@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Run one of the practice fuse daemons.  Set up a handler
+# to unmount on ctl-C
+
+if [[ $# -ne 2 ]]; then
+	echo "Usage: $0 <executable> <mount_point>"
+	exit 1
+fi
+
+# e.g. /users/jti/projects/mar_fs/fuse/test/filesys/mnt
+PROG=$1
+MOUNT=$2
+
+
+bye() {
+    echo "$0: trapped INT"
+    fusermount -u $MOUNT
+    exit
+}
+
+# trap bye INT
+trap bye EXIT
+
+
+
+eval "$PROG $MOUNT"
+
+cat $MOUNT/hello
+
