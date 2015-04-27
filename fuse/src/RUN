@@ -1,7 +1,12 @@
 #!/bin/bash
 
-# Run one of the practice fuse daemons.  Set up a handler
-# to unmount on ctl-C
+# Run 'cat' on one of the practice fuse daemons, like this:
+#
+#  make hello
+#  ./RUN hello ./mount_point
+#
+# We set up a handler to unmount on exit (or ctl-C).
+
 
 if [[ $# -ne 2 ]]; then
 	echo "Usage: $0 <executable> <mount_point>"
@@ -14,7 +19,7 @@ MOUNT=$2
 
 
 bye() {
-    echo "$0: trapped INT"
+    echo "$0: trapped EXIT:  unmounting '$MOUNT'"
     fusermount -u $MOUNT
     exit
 }
@@ -23,7 +28,7 @@ bye() {
 trap bye EXIT
 
 
-
+# e.g. "hello my_mount_point"
 eval "$PROG $MOUNT"
 
 cat $MOUNT/hello

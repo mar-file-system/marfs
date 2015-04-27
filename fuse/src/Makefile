@@ -1,46 +1,56 @@
-all: fuse
+all: marfs_fuse
 
-OBJS = config.o common.o
+
+# OBJS = config.o common.o marfs_xattrs.o
+OBJS = marfs_base.o common.o
 MNT  = ./filesys/mnt
 
+
+# c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
+CFLAGS += -Wall -std=c99 `pkg-config fuse --cflags`
+# CFLAGS += -Wall
+
+LDFLAGS += `pkg-config fuse --cflags --libs` -lm
+
+
 # currently a simple top-level FUSE daemon
-fuse: $(OBJS) fuse.c
-	gcc -Wall fuse.c `pkg-config fuse --cflags --libs` -o fuse
-
-# unit tests of the FUSE mount
-# unit: unit.c
+marfs_fuse: $(OBJS) marfs_fuse.c
+	gcc $(CFLAGS) -o marfs_fuse $(LDFLAGS) $(OBJS) marfs_fuse.c
 
 
-mount: fuse
-	fuse $(MNT)
+
+
+
+mount: marfs_fuse
+	marfs_fuse $(MNT)
 
 umount:
 	fusermount -u $(MNT)
 
+
 # TBD: develop a unit-test script to run ops on the mount-point
-test: fuse unit
+# unit tests of the FUSE mount
+# unit: unit.c
+
+test: marfs_fuse unit
 	$(MAKE) mount
 	unit $(MNT)
 	$(MAKE) umount
 
 
 
+
 %: %.o
-	gcc -o $@ `pkg-config fuse --libs` $<
+	gcc -o $@ $< $(LDFLAGS)
 
 %.o: %.c
-	gcc -Wall -c -o $@ `pkg-config fuse --cflags` $<
+	gcc $(CFLAGS) -c -o $@ $<
 
-# seriously?  You can't figure this out?
+
+# Seriously?  Make can't figure this out?
 % : %.c
 	@ $(MAKE) $*.o
 	@ $(MAKE) $*
-
-
-
-hello3: hello3.o common.o config.o
-	gcc -Wall -o $@ `pkg-config fuse --cflags --libs` $^
-
 
 
 
@@ -50,4 +60,24 @@ run-%: %
 	RUN $* $(MNT)
 
 clean:
-	$(RM) *.o
+	$(RM) *.{o,i}
+	$(RM) *~
+	$(RM) marfs_fuse
+
+
+
+
+# -- various testing
+
+hello3: hello3.o $(OBJS)
+	gcc $(CFLAGS) -o $@ $(LDFLAGS) $^
+
+
+# lines-of-code
+loc:
+	wc -l marfs_base.{h,c} common.{h,c} marfs_fuse.{h,c} 
+
+show_inc_path:
+	gcc -Wp,-v $(CFLAGS) -c -o marfs_base.o marfs_base.c
+
+

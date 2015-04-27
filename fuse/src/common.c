@@ -7,13 +7,22 @@
 #include <string.h>
 #include <stdio.h>              /* rename() */
 #include <assert.h>
-#include <syslog.h>
-
-#define FUSE_USE_VERSION 26
-#include <fuse.h>
+#include <stdarg.h>
 
 
+// ---------------------------------------------------------------------------
+// COMMON
+//
+// These are functions to support the MarFS fuse implementation (and pftool
+// TBD).  These should generally return zero for true, and non-zero for
+// errors.  They should not invert the values to negative, for fuse.  The
+// fuse impl takes care of that.
+// ---------------------------------------------------------------------------
 
+
+
+// push_user()
+//
 //   Save current user info from syscall into saved_user
 //   Set userid to requesting user (in fuse request structure)
 //   return 0/negative for success/error
@@ -33,7 +42,7 @@ int push_user(uid_t* saved_euid) {
 #if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
    //   fuse_context* ctx = fuse_get_context();
    //   if (ctx->flags & PUSHED_USER) {
-   //      syslog(LOG_ERR, "push_user -- already pushed!\n");
+   //      LOG(LOG_ERR, "push_user -- already pushed!\n");
    //      return;
    //   }
    *saved_euid = geteuid();
@@ -43,8 +52,8 @@ int push_user(uid_t* saved_euid) {
       if ((errno == EACCES) && (new_uid == getuid()))
          return 0;              /* okay [see NOTE] */
       else {
-         syslog(LOG_ERR, "push_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
-                (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
+         LOG(LOG_ERR, "push_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
+             (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
          return errno;
       }
    }
@@ -98,14 +107,15 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    if (! info->ns)
       return ENOENT;            /* no such file or directory */
 
-   char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
-   snprintf(info->md_path, "%s/%s", ns->md_path, sub_path);
+   const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
+   snprintf(info->md_path, MARFS_MAX_MD_PATH,
+            "%s/%s", info->ns->md_path, sub_path);
 
    // you need to pass in is this interactive (fuse) or batch
    // so you can use iperms or bperms as the perms to use)
    //
    // [jti: we now handle this by having callers pass whichever perms they
-   //       want to test.]
+   //       want to test, calling CHECK_PERMS() within fuse routines.]
 
    // if this is an existing file operation (you need to pass in if this
    // may be a existing file op) and if it is you need to pull in the
@@ -123,13 +133,19 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 }
 
 
-// we defer computing the trash-path name until it is needed
+// expand_path_info() deferred computing the trash-path name until needed.
+// Now's the time.
 // Trash-path gets a time-stamp added, so that if the same file is
 // trashed many times, we can find all the versions. (?)
 int expand_trash_info(PathInfo*    info,
                       const char*  path) {
-   if (! info->flags & PI_TRASH_PATH) {
-      char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
+   int rc;
+
+   // won't hurt (much), if it's already been done.
+   __TRY0(expand_path_info, info, path);
+
+   if (! (info->flags & PI_TRASH_PATH)) {
+      const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
 
       char       date_string[128];
       time_t     now = time(NULL);
@@ -143,15 +159,41 @@ int expand_trash_info(PathInfo*    info,
       if (! strftime(date_string, sizeof(date_string)-1, "%Y%m%d%_H%M%S", t))
          return -1;
 
-      if (snprintf(info->md_trash_path,
+      if (snprintf(info->trash_path, MARFS_MAX_MD_PATH,
                    "%s/%s.trash_%s",
-                   ns->md_trash_path, sub_path, date_string) < 0)
+                   info->ns->trash_path, sub_path, date_string) < 0)
          return -1;
 
       info->flags |= PI_TRASH_PATH;
    }
+
+   return 0;
 }
 
+
+
+
+int stat_regular(PathInfo* info) {
+
+   int rc;
+
+   if (info->flags & PI_STAT_QUERY)
+      return 0;                 /* already called stat_regular() */
+
+   memset(&(info->st), 0, sizeof(struct stat));
+   __TRY0(lstat, info->md_path, &info->st);
+
+   info->flags |= PI_STAT_QUERY;
+   return 0;
+}
+
+
+// return non-zero if info->md_path exists
+int md_exists(PathInfo* info) {
+   assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
+   stat_regular(info);                /* no-op, if already done */
+   return (info->st.st_ino != 0);
+}
 
 
 // stat_xattr()
@@ -167,74 +209,132 @@ int expand_trash_info(PathInfo*    info,
 
 
 
-// most fields can be parsed like this
-#define PARSE_XATTR(FIELD)                                              \
+// in stat_xattr(), most fields can be parsed like this
+#define PARSE_XATTR(INFO, FIELD)                                        \
    do {                                                                 \
-      if (lgetxaattr(md_path, spec->key_name,                           \
-                     resv->(FIELD),                                     \
-                     sizeof(resv->(FIELD))) < 0)                        \
+      if (lgetxattr(md_path, spec->key_name,                            \
+                    (INFO)->(FIELD),                                    \
+                    sizeof((INFO)->(FIELD))) < 0)                       \
          return errno;                                                  \
    } while (0)
 
 
-//  if no objtype xattr then its just stat  [jti: leaving out plain stat()]
+
+// Attempt to read all the MarFS system-xattrs from the file.  All values
+// are assumed to be ascii text.  Parse these values to populate fields in
+// the corresponding structs, in PathInfo.
+//
+// has_any_xattrs() should return true if we find any of a certain set of
+// keys, from MarFS_xattr_specs.  We set a bit corresponding to each xattr
+// we find, has_any_xattrs() can be used to test for specific ones.
+// 
+//  Need to call stat() first, so caller will know that failure to get
+//  xattrs means either an existing file without xattrs (i.e. "uni" mode),
+//  or a non-existent file.  We also need the stat info to construct new
+//  xattr field-values (e.g. MD path-name.
+//
+//  if no objtype xattr then it's just stat
 //  if objtype exists get entire H2O_reserved_xattr list
+//
+// *** NOTE: IT IS NOT AN ERROR FOR THERE TO BE NO XATTRS!  We should only
+//       return non-zero when something goes wrong.  Caller can call
+//       has_marfs_xattrs(info) to see whether we found them all.
+
 int stat_xattr(PathInfo* info) {
 
-   if (info.flags & PI_XATTR_QUERY)
+   int rc;
+
+   if (info->flags & PI_XATTR_QUERY)
       return 0;                 /* already called stat_xattr() */
 
-   MarFS_ReservedXattr* resv = &info->xattr;
-   const char*          md_path = info->md_path;
+   // call stat_regular().
+   __TRY0(stat_regular, info);
 
-   // go through the list of reserved Xattrs, and install values into
-   // fields of the MarFS_ReservedXattr struct, in PathInfo.  Set the
-   // RESV_INTIALIZED only if we found ALL reserved xattrs
+   const char*  md_path = info->md_path; /* where xattrs are */
+
+   // go through the list of reserved Xattrs, and install string values into
+   // fields of the corresponding structs, in PathInfo.  Set the
+   // PI_XATTRS only if we found ALL reserved xattrs
    XattrSpec* spec;
-   for (spec=MarFS_xattr_specs; spec.value_type!=XVT_NONE; ++spec) {
+   for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
 
       switch (spec->value_type) {
 
-      case XVT_REPO_NAME: {
-         // read the repo-name, find the repo, and store a pointer
-         char repo_name[MARFS_MAX_REPO_NAME];
-         if (lgetxaattr(md_path, spec->key_name,
-                        repo_name, MARFS_MAX_REPO_NAME) < 0)
+      case XVT_PRE: {
+         // object-IDs encode data that fills out an XattrPre struct
+         // NOTE: If obj doesn't exist, it's md_ctime will match the
+         //       ctime currently found in info->st, as a result of
+         //       the call to stat_regular(), above.
+
+         char*  obj_id = info->pre.obj_id; /* shorthand */
+         if (lgetxattr(md_path, spec->key_name, obj_id, MARFS_MAX_OBJ_ID_SIZE) != -1) {
+            // got the xattr-value.  Parse it into info->pre
+            __TRY0(str_2_pre, &info->pre, info->md_path, obj_id, &info->st, 1);
+            info->flags  |= PI_XATTRS; /*  found at least one MarFS xattr */
+            info->xattrs |= spec->value_type; /* found this one */
+         }
+         else if (errno == ENOATTR) {
+            // ENOATTR means no attr, or no access.  Treat as the former.
+            __TRY0(init_pre,
+                   &info->pre, info->md_path, info->ns, info->ns->iwrite_repo, &info->st);
+            info->flags |= PI_PRE_INIT;
+         }
+         else
             return errno;
-
-         MarFS_Repo* repo = lookup_repo(repo_name);
-         if (! repo)
-            return ENOKEY;      /* ?? */
-
-         resv->repo = repo;
+         break;
       }
-         break;
 
-      case XVT_OBJID:
-         if (lgetxaattr(md_path, spec->key_name,
-                        resv->obj_id, MARFS_MAX_OBJ_ID) < 0)
+      case XVT_POST: {
+         char post_val[XATTR_POST_STRING_VALUE_SIZE];
+         if (lgetxattr(md_path, spec->key_name, post_val, XATTR_POST_STRING_VALUE_SIZE) != -1) {
+            // got the xattr-value.  Parse it into info->pre
+            __TRY0(str_2_post, &info->post, post_val);
+            info->flags  |= PI_XATTRS; /*  found at least one MarFS xattr */
+            info->xattrs |= spec->value_type; /* found this one */
+         }
+         else if (errno == ENOATTR) {
+            // ENOATTR means no attr, or no access.  Treat as the former.
+            __TRY0(init_post, &info->post, info->ns, info->ns->iwrite_repo);
+            info->flags |= PI_POST_INIT;
+         }
+         else
             return errno;
          break;
+      }
 
+      case XVT_RESTART: {
+         char restart_val;
 
-         // remaining fields can be parsed in a standard way
-      case XVT_OBJTYPE:       PARSE_XATTR(obj_type);       break;
-      case XVT_OBJOFFSET:     PARSE_XATTR(obj_offset);     break;
-      case XVT_CHUNK_SIZE:    PARSE_XATTR(chnksz);         break;
-      case XVT_CONF_VERS:     PARSE_XATTR(conf_vers);      break;
-      case XVT_COMPRESS:      PARSE_XATTR(compress);       break;
-      case XVT_CORRECT:       PARSE_XATTR(correct);        break;
-      case XVT_CORRECT_INFO:  PARSE_XATTR(correct_info);   break;
-      case XVT_FLAGS:         PARSE_XATTR(flags);          break;
-      case XVT_SECURITY:      PARSE_XATTR(security);       break;
+         // Probably shouldn't even have this attribute, if not restarting
+         info->flags &= ~(PI_RESTART); /* default = NOT in restart mode */
+         ssize_t val_size = lgetxattr(md_path, spec->key_name, &restart_val, 1);
+         if (val_size < 0) {
+            if (errno == ENOATTR)
+               break;           /* treat ENOATTR as restart=0 */
+            return errno;
+         }
+         info->flags  |= PI_XATTRS; /*  found at least one MarFS xattr */
+         info->xattrs |= spec->value_type; /* found this one */
+         if (val_size && (restart_val & ~'0')) /* value is not '0' */
+            info->flags |= PI_RESTART;
+         break;
+      }
+
+      case XVT_SLAVE: {
+         // TBD ...
+         assert(0);
+         break;
+      }
+
 
       default:
-         return ENOKEY;         /* ?? */
+         // a key was added to MarFS_attr_specs, but stat_xattr() wasn't updated
+         assert(0);
       };
    }
 
    // found ALL fields in MarFS_xattr_specs
-   resv->flags |= RESV_INITIALIZED;
+   info->flags |= PI_XATTRS;
    
 
    return 0;                    /* "success" */
@@ -242,36 +342,22 @@ int stat_xattr(PathInfo* info) {
 
 
 
-int stat_regular(PathInfo* info) {
-
-   if (info.flags & PI_STAT_QUERY)
-      return 0;                 /* already called stat_xattr() */
-
-   memset(&(info->st), 0, sizeof(struct stat));
-
-   int rc = lstat(info->md_path, &info->st);
-   info->flags |= PI_STAT_QUERY;
-   return rc;
-}
-
-
-// return non-zero if info->md_path exists
-int exists(PathInfo* info) {
-   assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
-   stat_regular(info);                /* no-op, if already done */
-   return (info.st.st_ino != 0);
-}
-
-// Return non-zero if info->md_path has ALL the reserved xattrs needed to
-// fill out the PathInfo.xattr struct.  Else, zero.
+// Return non-zero if info->md_path has ALL/ANY of the reserved xattrs
+// indicated in <mask>.  Else, zero.
 //
 // NOTE: Having these reserved xattrs indicates that the data-contents are
-//       stored directly in an object, described in the meta-data.
-//       Otherwise, data is stored directly in the md_path.
-int has_resv_xattrs(PathInfo* info) {
+//       stored in object(s), described in the meta-data.  Otherwise, data
+//       is stored directly in the md_path.
+
+int has_all_xattrs(PathInfo* info, XattrMaskType mask) {
    assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
    stat_xattr(info);                  /* no-op, if already done */
-   return (info.xattr.flags & RESV_INITIALIZED);
+   return ((info->xattrs & mask) == mask);
+}
+int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
+   assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
+   stat_xattr(info);                  /* no-op, if already done */
+   return (info->xattrs & mask);
 }
 
 
@@ -290,6 +376,7 @@ int  trash_file(PathInfo*   info,
    //    rename file to trashname 
    //    trash_name()   record the full path in a related file in trash
 
+   int rc;
    __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
    __TRY0(rename, info->md_path, info->trash_path);
    return 0;
@@ -309,8 +396,10 @@ int  trash_dup_file(PathInfo*   info,
    //    for data) just trunc the file and return – we have nothing to
    //    clean up, too bad for the user as we aren’t going to keep the
    //    trunc’d file.
-   __TRY0(stat_xattr);
-   if (! has_resv_xattrs(info)) {
+
+   int rc;
+   __TRY0(stat_xattr, info);
+   if (! has_any_xattrs(info, MD_MARFS_XATTRS)) {
       __TRY0(truncate, info->md_path, 0);
       return 0;
    }
@@ -319,9 +408,9 @@ int  trash_dup_file(PathInfo*   info,
    //   stat_xattr()    to get all file attrs/xattrs
    //   open trashdir/trashname
    //
-   //   if no xattr objtype [jti: i.e. info->xattr.obj_type == MARFS_UNI]
+   //   if no xattr objtype [jti: i.e. info->xattr.obj_type == OBJ_UNI]
    //        copy file data to file
-   //   if xattr objtype is multipart [jti: i.e. == MARFS_MULTI]
+   //   if xattr objtype is multipart [jti: i.e. == OBJ_MULTI]
    //        copy file data until end of objlist marker
    //
    //   update trash file mtime to original mtime
@@ -334,7 +423,8 @@ int  trash_dup_file(PathInfo*   info,
    // capture mode-bits, etc.  Destination has all the same mode-bits,
    // for permissions and file-type bits only.  No, just permissions.
    __TRY0(stat_regular, info);
-   mode_t new_mode = info->st & (ACCESSPERMS);
+   // mode_t new_mode = info->st.st_mode & (ACCESSPERMS); // ACCESSPERMS is only BSD
+   mode_t new_mode = info->st.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO); // more-portable
 
    // write to trash_file
    __TRY0(expand_trash_info, info, path);
@@ -345,10 +435,10 @@ int  trash_dup_file(PathInfo*   info,
 
    // MD file for "uni" storage contains ... what?
    // copy contents to the trash-version
-   if (info->xattr.obj_type == MARFS_UNI) {
+   if (info->post.obj_type == OBJ_UNI) {
 
       // read from md_file
-      int in = open(info->md_path, O_RDONLY));
+      int in = open(info->md_path, O_RDONLY);
       if (in == -1)
          return errno;
 
@@ -377,9 +467,9 @@ int  trash_dup_file(PathInfo*   info,
 
    // MD file for "multi" storage contains ... what?
    // copy contents to the trash-version
-   else if (info->xattr.obj_type == MARFS_MULTI) {
+   else if (info->post.obj_type == OBJ_MULTI) {
    }
-   else if (info->xattr.obj_type == MARFS_PACKED) {
+   else if (info->post.obj_type == OBJ_PACKED) {
       assert(0); // TBD
    }
    else {
@@ -394,7 +484,18 @@ int  trash_dup_file(PathInfo*   info,
 
 
 
-int trash_name(const char* path, PathInfo* info) {
+//   trunc file to zero
+//   remove (not just reset but remove) all reserved xattrs
+int trunc_xattr(PathInfo* info) {
+   XattrSpec*  spec;
+   for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
+      lremovexattr(info->md_path, spec->key_name);
+   }   
+   return 0;
+}
+
+
+int trash_name(PathInfo* info, const char* path) {
    // (pass in expanded_path_info_structure and file name and trashname)
 
    // make file in trash that has the full path of the file name and the
@@ -408,16 +509,69 @@ int trash_name(const char* path, PathInfo* info) {
    return 0;
 }
 
-  
 
-//   trunc file to zero
-//   remove (not just reset but remove) all reserved xattrs
-int trunc_xattr(PathInfo* info) {
-   const char* path = info.md_path;
+// only defined/used when not runas root
+//
+// QUESTION: Do we really want fuse to abort routines with error-codes
+//    if the logging function fails?  I suspect not.  If you wanted to,
+//    you could define LOG(...) to be TRY_GE0(printf_log(...))
 
-   XattrSpec*  spec;
-   for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
-      lremovexattr(path, spec->key_name);
-   }   
-   return 0;
+ssize_t printf_log(size_t prio, const char* format, ...) {
+   va_list list;
+   va_start(list, format);
+
+   return vfprintf(stderr, format, list);
 }
+
+
+
+// return non-zero if there's no more space.
+//
+// Namespace.fsinfo has a path to a file where info about overall
+// space-usage is maintained in a custom way.  The idea is that a batch
+// process will periodically crawl the MDFS to collect the amount of
+// storage used, and it will store it there.  Then mknod()/create() can
+// look there to see whether an attempt to create a new object should be
+// allowed to succeed.
+//
+// The first approach might be to store the contents of a fake statvfs
+// struct in the file, maybe in some human-readable form, for convenience.
+// However, the types of values in that struct may have some scaling
+// problems: Our equivalent of statvfs.f_frsize might want to be as large
+// as 10 GB, which couldn't fit into 32-bits, assuming an 'unsigned long'
+// could be 32 bits.
+//
+// We could improve access time by making two fsinfo files, one having
+// size trunc'ed to be multiplier, and the other having size trunc'ed to be
+// a multiplicand.  Then we wouldn't have to do an open/read/write to check
+// quotes, for every call to mknod().
+//
+// For 0.1, I'll do something even cheaper (and quicker): assume fsinfo is
+// trunc'ed to the space-limit, and ignore name-limits.
+//
+// NOTE: We could possibly save ourselves some work by setting a flag
+//       (e.g. PI_STATVFS) in info->flags, to avoid redundantly updating
+//       info->stvfs, but probably we should be responsive to potential
+//       ongoing updates to fsinfo, and just always read it.
+
+int check_quotas(PathInfo* info) {
+
+   int rc;
+
+   //   if (! (info->flags & PI_STATVFS))
+   //      __TRY0(statvfs, info->ns->fsinfo, &info->stvfs);
+
+
+   uint64_t  space_limit = ((uint64_t)info->ns->quota_space_units *
+                            (uint64_t)info->ns->quota_space);
+#if TBD
+   uint64_t  names_limit = ((uint64_t)info->ns->quota_name_units *
+                            (uint64_t)info->ns->quota_names);
+#endif
+
+   struct stat st;
+   __TRY0(stat, info->ns->fsinfo_path, &st);
+
+   return (st.st_size >= space_limit); /* 0 = OK,  1 = no-more-space */
+}
+
