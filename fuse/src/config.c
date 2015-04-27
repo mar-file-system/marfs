@@ -1,4 +1,5 @@
 #include "config.h"
+#include "xattrs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -175,10 +176,10 @@ int load_config(const char* config_fname) {
    // hard-coded namespace
    _ns  = (MarFS_Namespace*) malloc(sizeof(MarFS_Namespace));
    *_ns = (MarFS_Namespace) {
-      .mnt_suffix    = "/users/jti/projects/mar_fs/fuse/test/filesys/mnt",
-      .md_path       = "/users/jti/projects/mar_fs/fuse/test/filesys/meta",
-      .trash_path    = "/users/jti/projects/mar_fs/fuse/test/filesys/trash",
-      .fsinfo_path   = "/users/jti/projects/mar_fs/fuse/test/filesys/stat",
+      .mnt_suffix    = "/users/jti/projects/mar_fs/git/fuse/test/filesys/mnt",
+      .md_path       = "/users/jti/projects/mar_fs/git/fuse/test/filesys/meta",
+      .trash_path    = "/users/jti/projects/mar_fs/git/fuse/test/filesys/trash",
+      .fsinfo_path   = "/users/jti/projects/mar_fs/git/fuse/test/filesys/stat",
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -200,25 +201,6 @@ int load_config(const char* config_fname) {
 
    // helper for find_namespace()
    _ns->mnt_suffix_len = strlen(_ns->mnt_suffix);
-
-
-   // these are used by a parser (e.g. stat_xattr())
-   // The string in MarFS_XattrPrefix is appended to all of them
-   // TBD: free this in clean-up
-   MarFS_xattr_specs = (XattrSpec*) calloc(16, sizeof(XattrSpec));
-
-   MarFS_xattr_specs[0] = (XattrSpec) { XVT_OBJID,    "obj_id" };
-   MarFS_xattr_specs[1] = (XattrSpec) { XVT_OBJTYPE,  "obj_type" };
-   MarFS_xattr_specs[2] = (XattrSpec) { XVT_SIZE_T,   "obj_offset" };
-   MarFS_xattr_specs[3] = (XattrSpec) { XVT_SIZE_T,   "chnksz" };
-   MarFS_xattr_specs[4] = (XattrSpec) { XVT_FLOAT,    "conf_version" };
-   MarFS_xattr_specs[5] = (XattrSpec) { XVT_COMPRESS, "compress" };
-   MarFS_xattr_specs[6] = (XattrSpec) { XVT_CORRECT,  "correct" };
-   MarFS_xattr_specs[7] = (XattrSpec) { XVT_UINT64,   "correct_info" };
-   MarFS_xattr_specs[8] = (XattrSpec) { XVT_FLAGS,    "flags" };
-   MarFS_xattr_specs[9] = (XattrSpec) { XVT_SECURITY, "sec_info" };
-
-   MarFS_xattr_specs[9] = (XattrSpec) { XVT_NONE,     NULL };
 
 
    return 0;                    /* success */

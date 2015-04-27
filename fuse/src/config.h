@@ -1,8 +1,11 @@
 #ifndef SERVER_CONFIG_H
 #define SERVER_CONFIG_H
 
+#include "marfs_xattrs.h"
+
 #include <stdint.h>
 #include <stddef.h>
+
 
 #  ifdef __cplusplus
 extern "C" {
@@ -34,7 +37,7 @@ extern float MarFS_config_version;
 #define              MARFS_MAX_MD_PATH       1024
 #define              MARFS_MAX_BUCKET_SIZE     63
 #define              MARFS_MAX_OBJ_ID_SIZE   1024
-#define              MARFS_MAX_REPO_NAME     1024
+#define              MARFS_MAX_REPO_NAME       63
 
 
 // ---------------------------------------------------------------------------
@@ -76,146 +79,6 @@ typedef struct MarFS_Repo {
    uint32_t          latency_ms;   // max time to wait for a response 
 }  MarFS_Repo;
 
-
-
-// ---------------------------------------------------------------------------
-// ReservedXattr
-//
-// Fields in this structure are filled from individual xattrs attached to
-// files in the MDFS.
-//
-// NOTE: We are currently using lack of xattrs (on an MD file) as an
-//       indicator that data is stored directly in the MD file (instead of
-//       being stored in an object to which xattrs would refer).  This
-//       really means a lack of the complete set of xattrs, needed for
-//       MarFS_ReservedXattrs.  (See stat_xattrs(), in common.c)
-//
-//       You can test for this situation by doing the following:
-//
-//       EXPAND_PATH_INFO(&info, path);
-//       STAT_XATTRS(&info, path);
-//       if ( ! (info.xattr.flags & RESV_INITIALIZED) ) {
-//           // MD file has no xattrs ...
-//       }
-//
-// ---------------------------------------------------------------------------
-
-// this prefix is reserved for system-xattrs in the MDFS and on objects
-#define   MarFS_XattrPrefix  "marfs_"
-
-// how objects are used to store "files"
-typedef enum {
-   MARFS_UNI = 0,                 // one object per file
-   MARFS_MULTI,                   // file spans multiple objs (list of objs as chunks)
-   MARFS_PACKED,                  // multiple files per objects
-   MARFS_STRIPED                  // (like Lustre does it)
-} MarFS_ObjType;
-
-// room for multiple boolean flags
-typedef uint8_t XattrFlagType;
-typedef enum {
-   RESV_INITIALIZED      = 0x01,  // found ALL fields of MarFS_ReservedXattr
-   RESV_RESTART          = 0x02,  // file in restart mode? (i.e. being updated)
-   RESV_OBJ_LIST_IN_FILE = 0x04,  // obj-list is in MD file?
-} XattrFlags;
-
-
-
-typedef enum {
-   CORRECT_NONE = 0,
-   CORRECT_CRC,
-   CORRECT_CHECKSUM,
-   CORRECT_HASH,
-   CORRECT_RAID,
-   CORRECT_ERASURE,
-} CorrectionMethod;
-
-extern CorrectionMethod lookup_correction(const char* correction_name);
-
-
-
-typedef enum {
-   COMPRESS_NONE = 0,
-   COMPRESS_ERASURE,
-   COMPRESS_RUN_LENGTH,
-} CompressionMethod;
-
-extern CompressionMethod lookup_compression(const char* compression_name);
-
-
-
-typedef uint64_t SecurityInfo;  /* e.g. per-object S3 meta-data key */
-
-
-// xattrs from the metadata FS are parsed and stored into a single structure.
-typedef struct MarFS_ReservedXattr {
-   MarFS_Repo*        repo;         // data repository (name)
-   char               obj_id[MARFS_MAX_OBJ_ID_SIZE];
-   MarFS_ObjType      obj_type;
-   size_t             obj_offset;   // offset of file in the obj (for packed)
-   size_t             chnksz;       // chunk size file was written with
-   float              conf_version; // (major.minor) config that file was written with
-   CompressionMethod  compress;     // compression method
-   CorrectionMethod   correct;      // correctness method  (like CRC/checksum/etc.)
-   uint64_t           correct_info; // correctness info  (e.g. the computed checksum)
-   XattrFlagType      flags;
-   SecurityInfo       security;     // any info reqd to get access to data object
-} MarFS_ReservedXattr;
-
-
-// These describe xattr keys, and the type of the corresponding values, for
-// all the metadata fields in a MarFS_ReservedXattr.  These support a
-// generic parser for extracting and parsing xattr data from a metadata
-// file (or maybe also from object metadata).
-
-typedef enum {
-   XVT_NONE       = 0,          // marks the end of <xattr_specs>
-
-   //   XVT_CHAR       = 1,
-   //   XVT_UINT8      = 2,
-   //   XVT_UINT16     = 3,
-   //   XVT_UINT32     = 4,
-   //   XVT_UINT64     = 5,
-   //   XVT_SIZE_T     = 6,
-   //   XVT_FLOAT      = 7,
-   //
-   //   XVT_STRING     = 8,
-   //   XVT_STRING_LEN = 9,
-
-   XVT_REPO_NAME    = 20,
-   XVT_OBJID        = 21,
-   XVT_OBJTYPE      = 22,
-   XVT_OBJOFFSET    = 23,
-   XVT_CHUNK_SIZE   = 24,
-
-   XVT_CONF_VERS    = 25,
-
-   XVT_COMPRESS     = 26,
-   XVT_CORRECT      = 27,
-   XVT_CORRECT_INFO = 28,
-
-   XVT_FLAGS        = 29,
-   XVT_SECURITY     = 30,
-   
-} XattrValueType;
-
-// generic description of one of our reserved xattrs
-typedef struct {
-   const char*     key_name;        // does not incl MarFS_XattrPrefix (?)
-   XattrValueType  value_type;
-} XattrSpec;
-
-
-/// typdef struct MarFS_XattrList {
-///   char*                   name;
-///   char*                   value;
-///   struct MarFS_XattrList* next;
-/// } MarFS_XattrList;
-
-
-// An array of XattrSpecs.  Last one has value_type == XVT_NONE.
-// initialized in load_config()
-extern XattrSpec*  MarFS_xattr_specs;
 
 
 // ---------------------------------------------------------------------------
