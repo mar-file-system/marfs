@@ -48,6 +48,34 @@ typedef enum {
 // } MarFS_PermSelect;
 
 
+
+// ---------------------------------------------------------------------------
+// logging macros use syslog for root, printf for user.
+// See syslog(3) for priority constants.
+//
+// NOTE: To see output to stderr/stdout, you must start fuse with '-f'
+// ---------------------------------------------------------------------------
+
+
+/// #define LOG_PREFIX  "marfs_fuse -- : "
+#define LOG_PREFIX  "marfs_fuse [%s:%3d]%*s -- %-17s: "
+#  include <syslog.h>           // we always need priority-names
+
+#ifdef RUNAS_ROOT
+// calling syslog() as a regular user on rrz seems to be an expensive no-op
+#  define INIT_LOG()                   openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)
+#  define LOG(PRIO, FMT, ...)          syslog((PRIO), FMT, __FILE__, __LINE__, 13-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
+
+#else
+// must start fuse with '-f' in order to allow stdout/stderr to work
+// NOTE: print_log call merges LOG_PREFIX w/ user format at compile-time
+#  define INIT_LOG()
+/// #  define LOG(PRIO, FMT, ...)          printf_log((PRIO), LOG_PREFIX FMT, ## __VA_ARGS__)
+#  define LOG(PRIO, FMT, ...)          printf_log((PRIO), LOG_PREFIX FMT, __FILE__, __LINE__, 13-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
+ssize_t   printf_log(size_t prio, const char* format, ...);
+#endif
+
+
 // ---------------------------------------------------------------------------
 // TRY, etc
 //
@@ -85,8 +113,10 @@ typedef enum {
 
 #define TRY0(FUNCTION, ...)                                             \
    do {                                                                 \
+      /* LOG(LOG_INFO, "TRY0(%s)\n", #FUNCTION); */                     \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
+         LOG(LOG_ERR, "ERR TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
          RETURN(-rc); /* negated for FUSE */                            \
       }                                                                 \
    } while (0)
@@ -95,8 +125,10 @@ typedef enum {
 // e.g. open() returns -1 or an fd.
 #define TRY_GE0(FUNCTION, ...)                                          \
    do {                                                                 \
+      /* LOG(LOG_INFO, "TRY_GE0(%s)\n", #FUNCTION); */                  \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize < 0) {                                               \
+         LOG(LOG_ERR, "ERR GE0(%s) returning (%d) '%s'\n\n", #FUNCTION, errno, strerror(errno)); \
          RETURN(-errno); /* negated for FUSE */                         \
       }                                                                 \
    } while (0)
@@ -108,8 +140,10 @@ typedef enum {
 // This version doesn't invert the value of the return-code
 #define __TRY0(FUNCTION, ...)                                           \
    do {                                                                 \
+      LOG(LOG_INFO, "__TRY0(%s)\n", #FUNCTION);                         \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
+         LOG(LOG_ERR, "ERR __TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
          RETURN(rc); /* NOT negated! */                                 \
       }                                                                 \
    } while (0)
@@ -119,6 +153,7 @@ typedef enum {
 
 
 #define PUSH_USER()                                                     \
+   LOG(LOG_INFO, "entry\n");                                            \
    __attribute__ ((unused)) size_t   rc = 0;                            \
    __attribute__ ((unused)) ssize_t  rc_ssize = 0;                      \
    uid_t saved_euid = -1;                                               \
@@ -126,6 +161,7 @@ typedef enum {
 
 
 #define POP_USER()                                                      \
+   LOG(LOG_INFO, "exit\n\n");                                           \
    TRY0(pop_user, &saved_euid);                                         \
 
 
@@ -144,6 +180,7 @@ typedef enum {
 // in the iperms or bperms of the given NS.
 #define CHECK_PERMS(ACTUAL_PERMS, REQUIRED_PERMS)                       \
    do {                                                                 \
+      LOG(LOG_INFO, "check_perms req:%08x actual:%08x\n", (REQUIRED_PERMS), (ACTUAL_PERMS)); \
       if (((ACTUAL_PERMS) & (REQUIRED_PERMS)) != (REQUIRED_PERMS))      \
          return -EACCES;   /* should be EPERM? (i.e. being root wouldn't help) */ \
    } while (0)
@@ -152,30 +189,6 @@ typedef enum {
 #define CHECK_QUOTAS(INFO)             TRY0(check_quotas, (INFO))
 
 
-
-
-// ---------------------------------------------------------------------------
-// logging macros use syslog for root, printf for user
-//
-// NOTE: To see output to stderr/stdout, you must start fuse with '-f'
-// ---------------------------------------------------------------------------
-
-
-#define LOG_PREFIX  "marfs_fuse"
-#  include <syslog.h>           // we always need priority-names
-
-#ifdef RUNAS_ROOT
-// calling syslog() as a regular user on rrz seems to be an expensive no-op
-#  define INIT_LOG()                   openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)
-#  define LOG(PRIO, FMT, ...)               syslog((PRIO), FMT, ## __VA_ARGS__)
-
-#else
-// must start fuse with '-f' in order to allow stdout/stderr to work
-// NOTE: print_log call merges LOG_PREFIX w/ user format at compile-time
-#  define INIT_LOG()
-#  define LOG(PRIO, FMT, ...)          printf_log((PRIO), LOG_PREFIX ": " FMT, ## __VA_ARGS__)
-ssize_t   printf_log(size_t prio, const char* format, ...);
-#endif
 
 
 

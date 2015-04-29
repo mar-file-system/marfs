@@ -31,5 +31,6 @@ trap bye EXIT
 # e.g. "hello my_mount_point"
 eval "$PROG $MOUNT"
 
-cat $MOUNT/hello
+# cat $MOUNT/hello
+ls $MOUNT/hello
 

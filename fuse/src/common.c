@@ -47,16 +47,20 @@ int push_user(uid_t* saved_euid) {
    //   }
    *saved_euid = geteuid();
    uid_t new_uid = fuse_get_context()->uid;
+   LOG(LOG_INFO, "user %ld (euid %ld) -> (euid %ld) ...\n",
+       (size_t)getuid(), (size_t)*saved_euid, (size_t)new_uid);
    int rc = seteuid(new_uid);
    if (rc == -1) {
-      if ((errno == EACCES) && (new_uid == getuid()))
+      if ((errno == EACCES) && (new_uid == getuid())) {
+         LOG(LOG_ERR, "failed (but okay)\n");
          return 0;              /* okay [see NOTE] */
+      }
       else {
-         LOG(LOG_ERR, "push_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
-             (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
+         LOG(LOG_ERR, "failed!\n");
          return errno;
       }
    }
+   LOG(LOG_ERR, "succeess\n");
    return 0;
 #else
 #  error "No support for seteuid()"
@@ -74,9 +78,9 @@ int pop_user(uid_t* saved_euid) {
       if ((errno == EACCES) && (new_uid == getuid()))
          return 0;              /* okay [see NOTE] */
       else {
-         syslog(LOG_ERR,
-                "pop_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
-                (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
+         LOG(LOG_ERR,
+             "pop_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
+             (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
          return errno;
       }
    }
@@ -92,6 +96,8 @@ int pop_user(uid_t* saved_euid) {
 //       (Actually a suffix array.)  
 int expand_path_info(PathInfo*   info, /* side-effect */
                      const char* path) {
+   LOG(LOG_INFO, "path %s\n", path);
+
    // (pass path, address to stuff, batch/interactive, working with existing file)
    if (! info)
       return ENOENT;            /* no such file or directory */
@@ -107,9 +113,14 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    if (! info->ns)
       return ENOENT;            /* no such file or directory */
 
+   LOG(LOG_INFO, "namespace %s\n", info->ns->mnt_suffix);
+
    const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
    snprintf(info->md_path, MARFS_MAX_MD_PATH,
-            "%s/%s", info->ns->md_path, sub_path);
+            "%s%s", info->ns->md_path, sub_path);
+
+   LOG(LOG_INFO, "sub-path %s\n", sub_path);
+   LOG(LOG_INFO, "md-path  %s\n", info->md_path);
 
    // you need to pass in is this interactive (fuse) or batch
    // so you can use iperms or bperms as the perms to use)
@@ -258,6 +269,7 @@ int stat_xattr(PathInfo* info) {
    XattrSpec* spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
 
+      LOG(LOG_INFO, "trying xattr %s ...\n", spec->key_name);
       switch (spec->value_type) {
 
       case XVT_PRE: {
@@ -267,6 +279,7 @@ int stat_xattr(PathInfo* info) {
          //       the call to stat_regular(), above.
 
          char*  obj_id = info->pre.obj_id; /* shorthand */
+         LOG(LOG_INFO, "XVT_PRE 0x%lx\n", obj_id);
          if (lgetxattr(md_path, spec->key_name, obj_id, MARFS_MAX_OBJ_ID_SIZE) != -1) {
             // got the xattr-value.  Parse it into info->pre
             __TRY0(str_2_pre, &info->pre, info->md_path, obj_id, &info->st, 1);
@@ -279,13 +292,16 @@ int stat_xattr(PathInfo* info) {
                    &info->pre, info->md_path, info->ns, info->ns->iwrite_repo, &info->st);
             info->flags |= PI_PRE_INIT;
          }
-         else
+         else {
+            LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
             return errno;
+         }
          break;
       }
 
       case XVT_POST: {
          char post_val[XATTR_POST_STRING_VALUE_SIZE];
+         LOG(LOG_INFO, "XVT_POST 0x%lx\n", post_val);
          if (lgetxattr(md_path, spec->key_name, post_val, XATTR_POST_STRING_VALUE_SIZE) != -1) {
             // got the xattr-value.  Parse it into info->pre
             __TRY0(str_2_post, &info->post, post_val);
@@ -297,13 +313,16 @@ int stat_xattr(PathInfo* info) {
             __TRY0(init_post, &info->post, info->ns, info->ns->iwrite_repo);
             info->flags |= PI_POST_INIT;
          }
-         else
+         else {
+            LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
             return errno;
+         }
          break;
       }
 
       case XVT_RESTART: {
          char restart_val;
+         LOG(LOG_INFO, "XVT_RESTART\n");
 
          // Probably shouldn't even have this attribute, if not restarting
          info->flags &= ~(PI_RESTART); /* default = NOT in restart mode */
@@ -311,6 +330,7 @@ int stat_xattr(PathInfo* info) {
          if (val_size < 0) {
             if (errno == ENOATTR)
                break;           /* treat ENOATTR as restart=0 */
+            LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
             return errno;
          }
          info->flags  |= PI_XATTRS; /*  found at least one MarFS xattr */
@@ -322,21 +342,20 @@ int stat_xattr(PathInfo* info) {
 
       case XVT_SLAVE: {
          // TBD ...
-         assert(0);
+         LOG(LOG_ERR, "slave xattr TBD\n");
          break;
       }
 
 
       default:
          // a key was added to MarFS_attr_specs, but stat_xattr() wasn't updated
+         LOG(LOG_ERR, "unknown xattr %d = '%s'\n", spec->value_type, spec->key_name);
          assert(0);
       };
    }
 
    // found ALL fields in MarFS_xattr_specs
    info->flags |= PI_XATTRS;
-   
-
    return 0;                    /* "success" */
 }
 
@@ -520,7 +539,9 @@ ssize_t printf_log(size_t prio, const char* format, ...) {
    va_list list;
    va_start(list, format);
 
-   return vfprintf(stderr, format, list);
+   ssize_t written = vfprintf(stderr, format, list);
+   fflush(stderr);
+   return written;
 }
 
 

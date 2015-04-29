@@ -292,6 +292,7 @@ int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
    return 0;
 }
 
+
 // from MarFS_XattrPost to string
 int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post) {
 
@@ -379,9 +380,9 @@ int init_xattr_specs() {
    // TBD: free this in clean-up
    MarFS_xattr_specs = (XattrSpec*) calloc(4, sizeof(XattrSpec));
 
-   MarFS_xattr_specs[0] = (XattrSpec) { XVT_PRE,     "objid" };
-   MarFS_xattr_specs[1] = (XattrSpec) { XVT_POST,    "post" };
-   MarFS_xattr_specs[2] = (XattrSpec) { XVT_RESTART, "restart" };
+   MarFS_xattr_specs[0] = (XattrSpec) { XVT_PRE,     MarFS_XattrPrefix "objid" };
+   MarFS_xattr_specs[1] = (XattrSpec) { XVT_POST,    MarFS_XattrPrefix "post" };
+   MarFS_xattr_specs[2] = (XattrSpec) { XVT_RESTART, MarFS_XattrPrefix "restart" };
 
    MarFS_xattr_specs[3] = (XattrSpec) { XVT_NONE,    NULL };
 
@@ -532,7 +533,11 @@ int load_config(const char* config_fname) {
    };
 
 
-   MarFS_mnt_top = "/users/jti/projects/mar_fs/git/fuse/test/filesys/mnt";
+#if CCSTAR
+   MarFS_mnt_top = "/users/jti/projects/marfs/git/fuse/test/filesys/mnt";
+#else
+   MarFS_mnt_top = "/root/jti/projects/marfs/git/fuse/test/filesys/mnt";
+#endif
 
    // hard-coded namespace
    //
@@ -543,11 +548,16 @@ int load_config(const char* config_fname) {
    //
    _ns  = (MarFS_Namespace*) malloc(sizeof(MarFS_Namespace));
    *_ns = (MarFS_Namespace) {
-      .mnt_suffix     = "/test00",  // e.g. fuse exposes "<mnt_top>/test00"
-      .md_path        = "/users/jti/projects/mar_fs/git/fuse/test/filesys/meta",
-      .trash_path     = "/users/jti/projects/mar_fs/git/fuse/test/filesys/trash",
-      .fsinfo_path    = "/users/jti/projects/mar_fs/git/fuse/test/filesys/stat",
-
+      .mnt_suffix     = "/test00",  // "<mnt_top>/test00" comes here
+#if CCSTAR
+      .md_path        = "/users/jti/projects/marfs/git/fuse/filesys/mdfs/test00",
+      .trash_path     = "/users/jti/projects/marfs/git/fuse/filesys/trash/test00",
+      .fsinfo_path    = "/users/jti/projects/marfs/git/fuse/filesys/stat/test00",
+#else
+      .md_path        = "/mnt/xfs/jti/filesys/mdfs/test00",
+      .trash_path     = "/mnt/xfs/jti/filesys/trash/test00",
+      .fsinfo_path    = "/mnt/xfs/jti/filesys/stat/test00",
+#endif
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
 

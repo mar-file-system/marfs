@@ -362,7 +362,13 @@ typedef struct MarFS_Namespace {
 
 // [Co-maintain with MarFS_XattrPrefixSize]
 // this prefix is reserved for system-xattrs in the MDFS and on objects
-#define   MarFS_XattrPrefix      "marfs_"
+#define XFS
+
+#ifdef XFS
+#  define   MarFS_XattrPrefix      "user.marfs_"
+#else
+#  define   MarFS_XattrPrefix      "marfs_"
+#endif
 
 // [Co-maintain with MarFS_XattrPrefix]
 // This just saves us worrying whether the compiler will optimize away

@@ -1,16 +1,26 @@
 all: marfs_fuse
 
+GIT = ~/projects/marfs/git
 
-# OBJS = config.o common.o marfs_xattrs.o
 OBJS = marfs_base.o common.o
-MNT  = ./filesys/mnt
 
+# MNT  = ./filesys/mnt
+MNT  = $(GIT)/fuse/filesys/mnt
 
 # c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
 CFLAGS += -Wall -std=c99 `pkg-config fuse --cflags`
 # CFLAGS += -Wall
 
 LDFLAGS += `pkg-config fuse --cflags --libs` -lm
+
+# only works from ccstargate
+2hb:
+	rsync -Pvaurl ~/projects/marfs/git/fuse/src/ root@10.135.0.2:/root/projects/marfs/git/fuse/src
+
+# only works from ccstargate
+fromhb:
+	rsync -Pvaurl root@10.135.0.2:/root/projects/marfs/git/fuse/src/ ~/projects/marfs/git/fuse/src
+
 
 
 # currently a simple top-level FUSE daemon
@@ -19,12 +29,15 @@ marfs_fuse: $(OBJS) marfs_fuse.c
 
 
 
+PID = marfs_fuse.pid
 
+mnt: marfs_fuse
+	@ # marfs_fuse $(MNT)
+	@ echo
+	@ echo "mounting at $(MNT)"
+	marfs_fuse -f $(MNT) &
 
-mount: marfs_fuse
-	marfs_fuse $(MNT)
-
-umount:
+umnt:
 	fusermount -u $(MNT)
 
 
@@ -54,10 +67,8 @@ test: marfs_fuse unit
 
 
 
-
-
 run-%: %
-	RUN $* $(MNT)
+	RUN $* $(MNT)/test00
 
 clean:
 	$(RM) *.{o,i}
@@ -68,6 +79,13 @@ clean:
 
 
 # -- various testing
+
+shell_test:
+	[ -e foo.pid ] \
+	&& [ -n "`cat foo.pid | xargs ps --no-headers`" ] \
+	&& ( eval "cat foo.pid | xargs kill -TERM" ; \
+		eval "cat foo.pid | xargs echo killed" ; \
+		rm foo.pid )
 
 hello3: hello3.o $(OBJS)
 	gcc $(CFLAGS) -o $@ $(LDFLAGS) $^

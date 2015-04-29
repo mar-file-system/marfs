@@ -206,13 +206,15 @@ int marfs_getattr (const char*  path,
 
    PathInfo info;
    EXPAND_PATH_INFO(&info, path);
+   LOG(LOG_INFO, "expanded %s -> %s\n", path, info.md_path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, R_META);
 
    // No need for access check, just try the op
    // appropriate statlike call filling in fuse structure (dont mess with xattrs here etc.)
-   TRY0(lstat, path, stbuf);
+   LOG(LOG_INFO, "lstat %s\n", info.md_path);
+   TRY_GE0(lstat, info.md_path, stbuf);
 
    POP_USER();
    return 0;
@@ -335,7 +337,7 @@ int marfs_mkdir (const char* path,
 
    // No need for access check, just try the op
    // Appropriate mkdirlike call filling in fuse structure 
-   TRY0(mkdir, path, mode);
+   TRY0(mkdir, info.md_path, mode);
 
    POP_USER();
    return 0;
@@ -382,7 +384,7 @@ int marfs_mknod (const char* path,
 
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
-   TRY0(mknod, path, mode, rdev);
+   TRY0(mknod, info.md_path, mode, rdev);
 
    POP_USER();
    return 0;
@@ -479,16 +481,17 @@ int marfs_open (const char*            path,
    //   }
 
    // unsupported operations
-   if (ffi->flags & (O_RDWR))   /* for now */
+   if (ffi->flags & (O_RDWR)) { /* for now */
       fh->flags |= (FH_READING | FH_WRITING);
-      return EPERM;
+      RETURN(EPERM);
+   }
    if (ffi->flags & (O_APPEND))
-      return EPERM;
+      RETURN(EPERM);
 
 
    STAT_XATTR(info);
 
-  // open md file in asked for mode
+   // open md file in asked for mode
    if (! has_any_xattrs(info, MD_MARFS_XATTRS)) {
       fh->md_fd = open(info->md_path,
                        (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
@@ -623,12 +626,19 @@ int marfs_readlink (const char* path,
 
    // No need for access check, just try the op
    // Appropriate readlinklike call filling in fuse structure 
-   TRY0(readlink, path, buf, size);
+   TRY0(readlink, info.md_path, buf, size);
 
    POP_USER();
    return 0;
 }
 
+
+//   "This is the only FUSE function that doesn't have a directly
+//    corresponding system call, although close(2) is related. Release is
+//    called when FUSE is completely done with a file; at that point, you
+//    can free up any temporarily allocated data structures. The IBM
+//    document claims that there is exactly one release per open, but I
+//    don't know if that is true."
 
 int marfs_release (const char*            path,
                    struct fuse_file_info* ffi) {
@@ -643,9 +653,22 @@ int marfs_release (const char*            path,
 }
 
 
+//  [Like release(), this doesn't have a directly corresponding system
+//  call.]  This is also the only function I've seen (sa far) that gets
+//  called with fuse_context->uid of 0, even when running as non-root.
+//  This seteuid() will fail.
+//
+// NOTE: Testing as myself, I notice releasedir() gets called with
+// fuse_context.uid ==0.  Other functions are all called with
+// fuse_context.uid == my_uid.  I’m ignoring push/pop UID in this case, in
+// order to be able to continue debugging.
+
 int marfs_releasedir (const char*            path,
                       struct fuse_file_info* ffi) {
-   PUSH_USER();
+   LOG(LOG_INFO, "releasedir %s\n", path);
+   LOG(LOG_INFO, "entry -- skipping push_user(%ld)\n", fuse_get_context()->uid);
+   //   PUSH_USER();
+   size_t rc = 0;
 
    PathInfo info;
    EXPAND_PATH_INFO(&info, path);
@@ -658,7 +681,8 @@ int marfs_releasedir (const char*            path,
    DIR* dirp = (DIR*)ffi->fh;
    TRY0(closedir, dirp);
 
-   POP_USER();
+   LOG(LOG_INFO, "exit -- skipping pop_user()\n");
+   //   POP_USER();
    return 0;
 }
 
@@ -1005,7 +1029,7 @@ int marfs_create(const char*            path,
    // Check/act on quota num names
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
-   TRY0(mknod, path, mode, rdev);
+   TRY0(mknod, info.md_path, mode, rdev);
 
    POP_USER();
    return 0;
@@ -1108,7 +1132,7 @@ int marfs_poll(const char*             path,
 int main(int argc, char* argv[])
 {
    INIT_LOG();
-   LOG(LOG_INFO, "starting");
+   LOG(LOG_INFO, "starting\n");
 
    load_config("~/marfs.config");
    init_xattr_specs();
