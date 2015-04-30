@@ -89,7 +89,8 @@ typedef enum {
    OBJ_UNI,            // one object per file
    OBJ_MULTI,          // file spans multiple objs (list of objs as chunks)
    OBJ_PACKED,         // multiple files per objects
-   OBJ_STRIPED         // (like Lustre does it)
+   OBJ_STRIPED,        // (like Lustre does it)
+   OBJ_FUSE,           // written by FUSE.  (not packed, maybe uni/multi. see Post xattr)
 } MarFS_ObjType;
 
 // extern const char*   obj_type_name(MarFS_ObjType type);
@@ -437,6 +438,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
 
 // initialize
 int init_pre(MarFS_XattrPre*        pre,
+             MarFS_ObjType          obj_type, // see NOTE above function def
              const char*            md_path,
              const MarFS_Namespace* ns,
              const MarFS_Repo*      repo,

@@ -13,6 +13,10 @@ CFLAGS += -Wall -std=c99 `pkg-config fuse --cflags`
 
 LDFLAGS += `pkg-config fuse --cflags --libs` -lm
 
+
+# ...........................................................................
+# back and forth to HB's test node with XFS (supporting xattrs) at 10.135.0.2
+
 # only works from ccstargate
 2hb:
 	rsync -Pvaurl ~/projects/marfs/git/fuse/src/ root@10.135.0.2:/root/projects/marfs/git/fuse/src
@@ -20,6 +24,9 @@ LDFLAGS += `pkg-config fuse --cflags --libs` -lm
 # only works from ccstargate
 fromhb:
 	rsync -Pvaurl root@10.135.0.2:/root/projects/marfs/git/fuse/src/ ~/projects/marfs/git/fuse/src
+
+# ...........................................................................
+
 
 
 
@@ -37,19 +44,32 @@ mnt: marfs_fuse
 	@ echo "mounting at $(MNT)"
 	marfs_fuse -f $(MNT) &
 
+mntlog: marfs_fuse
+	@ echo
+	@ echo "mounting at $(MNT)"
+	marfs_fuse -f $(MNT) > foo.log 2>&1 &
+
+# TBD should succeed silently if not mounted
 umnt:
 	fusermount -u $(MNT)
+
+
+reset:
+	rm -f /mnt/xfs/jti/filesys/mdfs/test00/foo
 
 
 # TBD: develop a unit-test script to run ops on the mount-point
 # unit tests of the FUSE mount
 # unit: unit.c
 
-test: marfs_fuse unit
-	$(MAKE) mount
-	unit $(MNT)
-	$(MAKE) umount
+# test: marfs_fuse unit
+# 	$(MAKE) mount
+# 	unit $(MNT)
+# 	$(MAKE) umount
 
+# test: umnt clean marfs_fuse reset mntlog
+test: clean marfs_fuse reset mntlog
+	echo foo > ../filesys/mnt/test00/foo
 
 
 
@@ -74,6 +94,7 @@ clean:
 	$(RM) *.{o,i}
 	$(RM) *~
 	$(RM) marfs_fuse
+	$(RM) core.*
 
 
 

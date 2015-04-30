@@ -73,7 +73,7 @@ CorrectionMethod lookup_correction(const char* token) {
 
 
 // encode_obj_type() / decode_obj_type()
-DEFINE_ENCODE(obj_type, MarFS_ObjType, "_UMPS");
+DEFINE_ENCODE(obj_type, MarFS_ObjType, "_UMPSF");
 DEFINE_DECODE(obj_type, MarFS_ObjType);
 
 // encode_compression() / decode_compression()
@@ -95,8 +95,35 @@ DEFINE_DECODE(encryption, EncryptionMethod);
 // xattrs
 // ---------------------------------------------------------------------------
 
+// enforce consistency
+#define MARFS_OBJ_ID_FORMAT  "%03d_%03d/%c%c%c%c/%016lx/%s.%s.%s"
+#define MARFS_POST_FORMAT    "%03d_%03d,%c,%lx,%016lx,%016lx"
+
 // Fill in fields, construct new obj-ID, etc.
+//
+// ino_t is ultimately __ULONGWORD, which should never be more than 64-bits
+// (in the current world).
+//
+// NOTE: We wanted to indicate whether obj-type is PACKED or not, in the
+//       obj-ID.  This should just be the encoded object-type, same as what
+//       is found in the Post xattr.  However, at the time we are
+//       initializing the Pre struct, and constructing the object-ID, we
+//       might not know the final object-type.  (pftool will know, but fuse
+//       won't know whether the object will ultimately be UNI or PACKED.
+//       However, it will know that the object-type is not packed.)  If the
+//       caller is pftool, it can pass in the final type, to become part of
+//       the object-name.  If fuse is calling, it can assign type FUSE.
+//       This allows reconstruction (from object-IDs alone) to know whether
+//       the object is packed, without requiring fuse to know all the
+//       details of the object-type.  If you're looking at xattrs, the
+//       result of object-ID in the Pre xattr may indicate FUSE-type, but
+//       Post is where you should be looking for the object-type.
+//
+//       This also offers a way for restart to identify objects that were
+//       being written via fuse.
+//
 int init_pre(MarFS_XattrPre*        pre,
+             MarFS_ObjType          obj_type, /* see NOTE */
              const char*            md_path,
              const MarFS_Namespace* ns,
              const MarFS_Repo*      repo,
@@ -153,15 +180,17 @@ int init_pre(MarFS_XattrPre*        pre,
    int major = (int)floorf(pre->config_vers);
    int minor = (int)floorf((pre->config_vers - major) * 1000.f);
 
+   char type     = encode_obj_type(obj_type);
    char compress = encode_compression(pre->compression);
    char correct  = encode_correction(pre->correction);
    char encrypt  = encode_encryption(pre->encryption);
 
    // put all components together
    int objid_size = snprintf(pre->obj_id, MARFS_MAX_OBJ_ID_SIZE,
-                             "%03d_%03d/%c%c%c/%s.%s.%s",
+                             MARFS_OBJ_ID_FORMAT,
                              major, minor,
-                             compress, correct, encrypt,
+                             type, compress, correct, encrypt,
+                             (uint64_t)pre->md_inode,
                              md_ctime, obj_ctime, md_path);
    if (objid_size < 0)
       return errno;
@@ -215,26 +244,34 @@ int str_2_pre(MarFS_XattrPre*    pre,
       pre->obj_id[MARFS_MAX_OBJ_ID_SIZE] = 0;
    }
 
-   int major;
-   int minor;
+   int   major;
+   int   minor;
 
-   char compress;
-   char correct;
-   char encrypt;
+   char  type;                  /* ignored, see NOTE above init_pre() */
+   char  compress;
+   char  correct;
+   char  encrypt;
+
+   ino_t md_inode;
 
    char md_ctime[MARFS_DATE_STRING_MAX];
    char obj_ctime[MARFS_DATE_STRING_MAX];
 
    // --- extract bucket, and some top-level fields
-   int objid_size = sscanf(pre->obj_id, "%s/%03d_%03d/%c%c%c/%s/%s.%s",
+   int objid_size = sscanf(pre->obj_id, "%s/" MARFS_OBJ_ID_FORMAT,
                            pre->bucket,
                            &major, &minor,
-                           &compress, &correct, &encrypt,
+                           &type, &compress, &correct, &encrypt,
+                           &md_inode,
                            md_ctime, obj_ctime, md_path);
 
    if (objid_size == EOF)
       return errno;
    else if (objid_size != 6)
+      return EINVAL;            /* ?? */
+
+   // --- should we believe the inode in the obj-id, or the one in caller's stat struct?
+   if (md_inode != st->st_ino)
       return EINVAL;            /* ?? */
 
    // --- bucket-name includes MDFS root, and repo-name
@@ -275,7 +312,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
    pre->repo         = repo;
    pre->chunk_size   = repo->chunk_size;
    pre->chunk_no     = 0;
-   pre->md_inode     = st->st_ino;
+   pre->md_inode     = st->st_ino; /* NOTE: from caller, not object-ID */
 
    assert (pre->config_vers == MarFS_config_vers);
    return 0;
@@ -288,7 +325,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
 // initialize -- most fields aren't known, when stat_xattr() calls us
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
    post->config_vers = MarFS_config_vers;
-   post->obj_type = OBJ_NONE;   /* figured out later */
+   post->obj_type    = OBJ_NONE;   /* figured out later */
    return 0;
 }
 
@@ -301,7 +338,7 @@ int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post) {
    int minor = (int)floorf((post->config_vers - major) * 1000.f);
 
    ssize_t bytes_printed = snprintf(post_str, size,
-                                    "%03d_%03d,%c,%lx,%016lx,%016lx",
+                                    MARFS_POST_FORMAT,
                                     major, minor,
                                     encode_obj_type(post->obj_type),
                                     post->obj_offset,
@@ -318,13 +355,14 @@ int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post) {
 // parse an xattr-value string into a MarFS_XattrPost
 int str_2_post(MarFS_XattrPost* post, const char* post_str) {
 
-   int major;
-   int minor;
+   int   major;
+   int   minor;
+   float version;
 
-   char obj_type_code;
+   char  obj_type_code;
 
    // --- extract bucket, and some top-level fields
-   int scanf_size = sscanf(post_str, "%03d_%03d,%c,%lx,%016lx,%016lx",
+   int scanf_size = sscanf(post_str, MARFS_POST_FORMAT,
                            &major, &minor,
                            &obj_type_code,
                            &post->obj_offset,
@@ -336,8 +374,12 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
    else if (scanf_size != 6)
       return EINVAL;            /* ?? */
 
+   version = (float)major + ((float)minor / 1000.f);
+   if (version != MarFS_config_vers)
+      return EINVAL;            /* ?? */
 
-   post->obj_type = decode_obj_type(obj_type_code);
+   post->config_vers = version;
+   post->obj_type    = decode_obj_type(obj_type_code);
    return 0;
 }
 

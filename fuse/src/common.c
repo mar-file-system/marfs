@@ -289,7 +289,8 @@ int stat_xattr(PathInfo* info) {
          else if (errno == ENOATTR) {
             // ENOATTR means no attr, or no access.  Treat as the former.
             __TRY0(init_pre,
-                   &info->pre, info->md_path, info->ns, info->ns->iwrite_repo, &info->st);
+                   &info->pre, OBJ_FUSE, info->md_path,
+                   info->ns, info->ns->iwrite_repo, &info->st);
             info->flags |= PI_PRE_INIT;
          }
          else {
