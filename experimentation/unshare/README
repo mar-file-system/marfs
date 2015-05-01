@@ -1,0 +1,5 @@
+Documentation for this project is located at http://cm-7-w/lore/Unshare%20Tests
+
+We assume both mhddfs and gpfs are installed
+
+Look at both scripts. "unshare_gpfs_mhddfs.bash" calls "mount_script.bash"
