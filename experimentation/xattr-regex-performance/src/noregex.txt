@@ -1,2 +1,1 @@
-RULE 'list_substr1' LIST 'test-list' WHERE XATTR('user.testattr')
-
+RULE 'list-everything' LIST 'test-list' WHERE XATTR('user.testattr') NOT LIKE ''

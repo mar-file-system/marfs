@@ -6,12 +6,12 @@
 #
 
 # VARIABLES --------------------------------------------------------------------
-testdirectory="testdirectory"
+testdirectory="testdirectory" #make this a full path, in a GPFS
 filecount=10
 attrcount=10
 attrlength=64
 delimiter=","
-attrstep=10
+attrstep=1
 whichattr=3
 
 echo "Starting with the following values:"
@@ -35,6 +35,8 @@ echo "done!"
 echo "Entering $testdirectory"
 pushd $testdirectory
 
+rm -f *
+ls -al
 # Create files in parallel
 echo -n "Creating $filecount empty files..."
 for i in $(seq 1 $filecount); do
@@ -68,14 +70,17 @@ for i in $(seq 1 $attrstep $filecount); do
   echo -n "Changing file $i ..."
   xattr=""
   for j in $(seq 1 $((whichattr - 1))); do
-    newattr=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w $attrlength | head -n 1)
+    newattr=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w $attrlength \
+        | head -n 1)
     xattr="$xattr$delimiter$newattr"
   done
-  newattr=$(printf "%01000d" 0 | tr -dc 'a-zA-Z0-9' | fold -w $attrlength | head -n 1)
+  newattr=$(printf "%01000d" 0 | tr -dc 'a-zA-Z0-9' | fold -w $attrlength \
+      | head -n 1)
   xattr="$xattr$delimiter$newattr"
   testthing=$(seq $((whichattr + 1)) $attrcount)
   for j in $testthing; do
-    newattr=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w $attrlength | head -n 1)
+    newattr=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w $attrlength \
+        | head -n 1)
     xattr="$xattr$delimiter$newattr"
   done
   xattr="$xattr$delimiter"
@@ -89,3 +94,6 @@ echo "done!"
 echo "Exiting $testdirectory"
 popd
 
+sleep 5
+time mmapplypolicy $(pwd)/$testdirectory -P noregex.txt
+time mmapplypolicy $(pwd)/$testdirectory -P regex.txt
