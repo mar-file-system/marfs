@@ -1,1 +1,1 @@
-RULE 'list_substr1' DELETE WHERE REGEX(XATTR('user.testattr'),',.*,.*,0+,.*,.*,.*,.*,.*,.*,.*,')
+RULE 'list_substr1' LIST 'test-list'  WHERE REGEX(XATTR('user.testattr'),',.*,.*,0+,.*,.*,.*,.*,.*,.*,.*,')

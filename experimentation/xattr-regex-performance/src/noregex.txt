@@ -1,2 +1,2 @@
-RULE 'list_substr1' DELETE WHERE XATTR('user.testattr')
+RULE 'list_substr1' LIST 'test-list' WHERE XATTR('user.testattr')
 
