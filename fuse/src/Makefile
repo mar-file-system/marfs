@@ -55,11 +55,11 @@ WORK = 10.146.0.3
 
 # only works on ccstargate, or cc-gate
 2work:
-	rsync -Pvaurl ~/projects/marfs/git/fuse/src/ root@$(WORK):/root/projects/marfs/git/fuse/src
+	rsync -Pvaurl ~/projects/marfs/git/ root@$(WORK):/root/projects/marfs/git
 
 # only works on ccstargate, or cc-gate
 fromwork:
-	rsync -Pvaurl root@$(WORK):/root/projects/marfs/git/fuse/src/ ~/projects/marfs/git/fuse/src
+	rsync -Pvaurl root@$(WORK):/root/projects/marfs/git/ ~/projects/marfs/git
 
 # ...........................................................................
 
@@ -136,6 +136,11 @@ redo: umnt marfs_fuse reset mntlog
 
 run-%: %
 	RUN $* $(MNT)/test00
+
+# for every '*.c' file, if there is an executable file without the '.c',
+# then delete that executable file.
+cleanx:
+	ls *.c | sed -e 's/\.c$$//' | xargs -L 1 bash -c '[[ -x $$0 ]] && rm $$0'
 
 clean:
 	$(RM) *.{o,i}

@@ -132,7 +132,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    LOG(LOG_INFO, "md-path  %s\n", info->md_path);
 
    // don't let users into the trash
-   if (strcmp(info->md_path, info->trash_path)) {
+   if (! strcmp(info->md_path, info->trash_path)) {
       LOG(LOG_ERR, "users can't access trash_path\n", info->md_path);
       return EPERM;
    }
