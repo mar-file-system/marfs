@@ -54,6 +54,7 @@ CorrectionMethod lookup_correction(const char* token) {
 // translations to/from strings used in obj-ids
 // ---------------------------------------------------------------------------
 
+
 #define DEFINE_ENCODE(THING, TYPE, CHARS)                          \
    static const char*   THING##_index = CHARS;                     \
    static ssize_t       THING##_max   = -1;                        \
@@ -89,15 +90,27 @@ DEFINE_ENCODE(encryption, EncryptionMethod, "_");
 DEFINE_DECODE(encryption, EncryptionMethod);
 
 
-
+// NOTE: <src> and <dest> can be the same
+// NOTE: we assume load_config() guarantees that no namespace contains '-'
+int encode_namespace(char* dst, char* src) {
+   int i;
+   for (i=0; src[i]; ++i) {
+      dst[i] = ((src[i] == '/') ? '-' : src[i]); // change '/' to '-'
+   }
+   return 0;
+}
+int decode_namespace(char* dst, char* src) {
+   int i;
+   for (i=0; src[i]; ++i) {
+      dst[i] = ((src[i] == '-') ? '/' : src[i]); // change '-' to '/'
+   }
+   return 0;
+}
 
 // ---------------------------------------------------------------------------
 // xattrs
 // ---------------------------------------------------------------------------
 
-// enforce consistency
-#define MARFS_OBJ_ID_FORMAT  "%03d_%03d/%c%c%c%c/%016lx/%s.%s.%s"
-#define MARFS_POST_FORMAT    "%03d_%03d,%c,%lx,%016lx,%016lx"
 
 // Fill in fields, construct new obj-ID, etc.
 //
@@ -124,7 +137,6 @@ DEFINE_DECODE(encryption, EncryptionMethod);
 //
 int init_pre(MarFS_XattrPre*        pre,
              MarFS_ObjType          obj_type, /* see NOTE */
-             const char*            md_path,
              const MarFS_Namespace* ns,
              const MarFS_Repo*      repo,
              const struct stat*     st) {
@@ -134,71 +146,101 @@ int init_pre(MarFS_XattrPre*        pre,
       return errno;
 
    // --- initialize fields in info.pre
-   pre->md_ctime     = st->st_ctime;
-   pre->obj_ctime    = now;     /* TBD: update with info from HEAD request */
+   pre->repo         = repo;
+   pre->ns           = ns;
+
    pre->config_vers  = MarFS_config_vers;
 
+   pre->obj_type     = obj_type;
    pre->compression  = ns->compression;
    pre->correction   = ns->correction;
    pre->encryption   = repo->encryption;
 
-   pre->repo         = repo;
+   pre->md_inode     = st->st_ino;
+   pre->md_ctime     = st->st_ctime;
+   pre->obj_ctime    = now;     /* TBD: update with info from HEAD request */
+
    pre->chunk_size   = repo->chunk_size;
    pre->chunk_no     = 0;
-   pre->md_inode     = st->st_ino;
 
    // pre->slave = ...;    // TBD: for hashing directories across slave nodes
 
+   // generate bucket and obj-id
+   return update_pre(pre);
+}
+
+
+// before writing an xattr value-string, and maybe before opening an object
+// connection, we may want to update the bucket and objid strings, in case
+// any fields have changed.
+//
+// For example, maybe you truncated a MarFS object, which actually copied
+// it to the trash.  Now, you're writing a new object, so you have a new
+// Pre.obj_ctime.  The obj-id for that object should reflect this new
+// ctime, not the one it had when you parsed the orginal obj-id.
+//
+// NOTE: S3 requires the bucket and object-name to be separate strings.
+//       But Scality sproxyd treats them as a single string.  Because they
+//       must have the capability of being separated, we store them
+//       separately.
+
+int update_pre(MarFS_XattrPre* pre) {
+
    // --- generate bucket-name
-   int bkt_size = snprintf(pre->bucket, MARFS_MAX_BUCKET_SIZE,
-                           "%s.%s",
-                           ns->mnt_suffix, pre->repo->name);
-   if (bkt_size < 0)
-      return errno;
-   if (bkt_size == MARFS_MAX_BUCKET_SIZE) /* overflow */
-      return EINVAL;
-   
-   // --- generate obj-id
-
-   // prepare date-string components
-	struct tm md_ctime_tm;
-   char md_ctime[MARFS_DATE_STRING_MAX];
-
-   if (! gmtime_r(&pre->md_ctime, &md_ctime_tm))
-      return EINVAL;            /* ?? */
-   strftime(md_ctime, MARFS_DATE_STRING_MAX, MARFS_DATE_FORMAT, &md_ctime_tm);
-
-
-	struct tm obj_ctime_tm;
-   char obj_ctime[MARFS_DATE_STRING_MAX];
-
-   if (! gmtime(&pre->obj_ctime))
-      return EINVAL;            /* ?? */
-   strftime(obj_ctime, MARFS_DATE_STRING_MAX, MARFS_DATE_FORMAT, &obj_ctime_tm);
 
    // config-version major and minor
    int major = (int)floorf(pre->config_vers);
    int minor = (int)floorf((pre->config_vers - major) * 1000.f);
 
-   char type     = encode_obj_type(obj_type);
+   int write_count = snprintf(pre->bucket, MARFS_MAX_BUCKET_SIZE,
+                              MARFS_BUCKET_WR_FORMAT,
+                              pre->repo->name,
+                              pre->ns->mnt_suffix);
+   if (write_count < 0)
+      return errno;
+   if (write_count == MARFS_MAX_BUCKET_SIZE) /* overflow */
+      return EINVAL;
+   
+   // convert '/' to '-' in namespace-name
+   if (encode_namespace(pre->bucket, pre->bucket))
+      return EINVAL;
+
+   // --- generate obj-id
+
+   char type     = encode_obj_type(pre->obj_type);
    char compress = encode_compression(pre->compression);
    char correct  = encode_correction(pre->correction);
    char encrypt  = encode_encryption(pre->encryption);
 
+   // prepare date-string components
+	struct tm md_ctime_tm;
+   char md_ctime[MARFS_DATE_STRING_MAX];
+   if (! localtime_r(&pre->md_ctime, &md_ctime_tm))
+      return EINVAL;            /* ?? */
+   strftime(md_ctime, MARFS_DATE_STRING_MAX, MARFS_DATE_FORMAT, &md_ctime_tm);
+
+	struct tm obj_ctime_tm;
+   char obj_ctime[MARFS_DATE_STRING_MAX];
+   if (! localtime_r(&pre->obj_ctime, &obj_ctime_tm))
+      return EINVAL;            /* ?? */
+   strftime(obj_ctime, MARFS_DATE_STRING_MAX, MARFS_DATE_FORMAT, &obj_ctime_tm);
+
    // put all components together
-   int objid_size = snprintf(pre->obj_id, MARFS_MAX_OBJ_ID_SIZE,
-                             MARFS_OBJ_ID_FORMAT,
-                             major, minor,
-                             type, compress, correct, encrypt,
-                             (uint64_t)pre->md_inode,
-                             md_ctime, obj_ctime, md_path);
-   if (objid_size < 0)
+   write_count = snprintf(pre->objid, MARFS_MAX_OBJID_SIZE,
+                          MARFS_OBJID_WR_FORMAT,
+                          major, minor,
+                          type, compress, correct, encrypt,
+                          (uint64_t)pre->md_inode,
+                          md_ctime, obj_ctime,
+                          pre->chunk_size, pre->chunk_no);
+   if (write_count < 0)
       return errno;
-   if (objid_size == MARFS_MAX_OBJ_ID_SIZE) /* overflow */
+   if (write_count == MARFS_MAX_OBJID_SIZE) /* overflow */
       return EINVAL;
 
    return 0;
 }
+
 
 // from MarFS_XattrPre to string
 //
@@ -209,16 +251,18 @@ int init_pre(MarFS_XattrPre*        pre,
 // extraction by str_2_pre().  (For example, we could add them after the
 // obj-ID, separated by commas.
 //
-int pre_2_str(char* pre_str, size_t size, const MarFS_XattrPre* pre) {
-   if (size < MARFS_MAX_OBJ_ID_SIZE)
-      return -1;
-   ssize_t bytes_printed = snprintf(pre_str, size,
-                                    "%s/%s",
-                                    pre->bucket,
-                                    pre->obj_id);
-   if (bytes_printed < 0)
+int pre_2_str(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
+
+   // contents may have changed
+   update_pre(pre);
+
+   int write_count = snprintf(pre_str, max_size,
+                              "%s/%s",
+                              pre->bucket,
+                              pre->objid);
+   if (write_count < 0)
       return errno;
-   if (bytes_printed == size)   /* overflow */
+   if (write_count == max_size)   /* overflow */
       return EINVAL;
 
    return 0;
@@ -228,61 +272,102 @@ int pre_2_str(char* pre_str, size_t size, const MarFS_XattrPre* pre) {
 
 // parse an xattr-value string into a MarFS_XattrPre
 //
+// If <has_objid> is non-zero, caller has already populated Pre.bucket and
+// Pre.objid.
+//
 // NOTE: For now, the string really is nothing more than the object ID.
 //       However, that could possibly change at some point.  (e.g. we might
 //       have some fields we want to add tot he XattrPre xattr-value,
 //       without requiring they be added to the object-id.)
-//
-int str_2_pre(MarFS_XattrPre*    pre,
-              char*              md_path,
-              const char*        pre_str,
-              const struct stat* st,
-              int                has_obj_id) {
 
-   if (! has_obj_id) {
-      strncpy(pre->obj_id, pre_str, MARFS_MAX_OBJ_ID_SIZE);
-      pre->obj_id[MARFS_MAX_OBJ_ID_SIZE] = 0;
-   }
+
+int str_2_pre(MarFS_XattrPre*    pre,
+              const char*        pre_str, // i.e. an xattr-value
+              const struct stat* st) {
+
+   // parse bucket and objid separately
+   int read_count;
+   read_count = sscanf(pre_str, NON_SLASH "/%s",
+                       pre->bucket,
+                       pre->objid);
+   if (read_count == EOF)
+      return errno;
+   if (read_count != 2)
+      return EINVAL;
+
 
    int   major;
    int   minor;
 
-   char  type;                  /* ignored, see NOTE above init_pre() */
+   char  obj_type;              /* ignored, see NOTE above init_pre() */
    char  compress;
    char  correct;
    char  encrypt;
 
    ino_t md_inode;
 
+   size_t chunk_size;
+   size_t chunk_no;
+
    char md_ctime[MARFS_DATE_STRING_MAX];
    char obj_ctime[MARFS_DATE_STRING_MAX];
 
-   // --- extract bucket, and some top-level fields
-   int objid_size = sscanf(pre->obj_id, "%s/" MARFS_OBJ_ID_FORMAT,
-                           pre->bucket,
-                           &major, &minor,
-                           &type, &compress, &correct, &encrypt,
-                           &md_inode,
-                           md_ctime, obj_ctime, md_path);
+   // --- parse bucket components
 
-   if (objid_size == EOF)
+   // NOTE: We put repo first, because it seems less-likely we'll want a
+   //       dot in a repo-name, than in a namespace, and we're using dot as
+   //       a delimiter.  It will still be easy to construct
+   //       delimiter-based S3 commands, to search for all entries with a
+   //       given namespace, in a known repo.
+   char repo_name[MARFS_MAX_REPO_NAME];
+
+   // Holds namespace-name from bucket, so we can decode_namespace(), then
+   // find the corresponding namespace, for Pre.ns.  Do we ever care about
+   // this?  The only reason we need it is because update_pre() uses it to
+   // re-encode the bucket string.
+   char  ns_name[MARFS_MAX_NAMESPACE_NAME];
+   
+   read_count = sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT,
+                       repo_name,
+                       ns_name);
+
+   if (read_count == EOF)
       return errno;
-   else if (objid_size != 6)
+   else if (read_count != 2)
       return EINVAL;            /* ?? */
 
-   // --- should we believe the inode in the obj-id, or the one in caller's stat struct?
-   if (md_inode != st->st_ino)
+
+   // --- parse "obj-id" components (i.e. the part below bucket)
+   read_count = sscanf(pre->objid, MARFS_OBJID_RD_FORMAT,
+                       &major, &minor,
+                       &obj_type, &compress, &correct, &encrypt,
+                       &md_inode,
+                       obj_ctime, md_ctime,
+                       &chunk_size, &chunk_no);
+
+   if (read_count == EOF)
+      return errno;
+   else if (read_count != 11)
       return EINVAL;            /* ?? */
 
-   // --- bucket-name includes MDFS root, and repo-name
-   char* repo_name = strrchr(pre->bucket, '.');
-   if (! repo_name)
-      return EINVAL;            /* ?? */
 
+   // --- conversions and validation
+
+   // find repo from repo-name
    MarFS_Repo* repo = find_repo_by_name(repo_name);
    if (! repo)
       return EINVAL;            /* ?? */
 
+   // find namespace from namespace-name
+   if (decode_namespace(ns_name, ns_name))
+      return EINVAL;
+   MarFS_Namespace* ns = find_namespace(ns_name);
+   if (! ns)
+      return EINVAL;
+
+   // should we believe the inode in the obj-id, or the one in caller's stat struct?
+   if (md_inode != st->st_ino)
+      return EINVAL;            /* ?? */
 
    // parse encoded time-stamps
 	struct tm  md_ctime_tm;
@@ -302,18 +387,21 @@ int str_2_pre(MarFS_XattrPre*    pre,
 
    // --- fill in fields in Pre
    pre->md_ctime     = mktime(&md_ctime_tm);
-   pre->obj_ctime    = mktime(&md_ctime_tm);
+   pre->obj_ctime    = mktime(&obj_ctime_tm);
    pre->config_vers  = (float)major + ((float)minor / 1000.f);
 
+   pre->obj_type     = decode_obj_type(obj_type);
    pre->compression  = decode_compression(compress);
    pre->correction   = decode_correction(correct);
    pre->encryption   = decode_encryption(encrypt);
 
+   pre->ns           = ns;
    pre->repo         = repo;
-   pre->chunk_size   = repo->chunk_size;
-   pre->chunk_no     = 0;
+   pre->chunk_size   = chunk_size;
+   pre->chunk_no     = chunk_no;
    pre->md_inode     = st->st_ino; /* NOTE: from caller, not object-ID */
 
+   // validate version
    assert (pre->config_vers == MarFS_config_vers);
    return 0;
 }
@@ -326,27 +414,31 @@ int str_2_pre(MarFS_XattrPre*    pre,
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
    post->config_vers = MarFS_config_vers;
    post->obj_type    = OBJ_NONE;   /* figured out later */
+   post->num_objects = 0;
+   post->chunk_info_bytes = 0;
    return 0;
 }
 
 
 // from MarFS_XattrPost to string
-int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post) {
+int post_2_str(char* post_str, size_t max_size, const MarFS_XattrPost* post) {
 
    // config-version major and minor
    int major = (int)floorf(post->config_vers);
    int minor = (int)floorf((post->config_vers - major) * 1000.f);
 
-   ssize_t bytes_printed = snprintf(post_str, size,
+   ssize_t bytes_printed = snprintf(post_str, max_size,
                                     MARFS_POST_FORMAT,
                                     major, minor,
                                     encode_obj_type(post->obj_type),
                                     post->obj_offset,
+                                    post->num_objects,
+                                    post->chunk_info_bytes,
                                     post->correct_info,
                                     post->encrypt_info);
    if (bytes_printed < 0)
       return errno;
-   if (bytes_printed == size)   /* overflow */
+   if (bytes_printed == max_size)   /* overflow */
       return EINVAL;
 
    return 0;
@@ -366,12 +458,14 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
                            &major, &minor,
                            &obj_type_code,
                            &post->obj_offset,
+                           &post->num_objects,
+                           &post->chunk_info_bytes,
                            &post->correct_info,
                            &post->encrypt_info);
 
    if (scanf_size == EOF)
       return errno;
-   else if (scanf_size != 6)
+   else if (scanf_size != 8)
       return EINVAL;            /* ?? */
 
    version = (float)major + ((float)minor / 1000.f);
@@ -411,25 +505,6 @@ int str_3_slave(MarFS_XattrSlave* slave, const char* slave_str) {
 
 
 
-
-
-XattrSpec*  MarFS_xattr_specs = NULL;
-
-int init_xattr_specs() {
-
-   // these are used by a parser (e.g. stat_xattr())
-   // The string in MarFS_XattrPrefix is appended to all of them
-   // TBD: free this in clean-up
-   MarFS_xattr_specs = (XattrSpec*) calloc(4, sizeof(XattrSpec));
-
-   MarFS_xattr_specs[0] = (XattrSpec) { XVT_PRE,     MarFS_XattrPrefix "objid" };
-   MarFS_xattr_specs[1] = (XattrSpec) { XVT_POST,    MarFS_XattrPrefix "post" };
-   MarFS_xattr_specs[2] = (XattrSpec) { XVT_RESTART, MarFS_XattrPrefix "restart" };
-
-   MarFS_xattr_specs[3] = (XattrSpec) { XVT_NONE,    NULL };
-
-   return 0;
-}
 
 
 // Give us a pointer to your list-pointer.  Your list-pointer should start
@@ -523,7 +598,7 @@ MarFS_Repo* find_in_range(RangeList* list,
 // FOR NOW:  Just do a simple lookup in the hard-coded vector of namespaces.
 // ---------------------------------------------------------------------------
 
-float MarFS_config_vers = 0.1;
+float MarFS_config_vers = 0.001;
 
 
 // top level mount point for fuse/pftool
@@ -547,6 +622,10 @@ static MarFS_Repo*      _repo = NULL;
 //       user paths that distinguish different namespaces.  Then, insert
 //       all the paths into that suffix tree, mapping to namespaces.  That
 //       will allow expand_path_info() to do very fast lookups.
+//
+// TBD: Reject namespace-names that contain '-'.  See comments above
+//      encode_namespace() decl, in marfs_base.h, for an explanation.
+
 int load_config(const char* config_fname) {
 
    if (! config_fname)
@@ -559,7 +638,7 @@ int load_config(const char* config_fname) {
       // .url          = "http://10.140.0.15:9020",
       .url          = "http://10.143.0.1:9020",
       .flags        = MARFS_ONLINE,
-      .proto        = PROTO_S3_EMC,
+      .access_proto = PROTO_S3_EMC,
       .chunk_size   = (1024 * 1024 * 512),
       .auth         = AUTH_S3_AWS_MASTER,
       .latency_ms   = (10 * 1000),
@@ -575,11 +654,12 @@ int load_config(const char* config_fname) {
    };
 
 
-#if CCSTAR
-   MarFS_mnt_top = "/users/jti/projects/marfs/git/fuse/test/filesys/mnt";
-#else
-   MarFS_mnt_top = "/root/jti/projects/marfs/git/fuse/test/filesys/mnt";
-#endif
+   /// #if CCSTAR
+   ///    MarFS_mnt_top = "/users/jti/projects/marfs/git/fuse/test/filesys/mnt";
+   /// #else
+   ///    MarFS_mnt_top = "/root/jti/projects/marfs/git/fuse/test/filesys/mnt";
+   /// #endif
+
 
    // hard-coded namespace
    //
@@ -591,15 +671,17 @@ int load_config(const char* config_fname) {
    _ns  = (MarFS_Namespace*) malloc(sizeof(MarFS_Namespace));
    *_ns = (MarFS_Namespace) {
       .mnt_suffix     = "/test00",  // "<mnt_top>/test00" comes here
-#if CCSTAR
-      .md_path        = "/users/jti/projects/marfs/git/fuse/filesys/mdfs/test00",
-      .trash_path     = "/users/jti/projects/marfs/git/fuse/filesys/trash/test00",
-      .fsinfo_path    = "/users/jti/projects/marfs/git/fuse/filesys/stat/test00",
-#else
-      .md_path        = "/mnt/xfs/jti/filesys/mdfs/test00",
-      .trash_path     = "/mnt/xfs/jti/filesys/trash/test00",
-      .fsinfo_path    = "/mnt/xfs/jti/filesys/stat/test00",
-#endif
+
+      /// #if CCSTAR
+      ///       .md_path        = "/users/jti/projects/marfs/git/fuse/filesys/mdfs/test00",
+      ///       .trash_path     = "/users/jti/projects/marfs/git/fuse/filesys/trash/test00",
+      ///       .fsinfo_path    = "/users/jti/projects/marfs/git/fuse/filesys/fsinfo/test00",
+      /// #else
+      ///       .md_path        = "/mnt/xfs/jti/filesys/mdfs/test00",
+      ///       .trash_path     = "/mnt/xfs/jti/filesys/trash/test00",
+      ///       .fsinfo_path    = "/mnt/xfs/jti/filesys/stat/test00",
+      /// #endif
+
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
 
@@ -619,6 +701,35 @@ int load_config(const char* config_fname) {
       .quota_names = 32,             /* 32 names */
    };
 
+   // NOTE: These are some hardcoded setups on different nodes I've been using for testing
+   const char* hostname = getenv("HOSTNAME");
+   assert(hostname);
+   if (! strncmp(hostname, "marfs-gpfs-00", 13)) {
+      // 10.146.0.3  using xattrs in EXT4, for starters
+      //             GPFS also available
+      fprintf(stderr, "loading for host 'marfs-gpfs-00*'\n");
+      MarFS_mnt_top       = "/root/projects/marfs/filesys/mnt";
+      _ns->md_path        = "/root/projects/marfs/filesys/mdfs/test00"; /* EXT4 */
+      _ns->trash_path     = "/root/projects/marfs/filesys/trash/test00";
+      _ns->fsinfo_path    = "/root/projects/marfs/filesys/fsinfo/test00"; /* a file */
+   }
+   else if ((! strncmp(hostname, "rrz-", 4))
+       || (! strncmp(hostname, "ca-", 3))) {
+      fprintf(stderr, "loading for host 'rrz-*' or 'ca-*'\n");
+      MarFS_mnt_top       = "/users/jti/projects/marfs/git/fuse/test/filesys/mnt";
+      _ns->md_path        = "/users/jti/projects/marfs/git/fuse/filesys/mdfs/test00";
+      _ns->trash_path     = "/users/jti/projects/marfs/git/fuse/filesys/trash/test00";
+      _ns->fsinfo_path    = "/users/jti/projects/marfs/git/fuse/filesys/fsinfo/test00";
+   }
+   else {
+      // 10.135.0.2   has XFS, supporting xattrs
+      fprintf(stderr, "loading for host 10.135.0.2 [default]'\n");
+      MarFS_mnt_top       = "/root/jti/projects/marfs/git/fuse/test/filesys/mnt";
+      _ns->md_path        = "/mnt/xfs/jti/filesys/mdfs/test00";
+      _ns->trash_path     = "/mnt/xfs/jti/filesys/trash/test00";
+      _ns->fsinfo_path    = "/mnt/xfs/jti/filesys/fsinfo/test00";
+   }
+
    // these make it quicker to parse parts of the paths
    _ns->mnt_suffix_len = strlen(_ns->mnt_suffix);
    _ns->md_path_len    = strlen(_ns->md_path);
@@ -632,16 +743,18 @@ int load_config(const char* config_fname) {
 }
 
 
-// Find the namespace corresponding to this path.  We might pontentially
-// have many namespaces (should be cheap to have as many as you want), and
-// this lookup is done for every fuse call (and in parallel from pftool).
-// Thus, it should eventually be made efficient.
+// Find the namespace corresponding to the mnt_suffx in a Namespace struct,
+// which corresponds with a "namespace" managed by fuse.  We might
+// pontentially have many namespaces (should be cheap to have as many as
+// you want), and this lookup is done for every fuse call (and in parallel
+// from pftool).  Also done every time we parse an object-ID xattr!  Thus,
+// this should eventually be made efficient.
 //
 // One way to make this fast would be to look through all the namespaces
 // and identify the places where a path diverges for different namespaces.
 // This becomes a series of hardcoded substring-ops, on the path.  Each one
-// identifies the next suffix to us in a suffix tree.  (Attractive Chaos
-// has an open source suffix-array impl).  The leaves would be pointers to
+// identifies the next suffix in a suffix tree.  (Attractive Chaos has an
+// open source suffix-array impl).  The leaves would be pointers to
 // Namespaces.
 //
 // NOTE: If the fuse mount-point is "/A/B", and you provide a path like

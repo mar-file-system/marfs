@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <attr/xattr.h>
 #include <errno.h>
+#include <stdlib.h>             /* calloc() */
 #include <string.h>
 #include <stdio.h>              /* rename() */
 #include <assert.h>
@@ -101,8 +102,16 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    // (pass path, address to stuff, batch/interactive, working with existing file)
    if (! info)
       return ENOENT;            /* no such file or directory */
+
+#if 0
+   // NOTE: It's not always the same path that is being expanded.
+   //       Suppressing this test (for now) so that we will always do the
+   //       expansion.  However, we do want to set the flag, so,
+   //       e.g. has_any_xattrs() can make sure it is being called with an
+   //       expanded PathInfo.
    if (info->flags & PI_EXPANDED)
       return 0;
+#endif
 
    // Take user supplied path in fuse request structure to look up info,
    // using MAR_mnttop and look up in MAR_namespace array, fill in all
@@ -122,6 +131,12 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    LOG(LOG_INFO, "sub-path %s\n", sub_path);
    LOG(LOG_INFO, "md-path  %s\n", info->md_path);
 
+   // don't let users into the trash
+   if (strcmp(info->md_path, info->trash_path)) {
+      LOG(LOG_ERR, "users can't access trash_path\n", info->md_path);
+      return EPERM;
+   }
+
    // you need to pass in is this interactive (fuse) or batch
    // so you can use iperms or bperms as the perms to use)
    //
@@ -130,14 +145,15 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 
    // if this is an existing file operation (you need to pass in if this
    // may be a existing file op) and if it is you need to pull in the
-   // Xattrs from the existing file (use stat_xattr() and put them into the
+   // Xattrs from the existing file (use stat_xattrs() and put them into the
    // structure as well, so you have everything needed to deal with this
    // operation, whatever it might be
    //
    // the reason you need to get the xattrs from the existing file for some
    // ops is that you need that info for how to do the subsequent read op
    //
-   // [jti: we now have fuse routines call stat_xattr() explicitly, when needed.]
+   // [jti: we now have fuse routines call stat_xattrs() explicitly, when needed.]
+
 
    info->flags |= PI_EXPANDED;
    return 0;
@@ -207,7 +223,29 @@ int md_exists(PathInfo* info) {
 }
 
 
-// stat_xattr()
+
+
+XattrSpec*  MarFS_xattr_specs = NULL;
+
+int init_xattr_specs() {
+
+   // these are used by a parser (e.g. stat_xattrs())
+   // The string in MarFS_XattrPrefix is appended to all of them
+   // TBD: free this in clean-up
+   MarFS_xattr_specs = (XattrSpec*) calloc(4, sizeof(XattrSpec));
+
+   MarFS_xattr_specs[0] = (XattrSpec) { XVT_PRE,     MarFS_XattrPrefix "objid" };
+   MarFS_xattr_specs[1] = (XattrSpec) { XVT_POST,    MarFS_XattrPrefix "post" };
+   MarFS_xattr_specs[2] = (XattrSpec) { XVT_RESTART, MarFS_XattrPrefix "restart" };
+
+   MarFS_xattr_specs[3] = (XattrSpec) { XVT_NONE,    NULL };
+
+   return 0;
+}
+
+
+
+// stat_xattrs()
 //
 // Find all the reserved xattrs on <path>.  These key-values are all parsed
 // and stored into specific fields of a MarFS_ReservedXattr struct.  You
@@ -220,7 +258,7 @@ int md_exists(PathInfo* info) {
 
 
 
-// in stat_xattr(), most fields can be parsed like this
+// in stat_xattrs(), most fields can be parsed like this
 #define PARSE_XATTR(INFO, FIELD)                                        \
    do {                                                                 \
       if (lgetxattr(md_path, spec->key_name,                            \
@@ -231,41 +269,41 @@ int md_exists(PathInfo* info) {
 
 
 
-// Attempt to read all the MarFS system-xattrs from the file.  All values
-// are assumed to be ascii text.  Parse these values to populate fields in
-// the corresponding structs, in PathInfo.
+// Attempt to read all MarFS system-xattrs from the file.  All values are
+// assumed to be ascii text.  Parse these values to populate fields in the
+// corresponding structs, in PathInfo.
 //
-// has_any_xattrs() should return true if we find any of a certain set of
-// keys, from MarFS_xattr_specs.  We set a bit corresponding to each xattr
-// we find, has_any_xattrs() can be used to test for specific ones.
+// For each found xattr, we set the corresponding flag (XattrValueType) in
+// PathInfo.xattrs.  Then, you can use has_any_xattrs() to test wheter
+// specific xattrs, or groups of xattrs, were found.
 // 
-//  Need to call stat() first, so caller will know that failure to get
-//  xattrs means either an existing file without xattrs (i.e. "uni" mode),
-//  or a non-existent file.  We also need the stat info to construct new
-//  xattr field-values (e.g. MD path-name.
+//  Need to call stat() first, so caller will know (by failing return) that
+//  failure to get xattrs means either an existing file without xattrs
+//  (i.e. Repo.access_proto=DIRECT), or a non-existent file.  We also need
+//  the stat info in order to construct new xattr field-values (e.g. MD
+//  path-name.)
 //
-//  if no objtype xattr then it's just stat
+//  if no objtype xattr then its just stat
 //  if objtype exists get entire H2O_reserved_xattr list
 //
 // *** NOTE: IT IS NOT AN ERROR FOR THERE TO BE NO XATTRS!  We should only
 //       return non-zero when something goes wrong.  Caller can call
-//       has_marfs_xattrs(info) to see whether we found them all.
-
-int stat_xattr(PathInfo* info) {
+//       has_marfs_xattrs(info, mask) to see whether we found given ones.
+//
+int stat_xattrs(PathInfo* info) {
 
    int rc;
 
    if (info->flags & PI_XATTR_QUERY)
-      return 0;                 /* already called stat_xattr() */
+      return 0;                 // already did this
+
 
    // call stat_regular().
    __TRY0(stat_regular, info);
 
-   const char*  md_path = info->md_path; /* where xattrs are */
-
    // go through the list of reserved Xattrs, and install string values into
-   // fields of the corresponding structs, in PathInfo.  Set the
-   // PI_XATTRS only if we found ALL reserved xattrs
+   // fields of the corresponding structs, in PathInfo.
+   char       xattr_value_str[MARFS_MAX_XATTR_SIZE];
    XattrSpec* spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
 
@@ -274,23 +312,21 @@ int stat_xattr(PathInfo* info) {
 
       case XVT_PRE: {
          // object-IDs encode data that fills out an XattrPre struct
-         // NOTE: If obj doesn't exist, it's md_ctime will match the
+         // NOTE: If obj doesn't exist, its md_ctime will match the
          //       ctime currently found in info->st, as a result of
          //       the call to stat_regular(), above.
 
-         char*  obj_id = info->pre.obj_id; /* shorthand */
-         LOG(LOG_INFO, "XVT_PRE 0x%lx\n", obj_id);
-         if (lgetxattr(md_path, spec->key_name, obj_id, MARFS_MAX_OBJ_ID_SIZE) != -1) {
+         if (lgetxattr(info->md_path, spec->key_name,
+                       xattr_value_str, MARFS_MAX_XATTR_SIZE) != -1) {
             // got the xattr-value.  Parse it into info->pre
-            __TRY0(str_2_pre, &info->pre, info->md_path, obj_id, &info->st, 1);
-            info->flags  |= PI_XATTRS; /*  found at least one MarFS xattr */
+            LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
+            __TRY0(str_2_pre, &info->pre, xattr_value_str, &info->st);
             info->xattrs |= spec->value_type; /* found this one */
          }
          else if (errno == ENOATTR) {
             // ENOATTR means no attr, or no access.  Treat as the former.
-            __TRY0(init_pre,
-                   &info->pre, OBJ_FUSE, info->md_path,
-                   info->ns, info->ns->iwrite_repo, &info->st);
+            __TRY0(init_pre, &info->pre,
+                   OBJ_FUSE, info->ns, info->ns->iwrite_repo, &info->st);
             info->flags |= PI_PRE_INIT;
          }
          else {
@@ -301,12 +337,11 @@ int stat_xattr(PathInfo* info) {
       }
 
       case XVT_POST: {
-         char post_val[XATTR_POST_STRING_VALUE_SIZE];
-         LOG(LOG_INFO, "XVT_POST 0x%lx\n", post_val);
-         if (lgetxattr(md_path, spec->key_name, post_val, XATTR_POST_STRING_VALUE_SIZE) != -1) {
+         if (lgetxattr(info->md_path, spec->key_name,
+                       xattr_value_str, MARFS_MAX_XATTR_SIZE) != -1) {
             // got the xattr-value.  Parse it into info->pre
-            __TRY0(str_2_post, &info->post, post_val);
-            info->flags  |= PI_XATTRS; /*  found at least one MarFS xattr */
+            LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
+            __TRY0(str_2_post, &info->post, xattr_value_str);
             info->xattrs |= spec->value_type; /* found this one */
          }
          else if (errno == ENOATTR) {
@@ -322,21 +357,18 @@ int stat_xattr(PathInfo* info) {
       }
 
       case XVT_RESTART: {
-         char restart_val;
-         LOG(LOG_INFO, "XVT_RESTART\n");
-
-         // Probably shouldn't even have this attribute, if not restarting
          info->flags &= ~(PI_RESTART); /* default = NOT in restart mode */
-         ssize_t val_size = lgetxattr(md_path, spec->key_name, &restart_val, 1);
+         ssize_t val_size = lgetxattr(info->md_path, spec->key_name,
+                                      &xattr_value_str, 1);
          if (val_size < 0) {
             if (errno == ENOATTR)
                break;           /* treat ENOATTR as restart=0 */
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
             return errno;
          }
-         info->flags  |= PI_XATTRS; /*  found at least one MarFS xattr */
+         LOG(LOG_INFO, "XVT_RESTART\n");
          info->xattrs |= spec->value_type; /* found this one */
-         if (val_size && (restart_val & ~'0')) /* value is not '0' */
+         if (val_size && (xattr_value_str[0] & ~'0')) /* value is not '0' */
             info->flags |= PI_RESTART;
          break;
       }
@@ -349,14 +381,25 @@ int stat_xattr(PathInfo* info) {
 
 
       default:
-         // a key was added to MarFS_attr_specs, but stat_xattr() wasn't updated
+         // a key was added to MarFS_attr_specs, but stat_xattrs() wasn't updated
          LOG(LOG_ERR, "unknown xattr %d = '%s'\n", spec->value_type, spec->key_name);
          assert(0);
       };
    }
 
-   // found ALL fields in MarFS_xattr_specs
-   info->flags |= PI_XATTRS;
+   // subsequent calls can skip processing
+   info->flags |= PI_XATTR_QUERY;
+
+
+   // if you have ANY of the MarFS xattrs, you should have ALL of them
+   // NOTE: These will call stat_xattrs(), but skip out because of PI_XATTR_QUERY
+   if (has_any_xattrs(info, MARFS_MD_XATTRS)
+       && ! has_all_xattrs(info, MARFS_MD_XATTRS)) {
+      LOG(LOG_ERR, "%s -- incomplete MD xattrs\n", info->md_path);
+      return EINVAL;            /* ?? */
+   }
+
+
    return 0;                    /* "success" */
 }
 
@@ -371,14 +414,112 @@ int stat_xattr(PathInfo* info) {
 
 int has_all_xattrs(PathInfo* info, XattrMaskType mask) {
    assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
-   stat_xattr(info);                  /* no-op, if already done */
+   stat_xattrs(info);                  /* no-op, if already done */
    return ((info->xattrs & mask) == mask);
 }
 int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
    assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
-   stat_xattr(info);                  /* no-op, if already done */
+   stat_xattrs(info);                  /* no-op, if already done */
    return (info->xattrs & mask);
 }
+
+
+
+// For all the attributes in <mask>, convert info xattrs to stringified values, and save
+// on info->md_path.
+int save_xattrs(PathInfo* info, XattrMaskType mask) {
+
+   int rc;
+
+   // call stat_regular().
+   __TRY0(stat_regular, info);
+
+
+   // go through the list of reserved Xattrs, and install string values into
+   // fields of the corresponding structs, in PathInfo.
+   char       xattr_value_str[MARFS_MAX_XATTR_SIZE];
+   XattrSpec* spec;
+   for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
+
+      // only save the xattrs selected by <mask>
+      if (! (mask & spec->value_type)) {
+         LOG(LOG_INFO, "skipping xattr %s ...\n", spec->key_name);
+         continue;
+      }
+         
+      LOG(LOG_INFO, "trying xattr %s ...\n", spec->key_name);
+      switch (spec->value_type) {
+
+      case XVT_PRE: {
+         // object-IDs encode data that fills out an XattrPre struct
+         // NOTE: If obj doesn't exist, its md_ctime will match the
+         //       ctime currently found in info->st, as a result of
+         //       the call to stat_regular(), above.
+
+         // create the new xattr-value from info->pre
+         __TRY0(pre_2_str, xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->pre);
+         LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
+         __TRY0(lsetxattr, info->md_path,
+                spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0);
+         break;
+      }
+
+      case XVT_POST: {
+         __TRY0(post_2_str, xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->post);
+         LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
+         __TRY0(lsetxattr, info->md_path,
+                spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0);
+         break;
+      }
+
+      case XVT_RESTART: {
+
+         // TBD: Other flags could be combined into a single value to be
+         //      stored as "flags" rather than just "restart".  Then the
+         //      scan for files to restart (when restarting pftool) would
+         //      just be "find inodes that have xattr with key 'flags'
+         //      having value matching a given bit-pattern", rather than
+         //      "find indoes that have xattr with key 'restart'"
+
+         // If the flag isn't set, then don't install (or remove) the xattr.
+         if (info->flags & (PI_RESTART)) {
+            LOG(LOG_INFO, "XVT_RESTART\n");
+            xattr_value_str[0] = 1;
+            xattr_value_str[1] = 0; // in case someone tries strlen
+            __TRY0(lsetxattr, info->md_path,
+                   spec->key_name, xattr_value_str, 2, 0);
+         }
+         else {
+            ssize_t val_size = lremovexattr(info->md_path, spec->key_name);
+            if (val_size < 0) {
+               if (errno == ENOATTR)
+                  break;           /* not a problem */
+               LOG(LOG_INFO, "removexattr -> err (%d) %s\n", errno, strerror(errno));
+               return errno;
+            }
+         }
+      }
+
+      case XVT_SLAVE: {
+         // TBD ...
+         LOG(LOG_ERR, "slave xattr TBD\n");
+         break;
+      }
+
+
+      default:
+         // a key was added to MarFS_attr_specs, but stat_xattrs() wasn't updated
+         LOG(LOG_ERR, "unknown xattr %d = '%s'\n", spec->value_type, spec->key_name);
+         assert(0);
+      };
+   }
+
+   return 0;                    /* "success" */
+}
+
+
+
+
 
 
 // Rename MD file to trashfile, keeping all attrs.
@@ -418,14 +559,14 @@ int  trash_dup_file(PathInfo*   info,
    //    trunc’d file.
 
    int rc;
-   __TRY0(stat_xattr, info);
-   if (! has_any_xattrs(info, MD_MARFS_XATTRS)) {
+   __TRY0(stat_xattrs, info);
+   if (! has_any_xattrs(info, MARFS_MD_XATTRS)) {
       __TRY0(truncate, info->md_path, 0);
       return 0;
    }
 
    //   uniqueify name somehow with time perhaps == trashname, 
-   //   stat_xattr()    to get all file attrs/xattrs
+   //   stat_xattrs()    to get all file attrs/xattrs
    //   open trashdir/trashname
    //
    //   if no xattr objtype [jti: i.e. info->xattr.obj_type == OBJ_UNI]

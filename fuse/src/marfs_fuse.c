@@ -1,27 +1,3 @@
-
-
-/* ___________________________________________________________________________
-from Gary's email:
-
-I was trying to update the fuse specs
-I saw this about linux fuse
-------------------------------------------------------
-int(* fuse_operations::mknod)(const char *, mode_t, dev_t)
-Create a file node
-This is called for creation of all non-directory, non-symlink nodes. If the filesystem defines a create() method, then for regular files that will be called instead.
-
-int(* fuse_operations::open)(const char *, struct fuse_file_info *)
-File open operation
-No creation (O_CREAT, O_EXCL) and by default also no truncation (O_TRUNC) flags will be passed to open(). If an application specifies O_TRUNC, fuse first calls truncate() and then open(). Only if 'atomic_o_trunc' has been specified and kernel version is 2.6.24 or later, O_TRUNC is passed on to open.
-Unless the 'default_permissions' mount option is given, open should check if the operation is permitted for the given flags. Optionally open may also return an arbitrary filehandle in the fuse_file_info structure, which will be passed to all file operations.
--Changed in version 2.2 
-------------------------------------------------------
-This changes the spec slightly simplifying open a bunch
-Looks like open with create is really mknod then open r/rw/w  no create/no trunc :-)
-Looks like open with trunc is really trunc then open rw/w  :-)
-Wow, fuse makes things easier.
-___________________________________________________________________________ */
-
 #include "common.h"
 #include "marfs_fuse.h"
 
@@ -174,11 +150,11 @@ int marfs_ftruncate(const char*            path,
    // Call access() syscall to check/act if allowed to truncate for this user
    ACCESS(info.md_path, (W_OK));        /* for truncate? */
 
-   // stat_xattr – or look up info stuffed into memory pointed at in fuse
+   // stat_xattrs – or look up info stuffed into memory pointed at in fuse
    // open table if this is not just a normal [object-storage case?], use
    // the md for file data
-   STAT_XATTR(&info);
-   if (! has_any_xattrs(&info, MD_MARFS_XATTRS))
+   STAT_XATTRS(&info);
+   if (! has_any_xattrs(&info, MARFS_MD_XATTRS))
       assert(0); // TBD.  (data stored directly in file)
 
    //***** this may or may not work – may need a trash_dup_file() that uses
@@ -200,6 +176,7 @@ int marfs_ftruncate(const char*            path,
 }
 
 
+// This is "stat()"
 int marfs_getattr (const char*  path,
                    struct stat* stbuf) {
    PUSH_USER();
@@ -238,7 +215,7 @@ int marfs_getxattr (const char* path,
 
    // *** make sure they aren’t getting a reserved xattr***
    if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize))
-      return EPERM;
+      return -EPERM;
 
    // No need for access check, just try the op
    // Appropriate  getxattr call filling in fuse structure
@@ -433,6 +410,7 @@ int marfs_mknod (const char* path,
    } while(0)
 
 
+
 int marfs_open (const char*            path,
                 struct fuse_file_info* ffi) {
 
@@ -447,7 +425,7 @@ int marfs_open (const char*            path,
    //    also put space for read to attach a structure for object read mgmt
    //
    if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_FileHandle))))
-      return ENOMEM;
+      return -ENOMEM;
 
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
@@ -481,23 +459,34 @@ int marfs_open (const char*            path,
    //   }
 
    // unsupported operations
-   if (ffi->flags & (O_RDWR)) { /* for now */
+   if (ffi->flags & (O_RDWR)) {
       fh->flags |= (FH_READING | FH_WRITING);
-      RETURN(EPERM);
+      RETURN(-ENOSYS);          /* for now */
    }
    if (ffi->flags & (O_APPEND))
-      RETURN(EPERM);
+      RETURN(-ENOSYS);
 
 
-   STAT_XATTR(info);
+   STAT_XATTRS(info);
 
-   // open md file in asked for mode
-   if (! has_any_xattrs(info, MD_MARFS_XATTRS)) {
+   // If no xattrs, we let user read/write directly into the file.
+   // This corresponds to a file that was created in DIRECT repo-mode.
+   if (! has_any_xattrs(info, MARFS_MD_XATTRS)) {
       fh->md_fd = open(info->md_path,
                        (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
       if (fh->md_fd < 0)
          RETURN(-errno);
    }
+   // some kinds of reads need to get info from inside the MD-file
+   else if ((fh->flags & FH_READING)
+            && ((info->post.obj_type == OBJ_MULTI)
+                || (info->post.obj_type == OBJ_PACKED))) {
+      fh->md_fd = open(info->md_path,
+                       (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
+      if (fh->md_fd < 0)
+         RETURN(-errno);
+   }
+
 
   POP_USER();
   return 0;
@@ -633,15 +622,21 @@ int marfs_readlink (const char* path,
 }
 
 
+// [http://www.cs.hmc.edu/~geoff/classes/hmc.cs135.201001/homework/fuse/fuse_doc.html]
+//
 //   "This is the only FUSE function that doesn't have a directly
 //    corresponding system call, although close(2) is related. Release is
 //    called when FUSE is completely done with a file; at that point, you
 //    can free up any temporarily allocated data structures. The IBM
 //    document claims that there is exactly one release per open, but I
 //    don't know if that is true."
+//
 
 int marfs_release (const char*            path,
                    struct fuse_file_info* ffi) {
+
+   PUSH_USER(); // ENTRY();
+
    // if writing there will be an objid stuffed into a address  in fuse open table
    //       seal that object if needed
    //       free the area holding that objid
@@ -649,6 +644,37 @@ int marfs_release (const char*            path,
    //       close any objects if needed
    //       free the area holding that stuff
    // close the metadata file handle
+
+   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+   PathInfo*         info = &fh->info;                  /* shorthand */
+
+   // (before closing MDFS file) close object stream.  This means telling
+   // our readfunc in libaws4c that there won't be any more data, so it
+   // should return 0 to curl.
+   //
+   LOG(LOG_ERR, "TBD: close object-writing stream\n"); // actually causes an exit() ?
+   // return -ENOSYS;
+
+   // need to write final Post record into file?  (check fh->write_state)
+   if (fh->md_fd)
+      TRY0(close, fh->md_fd);
+
+   // install xattrs
+#if 0
+   if ((! has_any_xattrs(info, MARFS_MD_XATTRS))
+       && (info->ns->iwrite_repo->access_proto != PROTO_DIRECT)) {
+      SAVE_XATTRS(info, MARFS_ALL_XATTRS);
+   }
+#else
+   if (has_any_xattrs(info, MARFS_MD_XATTRS))
+      LOG(LOG_INFO, "has xattrs\n");
+   if (info->ns->iwrite_repo->access_proto != PROTO_DIRECT)
+      LOG(LOG_INFO, "repo method is not DIRECT\n");
+   SAVE_XATTRS(info, MARFS_ALL_XATTRS);
+#endif
+
+
+   POP_USER(); // EXIT();
    return 0;
 }
 
@@ -702,7 +728,7 @@ int marfs_removexattr (const char* path,
 
    // *** make sure they aren’t removing a reserved xattr***
    if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize))
-      return EPERM;
+      return -EPERM;
 
    // No need for access check, just try the op
    // Appropriate  removexattr call filling in fuse structure 
@@ -769,7 +795,7 @@ int marfs_setxattr (const char* path,
 
    // *** make sure they aren’t setting a reserved xattr***
    if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize))
-      return EPERM;
+      return -EPERM;
 
    // No need for access check, just try the op
    // Appropriate  setxattr call filling in fuse structure 
@@ -779,6 +805,10 @@ int marfs_setxattr (const char* path,
    return 0;
 }
 
+// The OS seems to call this from time to time, with <path>=/ (and
+// euid==0).  We could walk through all the namespaces, and accumulate
+// total usage.  (Maybe we should have a top-level fsinfo path?)  But I
+// guess we don't want to allow average users from doing this.
 int marfs_statfs (const char*      path,
                   struct statvfs*  statbuf) {
    PUSH_USER();
@@ -830,7 +860,7 @@ int marfs_truncate (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
    // If this is not just a normal md, it's the file data
-   STAT_XATTR(&info); // to get xattrs
+   STAT_XATTRS(&info); // to get xattrs
 
    // Call access syscall to check/act if allowed to truncate for this user 
    ACCESS(info.md_path, (W_OK));
@@ -947,7 +977,7 @@ int marfs_write(const char*            path,
    // Write bytes to object
    // Trunc file to current last byte  set end marker
    LOG(LOG_ERR, "write not implemented yet\n");
-   assert(0); // TBD
+   return -ENOSYS; // TBD
 
    POP_USER();
    return 0;
@@ -1008,7 +1038,7 @@ int marfs_create(const char*            path,
    }
 
    if (info.flags & (O_APPEND | O_RDWR)) {
-      return EPERM;
+      return -EPERM;
    }
    if (info.flags & (O_APPEND | O_TRUNC)) { /* can this happen, with create()? */
       CHECK_PERMS(info.ns->iperms, (T_DATA));
@@ -1032,9 +1062,6 @@ int marfs_create(const char*            path,
    TRY0(mknod, info.md_path, mode, rdev);
 
    POP_USER();
-   return 0;
-
-
    return 0;
 }
 

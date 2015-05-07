@@ -61,8 +61,23 @@ extern float MarFS_config_vers;
 // associated with the config version.
 #define   MARFS_MAX_MD_PATH       1024
 #define   MARFS_MAX_BUCKET_SIZE     63
-#define   MARFS_MAX_OBJ_ID_SIZE   1024
-#define   MARFS_MAX_REPO_NAME       63
+#define   MARFS_MAX_OBJID_SIZE    1024
+
+// Must fit in an S3 bucket (max 63 chars), with room left for
+// namespace-name.  We also leave room for terminal '\0', because this is
+// really used to allocate buffers when parsing objid xattr-values.
+//
+// // #define   MARFS_MAX_REPO_NAME       63
+// #define MARFS_MAX_REPO_NAME        52 /* BUCKET_SIZE - "ver.%03d_%03d." */
+#define MARFS_MAX_REPO_NAME         16
+
+// Allows us to allocate buffers when parsing objid
+// xattr-values.  If this is going to go into the
+// "bucket" part of the object-ID, then it must fit there, with
+// enough room left over to fit MAX_REPO_NAME
+#define MARFS_MAX_NAMESPACE_NAME   (MARFS_MAX_BUCKET_SIZE - MARFS_MAX_REPO_NAME)
+
+
 
 // max buffer for calls to write().  This should "match" (i.e. be a
 // multiple or divide evenly into) the size of buffer we're using
@@ -72,13 +87,75 @@ extern float MarFS_config_vers;
 // fuse version, instead.
 #define   MARFS_WRITEBUF_MAX    (128 * 1024 * 1024)
 
-// // All the encoded date-info etc goes into the object-name ?  This puts
-// // everything in one bucket, but saves us some confusion.
-// #define   MARFS_DEFAULT_BUCKET     "marfs"
 
 // #define   MARFS_DATE_FORMAT        "%Y_%m_%d-%H_%M_%S"
-#define   MARFS_DATE_FORMAT        "%Y_%m_%d--%H_%M_%S_%z"
+// #define   MARFS_DATE_FORMAT        "%Y_%m_%d--%H_%M_%S_%z"
+#define   MARFS_DATE_FORMAT        "%Y%m%d_%H%M%S%z"
 #define   MARFS_DATE_STRING_MAX    64  /* after formatting */
+
+
+// OBJECT_ID FORMAT
+//
+// NOTE: The "objid" xattr-value includes the bucket.
+//
+// NOTE: The bucket given to S3 can't include slashes, so we can't reliably
+//       encode the Marfs namespace there.  Therefore, I've rearranged the
+//       order of elements in the xattr-string and in the obj-ID.
+//
+//   <bucket>                 [ ver.<version_major>_<version_minor>.<repo> ]
+//
+//   /
+//
+//   <object_type>            { _=NONE, Uni, Multi, Packed, Striped, Fuse }
+//   <compress>               { _=NONE, Run_length }
+//   <correct>                { _=NONE, cRc, checKsum, Hash, Rais, Erasure }
+//   <encrypt>                { _=NONE, ? }
+//   /inode.<inode>           [64-bits as 16 hex digits]
+//   /obj_ctime.<obj_ctime>   [see MARFS_DATE_FORMAT]
+//   /md_ctime.<md_ctime>     [see MARFS_DATE_FORMAT]
+//   /ns.<namespace>
+//   
+//   /mdfs<MDFS_path>
+
+#define NON_SLASH           "%[^/]"
+#define NON_DOT             "%[^./]"
+
+// <repo>.<encoded_namespace>
+#define MARFS_BUCKET_RD_FORMAT  NON_DOT "." NON_SLASH
+#define MARFS_BUCKET_WR_FORMAT  "%s.%s"
+
+
+#define MARFS_OBJID_RD_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%[^/]/obj_ctime.%[^/]/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_WR_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%s/obj_ctime.%s/chnksz.%lx/chnkno.%lx"
+
+
+// #define MARFS_PRE_RD_FORMAT     MARFS_BUCKET_RD_FORMAT "/" MARFS_OBJID_RD_FORMAT  
+#define MARFS_PRE_RD_FORMAT     NON_SLASH "/%s" 
+
+
+
+#define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx"
+
+
+
+// Do an in-place modification of a given namespace-name (i.e. the part of
+// a path that sits below the fuse-mount, not including the contained
+// files).  We are storing the namespace in the "bucket"-part of an
+// object-id.  S3 buckets have to look like domain-names (i.e. they can
+// only contain alphanums, dot, dash, underscore, with no repeated dots,
+// and dot not first or last).  This means no slashes.  Namespaces contain
+// slashes.  So, we encode them before adding them into he object-id.
+//
+// We could use an escaping-system (e.g. map slash to underscore, and use
+// doubled underscores to represent a literal underscore), but that allows
+// the encoded string to change size, which is awkward.  Instead we decree
+// NAMESPACE-NAMES SHALL NOT CONTAIN DASHES.  Then we can always map slash
+// to dash (in a non slap-dash way).  config-reader should reject
+// namespaces containing dash.
+
+int encode_namespace(char* dst, char* src);
+int decode_namespace(char* dst, char* src);
+
 
 
 
@@ -90,7 +167,8 @@ typedef enum {
    OBJ_MULTI,          // file spans multiple objs (list of objs as chunks)
    OBJ_PACKED,         // multiple files per objects
    OBJ_STRIPED,        // (like Lustre does it)
-   OBJ_FUSE,           // written by FUSE.  (not packed, maybe uni/multi. see Post xattr)
+   OBJ_FUSE,           // written by FUSE.  (i.e. not packed, maybe uni/multi.
+                       // Only used in object-ID, not in Post xattr)
 } MarFS_ObjType;
 
 // extern const char*   obj_type_name(MarFS_ObjType type);
@@ -186,12 +264,11 @@ typedef enum {
 
 
 
-
 typedef struct MarFS_Repo {
    const char*       name;         // (logical) name for this repo 
    const char*       url;          // URL prefix (e.g. "http://10.140.0.15:9020")
    RepoFlagsType     flags;
-   RepoAccessProto   proto;
+   RepoAccessProto   access_proto;
    size_t            chunk_size;   // chunksize for repo (Cf. Namespace.range_list)
    MarFSAuthMethod   auth;         // (current) authentication method for this repo
    EncryptionMethod  encryption;   // (current) encryption method for this repo
@@ -289,7 +366,6 @@ extern MarFS_Repo* find_in_range(RangeList*  list,
 
 
 
-
 // Somewhere there is a vector/B-tree/hash-table of these.  That thing
 // should optimize lookups based on paths, so maybe a suffix-tree using
 // distinct path-components of all namespaces seen by the config-file
@@ -354,7 +430,7 @@ typedef struct MarFS_Namespace {
 //
 //       EXPAND_PATH_INFO(&info, path);
 //       STAT_XATTRS(&info, path);
-//       if ( ! has_any_xattrs(&info, MD_MARFS_XATTRS) )
+//       if ( ! has_any_xattrs(&info, MARFS_MD_XATTRS) )
 //           // MD file has no xattrs ...
 //       }
 //
@@ -376,13 +452,25 @@ typedef struct MarFS_Namespace {
 // "strlen(MarFS_XattrPrefix)".
 #define   MarFS_XattrPrefixSize  6
 
+// <linux/limits.h> has XATTR_SIZE_MAX,  XATTR_NAME_MAX, etc.
+// <gpfs_fcntl.h> has GPFS_FCNTL_XATTR_MAX_NANMELEN/VALUELEN
+#define MARFS_MAX_XATTR_SIZE (16 * 1024) /* TBD: define appropriately for GPFS vs etc */
+
 
 // ...........................................................................
-// xattrs from the metadata FS are parsed and stored into a single structure.
+// Each system-xattr from the MDFS is parsed and stored into a single structure.
 // ...........................................................................
 
-// "Pre" has info that can be written when object-storage behind a file is
-// first opened.  These fields are formatted into object-names.
+// "Pre" has info that is known when object-storage behind a file is first
+// opened.  (So, for example, it can't include length.)  Some or all of the
+// members are formatted into object-names.
+//
+// NOTE: There is an object-type stored here, but it is only the part of an
+//       object type that can be known at obj-open time, by fuse or pftool.
+//       (See MarFS_XattrPost, for the true object-type, which can only be
+//       known by fuse after the object has been written.)  The point of
+//       this field is to indicate whether the object is PACKED, or not.
+//       We also capture whether the object was written by Fuse, or not.
 //
 // NOTE: We record the compression/correction/etc, in addition to the
 //       repo-name.  Information about compression/correction can be found
@@ -403,46 +491,51 @@ typedef struct MarFS_Namespace {
 //       feature.
 
 typedef struct MarFS_XattrPre {
+
+   const MarFS_Repo*      repo;
+   const MarFS_Namespace* ns;
+
    float              config_vers; // (major.minor) config that file was written with
-   time_t             md_ctime;
-   time_t             obj_ctime;    // might be versions in the trash
+   int                obj_type;    // This will only be { Packed, Fuse, or None }
 
    CompressionMethod  compression;  // in addition to erasure-coding
    CorrectionMethod   correction;   // (e.g. CRC/checksum/etc.)
    EncryptionMethod   encryption;   // data-encryption (e.g. sha-256)
 
-   const MarFS_Repo*  repo;         // data repository (name)
+   ino_t              md_inode;
+   time_t             md_ctime;
+   time_t             obj_ctime;    // might be versions in the trash
+
    size_t             chunk_size;   // from repo-config at write-time
    size_t             chunk_no;
 
-   ino_t              md_inode;
    //   uint16_t           slave;    // TBD: for hashing directories across slave nodes
 
    char               bucket[MARFS_MAX_BUCKET_SIZE];
-   char               obj_id[MARFS_MAX_OBJ_ID_SIZE];
+   char               objid [MARFS_MAX_OBJID_SIZE]; // not including bucket
 
 } MarFS_XattrPre;
+
 
 int print_objname(char* obj_name,      const MarFS_XattrPre* pre);
 
 // from MarFS_XattrPre to string
-int pre_2_str(char* pre_str, size_t size, const MarFS_XattrPre* pre);
+int pre_2_str(char* pre_str, size_t size, MarFS_XattrPre* pre);
 
 // from string to MarFS_XattrPre
-// <has_obj_id> indicates whether pre.obj_id is already filled-in
+// <has_objid> indicates whether pre.objid is already filled-in
 int str_2_pre(MarFS_XattrPre*    pre,
-              char*              md_path,
               const char*        pre_str,
-              const struct stat* st,
-              int                has_obj_id); // from string
+              const struct stat* st); // from string
 
 // initialize
 int init_pre(MarFS_XattrPre*        pre,
              MarFS_ObjType          obj_type, // see NOTE above function def
-             const char*            md_path,
              const MarFS_Namespace* ns,
              const MarFS_Repo*      repo,
              const struct stat*     st);
+
+int update_pre(MarFS_XattrPre* pre);
 
 
 
@@ -457,10 +550,12 @@ typedef struct MarFS_XattrPost {
    size_t             obj_offset;    // offset of file in the obj (for packed)
    CorrectInfo        correct_info;  // correctness info  (e.g. the computed checksum)
    EncryptInfo        encrypt_info;  // any info reqd to decrypt the data
+   size_t             num_objects;   // number ChunkInfos written in MDFS file
+   size_t             chunk_info_bytes; // total size of chunk-info in MDFS file
 } MarFS_XattrPost;
 
 
-#define XATTR_POST_STRING_VALUE_SIZE  256 /* max */
+#define XATTR_MAX_POST_STRING_VALUE_SIZE  256 /* max */
 
 // from MarFS_XattrPost to string
 int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post);
@@ -491,55 +586,30 @@ int str_3_slave(MarFS_XattrSlave* slave, const char* slave_str); // from string
 
 
 
-
-
-// These describe xattr keys, and the type of the corresponding values, for
-// all the metadata fields in a MarFS_ReservedXattr.  These support a
-// generic parser for extracting and parsing xattr data from a metadata
-// file (or maybe also from object metadata).
+// ---------------------------------------------------------------------------
+// FileInfo
 //
-// As they are found in stat_xattrs(), each flag is OR'ed into a counter,
-// so that has_any_xattrs() can tell you whether specific xattrs were
-// found.
+// Fileinfo is a record that has information mostly from stat() of the
+// metadata file in human-readable form.  This thing is written directly
+// into the metadata file itself, in some cases.
 //
-// NOTE: co-maintain XattrMaskType, ALL_MARFS_XATTRS, MD_MARFS_XATTRS
+// (This is recovery information captured at create time only; it is not
+// updated upon metadata changes like chmod, chown, rename, etc.)
+// ---------------------------------------------------------------------------
 
-typedef uint8_t XattrMaskType;  // OR'ed XattrValueTypes
-typedef enum {
-   XVT_NONE       = 0,          // marks the end of <xattr_specs>
+// TBD: fileinfo_2_str(), str_2_fileinfo().
 
-   XVT_PRE        = 0x01,
-   XVT_POST       = 0x02,
-   XVT_RESTART    = 0x04,
-   XVT_SLAVE      = 0x08,
-   
-} XattrValueType;
-
-#define ALL_MARFS_XATTRS  0x07 /* mask of all implemented XattrValueTypes */
-#define MD_MARFS_XATTRS  (XVT_PRE | XVT_POST)  /* XattrValueTypes concerned w/ MD */
-
-
-
-
-// generic description of one of our reserved xattrs
 typedef struct {
-   XattrValueType  value_type;
-   const char*     key_name;        // does not incl MarFS_XattrPrefix (?)
-} XattrSpec;
-
-
-/// typdef struct MarFS_XattrList {
-///   char*                   name;
-///   char*                   value;
-///   struct MarFS_XattrList* next;
-/// } MarFS_XattrList;
-
-
-// An array of XattrSpecs.  Last one has value_type == XVT_NONE.
-// initialized in load_config()
-extern XattrSpec*  MarFS_xattr_specs;
-
-int init_xattr_specs();
+   float    config_vers;
+   size_t   size;               // Size of record
+   ino_t    inode;
+   mode_t   mode;
+   uid_t    uid;
+   gid_t    gid;
+   time_t   mtime;
+   time_t   ctime;
+   char     mdfs_path[MARFS_MAX_MD_PATH]; // full path in the MDFS
+} Fileinfo;
 
 
 // ---------------------------------------------------------------------------

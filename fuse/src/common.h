@@ -76,6 +76,8 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
 #endif
 
 
+
+
 // ---------------------------------------------------------------------------
 // TRY, etc
 //
@@ -151,18 +153,26 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
 
 
 
-
-#define PUSH_USER()                                                     \
+// add log items when you enter/exit a function
+#define ENTRY()                                                         \
    LOG(LOG_INFO, "entry\n");                                            \
    __attribute__ ((unused)) size_t   rc = 0;                            \
-   __attribute__ ((unused)) ssize_t  rc_ssize = 0;                      \
+   __attribute__ ((unused)) ssize_t  rc_ssize = 0
+
+#define EXIT()                                                        \
+   LOG(LOG_INFO, "exit\n\n")
+
+
+
+#define PUSH_USER()                                                     \
+   ENTRY();                                                             \
    uid_t saved_euid = -1;                                               \
    TRY0(push_user, &saved_euid)
 
-
 #define POP_USER()                                                      \
-   LOG(LOG_INFO, "exit\n\n");                                           \
+   EXIT();                                                              \
    TRY0(pop_user, &saved_euid);                                         \
+
 
 
 
@@ -171,8 +181,10 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
 #define TRASH_DUP_FILE(INFO, PATH)     TRY0(trash_dup_file,   (INFO), (PATH))
 #define TRASH_NAME(INFO, PATH)         TRY0(trash_name,       (INFO), (PATH))
 
-#define STAT_XATTR(INFO)               TRY0(stat_xattr, (INFO))
+#define STAT_XATTRS(INFO)              TRY0(stat_xattrs, (INFO))
 #define STAT(INFO)                     TRY0(stat_regular, (INFO))
+
+#define SAVE_XATTRS(INFO, MASK)        TRY0(save_xattrs, (INFO), (MASK))
 
 
 
@@ -190,11 +202,60 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
 
 
 
+// ---------------------------------------------------------------------------
+// xattrs
+// ---------------------------------------------------------------------------
+
+
+// These describe xattr keys, and the type of the corresponding values, for
+// all the metadata fields in a MarFS_ReservedXattr.  These support a
+// generic parser for extracting and parsing xattr data from a metadata
+// file (or maybe also from object metadata).
+//
+// As they are found in stat_xattrs(), each flag is OR'ed into a counter,
+// so that has_any_xattrs() can tell you whether specific xattrs were
+// found.
+//
+// NOTE: co-maintain XattrMaskType, ALL_MARFS_XATTRS, MARFS_MD_XATTRS
+
+
+typedef uint8_t XattrMaskType;  // OR'ed XattrValueTypes
+
+typedef enum {
+   XVT_NONE       = 0,          // marks the end of <xattr_specs>
+
+   XVT_PRE        = 0x01,
+   XVT_POST       = 0x02,
+   XVT_RESTART    = 0x04,
+   XVT_SLAVE      = 0x08,
+   
+} XattrValueType;
+
+#define MARFS_MD_XATTRS   (XVT_PRE | XVT_POST)     /* MD-related XattrValueTypes */
+#define MARFS_ALL_XATTRS  (XVT_PRE | XVT_POST | XVT_RESTART | XVT_SLAVE)  /* all XattrValueTypes */
 
 
 
-int  push_user();
-int  pop_user();
+
+
+// generic description of one of our reserved xattrs
+typedef struct {
+   XattrValueType  value_type;
+   const char*     key_name;        // does not incl MarFS_XattrPrefix (?)
+} XattrSpec;
+
+
+/// typdef struct MarFS_XattrList {
+///   char*                   name;
+///   char*                   value;
+///   struct MarFS_XattrList* next;
+/// } MarFS_XattrList;
+
+// An array of XattrSpecs.  Last one has value_type == XVT_NONE.
+// initialized in init_xattr_specs()
+extern XattrSpec*  MarFS_xattr_specs;
+
+
 
 
 
@@ -202,23 +263,36 @@ int  pop_user();
 // PathInfo
 //
 // used to accumulate FUSE-support information.
-// see expand_path_info(), and stat_xattr()
+// see expand_path_info(), and stat_xattrs()
+//
+// NOTE: stat_xattrs() sets the flags in PathInfo.xattrs, for each
+//       corresponding xattr that is found.  Use has_any_xattrs() or
+//       has_all_xattrs(), with a mask, to check for presence of xattrs you
+//       care about, after stat_xattr().  The <mask> is just
+//       XattrValueTypes, OR'ed together.
+//
+//       Because this is C, and not C++, I'm not tracking which xattrs you
+//       might be changing and updating.  However, when you call
+//       save_xattrs(), you can provide another mask (i.e. just like
+//       has_any_xattrs()), and we'll install all the xattrs that your mask
+//       selects.  (You could use this to write different xattrs at
+//       different times, or to update a specific one several times.)
+//
 // ---------------------------------------------------------------------------
 
 
 typedef uint8_t  PathInfoFlagType;
 typedef enum {
-   PI_EXPANDED     = 0x01,      // expand_path_info() was called?
-   PI_STAT_QUERY   = 0x02,      // i.e. maybe PathInfo.st empty for a reason
-   PI_XATTR_QUERY  = 0x04,      // i.e. maybe PathInfo.xattr empty for a reason
-   PI_XATTRS       = 0x08,      // XATTR_QUERY found any MarFS xattrs
+   PI_RESTART      = 0x01,      // file is in restart-mode (see stat_xattrs())
+   PI_EXPANDED     = 0x02,      // expand_path_info() was called?
+   PI_STAT_QUERY   = 0x04,      // i.e. maybe PathInfo.st empty for a reason
+   PI_XATTR_QUERY  = 0x08,      // i.e. maybe PathInfo.xattr empty for a reason
+   // PI_XATTRS       = 0x08,      // XATTR_QUERY found any MarFS xattrs
    PI_PRE_INIT     = 0x10,      // "pre"  field has been initialized from scratch (unused?)
    PI_POST_INIT    = 0x20,      // "post" field has been initialized from scratch (unused?)
-   PI_RESTART      = 0x40,      // file is in restart-mode (see stat_xattr())
    PI_TRASH_PATH   = 0x80,      // expand_trash_info() was called?
    //   PI_STATVFS      = 0x80,      // stvfs has been initialized from Namespace.fsinfo?
 } PathInfoFlagValue;
-
 
 
 typedef struct PathInfo {
@@ -229,7 +303,7 @@ typedef struct PathInfo {
    MarFS_XattrPre       pre;
    MarFS_XattrPost      post;
    MarFS_XattrSlave     slave;
-   uint8_t              xattrs; // OR'ed XattrValueTypes, found by stat_xattr()
+   XattrMaskType        xattrs; // OR'ed XattrValueTypes, use has_any_xattrs()
 
    PathInfoFlagType     flags;
 
@@ -251,9 +325,11 @@ typedef struct PathInfo {
 typedef enum {
    FH_READING    = 0x01,        // might someday allow O_RDWR
    FH_WRITING    = 0x02,        // might someday allow O_RDWR
+   FH_DIRECT     = 0x04,        // i.e. PathInfo.xattrs has no MD_
 } FHFlags;
 
 typedef uint16_t FHFlagType;
+
 
 // read() can maintain state here
 typedef struct {
@@ -261,11 +337,18 @@ typedef struct {
 } ReadStatus;
 
 
+// write() can maintain state here
+typedef struct {
+   // TBD ...
+} WriteStatus;
+
+
 
 typedef struct {
    PathInfo     info;
    int          md_fd;          // opened for reading meta-data, or data
-   ReadStatus   read_status;    // current_offset, buffer-management, etc
+   ReadStatus   read_status;    // buffer_management, current_offset, etc
+   WriteStatus  write_status;   // buffer-management, etc
    FHFlagType   flags;
 } MarFS_FileHandle;
 
@@ -293,16 +376,22 @@ typedef struct {
 
 
 
+extern int  push_user();
+extern int  pop_user();
 
 // These initialize different parts of the PathInfo struct.
 // Calling them redundantly is cheap and harmless.
 extern int  expand_path_info (PathInfo* info, const char* path);
 extern int  expand_trash_info(PathInfo* info, const char* path);
 
-extern int  stat_xattr       (PathInfo* info);
 extern int  stat_regular     (PathInfo* info);
+extern int  stat_xattrs      (PathInfo* info);
+extern int  save_xattrs      (PathInfo* info, XattrMaskType mask);
 
 extern int  md_exists        (PathInfo* info);
+
+// initialize MarFS_xattr_specs
+extern int  init_xattr_specs();
 
 //extern int  has_marfs_xattrs (PathInfo* info);
 extern int  has_all_xattrs (PathInfo* info, XattrMaskType mask);
