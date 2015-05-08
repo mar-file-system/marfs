@@ -15,8 +15,7 @@
 * Features to be added/to do:
 * 
 *  determine extended attributes that we care about
-*  determine arguments to this functions
-*  histogram of file sizes (small medium large)
+*  determine arguments to main 
 *  inode total count
 *  block (512 bytes) held by file
 *
@@ -24,8 +23,64 @@
 ******************************************************************************/
 char    *ProgName;
 
+/*****************************************************************************
+Name: main
+
+*****************************************************************************/
+
+int main(int argc, char **argv) {
+   FILE *outfd;
+   int ec;
+   char *outf = NULL;
+   char *rdir = NULL;
+   unsigned int uid = 0;
+   int  c;
+   extern char *optarg;
+   struct histogram size_histo;
+   struct histogram *histo_size_ptr = &size_histo;
 
 
+   if ((ProgName = strrchr(argv[0],'/')) == NULL)
+      ProgName = argv[0];
+   else
+      ProgName++;
+
+   while ((c=getopt(argc,argv,"d:ho:u:")) != EOF) {
+      switch (c) {
+         case 'd': rdir = optarg; break;
+         case 'o': outf = optarg; break;
+         case 'u': uid = atoi(optarg); break;
+         case 'h': print_usage();
+         default:
+            exit(0);
+      }
+   }
+
+   if (rdir == NULL || outf == NULL) {
+      fprintf(stderr,"%s: no directory (-d) or output file name (-o) specified\n",ProgName);
+      exit(1);
+   }
+   histo_size_ptr->small_count=0;
+   histo_size_ptr->medium_count=0;
+   histo_size_ptr->large_count=0;
+   outfd = fopen(outf,"w");
+
+   ec = read_inodes(rdir,outfd, histo_size_ptr,uid);
+   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n",
+          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
+   exit(ec);
+}
+
+
+
+/***************************************************************************** 
+Name: print_usage 
+
+*****************************************************************************/
+void print_usage()
+{
+   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file [-u uid]\n",ProgName);
+}
 
 /***************************************************************************** 
 Name: fill_size_histo 
@@ -145,7 +200,7 @@ This function opens an inode scan in order to provide size/block information
 as well as file extended attribute information
 
 *****************************************************************************/
-int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr) {
+int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, unsigned int uid) {
    int rc = 0;
    const gpfs_iattr_t *iattrP;
    const char *xattrBP;
@@ -198,6 +253,13 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr) {
       if ((iattrP == NULL) || (iattrP->ia_inode > 0x7FFFFFFF))
          break;
 
+      // If userid is specified then only look for those inodes and xattrs
+      if (uid > 0) {
+         if (uid != iattrP->ia_uid){
+            continue; 
+         }
+      }
+
       if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
          xattr_ptr = &mar_xattrs[0];
          if ((xattr_count = get_xattr_value(iscanP, xattrBP, xattr_len, "user.a", xattr_ptr)) > 0) {
@@ -231,53 +293,5 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr) {
    fprintf(outfd,"file size sum  = %llu\n", sum_size);
    clean_exit(outfd, iscanP, fsP, early_exit);
    return(rc);
-}
-
-
-
-/***************************************************************************** 
-Name: main 
-
-*****************************************************************************/
-
-int main(int argc, char **argv) {
-   FILE *outfd;
-   int ec;
-   char *outf = NULL;
-   char *rdir = NULL;
-   int  c;
-   extern char *optarg;
-   struct histogram size_histo;
-   struct histogram *histo_size_ptr = &size_histo;
- 
-
-   if ((ProgName = strrchr(argv[0],'/')) == NULL) 
-      ProgName = argv[0];
-   else
-      ProgName++;
-		
-   while ((c=getopt(argc,argv,"d:ho:")) != EOF) {
-      switch (c) {
-         case 'd': rdir = optarg; break;
-         case 'o': outf = optarg; break;
-         case 'h':
-         default:
-            exit(0);
-      }
-   }
-
-   if (rdir == NULL || outf == NULL) {
-      fprintf(stderr,"%s: no directory (-d) or output file name (-o) specified\n",ProgName);
-      exit(1);
-   }
-   histo_size_ptr->small_count=0;
-   histo_size_ptr->medium_count=0;
-   histo_size_ptr->large_count=0;
-   outfd = fopen(outf,"w");
-
-   ec = read_inodes(rdir,outfd, histo_size_ptr);
-   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n", 
-          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
-   exit(ec);
 }
 
