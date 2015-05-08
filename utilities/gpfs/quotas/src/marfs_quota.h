@@ -18,5 +18,17 @@ struct marfs_xattr {
   char xattr_name[MAX_XATTR_NAME_LEN];
   char xattr_value[MAX_XATTR_VAL_LEN];
 };
+
+
+int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, unsigned int uid);
+int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
+int get_xattr_value(gpfs_iscan_t *iscanP,
+                 const char *xattrP,
+                 unsigned int xattrLen,
+                 char * desired_xattr,
+                 struct marfs_xattr *xattr_ptr);
+static void fill_size_histo(const gpfs_iattr_t *iattrP, struct histogram *histogram_ptr);
+void print_usage();
+
 #endif
 
