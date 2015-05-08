@@ -15,6 +15,7 @@
 * Features to be added/to do:
 * 
 *  determine extended attributes that we care about
+*     passed in as args or hard coded?
 *  determine arguments to main 
 *  inode total count
 *  block (512 bytes) held by file
@@ -250,8 +251,15 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, un
          early_exit = 1;
          clean_exit(outfd, iscanP, fsP, early_exit);
       }
+      // Are we done?
       if ((iattrP == NULL) || (iattrP->ia_inode > 0x7FFFFFFF))
          break;
+
+      // Determine if invalid inode error 
+      if (iattrP->ia_flags & GPFS_IAFLAG_ERROR) {
+         fprintf(stderr,"%s: invalid inode %9d (GPFS_IAFLAG_ERROR)\n", ProgName,iattrP->ia_inode);
+         continue;
+      } 
 
       // If userid is specified then only look for those inodes and xattrs
       if (uid > 0) {
@@ -260,6 +268,20 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, un
          }
       }
 
+      // Print out inode values to output file
+      // This is handy for debug at the moment
+      if (iattrP->ia_inode != 3) {	/* skip the root inode */
+         fprintf(outfd,"%u|%lld|%lld|%d|%u|%u|%u|%u|%u|%lld|%d\n",
+         iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,
+         iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
+         iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
+
+         sum_size += iattrP->ia_size;
+         fill_size_histo(iattrP, histo_ptr);
+      }
+
+      // Do we have extended attributes?
+      // This will be modified as time goes on - what xattrs do we care about
       if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
          xattr_ptr = &mar_xattrs[0];
          if ((xattr_count = get_xattr_value(iscanP, xattrBP, xattr_len, "user.a", xattr_ptr)) > 0) {
@@ -270,25 +292,6 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, un
             }
          }
       }
-
-//    if ((iattrP == NULL) || (iattrP->ia_inode > 0x7FFFFFFF))
-//      break;
-
-      if (iattrP->ia_flags & GPFS_IAFLAG_ERROR) {
-         fprintf(stderr,"%s: invalid inode %9d (GPFS_IAFLAG_ERROR)\n", ProgName,iattrP->ia_inode);
-
-      } 
-      //  print the desired contents of Inode 
-      else if (iattrP->ia_inode != 3) {	/* skip the root inode */
-         fprintf(outfd,"%u|%lld|%lld|%d|%u|%u|%u|%u|%u|%lld|%d\n",
-         iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,
-         iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
-         iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
-
-         sum_size += iattrP->ia_size;
-         fill_size_histo(iattrP, histo_ptr);
-      }
-
    } // endwhile
    fprintf(outfd,"file size sum  = %llu\n", sum_size);
    clean_exit(outfd, iscanP, fsP, early_exit);
