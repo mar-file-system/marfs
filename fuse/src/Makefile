@@ -4,8 +4,8 @@ all: marfs_fuse
 GIT = `readlink -f ~/projects/marfs/git`
 SYS = `readlink -f ~/projects/marfs/filesys`
 
-OBJS = marfs_base.o common.o
-H    = marfs_base.h common.h
+OBJS = marfs_base.o common.o object_stream.o
+H    = marfs_base.h common.h object_stream.h
 
 # MNT  = ./filesys/mnt
 MNT  = $(SYS)/mnt
@@ -31,18 +31,20 @@ else
 endif
 
 
-### LIBAWS4C = /users/jti/projects/ecs_hobo/tools/aws4c
-LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
-
 
 # c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
 CFLAGS += -Wall -std=c99 `pkg-config fuse --cflags` -I $(LIBAWS4C) -I.
 CFLAGS += $(patsubst %, -D%, $(DEFS))
 
+# LDFLAGS += `pkg-config fuse --cflags --libs` -lm -L $(LIBAWS4C) -laws4c
+LDFLAGS += `pkg-config fuse --libs-only-L`
+LIBS    += `pkg-config fuse --libs-only-l` -lm
 
-LDFLAGS += `pkg-config fuse --cflags --libs` -lm -L $(LIBAWS4C) -laws4c
-
-
+# stuf for aws4c
+### LIBAWS4C = /users/jti/projects/ecs_hobo/tools/aws4c
+LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
+LDFLAGS += -L$(LIBAWS4C)
+LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
 
 
 # ...........................................................................
@@ -56,10 +58,12 @@ WORK = 10.146.0.3
 # only works on ccstargate, or cc-gate
 2work:
 	rsync -Pvaurl ~/projects/marfs/git/ root@$(WORK):/root/projects/marfs/git
+	# rsync -Pvaurl ~/projects/ecs_hobo/tools/aws4c/ root@$(WORK):/root/projects/ecs_hobo/tools/aws4c
 
 # only works on ccstargate, or cc-gate
 fromwork:
 	rsync -Pvaurl root@$(WORK):/root/projects/marfs/git/ ~/projects/marfs/git
+	rsync -Pvaurl root@$(WORK):/root/projects/ecs_hobo/tools/aws4c/ ~/projects/ecs_hobo/tools/aws4c
 
 # ...........................................................................
 
@@ -68,34 +72,41 @@ fromwork:
 
 # currently a simple top-level FUSE daemon
 marfs_fuse: $(OBJS) marfs_fuse.c $(OBJS)
-	gcc $(CFLAGS) -o marfs_fuse $(LDFLAGS) $(OBJS) marfs_fuse.c
+	gcc $(CFLAGS) -o marfs_fuse $(LDFLAGS) $(OBJS) marfs_fuse.c $(LIBS)
 
 # aplications that link with various marfs support libs
 demo_%: demo_%.o $(OBJS)
-	gcc -o $@ $< $(LDFLAGS) $(OBJS)
+	gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
 
 
 
 PID = marfs_fuse.pid
 
-mnt: marfs_fuse
+mnt.simple: marfs_fuse
 	@ # marfs_fuse $(MNT)
 	@ echo
 	@ echo "mounting at $(MNT)"
 	marfs_fuse -f $(MNT) &
 
-mntlog: marfs_fuse
+# NOTE: You should do this, if you want to see core-files:
+#  # [default core-pattern was "/var/tmp/core-%e-%p-%t"]
+#
+#  $ ulimit -c unlimited
+#  $ echo "core.%e-%t" > /proc/sys/kernel/core_pattern
+
+mnt: marfs_fuse umnt
 	@ echo
 	@ echo "mounting at $(MNT)"
-	marfs_fuse -f $(MNT) > foo.log 2>&1 &
-	#
-	# TBD: while (! `mount | grep fuse | grep -v fusectl | wc -l`) ; do (echo sleeping; sleep 1) done
+	@ echo "core.%e-%t" > /proc/sys/kernel/core_pattern
+	marfs_fuse -d -f $(MNT) > foo.log 2>&1 &
+	@
+	@ # TBD: while (! `mount | grep fuse | grep -v fusectl | wc -l`) ; do (echo sleeping; sleep 1) done
 	@ echo "sleeping to give background fuse a chance to start"
 	sleep 1
 
-# TBD should succeed silently if not mounted
+# okay to run this even if not mounted
 umnt:
-	fusermount -u $(MNT) || echo "already unmounted"
+	@ (fusermount -q -u $(MNT) && echo "unmounted") || echo "already unmounted"
 
 
 # wipe all state from MDFS and object-store
@@ -113,15 +124,19 @@ reset:
 # 	$(MAKE) umount
 
 # after edits: unmount, rebuild (if needed), wipe MDFS, mount, run test, show the log
-redo: umnt marfs_fuse reset mntlog
+redo: umnt marfs_fuse reset mnt
 	echo "foo" > $(MNT)/test00/foo || echo "failed"
-	tail foo.log
+	@ echo
+	@ echo "tail of foo.log (trimmed to match window-size):"
+	@ tail -20 foo.log | cut -c-`tput cols`
 	@ echo
 	$(MAKE) mdfs-foo
 
+gdb:
+	ls core.* | tail -n -1 | xargs exec gdb marfs_fuse
 
 %: %.o
-	gcc -o $@ $< $(LDFLAGS)
+	gcc -o $@ $< $(LDFLAGS) $(LIBS)
 
 %.o: %.c %.h
 	gcc $(CFLAGS) -c -o $@ $<
@@ -152,8 +167,12 @@ clean:
 # show quick diagnostics of the guts of an MDFS file
 #  e.g. 'make mdfs-foo' shows ...filesys/mdfs/test00/foo
 mdfs-%:
+	@ echo
+	@ echo "overview of metadata for $(MDFS)/$*"
 	@ ls -l   $(MDFS)/$*
-	@ attr -l $(MDFS)/$*
+	@ echo
+	@ echo "xattrs:"
+	@ (attr -l $(MDFS)/$* | grep marfs_) || echo "(none)"
 
 
 # -- various testing
@@ -166,7 +185,7 @@ shell_test:
 		rm foo.pid )
 
 hello3: hello3.o $(OBJS)
-	gcc $(CFLAGS) -o $@ $(LDFLAGS) $^
+	gcc $(CFLAGS) -o $@ $(LDFLAGS) $^ $(LIBS)
 
 
 # lines-of-code

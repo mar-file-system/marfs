@@ -77,6 +77,10 @@ extern float MarFS_config_vers;
 // enough room left over to fit MAX_REPO_NAME
 #define MARFS_MAX_NAMESPACE_NAME   (MARFS_MAX_BUCKET_SIZE - MARFS_MAX_REPO_NAME)
 
+// "http://.../<bucket>/<objid>"
+#define   MARFS_MAX_URL_SIZE      (128 + MARFS_MAX_BUCKET_SIZE + MARFS_MAX_OBJID_SIZE)
+
+
 
 
 // max buffer for calls to write().  This should "match" (i.e. be a
@@ -238,9 +242,10 @@ extern EncryptionMethod  decode_encryption(char);
 // ---------------------------------------------------------------------------
 
 typedef enum {
-   MARFS_ONLINE          = 0x01, // repo is online?
-   MARFS_ALLOWS_OFFLINE  = 0x02, // repo allows offline?
-   MARFS_UPDATE_IN_PLACE = 0x04, // repo allows update-in-place ?
+   REPO_ONLINE          = 0x01, // repo is online?
+   REPO_ALLOWS_OFFLINE  = 0x02, // repo allows offline?
+   REPO_UPDATE_IN_PLACE = 0x04, // repo allows update-in-place ?
+   REPO_SSL             = 0x08  // e.g. use https://...
 } RepoFlags;
 
 typedef uint8_t  RepoFlagsType;
@@ -254,6 +259,8 @@ typedef enum {
    PROTO_S3_EMC,                // should include installed release version
 } RepoAccessProto;
 
+#define PROTO_IS_S3(PROTO)  ((PROTO) & (PROTO_S3 | PROTO_S3_SCALITY | PROTO_S3_EMC))
+
 
 typedef enum {
    AUTH_NONE = 0,
@@ -266,7 +273,7 @@ typedef enum {
 
 typedef struct MarFS_Repo {
    const char*       name;         // (logical) name for this repo 
-   const char*       url;          // URL prefix (e.g. "http://10.140.0.15:9020")
+   const char*       host;         // e.g. "10.140.0.15:9020"
    RepoFlagsType     flags;
    RepoAccessProto   access_proto;
    size_t            chunk_size;   // chunksize for repo (Cf. Namespace.range_list)
@@ -521,6 +528,7 @@ int print_objname(char* obj_name,      const MarFS_XattrPre* pre);
 
 // from MarFS_XattrPre to string
 int pre_2_str(char* pre_str, size_t size, MarFS_XattrPre* pre);
+int pre_2_url(char* url_str, size_t size, MarFS_XattrPre* pre);
 
 // from string to MarFS_XattrPre
 // <has_objid> indicates whether pre.objid is already filled-in

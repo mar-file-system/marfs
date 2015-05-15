@@ -53,7 +53,7 @@ int push_user(uid_t* saved_euid) {
    int rc = seteuid(new_uid);
    if (rc == -1) {
       if ((errno == EACCES) && (new_uid == getuid())) {
-         LOG(LOG_ERR, "failed (but okay)\n");
+         LOG(LOG_INFO, "failed (but okay)\n");
          return 0;              /* okay [see NOTE] */
       }
       else {
@@ -61,7 +61,7 @@ int push_user(uid_t* saved_euid) {
          return errno;
       }
    }
-   LOG(LOG_ERR, "succeess\n");
+   LOG(LOG_INFO, "succeess\n");
    return 0;
 #else
 #  error "No support for seteuid()"
@@ -429,7 +429,7 @@ int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
 // on info->md_path.
 int save_xattrs(PathInfo* info, XattrMaskType mask) {
 
-   int rc;
+   ENTRY();
 
    // call stat_regular().
    __TRY0(stat_regular, info);
@@ -447,7 +447,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          continue;
       }
          
-      LOG(LOG_INFO, "trying xattr %s ...\n", spec->key_name);
+      LOG(LOG_INFO, "xattr %s ...\n", spec->key_name);
       switch (spec->value_type) {
 
       case XVT_PRE: {
@@ -479,7 +479,10 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          //      scan for files to restart (when restarting pftool) would
          //      just be "find inodes that have xattr with key 'flags'
          //      having value matching a given bit-pattern", rather than
-         //      "find indoes that have xattr with key 'restart'"
+         //      "find inodes that have xattr with key 'restart'"
+         //
+         //      [However, you'd want to be sure that no two processes
+         //      would ever be racing to read/modify/write such an xattr.]
 
          // If the flag isn't set, then don't install (or remove) the xattr.
          if (info->flags & (PI_RESTART)) {
@@ -494,7 +497,8 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
             if (val_size < 0) {
                if (errno == ENOATTR)
                   break;           /* not a problem */
-               LOG(LOG_INFO, "removexattr -> err (%d) %s\n", errno, strerror(errno));
+               LOG(LOG_INFO, "ERR removexattr(%s, %s) (%d) %s\n",
+                   info->md_path, spec->key_name, errno, strerror(errno));
                return errno;
             }
          }
@@ -510,10 +514,10 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
       default:
          // a key was added to MarFS_attr_specs, but stat_xattrs() wasn't updated
          LOG(LOG_ERR, "unknown xattr %d = '%s'\n", spec->value_type, spec->key_name);
-         assert(0);
       };
    }
 
+   LOG(LOG_INFO, "exit\n");
    return 0;                    /* "success" */
 }
 
@@ -681,7 +685,25 @@ ssize_t printf_log(size_t prio, const char* format, ...) {
    va_list list;
    va_start(list, format);
 
-   ssize_t written = vfprintf(stderr, format, list);
+   ssize_t written;
+   if (prio <= LOG_ERR) {
+      const char*  stand_out = "*** ERROR ";
+      const size_t stand_out_len = strlen(stand_out);
+      const size_t format_len = strlen(format);
+
+      char* tmp_buf = malloc(format_len + stand_out_len +1);
+      assert(tmp_buf);
+
+      memcpy(tmp_buf, stand_out, stand_out_len);
+      memcpy(tmp_buf + stand_out_len, format, format_len);
+      tmp_buf[stand_out_len + format_len] = 0;
+
+      written = vfprintf(stderr, tmp_buf, list);
+      free(tmp_buf);
+   }
+   else {
+      written = vfprintf(stderr, format, list);
+   }
    fflush(stderr);
    return written;
 }

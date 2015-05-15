@@ -4,6 +4,8 @@
 // Must come before anything else that might include <time.h>
 #include "marfs_base.h"
 
+#include "object_stream.h"      // FileHandle needs ObjectStream
+
 #define FUSE_USE_VERSION 26
 #include <fuse.h>
 
@@ -12,7 +14,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
-
 
 #  ifdef __cplusplus
 extern "C" {
@@ -58,20 +59,20 @@ typedef enum {
 
 
 /// #define LOG_PREFIX  "marfs_fuse -- : "
-#define LOG_PREFIX  "marfs_fuse [%s:%3d]%*s -- %-17s: "
+#define LOG_PREFIX  "marfs_fuse [%s:%4d]%*s %-20s | "
 #  include <syslog.h>           // we always need priority-names
 
 #ifdef RUNAS_ROOT
 // calling syslog() as a regular user on rrz seems to be an expensive no-op
 #  define INIT_LOG()                   openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)
-#  define LOG(PRIO, FMT, ...)          syslog((PRIO), FMT, __FILE__, __LINE__, 13-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
+#  define LOG(PRIO, FMT, ...)          syslog((PRIO), FMT, __FILE__, __LINE__, 17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
 
 #else
 // must start fuse with '-f' in order to allow stdout/stderr to work
 // NOTE: print_log call merges LOG_PREFIX w/ user format at compile-time
 #  define INIT_LOG()
 /// #  define LOG(PRIO, FMT, ...)          printf_log((PRIO), LOG_PREFIX FMT, ## __VA_ARGS__)
-#  define LOG(PRIO, FMT, ...)          printf_log((PRIO), LOG_PREFIX FMT, __FILE__, __LINE__, 13-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
+#  define LOG(PRIO, FMT, ...)          printf_log((PRIO), LOG_PREFIX FMT, __FILE__, __LINE__, 17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
 ssize_t   printf_log(size_t prio, const char* format, ...);
 #endif
 
@@ -118,7 +119,7 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
       /* LOG(LOG_INFO, "TRY0(%s)\n", #FUNCTION); */                     \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_ERR, "ERR TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
+         LOG(LOG_INFO, "ERR TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
          RETURN(-rc); /* negated for FUSE */                            \
       }                                                                 \
    } while (0)
@@ -130,7 +131,8 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
       /* LOG(LOG_INFO, "TRY_GE0(%s)\n", #FUNCTION); */                  \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize < 0) {                                               \
-         LOG(LOG_ERR, "ERR GE0(%s) returning (%d) '%s'\n\n", #FUNCTION, errno, strerror(errno)); \
+         LOG(LOG_INFO, "ERR GE0(%s) returning (%d) '%s'\n\n",           \
+             #FUNCTION, errno, strerror(errno));                        \
          RETURN(-errno); /* negated for FUSE */                         \
       }                                                                 \
    } while (0)
@@ -145,7 +147,7 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
       LOG(LOG_INFO, "__TRY0(%s)\n", #FUNCTION);                         \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_ERR, "ERR __TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
+         LOG(LOG_INFO, "ERR __TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
          RETURN(rc); /* NOT negated! */                                 \
       }                                                                 \
    } while (0)
@@ -159,7 +161,7 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
    __attribute__ ((unused)) size_t   rc = 0;                            \
    __attribute__ ((unused)) ssize_t  rc_ssize = 0
 
-#define EXIT()                                                        \
+#define EXIT()                                  \
    LOG(LOG_INFO, "exit\n\n")
 
 
@@ -345,11 +347,14 @@ typedef struct {
 
 
 typedef struct {
-   PathInfo     info;
-   int          md_fd;          // opened for reading meta-data, or data
-   ReadStatus   read_status;    // buffer_management, current_offset, etc
-   WriteStatus  write_status;   // buffer-management, etc
-   FHFlagType   flags;
+   PathInfo      info;
+   int           md_fd;         // opened for reading meta-data, or data
+   ReadStatus    read_status;   // buffer_management, current_offset, etc
+   WriteStatus   write_status;  // buffer-management, etc
+   FHFlagType    flags;
+
+   // for support of streaming access to objects
+   ObjectStream  os;
 } MarFS_FileHandle;
 
 

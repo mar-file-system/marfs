@@ -13,8 +13,10 @@
 #include <utime.h>              /* for deprecated marfs_utime() */
 #include <stdio.h>
 
-
-
+// "The return value of this function is available to all file operations
+// in the private_data field of fuse_context."  (e.g. via get_fuse_context())
+// [http://www.cs.hmc.edu/~geoff/classes/hmc.cs135.201001/homework/fuse/fuse_doc.html]
+//
 void* marfs_init(struct fuse_conn_info* conn) {
    conn->max_write = MARFS_WRITEBUF_MAX;
    conn->want      = FUSE_CAP_BIG_WRITES;
@@ -97,6 +99,8 @@ int marfs_chown (const char* path,
    POP_USER();
    return 0;
 }
+
+// Looking for "marfs_close()"?  It's called "marfs_release()".
 
 
 int marfs_flush (const char*            path,
@@ -198,13 +202,16 @@ int marfs_getattr (const char*  path,
 }
 
 
+// *** this may not be needed until we implement user xattrs in the fuse daemon ***
+//
+// Kernel calls this with key 'security.capability'
+//
 int marfs_getxattr (const char* path,
                     const char* name,
                     char*       value,
                     size_t      size) {
-   // *** this may not be needed until we implement user xattrs in the fuse daemon ***
-   return -ENOSYS;
-
+   //   LOG(LOG_INFO, "not implemented  (path %s, key %s)\n", path, name);
+   //   return -ENOSYS;
    PUSH_USER();
 
    PathInfo info;
@@ -214,8 +221,10 @@ int marfs_getxattr (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META));
 
    // *** make sure they aren’t getting a reserved xattr***
-   if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize))
+   if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize)) {
+      LOG(LOG_INFO, "denying getxattr(%s, %s, ...)\n", path, name);
       return -EPERM;
+   }
 
    // No need for access check, just try the op
    // Appropriate  getxattr call filling in fuse structure
@@ -241,6 +250,8 @@ int marfs_ioctl(const char*            path,
 
 
 
+// *** this may not be needed until we implement user xattrs in the fuse daemon ***
+//
 // NOTE: Even though we remove reserved xattrs, user can call with empty
 //       buffer and receive back length of xattr names.  Then, when we
 //       remove reserved xattrs (in a subsequent call), user will see a
@@ -248,7 +259,7 @@ int marfs_ioctl(const char*            path,
 int marfs_listxattr (const char* path,
                      char*       list,
                      size_t      size) {
-   // *** this may not be needed until we implement user xattrs in the fuse daemon ***
+   LOG(LOG_INFO, "listxattr(%s, ...) not implemented\n", path);
    return -ENOSYS;
 
    PUSH_USER();
@@ -404,6 +415,7 @@ int marfs_mknod (const char* path,
 #undef RETURN
 #define RETURN(VALUE)                             \
    do {                                           \
+      LOG(LOG_INFO, "returning %d\n", (VALUE));   \
       free((MarFS_FileHandle*)ffi->fh);           \
       ffi->fh = 0;                                \
       return (VALUE);                             \
@@ -461,10 +473,13 @@ int marfs_open (const char*            path,
    // unsupported operations
    if (ffi->flags & (O_RDWR)) {
       fh->flags |= (FH_READING | FH_WRITING);
+      LOG(LOG_INFO, "open(O_RDWR) not implemented\n");
       RETURN(-ENOSYS);          /* for now */
    }
-   if (ffi->flags & (O_APPEND))
+   if (ffi->flags & (O_APPEND)) {
+      LOG(LOG_INFO, "open(O_APPEND) not implemented\n");
       RETURN(-ENOSYS);
+   }
 
 
    STAT_XATTRS(info);
@@ -487,9 +502,25 @@ int marfs_open (const char*            path,
          RETURN(-errno);
    }
 
+   // initialize the URL in the ObjectStream, in our FileHandle
+   // TRY0(pre_2_url, fh->os.url, MARFS_MAX_URL_SIZE, &info->pre);
+   strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
+   LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
 
-  POP_USER();
-  return 0;
+   if (PROTO_IS_S3(info->pre.repo->access_proto)) {
+      s3_set_host(info->pre.repo->host);
+      LOG(LOG_INFO, "host   '%s'\n", info->pre.repo->host);
+
+      s3_set_bucket(info->pre.bucket);
+      LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
+   }
+   if (info->pre.repo->access_proto == PROTO_S3_EMC)
+      s3_enable_EMC_extensions(1);
+
+   TRY0(open_object_stream, &fh->os, OS_PUT);
+
+   POP_USER();
+   return 0;
 }
 #undef RETURN
 #define RETURN(VALUE) return(VALUE)
@@ -647,17 +678,21 @@ int marfs_release (const char*            path,
 
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
+   ObjectStream*     os   = &fh->os;
 
    // (before closing MDFS file) close object stream.  This means telling
    // our readfunc in libaws4c that there won't be any more data, so it
    // should return 0 to curl.
    //
-   LOG(LOG_ERR, "TBD: close object-writing stream\n"); // actually causes an exit() ?
    // return -ENOSYS;
+   TRY0(close_object_stream, os);
 
    // need to write final Post record into file?  (check fh->write_state)
-   if (fh->md_fd)
+   if (fh->md_fd) {
+      if (os->flags & OSF_WRITING)
+         TRY0(ftruncate, fh->md_fd, os->written);
       TRY0(close, fh->md_fd);
+   }
 
    // install xattrs
 #if 0
@@ -673,6 +708,8 @@ int marfs_release (const char*            path,
    SAVE_XATTRS(info, MARFS_ALL_XATTRS);
 #endif
 
+   // truncate length to reflect length of data
+   
 
    POP_USER(); // EXIT();
    return 0;
@@ -713,10 +750,14 @@ int marfs_releasedir (const char*            path,
 }
 
 
+// *** this may not be needed until we implement user xattrs in the fuse daemon ***
+//
+// Kernel calls this with key 'security.capability'
+//
 int marfs_removexattr (const char* path,
                        const char* name) {
-   // *** this may not be needed until we implement user xattrs in the fuse daemon ***
-   return -ENOSYS;
+   //   LOG(LOG_INFO, "removexattr(%s, %s) not implemented\n", path, name);
+   //   return -ENOSYS;
 
    PUSH_USER();
 
@@ -732,7 +773,10 @@ int marfs_removexattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  removexattr call filling in fuse structure 
+
+#if 0 // for speed, we just ignore this
    TRY0(lremovexattr, info.md_path, name);
+#endif
 
    POP_USER();
    return 0;
@@ -783,6 +827,7 @@ int marfs_setxattr (const char* path,
                     size_t      size,
                     int         flags) {
    // *** this may not be needed until we implement user xattrs in the fuse daemon ***
+   LOG(LOG_INFO, "not implemented\n");
    return -ENOSYS;
 
    PUSH_USER();
@@ -937,19 +982,29 @@ int marfs_utimens(const char*           path,
 }
 
 
+// *** this may not be needed until we implement write in the fuse daemon ***
 int marfs_write(const char*            path,
                 const char*            buf,
                 size_t                 size,
                 off_t                  offset,
                 struct fuse_file_info* ffi) {
-   // *** this may not be needed until we implement write in the fuse daemon ***
    PUSH_USER();
 
-   PathInfo info;
-   EXPAND_PATH_INFO(&info, path);
+   //   PathInfo info;
+   //   EXPAND_PATH_INFO(&info, path);
+   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+   PathInfo*         info = &fh->info;                  /* shorthand */
+   ObjectStream*     os   = &fh->os;
+
+   // NOTE: It seems that expanding the path-info here is unnecessary.
+   //    marfs_open() will already have done this, and if our path isn't
+   //    the same as what marfs_open() saw, that's got to be a bug in fuse.
+   //
+   //   EXPAND_PATH_INFO(info, path);
+   
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
    // No need to call access as we called it in open for write
    // Make sure security is set up for accessing objrepo using iwrite_datarepo
@@ -976,8 +1031,16 @@ int marfs_write(const char*            path,
    //   }
    // Write bytes to object
    // Trunc file to current last byte  set end marker
-   LOG(LOG_ERR, "write not implemented yet\n");
-   return -ENOSYS; // TBD
+
+
+   //    LOG(LOG_INFO, "write not implemented yet\n");
+   //    return -ENOSYS; // TBD
+   //
+   // UNDER CONSTRUCTION
+   // marfs_open() opened an ObjectStream for us.
+   TRY0(stream_to_object, os, buf, size);
+
+   
 
    POP_USER();
    return 0;
@@ -1087,6 +1150,10 @@ int marfs_fallocate(const char*            path,
 }
 
 
+// this is really fstat() ??
+//
+// Instead of using the <fd> (which is not yet implemented in our
+// FileHandle), I'm calling fstat on the file itself.  Good enough?
 int marfs_fgetattr(const char*            path,
                    struct stat*           st,
                    struct fuse_file_info* ffi) {
@@ -1096,15 +1163,20 @@ int marfs_fgetattr(const char*            path,
    // don’t need to check on IPERMS
    // No need for access check, just try the op
    // appropriate fgetattr/fstat call filling in fuse structure (dont mess with xattrs)
+   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+   PathInfo*         info = &fh->info;                  /* shorthand */
+
+   TRY0(lstat, info->md_path, st);
 
    POP_USER();
    return 0;
 }
 
-// new in 2.6, yet deprecated
+// new in 2.6, yet deprecated?
 // combines opendir(), readdir(), closedir() into one call.
 int  marfs_getdir(const char *path, fuse_dirh_t , fuse_dirfil_t) {
-   assert(0);
+   LOG(LOG_ERR, "getdir(%s, ...) not implemented\n", path);
+   return -ENOSYS;
 }
 
 
@@ -1118,7 +1190,8 @@ int marfs_flock(const char*            path,
 int marfs_link (const char* path,
                 const char* to) {
    // for now, I think we should not allow link – its pretty complicated to do
-   return 0;
+   LOG(LOG_INFO, "link(%s, ...) not implemented\n", path);
+   return -ENOSYS;
 }
 
 
@@ -1127,7 +1200,8 @@ int marfs_lock(const char*            path,
                int                    cmd,
                struct flock*          locks) {
    // don’t support it, either don’t implement or throw error
-   return 0;
+   LOG(LOG_INFO, "lock(%s, ...) not implemented\n", path);
+   return -ENOSYS;
 }
 
 int marfs_poll(const char*             path,
@@ -1135,6 +1209,7 @@ int marfs_poll(const char*             path,
                struct fuse_pollhandle* ph,
                unsigned*               reventsp) {
    // either don’t implement or just return 0;
+   LOG(LOG_INFO, "poll(%s, ...) stubbed out.  Just returns 0\n", path);
    return 0;
 }
 
@@ -1163,6 +1238,17 @@ int main(int argc, char* argv[])
 
    load_config("~/marfs.config");
    init_xattr_specs();
+
+   // initialize libaws4c/libcurl
+   aws_init();
+   aws_reuse_connections(1);
+   aws_set_debug(1);
+   char* const user_name = (getenv("USER"));
+   if (aws_read_config(user_name)) {
+      // probably missing a line in ~/.awsAuth
+      LOG(LOG_ERR, "read-config for user '%s' failed\n", user_name);
+      exit(1);
+   }
 
    struct fuse_operations marfs_oper = {
       .init        = marfs_init,

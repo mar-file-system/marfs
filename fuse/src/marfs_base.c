@@ -270,6 +270,27 @@ int pre_2_str(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
 
 
 
+int pre_2_url(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
+
+   // contents may have changed
+   update_pre(pre);
+
+   int write_count = snprintf(pre_str, max_size,
+                              "%s://%s/%s/%s",
+                              ((pre->repo->flags & REPO_SSL) ? "https" : "http"),
+                              pre->repo->host,
+                              pre->bucket,
+                              pre->objid);
+   if (write_count < 0)
+      return errno;
+   if (write_count == max_size)   /* overflow */
+      return EINVAL;
+
+   return 0;
+}
+
+
+
 // parse an xattr-value string into a MarFS_XattrPre
 //
 // If <has_objid> is non-zero, caller has already populated Pre.bucket and
@@ -634,12 +655,13 @@ int load_config(const char* config_fname) {
    // hard-coded repository
    _repo  = (MarFS_Repo*) malloc(sizeof(MarFS_Repo));
    *_repo = (MarFS_Repo) {
-      .name         = "emcs3_00",
-      // .url          = "http://10.140.0.15:9020",
-      .url          = "http://10.143.0.1:9020",
-      .flags        = MARFS_ONLINE,
+      .name         = "emcS3_00",
+      // .url_prefix   = "http://10.140.0.15:9020",
+      // .url_prefix   = "http://10.143.0.1:80",
+      .host         = "10.140.0.15:9020",
+      .flags        = (REPO_ONLINE),
       .access_proto = PROTO_S3_EMC,
-      .chunk_size   = (1024 * 1024 * 512),
+      .chunk_size   = (1024 * 1024 * 512), /* i.e. max MarFS object (?) */
       .auth         = AUTH_S3_AWS_MASTER,
       .latency_ms   = (10 * 1000),
    };
@@ -707,7 +729,7 @@ int load_config(const char* config_fname) {
    if (! strncmp(hostname, "marfs-gpfs-00", 13)) {
       // 10.146.0.3  using xattrs in EXT4, for starters
       //             GPFS also available
-      fprintf(stderr, "loading for host 'marfs-gpfs-00*'\n");
+      fprintf(stderr, "loading marfs-config for host 'marfs-gpfs-00*'\n");
       MarFS_mnt_top       = "/root/projects/marfs/filesys/mnt";
       _ns->md_path        = "/root/projects/marfs/filesys/mdfs/test00"; /* EXT4 */
       _ns->trash_path     = "/root/projects/marfs/filesys/trash/test00";
@@ -715,7 +737,7 @@ int load_config(const char* config_fname) {
    }
    else if ((! strncmp(hostname, "rrz-", 4))
        || (! strncmp(hostname, "ca-", 3))) {
-      fprintf(stderr, "loading for host 'rrz-*' or 'ca-*'\n");
+      fprintf(stderr, "loading marfs-config for host 'rrz-*' or 'ca-*'\n");
       MarFS_mnt_top       = "/users/jti/projects/marfs/git/fuse/test/filesys/mnt";
       _ns->md_path        = "/users/jti/projects/marfs/git/fuse/filesys/mdfs/test00";
       _ns->trash_path     = "/users/jti/projects/marfs/git/fuse/filesys/trash/test00";
@@ -723,7 +745,7 @@ int load_config(const char* config_fname) {
    }
    else {
       // 10.135.0.2   has XFS, supporting xattrs
-      fprintf(stderr, "loading for host 10.135.0.2 [default]'\n");
+      fprintf(stderr, "loading marfs-config for host 10.135.0.2 [default]'\n");
       MarFS_mnt_top       = "/root/jti/projects/marfs/git/fuse/test/filesys/mnt";
       _ns->md_path        = "/mnt/xfs/jti/filesys/mdfs/test00";
       _ns->trash_path     = "/mnt/xfs/jti/filesys/trash/test00";
