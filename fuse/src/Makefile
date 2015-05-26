@@ -1,20 +1,32 @@
+# Lots of testing/support crap in here, for now.
+
 all: marfs_fuse
 
 
+OBJS = logging.o marfs_base.o common.o object_stream.o
+SRCS = logging.c marfs_base.c common.c object_stream.c
+H    = logging.h marfs_base.h common.h object_stream.h
+LOG  = fuse.log
+
+
 GIT = `readlink -f ~/projects/marfs/git`
-SYS = `readlink -f ~/projects/marfs/filesys`
 
-OBJS = marfs_base.o common.o object_stream.o
-H    = marfs_base.h common.h object_stream.h
-
-# MNT  = ./filesys/mnt
-MNT  = $(SYS)/mnt
-MDFS = $(SYS)/mdfs/test00
+### SYS = `readlink -f ~/projects/marfs/filesys`
+### 
+### MNT  = $(SYS)/mnt
+### MDFS = $(SYS)/mdfs/test00
 
 
+GPFS = /gpfs/marfs-gpfs/fuse
+
+MNT    = /marfs
+MDFS   = $(GPFS)/test00/mdfs
+FSINFO = $(GPFS)/test00/fsinfo
 
 
-# if you set the environment variable DEBUG, we'll add '-g', and defined
+
+
+# if you set the environment variable DEBUG, we'll add '-g', and define
 # DEBUG for the pre-processor.
 ifeq ($(DEBUG),1)
 	CFLAGS += -g
@@ -33,8 +45,8 @@ endif
 
 
 # c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
-CFLAGS += -Wall -std=c99 `pkg-config fuse --cflags` -I $(LIBAWS4C) -I.
-CFLAGS += $(patsubst %, -D%, $(DEFS))
+CFLAGS  += -Wall -std=c99 `pkg-config fuse --cflags` -I.
+CFLAGS  += $(patsubst %, -D%, $(DEFS))
 
 # LDFLAGS += `pkg-config fuse --cflags --libs` -lm -L $(LIBAWS4C) -laws4c
 LDFLAGS += `pkg-config fuse --libs-only-L`
@@ -43,6 +55,7 @@ LIBS    += `pkg-config fuse --libs-only-l` -lm
 # stuf for aws4c
 ### LIBAWS4C = /users/jti/projects/ecs_hobo/tools/aws4c
 LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
+CFLAGS  += -I $(LIBAWS4C)
 LDFLAGS += -L$(LIBAWS4C)
 LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
 
@@ -59,11 +72,14 @@ WORK = 10.146.0.3
 2work:
 	rsync -Pvaurl ~/projects/marfs/git/ root@$(WORK):/root/projects/marfs/git
 	# rsync -Pvaurl ~/projects/ecs_hobo/tools/aws4c/ root@$(WORK):/root/projects/ecs_hobo/tools/aws4c
+	# rsync -Pvaurl ~/projects/ecs_hobo/tools/curl_tools/ root@$(WORK):/root/projects/ecs_hobo/tools/curl_tools
+
 
 # only works on ccstargate, or cc-gate
 fromwork:
 	rsync -Pvaurl root@$(WORK):/root/projects/marfs/git/ ~/projects/marfs/git
 	rsync -Pvaurl root@$(WORK):/root/projects/ecs_hobo/tools/aws4c/ ~/projects/ecs_hobo/tools/aws4c
+	rsync -Pvaurl root@$(WORK):/root/projects/ecs_hobo/tools/curl_tools/ ~/projects/ecs_hobo/tools/curl_tools
 
 # ...........................................................................
 
@@ -82,14 +98,10 @@ demo_%: demo_%.o $(OBJS)
 
 PID = marfs_fuse.pid
 
-mnt.simple: marfs_fuse
-	@ # marfs_fuse $(MNT)
-	@ echo
-	@ echo "mounting at $(MNT)"
-	marfs_fuse -f $(MNT) &
 
-# NOTE: You should do this, if you want to see core-files:
-#  # [default core-pattern was "/var/tmp/core-%e-%p-%t"]
+# NOTE: You should do this, if you want to see core-files.
+#       Otherwise, they might end up in /var/tmp
+#       [default core-pattern was "/var/tmp/core-%e-%p-%t"]
 #
 #  $ ulimit -c unlimited
 #  $ echo "core.%e-%t" > /proc/sys/kernel/core_pattern
@@ -98,21 +110,73 @@ mnt: marfs_fuse umnt
 	@ echo
 	@ echo "mounting at $(MNT)"
 	@ echo "core.%e-%t" > /proc/sys/kernel/core_pattern
-	marfs_fuse -d -f $(MNT) > foo.log 2>&1 &
+	( marfs_fuse -d -f $(MNT) > $(LOG) 2>&1 & echo "$$!" > $(PID) )
+	@ echo "PID: " `cat $(PID)`
 	@
 	@ # TBD: while (! `mount | grep fuse | grep -v fusectl | wc -l`) ; do (echo sleeping; sleep 1) done
 	@ echo "sleeping to give background fuse a chance to start"
 	sleep 1
 
+
+mnt.simple: marfs_fuse
+	@ # marfs_fuse $(MNT)
+	@ echo
+	@ echo "mounting at $(MNT)"
+	marfs_fuse -f $(MNT) &
+	echo $! > $(PID)
+
+
+
 # okay to run this even if not mounted
-umnt:
+umnt: umnt.force
+
+# umnt.force:
+# 	@ ps -elf | grep marfs_fuse | grep -v grep | awk '{print $$4}' | xargs -r echo kill -KILL
+# 	@ ps -elf | grep marfs_fuse | grep -v grep | awk '{print $$4}' | xargs -r kill -KILL
+# 	@ $(MAKE) umnt.simple
+
+umnt.force:
+	@ cat $(PID) | xargs -r echo kill -KILL
+	@ cat $(PID) | xargs -r kill -KILL
+	@ $(MAKE) umnt.simple
+
+umnt.simple:
 	@ (fusermount -q -u $(MNT) && echo "unmounted") || echo "already unmounted"
 
+test_umnt:
+	@ (fusermount -q -u $(MNT) && echo "unmounted") || ( (( `ps -elf | grep fuse_mount | grep -v grep` )) && echo "wedged" ) || echo "already unmounted"
 
-# wipe all state from MDFS and object-store
-reset:
-	rm -f $(MDFS)/foo
 
+
+
+# wipe all state from MDFS
+reset_md:
+	rm -f $(MDFS)/*
+	# rm -f $(TRASH)/*
+	rm -f $(FSINFO)
+	touch $(FSINFO)
+
+# wipe all objects under  http://10.140.0.15:9020/emcS3_00.-test00/
+reset_obj:
+	@ ls_obj_w_prefix emcS3_00.-test00 ver | xargs -r -L 1 rm_obj
+
+
+
+test_wr:
+	@ echo "testing 1 2 3" > $(MNT)/test00/foo || echo "failed"
+	@ $(MAKE) show_results
+
+test_rd:
+	@ cat $(MNT)/test00/foo || echo "failed"
+	@ $(MAKE) show_results
+
+show_results:
+	@ echo "sleeping to let logging complete"
+	sleep 1
+	@ echo "tail of $(LOG) (trimmed to match window-size):"
+	@ tail -20 $(LOG) | cut -c-`tput cols`
+	@ echo
+	@ $(MAKE) mdfs-foo
 
 # TBD: develop a unit-test script to run ops on the mount-point
 # unit tests of the FUSE mount
@@ -124,13 +188,8 @@ reset:
 # 	$(MAKE) umount
 
 # after edits: unmount, rebuild (if needed), wipe MDFS, mount, run test, show the log
-redo: umnt marfs_fuse reset mnt
-	echo "foo" > $(MNT)/test00/foo || echo "failed"
-	@ echo
-	@ echo "tail of foo.log (trimmed to match window-size):"
-	@ tail -20 foo.log | cut -c-`tput cols`
-	@ echo
-	$(MAKE) mdfs-foo
+redo: umnt marfs_fuse reset_md reset_obj mnt
+
 
 gdb:
 	ls core.* | tail -n -1 | xargs exec gdb marfs_fuse
@@ -171,8 +230,12 @@ mdfs-%:
 	@ echo "overview of metadata for $(MDFS)/$*"
 	@ ls -l   $(MDFS)/$*
 	@ echo
-	@ echo "xattrs:"
-	@ (attr -l $(MDFS)/$* | grep marfs_) || echo "(none)"
+	@ # echo "xattrs:"
+	@ # (attr -l $(MDFS)/$* | grep marfs_) || echo "(none)"
+	@ echo
+	@ ( attr -g marfs_objid $(MDFS)/$* 2>/dev/null || echo "N/A")
+	@ echo
+	@ ( attr -g marfs_post  $(MDFS)/$* 2>/dev/null || echo "N/A")
 
 
 # -- various testing
@@ -190,7 +253,7 @@ hello3: hello3.o $(OBJS)
 
 # lines-of-code
 loc:
-	wc -l marfs_base.{h,c} common.{h,c} marfs_fuse.{h,c} 
+	wc -l $(H) $(SRCS)
 
 show_inc_path:
 	gcc -Wp,-v $(CFLAGS) -c -o marfs_base.o marfs_base.c

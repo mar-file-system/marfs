@@ -179,6 +179,11 @@ int init_pre(MarFS_XattrPre*        pre,
 // Pre.obj_ctime.  The obj-id for that object should reflect this new
 // ctime, not the one it had when you parsed the orginal obj-id.
 //
+// Or maybe marfs_write was about to exceed Pre.chunk_size, so you closed
+// off one object, updated the chunk_no, and now you want to regenerate the
+// obj-id for the new chunk, so you can generate a new URL, for the
+// ObjectStream.
+//
 // NOTE: S3 requires the bucket and object-name to be separate strings.
 //       But Scality sproxyd treats them as a single string.  Because they
 //       must have the capability of being separated, we store them
@@ -281,11 +286,13 @@ int pre_2_url(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
                               pre->repo->host,
                               pre->bucket,
                               pre->objid);
-   if (write_count < 0)
-      return errno;
-   if (write_count == max_size)   /* overflow */
-      return EINVAL;
 
+   if (write_count < 0)         // (errno set?)
+      return -1;                
+   if (write_count == max_size) { // overflow
+      errno = EINVAL;
+      return -1;
+   }
    return 0;
 }
 
@@ -300,7 +307,10 @@ int pre_2_url(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
 //       However, that could possibly change at some point.  (e.g. we might
 //       have some fields we want to add tot he XattrPre xattr-value,
 //       without requiring they be added to the object-id.)
-
+//
+// NOTE: There is a bug in strptime() such that the presence of "%z" in our
+//       data-format, which appears to be correctly handled by strftime(),
+//       causes strptime() to initialize tm.tm_isdst with crap.
 
 int str_2_pre(MarFS_XattrPre*    pre,
               const char*        pre_str, // i.e. an xattr-value
@@ -311,11 +321,13 @@ int str_2_pre(MarFS_XattrPre*    pre,
    read_count = sscanf(pre_str, NON_SLASH "/%s",
                        pre->bucket,
                        pre->objid);
-   if (read_count == EOF)
-      return errno;
-   if (read_count != 2)
-      return EINVAL;
 
+   if (read_count == EOF)       // errno is set (?)
+      return -1;
+   if (read_count != 2) {
+      errno = EINVAL;
+      return -1;
+   }
 
    int   major;
    int   minor;
@@ -352,64 +364,104 @@ int str_2_pre(MarFS_XattrPre*    pre,
                        repo_name,
                        ns_name);
 
-   if (read_count == EOF)
-      return errno;
-   else if (read_count != 2)
-      return EINVAL;            /* ?? */
-
+   if (read_count == EOF)       // errno is set (?)
+      return -1;
+   else if (read_count != 2) {
+      errno = EINVAL;            /* ?? */
+      return -1;
+   }
 
    // --- parse "obj-id" components (i.e. the part below bucket)
    read_count = sscanf(pre->objid, MARFS_OBJID_RD_FORMAT,
                        &major, &minor,
                        &obj_type, &compress, &correct, &encrypt,
                        &md_inode,
-                       obj_ctime, md_ctime,
+                       md_ctime, obj_ctime,
                        &chunk_size, &chunk_no);
 
-   if (read_count == EOF)
-      return errno;
-   else if (read_count != 11)
-      return EINVAL;            /* ?? */
+   if (read_count == EOF)       // errno is set (?)
+      return -1;
+   else if (read_count != 11) {
+      errno = EINVAL;            /* ?? */
+      return -1;
+   }
 
+   fprintf(stderr, "str_2_pre: md_ctime:  %s\n", md_ctime);
+   fprintf(stderr, "str_2_pre: obj_ctime: %s\n", obj_ctime);
 
    // --- conversions and validation
 
    // find repo from repo-name
    MarFS_Repo* repo = find_repo_by_name(repo_name);
-   if (! repo)
-      return EINVAL;            /* ?? */
+   if (! repo) {
+      errno = EINVAL;            /* ?? */
+      return -1;
+   }
 
    // find namespace from namespace-name
-   if (decode_namespace(ns_name, ns_name))
-      return EINVAL;
+   if (decode_namespace(ns_name, ns_name)) {
+      errno = EINVAL;
+      return -1;
+   }
    MarFS_Namespace* ns = find_namespace(ns_name);
-   if (! ns)
-      return EINVAL;
+   if (! ns) {
+      errno = EINVAL;
+      return -1;
+   }
 
    // should we believe the inode in the obj-id, or the one in caller's stat struct?
-   if (md_inode != st->st_ino)
-      return EINVAL;            /* ?? */
+   if (md_inode != st->st_ino) {
+      errno = EINVAL;            /* ?? */
+      return -1;
+   }
 
    // parse encoded time-stamps
 	struct tm  md_ctime_tm;
+   memset(&md_ctime_tm, 0, sizeof(md_ctime_tm)); // DEBUGGING
    char* time_str_ptr = strptime(md_ctime, MARFS_DATE_FORMAT, &md_ctime_tm);
    if (!time_str_ptr)
-      return errno;
-   else if (*time_str_ptr)
-      return EINVAL;
+      return -1;                // errno is set
+   else if (*time_str_ptr) {
+      errno = EINVAL;
+      return -1;
+   }
 
 	struct tm  obj_ctime_tm;
+   memset(&obj_ctime_tm, 0, sizeof(obj_ctime_tm)); // DEBUGGING
    time_str_ptr = strptime(obj_ctime, MARFS_DATE_FORMAT, &obj_ctime_tm);
    if (!time_str_ptr)
-      return errno;
-   else if (*time_str_ptr)
-      return EINVAL;
+      return -1;                // errno is set
+   else if (*time_str_ptr) {
+      errno = EINVAL;
+      return -1;
+   }
 
+   struct tm* dbg = &md_ctime_tm;
+   fprintf(stderr, "str_2_pre: md_ctime:    %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+           1900+(dbg->tm_year),
+           dbg->tm_mon,
+           dbg->tm_mday,
+           dbg->tm_hour,
+           dbg->tm_min,
+           dbg->tm_sec,
+           dbg->tm_isdst);
+   dbg = &obj_ctime_tm;
+   fprintf(stderr, "str_2_pre: obj_ctime:   %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+           1900+(dbg->tm_year),
+           dbg->tm_mon,
+           dbg->tm_mday,
+           dbg->tm_hour,
+           dbg->tm_min,
+           dbg->tm_sec,
+           dbg->tm_isdst);
 
    // --- fill in fields in Pre
    pre->md_ctime     = mktime(&md_ctime_tm);
    pre->obj_ctime    = mktime(&obj_ctime_tm);
    pre->config_vers  = (float)major + ((float)minor / 1000.f);
+
+   fprintf(stderr, "str_2_pre: md_ctime:  %016lx\n", pre->md_ctime);
+   fprintf(stderr, "str_2_pre: obj_ctime: %016lx\n", pre->obj_ctime);
 
    pre->obj_type     = decode_obj_type(obj_type);
    pre->compression  = decode_compression(compress);
@@ -458,9 +510,11 @@ int post_2_str(char* post_str, size_t max_size, const MarFS_XattrPost* post) {
                                     post->correct_info,
                                     post->encrypt_info);
    if (bytes_printed < 0)
-      return errno;
-   if (bytes_printed == max_size)   /* overflow */
-      return EINVAL;
+      return -1;                  // errno is set
+   if (bytes_printed == max_size) {   /* overflow */
+      errno = EINVAL;
+      return -1;
+   }
 
    return 0;
 }
@@ -485,13 +539,17 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
                            &post->encrypt_info);
 
    if (scanf_size == EOF)
-      return errno;
-   else if (scanf_size != 8)
-      return EINVAL;            /* ?? */
+      return -1;                // errno is set
+   else if (scanf_size != 8) {
+      errno = EINVAL;
+      return -1;            /* ?? */
+   }
 
    version = (float)major + ((float)minor / 1000.f);
-   if (version != MarFS_config_vers)
-      return EINVAL;            /* ?? */
+   if (version != MarFS_config_vers) {
+      errno = EINVAL;            /* ?? */
+      return -1;
+   }
 
    post->config_vers = version;
    post->obj_type    = decode_obj_type(obj_type_code);
@@ -646,6 +704,15 @@ static MarFS_Repo*      _repo = NULL;
 //
 // TBD: Reject namespace-names that contain '-'.  See comments above
 //      encode_namespace() decl, in marfs_base.h, for an explanation.
+//
+// TBD: Add 'log-level' to config-file.  Use it to either configure syslog,
+//      or to set a flag that is tested by printf_log().  This would allow
+//      diabling some of the output logging.  Should also control whether
+//      we use aws_set_debug() to enable curl diagnostics.
+//
+// TBD: See object_stream.c We could configure a timeout for waiting on
+//      GET/PUT.  Work need to be done on the stream_wait(), to honor this
+//      timeout.
 
 int load_config(const char* config_fname) {
 
@@ -730,10 +797,16 @@ int load_config(const char* config_fname) {
       // 10.146.0.3  using xattrs in EXT4, for starters
       //             GPFS also available
       fprintf(stderr, "loading marfs-config for host 'marfs-gpfs-00*'\n");
-      MarFS_mnt_top       = "/root/projects/marfs/filesys/mnt";
-      _ns->md_path        = "/root/projects/marfs/filesys/mdfs/test00"; /* EXT4 */
-      _ns->trash_path     = "/root/projects/marfs/filesys/trash/test00";
-      _ns->fsinfo_path    = "/root/projects/marfs/filesys/fsinfo/test00"; /* a file */
+
+      ///      MarFS_mnt_top       = "/root/projects/marfs/filesys/mnt";
+      ///      _ns->md_path        = "/root/projects/marfs/filesys/mdfs/test00"; /* EXT4 */
+      ///      _ns->trash_path     = "/root/projects/marfs/filesys/trash/test00";
+      ///      _ns->fsinfo_path    = "/root/projects/marfs/filesys/fsinfo/test00"; /* a file */
+      ///
+      MarFS_mnt_top       = "/marfs";
+      _ns->md_path        = "/gpfs/marfs-gpfs/fuse/test00/mdfs";
+      _ns->trash_path     = "/gpfs/marfs-gpfs/fuse/test00/trash";
+      _ns->fsinfo_path    = "/gpfs/marfs-gpfs/fuse/test00/fsinfo"; /* a file */
    }
    else if ((! strncmp(hostname, "rrz-", 4))
        || (! strncmp(hostname, "ca-", 3))) {

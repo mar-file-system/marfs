@@ -30,6 +30,7 @@
 #include <sys/stat.h>
 #include <math.h>               // floorf
 
+#include "logging.h"
 
 
 #  ifdef __cplusplus
@@ -276,7 +277,7 @@ typedef struct MarFS_Repo {
    const char*       host;         // e.g. "10.140.0.15:9020"
    RepoFlagsType     flags;
    RepoAccessProto   access_proto;
-   size_t            chunk_size;   // chunksize for repo (Cf. Namespace.range_list)
+   size_t            chunk_size;   // max Uni-object (Cf. Namespace.range_list)
    MarFSAuthMethod   auth;         // (current) authentication method for this repo
    EncryptionMethod  encryption;   // (current) encryption method for this repo
    uint32_t          latency_ms;   // max time to wait for a response 
@@ -502,8 +503,9 @@ typedef struct MarFS_XattrPre {
    const MarFS_Repo*      repo;
    const MarFS_Namespace* ns;
 
-   float              config_vers; // (major.minor) config that file was written with
-   int                obj_type;    // This will only be { Packed, Fuse, or None }
+   float              config_vers;  // (major.minor) config that file was written with
+   MarFS_ObjType      obj_type;     // This will only be { Packed, Fuse, or None }
+                                    // see XattrPost for final correct type of object
 
    CompressionMethod  compression;  // in addition to erasure-coding
    CorrectionMethod   correction;   // (e.g. CRC/checksum/etc.)
@@ -514,9 +516,9 @@ typedef struct MarFS_XattrPre {
    time_t             obj_ctime;    // might be versions in the trash
 
    size_t             chunk_size;   // from repo-config at write-time
-   size_t             chunk_no;
+   size_t             chunk_no;     // 0-based number of current chunk (object)
 
-   //   uint16_t           slave;    // TBD: for hashing directories across slave nodes
+   //   uint16_t           slave;   // TBD: for hashing directories across slave nodes
 
    char               bucket[MARFS_MAX_BUCKET_SIZE];
    char               objid [MARFS_MAX_OBJID_SIZE]; // not including bucket
@@ -595,11 +597,11 @@ int str_3_slave(MarFS_XattrSlave* slave, const char* slave_str); // from string
 
 
 // ---------------------------------------------------------------------------
-// FileInfo
+// RecoveryInfo
 //
-// Fileinfo is a record that has information mostly from stat() of the
-// metadata file in human-readable form.  This thing is written directly
-// into the metadata file itself, in some cases.
+// This is a record that has information mostly from stat() of the metadata
+// file in human-readable form.  This thing is written directly into the
+// metadata file itself, in some cases.
 //
 // (This is recovery information captured at create time only; it is not
 // updated upon metadata changes like chmod, chown, rename, etc.)
@@ -617,7 +619,7 @@ typedef struct {
    time_t   mtime;
    time_t   ctime;
    char     mdfs_path[MARFS_MAX_MD_PATH]; // full path in the MDFS
-} Fileinfo;
+} RecoveryInfo;
 
 
 // ---------------------------------------------------------------------------

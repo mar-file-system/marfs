@@ -58,10 +58,10 @@ int push_user(uid_t* saved_euid) {
       }
       else {
          LOG(LOG_ERR, "failed!\n");
-         return errno;
+         return -1;
       }
    }
-   LOG(LOG_INFO, "succeess\n");
+   LOG(LOG_INFO, "success\n");
    return 0;
 #else
 #  error "No support for seteuid()"
@@ -82,7 +82,7 @@ int pop_user(uid_t* saved_euid) {
          LOG(LOG_ERR,
              "pop_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
              (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
-         return errno;
+         return -1;
       }
    }
    return 0;
@@ -100,8 +100,10 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    LOG(LOG_INFO, "path %s\n", path);
 
    // (pass path, address to stuff, batch/interactive, working with existing file)
-   if (! info)
-      return ENOENT;            /* no such file or directory */
+   if (! info) {
+      errno = ENOENT;
+      return -1;            /* no such file or directory */
+   }
 
 #if 0
    // NOTE: It's not always the same path that is being expanded.
@@ -119,8 +121,10 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    // everything we know about that path.  We also compute the full path of
    // the corresponding entry in the MDFS (see Namespace.md_path).
    info->ns = find_namespace(path);
-   if (! info->ns)
-      return ENOENT;            /* no such file or directory */
+   if (! info->ns) {
+      errno = ENOENT;
+      return -1;            /* no such file or directory */
+   }
 
    LOG(LOG_INFO, "namespace %s\n", info->ns->mnt_suffix);
 
@@ -134,7 +138,8 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    // don't let users into the trash
    if (! strcmp(info->md_path, info->trash_path)) {
       LOG(LOG_ERR, "users can't access trash_path\n", info->md_path);
-      return EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // you need to pass in is this interactive (fuse) or batch
@@ -177,7 +182,7 @@ int expand_trash_info(PathInfo*    info,
       char       date_string[128];
       time_t     now = time(NULL);
       if (now == (time_t)-1)
-         return errno;
+         return -1;
 
       struct tm* t = localtime(&now);
       if (! t)
@@ -258,17 +263,6 @@ int init_xattr_specs() {
 
 
 
-// in stat_xattrs(), most fields can be parsed like this
-#define PARSE_XATTR(INFO, FIELD)                                        \
-   do {                                                                 \
-      if (lgetxattr(md_path, spec->key_name,                            \
-                    (INFO)->(FIELD),                                    \
-                    sizeof((INFO)->(FIELD))) < 0)                       \
-         return errno;                                                  \
-   } while (0)
-
-
-
 // Attempt to read all MarFS system-xattrs from the file.  All values are
 // assumed to be ascii text.  Parse these values to populate fields in the
 // corresponding structs, in PathInfo.
@@ -307,7 +301,6 @@ int stat_xattrs(PathInfo* info) {
    XattrSpec* spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
 
-      LOG(LOG_INFO, "trying xattr %s ...\n", spec->key_name);
       switch (spec->value_type) {
 
       case XVT_PRE: {
@@ -321,6 +314,7 @@ int stat_xattrs(PathInfo* info) {
             // got the xattr-value.  Parse it into info->pre
             LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
             __TRY0(str_2_pre, &info->pre, xattr_value_str, &info->st);
+            LOG(LOG_INFO, "md_ctime: %016lx, obj_ctime: %016lx\n", info->pre.md_ctime, info->pre.obj_ctime);
             info->xattrs |= spec->value_type; /* found this one */
          }
          else if (errno == ENOATTR) {
@@ -331,7 +325,7 @@ int stat_xattrs(PathInfo* info) {
          }
          else {
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
-            return errno;
+            return -1;
          }
          break;
       }
@@ -351,7 +345,7 @@ int stat_xattrs(PathInfo* info) {
          }
          else {
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
-            return errno;
+            return -1;
          }
          break;
       }
@@ -364,7 +358,7 @@ int stat_xattrs(PathInfo* info) {
             if (errno == ENOATTR)
                break;           /* treat ENOATTR as restart=0 */
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
-            return errno;
+            return -1;
          }
          LOG(LOG_INFO, "XVT_RESTART\n");
          info->xattrs |= spec->value_type; /* found this one */
@@ -396,7 +390,8 @@ int stat_xattrs(PathInfo* info) {
    if (has_any_xattrs(info, MARFS_MD_XATTRS)
        && ! has_all_xattrs(info, MARFS_MD_XATTRS)) {
       LOG(LOG_ERR, "%s -- incomplete MD xattrs\n", info->md_path);
-      return EINVAL;            /* ?? */
+      errno = EINVAL;            /* ?? */
+      return -1;
    }
 
 
@@ -499,14 +494,14 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
                   break;           /* not a problem */
                LOG(LOG_INFO, "ERR removexattr(%s, %s) (%d) %s\n",
                    info->md_path, spec->key_name, errno, strerror(errno));
-               return errno;
+               return -1;
             }
          }
       }
 
       case XVT_SLAVE: {
          // TBD ...
-         LOG(LOG_ERR, "slave xattr TBD\n");
+         LOG(LOG_INFO, "slave xattr TBD\n");
          break;
       }
 
@@ -595,7 +590,7 @@ int  trash_dup_file(PathInfo*   info,
    __TRY0(expand_trash_info, info, path);
    int out = open(info->trash_path, (O_CREAT | O_WRONLY), new_mode);
    if (out == -1)
-      return errno;
+      return -1;
 
 
    // MD file for "uni" storage contains ... what?
@@ -605,7 +600,7 @@ int  trash_dup_file(PathInfo*   info,
       // read from md_file
       int in = open(info->md_path, O_RDONLY);
       if (in == -1)
-         return errno;
+         return -1;
 
       // buf used for data-transfer
       const size_t BUF_SIZE = 64 * 1024 * 1024; /* 64 MB */
@@ -621,13 +616,13 @@ int  trash_dup_file(PathInfo*   info,
          while (remain) {
             size_t wr_count = write(out, buf, remain);
             if (wr_count < 0)
-               return errno;
+               return -1;
             remain -= wr_count;
          }
       }
 
       if (rd_count < 0)
-         return errno;
+         return -1;
    }
 
    // MD file for "multi" storage contains ... what?
@@ -675,49 +670,17 @@ int trash_name(PathInfo* info, const char* path) {
 }
 
 
-// only defined/used when not runas root
-//
-// QUESTION: Do we really want fuse to abort routines with error-codes
-//    if the logging function fails?  I suspect not.  If you wanted to,
-//    you could define LOG(...) to be TRY_GE0(printf_log(...))
-
-ssize_t printf_log(size_t prio, const char* format, ...) {
-   va_list list;
-   va_start(list, format);
-
-   ssize_t written;
-   if (prio <= LOG_ERR) {
-      const char*  stand_out = "*** ERROR ";
-      const size_t stand_out_len = strlen(stand_out);
-      const size_t format_len = strlen(format);
-
-      char* tmp_buf = malloc(format_len + stand_out_len +1);
-      assert(tmp_buf);
-
-      memcpy(tmp_buf, stand_out, stand_out_len);
-      memcpy(tmp_buf + stand_out_len, format, format_len);
-      tmp_buf[stand_out_len + format_len] = 0;
-
-      written = vfprintf(stderr, tmp_buf, list);
-      free(tmp_buf);
-   }
-   else {
-      written = vfprintf(stderr, format, list);
-   }
-   fflush(stderr);
-   return written;
-}
 
 
 
-// return non-zero if there's no more space.
+// return non-zero if there's no more space (according to user's quota).
 //
 // Namespace.fsinfo has a path to a file where info about overall
 // space-usage is maintained in a custom way.  The idea is that a batch
 // process will periodically crawl the MDFS to collect the amount of
-// storage used, and it will store it there.  Then mknod()/create() can
-// look there to see whether an attempt to create a new object should be
-// allowed to succeed.
+// storage used, and it will store this information in the fsinfo file.
+// Then mknod()/create() can look there to see whether an attempt to create
+// a new object should be allowed to succeed.
 //
 // The first approach might be to store the contents of a fake statvfs
 // struct in the file, maybe in some human-readable form, for convenience.
@@ -738,10 +701,15 @@ ssize_t printf_log(size_t prio, const char* format, ...) {
 //       (e.g. PI_STATVFS) in info->flags, to avoid redundantly updating
 //       info->stvfs, but probably we should be responsive to potential
 //       ongoing updates to fsinfo, and just always read it.
+//
+// NOTE: During testing, I sometimes forget to create a dummy version of
+//       this file.  That shouldn't happen in production, but if we're
+//       testing this, and you're seeing an error in the log because this
+//       file doesn't exist, just 'touch' it.
 
 int check_quotas(PathInfo* info) {
 
-   int rc;
+   //   int rc;
 
    //   if (! (info->flags & PI_STATVFS))
    //      __TRY0(statvfs, info->ns->fsinfo, &info->stvfs);
@@ -755,8 +723,12 @@ int check_quotas(PathInfo* info) {
 #endif
 
    struct stat st;
-   __TRY0(stat, info->ns->fsinfo_path, &st);
-
+   if (stat(info->ns->fsinfo_path, &st)) {
+      LOG(LOG_ERR, "couldn't stat fsinfo at '%s': %s\n",
+          info->ns->fsinfo_path, strerror(errno));
+      errno = EINVAL;
+      return -1;
+   }
    return (st.st_size >= space_limit); /* 0 = OK,  1 = no-more-space */
 }
 

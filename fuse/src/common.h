@@ -51,35 +51,6 @@ typedef enum {
 
 
 // ---------------------------------------------------------------------------
-// logging macros use syslog for root, printf for user.
-// See syslog(3) for priority constants.
-//
-// NOTE: To see output to stderr/stdout, you must start fuse with '-f'
-// ---------------------------------------------------------------------------
-
-
-/// #define LOG_PREFIX  "marfs_fuse -- : "
-#define LOG_PREFIX  "marfs_fuse [%s:%4d]%*s %-20s | "
-#  include <syslog.h>           // we always need priority-names
-
-#ifdef RUNAS_ROOT
-// calling syslog() as a regular user on rrz seems to be an expensive no-op
-#  define INIT_LOG()                   openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)
-#  define LOG(PRIO, FMT, ...)          syslog((PRIO), FMT, __FILE__, __LINE__, 17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
-
-#else
-// must start fuse with '-f' in order to allow stdout/stderr to work
-// NOTE: print_log call merges LOG_PREFIX w/ user format at compile-time
-#  define INIT_LOG()
-/// #  define LOG(PRIO, FMT, ...)          printf_log((PRIO), LOG_PREFIX FMT, ## __VA_ARGS__)
-#  define LOG(PRIO, FMT, ...)          printf_log((PRIO), LOG_PREFIX FMT, __FILE__, __LINE__, 17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
-ssize_t   printf_log(size_t prio, const char* format, ...);
-#endif
-
-
-
-
-// ---------------------------------------------------------------------------
 // TRY, etc
 //
 // Macro-wrappers around common functions allow the fuse code to be a lot
@@ -120,7 +91,8 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
          LOG(LOG_INFO, "ERR TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
-         RETURN(-rc); /* negated for FUSE */                            \
+         /* RETURN(-rc); */ /* negated for FUSE */                      \
+         RETURN(-errno); /* negated for FUSE */                         \
       }                                                                 \
    } while (0)
 
@@ -148,7 +120,8 @@ ssize_t   printf_log(size_t prio, const char* format, ...);
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
          LOG(LOG_INFO, "ERR __TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
-         RETURN(rc); /* NOT negated! */                                 \
+         /* RETURN(rc);*/ /* NOT negated! */                            \
+         RETURN(errno);                                                 \
       }                                                                 \
    } while (0)
 
@@ -342,19 +315,18 @@ typedef struct {
 // write() can maintain state here
 typedef struct {
    // TBD ...
+   RecoveryInfo  rec_info;      // (goes into tail of object)
 } WriteStatus;
 
 
 
 typedef struct {
-   PathInfo      info;
+   PathInfo      info;          // includes xattrs, MDFS path, etc
    int           md_fd;         // opened for reading meta-data, or data
+   FHFlagType    flags;
    ReadStatus    read_status;   // buffer_management, current_offset, etc
    WriteStatus   write_status;  // buffer-management, etc
-   FHFlagType    flags;
-
-   // for support of streaming access to objects
-   ObjectStream  os;
+   ObjectStream  os;            // handle for streaming access to objects
 } MarFS_FileHandle;
 
 

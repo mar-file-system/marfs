@@ -6,6 +6,9 @@
 // entire contents of an object before writing, nor fuse write() to create
 // a complete object per call.
 //
+// These functions all expect to be wrapped in a TRY0(), in marfs_fuse, so they
+// return 0 for success, or an errno for failure.
+//
 // The streaming support here involves a curl readfunc (or writefunc) which
 // moves an incremental amount of data into a PUT (or GET), then waits for
 // more.  There is code in test_aws.c in libaws4c that shows a
@@ -21,19 +24,26 @@
 // 0).  A similar set of operation is done for fuse_read.
 //
 // TBD: double buffering.  ObjectStream wouldhave 2 IOBufs.  In the writing
-//      case, stream_to_obj would signal readfunc to go ahead, and return
+//      case, stream_put would signal readfunc to go ahead, and return
 //      immediately.  Next write would work on the other IOBuf.  See
 //      example-code in test_aws.c, case 12.
 //
 // TBD: Should ObjectStream.iob be volatile?  Test code worked without that,
 //      but future changes here might introduce subtle bugs without it.
 //
+// TBD: Should we add a mutex to OpenStream?  This would by locked during
+//      writes.  Then we'd add a "stream_flush()" function which would try
+//      to acquire the lock.  If acquired, it would just unlock again, and
+//      return.  The value would be that fuse flush could be assured that
+//      pending writes had completed, so that when it called stat on the
+//      MDFS file, we would be confident that the result was correct.
+//
 // ---------------------------------------------------------------------------
 
 #ifndef _MARFS_OBJECTS_H
 #define _MARFS_OBJECTS_H
 
-#include "common.h"
+//#include "common.h"
 #include <aws4c.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -47,7 +57,11 @@ extern "C" {
 
 typedef enum {
    OSF_OPEN       = 0x01,
-   OSF_WRITING    = 0x02,       // else, reading
+   OSF_WRITING    = 0x02,
+   OSF_READING    = 0x04,
+   OSF_EOF        = 0x08,
+   OSF_JOINED     = 0x10,
+   OSF_CLOSED     = 0x20,
 } OSFlags;
 
 
@@ -57,8 +71,10 @@ typedef struct {
    sem_t             iob_empty; // e.g. stream_to_write() can add data?
    sem_t             iob_full;  // e.g. curl readfunc can copy to PUT-stream
    pthread_t         op;        // GET/PUT
+   int               op_rc;     // typically 0 or -1  (see iob.result, for curl/S3 errors)
    char              url[MARFS_MAX_URL_SIZE]; // WARNING: only valid during open_object()
    size_t            written;   // bytes written to stream
+   // size_t         req_size;  // 
    volatile OSFlags  flags;
 } ObjectStream;
 
@@ -71,17 +87,13 @@ typedef enum {
 
 
 // initialize os.url, before calling
-int open_object_stream(ObjectStream* os, IsPut put);
+int     stream_open(ObjectStream* os, IsPut put);
 
-int stream_to_object(ObjectStream* os,
-                     const char*   buf,
-                     size_t        size);
+int     stream_put(ObjectStream* os, const char* buf, size_t size);
+ssize_t stream_get(ObjectStream* os, char* buf,       size_t size);
 
-int stream_from_object(ObjectStream* os,
-                       const char*   buf,
-                       size_t        size);
-
-int close_object_stream(ObjectStream* os);
+int     stream_sync(ObjectStream* os);
+int     stream_close(ObjectStream* os);
 
 
 
