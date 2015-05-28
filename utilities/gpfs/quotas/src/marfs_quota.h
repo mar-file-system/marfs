@@ -23,7 +23,7 @@
 extern float MarFS_config_vers;
 // Eventually would like to link fuse marfs so that these are defined in only one location
 // and also call fuse xattr parsing functions
-#define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx"
+#define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/gc.%s"
 // how objects are used to store "files"
 // NOTE: co-maintain encode/decode_obj_type()
 typedef enum {
@@ -35,6 +35,8 @@ typedef enum {
    OBJ_FUSE,           // written by FUSE.  (i.e. not packed, maybe uni/multi.
                        // Only used in object-ID, not in Post xattr)
 } MarFS_ObjType;
+
+#define MARFS_MAX_MD_PATH 1024 
 
 typedef uint64_t CorrectInfo;   // e.g. checksum
 typedef uint64_t EncryptInfo;  // e.g. encryption key (doesn't go into object-ID)
@@ -51,15 +53,16 @@ typedef struct MarFS_XattrPost {
    EncryptInfo        encrypt_info;  // any info reqd to decrypt the data
    size_t             num_objects;   // number ChunkInfos written in MDFS file
    size_t             chunk_info_bytes; // total size of chunk-info in MDFS file
+   char               gc_path[MARFS_MAX_MD_PATH];
 } MarFS_XattrPost;
 
 
 
 
 struct histogram {
-  unsigned long long int small_count;
-  unsigned long long int medium_count;
-  unsigned long long int large_count;
+  size_t small_count;
+  size_t medium_count;
+  size_t large_count;
 };
 
 struct marfs_xattr {
@@ -73,13 +76,16 @@ typedef struct fileset_stats {
       unsigned long long int sum_size;
       int sum_blocks;
       size_t sum_filespace_used;
-      unsigned long long int small_count;
-      unsigned long long int medium_count;
-      unsigned long long int large_count;
+      size_t sum_file_count;
+      size_t sum_trash;
+      size_t adjusted_size;
+      size_t small_count;
+      size_t medium_count;
+      size_t large_count;
 } fileset_stat;
 
 
-int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, int fileset_id, fileset_stat *fileset_stat_ptr, unsigned int rec_count);
+int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count);
 int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
 int get_xattr_value(gpfs_iscan_t *iscanP,
                  const char *xattrP,
@@ -88,9 +94,9 @@ int get_xattr_value(gpfs_iscan_t *iscanP,
                  struct marfs_xattr *xattr_ptr);
 void print_usage();
 void init_records(fileset_stat *fileset_stat_buf, unsigned int record_count);
-int lookup_fileset(fileset_stat *fileset_stat_ptr, unsigned int rec_count,char *inode_fileset);
+int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count,char *inode_fileset);
 static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_buffer, int index);
 int str_2_post(MarFS_XattrPost* post, struct marfs_xattr* post_str);
+void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count);
 
-#endif
 
