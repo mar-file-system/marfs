@@ -20,8 +20,12 @@ GIT = `readlink -f ~/projects/marfs/git`
 GPFS = /gpfs/marfs-gpfs/fuse
 
 MNT    = /marfs
+
+# DO NOT COMMENT ANY OF THESE OUT !!!
+# look at reset_md
 MDFS   = $(GPFS)/test00/mdfs
 FSINFO = $(GPFS)/test00/fsinfo
+TRASH  = $(GPFS)/test00/trash
 
 
 
@@ -128,7 +132,7 @@ mnt.simple: marfs_fuse
 
 
 # okay to run this even if not mounted
-umnt: umnt.force
+umnt: umnt.simple
 
 # umnt.force:
 # 	@ ps -elf | grep marfs_fuse | grep -v grep | awk '{print $$4}' | xargs -r echo kill -KILL
@@ -138,6 +142,7 @@ umnt: umnt.force
 umnt.force:
 	@ cat $(PID) | xargs -r echo kill -KILL
 	@ cat $(PID) | xargs -r kill -KILL
+	@ rm -f $(PID)
 	@ $(MAKE) umnt.simple
 
 umnt.simple:
@@ -147,13 +152,17 @@ test_umnt:
 	@ (fusermount -q -u $(MNT) && echo "unmounted") || ( (( `ps -elf | grep fuse_mount | grep -v grep` )) && echo "wedged" ) || echo "already unmounted"
 
 
+var_%:
+	@ ([ -n "$($*)" ] && echo "value: $($*)" ) || echo "empty: $*"
 
 
 # wipe all state from MDFS
+# CAREFUL!!! Think what happens if one of these variables is undefined.
+# That's why this is in a makefile.
 reset_md:
-	rm -f $(MDFS)/*
-	# rm -f $(TRASH)/*
-	rm -f $(FSINFO)
+	( [ -n "$(MDFS)" ]  && rm -f $(MDFS)/* )
+	( [ -n "$(TRASH)" ] && rm -f $(TRASH)/* )
+	( [ -n "$(FSINFO)" ]  && rm -f $(FSINFO) )
 	touch $(FSINFO)
 
 # wipe all objects under  http://10.140.0.15:9020/emcS3_00.-test00/
@@ -177,6 +186,7 @@ show_results:
 	@ tail -20 $(LOG) | cut -c-`tput cols`
 	@ echo
 	@ $(MAKE) mdfs-foo
+	@ ./show_trash
 
 # TBD: develop a unit-test script to run ops on the mount-point
 # unit tests of the FUSE mount
@@ -191,8 +201,13 @@ show_results:
 redo: umnt marfs_fuse reset_md reset_obj mnt
 
 
-gdb:
+# I have things setup so core-files sort chronologically.  (See above)
+gdb.core:
 	ls core.* | tail -n -1 | xargs exec gdb marfs_fuse
+
+gdb:
+	@ exec gdb marfs_fuse `cat "$(PID)"`
+
 
 %: %.o
 	gcc -o $@ $< $(LDFLAGS) $(LIBS)

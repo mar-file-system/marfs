@@ -93,10 +93,20 @@ extern float MarFS_config_vers;
 #define   MARFS_WRITEBUF_MAX    (128 * 1024 * 1024)
 
 
-// #define   MARFS_DATE_FORMAT        "%Y_%m_%d-%H_%M_%S"
-// #define   MARFS_DATE_FORMAT        "%Y_%m_%d--%H_%M_%S_%z"
+// strptime() / strftime() are severely limited in our old version of glibc
+// (2.12).  With a newer version, perhaps %Z would be understood by both of
+// them.  Then, you could restore that version of the DATE_FORMAT, and do
+// away with everything using the DST_FORMAT string, in update_pre() and
+// str_to_pre().
+//
+// #define   MARFS_DATE_FORMAT        "%Y%m%d_%H%M%S%Z"
+
 #define   MARFS_DATE_FORMAT        "%Y%m%d_%H%M%S%z"
+#define   MARFS_DST_FORMAT         "_%d"
+
+
 #define   MARFS_DATE_STRING_MAX    64  /* after formatting */
+
 
 
 // OBJECT_ID FORMAT
@@ -139,7 +149,7 @@ extern float MarFS_config_vers;
 
 
 
-#define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx"
+#define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/gc.%s"
 
 
 
@@ -236,6 +246,14 @@ extern EncryptionMethod  lookup_encryption(const char* encryption_name);
 extern char              encode_encryption(EncryptionMethod type);
 extern EncryptionMethod  decode_encryption(char);
 
+
+
+// ---------------------------------------------------------------------------
+// Standardized date/time stringification
+// ---------------------------------------------------------------------------
+
+int epoch_to_str(char* str, size_t size, const time_t* time);
+int str_to_epoch(time_t* time, const char* str, size_t size);
 
 
 // ---------------------------------------------------------------------------
@@ -562,6 +580,7 @@ typedef struct MarFS_XattrPost {
    EncryptInfo        encrypt_info;  // any info reqd to decrypt the data
    size_t             num_objects;   // number ChunkInfos written in MDFS file
    size_t             chunk_info_bytes; // total size of chunk-info in MDFS file
+   char               gc_path[MARFS_MAX_MD_PATH]; // only if file is in trash
 } MarFS_XattrPost;
 
 

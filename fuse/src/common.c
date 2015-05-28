@@ -179,17 +179,12 @@ int expand_trash_info(PathInfo*    info,
    if (! (info->flags & PI_TRASH_PATH)) {
       const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
 
-      char       date_string[128];
+      char       date_string[MARFS_DATE_STRING_MAX];
       time_t     now = time(NULL);
       if (now == (time_t)-1)
          return -1;
 
-      struct tm* t = localtime(&now);
-      if (! t)
-         return -1;
-
-      if (! strftime(date_string, sizeof(date_string)-1, "%Y%m%d%_H%M%S", t))
-         return -1;
+      __TRY0(epoch_to_str, date_string, MARFS_DATE_STRING_MAX, &now);
 
       if (snprintf(info->trash_path, MARFS_MAX_MD_PATH,
                    "%s/%s.trash_%s",
@@ -314,7 +309,8 @@ int stat_xattrs(PathInfo* info) {
             // got the xattr-value.  Parse it into info->pre
             LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
             __TRY0(str_2_pre, &info->pre, xattr_value_str, &info->st);
-            LOG(LOG_INFO, "md_ctime: %016lx, obj_ctime: %016lx\n", info->pre.md_ctime, info->pre.obj_ctime);
+            LOG(LOG_INFO, "md_ctime: %016lx, obj_ctime: %016lx\n",
+                info->pre.md_ctime, info->pre.obj_ctime);
             info->xattrs |= spec->value_type; /* found this one */
          }
          else if (errno == ENOATTR) {
@@ -520,14 +516,16 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 
 
 
-
+// [trash_file]
+// This is used to implement unlink().
+//
 // Rename MD file to trashfile, keeping all attrs.
 // original is gone.
 // Object-storage is untouched.
 //
-// NOTE: This is used to implement unlink().  Should we do something to
-//       make this thread-safe (like unlink()) ?
-int  trash_file(PathInfo*   info,
+// NOTE: Should we do something to make this thread-safe (like unlink()) ?
+//
+int  trash_unlink(PathInfo*   info,
                 const char* path) {
 
    //    pass in expanded_path_info_structure and file name to be trashed
@@ -543,9 +541,14 @@ int  trash_file(PathInfo*   info,
 }
 
 
+// [trash_dup_file]
+// This is used to implement truncate/ftruncate
+//
 // Copy trashed MD file into trash area, does NOT unlink original.
 // Does NOT do anything with object-storage.
-int  trash_dup_file(PathInfo*   info,
+// Wipes all xattrs on original, and truncs to zero.
+//
+int  trash_truncate(PathInfo*   info,
                     const char* path) {
 
    //    pass in expanded_path_info_structure and file name to be trashed
@@ -559,7 +562,7 @@ int  trash_dup_file(PathInfo*   info,
 
    int rc;
    __TRY0(stat_xattrs, info);
-   if (! has_any_xattrs(info, MARFS_MD_XATTRS)) {
+   if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
       __TRY0(truncate, info->md_path, 0);
       return 0;
    }
@@ -581,61 +584,98 @@ int  trash_dup_file(PathInfo*   info,
 
 
    // capture mode-bits, etc.  Destination has all the same mode-bits,
-   // for permissions and file-type bits only.  No, just permissions.
+   // for permissions and file-type bits only. [No, just permissions.]
    __TRY0(stat_regular, info);
    // mode_t new_mode = info->st.st_mode & (ACCESSPERMS); // ACCESSPERMS is only BSD
    mode_t new_mode = info->st.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO); // more-portable
 
+   // read from md_file
+   int in = open(info->md_path, O_RDONLY);
+   if (in == -1) {
+      LOG(LOG_ERR, "open(%s, O_RDONLY) failed\n",
+          info->md_path, new_mode);
+      return -1;
+   }
+
    // write to trash_file
    __TRY0(expand_trash_info, info, path);
    int out = open(info->trash_path, (O_CREAT | O_WRONLY), new_mode);
-   if (out == -1)
+   if (out == -1) {
+      LOG(LOG_ERR, "open(%s, (O_CREAT | )_WRONLY), [oct]%o) failed\n",
+          info->trash_path, new_mode);
       return -1;
+   }
 
+   // MD files (except Packed) are trunc'ed to their "logical" size (the
+   // size of the data they represent.  They may also contain some
+   // "physical" data (blobs we have tucked inside to track object-storage.
+   // Move the physical data, then trunc to logical size.
+   off_t log_size = info->st.st_size;
+   off_t phy_size = info->post.chunk_info_bytes;
 
-   // MD file for "uni" storage contains ... what?
-   // copy contents to the trash-version
-   if (info->post.obj_type == OBJ_UNI) {
-
-      // read from md_file
-      int in = open(info->md_path, O_RDONLY);
-      if (in == -1)
-         return -1;
+   if (phy_size) {
 
       // buf used for data-transfer
       const size_t BUF_SIZE = 64 * 1024 * 1024; /* 64 MB */
-      char buf[BUF_SIZE];
+      char         buf[BUF_SIZE];
 
-      // copy everything from md_file to trash_file, one buf at a time
+      size_t read_size = ((phy_size < BUF_SIZE) ? phy_size : BUF_SIZE);
+      size_t wr_total = 0;
+
+      // copy phy-data from md_file to trash_file, one buf at a time
       size_t rd_count;
-      for (rd_count = read(in, buf, BUF_SIZE);
+      for (rd_count = read(in, buf, read_size);
            rd_count > 0;
-           rd_count = read(in, buf, BUF_SIZE)) {
+           rd_count = read(in, buf, read_size)) {
 
-         size_t remain = rd_count;
+         char*  buf_ptr = buf;
+         size_t remain  = rd_count;
          while (remain) {
-            size_t wr_count = write(out, buf, remain);
-            if (wr_count < 0)
+            size_t wr_count = write(out, buf_ptr, remain);
+            if (wr_count < 0) {
+               LOG(LOG_ERR, "err writing %s (byte %d)\n",
+                   info->trash_path, wr_total);
                return -1;
-            remain -= wr_count;
+            }
+            remain   -= wr_count;
+            wr_total += wr_count;
+            buf_ptr  += wr_count;
          }
+
+         size_t phy_remain = phy_size - wr_total;
+         read_size = ((phy_remain < BUF_SIZE) ? phy_remain : BUF_SIZE);
+      }
+      if (rd_count < 0) {
+         LOG(LOG_ERR, "err reading %s (byte %d)\n",
+             info->trash_path, wr_total);
+         return -1;
       }
 
-      if (rd_count < 0)
-         return -1;
+      __TRY0(close, in);
+      __TRY0(close, out);
+
    }
 
-   // MD file for "multi" storage contains ... what?
-   // copy contents to the trash-version
-   else if (info->post.obj_type == OBJ_MULTI) {
+   // trunc trash-file to size
+   __TRY0(truncate, info->trash_path, log_size);
+
+   // copy xattrs to the trash-file.
+   // ugly-but-simple: make a duplicate PathInfo, but with md_path
+   // of our trash_path.  Then save_xattrs() will just work on the
+   // trash-file.
+   {  PathInfo trash_info = *info;
+      memcpy(trash_info.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
+
+      // tweak the Post xattr to indicate to garbage-collector that this
+      // file is in the trash.  The latest trick is to indicate this by
+      // storing the full path to the trash-file inside the Post.gc_path
+      // field.
+      memcpy(trash_info.post.gc_path, info->trash_path, MARFS_MAX_MD_PATH);
+
+      __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
    }
-   else if (info->post.obj_type == OBJ_PACKED) {
-      assert(0); // TBD
-   }
-   else {
-      assert(0);
-   }
-   
+
+   // clean out everything on the original
    __TRY0(trunc_xattr, info);
    __TRY0(trash_name, info, path);
 

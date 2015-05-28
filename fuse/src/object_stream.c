@@ -1,6 +1,7 @@
 // _GNU_SOURCE defines pthread_timedjoin_np(), and pthread_tryjoin_np()
 #define _GNU_SOURCE
 #include <pthread.h>
+#include <signal.h>             // pthread_kill()
 
 #include "common.h"
 #include "object_stream.h"
@@ -40,32 +41,48 @@ void stream_reset(ObjectStream* os);
 
 #define WAIT_SEM(SEM, OS)                       \
   do {                                          \
-     int rc = stream_wait_sem((SEM), (OS));     \
+     int rc = timed_sem_wait((SEM), (OS));     \
      if (rc)                                    \
         return (rc);                            \
   } while (0)
 
+#endif
 
 
 
-int stream_wait_sem(sem_t* sem, ObjectStream* os) {
-   const struct timespec timeout;
+int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
+
+   struct timespec timeout;
    if (clock_gettime(CLOCK_REALTIME, &timeout))
       return -1;
 
-   timeout.tv_sec += os->timeout_sec; // TBD
+   // timeout.tv_sec += os->timeout_sec; // TBD
+   timeout.tv_sec += timeout_sec;
 
    // wait for a little while on the semaphore
    if (! sem_timedwait(sem, &timeout))
-      return 0;              // got it
+      return 0;                 // got it
 
    if (errno != ETIMEDOUT)
-      return -1;
+      return 1;                 // timed-out
 
-   return 1;
+   return -1;                   // something else went wrong
 }
 
-#endif
+// #define safe_sem_wait(SEM, TIMEOUT, OS)                               \
+//   safe_sem_wait_internal((SEM), (TIMEOUT), (OS), __FILE__, __LINE__)
+// int safe_sem_wait_internal(sem_t* sem, size_t timeout_sec, ObjectStream* os, char* file, char* line) {
+
+#define SAFE_SEM_WAIT(SEM_PTR, TIMEOUT_SEC, OS)                         \
+   do {                                                                 \
+      if (timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))) {                   \
+         fprintf(stderr, "--- stream_sync failed to get sem [%s:%d].  Aborting.\n", \
+                 __FILE__, __LINE__);                                   \
+         pthread_kill((OS)->op, SIGKILL);                               \
+         return -1;                                                     \
+      }                                                                 \
+   } while (0)
+
 
 
 
@@ -525,8 +542,13 @@ int stream_open(ObjectStream* os, IsPut put) {
 //       accomodate that.
 // ---------------------------------------------------------------------------
 
+
+
 // wait for the S3 GET/PUT to complete
 int stream_sync(ObjectStream* os) {
+
+   // TBD: this should be a per-repo config-option
+   static const time_t timeout_sec = 5;
 
    // fuse may call fuse-flush multiple times (one for every open stream).
    // but will not call flush after calling close().
@@ -536,44 +558,44 @@ int stream_sync(ObjectStream* os) {
       return -1;
    }
 
-
-#if 1
    IOBuf* b = &os->iob;         // shorthand
    void* retval;
 
    if (! pthread_tryjoin_np(os->op, &retval)) {
-      fprintf(stderr, "--- stream_close op-thread joined\n");
+      fprintf(stderr, "--- stream_sync op-thread joined\n");
       os->flags |= OSF_JOINED;
    }
-   else if (os->flags & OSF_WRITING) {
-      // signal EOF to readfunc
-      fprintf(stderr, "--- stream_close(wr) waiting my turn\n");
-      sem_wait(&os->iob_empty);
-      aws_iobuf_reset(b);      // doesn't affect <user_data>
+   else {
 
-      fprintf(stderr, "--- stream_close(wr) sent EOF\n");
-      sem_post(&os->iob_full);
-      sem_wait(&os->iob_empty);
-   }
-   else { // READING
-      // signal EOF to writefunc
-      fprintf(stderr, "--- stream_close(rd) waiting my turn\n");
-      sem_wait(&os->iob_full);
-      aws_iobuf_reset(b);       // doesn't affect <user_data>
+      if (os->flags & OSF_WRITING) {
+         // signal EOF to readfunc
+         fprintf(stderr, "--- stream_sync(wr) waiting my turn\n");
+         SAFE_SEM_WAIT(&os->iob_empty, timeout_sec, os);// sem_wait(&os->iob_empty);
+         aws_iobuf_reset(b);      // doesn't affect <user_data>
 
-      fprintf(stderr, "--- stream_close(rd) sent EOF\n");
-      sem_post(&os->iob_full);
-      sem_wait(&os->iob_empty);
-   }
+         fprintf(stderr, "--- stream_sync(wr) sent EOF\n");
+         sem_post(&os->iob_full);
+         SAFE_SEM_WAIT(&os->iob_empty, timeout_sec, os); // sem_wait(&os->iob_empty);
+      }
+      else { // READING
+         // signal EOF to writefunc
+         fprintf(stderr, "--- stream_sync(rd) waiting my turn\n");
+         SAFE_SEM_WAIT(&os->iob_full, timeout_sec, os); // sem_wait(&os->iob_full);
+         aws_iobuf_reset(b);       // doesn't affect <user_data>
 
-#endif
+         fprintf(stderr, "--- stream_sync(rd) sent EOF\n");
+         sem_post(&os->iob_empty);
+         SAFE_SEM_WAIT(&os->iob_full, timeout_sec, os); // sem_wait(&os->iob_full);
+      }
 
-   // check whether thread has returned.  Could mean a curl
-   // error, an S3 protocol error, or server flaking out.
-   fprintf(stderr, "--- stream_sync waiting for op-thread\n");
-   if (! (os->flags & OSF_JOINED)
-       && stream_wait_op(os)) {
-      return -1;
+
+      // check whether thread has returned.  Could mean a curl
+      // error, an S3 protocol error, or server flaking out.
+      fprintf(stderr, "--- stream_sync waiting for op-thread\n");
+      if (stream_wait_op(os)) {
+         fprintf(stderr, "--- stream_sync err from op-thread\n");
+         return -1;
+      }
    }
 
    // thread has completed
@@ -620,7 +642,7 @@ int stream_close(ObjectStream* os) {
 
 
 // reset everything except URL.  This is used when stream_open gets an OS
-// that has been opened and closed.
+// that has been previously opened and closed.
 void stream_reset(ObjectStream* os) {
    char*  before_ptr  = (char*)os;
    size_t before_size = (char*)os->url - (char*)os;

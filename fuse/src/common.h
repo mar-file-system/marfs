@@ -90,7 +90,8 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY0(%s)\n", #FUNCTION); */                     \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "ERR TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
+         LOG(LOG_INFO, "ERR TRY0(%s) returning (%d) '%s'\n\n",          \
+             #FUNCTION, rc, strerror(errno));                           \
          /* RETURN(-rc); */ /* negated for FUSE */                      \
          RETURN(-errno); /* negated for FUSE */                         \
       }                                                                 \
@@ -119,7 +120,8 @@ typedef enum {
       LOG(LOG_INFO, "__TRY0(%s)\n", #FUNCTION);                         \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "ERR __TRY0(%s) returning (%d)\n\n", #FUNCTION, rc); \
+         LOG(LOG_INFO, "ERR __TRY0(%s) returning (%d)\n\n",             \
+             #FUNCTION, rc);                                            \
          /* RETURN(rc);*/ /* NOT negated! */                            \
          RETURN(errno);                                                 \
       }                                                                 \
@@ -152,8 +154,8 @@ typedef enum {
 
 
 #define EXPAND_PATH_INFO(INFO, PATH)   TRY0(expand_path_info, (INFO), (PATH))
-#define TRASH_FILE(INFO, PATH)         TRY0(trash_file,       (INFO), (PATH))
-#define TRASH_DUP_FILE(INFO, PATH)     TRY0(trash_dup_file,   (INFO), (PATH))
+#define TRASH_UNLINK(INFO, PATH)       TRY0(trash_unlink,     (INFO), (PATH))
+#define TRASH_TRUNCATE(INFO, PATH)     TRY0(trash_truncate,   (INFO), (PATH))
 #define TRASH_NAME(INFO, PATH)         TRY0(trash_name,       (INFO), (PATH))
 
 #define STAT_XATTRS(INFO)              TRY0(stat_xattrs, (INFO))
@@ -377,8 +379,8 @@ extern int  has_any_xattrs (PathInfo* info, XattrMaskType mask);
 extern int  trunc_xattr  (PathInfo* info);
 
 // need the path to initialize info->md_trash_path
-extern int  trash_file    (PathInfo* info, const char* path);
-extern int  trash_dup_file(PathInfo* info, const char* path);
+extern int  trash_unlink  (PathInfo* info, const char* path);
+extern int  trash_truncate(PathInfo* info, const char* path);
 extern int  trash_name    (PathInfo* info, const char* path);
 
 extern int  check_quotas  (PathInfo* info);

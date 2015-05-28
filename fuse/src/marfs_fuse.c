@@ -200,9 +200,9 @@ int marfs_ftruncate(const char*            path,
    if (! has_any_xattrs(&info, MARFS_MD_XATTRS))
       assert(0); // TBD.  (data stored directly in file)
 
-   //***** this may or may not work – may need a trash_dup_file() that uses
+   //***** this may or may not work – may need a trash_truncate() that uses
    //***** ftruncate since the file is already open (may need to modify the
-   //***** trash_dup_file to use trunc or ftrunc depending on if file is
+   //***** trash_truncate to use trunc or ftrunc depending on if file is
    //***** open or not
 
    // [jti: I think I read that FUSE will never call open() with O_TRUNC,
@@ -212,7 +212,7 @@ int marfs_ftruncate(const char*            path,
    // is good.]
 
    // copy metadata to trash, resets original file zero len and no xattr
-   TRASH_DUP_FILE(&info, path);
+   TRASH_TRUNCATE(&info, path);
 
    POP_USER();
    return 0;
@@ -550,6 +550,17 @@ int marfs_open (const char*            path,
       if (fh->md_fd < 0)
          RETURN(-errno);
    }
+   else {
+
+      // start out assuming write object-type is Uni.  We'll change to
+      // Multi if writes require a second object.  Open MD file now, in
+      // case we might be Multi.
+      info->post.obj_type = OBJ_UNI;
+      //      fh->md_fd = open(info->md_path,
+      //                       (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
+      //      if (fh->md_fd < 0)
+      //         RETURN(-errno);
+   }
 
    // initialize the URL in the ObjectStream, in our FileHandle
    // TRY0(pre_2_url, fh->os.url, MARFS_MAX_URL_SIZE, &info->pre);
@@ -567,6 +578,7 @@ int marfs_open (const char*            path,
       s3_enable_EMC_extensions(1);
 
    TRY0(stream_open, &fh->os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
+
 
    POP_USER();
    return 0;
@@ -768,7 +780,7 @@ int marfs_release (const char*            path,
        && (info->ns->iwrite_repo->access_proto != PROTO_DIRECT)) {
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
    }
-#else
+#elif 0
    if (has_any_xattrs(info, MARFS_MD_XATTRS))
       LOG(LOG_INFO, "has xattrs\n");
    if (info->ns->iwrite_repo->access_proto != PROTO_DIRECT)
@@ -779,9 +791,18 @@ int marfs_release (const char*            path,
    //     save_xattrs(), which results from a bug in strptime().
    //
    //   if (fh->flags & FH_WRITING)
+   SAVE_XATTRS(info, MARFS_ALL_XATTRS);
+
+#else
+   if ((info->ns->iwrite_repo->access_proto != PROTO_DIRECT)
+       && (fh->flags & FH_WRITING))
+
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
 #endif
 
+   // reclaim FileHandle allocated in marfs_open()
+   free(fh);
+   ffi->fh = 0;
    
 
    POP_USER(); // EXIT();
@@ -863,12 +884,16 @@ int marfs_rename (const char* path,
    PathInfo info;
    EXPAND_PATH_INFO(&info, path);
 
+   PathInfo info2;
+   EXPAND_PATH_INFO(&info2, to);
+
+
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // No need for access check, just try the op
    // Appropriate  rename call filling in fuse structure 
-   TRY0(rename, info.md_path, to);
+   TRY0(rename, info.md_path, info2.md_path);
 
    POP_USER();
    return 0;
@@ -984,7 +1009,7 @@ int marfs_truncate (const char* path,
    ACCESS(info.md_path, (W_OK));
 
    // copy metadata to trash, resets original file zero len and no xattr
-   TRASH_DUP_FILE(&info, path);
+   TRASH_TRUNCATE(&info, path);
 
    POP_USER();
    return 0;
@@ -1004,7 +1029,7 @@ int marfs_unlink (const char* path) {
    ACCESS(info.md_path, (W_OK));
 
    // rename file with all xattrs into trashdir, preserving objects and paths 
-   TRASH_FILE(&info, path);
+   TRASH_UNLINK(&info, path);
 
    POP_USER();
    return 0;

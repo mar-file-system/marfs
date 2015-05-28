@@ -107,6 +107,101 @@ int decode_namespace(char* dst, char* src) {
    return 0;
 }
 
+
+
+// ---------------------------------------------------------------------------
+// Standardized date/time stringification
+// ---------------------------------------------------------------------------
+
+
+// See comments above MARFS_DATA_FORMAT (in marfs_base.h)
+int epoch_to_str(char* str, size_t size, const time_t* time) {
+   struct tm tm;
+
+   // DEBUGGING
+   fprintf(stderr, "* epoch_to_str epoch:            %016lx\n", *time);
+
+   // time_t -> struct tm
+   if (! localtime_r(time, &tm)) {
+      fprintf(stderr, "localtime_r failed: %s\n", strerror(errno));
+      return -1;
+   }
+
+   // DEBUGGING
+   struct tm* dbg = &tm;
+   fprintf(stderr, "* epoch_2_str localtime:         %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+           1900+(dbg->tm_year),
+           dbg->tm_mon,
+           dbg->tm_mday,
+           dbg->tm_hour,
+           dbg->tm_min,
+           dbg->tm_sec,
+           dbg->tm_isdst);
+
+   // struct tm -> string
+   size_t strf_size = strftime(str, size, MARFS_DATE_FORMAT, &tm);
+   if (! strf_size) {
+      fprintf(stderr, "strftime failed even more than usual: %s\n", strerror(errno));
+      return -1;
+   }
+
+   // DEBUGGING
+   fprintf(stderr, "* epoch_2_str to-string (1)      %s\n", str);
+
+   // add DST indicator
+   snprintf(str+strf_size, size-strf_size, MARFS_DST_FORMAT, tm.tm_isdst);
+
+   // DEBUGGING
+   fprintf(stderr, "* epoch_2_str to-string (2)      %s\n", str);
+
+   return 0;
+}
+
+
+int str_to_epoch(time_t* time, const char* str, size_t size) {
+   struct tm tm;
+   //   memset(&tm, 0, sizeof(tm)); // DEBUGGING
+
+   fprintf(stderr, "* str_to_epoch str:             %s\n", str);
+
+   char* time_str_ptr = strptime(str, MARFS_DATE_FORMAT, &tm);
+   if (!time_str_ptr) {
+      fprintf(stderr, "strptime failed (1): %s\n", strerror(errno));
+      return -1;
+   }
+   else if (*time_str_ptr) {
+
+      // parse DST indicator
+      if (sscanf(time_str_ptr, MARFS_DST_FORMAT, &tm.tm_isdst) != 1) {
+         fprintf(stderr, "sscanf failed, at '...%s': %s\n", time_str_ptr, strerror(errno));
+         return -1;
+      }
+   }
+   else {
+      fprintf(stderr, "expected DST, after time-string, at '...%s'\n", time_str_ptr);
+      return -1;
+   }
+
+   // DEBUGGING
+   struct tm* dbg = &tm;
+   fprintf(stderr, "* str_to_epoch from string: (1)  %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+           1900+(dbg->tm_year),
+           dbg->tm_mon,
+           dbg->tm_mday,
+           dbg->tm_hour,
+           dbg->tm_min,
+           dbg->tm_sec,
+           dbg->tm_isdst);
+
+   // struct tm -> epoch
+   *time = mktime(&tm);
+
+   // DEBUGGING
+   fprintf(stderr, "* str_to_epoch epoch:            %016lx\n", *time);
+
+   return 0;
+}
+
 // ---------------------------------------------------------------------------
 // xattrs
 // ---------------------------------------------------------------------------
@@ -170,6 +265,7 @@ int init_pre(MarFS_XattrPre*        pre,
 }
 
 
+
 // before writing an xattr value-string, and maybe before opening an object
 // connection, we may want to update the bucket and objid strings, in case
 // any fields have changed.
@@ -182,7 +278,12 @@ int init_pre(MarFS_XattrPre*        pre,
 // Or maybe marfs_write was about to exceed Pre.chunk_size, so you closed
 // off one object, updated the chunk_no, and now you want to regenerate the
 // obj-id for the new chunk, so you can generate a new URL, for the
-// ObjectStream.
+// ObjectStream.  [*** WAIT!  In this case, we are supposed to keep the
+// same object-id, all-except for the chunk-number.  *** OKAY: What we're
+// doing here is updaing the objid from the struct-member-values.  If the
+// ctimes haven't been changed, then that part of the objid wont change.
+// In this case, you'd just be changing the chunk-number, to get the new
+// objid.]
 //
 // NOTE: S3 requires the bucket and object-name to be separate strings.
 //       But Scality sproxyd treats them as a single string.  Because they
@@ -218,17 +319,17 @@ int update_pre(MarFS_XattrPre* pre) {
    char encrypt  = encode_encryption(pre->encryption);
 
    // prepare date-string components
-	struct tm md_ctime_tm;
-   char md_ctime[MARFS_DATE_STRING_MAX];
-   if (! localtime_r(&pre->md_ctime, &md_ctime_tm))
-      return EINVAL;            /* ?? */
-   strftime(md_ctime, MARFS_DATE_STRING_MAX, MARFS_DATE_FORMAT, &md_ctime_tm);
+   char md_ctime_str[MARFS_DATE_STRING_MAX];
+   char obj_ctime_str[MARFS_DATE_STRING_MAX];
 
-	struct tm obj_ctime_tm;
-   char obj_ctime[MARFS_DATE_STRING_MAX];
-   if (! localtime_r(&pre->obj_ctime, &obj_ctime_tm))
-      return EINVAL;            /* ?? */
-   strftime(obj_ctime, MARFS_DATE_STRING_MAX, MARFS_DATE_FORMAT, &obj_ctime_tm);
+   if (epoch_to_str(md_ctime_str, MARFS_DATE_STRING_MAX, &pre->md_ctime)) {
+      fprintf(stderr, "error converting Pre.md_time to string\n");
+      return -1;
+   }
+   if (epoch_to_str(obj_ctime_str, MARFS_DATE_STRING_MAX, &pre->obj_ctime)) {
+      fprintf(stderr, "error converting Pre.md_time to string\n");
+      return -1;
+   }
 
    // put all components together
    write_count = snprintf(pre->objid, MARFS_MAX_OBJID_SIZE,
@@ -236,7 +337,7 @@ int update_pre(MarFS_XattrPre* pre) {
                           major, minor,
                           type, compress, correct, encrypt,
                           (uint64_t)pre->md_inode,
-                          md_ctime, obj_ctime,
+                          md_ctime_str, obj_ctime_str,
                           pre->chunk_size, pre->chunk_no);
    if (write_count < 0)
       return errno;
@@ -308,9 +409,10 @@ int pre_2_url(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
 //       have some fields we want to add tot he XattrPre xattr-value,
 //       without requiring they be added to the object-id.)
 //
-// NOTE: There is a bug in strptime() such that the presence of "%z" in our
-//       data-format, which appears to be correctly handled by strftime(),
-//       causes strptime() to initialize tm.tm_isdst with crap.
+// NOTE: strptime() and strftime() are crapulous, regarding DST and time-zones.
+//       If strptime() decides you are in DST, and you use "%z", then strptime() will simply adjust the 
+//       time-zone east by an hour.  This is a really stoopid thing to do, because strftime()
+//       
 
 int str_2_pre(MarFS_XattrPre*    pre,
               const char*        pre_str, // i.e. an xattr-value
@@ -342,8 +444,8 @@ int str_2_pre(MarFS_XattrPre*    pre,
    size_t chunk_size;
    size_t chunk_no;
 
-   char md_ctime[MARFS_DATE_STRING_MAX];
-   char obj_ctime[MARFS_DATE_STRING_MAX];
+   char md_ctime_str[MARFS_DATE_STRING_MAX];
+   char obj_ctime_str[MARFS_DATE_STRING_MAX];
 
    // --- parse bucket components
 
@@ -376,7 +478,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
                        &major, &minor,
                        &obj_type, &compress, &correct, &encrypt,
                        &md_inode,
-                       md_ctime, obj_ctime,
+                       md_ctime_str, obj_ctime_str,
                        &chunk_size, &chunk_no);
 
    if (read_count == EOF)       // errno is set (?)
@@ -385,9 +487,6 @@ int str_2_pre(MarFS_XattrPre*    pre,
       errno = EINVAL;            /* ?? */
       return -1;
    }
-
-   fprintf(stderr, "str_2_pre: md_ctime:  %s\n", md_ctime);
-   fprintf(stderr, "str_2_pre: obj_ctime: %s\n", obj_ctime);
 
    // --- conversions and validation
 
@@ -416,52 +515,23 @@ int str_2_pre(MarFS_XattrPre*    pre,
    }
 
    // parse encoded time-stamps
-	struct tm  md_ctime_tm;
-   memset(&md_ctime_tm, 0, sizeof(md_ctime_tm)); // DEBUGGING
-   char* time_str_ptr = strptime(md_ctime, MARFS_DATE_FORMAT, &md_ctime_tm);
-   if (!time_str_ptr)
-      return -1;                // errno is set
-   else if (*time_str_ptr) {
-      errno = EINVAL;
+   time_t  md_ctime;
+   time_t  obj_ctime;
+
+   if (str_to_epoch(&md_ctime, md_ctime_str, MARFS_DATE_STRING_MAX)) {
+      fprintf(stderr, "error converting string '%s' to Pre.md_time\n", md_ctime_str);
+      return -1;
+   }
+   if (str_to_epoch(&obj_ctime, obj_ctime_str, MARFS_DATE_STRING_MAX)) {
+      fprintf(stderr, "error converting string '%s' to Pre.md_time\n", md_ctime_str);
       return -1;
    }
 
-	struct tm  obj_ctime_tm;
-   memset(&obj_ctime_tm, 0, sizeof(obj_ctime_tm)); // DEBUGGING
-   time_str_ptr = strptime(obj_ctime, MARFS_DATE_FORMAT, &obj_ctime_tm);
-   if (!time_str_ptr)
-      return -1;                // errno is set
-   else if (*time_str_ptr) {
-      errno = EINVAL;
-      return -1;
-   }
-
-   struct tm* dbg = &md_ctime_tm;
-   fprintf(stderr, "str_2_pre: md_ctime:    %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
-           1900+(dbg->tm_year),
-           dbg->tm_mon,
-           dbg->tm_mday,
-           dbg->tm_hour,
-           dbg->tm_min,
-           dbg->tm_sec,
-           dbg->tm_isdst);
-   dbg = &obj_ctime_tm;
-   fprintf(stderr, "str_2_pre: obj_ctime:   %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
-           1900+(dbg->tm_year),
-           dbg->tm_mon,
-           dbg->tm_mday,
-           dbg->tm_hour,
-           dbg->tm_min,
-           dbg->tm_sec,
-           dbg->tm_isdst);
 
    // --- fill in fields in Pre
-   pre->md_ctime     = mktime(&md_ctime_tm);
-   pre->obj_ctime    = mktime(&obj_ctime_tm);
+   pre->md_ctime     = md_ctime;
+   pre->obj_ctime    = obj_ctime;
    pre->config_vers  = (float)major + ((float)minor / 1000.f);
-
-   fprintf(stderr, "str_2_pre: md_ctime:  %016lx\n", pre->md_ctime);
-   fprintf(stderr, "str_2_pre: obj_ctime: %016lx\n", pre->obj_ctime);
 
    pre->obj_type     = decode_obj_type(obj_type);
    pre->compression  = decode_compression(compress);
@@ -489,6 +559,7 @@ int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
    post->obj_type    = OBJ_NONE;   /* figured out later */
    post->num_objects = 0;
    post->chunk_info_bytes = 0;
+   memset(post->gc_path, 0, MARFS_MAX_MD_PATH);
    return 0;
 }
 
@@ -508,7 +579,8 @@ int post_2_str(char* post_str, size_t max_size, const MarFS_XattrPost* post) {
                                     post->num_objects,
                                     post->chunk_info_bytes,
                                     post->correct_info,
-                                    post->encrypt_info);
+                                    post->encrypt_info,
+                                    post->gc_path);
    if (bytes_printed < 0)
       return -1;                  // errno is set
    if (bytes_printed == max_size) {   /* overflow */
@@ -536,11 +608,12 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
                            &post->num_objects,
                            &post->chunk_info_bytes,
                            &post->correct_info,
-                           &post->encrypt_info);
+                           &post->encrypt_info,
+                           (char*)&post->gc_path); // might be empty
 
    if (scanf_size == EOF)
       return -1;                // errno is set
-   else if (scanf_size != 8) {
+   else if (scanf_size < 8) {
       errno = EINVAL;
       return -1;            /* ?? */
    }
