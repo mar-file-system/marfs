@@ -23,6 +23,7 @@
 *
 ******************************************************************************/
 char    *ProgName;
+int debug = 0;
 
 /*****************************************************************************
 Name: main
@@ -44,7 +45,8 @@ int main(int argc, char **argv) {
    fileset_stat *fileset_stat_ptr;
 //   char * fileset_name = "root,proja,projb";
 //   char  fileset_name[] = "root,proja,projb";
-   char  fileset_name[] = "proja,projb,root";
+//   char  fileset_name[] = "project_a,projb,root";
+   char  fileset_name[] = "project_a,root,projb";
    char * indv_fileset_name; 
    int i;
 
@@ -65,6 +67,7 @@ int main(int argc, char **argv) {
             exit(0);
       }
    }
+   
    if (rdir == NULL || outf == NULL) {
       fprintf(stderr,"%s: no directory (-d) or output file name (-o) specified\n",ProgName);
       exit(1);
@@ -92,33 +95,29 @@ int main(int argc, char **argv) {
    // tokeninzing.  I also require the count from the parser so that I can malloc the 
    // correct amount of filset structures.  I could always count filesets before I malloc 
    // if need be
-   printf("Going to tokenize\n");
+   if (debug) 
+      printf("Going to tokenize\n");
    indv_fileset_name = strtok(fileset_name,",");
-   printf("%s\n", indv_fileset_name);
+   if (debug) 
+      printf("%s\n", indv_fileset_name);
    i =0;
    while (indv_fileset_name != NULL) {
-      printf("%s\n", indv_fileset_name);
+      if (debug) 
+         printf("%s\n", indv_fileset_name);
       strcpy(fileset_stat_ptr[i].fileset_name, indv_fileset_name);
       indv_fileset_name = strtok(NULL,","); 
       i++;
    }
-   printf("Filsets count = %d\n", fileset_count);
+   if (debug) 
+      printf("Filsets count = %d\n", fileset_count);
   
    outfd = fopen(outf,"w");
    // Add filsets to structure so that inode scan can update fileset info
    ec = read_inodes(rdir,outfd, histo_size_ptr,fileset_id,fileset_stat_ptr,fileset_count);
-   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n",
-          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
+//   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n",
+//          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
    return (0);   
 }
-
-
-
-
-
-
-
-
 
 /***************************************************************************** 
 Name: init_records 
@@ -144,7 +143,6 @@ Name: fill_size_histo
 This function counts file sizes based on small, medium, and large for 
 the purposes of displaying a size histogram.
 *****************************************************************************/
-//fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id)
 static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_buffer, int index)
 {
 
@@ -260,18 +258,16 @@ This function opens an inode scan in order to provide size/block information
 as well as file extended attribute information
 
 *****************************************************************************/
-int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, int fileset_id,fileset_stat *fileset_stat_ptr, unsigned int rec_count) {
+int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, int fileset_id,fileset_stat *fileset_stat_ptr, size_t rec_count) {
    int rc = 0;
    const gpfs_iattr_t *iattrP;
    const char *xattrBP;
    unsigned int xattr_len; 
    register gpfs_iscan_t *iscanP = NULL;
    gpfs_fssnap_handle_t *fsP = NULL;
-//  int printCompare;
-   //unsigned long long int sum_size = 0;
    struct marfs_xattr mar_xattrs[MAX_MARFS_XATTR];
    struct marfs_xattr *xattr_ptr = mar_xattrs;
-   int i, xattr_count;
+   int xattr_count;
    char fileset_name_buffer[32];
    int last_struct_index = -1;
    unsigned int struct_index;
@@ -339,14 +335,12 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, in
       // Print out inode values to output file
       // This is handy for debug at the moment
       if (iattrP->ia_inode != 3) {	/* skip the root inode */
-         fprintf(outfd,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
-         iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
-         iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
-         iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
-
-         //sum_size += iattrP->ia_size;
-         //fill_size_histo(iattrP, histo_ptr);
-
+         if (debug) { 
+            fprintf(outfd,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
+            iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
+            iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
+            iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
+         }
 
          /*
          At this point determine if the last inode fileset name matches this one.  if not,
@@ -354,87 +348,93 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, in
          the function will return an index and this function will update appropriate 
          fields.
          */
-
-         printf("%d %d\n", last_fileset_id, iattrP->ia_filesetid);
+         if (debug) 
+            printf("%d %d\n", last_fileset_id, iattrP->ia_filesetid);
          if (last_fileset_id != iattrP->ia_filesetid) {
             gpfs_igetfilesetname(iscanP, iattrP->ia_filesetid, &fileset_name_buffer, 32); 
             struct_index = lookup_fileset(fileset_stat_ptr,rec_count,fileset_name_buffer);
+            if (struct_index == -1) 
+               continue;
             last_struct_index = struct_index;
-            printf("XXXXXX\n");
             last_fileset_id = iattrP->ia_filesetid;
-            //NOTE make sure structure has filesetid as unsigned int
-
          }
          fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
-         printf("%d size = %llu file size sum  = %llu\n", last_struct_index,iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
+         fileset_stat_ptr[last_struct_index].sum_file_count+=1;
+         if (debug) 
+            printf("%d size = %llu file size sum  = %llu\n", last_struct_index,iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
          fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id); 
 
-         if (strcmp(fileset_stat_ptr[0].fileset_name,fileset_name_buffer) ==  0) {
-            fprintf(outfd, "found matching fileset %s\n", fileset_name_buffer);
-         }
-      }
-
-      // Do we have extended attributes?
-      // This will be modified as time goes on - what xattrs do we care about
-      if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
-         xattr_ptr = &mar_xattrs[0];
-         if ((xattr_count = get_xattr_value(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+         // Do we have extended attributes?
+         // This will be modified as time goes on - what xattrs do we care about
+         if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
             xattr_ptr = &mar_xattrs[0];
-            str_2_post(&post, xattr_ptr); 
-            // Talk to Jeff about this filespace used not in post xattr
-            fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
-            
-            //for (i = 0; i < xattr_count; i++) {
-            //   fprintf(outfd,"xattr name:   %s   xattr value:  %s\n", xattr_ptr->xattr_name, xattr_ptr->xattr_value); 
-            //   xattr_ptr++;
-            //}
+            if ((xattr_count = get_xattr_value(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+               xattr_ptr = &mar_xattrs[0];
+               str_2_post(&post, xattr_ptr); 
+               // Talk to Jeff about this filespace used not in post xattr
+               if (debug) 
+                  printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
+               fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
+               if (!strcmp(post.gc_path, "0")){
+                  if (debug) 
+                     printf("gc_path is NULL\n");
+               } 
+               else {
+                  fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
+                  fileset_stat_ptr[last_struct_index].adjusted_size = fileset_stat_ptr[last_struct_index].sum_size - iattrP->ia_size; 
+               }
+
+            }
          }
       }
    } // endwhile
-   for (i=0; i < rec_count; i++) {
-      fprintf(outfd,"fileset %s file size sum  = %llu\n", fileset_stat_ptr[i].fileset_name, fileset_stat_ptr[i].sum_size);
-   }
+   write_fsinfo(outfd, fileset_stat_ptr, rec_count);
    clean_exit(outfd, iscanP, fsP, early_exit);
    return(rc);
 }
 
+/***************************************************************************** 
+Name: lookup_fileset 
 
-
-
-
-int lookup_fileset(fileset_stat *fileset_stat_ptr, unsigned int rec_count,char *inode_fileset)
+This function attempts to match the passed in fileset name to the structure
+element (array of structures ) containing that same fileset name.  The index 
+for the matching element is returned. 
+*****************************************************************************/
+int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count,char *inode_fileset)
 {
    int index = 0;
    int comp_res;
 
-
-   printf("inode fileset = %s\n", inode_fileset);
-   printf(" fileset = %s\n", inode_fileset);
-   
+   // search the array of structures for matching fileset name
    do 
    {
       index++;
    } while ((comp_res = strcmp(fileset_stat_ptr[index-1].fileset_name, inode_fileset)) && index <= rec_count);
+   // found a match
    if (!comp_res) {
-      printf("index_returned = %d\n", index-1);
       return(index-1);
    }
+   // no match return -1
    else { 
-     printf("AAAAA\n");
       return(-1);
    }
 }   
 
 
+/***************************************************************************** 
+Name: str_2_post 
 
-// parse an xattr-value string into a MarFS_XattrPost
+ parse an xattr-value string into a MarFS_XattrPost
+
+*****************************************************************************/
 int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    int   major;
    int   minor;
 
    char  obj_type_code;
-
+   if (debug)
+      printf("%s\n", post_str->xattr_value);
    // --- extract bucket, and some top-level fields
    int scanf_size = sscanf(post_str->xattr_value, MARFS_POST_FORMAT,
                            &major, &minor,
@@ -443,7 +443,8 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &post->num_objects,
                            &post->chunk_info_bytes,
                            &post->correct_info,
-                           &post->encrypt_info);
+                           &post->encrypt_info,
+                           (char*)&post->gc_path);
 
    if (scanf_size == EOF)
       return -1;                // errno is set
@@ -455,7 +456,24 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 }
 
 
+/***************************************************************************** 
+Name: write_fsinfo 
 
+This function prints various fileset information to the fs_info file
+
+*****************************************************************************/
+void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count)
+{
+   size_t i;
+ 
+   for (i=0; i < rec_count; i++) {
+      fprintf(outfd,"[%s]\n", fileset_stat_ptr[i].fileset_name);
+      fprintf(outfd,"total_file_count:  %zu\n", fileset_stat_ptr[i].sum_file_count);
+      fprintf(outfd,"total_size:  %llu\n", fileset_stat_ptr[i].sum_size);
+      fprintf(outfd,"trash_size:  %zu\n", fileset_stat_ptr[i].sum_trash);
+      fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].adjusted_size);
+   }
+}
 
 
 
