@@ -1,7 +1,3 @@
-#ifndef __MARFS_COPYRIGHT_H__
-#define __MARFS_COPYRIGHT_H__
-
-/*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
 
@@ -17,12 +13,14 @@ with the version available from LANL.
  
 Additionally, redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
+
 1. Redistributions of source code must retain the above copyright notice, this
 list of conditions and the following disclaimer.
 
 2. Redistributions in binary form must reproduce the above copyright notice,
 this list of conditions and the following disclaimer in the documentation
 and/or other materials provided with the distribution.
+
 3. Neither the name of Los Alamos National Security, LLC, Los Alamos National
 Laboratory, LANL, the U.S. Government, nor the names of its contributors may be
 used to endorse or promote products derived from this software without specific
@@ -53,6 +51,3 @@ LANL added functionality to the original work. The original work plus
 LANL contributions is found at https://github.com/jti-lanl/aws4c.
 
 GNU licenses can be found at http://www.gnu.org/licenses/.
-*/
-
-#endif
