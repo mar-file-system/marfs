@@ -38,15 +38,14 @@ int main(int argc, char **argv) {
    //unsigned int uid = 0;
    int fileset_id = -1;
    int  c;
-   unsigned int fileset_count = 3;
+   unsigned int fileset_count = 1;
    extern char *optarg;
-   struct histogram size_histo;
-   struct histogram *histo_size_ptr = &size_histo;
    fileset_stat *fileset_stat_ptr;
 //   char * fileset_name = "root,proja,projb";
 //   char  fileset_name[] = "root,proja,projb";
 //   char  fileset_name[] = "project_a,projb,root";
-   char  fileset_name[] = "project_a,root,projb";
+//   char  fileset_name[] = "project_a,root,projb";
+   char  fileset_name[] = "root";
    char * indv_fileset_name; 
    int i;
 
@@ -113,7 +112,7 @@ int main(int argc, char **argv) {
   
    outfd = fopen(outf,"w");
    // Add filsets to structure so that inode scan can update fileset info
-   ec = read_inodes(rdir,outfd, histo_size_ptr,fileset_id,fileset_stat_ptr,fileset_count);
+   ec = read_inodes(rdir, outfd, fileset_id, fileset_stat_ptr, fileset_count);
 //   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n",
 //          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
    return (0);   
@@ -189,7 +188,6 @@ int get_xattr_value(gpfs_iscan_t *iscanP,
          break;
 
       // keep track of how many xattrs found 
-      //xattr_count++;
       if (!strcmp(nameP, desired_xattr)) {
          strcpy(xattr_ptr->xattr_name, nameP);
           xattr_count++;
@@ -258,7 +256,7 @@ This function opens an inode scan in order to provide size/block information
 as well as file extended attribute information
 
 *****************************************************************************/
-int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, int fileset_id,fileset_stat *fileset_stat_ptr, size_t rec_count) {
+int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fileset_stat_ptr, size_t rec_count) {
    int rc = 0;
    const gpfs_iattr_t *iattrP;
    const char *xattrBP;
@@ -366,6 +364,7 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, in
 
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
+         
          if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
             xattr_ptr = &mar_xattrs[0];
             if ((xattr_count = get_xattr_value(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
@@ -383,7 +382,6 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, in
                   fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
                   fileset_stat_ptr[last_struct_index].adjusted_size = fileset_stat_ptr[last_struct_index].sum_size - iattrP->ia_size; 
                }
-
             }
          }
       }
