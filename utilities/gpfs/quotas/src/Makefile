@@ -1,4 +1,4 @@
-ll: marfs_quota
+all: marfs_quota
 
 #OBJS = marfs_quota.o
 
