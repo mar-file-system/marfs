@@ -6,9 +6,12 @@
 #include <sys/types.h>          // ino_t
 #include <sys/stat.h>
 #include <math.h>               // floorf
+#include <gpfs_fcntl.h>
 
-#define MAX_XATTR_VAL_LEN 64
-#define MAX_XATTR_NAME_LEN 32
+//#define MAX_XATTR_VAL_LEN 64
+//#define MAX_XATTR_NAME_LEN 32
+#define MAX_XATTR_VAL_LEN 1024 
+#define MAX_XATTR_NAME_LEN 1024 
 
 #define MAX_FILESET_NAME_LEN 256
 
@@ -66,8 +69,13 @@ struct histogram {
 };
 
 struct marfs_xattr {
-  char xattr_name[MAX_XATTR_NAME_LEN];
-  char xattr_value[MAX_XATTR_VAL_LEN];
+//  char xattr_name[MAX_XATTR_NAME_LEN];
+//  char xattr_value[MAX_XATTR_VAL_LEN];
+   
+// Getting the following array sizez from gpfs_fcntl.h
+  char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
+  char xattr_value[GPFS_FCNTL_XATTR_MAX_VALUELEN];
+
 };
 
 typedef struct fileset_stats {
@@ -85,7 +93,7 @@ typedef struct fileset_stats {
 } fileset_stat;
 
 
-int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count);
+int read_inodes(const char *fnameP, FILE *outfd, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count);
 int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
 int get_xattr_value(gpfs_iscan_t *iscanP,
                  const char *xattrP,
@@ -99,4 +107,5 @@ static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_bu
 int str_2_post(MarFS_XattrPost* post, struct marfs_xattr* post_str);
 void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count);
 
+#endif
 
