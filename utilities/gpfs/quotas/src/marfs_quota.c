@@ -17,7 +17,6 @@
 *  determine extended attributes that we care about
 *     passed in as args or hard coded?
 *  determine arguments to main 
-*  inode total count
 *  block (512 bytes) held by file
 *
 *
