@@ -94,7 +94,7 @@ typedef struct fileset_stats {
 } fileset_stat;
 
 
-int read_inodes(const char *fnameP, FILE *outfd, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count);
+int read_inodes(const char *fnameP, FILE *outfd, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offset_start);
 int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
 int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt);
 int get_xattrs(gpfs_iscan_t *iscanP,
@@ -104,10 +104,10 @@ int get_xattrs(gpfs_iscan_t *iscanP,
                  struct marfs_xattr *xattr_ptr);
 void print_usage();
 void init_records(fileset_stat *fileset_stat_buf, unsigned int record_count);
-int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count,char *inode_fileset);
+int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offset_start, char *inode_fileset);
 static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_buffer, int index);
 int str_2_post(MarFS_XattrPost* post, struct marfs_xattr* post_str);
-void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count);
+void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count, size_t index_start);
 
 #endif
 
