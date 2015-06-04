@@ -6,6 +6,7 @@
 #include <sys/types.h>          // ino_t
 #include <sys/stat.h>
 #include <math.h>               // floorf
+#include <gpfs_fcntl.h>
 
 #define MAX_XATTR_VAL_LEN 64
 #define MAX_XATTR_NAME_LEN 32
@@ -67,8 +68,10 @@ struct histogram {
 *********/
 
 struct marfs_xattr {
-  char xattr_name[MAX_XATTR_NAME_LEN];
-  char xattr_value[MAX_XATTR_VAL_LEN];
+//  char xattr_name[MAX_XATTR_NAME_LEN];
+//  char xattr_value[MAX_XATTR_VAL_LEN];
+  char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
+  char xattr_value[GPFS_FCNTL_XATTR_MAX_VALUELEN];
 };
 
 typedef struct fileset_stats {
@@ -88,7 +91,8 @@ typedef struct fileset_stats {
 
 int read_inodes(const char *fnameP, FILE *outfd, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count);
 int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
-int get_xattr_value(gpfs_iscan_t *iscanP,
+int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt);
+int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
                  const char * desired_xattr,
