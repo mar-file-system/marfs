@@ -30,5 +30,4 @@ clean:
 	$(RM) *.{o,i}
 	$(RM) *~
 	$(RM) marfs_gc   
-[root@dsu-sn45 gc]# 
 
