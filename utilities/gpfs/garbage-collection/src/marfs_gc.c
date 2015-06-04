@@ -350,7 +350,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                         fprintf(outfd,"objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
                      
                         //call aws delete_object (xattr_ptr->value);
-                        //caluu unlink(gc_pathkk
+                        //call unlink(gc_path)
                      }
 
 
