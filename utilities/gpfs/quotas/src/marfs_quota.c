@@ -47,6 +47,8 @@ int main(int argc, char **argv) {
 //   char  fileset_name[] = "root";
    char * indv_fileset_name; 
    int i;
+   unsigned int fileset_scan_count = 0;
+   unsigned int fileset_scan_index = 0; 
 
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
@@ -54,10 +56,12 @@ int main(int argc, char **argv) {
    else
       ProgName++;
 
-   while ((c=getopt(argc,argv,"d:f:ho:u:")) != EOF) {
+   while ((c=getopt(argc,argv,"c:d:f:hi:o:u:")) != EOF) {
       switch (c) {
+         case 'c': fileset_scan_count =  atoi(optarg); break;
          case 'd': rdir = optarg; break;
          case 'f': fileset_id = atoi(optarg); break;
+         case 'i': fileset_scan_index = atoi(optarg); break;
          case 'o': outf = optarg; break;
          //case 'u': uid = atoi(optarg); break;
          case 'h': print_usage();
@@ -104,11 +108,23 @@ int main(int argc, char **argv) {
     *
    */
    // Get list of filesets and count
+   if ( fileset_scan_count == 0 ) {
+      // Call parser get link list and count filesets
+      // fileset_count = fileset_scan_count;
+      fileset_count = 3; 
+      // TEMP for now until I get parser integrated
+      fileset_scan_count = fileset_count;
+      // TEMP for now until I get parser integrated
+   } 
 
-   int *fileset_id_map;
-   fileset_id_map = (int *) malloc(sizeof(int)*fileset_count); 
+   if (fileset_scan_count > fileset_count) {
+      fprintf(stderr, "Trying to scan more filesets than exist\n");
+      print_usage();
+      exit(1);
+   }  
+    
    fileset_stat_ptr = (fileset_stat *) malloc(sizeof(*fileset_stat_ptr)*fileset_count);
-   if (fileset_stat_ptr == NULL || fileset_id_map == NULL) {
+   if (fileset_stat_ptr == NULL ) {
       fprintf(stderr,"Memory allocation failed\n");
       exit(1);
    }
@@ -137,10 +153,15 @@ int main(int argc, char **argv) {
       printf("Filsets count = %d\n", fileset_count);
   
    outfd = fopen(outf,"w");
+
+    
+
+
    // Add filsets to structure so that inode scan can update fileset info
-   ec = read_inodes(rdir, outfd, fileset_id, fileset_stat_ptr, fileset_count);
+   ec = read_inodes(rdir, outfd, fileset_id, fileset_stat_ptr, fileset_scan_count,fileset_scan_index);
 //   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n",
 //          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
+   free(fileset_stat_ptr);
    return (0);   
 }
 
@@ -159,7 +180,7 @@ Name: print_usage
 *****************************************************************************/
 void print_usage()
 {
-   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file [-f fileset_id]\n",ProgName);
+   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file [-c fileset_count] [-i start_index] [-f fileset_id]\n",ProgName);
 }
 
 /***************************************************************************** 
@@ -251,6 +272,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
       }
 ***********/
     
+      // Determine if printible characters
       if (valueLen > 0) {
          printable = 0;
          if (valueLen > 1) {
@@ -266,6 +288,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
             }
          }
 
+         //create string from xattr value char array
          for (i = 0; i < valueLen; i++) {
             if (printable) {
               xattr_ptr->xattr_value[i] = valueP[i]; 
@@ -304,7 +327,7 @@ This function opens an inode scan in order to provide size/block information
 as well as file extended attribute information
 
 *****************************************************************************/
-int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fileset_stat_ptr, size_t rec_count) {
+int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offset_start) {
    int rc = 0;
    const gpfs_iattr_t *iattrP;
    const char *xattrBP;
@@ -399,7 +422,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
             printf("%d %d\n", last_fileset_id, iattrP->ia_filesetid);
          if (last_fileset_id != iattrP->ia_filesetid) {
             gpfs_igetfilesetname(iscanP, iattrP->ia_filesetid, &fileset_name_buffer, 32); 
-            struct_index = lookup_fileset(fileset_stat_ptr,rec_count,fileset_name_buffer);
+            struct_index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,fileset_name_buffer);
             if (struct_index == -1) 
                continue;
             last_struct_index = struct_index;
@@ -440,7 +463,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          }
       }
    } // endwhile
-   write_fsinfo(outfd, fileset_stat_ptr, rec_count);
+   write_fsinfo(outfd, fileset_stat_ptr, rec_count, offset_start);
    clean_exit(outfd, iscanP, fsP, early_exit);
    return(rc);
 }
@@ -452,10 +475,11 @@ This function attempts to match the passed in fileset name to the structure
 element (array of structures ) containing that same fileset name.  The index 
 for the matching element is returned. 
 *****************************************************************************/
-int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count,char *inode_fileset)
+int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offset_start, char *inode_fileset)
 {
-   int index = 0;
+   int index = offset_start;
    int comp_res;
+  
 
    // search the array of structures for matching fileset name
    do 
@@ -514,11 +538,11 @@ Name: write_fsinfo
 This function prints various fileset information to the fs_info file
 
 *****************************************************************************/
-void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count)
+void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count, size_t index_start)
 {
    size_t i;
  
-   for (i=0; i < rec_count; i++) {
+   for (i=index_start; i < rec_count+index_start; i++) {
       fprintf(outfd,"[%s]\n", fileset_stat_ptr[i].fileset_name);
       fprintf(outfd,"total_file_count:  %zu\n", fileset_stat_ptr[i].sum_file_count);
       fprintf(outfd,"total_size:  %zu\n", fileset_stat_ptr[i].sum_size);
