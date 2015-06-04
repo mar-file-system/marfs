@@ -37,14 +37,14 @@ int main(int argc, char **argv) {
    //unsigned int uid = 0;
    int fileset_id = -1;
    int  c;
-   unsigned int fileset_count = 1;
+   unsigned int fileset_count = 3;
    extern char *optarg;
    fileset_stat *fileset_stat_ptr;
 //   char * fileset_name = "root,proja,projb";
 //   char  fileset_name[] = "root,proja,projb";
 //   char  fileset_name[] = "project_a,projb,root";
-//   char  fileset_name[] = "project_a,root,projb";
-   char  fileset_name[] = "root";
+   char  fileset_name[] = "project_a,root,project_b";
+//   char  fileset_name[] = "root";
    char * indv_fileset_name; 
    int i;
 
@@ -71,10 +71,37 @@ int main(int argc, char **argv) {
       exit(1);
    }
    /*
-    * Now assuming that the config file has a list of filesets (either name or path or both).
-    * I will make a call to get a list of filesets and the count.
-    * I will use the count to malloc space for a array of strutures count size.
-    * I will malloc an array of ints count size that will map fileset id to array index 
+    * Things are becoming more clear now about how this will work with the parser
+    * The parser will return a link-list.  I will traverse and pull out filesets 
+    * from pathname (last part of pathname).  
+    * I will create an array of pointers to filesets which 
+    * I will work on as follows:
+    *
+    * Based on the number of filesets, this program will have two new arguments
+    * -c for number of filesets to scan
+    * -i index for where to start
+    *  
+    * If -c 0 is passed, the program will report total number of filesets to stdout
+    * This info can be used to determine if running multiple instances on different 
+    * filesets is desirable.
+    * If -c is non-zero than -i must be given
+    *
+    * Sample Scenario
+    *
+    * ./marfs_quota -c 0 -d /path/to/top/level/mount/fileset
+    * number of filesets:  10
+    * on node 1
+    * ./marfs_quota -c 2 -i 0 -d /path/tot/top/level/mount -o fsinfo.log
+    * This will run the scan looing for the first two filesets starting at index 0 (from list of
+    * filesets created from calling parser)
+    * on node 2
+    * ./marfs_quota -c 8 -i 2 -d /path/tot/top/level/mount -o fsinfo.log
+    * Scan looking for remaining filesetso
+    *
+    * Or run looking for all filesets 
+    * ./marfs_quota -c 10 -i 0 -d /path/tot/top/level/mount -o fsinfo.log
+    *
+    *
    */
    // Get list of filesets and count
 
@@ -154,12 +181,34 @@ static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_bu
 }
 
 /***************************************************************************** 
-Name:  get_attr_value
+Name:  get_xattr_value
 
 This function, given the name of the attribute returns the associated value.
 
 *****************************************************************************/
-int get_xattr_value(gpfs_iscan_t *iscanP,
+int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt) {
+
+   int i;
+   int ret_value = -1;
+
+   for (i=0; i< cnt; i++) {
+      if (!strcmp(xattr_ptr->xattr_name, desired_xattr)) {
+         return(i);
+      }
+      else {
+         xattr_ptr++;
+      }
+   }
+   return(ret_value);
+}
+
+/***************************************************************************** 
+Name:  get_xattrs
+
+This function fills the xattr struct with all xattr key value pairs
+
+*****************************************************************************/
+int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
                  const char * desired_xattr,
@@ -276,6 +325,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    //const char *xattr_post_name = "user.a";
   
    int early_exit =0;
+   int xattr_index;
 
    //outfd = fopen(onameP,"w");
 
@@ -358,7 +408,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
          fileset_stat_ptr[last_struct_index].sum_file_count+=1;
          if (debug) 
-            printf("%d size = %llu file size sum  = %llu\n", last_struct_index,iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
+            printf("%d size = %llu file size sum  = %zu\n", last_struct_index,iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
          fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id); 
 
          // Do we have extended attributes?
@@ -366,9 +416,15 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          
          if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
             xattr_ptr = &mar_xattrs[0];
-            if ((xattr_count = get_xattr_value(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+            if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
                xattr_ptr = &mar_xattrs[0];
-               str_2_post(&post, xattr_ptr); 
+               if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) {
+                   xattr_ptr = &mar_xattrs[xattr_index];
+                   fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
+                   str_2_post(&post, xattr_ptr);
+               }
+
+               //str_2_post(&post, xattr_ptr); 
                // Talk to Jeff about this filespace used not in post xattr
                if (debug) 
                   printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
@@ -379,7 +435,6 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                } 
                else {
                   fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
-                  fileset_stat_ptr[last_struct_index].adjusted_size = fileset_stat_ptr[last_struct_index].sum_size - iattrP->ia_size; 
                }
             }
          }
@@ -466,9 +521,9 @@ void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count)
    for (i=0; i < rec_count; i++) {
       fprintf(outfd,"[%s]\n", fileset_stat_ptr[i].fileset_name);
       fprintf(outfd,"total_file_count:  %zu\n", fileset_stat_ptr[i].sum_file_count);
-      fprintf(outfd,"total_size:  %llu\n", fileset_stat_ptr[i].sum_size);
+      fprintf(outfd,"total_size:  %zu\n", fileset_stat_ptr[i].sum_size);
       fprintf(outfd,"trash_size:  %zu\n", fileset_stat_ptr[i].sum_trash);
-      fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].adjusted_size);
+      fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
    }
 }
 
