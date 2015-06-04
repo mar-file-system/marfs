@@ -1,4 +1,3 @@
-[root@dsu-sn45 gc]# cat marfs_gc.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -46,7 +45,8 @@ int main(int argc, char **argv) {
 //   char  fileset_name[] = "root,proja,projb";
 //   char  fileset_name[] = "project_a,projb,root";
 //   char  fileset_name[] = "project_a,root,projb";
-   char  fileset_name[] = "trash";
+//   char  fileset_name[] = "trash";
+   char  fileset_name[] = "project_a";
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
       ProgName = argv[0];
@@ -110,13 +110,37 @@ void print_usage()
    fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file [-f fileset_id]\n",ProgName);
 }
 
+
+
 /***************************************************************************** 
 Name:  get_xattr_value
 
 This function, given the name of the attribute, returns the associated value.
 
 *****************************************************************************/
-int get_xattr_value(gpfs_iscan_t *iscanP,
+int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt) {
+
+   int i;
+   int ret_value = -1;
+
+   for (i=0; i< cnt; i++) {
+      if (!strcmp(xattr_ptr->xattr_name, desired_xattr)) {
+         return(i);
+      }
+      else {
+         xattr_ptr++;
+      }
+   }
+   return(ret_value);
+}
+
+/***************************************************************************** 
+Name:  get_xattrs
+
+This function fills the xattr struct with all xattr key value pairs
+
+*****************************************************************************/
+int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
                  const char * desired_xattr,
@@ -145,10 +169,10 @@ int get_xattr_value(gpfs_iscan_t *iscanP,
 
       // keep track of how many xattrs found 
       //xattr_count++;
-      if (!strcmp(nameP, desired_xattr)) {
-         strcpy(xattr_ptr->xattr_name, nameP);
+//      if (!strcmp(nameP, desired_xattr)) {
+          strcpy(xattr_ptr->xattr_name, nameP);
           xattr_count++;
-      }
+//      }
 
 /******* NOT SURE ABOUT THIS JUST YET
       Eliminate gpfs.dmapi attributes for comparision
@@ -231,6 +255,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    //const char *xattr_post_name = "user.a";
   
    int early_exit =0;
+   int xattr_index;
 
    //outfd = fopen(onameP,"w");
 
@@ -302,9 +327,14 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          // This will be modified as time goes on - what xattrs do we care about
             if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
                xattr_ptr = &mar_xattrs[0];
-               if ((xattr_count = get_xattr_value(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+               if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
                   xattr_ptr = &mar_xattrs[0];
-                  str_2_post(&post, xattr_ptr); 
+                  if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
+                     xattr_ptr = &mar_xattrs[xattr_index];
+                     fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
+                     str_2_post(&post, xattr_ptr); 
+                  }
+                  //str_2_post(&post, xattr_ptr); 
                   // Talk to Jeff about this filespace used not in post xattr
                   if (debug) 
                      printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
@@ -314,6 +344,16 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                         printf("gc_path is NULL\n");
                   } 
                   else {
+                     xattr_ptr = &mar_xattrs[0];
+                     if ((xattr_index=get_xattr_value(xattr_ptr, xattr_objid_name, xattr_count)) != -1) { 
+                        xattr_ptr = &mar_xattrs[xattr_index];
+                        fprintf(outfd,"objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
+                     
+                        //call aws delete_object (xattr_ptr->value);
+                        //caluu unlink(gc_pathkk
+                     }
+
+
                      // So trash will have two files  associated for the original mds file
 		     // The first being inodenumber.datetimestamp.metadata
 		     // The second being inodenumber.datetimestamp.path
@@ -328,11 +368,8 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
 		     //
 		     //
                      // Get pre xattr which defines object name
-                     if ((xattr_count = get_xattr_value(iscanP, xattrBP, xattr_len, xattr_objid_name, xattr_ptr)) > 0) {
-                        xattr_ptr = &mar_xattrs[0];
 			// xattr_ptr now has name of object to delete
 			// Call aws/S3 to delete object
-                     }
                      // use gc_path to delete mds stuff.  Or do I open *.path file to get path?
 		     // delete original mds file and delete trash directory stuff 
                   }
