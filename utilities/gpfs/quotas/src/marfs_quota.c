@@ -76,14 +76,24 @@ int main(int argc, char **argv) {
    }
    /*
     * Things are becoming more clear now about how this will work with the parser
-    * The parser will return a link-list.  I will traverse and pull out filesets 
-    * from pathname (last part of pathname).  
-    * I will create an array of pointers to filesets which 
-    * I will work on as follows:
+    * The parser will return a link-list. Jeff has created some support functions
+    * that may be used to get the fileset from the returned link list.  It would
+    * be ideal for the filesets to be in a comma seperated list that I can 
+    * tokenize.
     *
-    * Based on the number of filesets, this program will have two new arguments
-    * -c for number of filesets to scan
-    * -i index for where to start
+    * Based on the number of filesets, this program will have two new optional
+    * arguments  -c for number of filesets to scan and * -i index for where to 
+    * start.  filesets are contained in an array of struct
+    *
+    *  so array element [0] --> fileset_1
+    *                   [1] --> fileset_2
+    *                   [2] --> fileset_3
+    *                   [3[ --> fileset_4 
+    *
+    * so -c 2 -i 1 implies look for 2 filesets in scan and work on fileset_2 and 
+    * fileset_3 (-i 1 implies [1] which is fileset_2).
+    * If -c and -i are not specified the program defaults to looking for all filesets
+    * defined in the array of structures.
     *  
     * If -c 0 is passed, the program will report total number of filesets to stdout
     * This info can be used to determine if running multiple instances on different 
@@ -108,6 +118,8 @@ int main(int argc, char **argv) {
     *
    */
    // Get list of filesets and count
+   // When parser implemented 
+   // get filesecount before doing any of this
    if ( fileset_scan_count == 0 ) {
       // Call parser get link list and count filesets
       // fileset_count = fileset_scan_count;
@@ -117,7 +129,9 @@ int main(int argc, char **argv) {
       // TEMP for now until I get parser integrated
    } 
 
-   if (fileset_scan_count > fileset_count) {
+   if ((fileset_scan_count > fileset_count) ||
+       (fileset_scan_count + fileset_scan_index > fileset_count)) {
+
       fprintf(stderr, "Trying to scan more filesets than exist\n");
       print_usage();
       exit(1);
@@ -181,6 +195,8 @@ Name: print_usage
 void print_usage()
 {
    fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file [-c fileset_count] [-i start_index] [-f fileset_id]\n",ProgName);
+   fprintf(stderr, "NOTE: -c and -i are optional.  Default behavior will be to try to match all filesets defined in config\n");
+   fprintf(stderr, "See README for information\n");
 }
 
 /***************************************************************************** 
