@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <unistd.h>
 #include "marfs_gc.h"
+#include "aws4c.h"
 
 /******************************************************************************
 * This program reads gpfs inodes and extended attributes in order to provide
@@ -46,7 +47,7 @@ int main(int argc, char **argv) {
 //   char  fileset_name[] = "project_a,projb,root";
 //   char  fileset_name[] = "project_a,root,projb";
 //   char  fileset_name[] = "trash";
-   char  fileset_name[] = "project_a";
+   char  fileset_name[] = "project_c";
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
       ProgName = argv[0];
@@ -256,6 +257,8 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
   
    int early_exit =0;
    int xattr_index;
+   int rv;
+   char *gc_path_ptr;
 
    //outfd = fopen(onameP,"w");
 
@@ -344,12 +347,29 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                         printf("gc_path is NULL\n");
                   } 
                   else {
+                     gc_path_ptr = &post.gc_path[0];
                      xattr_ptr = &mar_xattrs[0];
                      if ((xattr_index=get_xattr_value(xattr_ptr, xattr_objid_name, xattr_count)) != -1) { 
                         xattr_ptr = &mar_xattrs[xattr_index];
                         fprintf(outfd,"objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
-                     
+                        fprintf(outfd, "remove file: %s  remove object:  %s\n", gc_path_ptr, xattr_ptr->xattr_value); 
                         //call aws delete_object (xattr_ptr->value);
+                        // OK, this section essentially works Need to make this more general of course 
+                        // but it served as a proof of concept
+                        // Some things to do:
+                        // Figure out how to get userid and host IP.  In xattr??
+                        // move s3 functions to separate function
+                        aws_init();
+                        aws_read_config("atorrez");
+                        s3_set_host ("10.140.0.17:9020");
+                        IOBuf * bf = aws_iobuf_new();
+                        //s3_set_bucket("atorrez");
+                        //rv = s3_delete( bf, "atorrez/test");
+                        rv = s3_delete( bf, xattr_ptr->xattr_value);
+                        fprintf(outfd, "s3_delete returned %d\n", rv);
+                        if ((unlink(gc_path_ptr) == -1)) {
+                            fprintf(outfd,"Error removing file\n");                         
+                        }
                         //call unlink(gc_path)
                      }
 
