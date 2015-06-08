@@ -32,24 +32,27 @@ TRASH  = $(GPFS)/test00/trash
 
 # if you set the environment variable DEBUG, we'll add '-g', and define
 # DEBUG for the pre-processor.
-ifeq ($(DEBUG),1)
-	CFLAGS += -g
-	DEFS   += DEBUG=1
-else ifeq ($(DEBUG),2)
-	CFLAGS += -ggdb -save-temps
-	DEFS   += DEBUG=1
-else ifeq ($(DEBUG),3)
-	CFLAGS += -pg
-	DEFS   += DEBUG=2
+ifdef DEBUG
+	ifeq ($(DEBUG),)
+		CFLAGS += -O3
+		DEFS   += DEBUG=0
+	else
+		CFLAGS += -g
+		DEFS   += DEBUG=$(DEBUG)
+	endif
 else
 	CFLAGS += -O3
 	DEFS   += DEBUG=0
 endif
 
 
-FUSE_FLAGS =
-ifneq ($(DEBUG),0)
-	FUSE_FLAGS += -d -f
+FUSE_FLAGS += -d -f
+ifndef DEBUG
+	FUSE_FLAGS =
+else ifeq ($(DEBUG),)
+	FUSE_FLAGS =
+else ifeq ($(DEBUG),0)
+	FUSE_FLAGS =
 endif
 
 
@@ -283,8 +286,11 @@ loc:
 show_inc_path:
 	gcc -Wp,-v $(CFLAGS) -c -o marfs_base.o marfs_base.c
 
-show_cflags:
-	@ echo "CFLAGS = $(CFLAGS)"
-
 show_env:
 	printenv
+
+show_locals:
+	@ echo "CFLAGS     = $(CFLAGS)"
+	@ echo "LDFLAGS    = $(LDFLAGS)"
+	@ echo "FUSE_FLAGS = $(FUSE_FLAGS)"
+

@@ -190,7 +190,7 @@ int epoch_to_str(char* str, size_t size, const time_t* time) {
    struct tm tm;
 
    // DEBUGGING
-   LOG(LOG_ERR, "* epoch_to_str epoch:            %016lx\n", *time);
+   LOG(LOG_INFO, "* epoch_to_str epoch:            %016lx\n", *time);
 
    // time_t -> struct tm
    if (! localtime_r(time, &tm)) {
@@ -200,7 +200,7 @@ int epoch_to_str(char* str, size_t size, const time_t* time) {
 
    // DEBUGGING
    __attribute__ ((unused)) struct tm* dbg = &tm;
-   LOG(LOG_ERR, "* epoch_2_str localtime:         %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+   LOG(LOG_INFO, "* epoch_2_str localtime:         %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
            1900+(dbg->tm_year),
            dbg->tm_mon,
            dbg->tm_mday,
@@ -217,13 +217,13 @@ int epoch_to_str(char* str, size_t size, const time_t* time) {
    }
 
    // DEBUGGING
-   LOG(LOG_ERR, "* epoch_2_str to-string (1)      %s\n", str);
+   LOG(LOG_INFO, "* epoch_2_str to-string (1)      %s\n", str);
 
    // add DST indicator
    snprintf(str+strf_size, size-strf_size, MARFS_DST_FORMAT, tm.tm_isdst);
 
    // DEBUGGING
-   LOG(LOG_ERR, "* epoch_2_str to-string (2)      %s\n", str);
+   LOG(LOG_INFO, "* epoch_2_str to-string (2)      %s\n", str);
 
    return 0;
 }
@@ -233,7 +233,7 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
    struct tm tm;
    //   memset(&tm, 0, sizeof(tm)); // DEBUGGING
 
-   LOG(LOG_ERR, "* str_to_epoch str:              %s\n", str);
+   LOG(LOG_INFO, "* str_to_epoch str:              %s\n", str);
 
    char* time_str_ptr = strptime(str, MARFS_DATE_FORMAT, &tm);
    if (!time_str_ptr) {
@@ -255,7 +255,7 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
 
    // DEBUGGING
    __attribute__ ((unused)) struct tm* dbg = &tm;
-   LOG(LOG_ERR, "* str_to_epoch from string: (1)  %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+   LOG(LOG_INFO, "* str_to_epoch from string: (1)  %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
            1900+(dbg->tm_year),
            dbg->tm_mon,
            dbg->tm_mday,
@@ -268,7 +268,7 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
    *time = mktime(&tm);
 
    // DEBUGGING
-   LOG(LOG_ERR, "* str_to_epoch epoch:            %016lx\n", *time);
+   LOG(LOG_INFO, "* str_to_epoch epoch:            %016lx\n", *time);
 
    return 0;
 }
@@ -940,7 +940,7 @@ int load_config(const char* config_fname) {
    if (! strncmp(hostname, "marfs-gpfs-00", 13)) {
       // 10.146.0.3  using xattrs in EXT4, for starters
       //             GPFS also available
-      LOG(LOG_ERR, "loading marfs-config for host 'marfs-gpfs-00*'\n");
+      LOG(LOG_INFO, "loading marfs-config for host 'marfs-gpfs-00*'\n");
 
       ///      MarFS_mnt_top       = "/root/projects/marfs/filesys/mnt";
       ///      _ns->md_path        = "/root/projects/marfs/filesys/mdfs/test00"; /* EXT4 */
@@ -954,7 +954,7 @@ int load_config(const char* config_fname) {
    }
    else if ((! strncmp(hostname, "rrz-", 4))
        || (! strncmp(hostname, "ca-", 3))) {
-      LOG(LOG_ERR, "loading marfs-config for host 'rrz-*' or 'ca-*'\n");
+      LOG(LOG_INFO, "loading marfs-config for host 'rrz-*' or 'ca-*'\n");
       MarFS_mnt_top       = "/users/jti/projects/marfs/git/fuse/test/filesys/mnt";
       _ns->md_path        = "/users/jti/projects/marfs/git/fuse/filesys/mdfs/test00";
       _ns->trash_path     = "/users/jti/projects/marfs/git/fuse/filesys/trash/test00";
@@ -962,7 +962,7 @@ int load_config(const char* config_fname) {
    }
    else {
       // 10.135.0.2   has XFS, supporting xattrs
-      LOG(LOG_ERR, "loading marfs-config for host 10.135.0.2 [default]'\n");
+      LOG(LOG_INFO, "loading marfs-config for host 10.135.0.2 [default]'\n");
       MarFS_mnt_top       = "/root/jti/projects/marfs/git/fuse/test/filesys/mnt";
       _ns->md_path        = "/mnt/xfs/jti/filesys/mdfs/test00";
       _ns->trash_path     = "/mnt/xfs/jti/filesys/trash/test00";

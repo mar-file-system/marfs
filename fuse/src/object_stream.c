@@ -303,17 +303,22 @@ int s3_op_internal(ObjectStream* os) {
 
 
    // s3_get with byte-range can leave streaming_writefunc() waiting for
-   // a curl callback that never comes.
+   // a curl callback that never comes.  This happens if there is still writable
+   // space in the buffer, when the last bytes in the request are processed.
+   // This can happen because caller (e.g. fuse) may ask for more bytes than are present,
+   // and provide a buffer big enought o receive them.
    if (is_get && (b->code == 206)) {
       // should we do something with os->iob_full?  set os->flags & EOF?
       LOG(LOG_INFO, "GET complete\n");
+      os->flags |= OSF_EOF;
+      sem_post(&os->iob_full);
       return 0;
    }
    else if (AWS4C_OK(b) ) {
       LOG(LOG_INFO, "%s complete\n", ((is_get) ? "GET" : "PUT"));
       return 0;
    }
-   LOG(LOG_ERR, "CURL ERROR: %d '%s'\n", b->code, b->result);
+   LOG(LOG_ERR, "CURL ERROR: %lx %d '%s'\n", b, b->code, b->result);
    return -1;
 }
 
@@ -500,7 +505,7 @@ size_t streaming_writeheaderfunc(void* ptr, size_t size, size_t nitems, void* st
          sem_post(&os->iob_full);
       }
       else
-         LOG(LOG_INFO, "content-length is non-zero\n");
+         LOG(LOG_INFO, "content-length (%ld) is non-zero\n", b->contentLen);
    }
    return result;
 }

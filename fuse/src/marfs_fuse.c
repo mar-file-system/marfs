@@ -296,17 +296,17 @@ int marfs_getxattr (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META));
 
    // *** make sure they aren’t getting a reserved xattr***
-   if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize)) {
-      LOG(LOG_INFO, "denying getxattr(%s, %s, ...)\n", path, name);
+   if ( !strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize) ) {
+      LOG(LOG_ERR, "denying reserved getxattr(%s, %s, ...)\n", path, name);
       return -EPERM;
    }
 
    // No need for access check, just try the op
    // Appropriate  getxattr call filling in fuse structure
-   TRY0(lgetxattr, info.md_path, name, (void*)value, size);
+   TRY_GE0(lgetxattr, info.md_path, name, (void*)value, size);
 
    POP_USER();
-   return 0;
+   return rc_ssize;
 }
 
 
@@ -1007,9 +1007,10 @@ int marfs_setxattr (const char* path,
                     const char* value,
                     size_t      size,
                     int         flags) {
-   // *** this may not be needed until we implement user xattrs in the fuse daemon ***
-   LOG(LOG_INFO, "not implemented\n");
-   return -ENOSYS;
+
+   //   // *** this may not be needed until we implement user xattrs in the fuse daemon ***
+   //   LOG(LOG_INFO, "not implemented\n");
+   //   return -ENOSYS;
 
    PUSH_USER();
 
@@ -1020,8 +1021,10 @@ int marfs_setxattr (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // *** make sure they aren’t setting a reserved xattr***
-   if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize))
+   if ( !strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize) ) {
+      LOG(LOG_ERR, "denying reserved setxattr(%s, %s, ...)\n", path, name);
       return -EPERM;
+   }
 
    // No need for access check, just try the op
    // Appropriate  setxattr call filling in fuse structure 
@@ -1560,7 +1563,9 @@ int main(int argc, char* argv[])
    // initialize libaws4c/libcurl
    aws_init();
    aws_reuse_connections(1);
+#if (DEBUG > 1)
    aws_set_debug(1);
+#endif
    char* const user_name = (getenv("USER"));
    if (aws_read_config(user_name)) {
       // probably missing a line in ~/.awsAuth

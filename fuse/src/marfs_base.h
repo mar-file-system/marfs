@@ -540,14 +540,16 @@ typedef struct MarFS_Namespace {
 
 #ifdef XFS
 #  define   MarFS_XattrPrefix      "user.marfs_"
+#  define   MarFS_XattrPrefixSize  11  /* would compiler optimize "strlen(MarFS_XattrPrefix)" ? */
+
 #else
 #  define   MarFS_XattrPrefix      "marfs_"
+#  define   MarFS_XattrPrefixSize  6   /* would compiler optimize "strlen(MarFS_XattrPrefix)" ? */
+
 #endif
 
 // [Co-maintain with MarFS_XattrPrefix]
-// This just saves us worrying whether the compiler will optimize away
-// "strlen(MarFS_XattrPrefix)".
-#define   MarFS_XattrPrefixSize  6
+
 
 // <linux/limits.h> has XATTR_SIZE_MAX,  XATTR_NAME_MAX, etc.
 // <gpfs_fcntl.h> has GPFS_FCNTL_XATTR_MAX_NANMELEN/VALUELEN
