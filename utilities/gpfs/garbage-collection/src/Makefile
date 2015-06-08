@@ -1,8 +1,8 @@
 all: marfs_gc
 
-#OBJS = marfs_gc.o
+OBJS = /root/atorrez-test/aws4c-latest/aws4c.o
 
-CFLAGS += -Wall -lgpfs
+CFLAGS += -Wall -g -lgpfs -I /root/atorrez-test/aws4c-latest -lcurl 
 
 # currently a simple top-level FUSE daemon
 marfs_gc: marfs_gc.c
