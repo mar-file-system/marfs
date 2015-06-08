@@ -250,6 +250,7 @@ int expand_trash_info(PathInfo*    info,
    if (! (info->flags & PI_TRASH_PATH)) {
       const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
 
+      // construct date-time string in standard format
       char       date_string[MARFS_DATE_STRING_MAX];
       time_t     now = time(NULL);
       if (now == (time_t)-1)
@@ -257,11 +258,13 @@ int expand_trash_info(PathInfo*    info,
 
       __TRY0(epoch_to_str, date_string, MARFS_DATE_STRING_MAX, &now);
 
+      // construct trash-path
       if (snprintf(info->trash_path, MARFS_MAX_MD_PATH,
                    "%s/%s.trash_%s",
                    info->ns->trash_path, sub_path, date_string) < 0)
          return -1;
 
+      // subsequent calls to expand_path_info() are NOP.
       info->flags |= PI_TRASH_PATH;
    }
 
@@ -420,7 +423,7 @@ int stat_xattrs(PathInfo* info) {
       case XVT_RESTART: {
          info->flags &= ~(PI_RESTART); /* default = NOT in restart mode */
          ssize_t val_size = lgetxattr(info->md_path, spec->key_name,
-                                      &xattr_value_str, 1);
+                                      &xattr_value_str, 2);
          if (val_size < 0) {
             if (errno == ENOATTR)
                break;           /* treat ENOATTR as restart=0 */
@@ -732,7 +735,7 @@ int  trash_truncate(PathInfo*   info,
 
    // copy xattrs to the trash-file.
    // ugly-but-simple: make a duplicate PathInfo, but with md_path
-   // of our trash_path.  Then save_xattrs() will just work on the
+   // set to our trash_path.  Then save_xattrs() will just work on the
    // trash-file.
    {  PathInfo trash_info = *info;
       memcpy(trash_info.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);

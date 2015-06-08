@@ -75,6 +75,8 @@ OF SUCH DAMAGE.
 #include <pthread.h>
 #include <signal.h>             // pthread_kill()
 
+#define LOG_PREFIX "obj_stream"
+#include "logging.h"
 #include "common.h"
 #include "object_stream.h"
 
@@ -141,15 +143,25 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
    return -1;                   // something else went wrong
 }
 
-// #define safe_sem_wait(SEM, TIMEOUT, OS)                               \
-//   safe_sem_wait_internal((SEM), (TIMEOUT), (OS), __FILE__, __LINE__)
-// int safe_sem_wait_internal(sem_t* sem, size_t timeout_sec, ObjectStream* os, char* file, char* line) {
+/* #define safe_sem_wait(SEM, TIMEOUT, OS)                              \
+   safe_sem_wait_internal((SEM), (TIMEOUT), (OS), __FILE__, __LINE__)
+   int safe_sem_wait_internal(sem_t* sem, size_t timeout_sec, ObjectStream* os, char* file, char* line) {
+*/
 
-#define SAFE_SEM_WAIT(SEM_PTR, TIMEOUT_SEC, OS)                         \
+#define SAFE_SEM_WAIT(SEM_PTR, TIMEOUT_SEC)                             \
    do {                                                                 \
       if (timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))) {                   \
-         fprintf(stderr, "--- stream_sync failed to get sem [%s:%d].  Aborting.\n", \
-                 __FILE__, __LINE__);                                   \
+         LOG(LOG_ERR, "timed_sem_wait failed to get sem [%s:%d]. (%s)\n", \
+             __FILE__, __LINE__, strerror(errno));                      \
+         return -1;                                                     \
+      }                                                                 \
+   } while (0)
+
+#define SAFE_SEM_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS)                    \
+   do {                                                                 \
+      if (timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))) {                   \
+         LOG(LOG_ERR, "timed_sem_wait failed to get sem [%s:%d].  (%s) Aborting.\n", \
+             __FILE__, __LINE__, strerror(errno));                      \
          pthread_kill((OS)->op, SIGKILL);                               \
          return -1;                                                     \
       }                                                                 \
@@ -159,7 +171,7 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
 
 
 // ---------------------------------------------------------------------------
-// stream_wait_op()
+// stream_wait()
 //
 // Wait until thread completes (and return immediately when that happens).
 // Loop is necessary to handle the case where another thread is also trying
@@ -180,36 +192,44 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
 // ---------------------------------------------------------------------------
 
 
-#if 0
+#if 1
 
 static
-int stream_wait_op(ObjectStream* os) {
+int stream_wait(ObjectStream* os) {
+
+   static const size_t  TIMEOUT_SECS = 10;
+
    struct timespec timeout;
-   if (clock_gettime(CLOCK_REALTIME, &timeout))
+   if (clock_gettime(CLOCK_REALTIME, &timeout)) {
+      fprintf(stderr, "stream_wait failed to get timer '%s'\n", strerror(errno));
       return -1;                // errno is set
+   }
+   timeout.tv_sec += TIMEOUT_SECS;
+
 
    void* retval;
    while (1) {
-      timeout.tv_sec += 1;
 
-      // check whether thread has returned.  Could mean a curl
-      // error, an S3 protocol error, or server flaking out.
+      // check whether thread has returned.  Could mean a curl error, an S3
+      // protocol error, or server flaking out.  Successful return will
+      // have saved retval in os->op_rc, so we don't have to return it.
       if (! pthread_timedjoin_np(os->op, &retval, &timeout))
          return 0;              // joined
 
       else if (errno == ETIMEDOUT)
-         continue;              // timed-out
+         return -1;             // timed-out
 
       else if (errno != EINVAL)
          return -1;             // error
 
-      // EINVAL = another thread trying to join (?)  timed-wait will just
-      // return immediately again, and we'll turn into a busy-wait.  Add an
-      // explicit sleep here.  [Alternatively, here's another idea: If
-      // multiple threads are waiting on this thread, then that implies the
-      // fuse handle was dup'ed.  In that case, if we return success, won't
-      // fuse still wait until all threads have flushed?  I don't trust my
-      // knowledge of fuse enough to depend on that.]
+      // EINVAL == another thread is also trying to join (?)  timed-wait
+      // will just return immediately again, and we'll turn into a
+      // busy-wait.  Add an explicit sleep here.  [Alternatively, here's
+      // another idea: If multiple threads are waiting on this thread, then
+      // that implies the fuse handle was dup'ed.  In that case, if we
+      // return success, fuse might still wait until all threads have
+      // flushed?  I don't trust my knowledge of fuse enough to depend on
+      // that.]
       else
          sleep(1);
    }
@@ -218,7 +238,7 @@ int stream_wait_op(ObjectStream* os) {
 #else
 
 static
-int stream_wait_op(ObjectStream* os) {
+int stream_wait(ObjectStream* os) {
 
    void* retval = NULL;
    while (1) {
@@ -231,8 +251,8 @@ int stream_wait_op(ObjectStream* os) {
       else if (errno != EINVAL)
          return -1;             // error
 
-      // EINVAL = another thread trying to join (?)  timed-wait will just
-      // return immediately again, and we'll turn into a busy-wait.  Add an
+      // EINVAL = another thread trying to join (?)  timed-wait would just
+      // return immediately again, and we'd turn into a busy-wait.  Add an
       // explicit sleep here.  [Alternatively, here's another idea: If
       // multiple threads are waiting on this thread, then that implies the
       // fuse handle was dup'ed.  In that case, if we return success, won't
@@ -262,27 +282,39 @@ int stream_wait_op(ObjectStream* os) {
 //
 // Any errors from curl, S3, etc, will be found in os->iob->result.
 // If there are any, we'll be returning non-zero.
+//
+// TBD: If we return non-zero on a GET, writefunc will be stranded waiting for us.
+// Now, it will time-out on its sem_wait and report an error.  Therefore,
+//      we should return zero on all legitimate cases.
 
 int s3_op_internal(ObjectStream* os) {
    IOBuf*        b  = &os->iob;
 
-   int is_put = (os->flags & OSF_WRITING);
-   if (is_put) {
-      LOG(LOG_INFO, "streaming PUT %lx, '%s'\n", b, os->url);
-      AWS4C_CHECK1   ( s3_put(b, os->url) ); /* create empty object with user metadata */
+   // run the GET or PUT
+   int is_get = (os->flags & OSF_READING);
+   if (is_get) {
+      LOG(LOG_INFO, "GET %lx, '%s'\n", b, os->url);
+      AWS4C_CHECK1( s3_get(b, os->url) ); /* create empty object with user metadata */
    }
    else {
-      LOG(LOG_INFO, "streaming GET %lx, '%s'\n", b, os->url);
-      AWS4C_CHECK1   ( s3_get(b, os->url) ); /* create empty object with user metadata */
+      LOG(LOG_INFO, "PUT %lx, '%s'\n", b, os->url);
+      AWS4C_CHECK1( s3_put(b, os->url) ); /* create empty object with user metadata */
    }
 
-   if (! AWS4C_OK(b)) {
-      LOG(LOG_ERR, "CURL ERROR: %d '%s'\n", b->code, b->result);
-      return -1;
-   }
 
-   LOG(LOG_INFO, "streaming %s complete\n", ((is_put) ? "PUT" : "GET"));
-   return 0;
+   // s3_get with byte-range can leave streaming_writefunc() waiting for
+   // a curl callback that never comes.
+   if (is_get && (b->code == 206)) {
+      // should we do something with os->iob_full?  set os->flags & EOF?
+      LOG(LOG_INFO, "GET complete\n");
+      return 0;
+   }
+   else if (AWS4C_OK(b) ) {
+      LOG(LOG_INFO, "%s complete\n", ((is_get) ? "GET" : "PUT"));
+      return 0;
+   }
+   LOG(LOG_ERR, "CURL ERROR: %d '%s'\n", b->code, b->result);
+   return -1;
 }
 
 // this runs as a separate thread, so that stream_open() can return
@@ -291,9 +323,9 @@ void* s3_op(void* arg) {
    IOBuf*        b  = &os->iob;
 
    if ((os->op_rc = s3_op_internal(os)))
-      LOG(LOG_ERR, "s3_op(%s) failed '%s'\n", os->url, b->result);
+      LOG(LOG_ERR, "failed (%s) '%s'\n", os->url, b->result);
    else
-      LOG(LOG_INFO, "s3_op(%s) done\n", os->url);
+      LOG(LOG_INFO, "done (%s)\n", os->url);
 
    return os;
 }
@@ -304,7 +336,7 @@ void* s3_op(void* arg) {
 //
 // This is installed as the "readfunc" which is called by curl, whenever it
 // needs more data for a PUT.  (It's a "read" of data from curl's
-// perspective.)  This function is invoked in it's own thread by curl.  We
+// perspective.)  This function is invoked in its own thread by curl.  We
 // synchronize with stream_put(), where a user has more data to be
 // added to a stream.  The user's buffer may be larger than the size of the
 // buffer curl gives us to fill, in which case we self-enable, so the next
@@ -319,14 +351,14 @@ size_t streaming_readfunc(void* ptr, size_t size, size_t nmemb, void* stream) {
    IOBuf*        b     = (IOBuf*)stream;
    ObjectStream* os    = (ObjectStream*)b->user_data;
    size_t        total = (size * nmemb);
-   fprintf(stderr, "--- readfn curl buff %ld\n", total);
+   LOG(LOG_INFO, "curl buff %ld\n", total);
 
    // wait for producer to fill buffers
    sem_wait(&os->iob_full);
-   fprintf(stderr, "--- readfn avail-data: %ld\n", b->avail);
+   LOG(LOG_INFO, "avail-data: %ld\n", b->avail);
 
    if (b->write_count == 0) {
-      fprintf(stderr, "--- readfn got EOF\n");
+      LOG(LOG_INFO, "got EOF\n");
       sem_post(&os->iob_empty); // polite
       return 0;
    }
@@ -338,14 +370,14 @@ size_t streaming_readfunc(void* ptr, size_t size, size_t nmemb, void* stream) {
 
    // track total size
    os->written += moved;
+   LOG(LOG_INFO, "moved %ld  (total: %ld)\n", moved, os->written);
 
    if (b->avail) {
-      fprintf(stderr, "--- readfn iterating\n");
+      LOG(LOG_INFO, "iterating\n");
       sem_post(&os->iob_full);  // next callback is pre-approved
    }
    else {
-      fprintf(stderr, "--- readfn done with buffer (total written %ld)\n",
-              os->written);
+      LOG(LOG_INFO, "done with buffer (total written %ld)\n", os->written);
       sem_post(&os->iob_empty); // tell producer that buffer is used
    }
 
@@ -364,6 +396,8 @@ int stream_put(ObjectStream* os,
                const char*   buf,
                size_t        size) {
 
+   static const int put_timeout_sec = 10; /* totally made up out of thin air */
+
    LOG(LOG_INFO, "entry\n");
    if (! (os->flags & OSF_OPEN)) {
       LOG(LOG_ERR, "%s isn't open\n", os->url);
@@ -380,31 +414,35 @@ int stream_put(ObjectStream* os,
    // install buffer into IOBuf
    aws_iobuf_reset(b);          // doesn't affect <user_data>
    aws_iobuf_append_static(b, (char*)buf, size);
-   fprintf(stderr, "--- stream_put appended data for readfn\n");
+   LOG(LOG_INFO, "installed buffer (%ld bytes) for readfn\n", size);
 
    // let readfunc move data
    sem_post(&os->iob_full);
 
-   fprintf(stderr, "--- stream_put waiting for IOBuf\n"); // readfunc done with IOBuf?
-   sem_wait(&os->iob_empty);
+   LOG(LOG_INFO, "waiting for IOBuf\n"); // readfunc done with IOBuf?
+   SAFE_SEM_WAIT(&os->iob_empty, put_timeout_sec);
 
-   return 0;
+   LOG(LOG_INFO, "buffer done\n"); // readfunc done with IOBuf?
+   return size;
 }
 
 
 // ---------------------------------------------------------------------------
 // GET (read)
 
-// curl is calling us with some incoming data on a GET, which we are
-// supposed to "write" somewhere.  We interact with stream_get(),
-// to write our data into a buffer that a caller provided to
-// stream_get().
+// curl calls streaming_writefunc with some incoming data on a GET, which
+// we are supposed to "write" somewhere.  We interact with stream_get(), to
+// write our data into a buffer that a caller provided to stream_get().
 //
-// This function is more complex than streaming_readfunc(), because we
+// streaming_writefunc() is more complex than streaming_readfunc(), because we
 // don't return to curl until we have exhausted curl's buffer.  [because
 // doc says curl treats anything less than that as an error.  Should test
 // that.]  That means is may require multiple calls to stream_get(), before
 // we can write all of curl's buffer.
+//
+// If it so happens that the object is not-bigger-than the buffer, or the
+// GET is issued with a byte-range not-bigger-than the buffer, we will fill
+// the buffer.
 //
 // As in the case of stream_put() plus readfunc(), we're guessing that the
 // buffer sizes presented to stream_get() by users will tend to be much
@@ -433,56 +471,95 @@ int stream_put(ObjectStream* os,
 //       even that won't happen.  Therefore, I think we (or stream_get)
 //       will need to count the bytes going past.
 //
+//       No, it's worse than that.  If the byte-range is beyond EOF, then
+//       no write-function gets called
+//
 // ---------------------------------------------------------------------------
 
-size_t streaming_writefunc(void* ptr, size_t size, size_t nmemb, void* stream) {
-   LOG(LOG_INFO, "entry\n");
+// After EOF, fuse makes a callback to marfs_read() with a byte-range
+// beyond the end of the object.  In that case, curl never calls
+// streaming_writefunc(), so stream_get() is stuck waiting for iob_full.
+// This function can detect that case, because the Content-length returned
+// in the header will be zero.
+size_t streaming_writeheaderfunc(void* ptr, size_t size, size_t nitems, void* stream) {
 
+   size_t result = aws_headerfunc(ptr, size, nitems, stream);
+
+   // if we've parse content-length from the response-header, and length
+   // was zero, then there will be no callback to streaming_writefunc().
+   // Therefore, streaming_writefunc() will never post iob_full, and
+   // stream_get() will wait forever (or until it times out).  We have
+   // knowledge that this is happening, so we can post iob_full ourselves,
+   // and let stream_get() proceed.
+   if ( !strncmp( ptr, "Content-Length: ", 15 )) {
+      IOBuf*        b     = (IOBuf*)stream;
+      ObjectStream* os    = (ObjectStream*)b->user_data;
+      if (!b->contentLen) {
+         LOG(LOG_INFO, "detected EOF\n"); // readfunc done with IOBuf?
+         os->flags |= OSF_EOF;                            // (or error)
+         sem_post(&os->iob_full);
+      }
+      else
+         LOG(LOG_INFO, "content-length is non-zero\n");
+   }
+   return result;
+}
+
+
+size_t streaming_writefunc(void* ptr, size_t size, size_t nmemb, void* stream) {
    IOBuf*        b     = (IOBuf*)stream;
    ObjectStream* os    = (ObjectStream*)b->user_data;
    size_t        total = (size * nmemb);
-   fprintf(stderr, "--- writefn curl-buff %ld\n", total);
+   LOG(LOG_INFO, "curl-buff %ld\n", total);
 
    // wait for user-buffer, supplied to stream_get()
    sem_wait(&os->iob_empty);
-   fprintf(stderr, "--- writefn user-buff %ld\n", (b->len - b->write_count));
+   LOG(LOG_INFO, "user-buff %ld\n", (b->len - b->write_count));
 
    // check for EOF on the object
    if (! total) {
-      os->flags |= EOF;
+      os->flags |= OSF_EOF;
       sem_post(&os->iob_full);
-      fprintf(stderr, "--- writefn EOF done\n");
+      LOG(LOG_INFO, "EOF done\n");
       return 0;
    }
 
-   size_t avail = total;
-   char*  dst   = ptr;
+   size_t avail    = total;     /* availble for reading from curl-buffer */
+   char*  dst      = ptr;
+   size_t writable = (b->len - b->write_count); /* space for writing in user-buffer */
    while (avail) {
 
-      size_t writable = (b->len - b->write_count);
-      fprintf(stderr, "--- writefn iterating: writable=%ld, readble=%ld\n",
-              writable, avail);
+      LOG(LOG_INFO, "iterating: writable=%ld, readble=%ld\n", writable, avail);
 
       // if user-buffer is full, wait for another one
       if (! writable) {
-         fprintf(stderr, "--- writefn user-buff is full\n");
+         LOG(LOG_INFO, "user-buff is full\n");
          sem_post(&os->iob_full);
          sem_wait(&os->iob_empty);
+         writable = (b->len - b->write_count);
          continue;
       }
 
+      // move data to user's buffer
       size_t move = ((writable < avail) ? writable : avail);
       aws_iobuf_append(b, dst, move);
 
-      avail -= move;
-      dst   += move;
+      avail    -= move;
+      writable -= move;
+      dst      += move;
    }
 
-   // curl-buffer is exhausted.  Ready for next callback
-   fprintf(stderr, "--- writefn copied all of curl-buff\n");
-   sem_post(&os->iob_full);
-   return total;
+   // curl-buffer is exhausted.
+   LOG(LOG_INFO, "copied all of curl-buff (writable=%d)\n", writable);
+   if (writable)
+      sem_post(&os->iob_empty);    // next callback is pre-approved
+   else {
+      os->flags |= OSF_EOF;
+      sem_post(&os->iob_full);
+   }
+   return total;                /* to curl */
 }
+
 
 
 // Accept as much as <size>, from the streaming GET, into caller's <buf>.
@@ -491,9 +568,16 @@ size_t streaming_writefunc(void* ptr, size_t size, size_t nmemb, void* stream) {
 // will just short-circuit to return 0, signalling EOF to caller.
 // 
 // return -1 with errno, for failures.
+// else return number of chars we get.
+//
 ssize_t stream_get(ObjectStream* os,
                   char*         buf,
                   size_t        size) {
+
+   static const int get_timeout_sec = 10; /* totally made up out of thin air */
+
+   IOBuf* b = &os->iob;     // shorthand
+
    LOG(LOG_INFO, "entry\n");
    if (! (os->flags & OSF_OPEN)) {
       LOG(LOG_ERR, "%s isn't open\n", os->url);
@@ -506,27 +590,27 @@ ssize_t stream_get(ObjectStream* os,
       return -1;
    }
    if (os->flags & OSF_EOF)
-      return 0;
+      return 0; // b->write_count;
 
-   IOBuf* b     = &os->iob;     // shorthand
 
    aws_iobuf_reset(b);          // doesn't affect <user_data>
    aws_iobuf_extend_static(b, (char*)buf, size);
-   fprintf(stderr, "--- stream_get got %ld-byte buffer for writefn\n", size);
+   LOG(LOG_INFO, "got %ld-byte buffer for writefn\n", size);
 
    // let writefn move data
    sem_post(&os->iob_empty);
 
    // wait for writefn to fill our buffer
-   fprintf(stderr, "--- stream_get waiting for writefn\n");
-   sem_wait(&os->iob_full);
-   fprintf(stderr, "--- stream_get got %ld bytes\n", b->write_count);
+   LOG(LOG_INFO, "waiting for writefn\n");
+   SAFE_SEM_WAIT(&os->iob_full, get_timeout_sec);
 
    // 
    if (os->flags & OSF_EOF) {
-   fprintf(stderr, "--- stream_get got %ld bytes\n", b->write_count);
+      LOG(LOG_INFO, "EOF is asserted\n");
    }
 
+   os->written += b->write_count;
+   LOG(LOG_INFO, "returning %ld (total=%ld)\n", b->write_count, os->written);
    return (b->write_count);
 }
 
@@ -553,10 +637,11 @@ ssize_t stream_get(ObjectStream* os,
 // ---------------------------------------------------------------------------
 
 int stream_open(ObjectStream* os, IsPut put) {
-   LOG(LOG_INFO, "entry\n");
+   LOG(LOG_INFO, "%s\n", ((put) ? "PUT" : "GET"));
 
    if (os->flags & OSF_OPEN) {
       LOG(LOG_ERR, "%s is already open\n", os->url);
+      errno = EINVAL;
       return -1;                // already open
    }
    if (os->flags) {
@@ -564,6 +649,7 @@ int stream_open(ObjectStream* os, IsPut put) {
       LOG(LOG_INFO, "stream being re-opened with %s\n", os->url);
       stream_reset(os);
    }
+
    os->flags |= OSF_OPEN;
    os->written = 0;             // total read/written through OS
    if (put)
@@ -581,13 +667,14 @@ int stream_open(ObjectStream* os, IsPut put) {
    aws_iobuf_chunked_transfer_encoding(b, 1);
 
    if (put) {
-      sem_init(&os->iob_empty, 0, 1);
+      sem_init(&os->iob_empty, 0, 0);
       sem_init(&os->iob_full,  0, 0);
       aws_iobuf_readfunc (b, &streaming_readfunc);
    }
    else {
       sem_init(&os->iob_empty, 0, 0);
       sem_init(&os->iob_full,  0, 0);
+      aws_iobuf_headerfunc(b, &streaming_writeheaderfunc);
       aws_iobuf_writefunc(b, &streaming_writefunc);
    }
 
@@ -608,6 +695,19 @@ int stream_open(ObjectStream* os, IsPut put) {
 // possible), rather than "fflush" (i.e. wait for current buffers to be
 // empty).  When stream_sync() returns, all I/O is completed on the stream.
 //
+// Fuse may call this before I/O is complete on the stream.  Therefore,
+// we shouldn't just assume that failure to join means something is wedged.
+//
+// NOTE: New approach to reads: each call to marfs_read() will create a
+//       distinct GET request.  Therefore, the op should return (because of
+//       EOF for the given byte-range), at the end of each call, so we
+//       should simply join the thread.
+//
+//       For marfs_write(), writes start at offset zero, and are expected
+//       to be contiguous.  Therefore, we set up a streaming readfunc, and
+//       we must signal EOF when closing.
+//
+//
 // NOTE: If there are duplicated handles, fuse will call flush for each of
 //       them.  That would imply that our pthread_join() may return EINVAL,
 //       because another thread is already trying to join.  We do not currently
@@ -619,8 +719,8 @@ int stream_open(ObjectStream* os, IsPut put) {
 // wait for the S3 GET/PUT to complete
 int stream_sync(ObjectStream* os) {
 
-   // TBD: this should be a per-repo config-option
-   static const time_t timeout_sec = 5;
+   ///   // TBD: this should be a per-repo config-option
+   ///   static const time_t timeout_sec = 5;
 
    // fuse may call fuse-flush multiple times (one for every open stream).
    // but will not call flush after calling close().
@@ -630,49 +730,95 @@ int stream_sync(ObjectStream* os) {
       return -1;
    }
 
-   IOBuf* b = &os->iob;         // shorthand
-   void* retval;
+   ///   IOBuf* b = &os->iob;         // shorthand
 
+#if 0
+   void* retval;
    if (! pthread_tryjoin_np(os->op, &retval)) {
-      fprintf(stderr, "--- stream_sync op-thread joined\n");
+      LOG(LOG_INFO, "op-thread joined\n");
       os->flags |= OSF_JOINED;
    }
    else {
 
       if (os->flags & OSF_WRITING) {
          // signal EOF to readfunc
-         fprintf(stderr, "--- stream_sync(wr) waiting my turn\n");
-         SAFE_SEM_WAIT(&os->iob_empty, timeout_sec, os);// sem_wait(&os->iob_empty);
+         LOG(LOG_INFO, "(wr) waiting my turn\n");
+         SAFE_SEM_WAIT_KILL(&os->iob_empty, timeout_sec, os);// sem_wait(&os->iob_empty);
          aws_iobuf_reset(b);      // doesn't affect <user_data>
 
-         fprintf(stderr, "--- stream_sync(wr) sent EOF\n");
+         LOG(LOG_INFO, "(wr) sent EOF\n");
          sem_post(&os->iob_full);
-         SAFE_SEM_WAIT(&os->iob_empty, timeout_sec, os); // sem_wait(&os->iob_empty);
+         SAFE_SEM_WAIT_KILL(&os->iob_empty, timeout_sec, os); // sem_wait(&os->iob_empty);
       }
-      else { // READING
-         // signal EOF to writefunc
-         fprintf(stderr, "--- stream_sync(rd) waiting my turn\n");
-         SAFE_SEM_WAIT(&os->iob_full, timeout_sec, os); // sem_wait(&os->iob_full);
-         aws_iobuf_reset(b);       // doesn't affect <user_data>
+      //      else { // READING
+      //         // signal EOF to writefunc
+      //         LOG(LOG_INFO, "(rd) waiting my turn\n");
+      //         SAFE_SEM_WAIT_KILL(&os->iob_full, timeout_sec, os); // sem_wait(&os->iob_full);
+      //         aws_iobuf_reset(b);       // doesn't affect <user_data>
+      //
+      //         LOG(LOG_INFO, "(rd) sent EOF\n");
+      //         sem_post(&os->iob_empty);
+      //         SAFE_SEM_WAIT_KILL(&os->iob_full, timeout_sec, os); // sem_wait(&os->iob_full);
+      //      }
 
-         fprintf(stderr, "--- stream_sync(rd) sent EOF\n");
-         sem_post(&os->iob_empty);
-         SAFE_SEM_WAIT(&os->iob_full, timeout_sec, os); // sem_wait(&os->iob_full);
+
+      // check whether thread has returned.  Could mean a curl
+      // error, an S3 protocol error, or server flaking out.
+      LOG(LOG_INFO, "waiting for op-thread\n");
+      if (stream_wait(os)) {
+         LOG(LOG_ERR, "err from op-thread\n");
+         return -1;
+      }
+   }
+
+#elif 0
+   // The code above assumes that failure to join means something is
+   // wedged, and immediately starts dicking with the stream read/write
+   // functions.  But they may be performing just fine, and simply haven't
+   // completed yet.  In fact they might not even have started yet!
+   //
+   // The safer plan is what stream_wait() does: wait for a timeout
+   // trying to join, and if that fails (or if user sends signal, e.g. with
+   // ctl-C) to force-kill the op-thread.
+   LOG(LOG_INFO, "waiting for op-thread\n");
+   if (stream_wait(os)) {
+      LOG(LOG_ERR, "err from op-thread. Killing.\n");
+      pthread_kill(os->op, SIGKILL);
+   }
+
+#else
+   // See NOTE, above, regarding the difference between reads and writes.
+   void* retval;
+   if (! pthread_tryjoin_np(os->op, &retval)) {
+      LOG(LOG_INFO, "op-thread joined\n");
+      os->flags |= OSF_JOINED;
+   }
+   else {
+
+      if (os->flags & OSF_WRITING) {
+         // signal EOF to readfunc
+         LOG(LOG_INFO, "(wr) sending empty buffer (%x)\n", os->flags);
+         if (stream_put(os, NULL, 0)) {
+            LOG(LOG_ERR, "stream_put(0) failed\n");
+            pthread_kill(os->op, SIGKILL);
+            LOG(LOG_INFO, "killed thread\n");
+         }
       }
 
 
       // check whether thread has returned.  Could mean a curl
       // error, an S3 protocol error, or server flaking out.
-      fprintf(stderr, "--- stream_sync waiting for op-thread\n");
-      if (stream_wait_op(os)) {
-         fprintf(stderr, "--- stream_sync err from op-thread\n");
+      LOG(LOG_INFO, "waiting for op-thread\n");
+      if (stream_wait(os)) {
+         LOG(LOG_ERR, "err from op-thread\n");
          return -1;
       }
    }
+#endif
 
    // thread has completed
    os->flags |= OSF_JOINED;
-   fprintf(stderr, "--- stream_sync op-thread returned %d\n", os->op_rc);
+   LOG(LOG_INFO, "op-thread returned %d\n", os->op_rc);
    errno = (os->op_rc ? EINVAL : 0);
    return os->op_rc;
 }
@@ -701,10 +847,13 @@ int stream_close(ObjectStream* os) {
       return -1;
    }
 
+   sem_destroy(&os->iob_empty);
+   sem_destroy(&os->iob_full);
+
    os->flags &= ~(OSF_OPEN);
    os->flags |= OSF_CLOSED;     /* so stream_open() can identify re-opens */
 
-   fprintf(stderr, "--- stream_close done (returning %d)\n", os->op_rc);
+   LOG(LOG_INFO, "done (returning %d)\n", os->op_rc);
    errno = (os->op_rc ? EINVAL : 0);
    return os->op_rc;
 }
@@ -713,9 +862,20 @@ int stream_close(ObjectStream* os) {
 
 
 
-// reset everything except URL.  This is used when stream_open gets an OS
-// that has been previously opened and closed.
+// Reset everything except URL.  Also, use aws_iob_reset() to reset
+// os->iob.
+//
+// NOTE: This is used when stream_open gets an OS that has been previously
+//       opened and closed.  Therefore, we can assume that sems have been
+//       destroyed, and thread has bben joined or killed.
+//
 void stream_reset(ObjectStream* os) {
+   if (! (os->flags & OSF_CLOSED)) {
+      LOG(LOG_ERR, "We require a stream that was previously opened\n");
+      return;
+   }
+
+#if 0
    char*  before_ptr  = (char*)os;
    size_t before_size = (char*)os->url - (char*)os;
 
@@ -724,4 +884,11 @@ void stream_reset(ObjectStream* os) {
 
    memset(before_ptr, 0, before_size);
    memset(after_ptr,  0, after_size);
+
+#else
+   aws_iobuf_reset(&os->iob);
+   os->op_rc = 0;
+   os->written = 0;
+   os->flags = 0;
+#endif
 }

@@ -93,6 +93,9 @@ void* marfs_init(struct fuse_conn_info* conn) {
    conn->max_write = MARFS_WRITEBUF_MAX;
    conn->want      = FUSE_CAP_BIG_WRITES;
 
+   // To disable: Set zero here, and clear FUSE_CAP_ASYNC_READ from <want>
+   conn->async_read = 0;
+
    return conn;
 }
 
@@ -175,51 +178,6 @@ int marfs_chown (const char* path,
 // Looking for "marfs_close()"?  It's called "marfs_release()".
 
 
-// Apparently, fuse "flush" is not the same as "fflush()".  Fuse flush is
-// called as part of fuse close, and shouldn't return until all I/O is
-// complete on the file-handle, such that no further I/O errors are
-// possible.  In other words, this is our last chance to return errors to
-// the user.
-//
-// NOTE: It also appears that fuse calls stat immediately after flush.
-//       (Hard to be sure, because fuse calls stat all the time.)  I'd
-//       guess we should return until we are sure that stat will see the
-//       final state of the file.  Probably also applies to xattrs (?)
-//
-// Maybe flush() is also the best place to assure that final recovery-blobs
-// are written into objects, and pending object-reads are cut short, etc,
-// ... instead of doing that in close.
-//
-// TBD: Don't do object-interaction if file is DIRECT.  See marfs_open().
-
-#if 0
-int marfs_flush (const char*            path,
-                 struct fuse_file_info* ffi) {
-
-   //   // I don’t think we will have dirty data that we can control
-   //   // I guess we could call flush on the filehandle  that is being written
-   //   // But the only data we will write is multi-part objects, 
-   //   // All other data would be to some object interface
-   //
-   //   LOG(LOG_INFO, "NOP for %s", path);
-
-   PUSH_USER();
-
-   ///   PathInfo info;
-   ///   EXPAND_PATH_INFO(&info, path);
-   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
-   // PathInfo*         info = &fh->info;                  /* shorthand */
-   ObjectStream*     os   = &fh->os;
-
-   //   // shouldn't do this for DIRECT files!  See marfs_open().
-   //   LOG(LOG_INFO, "synchronizing object stream %s\n", path);
-   //   TRY0(stream_sync, os);
-
-   POP_USER();
-   return 0;
-}
-#endif
-
 int marfs_fsync (const char*            path,
                  int                    isdatasync,
                  struct fuse_file_info* ffi) {
@@ -255,22 +213,28 @@ int marfs_ftruncate(const char*            path,
 
    PUSH_USER();
 
-   // resolve the full path to use to expand
-   PathInfo info;
-   EXPAND_PATH_INFO(&info, path);
+   //   // resolve the full path to use to expand
+   //   PathInfo info;
+   //   EXPAND_PATH_INFO(&info, path);
+   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+   PathInfo*         info = &fh->info;                  /* shorthand */
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
    // Call access() syscall to check/act if allowed to truncate for this user
-   ACCESS(info.md_path, (W_OK));        /* for truncate? */
+   ACCESS(info->md_path, (W_OK));        /* for truncate? */
 
    // stat_xattrs – or look up info stuffed into memory pointed at in fuse
    // open table if this is not just a normal [object-storage case?], use
    // the md for file data
-   STAT_XATTRS(&info);
-   if (! has_any_xattrs(&info, MARFS_MD_XATTRS))
-      assert(0); // TBD.  (data stored directly in file)
+   STAT_XATTRS(info);
+   if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
+      LOG(LOG_INFO, "no xattrs\n");
+      TRY0(ftruncate, fh->md_fd, length);
+      return 0;
+   }
+
 
    //***** this may or may not work – may need a trash_truncate() that uses
    //***** ftruncate since the file is already open (may need to modify the
@@ -284,7 +248,7 @@ int marfs_ftruncate(const char*            path,
    // is good.]
 
    // copy metadata to trash, resets original file zero len and no xattr
-   TRASH_TRUNCATE(&info, path);
+   TRASH_TRUNCATE(info, path);
 
    POP_USER();
    return 0;
@@ -449,7 +413,7 @@ int marfs_mkdir (const char* path,
 //
 // This only gets called when fuse determines file doesn't exist and needs
 // to be created.  If it needs to be truncated, fuse calls
-// truncate/ftruncate.
+// truncate/ftruncate, before calling us.
 // 
 // It might make sense to do object-creation, and initialization of
 // PathInfo.pre, here.  However, open() is where we do tests that should be
@@ -607,7 +571,7 @@ int marfs_open (const char*            path,
 
    // If no xattrs, we let user read/write directly into the file.
    // This corresponds to a file that was created in DIRECT repo-mode.
-   if (! has_any_xattrs(info, MARFS_MD_XATTRS)) {
+   if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
       fh->md_fd = open(info->md_path,
                        (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
       if (fh->md_fd < 0)
@@ -622,7 +586,7 @@ int marfs_open (const char*            path,
       if (fh->md_fd < 0)
          RETURN(-errno);
    }
-   else {
+   else if (fh->flags & FH_WRITING) {
 
       // start out assuming write object-type is Uni.  We'll change to
       // Multi if writes require a second object.  Open MD file now, in
@@ -632,14 +596,26 @@ int marfs_open (const char*            path,
       //                       (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
       //      if (fh->md_fd < 0)
       //         RETURN(-errno);
+
+      // set the RESTART flag, in open, so we don't have to truncate after
+      // every write?  It will just be clear that this object hasn't been
+      // successfully closed, yet.  It will also be clear that this is not
+      // one of those files with no xattrs.  Thus, if someone reads from
+      // this file while it's being written, fuse will see it as a
+      // file-with-xattrs (which is incomplete), and could throw an error,
+      // instead of seeing it as a file-without-xattrs, and allowing
+      // readers to see our internal data (e.g. in a MULTI file).
+      info->flags |= PI_RESTART;
+      SAVE_XATTRS(info, XVT_RESTART);
    }
 
    // initialize the URL in the ObjectStream, in our FileHandle
    // TRY0(pre_2_url, fh->os.url, MARFS_MAX_URL_SIZE, &info->pre);
+   update_pre(&info->pre);
    strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
    LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
 
-   if (PROTO_IS_S3(info->pre.repo->access_proto)) {
+   if (PROTO_IS_S3(info->pre.repo->access_proto)) { // (includes S3_EMC)
       s3_set_host(info->pre.repo->host);
       LOG(LOG_INFO, "host   '%s'\n", info->pre.repo->host);
 
@@ -649,14 +625,24 @@ int marfs_open (const char*            path,
    if (info->pre.repo->access_proto == PROTO_S3_EMC)
       s3_enable_EMC_extensions(1);
 
+#if 0
    TRY0(stream_open, &fh->os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
-
+#else
+   // To support seek() [for reads], and allow reading at arbitrary
+   // offsets, we are now implementing each call to marfs_read() as an
+   // independent GET, with byte-ranges.  Therefore, for reads, we don't
+   // open the stream, here.
+   if (fh->flags & FH_WRITING)
+      TRY0(stream_open, &fh->os, OS_PUT);
+#endif
+   // 
 
    POP_USER();
    return 0;
 }
 #undef RETURN
 #define RETURN(VALUE) return(VALUE)
+
 
 
 
@@ -707,12 +693,22 @@ int marfs_read (const char*            path,
    // Case
    //   File has no xattr objtype
    //     Just read the bytes from the file and fill in fuse read buffer
+   //
+   if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
+       && (info->ns->iwrite_repo->access_proto == PROTO_DIRECT)) {
+      LOG(LOG_INFO, "reading DIRECT\n");
+      TRY_GE0(read, fh->md_fd, buf, size);
+      return rc_ssize;
+   }
+
    //   File is objtype packed or uni
-   //      Make sure start and end are within the object according to (file size and objoffset)
+   //      Make sure start and end are within the object
+   //           (according to file size and objoffset)
    //      Make sure security is set up for accessing objrepo using table
    //      Read bytes from object server and fill in fuse read buffer
    //   File is objtype multipart
-   //     Make sure start and end are within the object according to (file size and objoffset)
+   //     Make sure start and end are within the object
+   //           (according to file size and objoffset)
    //     Make sure security is set up for accessing objrepo using table
    //     If this is the first read, 
    //           Malloc space for read obj mgmt. and put address in fuse open table area
@@ -722,12 +718,36 @@ int marfs_read (const char*            path,
    //       We will implement this later perhaps
    //      look up in read obj mgmt. area for which object(s)
    //      for loop objects needed to honor read, read obj data and fill in fuse read buffer
-#if TBD
-   // see TBD in marfs_write() ...
-#else
+
+#if 0
+   // Old approach, where open() opens stream, and we read contiguously from it
    TRY_GE0(stream_get, os, buf, size);
    LOG(LOG_INFO, "result: '%*s'\n", rc_ssize, buf);
+
+#else
+   LOG(LOG_INFO, "offset: %ld, size: %ld\n", offset, size);
+   s3_set_byte_range(offset, size);
+   TRY0(stream_open, os, OS_GET);
+
+   // because we are reading byte-ranges, we may see '206 Partial Content'
+   //
+   // TRY_GE0(stream_get, os, buf, size);
+   rc_ssize = stream_get(os, buf, size);
+   if ((rc_ssize < 0)
+       && (os->iob.code != 200)
+       && (os->iob.code != 206)) {
+      LOG(LOG_ERR, "stream_get returned %ld (%ld '%s')\n",
+          rc_ssize, os->iob.code, os->iob.result);
+      return -1;
+   }
+
+   // // handy for debugging small things, but don't want it there always
+   // LOG(LOG_INFO, "result: '%*s'\n", rc_ssize, buf);
+
+   TRY0(stream_sync, os);
+   TRY0(stream_close, os);
 #endif
+
 
    POP_USER();
    return rc_ssize;
@@ -830,13 +850,20 @@ int marfs_release (const char*            path,
 
    // close object stream (before closing MDFS file).  For writes, this
    // means telling our readfunc in libaws4c that there won't be any more
-   // data, so it should return 0 to curl.  For reads, we're past waiting
-   // for data, so it's time to just terminate any ongoing reads, but we'll
-   // try to be nice.
+   // data, so it should return 0 to curl.  For reads, the writefunc may be
+   // waiting for another buffer to fill, so it can be told to terminate.
+#if 0
    TRY0(stream_sync, os);
    TRY0(stream_close, os);
+#else
+   // New approach.  read() handles its own open/read/close
+   if (fh->flags & FH_WRITING) {
+      TRY0(stream_sync, os);
+      TRY0(stream_close, os);
+   }
+#endif
 
-   // need to write final Post record into file?  (check fh->write_state)
+   // need to write final FileInfo record into file?  (check fh->write_state)
    if (fh->md_fd) {
 
       // truncate length to reflect length of data
@@ -846,31 +873,15 @@ int marfs_release (const char*            path,
       TRY0(close, fh->md_fd);
    }
 
+   // no longer incomplete
+   info->flags &= ~(PI_RESTART);
+
    // install xattrs
-#if 0
-   if ((! has_any_xattrs(info, MARFS_MD_XATTRS))
-       && (info->ns->iwrite_repo->access_proto != PROTO_DIRECT)) {
+   if ((info->ns->iwrite_repo->access_proto != PROTO_DIRECT)
+       && (fh->flags & FH_WRITING)) {
+
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
    }
-#elif 0
-   if (has_any_xattrs(info, MARFS_MD_XATTRS))
-      LOG(LOG_INFO, "has xattrs\n");
-   if (info->ns->iwrite_repo->access_proto != PROTO_DIRECT)
-      LOG(LOG_INFO, "repo method is not DIRECT\n");
-
-   // *** THIS 'IF' SHOULD BE UNCOMMENTED!  It's just commented out for
-   //     now, because it makes it easier for me to work on a bug in
-   //     save_xattrs(), which results from a bug in strptime().
-   //
-   //   if (fh->flags & FH_WRITING)
-   SAVE_XATTRS(info, MARFS_ALL_XATTRS);
-
-#else
-   if ((info->ns->iwrite_repo->access_proto != PROTO_DIRECT)
-       && (fh->flags & FH_WRITING))
-
-      SAVE_XATTRS(info, MARFS_ALL_XATTRS);
-#endif
 
    // reclaim FileHandle allocated in marfs_open()
    free(fh);
@@ -883,7 +894,7 @@ int marfs_release (const char*            path,
 
 
 //  [Like release(), this doesn't have a directly corresponding system
-//  call.]  This is also the only function I've seen (sa far) that gets
+//  call.]  This is also the only function I've seen (so far) that gets
 //  called with fuse_context->uid of 0, even when running as non-root.
 //  This seteuid() will fail.
 //
@@ -1152,14 +1163,14 @@ int marfs_utimens(const char*           path,
 }
 
 
-// TBD: Don't do object-interaction if file is DIRECT.  See marfs_open().
-//
 int marfs_write(const char*            path,
                 const char*            buf,
                 size_t                 size,
                 off_t                  offset,
                 struct fuse_file_info* ffi) {
    PUSH_USER();
+   LOG(LOG_INFO, "%s\n", path);
+   LOG(LOG_INFO, "offset: %ld, size: %ld\n", offset, size);
 
    //   PathInfo info;
    //   EXPAND_PATH_INFO(&info, path);
@@ -1182,83 +1193,110 @@ int marfs_write(const char*            path,
 
    // If file has no xattrs its just a normal use the md file for data,
    //   just do the write and return – don’t bother with all this stuff below
+   if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
+       && (info->ns->iwrite_repo->access_proto == PROTO_DIRECT)) {
+      LOG(LOG_INFO, "no xattrs, and DIRECT: writing to file\n");
+      TRY_GE0(write, fh->md_fd, buf, size);
+      return rc_ssize;
+   }
 
    // If first write, check/act on quota bytes
+   // TBD ...
+
    // If first write, it has to start at offset 0, if not fail
+   if ((! os->written) && offset) {
+      LOG(LOG_ERR, "first write started at non-zero offset %ld\n", offset);
+      errno = EINVAL;
+      return -1;
+   }
+
    // If write does not start at previous end of file, fail
-   // If first write allocate space for current obj being written put addr in fuse open table
-   // If first write or if new file length will make object bigger than chunksize 
-   //    seal old ojb get new obj
-   // If first write, add objrepo, objid, objtype(unitype), confversion, datasecurity, chnksz xattrs
+   if ( offset != os->written) {
+      LOG(LOG_ERR, "non-contig write: offset %ld, after %ld\n", offset, os->written);
+      errno = EINVAL;
+      return -1;
+   }
+
+   // If first write allocate space for current obj being written put addr
+   //     in fuse open table
+   // If first write or if new file length will make object bigger than
+   //     chunksize seal old ojb get new obj
+   // If first write, add objrepo, objid, objtype(unitype), confversion,
+   //     datasecurity, chnksz xattrs
    // If “new” obj
    //   If first “new” obj
    //       Write old and new objid to md file set end marker
    //       Change objid xattr to file
-   //        Add change objtype to multipart
+   //       Change objtype to multipart
    //   Else
-   //       Write new objid to mdfile;
-   //      }
+   //       Write new objid to mdfile
    //   Put objid into current obj being written into fuse open table place
-   //   }
-   // Write bytes to object
-   // Trunc file to current last byte  set end marker
-
-
-   //    LOG(LOG_INFO, "write not implemented yet\n");
-   //    return -ENOSYS; // TBD
    //
-   // UNDER CONSTRUCTION
+   // Write bytes to object
+   // Trunc file to current last byte, and set end marker
+
+
    // marfs_open() opened an ObjectStream for us.
-   TRY0(stream_put, os, buf, size);
+   TRY_GE0(stream_put, os, buf, size);
+   LOG(LOG_INFO, "wrote %ld, total %ld\n", rc_ssize, os->written);
+
+   // Do we really want to trunc after every write?
+   // Better would be to have a flag in xattrs, that says "incomplete".
+   // This is roughly the same as pftool's RESTART xattr.
 
 #if TBD
-   // Repo.chunk_size is the maximum size of an individual object written
-   // by MarFS.  Check whether this write will put us over.
-   //
-   // A safer approach than this custom code would be to move the
-   // object-related guts of marfs_open() and marfs_close() into library
-   // functions, so we can use exactly the same code here to close off a
-   // chunk, and open up a new one.
-   copnst size_t reclaim    = sizeof(FileInfo);
+   // Span across objects for "Multi" format.  Repo.chunk_size is the
+   // maximum size of an individual object written by MarFS.  Check whether
+   // this write will put us over.  If so, then write as much data into
+   // this object as can fit (minus size of recovery-info), write the
+   // recovery-info into the tail, close the object, open a new one, and
+   // resume writing there.
+   copnst size_t recovery    = sizeof(FileInfo) +8; // written in tail of object
    size_t        chunk_end  = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
    size_t        write_size = size;
-   while ((os->written + write_size + reclaim) > chunk_end) {
+   while ((os->written + write_size + recovery) > chunk_end) {
 
       // object-type is now known to be multi
       info->post.obj_type = OBJ_MULTI;
 
       // write <partial> more bytes into this object
-      ssize_t partial = chunk_end - (os->written + reclaim);
-      assert (partial > 0);     // silly config: (reclaim > chunk_size)
+      ssize_t partial = chunk_end - (os->written + recovery);
+      assert (partial > 0);     // possible silly config: (recovery > chunk_size)
       size_t remain   = write_size - partial;
 
-      TRY0(stream_put, os, buf, partial);
+      TRY_GE0(stream_put, os, buf, partial);
 
-      // add recoverability-info, at the tail
-      char file_info[...];
-      TRY_GE0(file_info_2_str, fh->write_status.file_info);
-      TRY0(stream_put, os, file_info, reclaim);
+      if (remain) {
 
-      // close the object
-      TRY0(stream_close, os);
+         // add recoverability-info, at the tail
+         char file_info[...];
+         TRY_GE0(file_info_2_str, fh->write_status.file_info);
+         TRY0(stream_put, os, file_info, recovery);
 
-      // update chunk-number, and generate the new obj-id
-      info->pre.chunk_no += 1;
-      update_pre(&info->pre);
+         // close the object
+         TRY0(stream_close, os);
+
+         // MarFS file-type is definitely "Multi", now
+         info->post.obj_type = OBJ_MULTI;
+
+         // update chunk-number, and generate the new obj-id
+         info->pre.chunk_no += 1;
       
-      // update the URL in the ObjectStream, in our FileHandle
-      strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
-      LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
+         // update the URL in the ObjectStream, in our FileHandle
+         update_pre(&info->pre);
+         strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
+         LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
 
-      // open next chunk
-      //
-      // NOTE: The assert() is here because work is needed on
-      //       ObjectStreams, before we can close and reopen them.  This
-      //       should wipe everything, except ObjectStream.written, and
-      //       what else ...?
+         // open next chunk
+         //
+         // NOTE: The assert() is here because work is needed on
+         //       ObjectStreams, before we can close and reopen them.  This
+         //       should wipe everything, except ObjectStream.written, and
+         //       what else ...?
 
-      assert(0); // See notes at stream_open() re re-opening an O-stream
-      TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
+         assert(0); // See notes at stream_open() re re-opening an O-stream
+         TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
+      }
 
       // compute limits of new chunk
       chunk_end = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
@@ -1267,13 +1305,13 @@ int marfs_write(const char*            path,
 
    // write more data into object
    if (write_size)
-      TRY0(stream_put, os, buf, write_size);
+      TRY_GE0(stream_put, os, buf, write_size);
 #endif
 
 
 
    POP_USER();
-   return 0;
+   return size;
 }
 
 
@@ -1402,6 +1440,56 @@ int marfs_fgetattr(const char*            path,
    return 0;
 }
 
+
+// Fuse "flush" is not the same as "fflush()".  Fuse flush is called as
+// part of fuse close, and shouldn't return until all I/O is complete on
+// the file-handle, such that no further I/O errors are possible.  In other
+// words, this is our last chance to return errors to the user.
+//
+// Maybe flush() is also the best place to assure that final recovery-blobs
+// are written into objects, and pending object-reads are cut short, etc,
+// ... instead of doing that in close.
+//
+// TBD: Don't do object-interaction if file is DIRECT.  See marfs_open().
+//
+// NOTE: It also appears that fuse calls stat immediately after flush.
+//       (Hard to be sure, because fuse calls stat all the time.)  I'd
+//       guess we shouldn't return until we are sure that stat will see the
+//       final state of the file.  Probably also applies to xattrs (?)
+//       But hanging here seems to cause fuse to hang.
+//
+//       BECAUSE OF THIS, we took a simpler route: move all the
+//       synchronization into marfs_release(), and don't implement fuse
+//       flush.  This seems to have the desired effect of getting fuse to
+//       do all the sync at close-time.
+
+int marfs_flush (const char*            path,
+                 struct fuse_file_info* ffi) {
+
+   //   // I don’t think we will have dirty data that we can control
+   //   // I guess we could call flush on the filehandle  that is being written
+   //   // But the only data we will write is multi-part objects, 
+   //   // All other data would be to some object interface
+   //
+   //   LOG(LOG_INFO, "NOP for %s", path);
+
+   PUSH_USER();
+
+   ///   PathInfo info;
+   ///   EXPAND_PATH_INFO(&info, path);
+   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+   // PathInfo*         info = &fh->info;                  /* shorthand */
+   ObjectStream*     os   = &fh->os;
+
+   //   // shouldn't do this for DIRECT files!  See marfs_open().
+   //   LOG(LOG_INFO, "synchronizing object stream %s\n", path);
+   //   TRY0(stream_sync, os);
+
+   POP_USER();
+   return 0;
+}
+
+
 // new in 2.6, yet deprecated?
 // combines opendir(), readdir(), closedir() into one call.
 int  marfs_getdir(const char *path, fuse_dirh_t , fuse_dirfil_t) {
@@ -1487,8 +1575,6 @@ int main(int argc, char* argv[])
       .access      = marfs_access,
       .chmod       = marfs_chmod,
       .chown       = marfs_chown,
-      // .fallocate   = marfs_fallocate  /* not in 2.6 */
-      //      .flush       = marfs_flush,
       .fsync       = marfs_fsync,
       .fsyncdir    = marfs_fsyncdir,
       .ftruncate   = marfs_ftruncate,
@@ -1516,12 +1602,14 @@ int main(int argc, char* argv[])
       .utime       = marfs_utime, /* deprecated in 2.6 */
       .utimens     = marfs_utimens,
       .write       = marfs_write,
-
 #if 0
+      // not implemented
       .bmap        = marfs_bmap,
       .create      = marfs_create,
+      .fallocate   = marfs_fallocate /* not in 2.6 */
       .fgetattr    = marfs_fgetattr,
       .flock       = marfs_flock,
+      .flush       = marfs_flush,
       .getdir      = marfs_getdir, /* deprecated in 2.6 */
       .link        = marfs_link,
       .lock        = marfs_lock,

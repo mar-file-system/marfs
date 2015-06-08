@@ -333,7 +333,7 @@ extern XattrSpec*  MarFS_xattr_specs;
 
 typedef uint8_t  PathInfoFlagType;
 typedef enum {
-   PI_RESTART      = 0x01,      // file is in restart-mode (see stat_xattrs())
+   PI_RESTART      = 0x01,      // file is incomplete (see stat_xattrs())
    PI_EXPANDED     = 0x02,      // expand_path_info() was called?
    PI_STAT_QUERY   = 0x04,      // i.e. maybe PathInfo.st empty for a reason
    PI_XATTR_QUERY  = 0x08,      // i.e. maybe PathInfo.xattr empty for a reason

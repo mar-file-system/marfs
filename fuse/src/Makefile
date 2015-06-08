@@ -47,6 +47,11 @@ else
 endif
 
 
+FUSE_FLAGS =
+ifneq ($(DEBUG),0)
+	FUSE_FLAGS += -d -f
+endif
+
 
 # c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
 CFLAGS  += -Wall -std=c99 `pkg-config fuse --cflags` -I.
@@ -114,7 +119,7 @@ mnt: marfs_fuse umnt
 	@ echo
 	@ echo "mounting at $(MNT)"
 	@ echo "core.%e-%t" > /proc/sys/kernel/core_pattern
-	( marfs_fuse -d -f $(MNT) > $(LOG) 2>&1 & echo "$$!" > $(PID) )
+	( marfs_fuse $(FUSE_FLAGS) $(MNT) > $(LOG) 2>&1 & echo "$$!" > $(PID) )
 	@ echo "PID: " `cat $(PID)`
 	@
 	@ # TBD: while (! `mount | grep fuse | grep -v fusectl | wc -l`) ; do (echo sleeping; sleep 1) done
@@ -128,6 +133,8 @@ mnt.simple: marfs_fuse
 	@ echo "mounting at $(MNT)"
 	marfs_fuse -f $(MNT) &
 	echo $! > $(PID)
+
+
 
 
 
@@ -152,13 +159,16 @@ test_umnt:
 	@ (fusermount -q -u $(MNT) && echo "unmounted") || ( (( `ps -elf | grep fuse_mount | grep -v grep` )) && echo "wedged" ) || echo "already unmounted"
 
 
+
+# test shell-syntax for checking Makefile-variables
 var_%:
 	@ ([ -n "$($*)" ] && echo "value: $($*)" ) || echo "empty: $*"
 
-
 # wipe all state from MDFS
+# Create a dummy fsinfo file, for now.
+#
 # CAREFUL!!! Think what happens if one of these variables is undefined.
-# That's why this is in a makefile.
+#            That's why this is in a makefile.
 reset_md:
 	( [ -n "$(MDFS)" ]  && rm -f $(MDFS)/* )
 	( [ -n "$(TRASH)" ] && rm -f $(TRASH)/* )

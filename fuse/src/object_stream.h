@@ -115,25 +115,26 @@ OF SUCH DAMAGE.
 #ifndef _MARFS_OBJECTS_H
 #define _MARFS_OBJECTS_H
 
-//#include "common.h"
+#include "common.h"             // only for MARFS_MAX_URL_SIZE
 #include <aws4c.h>
 #include <pthread.h>
 #include <semaphore.h>
+
+
 
 #  ifdef __cplusplus
 extern "C" {
 #  endif
 
 
-
-
 typedef enum {
    OSF_OPEN       = 0x01,
    OSF_WRITING    = 0x02,
    OSF_READING    = 0x04,
-   OSF_EOF        = 0x08,
-   OSF_JOINED     = 0x10,
-   OSF_CLOSED     = 0x20,
+   OSF_LEN_CHECK  = 0x08,
+   OSF_EOF        = 0x10,
+   OSF_JOINED     = 0x20,
+   OSF_CLOSED     = 0x40,
 } OSFlags;
 
 
@@ -145,8 +146,7 @@ typedef struct {
    pthread_t         op;        // GET/PUT
    int               op_rc;     // typically 0 or -1  (see iob.result, for curl/S3 errors)
    char              url[MARFS_MAX_URL_SIZE]; // WARNING: only valid during open_object()
-   size_t            written;   // bytes written to stream
-   // size_t         req_size;  // 
+   size_t            written;   // bytes written-to/read-from stream
    volatile OSFlags  flags;
 } ObjectStream;
 

@@ -91,7 +91,7 @@ OF SUCH DAMAGE.
 //    case OBJ_NONE:    return "none";
 // 
 //    default:
-//       fprintf(stderr, "Unrecognized obj_type: %u\n", type);
+//       LOG(LOG_ERR, "Unrecognized obj_type: %u\n", type);
 //       exit(1);
 //    }
 // }
@@ -103,7 +103,7 @@ MarFS_ObjType lookup_obj_type(const char* token) {
    else if (! strcmp(token, "packed"))   return OBJ_PACKED;
    else if (! strcmp(token, "striped"))  return OBJ_STRIPED;
 
-   fprintf(stderr, "Unrecognized obj_type: %s\n", token);
+   LOG(LOG_ERR, "Unrecognized obj_type: %s\n", token);
    exit(1);
 }
 
@@ -117,7 +117,7 @@ CorrectionMethod lookup_correction(const char* token) {
    else if (! strcmp(token, "raid"))     return CORRECT_RAID;
    else if (! strcmp(token, "erasure"))  return CORRECT_ERASURE;
 
-   fprintf(stderr, "Unrecognized correction_method: %s\n", token);
+   LOG(LOG_ERR, "Unrecognized correction_method: %s\n", token);
    exit(1);
 }
 
@@ -190,17 +190,17 @@ int epoch_to_str(char* str, size_t size, const time_t* time) {
    struct tm tm;
 
    // DEBUGGING
-   fprintf(stderr, "* epoch_to_str epoch:            %016lx\n", *time);
+   LOG(LOG_ERR, "* epoch_to_str epoch:            %016lx\n", *time);
 
    // time_t -> struct tm
    if (! localtime_r(time, &tm)) {
-      fprintf(stderr, "localtime_r failed: %s\n", strerror(errno));
+      LOG(LOG_ERR, "localtime_r failed: %s\n", strerror(errno));
       return -1;
    }
 
    // DEBUGGING
-   struct tm* dbg = &tm;
-   fprintf(stderr, "* epoch_2_str localtime:         %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+   __attribute__ ((unused)) struct tm* dbg = &tm;
+   LOG(LOG_ERR, "* epoch_2_str localtime:         %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
            1900+(dbg->tm_year),
            dbg->tm_mon,
            dbg->tm_mday,
@@ -212,18 +212,18 @@ int epoch_to_str(char* str, size_t size, const time_t* time) {
    // struct tm -> string
    size_t strf_size = strftime(str, size, MARFS_DATE_FORMAT, &tm);
    if (! strf_size) {
-      fprintf(stderr, "strftime failed even more than usual: %s\n", strerror(errno));
+      LOG(LOG_ERR, "strftime failed even more than usual: %s\n", strerror(errno));
       return -1;
    }
 
    // DEBUGGING
-   fprintf(stderr, "* epoch_2_str to-string (1)      %s\n", str);
+   LOG(LOG_ERR, "* epoch_2_str to-string (1)      %s\n", str);
 
    // add DST indicator
    snprintf(str+strf_size, size-strf_size, MARFS_DST_FORMAT, tm.tm_isdst);
 
    // DEBUGGING
-   fprintf(stderr, "* epoch_2_str to-string (2)      %s\n", str);
+   LOG(LOG_ERR, "* epoch_2_str to-string (2)      %s\n", str);
 
    return 0;
 }
@@ -233,29 +233,29 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
    struct tm tm;
    //   memset(&tm, 0, sizeof(tm)); // DEBUGGING
 
-   fprintf(stderr, "* str_to_epoch str:             %s\n", str);
+   LOG(LOG_ERR, "* str_to_epoch str:              %s\n", str);
 
    char* time_str_ptr = strptime(str, MARFS_DATE_FORMAT, &tm);
    if (!time_str_ptr) {
-      fprintf(stderr, "strptime failed (1): %s\n", strerror(errno));
+      LOG(LOG_ERR, "strptime failed (1): %s\n", strerror(errno));
       return -1;
    }
    else if (*time_str_ptr) {
 
       // parse DST indicator
       if (sscanf(time_str_ptr, MARFS_DST_FORMAT, &tm.tm_isdst) != 1) {
-         fprintf(stderr, "sscanf failed, at '...%s': %s\n", time_str_ptr, strerror(errno));
+         LOG(LOG_ERR, "sscanf failed, at '...%s': %s\n", time_str_ptr, strerror(errno));
          return -1;
       }
    }
    else {
-      fprintf(stderr, "expected DST, after time-string, at '...%s'\n", time_str_ptr);
+      LOG(LOG_ERR, "expected DST, after time-string, at '...%s'\n", time_str_ptr);
       return -1;
    }
 
    // DEBUGGING
-   struct tm* dbg = &tm;
-   fprintf(stderr, "* str_to_epoch from string: (1)  %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+   __attribute__ ((unused)) struct tm* dbg = &tm;
+   LOG(LOG_ERR, "* str_to_epoch from string: (1)  %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
            1900+(dbg->tm_year),
            dbg->tm_mon,
            dbg->tm_mday,
@@ -268,7 +268,7 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
    *time = mktime(&tm);
 
    // DEBUGGING
-   fprintf(stderr, "* str_to_epoch epoch:            %016lx\n", *time);
+   LOG(LOG_ERR, "* str_to_epoch epoch:            %016lx\n", *time);
 
    return 0;
 }
@@ -394,11 +394,11 @@ int update_pre(MarFS_XattrPre* pre) {
    char obj_ctime_str[MARFS_DATE_STRING_MAX];
 
    if (epoch_to_str(md_ctime_str, MARFS_DATE_STRING_MAX, &pre->md_ctime)) {
-      fprintf(stderr, "error converting Pre.md_time to string\n");
+      LOG(LOG_ERR, "error converting Pre.md_time to string\n");
       return -1;
    }
    if (epoch_to_str(obj_ctime_str, MARFS_DATE_STRING_MAX, &pre->obj_ctime)) {
-      fprintf(stderr, "error converting Pre.md_time to string\n");
+      LOG(LOG_ERR, "error converting Pre.md_time to string\n");
       return -1;
    }
 
@@ -590,11 +590,11 @@ int str_2_pre(MarFS_XattrPre*    pre,
    time_t  obj_ctime;
 
    if (str_to_epoch(&md_ctime, md_ctime_str, MARFS_DATE_STRING_MAX)) {
-      fprintf(stderr, "error converting string '%s' to Pre.md_time\n", md_ctime_str);
+      LOG(LOG_ERR, "error converting string '%s' to Pre.md_time\n", md_ctime_str);
       return -1;
    }
    if (str_to_epoch(&obj_ctime, obj_ctime_str, MARFS_DATE_STRING_MAX)) {
-      fprintf(stderr, "error converting string '%s' to Pre.md_time\n", md_ctime_str);
+      LOG(LOG_ERR, "error converting string '%s' to Pre.md_time\n", md_ctime_str);
       return -1;
    }
 
@@ -749,17 +749,17 @@ int insert_in_range(RangeList**  list,
       if (min < this->min) {    // insert before <this>
 
          if (max == -1) {
-            fprintf(stderr, "range [%ld, -1] includes range [%ld, %ld]\n",
+            LOG(LOG_ERR, "range [%ld, -1] includes range [%ld, %ld]\n",
                     min, this->min, this->max);
             return -1;
          }
          if (max < this->min) {
-            fprintf(stderr, "gap between range [%ld, %ld] and [%ld, %ld]\n",
+            LOG(LOG_ERR, "gap between range [%ld, %ld] and [%ld, %ld]\n",
                     min, max, this->min, this->max);
             return -1;
          }
          if (max > this->min) {
-            fprintf(stderr, "overlap in range [%ld, %ld] and [%ld, %ld]\n",
+            LOG(LOG_ERR, "overlap in range [%ld, %ld] and [%ld, %ld]\n",
                     min, max, this->min, this->max);
             return -1;
          }
@@ -940,7 +940,7 @@ int load_config(const char* config_fname) {
    if (! strncmp(hostname, "marfs-gpfs-00", 13)) {
       // 10.146.0.3  using xattrs in EXT4, for starters
       //             GPFS also available
-      fprintf(stderr, "loading marfs-config for host 'marfs-gpfs-00*'\n");
+      LOG(LOG_ERR, "loading marfs-config for host 'marfs-gpfs-00*'\n");
 
       ///      MarFS_mnt_top       = "/root/projects/marfs/filesys/mnt";
       ///      _ns->md_path        = "/root/projects/marfs/filesys/mdfs/test00"; /* EXT4 */
@@ -954,7 +954,7 @@ int load_config(const char* config_fname) {
    }
    else if ((! strncmp(hostname, "rrz-", 4))
        || (! strncmp(hostname, "ca-", 3))) {
-      fprintf(stderr, "loading marfs-config for host 'rrz-*' or 'ca-*'\n");
+      LOG(LOG_ERR, "loading marfs-config for host 'rrz-*' or 'ca-*'\n");
       MarFS_mnt_top       = "/users/jti/projects/marfs/git/fuse/test/filesys/mnt";
       _ns->md_path        = "/users/jti/projects/marfs/git/fuse/filesys/mdfs/test00";
       _ns->trash_path     = "/users/jti/projects/marfs/git/fuse/filesys/trash/test00";
@@ -962,7 +962,7 @@ int load_config(const char* config_fname) {
    }
    else {
       // 10.135.0.2   has XFS, supporting xattrs
-      fprintf(stderr, "loading marfs-config for host 10.135.0.2 [default]'\n");
+      LOG(LOG_ERR, "loading marfs-config for host 10.135.0.2 [default]'\n");
       MarFS_mnt_top       = "/root/jti/projects/marfs/git/fuse/test/filesys/mnt";
       _ns->md_path        = "/mnt/xfs/jti/filesys/mdfs/test00";
       _ns->trash_path     = "/mnt/xfs/jti/filesys/trash/test00";

@@ -23,28 +23,41 @@ extern "C" {
 // ---------------------------------------------------------------------------
 
 
-/// #define LOG_PREFIX  "marfs_fuse -- : "
-#define LOG_PREFIX  "marfs_fuse [%s:%4d]%*s %-20s | "
+// LOG_PREFIX is prepended to all output.  Allows grepping in syslogs.
+#ifndef LOG_PREFIX
+#  define LOG_PREFIX  "marfs_fuse"
+#endif
+
+
+#define xFMT  " [%s:%4d]%*s %-20s | "
 
 
 #ifdef USE_SYSLOG
 // calling syslog() as a regular user on rrz seems to be an expensive no-op
-#  define INIT_LOG()                   openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)
+#  define INIT_LOG()       openlog(LOG_PREFIX xFMT, LOG_CONS|LOG_PERROR, LOG_USER)
 
 #  define LOG(PRIO, FMT, ...)                                           \
-   syslog((PRIO), FMT, __FILE__, __LINE__,                              \
+   syslog((PRIO), LOG_PREFIX xFMT FMT, __FILE__, __LINE__,              \
           17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
 
-#else
+#elif DEBUG
 // must start fuse with '-f' in order to allow stdout/stderr to work
 // NOTE: print_log call merges LOG_PREFIX w/ user format at compile-time
 #  define INIT_LOG()
 
 #  define LOG(PRIO, FMT, ...)                                           \
-   printf_log((PRIO), LOG_PREFIX FMT, __FILE__, __LINE__,               \
+   printf_log((PRIO), LOG_PREFIX xFMT FMT, __FILE__, __LINE__,          \
               17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
 
-ssize_t   printf_log(size_t prio, const char* format, ...);
+   ssize_t   printf_log(size_t prio, const char* format, ...);
+
+#else
+// Without DEBUG or USE_SYSLOG, these become no-ops
+#  define INIT_LOG()
+#  define LOG(PRIO, FMT, ...)
+
+
+
 #endif
 
 
