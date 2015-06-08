@@ -1,12 +1,12 @@
-all: marfs_quota
+all: marfs_gc
 
-#OBJS = marfs_quota.o
+OBJS = /root/atorrez-test/aws4c-latest/aws4c.o
 
-CFLAGS += -Wall -lgpfs
+CFLAGS += -Wall -g -lgpfs -I /root/atorrez-test/aws4c-latest -lcurl 
 
 # currently a simple top-level FUSE daemon
-marfs_quota: marfs_quota.c
-	gcc $(CFLAGS) -o marfs_quota $(LDFLAGS) $(OBJS) marfs_quota.c
+marfs_gc: marfs_gc.c
+	gcc $(CFLAGS) -o marfs_gc $(LDFLAGS) $(OBJS) marfs_gc.c
 
 
 
@@ -29,5 +29,5 @@ marfs_quota: marfs_quota.c
 clean:
 	$(RM) *.{o,i}
 	$(RM) *~
-	$(RM) marfs_quota
+	$(RM) marfs_gc   
 

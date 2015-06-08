@@ -1,3 +1,74 @@
+/*
+ * This file is part of MarFS, which is released under the BSD license.
+ *
+ *
+ * Copyright (c) 2015, Los Alamos National Security (LANS), LLC
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation and/or
+ * other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors
+ * may be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * -----
+ *  NOTE:
+ *  -----
+ *  MarFS uses libaws4c for Amazon S3 object communication. The original version
+ *  is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
+ *  LANS, LLC added functionality to the original work. The original work plus
+ *  LANS, LLC contributions is found at https://github.com/jti-lanl/aws4c.
+ *
+ *  GNU licenses can be found at <http://www.gnu.org/licenses/>.
+ *
+ *
+ *  From Los Alamos National Security, LLC:
+ *  LA-CC-15-039
+ *
+ *  Copyright (c) 2015, Los Alamos National Security, LLC All rights reserved.
+ *  Copyright 2015. Los Alamos National Security, LLC. This software was produced
+ *  under U.S. Government contract DE-AC52-06NA25396 for Los Alamos National
+ *  Laboratory (LANL), which is operated by Los Alamos National Security, LLC for
+ *  the U.S. Department of Energy. The U.S. Government has rights to use,
+ *  reproduce, and distribute this software.  NEITHER THE GOVERNMENT NOR LOS
+ *  ALAMOS NATIONAL SECURITY, LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR
+ *  ASSUMES ANY LIABILITY FOR THE USE OF THIS SOFTWARE.  If software is
+ *  modified to produce derivative works, such modified software should be
+ *  clearly marked, so as not to confuse it with the version available from
+ *  LANL.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND CONTRIBUTORS
+ *  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ *  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ *  ARE DISCLAIMED. IN NO EVENT SHALL LOS ALAMOS NATIONAL SECURITY, LLC OR
+ *  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ *  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+ *  OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ *  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ *  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+ *  IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+ *  OF SUCH DAMAGE.
+ *  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -17,12 +88,12 @@
 *  determine extended attributes that we care about
 *     passed in as args or hard coded?
 *  determine arguments to main 
-*  inode total count
 *  block (512 bytes) held by file
 *
 *
 ******************************************************************************/
 char    *ProgName;
+int debug = 0;
 
 /*****************************************************************************
 Name: main
@@ -39,14 +110,16 @@ int main(int argc, char **argv) {
    int  c;
    unsigned int fileset_count = 3;
    extern char *optarg;
-   struct histogram size_histo;
-   struct histogram *histo_size_ptr = &size_histo;
    fileset_stat *fileset_stat_ptr;
 //   char * fileset_name = "root,proja,projb";
 //   char  fileset_name[] = "root,proja,projb";
-   char  fileset_name[] = "proja,projb,root";
+//   char  fileset_name[] = "project_a,projb,root";
+   char  fileset_name[] = "project_a,root,project_b";
+//   char  fileset_name[] = "root";
    char * indv_fileset_name; 
    int i;
+   unsigned int fileset_scan_count = 0;
+   unsigned int fileset_scan_index = 0; 
 
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
@@ -54,10 +127,12 @@ int main(int argc, char **argv) {
    else
       ProgName++;
 
-   while ((c=getopt(argc,argv,"d:f:ho:u:")) != EOF) {
+   while ((c=getopt(argc,argv,"c:d:f:hi:o:u:")) != EOF) {
       switch (c) {
+         case 'c': fileset_scan_count =  atoi(optarg); break;
          case 'd': rdir = optarg; break;
          case 'f': fileset_id = atoi(optarg); break;
+         case 'i': fileset_scan_index = atoi(optarg); break;
          case 'o': outf = optarg; break;
          //case 'u': uid = atoi(optarg); break;
          case 'h': print_usage();
@@ -65,22 +140,76 @@ int main(int argc, char **argv) {
             exit(0);
       }
    }
+   
    if (rdir == NULL || outf == NULL) {
       fprintf(stderr,"%s: no directory (-d) or output file name (-o) specified\n",ProgName);
       exit(1);
    }
    /*
-    * Now assuming that the config file has a list of filesets (either name or path or both).
-    * I will make a call to get a list of filesets and the count.
-    * I will use the count to malloc space for a array of strutures count size.
-    * I will malloc an array of ints count size that will map fileset id to array index 
+    * Things are becoming more clear now about how this will work with the parser
+    * The parser will return a link-list. Jeff has created some support functions
+    * that may be used to get the fileset from the returned link list.  It would
+    * be ideal for the filesets to be in a comma seperated list that I can 
+    * tokenize.
+    *
+    * Based on the number of filesets, this program will have two new optional
+    * arguments  -c for number of filesets to scan and * -i index for where to 
+    * start.  filesets are contained in an array of struct
+    *
+    *  so array element [0] --> fileset_1
+    *                   [1] --> fileset_2
+    *                   [2] --> fileset_3
+    *                   [3[ --> fileset_4 
+    *
+    * so -c 2 -i 1 implies look for 2 filesets in scan and work on fileset_2 and 
+    * fileset_3 (-i 1 implies [1] which is fileset_2).
+    * If -c and -i are not specified the program defaults to looking for all filesets
+    * defined in the array of structures.
+    *  
+    * If -c 0 is passed, the program will report total number of filesets to stdout
+    * This info can be used to determine if running multiple instances on different 
+    * filesets is desirable.
+    * If -c is non-zero than -i must be given
+    *
+    * Sample Scenario
+    *
+    * ./marfs_quota -c 0 -d /path/to/top/level/mount/fileset
+    * number of filesets:  10
+    * on node 1
+    * ./marfs_quota -c 2 -i 0 -d /path/tot/top/level/mount -o fsinfo.log
+    * This will run the scan looing for the first two filesets starting at index 0 (from list of
+    * filesets created from calling parser)
+    * on node 2
+    * ./marfs_quota -c 8 -i 2 -d /path/tot/top/level/mount -o fsinfo.log
+    * Scan looking for remaining filesetso
+    *
+    * Or run looking for all filesets 
+    * ./marfs_quota -c 10 -i 0 -d /path/tot/top/level/mount -o fsinfo.log
+    *
+    *
    */
    // Get list of filesets and count
+   // When parser implemented 
+   // get filesecount before doing any of this
+   if ( fileset_scan_count == 0 ) {
+      // Call parser get link list and count filesets
+      // fileset_count = fileset_scan_count;
+      fileset_count = 3; 
+      // TEMP for now until I get parser integrated
+      fileset_scan_count = fileset_count;
+      // TEMP for now until I get parser integrated
+   } 
 
-   int *fileset_id_map;
-   fileset_id_map = (int *) malloc(sizeof(int)*fileset_count); 
+   if ((fileset_scan_count > fileset_count) ||
+       (fileset_scan_count + fileset_scan_index > fileset_count)) {
+
+      fprintf(stderr, "Trying to scan more filesets than exist\n");
+      print_usage();
+      exit(1);
+   }  
+    
    fileset_stat_ptr = (fileset_stat *) malloc(sizeof(*fileset_stat_ptr)*fileset_count);
-   if (fileset_stat_ptr == NULL || fileset_id_map == NULL) {
+   if (fileset_stat_ptr == NULL ) {
       fprintf(stderr,"Memory allocation failed\n");
       exit(1);
    }
@@ -92,33 +221,34 @@ int main(int argc, char **argv) {
    // tokeninzing.  I also require the count from the parser so that I can malloc the 
    // correct amount of filset structures.  I could always count filesets before I malloc 
    // if need be
-   printf("Going to tokenize\n");
+   if (debug) 
+      printf("Going to tokenize\n");
    indv_fileset_name = strtok(fileset_name,",");
-   printf("%s\n", indv_fileset_name);
+   if (debug) 
+      printf("%s\n", indv_fileset_name);
    i =0;
    while (indv_fileset_name != NULL) {
-      printf("%s\n", indv_fileset_name);
+      if (debug) 
+         printf("%s\n", indv_fileset_name);
       strcpy(fileset_stat_ptr[i].fileset_name, indv_fileset_name);
       indv_fileset_name = strtok(NULL,","); 
       i++;
    }
-   printf("Filsets count = %d\n", fileset_count);
+   if (debug) 
+      printf("Filsets count = %d\n", fileset_count);
   
    outfd = fopen(outf,"w");
+
+    
+
+
    // Add filsets to structure so that inode scan can update fileset info
-   ec = read_inodes(rdir,outfd, histo_size_ptr,fileset_id,fileset_stat_ptr,fileset_count);
-   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n",
-          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
+   ec = read_inodes(rdir, outfd, fileset_id, fileset_stat_ptr, fileset_scan_count,fileset_scan_index);
+//   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n",
+//          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
+   free(fileset_stat_ptr);
    return (0);   
 }
-
-
-
-
-
-
-
-
 
 /***************************************************************************** 
 Name: init_records 
@@ -135,7 +265,9 @@ Name: print_usage
 *****************************************************************************/
 void print_usage()
 {
-   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file [-f fileset_id]\n",ProgName);
+   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file [-c fileset_count] [-i start_index] [-f fileset_id]\n",ProgName);
+   fprintf(stderr, "NOTE: -c and -i are optional.  Default behavior will be to try to match all filesets defined in config\n");
+   fprintf(stderr, "See README for information\n");
 }
 
 /***************************************************************************** 
@@ -144,7 +276,6 @@ Name: fill_size_histo
 This function counts file sizes based on small, medium, and large for 
 the purposes of displaying a size histogram.
 *****************************************************************************/
-//fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id)
 static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_buffer, int index)
 {
 
@@ -158,12 +289,34 @@ static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_bu
 }
 
 /***************************************************************************** 
-Name:  get_attr_value
+Name:  get_xattr_value
 
 This function, given the name of the attribute returns the associated value.
 
 *****************************************************************************/
-int get_xattr_value(gpfs_iscan_t *iscanP,
+int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt) {
+
+   int i;
+   int ret_value = -1;
+
+   for (i=0; i< cnt; i++) {
+      if (!strcmp(xattr_ptr->xattr_name, desired_xattr)) {
+         return(i);
+      }
+      else {
+         xattr_ptr++;
+      }
+   }
+   return(ret_value);
+}
+
+/***************************************************************************** 
+Name:  get_xattrs
+
+This function fills the xattr struct with all xattr key value pairs
+
+*****************************************************************************/
+int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
                  const char * desired_xattr,
@@ -191,7 +344,6 @@ int get_xattr_value(gpfs_iscan_t *iscanP,
          break;
 
       // keep track of how many xattrs found 
-      //xattr_count++;
       if (!strcmp(nameP, desired_xattr)) {
          strcpy(xattr_ptr->xattr_name, nameP);
           xattr_count++;
@@ -207,6 +359,7 @@ int get_xattr_value(gpfs_iscan_t *iscanP,
       }
 ***********/
     
+      // Determine if printible characters
       if (valueLen > 0) {
          printable = 0;
          if (valueLen > 1) {
@@ -222,6 +375,7 @@ int get_xattr_value(gpfs_iscan_t *iscanP,
             }
          }
 
+         //create string from xattr value char array
          for (i = 0; i < valueLen; i++) {
             if (printable) {
               xattr_ptr->xattr_value[i] = valueP[i]; 
@@ -260,18 +414,16 @@ This function opens an inode scan in order to provide size/block information
 as well as file extended attribute information
 
 *****************************************************************************/
-int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, int fileset_id,fileset_stat *fileset_stat_ptr, unsigned int rec_count) {
+int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offset_start) {
    int rc = 0;
    const gpfs_iattr_t *iattrP;
    const char *xattrBP;
    unsigned int xattr_len; 
    register gpfs_iscan_t *iscanP = NULL;
    gpfs_fssnap_handle_t *fsP = NULL;
-//  int printCompare;
-   //unsigned long long int sum_size = 0;
    struct marfs_xattr mar_xattrs[MAX_MARFS_XATTR];
    struct marfs_xattr *xattr_ptr = mar_xattrs;
-   int i, xattr_count;
+   int xattr_count;
    char fileset_name_buffer[32];
    int last_struct_index = -1;
    unsigned int struct_index;
@@ -283,6 +435,7 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, in
    //const char *xattr_post_name = "user.a";
   
    int early_exit =0;
+   int xattr_index;
 
    //outfd = fopen(onameP,"w");
 
@@ -339,14 +492,12 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, in
       // Print out inode values to output file
       // This is handy for debug at the moment
       if (iattrP->ia_inode != 3) {	/* skip the root inode */
-         fprintf(outfd,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
-         iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
-         iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
-         iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
-
-         //sum_size += iattrP->ia_size;
-         //fill_size_histo(iattrP, histo_ptr);
-
+         if (debug) { 
+            fprintf(outfd,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
+            iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
+            iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
+            iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
+         }
 
          /*
          At this point determine if the last inode fileset name matches this one.  if not,
@@ -354,87 +505,99 @@ int read_inodes(const char *fnameP, FILE *outfd, struct histogram *histo_ptr, in
          the function will return an index and this function will update appropriate 
          fields.
          */
-
-         printf("%d %d\n", last_fileset_id, iattrP->ia_filesetid);
+         if (debug) 
+            printf("%d %d\n", last_fileset_id, iattrP->ia_filesetid);
          if (last_fileset_id != iattrP->ia_filesetid) {
             gpfs_igetfilesetname(iscanP, iattrP->ia_filesetid, &fileset_name_buffer, 32); 
-            struct_index = lookup_fileset(fileset_stat_ptr,rec_count,fileset_name_buffer);
+            struct_index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,fileset_name_buffer);
+            if (struct_index == -1) 
+               continue;
             last_struct_index = struct_index;
-            printf("XXXXXX\n");
             last_fileset_id = iattrP->ia_filesetid;
-            //NOTE make sure structure has filesetid as unsigned int
-
          }
          fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
-         printf("%d size = %llu file size sum  = %llu\n", last_struct_index,iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
+         fileset_stat_ptr[last_struct_index].sum_file_count+=1;
+         if (debug) 
+            printf("%d size = %llu file size sum  = %zu\n", last_struct_index,iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
          fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id); 
 
-         if (strcmp(fileset_stat_ptr[0].fileset_name,fileset_name_buffer) ==  0) {
-            fprintf(outfd, "found matching fileset %s\n", fileset_name_buffer);
-         }
-      }
-
-      // Do we have extended attributes?
-      // This will be modified as time goes on - what xattrs do we care about
-      if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
-         xattr_ptr = &mar_xattrs[0];
-         if ((xattr_count = get_xattr_value(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+         // Do we have extended attributes?
+         // This will be modified as time goes on - what xattrs do we care about
+         
+         if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
             xattr_ptr = &mar_xattrs[0];
-            str_2_post(&post, xattr_ptr); 
-            // Talk to Jeff about this filespace used not in post xattr
-            fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
-            
-            //for (i = 0; i < xattr_count; i++) {
-            //   fprintf(outfd,"xattr name:   %s   xattr value:  %s\n", xattr_ptr->xattr_name, xattr_ptr->xattr_value); 
-            //   xattr_ptr++;
-            //}
+            if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+               xattr_ptr = &mar_xattrs[0];
+               if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) {
+                   xattr_ptr = &mar_xattrs[xattr_index];
+                   fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
+                   str_2_post(&post, xattr_ptr);
+               }
+
+               //str_2_post(&post, xattr_ptr); 
+               // Talk to Jeff about this filespace used not in post xattr
+               if (debug) 
+                  printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
+               fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
+               if (!strcmp(post.gc_path, "0")){
+                  if (debug) 
+                     printf("gc_path is NULL\n");
+               } 
+               else {
+                  fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
+               }
+            }
          }
       }
    } // endwhile
-   for (i=0; i < rec_count; i++) {
-      fprintf(outfd,"fileset %s file size sum  = %llu\n", fileset_stat_ptr[i].fileset_name, fileset_stat_ptr[i].sum_size);
-   }
+   write_fsinfo(outfd, fileset_stat_ptr, rec_count, offset_start);
    clean_exit(outfd, iscanP, fsP, early_exit);
    return(rc);
 }
 
+/***************************************************************************** 
+Name: lookup_fileset 
 
-
-
-
-int lookup_fileset(fileset_stat *fileset_stat_ptr, unsigned int rec_count,char *inode_fileset)
+This function attempts to match the passed in fileset name to the structure
+element (array of structures ) containing that same fileset name.  The index 
+for the matching element is returned. 
+*****************************************************************************/
+int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offset_start, char *inode_fileset)
 {
-   int index = 0;
+   int index = offset_start;
    int comp_res;
+  
 
-
-   printf("inode fileset = %s\n", inode_fileset);
-   printf(" fileset = %s\n", inode_fileset);
-   
+   // search the array of structures for matching fileset name
    do 
    {
       index++;
    } while ((comp_res = strcmp(fileset_stat_ptr[index-1].fileset_name, inode_fileset)) && index <= rec_count);
+   // found a match
    if (!comp_res) {
-      printf("index_returned = %d\n", index-1);
       return(index-1);
    }
+   // no match return -1
    else { 
-     printf("AAAAA\n");
       return(-1);
    }
 }   
 
 
+/***************************************************************************** 
+Name: str_2_post 
 
-// parse an xattr-value string into a MarFS_XattrPost
+ parse an xattr-value string into a MarFS_XattrPost
+
+*****************************************************************************/
 int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    int   major;
    int   minor;
 
    char  obj_type_code;
-
+   if (debug)
+      printf("%s\n", post_str->xattr_value);
    // --- extract bucket, and some top-level fields
    int scanf_size = sscanf(post_str->xattr_value, MARFS_POST_FORMAT,
                            &major, &minor,
@@ -443,7 +606,8 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &post->num_objects,
                            &post->chunk_info_bytes,
                            &post->correct_info,
-                           &post->encrypt_info);
+                           &post->encrypt_info,
+                           (char*)&post->gc_path);
 
    if (scanf_size == EOF)
       return -1;                // errno is set
@@ -455,7 +619,24 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 }
 
 
+/***************************************************************************** 
+Name: write_fsinfo 
 
+This function prints various fileset information to the fs_info file
+
+*****************************************************************************/
+void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count, size_t index_start)
+{
+   size_t i;
+ 
+   for (i=index_start; i < rec_count+index_start; i++) {
+      fprintf(outfd,"[%s]\n", fileset_stat_ptr[i].fileset_name);
+      fprintf(outfd,"total_file_count:  %zu\n", fileset_stat_ptr[i].sum_file_count);
+      fprintf(outfd,"total_size:  %zu\n", fileset_stat_ptr[i].sum_size);
+      fprintf(outfd,"trash_size:  %zu\n", fileset_stat_ptr[i].sum_trash);
+      fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
+   }
+}
 
 
 
