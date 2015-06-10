@@ -31,21 +31,30 @@ TRASH  = $(GPFS)/test00/trash
 
 
 # if you set the environment variable DEBUG, we'll add '-g', and define
-# DEBUG for the pre-processor.
+# DEBUG for the pre-processor.  Use DEBUG=0 to turn off diagnostic output,
+# but still compile with -g.  For optimization, you must undef DEBUG, or
+# define it empty.
+#
+# DEBUG undef  -- full optimization, no -DDEBUG
+# DEBUG null   -- full optimization, no -DDEBUG
+# DEBUG <n>    -- compile w/ "-g -DDEBUG=<n>"
 ifdef DEBUG
 	ifeq ($(DEBUG),)
 		CFLAGS += -O3
-		DEFS   += DEBUG=0
 	else
+      # NOTE: this also applies if DEBUG = 0
 		CFLAGS += -g
 		DEFS   += DEBUG=$(DEBUG)
 	endif
 else
 	CFLAGS += -O3
-	DEFS   += DEBUG=0
 endif
 
-
+# environment-var DEBUG also controls command-line flags for fuse launch.
+# DEBUG = 0 (or undef, or empty)
+#   run as standard background task, w/out debug flags
+# DEBUG <= 1
+#   run in foreground, with debug flags  (NOTE: foreground is single-threaded)
 FUSE_FLAGS += -d -f
 ifndef DEBUG
 	FUSE_FLAGS =
@@ -54,6 +63,13 @@ else ifeq ($(DEBUG),)
 else ifeq ($(DEBUG),0)
 	FUSE_FLAGS =
 endif
+
+
+# This tells logging.h to write via syslog(), instead of printf()
+ifdef USE_SYSLOG
+	DEFS += USE_SYSLOG
+endif
+
 
 
 # c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
@@ -182,6 +198,13 @@ reset_md:
 reset_obj:
 	@ ls_obj_w_prefix emcS3_00.-test00 ver | xargs -r -L 1 rm_obj
 
+# on the marfs-gpfs-003, syslog-ng is disabled by default.  We're the
+# only ones using it, so this seems reasonable
+reset_syslog:
+	service syslog-ng stop
+	rm -f /var/log/messages
+	service syslog-ng start
+
 
 
 test_wr:
@@ -212,6 +235,8 @@ show_results:
 
 # after edits: unmount, rebuild (if needed), wipe MDFS, mount, run test, show the log
 redo: umnt marfs_fuse reset_md reset_obj mnt
+
+redo2: umnt marfs_fuse reset_syslog reset_md reset_obj mnt
 
 
 # I have things setup so core-files sort chronologically.  (See above)

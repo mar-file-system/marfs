@@ -134,13 +134,20 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
    timeout.tv_sec += timeout_sec;
 
    // wait for a little while on the semaphore
-   if (! sem_timedwait(sem, &timeout))
-      return 0;                 // got it
+   while (1) {
+      if (! sem_timedwait(sem, &timeout))
+         return 0;              // got it
 
-   if (errno != ETIMEDOUT)
-      return 1;                 // timed-out
+      if (errno == EINTR) {
+         LOG(LOG_INFO, "interrupted.  resuming wait ...\n");
+         continue;              // interrupted (try again?)
+      }
 
-   return -1;                   // something else went wrong
+      if (errno == ETIMEDOUT)
+         return -1;             // timed-out
+
+      return -1;                // something else went wrong
+   }
 }
 
 /* #define safe_sem_wait(SEM, TIMEOUT, OS)                              \
@@ -219,19 +226,19 @@ int stream_wait(ObjectStream* os) {
       else if (errno == ETIMEDOUT)
          return -1;             // timed-out
 
-      else if (errno != EINVAL)
-         return -1;             // error
-
-      // EINVAL == another thread is also trying to join (?)  timed-wait
-      // will just return immediately again, and we'll turn into a
-      // busy-wait.  Add an explicit sleep here.  [Alternatively, here's
-      // another idea: If multiple threads are waiting on this thread, then
-      // that implies the fuse handle was dup'ed.  In that case, if we
-      // return success, fuse might still wait until all threads have
-      // flushed?  I don't trust my knowledge of fuse enough to depend on
-      // that.]
-      else
+      else if (errno == EINVAL)
+         // EINVAL == another thread is also trying to join (?)  timed-wait
+         // will just return immediately again, and we'll turn into a
+         // busy-wait.  Add an explicit sleep here.  [Alternatively, here's
+         // another idea: If multiple threads are waiting on this thread, then
+         // that implies the fuse handle was dup'ed.  In that case, if we
+         // return success, fuse might still wait until all threads have
+         // flushed?  I don't trust my knowledge of fuse enough to depend on
+         // that.]
          sleep(1);
+
+      else
+         return -1;             // error
    }
 }
 
@@ -293,11 +300,11 @@ int s3_op_internal(ObjectStream* os) {
    // run the GET or PUT
    int is_get = (os->flags & OSF_READING);
    if (is_get) {
-      LOG(LOG_INFO, "GET %lx, '%s'\n", b, os->url);
+      LOG(LOG_INFO, "GET %lx, '%s'\n", (size_t)b, os->url);
       AWS4C_CHECK1( s3_get(b, os->url) ); /* create empty object with user metadata */
    }
    else {
-      LOG(LOG_INFO, "PUT %lx, '%s'\n", b, os->url);
+      LOG(LOG_INFO, "PUT %lx, '%s'\n", (size_t)b, os->url);
       AWS4C_CHECK1( s3_put(b, os->url) ); /* create empty object with user metadata */
    }
 
@@ -318,7 +325,7 @@ int s3_op_internal(ObjectStream* os) {
       LOG(LOG_INFO, "%s complete\n", ((is_get) ? "GET" : "PUT"));
       return 0;
    }
-   LOG(LOG_ERR, "CURL ERROR: %lx %d '%s'\n", b, b->code, b->result);
+   LOG(LOG_ERR, "CURL ERROR: %lx %d '%s'\n", (size_t)b, b->code, b->result);
    return -1;
 }
 
@@ -390,7 +397,7 @@ size_t streaming_readfunc(void* ptr, size_t size, size_t nmemb, void* stream) {
 }
 
 // Hand <buf> over to the streaming_readfunc(), so it can be added into
-// the ongoing streaming PUT.  You must call stream_open() first.
+// the ongoing streaming PUT.  You must call stream_open) first.
 //
 // NOTE: Doing this a little differently from the test_aws.c (case 12)
 //       approach.  We're forcing *synchronous* interaction with the
@@ -555,7 +562,7 @@ size_t streaming_writefunc(void* ptr, size_t size, size_t nmemb, void* stream) {
    }
 
    // curl-buffer is exhausted.
-   LOG(LOG_INFO, "copied all of curl-buff (writable=%d)\n", writable);
+   LOG(LOG_INFO, "copied all of curl-buff (writable=%ld)\n", writable);
    if (writable)
       sem_post(&os->iob_empty);    // next callback is pre-approved
    else {
@@ -668,13 +675,17 @@ int stream_open(ObjectStream* os, IsPut put) {
    os->iob.user_data = os;
    IOBuf* b = &os->iob;         // shorthand
 
+   // install copy of global default-context as per-connection context 
+   if (! b->context)
+      aws_iobuf_context(b, aws_context_clone());
+
    aws_iobuf_reset(b);          // doesn't affect <user_data>
    aws_iobuf_chunked_transfer_encoding(b, 1);
 
    if (put) {
       sem_init(&os->iob_empty, 0, 0);
       sem_init(&os->iob_full,  0, 0);
-      aws_iobuf_readfunc (b, &streaming_readfunc);
+      aws_iobuf_readfunc(b, &streaming_readfunc);
    }
    else {
       sem_init(&os->iob_empty, 0, 0);
@@ -683,7 +694,7 @@ int stream_open(ObjectStream* os, IsPut put) {
       aws_iobuf_writefunc(b, &streaming_writefunc);
    }
 
-   // thread runs the GET/PUT
+   // thread runs the GET/PUT, with the iobuf in <os>
    LOG(LOG_INFO, "starting thread\n");
    if (pthread_create(&os->op, NULL, &s3_op, os)) {
       LOG(LOG_ERR, "pthread_create failed: '%s'\n", strerror(errno));
@@ -696,9 +707,10 @@ int stream_open(ObjectStream* os, IsPut put) {
 // ---------------------------------------------------------------------------
 // SYNC
 //
-// This is like "flush" in the fuse sense (i.e. no more I/O errors are
+// This is like "flush" in the FUSE sense (i.e. no more I/O errors are
 // possible), rather than "fflush" (i.e. wait for current buffers to be
-// empty).  When stream_sync() returns, all I/O is completed on the stream.
+// empty).  When stream_sync() returns, all I/O (ever) is completed on the
+// stream.
 //
 // Fuse may call this before I/O is complete on the stream.  Therefore,
 // we shouldn't just assume that failure to join means something is wedged.

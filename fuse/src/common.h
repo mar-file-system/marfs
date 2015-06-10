@@ -163,7 +163,7 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY0(%s)\n", #FUNCTION); */                     \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "ERR TRY0(%s) returning (%d) '%s'\n\n",          \
+         LOG(LOG_INFO, "ERR TRY0(%s) returning (%ld) '%s'\n\n",         \
              #FUNCTION, rc, strerror(errno));                           \
          /* RETURN(-rc); */ /* negated for FUSE */                      \
          RETURN(-errno); /* negated for FUSE */                         \
@@ -193,7 +193,7 @@ typedef enum {
       LOG(LOG_INFO, "__TRY0(%s)\n", #FUNCTION);                         \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "ERR __TRY0(%s) returning (%d)\n\n",             \
+         LOG(LOG_INFO, "ERR __TRY0(%s) returning (%ld)\n\n",            \
              #FUNCTION, rc);                                            \
          /* RETURN(rc);*/ /* NOT negated! */                            \
          RETURN(errno);                                                 \
@@ -210,7 +210,8 @@ typedef enum {
    __attribute__ ((unused)) ssize_t  rc_ssize = 0
 
 #define EXIT()                                  \
-   LOG(LOG_INFO, "exit\n\n")
+   LOG(LOG_INFO, "exit\n");                     \
+   LOG(LOG_INFO, "\n")
 
 
 

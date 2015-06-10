@@ -34,10 +34,10 @@ extern "C" {
 
 #ifdef USE_SYSLOG
 // calling syslog() as a regular user on rrz seems to be an expensive no-op
-#  define INIT_LOG()       openlog(LOG_PREFIX xFMT, LOG_CONS|LOG_PERROR, LOG_USER)
+#  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)
 
 #  define LOG(PRIO, FMT, ...)                                           \
-   syslog((PRIO), LOG_PREFIX xFMT FMT, __FILE__, __LINE__,              \
+   syslog((PRIO), xFMT FMT, __FILE__, __LINE__,                         \
           17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
 
 #elif DEBUG
@@ -49,7 +49,7 @@ extern "C" {
    printf_log((PRIO), LOG_PREFIX xFMT FMT, __FILE__, __LINE__,          \
               17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
 
-   ssize_t   printf_log(size_t prio, const char* format, ...);
+   ssize_t printf_log(size_t prio, const char* format, ...);
 
 #else
 // Without DEBUG or USE_SYSLOG, these become no-ops
