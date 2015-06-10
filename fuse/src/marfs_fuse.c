@@ -501,13 +501,15 @@ int marfs_mknod (const char* path,
 
 
 
-// NOTE: stream_open() assumes the OS is in a pristine state.
-//       marfs_open() currently always allocates a fresh OS (inside the new
-//       FileHandle), so that assumption is safe.  stream_close()
-//       doesn't wipe everything clean, because we want some of that info
-//       (e.g. how much data was written).  If you decide to start reusing
-//       FileHandles, you should probably (a) assure they have been
-//       flushed/closed, and (b) wipe them clean.
+// NOTE: stream_open() assumes the OS is in a pristine state.  marfs_open()
+//       currently always allocates a fresh OS (inside the new FileHandle),
+//       so that assumption is safe.  stream_close() doesn't wipe
+//       everything clean, because we want some of that info (e.g. how much
+//       data was written).  If you decide to start reusing FileHandles,
+//       you should probably (a) assure they have been flushed/closed, and
+//       (b) wipe them clean.  [See marfs_read(), which now performs a
+//       distinct S3 request for every call, and reuses the ObjectStream
+//       inside the FileHandle.]
 int marfs_open (const char*            path,
                 struct fuse_file_info* ffi) {
 
@@ -525,6 +527,7 @@ int marfs_open (const char*            path,
       return -ENOMEM;
 
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+   IOBuf*            b    = &fh->os.iob;                /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
    EXPAND_PATH_INFO(info, path);
 
@@ -615,15 +618,20 @@ int marfs_open (const char*            path,
    strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
    LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
 
+   // Configure a private AWSContext, for this request
+   AWSContext* ctx = aws_context_clone();
    if (PROTO_IS_S3(info->pre.repo->access_proto)) { // (includes S3_EMC)
-      s3_set_host(info->pre.repo->host);
+      s3_set_host_r(info->pre.repo->host, ctx);
       LOG(LOG_INFO, "host   '%s'\n", info->pre.repo->host);
 
-      s3_set_bucket(info->pre.bucket);
+      s3_set_bucket_r(info->pre.bucket, ctx);
       LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
    }
    if (info->pre.repo->access_proto == PROTO_S3_EMC)
-      s3_enable_EMC_extensions(1);
+      s3_enable_EMC_extensions_r(1, ctx);
+
+   // install custom context
+   aws_iobuf_context(b, ctx);
 
 #if 0
    TRY0(stream_open, &fh->os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
@@ -635,7 +643,6 @@ int marfs_open (const char*            path,
    if (fh->flags & FH_WRITING)
       TRY0(stream_open, &fh->os, OS_PUT);
 #endif
-   // 
 
    POP_USER();
    return 0;
@@ -684,6 +691,7 @@ int marfs_read (const char*            path,
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
+   IOBuf*            b    = &os->iob;
 
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM  RD
@@ -726,7 +734,7 @@ int marfs_read (const char*            path,
 
 #else
    LOG(LOG_INFO, "offset: %ld, size: %ld\n", offset, size);
-   s3_set_byte_range(offset, size);
+   s3_set_byte_range_r(offset, size, b->context);
    TRY0(stream_open, os, OS_GET);
 
    // because we are reading byte-ranges, we may see '206 Partial Content'
@@ -736,7 +744,7 @@ int marfs_read (const char*            path,
    if ((rc_ssize < 0)
        && (os->iob.code != 200)
        && (os->iob.code != 206)) {
-      LOG(LOG_ERR, "stream_get returned %ld (%ld '%s')\n",
+      LOG(LOG_ERR, "stream_get returned %ld (%d '%s')\n",
           rc_ssize, os->iob.code, os->iob.result);
       return -1;
    }
@@ -906,7 +914,7 @@ int marfs_release (const char*            path,
 int marfs_releasedir (const char*            path,
                       struct fuse_file_info* ffi) {
    LOG(LOG_INFO, "releasedir %s\n", path);
-   LOG(LOG_INFO, "entry -- skipping push_user(%ld)\n", fuse_get_context()->uid);
+   LOG(LOG_INFO, "entry -- skipping push_user(%d)\n", fuse_get_context()->uid);
    //   PUSH_USER();
    size_t rc = 0;
 
@@ -1561,6 +1569,12 @@ int main(int argc, char* argv[])
    init_xattr_specs();
 
    // initialize libaws4c/libcurl
+   //
+   // NOTE: We're making initializations in the default-context.  These
+   //       will be copied into the per-file-handle context via
+   //       aws_context_clone(), in stream_open().  Instead of having to
+   //       make these initializations in every context, we make them once
+   //       here.
    aws_init();
    aws_reuse_connections(1);
 #if (DEBUG > 1)

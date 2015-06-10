@@ -208,7 +208,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 
    // don't let users into the trash
    if (! strcmp(info->md_path, info->trash_path)) {
-      LOG(LOG_ERR, "users can't access trash_path\n", info->md_path);
+      LOG(LOG_ERR, "users can't access trash_path (%s)\n", info->md_path);
       errno = EPERM;
       return -1;
    }
@@ -242,7 +242,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 // trashed many times, we can find all the versions. (?)
 int expand_trash_info(PathInfo*    info,
                       const char*  path) {
-   int rc;
+   size_t rc;                   // __TRY() assumes this exists
 
    // won't hurt (much), if it's already been done.
    __TRY0(expand_path_info, info, path);
@@ -276,7 +276,7 @@ int expand_trash_info(PathInfo*    info,
 
 int stat_regular(PathInfo* info) {
 
-   int rc;
+   size_t rc;
 
    if (info->flags & PI_STAT_QUERY)
       return 0;                 /* already called stat_regular() */
@@ -355,7 +355,7 @@ int init_xattr_specs() {
 //
 int stat_xattrs(PathInfo* info) {
 
-   int rc;
+   size_t rc;
 
    if (info->flags & PI_XATTR_QUERY)
       return 0;                 // already did this
@@ -608,7 +608,7 @@ int  trash_unlink(PathInfo*   info,
    //    rename file to trashname 
    //    trash_name()   record the full path in a related file in trash
 
-   int rc;
+   size_t rc;
    __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
    __TRY0(rename, info->md_path, info->trash_path);
    return 0;
@@ -634,7 +634,7 @@ int  trash_truncate(PathInfo*   info,
    //    clean up, too bad for the user as we aren’t going to keep the
    //    trunc’d file.
 
-   int rc;
+   size_t rc;
    __TRY0(stat_xattrs, info);
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
       __TRY0(truncate, info->md_path, 0);
@@ -666,7 +666,7 @@ int  trash_truncate(PathInfo*   info,
    // read from md_file
    int in = open(info->md_path, O_RDONLY);
    if (in == -1) {
-      LOG(LOG_ERR, "open(%s, O_RDONLY) failed\n",
+      LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
           info->md_path, new_mode);
       return -1;
    }
@@ -675,7 +675,7 @@ int  trash_truncate(PathInfo*   info,
    __TRY0(expand_trash_info, info, path);
    int out = open(info->trash_path, (O_CREAT | O_WRONLY), new_mode);
    if (out == -1) {
-      LOG(LOG_ERR, "open(%s, (O_CREAT | )_WRONLY), [oct]%o) failed\n",
+      LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
           info->trash_path, new_mode);
       return -1;
    }
@@ -707,7 +707,7 @@ int  trash_truncate(PathInfo*   info,
          while (remain) {
             size_t wr_count = write(out, buf_ptr, remain);
             if (wr_count < 0) {
-               LOG(LOG_ERR, "err writing %s (byte %d)\n",
+               LOG(LOG_ERR, "err writing %s (byte %ld)\n",
                    info->trash_path, wr_total);
                return -1;
             }
@@ -720,7 +720,7 @@ int  trash_truncate(PathInfo*   info,
          read_size = ((phy_remain < BUF_SIZE) ? phy_remain : BUF_SIZE);
       }
       if (rd_count < 0) {
-         LOG(LOG_ERR, "err reading %s (byte %d)\n",
+         LOG(LOG_ERR, "err reading %s (byte %ld)\n",
              info->trash_path, wr_total);
          return -1;
       }
@@ -823,7 +823,7 @@ int trash_name(PathInfo* info, const char* path) {
 
 int check_quotas(PathInfo* info) {
 
-   //   int rc;
+   //   size_t rc;
 
    //   if (! (info->flags & PI_STATVFS))
    //      __TRY0(statvfs, info->ns->fsinfo, &info->stvfs);
