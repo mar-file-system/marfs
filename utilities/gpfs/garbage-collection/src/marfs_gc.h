@@ -166,7 +166,8 @@ int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, in
 int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
-                 const char * desired_xattr,
+                 const char * xattr_1,
+                 const char * xattr_2,
                  struct marfs_xattr *xattr_ptr);
 void print_usage();
 void init_records(fileset_stat *fileset_stat_buf, unsigned int record_count);

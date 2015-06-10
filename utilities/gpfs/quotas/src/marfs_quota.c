@@ -294,7 +294,7 @@ Name:  get_xattr_value
 This function, given the name of the attribute returns the associated value.
 
 *****************************************************************************/
-int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt) {
+int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt, FILE *outfd) {
 
    int i;
    int ret_value = -1;
@@ -319,7 +319,9 @@ This function fills the xattr struct with all xattr key value pairs
 int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
-                 const char * desired_xattr,
+                 const char * xattr_1,
+                 const char * xattr_2,
+                 const char * xattr_3,
                  struct marfs_xattr *xattr_ptr) {
    int rc;
    int i;
@@ -343,11 +345,24 @@ int get_xattrs(gpfs_iscan_t *iscanP,
       if (nameP == NULL)
          break;
 
-      // keep track of how many xattrs found 
-      if (!strcmp(nameP, desired_xattr)) {
+      // keep track of how many marfs xattrs found 
+      // Eventually make xattrs an array of pointers to strings
+      if (!strcmp(nameP, xattr_1)) {
          strcpy(xattr_ptr->xattr_name, nameP);
-          xattr_count++;
+         xattr_count++;
       }
+      else if (!strcmp(nameP, xattr_2)) {
+         strcpy(xattr_ptr->xattr_name, nameP);
+         xattr_count++;
+      }
+      else if (!strcmp(nameP, xattr_3)) {
+         strcpy(xattr_ptr->xattr_name, nameP);
+         xattr_count++;
+      }
+      else {
+         continue;
+      }
+ 
 
 /******* NOT SURE ABOUT THIS JUST YET
       Eliminate gpfs.dmapi attributes for comparision
@@ -360,7 +375,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
 ***********/
     
       // Determine if printible characters
-      if (valueLen > 0) {
+      if (valueLen > 0 && xattr_count > 0) {
          printable = 0;
          if (valueLen > 1) {
             printable = 1;
@@ -384,6 +399,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
          xattr_ptr->xattr_value[valueLen] = '\0'; 
       }
       xattr_ptr++;
+      //xattr_count++;
    } // endwhile
    return(xattr_count);
 }
@@ -429,8 +445,11 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    unsigned int struct_index;
    unsigned int last_fileset_id = -1;
 
-   //const char *xattr_objid_name = "user.marfs_objid";
+   const char *xattr_objid_name = "user.marfs_objid";
    const char *xattr_post_name = "user.marfs_post";
+   const char *xattr_restart_name = "user.marfs_restart";
+
+
    MarFS_XattrPost post;
    //const char *xattr_post_name = "user.a";
   
@@ -526,24 +545,27 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          
          if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
             xattr_ptr = &mar_xattrs[0];
-            if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+            if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_objid_name, xattr_restart_name, xattr_ptr)) > 0) {
+
                xattr_ptr = &mar_xattrs[0];
-               if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) {
+
+               if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count, outfd)) != -1 ) {
                    xattr_ptr = &mar_xattrs[xattr_index];
                    fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
-                   str_2_post(&post, xattr_ptr);
                }
-
-               //str_2_post(&post, xattr_ptr); 
-               // Talk to Jeff about this filespace used not in post xattr
+               if (str_2_post(&post, xattr_ptr)) {
+                  continue;             
+               }
                if (debug) 
                   printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
                fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
-               if (!strcmp(post.gc_path, "0")){
+               if (!strcmp(post.gc_path, "")){
+                  fprintf(outfd,"gc_path is NULL\n");
                   if (debug) 
                      printf("gc_path is NULL\n");
                } 
                else {
+                  fprintf(outfd,"index = %d   %llu\n", last_struct_index, iattrP->ia_size);
                   fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
                }
             }
@@ -611,7 +633,7 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    if (scanf_size == EOF)
       return -1;                // errno is set
-   else if (scanf_size != 8) {
+   else if (scanf_size < 9) {
       errno = EINVAL;
       return -1;            /* ?? */
    }
@@ -637,8 +659,4 @@ void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count,
       fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
    }
 }
-
-
-
-
 

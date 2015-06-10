@@ -167,11 +167,13 @@ typedef struct fileset_stats {
 
 int read_inodes(const char *fnameP, FILE *outfd, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offset_start);
 int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
-int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt);
+int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt, FILE *outfd);
 int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
-                 const char * desired_xattr,
+                 const char * xattr_1,
+                 const char * xattr_2,
+                 const char * xattr_3,
                  struct marfs_xattr *xattr_ptr);
 void print_usage();
 void init_records(fileset_stat *fileset_stat_buf, unsigned int record_count);

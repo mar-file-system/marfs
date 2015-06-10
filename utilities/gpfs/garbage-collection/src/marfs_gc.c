@@ -80,20 +80,12 @@ OF SUCH DAMAGE.
 #include "aws4c.h"
 
 /******************************************************************************
-* This program reads gpfs inodes and extended attributes in order to provide
-* a total size value to the fsinfo file.  It is meant to run as a regularly
-* scheduled batch job.
-*
-* Features to be added/to do:
-* 
-*  determine extended attributes that we care about
-*     passed in as args or hard coded?
-*  determine arguments to main 
-*  inode total count
-*  block (512 bytes) held by file
-*
+* This program scans the inodes looking specifically at trash filesets.  It will
+* determine if post xattr and gc.path defined and if so, gets the objid xattr
+* and deletes those objects.  The gc.path file is also deleted.
 *
 ******************************************************************************/
+
 char    *ProgName;
 int debug = 0;
 
@@ -156,6 +148,7 @@ int main(int argc, char **argv) {
       exit(1);
    }
    init_records(fileset_stat_ptr, fileset_count);
+   aws_init();
    strcpy(fileset_stat_ptr[0].fileset_name, fileset_name);
 
    outfd = fopen(outf,"w");
@@ -215,7 +208,8 @@ This function fills the xattr struct with all xattr key value pairs
 int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
-                 const char * desired_xattr,
+                 const char * xattr_1,
+                 const char * xattr_2,
                  struct marfs_xattr *xattr_ptr) {
    int rc;
    int i;
@@ -239,11 +233,22 @@ int get_xattrs(gpfs_iscan_t *iscanP,
       if (nameP == NULL)
          break;
 
+
+      if (!strcmp(nameP, xattr_1)) {
+         strcpy(xattr_ptr->xattr_name, nameP);
+         xattr_count++;
+      }
+      else if (!strcmp(nameP, xattr_2)) {
+         strcpy(xattr_ptr->xattr_name, nameP);
+         xattr_count++;
+      }
+
+
       // keep track of how many xattrs found 
       //xattr_count++;
 //      if (!strcmp(nameP, desired_xattr)) {
-          strcpy(xattr_ptr->xattr_name, nameP);
-          xattr_count++;
+//          strcpy(xattr_ptr->xattr_name, nameP);
+//          xattr_count++;
 //      }
 
 /******* NOT SURE ABOUT THIS JUST YET
@@ -256,7 +261,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
       }
 ***********/
     
-      if (valueLen > 0) {
+      if (valueLen > 0 && xattr_count > 0 ) {
          printable = 0;
          if (valueLen > 1) {
             printable = 1;
@@ -401,18 +406,21 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          // This will be modified as time goes on - what xattrs do we care about
             if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
                xattr_ptr = &mar_xattrs[0];
-               if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+               if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_objid_name, xattr_ptr)) > 0) {
                   xattr_ptr = &mar_xattrs[0];
                   if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
                      xattr_ptr = &mar_xattrs[xattr_index];
                      fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
-                     str_2_post(&post, xattr_ptr); 
+                     if ((str_2_post(&post, xattr_ptr))) {
+                         fprintf(stderr,"Error getting post xattr\n");
+                         continue;
+                     }
                   }
                   //str_2_post(&post, xattr_ptr); 
                   // Talk to Jeff about this filespace used not in post xattr
                   if (debug) 
                      printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
-                  if (!strcmp(post.gc_path, "0")){
+                  if (!strcmp(post.gc_path, "")){
                      if (debug) 
 			// why would this ever happen?  if in trash gc_path should be non-null
                         printf("gc_path is NULL\n");
@@ -432,13 +440,22 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                         //   -- userid will be a fixed name according to Jeff/Gary
                         //   -- hostIP can be found in namespace namespace or repo info
                         //   So I will need to make some calls config file parser/routines to get this
+                        //   But how do I link objectid to correct config table info?
+                        //   Maybe I can pass gc.path or object Id back to parser routines 
+                        //   and they will pass back host and userid?
+                        //
                         // move s3 functions to separate function
-                        aws_init();
+                        //aws_init();
+                        //Call find namespace to get username
+                        //userid = find_namespace() 
+                        //aws_read_config(userid);
                         aws_read_config("atorrez");
+                        //hostname = find_host(namespace
+                        //s3_set_host (hostname);
                         s3_set_host ("10.140.0.17:9020");
                         IOBuf * bf = aws_iobuf_new();
+                         // do not have to set bucket if part of the path
                         //s3_set_bucket("atorrez");
-                        //rv = s3_delete( bf, "atorrez/test");
                         rv = s3_delete( bf, xattr_ptr->xattr_value);
                         fprintf(outfd, "s3_delete returned %d\n", rv);
                         if ((unlink(gc_path_ptr) == -1)) {
@@ -504,7 +521,7 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    if (scanf_size == EOF)
       return -1;                // errno is set
-   else if (scanf_size != 8) {
+   else if (scanf_size != 9) {
       errno = EINVAL;
       return -1;            /* ?? */
    }
