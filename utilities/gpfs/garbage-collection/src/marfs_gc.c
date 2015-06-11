@@ -80,20 +80,12 @@ OF SUCH DAMAGE.
 #include "aws4c.h"
 
 /******************************************************************************
-* This program reads gpfs inodes and extended attributes in order to provide
-* a total size value to the fsinfo file.  It is meant to run as a regularly
-* scheduled batch job.
-*
-* Features to be added/to do:
-* 
-*  determine extended attributes that we care about
-*     passed in as args or hard coded?
-*  determine arguments to main 
-*  inode total count
-*  block (512 bytes) held by file
-*
+* This program scans the inodes looking specifically at trash filesets.  It will
+* determine if post xattr and gc.path defined and if so, gets the objid xattr
+* and deletes those objects.  The gc.path file is also deleted.
 *
 ******************************************************************************/
+
 char    *ProgName;
 int debug = 0;
 
@@ -156,6 +148,7 @@ int main(int argc, char **argv) {
       exit(1);
    }
    init_records(fileset_stat_ptr, fileset_count);
+   aws_init();
    strcpy(fileset_stat_ptr[0].fileset_name, fileset_name);
 
    outfd = fopen(outf,"w");
@@ -215,8 +208,9 @@ This function fills the xattr struct with all xattr key value pairs
 int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
-                 const char * desired_xattr,
-                 struct marfs_xattr *xattr_ptr) {
+                 const char **marfs_xattr,
+                 int max_xattr_count,
+                 struct marfs_xattr *xattr_ptr, FILE *outfd) {
    int rc;
    int i;
    const char *nameP;
@@ -239,12 +233,16 @@ int get_xattrs(gpfs_iscan_t *iscanP,
       if (nameP == NULL)
          break;
 
-      // keep track of how many xattrs found 
-      //xattr_count++;
-//      if (!strcmp(nameP, desired_xattr)) {
-          strcpy(xattr_ptr->xattr_name, nameP);
-          xattr_count++;
-//      }
+
+
+      //Determine if found a marfs_xattr by comparing our list of xattrs
+      //to what the scan has found
+      for ( i=0; i < max_xattr_count; i++) {
+         if (!strcmp(nameP, marfs_xattr[i])) {
+            strcpy(xattr_ptr->xattr_name, nameP);
+            xattr_count++;
+         }
+      }
 
 /******* NOT SURE ABOUT THIS JUST YET
       Eliminate gpfs.dmapi attributes for comparision
@@ -256,7 +254,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
       }
 ***********/
     
-      if (valueLen > 0) {
+      if (valueLen > 0 && xattr_count > 0 ) {
          printable = 0;
          if (valueLen > 1) {
             printable = 1;
@@ -277,8 +275,9 @@ int get_xattrs(gpfs_iscan_t *iscanP,
             }
          }
          xattr_ptr->xattr_value[valueLen] = '\0'; 
+         xattr_ptr++;
       }
-      xattr_ptr++;
+      //xattr_ptr++;
    } // endwhile
    return(xattr_count);
 }
@@ -321,8 +320,15 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    int xattr_count;
    char fileset_name_buffer[32];
 
-   const char *xattr_objid_name = "user.marfs_objid";
-   const char *xattr_post_name = "user.marfs_post";
+   const char *marfs_xattrs[] = {"user.marfs_post","user.marfs_objid"};
+   int post_index=0;
+   int objid_index=1;
+   int marfs_xattr_cnt = MARFS_GC_XATTR_CNT;
+
+
+
+//   const char *xattr_objid_name = "user.marfs_objid";
+//   const char *xattr_post_name = "user.marfs_post";
    MarFS_XattrPost post;
    //const char *xattr_post_name = "user.a";
   
@@ -401,18 +407,23 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          // This will be modified as time goes on - what xattrs do we care about
             if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
                xattr_ptr = &mar_xattrs[0];
-               if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+               //if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_objid_name, xattr_ptr, outfd)) > 0) {
+               if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, marfs_xattrs, marfs_xattr_cnt, xattr_ptr, outfd)) > 0) {
                   xattr_ptr = &mar_xattrs[0];
-                  if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
+                  //if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
+                  if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count)) != -1 ) { 
                      xattr_ptr = &mar_xattrs[xattr_index];
-                     fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
-                     str_2_post(&post, xattr_ptr); 
+                     fprintf(outfd,"post xattr name = %s value = %s count = %d index=%d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count,xattr_index);
+                     if ((str_2_post(&post, xattr_ptr))) {
+                         fprintf(stderr,"Error getting post xattr\n");
+                         continue;
+                     }
                   }
                   //str_2_post(&post, xattr_ptr); 
                   // Talk to Jeff about this filespace used not in post xattr
                   if (debug) 
                      printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
-                  if (!strcmp(post.gc_path, "0")){
+                  if (!strcmp(post.gc_path, "")){
                      if (debug) 
 			// why would this ever happen?  if in trash gc_path should be non-null
                         printf("gc_path is NULL\n");
@@ -420,7 +431,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   else {
                      gc_path_ptr = &post.gc_path[0];
                      xattr_ptr = &mar_xattrs[0];
-                     if ((xattr_index=get_xattr_value(xattr_ptr, xattr_objid_name, xattr_count)) != -1) { 
+                     if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count)) != -1) { 
                         xattr_ptr = &mar_xattrs[xattr_index];
                         fprintf(outfd,"objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
                         fprintf(outfd, "remove file: %s  remove object:  %s\n", gc_path_ptr, xattr_ptr->xattr_value); 
@@ -432,13 +443,22 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                         //   -- userid will be a fixed name according to Jeff/Gary
                         //   -- hostIP can be found in namespace namespace or repo info
                         //   So I will need to make some calls config file parser/routines to get this
+                        //   But how do I link objectid to correct config table info?
+                        //   Maybe I can pass gc.path or object Id back to parser routines 
+                        //   and they will pass back host and userid?
+                        //
                         // move s3 functions to separate function
-                        aws_init();
+                        //aws_init();
+                        //Call find namespace to get username
+                        //userid = find_namespace() 
+                        //aws_read_config(userid);
                         aws_read_config("atorrez");
+                        //hostname = find_host(namespace
+                        //s3_set_host (hostname);
                         s3_set_host ("10.140.0.17:9020");
                         IOBuf * bf = aws_iobuf_new();
+                         // do not have to set bucket if part of the path
                         //s3_set_bucket("atorrez");
-                        //rv = s3_delete( bf, "atorrez/test");
                         rv = s3_delete( bf, xattr_ptr->xattr_value);
                         fprintf(outfd, "s3_delete returned %d\n", rv);
                         if ((unlink(gc_path_ptr) == -1)) {
@@ -504,7 +524,7 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    if (scanf_size == EOF)
       return -1;                // errno is set
-   else if (scanf_size != 8) {
+   else if (scanf_size < 9) {
       errno = EINVAL;
       return -1;            /* ?? */
    }

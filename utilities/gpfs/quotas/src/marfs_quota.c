@@ -85,10 +85,22 @@
 *
 * Features to be added/to do:
 * 
+* 1) Need to interface with config parser
+*  to:
+*   get list of filesets for scanning
+*   get count of filesets for scanning
+* 2) Use new xattr to determine what fileset trash belongs
+*    We currently do not have a way to determine this once files are in trash
+*    alternatively, use a file as Gary suggested that has path to orignal
+*
+* 3) OTHER
 *  determine extended attributes that we care about
 *     passed in as args or hard coded?
 *  determine arguments to main 
 *  block (512 bytes) held by file
+*  I consider this a perpetual process  in that we will find more and more
+*  info we want to store in fsinfo as  the project proceeds.  But 
+*  all info from attr and xattr is handy!
 *
 *
 ******************************************************************************/
@@ -294,7 +306,7 @@ Name:  get_xattr_value
 This function, given the name of the attribute returns the associated value.
 
 *****************************************************************************/
-int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt) {
+int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt, FILE *outfd) {
 
    int i;
    int ret_value = -1;
@@ -319,7 +331,11 @@ This function fills the xattr struct with all xattr key value pairs
 int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
-                 const char * desired_xattr,
+                 const char **marfs_xattr,
+                 int max_xattr_count,
+                 //const char * xattr_1,
+                 //const char * xattr_2,
+                 //const char * xattr_3,
                  struct marfs_xattr *xattr_ptr) {
    int rc;
    int i;
@@ -343,10 +359,13 @@ int get_xattrs(gpfs_iscan_t *iscanP,
       if (nameP == NULL)
          break;
 
-      // keep track of how many xattrs found 
-      if (!strcmp(nameP, desired_xattr)) {
-         strcpy(xattr_ptr->xattr_name, nameP);
-          xattr_count++;
+      // find marfs xattrs we care about by comaring our list of xattrs
+      // to what the scan has found
+      for ( i=0; i < max_xattr_count; i++) {
+         if (!strcmp(nameP, marfs_xattr[i])) {
+            strcpy(xattr_ptr->xattr_name, nameP);
+            xattr_count++;
+         }
       }
 
 /******* NOT SURE ABOUT THIS JUST YET
@@ -358,9 +377,9 @@ int get_xattrs(gpfs_iscan_t *iscanP,
             continue;
       }
 ***********/
-    
+      // Now get associated value 
       // Determine if printible characters
-      if (valueLen > 0) {
+      if (valueLen > 0 && xattr_count > 0) {
          printable = 0;
          if (valueLen > 1) {
             printable = 1;
@@ -382,8 +401,10 @@ int get_xattrs(gpfs_iscan_t *iscanP,
             }
          }
          xattr_ptr->xattr_value[valueLen] = '\0'; 
+         xattr_ptr++;
       }
-      xattr_ptr++;
+      //xattr_ptr++;
+      //xattr_count++;
    } // endwhile
    return(xattr_count);
 }
@@ -429,8 +450,14 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    unsigned int struct_index;
    unsigned int last_fileset_id = -1;
 
-   //const char *xattr_objid_name = "user.marfs_objid";
-   const char *xattr_post_name = "user.marfs_post";
+
+   // Defined xattrs as an array of const char strings with defined indexs
+   const char *marfs_xattrs[] = {"user.marfs_post","user.marfs_objid","user.marfs_restart"};
+   int post_index=0;
+   //int objid_index=1;
+   //int restart_index=2;
+   int marfs_xattr_cnt = MARFS_QUOTA_XATTR_CNT;
+
    MarFS_XattrPost post;
    //const char *xattr_post_name = "user.a";
   
@@ -526,24 +553,32 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          
          if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
             xattr_ptr = &mar_xattrs[0];
-            if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_ptr)) > 0) {
+            // get marfs xattrs and associated values
+            if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, marfs_xattrs, marfs_xattr_cnt, xattr_ptr)) > 0) {
                xattr_ptr = &mar_xattrs[0];
-               if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) {
+               // Get post xattr value
+               if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count, outfd)) != -1 ) {
                    xattr_ptr = &mar_xattrs[xattr_index];
-                   fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
-                   str_2_post(&post, xattr_ptr);
+                   //if (debug)
+                   //fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
                }
-
-               //str_2_post(&post, xattr_ptr); 
-               // Talk to Jeff about this filespace used not in post xattr
+               // scan into post xattr structure
+               if (str_2_post(&post, xattr_ptr)) {
+                  continue;             
+               }
                if (debug) 
                   printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
                fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
-               if (!strcmp(post.gc_path, "0")){
+               // Determine if file in trash directory
+               if (!strcmp(post.gc_path, "")){
+                  fprintf(outfd,"gc_path is NULL\n");
                   if (debug) 
                      printf("gc_path is NULL\n");
                } 
+               // Is trash
                else {
+                  //if(debug)
+                  //fprintf(outfd,"index = %d   %llu\n", last_struct_index, iattrP->ia_size);
                   fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
                }
             }
@@ -611,7 +646,7 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    if (scanf_size == EOF)
       return -1;                // errno is set
-   else if (scanf_size != 8) {
+   else if (scanf_size < 9) {
       errno = EINVAL;
       return -1;            /* ?? */
    }
@@ -637,8 +672,4 @@ void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count,
       fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
    }
 }
-
-
-
-
 

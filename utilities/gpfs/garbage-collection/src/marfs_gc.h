@@ -90,6 +90,8 @@ OF SUCH DAMAGE.
 
 // Xattr info
 #define MAX_MARFS_XATTR 3
+#define MARFS_QUOTA_XATTR_CNT 3
+#define MARFS_GC_XATTR_CNT 2
 
 
 extern float MarFS_config_vers;
@@ -163,11 +165,18 @@ typedef struct fileset_stats {
 int read_inodes(const char *fnameP, FILE *outfd, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count);
 int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
 int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt);
+//int get_xattrs(gpfs_iscan_t *iscanP,
+//                 const char *xattrP,
+//                 unsigned int xattrLen,
+//                 const char * xattr_1,
+//                 const char * xattr_2,
+//                 struct marfs_xattr *xattr_ptr, FILE *outfd);
 int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
-                 const char * desired_xattr,
-                 struct marfs_xattr *xattr_ptr);
+                 const char **marfs_xattr,
+                 int max_xattr_count,
+                 struct marfs_xattr *xattr_ptr, FILE *outfd);
 void print_usage();
 void init_records(fileset_stat *fileset_stat_buf, unsigned int record_count);
 int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count,char *inode_fileset);
