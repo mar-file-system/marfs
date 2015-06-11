@@ -53,7 +53,7 @@ endif
 # environment-var DEBUG also controls command-line flags for fuse launch.
 # DEBUG = 0 (or undef, or empty)
 #   run as standard background task, w/out debug flags
-# DEBUG <= 1
+# DEBUG >= 1
 #   run in foreground, with debug flags  (NOTE: foreground is single-threaded)
 FUSE_FLAGS += -d -f
 ifndef DEBUG
@@ -62,6 +62,10 @@ else ifeq ($(DEBUG),)
 	FUSE_FLAGS =
 else ifeq ($(DEBUG),0)
 	FUSE_FLAGS =
+	# # performance-tuning experiments (these don't seem to help)
+	# FUSE_FLAGS = -d -f -o max_write="$$((1024 * 1024))"
+	# FUSE_FLAGS = -d -f -o noatime
+	# FUSE_FLAGS = -o noatime
 endif
 
 
