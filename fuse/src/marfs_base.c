@@ -867,12 +867,12 @@ int load_config(const char* config_fname) {
    _repo  = (MarFS_Repo*) malloc(sizeof(MarFS_Repo));
    *_repo = (MarFS_Repo) {
       .name         = "emcS3_00",
-      // .url_prefix   = "http://10.140.0.15:9020",
-      // .url_prefix   = "http://10.143.0.1:80",
+      // .host         = "10.143.0.1:80",
       .host         = "10.140.0.15:9020",
       .flags        = (REPO_ONLINE),
       .access_proto = PROTO_S3_EMC,
-      .chunk_size   = (1024 * 1024 * 512), /* i.e. max MarFS object (?) */
+      // .chunk_size   = (1024 * 1024 * 512), /* (?) max MarFS object */
+      .chunk_size   = (1024 * 1024), /* (?) i.e. max MarFS object */
       .auth         = AUTH_S3_AWS_MASTER,
       .latency_ms   = (10 * 1000),
    };

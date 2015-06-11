@@ -342,7 +342,7 @@ typedef uint8_t  RepoFlagsType;
 
 
 typedef enum {
-   PROTO_DIRECT = 0,
+   PROTO_DIRECT = 0,            // data stored directly into MD files
    PROTO_CDMI,
    PROTO_S3,
    PROTO_S3_SCALITY,            // should include installed release version
@@ -483,7 +483,7 @@ typedef struct MarFS_Namespace {
    CompressionMethod  compression;     // compression type
    CorrectionMethod   correction;      // correctness type  (like CRC/checksum/etc.)
 
-   MarFS_Repo*        iwrite_repo;     // ultimate size is unknown (fuse)
+   MarFS_Repo*        iwrite_repo;     // final size unknown ("interactive" = fuse)
    RangeList*         range_list;      // repos for different file-sizes (pftool)
 
    uint8_t            dirty_pack_percent;   // percent dirty (observed)

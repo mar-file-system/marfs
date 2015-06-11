@@ -452,6 +452,30 @@ int marfs_mknod (const char* path,
    TRY0(mknod, info.md_path, mode, rdev);
    LOG(LOG_INFO, "mode: (octal) 0%o\n", mode); // debugging
 
+   // PROBLEM: marfs_open() assumes that a file that exists, which doesn't
+   //     have xattrs, is something that was created when
+   //     repo.access_method was DIRECT.  For such files, marfs_open()
+   //     expects to read directly from the file.  We have just created a
+   //     file.  If repo.access_method is not direct, we'd better find a
+   //     way to let marfs_open() know about it.  However, it would be nice
+   //     to leave most of the xattr creation to marfs_release().
+   //
+   // SOLUTION: set the RESTART flag, in open, so we don't have to truncate
+   //     after every write?  It will just be clear that this object hasn't
+   //     been successfully closed, yet.  It will also be clear that this
+   //     is not one of those files with no xattrs.  Thus, if someone reads
+   //     from this file while it's being written, fuse will see it as a
+   //     file-with-xattrs (which is incomplete), and could throw an error,
+   //     instead of seeing it as a file-without-xattrs, and allowing
+   //     readers to see our internal data (e.g. in a MULTI file).
+   if (info.ns->iwrite_repo->access_proto != PROTO_DIRECT) {
+      LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
+      info.flags |= PI_RESTART;
+      SAVE_XATTRS(&info, XVT_RESTART);
+   }
+   else
+      LOG(LOG_INFO, "iwrite_repo.access_proto = DIRECT\n");
+
    POP_USER();
    return 0;
 }
@@ -599,17 +623,6 @@ int marfs_open (const char*            path,
       //                       (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
       //      if (fh->md_fd < 0)
       //         RETURN(-errno);
-
-      // set the RESTART flag, in open, so we don't have to truncate after
-      // every write?  It will just be clear that this object hasn't been
-      // successfully closed, yet.  It will also be clear that this is not
-      // one of those files with no xattrs.  Thus, if someone reads from
-      // this file while it's being written, fuse will see it as a
-      // file-with-xattrs (which is incomplete), and could throw an error,
-      // instead of seeing it as a file-without-xattrs, and allowing
-      // readers to see our internal data (e.g. in a MULTI file).
-      info->flags |= PI_RESTART;
-      SAVE_XATTRS(info, XVT_RESTART);
    }
 
    // initialize the URL in the ObjectStream, in our FileHandle
@@ -872,13 +885,14 @@ int marfs_release (const char*            path,
 #endif
 
    // need to write final FileInfo record into file?  (check fh->write_state)
-   if (fh->md_fd) {
-
-      // truncate length to reflect length of data
-      if (fh->flags & FH_WRITING)
-         TRY0(ftruncate, fh->md_fd, os->written);
-
+   if (fh->md_fd)
       TRY0(close, fh->md_fd);
+
+   // truncate length to reflect length of data
+   if ((fh->flags & FH_WRITING)
+       && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
+      // TRY0(ftruncate, fh->md_fd, os->written);
+      TRY0(truncate, info->md_path, os->written);
    }
 
    // no longer incomplete
