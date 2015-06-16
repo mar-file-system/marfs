@@ -580,6 +580,15 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   //if(debug)
                   //fprintf(outfd,"index = %d   %llu\n", last_struct_index, iattrP->ia_size);
                   fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
+                  /*
+                    Code needed here in order to determine trash per fileset 
+                    xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count, outfd)  
+                    xattr_ptr = &mar_xattrs[xattr_index]
+                    str_2_pre to get filespace name - this should be fileset name
+                        use Jeff's code as a model no need to do all the parsing that he does
+                    index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,fileset_name_buffer); 
+                    fileset_stat_ptr[index].sum_trash += iattrP->ia_size;
+                  */
                }
             }
          }
