@@ -1261,24 +1261,17 @@ int marfs_write(const char*            path,
    // Trunc file to current last byte, and set end marker
 
 
-   // marfs_open() opened an ObjectStream for us.
-   TRY_GE0(stream_put, os, buf, size);
-   LOG(LOG_INFO, "wrote %ld, total %ld\n", rc_ssize, os->written);
+#if 0 //#if TBD
 
-   // Do we really want to trunc after every write?
-   // Better would be to have a flag in xattrs, that says "incomplete".
-   // This is roughly the same as pftool's RESTART xattr.
-
-#if TBD
    // Span across objects for "Multi" format.  Repo.chunk_size is the
    // maximum size of an individual object written by MarFS.  Check whether
    // this write will put us over.  If so, then write as much data into
    // this object as can fit (minus size of recovery-info), write the
    // recovery-info into the tail, close the object, open a new one, and
    // resume writing there.
-   copnst size_t recovery    = sizeof(FileInfo) +8; // written in tail of object
-   size_t        chunk_end  = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
-   size_t        write_size = size;
+   const size_t recovery   = sizeof(RecoveryInfo) +8; // written in tail of object
+   size_t       chunk_end  = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
+   size_t       write_size = size;
    while ((os->written + write_size + recovery) > chunk_end) {
 
       // object-type is now known to be multi
@@ -1287,7 +1280,7 @@ int marfs_write(const char*            path,
       // write <partial> more bytes into this object
       ssize_t partial = chunk_end - (os->written + recovery);
       assert (partial > 0);     // possible silly config: (recovery > chunk_size)
-      size_t remain   = write_size - partial;
+      size_t  remain   = write_size - partial;
 
       TRY_GE0(stream_put, os, buf, partial);
 
@@ -1331,6 +1324,16 @@ int marfs_write(const char*            path,
    // write more data into object
    if (write_size)
       TRY_GE0(stream_put, os, buf, write_size);
+
+#else
+   // marfs_open() opened an ObjectStream for us.
+   TRY_GE0(stream_put, os, buf, size);
+   LOG(LOG_INFO, "wrote %ld, total %ld\n", rc_ssize, os->written);
+
+   // Do we really want to trunc after every write?
+   // Better would be to have a flag in xattrs, that says "incomplete".
+   // This is roughly the same as pftool's RESTART xattr.
+
 #endif
 
 

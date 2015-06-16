@@ -222,7 +222,15 @@ extern float MarFS_config_vers;
 
 #define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/gc.%s"
 
+#define MARFS_REC_INFO_FORMAT   "ver.%03d_%03d/inode.%016lx/mode.%08x/uid.%d/gid.%d/mtime.%s/ctime.%s/mdfs.%s"
 
+// Two files in the trash.  Original MDFS is renamed to the name computed
+// in expand_trash_info().  Then another file with this format has contents
+// that hold the original MDFS path (for undelete).  The
+// expand_trash_path() result (in PathInfo.trash_path) is printed with this
+// format, to create the second path, whose contents hold the original MDFS
+// path.
+#define MARFS_TRASH_ORIGINAL_PATH_SUFFIX ".path"
 
 // Do an in-place modification of a given namespace-name (i.e. the part of
 // a path that sits below the fuse-mount, not including the contained
@@ -680,11 +688,11 @@ typedef struct MarFS_XattrSlave {
 #define XATTR_SLAVE_STRING_VALUE_SIZE  256 /* max */
 
 
- // from MarFS_XattrSlave to string
+// from MarFS_XattrSlave to string
 int slave_2_str(char* slave_str,        const MarFS_XattrSlave* slave);
 
- // from string to MarFS_XattrSlave
-int str_3_slave(MarFS_XattrSlave* slave, const char* slave_str); // from string
+// from string to MarFS_XattrSlave
+int str_2_slave(MarFS_XattrSlave* slave, const char* slave_str); // from string
 
 
 
@@ -699,11 +707,14 @@ int str_3_slave(MarFS_XattrSlave* slave, const char* slave_str); // from string
 // updated upon metadata changes like chmod, chown, rename, etc.)
 // ---------------------------------------------------------------------------
 
-// TBD: fileinfo_2_str(), str_2_fileinfo().
+// OBSOLETE?  The recovery info is just the contents of the Post xattr?
+// [Plus the MDFS filename.]  Objects already have (most of) the Pre xattr
+// in their obj-id.  What remains unknown is MDFS filename, etc, which in
+// in the Post xattr.
 
 typedef struct {
    float    config_vers;
-   size_t   size;               // Size of record
+   // size_t   size;               // Size of record
    ino_t    inode;
    mode_t   mode;
    uid_t    uid;
@@ -712,6 +723,13 @@ typedef struct {
    time_t   ctime;
    char     mdfs_path[MARFS_MAX_MD_PATH]; // full path in the MDFS
 } RecoveryInfo;
+
+// from RecoveryInfo to string
+int rec_info_2_str(char* rec_info_str, const size_t max_size, const RecoveryInfo* rec_info);
+
+// from string to RecoveryInfo
+int str_2_rec_info(RecoveryInfo* rec_info, const char* rec_info_str); // from string
+
 
 
 // ---------------------------------------------------------------------------

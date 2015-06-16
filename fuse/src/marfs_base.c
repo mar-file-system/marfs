@@ -713,7 +713,7 @@ int slave_2_str(char* slave_str,        const MarFS_XattrSlave* slave) {
 }
 
 // from string to MarFS_XattrSlave
-int str_3_slave(MarFS_XattrSlave* slave, const char* slave_str) {
+int str_2_slave(MarFS_XattrSlave* slave, const char* slave_str) {
    assert(0);                   // TBD
 }
 
@@ -721,6 +721,48 @@ int str_3_slave(MarFS_XattrSlave* slave, const char* slave_str) {
 
 
 
+// from RecoveryInfo to string
+int recinfo_2_str(char* rec_str, const size_t max_size, const RecoveryInfo* rec) {
+
+   // UNDER CONSTRUCTION ...
+   assert(0);
+
+#if 0
+   // config-version major and minor
+   int major = (int)floorf(rec->config_vers);
+   int minor = (int)floorf((rec->config_vers - major) * 1000.f);
+
+   ssize_t bytes_printed = snprintf(rec_info_str, max_size,
+                                    MARFS_REC_INFO_FORMAT,
+                                    major, minor,
+                                    rec->inode,
+                                    rec->mode,
+                                    rec->uid,
+                                    rec->gid,
+                                    mtime,
+                                    ctime,
+                                    post->gc_path);
+   if (bytes_printed < 0)
+      return -1;                  // errno is set
+   if (bytes_printed == max_size) {   /* overflow */
+      errno = EINVAL;
+      return -1;
+   }
+
+#endif
+   return 0;
+}
+
+// from string to RecoveryInfo.  Presumabl,y the string is what you got
+// from the tail-end of an object.  Use this to convert the string to a
+// RecoveryInfo struct.
+int str_2_recinfo(RecoveryInfo* rec_info, const char* rec_info_str) {
+}
+
+
+// // this is just a sketch.
+// int get_recovery_string() { }
+// int get_next_recovery_string(RecoveryInfo* info) { }
 
 
 

@@ -29,7 +29,7 @@ extern "C" {
 #endif
 
 
-#define xFMT  " [%s:%4d]%*s %-20s | "
+#define xFMT  " [%s:%4d]%*s %-21s | "
 
 
 #ifdef USE_SYSLOG

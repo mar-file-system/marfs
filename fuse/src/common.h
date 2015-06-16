@@ -170,7 +170,6 @@ typedef enum {
       }                                                                 \
    } while (0)
 
-
 // e.g. open() returns -1 or an fd.
 #define TRY_GE0(FUNCTION, ...)                                          \
    do {                                                                 \
@@ -193,8 +192,20 @@ typedef enum {
       LOG(LOG_INFO, "__TRY0(%s)\n", #FUNCTION);                         \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "ERR __TRY0(%s) returning (%ld)\n\n",            \
-             #FUNCTION, rc);                                            \
+         LOG(LOG_INFO, "ERR __TRY0(%s) returning (%ld) '%s'\n\n",       \
+             #FUNCTION, rc, strerror(errno));                           \
+         /* RETURN(rc);*/ /* NOT negated! */                            \
+         RETURN(errno);                                                 \
+      }                                                                 \
+   } while (0)
+
+#define __TRY_GE0(FUNCTION, ...)                                        \
+   do {                                                                 \
+      LOG(LOG_INFO, "__TRY_GE0(%s)\n", #FUNCTION);                      \
+      rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
+      if (rc_ssize < 0) {                                               \
+         LOG(LOG_INFO, "ERR __TRY_GE0(%s) returning (%ld) '%s'\n\n",    \
+             #FUNCTION, rc_ssize, strerror(errno));                     \
          /* RETURN(rc);*/ /* NOT negated! */                            \
          RETURN(errno);                                                 \
       }                                                                 \

@@ -238,8 +238,36 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 
 // expand_path_info() deferred computing the trash-path name until needed.
 // Now's the time.
-// Trash-path gets a time-stamp added, so that if the same file is
-// trashed many times, we can find all the versions. (?)
+//
+// Info in the trash supports three kinds of operations: (a) a Garbage
+// Collection task, that may skim through the trash, deleting "trashed"
+// files with age greater than some threshold, etc, (b) a Quota task, which
+// skims through all the indoes in the MDFS, counting totals used per
+// project, per-user, etc, but discounting storage taken up by trash, and
+// (c) an "undelete" admin function, that can restore a trashed file to its
+// original location.
+//
+// Files that are moved to the trash keep only the basename (i.e. the name
+// of the file in the bottom-most directory of the full-path).  There may
+// be multiple files in different directories with the same name, and a
+// file in the same place may be deleted and created anew many times, so we
+// "unique-ify" the file-name by appending the inode, and a timestamp.
+// 
+// We actually create two files in the trash, one that has all the xattrs
+// of the original (so that we can find the corresponding object,
+// object-type, etc) and another with contents that hold the full path of
+// the original.  We considered achieving this latter end by adding more
+// xattr info, but part of the goal here is to facilitate the GC batch
+// process, which may be doing a fast tree-walk using ILM, in GPFS.  In
+// this latter case, not all of the xattr info is part of the inode
+// data. We want to make sure the GC task can get all the info it needs
+// from the fast-access list of inodes it will see, without further calls
+// to lgetxattr(), etc.
+//
+// Each of the two files use the same path produced by expand trash_info,
+// and one of them just adds a suffix ".path", with the contents as
+// described above.
+
 int expand_trash_info(PathInfo*    info,
                       const char*  path) {
    size_t rc;                   // __TRY() assumes this exists
@@ -248,23 +276,53 @@ int expand_trash_info(PathInfo*    info,
    __TRY0(expand_path_info, info, path);
 
    if (! (info->flags & PI_TRASH_PATH)) {
-      const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
+      const char* sub_path  = path + info->ns->mnt_suffix_len; /* below fuse mount */
+      char*       base_name = strrchr(sub_path, '/');
+      base_name = (base_name ? base_name +1 : (char*)sub_path);
 
       // construct date-time string in standard format
       char       date_string[MARFS_DATE_STRING_MAX];
       time_t     now = time(NULL);
-      if (now == (time_t)-1)
+      if (now == (time_t)-1) {
+         LOG(LOG_ERR, "time() failed\n");
          return -1;
-
+      }
       __TRY0(epoch_to_str, date_string, MARFS_DATE_STRING_MAX, &now);
 
       // construct trash-path
-      if (snprintf(info->trash_path, MARFS_MAX_MD_PATH,
-                   "%s/%s.trash_%s",
-                   info->ns->trash_path, sub_path, date_string) < 0)
+      int prt_count = snprintf(info->trash_path, MARFS_MAX_MD_PATH,
+                               "%s/%s.trash_%016lx_%s",
+                               info->ns->trash_path,
+                               base_name,
+                               info->st.st_ino,
+                               date_string);
+      if (prt_count < 0) {
+         LOG(LOG_ERR, "snprintf(..., %s, %s, %016lx, %s) failed\n",
+             info->ns->trash_path,
+             base_name,
+             info->st.st_ino,
+             date_string);
          return -1;
+      }
+      else if (prt_count >= MARFS_MAX_MD_PATH) {
+         LOG(LOG_ERR, "snprintf(..., %s, %s, %016lx, %s) truncated\n",
+             info->ns->trash_path,
+             base_name,
+             info->st.st_ino,
+             date_string);
+         errno = EIO;
+         return -1;
+      }
+      else if (prt_count + strlen(MARFS_TRASH_ORIGINAL_PATH_SUFFIX)
+               >= MARFS_MAX_MD_PATH) {
+         LOG(LOG_ERR, "no room for '%s' after trash_path '%s'\n",
+             MARFS_TRASH_ORIGINAL_PATH_SUFFIX,
+             info->trash_path);
+         errno = EIO;
+         return -1;
+      }
 
-      // subsequent calls to expand_path_info() are NOP.
+      // subsequent calls to expand_trash_info() are NOP.
       info->flags |= PI_TRASH_PATH;
    }
 
@@ -588,6 +646,39 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 
 
 
+// This is only used iunternally.  We just assume expand_trash_info has
+// already been called.
+//
+// In addition to moving the original to the trash, the two trash functions
+// (trash_unlink() and trash_truncate()) also write the full-path of
+// original into "<trash_path>.path".
+
+int write_trash_path_file(PathInfo*   info,
+                          const char* path) {
+   size_t  rc;
+   ssize_t rc_ssize;
+
+   __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
+   LOG(LOG_INFO, "trash_path: %s\n", info->trash_path);
+
+   // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
+   // add this suffix, so no need to check.
+   char contents_fname[MARFS_MAX_MD_PATH];
+   __TRY_GE0(snprintf, contents_fname, MARFS_MAX_MD_PATH, "%s%s",
+             info->trash_path,
+             MARFS_TRASH_ORIGINAL_PATH_SUFFIX);
+
+   // TBD: Don't want to depend on support for open(... (O_CREAT|O_EXCL)).
+   //      Should just stat() the contents-file, before opening, to assure
+   //      it doesn't already exist.
+   __TRY_GE0(open, contents_fname, (O_WRONLY|O_CREAT), info->st.st_mode);
+   int fd = rc_ssize;
+
+   __TRY_GE0(write, fd, info->md_path, MARFS_MAX_MD_PATH);
+   __TRY0(close, fd);
+
+   return 0;
+}
 
 
 // [trash_file]
@@ -600,7 +691,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 // NOTE: Should we do something to make this thread-safe (like unlink()) ?
 //
 int  trash_unlink(PathInfo*   info,
-                const char* path) {
+                  const char* path) {
 
    //    pass in expanded_path_info_structure and file name to be trashed
    //    rename mdfile (with all xattrs) into trashmdnamepath,
@@ -610,7 +701,13 @@ int  trash_unlink(PathInfo*   info,
 
    size_t rc;
    __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
+   LOG(LOG_INFO, "trash_path: %s\n", info->trash_path);
+
    __TRY0(rename, info->md_path, info->trash_path);
+
+   // write full-MDFS-path of original-file into similarly-named file
+   __TRY0(write_trash_path_file, info, path);
+
    return 0;
 }
 
@@ -752,6 +849,9 @@ int  trash_truncate(PathInfo*   info,
    // clean out everything on the original
    __TRY0(trunc_xattr, info);
    __TRY0(trash_name, info, path);
+
+   // write full-MDFS-path of original-file into similarly-named file
+   __TRY0(write_trash_path_file, info, path);
 
    return 0;
 }

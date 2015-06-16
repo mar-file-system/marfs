@@ -193,7 +193,7 @@ var_%:
 # CAREFUL!!! Think what happens if one of these variables is undefined.
 #            That's why this is in a makefile.
 reset_md:
-	( [ -n "$(MDFS)" ]  && rm -f $(MDFS)/* )
+	( [ -n "$(MDFS)" ]  && rm -rf $(MDFS)/* )
 	( [ -n "$(TRASH)" ] && rm -f $(TRASH)/* )
 	( [ -n "$(FSINFO)" ]  && rm -f $(FSINFO) )
 	touch $(FSINFO)
