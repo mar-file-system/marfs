@@ -430,7 +430,8 @@ typedef struct MarFS_Repo {
 // ---------------------------------------------------------------------------
 
 
-extern char* MarFS_mnttop;        // top level mount point for fuse/pftool
+// NOTE: Do NOT include a final slash.
+extern char* MarFS_mnt_top;        // top level mount point for fuse/pftool
 
 // (RM read meta, WM write meta, RD read data, WD write data) 
 typedef enum {

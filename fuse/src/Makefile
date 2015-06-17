@@ -97,8 +97,8 @@ LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
 #
 # [see ./init_test_node, to initialize a test node with everything I need]
 
-# WORK = 10.135.0.2
-WORK = 10.146.0.3
+# WORK = 10.146.0.3
+WORK = 10.146.0.2
 
 # only works on ccstargate, or cc-gate
 2work:
