@@ -120,13 +120,13 @@ int main(int argc, char **argv) {
    //unsigned int uid = 0;
    int fileset_id = -1;
    int  c;
-   unsigned int fileset_count = 3;
+   unsigned int fileset_count = 4;
    extern char *optarg;
    fileset_stat *fileset_stat_ptr;
 //   char * fileset_name = "root,proja,projb";
 //   char  fileset_name[] = "root,proja,projb";
 //   char  fileset_name[] = "project_a,projb,root";
-   char  fileset_name[] = "project_a,root,project_b";
+   char  fileset_name[] = "project_a,root,project_b,project_c";
 //   char  fileset_name[] = "root";
    char * indv_fileset_name; 
    int i;
@@ -206,7 +206,7 @@ int main(int argc, char **argv) {
    if ( fileset_scan_count == 0 ) {
       // Call parser get link list and count filesets
       // fileset_count = fileset_scan_count;
-      fileset_count = 3; 
+      fileset_count = 4; 
       // TEMP for now until I get parser integrated
       fileset_scan_count = fileset_count;
       // TEMP for now until I get parser integrated
@@ -220,6 +220,7 @@ int main(int argc, char **argv) {
       exit(1);
    }  
     
+   //create structure containing all the stats that we care about
    fileset_stat_ptr = (fileset_stat *) malloc(sizeof(*fileset_stat_ptr)*fileset_count);
    if (fileset_stat_ptr == NULL ) {
       fprintf(stderr,"Memory allocation failed\n");
@@ -446,15 +447,22 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    struct marfs_xattr *xattr_ptr = mar_xattrs;
    int xattr_count;
    char fileset_name_buffer[32];
+
    int last_struct_index = -1;
    unsigned int struct_index;
+   int last_trash_index = -1;
+   unsigned int trash_index = 0;
+   int read_count;
+   char repo_name[16];
+   char ns_name[57];
+ 
    unsigned int last_fileset_id = -1;
 
 
    // Defined xattrs as an array of const char strings with defined indexs
    const char *marfs_xattrs[] = {"user.marfs_post","user.marfs_objid","user.marfs_restart"};
    int post_index=0;
-   //int objid_index=1;
+   int objid_index=1;
    //int restart_index=2;
    int marfs_xattr_cnt = MARFS_QUOTA_XATTR_CNT;
 
@@ -579,7 +587,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                else {
                   //if(debug)
                   //fprintf(outfd,"index = %d   %llu\n", last_struct_index, iattrP->ia_size);
-                  fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
+                  //fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
                   /*
                     Code needed here in order to determine trash per fileset 
                     xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count, outfd)  
@@ -589,6 +597,19 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                     index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,fileset_name_buffer); 
                     fileset_stat_ptr[index].sum_trash += iattrP->ia_size;
                   */
+                  if ((trash_index = get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count,outfd)) != -1) {
+                     fprintf(outfd,"trash index %d\n", trash_index);
+                     xattr_ptr = &mar_xattrs[trash_index];
+                     fprintf(outfd,"trash found objid = %s\n", xattr_ptr->xattr_value);
+                     read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT, repo_name, ns_name);
+                  // do not lookup fileset name every iteration because chances are it is the same as last
+                  // iteration
+                     if (last_trash_index != trash_index) {
+                        trash_index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,ns_name);
+                        last_trash_index = trash_index;
+                     }
+                     fileset_stat_ptr[last_trash_index].sum_trash += iattrP->ia_size;
+                  }
                }
             }
          }

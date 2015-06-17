@@ -95,6 +95,11 @@
 #define MARFS_QUOTA_XATTR_CNT 3
 #define MARFS_GC_XATTR_CNT 2
 
+#define NON_SLASH           "%[^/]"
+#define NON_DOT             "%[^./]"
+
+
+#define MARFS_BUCKET_RD_FORMAT  NON_DOT "." NON_SLASH
 extern float MarFS_config_vers;
 // Eventually would like to link fuse marfs so that these are defined in only one location
 // and also call fuse xattr parsing functions
