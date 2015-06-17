@@ -110,7 +110,8 @@ int main(int argc, char **argv) {
 //   char  fileset_name[] = "project_a,projb,root";
 //   char  fileset_name[] = "project_a,root,projb";
 //   char  fileset_name[] = "trash";
-   char  fileset_name[] = "project_c";
+//   char  fileset_name[] = "project_c";
+   char  fileset_name[] = "trash";
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
       ProgName = argv[0];
@@ -189,6 +190,7 @@ int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, in
    int ret_value = -1;
 
    for (i=0; i< cnt; i++) {
+      printf("XX %s %s\n", xattr_ptr->xattr_name, desired_xattr);
       if (!strcmp(xattr_ptr->xattr_name, desired_xattr)) {
          return(i);
       }
@@ -326,6 +328,10 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    int marfs_xattr_cnt = MARFS_GC_XATTR_CNT;
 
 
+  // NEED TO FIGURE OUT SIZE FOR THIS
+   char path_file[4096];
+
+
 
 //   const char *xattr_objid_name = "user.marfs_objid";
 //   const char *xattr_post_name = "user.marfs_post";
@@ -413,7 +419,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   //if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
                   if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count)) != -1 ) { 
                      xattr_ptr = &mar_xattrs[xattr_index];
-                     fprintf(outfd,"post xattr name = %s value = %s count = %d index=%d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count,xattr_index);
+                     printf("post xattr name = %s value = %s count = %d index=%d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count,xattr_index);
                      if ((str_2_post(&post, xattr_ptr))) {
                          fprintf(stderr,"Error getting post xattr\n");
                          continue;
@@ -428,13 +434,19 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
 			// why would this ever happen?  if in trash gc_path should be non-null
                         printf("gc_path is NULL\n");
                   } 
+                  // else trash
                   else {
+                     printf("found trash\n");
                      gc_path_ptr = &post.gc_path[0];
+                     //create string for *.path file that needs removal also
+                     sprintf(path_file,"%s.path",gc_path_ptr);
+                     printf("%s\n",marfs_xattrs[post_index]);
+                     printf("path_file is %s\n", path_file);
                      xattr_ptr = &mar_xattrs[0];
                      if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count)) != -1) { 
                         xattr_ptr = &mar_xattrs[xattr_index];
-                        fprintf(outfd,"objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
-                        fprintf(outfd, "remove file: %s  remove object:  %s\n", gc_path_ptr, xattr_ptr->xattr_value); 
+                        printf("objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
+                        printf("remove file: %s  remove object:  %s\n", gc_path_ptr, xattr_ptr->xattr_value); 
                         //call aws delete_object (xattr_ptr->value);
                         // OK, this section essentially works Need to make this more general of course 
                         // but it served as a proof of concept
@@ -462,6 +474,9 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                         rv = s3_delete( bf, xattr_ptr->xattr_value);
                         fprintf(outfd, "s3_delete returned %d\n", rv);
                         if ((unlink(gc_path_ptr) == -1)) {
+                            fprintf(outfd,"Error removing file\n");                         
+                        }
+                        if ((unlink(path_file) == -1)) {
                             fprintf(outfd,"Error removing file\n");                         
                         }
                         //call unlink(gc_path)
