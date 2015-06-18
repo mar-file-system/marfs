@@ -822,6 +822,9 @@ int marfs_readdir (const char*            path,
 }
 
 
+// It appears that, unlike readlink(), we shouldn't return the number of
+// chars in the path.  Also, unlinke readlink(), we *should* write the
+// final '\0' into the caller's buf.
 int marfs_readlink (const char* path,
                     char*       buf,
                     size_t      size) {
@@ -835,10 +838,18 @@ int marfs_readlink (const char* path,
 
    // No need for access check, just try the op
    // Appropriate readlinklike call filling in fuse structure 
-   TRY0(readlink, info.md_path, buf, size);
+   TRY_GE0(readlink, info.md_path, buf, size);
+   int count = rc_ssize;
+   if (count >= size) {
+      LOG(LOG_ERR, "no room for '\\0'\n");
+      return -ENAMETOOLONG;
+   }
+   buf[count] = '\0';
+
+   LOG(LOG_INFO, "readlink '%s' -> '%s' = (%d)\n", info.md_path, buf, count);
 
    POP_USER();
-   return 0;
+   return 0; // return result;
 }
 
 
@@ -1076,19 +1087,30 @@ int marfs_statfs (const char*      path,
    return 0;
 }
 
-int marfs_symlink (const char* path,
-                   const char* to) {
+
+// NOTE: <target> is given as a full path.  It might or might not be under
+//     our fuse mount-point, but even if it is, we should just stuff
+//     whatever <target> we get into the symlink.  If it is something under
+//     a marfs mount, then marfs_readlink() will be called when the link is
+//     followed.
+
+int marfs_symlink (const char* target,
+                   const char* linkname) {
    PUSH_USER();
 
-   PathInfo info;
-   EXPAND_PATH_INFO(&info, path);
+   // <linkname> is given to us as a path under the fuse-mount,
+   // in the usual way for fuse-functions.
+   LOG(LOG_INFO, "linkname: %s\n", linkname);
+   PathInfo lnk_info;
+   EXPAND_PATH_INFO(&lnk_info, linkname);   // (okay if this file doesn't exist)
+
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(lnk_info.ns->iperms, (R_META | W_META));
 
    // No need for access check, just try the op
    // Appropriate  symlink call filling in fuse structure 
-   TRY0(symlink, info.md_path, to);
+   TRY0(symlink, target, lnk_info.md_path);
 
    POP_USER();
    return 0;
@@ -1134,7 +1156,25 @@ int marfs_unlink (const char* path) {
    CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
    // Call access() syscall to check/act if allowed to unlink for this user 
-   ACCESS(info.md_path, (W_OK));
+   //
+   // NOTE: if path is a symlink, pointing to another marfs file, access()
+   //       will hang forever, because it will require interaction with us,
+   //       but we're unavailable until we return from this.  Therefore, in
+   //       the case of a symlink, which points to a marfs-file, we skip
+   //       the call to access().
+   STAT(&info);
+   int call_access = 1;
+   if (S_ISLNK(info.st.st_mode)) {
+      const size_t mnt_top_len = strlen(MarFS_mnt_top);
+      char target[MARFS_MAX_MD_PATH];
+
+      TRY_GE0(readlink, info.md_path, target, MARFS_MAX_MD_PATH);
+      if ((rc_ssize >= mnt_top_len)
+          && (! strncmp(MarFS_mnt_top, target, mnt_top_len)))
+         call_access = 0;
+   }
+   if (call_access)
+      ACCESS(info.md_path, (W_OK));
 
    // rename file with all xattrs into trashdir, preserving objects and paths 
    TRASH_UNLINK(&info, path);

@@ -203,8 +203,8 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    snprintf(info->md_path, MARFS_MAX_MD_PATH,
             "%s%s", info->ns->md_path, sub_path);
 
-   LOG(LOG_INFO, "sub-path %s\n", sub_path);
-   LOG(LOG_INFO, "md-path  %s\n", info->md_path);
+   LOG(LOG_INFO, "sub-path  %s\n", sub_path);
+   LOG(LOG_INFO, "md-path   %s\n", info->md_path);
 
    // don't let users into the trash
    if (! strcmp(info->md_path, info->trash_path)) {
