@@ -571,7 +571,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                    //fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
                }
                // scan into post xattr structure
-               if (str_2_post(&post, xattr_ptr)) {
+               if (parse_post_xattr(&post, xattr_ptr)) {
                   continue;             
                }
                if (debug) 
@@ -587,23 +587,24 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                else {
                   //if(debug)
                   //fprintf(outfd,"index = %d   %llu\n", last_struct_index, iattrP->ia_size);
-                  //fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
+                    
+                  //This is a sum of all trash sizes in the trash fileset 
+                  fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
                   /*
-                    Code needed here in order to determine trash per fileset 
-                    xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count, outfd)  
-                    xattr_ptr = &mar_xattrs[xattr_index]
-                    str_2_pre to get filespace name - this should be fileset name
-                        use Jeff's code as a model no need to do all the parsing that he does
-                    index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,fileset_name_buffer); 
-                    fileset_stat_ptr[index].sum_trash += iattrP->ia_size;
+                     We must be in a trash fileset/directory so the next bit of code 
+                     determines which fileset/project the trash belongs to so that
+                     we can keep track of trash per fileset.
                   */
+                  // Get objid xattr
                   if ((trash_index = get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count,outfd)) != -1) {
                      fprintf(outfd,"trash index %d\n", trash_index);
                      xattr_ptr = &mar_xattrs[trash_index];
                      fprintf(outfd,"trash found objid = %s\n", xattr_ptr->xattr_value);
+                     
+                     //From ojbid xattr, get the ns_name which is actually the fileset name
                      read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT, repo_name, ns_name);
-                  // do not lookup fileset name every iteration because chances are it is the same as last
-                  // iteration
+                     // do not lookup fileset name every iteration because chances are it is the same as last
+                     // iteration
                      if (last_trash_index != trash_index) {
                         trash_index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,ns_name);
                         last_trash_index = trash_index;
@@ -650,12 +651,13 @@ int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offs
 
 
 /***************************************************************************** 
-Name: str_2_post 
+//Name: str_2_post 
+Name: parse_post_xattr
 
  parse an xattr-value string into a MarFS_XattrPost
 
 *****************************************************************************/
-int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
+int parse_post_xattr (MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    int   major;
    int   minor;
@@ -674,12 +676,8 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &post->encrypt_info,
                            (char*)&post->gc_path);
 
-   if (scanf_size == EOF)
-      return -1;                // errno is set
-   else if (scanf_size < 9) {
-      errno = EINVAL;
-      return -1;            /* ?? */
-   }
+   if (scanf_size == EOF || scanf_size < 9)
+      return -1;                
    return 0;
 }
 

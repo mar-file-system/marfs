@@ -3,6 +3,7 @@ all: marfs_quota
 #OBJS = marfs_quota.o
 
 CFLAGS += -Wall -lgpfs
+LDFLAGS += -I../../../../fuse/src
 
 # currently a simple top-level FUSE daemon
 marfs_quota: marfs_quota.c
