@@ -58,6 +58,8 @@ endif
 FUSE_FLAGS += -d -f
 ifndef DEBUG
 	FUSE_FLAGS =
+	# what would this do? ...
+	# FUSE_FLAGS = -o intr
 else ifeq ($(DEBUG),)
 	FUSE_FLAGS =
 else ifeq ($(DEBUG),0)
@@ -307,10 +309,28 @@ shell_test:
 hello3: hello3.o $(OBJS)
 	gcc $(CFLAGS) -o $@ $(LDFLAGS) $^ $(LIBS)
 
+# for testing with repo.chunk_size=2048, and sizeof(RecoveryInfo)=1080 That
+# leaves 968 of user-data, per object.  We want the individual objects to
+# have recognizable contents, so when we read the contents back, it will be
+# obvious that correct contents were written into each object.  That means,
+# we want successive 968-byte chunks of input to have different values.
+.PHONY: foo.multi.4096
+foo.multi.4096:
+	dd if=/dev/zero bs=968 count=1 | tr '\0' '0' >  foo.multi.4096
+	dd if=/dev/zero bs=968 count=1 | tr '\0' '1' >> foo.multi.4096
+	dd if=/dev/zero bs=968 count=1 | tr '\0' '2' >> foo.multi.4096
+	dd if=/dev/zero bs=968 count=1 | tr '\0' '3' >> foo.multi.4096
+	dd if=/dev/zero bs=224 count=1 | tr '\0' '4' >> foo.multi.4096
+
+
 
 # lines-of-code
 loc:
 	wc -l $(H) $(SRCS)
+
+loc2:
+	wc -l $(H) $(SRCS)  $(LIBAWS4C)/*.{c,h}
+
 
 show_inc_path:
 	gcc -Wp,-v $(CFLAGS) -c -o marfs_base.o marfs_base.c
@@ -323,3 +343,10 @@ show_locals:
 	@ echo "LDFLAGS    = $(LDFLAGS)"
 	@ echo "FUSE_FLAGS = $(FUSE_FLAGS)"
 
+.PHONY: show_objects
+show_objects:
+	./show_objects
+
+.PHONY: show_trash
+show_trash:
+	./show_trash

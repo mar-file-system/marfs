@@ -679,9 +679,10 @@ int stream_open(ObjectStream* os, IsPut put) {
    if (! b->context)
       aws_iobuf_context(b, aws_context_clone());
 
-   aws_iobuf_reset(b);          // doesn't affect <user_data>
-   aws_iobuf_chunked_transfer_encoding(b, 1);
+   AWSContext* ctx = b->context;
+   s3_chunked_transfer_encoding_r(1, ctx);
 
+   aws_iobuf_reset(b);          // doesn't affect <user_data> or <context>
    if (put) {
       sem_init(&os->iob_empty, 0, 0);
       sem_init(&os->iob_full,  0, 0);
@@ -845,13 +846,14 @@ int stream_sync(ObjectStream* os) {
 // ---------------------------------------------------------------------------
 // CLOSE
 //
-// This assumes stream_sync() has already been called.  If marfs is
-// implementing fuse-flush, then fuse-flush should invoke stream_sync() and
-// fuse-release (aka close) should invoke stream_close().  If fuse-flush is
-// not implemented, then Gary says fuse falls-back to using fuse-release
-// for both tasks, so fuse-close should call stream_sync(), then
-// stream_close().  We separate the functions here, to allow either
-// approach.
+// *** WARNING: This assumes stream_sync() has already been called.
+//
+// If marfs is implementing fuse-flush, then fuse-flush should invoke
+// stream_sync() and fuse-release (aka close) should invoke stream_close().
+// If fuse-flush is not implemented, then Gary says fuse falls-back to
+// using fuse-release for both tasks, so fuse-close should call
+// stream_sync(), then stream_close().  We separate the functions here, to
+// allow either approach.
 // 
 // ---------------------------------------------------------------------------
 
