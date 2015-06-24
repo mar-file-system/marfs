@@ -216,13 +216,13 @@ typedef enum {
 
 // add log items when you enter/exit a function
 #define ENTRY()                                                         \
+   LOG(LOG_INFO, "\n");                                                 \
    LOG(LOG_INFO, "entry\n");                                            \
    __attribute__ ((unused)) size_t   rc = 0;                            \
    __attribute__ ((unused)) ssize_t  rc_ssize = 0
 
 #define EXIT()                                  \
    LOG(LOG_INFO, "exit\n");                     \
-   LOG(LOG_INFO, "\n")
 
 
 
@@ -393,16 +393,28 @@ typedef enum {
 typedef uint16_t FHFlagType;
 
 
-// read() can maintain state here
+// read() can maintain state here (see notes in WriteStatus, re
+// marfs_data).
 typedef struct {
    // TBD ...
+   size_t        sys_reads;     // discount this much from FileHandle.os.written
 } ReadStatus;
 
 
 // write() can maintain state here
+//
+// <sys_writes> tracks data written into the object which is not user-data.
+// For example, we write recovery-data into objects, using the same
+// ObjectStream as is used to write user-data.  That will be included in
+// the total write-count found in ObjectStream.written.  So, we count the
+// purely-system-related writes in FileHandle.write_status.sys_writes.
+// Thus, when it comes time to truncate the MDFS file to the size of the
+// data written by the user, we can compute the appropriate size.
+
 typedef struct {
    // TBD ...
    RecoveryInfo  rec_info;      // (goes into tail of object)
+   size_t        sys_writes;    // discount this much from FileHandle.os.written
 } WriteStatus;
 
 
@@ -470,6 +482,17 @@ extern int  trash_name    (PathInfo* info, const char* path);
 
 extern int  check_quotas  (PathInfo* info);
 
+
+// write MultiChunkInfo (as binary data in network-byte-order), into file
+extern int write_chunkinfo(int                   md_fd,
+                           const PathInfo* const info,
+                           const size_t          total_written);
+
+extern int read_chunkinfo(int md_fd, MultiChunkInfo* chnk);
+
+
+extern  ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info);
+                              
 
 
 

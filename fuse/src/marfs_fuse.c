@@ -262,7 +262,7 @@ int marfs_getattr (const char*  path,
 
    PathInfo info;
    EXPAND_PATH_INFO(&info, path);
-   LOG(LOG_INFO, "expanded %s -> %s\n", path, info.md_path);
+   LOG(LOG_INFO, "expanded  %s -> %s\n", path, info.md_path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, R_META);
@@ -599,8 +599,8 @@ int marfs_open (const char*            path,
    // If no xattrs, we let user read/write directly into the file.
    // This corresponds to a file that was created in DIRECT repo-mode.
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
-      fh->md_fd = open(info->md_path,
-                       (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
+      // fh->md_fd = open(info->md_path, (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
+      fh->md_fd = open(info->md_path, ffi->flags);
       if (fh->md_fd < 0)
          RETURN(-errno);
    }
@@ -608,28 +608,25 @@ int marfs_open (const char*            path,
    else if ((fh->flags & FH_READING)
             && ((info->post.obj_type == OBJ_MULTI)
                 || (info->post.obj_type == OBJ_PACKED))) {
-      fh->md_fd = open(info->md_path,
-                       (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
+      fh->md_fd = open(info->md_path, (O_RDONLY)); // no O_BINARY in Linux.  Not needed.
       if (fh->md_fd < 0)
          RETURN(-errno);
    }
    else if (fh->flags & FH_WRITING) {
 
       // start out assuming write object-type is Uni.  We'll change to
-      // Multi if writes require a second object.  Open MD file now, in
-      // case we might be Multi.
+      // Multi if writes require a second object.
       info->post.obj_type = OBJ_UNI;
-      //      fh->md_fd = open(info->md_path,
-      //                       (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
+
+      // Don't open MD file, here.  It isn't needed until the object-size
+      // exceeds the threshold for Uni
+      // (i.e. Namespace.iwrite_repo->chunk_size).  If we open it here,
+      // then we unnecessarily slow down writing small files.
+      //
+      //      fh->md_fd = open(info->md_path,(O_WRONLY));  // no O_BINARY in Linux.  Not needed.
       //      if (fh->md_fd < 0)
       //         RETURN(-errno);
    }
-
-   // initialize the URL in the ObjectStream, in our FileHandle
-   // TRY0(pre_2_url, fh->os.url, MARFS_MAX_URL_SIZE, &info->pre);
-   update_pre(&info->pre);
-   strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
-   LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
 
    // Configure a private AWSContext, for this request
    AWSContext* ctx = aws_context_clone();
@@ -646,16 +643,27 @@ int marfs_open (const char*            path,
    // install custom context
    aws_iobuf_context(b, ctx);
 
+   { // This code should be co-maintained with some code in
+      // marfs_write().
+
+      // initialize the URL in the ObjectStream, in our FileHandle
+      // TRY0(pre_2_url, fh->os.url, MARFS_MAX_URL_SIZE, &info->pre);
+      update_pre(&info->pre);
+      strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
+      LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
+
+
 #if 0
-   TRY0(stream_open, &fh->os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
+      TRY0(stream_open, &fh->os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
 #else
-   // To support seek() [for reads], and allow reading at arbitrary
-   // offsets, we are now implementing each call to marfs_read() as an
-   // independent GET, with byte-ranges.  Therefore, for reads, we don't
-   // open the stream, here.
-   if (fh->flags & FH_WRITING)
-      TRY0(stream_open, &fh->os, OS_PUT);
+      // To support seek() [for reads], and allow reading at arbitrary
+      // offsets, we are now implementing each call to marfs_read() as an
+      // independent GET, with byte-ranges.  Therefore, for reads, we don't
+      // open the stream, here.
+      if (fh->flags & FH_WRITING)
+         TRY0(stream_open, &fh->os, OS_PUT);
 #endif
+   }
 
    POP_USER();
    return 0;
@@ -690,6 +698,7 @@ int marfs_opendir (const char*            path,
 // return actual number of bytes read.  0 indicates EOF.
 // negative understood to be negative errno.
 //
+// NOTE: 
 // TBD: Don't do object-interaction if file is DIRECT.  See marfs_open().
 //
 int marfs_read (const char*            path,
@@ -745,7 +754,12 @@ int marfs_read (const char*            path,
    TRY_GE0(stream_get, os, buf, size);
    LOG(LOG_INFO, "result: '%*s'\n", rc_ssize, buf);
 
-#else
+   POP_USER();
+   return rc_ssize;
+
+#elif 0
+   // new approach, where we do an open/close for every call to read().  We
+   // correctly read byte ranges (but don't handle Multi files).
    LOG(LOG_INFO, "offset: %ld, size: %ld\n", offset, size);
    s3_set_byte_range_r(offset, size, b->context);
    TRY0(stream_open, os, OS_GET);
@@ -767,11 +781,134 @@ int marfs_read (const char*            path,
 
    TRY0(stream_sync, os);
    TRY0(stream_close, os);
-#endif
-
 
    POP_USER();
    return rc_ssize;
+
+#else
+   // newest approach, where we still do open/close per read(), and we also
+   // handle Multi files.  This means that the data that is requested may
+   // span multiple objects.  In that case, we will actually do multiple
+   // open/close actions per read(), because we must open objects
+   // individually.
+   //
+   // Marfs_write (and pftool) promise that we can reliably compute compute
+   // the object-IDs based on the following assumptions:
+   //
+   // (a) every object except possibly the last one will contain
+   //     repo.block_size of data (including the recovery-info at the end.
+   //
+   // (b) Object-IDs are all the same as the object-ID in the "objid"
+   //     xattr, but changing the final ".0" to the appropriate
+   //     block-offset.
+   //
+   // These assumptions mean we can easily compute the object(s) we need,
+   // given only the desired data-offset and teh original object-ID.
+
+
+   // NOTE: The presence of recovery-info at the tail-end of objects means
+   //     we have to detect the case when fuse wants us to read beyond the
+   //     end of the data.  (It always does this, to make us identify EOF.)
+   //     S3 has data for us there, because of the recovery-info at the
+   //     tail of the final object.  We use the stat-size of the MDFS file
+   //     to indicate the logical extent of user data, so we can recognize
+   //     where the legitimate data ends.
+   STAT(info);
+   const size_t max_extent = info->st.st_size;
+   const size_t max_size   = (offset >= max_extent) ? 0 : max_extent - offset;
+
+   // portions of each block that are used for system-data vs. user-data
+   const size_t recovery   = sizeof(RecoveryInfo) +8;
+   const size_t data       = info->pre.chunk_size - recovery; // per-block
+   
+   size_t block        = offset / data; // trunc
+   size_t block_offset = offset - (block * data); // offset in <block>
+   size_t block_remain = data - block_offset;     // max for this block
+   size_t total_remain = (max_size < size) ? max_size : size;
+
+   char*  buf_ptr      = buf;
+   size_t read_size    = ((total_remain < block_remain) // actual read size
+                          ? total_remain
+                          : block_remain);
+
+   size_t read_count   = 0;     // amount read during this call
+
+   // Starting at the appropriate block and offset to match caller's
+   // logical offset in the multi-object data, move through successive
+   // blocks, reading contiguous user-data (skipping e.g. recovery-info),
+   // until we've filled caller's buffer.
+   while (read_size) {
+
+      // read as much user-data as we have room for from the current block
+      LOG(LOG_INFO, "iter: blk=%ld, boff=%ld, rsz=%ld, brem=%ld, trem=%ld\n",
+          block, block_offset, read_size, block_remain, total_remain);
+
+      // byte-range in terms of this object
+      s3_set_byte_range_r(block_offset, read_size, b->context);
+
+      // NOTE: stream_open() wipes ObjectStream.written.  We want
+      //     this field to track the total amount read across all
+      //     chunks, so we save it before calling open, and restore
+      //     it after.
+      size_t written = os->written;
+      TRY0(stream_open, os, OS_GET);
+      os->written = written;
+
+      // because we are reading byte-ranges, we may see '206 Partial Content'
+      //
+      // TRY_GE0(stream_get, os, buf, size);
+      rc_ssize = stream_get(os, buf_ptr, read_size);
+      if ((rc_ssize < 0)
+          && (os->iob.code != 200)
+          && (os->iob.code != 206)) {
+         LOG(LOG_ERR, "stream_get returned %ld (%d '%s')\n",
+             rc_ssize, os->iob.code, os->iob.result);
+         return -EIO;
+      }
+      if (rc_ssize != read_size) {
+         // It's probably legit that the server could give us less than we
+         // asked for. (i.e. 'Partial Content' might not only mean that we
+         // asked for a byte range; it might also mean we didn't even get
+         // all of our byte range.)  In that case, instead of moving on to
+         // the next object, we should try again on this one.  We don't
+         // currently do that, so instead we'll throw an error, and fail
+         // the user's request.
+         LOG(LOG_ERR, "request for %ld-%ld (%ld bytes) returned only %ld bytes\n",
+             block_offset, (block_offset + read_size), read_size, rc_ssize);
+         return -EIO;
+      }
+      read_count += read_size;
+
+      // // handy for debugging small things, but don't want it there always
+      // LOG(LOG_INFO, "result: '%*s'\n", rc_ssize, buf);
+
+      TRY0(stream_sync, os);
+      TRY0(stream_close, os);
+
+      block         += 1;
+      block_offset   = 0;
+      block_remain   = data;
+      total_remain  -= read_size;
+
+      buf_ptr       += read_size;
+      read_size      = ((total_remain < block_remain)
+                        ? total_remain
+                        : block_remain);
+
+      // update the URL in the ObjectStream, in our FileHandle
+      if (read_size) {
+         info->pre.chunk_no = block;
+         update_pre(&info->pre);
+         strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
+         LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
+      }
+   }
+
+   POP_USER();
+   return read_count;
+
+
+#endif
 }
 
 
@@ -822,6 +959,9 @@ int marfs_readdir (const char*            path,
 }
 
 
+// It appears that, unlike readlink(), we shouldn't return the number of
+// chars in the path.  Also, unlinke readlink(), we *should* write the
+// final '\0' into the caller's buf.
 int marfs_readlink (const char* path,
                     char*       buf,
                     size_t      size) {
@@ -835,10 +975,18 @@ int marfs_readlink (const char* path,
 
    // No need for access check, just try the op
    // Appropriate readlinklike call filling in fuse structure 
-   TRY0(readlink, info.md_path, buf, size);
+   TRY_GE0(readlink, info.md_path, buf, size);
+   int count = rc_ssize;
+   if (count >= size) {
+      LOG(LOG_ERR, "no room for '\\0'\n");
+      return -ENAMETOOLONG;
+   }
+   buf[count] = '\0';
+
+   LOG(LOG_INFO, "readlink '%s' -> '%s' = (%d)\n", info.md_path, buf, count);
 
    POP_USER();
-   return 0;
+   return 0; // return result;
 }
 
 
@@ -876,23 +1024,49 @@ int marfs_release (const char*            path,
 #if 0
    TRY0(stream_sync, os);
    TRY0(stream_close, os);
-#else
+#elif 0
    // New approach.  read() handles its own open/read/close
    if (fh->flags & FH_WRITING) {
       TRY0(stream_sync, os);
       TRY0(stream_close, os);
    }
+#else
+   // Newer approach.  read() handles its own open/read/close write(), in
+   // the case of Multi, after the first object, doesn't open next object
+   // until there's data to be written to it.
+   if ((fh->flags & FH_WRITING)
+       && (fh->os.flags & OSF_OPEN)) {
+
+      // add final recovery-info, at the tail of the object
+      if (info->post.obj_type == OBJ_MULTI) {
+         TRY_GE0(write_recoveryinfo, os, info);
+         fh->write_status.sys_writes += rc_ssize; // accumulate non-user-data written
+      }
+
+      TRY0(stream_sync, os);
+      TRY0(stream_close, os);
+   }
 #endif
 
-   // need to write final FileInfo record into file?  (check fh->write_state)
-   if (fh->md_fd)
+   // close MD file, if it's open
+   if (fh->md_fd) {
+
+      // If obj-type is Multi, write the final MultiChunkInfo into the MD file.
+      if ((fh->flags & FH_WRITING)
+          && (info->post.obj_type == OBJ_MULTI)) {
+
+         TRY0(write_chunkinfo, fh->md_fd, info, os->written - fh->write_status.sys_writes);
+
+         // reset current chunk-number, so xattrs will represent obj 0
+         info->pre.chunk_no = 0;
+      }
       TRY0(close, fh->md_fd);
+   }
 
    // truncate length to reflect length of data
    if ((fh->flags & FH_WRITING)
        && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
-      // TRY0(ftruncate, fh->md_fd, os->written);
-      TRY0(truncate, info->md_path, os->written);
+      TRY0(truncate, info->md_path, os->written - fh->write_status.sys_writes);
    }
 
    // no longer incomplete
@@ -1076,19 +1250,30 @@ int marfs_statfs (const char*      path,
    return 0;
 }
 
-int marfs_symlink (const char* path,
-                   const char* to) {
+
+// NOTE: <target> is given as a full path.  It might or might not be under
+//     our fuse mount-point, but even if it is, we should just stuff
+//     whatever <target> we get into the symlink.  If it is something under
+//     a marfs mount, then marfs_readlink() will be called when the link is
+//     followed.
+
+int marfs_symlink (const char* target,
+                   const char* linkname) {
    PUSH_USER();
 
-   PathInfo info;
-   EXPAND_PATH_INFO(&info, path);
+   // <linkname> is given to us as a path under the fuse-mount,
+   // in the usual way for fuse-functions.
+   LOG(LOG_INFO, "linkname: %s\n", linkname);
+   PathInfo lnk_info;
+   EXPAND_PATH_INFO(&lnk_info, linkname);   // (okay if this file doesn't exist)
+
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(lnk_info.ns->iperms, (R_META | W_META));
 
    // No need for access check, just try the op
    // Appropriate  symlink call filling in fuse structure 
-   TRY0(symlink, info.md_path, to);
+   TRY0(symlink, target, lnk_info.md_path);
 
    POP_USER();
    return 0;
@@ -1134,7 +1319,30 @@ int marfs_unlink (const char* path) {
    CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
    // Call access() syscall to check/act if allowed to unlink for this user 
-   ACCESS(info.md_path, (W_OK));
+   //
+   // NOTE: if path is a symlink, pointing to another marfs file, access()
+   //       will hang forever, because it will require interaction with us,
+   //       but we're unavailable until we return from this.  Therefore, in
+   //       the case of a symlink, which points to a marfs-file, we skip
+   //       the call to access().  How do we know if it's a marfs file?
+   //       Well, if it's an absolute path with our same mount-point, or
+   //       it's a relative path, then it's a marfs file.
+   STAT(&info);
+   int call_access = 1;
+   if (S_ISLNK(info.st.st_mode)) {
+      const size_t mnt_top_len = strlen(MarFS_mnt_top);
+      char target[MARFS_MAX_MD_PATH];
+
+      TRY_GE0(readlink, info.md_path, target, MARFS_MAX_MD_PATH);
+      if ((rc_ssize >= mnt_top_len)
+          && (! strncmp(MarFS_mnt_top, target, mnt_top_len)))
+         call_access = 0;
+      else if ((rc_ssize > 0)
+               && (target[0] != '/'))
+         call_access = 0;
+   }
+   if (call_access)
+      ACCESS(info.md_path, (W_OK));
 
    // rename file with all xattrs into trashdir, preserving objects and paths 
    TRASH_UNLINK(&info, path);
@@ -1228,14 +1436,15 @@ int marfs_write(const char*            path,
    // If first write, check/act on quota bytes
    // TBD ...
 
-   // If first write, it has to start at offset 0, if not fail
-   if ((! os->written) && offset) {
-      LOG(LOG_ERR, "first write started at non-zero offset %ld\n", offset);
-      errno = EINVAL;
-      return -1;
-   }
+   ///   // If first write, it has to start at offset 0, if not fail
+   ///   if ((! os->written) && offset) {
+   ///      LOG(LOG_ERR, "first write started at non-zero offset %ld\n", offset);
+   ///      errno = EINVAL;
+   ///      return -1;
+   ///   }
 
-   // If write does not start at previous end of file, fail
+   // If first write, it has to start at offset 0, if not fail
+   // If write is not contiguous with previous write, fail
    if ( offset != os->written) {
       LOG(LOG_ERR, "non-contig write: offset %ld, after %ld\n", offset, os->written);
       errno = EINVAL;
@@ -1261,38 +1470,83 @@ int marfs_write(const char*            path,
    // Trunc file to current last byte, and set end marker
 
 
-#if 0 //#if TBD
+#if 1 //#if TBD
+
+   // It's possible that we finished and closed the first object, without
+   // knowing that it was going to be Multi, until now.  In that case, the
+   // OS is closed.  (We also might have closed the previous Multi object
+   // without knowing there would be more written.  This works for that,
+   // too.)
+   if (os->flags & OSF_CLOSED) {
+      info->post.obj_type = OBJ_MULTI;
+      info->pre.chunk_no += 1;
+
+      // update the URL in the ObjectStream, in our FileHandle
+      update_pre(&info->pre);
+      strncpy(os->url, info->pre.objid, MARFS_MAX_URL_SIZE);
+      LOG(LOG_INFO, "(a) generated URL '%s'\n", os->url);
+
+      TRY0(stream_open, os, OS_PUT);
+   }
 
    // Span across objects for "Multi" format.  Repo.chunk_size is the
    // maximum size of an individual object written by MarFS.  Check whether
-   // this write will put us over.  If so, then write as much data into
-   // this object as can fit (minus size of recovery-info), write the
-   // recovery-info into the tail, close the object, open a new one, and
-   // resume writing there.
+   // this write will put us over (leaving room at the end for
+   // recovery-info).  If so, then write as much data into this object as
+   // can fit (minus size of recovery-info), write the recovery-info into
+   // the tail, close the object, open a new one, and resume writing there.
+   //
+   // For each chunk of a Multi object, we also write a corresponding copy
+   // of the object-ID into the MD file.  The MD file is not opened for us
+   // in marfs_open(), because it wasn't known until now that we'd need it.
+   size_t       write_size = size;
    const size_t recovery   = sizeof(RecoveryInfo) +8; // written in tail of object
    size_t       chunk_end  = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
-   size_t       write_size = size;
-   while ((os->written + write_size + recovery) > chunk_end) {
+   char*        buf_ptr    = (char*)buf;
 
-      // object-type is now known to be multi
-      info->post.obj_type = OBJ_MULTI;
+   while ((os->written + write_size + recovery) >= chunk_end) {
 
-      // write <partial> more bytes into this object
-      ssize_t partial = chunk_end - (os->written + recovery);
-      assert (partial > 0);     // possible silly config: (recovery > chunk_size)
-      size_t  remain   = write_size - partial;
+      // write <fill> more bytes, to fill this object
+      ssize_t fill   = chunk_end - (os->written + recovery);
+      size_t  remain = write_size - fill; // remaining after <fill>
 
-      TRY_GE0(stream_put, os, buf, partial);
+      LOG(LOG_INFO, "iterating: written=%ld, fill=%ld, rec=%ld, remain=%ld, chnksz=%ld\n",
+          os->written, fill, recovery, remain, info->pre.chunk_size);
 
+      // possible silly config: (recovery > chunk_size)
+      // This config is now ruled out by validate_config() ?
+      if (fill <= 0) {
+         LOG(LOG_ERR, "fill %ld < 0  (written %ld, rec: %ld, wr: %ld)\n",
+             fill, os->written, recovery, write_size);
+         return -EIO;
+      }
+
+
+      TRY_GE0(stream_put, os, buf_ptr, fill);
+      buf_ptr += fill;
+
+      TRY_GE0(write_recoveryinfo, os, info);
+      fh->write_status.sys_writes += rc_ssize; // track non-user-data written
+
+      // close the object
+      LOG(LOG_INFO, "closing chunk: %ld\n", info->pre.chunk_no);
+      TRY0(stream_sync, os);
+      TRY0(stream_close, os);
+
+      // if we haven't already opened the MD file, do it now.
+      if (! fh->md_fd) {
+         fh->md_fd = open(info->md_path, (O_WRONLY));// no O_BINARY in Linux.  Not needed.
+         if (fh->md_fd < 0) {
+            LOG(LOG_ERR, "open %s failed (%s)\n", info->md_path, strerror(errno));
+            RETURN(-errno);
+         }
+      }
+
+      // MD file gets per-chunk information
+      TRY0(write_chunkinfo, fh->md_fd, info, os->written - fh->write_status.sys_writes);
+
+      // if we still have more data to write, prepare for next iteration
       if (remain) {
-
-         // add recoverability-info, at the tail
-         char file_info[...];
-         TRY_GE0(file_info_2_str, fh->write_status.file_info);
-         TRY0(stream_put, os, file_info, recovery);
-
-         // close the object
-         TRY0(stream_close, os);
 
          // MarFS file-type is definitely "Multi", now
          info->post.obj_type = OBJ_MULTI;
@@ -1300,30 +1554,37 @@ int marfs_write(const char*            path,
          // update chunk-number, and generate the new obj-id
          info->pre.chunk_no += 1;
       
-         // update the URL in the ObjectStream, in our FileHandle
-         update_pre(&info->pre);
-         strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
-         LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
+         { // This code should be co-maintained with corresponding code in
+            // marfs_open().
 
-         // open next chunk
-         //
-         // NOTE: The assert() is here because work is needed on
-         //       ObjectStreams, before we can close and reopen them.  This
-         //       should wipe everything, except ObjectStream.written, and
-         //       what else ...?
+            // update the URL in the ObjectStream, in our FileHandle
+            update_pre(&info->pre);
+            strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
+            LOG(LOG_INFO, "(b) generated URL '%s'\n", fh->os.url);
 
-         assert(0); // See notes at stream_open() re re-opening an O-stream
-         TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
+            // open next chunk
+            //
+            // NOTE: stream_open() wipes ObjectStream.written.  We want
+            //     this field to track the total amount written across all
+            //     chunks, so we save it before calling open, and restore
+            //     it after.
+            size_t written = os->written;
+            TRY0(stream_open, os, OS_PUT);
+            os->written = written;
+         }
+
+         chunk_end = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
       }
 
       // compute limits of new chunk
-      chunk_end = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
       write_size = remain;
    }
+   LOG(LOG_INFO, "done iterating\n");
 
-   // write more data into object
+   // write more data into object. This amount doesn't finish out any
+   // object, so don't write chunk-info to MD file.
    if (write_size)
-      TRY_GE0(stream_put, os, buf, write_size);
+      TRY_GE0(stream_put, os, buf_ptr, write_size);
 
 #else
    // marfs_open() opened an ObjectStream for us.
@@ -1333,6 +1594,7 @@ int marfs_write(const char*            path,
    // Do we really want to trunc after every write?
    // Better would be to have a flag in xattrs, that says "incomplete".
    // This is roughly the same as pftool's RESTART xattr.
+   // [marfs_open() now does this for us.]
 
 #endif
 
@@ -1582,7 +1844,11 @@ int main(int argc, char* argv[])
    INIT_LOG();
    LOG(LOG_INFO, "starting\n");
 
-   load_config("~/marfs.config");
+   if (load_config("~/marfs.config")) {
+      LOG(LOG_ERR, "load_config() failed.  Quitting\n");
+      return -1;
+   }
+
    init_xattr_specs();
 
    // initialize libaws4c/libcurl

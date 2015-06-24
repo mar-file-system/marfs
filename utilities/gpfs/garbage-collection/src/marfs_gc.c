@@ -110,7 +110,8 @@ int main(int argc, char **argv) {
 //   char  fileset_name[] = "project_a,projb,root";
 //   char  fileset_name[] = "project_a,root,projb";
 //   char  fileset_name[] = "trash";
-   char  fileset_name[] = "project_c";
+//   char  fileset_name[] = "project_c";
+   char  fileset_name[] = "trash";
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
       ProgName = argv[0];
@@ -189,6 +190,7 @@ int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, in
    int ret_value = -1;
 
    for (i=0; i< cnt; i++) {
+      printf("XX %s %s\n", xattr_ptr->xattr_name, desired_xattr);
       if (!strcmp(xattr_ptr->xattr_name, desired_xattr)) {
          return(i);
       }
@@ -324,6 +326,11 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    int post_index=0;
    int objid_index=1;
    int marfs_xattr_cnt = MARFS_GC_XATTR_CNT;
+   int trash_status;
+
+
+  // NEED TO FIGURE OUT SIZE FOR THIS
+   char path_file[4096];
 
 
 
@@ -334,7 +341,6 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
   
    int early_exit =0;
    int xattr_index;
-   int rv;
    char *gc_path_ptr;
 
    //outfd = fopen(onameP,"w");
@@ -413,8 +419,8 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   //if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
                   if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count)) != -1 ) { 
                      xattr_ptr = &mar_xattrs[xattr_index];
-                     fprintf(outfd,"post xattr name = %s value = %s count = %d index=%d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count,xattr_index);
-                     if ((str_2_post(&post, xattr_ptr))) {
+                     printf("post xattr name = %s value = %s count = %d index=%d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count,xattr_index);
+                     if ((parse_post_xattr(&post, xattr_ptr))) {
                          fprintf(stderr,"Error getting post xattr\n");
                          continue;
                      }
@@ -428,17 +434,20 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
 			// why would this ever happen?  if in trash gc_path should be non-null
                         printf("gc_path is NULL\n");
                   } 
+                  // else trash
                   else {
+                     printf("found trash\n");
                      gc_path_ptr = &post.gc_path[0];
+                     //create string for *.path file that needs removal also
+                     sprintf(path_file,"%s.path",gc_path_ptr);
+                     printf("%s\n",marfs_xattrs[post_index]);
+                     printf("path_file is %s\n", path_file);
                      xattr_ptr = &mar_xattrs[0];
                      if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count)) != -1) { 
                         xattr_ptr = &mar_xattrs[xattr_index];
-                        fprintf(outfd,"objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
-                        fprintf(outfd, "remove file: %s  remove object:  %s\n", gc_path_ptr, xattr_ptr->xattr_value); 
-                        //call aws delete_object (xattr_ptr->value);
-                        // OK, this section essentially works Need to make this more general of course 
-                        // but it served as a proof of concept
-                        // Some things to do:
+                        printf("objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
+                        printf("remove file: %s  remove object:  %s\n", gc_path_ptr, xattr_ptr->xattr_value); 
+                        // TO DO:
                         // Figure out how to get userid and host IP.  In xattr??
                         //   -- userid will be a fixed name according to Jeff/Gary
                         //   -- hostIP can be found in namespace namespace or repo info
@@ -459,34 +468,12 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                         IOBuf * bf = aws_iobuf_new();
                          // do not have to set bucket if part of the path
                         //s3_set_bucket("atorrez");
-                        rv = s3_delete( bf, xattr_ptr->xattr_value);
-                        fprintf(outfd, "s3_delete returned %d\n", rv);
-                        if ((unlink(gc_path_ptr) == -1)) {
-                            fprintf(outfd,"Error removing file\n");                         
-                        }
-                        //call unlink(gc_path)
+                        //
+
+                        trash_status = dump_trash(bf, xattr_ptr, gc_path_ptr, &path_file[0], outfd);
+
                      }
 
-                     // INFO from Gary's gc update email
-                     //
-                     // So trash will have two files  associated for the original mds file
-		     // The first being inodenumber.datetimestamp.metadata
-		     // The second being inodenumber.datetimestamp.path
-		     // The *metadata file will have a post xattr with prefix inodenumber.datetimestamp
-		     // So read the post xattr and get gc_path and prefix. 
-		     // get object name from objid xattr?
-		     // Use prefix to form string for removal of *.metadata and *.path
-		     // Use gc_path to form string for removal of mdsfile
-		     // Use object name to remove oject.
-		     //
-                     // use gc_path to delete mds stuff.  Or do I open *.path file to get path?
-		     //
-		     //
-                     // Get pre xattr which defines object name
-			// xattr_ptr now has name of object to delete
-			// Call aws/S3 to delete object
-                     // use gc_path to delete mds stuff.  Or do I open *.path file to get path?
-		     // delete original mds file and delete trash directory stuff 
                   }
                }
             }
@@ -498,12 +485,12 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
 }
 
 /***************************************************************************** 
-Name: str_2_post 
+Name: parse_post_xattr 
 
  parse an xattr-value string into a MarFS_XattrPost
 
 *****************************************************************************/
-int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
+int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    int   major;
    int   minor;
@@ -522,12 +509,58 @@ int str_2_post(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &post->encrypt_info,
                            (char*)&post->gc_path);
 
-   if (scanf_size == EOF)
-      return -1;                // errno is set
-   else if (scanf_size < 9) {
-      errno = EINVAL;
-      return -1;            /* ?? */
-   }
+   if (scanf_size == EOF || scanf_size < 9)
+      return -1;   
    return 0;
 }
 
+
+/***************************************************************************** 
+Name: dump_trash 
+
+ This function deletes the object file as well as gpfs metadata files
+*****************************************************************************/
+int dump_trash(IOBuf * bf, struct marfs_xattr *xattr_ptr, char *gc_path_ptr, 
+               char *path_file_ptr, FILE *outfd) 
+{
+   int return_value =0;
+   int rv;
+   char time_string[20];
+   struct tm *time_info;
+   
+   time_t now = time(0);
+   time_info = localtime(&now);
+   strftime(time_string, sizeof(time_string), "%Y-%m-%d %H:%M:%S", time_info);
+ 
+   // Delete object
+   fprintf(outfd, "%s ", time_string);
+   rv = s3_delete( bf, xattr_ptr->xattr_value);
+   if (rv != 0) {
+      fprintf(outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+      return_value = -1;
+   }
+   else {
+      fprintf(outfd, "deleted object %s\n", xattr_ptr->xattr_value);
+   }
+
+   // Delete trash file
+   fprintf(outfd, "%s ", time_string);
+   if ((unlink(gc_path_ptr) == -1)) {
+      fprintf(outfd,"Error removing file %s\\n",gc_path_ptr);
+      return_value = -1;
+   }
+   else {
+      fprintf(outfd,"deleted file %s\n",gc_path_ptr);
+   }
+
+   // Delete trash path file
+   fprintf(outfd, "%s ", time_string);
+   if ((unlink(path_file_ptr) == -1)) {
+      fprintf(outfd,"Error removing file %s\n",path_file_ptr);
+      return_value = -1;
+   }
+   else {
+      fprintf(outfd,"deleted file %s\n",path_file_ptr);
+   }
+   return(return_value);
+}

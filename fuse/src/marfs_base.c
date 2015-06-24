@@ -77,6 +77,8 @@ OF SUCH DAMAGE.
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <arpa/inet.h>          // htonl(), etc
+
 
 // ---------------------------------------------------------------------------
 // translations from strings used in config-files
@@ -628,7 +630,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
    post->config_vers = MarFS_config_vers;
    post->obj_type    = OBJ_NONE;   /* figured out later */
-   post->num_objects = 0;
+   post->chunks      = 0;
    post->chunk_info_bytes = 0;
    memset(post->gc_path, 0, MARFS_MAX_MD_PATH);
    return 0;
@@ -647,7 +649,7 @@ int post_2_str(char* post_str, size_t max_size, const MarFS_XattrPost* post) {
                                     major, minor,
                                     encode_obj_type(post->obj_type),
                                     post->obj_offset,
-                                    post->num_objects,
+                                    post->chunks,
                                     post->chunk_info_bytes,
                                     post->correct_info,
                                     post->encrypt_info,
@@ -676,7 +678,7 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
                            &major, &minor,
                            &obj_type_code,
                            &post->obj_offset,
-                           &post->num_objects,
+                           &post->chunks,
                            &post->chunk_info_bytes,
                            &post->correct_info,
                            &post->encrypt_info,
@@ -711,7 +713,6 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
 int slave_2_str(char* slave_str,        const MarFS_XattrSlave* slave) {
    assert(0);                   // TBD
 }
-
 // from string to MarFS_XattrSlave
 int str_2_slave(MarFS_XattrSlave* slave, const char* slave_str) {
    assert(0);                   // TBD
@@ -722,7 +723,7 @@ int str_2_slave(MarFS_XattrSlave* slave, const char* slave_str) {
 
 
 // from RecoveryInfo to string
-int recinfo_2_str(char* rec_str, const size_t max_size, const RecoveryInfo* rec) {
+int rec_2_str(char* rec_str, const size_t max_size, const RecoveryInfo* rec) {
 
    // UNDER CONSTRUCTION ...
    assert(0);
@@ -756,7 +757,9 @@ int recinfo_2_str(char* rec_str, const size_t max_size, const RecoveryInfo* rec)
 // from string to RecoveryInfo.  Presumabl,y the string is what you got
 // from the tail-end of an object.  Use this to convert the string to a
 // RecoveryInfo struct.
-int str_2_recinfo(RecoveryInfo* rec_info, const char* rec_info_str) {
+int str_2_rec(RecoveryInfo* rec_info, const char* rec_info_str) {
+   // TBD ...
+   return -1;
 }
 
 
@@ -766,6 +769,129 @@ int str_2_recinfo(RecoveryInfo* rec_info, const char* rec_info_str) {
 
 
 
+
+
+
+
+// htonll() / ntohll() are not provided in our environment.  <endian.h> or
+// <byteswap.h> make things easier, but these are non-standard.  Also, we're
+// compiled with -Wall, so we avoid pointer-aliasing that makes gcc whine.
+//
+// TBD: Find the appropriate #ifdefs to make these definitions go away on
+//     systems that already provide them.
+
+
+// see http://esr.ibiblio.org/?p=5095
+#define IS_LITTLE_ENDIAN (*(uint16_t *)"\0\xff" >= 0x100)
+
+uint64_t htonll(uint64_t ll) {
+   if (IS_LITTLE_ENDIAN) {
+      uint64_t result;
+      char* sptr = ((char*)&ll) +7; // gcc doesn't mind char* aliases
+      char* dptr = (char*)&result; // gcc doesn't mind char* aliases
+      int i;
+      for (i=0; i<8; ++i)
+         *dptr++ = *sptr--;
+      return result;
+   }
+   else
+      return ll;
+}
+uint64_t ntohll(uint64_t ll) {
+   if (IS_LITTLE_ENDIAN) {
+      uint64_t result;
+      char* sptr = ((char*)&ll) +7; // gcc doesn't mind char* aliases
+      char* dptr = (char*)&result; // gcc doesn't mind char* aliases
+      int i;
+      for (i=0; i<8; ++i)
+         *dptr++ = *sptr--;
+      return result;
+   }
+   else
+      return ll;
+}
+
+
+typedef union {
+   float    f;
+   uint32_t i;
+} UFloat32;
+
+// We write MultiChunkInfo as binary data (in network-byte-order) in hopes
+// that this will speed-up treating the MD file as a big index, during
+// pftool restarts.  Return number of bytes moved, or -1 + errno.
+//
+// NOTE: If max_size == sizeof(MultiChunkInfo), this may still return a
+//     size less than sizeof(MultiChunkInfo), because the struct may
+//     include padding assoicated with alignment.
+
+ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* chnk) {
+   if (max_size < sizeof(MultiChunkInfo)) {
+      errno = EINVAL;
+      return -1;
+   }
+   char* dest = str;
+
+#define COPY_OUT(SOURCE, TYPE, CONVERSION_FN)       \
+   {  TYPE temp = CONVERSION_FN (SOURCE);           \
+      memcpy(dest, (char*)&temp, sizeof(TYPE));    \
+      dest += sizeof(TYPE);                        \
+   }
+
+
+   // version is copied byte-for-byte as a float (in network-byte-order)
+   UFloat32 uf = (UFloat32){ .f = chnk->config_vers };
+   uf.i = htonl(uf.i);
+   memcpy(dest, (char*)&uf.i, 4);
+   dest += sizeof(float);
+
+   COPY_OUT(chnk->chunk_no,         size_t,      htonll);
+   COPY_OUT(chnk->data_offset,      size_t,      htonll);
+   COPY_OUT(chnk->chunk_data_bytes, size_t,      htonll);
+   COPY_OUT(chnk->correct_info,     CorrectInfo, htonll);
+   COPY_OUT(chnk->encrypt_info,     EncryptInfo, htonll);
+
+#undef COPY_OUT
+
+   return (dest - str);
+}
+
+// NOTE: We require str_len >= sizeof(MultiChunkInfo), even though it's
+//     possible that chunkinfo_2_str() can encode a MultiChunkInfo into a
+//     string that is smaller than sizeof(MultiChunkInfo), because of
+//     padding for alingment, within the struct.  We're just playing it
+//     safe.
+ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_len) {
+   if (str_len < sizeof(MultiChunkInfo)) {
+      errno = EINVAL;
+      return -1;
+   }
+   char* src = (char*)str;
+
+#define COPY_IN(DEST, TYPE, CONVERSION_FN)       \
+   {  TYPE temp;                                 \
+      memcpy((char*)&temp, src, sizeof(TYPE));   \
+      DEST = CONVERSION_FN( temp );              \
+      src += sizeof(TYPE);                       \
+   }
+
+   // version is copied byte-for-byte as a float (in network-byte-order)
+   UFloat32 uf;
+   memcpy((char*)&uf.i, src, 4);
+   uf.i = htonl(uf.i);
+   chnk->config_vers = uf.f;
+   src += sizeof(float);
+
+   COPY_IN(chnk->chunk_no,         size_t,      htonll);
+   COPY_IN(chnk->data_offset,      size_t,      htonll);
+   COPY_IN(chnk->chunk_data_bytes, size_t,      htonll);
+   COPY_IN(chnk->correct_info,     CorrectInfo, htonll);
+   COPY_IN(chnk->encrypt_info,     EncryptInfo, htonll);
+
+#undef COPY_IN
+
+   return (src - str);
+}
 
 
 
@@ -899,7 +1025,13 @@ static MarFS_Repo*      _repo = NULL;
 // TBD: See object_stream.c We could configure a timeout for waiting on
 //      GET/PUT.  Work need to be done on the stream_wait(), to honor this
 //      timeout.
+//
+// TBD: Validation.  E.g. make sure repo.chunk_size is never less-than
+//      MARFS_MAX_OBJID_SIZE (or else an MD file full of objIDs, for a
+//      Multi-type object, could be truncated to a size smaller than its
+//      contents.
 
+int validate_config();          // fwd-decl
 int load_config(const char* config_fname) {
 
    if (! config_fname)
@@ -913,8 +1045,8 @@ int load_config(const char* config_fname) {
       .host         = "10.140.0.15:9020",
       .flags        = (REPO_ONLINE),
       .access_proto = PROTO_S3_EMC,
-      // .chunk_size   = (1024 * 1024 * 512), /* (?) max MarFS object */
-      .chunk_size   = (1024 * 1024), /* (?) i.e. max MarFS object */
+      .chunk_size   = (1024 * 1024 * 512), /* (?) max MarFS object */
+      // .chunk_size   = (2048), /* i.e. max MarFS object (small for debugging) */
       .auth         = AUTH_S3_AWS_MASTER,
       .latency_ms   = (10 * 1000),
    };
@@ -1020,7 +1152,27 @@ int load_config(const char* config_fname) {
    _ns->mnt_suffix_len = strlen(_ns->mnt_suffix);
 
 
+   if (validate_config())
+      return -1;
+
    return 0;                    /* success */
+}
+
+
+// ad-hoc tests of various inconsitencies, or illegal states, that are
+// possible after load_config() has loaded a config file.
+int validate_config() {
+   int retval = 0;
+
+   // eventually, this should iterate over all repos ...
+   if (_repo->chunk_size <= sizeof(RecoveryInfo)) {
+      LOG(LOG_ERR, "repo '%s' has chunk-size (%ld) "
+          "less than the size of recovery-info (%ld)\n",
+          _repo->name, _repo->chunk_size, sizeof(RecoveryInfo));
+      retval = -1;
+   }
+
+   return retval;
 }
 
 

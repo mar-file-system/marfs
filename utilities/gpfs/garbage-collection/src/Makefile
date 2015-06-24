@@ -3,6 +3,7 @@ all: marfs_gc
 OBJS = /root/atorrez-test/aws4c-latest/aws4c.o
 
 CFLAGS += -Wall -g -lgpfs -I /root/atorrez-test/aws4c-latest -lcurl 
+LDFLAGS += -I../../../../fuse/src
 
 # currently a simple top-level FUSE daemon
 marfs_gc: marfs_gc.c

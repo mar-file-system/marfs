@@ -232,6 +232,15 @@ extern float MarFS_config_vers;
 // path.
 #define MARFS_TRASH_ORIGINAL_PATH_SUFFIX ".path"
 
+
+// // (see comments at MultiChunkInfo, below)
+// #define MARFS_MULTI_MD_FORMAT   "ver.%03d.%03d,off.%ld,len.%ld,obj.%s\n"
+
+
+
+
+
+
 // Do an in-place modification of a given namespace-name (i.e. the part of
 // a path that sits below the fuse-mount, not including the contained
 // files).  We are storing the namespace in the "bucket"-part of an
@@ -430,7 +439,8 @@ typedef struct MarFS_Repo {
 // ---------------------------------------------------------------------------
 
 
-extern char* MarFS_mnttop;        // top level mount point for fuse/pftool
+// NOTE: Do NOT include a final slash.
+extern char* MarFS_mnt_top;        // top level mount point for fuse/pftool
 
 // (RM read meta, WM write meta, RD read data, WD write data) 
 typedef enum {
@@ -654,13 +664,13 @@ int update_pre(MarFS_XattrPre* pre);
 // written via fuse, we have no knowledge of the total size until the
 // file-descriptor is closed.
 typedef struct MarFS_XattrPost {
-   float              config_vers;  // redundant w/ config_vers in Pre?
+   float              config_vers;   // redundant w/ config_vers in Pre?
    MarFS_ObjType      obj_type;
-   size_t             obj_offset;    // offset of file in the obj (for packed)
+   size_t             obj_offset;    // offset of file in the obj (Packed)
    CorrectInfo        correct_info;  // correctness info  (e.g. the computed checksum)
    EncryptInfo        encrypt_info;  // any info reqd to decrypt the data
-   size_t             num_objects;   // number ChunkInfos written in MDFS file
-   size_t             chunk_info_bytes; // total size of chunk-info in MDFS file
+   size_t             chunks;        // number ChunkInfos written in MDFS file (Multi)
+   size_t             chunk_info_bytes; // total size of chunk-info in MDFS file (Multi)
    char               gc_path[MARFS_MAX_MD_PATH]; // only if file is in trash
 } MarFS_XattrPost;
 
@@ -725,10 +735,58 @@ typedef struct {
 } RecoveryInfo;
 
 // from RecoveryInfo to string
-int rec_info_2_str(char* rec_info_str, const size_t max_size, const RecoveryInfo* rec_info);
+int rec_2_str(char* rec_info_str, const size_t max_size, const RecoveryInfo* rec_info);
 
 // from string to RecoveryInfo
-int str_2_rec_info(RecoveryInfo* rec_info, const char* rec_info_str); // from string
+int str_2_rec(RecoveryInfo* rec_info, const char* rec_info_str); // from string
+
+
+
+// ---------------------------------------------------------------------------
+// MultiChunkInfo
+//
+// Multi-type marfs MD files contain a "blob" for each chunk.  Each blob
+// specifies the offset of the corresponding object (i.e. position
+// represented by the beginning of this object in the stream of data making
+// up the total object), the size of data in the object (because there is a
+// "recovery" blob at the end of each object which is not part of the
+// user-data), the checksum, encryption, and compression keys, etc.
+//
+// All object-IDs are the same as what's in the Pre xattr, differing only
+// in chunk-number, so we don't need to store those.
+//
+// When writing from fuse, we fill every object to the brim before moving
+// on to the next one.  Therefore, for any offset into the user-data, we
+// can compute the name of the object containing that data.  If something
+// fails during a write, and the write is restarted, we start over from
+// scratch, and all previous progress is trashed.
+//
+// However, pftool wants the ability to restart a large copy, picking up
+// where it left off.  It also may do an N:1 style of write, so chunks may
+// be written out-of-order, such that the existing set after a failure is
+// not contiguous.  Therefore, pftool restart needs a way to figure out
+// which chunks were written.  (The fact that not all of them were written
+// will be indicated by the presence of a RESTART xattr.)
+//
+// Because we want to be able to compute an offset for chunk-info, and
+// simply seek into the MD file to find it, we want all the fields, and the
+// chunk-info-records to have known sizes and offsets.  Therfore, we leave
+// out the usual human-readability support, and just write raw numbers.
+// However, we do write them as ascii text, rather than binary, for
+// portability.
+// ---------------------------------------------------------------------------
+
+typedef struct {
+   float         config_vers;
+   size_t        chunk_no;         // from MarFS_XattrPost.chunk_no
+   size_t        data_offset;      // offset of this chunk in data-stream
+   size_t        chunk_data_bytes; // not counting recovery-info (at the end)
+   CorrectInfo   correct_info;     // from MarFS_XattrPost.correct_info
+   EncryptInfo   encrypt_info;     // from MarFS_XattrPost.encrypt_info
+} MultiChunkInfo;
+
+ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* chnk);
+ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_len);
 
 
 

@@ -203,8 +203,8 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    snprintf(info->md_path, MARFS_MAX_MD_PATH,
             "%s%s", info->ns->md_path, sub_path);
 
-   LOG(LOG_INFO, "sub-path %s\n", sub_path);
-   LOG(LOG_INFO, "md-path  %s\n", info->md_path);
+   LOG(LOG_INFO, "sub-path  %s\n", sub_path);
+   LOG(LOG_INFO, "md-path   %s\n", info->md_path);
 
    // don't let users into the trash
    if (! strcmp(info->md_path, info->trash_path)) {
@@ -760,7 +760,7 @@ int  trash_truncate(PathInfo*   info,
    // mode_t new_mode = info->st.st_mode & (ACCESSPERMS); // ACCESSPERMS is only BSD
    mode_t new_mode = info->st.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO); // more-portable
 
-   // read from md_file
+   // we'll read from md_file
    int in = open(info->md_path, O_RDONLY);
    if (in == -1) {
       LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
@@ -768,7 +768,7 @@ int  trash_truncate(PathInfo*   info,
       return -1;
    }
 
-   // write to trash_file
+   // we'll write to trash_file
    __TRY0(expand_trash_info, info, path);
    int out = open(info->trash_path, (O_CREAT | O_WRONLY), new_mode);
    if (out == -1) {
@@ -946,3 +946,163 @@ int check_quotas(PathInfo* info) {
    return (st.st_size >= space_limit); /* 0 = OK,  1 = no-more-space */
 }
 
+
+
+// write MultiChunkInfo (as binary data in network-byte-order), into file
+//
+// <total_written> includes all user-data and system-data
+// (e.g. RecoveryInfo) written to the object.  When called by
+// marfs_release(), we assume the final RecoveryInfo is included in the
+// total_written.  And that only the final chunk can be less than 100%
+// full.
+//
+// We use "sizeof(RecoveryInfo) +8" everywhere, because the final 8 bytes
+// in an object hold the index of the begining of the RecoveryInfo, within
+// the object.
+
+int write_chunkinfo(int                   md_fd,
+                    const PathInfo* const info,
+                    const size_t          total_written) {
+
+   const size_t chunk_info_len = sizeof(MultiChunkInfo);
+   char str[chunk_info_len];
+
+   const size_t recovery             = sizeof(RecoveryInfo) +8;
+   const size_t user_data_per_chunk  = info->pre.chunk_size - recovery;
+   const size_t data_offset          = info->pre.chunk_no * user_data_per_chunk;
+   const size_t user_data_this_chunk = total_written - data_offset;
+
+   MultiChunkInfo chunk_info = (MultiChunkInfo) {
+      .config_vers      = MarFS_config_vers,
+      .chunk_no         = info->pre.chunk_no,
+      .data_offset      = data_offset,
+      .chunk_data_bytes = user_data_this_chunk,
+      .correct_info     = info->post.correct_info,
+      .encrypt_info     = info->post.encrypt_info,
+   };
+
+   // convert struct to string
+   ssize_t str_count = chunkinfo_2_str(str, chunk_info_len, &chunk_info);
+   if (str_count < 0) {
+      LOG(LOG_ERR, "error preparing chunk-info (%ld < 0)\n",
+          str_count);
+      errno = EIO;
+      return -1;
+   }
+   if (str_count < chunk_info_len) {
+      // pad with zeros, if nec
+      memset(str + str_count, 0, (chunk_info_len - str_count));
+   }
+   else if (str_count > chunk_info_len) {
+      LOG(LOG_ERR, "error preparing chunk-info (%ld != %ld)\n",
+          str_count, chunk_info_len);
+      errno = EIO;
+      return -1;
+   }
+
+   // write string as raw data to MD file
+   ssize_t wr_count = write(md_fd, str, chunk_info_len);
+   if (wr_count < 0) {
+      LOG(LOG_ERR, "error writing chunk-info (%s)\n",
+          strerror(errno));
+      return -1;
+   }
+   if (wr_count != chunk_info_len) {
+      LOG(LOG_ERR, "error writing chunk-info (%ld != %ld)\n",
+          wr_count, chunk_info_len);
+      errno = EIO;
+      return -1;
+   }
+
+   return 0;
+}
+
+// read MultiChunkInfo for given chunk, from file
+int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
+   static const size_t chunk_info_len = sizeof(MultiChunkInfo);
+
+   char str[chunk_info_len];
+   ssize_t rd_count = read(md_fd, str, chunk_info_len);
+   if (rd_count < 0) {
+      LOG(LOG_ERR, "error reading chunk-info (%s)\n",
+          strerror(errno));
+      return -1;
+   }
+   if (rd_count != chunk_info_len) {
+      LOG(LOG_ERR, "error reading chunk-info (%ld != %ld)\n",
+          rd_count, chunk_info_len);
+      errno = EIO;
+      return -1;
+   }
+
+   ssize_t str_count = str_2_chunkinfo(chnk, str, rd_count);
+   if (str_count < 0) {
+      LOG(LOG_ERR, "error preparing chunk-info (%ld < 0)\n",
+          str_count);
+      errno = EIO;
+      return -1;
+   }
+   if (str_count != chunk_info_len) {
+      LOG(LOG_ERR, "error preparing chunk-info (%ld != %ld)\n",
+          str_count, chunk_info_len);
+      errno = EIO;
+      return -1;
+   }
+
+   return 0;
+}
+
+
+
+
+
+
+// write appropriate RecoveryInfo into an object.  Moved this here so it
+// could be shared by marfs_write() and marfs_release()
+//
+// NOTE: We actually write "sizeof(RecoveryInfo)+8", because the final 8
+//     bytes are a value that indicate the size of the RecoveryInfo.  This
+//     allows RecoveryInfo written by earlier versions of the software
+//     (e.g. when RecoveryInfo was different) to be properly located and
+//     parsed.
+
+ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
+   const size_t recovery   = sizeof(RecoveryInfo) +8; // written in tail of object
+   ssize_t rc_ssize;
+
+#if TBD
+   // add recovery-info, at the tail of the object
+
+   //      char objid[MARFS_MAX_OBJID_SIZE];
+   //      TRY0(pre_2_str, objid, MARFS_MAX_OBJID_SIZE, &info->pre);
+   //      TRY_GE0(write, fh->md_fd, objid, MARFS_MAX_OBJID_SIZE);
+   //      info->post.chunk_info_bytes += MARFS_MAX_OBJID_SIZE;
+   //      info->post.chunk_info_bytes += MARFS_MAX_OBJID_SIZE;
+
+   char file_info[...];
+   __TRY_GE0(file_info_2_str, fh->write_status.file_info);
+   __TRY_GE0(stream_put, os, file_info, recovery);
+
+#else
+   LOG(LOG_WARNING, "writing fake recovery info of size %ld\n", recovery);
+
+   // static char rec[recovery];
+   static char rec[sizeof(RecoveryInfo) +8]; // stupid compiler ...
+
+   ///   static int  needs_init=1;
+   ///   if (needs_init) {
+   ///      memset(rec, 1, recovery); // stands out in objects written from /dev/zero
+   ///      needs_init = 0;
+   ///   }
+   static int dbg=0x11;
+   memset(rec, dbg, recovery); // stands out in objects written from /dev/zero
+   dbg += 0x11;
+
+   LOG(LOG_WARNING, "first part of fake rec-info: 0x%02x,%02x,%02x,%02x\n",
+       rec[0], rec[1], rec[2], rec[3]);
+   __TRY_GE0(stream_put, os, rec, recovery);
+
+#endif
+
+   return rc_ssize;
+}
