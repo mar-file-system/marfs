@@ -289,12 +289,12 @@ typedef enum {
    XVT_PRE        = 0x01,
    XVT_POST       = 0x02,
    XVT_RESTART    = 0x04,
-   XVT_SLAVE      = 0x08,
+   XVT_SHARD      = 0x08,
    
 } XattrValueType;
 
 #define MARFS_MD_XATTRS   (XVT_PRE | XVT_POST)     /* MD-related XattrValueTypes */
-#define MARFS_ALL_XATTRS  (XVT_PRE | XVT_POST | XVT_RESTART | XVT_SLAVE)  /* all XattrValueTypes */
+#define MARFS_ALL_XATTRS  (XVT_PRE | XVT_POST | XVT_RESTART | XVT_SHARD)  /* all XattrValueTypes */
 
 
 
@@ -364,7 +364,7 @@ typedef struct PathInfo {
 
    MarFS_XattrPre       pre;
    MarFS_XattrPost      post;
-   MarFS_XattrSlave     slave;
+   MarFS_XattrShard     shard;
    XattrMaskType        xattrs; // OR'ed XattrValueTypes, use has_any_xattrs()
 
    PathInfoFlagType     flags;

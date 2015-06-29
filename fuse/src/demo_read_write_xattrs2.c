@@ -43,7 +43,7 @@ void show_pre(MarFS_XattrPre* pre) {
    printf("  chunk_no:     %ld\n", pre->chunk_no);
 
    printf("  md_inode:     %ld\n", pre->md_inode);
-   //   uint16_t           slave;    // TBD: for hashing directories across slave nodes
+   //   uint16_t           shard;    // TBD: for hashing directories across shard nodes
 
    printf("  bucket:       %s\n",  pre->bucket);
    printf("  objid:        %s\n",  pre->objid);

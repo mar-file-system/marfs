@@ -304,9 +304,10 @@ int marfs_getxattr (const char* path,
    // No need for access check, just try the op
    // Appropriate  getxattr call filling in fuse structure
    TRY_GE0(lgetxattr, info.md_path, name, (void*)value, size);
+   ssize_t result = rc_ssize;
 
    POP_USER();
-   return rc_ssize;
+   return result;
 }
 
 
@@ -336,8 +337,8 @@ int marfs_ioctl(const char*            path,
 int marfs_listxattr (const char* path,
                      char*       list,
                      size_t      size) {
-   LOG(LOG_INFO, "listxattr(%s, ...) not implemented\n", path);
-   return -ENOSYS;
+   //   LOG(LOG_INFO, "listxattr(%s, ...) not implemented\n", path);
+   //   return -ENOSYS;
 
    PUSH_USER();
 
@@ -349,27 +350,51 @@ int marfs_listxattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  listxattr call
-   // filling in fuse structure
+   // filling in fuse structure.
+   // NOTE: If caller passes <list>=0, we'll be fine.
    TRY_GE0(llistxattr, info.md_path, list, size);
 
-#if 0
-   // TBD ...
+#if 1
    // *** remove any reserved xattrs from list ***
+   //
    // We could malloc our own storage here, listxattr into our storage,
    // remove any reserved xattrs, then copy to user's storage.  Or, we
    // could just use the caller's space to receive results, and then remove
-   // any reserved xattrs from that list.  That potentially allows a user
-   // to discover the *names* of reserved xattrs (seeing them before we've
-   // deleted them).  Because the user can't actually get values for the
-   // reserved xattrs, and their names are to be documented for public
-   // consumption, the former approach seems secure enough.
+   // any reserved xattrs from that list.  The latter would be faster, but
+   // potentially allows a user to discover the *names* of reserved xattrs
+   // (seeing them before we've deleted them).  Because the user can't
+   // actually get values for the reserved xattrs, and their names are to
+   // be documented for public consumption, the former approach seems
+   // secure enough.  But, on second thought, shuffling MarFS xattr names
+   // to cover-up system names takes as much trouble as just copying the
+   // legit names into callers list, so we'll do the copy, instead.  On
+   // third thought, it takes as much shuffling trouble, but also requires
+   // a malloc, so we revert to using caller's buffer.
 
-   char* name = list;
+   // We're supposed to support the case where list=0, returning the size
+   // of the buffer that caller would need, in order to receive all our
+   // xattr data.
+   if (! list) {
+      POP_USER();
+      return rc_ssize;
+   }
+
    char* end  = list + rc_ssize;
+   char* name = list;
+   int   result_size = 0;
    while (name < end) {
+      const size_t len = strlen(name) +1;
+
+      // if it's a system xattr, shift subsequent data to cover it.
       if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize)) {
-         size_t len = strlen(name) +1;
-         assert(name + len < end); /* else llistxattr() should return neg */
+
+         /* llistxattr() should have returned neg, in this case */
+         if (name + len > end) {
+            LOG(LOG_ERR, "name + len(%ld) exceeds end\n", len);
+            return -EINVAL;
+         }
+
+         LOG(LOG_INFO, "skipping '%s'\n", name);
 
          // shuffle subsequent keys forward to cover this one
          memmove(name, name + len, end - name + len);
@@ -377,14 +402,18 @@ int marfs_listxattr (const char* path,
          // wipe the tail clean
          memset(end - len, 0, len);
 
-         size -= len;
          end -= len;
+      }
+      else {
+         LOG(LOG_INFO, "allowing '%s'\n", name);
+         name += len;
+         result_size += len;
       }
    }
 #endif
 
    POP_USER();
-   return 0;
+   return result_size;
 }
 
 
@@ -786,45 +815,61 @@ int marfs_read (const char*            path,
    return rc_ssize;
 
 #else
-   // newest approach, where we still do open/close per read(), and we also
+   // Newest approach, where we still do open/close per read(), and we also
    // handle Multi files.  This means that the data that is requested may
-   // span multiple objects.  In that case, we will actually do multiple
-   // open/close actions per read(), because we must open objects
-   // individually.
+   // span multiple objects (we call these internal objects "blocks").  In
+   // that case, we will actually do multiple open/close actions per
+   // read(), because we must open objects individually.
    //
-   // Marfs_write (and pftool) promise that we can reliably compute compute
-   // the object-IDs based on the following assumptions:
+   // Marfs_write (and pftool) promise that we can compute the object-IDs
+   // of blocks composing a Multi-object, using the following assumptions:
    //
    // (a) every object except possibly the last one will contain
-   //     repo.block_size of data (including the recovery-info at the end.
+   //     repo.block_size of data (if you count the recovery-info at the
+   //     end).
    //
    // (b) Object-IDs are all the same as the object-ID in the "objid"
    //     xattr, but changing the final ".0" to the appropriate
    //     block-offset.
    //
-   // These assumptions mean we can easily compute the object(s) we need,
-   // given only the desired data-offset and teh original object-ID.
+   // These assumptions mean we can easily compute the IDs of block(s) we
+   // need, given only the desired data-offset (i.e. the "logical" offset)
+   // and the original object-ID.
 
 
-   // NOTE: The presence of recovery-info at the tail-end of objects means
-   //     we have to detect the case when fuse wants us to read beyond the
-   //     end of the data.  (It always does this, to make us identify EOF.)
-   //     S3 has data for us there, because of the recovery-info at the
-   //     tail of the final object.  We use the stat-size of the MDFS file
-   //     to indicate the logical extent of user data, so we can recognize
-   //     where the legitimate data ends.
+   // In the case of "Packed" objects, many user-level files are packed
+   // (with recovery-info at the tail of each) into a single physical
+   // object.  The "logical offset" of the user's data must then be
+   // adjusted to skip over the objects (and their recovery-info) that
+   // preceded the "logical object" within the physical object.
+   // Post.obj_offset is only non-zero for Packed files, where it holds the
+   // absolute physical byte_offset of the beginning of user's logical
+   // data, within the physical object.
+   const size_t phy_offset = info->post.obj_offset + offset;
+
+   // The presence of recovery-info at the tail-end of objects means we
+   // have to detect the case when fuse wants us to read beyond the end of
+   // the data.  (It always does this, to make us identify EOF.)  S3 has
+   // data for us there, because of the recovery-info at the tail of the
+   // final object.  We use the stat-size of the MDFS file to indicate the
+   // logical extent of user data, so we can recognize where the legitimate
+   // data ends.
    STAT(info);
-   const size_t max_extent = info->st.st_size;
-   const size_t max_size   = (offset >= max_extent) ? 0 : max_extent - offset;
+   const size_t max_extent = info->st.st_size;       // max logical index
+   const size_t max_size   = ((offset >= max_extent) // max logical span
+                              ? 0
+                              : max_extent - offset);
 
-   // portions of each block that are used for system-data vs. user-data
+   // portions of each block that are used for system-data vs. user-data.
+   // Post.chunks is always 1, except in the cast of packed.
    const size_t recovery   = sizeof(RecoveryInfo) +8;
-   const size_t data       = info->pre.chunk_size - recovery; // per-block
+   const size_t data       = (info->pre.chunk_size // logical bytes per block
+                              - (info->post.chunks * recovery));
    
-   size_t block        = offset / data; // trunc
-   size_t block_offset = offset - (block * data); // offset in <block>
+   size_t block        = phy_offset / data; // only non-zero for Multi
+   size_t block_offset = phy_offset - (block * data); // offset in <block>
    size_t block_remain = data - block_offset;     // max for this block
-   size_t total_remain = (max_size < size) ? max_size : size;
+   size_t total_remain = (max_size < size) ? max_size : size; // logical EOF
 
    char*  buf_ptr      = buf;
    size_t read_size    = ((total_remain < block_remain) // actual read size
@@ -1031,17 +1076,15 @@ int marfs_release (const char*            path,
       TRY0(stream_close, os);
    }
 #else
-   // Newer approach.  read() handles its own open/read/close write(), in
-   // the case of Multi, after the first object, doesn't open next object
-   // until there's data to be written to it.
+   // Newer approach.  read() handles its own open/read/close write(). In
+   // the case of Multi, after the first object, write() doesn't open next
+   // object until there's data to be written to it.
    if ((fh->flags & FH_WRITING)
        && (fh->os.flags & OSF_OPEN)) {
 
       // add final recovery-info, at the tail of the object
-      if (info->post.obj_type == OBJ_MULTI) {
-         TRY_GE0(write_recoveryinfo, os, info);
-         fh->write_status.sys_writes += rc_ssize; // accumulate non-user-data written
-      }
+      TRY_GE0(write_recoveryinfo, os, info);
+      fh->write_status.sys_writes += rc_ssize; // accumulate non-user-data written
 
       TRY0(stream_sync, os);
       TRY0(stream_close, os);
@@ -1060,6 +1103,13 @@ int marfs_release (const char*            path,
          // reset current chunk-number, so xattrs will represent obj 0
          info->pre.chunk_no = 0;
       }
+
+      ///      // QUESTION: does adding an fsync here cause the xattrs to appear
+      ///      //     immediately on GPFS files, instead of being delayed?
+      ///      //     [NOTE: We also moved SAVE_XATTRS() earlier, for this test.]
+      ///      // ANSWER:  No.
+      ///      TRY0(fsync, fh->md_fd);
+
       TRY0(close, fh->md_fd);
    }
 
@@ -1075,9 +1125,14 @@ int marfs_release (const char*            path,
    // install xattrs
    if ((info->ns->iwrite_repo->access_proto != PROTO_DIRECT)
        && (fh->flags & FH_WRITING)) {
-
+   
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
    }
+   //   // QUESTION: Does sync cause GPFS xattrs to be immediately visible to
+   //   //     direct readers?
+   //   // ANSWER: No.
+   //   sync();
+
 
    // reclaim FileHandle allocated in marfs_open()
    free(fh);

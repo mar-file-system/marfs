@@ -1,0 +1,133 @@
+#!/bin/bash
+
+# fuse doesn't create packed files, but it has to be able to read them.
+# This script creates a dummy packed file, so we can test fuse-read on it.
+#
+# We're trying to match all the real properties that Packed files will
+# eventually have.  For example, I'm guessing that we will just concatenate
+# the contents of the member objects, including their tail-end
+# recovery-info (plus 8 more bytes).  We also want object-IDs to be
+# reliably unique, so we want a real inode in their object-IDs, which we
+# get from the first member.
+
+
+# This is the current value for "sizeof(RecoveryInfo)" +8
+RECOVERY=1080
+
+MOUNT="/marfs/test00"
+HOST="http://10.140.0.15:9020"
+GPFS="/gpfs/marfs-gpfs/fuse/test00/mdfs"
+FNAME="packed"
+SIZE=0
+
+
+function obj_name() {
+    FILE=$1
+    OBJ=`attr -q -g marfs_objid $GPFS/$FILE`
+    echo "$OBJ"
+}
+
+
+# --- create several small Marfs files to be packed
+
+echo "creating two objects with recognizable contents"
+dd if=/dev/zero bs=968 count=1 | tr '\0' '1' > $MOUNT/p1
+dd if=/dev/zero bs=968 count=1 | tr '\0' '2' > $MOUNT/p2
+
+# dd if=/dev/zero bs=968 count=1 conv=fsync | tr '\0' '1' > $MOUNT/p1
+# dd if=/dev/zero bs=968 count=1 conv=fsync | tr '\0' '2' > $MOUNT/p2
+
+# appears to be a small delay, before GPFS xattrs written by fuse will be
+# seen by other processes, unless we sync.
+#
+### sleep 1
+### sync $GPFS/p1
+sync
+
+
+
+# --- extract "marfs_objid" xattr, and adapt
+
+# In order to assure we're using an objid that is consistent with the
+# running fuse client (e.g. having correct chunk-size), we'll just adapt
+# the object-id from one of the small files that are being packed.  This
+# will have incorrect ctime, etc, but that won't matter.
+OBJID=`obj_name p1`
+echo "OBJID (0): $OBJID"
+
+# Change the encoded object-type from "Fuse" to "Packed"
+# NOTE: I think this is ignored in favor of info in the Post xattr.
+OBJID=`echo $OBJID | sed -E 's/F___/P___/'`
+echo "OBJID (1): $OBJID"
+
+
+# NOTE: For packed files, the inode in the object-ID can't match more than
+#    one member.  But, if we were to set it all-zeros, or something, it
+#    wouldn't be reliably-unique.  Therefore, we use the inode of the first
+#    member-file, to provide the "inode" value that makes the object-ID
+#    reliably unique.
+#
+# # OBJID=`echo $OBJID | sed -E 's/inode.[0-9a-fA-F]+\//inode.0000000000000000\//'`
+# # echo "OBJID (2): $OBJID"
+
+
+
+# --- extract "marfs_post" xattr, and adapt
+
+
+# To get a consistent value for Post xattr, we'll borrow from one of the
+# to-be-packed files, and tweak it.
+echo "POST=attr -qg marfs_post $GPFS/p1"
+POST=`attr -qg marfs_post $GPFS/p1`
+echo "POST (0): $POST"
+
+# Change the encoded object-type from "Uni" to "Packed"
+POST=`echo $POST | sed -E 's/\/U\//\/P\//'`
+echo "POST (1): $POST"
+
+
+
+
+# --- the packed object just has the concatenattion of the contents of the
+#     two original objects.  Delete the originals.
+
+echo
+echo "gathering contents of two objects into local file tmp.$PACKED"
+rm -f tmp.$PACKED
+for F in p1 p2; do
+    OBJ=`obj_name $F`
+
+    echo
+    echo "copying $HOST/$OBJ"
+    s3curl.pl --id=jti -- $HOST/$OBJ >> tmp.$PACKED
+
+    echo "deleting the original"
+    s3curl.pl --id=jti -- -X DELETE $HOST/$OBJ
+done
+
+echo
+echo "writing local file back out as a single object"
+echo "writing $HOST/$OBJID"
+s3curl.pl --id=jti --put tmp.$PACKED -- $HOST/$OBJID
+
+
+
+# --- update the xattrs of the originals, since they are now packed
+
+
+OFFSET=0
+for F in p1 p2; do
+    echo
+    echo "updating xattrs for $GPFS/$F"
+
+    # Change the object-offset
+    POST=`echo $POST | sed -E "s/off.([0-9]+)\//off.$OFFSET\//"`
+    echo "POST (2): $POST"
+
+    attr -s marfs_objid -V $OBJID $GPFS/$F
+    attr -s marfs_post  -V $POST  $GPFS/$F
+
+    SIZE=`stat -c "%s" $GPFS/$F`
+
+    OFFSET=$(( OFFSET + SIZE + RECOVERY ))
+done

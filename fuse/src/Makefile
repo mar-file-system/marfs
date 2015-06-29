@@ -55,15 +55,17 @@ endif
 #   run as standard background task, w/out debug flags
 # DEBUG >= 1
 #   run in foreground, with debug flags  (NOTE: foreground is single-threaded)
-FUSE_FLAGS += -d -f
+
+# FUSE_FLAGS += -d -f
+FUSE_FLAGS += -d -f -o intr
 ifndef DEBUG
-	FUSE_FLAGS =
+	FUSE_FLAGS = -o intr
 	# what would this do? ...
 	# FUSE_FLAGS = -o intr
 else ifeq ($(DEBUG),)
-	FUSE_FLAGS =
+	FUSE_FLAGS = -o intr
 else ifeq ($(DEBUG),0)
-	FUSE_FLAGS =
+	FUSE_FLAGS = -o intr
 	# # performance-tuning experiments (these don't seem to help)
 	# FUSE_FLAGS = -d -f -o max_write="$$((1024 * 1024))"
 	# FUSE_FLAGS = -d -f -o noatime
@@ -250,7 +252,8 @@ gdb.core:
 	ls core.* | tail -n -1 | xargs exec gdb marfs_fuse
 
 gdb:
-	@ exec gdb marfs_fuse `cat "$(PID)"`
+	# @ exec gdb marfs_fuse `cat "$(PID)"`
+	@ exec gdb marfs_fuse `ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'`
 
 
 %: %.o
@@ -309,7 +312,7 @@ shell_test:
 hello3: hello3.o $(OBJS)
 	gcc $(CFLAGS) -o $@ $(LDFLAGS) $^ $(LIBS)
 
-# for testing with repo.chunk_size=2048, and sizeof(RecoveryInfo)=1080 That
+# For testing with repo.chunk_size=2048, and sizeof(RecoveryInfo)=1080 That
 # leaves 968 of user-data, per object.  We want the individual objects to
 # have recognizable contents, so when we read the contents back, it will be
 # obvious that correct contents were written into each object.  That means,
@@ -321,6 +324,14 @@ foo.multi.4096:
 	dd if=/dev/zero bs=968 count=1 | tr '\0' '2' >> foo.multi.4096
 	dd if=/dev/zero bs=968 count=1 | tr '\0' '3' >> foo.multi.4096
 	dd if=/dev/zero bs=224 count=1 | tr '\0' '4' >> foo.multi.4096
+
+# Make a phony PACKED file, from several small UNI files, in order test
+# reading from PACKED.  Fuse will never create packed files, but pftool
+# will, and fuse will have to be able to read them.
+.PHONY: foo.packed
+foo.packed:
+	dd if=/dev/zero bs=968 count=1 | tr '\0' '1' > /marfs/test00/p1
+	dd if=/dev/zero bs=968 count=1 | tr '\0' '2' > /marfs/test00/p2
 
 
 
@@ -337,6 +348,9 @@ show_inc_path:
 
 show_env:
 	printenv
+
+show_pid:
+	ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'
 
 show_locals:
 	@ echo "CFLAGS     = $(CFLAGS)"
