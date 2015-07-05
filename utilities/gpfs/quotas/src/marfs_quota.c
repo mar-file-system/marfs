@@ -78,6 +78,13 @@
 #include <unistd.h>
 #include "marfs_quota.h"
 
+#include "config-structs.h"
+
+#include "confpars-structs.h"
+#include "confpars.h"
+#include "parse-types.h"
+#include "parsedata.h"
+
 /******************************************************************************
 * This program reads gpfs inodes and extended attributes in order to provide
 * a total size value to the fsinfo file.  It is meant to run as a regularly
@@ -89,9 +96,6 @@
 *  to:
 *   get list of filesets for scanning
 *   get count of filesets for scanning
-* 2) Use new xattr to determine what fileset trash belongs
-*    We currently do not have a way to determine this once files are in trash
-*    alternatively, use a file as Gary suggested that has path to orignal
 *
 * 3) OTHER
 *  determine extended attributes that we care about
@@ -126,13 +130,20 @@ int main(int argc, char **argv) {
 //   char * fileset_name = "root,proja,projb";
 //   char  fileset_name[] = "root,proja,projb";
 //   char  fileset_name[] = "project_a,projb,root";
-   char  fileset_name[] = "project_a,root,project_b,project_c";
+///   char  fileset_name[] = "project_a,root,project_b,project_c";
 //   char  fileset_name[] = "root";
-   char * indv_fileset_name; 
+///   char * indv_fileset_name; 
    int i;
-   unsigned int fileset_scan_count = 0;
+   int fileset_scan_count = -1;
    unsigned int fileset_scan_index = 0; 
 
+// For New parser
+struct line h_page, pseudo_h, fld_nm_lst;
+struct config *config = NULL;
+
+struct namespace **myNamespaceList, *myNamespace;
+//struct repo **myRepoList, *myRepo;
+int j = 0;
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
       ProgName = argv[0];
@@ -149,6 +160,7 @@ int main(int argc, char **argv) {
          //case 'u': uid = atoi(optarg); break;
          case 'h': print_usage();
          default:
+            print_usage();
             exit(0);
       }
    }
@@ -157,12 +169,12 @@ int main(int argc, char **argv) {
       fprintf(stderr,"%s: no directory (-d) or output file name (-o) specified\n",ProgName);
       exit(1);
    }
+// For New parser
+   memset(&h_page,     0x00, sizeof(struct line));     
+   memset(&pseudo_h,   0x00, sizeof(struct line));    
+   memset(&fld_nm_lst, 0x00, sizeof(struct line));      
+
    /*
-    * Things are becoming more clear now about how this will work with the parser
-    * The parser will return a link-list. Jeff has created some support functions
-    * that may be used to get the fileset from the returned link list.  It would
-    * be ideal for the filesets to be in a comma seperated list that I can 
-    * tokenize.
     *
     * Based on the number of filesets, this program will have two new optional
     * arguments  -c for number of filesets to scan and * -i index for where to 
@@ -183,7 +195,7 @@ int main(int argc, char **argv) {
     * filesets is desirable.
     * If -c is non-zero than -i must be given
     *
-    * Sample Scenario
+    * Sample Scenario - running multiple instances
     *
     * ./marfs_quota -c 0 -d /path/to/top/level/mount/fileset
     * number of filesets:  10
@@ -195,30 +207,58 @@ int main(int argc, char **argv) {
     * ./marfs_quota -c 8 -i 2 -d /path/tot/top/level/mount -o fsinfo.log
     * Scan looking for remaining filesetso
     *
+    *
     * Or run looking for all filesets 
     * ./marfs_quota -c 10 -i 0 -d /path/tot/top/level/mount -o fsinfo.log
+    * Or, simply
+    * ./marfs_quota -d /path/tot/top/level/mount -o fsinfo.log
+    *
     *
     *
    */
-   // Get list of filesets and count
-   // When parser implemented 
-   // get filesecount before doing any of this
-   if ( fileset_scan_count == 0 ) {
-      // Call parser get link list and count filesets
-      // fileset_count = fileset_scan_count;
-      fileset_count = 4; 
-      // TEMP for now until I get parser integrated
+
+   // Use Parser to dig out fileset names and to get a count of filesets
+   if ( fileset_scan_count <= 0 ) {
+      config = (struct config *)malloc(sizeof(struct config)); 
+      parseConfigFile("/root/atorrez-test/current/config/config-2-at", CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, QUIET); 
+      freeHeaderFile(h_page.next);                                                                 
+
+ 
+      myNamespaceList = (struct namespace **)listObjByName("namespace", config);                   
+      while (myNamespaceList[j] != (struct namespace *)NULL) {
+         myNamespace = (struct namespace *)myNamespaceList[j];
+         if (fileset_scan_count == 0) 
+            printf("fileset:  %s\n", myNamespace->name);
+         j++;
+      }
+      fileset_count = j;
+
+      // User wants to know how many filesets exists
+      // print and exit
+      if ( fileset_scan_count == 0 ) {
+         printf("fileset count = %d\n", fileset_count);
+         exit(0);
+      }
       fileset_scan_count = fileset_count;
-      // TEMP for now until I get parser integrated
+
+      /* Alternative to using parser 
+      * will remove eventually
+      fileset_count = 4; 
+      fileset_scan_count = fileset_count;
+      */
    } 
+   else {
+     //do below checks here since only applies when user provides these parameters
+   
 
-   if ((fileset_scan_count > fileset_count) ||
-       (fileset_scan_count + fileset_scan_index > fileset_count)) {
+      if ((fileset_scan_count > fileset_count) ||
+         (fileset_scan_count + fileset_scan_index > fileset_count)) {
 
-      fprintf(stderr, "Trying to scan more filesets than exist\n");
-      print_usage();
-      exit(1);
-   }  
+         fprintf(stderr, "Trying to scan more filesets than exist\n");
+         print_usage();
+         exit(1);
+      }  
+   }
     
    //create structure containing all the stats that we care about
    fileset_stat_ptr = (fileset_stat *) malloc(sizeof(*fileset_stat_ptr)*fileset_count);
@@ -228,29 +268,39 @@ int main(int argc, char **argv) {
    }
    init_records(fileset_stat_ptr, fileset_count);
 
-   // now copy info into structure
-   //
-   // This code is dependent on what the parser returns.  I may need to do a strdup before 
-   // tokeninzing.  I also require the count from the parser so that I can malloc the 
-   // correct amount of filset structures.  I could always count filesets before I malloc 
-   // if need be
-   if (debug) 
-      printf("Going to tokenize\n");
-   indv_fileset_name = strtok(fileset_name,",");
-   if (debug) 
-      printf("%s\n", indv_fileset_name);
-   i =0;
-   while (indv_fileset_name != NULL) {
-      if (debug) 
-         printf("%s\n", indv_fileset_name);
-      strcpy(fileset_stat_ptr[i].fileset_name, indv_fileset_name);
-      indv_fileset_name = strtok(NULL,","); 
-      i++;
-   }
-   if (debug) 
-      printf("Filsets count = %d\n", fileset_count);
-  
+   // open the user defined log file
    outfd = fopen(outf,"w");
+   if (outfd == NULL) {
+      fprintf(stderr, "Error opening log file\n");
+      exit(1);
+   }
+
+   // Now copy filset name  returned by parser into fileset info struture
+   for (i=0; i < fileset_count; i++ ) {
+      myNamespace = (struct namespace *)myNamespaceList[i];
+      strcpy(fileset_stat_ptr[i].fileset_name, myNamespace->name);
+   } 
+
+
+   /* Alternative to using paser will remove eventually
+   ///if (debug) 
+   ///   printf("Going to tokenize\n");
+   ///indv_fileset_name = strtok(fileset_name,",");
+   ///if (debug) 
+   ///   printf("%s\n", indv_fileset_name);
+   ///i =0;
+   ///while (indv_fileset_name != NULL) {
+    ///  if (debug) 
+   ///      printf("%s\n", indv_fileset_name);
+   ///   strcpy(fileset_stat_ptr[i].fileset_name, indv_fileset_name);
+    ///  indv_fileset_name = strtok(NULL,","); 
+   ///   i++;
+   ///}
+   ///if (debug) 
+   ///   printf("Filsets count = %d\n", fileset_count);
+  
+   ///outfd = fopen(outf,"w");
+   */
 
     
 
@@ -259,6 +309,7 @@ int main(int argc, char **argv) {
    ec = read_inodes(rdir, outfd, fileset_id, fileset_stat_ptr, fileset_scan_count,fileset_scan_index);
 //   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n",
 //          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
+   free(myNamespaceList);
    free(fileset_stat_ptr);
    return (0);   
 }
@@ -446,6 +497,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    struct marfs_xattr mar_xattrs[MAX_MARFS_XATTR];
    struct marfs_xattr *xattr_ptr = mar_xattrs;
    int xattr_count;
+   // Need to define this size
    char fileset_name_buffer[32];
 
    int last_struct_index = -1;
@@ -558,32 +610,42 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
 
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
-         
          if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
             xattr_ptr = &mar_xattrs[0];
             // get marfs xattrs and associated values
             if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, marfs_xattrs, marfs_xattr_cnt, xattr_ptr)) > 0) {
                xattr_ptr = &mar_xattrs[0];
+
                // Get post xattr value
                if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count, outfd)) != -1 ) {
                    xattr_ptr = &mar_xattrs[xattr_index];
                    //if (debug)
                    //fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
                }
+
                // scan into post xattr structure
                if (parse_post_xattr(&post, xattr_ptr)) {
                   continue;             
                }
+
                if (debug) 
                   printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
                fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
+
                // Determine if file in trash directory
                if (!strcmp(post.gc_path, "")){
                   fprintf(outfd,"gc_path is NULL\n");
                   if (debug) 
                      printf("gc_path is NULL\n");
                } 
-               // Is trash
+
+               /* Else this is trash so there are a few steps here
+               *
+               *  1)  First sum the trash in this fileset
+               *  2)  Read objid xattr to determine which fileset the trash came from
+               *  3)  Update the fileset structure with a trash size count
+               *
+               */
                else {
                   //if(debug)
                   //fprintf(outfd,"index = %d   %llu\n", last_struct_index, iattrP->ia_size);
@@ -606,8 +668,10 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                      // do not lookup fileset name every iteration because chances are it is the same as last
                      // iteration
                      if (last_trash_index != trash_index) {
-                        trash_index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,ns_name);
-                        last_trash_index = trash_index;
+                        if ((trash_index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,ns_name)) >= 0)
+                           last_trash_index = trash_index;
+                        else 
+                           continue;
                      }
                      fileset_stat_ptr[last_trash_index].sum_trash += iattrP->ia_size;
                   }

@@ -280,7 +280,9 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
 // ---------------------------------------------------------------------------
 
 
-// Fill in fields, construct new obj-ID, etc.
+// Fill in fields, construct new obj-ID, etc.  This is called to initialize
+// a brand new MarFS_XattrPre, in the case where a file didn't already have
+// one.
 //
 // ino_t is ultimately __ULONGWORD, which should never be more than 64-bits
 // (in the current world).
@@ -290,7 +292,7 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
 //       is found in the Post xattr.  However, at the time we are
 //       initializing the Pre struct, and constructing the object-ID, we
 //       might not know the final object-type.  (pftool will know, but fuse
-//       won't know whether the object will ultimately be UNI or PACKED.
+//       won't know whether the object will ultimately be UNI or MULTI.
 //       However, it will know that the object-type is not packed.)  If the
 //       caller is pftool, it can pass in the final type, to become part of
 //       the object-name.  If fuse is calling, it can assign type FUSE.
@@ -331,7 +333,7 @@ int init_pre(MarFS_XattrPre*        pre,
    pre->chunk_size   = repo->chunk_size;
    pre->chunk_no     = 0;
 
-   // pre->slave = ...;    // TBD: for hashing directories across slave nodes
+   // pre->shard = ...;    // TBD: for hashing directories across shard nodes
 
    // generate bucket and obj-id
    return update_pre(pre);
@@ -362,6 +364,13 @@ int init_pre(MarFS_XattrPre*        pre,
 //       But Scality sproxyd treats them as a single string.  Because they
 //       must have the capability of being separated, we store them
 //       separately.
+//
+// NOTE: Packed objects are created externally, but read by fuse.  They
+//       can't be presumed to have an indoe that matches the actual inode
+//       of the MDFS file.  Therefore, in the case of packed, we should
+//       avoid updating that field.  (However, because we're using an
+//       sprintf() we'll just assume that the "inode" for packed files is
+//       always zero.)
 
 int update_pre(MarFS_XattrPre* pre) {
 
@@ -390,6 +399,10 @@ int update_pre(MarFS_XattrPre* pre) {
    char compress = encode_compression(pre->compression);
    char correct  = encode_correction(pre->correction);
    char encrypt  = encode_encryption(pre->encryption);
+
+   // PACKED objects have a real inode-value in their object-ID (in order
+   // to assure unique-ness).  But it might not match this particular file.
+   // Therefore, for packed objects, we should leave it as is.
 
    // prepare date-string components
    char md_ctime_str[MARFS_DATE_STRING_MAX];
@@ -482,9 +495,10 @@ int pre_2_url(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
 //       have some fields we want to add tot he XattrPre xattr-value,
 //       without requiring they be added to the object-id.)
 //
-// NOTE: strptime() and strftime() are crapulous, regarding DST and time-zones.
-//       If strptime() decides you are in DST, and you use "%z", then strptime() will simply adjust the 
-//       time-zone east by an hour.  This is a really stoopid thing to do, because strftime()
+// NOTE: strptime() and strftime() are crapulous, regarding DST and
+//       time-zones.  If strptime() decides you are in DST, and you use
+//       "%z", then strptime() will simply adjust the time-zone east by an
+//       hour.  This is a really stoopid thing to do, because strftime()
 //       
 
 int str_2_pre(MarFS_XattrPre*    pre,
@@ -582,7 +596,15 @@ int str_2_pre(MarFS_XattrPre*    pre,
    }
 
    // should we believe the inode in the obj-id, or the one in caller's stat struct?
-   if (md_inode != st->st_ino) {
+   //
+   // NOTE: Packed objects (if they contain more than one logical object)
+   //     can't possibly have the correct inode in their object-ID, in all
+   //     cases.  But we don't want them to have all-zeros, either, because
+   //     then they wouldn't be reliably-unique.  Therefore, they are built
+   //     with an indoe from one of their members, but it won't match the
+   //     inode of the others.
+   if ((md_inode != st->st_ino)
+       && (decode_obj_type(obj_type) != OBJ_PACKED)) {
       errno = EINVAL;            /* ?? */
       return -1;
    }
@@ -615,7 +637,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
    pre->repo         = repo;
    pre->chunk_size   = chunk_size;
    pre->chunk_no     = chunk_no;
-   pre->md_inode     = st->st_ino; /* NOTE: from caller, not object-ID */
+   pre->md_inode     = md_inode; /* NOTE: from object-ID, not st->st_ino  */
 
    // validate version
    assert (pre->config_vers == MarFS_config_vers);
@@ -630,7 +652,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
    post->config_vers = MarFS_config_vers;
    post->obj_type    = OBJ_NONE;   /* figured out later */
-   post->chunks      = 0;
+   post->chunks      = 1;          // we don't create Packed objects
    post->chunk_info_bytes = 0;
    memset(post->gc_path, 0, MARFS_MAX_MD_PATH);
    return 0;
@@ -709,12 +731,12 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
 
 
 
-// from MarFS_XattrSlave to string
-int slave_2_str(char* slave_str,        const MarFS_XattrSlave* slave) {
+// from MarFS_XattrShard to string
+int shard_2_str(char* shard_str,        const MarFS_XattrShard* shard) {
    assert(0);                   // TBD
 }
-// from string to MarFS_XattrSlave
-int str_2_slave(MarFS_XattrSlave* slave, const char* slave_str) {
+// from string to MarFS_XattrShard
+int str_2_shard(MarFS_XattrShard* shard, const char* shard_str) {
    assert(0);                   // TBD
 }
 

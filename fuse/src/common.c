@@ -495,9 +495,9 @@ int stat_xattrs(PathInfo* info) {
          break;
       }
 
-      case XVT_SLAVE: {
+      case XVT_SHARD: {
          // TBD ...
-         LOG(LOG_ERR, "slave xattr TBD\n");
+         LOG(LOG_ERR, "shard xattr TBD\n");
          break;
       }
 
@@ -627,9 +627,9 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          }
       }
 
-      case XVT_SLAVE: {
+      case XVT_SHARD: {
          // TBD ...
-         LOG(LOG_INFO, "slave xattr TBD\n");
+         LOG(LOG_INFO, "shard xattr TBD\n");
          break;
       }
 

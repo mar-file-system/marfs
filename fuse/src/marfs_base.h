@@ -627,7 +627,7 @@ typedef struct MarFS_XattrPre {
    size_t             chunk_size;   // from repo-config at write-time
    size_t             chunk_no;     // 0-based number of current chunk (object)
 
-   //   uint16_t           slave;   // TBD: for hashing directories across slave nodes
+   //   uint16_t      shard;   // TBD: for hashing directories across shard-nodes
 
    char               bucket[MARFS_MAX_BUCKET_SIZE];
    char               objid [MARFS_MAX_OBJID_SIZE]; // not including bucket
@@ -688,21 +688,21 @@ int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo);
 
 
 
-// TBD: "Slave" will be used to redirect directory paths via hashing to a
-// set of slaves for each directory.
-typedef struct MarFS_XattrSlave {
+// TBD: "Shard" will be used to redirect directory paths via hashing to a
+// set of shards for each directory.
+typedef struct MarFS_XattrShard {
    float              config_vers;
    // TBD ...
-} MarFS_XattrSlave;
+} MarFS_XattrShard;
 
-#define XATTR_SLAVE_STRING_VALUE_SIZE  256 /* max */
+#define XATTR_SHARD_STRING_VALUE_SIZE  256 /* max */
 
 
-// from MarFS_XattrSlave to string
-int slave_2_str(char* slave_str,        const MarFS_XattrSlave* slave);
+// from MarFS_XattrShard to string
+int shard_2_str(char* shard_str,        const MarFS_XattrShard* shard);
 
-// from string to MarFS_XattrSlave
-int str_2_slave(MarFS_XattrSlave* slave, const char* slave_str); // from string
+// from string to MarFS_XattrShard
+int str_2_shard(MarFS_XattrShard* shard, const char* shard_str); // from string
 
 
 
