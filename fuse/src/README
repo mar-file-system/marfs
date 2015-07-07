@@ -1,0 +1,66 @@
+Starting to keep some notes here, for others that want to pick up development.
+
+(1) building
+
+The makefile is currently a big "bag of tricks" to help me with debugging
+and running.  there are two environment-vars that are important:
+
+    USE_SYSLOG -- if defined (regardless of value), compile so that all log
+                  messages are sent to syslog.  You have to be root for
+                  this to work.  You also have to have the syslog daemon
+                  running.
+
+    DEBUG -- if undef, or defined empty, or defined 0, run fuse in the background
+             if undef or defined empty, compile with debugging-flags (else optimize).
+             if defined > 1, debugging output will include low-level curl conversation
+             with the server.
+
+    TRY_SPROXYD -- If defined, then the hardwired config uses our Scality
+                   sproxyd-based repository.  Otherwise, our config repo is
+                   based on EMC S3.
+
+If you don't define DEBUG or SYSLOG, there will be no log messages.
+If you don't run fuse in the background, then print statements go nowhere.
+
+So, here are some tricks I use for debugging:
+
+   # run in foreground, compiled so I can intervene with gdb
+   make clean
+   make DEBUG=2
+
+
+    # *** I am often wanting to "unmount fuse; then remove all objects,
+    # MDFS files, trash, and log-output; then rebuild; then re-mount".
+    # That can be done easily as follows:
+
+    make clean
+    make redo2 DEBUG=2
+
+
+   # re-build to use scality:
+
+   make clean
+   make DEBUG=2 TRY_CONFIG=1
+   make redo2 DEBUG=2
+
+
+
+(2) debugging
+
+You can attach gdb to a running fuse client.
+
+    make gdb
+
+(You'll want to be sure marfs_fuse was compiled with DEBUG=something.  See
+above.)  Then set break-points, and continue.  Then run a program or
+command that will invoke that break-point (e.g. 'echo "testing" >
+/marfs/test00/myfile')
+
+NOTE: after the first continue, you can't get control back in gdb, unless a
+break-point is hit.  Then you can detach by quitting.
+
+
+You can always mount fusectl, then abort all stuck operations by catting
+into the 'abort' files in the fusectl mount.
+
+    make abort

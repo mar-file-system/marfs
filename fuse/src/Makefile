@@ -50,6 +50,11 @@ else
 	CFLAGS += -O3
 endif
 
+
+ifdef TRY_SPROXYD
+	DEFS += TRY_SPROXYD=1
+endif
+
 # environment-var DEBUG also controls command-line flags for fuse launch.
 # DEBUG = 0 (or undef, or empty)
 #   run as standard background task, w/out debug flags
@@ -57,19 +62,22 @@ endif
 #   run in foreground, with debug flags  (NOTE: foreground is single-threaded)
 
 # FUSE_FLAGS += -d -f
-FUSE_FLAGS += -d -f -o intr
+# FUSE_FLAGS += -d -f -o intr
+FUSE_FLAGS += -d -f -o allow_other
 ifndef DEBUG
-	FUSE_FLAGS = -o intr
 	# what would this do? ...
 	# FUSE_FLAGS = -o intr
+	FUSE_FLAGS = -o allow_other
 else ifeq ($(DEBUG),)
-	FUSE_FLAGS = -o intr
+	# FUSE_FLAGS = -o intr
+	FUSE_FLAGS = -o allow_other
 else ifeq ($(DEBUG),0)
-	FUSE_FLAGS = -o intr
 	# # performance-tuning experiments (these don't seem to help)
 	# FUSE_FLAGS = -d -f -o max_write="$$((1024 * 1024))"
 	# FUSE_FLAGS = -d -f -o noatime
 	# FUSE_FLAGS = -o noatime
+	# FUSE_FLAGS = -o intr
+	FUSE_FLAGS =
 endif
 
 
@@ -256,6 +264,17 @@ gdb:
 	@ exec gdb marfs_fuse `ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'`
 
 
+# fusectl filesystem.  Under the mounted point, each existing connection
+# has a numbered subdirectory.  There's a special file named "abort" there.
+# Writing anything to that file aborts the connection.
+fusectl:
+	mount -t fusectl none /sys/fs/fuse/connections
+
+abort: fusectl
+	for A in `find /sys/fs/fuse/connections/ -name abort`; do echo $$A; echo 1 > $$A;  done
+
+
+
 %: %.o
 	gcc -o $@ $< $(LDFLAGS) $(LIBS)
 
@@ -301,13 +320,6 @@ mdfs-%:
 
 
 # -- various testing
-
-shell_test:
-	[ -e foo.pid ] \
-	&& [ -n "`cat foo.pid | xargs ps --no-headers`" ] \
-	&& ( eval "cat foo.pid | xargs kill -TERM" ; \
-		eval "cat foo.pid | xargs echo killed" ; \
-		rm foo.pid )
 
 hello3: hello3.o $(OBJS)
 	gcc $(CFLAGS) -o $@ $(LDFLAGS) $^ $(LIBS)
