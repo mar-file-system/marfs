@@ -206,13 +206,17 @@ extern float MarFS_config_vers;
 #define NON_SLASH           "%[^/]"
 #define NON_DOT             "%[^./]"
 
-// <repo>.<encoded_namespace>
-#define MARFS_BUCKET_RD_FORMAT  NON_DOT "." NON_SLASH
-#define MARFS_BUCKET_WR_FORMAT  "%s.%s"
+// // <repo>.<encoded_namespace>
+// #define MARFS_BUCKET_RD_FORMAT  NON_DOT "." NON_SLASH
+// #define MARFS_BUCKET_WR_FORMAT  "%s.%s"
+#define MARFS_BUCKET_RD_FORMAT  NON_SLASH
+#define MARFS_BUCKET_WR_FORMAT  "%s"
 
 
-#define MARFS_OBJID_RD_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%[^/]/obj_ctime.%[^/]/chnksz.%lx/chnkno.%lx"
-#define MARFS_OBJID_WR_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%s/obj_ctime.%s/chnksz.%lx/chnkno.%lx"
+// #define MARFS_OBJID_RD_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%[^/]/obj_ctime.%[^/]/chnksz.%lx/chnkno.%lx"
+// #define MARFS_OBJID_WR_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%s/obj_ctime.%s/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%[^/]/obj_ctime.%[^/]/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%s/obj_ctime.%s/chnksz.%lx/chnkno.%lx"
 
 
 // #define MARFS_PRE_RD_FORMAT     MARFS_BUCKET_RD_FORMAT "/" MARFS_OBJID_RD_FORMAT  
@@ -263,7 +267,7 @@ int decode_namespace(char* dst, char* src);
 
 
 // how objects are used to store "files"
-// NOTE: co-maintain encode/decode_obj_type()
+// NOTE: You must co-maintain string-constants in encode/decode_obj_type()
 typedef enum {
    OBJ_NONE = 0,
    OBJ_UNI,            // one object per file
@@ -286,7 +290,7 @@ extern MarFS_ObjType decode_obj_type(char);
 // functions to convert strings to enumeration values.
 
 // TBD ... compression is applied before erasure-coding?
-// NOTE: co-maintain encode/decode_compression()
+// NOTE: You must co-maintain string-constants in encode/decode_compression()
 typedef enum {
    COMPRESS_NONE = 0,
    COMPRESS_RUN_LENGTH,
@@ -300,7 +304,7 @@ extern CompressionMethod decode_compression(char);
 
 
 // error-correction
-// NOTE: co-maintain encode/decode_correction()
+// NOTE: You must co-maintain string-constants in encode/decode_correction()
 typedef enum {
    CORRECT_NONE = 0,
    CORRECT_CRC,
@@ -322,7 +326,7 @@ extern CorrectionMethod decode_correction(char);
 
 // TBD: object-encryption
 // Cf. Repo.authentication, which is not the same thing
-// NOTE: co-maintain encode/decode_encryption()
+// NOTE: You must co-maintain string-constants in encode/decode_encryption()
 typedef enum {
    ENCRYPT_NONE = 0
 } EncryptionMethod;
@@ -361,12 +365,17 @@ typedef uint8_t  RepoFlagsType;
 typedef enum {
    PROTO_DIRECT = 0,            // data stored directly into MD files
    PROTO_CDMI,
+   PROTO_SPROXYD,               // should include installed release version
    PROTO_S3,
    PROTO_S3_SCALITY,            // should include installed release version
    PROTO_S3_EMC,                // should include installed release version
 } RepoAccessProto;
 
-#define PROTO_IS_S3(PROTO)  ((PROTO) & (PROTO_S3 | PROTO_S3_SCALITY | PROTO_S3_EMC))
+#ifdef TRY_SPROXYD
+#  define PROTO_IS_S3(PROTO)  ((PROTO) & (PROTO_S3 | PROTO_S3_SCALITY | PROTO_S3_EMC | PROTO_SPROXYD))
+#else
+#  define PROTO_IS_S3(PROTO)  ((PROTO) & (PROTO_S3 | PROTO_S3_SCALITY | PROTO_S3_EMC))
+#endif
 
 
 typedef enum {
@@ -377,9 +386,17 @@ typedef enum {
 } MarFSAuthMethod;
 
 
+// We allow <bkt_name> to be different from the top-level name, so that
+// names can be descriptive, whereas bucket-name may be constrained in some
+// way (e.g. for Scality sproxyd, the fastcgi module is configured to use
+// the first component of the URL to match a local path, which redirects to
+// the sproxyd daemon.  We might not have thought to give this a name that
+// is meaningful, and/or several repos could have the same name -- defaults
+// to "/proxy".)
 
 typedef struct MarFS_Repo {
    const char*       name;         // (logical) name for this repo 
+   // const char*       bkt_name;     // name for S3 bucket in this repo
    const char*       host;         // e.g. "10.140.0.15:9020"
    RepoFlagsType     flags;
    RepoAccessProto   access_proto;
@@ -485,6 +502,13 @@ extern MarFS_Repo* find_in_range(RangeList*  list,
 // should optimize lookups based on paths, so maybe a suffix-tree using
 // distinct path-components of all namespaces seen by the config-file
 // loader.
+//
+// NOTE: For Scality sproxyd, we assume that mnt_suffix is identical to the
+//     "namespace" used in sproxyd requests.  This is configured in
+//     /etc/sproxyd.conf on the repo server, as the alias of a given
+//     "driver" for "by-path" access.  This means that the mount-suffix
+//     used here actually selects which sproxyd driver is to be used.b
+
 typedef struct MarFS_Namespace {
 
    const char*        mnt_suffix; // the part of path below MarFS_mnt_top
@@ -512,6 +536,10 @@ typedef struct MarFS_Namespace {
 
    size_t             quota_name_units;  // multiplier
    size_t             quota_names;       // name-quota in name_units
+
+   // TBD:
+   //    <type>   shard;
+   //    <type>   shard_num;
 }  MarFS_Namespace;
 
 

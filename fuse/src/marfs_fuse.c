@@ -666,8 +666,13 @@ int marfs_open (const char*            path,
       s3_set_bucket_r(info->pre.bucket, ctx);
       LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
    }
+
    if (info->pre.repo->access_proto == PROTO_S3_EMC)
       s3_enable_EMC_extensions_r(1, ctx);
+   if (info->pre.repo->access_proto == PROTO_SPROXYD) {
+      s3_enable_Scality_extensions_r(1, ctx);
+      s3_sproxyd_r(1, ctx);
+   }
 
    // install custom context
    aws_iobuf_context(b, ctx);
@@ -1918,11 +1923,32 @@ int main(int argc, char* argv[])
 #if (DEBUG > 1)
    aws_set_debug(1);
 #endif
+
+#ifdef TRY_SPROXYD
+   // NOTE: sproxyd doesn't require authentication, and so it could work on
+   //     an installation without a ~/.awsAuth file.  But suppose we're
+   //     supporting some repos that use S3 and some that use sproxyd?  In
+   //     that case, the s3 requests will need this.  Loading it once
+   //     up-front, like this, at start-time, means we don't have to reload
+   //     it inside marfs_open(), for every S3 open, but it also means we
+   //     don't know whether we really need it.
+   //
+   // ALSO: At start-up time, $USER is "root".  If we want per-user S3 IDs,
+   //     then we would have to either (a) load them all now, and
+   //     dynamically pick the one we want inside marfs_open(), or (b) call
+   //     aws_read_config() inside marfs_open(), using the euid of the user
+   //     to find ~/.awsAuth.
+   int config_fail_ok = 1;
+#else
+   int config_fail_ok = 0;
+#endif
+
    char* const user_name = (getenv("USER"));
    if (aws_read_config(user_name)) {
       // probably missing a line in ~/.awsAuth
       LOG(LOG_ERR, "read-config for user '%s' failed\n", user_name);
-      exit(1);
+      if (! config_fail_ok)
+         exit(1);
    }
 
    struct fuse_operations marfs_oper = {

@@ -376,24 +376,26 @@ int update_pre(MarFS_XattrPre* pre) {
 
    // --- generate bucket-name
 
-   // config-version major and minor
-   int major = (int)floorf(pre->config_vers);
-   int minor = (int)floorf((pre->config_vers - major) * 1000.f);
-
-   int write_count = snprintf(pre->bucket, MARFS_MAX_BUCKET_SIZE,
-                              MARFS_BUCKET_WR_FORMAT,
-                              pre->repo->name,
-                              pre->ns->mnt_suffix);
+   int write_count;
+   write_count = snprintf(pre->bucket, MARFS_MAX_BUCKET_SIZE,
+                          MARFS_BUCKET_WR_FORMAT,
+                          pre->repo->name);
    if (write_count < 0)
       return errno;
    if (write_count == MARFS_MAX_BUCKET_SIZE) /* overflow */
       return EINVAL;
-   
-   // convert '/' to '-' in namespace-name
-   if (encode_namespace(pre->bucket, pre->bucket))
-      return EINVAL;
+
 
    // --- generate obj-id
+
+   // convert '/' to '-' in namespace-name
+   char ns_name[MARFS_MAX_NAMESPACE_NAME];
+   if (encode_namespace(ns_name, (char*)pre->ns->mnt_suffix))
+      return EINVAL;
+
+   // config-version major and minor
+   int major = (int)floorf(pre->config_vers);
+   int minor = (int)floorf((pre->config_vers - major) * 1000.f);
 
    char type     = encode_obj_type(pre->obj_type);
    char compress = encode_compression(pre->compression);
@@ -420,6 +422,7 @@ int update_pre(MarFS_XattrPre* pre) {
    // put all components together
    write_count = snprintf(pre->objid, MARFS_MAX_OBJID_SIZE,
                           MARFS_OBJID_WR_FORMAT,
+                          ns_name,
                           major, minor,
                           type, compress, correct, encrypt,
                           (uint64_t)pre->md_inode,
@@ -427,7 +430,7 @@ int update_pre(MarFS_XattrPre* pre) {
                           pre->chunk_size, pre->chunk_no);
    if (write_count < 0)
       return errno;
-   if (write_count == MARFS_MAX_OBJID_SIZE) /* overflow */
+   if (write_count >= MARFS_MAX_OBJID_SIZE) /* overflow */
       return EINVAL;
 
    return 0;
@@ -507,16 +510,17 @@ int str_2_pre(MarFS_XattrPre*    pre,
 
    // parse bucket and objid separately
    int read_count;
-   read_count = sscanf(pre_str, NON_SLASH "/%s",
+
+   read_count = sscanf(pre_str, MARFS_PRE_RD_FORMAT,
                        pre->bucket,
                        pre->objid);
-
    if (read_count == EOF)       // errno is set (?)
       return -1;
    if (read_count != 2) {
       errno = EINVAL;
       return -1;
    }
+
 
    int   major;
    int   minor;
@@ -543,25 +547,26 @@ int str_2_pre(MarFS_XattrPre*    pre,
    //       given namespace, in a known repo.
    char repo_name[MARFS_MAX_REPO_NAME];
 
-   // Holds namespace-name from bucket, so we can decode_namespace(), then
-   // find the corresponding namespace, for Pre.ns.  Do we ever care about
-   // this?  The only reason we need it is because update_pre() uses it to
-   // re-encode the bucket string.
-   char  ns_name[MARFS_MAX_NAMESPACE_NAME];
-   
    read_count = sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT,
-                       repo_name,
-                       ns_name);
+                       repo_name);
 
    if (read_count == EOF)       // errno is set (?)
       return -1;
-   else if (read_count != 2) {
+   else if (read_count != 1) {
       errno = EINVAL;            /* ?? */
       return -1;
    }
 
    // --- parse "obj-id" components (i.e. the part below bucket)
+
+   // Holds namespace-name from obj-id, so we can decode_namespace(), then
+   // find the corresponding namespace, for Pre.ns.  Do we ever care about
+   // this?  The only reason we need it is because update_pre() uses it to
+   // re-encode the bucket string.
+   char  ns_name[MARFS_MAX_NAMESPACE_NAME];
+   
    read_count = sscanf(pre->objid, MARFS_OBJID_RD_FORMAT,
+                       ns_name,
                        &major, &minor,
                        &obj_type, &compress, &correct, &encrypt,
                        &md_inode,
@@ -570,7 +575,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
 
    if (read_count == EOF)       // errno is set (?)
       return -1;
-   else if (read_count != 11) {
+   else if (read_count != 12) {
       errno = EINVAL;            /* ?? */
       return -1;
    }
@@ -1062,12 +1067,22 @@ int load_config(const char* config_fname) {
    // hard-coded repository
    _repo  = (MarFS_Repo*) malloc(sizeof(MarFS_Repo));
    *_repo = (MarFS_Repo) {
+
+#ifdef TRY_SPROXYD
+      .name         = "proxy",
+      // .bkt_name     = "proxy", // fastcgi identifier on servers
+      .host         = "10.135.0.21:81",
+      .access_proto = PROTO_SPROXYD,
+#else
       .name         = "emcS3_00",
+      // .bkt_name     = "emcS3",
       // .host         = "10.143.0.1:80",
       .host         = "10.140.0.15:9020",
-      .flags        = (REPO_ONLINE),
       .access_proto = PROTO_S3_EMC,
-      .chunk_size   = (1024 * 1024 * 512), /* (?) max MarFS object */
+#endif
+
+      .flags        = (REPO_ONLINE),
+      .chunk_size   = (1024 * 1024 * 512), /* max MarFS object (tune to match storage) */
       // .chunk_size   = (2048), /* i.e. max MarFS object (small for debugging) */
       .auth         = AUTH_S3_AWS_MASTER,
       .latency_ms   = (10 * 1000),
@@ -1099,8 +1114,14 @@ int load_config(const char* config_fname) {
    //
    _ns  = (MarFS_Namespace*) malloc(sizeof(MarFS_Namespace));
    *_ns = (MarFS_Namespace) {
-      .mnt_suffix     = "/test00",  // "<mnt_top>/test00" comes here
 
+#ifdef TRY_SPROXYD
+      // .mnt_suffix     = "/bparc",  // "<mnt_top>/bparc" comes here
+      .mnt_suffix     = "/test00",  // "<mnt_top>/test00" comes here
+                                // NOTE: sproxyd driver-alias is named "-test00"
+#else
+      .mnt_suffix     = "/test00",  // "<mnt_top>/test00" comes here
+#endif
       /// #if CCSTAR
       ///       .md_path        = "/users/jti/projects/marfs/git/fuse/filesys/mdfs/test00",
       ///       .trash_path     = "/users/jti/projects/marfs/git/fuse/filesys/trash/test00",
