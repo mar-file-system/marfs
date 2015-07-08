@@ -222,7 +222,6 @@ int j = 0;
       config = (struct config *)malloc(sizeof(struct config)); 
       parseConfigFile("/root/atorrez-test/current/config/config-2-at", CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, QUIET); 
       freeHeaderFile(h_page.next);                                                                 
-
  
       myNamespaceList = (struct namespace **)listObjByName("namespace", config);                   
       while (myNamespaceList[j] != (struct namespace *)NULL) {
@@ -734,7 +733,7 @@ int parse_post_xattr (MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &major, &minor,
                            &obj_type_code,
                            &post->obj_offset,
-                           &post->num_objects,
+                           &post->chunks,
                            &post->chunk_info_bytes,
                            &post->correct_info,
                            &post->encrypt_info,

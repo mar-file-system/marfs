@@ -470,7 +470,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                         //s3_set_bucket("atorrez");
                         //
 
-                        trash_status = dump_trash(bf, xattr_ptr, gc_path_ptr, &path_file[0], outfd);
+                        trash_status = dump_trash(bf, xattr_ptr, gc_path_ptr, &path_file[0], outfd, &post);
 
                      }
 
@@ -503,7 +503,7 @@ int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &major, &minor,
                            &obj_type_code,
                            &post->obj_offset,
-                           &post->num_objects,
+                           &post->chunks,
                            &post->chunk_info_bytes,
                            &post->correct_info,
                            &post->encrypt_info,
@@ -511,6 +511,7 @@ int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    if (scanf_size == EOF || scanf_size < 9)
       return -1;   
+   post->obj_type = decode_obj_type(obj_type_code);
    return 0;
 }
 
@@ -521,27 +522,64 @@ Name: dump_trash
  This function deletes the object file as well as gpfs metadata files
 *****************************************************************************/
 int dump_trash(IOBuf * bf, struct marfs_xattr *xattr_ptr, char *gc_path_ptr, 
-               char *path_file_ptr, FILE *outfd) 
+               char *path_file_ptr, FILE *outfd, MarFS_XattrPost *post_xattr) 
 {
    int return_value =0;
-   int rv;
+   //int rv;
    char time_string[20];
    struct tm *time_info;
+   // GET CORRECT CONSTANT FOR THIS
+   char object_name[1024];
+   char *obj_name_ptr;
+   int i;
    
    time_t now = time(0);
    time_info = localtime(&now);
    strftime(time_string, sizeof(time_string), "%Y-%m-%d %H:%M:%S", time_info);
- 
-   // Delete object
-   fprintf(outfd, "%s ", time_string);
-   rv = s3_delete( bf, xattr_ptr->xattr_value);
-   if (rv != 0) {
-      fprintf(outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
-      return_value = -1;
+
+
+   //If multi type file then delete all objects associated with file
+   if (post_xattr->obj_type == OBJ_MULTI) {
+      for (i=0; i < post_xattr->chunks; i++ ) {
+         obj_name_ptr = strrchr(xattr_ptr->xattr_value, '.');
+         obj_name_ptr++;
+         *obj_name_ptr='\0'; 
+         sprintf(object_name, "%s%d",xattr_ptr->xattr_value,i);
+         fprintf(outfd, "%s ", time_string);
+         if (delete_object(bf, object_name) == -1) {
+            fprintf(outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+            return_value = -1;
+         }
+         else {
+            fprintf(outfd, "deleted object %s\n", object_name);
+         }
+      } 
    }
+   // else UNI BUT NEED to think about packed next
    else {
-      fprintf(outfd, "deleted object %s\n", xattr_ptr->xattr_value);
+      printf("must be uni\n");
+      strncpy(object_name, xattr_ptr->xattr_value, strlen(xattr_ptr->xattr_value));
+      fprintf(outfd, "%s ", time_string);
+      if (delete_object(bf, object_name)  == -1 ) {
+         fprintf(outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+         return_value = -1;
+      }
+      else {
+         fprintf(outfd, "deleted object %s\n", object_name);
+      }
+
    }
+  
+   // Delete object
+//   fprintf(outfd, "%s ", time_string);
+////   rv = s3_delete( bf, xattr_ptr->xattr_value);
+////   if (rv != 0) {
+//      fprintf(outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+//      return_value = -1;
+//   }
+//   else {
+//      fprintf(outfd, "deleted object %s\n", xattr_ptr->xattr_value);
+//   }
 
    // Delete trash file
    fprintf(outfd, "%s ", time_string);
@@ -563,4 +601,19 @@ int dump_trash(IOBuf * bf, struct marfs_xattr *xattr_ptr, char *gc_path_ptr,
       fprintf(outfd,"deleted file %s\n",path_file_ptr);
    }
    return(return_value);
+}
+
+/***************************************************************************** 
+Name: delete_object 
+
+ This function deletes the object and returns -1 if error, 0 if successful
+*****************************************************************************/
+int delete_object(IOBuf * buffer, char * object)
+{
+   int rv;
+   rv = s3_delete( buffer, object );
+   if (rv != 0) 
+      return -1;
+   else 
+      return 0;
 }
