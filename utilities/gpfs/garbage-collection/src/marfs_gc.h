@@ -123,7 +123,8 @@ void init_records(fileset_stat *fileset_stat_buf, unsigned int record_count);
 int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count,char *inode_fileset);
 int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
 void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count);
-int dump_trash(IOBuf *bf, struct marfs_xattr *xattr_ptr, char *gc_path_ptr, char *path_file_ptr, FILE *outfd);
+int dump_trash(IOBuf *bf, struct marfs_xattr *xattr_ptr, char *gc_path_ptr, char *path_file_ptr, FILE *outfd, MarFS_XattrPost *post_xattr);
+int delete_object(IOBuf * buffer, char * object);
 
 #endif
 
