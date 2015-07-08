@@ -191,13 +191,14 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    // MAR_namespace and MAR_repo info into a big structure to hold
    // everything we know about that path.  We also compute the full path of
    // the corresponding entry in the MDFS (see Namespace.md_path).
-   info->ns = find_namespace(path);
+   info->ns = find_namespace_by_path(path);
    if (! info->ns) {
       errno = ENOENT;
       return -1;            /* no such file or directory */
    }
 
-   LOG(LOG_INFO, "namespace %s\n", info->ns->mnt_suffix);
+   LOG(LOG_INFO, "namespace '%s'\n", info->ns->name);
+   LOG(LOG_INFO, "mnt_path  %s\n",   info->ns->mnt_suffix);
 
    const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
    snprintf(info->md_path, MARFS_MAX_MD_PATH,
@@ -646,7 +647,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 
 
 
-// This is only used iunternally.  We just assume expand_trash_info has
+// This is only used internally.  We just assume expand_trash_info has
 // already been called.
 //
 // In addition to moving the original to the trash, the two trash functions
@@ -671,6 +672,7 @@ int write_trash_path_file(PathInfo*   info,
    // TBD: Don't want to depend on support for open(... (O_CREAT|O_EXCL)).
    //      Should just stat() the contents-file, before opening, to assure
    //      it doesn't already exist.
+   LOG(LOG_INFO, "contents:   %s\n", contents_fname);
    __TRY_GE0(open, contents_fname, (O_WRONLY|O_CREAT), info->st.st_mode);
    int fd = rc_ssize;
 
@@ -702,6 +704,7 @@ int  trash_unlink(PathInfo*   info,
    size_t rc;
    __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
    LOG(LOG_INFO, "trash_path: %s\n", info->trash_path);
+   LOG(LOG_INFO, "md_path:    %s\n", info->md_path);
 
    __TRY0(rename, info->md_path, info->trash_path);
 

@@ -371,11 +371,7 @@ typedef enum {
    PROTO_S3_EMC,                // should include installed release version
 } RepoAccessProto;
 
-#ifdef TRY_SPROXYD
-#  define PROTO_IS_S3(PROTO)  ((PROTO) & (PROTO_S3 | PROTO_S3_SCALITY | PROTO_S3_EMC | PROTO_SPROXYD))
-#else
-#  define PROTO_IS_S3(PROTO)  ((PROTO) & (PROTO_S3 | PROTO_S3_SCALITY | PROTO_S3_EMC))
-#endif
+#define PROTO_IS_S3(PROTO)  ((PROTO) & (PROTO_S3 | PROTO_S3_SCALITY | PROTO_S3_EMC | PROTO_SPROXYD))
 
 
 typedef enum {
@@ -503,19 +499,21 @@ extern MarFS_Repo* find_in_range(RangeList*  list,
 // distinct path-components of all namespaces seen by the config-file
 // loader.
 //
-// NOTE: For Scality sproxyd, we assume that mnt_suffix is identical to the
-//     "namespace" used in sproxyd requests.  This is configured in
+// NOTE: For Scality sproxyd, we assume that namespace.name is identical to
+//     the "driver-alias" used in sproxyd requests.  This is configured in
 //     /etc/sproxyd.conf on the repo server, as the alias of a given
 //     "driver" for "by-path" access.  This means that the mount-suffix
 //     used here actually selects which sproxyd driver is to be used.b
 
 typedef struct MarFS_Namespace {
 
+   const char*        name;
    const char*        mnt_suffix; // the part of path below MarFS_mnt_top
    const char*        md_path;    // path of (root of) corresponding MD FS
    const char*        trash_path; // MDFS trash goes here
    const char*        fsinfo_path;// path is trunc'ed to show global FS usage
 
+   size_t             name_len;       // computed at config-load time
    size_t             mnt_suffix_len; // computed at config-load time
    size_t             md_path_len;    // computed at config-load time
 
@@ -832,7 +830,8 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
 
 extern int              load_config(const char* config_fname);
 
-extern MarFS_Namespace* find_namespace(const char* path);
+extern MarFS_Namespace* find_namespace_by_name(const char* name);
+extern MarFS_Namespace* find_namespace_by_path(const char* path);
 
 extern MarFS_Repo*      find_repo(MarFS_Namespace* ns,
                                   size_t           file_size,

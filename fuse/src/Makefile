@@ -51,8 +51,12 @@ else
 endif
 
 
-ifdef TRY_SPROXYD
-	DEFS += TRY_SPROXYD=1
+ifdef USE_SPROXYD
+	DEFS += USE_SPROXYD=1
+endif
+
+ifdef ALFRED_TEST
+	DEFS += ALFRED_TEST=1
 endif
 
 # environment-var DEBUG also controls command-line flags for fuse launch.
@@ -345,6 +349,10 @@ foo.packed:
 	dd if=/dev/zero bs=968 count=1 | tr '\0' '1' > /marfs/test00/p1
 	dd if=/dev/zero bs=968 count=1 | tr '\0' '2' > /marfs/test00/p2
 
+
+alfred: clean umnt
+	@ $(MAKE) marfs_fuse DEBUG=2 USE_SPROXYD=1 ALFRED_TEST=1
+	@ $(MAKE) mnt
 
 
 # lines-of-code

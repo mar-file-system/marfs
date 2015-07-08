@@ -388,10 +388,10 @@ int update_pre(MarFS_XattrPre* pre) {
 
    // --- generate obj-id
 
-   // convert '/' to '-' in namespace-name
-   char ns_name[MARFS_MAX_NAMESPACE_NAME];
-   if (encode_namespace(ns_name, (char*)pre->ns->mnt_suffix))
-      return EINVAL;
+   //   // convert '/' to '-' in namespace-name
+   //   char ns_name[MARFS_MAX_NAMESPACE_NAME];
+   //   if (encode_namespace(ns_name, (char*)pre->ns->mnt_suffix))
+   //      return EINVAL;
 
    // config-version major and minor
    int major = (int)floorf(pre->config_vers);
@@ -422,7 +422,7 @@ int update_pre(MarFS_XattrPre* pre) {
    // put all components together
    write_count = snprintf(pre->objid, MARFS_MAX_OBJID_SIZE,
                           MARFS_OBJID_WR_FORMAT,
-                          ns_name,
+                          pre->ns->name /* ns_name */ ,
                           major, minor,
                           type, compress, correct, encrypt,
                           (uint64_t)pre->md_inode,
@@ -590,11 +590,12 @@ int str_2_pre(MarFS_XattrPre*    pre,
    }
 
    // find namespace from namespace-name
-   if (decode_namespace(ns_name, ns_name)) {
-      errno = EINVAL;
-      return -1;
-   }
-   MarFS_Namespace* ns = find_namespace(ns_name);
+   //
+   //   if (decode_namespace(ns_name, ns_name)) {
+   //      errno = EINVAL;
+   //      return -1;
+   //   }
+   MarFS_Namespace* ns = find_namespace_by_name(ns_name);
    if (! ns) {
       errno = EINVAL;
       return -1;
@@ -1065,24 +1066,29 @@ int load_config(const char* config_fname) {
       config_fname = CONFIG_DEFAULT;
 
    // hard-coded repository
+   //
+   //     For sproxyd, repo.name must match an existing fast-cgi path
+   //     For S3, namespace.name must match an existing bucket
+   //
    _repo  = (MarFS_Repo*) malloc(sizeof(MarFS_Repo));
    *_repo = (MarFS_Repo) {
 
-#ifdef TRY_SPROXYD
-      .name         = "proxy",
-      // .bkt_name     = "proxy", // fastcgi identifier on servers
+#ifdef ALFRED_TEST
+      .name         = "proxy",  // repo is sproxyd: this must match fastcgi-path
+      .host         = "10.135.0.22:81",
+      .access_proto = PROTO_SPROXYD,
+#elif USE_SPROXYD
+      .name         = "proxy",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.21:81",
       .access_proto = PROTO_SPROXYD,
 #else
-      .name         = "emcS3_00",
-      // .bkt_name     = "emcS3",
-      // .host         = "10.143.0.1:80",
-      .host         = "10.140.0.15:9020",
+      .name         = "emcS3_00",  // repo is s3: this must match existing bucket
+      .host         = "10.140.0.15:9020", //"10.143.0.1:80",
       .access_proto = PROTO_S3_EMC,
 #endif
 
       .flags        = (REPO_ONLINE),
-      .chunk_size   = (1024 * 1024 * 512), /* max MarFS object (tune to match storage) */
+      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
       // .chunk_size   = (2048), /* i.e. max MarFS object (small for debugging) */
       .auth         = AUTH_S3_AWS_MASTER,
       .latency_ms   = (10 * 1000),
@@ -1107,6 +1113,9 @@ int load_config(const char* config_fname) {
 
    // hard-coded namespace
    //
+   //     For sproxyd, namespace.name must match an existing sproxyd driver-alias
+   //     For S3, namespace.name is just part of the object-id
+   //
    // TBD: Maybe trash_path should always be a subdir under the md_path, so
    //      that trash_file() variants can expect to just rename MDFS files,
    //      to move them into the trash.  We could enforce this by requiring
@@ -1115,11 +1124,14 @@ int load_config(const char* config_fname) {
    _ns  = (MarFS_Namespace*) malloc(sizeof(MarFS_Namespace));
    *_ns = (MarFS_Namespace) {
 
-#ifdef TRY_SPROXYD
-      // .mnt_suffix     = "/bparc",  // "<mnt_top>/bparc" comes here
+#ifdef ALFRED_TEST
+      .name           = "atorrez",  // repo is sproxyd: this must match driver-alias
+      .mnt_suffix     = "/atorrez", // "<mnt_top>/atorrez" comes here
+#elif USE_SPROXYD
+      .name           = "test00",   // repo is sproxyd: this must match driver-alias
       .mnt_suffix     = "/test00",  // "<mnt_top>/test00" comes here
-                                // NOTE: sproxyd driver-alias is named "-test00"
 #else
+      .name           = "test00",
       .mnt_suffix     = "/test00",  // "<mnt_top>/test00" comes here
 #endif
       /// #if CCSTAR
@@ -1164,10 +1176,17 @@ int load_config(const char* config_fname) {
       ///      _ns->trash_path     = "/root/projects/marfs/filesys/trash/test00";
       ///      _ns->fsinfo_path    = "/root/projects/marfs/filesys/fsinfo/test00"; /* a file */
       ///
+#ifdef ALFRED_TEST
+      MarFS_mnt_top       = "/marfs";
+      _ns->md_path        = "/gpfs/marfs-gpfs/project_a/mdfs";
+      _ns->trash_path     = "/gpfs/marfs-gpfs/project_a/trash"; // MUST BE IN THE SAME FILESET!
+      _ns->fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo"; /* a file */
+#else
       MarFS_mnt_top       = "/marfs";
       _ns->md_path        = "/gpfs/marfs-gpfs/fuse/test00/mdfs";
       _ns->trash_path     = "/gpfs/marfs-gpfs/fuse/test00/trash";
       _ns->fsinfo_path    = "/gpfs/marfs-gpfs/fuse/test00/fsinfo"; /* a file */
+#endif
    }
    else if ((! strncmp(hostname, "rrz-", 4))
        || (! strncmp(hostname, "ca-", 3))) {
@@ -1187,6 +1206,7 @@ int load_config(const char* config_fname) {
    }
 
    // these make it quicker to parse parts of the paths
+   _ns->name_len       = strlen(_ns->name);
    _ns->mnt_suffix_len = strlen(_ns->mnt_suffix);
    _ns->md_path_len    = strlen(_ns->md_path);
 
@@ -1241,12 +1261,12 @@ int validate_config() {
 // For a quick first-cut, there's only one namespace.  Your path is either
 // in it or fails.
 
-MarFS_Namespace* find_namespace(const char* path) {
-   //   size_t len = strlen(path);
-   //   if (strncmp(MarFS_mnt_top, path, len))
-   //      return NULL;
-   //   return _ns;
-
+MarFS_Namespace* find_namespace_by_name(const char* name) {
+   if (! strncmp(_ns->name, name, _ns->name_len))
+      return _ns;
+   return NULL;
+}
+MarFS_Namespace* find_namespace_by_path(const char* path) {
    if (! strncmp(_ns->mnt_suffix, path, _ns->mnt_suffix_len))
       return _ns;
    return NULL;

@@ -1505,8 +1505,17 @@ int marfs_write(const char*            path,
 
    // If first write, it has to start at offset 0, if not fail
    // If write is not contiguous with previous write, fail
-   if ( offset != os->written) {
-      LOG(LOG_ERR, "non-contig write: offset %ld, after %ld\n", offset, os->written);
+   //
+   // NOTE: Marfs recovery-info written into the object is included in
+   //     os->written, which keeps track of *all* data that is written to
+   //     the object-stream.  The "logical offset" is just the amount of
+   //     user-data.  To compute this, we subtract the amount of non-user
+   //     data, written by MarFS.  That amount is tracked in
+   //     fh->write_status.sys_writes.
+   size_t log_offset = (os->written - fh->write_status.sys_writes);
+   if ( offset != log_offset) {
+      LOG(LOG_ERR, "non-contig write: offset %ld, after %ld (+ %ld)\n",
+          offset, log_offset, fh->write_status.sys_writes);
       errno = EINVAL;
       return -1;
    }
@@ -1924,7 +1933,7 @@ int main(int argc, char* argv[])
    aws_set_debug(1);
 #endif
 
-#ifdef TRY_SPROXYD
+#ifdef USE_SPROXYD
    // NOTE: sproxyd doesn't require authentication, and so it could work on
    //     an installation without a ~/.awsAuth file.  But suppose we're
    //     supporting some repos that use S3 and some that use sproxyd?  In

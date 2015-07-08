@@ -1,0 +1,70 @@
+#!/bin/bash
+
+if [[ -z `mount | grep marfs_fuse` ]]; then
+    echo "MarFS fuse appears not to be mounted"
+    exit
+fi
+
+MARFS=/marfs/atorrez
+MDFS=/gpfs/marfs-gpfs/project_a
+TRASH=/gpfs/marfs-gpfs/trash
+CHUNKSIZE=$((64 * 1024 * 1024))
+
+DIRS="d1 d2 d3 d4"
+DEL_DIRS="del1 del2 del3 del4"
+
+# make directories
+#
+for D in $DIRS; do
+    echo "making directory $MARFS/$D"
+
+    # # NOTE: 'mkdir -p ...' not currently working
+    # mkdir $MARFS/$D
+    [[ -d $MARFS/$D ]] || mkdir $MARFS/$D
+done
+echo
+
+
+# make some UNI files
+for D in $DIRS; do
+    for i in `seq 1 200`; do
+        UNI=`printf "$MARFS/$D/uni.%03d" $i`
+
+        echo "making file $UNI"
+        echo "contents of $UNI" > $UNI
+        done
+done
+echo
+
+# make some multi-files
+for D in $DIRS; do
+    for i in `seq 1 2`; do
+        MULTI=`printf "$MARFS/$D/mul.%03d" $i`
+
+        echo "making file $MULTI"
+        dd if=/dev/zero of=$MULTI bs=$CHUNKSIZE count=8
+        done
+done
+echo
+
+
+# delete some files
+for D in $DIRS; do
+    for i in `seq 1 100`; do
+        UNI=`printf "$MARFS/$D/uni.%03d" $i`
+
+        echo "deleting $UNI"
+        rm $UNI
+        done
+done
+echo
+
+for D in $DIRS; do
+    for i in `seq 1 1`; do
+        MULTI=`printf "$MARFS/$D/mul.%03d" $i`
+
+        echo "deleting $MULTI"
+        rm $MULTI
+        done
+done
+echo
