@@ -201,11 +201,31 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    LOG(LOG_INFO, "mnt_path  %s\n",   info->ns->mnt_suffix);
 
    const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
-   snprintf(info->md_path, MARFS_MAX_MD_PATH,
-            "%s%s", info->ns->md_path, sub_path);
+   int prt_count = snprintf(info->md_path, MARFS_MAX_MD_PATH,
+                            "%s%s", info->ns->md_path, sub_path);
+   if (prt_count < 0) {
+      LOG(LOG_ERR, "snprintf(..., %s, %s) failed\n",
+          info->ns->md_path,
+          sub_path);
+      return -1;
+   }
+   else if (prt_count >= MARFS_MAX_MD_PATH) {
+      LOG(LOG_ERR, "snprintf(..., %s, %s) truncated\n",
+          info->ns->md_path,
+          sub_path);
+      errno = EIO;
+      return -1;
+   }
+   //   else
+   //      // saves us a strlen(), later
+   //      info->md_path_len = prt_count;
 
    LOG(LOG_INFO, "sub-path  %s\n", sub_path);
    LOG(LOG_INFO, "md-path   %s\n", info->md_path);
+
+
+#if 0
+   // Should be impossible, as long as the trash-dir is not below the mdfs-dir
 
    // don't let users into the trash
    if (! strcmp(info->md_path, info->trash_path)) {
@@ -213,6 +233,8 @@ int expand_path_info(PathInfo*   info, /* side-effect */
       errno = EPERM;
       return -1;
    }
+#endif
+
 
    // you need to pass in is this interactive (fuse) or batch
    // so you can use iperms or bperms as the perms to use)
@@ -266,7 +288,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 // to lgetxattr(), etc.
 //
 // Each of the two files use the same path produced by expand trash_info,
-// and one of them just adds a suffix ".path", with the contents as
+// and one of them just adds a suffix ".mdfs", with the contents as
 // described above.
 
 int expand_trash_info(PathInfo*    info,
@@ -292,13 +314,13 @@ int expand_trash_info(PathInfo*    info,
 
       // construct trash-path
       int prt_count = snprintf(info->trash_path, MARFS_MAX_MD_PATH,
-                               "%s/%s.trash_%016lx_%s",
+                               "%s/%s.trash_%010ld_%s",
                                info->ns->trash_path,
                                base_name,
                                info->st.st_ino,
                                date_string);
       if (prt_count < 0) {
-         LOG(LOG_ERR, "snprintf(..., %s, %s, %016lx, %s) failed\n",
+         LOG(LOG_ERR, "snprintf(..., %s, %s, %010ld, %s) failed\n",
              info->ns->trash_path,
              base_name,
              info->st.st_ino,
@@ -306,7 +328,7 @@ int expand_trash_info(PathInfo*    info,
          return -1;
       }
       else if (prt_count >= MARFS_MAX_MD_PATH) {
-         LOG(LOG_ERR, "snprintf(..., %s, %s, %016lx, %s) truncated\n",
+         LOG(LOG_ERR, "snprintf(..., %s, %s, %010ld, %s) truncated\n",
              info->ns->trash_path,
              base_name,
              info->st.st_ino,
@@ -322,6 +344,9 @@ int expand_trash_info(PathInfo*    info,
          errno = EIO;
          return -1;
       }
+      //      else
+      //         // saves us a strlen(), later
+      //         info->trash_path_len = prt_count;
 
       // subsequent calls to expand_trash_info() are NOP.
       info->flags |= PI_TRASH_PATH;
@@ -647,15 +672,23 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 
 
 
-// This is only used internally.  We just assume expand_trash_info has
+// This is only used internally.  We just assume expand_trash_info() has
 // already been called.
 //
 // In addition to moving the original to the trash, the two trash functions
-// (trash_unlink() and trash_truncate()) also write the full-path of
-// original into "<trash_path>.path".
+// (trash_unlink() and trash_truncate()) also write the full-path of the
+// original (MarFS) file into "<trash_path>.mdfs".  [NOTE: This is not the
+// same as the path to the file, where it now resides in trash, which is
+// installed into the POST xattr by trash_unlink/trash_truncate.]
+//
+// If <utim> is non-NULL, then it holds mtime/atime values for us to
+// install onto the file.  This is to allow "undelete" to also restore the
+// original atime of a file.
 
-int write_trash_path_file(PathInfo*   info,
-                          const char* path) {
+static
+int write_trash_path_file(PathInfo*             info,
+                          const char*           path,
+                          const struct utimbuf* utim) {
    size_t  rc;
    ssize_t rc_ssize;
 
@@ -663,7 +696,7 @@ int write_trash_path_file(PathInfo*   info,
    LOG(LOG_INFO, "trash_path: %s\n", info->trash_path);
 
    // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
-   // add this suffix, so no need to check.
+   // add MARFS_TRASH_ORIGINAL_PATH_SUFFIX, so no need to check.
    char contents_fname[MARFS_MAX_MD_PATH];
    __TRY_GE0(snprintf, contents_fname, MARFS_MAX_MD_PATH, "%s%s",
              info->trash_path,
@@ -676,8 +709,15 @@ int write_trash_path_file(PathInfo*   info,
    __TRY_GE0(open, contents_fname, (O_WRONLY|O_CREAT), info->st.st_mode);
    int fd = rc_ssize;
 
-   __TRY_GE0(write, fd, info->md_path, MARFS_MAX_MD_PATH);
+   //   __TRY_GE0(write, fd, info->md_path, strlen(info->md_path));
+   __TRY_GE0(write, fd, MarFS_mnt_top, MarFS_mnt_top_len);
+   __TRY_GE0(write, fd, path, strlen(path));
+
    __TRY0(close, fd);
+
+   // maybe install ctime/atime to support "undelete"
+   if (utim)
+      __TRY0(utime, contents_fname, utim);
 
    return 0;
 }
@@ -690,6 +730,16 @@ int write_trash_path_file(PathInfo*   info,
 // original is gone.
 // Object-storage is untouched.
 //
+// NEW APPROACH: Because we want to allow trash directories to live outside
+//     the file-system/file-set where the gpfs metadata is stored (e.g. so
+//     there can be fewer trash directories that filesets), we can no
+//     longer expect rename(2) to work.  We could *try* rename first, and
+//     then fail back to moving the data, but we're not sure whether that
+//     could add considerable overhead in the case where the rename is
+//     going to fail.  [NOTE: could we just compute this once, up front,
+//     and store it as a flag in the Repo or Namespace structs?]  So, we'll
+//     just always do a copy + unlink.
+
 // NOTE: Should we do something to make this thread-safe (like unlink()) ?
 //
 int  trash_unlink(PathInfo*   info,
@@ -697,19 +747,59 @@ int  trash_unlink(PathInfo*   info,
 
    //    pass in expanded_path_info_structure and file name to be trashed
    //    rename mdfile (with all xattrs) into trashmdnamepath,
-   //    uniqueify name somehow with time perhaps == trashname, 
-   //    rename file to trashname 
-   //    trash_name()   record the full path in a related file in trash
+   assert(info->flags & PI_EXPANDED);
+
+   //    If this has no xattrs (its just a normal file using the md file
+   //    for data) just unlink the file and return – we have nothing to
+   //    clean up, too bad for the user as we aren’t going to keep the
+   //    unlinked file in the trash.
 
    size_t rc;
+   __TRY0(stat_xattrs, info);
+   if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
+      __TRY0(unlink, info->md_path);
+      return 0;
+   }
+
+#if 0
+   //    uniqueify name somehow with time perhaps == trashname, 
+
    __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
    LOG(LOG_INFO, "trash_path: %s\n", info->trash_path);
    LOG(LOG_INFO, "md_path:    %s\n", info->md_path);
 
+   //    rename file to trashname 
    __TRY0(rename, info->md_path, info->trash_path);
+
+   // copy xattrs to the trash-file.
+   // ugly-but-simple: make a duplicate PathInfo, but with md_path
+   // set to our trash_path.  Then save_xattrs() will just work on the
+   // trash-file.
+   {  PathInfo trash_info = *info;
+      memcpy(trash_info.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
+
+      // tweak the Post xattr to indicate to garbage-collector that this
+      // file is in the trash.  The latest trick is to indicate this by
+      // storing the full path to the trash-file inside the Post.gc_path
+      // field.
+      memcpy(trash_info.post.gc_path, info->trash_path, MARFS_MAX_MD_PATH);
+
+      __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
+   }
 
    // write full-MDFS-path of original-file into similarly-named file
    __TRY0(write_trash_path_file, info, path);
+
+#else
+
+   // we no longer assume that a simple rename into the trash will always
+   // be possible (e.g. because trash will be in a different fileset, or
+   // filesystem).  It was thought we shouldn't even *try* the rename
+   // first.  Instead, we'll copy to the trash, then unlink the original.
+   __TRY0(trash_truncate, info, path);
+   __TRY0(unlink, info->md_path);
+
+#endif
 
    return 0;
 }
@@ -756,12 +846,27 @@ int  trash_truncate(PathInfo*   info,
    //
    //   close
 
+   __TRY0(stat_regular, info);
+
+   // capture atime of the original, so this can be saved as the ctime of
+   // the trash file.  This will allow "undelete" to restore the original
+   // atime, while also letting us see the correct atime of the trash file.
+   struct utimbuf trash_time;
+   trash_time.modtime = info->st.st_atime; // trash mtime = orig atime
+
+   time_t     now = time(NULL);
+   if (now == (time_t)-1) {
+      LOG(LOG_ERR, "time() failed\n");
+      return -1;
+   }
+   trash_time.actime  = now;               // trash atime = now
 
    // capture mode-bits, etc.  Destination has all the same mode-bits,
    // for permissions and file-type bits only. [No, just permissions.]
-   __TRY0(stat_regular, info);
+   //
    // mode_t new_mode = info->st.st_mode & (ACCESSPERMS); // ACCESSPERMS is only BSD
    mode_t new_mode = info->st.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO); // more-portable
+
 
    // we'll read from md_file
    int in = open(info->md_path, O_RDONLY);
@@ -780,10 +885,10 @@ int  trash_truncate(PathInfo*   info,
       return -1;
    }
 
-   // MD files (except Packed) are trunc'ed to their "logical" size (the
-   // size of the data they represent.  They may also contain some
-   // "physical" data (blobs we have tucked inside to track object-storage.
-   // Move the physical data, then trunc to logical size.
+   // MD files are trunc'ed to their "logical" size (the size of the data
+   // they represent.  They may also contain some "system" data (blobs we
+   // have tucked inside, to track object-storage.  Move the physical data,
+   // then trunc to logical size.
    off_t log_size = info->st.st_size;
    off_t phy_size = info->post.chunk_info_bytes;
 
@@ -843,7 +948,7 @@ int  trash_truncate(PathInfo*   info,
       // tweak the Post xattr to indicate to garbage-collector that this
       // file is in the trash.  The latest trick is to indicate this by
       // storing the full path to the trash-file inside the Post.gc_path
-      // field.
+      // field.  This allows a (fast) inode-scan to detect garbage.
       memcpy(trash_info.post.gc_path, info->trash_path, MARFS_MAX_MD_PATH);
 
       __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
@@ -851,10 +956,13 @@ int  trash_truncate(PathInfo*   info,
 
    // clean out everything on the original
    __TRY0(trunc_xattr, info);
-   __TRY0(trash_name, info, path);
 
    // write full-MDFS-path of original-file into similarly-named file
-   __TRY0(write_trash_path_file, info, path);
+   //  __TRY0(trash_name, info, path);
+   __TRY0(write_trash_path_file, info, path, &trash_time);
+
+   // update trash-file atime/mtime to support "undelete"
+   __TRY0(utime, info->trash_path, &trash_time);
 
    return 0;
 }
@@ -870,22 +978,6 @@ int trunc_xattr(PathInfo* info) {
    }   
    return 0;
 }
-
-
-int trash_name(PathInfo* info, const char* path) {
-   // (pass in expanded_path_info_structure and file name and trashname)
-
-   // make file in trash that has the full path of the file name and the
-   // inode number in the file data (having inode helps you not have to
-   // walk the tree for gpfs to do garbage collection/reclaim, you know
-   // object id, object type (uni, multi, packed, striped), file name, and
-   // inode.  Gpfs has ilm that will list all but the file path very
-   // quickly.)
-
-   // and call it $trashname.path
-   return 0;
-}
-
 
 
 

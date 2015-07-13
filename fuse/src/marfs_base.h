@@ -215,8 +215,8 @@ extern float MarFS_config_vers;
 
 // #define MARFS_OBJID_RD_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%[^/]/obj_ctime.%[^/]/chnksz.%lx/chnkno.%lx"
 // #define MARFS_OBJID_WR_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%s/obj_ctime.%s/chnksz.%lx/chnkno.%lx"
-#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%[^/]/obj_ctime.%[^/]/chnksz.%lx/chnkno.%lx"
-#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%s/obj_ctime.%s/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03d_%03d/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03d_%03d/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/chnksz.%lx/chnkno.%lx"
 
 
 // #define MARFS_PRE_RD_FORMAT     MARFS_BUCKET_RD_FORMAT "/" MARFS_OBJID_RD_FORMAT  
@@ -226,7 +226,7 @@ extern float MarFS_config_vers;
 
 #define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/gc.%s"
 
-#define MARFS_REC_INFO_FORMAT   "ver.%03d_%03d/inode.%016lx/mode.%08x/uid.%d/gid.%d/mtime.%s/ctime.%s/mdfs.%s"
+#define MARFS_REC_INFO_FORMAT   "ver.%03d_%03d/inode.%010ld/mode.%08x/uid.%d/gid.%d/mtime.%s/ctime.%s/mdfs.%s"
 
 // Two files in the trash.  Original MDFS is renamed to the name computed
 // in expand_trash_info().  Then another file with this format has contents
@@ -453,7 +453,8 @@ typedef struct MarFS_Repo {
 
 
 // NOTE: Do NOT include a final slash.
-extern char* MarFS_mnt_top;        // top level mount point for fuse/pftool
+extern char*  MarFS_mnt_top;        // top level mount point for fuse/pftool
+extern size_t MarFS_mnt_top_len;    // strlen(MarFS_mnt_top)
 
 // (RM read meta, WM write meta, RD read data, WD write data) 
 typedef enum {

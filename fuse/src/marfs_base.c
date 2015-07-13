@@ -1021,7 +1021,8 @@ float MarFS_config_vers = 0.001;
 
 
 // top level mount point for fuse/pftool
- char*                   MarFS_mnt_top = NULL;
+char*                   MarFS_mnt_top = NULL;
+size_t                  MarFS_mnt_top_len = 0;
 
 // quick-n-dirty
 static MarFS_Namespace* _ns = NULL;
@@ -1077,6 +1078,10 @@ int load_config(const char* config_fname) {
       .name         = "proxy",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.22:81",
       .access_proto = PROTO_SPROXYD,
+#elif BRETTK_TEST
+      .name         = "proxy",  // repo is sproxyd: this must match fastcgi-path
+      .host         = "10.135.0.22:81",
+      .access_proto = PROTO_SPROXYD,
 #elif USE_SPROXYD
       .name         = "proxy",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.21:81",
@@ -1124,9 +1129,12 @@ int load_config(const char* config_fname) {
    _ns  = (MarFS_Namespace*) malloc(sizeof(MarFS_Namespace));
    *_ns = (MarFS_Namespace) {
 
-#ifdef ALFRED_TEST
+#if    ALFRED_TEST
       .name           = "atorrez",  // repo is sproxyd: this must match driver-alias
       .mnt_suffix     = "/atorrez", // "<mnt_top>/atorrez" comes here
+#elif BRETTK_TEST
+      .name           = "brettk",  // repo is sproxyd: this must match driver-alias
+      .mnt_suffix     = "/brettk", // "<mnt_top>/atorrez" comes here
 #elif USE_SPROXYD
       .name           = "test00",   // repo is sproxyd: this must match driver-alias
       .mnt_suffix     = "/test00",  // "<mnt_top>/test00" comes here
@@ -1176,11 +1184,16 @@ int load_config(const char* config_fname) {
       ///      _ns->trash_path     = "/root/projects/marfs/filesys/trash/test00";
       ///      _ns->fsinfo_path    = "/root/projects/marfs/filesys/fsinfo/test00"; /* a file */
       ///
-#ifdef ALFRED_TEST
+#if   ALFRED_TEST
       MarFS_mnt_top       = "/marfs";
       _ns->md_path        = "/gpfs/marfs-gpfs/project_a/mdfs";
-      _ns->trash_path     = "/gpfs/marfs-gpfs/project_a/trash"; // MUST BE IN THE SAME FILESET!
+      _ns->trash_path     = "/gpfs/marfs-gpfs/project_a/trash"; // NOT NEC IN THE SAME FILESET!
       _ns->fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo"; /* a file */
+#elif BRETTK_TEST
+      MarFS_mnt_top       = "/marfs";
+      _ns->md_path        = "/gpfs/marfs-gpfs/testing/mdfs";
+      _ns->trash_path     = "/gpfs/marfs-gpfs/testing/trash"; // NOT NEC IN THE SAME FILESET!
+      _ns->fsinfo_path    = "/gpfs/marfs-gpfs/testing/fsinfo"; /* a file */
 #else
       MarFS_mnt_top       = "/marfs";
       _ns->md_path        = "/gpfs/marfs-gpfs/fuse/test00/mdfs";
@@ -1206,6 +1219,7 @@ int load_config(const char* config_fname) {
    }
 
    // these make it quicker to parse parts of the paths
+   MarFS_mnt_top_len   = strlen(MarFS_mnt_top);
    _ns->name_len       = strlen(_ns->name);
    _ns->mnt_suffix_len = strlen(_ns->mnt_suffix);
    _ns->md_path_len    = strlen(_ns->md_path);

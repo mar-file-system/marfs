@@ -56,8 +56,13 @@ ifdef USE_SPROXYD
 endif
 
 ifdef ALFRED_TEST
-	DEFS += ALFRED_TEST=1
+	DEFS += ALFRED_TEST=1 USE_SPROXYD=1
 endif
+
+ifdef BRETTK_TEST
+	DEFS += BRETTK_TEST=1 USE_SPROXYD=1
+endif
+
 
 # environment-var DEBUG also controls command-line flags for fuse launch.
 # DEBUG = 0 (or undef, or empty)
@@ -157,7 +162,7 @@ PID = marfs_fuse.pid
 mnt: marfs_fuse umnt
 	@ echo
 	@ echo "mounting at $(MNT)"
-	@ echo "core.%e-%t" > /proc/sys/kernel/core_pattern
+	@ echo "core\.%e-%t" > /proc/sys/kernel/core_pattern
 	( marfs_fuse $(FUSE_FLAGS) $(MNT) > $(LOG) 2>&1 & echo "$$!" > $(PID) )
 	@ echo "PID: " `cat $(PID)`
 	@
@@ -351,7 +356,11 @@ foo.packed:
 
 
 alfred: clean umnt
-	@ $(MAKE) marfs_fuse DEBUG=2 USE_SPROXYD=1 ALFRED_TEST=1
+	@ $(MAKE) marfs_fuse DEBUG=2 ALFRED_TEST=1
+	@ $(MAKE) mnt
+
+brettk: clean umnt
+	@ $(MAKE) marfs_fuse DEBUG=2 BRETTK_TEST=1
 	@ $(MAKE) mnt
 
 

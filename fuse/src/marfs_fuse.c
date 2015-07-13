@@ -1386,7 +1386,10 @@ int marfs_unlink (const char* path) {
    //       the case of a symlink, which points to a marfs-file, we skip
    //       the call to access().  How do we know if it's a marfs file?
    //       Well, if it's an absolute path with our same mount-point, or
-   //       it's a relative path, then it's a marfs file.
+   //       it's a relative path, then we'll assume it's a marfs file.
+   //       This doesn't mean user gets to rename links she shouldn't be
+   //       touching: if there is insufficient permission, the op will
+   //       fail.
    STAT(&info);
    int call_access = 1;
    if (S_ISLNK(info.st.st_mode)) {
