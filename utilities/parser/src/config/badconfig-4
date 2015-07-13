@@ -1,0 +1,45 @@
+#
+#
+# Configuration for MARFS 1.0
+#
+#
+
+# This is MARFS version 1.0
+
+<config>
+<version>1.0</version>
+
+<namespace>
+   <name>My Name Space</name>
+   <repo>
+      <name>emcS3_00</name>
+      <host>10.140.0.15:9020</host>
+      <flags>(REPO_ONLINE)</flags>
+      <access_proto>PROTO_S3_EMC</access_proto>
+      <chunk_size>(1024 * 1024 * 512)</chunk_size>
+      <auth>AUTH_S3_AWS_MASTER</auth>
+      <latency>(10 * 1000)</latency>
+   </reepo>
+   <repo>
+      <name>emcS3_01</name>
+      <host>10.140.0.16:9020</host>
+      <flags>(REPO_ONLINE)</flags>
+      <access_proto>PROTO_S3_EMC</access_proto>
+      <chunk_size>(1024 * 1024 * 512)</chunk_size>
+      <auth>AUTH_S3_AWS_MASTER</auth>
+      <latency>(10 * 1000)</latency>
+   </repo>
+</namespace>
+<namespace>
+   <name>My Other Name Space</name>
+   <repo>
+      <name>emcS3_02</name>
+      <host>10.140.0.17:9020</host>
+      <flags>(REPO_ONLINE)</flags>
+      <access_proto>PROTO_S3_EMC</access_proto>
+      <chunk_size>(1024 * 1024 * 512)</chunk_size>
+      <auth>AUTH_S3_AWS_MASTER</auth>
+      <latency>(10 * 1000)</latency>
+   </repo>
+</namespace>
+</config>

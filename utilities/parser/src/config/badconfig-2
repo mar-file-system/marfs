@@ -1,0 +1,32 @@
+#
+#
+# Configuration for MARFS 1.0
+#
+#
+
+# This is MARFS version 1.0
+
+<version>1.0</version>
+
+<namespace>
+   <name>My Name Space</name>
+   <repo>
+      <name>My Repo</name>
+      <size lower bound>1M</size lower bound>
+      <size upper bound>1G</size upper bound>
+   </repo>
+   <repo>
+      <name>My Other Repo</name>
+      <size lower bound>1M</size lower bound>
+      <size upper bound>1G</size upper bound>
+   </repo>
+</namespace>
+<namespace>
+   <name>My Other Name Space</name>
+      <repo>
+      <name>My alternate Repo</name>
+      <size lower bound>1M</size lower bound>
+      <size upper bound>1G</size upper bound>
+   </repo>
+</namespace>
+</config>

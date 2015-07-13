@@ -1,0 +1,68 @@
+#
+#
+# Configuration for MARFS 1.0
+#
+#
+
+# This is MARFS version 1.0
+
+<config>
+<version>1.0</version>
+
+<namespace>
+   <name>My Name Space</name>
+   <repo>
+      <name>emcS3_00</name>
+      <host>10.140.0.15:9020</host>
+      <flags>(REPO_ONLINE)</flags>
+      <access_proto>PROTO_S3_EMC</access_proto>
+      <chunk_size>(1024 * 1024 * 512)</chunk_size>
+      <auth>AUTH_S3_AWS_MASTER</auth>
+      <latency>(10 * 1000)</latency>
+   </repo>
+   <repo>
+      <name>emcS3_01</name>
+      <host>10.140.0.16:9020</host>
+      <flags>(REPO_ONLINE)</flags>
+      <access_proto>PROTO_S3_EMC</access_proto>
+      <chunk_size>(1024 * 1024 * 512)</chunk_size>
+      <auth>AUTH_S3_AWS_MASTER</auth>
+      <latency>(10 * 1000)</latency>
+   </repo>
+</namespace>
+<namespace>
+   <name>My Other Name Space</name>
+   <repo>
+      <name>emcS3_02</name>
+      <host>10.140.0.17:9020</host>
+      <flags>(REPO_ONLINE)</flags>
+      <access_proto>PROTO_S3_EMC</access_proto>
+      <chunk_size>(1024 * 1024 * 512)</chunk_size>
+      <auth>AUTH_S3_AWS_MASTER</auth>
+      <latency>(10 * 1000)</latency>
+   </repo>
+</namespace>
+# This is a test PFTOOL configuration, used to define an XML syntax
+# for a PFTOOL configuration.
+
+<config_opts>
+# Sets up configuration structure
+  <client_procs>
+    <per_node>2</per_node>
+    <def_num>15</def_num>
+  </client_procs>
+
+  <env>
+    <isThreaded>False</isThreaded>
+    <mpi_path>junk</mpi_path>
+    <use_syslog>False</use_syslog>
+    <parallel_dest>True</parallel_dest>
+  </env>
+
+  <mio_opts>
+    <writesize>1MB</writesize>
+    <chunk_at>10GB</chunk_at>
+    <chunksize>1GB</chunksize>
+  </mio_opts>
+</config_opts>
+</config> 

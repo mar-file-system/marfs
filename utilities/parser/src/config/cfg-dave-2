@@ -1,0 +1,21 @@
+<config>
+     <name>test</name>
+<config_opts>
+  <name>test</name>
+  <client_procs>
+    <per_node>2</per_node>
+    <def_num>15</def_num>
+  </client_procs>
+  <env>
+    <isThreaded>False</isThreaded>
+    <mpi_path>junk</mpi_path>
+    <use_syslog>False</use_syslog>
+    <parallel_dest>True</parallel_dest>
+  </env>
+  <mio_opts>
+    <writesize>1MB</writesize>
+    <chunk_at>10GB</chunk_at>
+    <chunksize>1GB</chunksize>
+  </mio_opts>
+</config_opts>
+</config> 
