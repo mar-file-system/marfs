@@ -356,11 +356,11 @@ foo.packed:
 
 
 alfred: clean umnt
-	@ $(MAKE) marfs_fuse DEBUG=2 ALFRED_TEST=1
+	@ $(MAKE) marfs_fuse ALFRED_TEST=1
 	@ $(MAKE) mnt
 
 brettk: clean umnt
-	@ $(MAKE) marfs_fuse DEBUG=2 BRETTK_TEST=1
+	@ $(MAKE) marfs_fuse BRETTK_TEST=1
 	@ $(MAKE) mnt
 
 

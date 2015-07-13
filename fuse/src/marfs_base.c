@@ -1078,22 +1078,25 @@ int load_config(const char* config_fname) {
       .name         = "proxy",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.22:81",
       .access_proto = PROTO_SPROXYD,
+      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
 #elif BRETTK_TEST
       .name         = "proxy",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.22:81",
       .access_proto = PROTO_SPROXYD,
+      .chunk_size   = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
 #elif USE_SPROXYD
       .name         = "proxy",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.21:81",
       .access_proto = PROTO_SPROXYD,
+      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
 #else
       .name         = "emcS3_00",  // repo is s3: this must match existing bucket
       .host         = "10.140.0.15:9020", //"10.143.0.1:80",
       .access_proto = PROTO_S3_EMC,
+      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
 #endif
 
       .flags        = (REPO_ONLINE),
-      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
       // .chunk_size   = (2048), /* i.e. max MarFS object (small for debugging) */
       .auth         = AUTH_S3_AWS_MASTER,
       .latency_ms   = (10 * 1000),
