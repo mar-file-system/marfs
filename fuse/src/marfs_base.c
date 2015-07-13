@@ -1174,6 +1174,23 @@ int load_config(const char* config_fname) {
       .quota_names = 32,             /* 32 names */
    };
 
+
+#if   ALFRED_TEST
+      LOG(LOG_INFO, "loading hardwired marfs-config for 'alfred' build\n");
+      MarFS_mnt_top       = "/marfs";
+      _ns->md_path        = "/gpfs/marfs-gpfs/project_a/mdfs";
+      _ns->trash_path     = "/gpfs/marfs-gpfs/project_a/trash"; // NOT NEC IN THE SAME FILESET!
+      _ns->fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo"; /* a file */
+
+#elif BRETTK_TEST
+      LOG(LOG_INFO, "loading hardwired marfs-config for 'brettk' build\n");
+      MarFS_mnt_top       = "/marfs";
+      _ns->md_path        = "/gpfs/marfs-gpfs/testing/mdfs";
+      _ns->trash_path     = "/gpfs/marfs-gpfs/testing/trash"; // NOT NEC IN THE SAME FILESET!
+      _ns->fsinfo_path    = "/gpfs/marfs-gpfs/testing/fsinfo"; /* a file */
+
+#else
+
    // NOTE: These are some hardcoded setups on different nodes I've been using for testing
    const char* hostname = getenv("HOSTNAME");
    assert(hostname);
@@ -1187,22 +1204,10 @@ int load_config(const char* config_fname) {
       ///      _ns->trash_path     = "/root/projects/marfs/filesys/trash/test00";
       ///      _ns->fsinfo_path    = "/root/projects/marfs/filesys/fsinfo/test00"; /* a file */
       ///
-#if   ALFRED_TEST
-      MarFS_mnt_top       = "/marfs";
-      _ns->md_path        = "/gpfs/marfs-gpfs/project_a/mdfs";
-      _ns->trash_path     = "/gpfs/marfs-gpfs/project_a/trash"; // NOT NEC IN THE SAME FILESET!
-      _ns->fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo"; /* a file */
-#elif BRETTK_TEST
-      MarFS_mnt_top       = "/marfs";
-      _ns->md_path        = "/gpfs/marfs-gpfs/testing/mdfs";
-      _ns->trash_path     = "/gpfs/marfs-gpfs/testing/trash"; // NOT NEC IN THE SAME FILESET!
-      _ns->fsinfo_path    = "/gpfs/marfs-gpfs/testing/fsinfo"; /* a file */
-#else
       MarFS_mnt_top       = "/marfs";
       _ns->md_path        = "/gpfs/marfs-gpfs/fuse/test00/mdfs";
       _ns->trash_path     = "/gpfs/marfs-gpfs/fuse/test00/trash";
       _ns->fsinfo_path    = "/gpfs/marfs-gpfs/fuse/test00/fsinfo"; /* a file */
-#endif
    }
    else if ((! strncmp(hostname, "rrz-", 4))
        || (! strncmp(hostname, "ca-", 3))) {
@@ -1220,6 +1225,7 @@ int load_config(const char* config_fname) {
       _ns->trash_path     = "/mnt/xfs/jti/filesys/trash/test00";
       _ns->fsinfo_path    = "/mnt/xfs/jti/filesys/fsinfo/test00";
    }
+#endif
 
    // these make it quicker to parse parts of the paths
    MarFS_mnt_top_len   = strlen(MarFS_mnt_top);
