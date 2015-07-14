@@ -81,7 +81,7 @@ example-4:
 	-rm *.o
 
 clean:
-	-rm *.o datapars checksum example-1 example-2 example-3 example-4
+	-rm -f *.o datapars checksum example-1 example-2 example-3 example-4
 
 pristine:
-	-rm *.o confpars datapars checksum example-1 example-2 example-3 example-4 ./parse-inc/*
+	-rm -f *.o confpars datapars checksum example-1 example-2 example-3 example-4 ./parse-inc/*
