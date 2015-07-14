@@ -107,7 +107,8 @@ LIBS    += `pkg-config fuse --libs-only-l` -lm
 
 # stuf for aws4c
 ### LIBAWS4C = /users/jti/projects/ecs_hobo/tools/aws4c
-LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
+### LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
+LIBAWS4C := `readlink -f ~/projects/git/aws4c`
 CFLAGS  += -I $(LIBAWS4C)
 LDFLAGS += -L$(LIBAWS4C)
 LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
@@ -162,8 +163,8 @@ PID = marfs_fuse.pid
 mnt: marfs_fuse umnt
 	@ echo
 	@ echo "mounting at $(MNT)"
-	@ echo "core\.%e-%t" > /proc/sys/kernel/core_pattern
-	( marfs_fuse $(FUSE_FLAGS) $(MNT) > $(LOG) 2>&1 & echo "$$!" > $(PID) )
+	@ # echo "core\.%e-%t" > /proc/sys/kernel/core_pattern
+	( id; ./marfs_fuse $(FUSE_FLAGS) $(MNT) > $(LOG) 2>&1 & echo "$$!" > $(PID) )
 	@ echo "PID: " `cat $(PID)`
 	@
 	@ # TBD: while (! `mount | grep fuse | grep -v fusectl | wc -l`) ; do (echo sleeping; sleep 1) done
@@ -288,7 +289,7 @@ abort: fusectl
 	gcc -o $@ $< $(LDFLAGS) $(LIBS)
 
 %.o: %.c %.h
-	gcc $(CFLAGS) -c -o $@ $<
+	gcc -c $(CFLAGS) -o $@ $<
 
 
 # Seriously?  Make can't figure this out?
@@ -377,6 +378,9 @@ show_inc_path:
 
 show_env:
 	printenv
+
+show_subshell_uid:
+	( id )
 
 show_pid:
 	ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'

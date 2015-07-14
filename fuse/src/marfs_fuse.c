@@ -1916,6 +1916,12 @@ int main(int argc, char* argv[])
    INIT_LOG();
    LOG(LOG_INFO, "starting\n");
 
+   // Not sure why, but I've seen machines where I'm logged in as root, and
+   // I run fuse in the background, and it has euid of some other user.
+   // This should fix that. This also now *requires* that this is
+   // always only run as root.
+   seteuid(0);
+
    if (load_config("~/marfs.config")) {
       LOG(LOG_ERR, "load_config() failed.  Quitting\n");
       return -1;
