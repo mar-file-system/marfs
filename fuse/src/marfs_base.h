@@ -536,6 +536,8 @@ typedef struct MarFS_Namespace {
    size_t             quota_name_units;  // multiplier
    size_t             quota_names;       // name-quota in name_units
 
+   uint8_t            is_root;  // special meta-namespace
+
    // TBD:
    //    <type>   shard;
    //    <type>   shard_num;
@@ -831,15 +833,24 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
 
 extern int              load_config(const char* config_fname);
 
+
+// --- NAMESPACES
 extern MarFS_Namespace* find_namespace_by_name(const char* name);
 extern MarFS_Namespace* find_namespace_by_path(const char* path);
 
+// extern void*            namespace_iterator();
+// extern MarFS_Namespace* namespace_next(void**);
+
+
+
+// --- REPOS
 extern MarFS_Repo*      find_repo(MarFS_Namespace* ns,
                                   size_t           file_size,
                                   int              interactive_write); // bool
-
 extern MarFS_Repo*      find_repo_by_name(const char* name);
 
+// extern void*            repo_iterator();
+// extern MarFS_Repo*      repo_next(void**);
 
 
 

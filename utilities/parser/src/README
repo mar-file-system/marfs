@@ -1,0 +1,27 @@
+
+How to build:
+
+- untar the tar-ball with tar -xvf somewhere
+- in the current-mmddyy directory, run 'make base'
+
+- To run the parser for the configuration ./config/config-2 :
+  (in the current-mmddyy directory)
+
+  run:  'make conf=./config/config-2'
+
+- To build the examples, they are based onm ./config/config-2:
+
+  run: 'make examples'   (example-3 is work in progress and
+  basically the same as example-2)
+
+- there is a checksum.c file, which will only compile if you have
+  openssl-devel installed. If you don't have it installed you
+  can safely ignore that, it has not been incorporated in the parser yet.
+
+  example-1 shows how to access/change the config structure
+  the parser way, if needed.
+  example-2 shows how to access members of the config structure
+  the 'regular C' way.
+
+- 'make clean'    :   cleans everything except for the 'base'
+- 'make pristine' :   clean everything as if you just untarred it
