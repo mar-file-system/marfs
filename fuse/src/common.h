@@ -478,7 +478,6 @@ extern int  trunc_xattr  (PathInfo* info);
 // need the path to initialize info->md_trash_path
 extern int  trash_unlink  (PathInfo* info, const char* path);
 extern int  trash_truncate(PathInfo* info, const char* path);
-extern int  trash_name    (PathInfo* info, const char* path);
 
 extern int  check_quotas  (PathInfo* info);
 

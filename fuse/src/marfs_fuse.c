@@ -1913,8 +1913,17 @@ int marfs_poll(const char*             path,
 
 int main(int argc, char* argv[])
 {
+   size_t rc;                   /* used by "TRY" macros */
+
    INIT_LOG();
    LOG(LOG_INFO, "starting\n");
+
+   // Not sure why, but I've seen machines where I'm logged in as root, and
+   // I run fuse in the background, and the process has an euid of some other user.
+   // This fixes that.
+   //
+   // NOTE: This also now *requires* that marfs fuse is always only run as root.
+   __TRY0(seteuid, 0);
 
    if (load_config("~/marfs.config")) {
       LOG(LOG_ERR, "load_config() failed.  Quitting\n");

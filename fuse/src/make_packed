@@ -150,14 +150,14 @@ echo
 # --- the packed object just has the concatenattion of the contents of the
 #     two original objects.  Delete the originals.
 
-echo "gathering contents of two objects into local file tmp"
-rm -f tmp
+echo "gathering contents of two objects into local file tmp.packed"
+rm -f tmp.packed
 for F in p1 p2; do
     OBJ=`obj_name $F`
 
     echo
     echo "gathering $HOST/$OBJ"
-    get $HOST/$OBJ >> tmp
+    get $HOST/$OBJ >> tmp.packed
 
     echo "deleting the original"
     del $HOST/$OBJ
@@ -167,7 +167,7 @@ echo
 
 echo "writing local file back out as a single object"
 echo "writing $HOST/$OBJID"
-put tmp $HOST/$OBJID
+put tmp.packed $HOST/$OBJID
 echo
 
 
@@ -192,4 +192,5 @@ for F in p1 p2; do
 done
 
 
+rm -f tmp.packed
 echo "done."

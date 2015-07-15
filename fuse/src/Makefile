@@ -55,14 +55,6 @@ ifdef USE_SPROXYD
 	DEFS += USE_SPROXYD=1
 endif
 
-ifdef ALFRED_TEST
-	DEFS += ALFRED_TEST=1 USE_SPROXYD=1
-endif
-
-ifdef BRETTK_TEST
-	DEFS += BRETTK_TEST=1 USE_SPROXYD=1
-endif
-
 
 # environment-var DEBUG also controls command-line flags for fuse launch.
 # DEBUG = 0 (or undef, or empty)
@@ -105,9 +97,10 @@ CFLAGS  += $(patsubst %, -D%, $(DEFS))
 LDFLAGS += `pkg-config fuse --libs-only-L`
 LIBS    += `pkg-config fuse --libs-only-l` -lm
 
-# stuf for aws4c
+# stuff for aws4c
 ### LIBAWS4C = /users/jti/projects/ecs_hobo/tools/aws4c
-LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
+### LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
+LIBAWS4C := `readlink -f ~/projects/git/aws4c`
 CFLAGS  += -I $(LIBAWS4C)
 LDFLAGS += -L$(LIBAWS4C)
 LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
@@ -162,8 +155,8 @@ PID = marfs_fuse.pid
 mnt: marfs_fuse umnt
 	@ echo
 	@ echo "mounting at $(MNT)"
-	@ echo "core\.%e-%t" > /proc/sys/kernel/core_pattern
-	( marfs_fuse $(FUSE_FLAGS) $(MNT) > $(LOG) 2>&1 & echo "$$!" > $(PID) )
+	@ # echo "core\.%e-%t" > /proc/sys/kernel/core_pattern
+	( ./marfs_fuse $(FUSE_FLAGS) $(MNT) > $(LOG) 2>&1 & echo "$$!" > $(PID) )
 	@ echo "PID: " `cat $(PID)`
 	@
 	@ # TBD: while (! `mount | grep fuse | grep -v fusectl | wc -l`) ; do (echo sleeping; sleep 1) done
@@ -288,7 +281,7 @@ abort: fusectl
 	gcc -o $@ $< $(LDFLAGS) $(LIBS)
 
 %.o: %.c %.h
-	gcc $(CFLAGS) -c -o $@ $<
+	gcc -c $(CFLAGS) -o $@ $<
 
 
 # Seriously?  Make can't figure this out?
@@ -355,15 +348,6 @@ foo.packed:
 	dd if=/dev/zero bs=968 count=1 | tr '\0' '2' > /marfs/test00/p2
 
 
-alfred: clean umnt
-	@ $(MAKE) marfs_fuse ALFRED_TEST=1
-	@ $(MAKE) mnt
-
-brettk: clean umnt
-	@ $(MAKE) marfs_fuse BRETTK_TEST=1
-	@ $(MAKE) mnt
-
-
 # lines-of-code
 loc:
 	wc -l $(H) $(SRCS)
@@ -377,6 +361,9 @@ show_inc_path:
 
 show_env:
 	printenv
+
+show_subshell_uid:
+	( id )
 
 show_pid:
 	ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'

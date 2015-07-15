@@ -99,6 +99,10 @@ OF SUCH DAMAGE.
 //   Set userid to requesting user (in fuse request structure)
 //   return 0/negative for success/error
 //
+// NOTE: setuid() doesn't allow returning to priviledged user, from
+//       unpriviledged-user.  For that, we apparently need the (BSD)
+//       seteuid().
+//
 // NOTE: If seteuid() fails, and the problem is that we lack privs to call
 //       seteuid(), this means *we* are running unpriviledged.  This could
 //       happen if we're testing the FUSE mount as a non-root user.  In
@@ -106,10 +110,6 @@ OF SUCH DAMAGE.
 //       the FUSE process, which we can extract from the fuse_context.
 //       [We try the seteuid() first, for speed]
 //
-// NOTE: setuid() doesn't allow returning to priviledged user, from
-//       unpriviledged-user.  For that, we apparently need the (BSD)
-//       seteuid().
-//       
 int push_user(uid_t* saved_euid) {
 #if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
    //   fuse_context* ctx = fuse_get_context();
@@ -1023,22 +1023,29 @@ int check_quotas(PathInfo* info) {
    //   if (! (info->flags & PI_STATVFS))
    //      __TRY0(statvfs, info->ns->fsinfo, &info->stvfs);
 
-
-   uint64_t  space_limit = ((uint64_t)info->ns->quota_space_units *
-                            (uint64_t)info->ns->quota_space);
 #if TBD
    uint64_t  names_limit = ((uint64_t)info->ns->quota_name_units *
                             (uint64_t)info->ns->quota_names);
 #endif
 
-   struct stat st;
-   if (stat(info->ns->fsinfo_path, &st)) {
-      LOG(LOG_ERR, "couldn't stat fsinfo at '%s': %s\n",
-          info->ns->fsinfo_path, strerror(errno));
-      errno = EINVAL;
-      return -1;
+   uint64_t space_limit = ((uint64_t)info->ns->quota_space_units *
+                           (uint64_t)info->ns->quota_space);
+
+   // value of -1 for ns->quota_space implies unlimited
+   if (space_limit >= 0) {
+      struct stat st;
+      if (stat(info->ns->fsinfo_path, &st)) {
+         LOG(LOG_ERR, "couldn't stat fsinfo at '%s': %s\n",
+             info->ns->fsinfo_path, strerror(errno));
+         errno = EINVAL;
+         return -1;
+      }
+      if (st.st_size >= space_limit) /* 0 = OK,  1 = no-more-space */
+         return -1;
    }
-   return (st.st_size >= space_limit); /* 0 = OK,  1 = no-more-space */
+
+   // not over quota
+   return 0;
 }
 
 
