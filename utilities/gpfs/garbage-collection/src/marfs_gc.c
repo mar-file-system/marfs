@@ -95,66 +95,102 @@ Name: main
 *****************************************************************************/
 
 int main(int argc, char **argv) {
-   FILE *outfd;
+   //FILE *outfd;
+   //FILE *packedfd;
    int ec;
    char *outf = NULL;
    char *rdir = NULL;
+   char *packed_log = NULL;
    //unsigned int uid = 0;
    int fileset_id = -1;
    int  c;
    unsigned int fileset_count = 1;
    extern char *optarg;
-   fileset_stat *fileset_stat_ptr;
+   unsigned int time_threshold_sec=0;
+ 
+   //fileset_stat *fileset_stat_ptr;
+   fileset_info *fileset_info_ptr;
 //   char * fileset_name = "root,proja,projb";
 //   char  fileset_name[] = "root,proja,projb";
 //   char  fileset_name[] = "project_a,projb,root";
 //   char  fileset_name[] = "project_a,root,projb";
 //   char  fileset_name[] = "trash";
 //   char  fileset_name[] = "project_c";
-   char  fileset_name[] = "trash";
+//   char  fileset_name[] = "trash";
+//   char  fileset_name[] = "project_c";
+   char *fileset = NULL;
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
       ProgName = argv[0];
    else
       ProgName++;
 
-   while ((c=getopt(argc,argv,"d:f:ho:u:")) != EOF) {
+   while ((c=getopt(argc,argv,"d:f:t:p:ho:")) != EOF) {
       switch (c) {
          case 'd': rdir = optarg; break;
          case 'o': outf = optarg; break;
-         //case 'u': uid = atoi(optarg); break;
+         case 't': time_threshold_sec=atoi(optarg) * DAY_SECONDS; break;
+         case 'f': fileset = optarg; break; 
+         case 'p': packed_log = optarg; break;
          case 'h': print_usage();
          default:
             exit(0);
       }
    }
    
-   if (rdir == NULL || outf == NULL) {
-      fprintf(stderr,"%s: no directory (-d) or output file name (-o) specified\n",ProgName);
+   if (rdir == NULL || 
+       outf == NULL || 
+       fileset == NULL ) {
+      fprintf(stderr,"%s: no directory (-d) or output file name (-o) or fileset specified\n\n",ProgName);
+      print_usage();
       exit(1);
    }
+
+   // Structure contains info about output log and temproray packed list file for trashing
+   // packed type objects
+   file_info file_stat_info;
+   file_info *file_status = &file_stat_info;
+
    /*
-    * Now assuming that the config file has a list of filesets (either name or path or both).
-    * I will make a call to get a list of filesets and the count.
-    * I will use the count to malloc space for a array of strutures count size.
-    * I will malloc an array of ints count size that will map fileset id to array index 
+    *  This code assumes is set up for multiple filesets if the need ever arises but
+    *  so I am going to leave it in for now.  
+    *  Currently a struture containing one fileset
    */
    // Get list of filesets and count
 
-   int *fileset_id_map;
-   fileset_id_map = (int *) malloc(sizeof(int)*fileset_count); 
-   fileset_stat_ptr = (fileset_stat *) malloc(sizeof(*fileset_stat_ptr)*fileset_count);
-   if (fileset_stat_ptr == NULL || fileset_id_map == NULL) {
+   //fileset_stat_ptr = (fileset_stat *) malloc(sizeof(*fileset_stat_ptr)*fileset_count);
+   fileset_info_ptr = (fileset_info *) malloc(sizeof(*fileset_info_ptr)*fileset_count);
+   if (fileset_info_ptr == NULL ) {
       fprintf(stderr,"Memory allocation failed\n");
       exit(1);
    }
-   init_records(fileset_stat_ptr, fileset_count);
+   init_records(fileset_info_ptr, fileset_count);
    aws_init();
-   strcpy(fileset_stat_ptr[0].fileset_name, fileset_name);
+   //strcpy(fileset_stat_ptr[0].fileset_name, fileset_name);
+   strcpy(fileset_info_ptr[0].fileset_name, fileset);
 
-   outfd = fopen(outf,"w");
+   if (packed_log == NULL) {
+      strcpy(packed_log,"./tmp_packed_log");
+   }
+   file_status->outfd = fopen(outf,"w");
+   file_status->packedfd = fopen(packed_log, "w");
+   strcpy(file_status->packed_filename, packed_log);
+
    // Add filsets to structure so that inode scan can update fileset info
-   ec = read_inodes(rdir,outfd,fileset_id,fileset_stat_ptr,fileset_count);
+   //ec = read_inodes(rdir,outfd,fileset_id,fileset_stat_ptr,fileset_count,time_threshold_sec);
+
+   // NEED to get these from config when the parser is ready
+   aws_read_config("atorrez");
+   s3_set_host ("10.135.0.22:81");
+
+   ec = read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,fileset_count,time_threshold_sec);
+   if (file_status->is_packed) {
+      process_packed(file_status);
+   }
+
+   fclose(file_status->outfd);
+   fclose(file_status->packedfd);
+   unlink(packed_log);
    return (0);   
 }
 
@@ -162,9 +198,9 @@ int main(int argc, char **argv) {
 Name: init_records 
 
 *****************************************************************************/
-void init_records(fileset_stat *fileset_stat_buf, unsigned int record_count)
+void init_records(fileset_info *fileset_info_buf, unsigned int record_count)
 {
-   memset(fileset_stat_buf, 0, (size_t)record_count * sizeof(fileset_stat)); 
+   memset(fileset_info_buf, 0, (size_t)record_count * sizeof(fileset_info)); 
 }
 
 /***************************************************************************** 
@@ -173,7 +209,7 @@ Name: print_usage
 *****************************************************************************/
 void print_usage()
 {
-   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file [-f fileset_id]\n",ProgName);
+   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file -f fileset name [-p packed_tmp_file] [-t time_threshold-days] [-h] \n",ProgName);
 }
 
 
@@ -190,7 +226,7 @@ int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, in
    int ret_value = -1;
 
    for (i=0; i< cnt; i++) {
-      printf("XX %s %s\n", xattr_ptr->xattr_name, desired_xattr);
+      //printf("XX %s %s\n", xattr_ptr->xattr_name, desired_xattr);
       if (!strcmp(xattr_ptr->xattr_name, desired_xattr)) {
          return(i);
       }
@@ -310,7 +346,7 @@ This function opens an inode scan in order to provide size/block information
 as well as file extended attribute information
 
 *****************************************************************************/
-int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fileset_stat_ptr, size_t rec_count) {
+int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fileset_info *fileset_info_ptr, size_t rec_count, unsigned int day_seconds) {
    int rc = 0;
    const gpfs_iattr_t *iattrP;
    const char *xattrBP;
@@ -327,10 +363,11 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
    int objid_index=1;
    int marfs_xattr_cnt = MARFS_GC_XATTR_CNT;
    int trash_status;
+   //unsigned int fileset_index = 0;
 
 
   // NEED TO FIGURE OUT SIZE FOR THIS
-   char path_file[4096];
+//   char path_file[4096];
 
 
 
@@ -353,7 +390,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
       fprintf(stderr, "%s: line %d - gpfs_get_fshandle_by_path: %s\n", 
               ProgName,__LINE__,strerror(rc));
       early_exit = 1;
-      clean_exit(outfd, iscanP, fsP, early_exit);
+      clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
    }
 
    /*
@@ -365,7 +402,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
       fprintf(stderr, "%s: line %d - gpfs_open_inodescan: %s\n", 
       ProgName,__LINE__,strerror(rc));
       early_exit = 1;
-      clean_exit(outfd, iscanP, fsP, early_exit);
+      clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
    }
 
 
@@ -376,7 +413,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          rc = errno;
          fprintf(stderr, "gpfs_next_inode: %s\n", strerror(rc));
          early_exit = 1;
-         clean_exit(outfd, iscanP, fsP, early_exit);
+         clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
       }
       // Are we done?
       if ((iattrP == NULL) || (iattrP->ia_inode > 0x7FFFFFFF))
@@ -399,13 +436,13 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
       // This is handy for debug at the moment
       if (iattrP->ia_inode != 3) {	/* skip the root inode */
          if (debug) { 
-            fprintf(outfd,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
+            fprintf(file_info_ptr->outfd,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
             iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
             iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
             iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
          }
          gpfs_igetfilesetname(iscanP, iattrP->ia_filesetid, &fileset_name_buffer, 32); 
-         if (!strcmp(fileset_name_buffer,fileset_stat_ptr[0].fileset_name)) {
+         if (!strcmp(fileset_name_buffer,fileset_info_ptr[0].fileset_name)) {
 
 
 
@@ -414,7 +451,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
             if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
                xattr_ptr = &mar_xattrs[0];
                //if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_objid_name, xattr_ptr, outfd)) > 0) {
-               if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, marfs_xattrs, marfs_xattr_cnt, xattr_ptr, outfd)) > 0) {
+               if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, marfs_xattrs, marfs_xattr_cnt, xattr_ptr, file_info_ptr->outfd)) > 0) {
                   xattr_ptr = &mar_xattrs[0];
                   //if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
                   if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count)) != -1 ) { 
@@ -436,51 +473,71 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   } 
                   // else trash
                   else {
-                     printf("found trash\n");
-                     gc_path_ptr = &post.gc_path[0];
-                     //create string for *.path file that needs removal also
-                     sprintf(path_file,"%s.path",gc_path_ptr);
-                     printf("%s\n",marfs_xattrs[post_index]);
-                     printf("path_file is %s\n", path_file);
-                     xattr_ptr = &mar_xattrs[0];
-                     if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count)) != -1) { 
-                        xattr_ptr = &mar_xattrs[xattr_index];
-                        printf("objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
-                        printf("remove file: %s  remove object:  %s\n", gc_path_ptr, xattr_ptr->xattr_value); 
-                        // TO DO:
-                        // Figure out how to get userid and host IP.  In xattr??
-                        //   -- userid will be a fixed name according to Jeff/Gary
-                        //   -- hostIP can be found in namespace namespace or repo info
-                        //   So I will need to make some calls config file parser/routines to get this
-                        //   But how do I link objectid to correct config table info?
-                        //   Maybe I can pass gc.path or object Id back to parser routines 
-                        //   and they will pass back host and userid?
-                        //
-                        // move s3 functions to separate function
-                        //aws_init();
-                        //Call find namespace to get username
-                        //userid = find_namespace() 
-                        //aws_read_config(userid);
-                        aws_read_config("atorrez");
-                        //hostname = find_host(namespace
-                        //s3_set_host (hostname);
-                        s3_set_host ("10.140.0.17:9020");
-                        IOBuf * bf = aws_iobuf_new();
-                         // do not have to set bucket if part of the path
-                        //s3_set_bucket("atorrez");
-                        //
+                     time_t now = time(0);
+                     //printf("XX a time is %d current time is %ju\n", iattrP->ia_atime.tv_sec, now);
+                   
+                     // Check if older than X days (specified by user arg)
+                     if (now-day_seconds > iattrP->ia_atime.tv_sec) {
+                        printf("XXgoing to delete\n");
+                        printf("found trash\n");
 
-                        trash_status = dump_trash(bf, xattr_ptr, gc_path_ptr, &path_file[0], outfd, &post);
+                        gc_path_ptr = &post.gc_path[0];
+                        //create string for *.path file that needs removal also
+                        ///sprintf(path_file,"%s.path",gc_path_ptr);
+                        ///printf("%s\n",marfs_xattrs[post_index]);
+                        ///printf("path_file is %s\n", path_file);
+                        xattr_ptr = &mar_xattrs[0];
 
+
+                        // Get objid xattr
+                        if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count)) != -1) { 
+                           xattr_ptr = &mar_xattrs[xattr_index];
+                           printf("objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
+                           printf("remove file: %s  remove object:  %s\n", gc_path_ptr, xattr_ptr->xattr_value); 
+
+                           if (post.obj_type == OBJ_PACKED) {
+                              fprintf(file_info_ptr->packedfd,"%s %s %zu\n", xattr_ptr->xattr_value, gc_path_ptr, post.chunks);
+                              file_info_ptr->is_packed = 1;
+                           }
+                           // TO DO:
+                           // Figure out how to get userid and host IP.  In xattr??
+                           //   -- userid will be a fixed name according to Jeff/Gary
+                           //   -- hostIP can be found in namespace namespace or repo info
+                           //   So I will need to make some calls config file parser/routines to get this
+                           //   But how do I link objectid to correct config table info?
+                           //   Maybe I can pass gc.path or object Id back to parser routines 
+                           //   and they will pass back host and userid?
+                           //
+                           // move s3 functions to separate function
+                           //aws_init();
+                           //Call find namespace to get username
+                           //userid = find_namespace() 
+                           //aws_read_config(userid);
+                           ////aws_read_config("atorrez");
+                           //hostname = find_host(namespace
+                           //s3_set_host (hostname);
+                           //s3_set_host ("10.140.0.17:9020");
+
+                           // FOR SPROXYD
+                           ////s3_set_host ("10.135.0.22:81");
+                           // FOR SPROXYD
+                           //IOBuf * bf = aws_iobuf_new();
+                            // do not have to set bucket if part of the path
+                           //s3_set_bucket("atorrez");
+                           //
+
+                           // Not checking return because log has error message and want to keep running 
+                           // even if errors exists on certain objects or files
+                           trash_status = dump_trash(xattr_ptr, gc_path_ptr, file_info_ptr, &post);
+                        }
                      }
-
                   }
                }
             }
          }
       }
    } // endwhile
-   clean_exit(outfd, iscanP, fsP, early_exit);
+   clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
    return(rc);
 }
 
@@ -509,7 +566,7 @@ int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &post->encrypt_info,
                            (char*)&post->gc_path);
 
-   if (scanf_size == EOF || scanf_size < 9)
+   if (scanf_size == EOF || scanf_size < 8)
       return -1;   
    post->obj_type = decode_obj_type(obj_type_code);
    return 0;
@@ -521,37 +578,39 @@ Name: dump_trash
 
  This function deletes the object file as well as gpfs metadata files
 *****************************************************************************/
-int dump_trash(IOBuf * bf, struct marfs_xattr *xattr_ptr, char *gc_path_ptr, 
-               char *path_file_ptr, FILE *outfd, MarFS_XattrPost *post_xattr) 
+int dump_trash(struct marfs_xattr *xattr_ptr, char *gc_path_ptr, 
+               //char *path_file_ptr, file_info *file_info_ptr, MarFS_XattrPost *post_xattr)
+               file_info *file_info_ptr, MarFS_XattrPost *post_xattr)
 {
    int return_value =0;
    //int rv;
-   char time_string[20];
-   struct tm *time_info;
+//   char time_string[20];
+//   struct tm *time_info;
    // GET CORRECT CONSTANT FOR THIS
-   char object_name[1024];
+   char object_name[MARFS_MAX_OBJID_SIZE];
    char *obj_name_ptr;
    int i;
    
-   time_t now = time(0);
-   time_info = localtime(&now);
-   strftime(time_string, sizeof(time_string), "%Y-%m-%d %H:%M:%S", time_info);
+//   time_t now = time(0);
+//   time_info = localtime(&now);
+//   strftime(time_string, sizeof(time_string), "%Y-%m-%d %H:%M:%S", time_info);
 
 
    //If multi type file then delete all objects associated with file
    if (post_xattr->obj_type == OBJ_MULTI) {
       for (i=0; i < post_xattr->chunks; i++ ) {
+         printf("must be multi\n");
          obj_name_ptr = strrchr(xattr_ptr->xattr_value, '.');
          obj_name_ptr++;
          *obj_name_ptr='\0'; 
          sprintf(object_name, "%s%d",xattr_ptr->xattr_value,i);
-         fprintf(outfd, "%s ", time_string);
-         if (delete_object(bf, object_name) == -1) {
-            fprintf(outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+//         fprintf(file_info_ptr->outfd, "%s ", time_string);
+         if (delete_object(object_name,file_info_ptr) == -1) {
+            fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
             return_value = -1;
          }
          else {
-            fprintf(outfd, "deleted object %s\n", object_name);
+            fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
          }
       } 
    }
@@ -559,13 +618,13 @@ int dump_trash(IOBuf * bf, struct marfs_xattr *xattr_ptr, char *gc_path_ptr,
    else {
       printf("must be uni\n");
       strncpy(object_name, xattr_ptr->xattr_value, strlen(xattr_ptr->xattr_value));
-      fprintf(outfd, "%s ", time_string);
-      if (delete_object(bf, object_name)  == -1 ) {
-         fprintf(outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+      //fprintf(file_info_ptr->outfd, "%s ", time_string);
+      if (delete_object(object_name, file_info_ptr)  == -1 ) {
+         fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
          return_value = -1;
       }
       else {
-         fprintf(outfd, "deleted object %s\n", object_name);
+         fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
       }
 
    }
@@ -581,25 +640,28 @@ int dump_trash(IOBuf * bf, struct marfs_xattr *xattr_ptr, char *gc_path_ptr,
 //      fprintf(outfd, "deleted object %s\n", xattr_ptr->xattr_value);
 //   }
 
-   // Delete trash file
-   fprintf(outfd, "%s ", time_string);
-   if ((unlink(gc_path_ptr) == -1)) {
-      fprintf(outfd,"Error removing file %s\\n",gc_path_ptr);
+   // Delete trash files
+   //fprintf(file_info_ptr->outfd, "%s ", time_string);
+   if ((delete_file(gc_path_ptr, file_info_ptr) == -1)) {
+      fprintf(file_info_ptr->outfd,"Error removing file %s\\n",gc_path_ptr);
       return_value = -1;
    }
    else {
-      fprintf(outfd,"deleted file %s\n",gc_path_ptr);
+      fprintf(file_info_ptr->outfd,"deleted file %s\n",gc_path_ptr);
    }
 
+/********
    // Delete trash path file
-   fprintf(outfd, "%s ", time_string);
+   fprintf(file_info_ptr->outfd, "%s ", time_string);
    if ((unlink(path_file_ptr) == -1)) {
-      fprintf(outfd,"Error removing file %s\n",path_file_ptr);
+      fprintf(file_info_ptr->outfd,"Error removing file %s\n",path_file_ptr);
       return_value = -1;
    }
    else {
-      fprintf(outfd,"deleted file %s\n",path_file_ptr);
+      fprintf(file_info_ptr->outfd,"deleted file %s\n",path_file_ptr);
    }
+   return(return_value);
+**********/
    return(return_value);
 }
 
@@ -608,12 +670,149 @@ Name: delete_object
 
  This function deletes the object and returns -1 if error, 0 if successful
 *****************************************************************************/
-int delete_object(IOBuf * buffer, char * object)
+int delete_object(char * object, file_info *file_info_ptr)
 {
    int rv;
-   rv = s3_delete( buffer, object );
+   IOBuf * obj_buffer = aws_iobuf_new();
+
+   print_current_time(file_info_ptr);
+
+   rv = s3_delete( obj_buffer, object );
    if (rv != 0) 
       return -1;
    else 
       return 0;
+}
+
+/***************************************************************************** 
+Name: delete_file 
+
+this function deletes the gpfs files assoiated with an object
+*****************************************************************************/
+int delete_file(char *filename, file_info *file_info_ptr)
+{
+   int return_value = 0;
+   // NEED TO FIGURE OUT SIZE FOR THIS
+   char path_file[4096];
+   sprintf(path_file,"%s.path",filename);
+   print_current_time(file_info_ptr);
+
+   if ((unlink(filename) == -1)) {
+      fprintf(file_info_ptr->outfd,"Error removing file %s\\n",filename);
+      return_value = -1;
+   }
+   else {
+      fprintf(file_info_ptr->outfd,"deleted file %s\n",filename);
+   }
+
+   if ((unlink(path_file) == -1)) {
+      fprintf(file_info_ptr->outfd,"Error removing file %s\\n",path_file);
+      return_value = -1;
+   }
+   else {
+      fprintf(file_info_ptr->outfd,"deleted file %s\n",path_file);
+   }
+   return(return_value);
+}
+
+/***************************************************************************** 
+Name: print_current_file 
+
+This function prints current time to the log entry
+*****************************************************************************/
+
+void print_current_time(file_info *file_info_ptr)
+{
+   char time_string[20];
+   struct tm *time_info;
+   
+   time_t now = time(0);
+   time_info = localtime(&now);
+   strftime(time_string, sizeof(time_string), "%Y-%m-%d %H:%M:%S", time_info);
+   fprintf(file_info_ptr->outfd, "%s ", time_string);
+}
+
+
+/***************************************************************************** 
+Name: process_packed
+
+This function determines which objects and files should be deleted when
+the store type is PACKED.  Packed implies multiple files packed into an 
+object so objects and files cannot be deleted if all the files do not
+exist for a particular object.  The function is passed in a filename that
+contains a list of all PACKED entries found in the scan.
+The format of the files is:
+
+object_name file_name total_file_count
+
+This function sorts by object name then proceeds to count how many files
+exists for that object_name.  If the files counted equal the total file_count,
+the object and files are deleted.  Ohterwise they are left in place and a 
+repack utility will be run on the trash directory.
+*****************************************************************************/
+
+int process_packed(file_info *file_info_ptr)
+{
+   FILE *pipe_cat;
+   FILE *pipe_grep;
+
+   // GET DEFINES FOR THESE ASAP!!!!!!!
+   char obj_buf[1024];
+   char file_buf[1024];
+   char objid[1024];
+   char last_objid[1024];
+   FILE *packedfd;
+   char grep_command[1024];
+   char cat_command[1024];
+   int obj_return;
+   int df_return;
+
+   packedfd = fopen("./test.out", "w");
+
+   //char *cat_command = "cat ./test.txt | sort";
+   int chunk_count;
+   char filename[32];
+   int count = 0;
+
+   sprintf(cat_command, "cat %s | sort", file_info_ptr->packed_filename);
+   
+
+   if (( pipe_cat = popen(cat_command, "r")) == NULL) {
+      fprintf(stderr, "Error with popen\n");
+      return(-1); 
+   }
+   fgets(obj_buf, 1024, pipe_cat);
+   sscanf(obj_buf,"%s %s %d", objid, filename, &chunk_count);
+
+   strcpy(last_objid, objid);
+   count++;
+
+   while(fgets(obj_buf, 1024, pipe_cat)) {
+      sscanf(obj_buf,"%s %s %d", objid, filename, &chunk_count);
+      if (!strcmp(last_objid,objid)) {
+         count++;
+         if (chunk_count == count) {
+            obj_return = delete_object(objid, file_info_ptr); 
+            fprintf(packedfd, "%s\n",objid);
+            sprintf(grep_command,"grep %s %s | awk '{print $2}' ", objid, file_info_ptr->packed_filename);
+            if (( pipe_grep = popen(grep_command, "r")) == NULL) {
+               fprintf(stderr, "Error with popen\n");
+               return(-1); 
+            }
+            while(fgets(file_buf, 1024, pipe_grep)) {
+               df_return = delete_file(file_buf, file_info_ptr);
+            }
+         }
+      }
+      else {
+         strcpy(last_objid, objid);
+         count = 1;
+      }
+
+   }
+   fclose(packedfd);
+   if (df_return == -1 || obj_return == -1)
+      return(-1);
+   else 
+      return(0);
 }
