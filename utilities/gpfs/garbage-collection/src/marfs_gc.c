@@ -175,6 +175,7 @@ int main(int argc, char **argv) {
    file_status->outfd = fopen(outf,"w");
    file_status->packedfd = fopen(packed_log, "w");
    strcpy(file_status->packed_filename, packed_log);
+   file_status->is_packed=0;
 
    // Add filsets to structure so that inode scan can update fileset info
    //ec = read_inodes(rdir,outfd,fileset_id,fileset_stat_ptr,fileset_count,time_threshold_sec);
