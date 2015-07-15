@@ -354,7 +354,8 @@ static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_bu
 /***************************************************************************** 
 Name:  get_xattr_value
 
-This function, given the name of the attribute returns the associated value.
+This function, given the name of the attribute returns the associated index
+for the value.
 
 *****************************************************************************/
 int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt, FILE *outfd) {
@@ -646,11 +647,13 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                *
                */
                else {
+                  //   fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
+
                   //if(debug)
                   //fprintf(outfd,"index = %d   %llu\n", last_struct_index, iattrP->ia_size);
                     
                   //This is a sum of all trash sizes in the trash fileset 
-                  fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
+                  //fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
                   /*
                      We must be in a trash fileset/directory so the next bit of code 
                      determines which fileset/project the trash belongs to so that
@@ -658,12 +661,16 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   */
                   // Get objid xattr
                   if ((trash_index = get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count,outfd)) != -1) {
-                     fprintf(outfd,"trash index %d\n", trash_index);
+                  //   if (debug)
+                  //      fprintf(outfd,"trash index %d\n", trash_index);
                      xattr_ptr = &mar_xattrs[trash_index];
-                     fprintf(outfd,"trash found objid = %s\n", xattr_ptr->xattr_value);
+                    // if (debug)
+                    //    fprintf(outfd,"trash found objid = %s\n", xattr_ptr->xattr_value);
                      
                      //From ojbid xattr, get the ns_name which is actually the fileset name
-                     read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT, repo_name, ns_name);
+                     //read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT, repo_name, ns_name);
+                     //read_count = sscanf(xattr_ptr->xattr_value, MARFS_OBJID_NAMESPACE_RD_FORMAT, repo_name, ns_name);
+                     read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT"/"NON_SLASH, repo_name, ns_name); 
                      // do not lookup fileset name every iteration because chances are it is the same as last
                      // iteration
                      if (last_trash_index != trash_index) {
@@ -754,13 +761,14 @@ This function prints various fileset information to the fs_info file
 void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count, size_t index_start)
 {
    size_t i;
+   int GIB = 1024*1024*1024;
  
    for (i=index_start; i < rec_count+index_start; i++) {
       fprintf(outfd,"[%s]\n", fileset_stat_ptr[i].fileset_name);
       fprintf(outfd,"total_file_count:  %zu\n", fileset_stat_ptr[i].sum_file_count);
-      fprintf(outfd,"total_size:  %zu\n", fileset_stat_ptr[i].sum_size);
+      fprintf(outfd,"total_size:  %zu (%dG)\n", fileset_stat_ptr[i].sum_size, fileset_stat_ptr[i].sum_size/GIB);
       fprintf(outfd,"trash_size:  %zu\n", fileset_stat_ptr[i].sum_trash);
-      fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
+      //fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
    }
 }
 
