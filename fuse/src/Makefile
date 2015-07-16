@@ -1,6 +1,6 @@
 # Lots of testing/support crap in here, for now.
 
-all: marfs_fuse
+all: fuse.std
 
 # non-useless shell
 SHELL = /bin/bash
