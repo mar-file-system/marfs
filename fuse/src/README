@@ -2,22 +2,27 @@ Starting to keep some notes here, for others that want to pick up development.
 
 (1) building
 
+
 The makefile is currently a big "bag of tricks" to help me with debugging
-and running.  there are two environment-vars that are important:
+and running.  There are several environment-vars that are important:
 
-    USE_SYSLOG -- if defined (regardless of value), compile so that all log
-                  messages are sent to syslog.  You have to be root for
-                  this to work.  You also have to have the syslog daemon
-                  running.
+    USE_SYSLOG  -- if defined (regardless of value), compile so that all log
+                   messages are sent to syslog.  You have to be root for
+                   this to work.  You also have to have the syslog daemon
+                   running.
 
-    DEBUG -- if undef, or defined empty, or defined 0, run fuse in the background
-             if undef or defined empty, compile with debugging-flags (else optimize).
-             if defined > 1, debugging output will include low-level curl conversation
-             with the server.
+    DEBUG       -- If defined to non-zero, compilations are done with '-g',
+                   and mounts run in the foreground (no threads).
+                   If defined > 1, then any debugging output will also include
+                   low-level curl conversations with the server.
 
-    TRY_SPROXYD -- If defined, then the hardwired config uses our Scality
-                   sproxyd-based repository.  Otherwise, our config repo is
-                   based on EMC S3.
+    USE_SPROXYD -- If defined, then failure to find ~/.awsAuth is not
+                   considered fatal.  This is something of a kludge, if
+                   you try to use S3 without ~/.awsAuth, your requests can't
+                   succeed.  Some of the hardwired repos support S3.  But maybe
+                   you know that you aren't going to use those.
+
+If you make
 
 If you don't define DEBUG or SYSLOG, there will be no log messages.
 If you don't run fuse in the background, then print statements go nowhere.

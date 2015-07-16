@@ -193,6 +193,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    // the corresponding entry in the MDFS (see Namespace.md_path).
    info->ns = find_namespace_by_path(path);
    if (! info->ns) {
+      LOG(LOG_INFO, "no namespace for path %s\n", path);
       errno = ENOENT;
       return -1;            /* no such file or directory */
    }
