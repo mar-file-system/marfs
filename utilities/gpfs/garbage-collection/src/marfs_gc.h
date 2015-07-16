@@ -88,28 +88,27 @@ OF SUCH DAMAGE.
 // Xattr info
 #define MAX_MARFS_XATTR 3
 #define MARFS_GC_XATTR_CNT 2
+#define DAY_SECONDS 24*60*60
 
 struct marfs_xattr {
   char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
   char xattr_value[GPFS_FCNTL_XATTR_MAX_VALUELEN];
 };
 
-typedef struct fileset_stats {
-      int fileset_id;
+typedef struct fileset_info {
       char fileset_name[MAX_FILESET_NAME_LEN];
-      unsigned long long int sum_size;
-      int sum_blocks;
-      size_t sum_filespace_used;
-      size_t sum_file_count;
-      size_t sum_trash;
-      size_t adjusted_size;
-      size_t small_count;
-      size_t medium_count;
-      size_t large_count;
-} fileset_stat;
+} fileset_info;
+
+typedef struct file_info {
+   char fileset_name[MAX_FILESET_NAME_LEN];
+   FILE *outfd;
+   FILE *packedfd;
+   char packed_filename[32];
+   unsigned int is_packed;
+} file_info;
 
 
-int read_inodes(const char *fnameP, FILE *outfd, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count);
+int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id, fileset_info *fileset_info_ptr, size_t rec_count, unsigned int day_seconds);
 int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
 int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt);
 int get_xattrs(gpfs_iscan_t *iscanP,
@@ -119,12 +118,13 @@ int get_xattrs(gpfs_iscan_t *iscanP,
                  int max_xattr_count,
                  struct marfs_xattr *xattr_ptr, FILE *outfd);
 void print_usage();
-void init_records(fileset_stat *fileset_stat_buf, unsigned int record_count);
-int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count,char *inode_fileset);
+void init_records(fileset_info *fileset_info_buf, unsigned int record_count);
 int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
-void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count);
-int dump_trash(IOBuf *bf, struct marfs_xattr *xattr_ptr, char *gc_path_ptr, char *path_file_ptr, FILE *outfd, MarFS_XattrPost *post_xattr);
-int delete_object(IOBuf * buffer, char * object);
+int dump_trash(struct marfs_xattr *xattr_ptr, char *gc_path_ptr, file_info *file_info_ptr, MarFS_XattrPost *post_xattr);
+int delete_object(char * object, file_info *file_info_ptr);
+int delete_file(char *filename, file_info *file_info_ptr);
+int process_packed(file_info *file_info_ptr);
+void print_current_time(file_info *file_info_ptr);
 
 #endif
 
