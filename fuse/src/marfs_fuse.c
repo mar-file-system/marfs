@@ -945,8 +945,9 @@ int marfs_read (const char*            path,
                         ? total_remain
                         : block_remain);
 
-      // update the URL in the ObjectStream, in our FileHandle
+      // writing another block?
       if (read_size) {
+         // update the URL in the ObjectStream, in our FileHandle
          info->pre.chunk_no = block;
          update_pre(&info->pre);
          strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
@@ -1104,6 +1105,9 @@ int marfs_release (const char*            path,
           && (info->post.obj_type == OBJ_MULTI)) {
 
          TRY0(write_chunkinfo, fh->md_fd, info, os->written - fh->write_status.sys_writes);
+
+         // update count of objects, in POST
+         info->post.chunks = info->pre.chunk_no +1;
 
          // reset current chunk-number, so xattrs will represent obj 0
          info->pre.chunk_no = 0;

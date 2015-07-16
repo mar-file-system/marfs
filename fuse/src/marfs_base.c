@@ -1351,6 +1351,10 @@ int load_config(const char* config_fname) {
 
 
    // "root" is a special path
+   //
+   // NOTE: find_namespace_by_path() will only return this namespace if its
+   //       <path> matches our <mnt_suffix> exactly.  That's because our
+   //       mnt_suffix is (necessarily) a suffix of all paths.
    ns_dummy = (MarFS_Namespace) {
       .name           = "root",
       .mnt_suffix     = "/",
@@ -1450,17 +1454,26 @@ MarFS_Namespace* find_namespace_by_name(const char* name) {
    }
    return NULL;
 }
+// NOTE: Our approach here requires that the "root" namespace is always
+//    last, because it will match any path.
 MarFS_Namespace* find_namespace_by_path(const char* path) {
-   size_t path_len = strlen(path);
-
    int i;
    for (i=0; i<_ns_count; ++i) {
       MarFS_Namespace* ns = _ns[i];
-      size_t           max_len = ((path_len > ns->mnt_suffix_len)
-                                  ? path_len
-                                  : ns->mnt_suffix_len);
-      if (! strncmp(ns->mnt_suffix, path, max_len))
+
+      // does <ns> path match the leading part of <path>?
+      if (! strncmp(ns->mnt_suffix, path, ns->mnt_suffix_len)) {
+
+         // NOTE: "root" namespace might be "/", which could match anything.
+         //      Make sure root is an exact match.
+         if (ns->is_root) {
+            if (! strncmp(path, ns->mnt_suffix, strlen(path)))
+               return ns;
+            else
+               return NULL;
+         }
          return ns;
+      }
    }
    return NULL;
 }

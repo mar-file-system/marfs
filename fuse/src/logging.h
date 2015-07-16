@@ -28,13 +28,13 @@ extern "C" {
 #  define LOG_PREFIX  "marfs_fuse"
 #endif
 
-
 #define xFMT  " [%s:%4d]%*s %-21s | "
 
 
 #ifdef USE_SYSLOG
 // calling syslog() as a regular user on rrz seems to be an expensive no-op
-#  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)
+// #  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)
+#  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PID, LOG_USER)
 
 #  define LOG(PRIO, FMT, ...)                                           \
    syslog((PRIO), xFMT FMT, __FILE__, __LINE__,                         \
