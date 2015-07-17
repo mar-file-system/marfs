@@ -1945,7 +1945,7 @@ int main(int argc, char* argv[])
    //       here.
    aws_init();
    aws_reuse_connections(1);
-#if (DEBUG > 1)
+#if (DEBUG >= 1)
    aws_set_debug(1);
 #endif
 
