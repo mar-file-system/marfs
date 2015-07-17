@@ -90,6 +90,8 @@ OF SUCH DAMAGE.
 #define MARFS_GC_XATTR_CNT 2
 #define DAY_SECONDS 24*60*60
 
+#define MAX_PACKED_NAME_SIZE 1024
+
 struct marfs_xattr {
   char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
   char xattr_value[GPFS_FCNTL_XATTR_MAX_VALUELEN];
