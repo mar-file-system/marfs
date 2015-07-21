@@ -722,7 +722,7 @@ int marfs_opendir (const char*            path,
    // Appropriate  opendir call filling in fuse structure
    ///   mode_t mode = ~(fuse_get_context()->umask); /* ??? */
    ///   TRY_GE0(opendir, info.md_path, ffi->flags, mode);
-   TRY_GE0(opendir, info.md_path);
+   TRY_GT0(opendir, info.md_path);
    ffi->fh = rc_ssize;          /* open() successfully returned a dirp */
 
    POP_USER();

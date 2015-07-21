@@ -182,6 +182,18 @@ typedef enum {
       }                                                                 \
    } while (0)
 
+// e.g. opendir() returns a pointer or NULL
+#define TRY_GT0(FUNCTION, ...)                                          \
+   do {                                                                 \
+      /* LOG(LOG_INFO, "TRY_GT0(%s)\n", #FUNCTION); */                  \
+      rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
+      if (rc_ssize <= 0) {                                               \
+         LOG(LOG_INFO, "ERR GT0(%s) returning (%d) '%s'\n\n",           \
+             #FUNCTION, errno, strerror(errno));                        \
+         RETURN(-errno); /* negated for FUSE */                         \
+      }                                                                 \
+   } while (0)
+
 
 
 

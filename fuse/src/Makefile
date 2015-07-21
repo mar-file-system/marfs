@@ -103,6 +103,7 @@ LIBS    += $(shell pkg-config fuse --libs-only-l) -lm
 ### LIBAWS4C = /users/jti/projects/ecs_hobo/tools/aws4c
 ### LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
 ### LIBAWS4C := `readlink -f ~/projects/git/aws4c`
+LIBAWS4C = `readlink -f ~jti/projects/git/aws4c`
 CFLAGS  += -I$(LIBAWS4C)
 LDFLAGS += -L$(LIBAWS4C)
 LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
@@ -191,7 +192,7 @@ fuse: fuse.std
 
 # --- specialized builds
 fuse.std: pre_req
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=1
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2
 
 fuse.lean: pre_req
 	@ $(MAKE) marfs_fuse
