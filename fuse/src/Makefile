@@ -1,6 +1,11 @@
 # Lots of testing/support crap in here, for now.
+#
+# 'make'           rebuild the fuse client
+# 'make remount'   unmount [if needed],  mount
+# 'make redo'      unmount [if needed], clean, build, WIPE-SYSLOG!, mount
 
-all: fuse.std
+all: fuse
+
 
 # non-useless shell
 SHELL = /bin/bash
@@ -8,7 +13,12 @@ SHELL = /bin/bash
 OBJS = logging.o marfs_base.o common.o object_stream.o
 SRCS = logging.c marfs_base.c common.c object_stream.c
 H    = logging.h marfs_base.h common.h object_stream.h
-LOG  = fuse.log
+
+
+# pipe-to-logger works, but without -d, all fuse stdout/stderr is lost
+# LOG  = 2>&1 | logger
+LOG  = > fuse.log 2>&1
+
 
 
 
@@ -34,6 +44,7 @@ endif
 
 
 # environment-variable DEBUG controls compile-flags:
+# NOTE: -DDEBUG w/value >= 1 turns on curl-conversation logging
 #
 # DEBUG = undef/null/0  --    -O3
 # DEBUG = 1             --    -O3 -DEBUG=1
@@ -42,7 +53,7 @@ endif
 # environment-var DEBUG also controls command-line flags for fuse launch.
 #
 # DEBUG = undef/null/0  --    
-# DEBUG = 1             --    -d
+# DEBUG = 1             --    
 # DEBUG = <n>           --    -d -f  [-f means foreground, without threads]
 #
 FUSE_FLAGS += -o allow_other
@@ -54,7 +65,6 @@ ifdef DEBUG
 	else ifeq ($(DEBUG),1)
 		CFLAGS += -O3
 		DEFS   += DEBUG=$(DEBUG)
-		FUSE_FLAGS += -d
 	else
 		CFLAGS += -g
 		DEFS   += DEBUG=$(DEBUG)
@@ -124,6 +134,38 @@ fromwork:
 
 
 # ...........................................................................
+# basics
+# ...........................................................................
+
+%: %.o
+	gcc -o $@ $< $(LDFLAGS) $(LIBS)
+
+%.o: %.c %.h
+	gcc -c $(CFLAGS) -o $@ $<
+
+
+# Seriously?  Make can't figure this out?
+% : %.c
+	@ $(MAKE) $*.o
+	@ $(MAKE) $*
+
+
+# for every '*.c' file, if there is an executable file without the '.c',
+# then delete that executable file.
+# Doesn't work.  Why not?
+cleanx:
+	ls *.c | sed -e 's/\.c$$//' | xargs -r -L 1 bash -c '[[ -x $$0 ]] && rm $$0'
+
+clean: # cleanx
+	$(RM) *.{o,i}
+	$(RM) *~
+	$(RM) marfs_fuse
+	$(RM) core.*
+
+
+
+
+# ...........................................................................
 # fuse
 # ...........................................................................
 
@@ -160,12 +202,13 @@ fuse.dbg: pre_req
 #	@ $(MV) marfs_fuse marfs_fuse.dbg
 
 
-# --- "redo" means: unmount, rebuild, clean up, mount
+
+# --- "redo" means: unmount, make clean, rebuild, clean up, mount
 
 redo: redo.std
 
 # compile -O3, verbose logging
-redo.std:  umnt.std  clean reset_syslog fuse.std  mnt.std
+redo.std: umnt.std  clean reset_syslog fuse.std  mnt.std
 
 # compile -O3, no logging
 redo.lean: umnt.lean clean              fuse.lean mnt.lean
@@ -174,35 +217,11 @@ redo.lean: umnt.lean clean              fuse.lean mnt.lean
 redo.dbg:  umnt.dbg  clean reset_syslog fuse.dbg  mnt.dbg
 
 
-# ...........................................................................
-# basics
-# ...........................................................................
-
-%: %.o
-	gcc -o $@ $< $(LDFLAGS) $(LIBS)
-
-%.o: %.c %.h
-	gcc -c $(CFLAGS) -o $@ $<
 
 
-# Seriously?  Make can't figure this out?
-% : %.c
-	@ $(MAKE) $*.o
-	@ $(MAKE) $*
-
-
-# for every '*.c' file, if there is an executable file without the '.c',
-# then delete that executable file.
-# Doesn't work.  Why not?
-cleanx:
-	ls *.c | sed -e 's/\.c$$//' | xargs -r -L 1 bash -c '[[ -x $$0 ]] && rm $$0'
-
-clean: # cleanx
-	$(RM) *.{o,i}
-	$(RM) *~
-	$(RM) marfs_fuse
-	$(RM) core.*
-
+# --- easy way to restart fuse, if it crashes.
+remount: umnt
+	@ make _mnt
 
 
 # ...........................................................................
@@ -230,10 +249,11 @@ clean: # cleanx
 #    (echo "waiting for fuse to start"; sleep 1) \
 # done
 
+# NOTE: Need to 'eval' because $(LOG) is now "> file 2>&1" or "2>&1 | logger"
 _mnt:
 	@ echo
 	@ echo "mounting at $(MNT)"
-	( ./marfs_fuse $(FUSE_FLAGS) $(MNT) > $(LOG) 2>&1 & echo $$! > $(PID) )
+	./marfs_fuse $(FUSE_FLAGS) $(MNT) $(LOG) & echo $$! > $(PID)
 	@ echo "PID: " `cat $(PID)`
 	@ echo "sleeping to give background fuse a chance to start"
 	sleep 1
@@ -245,17 +265,16 @@ test.mnt:
 
 
 
-
 mnt: mnt.std
 
 mnt.std: fuse.std umnt.std
-	@ $(MAKE) _mnt
+	@ $(MAKE) _mnt DEBUG=$(DEBUG)
 
 mnt.lean: fuse.lean umnt.lean
-	@ $(MAKE) _mnt LOG=/dev/null
+	@ $(MAKE) _mnt LOG="> /dev/null 2>&1"
 
 mnt.dbg: fuse.dbg umnt.dbg
-	@ $(MAKE) _mnt MNT=$(MNT)_dbg DEBUG=2
+	@ $(MAKE) _mnt MNT=$(MNT)_dbg DEBUG=2 LOG="> fuse.log 2>&1"
 
 
 
