@@ -1168,7 +1168,8 @@ int load_config(const char* config_fname) {
       .latency_ms   = (10 * 1000) };
    push_repo(&r_dummy);
 
-   // tiny, for debugging
+   // tiny, so detailed debugging (where we watch every char go over the line)
+   //       won't be overwhelming at the scale needed for Multi.
    r_dummy = (MarFS_Repo) {
       .name         = "sproxyd_2k",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.21:81",
@@ -1180,7 +1181,7 @@ int load_config(const char* config_fname) {
    };
    push_repo(&r_dummy);
 
-   // For Alfred, on his own server
+   // For Alfred, testing GC and quota utilities
    r_dummy = (MarFS_Repo) {
       .name         = "sproxyd_64M",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.22:81",
@@ -1191,7 +1192,7 @@ int load_config(const char* config_fname) {
       .latency_ms   = (10 * 1000) };
    push_repo(&r_dummy);
 
-   // For Brett, small enough to make it easy to create MULTIs
+   // For Brett, unit-testing, small enough to make it easy to create MULTIs
    r_dummy = (MarFS_Repo) {
       .name         = "sproxyd_1M",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.22:81",
@@ -1201,6 +1202,17 @@ int load_config(const char* config_fname) {
       .auth         = AUTH_S3_AWS_MASTER,
       .latency_ms   = (10 * 1000)
    };
+   push_repo(&r_dummy);
+
+   // free-for-all
+   r_dummy = (MarFS_Repo) {
+      .name         = "sproxyd_pub",  // repo is sproxyd: this must match fastcgi-path
+      .host         = "10.135.0.28:81",
+      .access_proto = PROTO_SPROXYD,
+      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
+      .flags        = (REPO_ONLINE),
+      .auth         = AUTH_S3_AWS_MASTER,
+      .latency_ms   = (10 * 1000) };
    push_repo(&r_dummy);
 
    // S3 on EMC ECS
@@ -1237,8 +1249,9 @@ int load_config(const char* config_fname) {
 
    // jti testing
    ns_dummy = (MarFS_Namespace) {
-      .name           = "test00",
-      .mnt_suffix     = "/test00",  // "<mnt_top>/test00" comes here
+      .name           = "jti",
+      .mnt_suffix     = "/jti",  // "<mnt_top>/test00" comes here
+
       .md_path        = "/gpfs/marfs-gpfs/fuse/test00/mdfs",
       .trash_path     = "/gpfs/marfs-gpfs/fuse/test00/trash", // NOT NEC IN THE SAME FILESET!
       .fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo", /* a file */
@@ -1262,6 +1275,123 @@ int load_config(const char* config_fname) {
    };
    // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
+
+
+   // Alfred
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "atorrez",
+      .mnt_suffix     = "/atorrez",  // "<mnt_top>/test00" comes here
+
+      .md_path        = "/gpfs/marfs-gpfs/project_a/mdfs",
+      .trash_path     = "/gpfs/marfs-gpfs/project_a/trash", // NOT NEC IN THE SAME FILESET!
+      .fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo", /* a file */
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .compression = COMPRESS_NONE,
+      .correction  = CORRECT_NONE,
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space_units = (1024 * 1024), /* MB */
+      .quota_space = -1,                  /* no limit */
+
+      .quota_space_units = 1,
+      .quota_names = -1,        /* no limit */
+
+      .is_root = 0,
+   };
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_64M"));
+
+
+   // Brett, unit 
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "brettk",
+      .mnt_suffix     = "/brettk",  // "<mnt_top>/test00" comes here
+
+      .md_path        = "/gpfs/marfs-gpfs/testing/mdfs",
+      .trash_path     = "/gpfs/marfs-gpfs/testing/trash", // NOT NEC IN THE SAME FILESET!
+      .fsinfo_path    = "/gpfs/marfs-gpfs/testing/fsinfo", /* a file */
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .compression = COMPRESS_NONE,
+      .correction  = CORRECT_NONE,
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space_units = (1024 * 1024), /* MB */
+      .quota_space = -1,          /* no limit */
+
+      .quota_space_units = 1,
+      .quota_names = -1,             /* no limit */
+
+      .is_root = 0,
+   };
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M"));
+
+
+   // free-for-all
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "test",
+      .mnt_suffix     = "/test",  // "<mnt_top>/test" comes here
+
+      .md_path        = "/gpfs/fs1/fuse_community/mdfs",
+      .trash_path     = "/gpfs/fs1/fuse_community/trash", // NOT NEC IN THE SAME FILESET!
+      .fsinfo_path    = "/gpfs/fs1/fuse_community/fsinfo", /* a file */
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .compression = COMPRESS_NONE,
+      .correction  = CORRECT_NONE,
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space_units = (1024 * 1024), /* MB */
+      .quota_space = -1,          /* no limit */
+
+      .quota_space_units = 1,
+      .quota_names = -1,             /* no limit */
+
+      .is_root = 0,
+   };
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_pub"));
+
+
+   // EMC ECS install (with S3)
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "s3",
+      .mnt_suffix     = "/s3",  // "<mnt_top>/s3" comes here
+
+      .md_path        = "/gpfs/fs2/fuse_s3/mdfs",
+      .trash_path     = "/gpfs/fs2/fuse_s3/trash", // NOT NEC IN THE SAME FILESET!
+      .fsinfo_path    = "/gpfs/fs2/fuse_s3/fsinfo", /* a file */
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .compression = COMPRESS_NONE,
+      .correction  = CORRECT_NONE,
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space_units = (1024 * 1024), /* MB */
+      .quota_space = 1024,          /* 1024 MB of data */
+
+      .quota_space_units = 1,
+      .quota_names = 32,             /* 32 names */
+
+      .is_root = 0,
+   };
+   // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
+   push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
 
 
    // jti testing on machine without GPFS
@@ -1294,60 +1424,7 @@ int load_config(const char* config_fname) {
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
 
 
-   // Alfred
-   ns_dummy = (MarFS_Namespace) {
-      .name           = "atorrez",
-      .mnt_suffix     = "/atorrez",  // "<mnt_top>/test00" comes here
-      .md_path        = "/gpfs/marfs-gpfs/project_a/mdfs",
-      .trash_path     = "/gpfs/marfs-gpfs/project_a/trash", // NOT NEC IN THE SAME FILESET!
-      .fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo", /* a file */
 
-      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
-
-      .dirty_pack_percent   =  0,
-      .dirty_pack_threshold = 75,
-
-      .quota_space_units = (1024 * 1024), /* MB */
-      .quota_space = -1,                  /* no limit */
-
-      .quota_space_units = 1,
-      .quota_names = -1,        /* no limit */
-
-      .is_root = 0,
-   };
-   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_64M"));
-
-
-   // Brett
-   ns_dummy = (MarFS_Namespace) {
-      .name           = "brettk",
-      .mnt_suffix     = "/brettk",  // "<mnt_top>/test00" comes here
-      .md_path        = "/gpfs/marfs-gpfs/testing/mdfs",
-      .trash_path     = "/gpfs/marfs-gpfs/testing/trash", // NOT NEC IN THE SAME FILESET!
-      .fsinfo_path    = "/gpfs/marfs-gpfs/testing/fsinfo", /* a file */
-
-      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
-
-      .dirty_pack_percent   =  0,
-      .dirty_pack_threshold = 75,
-
-      .quota_space_units = (1024 * 1024), /* MB */
-      .quota_space = -1,          /* no limit */
-
-      .quota_space_units = 1,
-      .quota_names = -1,             /* no limit */
-
-      .is_root = 0,
-   };
-   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M"));
 
 
    // "root" is a special path

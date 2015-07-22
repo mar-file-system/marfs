@@ -1,6 +1,11 @@
 # Lots of testing/support crap in here, for now.
+#
+# 'make'           rebuild the fuse client
+# 'make remount'   unmount [if needed],  mount
+# 'make redo'      unmount [if needed], clean, build, WIPE-SYSLOG!, mount
 
-all: fuse.std
+all: fuse
+
 
 # non-useless shell
 SHELL = /bin/bash
@@ -8,7 +13,12 @@ SHELL = /bin/bash
 OBJS = logging.o marfs_base.o common.o object_stream.o
 SRCS = logging.c marfs_base.c common.c object_stream.c
 H    = logging.h marfs_base.h common.h object_stream.h
-LOG  = fuse.log
+
+
+# pipe-to-logger works, but without -d, all fuse stdout/stderr is lost
+# LOG  = 2>&1 | logger
+LOG  = > fuse.log 2>&1
+
 
 
 
@@ -25,34 +35,36 @@ TRASH  = $(GPFS)/test00/trash
 PID = marfs_fuse.pid
 
 # LIBAWS4C := ~/projects/git/aws4c
-LIBAWS4C := $(shell readlink -f ~/projects/ecs_hobo/tools/aws4c)
-
+ifndef LIBAWS4C
+	LIBAWS4C := $(shell readlink -f ~/projects/ecs_hobo/tools/aws4c)
+endif
 
 # # passed in the environment by a recursive make.  (See e.g. 'fuse.dbg')
 # DEFS := $(RECURSIVE_DEFS)
 
 
-# if you set the environment variable DEBUG, we'll add '-g', and define
-# DEBUG for the pre-processor.  Use DEBUG=0 to turn off diagnostic output,
-# but still compile with -g.  For optimization, you must undef DEBUG, or
-# define it empty.
+# environment-variable DEBUG controls compile-flags:
+# NOTE: -DDEBUG w/value >= 1 turns on curl-conversation logging
+#
+# DEBUG = undef/null/0  --    -O3
+# DEBUG = 1             --    -O3 -DEBUG=1
+# DEBUG = <n>           --    -g  -DEBUG=<n>
 #
 # environment-var DEBUG also controls command-line flags for fuse launch.
-# DEBUG = 0 (or undef, or empty)
-#   run as standard background task, w/out debug flags
-# DEBUG >= 1
-#   run in foreground, with debug flags  (NOTE: foreground is single-threaded)
 #
-# Summary:
-#    DEBUG undef/null/0  --   -O3
-#    DEBUG <n>           --   -g -DDEBUG=<n> / launch w/ '-d -f'
-
+# DEBUG = undef/null/0  --    
+# DEBUG = 1             --    
+# DEBUG = <n>           --    -d -f  [-f means foreground, without threads]
+#
 FUSE_FLAGS += -o allow_other
 ifdef DEBUG
 	ifeq ($(DEBUG),)
 		CFLAGS += -O3
 	else ifeq ($(DEBUG),0)
 		CFLAGS += -O3
+	else ifeq ($(DEBUG),1)
+		CFLAGS += -O3
+		DEFS   += DEBUG=$(DEBUG)
 	else
 		CFLAGS += -g
 		DEFS   += DEBUG=$(DEBUG)
@@ -61,6 +73,7 @@ ifdef DEBUG
 else
 	CFLAGS += -O3
 endif
+
 
 # currently, this just tells fuse that it's okay if ~/.awsAuth doesn't exist
 ifdef USE_SPROXYD
@@ -90,6 +103,7 @@ LIBS    += $(shell pkg-config fuse --libs-only-l) -lm
 ### LIBAWS4C = /users/jti/projects/ecs_hobo/tools/aws4c
 ### LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
 ### LIBAWS4C := `readlink -f ~/projects/git/aws4c`
+LIBAWS4C = `readlink -f ~jti/projects/git/aws4c`
 CFLAGS  += -I$(LIBAWS4C)
 LDFLAGS += -L$(LIBAWS4C)
 LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
@@ -118,61 +132,6 @@ fromwork:
 	rsync -Pvaurl root@$(WORK):/root/projects/ecs_hobo/tools/aws4c/ ~/projects/ecs_hobo/tools/aws4c
 	rsync -Pvaurl root@$(WORK):/root/projects/ecs_hobo/tools/curl_tools/ ~/projects/ecs_hobo/tools/curl_tools
 
-
-
-# ...........................................................................
-# fuse
-# ...........................................................................
-
-# None of this crap works, to do a simple effing test for existence of user's $LIBAWS4C
-# in a way that would let me print a simple effing message.  Makefiles suck.
-#
-# # make sure that either the default value for LIBAWS4C is valid, or user
-# # has overridden it with something valid.
-# # This approach doesn't work.  Why not?
-# check_libaws4c:
-# 	@ [[ -d $(LIBAWS4C) ]] || $(error "can't find $(LIBAWS4C).  Consider 'make ... LIBAWS4C=...'")
-# 
-# # tells make where to look for libaws4c*
-# vpath libaws4c% $(LIBAWS4C)
-# 
-# # the "-laws4c" is Makefile crap to go look for the library.
-# # If not found, you should 'make ... LIBAWS4C=<libaws4c_install_dir>"
-# marfs_fuse: libaws4c.a $(H) marfs_fuse.c marfs_fuse.h $(OBJS)
-# 	gcc $(CFLAGS) -o $@ $(LDFLAGS) $(OBJS) marfs_fuse.c $(LIBS)
-
-marfs_fuse: $(H) marfs_fuse.c marfs_fuse.h $(OBJS)
-	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose marfs_fuse.c $(OBJS) $(LIBS)
-	gcc $(CFLAGS) -o $@ $(LDFLAGS) marfs_fuse.c $(OBJS) $(LIBS)
-
-
-fuse: fuse.std
-
-# --- specialized builds
-fuse.std:
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1
-
-fuse.lean:
-	@ $(MAKE) marfs_fuse
-
-fuse.dbg:
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=2 \
-                        LOG_PREFIX=marfs_fuse.dbg
-#	@ $(MV) marfs_fuse marfs_fuse.dbg
-
-
-# --- "install" means: unmount, rebuild, clean up, mount
-
-install: install.std
-
-# compile -O3, verbose logging
-install.std:  umnt.std  clean reset_syslog fuse.std  mnt.std
-
-# compile -O3, no logging
-install.lean: umnt.lean clean              fuse.lean mnt.lean
-
-# This makes a different mount-point (at /marfs_dbg), with verbose logging to syslog
-install.dbg:  umnt.dbg  clean reset_syslog fuse.dbg  mnt.dbg
 
 
 # ...........................................................................
@@ -206,6 +165,66 @@ clean: # cleanx
 
 
 
+
+# ...........................................................................
+# fuse
+# ...........................................................................
+
+# Instead of generating cryptic error-messages from gcc, we can inform the
+# user about certain basics they might be missing.
+#
+# (a) Make sure that either the default value for LIBAWS4C is valid, or
+#     user has overridden it with something valid.
+pre_req:
+ifeq ($(LIBAWS4C),)
+	$(error "couldn't find $(LIBAWS4C).  Consider 'make ... LIBAWS4C=<DIR>'")
+endif
+
+
+
+# Don't make this directly; make one of the 'fuse.foo' targets below.
+marfs_fuse: $(H) marfs_fuse.c marfs_fuse.h $(OBJS)
+	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose marfs_fuse.c $(OBJS) $(LIBS)
+	gcc $(CFLAGS) -o $@ $(LDFLAGS) marfs_fuse.c $(OBJS) $(LIBS)
+
+
+fuse: fuse.std
+
+# --- specialized builds
+fuse.std: pre_req
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2
+
+fuse.lean: pre_req
+	@ $(MAKE) marfs_fuse
+
+fuse.dbg: pre_req
+	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg
+	@ $(MAKE) marfs_fuse DEBUG=2 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg
+#	@ $(MV) marfs_fuse marfs_fuse.dbg
+
+
+
+# --- "redo" means: unmount, make clean, rebuild, clean up, mount
+
+redo: redo.std
+
+# compile -O3, verbose logging
+redo.std: umnt.std  clean reset_syslog fuse.std  mnt.std
+
+# compile -O3, no logging
+redo.lean: umnt.lean clean              fuse.lean mnt.lean
+
+# This makes a different mount-point (at /marfs_dbg), with verbose logging to syslog
+redo.dbg:  umnt.dbg  clean reset_syslog fuse.dbg  mnt.dbg
+
+
+
+
+# --- easy way to restart fuse, if it crashes.
+remount: umnt
+	@ make _mnt
+
+
 # ...........................................................................
 # mount
 # ...........................................................................
@@ -231,10 +250,11 @@ clean: # cleanx
 #    (echo "waiting for fuse to start"; sleep 1) \
 # done
 
+# NOTE: Need to 'eval' because $(LOG) is now "> file 2>&1" or "2>&1 | logger"
 _mnt:
 	@ echo
 	@ echo "mounting at $(MNT)"
-	( ./marfs_fuse $(FUSE_FLAGS) $(MNT) > $(LOG) 2>&1 & echo $$! > $(PID) )
+	./marfs_fuse $(FUSE_FLAGS) $(MNT) $(LOG) & echo $$! > $(PID)
 	@ echo "PID: " `cat $(PID)`
 	@ echo "sleeping to give background fuse a chance to start"
 	sleep 1
@@ -246,17 +266,16 @@ test.mnt:
 
 
 
-
 mnt: mnt.std
 
 mnt.std: fuse.std umnt.std
-	@ $(MAKE) _mnt LOG=/dev/null
+	@ $(MAKE) _mnt DEBUG=$(DEBUG)
 
 mnt.lean: fuse.lean umnt.lean
-	@ $(MAKE) _mnt LOG=/dev/null
+	@ $(MAKE) _mnt LOG="> /dev/null 2>&1"
 
 mnt.dbg: fuse.dbg umnt.dbg
-	@ $(MAKE) _mnt MNT=$(MNT)_dbg
+	@ $(MAKE) _mnt MNT=$(MNT)_dbg DEBUG=2 LOG="> fuse.log 2>&1"
 
 
 
@@ -349,11 +368,6 @@ reset_syslog:
 # 	$(MAKE) mount
 # 	unit $(MNT)
 # 	$(MAKE) umount
-
-# after edits: unmount, rebuild (if needed), wipe MDFS, mount, run test, show the log
-redo: umnt fuse reset_md reset_obj mnt
-
-redo2: umnt fuse reset_syslog reset_md reset_obj mnt
 
 
 

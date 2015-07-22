@@ -301,15 +301,18 @@ int stream_wait(ObjectStream* os) {
 
 int s3_op_internal(ObjectStream* os) {
    IOBuf*        b  = &os->iob;
+   AWSContext*   ctx = b->context;
 
    // run the GET or PUT
    int is_get = (os->flags & OSF_READING);
    if (is_get) {
-      LOG(LOG_INFO, "GET %lx, '%s'\n", (size_t)b, os->url);
+      LOG(LOG_INFO, "GET  '%s/%s/%s'\n",
+          (ctx ? ctx->S3Host : "*"),  (ctx ? ctx->Bucket : "*"), os->url);
       AWS4C_CHECK1( s3_get(b, os->url) ); /* create empty object with user metadata */
    }
    else {
-      LOG(LOG_INFO, "PUT %lx, '%s'\n", (size_t)b, os->url);
+      LOG(LOG_INFO, "PUT  '%s/%s/%s'\n",
+          (ctx ? ctx->S3Host : "*"),  (ctx ? ctx->Bucket : "*"), os->url);
       AWS4C_CHECK1( s3_put(b, os->url) ); /* create empty object with user metadata */
    }
 
