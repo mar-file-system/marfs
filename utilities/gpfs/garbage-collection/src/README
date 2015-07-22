@@ -1,0 +1,21 @@
+This utility is used to perform garabage collection on a targeted namespace/fileset.  It uses the GPFS Programming Interface to perform an inode scan on the targeted gpfs file sysystem.
+
+Install:
+make
+
+Usage: marfs_gc -d gpfs_path -o ouput_log_file -f fileset name [-p packed_tmp_file] [-t time_threshold-days] [-h] 
+
+-d gpfs_path  
+mount path for the targeted gpfs file system
+
+-o output_log_file
+path and name of the file delete log
+
+-f fileset_name
+namespace/fileset name to perform trash removal
+
+- t time_threshold in days 
+time threshold to specify "older than" days for file removal.  e.g. -d 5 delete files older than 5 days 
+ 
+-h
+provides script usage information
