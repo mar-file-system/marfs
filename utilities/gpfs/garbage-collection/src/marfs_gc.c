@@ -751,7 +751,6 @@ int process_packed(file_info *file_info_ptr)
       return(-1); 
    }
    // Get the first line and sscanf into object_name, filenames, and chunk cnt
-   //fgets(obj_buf, 1024, pipe_cat);
    fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat);
    sscanf(obj_buf,"%s %s %d", objid, filename, &chunk_count);
 
@@ -763,7 +762,6 @@ int process_packed(file_info *file_info_ptr)
    count++;
 
    //In a loop get all lines from the file
-   //while(fgets(obj_buf, 1024, pipe_cat)) {
    while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
       sscanf(obj_buf,"%s %s %d", objid, filename, &chunk_count);
       // if objid the same - keep counting files
