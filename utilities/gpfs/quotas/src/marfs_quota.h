@@ -102,6 +102,12 @@ struct histogram {
   size_t large_count;
 };
 
+struct store_type {
+  size_t uni_count;
+  size_t multi_count;
+  size_t packed_count;
+};
+
 struct marfs_xattr {
 // Getting the following array sizez from gpfs_fcntl.h
   char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
@@ -122,6 +128,7 @@ typedef struct fileset_stats {
       size_t small_count;
       size_t medium_count;
       size_t large_count;
+      struct store_type obj_type;
 } fileset_stat;
 
 
@@ -140,6 +147,6 @@ int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offs
 static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_buffer, int index);
 int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
 void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count, size_t index_start);
-
+void update_type(MarFS_XattrPost * xattr_post, fileset_stat * fileset_stat_ptr, int index);
 #endif
 
