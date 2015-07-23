@@ -628,6 +628,10 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   continue;             
                }
 
+               // Determine obj_type and update counts
+               update_type(&post, fileset_stat_ptr, last_struct_index);
+
+
                if (debug) 
                   printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
                fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
@@ -719,7 +723,6 @@ int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offs
    }
 }   
 
-
 /***************************************************************************** 
 //Name: str_2_post 
 Name: parse_post_xattr
@@ -748,6 +751,7 @@ int parse_post_xattr (MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
    if (scanf_size == EOF || scanf_size < 9)
       return -1;                
+   post->obj_type = decode_obj_type(obj_type_code);
    return 0;
 }
 
@@ -766,9 +770,34 @@ void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count,
    for (i=index_start; i < rec_count+index_start; i++) {
       fprintf(outfd,"[%s]\n", fileset_stat_ptr[i].fileset_name);
       fprintf(outfd,"total_file_count:  %zu\n", fileset_stat_ptr[i].sum_file_count);
-      fprintf(outfd,"total_size:  %zu (%dG)\n", fileset_stat_ptr[i].sum_size, fileset_stat_ptr[i].sum_size/GIB);
-      fprintf(outfd,"trash_size:  %zu\n", fileset_stat_ptr[i].sum_trash);
+      fprintf(outfd,"total_size:   %zu (%dG)\n", fileset_stat_ptr[i].sum_size, fileset_stat_ptr[i].sum_size/GIB);
+      fprintf(outfd,"trash_size:   %zu\n", fileset_stat_ptr[i].sum_trash);
+      fprintf(outfd,"uni count:    %zu\n", fileset_stat_ptr[i].obj_type.uni_count);
+      fprintf(outfd,"multi count:  %zu\n", fileset_stat_ptr[i].obj_type.multi_count);
+      fprintf(outfd,"packed count: %zu\n", fileset_stat_ptr[i].obj_type.packed_count);
       //fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
+   }
+}
+/****************************************************************************** 
+ * Name: update_type 
+ *
+ * This function keeps a running count of the object types for final log 
+ * reporting 
+ * ***************************************************************************/
+void update_type(MarFS_XattrPost * xattr_post, fileset_stat * fileset_stat_ptr, int index)
+{
+   switch(xattr_post->obj_type) {
+      case OBJ_UNI :
+         fileset_stat_ptr[index].obj_type.uni_count +=1;
+         break;
+      case OBJ_MULTI :
+         fileset_stat_ptr[index].obj_type.multi_count +=1;
+         break;
+      case OBJ_PACKED :
+         fileset_stat_ptr[index].obj_type.packed_count +=1;
+         break;
+      default:
+         printf("No type found\n");
    }
 }
 
