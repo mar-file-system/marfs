@@ -6,7 +6,8 @@ all: marfs_quota
 PARSE_OPT = -DDATAPARSE
 #For data parser
 
-CFLAGS += -Wall -lgpfs
+CFLAGS += -g -lgpfs -I /root/atorrez-test/aws4c-latest -l curl ../../../../fuse/src/marfs_base.o -lm
+#CFLAGS += -lgpfs
 PARSER_DIR = /root/atorrez-test/current
 LDFLAGS += -I../../../../fuse/src -I$(PARSER_DIR) -I$(PARSER_DIR)/parse-inc 
 OBJS = $(PARSER_DIR)/confpars.o $(PARSER_DIR)/parsedata.o $(PARSER_DIR)/path-switch.o 
