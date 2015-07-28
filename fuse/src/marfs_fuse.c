@@ -73,6 +73,17 @@ OF SUCH DAMAGE.
 #include "common.h"
 #include "marfs_fuse.h"
 
+/*
+@@@-HTTPS:
+This was added on 24-Jul-2015 because we need this for the RepoFlags type.
+However, it was also needed for other uses of types in marfs_base.h before
+this date. It happened that it is included in common.h. Rather than rely
+on that fact, because that could change, it is best practice to explicitly
+include the files on which a code unit depends.
+*/
+
+#include "marfs_base.h"
+
 #include <assert.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -667,11 +678,35 @@ int marfs_open (const char*            path,
       LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
    }
 
-   if (info->pre.repo->access_proto == PROTO_S3_EMC)
+   if (info->pre.repo->access_proto == PROTO_S3_EMC) {
       s3_enable_EMC_extensions_r(1, ctx);
+
+/*
+@@@-HTTPS:
+For now if we're using HTTPS, I'm just assuming that it is without validating
+the SSL certificate (curl's -k or --insecure flags). If we ever get a validated
+certificate, we will want to put a flag into the MarFS_Repo struct that says
+it's validated or not.
+*/
+      if ( info->pre.repo->flags & REPO_SSL ) {
+        s3_enable_https_r( 1, ctx );
+      }
+   }
+
    if (info->pre.repo->access_proto == PROTO_SPROXYD) {
       s3_enable_Scality_extensions_r(1, ctx);
       s3_sproxyd_r(1, ctx);
+
+/*
+@@@-HTTPS:
+For now if we're using HTTPS, I'm just assuming that it is without validating
+the SSL certificate (curl's -k or --insecure flags). If we ever get a validated
+certificate, we will want to put a flag into the MarFS_Repo struct that says
+it's validated or not.
+*/
+      if ( info->pre.repo->flags & REPO_SSL ) {
+        s3_enable_https_r( 1, ctx );
+      }
    }
 
    // install custom context

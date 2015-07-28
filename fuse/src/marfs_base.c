@@ -1128,7 +1128,9 @@ MarFS_Namespace* push_namespace(MarFS_Namespace* dummy, MarFS_Repo* repo) {
    ns->md_path_len    = strlen(ns->md_path);
 
    // helper for find_namespace()
-   ns->mnt_suffix_len = strlen(ns->mnt_suffix);
+   // @@@-HTTPS:
+   // This is redundant. It's done just above.
+   //ns->mnt_suffix_len = strlen(ns->mnt_suffix);
 
    _ns[_ns_count++] = ns;
    return ns;
@@ -1204,6 +1206,18 @@ int load_config(const char* config_fname) {
    };
    push_repo(&r_dummy);
 
+   // @@@-HTTPS: For Brett, unit-testing, small enough to make it easy to create MULTIs
+   r_dummy = (MarFS_Repo) {
+      .name         = "sproxyd_1M_https",  // repo is sproxyd: this must match fastcgi-path
+      .host         = "10.135.0.22:444",
+      .access_proto = PROTO_SPROXYD,
+      .chunk_size   = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
+      .flags        = (REPO_ONLINE | REPO_SSL),
+      .auth         = AUTH_S3_AWS_MASTER,
+      .latency_ms   = (10 * 1000)
+   };
+   push_repo(&r_dummy);
+
    // free-for-all
    r_dummy = (MarFS_Repo) {
       .name         = "sproxyd_pub",  // repo is sproxyd: this must match fastcgi-path
@@ -1222,6 +1236,18 @@ int load_config(const char* config_fname) {
       .access_proto = PROTO_S3_EMC,
       .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE),
+      .auth         = AUTH_S3_AWS_MASTER,
+      .latency_ms   = (10 * 1000),
+   };
+   push_repo(&r_dummy);
+
+   // @@@-HTTPS: S3 on EMC ECS
+   r_dummy = (MarFS_Repo) {
+      .name         = "emcS3_00_https",  // repo is s3: this must match existing bucket
+      .host         = "10.140.0.15:9021", //"10.143.0.1:443",
+      .access_proto = PROTO_S3_EMC,
+      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
+      .flags        = (REPO_ONLINE | REPO_SSL),
       .auth         = AUTH_S3_AWS_MASTER,
       .latency_ms   = (10 * 1000),
    };
@@ -1250,7 +1276,7 @@ int load_config(const char* config_fname) {
    // jti testing
    ns_dummy = (MarFS_Namespace) {
       .name           = "jti",
-      .mnt_suffix     = "/jti",  // "<mnt_top>/test00" comes here
+      .mnt_suffix     = "/jti",  // "<mnt_top>/jti" comes here
 
       .md_path        = "/gpfs/marfs-gpfs/fuse/test00/mdfs",
       .trash_path     = "/gpfs/marfs-gpfs/fuse/test00/trash", // NOT NEC IN THE SAME FILESET!
@@ -1280,7 +1306,7 @@ int load_config(const char* config_fname) {
    // Alfred
    ns_dummy = (MarFS_Namespace) {
       .name           = "atorrez",
-      .mnt_suffix     = "/atorrez",  // "<mnt_top>/test00" comes here
+      .mnt_suffix     = "/atorrez",  // "<mnt_top>/atorrez" comes here
 
       .md_path        = "/gpfs/marfs-gpfs/project_a/mdfs",
       .trash_path     = "/gpfs/marfs-gpfs/project_a/trash", // NOT NEC IN THE SAME FILESET!
@@ -1309,7 +1335,7 @@ int load_config(const char* config_fname) {
    // Brett, unit 
    ns_dummy = (MarFS_Namespace) {
       .name           = "brettk",
-      .mnt_suffix     = "/brettk",  // "<mnt_top>/test00" comes here
+      .mnt_suffix     = "/brettk",  // "<mnt_top>/brettk" comes here
 
       .md_path        = "/gpfs/marfs-gpfs/testing/mdfs",
       .trash_path     = "/gpfs/marfs-gpfs/testing/trash", // NOT NEC IN THE SAME FILESET!
@@ -1333,6 +1359,35 @@ int load_config(const char* config_fname) {
       .is_root = 0,
    };
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M"));
+
+
+   // @@@-HTTPS: Brett, unit 
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "brettk_https",
+      .mnt_suffix     = "/brettk_https",  // "<mnt_top>/brettk_https" comes here
+
+      .md_path        = "/gpfs/marfs-gpfs/testing_https/mdfs",
+      .trash_path     = "/gpfs/marfs-gpfs/testing_https/trash", // NOT NEC IN THE SAME FILESET!
+      .fsinfo_path    = "/gpfs/marfs-gpfs/testing_https/fsinfo", /* a file */
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .compression = COMPRESS_NONE,
+      .correction  = CORRECT_NONE,
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space_units = (1024 * 1024), /* MB */
+      .quota_space = -1,          /* no limit */
+
+      .quota_space_units = 1,
+      .quota_names = -1,             /* no limit */
+
+      .is_root = 0,
+   };
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M_https"));
 
 
    // free-for-all
@@ -1390,14 +1445,42 @@ int load_config(const char* config_fname) {
 
       .is_root = 0,
    };
-   // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
    push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
+
+
+   // @@@-HTTPS: EMC ECS install (with S3)
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "s3_https",
+      .mnt_suffix     = "/s3_https",  // "<mnt_top>/s3_https" comes here
+
+      .md_path        = "/gpfs/fs2/fuse_s3_https/mdfs",
+      .trash_path     = "/gpfs/fs2/fuse_s3_https/trash", // NOT NEC IN THE SAME FILESET!
+      .fsinfo_path    = "/gpfs/fs2/fuse_s3_https/fsinfo", /* a file */
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .compression = COMPRESS_NONE,
+      .correction  = CORRECT_NONE,
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space_units = (1024 * 1024), /* MB */
+      .quota_space = 1024,          /* 1024 MB of data */
+
+      .quota_space_units = 1,
+      .quota_names = 32,             /* 32 names */
+
+      .is_root = 0,
+   };
+   push_namespace(&ns_dummy, find_repo_by_name("emcS3_00_https"));
 
 
    // jti testing on machine without GPFS
    ns_dummy = (MarFS_Namespace) {
       .name           = "xfs",
-      .mnt_suffix     = "/xfs",  // "<mnt_top>/test00" comes here
+      .mnt_suffix     = "/xfs",  // "<mnt_top>/xfs" comes here
 
       .md_path        = "/mnt/xfs/jti/filesys/mdfs/test00",
       .trash_path     = "/mnt/xfs/jti/filesys/trash/test00",
@@ -1524,34 +1607,63 @@ int validate_config() {
 
 MarFS_Namespace* find_namespace_by_name(const char* name) {
    int i;
+   size_t name_len = strlen( name );
+
    for (i=0; i<_ns_count; ++i) {
       MarFS_Namespace* ns = _ns[i];
+/*
+ * @@@-HTTPS:
+ * There is a bug here. We want to compare the whole name to
+ * ns->name, not just the first name length characters.
+ * That will match names that are substrings of name to name
+ * incorrectly.
       if (! strncmp(ns->name, name, ns->name_len))
-         return ns;
-   }
-   return NULL;
-}
-// NOTE: Our approach here requires that the "root" namespace is always
-//    last, because it will match any path.
-MarFS_Namespace* find_namespace_by_path(const char* path) {
-   int i;
-   for (i=0; i<_ns_count; ++i) {
-      MarFS_Namespace* ns = _ns[i];
-
-      // does <ns> path match the leading part of <path>?
-      if (! strncmp(ns->mnt_suffix, path, ns->mnt_suffix_len)) {
-
-         // NOTE: "root" namespace might be "/", which could match anything.
-         //      Make sure root is an exact match.
-         if (ns->is_root) {
-            if (! strncmp(path, ns->mnt_suffix, strlen(path)))
-               return ns;
-            else
-               return NULL;
-         }
+ */
+      if (( ns->name_len == name_len ) && ( ! strcmp( ns->name, name ))) {
          return ns;
       }
    }
+   return NULL;
+}
+
+
+/*
+ * @@@-HTTPS:
+ * The path that is passed into this function always starts with the
+ * "/" character. That character and any others up to the next "/"
+ * character are the namespace's mnt_suffix. A namespace's mnt_suffix
+ * must begin with the "/" character and not contain any other "/"
+ * characters after the initial one by definition. It is the FUSE
+ * mount point and we'll always use a one-level mount point.
+ */
+MarFS_Namespace* find_namespace_by_path(const char* path) {
+   int i;
+   char *path_dup;
+   char *path_dup_token;
+   size_t path_dup_len;
+
+
+   path_dup = strdup( path );
+   path_dup_token = strtok( path_dup, "/" );
+   path_dup_len = strlen( path_dup );
+
+/*
+ * At this point path_dup will include the leading "/" and any other
+ * characters up to, but not including, the next "/" character in
+ * path. This includes path_dup being able to be "/" (the root
+ * namespace.
+ */
+
+   for (i=0; i<_ns_count; ++i) {
+      MarFS_Namespace* ns = _ns[i];
+
+      if (( ns->mnt_suffix_len == path_dup_len ) && ( !strcmp( ns->mnt_suffix, path_dup ))) {
+         free( path_dup );
+         return ns;
+      }
+   }
+
+   free( path_dup );
    return NULL;
 }
 
