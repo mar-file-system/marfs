@@ -96,12 +96,6 @@
 #define MARFS_QUOTA_XATTR_CNT 3
 #define MARFS_GC_XATTR_CNT 2
 
-struct histogram {
-  size_t small_count;
-  size_t medium_count;
-  size_t large_count;
-};
-
 struct store_type {
   size_t uni_count;
   size_t multi_count;
