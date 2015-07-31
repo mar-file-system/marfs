@@ -710,7 +710,7 @@ void print_current_time(file_info *file_info_ptr)
 Name: process_packed
 
 This function determines which objects and files should be deleted when
-the store type is PACKED.  Packed implies multiple files packed into an 
+the object type is PACKED.  Packed implies multiple files packed into an 
 object so objects and files cannot be deleted if all the files do not
 exist for a particular object.  The function is passed in a filename that
 contains a list of all PACKED entries found in the scan.
