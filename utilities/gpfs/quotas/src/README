@@ -4,22 +4,27 @@ This script is used to scan the gpfs filesystem to determine total size by files
 Usage:
 ./marfs_quota -d gpfs_mount_path -o output_filename [-c fileset_scan_count] [-i fileset_scan_index] 
 
--c fileset_scan_count
-count on how many filesets to characterize
-
 -d gpfs_mount_point
-
--i fileset_scan_index
-where to start in the list of filesets (used with -c argument)
-This is a way to reduce the 
-
-
 
 -o fileinfo_filename
 output filename with size info on filesets
 
+-i fileset_scan_index
+where to start in the list of filesets (used with -c argument)
+This is a way to reduce the number of filesets in a report or
+to run multiple scans in parallel with each targeting 
+different filesets 
+
+-c fileset_scan_count
+count on how many filesets to characterize
+
 -h 
 help
+
+
+Example run for all filesets:
+
+./marfs_quota -d /gpfs/marfs-gpfs -o ./quotas.txt
 
 
 Future work includes doing quotas by user which could be implemented using a binary tree based on uid.
