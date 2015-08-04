@@ -381,7 +381,7 @@ typedef struct PathInfo {
 
    PathInfoFlagType     flags;
 
-   char                 md_path[MARFS_MAX_MD_PATH]; // full path to MDFS file
+   // char                 md_path[MARFS_MAX_MD_PATH]; // full path to MDFS file
    char                 trash_path[MARFS_MAX_MD_PATH];
 } PathInfo;
 

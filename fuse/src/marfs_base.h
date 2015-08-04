@@ -224,17 +224,17 @@ extern float MarFS_config_vers;
 
 
 
-#define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/gc.%s"
+#define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/flags.%02hhX/mdfs.%s"
 
 #define MARFS_REC_INFO_FORMAT   "ver.%03d_%03d/inode.%010ld/mode.%08x/uid.%d/gid.%d/mtime.%s/ctime.%s/mdfs.%s"
 
 // Two files in the trash.  Original MDFS is renamed to the name computed
-// in expand_trash_info().  Then another file with this format has contents
-// that hold the original MDFS path (for undelete).  The
-// expand_trash_path() result (in PathInfo.trash_path) is printed with this
-// format, to create the second path, whose contents hold the original MDFS
-// path.
-#define MARFS_TRASH_ORIGINAL_PATH_SUFFIX ".path"
+// in expand_trash_info().  Then another file with the same name, extended
+// with this format, has contents that hold the original MDFS path (for
+// undelete).  The expand_trash_path() result (in PathInfo.trash_path) is
+// printed with this format, to create the companion path, whose contents
+// hold the original MDFS path.
+#define MARFS_TRASH_COMPANION_SUFFIX ".path"
 
 
 // // (see comments at MultiChunkInfo, below)
@@ -688,10 +688,30 @@ int update_pre(MarFS_XattrPre* pre);
 
 
 
+
+
 // "Post" has info that is not known until storage into the object(s)
 // behind a file is completed.  For example, in the case of an object being
 // written via fuse, we have no knowledge of the total size until the
 // file-descriptor is closed.
+
+// UPDATE: POST is now also where we keep the full-path to the meta-data
+// file.  This was formerly kept in PathInfo, but we're moving it into an
+// xattr in order to allow a GPFS inode-scan to have direct access to the
+// corresponding path, using only info in the xattrs.  expand_path_info()
+// used to build the path in PathInfo.md_path.  We could keep it there, and
+// copy to PathInfo.post, but that seems wasteful.  Instead, we'll build it
+// directly in post.
+
+typedef enum {
+   POST_TRASH           = 0x01, // file is in trash?
+} PostFlags;
+
+typedef uint8_t  PostFlagsType;
+
+
+
+
 typedef struct MarFS_XattrPost {
    float              config_vers;   // redundant w/ config_vers in Pre?
    MarFS_ObjType      obj_type;
@@ -700,7 +720,10 @@ typedef struct MarFS_XattrPost {
    EncryptInfo        encrypt_info;  // any info reqd to decrypt the data
    size_t             chunks;        // number ChunkInfos written in MDFS file (Multi)
    size_t             chunk_info_bytes; // total size of chunk-info in MDFS file (Multi)
-   char               gc_path[MARFS_MAX_MD_PATH]; // only if file is in trash
+
+   // char               gc_path[MARFS_MAX_MD_PATH]; // only if file is in trash
+   char               md_path[MARFS_MAX_MD_PATH]; // full path to MDFS file
+   PostFlagsType      flags;
 } MarFS_XattrPost;
 
 

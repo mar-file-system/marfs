@@ -202,7 +202,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    LOG(LOG_INFO, "mnt_path  %s\n",   info->ns->mnt_suffix);
 
    const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
-   int prt_count = snprintf(info->md_path, MARFS_MAX_MD_PATH,
+   int prt_count = snprintf(info->post.md_path, MARFS_MAX_MD_PATH,
                             "%s%s", info->ns->md_path, sub_path);
    if (prt_count < 0) {
       LOG(LOG_ERR, "snprintf(..., %s, %s) failed\n",
@@ -219,18 +219,18 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    }
    //   else
    //      // saves us a strlen(), later
-   //      info->md_path_len = prt_count;
+   //      info->post.md_path_len = prt_count;
 
    LOG(LOG_INFO, "sub-path  %s\n", sub_path);
-   LOG(LOG_INFO, "md-path   %s\n", info->md_path);
+   LOG(LOG_INFO, "md-path   %s\n", info->post.md_path);
 
 
 #if 0
    // Should be impossible, as long as the trash-dir is not below the mdfs-dir
 
    // don't let users into the trash
-   if (! strcmp(info->md_path, info->trash_path)) {
-      LOG(LOG_ERR, "users can't access trash_path (%s)\n", info->md_path);
+   if (! strcmp(info->post.md_path, info->trash_path)) {
+      LOG(LOG_ERR, "users can't access trash_path (%s)\n", info->post.md_path);
       errno = EPERM;
       return -1;
    }
@@ -337,10 +337,10 @@ int expand_trash_info(PathInfo*    info,
          errno = EIO;
          return -1;
       }
-      else if (prt_count + strlen(MARFS_TRASH_ORIGINAL_PATH_SUFFIX)
+      else if (prt_count + strlen(MARFS_TRASH_COMPANION_SUFFIX)
                >= MARFS_MAX_MD_PATH) {
          LOG(LOG_ERR, "no room for '%s' after trash_path '%s'\n",
-             MARFS_TRASH_ORIGINAL_PATH_SUFFIX,
+             MARFS_TRASH_COMPANION_SUFFIX,
              info->trash_path);
          errno = EIO;
          return -1;
@@ -367,14 +367,14 @@ int stat_regular(PathInfo* info) {
       return 0;                 /* already called stat_regular() */
 
    memset(&(info->st), 0, sizeof(struct stat));
-   __TRY0(lstat, info->md_path, &info->st);
+   __TRY0(lstat, info->post.md_path, &info->st);
 
    info->flags |= PI_STAT_QUERY;
    return 0;
 }
 
 
-// return non-zero if info->md_path exists
+// return non-zero if info->post.md_path exists
 int md_exists(PathInfo* info) {
    assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
    stat_regular(info);                /* no-op, if already done */
@@ -408,7 +408,7 @@ int init_xattr_specs() {
 //
 // Find all the reserved xattrs on <path>.  These key-values are all parsed
 // and stored into specific fields of a MarFS_ReservedXattr struct.  You
-// must have called expand_path_info, first, so that PathInfo.md_path has
+// must have called expand_path_info, first, so that PathInfo.post.md_path has
 // been initialized.  Quick-and-dirty parser.
 //
 // NOTE: It should not be an error to fail to find xattrs, or to fail to
@@ -463,7 +463,7 @@ int stat_xattrs(PathInfo* info) {
          //       ctime currently found in info->st, as a result of
          //       the call to stat_regular(), above.
 
-         if (lgetxattr(info->md_path, spec->key_name,
+         if (lgetxattr(info->post.md_path, spec->key_name,
                        xattr_value_str, MARFS_MAX_XATTR_SIZE) != -1) {
             // got the xattr-value.  Parse it into info->pre
             LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
@@ -486,7 +486,7 @@ int stat_xattrs(PathInfo* info) {
       }
 
       case XVT_POST: {
-         if (lgetxattr(info->md_path, spec->key_name,
+         if (lgetxattr(info->post.md_path, spec->key_name,
                        xattr_value_str, MARFS_MAX_XATTR_SIZE) != -1) {
             // got the xattr-value.  Parse it into info->pre
             LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
@@ -507,7 +507,7 @@ int stat_xattrs(PathInfo* info) {
 
       case XVT_RESTART: {
          info->flags &= ~(PI_RESTART); /* default = NOT in restart mode */
-         ssize_t val_size = lgetxattr(info->md_path, spec->key_name,
+         ssize_t val_size = lgetxattr(info->post.md_path, spec->key_name,
                                       &xattr_value_str, 2);
          if (val_size < 0) {
             if (errno == ENOATTR)
@@ -544,7 +544,7 @@ int stat_xattrs(PathInfo* info) {
    // NOTE: These will call stat_xattrs(), but skip out because of PI_XATTR_QUERY
    if (has_any_xattrs(info, MARFS_MD_XATTRS)
        && ! has_all_xattrs(info, MARFS_MD_XATTRS)) {
-      LOG(LOG_ERR, "%s -- incomplete MD xattrs\n", info->md_path);
+      LOG(LOG_ERR, "%s -- incomplete MD xattrs\n", info->post.md_path);
       errno = EINVAL;            /* ?? */
       return -1;
    }
@@ -555,12 +555,12 @@ int stat_xattrs(PathInfo* info) {
 
 
 
-// Return non-zero if info->md_path has ALL/ANY of the reserved xattrs
+// Return non-zero if info->post.md_path has ALL/ANY of the reserved xattrs
 // indicated in <mask>.  Else, zero.
 //
 // NOTE: Having these reserved xattrs indicates that the data-contents are
 //       stored in object(s), described in the meta-data.  Otherwise, data
-//       is stored directly in the md_path.
+//       is stored directly in the post.md_path.
 
 int has_all_xattrs(PathInfo* info, XattrMaskType mask) {
    assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
@@ -576,7 +576,7 @@ int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
 
 
 // For all the attributes in <mask>, convert info xattrs to stringified values, and save
-// on info->md_path.
+// on info->post.md_path.
 int save_xattrs(PathInfo* info, XattrMaskType mask) {
 
    ENTRY();
@@ -609,7 +609,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          // create the new xattr-value from info->pre
          __TRY0(pre_2_str, xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->pre);
          LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
-         __TRY0(lsetxattr, info->md_path,
+         __TRY0(lsetxattr, info->post.md_path,
                 spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0);
          break;
       }
@@ -617,7 +617,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
       case XVT_POST: {
          __TRY0(post_2_str, xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->post);
          LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
-         __TRY0(lsetxattr, info->md_path,
+         __TRY0(lsetxattr, info->post.md_path,
                 spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0);
          break;
       }
@@ -639,16 +639,16 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
             LOG(LOG_INFO, "XVT_RESTART\n");
             xattr_value_str[0] = 1;
             xattr_value_str[1] = 0; // in case someone tries strlen
-            __TRY0(lsetxattr, info->md_path,
+            __TRY0(lsetxattr, info->post.md_path,
                    spec->key_name, xattr_value_str, 2, 0);
          }
          else {
-            ssize_t val_size = lremovexattr(info->md_path, spec->key_name);
+            ssize_t val_size = lremovexattr(info->post.md_path, spec->key_name);
             if (val_size < 0) {
                if (errno == ENOATTR)
                   break;           /* not a problem */
                LOG(LOG_INFO, "ERR removexattr(%s, %s) (%d) %s\n",
-                   info->md_path, spec->key_name, errno, strerror(errno));
+                   info->post.md_path, spec->key_name, errno, strerror(errno));
                return -1;
             }
          }
@@ -678,18 +678,26 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 //
 // In addition to moving the original to the trash, the two trash functions
 // (trash_unlink() and trash_truncate()) also write the full-path of the
-// original (MarFS) file into "<trash_path>.mdfs".  [NOTE: This is not the
+// original (MarFS) file into "<trash_path>.path".  [NOTE: This is not the
 // same as the path to the file, where it now resides in trash, which is
 // installed into the POST xattr by trash_unlink/trash_truncate.]
+//
+// QUESTION: Do we want to write the MDFS path into the companion trash
+//     file, or should we write the MarFS path (i.e. the path the user
+//     would've known it by)?  The latter would allow undelete to deal with
+//     the case where a namespace now uses an MDFS located somewhere else,
+//     but that could also be handled by moving trash (in such rare cases), and
+//     relocating the stored paths.  The former is probably what's generally most
+//     useful for undelete, allowing immediate movement of the file.
 //
 // If <utim> is non-NULL, then it holds mtime/atime values for us to
 // install onto the file.  This is to allow "undelete" to also restore the
 // original atime of a file.
 
 static
-int write_trash_path_file(PathInfo*             info,
-                          const char*           path,
-                          const struct utimbuf* utim) {
+int write_trash_companion_file(PathInfo*             info,
+                               const char*           path,
+                               const struct utimbuf* utim) {
    size_t  rc;
    ssize_t rc_ssize;
 
@@ -697,28 +705,33 @@ int write_trash_path_file(PathInfo*             info,
    LOG(LOG_INFO, "trash_path: %s\n", info->trash_path);
 
    // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
-   // add MARFS_TRASH_ORIGINAL_PATH_SUFFIX, so no need to check.
-   char contents_fname[MARFS_MAX_MD_PATH];
-   __TRY_GE0(snprintf, contents_fname, MARFS_MAX_MD_PATH, "%s%s",
+   // add MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
+   char companion_fname[MARFS_MAX_MD_PATH];
+   __TRY_GE0(snprintf, companion_fname, MARFS_MAX_MD_PATH, "%s%s",
              info->trash_path,
-             MARFS_TRASH_ORIGINAL_PATH_SUFFIX);
+             MARFS_TRASH_COMPANION_SUFFIX);
 
    // TBD: Don't want to depend on support for open(... (O_CREAT|O_EXCL)).
-   //      Should just stat() the contents-file, before opening, to assure
+   //      Should just stat() the companion-file, before opening, to assure
    //      it doesn't already exist.
-   LOG(LOG_INFO, "contents:   %s\n", contents_fname);
-   __TRY_GE0(open, contents_fname, (O_WRONLY|O_CREAT), info->st.st_mode);
+   LOG(LOG_INFO, "companion:  %s\n", companion_fname);
+   __TRY_GE0(open, companion_fname, (O_WRONLY|O_CREAT), info->st.st_mode);
    int fd = rc_ssize;
 
-   //   __TRY_GE0(write, fd, info->md_path, strlen(info->md_path));
+#if 1
+   // write MDFS path into the trash companion
+   __TRY_GE0(write, fd, info->post.md_path, strlen(info->post.md_path));
+#else
+   // write MarFS path into the trash companion
    __TRY_GE0(write, fd, MarFS_mnt_top, MarFS_mnt_top_len);
    __TRY_GE0(write, fd, path, strlen(path));
+#endif
 
    __TRY0(close, fd);
 
    // maybe install ctime/atime to support "undelete"
    if (utim)
-      __TRY0(utime, contents_fname, utim);
+      __TRY0(utime, companion_fname, utim);
 
    return 0;
 }
@@ -758,7 +771,7 @@ int  trash_unlink(PathInfo*   info,
    size_t rc;
    __TRY0(stat_xattrs, info);
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
-      __TRY0(unlink, info->md_path);
+      __TRY0(unlink, info->post.md_path);
       return 0;
    }
 
@@ -766,30 +779,26 @@ int  trash_unlink(PathInfo*   info,
    //    uniqueify name somehow with time perhaps == trashname, 
 
    __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
-   LOG(LOG_INFO, "trash_path: %s\n", info->trash_path);
-   LOG(LOG_INFO, "md_path:    %s\n", info->md_path);
+   LOG(LOG_INFO, "trash_path: '%s'\n", info->trash_path);
+   LOG(LOG_INFO, "md_path:    '%s'\n", info->post.md_path);
 
    //    rename file to trashname 
-   __TRY0(rename, info->md_path, info->trash_path);
+   __TRY0(rename, info->post.md_path, info->trash_path);
 
    // copy xattrs to the trash-file.
-   // ugly-but-simple: make a duplicate PathInfo, but with md_path
+   // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
    // set to our trash_path.  Then save_xattrs() will just work on the
    // trash-file.
    {  PathInfo trash_info = *info;
-      memcpy(trash_info.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
+      memcpy(trash_info.post.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
 
-      // tweak the Post xattr to indicate to garbage-collector that this
-      // file is in the trash.  The latest trick is to indicate this by
-      // storing the full path to the trash-file inside the Post.gc_path
-      // field.
-      memcpy(trash_info.post.gc_path, info->trash_path, MARFS_MAX_MD_PATH);
+      trash_info.post.flags |= POST_TRASH;
 
       __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
    }
 
    // write full-MDFS-path of original-file into similarly-named file
-   __TRY0(write_trash_path_file, info, path);
+   __TRY0(write_trash_companion_file, info, path);
 
 #else
 
@@ -798,7 +807,7 @@ int  trash_unlink(PathInfo*   info,
    // filesystem).  It was thought we shouldn't even *try* the rename
    // first.  Instead, we'll copy to the trash, then unlink the original.
    __TRY0(trash_truncate, info, path);
-   __TRY0(unlink, info->md_path);
+   __TRY0(unlink, info->post.md_path);
 
 #endif
 
@@ -828,7 +837,7 @@ int  trash_truncate(PathInfo*   info,
    size_t rc;
    __TRY0(stat_xattrs, info);
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
-      __TRY0(truncate, info->md_path, 0);
+      __TRY0(truncate, info->post.md_path, 0);
       return 0;
    }
 
@@ -870,10 +879,10 @@ int  trash_truncate(PathInfo*   info,
 
 
    // we'll read from md_file
-   int in = open(info->md_path, O_RDONLY);
+   int in = open(info->post.md_path, O_RDONLY);
    if (in == -1) {
       LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
-          info->md_path, new_mode);
+          info->post.md_path, new_mode);
       return -1;
    }
 
@@ -903,7 +912,7 @@ int  trash_truncate(PathInfo*   info,
       size_t wr_total = 0;
 
       // copy phy-data from md_file to trash_file, one buf at a time
-      size_t rd_count;
+      ssize_t rd_count;
       for (rd_count = read(in, buf, read_size);
            rd_count > 0;
            rd_count = read(in, buf, read_size)) {
@@ -940,17 +949,13 @@ int  trash_truncate(PathInfo*   info,
    __TRY0(truncate, info->trash_path, log_size);
 
    // copy xattrs to the trash-file.
-   // ugly-but-simple: make a duplicate PathInfo, but with md_path
+   // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
    // set to our trash_path.  Then save_xattrs() will just work on the
    // trash-file.
    {  PathInfo trash_info = *info;
-      memcpy(trash_info.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
+      memcpy(trash_info.post.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
 
-      // tweak the Post xattr to indicate to garbage-collector that this
-      // file is in the trash.  The latest trick is to indicate this by
-      // storing the full path to the trash-file inside the Post.gc_path
-      // field.  This allows a (fast) inode-scan to detect garbage.
-      memcpy(trash_info.post.gc_path, info->trash_path, MARFS_MAX_MD_PATH);
+      trash_info.post.flags |= POST_TRASH;
 
       __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
    }
@@ -958,9 +963,8 @@ int  trash_truncate(PathInfo*   info,
    // clean out everything on the original
    __TRY0(trunc_xattr, info);
 
-   // write full-MDFS-path of original-file into similarly-named file
-   //  __TRY0(trash_name, info, path);
-   __TRY0(write_trash_path_file, info, path, &trash_time);
+   // write full-MDFS-path of original-file into trash-companion file
+   __TRY0(write_trash_companion_file, info, path, &trash_time);
 
    // update trash-file atime/mtime to support "undelete"
    __TRY0(utime, info->trash_path, &trash_time);
@@ -975,7 +979,7 @@ int  trash_truncate(PathInfo*   info,
 int trunc_xattr(PathInfo* info) {
    XattrSpec*  spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
-      lremovexattr(info->md_path, spec->key_name);
+      lremovexattr(info->post.md_path, spec->key_name);
    }   
    return 0;
 }

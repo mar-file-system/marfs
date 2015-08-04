@@ -32,18 +32,21 @@ if [[ $# != 1 ]]; then
     usage
     exit 1
 
+# For now we're hardwiring these variables to match the hardwired config in
+# the fuse-mount.  Eventually, this should read and parse the actual
+# config-file.
 elif [[ $1 == "scality" ]]; then
-    MOUNT="/marfs/test00"
-    GPFS="/gpfs/marfs-gpfs/fuse/test00/mdfs"
-    HOST="http://10.135.0.21:81"
+    MOUNT="/marfs/atorrez"
+    GPFS="/gpfs/marfs-gpfs/project_a"
+    HOST="http://10.135.0.22:81"
 
     function get() { URL=$1;          curl $VERBOSE $URL; }
     function del() { URL=$1;          curl $VERBOSE -X DELETE $URL; }
     function put() { FILE=$1; URL=$2; curl $VERBOSE -T $FILE $URL; }
 
 elif [[ $1 == "emc" ]]; then
-    MOUNT="/marfs/test00"
-    GPFS="/gpfs/marfs-gpfs/fuse/test00/mdfs"
+    MOUNT="/marfs/s3"
+    GPFS="/gpfs/fs2/fuse_s3/mdfs"
     HOST="http://10.140.0.15:9020"
 
     function get() { URL=$1;          s3curl.pl --id=jti             -- $VERBOSE $URL; }

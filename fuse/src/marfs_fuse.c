@@ -141,7 +141,7 @@ int marfs_access (const char* path,
    // Appropriate  access call filling in fuse structure 
    //
    // jti: which fuse structure?
-   TRY0(access, info.md_path, mask);
+   TRY0(access, info.post.md_path, mask);
  
    POP_USER();
    return 0;
@@ -161,7 +161,7 @@ int marfs_chmod(const char* path,
    // Appropriate  chmod call filling in fuse structure
    // WARNING: No lchmod() on rrz.
    //          chmod() always follows links.
-   TRY0(chmod, info.md_path, mode);
+   TRY0(chmod, info.post.md_path, mode);
 
    POP_USER();
    return 0;
@@ -180,7 +180,7 @@ int marfs_chown (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  chown call filling in fuse structure
-   TRY0(lchown, info.md_path, uid, gid);
+   TRY0(lchown, info.post.md_path, uid, gid);
 
    POP_USER();
    return 0;
@@ -234,7 +234,7 @@ int marfs_ftruncate(const char*            path,
    CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
    // Call access() syscall to check/act if allowed to truncate for this user
-   ACCESS(info->md_path, (W_OK));        /* for truncate? */
+   ACCESS(info->post.md_path, (W_OK));        /* for truncate? */
 
    // stat_xattrs – or look up info stuffed into memory pointed at in fuse
    // open table if this is not just a normal [object-storage case?], use
@@ -273,15 +273,15 @@ int marfs_getattr (const char*  path,
 
    PathInfo info;
    EXPAND_PATH_INFO(&info, path);
-   LOG(LOG_INFO, "expanded  %s -> %s\n", path, info.md_path);
+   LOG(LOG_INFO, "expanded  %s -> %s\n", path, info.post.md_path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, R_META);
 
    // No need for access check, just try the op
    // appropriate statlike call filling in fuse structure (dont mess with xattrs here etc.)
-   LOG(LOG_INFO, "lstat %s\n", info.md_path);
-   TRY_GE0(lstat, info.md_path, stbuf);
+   LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
+   TRY_GE0(lstat, info.post.md_path, stbuf);
 
    POP_USER();
    return 0;
@@ -314,7 +314,7 @@ int marfs_getxattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  getxattr call filling in fuse structure
-   TRY_GE0(lgetxattr, info.md_path, name, (void*)value, size);
+   TRY_GE0(lgetxattr, info.post.md_path, name, (void*)value, size);
    ssize_t result = rc_ssize;
 
    POP_USER();
@@ -363,7 +363,7 @@ int marfs_listxattr (const char* path,
    // Appropriate  listxattr call
    // filling in fuse structure.
    // NOTE: If caller passes <list>=0, we'll be fine.
-   TRY_GE0(llistxattr, info.md_path, list, size);
+   TRY_GE0(llistxattr, info.post.md_path, list, size);
 
 #if 1
    // *** remove any reserved xattrs from list ***
@@ -442,7 +442,7 @@ int marfs_mkdir (const char* path,
 
    // No need for access check, just try the op
    // Appropriate mkdirlike call filling in fuse structure 
-   TRY0(mkdir, info.md_path, mode);
+   TRY0(mkdir, info.post.md_path, mode);
 
    POP_USER();
    return 0;
@@ -489,7 +489,7 @@ int marfs_mknod (const char* path,
 
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
-   TRY0(mknod, info.md_path, mode, rdev);
+   TRY0(mknod, info.post.md_path, mode, rdev);
    LOG(LOG_INFO, "mode: (octal) 0%o\n", mode); // debugging
 
    // PROBLEM: marfs_open() assumes that a file that exists, which doesn't
@@ -609,12 +609,12 @@ int marfs_open (const char*            path,
 
    if (ffi->flags & (O_RDONLY)) {
       fh->flags |= FH_READING;
-      ACCESS(info->md_path, R_OK);
+      ACCESS(info->post.md_path, R_OK);
       CHECK_PERMS(info->ns->iperms, (R_META | R_DATA));
    }
    else if (ffi->flags & (O_WRONLY)) {
       fh->flags |= FH_WRITING;
-      ACCESS(info->md_path, W_OK);
+      ACCESS(info->post.md_path, W_OK);
       CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
    }
 
@@ -639,8 +639,8 @@ int marfs_open (const char*            path,
    // If no xattrs, we let user read/write directly into the file.
    // This corresponds to a file that was created in DIRECT repo-mode.
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
-      // fh->md_fd = open(info->md_path, (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
-      fh->md_fd = open(info->md_path, ffi->flags);
+      // fh->md_fd = open(info->post.md_path, (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
+      fh->md_fd = open(info->post.md_path, ffi->flags);
       if (fh->md_fd < 0)
          RETURN(-errno);
    }
@@ -648,7 +648,7 @@ int marfs_open (const char*            path,
    else if ((fh->flags & FH_READING)
             && ((info->post.obj_type == OBJ_MULTI)
                 || (info->post.obj_type == OBJ_PACKED))) {
-      fh->md_fd = open(info->md_path, (O_RDONLY)); // no O_BINARY in Linux.  Not needed.
+      fh->md_fd = open(info->post.md_path, (O_RDONLY)); // no O_BINARY in Linux.  Not needed.
       if (fh->md_fd < 0)
          RETURN(-errno);
    }
@@ -663,7 +663,7 @@ int marfs_open (const char*            path,
       // (i.e. Namespace.iwrite_repo->chunk_size).  If we open it here,
       // then we unnecessarily slow down writing small files.
       //
-      //      fh->md_fd = open(info->md_path,(O_WRONLY));  // no O_BINARY in Linux.  Not needed.
+      //      fh->md_fd = open(info->post.md_path,(O_WRONLY));  // no O_BINARY in Linux.  Not needed.
       //      if (fh->md_fd < 0)
       //         RETURN(-errno);
    }
@@ -689,7 +689,8 @@ certificate, we will want to put a flag into the MarFS_Repo struct that says
 it's validated or not.
 */
       if ( info->pre.repo->flags & REPO_SSL ) {
-        s3_enable_https_r( 1, ctx );
+        s3_https_r( 1, ctx );
+        s3_https_insecure_r( 1, ctx );
       }
    }
 
@@ -705,7 +706,8 @@ certificate, we will want to put a flag into the MarFS_Repo struct that says
 it's validated or not.
 */
       if ( info->pre.repo->flags & REPO_SSL ) {
-        s3_enable_https_r( 1, ctx );
+        s3_https_r( 1, ctx );
+        s3_https_insecure_r( 1, ctx );
       }
    }
 
@@ -757,7 +759,8 @@ int marfs_opendir (const char*            path,
    // Appropriate  opendir call filling in fuse structure
    ///   mode_t mode = ~(fuse_get_context()->umask); /* ??? */
    ///   TRY_GE0(opendir, info.md_path, ffi->flags, mode);
-   TRY_GT0(opendir, info.md_path);
+   ///   TRY_GE0(opendir, info.post.md_path);
+   TRY_GT0(opendir, info.post.md_path);
    ffi->fh = rc_ssize;          /* open() successfully returned a dirp */
 
    POP_USER();
@@ -1061,7 +1064,7 @@ int marfs_readlink (const char* path,
 
    // No need for access check, just try the op
    // Appropriate readlinklike call filling in fuse structure 
-   TRY_GE0(readlink, info.md_path, buf, size);
+   TRY_GE0(readlink, info.post.md_path, buf, size);
    int count = rc_ssize;
    if (count >= size) {
       LOG(LOG_ERR, "no room for '\\0'\n");
@@ -1069,7 +1072,7 @@ int marfs_readlink (const char* path,
    }
    buf[count] = '\0';
 
-   LOG(LOG_INFO, "readlink '%s' -> '%s' = (%d)\n", info.md_path, buf, count);
+   LOG(LOG_INFO, "readlink '%s' -> '%s' = (%d)\n", info.post.md_path, buf, count);
 
    POP_USER();
    return 0; // return result;
@@ -1160,7 +1163,7 @@ int marfs_release (const char*            path,
    // truncate length to reflect length of data
    if ((fh->flags & FH_WRITING)
        && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
-      TRY0(truncate, info->md_path, os->written - fh->write_status.sys_writes);
+      TRY0(truncate, info->post.md_path, os->written - fh->write_status.sys_writes);
    }
 
    // no longer incomplete
@@ -1247,7 +1250,7 @@ int marfs_removexattr (const char* path,
    // Appropriate  removexattr call filling in fuse structure 
 
 #if 0 // for speed, we just ignore this
-   TRY0(lremovexattr, info.md_path, name);
+   TRY0(lremovexattr, info.post.md_path, name);
 #endif
 
    POP_USER();
@@ -1271,7 +1274,7 @@ int marfs_rename (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  rename call filling in fuse structure 
-   TRY0(rename, info.md_path, info2.md_path);
+   TRY0(rename, info.post.md_path, info2.post.md_path);
 
    POP_USER();
    return 0;
@@ -1290,7 +1293,7 @@ int marfs_rmdir (const char* path) {
 
    // No need for access check, just try the op
    // Appropriate rmdirlike call filling in fuse structure 
-   TRY0(rmdir, info.md_path);
+   TRY0(rmdir, info.post.md_path);
 
    POP_USER();
    return 0;
@@ -1323,7 +1326,7 @@ int marfs_setxattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  setxattr call filling in fuse structure 
-   TRY0(lsetxattr, info.md_path, name, value, size, flags);
+   TRY0(lsetxattr, info.post.md_path, name, value, size, flags);
 
    POP_USER();
    return 0;
@@ -1372,7 +1375,7 @@ int marfs_symlink (const char* target,
 
    // No need for access check, just try the op
    // Appropriate  symlink call filling in fuse structure 
-   TRY0(symlink, target, lnk_info.md_path);
+   TRY0(symlink, target, lnk_info.post.md_path);
 
    POP_USER();
    return 0;
@@ -1398,7 +1401,7 @@ int marfs_truncate (const char* path,
    STAT_XATTRS(&info); // to get xattrs
 
    // Call access syscall to check/act if allowed to truncate for this user 
-   ACCESS(info.md_path, (W_OK));
+   ACCESS(info.post.md_path, (W_OK));
 
    // copy metadata to trash, resets original file zero len and no xattr
    TRASH_TRUNCATE(&info, path);
@@ -1435,7 +1438,7 @@ int marfs_unlink (const char* path) {
       const size_t mnt_top_len = strlen(MarFS_mnt_top);
       char target[MARFS_MAX_MD_PATH];
 
-      TRY_GE0(readlink, info.md_path, target, MARFS_MAX_MD_PATH);
+      TRY_GE0(readlink, info.post.md_path, target, MARFS_MAX_MD_PATH);
       if ((rc_ssize >= mnt_top_len)
           && (! strncmp(MarFS_mnt_top, target, mnt_top_len)))
          call_access = 0;
@@ -1444,7 +1447,7 @@ int marfs_unlink (const char* path) {
          call_access = 0;
    }
    if (call_access)
-      ACCESS(info.md_path, (W_OK));
+      ACCESS(info.post.md_path, (W_OK));
 
    // rename file with all xattrs into trashdir, preserving objects and paths 
    TRASH_UNLINK(&info, path);
@@ -1470,7 +1473,7 @@ int marfs_utime(const char*     path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
-   TRY_GE0(utime, info.md_path, buf);
+   TRY_GE0(utime, info.post.md_path, buf);
 
    POP_USER();
    return 0;
@@ -1491,7 +1494,7 @@ int marfs_utimens(const char*           path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
-   TRY_GE0(utimensat, 0, info.md_path, tv, AT_SYMLINK_NOFOLLOW);
+   TRY_GE0(utimensat, 0, info.post.md_path, tv, AT_SYMLINK_NOFOLLOW);
 
    POP_USER();
    return 0;
@@ -1646,9 +1649,9 @@ int marfs_write(const char*            path,
 
       // if we haven't already opened the MD file, do it now.
       if (! fh->md_fd) {
-         fh->md_fd = open(info->md_path, (O_WRONLY));// no O_BINARY in Linux.  Not needed.
+         fh->md_fd = open(info->post.md_path, (O_WRONLY));// no O_BINARY in Linux.  Not needed.
          if (fh->md_fd < 0) {
-            LOG(LOG_ERR, "open %s failed (%s)\n", info->md_path, strerror(errno));
+            LOG(LOG_ERR, "open %s failed (%s)\n", info->post.md_path, strerror(errno));
             RETURN(-errno);
          }
       }
@@ -1761,11 +1764,11 @@ int marfs_create(const char*            path,
    //   If wronly/rdwr/trunk  RMWMRDWD
    //   If append we don’t support that
    if (info.flags & (O_RDONLY)) {
-      ACCESS(info.md_path, W_OK);
+      ACCESS(info.post.md_path, W_OK);
       CHECK_PERMS(info.ns->iperms, (R_META | R_DATA));
    }
    else if (info.flags & (O_WRONLY)) {
-      ACCESS(info.md_path, W_OK);
+      ACCESS(info.post.md_path, W_OK);
       CHECK_PERMS(info.ns->iperms, (R_META | W_META | | R_DATA | W_DATA));
    }
 
@@ -1791,7 +1794,7 @@ int marfs_create(const char*            path,
    // Check/act on quota num names
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
-   TRY0(mknod, info.md_path, mode, rdev);
+   TRY0(mknod, info.post.md_path, mode, rdev);
 
    POP_USER();
    return 0;
@@ -1835,7 +1838,7 @@ int marfs_fgetattr(const char*            path,
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
 
-   TRY0(lstat, info->md_path, st);
+   TRY0(lstat, info->post.md_path, st);
 
    POP_USER();
    return 0;

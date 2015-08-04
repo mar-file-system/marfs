@@ -658,9 +658,10 @@ int str_2_pre(MarFS_XattrPre*    pre,
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
    post->config_vers = MarFS_config_vers;
    post->obj_type    = OBJ_NONE;   /* figured out later */
-   post->chunks      = 1;          // we don't create Packed objects
+   post->chunks      = 1;          // updated for multi
    post->chunk_info_bytes = 0;
-   memset(post->gc_path, 0, MARFS_MAX_MD_PATH);
+   //   post->flags       = 0;
+   //   memset(post->md_path, 0, MARFS_MAX_MD_PATH);
    return 0;
 }
 
@@ -669,8 +670,8 @@ int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
 int post_2_str(char* post_str, size_t max_size, const MarFS_XattrPost* post) {
 
    // config-version major and minor
-   int major = (int)floorf(post->config_vers);
-   int minor = (int)floorf((post->config_vers - major) * 1000.f);
+   const int major = (int)floorf(post->config_vers);
+   const int minor = (int)floorf((post->config_vers - major) * 1000.f);
 
    ssize_t bytes_printed = snprintf(post_str, max_size,
                                     MARFS_POST_FORMAT,
@@ -681,7 +682,8 @@ int post_2_str(char* post_str, size_t max_size, const MarFS_XattrPost* post) {
                                     post->chunk_info_bytes,
                                     post->correct_info,
                                     post->encrypt_info,
-                                    post->gc_path);
+                                    post->flags,
+                                    post->md_path);
    if (bytes_printed < 0)
       return -1;                  // errno is set
    if (bytes_printed == max_size) {   /* overflow */
@@ -697,8 +699,6 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
 
    int   major;
    int   minor;
-   float version;
-
    char  obj_type_code;
 
    // --- extract bucket, and some top-level fields
@@ -710,16 +710,17 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
                            &post->chunk_info_bytes,
                            &post->correct_info,
                            &post->encrypt_info,
-                           (char*)&post->gc_path); // might be empty
+                           &post->flags,
+                           (char*)&post->md_path); // never empty
 
    if (scanf_size == EOF)
       return -1;                // errno is set
-   else if (scanf_size < 8) {
+   else if (scanf_size < 9) {
       errno = EINVAL;
       return -1;            /* ?? */
    }
 
-   version = (float)major + ((float)minor / 1000.f);
+   float version = (float)major + ((float)minor / 1000.f);
    if (version != MarFS_config_vers) {
       errno = EINVAL;            /* ?? */
       return -1;
@@ -770,7 +771,7 @@ int rec_2_str(char* rec_str, const size_t max_size, const RecoveryInfo* rec) {
                                     rec->gid,
                                     mtime,
                                     ctime,
-                                    post->gc_path);
+                                    post->md_path);
    if (bytes_printed < 0)
       return -1;                  // errno is set
    if (bytes_printed == max_size) {   /* overflow */
@@ -1684,7 +1685,7 @@ MarFS_Repo* find_repo(MarFS_Namespace* ns,
 // repos.
 MarFS_Repo* find_repo_by_name(const char* repo_name) {
    int i;
-   for (i=0; i<_repo_max; ++i) {
+   for (i=0; i<_repo_count; ++i) {
       MarFS_Repo* repo = _repo[i];
       if (!strcmp(repo_name, repo->name))
          return repo;
