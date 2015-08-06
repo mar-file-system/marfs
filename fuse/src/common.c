@@ -1201,7 +1201,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
    ///      memset(rec, 1, recovery); // stands out in objects written from /dev/zero
    ///      needs_init = 0;
    ///   }
-   static int dbg=0x11;
+   static uint8_t dbg=0x11;
    memset(rec, dbg, recovery); // stands out in objects written from /dev/zero
    dbg += 0x11;
 
