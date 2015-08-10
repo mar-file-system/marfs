@@ -663,6 +663,9 @@ int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
    post->chunk_info_bytes = 0;
 
    //   post->flags       = 0;
+
+   //   // this would have the effect of resetting md_path, in the middle
+   //   // of stat_xattrs().  Instead, marfs_open() will wipe POST initially.
    //   memset(post->md_path, 0, MARFS_MAX_MD_PATH);
 
    return 0;
@@ -713,6 +716,17 @@ int post_2_str(char*                  post_str,
 }
 
 // parse an xattr-value string into a MarFS_XattrPost
+//
+// NOTE: We moved the "md_path" into the POST xattr.  That allows it to be
+//     conveniently saved and restored as part of the POST xattr.  However,
+//     we then realized that we only wanted md_path saved on xattrs for
+//     trash and SEMI, and is null for everyone else.  Meanwhile,
+//     expand_path_info() also initializes post.md_path, for fuse.  Thus,
+//     if we call expand_path_info() then stat_xattrs() (which calls
+//     str_2_post()), for a file that is neither trash nor SEMI, we want to
+//     avoid affecting md_path.
+
+
 int str_2_post(MarFS_XattrPost* post, const char* post_str) {
 
    int   major;
@@ -720,7 +734,6 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
    char  obj_type_code;
 
    // --- extract bucket, and some top-level fields
-   post->md_path[0] = '\0';
    int scanf_size = sscanf(post_str, MARFS_POST_FORMAT,
                            &major, &minor,
                            &obj_type_code,
