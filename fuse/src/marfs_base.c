@@ -656,22 +656,40 @@ int str_2_pre(MarFS_XattrPre*    pre,
 
 // initialize -- most fields aren't known, when stat_xattr() calls us
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
+
    post->config_vers = MarFS_config_vers;
    post->obj_type    = OBJ_NONE;   /* figured out later */
    post->chunks      = 1;          // updated for multi
    post->chunk_info_bytes = 0;
+
    //   post->flags       = 0;
    //   memset(post->md_path, 0, MARFS_MAX_MD_PATH);
+
    return 0;
 }
 
 
 // from MarFS_XattrPost to string
-int post_2_str(char* post_str, size_t max_size, const MarFS_XattrPost* post) {
+int post_2_str(char*                  post_str,
+               size_t                 max_size,
+               const MarFS_XattrPost* post,
+               MarFS_Repo*            repo) {
 
    // config-version major and minor
    const int major = (int)floorf(post->config_vers);
    const int minor = (int)floorf((post->config_vers - major) * 1000.f);
+
+   // putting the md_path into the xattr is really only useful if the marfs
+   // file is in the trash, or is SEMI_DIRECT.  For other types of marfs
+   // files, this md_path will be wrong as soon as the user renames it (or
+   // a parent-directory) to some other path.  Therefore, one would never
+   // want to trust it in those cases.  [Gary thought of an example where
+   // several renames could get the path to point to the wrong file.]
+   // So, let's only write it when it is needed and reliable.
+   const char* md_path = ( ((repo->access_proto == PROTO_SEMI_DIRECT)
+                            || (post->flags & POST_TRASH))
+                           ? post->md_path
+                           : "");
 
    ssize_t bytes_printed = snprintf(post_str, max_size,
                                     MARFS_POST_FORMAT,
@@ -683,7 +701,7 @@ int post_2_str(char* post_str, size_t max_size, const MarFS_XattrPost* post) {
                                     post->correct_info,
                                     post->encrypt_info,
                                     post->flags,
-                                    post->md_path);
+                                    md_path);
    if (bytes_printed < 0)
       return -1;                  // errno is set
    if (bytes_printed == max_size) {   /* overflow */
@@ -702,6 +720,7 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
    char  obj_type_code;
 
    // --- extract bucket, and some top-level fields
+   post->md_path[0] = '\0';
    int scanf_size = sscanf(post_str, MARFS_POST_FORMAT,
                            &major, &minor,
                            &obj_type_code,
@@ -711,7 +730,7 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
                            &post->correct_info,
                            &post->encrypt_info,
                            &post->flags,
-                           (char*)&post->md_path); // never empty
+                           (char*)&post->md_path); // might be empty
 
    if (scanf_size == EOF)
       return -1;                // errno is set

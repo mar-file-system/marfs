@@ -361,10 +361,9 @@ typedef enum {
    PI_EXPANDED     = 0x02,      // expand_path_info() was called?
    PI_STAT_QUERY   = 0x04,      // i.e. maybe PathInfo.st empty for a reason
    PI_XATTR_QUERY  = 0x08,      // i.e. maybe PathInfo.xattr empty for a reason
-   // PI_XATTRS       = 0x08,      // XATTR_QUERY found any MarFS xattrs
    PI_PRE_INIT     = 0x10,      // "pre"  field has been initialized from scratch (unused?)
    PI_POST_INIT    = 0x20,      // "post" field has been initialized from scratch (unused?)
-   PI_TRASH_PATH   = 0x80,      // expand_trash_info() was called?
+   PI_TRASH_PATH   = 0x40,      // expand_trash_info() was called?
    //   PI_STATVFS      = 0x80,      // stvfs has been initialized from Namespace.fsinfo?
 } PathInfoFlagValue;
 
