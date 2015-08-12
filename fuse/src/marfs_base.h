@@ -364,6 +364,7 @@ typedef uint8_t  RepoFlagsType;
 
 typedef enum {
    PROTO_DIRECT = 0,            // data stored directly into MD files
+   PROTO_SEMI_DIRECT,           // data stored in separate FS, w/ reference from MD xattr
    PROTO_CDMI,
    PROTO_SPROXYD,               // should include installed release version
    PROTO_S3,
@@ -730,7 +731,7 @@ typedef struct MarFS_XattrPost {
 #define XATTR_MAX_POST_STRING_VALUE_SIZE  256 /* max */
 
 // from MarFS_XattrPost to string
-int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post);
+int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post, MarFS_Repo* repo);
 
 // from string to MarFS_XattrPost
 int str_2_post(MarFS_XattrPost* post, const char* post_str); // from string

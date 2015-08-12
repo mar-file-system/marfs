@@ -445,7 +445,6 @@ int stat_xattrs(PathInfo* info) {
    if (info->flags & PI_XATTR_QUERY)
       return 0;                 // already did this
 
-
    // call stat_regular().
    __TRY0(stat_regular, info);
 
@@ -615,7 +614,8 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
       }
 
       case XVT_POST: {
-         __TRY0(post_2_str, xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->post);
+         __TRY0(post_2_str, xattr_value_str, MARFS_MAX_XATTR_SIZE,
+                &info->post, info->ns->iwrite_repo);
          LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
          __TRY0(lsetxattr, info->post.md_path,
                 spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0);
@@ -746,9 +746,9 @@ int write_trash_companion_file(PathInfo*             info,
 //
 // NEW APPROACH: Because we want to allow trash directories to live outside
 //     the file-system/file-set where the gpfs metadata is stored (e.g. so
-//     there can be fewer trash directories that filesets), we can no
+//     there can be fewer trash directories than filesets), we can no
 //     longer expect rename(2) to work.  We could *try* rename first, and
-//     then fail back to moving the data, but we're not sure whether that
+//     then fail-over to moving the data, but we're not sure whether that
 //     could add considerable overhead in the case where the rename is
 //     going to fail.  [NOTE: could we just compute this once, up front,
 //     and store it as a flag in the Repo or Namespace structs?]  So, we'll
@@ -767,7 +767,12 @@ int  trash_unlink(PathInfo*   info,
    //    for data) just unlink the file and return – we have nothing to
    //    clean up, too bad for the user as we aren’t going to keep the
    //    unlinked file in the trash.
-
+   //
+   // NOTE: The has_all_xattrs test treats any files that don't have both
+   //    POST and OBJID as though they were DIRECT, and just deletes them.
+   //    Such files are malformed, lacking sufficient info to be cleaned-up
+   //    when we take out the trash.
+   //
    size_t rc;
    __TRY0(stat_xattrs, info);
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
@@ -1201,7 +1206,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
    ///      memset(rec, 1, recovery); // stands out in objects written from /dev/zero
    ///      needs_init = 0;
    ///   }
-   static int dbg=0x11;
+   static uint8_t dbg=0x11;
    memset(rec, dbg, recovery); // stands out in objects written from /dev/zero
    dbg += 0x11;
 

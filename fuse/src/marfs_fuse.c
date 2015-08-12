@@ -132,6 +132,7 @@ int marfs_access (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -152,6 +153,7 @@ int marfs_chmod(const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -173,6 +175,7 @@ int marfs_chown (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -226,6 +229,7 @@ int marfs_ftruncate(const char*            path,
 
    //   // resolve the full path to use to expand
    //   PathInfo info;
+   //   memset((char*)&info, 0, sizeof(PathInfo));
    //   EXPAND_PATH_INFO(&info, path);
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
@@ -272,6 +276,7 @@ int marfs_getattr (const char*  path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
    LOG(LOG_INFO, "expanded  %s -> %s\n", path, info.post.md_path);
 
@@ -301,6 +306,7 @@ int marfs_getxattr (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -354,6 +360,7 @@ int marfs_listxattr (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -433,6 +440,7 @@ int marfs_mkdir (const char* path,
    PUSH_USER();
 
    PathInfo  info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -472,6 +480,7 @@ int marfs_mknod (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op
@@ -500,14 +509,14 @@ int marfs_mknod (const char* path,
    //     way to let marfs_open() know about it.  However, it would be nice
    //     to leave most of the xattr creation to marfs_release().
    //
-   // SOLUTION: set the RESTART flag, in open, so we don't have to truncate
-   //     after every write?  It will just be clear that this object hasn't
-   //     been successfully closed, yet.  It will also be clear that this
-   //     is not one of those files with no xattrs.  Thus, if someone reads
-   //     from this file while it's being written, fuse will see it as a
-   //     file-with-xattrs (which is incomplete), and could throw an error,
-   //     instead of seeing it as a file-without-xattrs, and allowing
-   //     readers to see our internal data (e.g. in a MULTI file).
+   // SOLUTION: set the RESTART xattr flag.  It will be clear that this
+   //     object hasn't been successfully closed, yet.  It will also be
+   //     clear that this is not one of those files with no xattrs, so open
+   //     will treat it properly. Thus, if someone reads from this file
+   //     while it's being written, fuse will see it as a file-with-xattrs
+   //     (which is incomplete), and could throw an error, instead of
+   //     seeing it as a file-without-xattrs, and allowing readers to see
+   //     our internal data (e.g. in a MULTI file).
    if (info.ns->iwrite_repo->access_proto != PROTO_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
       info.flags |= PI_RESTART;
@@ -681,13 +690,10 @@ int marfs_open (const char*            path,
    if (info->pre.repo->access_proto == PROTO_S3_EMC) {
       s3_enable_EMC_extensions_r(1, ctx);
 
-/*
-@@@-HTTPS:
-For now if we're using HTTPS, I'm just assuming that it is without validating
-the SSL certificate (curl's -k or --insecure flags). If we ever get a validated
-certificate, we will want to put a flag into the MarFS_Repo struct that says
-it's validated or not.
-*/
+      // For now if we're using HTTPS, I'm just assuming that it is without
+      // validating the SSL certificate (curl's -k or --insecure flags). If
+      // we ever get a validated certificate, we will want to put a flag
+      // into the MarFS_Repo struct that says it's validated or not.
       if ( info->pre.repo->flags & REPO_SSL ) {
         s3_https_r( 1, ctx );
         s3_https_insecure_r( 1, ctx );
@@ -698,13 +704,10 @@ it's validated or not.
       s3_enable_Scality_extensions_r(1, ctx);
       s3_sproxyd_r(1, ctx);
 
-/*
-@@@-HTTPS:
-For now if we're using HTTPS, I'm just assuming that it is without validating
-the SSL certificate (curl's -k or --insecure flags). If we ever get a validated
-certificate, we will want to put a flag into the MarFS_Repo struct that says
-it's validated or not.
-*/
+      // For now if we're using HTTPS, I'm just assuming that it is without
+      // validating the SSL certificate (curl's -k or --insecure flags). If
+      // we ever get a validated certificate, we will want to put a flag
+      // into the MarFS_Repo struct that says it's validated or not.
       if ( info->pre.repo->flags & REPO_SSL ) {
         s3_https_r( 1, ctx );
         s3_https_insecure_r( 1, ctx );
@@ -750,6 +753,7 @@ int marfs_opendir (const char*            path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -781,6 +785,7 @@ int marfs_read (const char*            path,
    PUSH_USER();
 
    ///   PathInfo info;
+   ///   memset((char*)&info, 0, sizeof(PathInfo));
    ///   EXPAND_PATH_INFO(&info, path);
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
@@ -860,30 +865,31 @@ int marfs_read (const char*            path,
 #else
    // Newest approach, where we still do open/close per read(), and we also
    // handle Multi files.  This means that the data that is requested may
-   // span multiple objects (we call these internal objects "blocks").  In
+   // span multiple objects (we call these internal objects "chunks").  In
    // that case, we will actually do multiple open/close actions per
    // read(), because we must open objects individually.
    //
    // Marfs_write (and pftool) promise that we can compute the object-IDs
-   // of blocks composing a Multi-object, using the following assumptions:
+   // of chunks composing a Multi-object, using the following assumptions:
    //
    // (a) every object except possibly the last one will contain
-   //     repo.block_size of data (if you count the recovery-info at the
+   //     repo.chunk_size of data (if you count the recovery-info at the
    //     end).
    //
    // (b) Object-IDs are all the same as the object-ID in the "objid"
    //     xattr, but changing the final ".0" to the appropriate
-   //     block-offset.
+   //     chunk-offset.
    //
-   // These assumptions mean we can easily compute the IDs of block(s) we
+   // These assumptions mean we can easily compute the IDs of chunk(s) we
    // need, given only the desired data-offset (i.e. the "logical" offset)
    // and the original object-ID.
 
 
    // In the case of "Packed" objects, many user-level files are packed
    // (with recovery-info at the tail of each) into a single physical
-   // object.  The "logical offset" of the user's data must then be
-   // adjusted to skip over the objects (and their recovery-info) that
+   // object.  The "logical offset" of the user's data must then be added
+   // to the physical offset of the beginning of the packed object, in
+   // order to skip over the objects (and their recovery-info) that
    // preceded the "logical object" within the physical object.
    // Post.obj_offset is only non-zero for Packed files, where it holds the
    // absolute physical byte_offset of the beginning of user's logical
@@ -891,48 +897,53 @@ int marfs_read (const char*            path,
    const size_t phy_offset = info->post.obj_offset + offset;
 
    // The presence of recovery-info at the tail-end of objects means we
-   // have to detect the case when fuse wants us to read beyond the end of
-   // the data.  (It always does this, to make us identify EOF.)  S3 has
-   // data for us there, because of the recovery-info at the tail of the
-   // final object.  We use the stat-size of the MDFS file to indicate the
-   // logical extent of user data, so we can recognize where the legitimate
-   // data ends.
+   // have to detect the case when fuse attempts to read beyond the end of
+   // the data.  (It always does this, to make us identify EOF.)  The
+   // object has data for us there, because of the recovery-info at the
+   // tail of the final object.  We use the stat-size of the MDFS file to
+   // indicate the logical extent of user data, so we can recognize where
+   // the legitimate data ends.
    STAT(info);
    const size_t max_extent = info->st.st_size;       // max logical index
    const size_t max_size   = ((offset >= max_extent) // max logical span
                               ? 0
                               : max_extent - offset);
 
-   // portions of each block that are used for system-data vs. user-data.
+   // portions of each chunk that are used for system-data vs. user-data.
    // Post.chunks is always 1, except in the cast of packed.
-   const size_t recovery   = sizeof(RecoveryInfo) +8;
-   const size_t data       = (info->pre.chunk_size // logical bytes per block
+   const size_t recovery   = sizeof(RecoveryInfo) +8; // sys bytes, per chunk
+   const size_t data1      = (info->pre.chunk_size - recovery); // log bytes, per chunk
+   const size_t data       = (info->pre.chunk_size // total logical bytes in obj(s)
                               - (info->post.chunks * recovery));
    
-   size_t block        = phy_offset / data; // only non-zero for Multi
-   size_t block_offset = phy_offset - (block * data); // offset in <block>
-   size_t block_remain = data - block_offset;     // max for this block
+   size_t chunk        = phy_offset / data; // only non-zero for Multi
+   if (phy_offset == data)
+      chunk -= 1; // bizarre case of user reading 0 bytes at tail of object
+
+   size_t chunk_offset = phy_offset - (chunk * data1); // offset in <chunk>
+   size_t chunk_remain = data1 - chunk_offset;     // max for this chunk
    size_t total_remain = (max_size < size) ? max_size : size; // logical EOF
 
    char*  buf_ptr      = buf;
-   size_t read_size    = ((total_remain < block_remain) // actual read size
+   size_t read_size    = ((total_remain < chunk_remain) // read size for this chunk
                           ? total_remain
-                          : block_remain);
+                          : chunk_remain);
 
    size_t read_count   = 0;     // amount read during this call
 
-   // Starting at the appropriate block and offset to match caller's
+   // Starting at the appropriate chunk and offset to match caller's
    // logical offset in the multi-object data, move through successive
-   // blocks, reading contiguous user-data (skipping e.g. recovery-info),
-   // until we've filled caller's buffer.
+   // chunks, reading contiguous user-data (skipping e.g. recovery-info),
+   // until we've filled caller's buffer.  <read_size> is the amount to
+   // read from this chunk.
    while (read_size) {
 
-      // read as much user-data as we have room for from the current block
-      LOG(LOG_INFO, "iter: blk=%ld, boff=%ld, rsz=%ld, brem=%ld, trem=%ld\n",
-          block, block_offset, read_size, block_remain, total_remain);
+      // read as much user-data as we have room for from the current chunk
+      LOG(LOG_INFO, "iter: chnk=%ld, choff=%ld, rdsz=%ld, chrem=%ld, totrem=%ld\n",
+          chunk, chunk_offset, read_size, chunk_remain, total_remain);
 
       // byte-range in terms of this object
-      s3_set_byte_range_r(block_offset, read_size, b->context);
+      s3_set_byte_range_r(chunk_offset, read_size, b->context);
 
       // NOTE: stream_open() wipes ObjectStream.written.  We want
       //     this field to track the total amount read across all
@@ -942,51 +953,73 @@ int marfs_read (const char*            path,
       TRY0(stream_open, os, OS_GET);
       os->written = written;
 
-      // because we are reading byte-ranges, we may see '206 Partial Content'
+      // Because we are reading byte-ranges, we may see '206 Partial Content'.
       //
-      // TRY_GE0(stream_get, os, buf, size);
-      rc_ssize = stream_get(os, buf_ptr, read_size);
-      if ((rc_ssize < 0)
-          && (os->iob.code != 200)
-          && (os->iob.code != 206)) {
-         LOG(LOG_ERR, "stream_get returned %ld (%d '%s')\n",
-             rc_ssize, os->iob.code, os->iob.result);
-         return -EIO;
-      }
-      if (rc_ssize != read_size) {
-         // It's probably legit that the server could give us less than we
-         // asked for. (i.e. 'Partial Content' might not only mean that we
-         // asked for a byte range; it might also mean we didn't even get
-         // all of our byte range.)  In that case, instead of moving on to
-         // the next object, we should try again on this one.  We don't
-         // currently do that, so instead we'll throw an error, and fail
-         // the user's request.
-         LOG(LOG_ERR, "request for %ld-%ld (%ld bytes) returned only %ld bytes\n",
-             block_offset, (block_offset + read_size), read_size, rc_ssize);
-         return -EIO;
-      }
-      read_count += read_size;
+      // It's probably also legit that the server could give us less than we
+      // asked for. (i.e. 'Partial Content' might not only mean that we
+      // asked for a byte range; it might also mean we didn't even get
+      // all of our byte range.)  In that case, instead of moving on to
+      // the next object, we should try again on this one.  We don't
+      // currently do that, so instead we'll throw an error, and fail
+      // the user's request.
+      //
+      // Keep trying until we read all of read_size, or get an error (or get 0).
+      size_t sub_read = read_size; // bytes remaining within <read_size>
+      do {
+         rc_ssize = stream_get(os, buf_ptr, sub_read);
+         if ((rc_ssize < 0)
+             && (os->iob.code != 200)
+             && (os->iob.code != 206)) {
+            LOG(LOG_ERR, "stream_get returned < 0: %ld (%d '%s')\n",
+                rc_ssize, os->iob.code, os->iob.result);
+            return -EIO;
+         }
+         if (rc_ssize < 0) {
+            LOG(LOG_ERR, "stream_get returned < 0: %ld (%d '%s')\n",
+                rc_ssize, os->iob.code, os->iob.result);
+            return -EIO;
+         }
+         // // handy for debugging small things, but don't want it there always
+         // LOG(LOG_INFO, "result: '%*s'\n", rc_ssize, buf);
 
-      // // handy for debugging small things, but don't want it there always
-      // LOG(LOG_INFO, "result: '%*s'\n", rc_ssize, buf);
+         // TBD: This might legitimately happen if stream_get() hits EOF?
+         if (rc_ssize == 0) {
+            LOG(LOG_ERR, "request for range %ld-%ld (%ld bytes) returned 0 bytes\n",
+                (chunk_offset + read_size - sub_read),
+                (chunk_offset + read_size),
+                sub_read);
+            return -EIO;
+         }
+         if (rc_ssize != sub_read) {
+            LOG(LOG_INFO, "request for range %ld-%ld (%ld bytes) returned only %ld bytes\n",
+                (chunk_offset + read_size - sub_read),
+                (chunk_offset + read_size),
+                sub_read, rc_ssize);
+            // return -EIO;
+         }
+         total_remain  -= rc_ssize;
+         buf_ptr       += rc_ssize;
+         read_count    += rc_ssize;
+         sub_read      -= rc_ssize;
+      } while (sub_read);
 
+
+      // We got all of read_size.  We're at the end of this chunk
       TRY0(stream_sync, os);
       TRY0(stream_close, os);
 
-      block         += 1;
-      block_offset   = 0;
-      block_remain   = data;
-      total_remain  -= read_size;
+      chunk         += 1;
+      chunk_offset   = 0;
+      chunk_remain   = data;
 
-      buf_ptr       += read_size;
-      read_size      = ((total_remain < block_remain)
+      read_size      = ((total_remain < chunk_remain)
                         ? total_remain
-                        : block_remain);
+                        : chunk_remain);
 
-      // writing another block?
+      // reading another chunk?
       if (read_size) {
          // update the URL in the ObjectStream, in our FileHandle
-         info->pre.chunk_no = block;
+         info->pre.chunk_no = chunk;
          update_pre(&info->pre);
          strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
          LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
@@ -1009,6 +1042,7 @@ int marfs_readdir (const char*            path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -1057,6 +1091,7 @@ int marfs_readlink (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -1209,6 +1244,7 @@ int marfs_releasedir (const char*            path,
    size_t rc = 0;
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -1237,6 +1273,7 @@ int marfs_removexattr (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -1263,9 +1300,11 @@ int marfs_rename (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    PathInfo info2;
+   memset((char*)&info2, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info2, to);
 
 
@@ -1286,6 +1325,7 @@ int marfs_rmdir (const char* path) {
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -1313,6 +1353,7 @@ int marfs_setxattr (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -1341,6 +1382,7 @@ int marfs_statfs (const char*      path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -1367,6 +1409,7 @@ int marfs_symlink (const char* target,
    // in the usual way for fuse-functions.
    LOG(LOG_INFO, "linkname: %s\n", linkname);
    PathInfo lnk_info;
+   memset((char*)&lnk_info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&lnk_info, linkname);   // (okay if this file doesn't exist)
 
 
@@ -1392,6 +1435,7 @@ int marfs_truncate (const char* path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
@@ -1415,6 +1459,7 @@ int marfs_unlink (const char* path) {
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
@@ -1465,6 +1510,7 @@ int marfs_utime(const char*     path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -1486,6 +1532,7 @@ int marfs_utimens(const char*           path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -1511,6 +1558,7 @@ int marfs_write(const char*            path,
    LOG(LOG_INFO, "offset: %ld, size: %ld\n", offset, size);
 
    //   PathInfo info;
+   //   memset((char*)&info, 0, sizeof(PathInfo));
    //   EXPAND_PATH_INFO(&info, path);
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
@@ -1757,6 +1805,7 @@ int marfs_create(const char*            path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure
@@ -1810,6 +1859,7 @@ int marfs_fallocate(const char*            path,
    PUSH_USER();
 
    PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
@@ -1880,6 +1930,7 @@ int marfs_flush (const char*            path,
    PUSH_USER();
 
    ///   PathInfo info;
+   ///   memset((char*)&info, 0, sizeof(PathInfo));
    ///   EXPAND_PATH_INFO(&info, path);
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    // PathInfo*         info = &fh->info;                  /* shorthand */

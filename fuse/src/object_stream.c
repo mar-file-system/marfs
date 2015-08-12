@@ -592,8 +592,8 @@ size_t streaming_writefunc(void* ptr, size_t size, size_t nmemb, void* stream) {
 // else return number of chars we get.
 //
 ssize_t stream_get(ObjectStream* os,
-                  char*         buf,
-                  size_t        size) {
+                   char*         buf,
+                   size_t        size) {
 
    static const int get_timeout_sec = 10; /* totally made up out of thin air */
 
@@ -625,7 +625,7 @@ ssize_t stream_get(ObjectStream* os,
    LOG(LOG_INFO, "waiting for writefn\n");
    SAFE_SEM_WAIT(&os->iob_full, get_timeout_sec);
 
-   // 
+   // writefn detected CURL EOF?
    if (os->flags & OSF_EOF) {
       LOG(LOG_INFO, "EOF is asserted\n");
    }
