@@ -220,6 +220,10 @@ int j = 0;
    // Use Parser to dig out fileset names and to get a count of filesets
    if ( fileset_scan_count <= 0 ) {
       config = (struct config *)malloc(sizeof(struct config)); 
+      if (config == NULL) {
+         fprintf(stderr, "malloc error on config for parser\n"); 
+         exit(1);
+      }
       parseConfigFile("/root/atorrez-test/current/config/config-2-at", CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, QUIET); 
       freeHeaderFile(h_page.next);                                                                 
  
@@ -262,7 +266,7 @@ int j = 0;
    //create structure containing all the stats that we care about
    fileset_stat_ptr = (fileset_stat *) malloc(sizeof(*fileset_stat_ptr)*fileset_count);
    if (fileset_stat_ptr == NULL ) {
-      fprintf(stderr,"Memory allocation failed\n");
+      fprintf(stderr,"Memory allocation failed on fileset_stat\n");
       exit(1);
    }
    init_records(fileset_stat_ptr, fileset_count);
@@ -306,8 +310,6 @@ int j = 0;
 
    // Add filsets to structure so that inode scan can update fileset info
    ec = read_inodes(rdir, outfd, fileset_id, fileset_stat_ptr, fileset_scan_count,fileset_scan_index);
-//   fprintf(outfd,"small files = %llu\n medium files = %llu\n large_files = %llu\n",
-//          histo_size_ptr->small_count, histo_size_ptr->medium_count, histo_size_ptr->large_count);
    free(myNamespaceList);
    free(fileset_stat_ptr);
    return (0);   
@@ -455,8 +457,6 @@ int get_xattrs(gpfs_iscan_t *iscanP,
          xattr_ptr->xattr_value[valueLen] = '\0'; 
          xattr_ptr++;
       }
-      //xattr_ptr++;
-      //xattr_count++;
    } // endwhile
    return(xattr_count);
 }
@@ -636,28 +636,15 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
                fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
 
-               // Determine if file in trash directory
-               if (!strcmp(post.gc_path, "")){
-                  fprintf(outfd,"gc_path is NULL\n");
-                  if (debug) 
-                     printf("gc_path is NULL\n");
-               } 
-
-               /* Else this is trash so there are a few steps here
+               /* Determine if file in trash directory
+               * if this is trash there are a few steps here
                *
                *  1)  First sum the trash in this fileset
                *  2)  Read objid xattr to determine which fileset the trash came from
                *  3)  Update the fileset structure with a trash size count
                *
                */
-               else {
-                  //   fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
-
-                  //if(debug)
-                  //fprintf(outfd,"index = %d   %llu\n", last_struct_index, iattrP->ia_size);
-                    
-                  //This is a sum of all trash sizes in the trash fileset 
-                  //fileset_stat_ptr[last_struct_index].sum_trash += iattrP->ia_size;
+               if ( post.flags == POST_TRASH ) {
                   /*
                      We must be in a trash fileset/directory so the next bit of code 
                      determines which fileset/project the trash belongs to so that
@@ -665,15 +652,13 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   */
                   // Get objid xattr
                   if ((trash_index = get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count,outfd)) != -1) {
-                  //   if (debug)
-                  //      fprintf(outfd,"trash index %d\n", trash_index);
+                     if (debug)
+                        fprintf(outfd,"trash index %d\n", trash_index);
                      xattr_ptr = &mar_xattrs[trash_index];
-                    // if (debug)
-                    //    fprintf(outfd,"trash found objid = %s\n", xattr_ptr->xattr_value);
+                     if (debug)
+                        fprintf(outfd,"trash found objid = %s\n", xattr_ptr->xattr_value);
                      
                      //From ojbid xattr, get the ns_name which is actually the fileset name
-                     //read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT, repo_name, ns_name);
-                     //read_count = sscanf(xattr_ptr->xattr_value, MARFS_OBJID_NAMESPACE_RD_FORMAT, repo_name, ns_name);
                      read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT"/"NON_SLASH, repo_name, ns_name); 
                      // do not lookup fileset name every iteration because chances are it is the same as last
                      // iteration
@@ -684,6 +669,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                            continue;
                      }
                      fileset_stat_ptr[last_trash_index].sum_trash += iattrP->ia_size;
+                     fileset_stat_ptr[last_trash_index].sum_trash_file_count += 1;
                   }
                }
             }
@@ -747,7 +733,9 @@ int parse_post_xattr (MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &post->chunk_info_bytes,
                            &post->correct_info,
                            &post->encrypt_info,
-                           (char*)&post->gc_path);
+                           &post->flags,
+                           //(char*)&post->gc_path);
+                           (char*)&post->md_path);
 
    if (scanf_size == EOF || scanf_size < 9)
       return -1;                
@@ -771,6 +759,7 @@ void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count,
       fprintf(outfd,"[%s]\n", fileset_stat_ptr[i].fileset_name);
       fprintf(outfd,"total_file_count:  %zu\n", fileset_stat_ptr[i].sum_file_count);
       fprintf(outfd,"total_size:   %zu (%dG)\n", fileset_stat_ptr[i].sum_size, fileset_stat_ptr[i].sum_size/GIB);
+      fprintf(outfd,"trash_file_count:  %zu\n", fileset_stat_ptr[i].sum_trash_file_count);
       fprintf(outfd,"trash_size:   %zu\n", fileset_stat_ptr[i].sum_trash);
       fprintf(outfd,"uni count:    %zu\n", fileset_stat_ptr[i].obj_type.uni_count);
       fprintf(outfd,"multi count:  %zu\n", fileset_stat_ptr[i].obj_type.multi_count);
