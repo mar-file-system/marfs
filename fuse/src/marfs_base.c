@@ -322,8 +322,8 @@ int init_pre(MarFS_XattrPre*        pre,
    pre->config_vers  = MarFS_config_vers;
 
    pre->obj_type     = obj_type;
-   pre->compression  = ns->compression;
-   pre->correction   = ns->correction;
+   pre->compression  = repo->compression;
+   pre->correction   = repo->correction;
    pre->encryption   = repo->encryption;
 
    pre->md_inode     = st->st_ino;
@@ -1212,6 +1212,9 @@ int load_config(const char* config_fname) {
       .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE),
       .auth         = AUTH_S3_AWS_MASTER,
+      .compression  = COMPRESS_NONE,
+      .correction   = CORRECT_NONE,
+      .encryption   = ENCRYPT_NONE,
       .latency_ms   = (10 * 1000) };
    push_repo(&r_dummy);
 
@@ -1224,6 +1227,9 @@ int load_config(const char* config_fname) {
       .chunk_size   = (2048), /* i.e. max MarFS object (small for debugging) */
       .flags        = (REPO_ONLINE),
       .auth         = AUTH_S3_AWS_MASTER,
+      .compression  = COMPRESS_NONE,
+      .correction   = CORRECT_NONE,
+      .encryption   = ENCRYPT_NONE,
       .latency_ms   = (10 * 1000),
    };
    push_repo(&r_dummy);
@@ -1236,6 +1242,9 @@ int load_config(const char* config_fname) {
       .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE),
       .auth         = AUTH_S3_AWS_MASTER,
+      .compression  = COMPRESS_NONE,
+      .correction   = CORRECT_NONE,
+      .encryption   = ENCRYPT_NONE,
       .latency_ms   = (10 * 1000) };
    push_repo(&r_dummy);
 
@@ -1247,6 +1256,9 @@ int load_config(const char* config_fname) {
       .chunk_size   = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE),
       .auth         = AUTH_S3_AWS_MASTER,
+      .compression  = COMPRESS_NONE,
+      .correction   = CORRECT_NONE,
+      .encryption   = ENCRYPT_NONE,
       .latency_ms   = (10 * 1000)
    };
    push_repo(&r_dummy);
@@ -1259,6 +1271,9 @@ int load_config(const char* config_fname) {
       .chunk_size   = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE | REPO_SSL),
       .auth         = AUTH_S3_AWS_MASTER,
+      .compression  = COMPRESS_NONE,
+      .correction   = CORRECT_NONE,
+      .encryption   = ENCRYPT_NONE,
       .latency_ms   = (10 * 1000)
    };
    push_repo(&r_dummy);
@@ -1271,6 +1286,9 @@ int load_config(const char* config_fname) {
       .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE),
       .auth         = AUTH_S3_AWS_MASTER,
+      .compression  = COMPRESS_NONE,
+      .correction   = CORRECT_NONE,
+      .encryption   = ENCRYPT_NONE,
       .latency_ms   = (10 * 1000) };
    push_repo(&r_dummy);
 
@@ -1282,6 +1300,9 @@ int load_config(const char* config_fname) {
       .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE),
       .auth         = AUTH_S3_AWS_MASTER,
+      .compression  = COMPRESS_NONE,
+      .correction   = CORRECT_NONE,
+      .encryption   = ENCRYPT_NONE,
       .latency_ms   = (10 * 1000),
    };
    push_repo(&r_dummy);
@@ -1294,6 +1315,9 @@ int load_config(const char* config_fname) {
       .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE | REPO_SSL),
       .auth         = AUTH_S3_AWS_MASTER,
+      .compression  = COMPRESS_NONE,
+      .correction   = CORRECT_NONE,
+      .encryption   = ENCRYPT_NONE,
       .latency_ms   = (10 * 1000),
    };
    push_repo(&r_dummy);
@@ -1330,9 +1354,6 @@ int load_config(const char* config_fname) {
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
 
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
-
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
@@ -1360,9 +1381,6 @@ int load_config(const char* config_fname) {
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
 
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
-
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
@@ -1388,9 +1406,6 @@ int load_config(const char* config_fname) {
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
 
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
@@ -1418,9 +1433,6 @@ int load_config(const char* config_fname) {
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
 
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
-
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
@@ -1446,9 +1458,6 @@ int load_config(const char* config_fname) {
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
 
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
@@ -1476,9 +1485,6 @@ int load_config(const char* config_fname) {
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
 
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
-
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
@@ -1505,9 +1511,6 @@ int load_config(const char* config_fname) {
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
 
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
-
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
@@ -1533,9 +1536,6 @@ int load_config(const char* config_fname) {
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
 
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
@@ -1569,9 +1569,6 @@ int load_config(const char* config_fname) {
 
       .iperms = 0,
       .bperms = 0,
-
-      .compression = COMPRESS_NONE,
-      .correction  = CORRECT_NONE,
 
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,

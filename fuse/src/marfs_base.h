@@ -397,6 +397,8 @@ typedef struct MarFS_Repo {
    RepoAccessProto   access_proto;
    size_t            chunk_size;   // max Uni-object (Cf. Namespace.range_list)
    MarFSAuthMethod   auth;         // (current) authentication method for this repo
+   CompressionMethod compression;  // compression type
+   CorrectionMethod  correction;   // correctness type  (like CRC/checksum/etc.)
    EncryptionMethod  encryption;   // (current) encryption method for this repo
    uint32_t          latency_ms;   // max time to wait for a response 
 }  MarFS_Repo;
@@ -519,9 +521,6 @@ typedef struct MarFS_Namespace {
 
    MarFS_Perms        iperms;   // RM/WM/RD/WD bits, for interactive (fuse)
    MarFS_Perms        bperms;   // RM/WM/RD/WD bits, for batch (pftool)
-
-   CompressionMethod  compression;     // compression type
-   CorrectionMethod   correction;      // correctness type  (like CRC/checksum/etc.)
 
    MarFS_Repo*        iwrite_repo;     // final size unknown ("interactive" = fuse)
    RangeList*         range_list;      // repos for different file-sizes (pftool)
