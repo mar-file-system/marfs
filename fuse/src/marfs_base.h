@@ -291,7 +291,6 @@ extern MarFS_ObjType decode_obj_type(char);
 // NOTE: You must co-maintain string-constants in encode/decode_compression()
 typedef enum {
    COMPRESS_NONE = 0,
-   COMPRESS_RUN_LENGTH,
 } CompressionMethod;
 
 extern CompressionMethod lookup_compression(const char* compression_name);
@@ -305,11 +304,6 @@ extern CompressionMethod decode_compression(char);
 // NOTE: You must co-maintain string-constants in encode/decode_correction()
 typedef enum {
    CORRECT_NONE = 0,
-   CORRECT_CRC,
-   CORRECT_CHECKSUM,
-   CORRECT_HASH,
-   CORRECT_RAID,
-   CORRECT_ERASURE,
 } CorrectionMethod;
 
 typedef uint64_t CorrectInfo;   // e.g. checksum
