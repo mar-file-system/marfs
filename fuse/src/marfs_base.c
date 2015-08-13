@@ -113,11 +113,6 @@ MarFS_ObjType lookup_obj_type(const char* token) {
 // correction-methods, into the corresponding enum.
 CorrectionMethod lookup_correction(const char* token) {
    if      (! strcmp(token, "none"))     return CORRECT_NONE;
-   else if (! strcmp(token, "crc"))      return CORRECT_CRC;
-   else if (! strcmp(token, "checksum")) return CORRECT_CHECKSUM;
-   else if (! strcmp(token, "hash"))     return CORRECT_HASH;
-   else if (! strcmp(token, "raid"))     return CORRECT_RAID;
-   else if (! strcmp(token, "erasure"))  return CORRECT_ERASURE;
 
    LOG(LOG_ERR, "Unrecognized correction_method: %s\n", token);
    exit(1);
@@ -1365,8 +1360,8 @@ int load_config(const char* config_fname) {
 
       .is_root = 0,
    };
-   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
-   // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
+   // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
 
 
    // Alfred
@@ -1533,6 +1528,33 @@ int load_config(const char* config_fname) {
       .md_path        = "/mnt/xfs/jti/filesys/mdfs/test00",
       .trash_path     = "/mnt/xfs/jti/filesys/trash/test00",
       .fsinfo_path    = "/mnt/xfs/jti/filesys/fsinfo/test00",
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space_units = (1024 * 1024), /* MB */
+      .quota_space = 1024,          /* 1024 MB of data */
+
+      .quota_space_units = 1,
+      .quota_names = 32,             /* 32 names */
+
+      .is_root = 0,
+   };
+   // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
+
+
+   // jti testing on machine without GPFS
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "ext4",
+      .mnt_suffix     = "/ext4",  // "<mnt_top>/ext4" comes here
+
+      .md_path        = "/root/marfs_test_filesys/mdfs",
+      .trash_path     = "/root/marfs_test_filesys/trash",
+      .fsinfo_path    = "/root/marfs_test_filesys/fsinfo",
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),

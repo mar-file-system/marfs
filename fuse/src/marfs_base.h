@@ -771,10 +771,18 @@ int str_2_shard(MarFS_XattrShard* shard, const char* shard_str); // from string
 //
 // This is a record that has information mostly from stat() of the metadata
 // file in human-readable form.  This thing is written directly into the
-// metadata file itself, in some cases.
+// object itself.
 //
-// (This is recovery information captured at create time only; it is not
-// updated upon metadata changes like chmod, chown, rename, etc.)
+// This is recovery information captured at create time only; it is not
+// updated upon metadata changes like chmod, chown, rename, etc.
+// Therefore, yes, it is probably out-of-date.  It's purpose is to allow
+// regenerating some semblance of the MDFS, using only the contents of
+// objects, in the event of a catastrophic meltdown of the MDFS.
+//
+// NOTE: Now that we are using Scality sproxyd, we have the further problem
+//     that you can't easily get a list of "all existing objects".
+//     Instead, you'd have to do some grovelling through low-level scality
+//     metadata.  But you could do that.
 // ---------------------------------------------------------------------------
 
 // OBSOLETE?  The recovery info is just the contents of the Post xattr?
