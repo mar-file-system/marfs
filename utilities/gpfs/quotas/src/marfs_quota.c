@@ -142,7 +142,6 @@ struct line h_page, pseudo_h, fld_nm_lst;
 struct config *config = NULL;
 
 struct namespace **myNamespaceList, *myNamespace;
-//struct repo **myRepoList, *myRepo;
 int j = 0;
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
@@ -218,6 +217,8 @@ int j = 0;
    */
 
    // Use Parser to dig out fileset names and to get a count of filesets
+   // fileset_scan_count init'd to -1
+   // if fileset_scan_count = 0, user wants fileset count only
    if ( fileset_scan_count <= 0 ) {
       config = (struct config *)malloc(sizeof(struct config)); 
       if (config == NULL) {
@@ -230,7 +231,7 @@ int j = 0;
       myNamespaceList = (struct namespace **)listObjByName("namespace", config);                   
       while (myNamespaceList[j] != (struct namespace *)NULL) {
          myNamespace = (struct namespace *)myNamespaceList[j];
-         if (fileset_scan_count == 0) 
+         if (debug)
             printf("fileset:  %s\n", myNamespace->name);
          j++;
       }
