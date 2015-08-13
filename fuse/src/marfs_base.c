@@ -329,6 +329,7 @@ int init_pre(MarFS_XattrPre*        pre,
    pre->md_inode     = st->st_ino;
    pre->md_ctime     = st->st_ctime;
    pre->obj_ctime    = now;     /* TBD: update with info from HEAD request */
+   pre->unique       = 0;
 
    pre->chunk_size   = repo->chunk_size;
    pre->chunk_no     = 0;
@@ -426,7 +427,7 @@ int update_pre(MarFS_XattrPre* pre) {
                           major, minor,
                           type, compress, correct, encrypt,
                           (uint64_t)pre->md_inode,
-                          md_ctime_str, obj_ctime_str,
+                          md_ctime_str, obj_ctime_str, pre->unique,
                           pre->chunk_size, pre->chunk_no);
    if (write_count < 0)
       return errno;
@@ -465,6 +466,9 @@ int pre_2_str(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
 
 
 
+#if 0
+// COMMETNED OUT.  I think this is now replaced by update_pre()  [?]
+
 int pre_2_url(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
 
    // contents may have changed
@@ -485,6 +489,8 @@ int pre_2_url(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
    }
    return 0;
 }
+
+#endif
 
 
 
@@ -522,21 +528,22 @@ int str_2_pre(MarFS_XattrPre*    pre,
    }
 
 
-   int   major;
-   int   minor;
+   int    major;
+   int    minor;
 
-   char  obj_type;              /* ignored, see NOTE above init_pre() */
-   char  compress;
-   char  correct;
-   char  encrypt;
+   char   obj_type;              /* ignored, see NOTE above init_pre() */
+   char   compress;
+   char   correct;
+   char   encrypt;
 
-   ino_t md_inode;
+   ino_t  md_inode;
 
    size_t chunk_size;
    size_t chunk_no;
 
-   char md_ctime_str[MARFS_DATE_STRING_MAX];
-   char obj_ctime_str[MARFS_DATE_STRING_MAX];
+   char    md_ctime_str[MARFS_DATE_STRING_MAX];
+   char    obj_ctime_str[MARFS_DATE_STRING_MAX];
+   uint8_t unique;
 
    // --- parse bucket components
 
@@ -570,12 +577,12 @@ int str_2_pre(MarFS_XattrPre*    pre,
                        &major, &minor,
                        &obj_type, &compress, &correct, &encrypt,
                        &md_inode,
-                       md_ctime_str, obj_ctime_str,
+                       md_ctime_str, obj_ctime_str, &unique,
                        &chunk_size, &chunk_no);
 
    if (read_count == EOF)       // errno is set (?)
       return -1;
-   else if (read_count != 12) {
+   else if (read_count != 13) {
       errno = EINVAL;            /* ?? */
       return -1;
    }
@@ -620,19 +627,21 @@ int str_2_pre(MarFS_XattrPre*    pre,
    time_t  obj_ctime;
 
    if (str_to_epoch(&md_ctime, md_ctime_str, MARFS_DATE_STRING_MAX)) {
-      LOG(LOG_ERR, "error converting string '%s' to Pre.md_time\n", md_ctime_str);
+      LOG(LOG_ERR, "error converting string '%s' to Pre.md_ctime\n", md_ctime_str);
       return -1;
    }
    if (str_to_epoch(&obj_ctime, obj_ctime_str, MARFS_DATE_STRING_MAX)) {
-      LOG(LOG_ERR, "error converting string '%s' to Pre.md_time\n", md_ctime_str);
+      LOG(LOG_ERR, "error converting string '%s' to Pre.obj_ctime\n", obj_ctime_str);
       return -1;
    }
 
 
    // --- fill in fields in Pre
+   pre->config_vers  = (float)major + ((float)minor / 1000.f);
+
    pre->md_ctime     = md_ctime;
    pre->obj_ctime    = obj_ctime;
-   pre->config_vers  = (float)major + ((float)minor / 1000.f);
+   pre->unique       = unique;
 
    pre->obj_type     = decode_obj_type(obj_type);
    pre->compression  = decode_compression(compress);
@@ -880,11 +889,11 @@ typedef union {
 
 // We write MultiChunkInfo as binary data (in network-byte-order) in hopes
 // that this will speed-up treating the MD file as a big index, during
-// pftool restarts.  Return number of bytes moved, or -1 + errno.
+// pftool restarts.  Return number of bytes moved, or -1 and errno.
 //
-// NOTE: If max_size == sizeof(MultiChunkInfo), this may still return a
+// NOTE: If max_size == sizeof(MultiChunkInfo), we may still return a
 //     size less than sizeof(MultiChunkInfo), because the struct may
-//     include padding assoicated with alignment.
+//     include padding associated with alignment.
 
 ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* chnk) {
    if (max_size < sizeof(MultiChunkInfo)) {
@@ -907,7 +916,7 @@ ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* 
    dest += sizeof(float);
 
    COPY_OUT(chnk->chunk_no,         size_t,      htonll);
-   COPY_OUT(chnk->data_offset,      size_t,      htonll);
+   COPY_OUT(chnk->logical_offset,   size_t,      htonll);
    COPY_OUT(chnk->chunk_data_bytes, size_t,      htonll);
    COPY_OUT(chnk->correct_info,     CorrectInfo, htonll);
    COPY_OUT(chnk->encrypt_info,     EncryptInfo, htonll);
@@ -917,12 +926,15 @@ ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* 
    return (dest - str);
 }
 
-// NOTE: We require str_len >= sizeof(MultiChunkInfo), even though it's
-//     possible that chunkinfo_2_str() can encode a MultiChunkInfo into a
-//     string that is smaller than sizeof(MultiChunkInfo), because of
-//     padding for alingment, within the struct.  We're just playing it
-//     safe.
+// <str> holds raw data read from an Multi MD file, representing one chunk.
+// Parse it into a MultiChunkInfo.
 ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_len) {
+
+   // We require str_len >= sizeof(MultiChunkInfo), even though it's
+   // possible that chunkinfo_2_str() can encode a MultiChunkInfo into a
+   // string that is smaller than sizeof(MultiChunkInfo), because of
+   // padding for alignment, within the struct.  We're just playing it
+   // safe.
    if (str_len < sizeof(MultiChunkInfo)) {
       errno = EINVAL;
       return -1;
@@ -939,15 +951,15 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
    // version is copied byte-for-byte as a float (in network-byte-order)
    UFloat32 uf;
    memcpy((char*)&uf.i, src, 4);
-   uf.i = htonl(uf.i);
+   uf.i = ntohl(uf.i);
    chnk->config_vers = uf.f;
    src += sizeof(float);
 
-   COPY_IN(chnk->chunk_no,         size_t,      htonll);
-   COPY_IN(chnk->data_offset,      size_t,      htonll);
-   COPY_IN(chnk->chunk_data_bytes, size_t,      htonll);
-   COPY_IN(chnk->correct_info,     CorrectInfo, htonll);
-   COPY_IN(chnk->encrypt_info,     EncryptInfo, htonll);
+   COPY_IN(chnk->chunk_no,         size_t,      ntohll);
+   COPY_IN(chnk->logical_offset,   size_t,      ntohll);
+   COPY_IN(chnk->chunk_data_bytes, size_t,      ntohll);
+   COPY_IN(chnk->correct_info,     CorrectInfo, ntohll);
+   COPY_IN(chnk->encrypt_info,     EncryptInfo, ntohll);
 
 #undef COPY_IN
 
@@ -1332,8 +1344,8 @@ int load_config(const char* config_fname) {
 
       .is_root = 0,
    };
-   // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
-   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
+   // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
 
 
    // Alfred

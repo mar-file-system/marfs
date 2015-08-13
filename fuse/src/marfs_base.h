@@ -213,10 +213,8 @@ extern float MarFS_config_vers;
 #define MARFS_BUCKET_WR_FORMAT  "%s"
 
 
-// #define MARFS_OBJID_RD_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%[^/]/obj_ctime.%[^/]/chnksz.%lx/chnkno.%lx"
-// #define MARFS_OBJID_WR_FORMAT   "ver.%03d_%03d/%c%c%c%c/inode.%016lx/md_ctime.%s/obj_ctime.%s/chnksz.%lx/chnkno.%lx"
-#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03d_%03d/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/chnksz.%lx/chnkno.%lx"
-#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03d_%03d/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03d_%03d/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/unq.%hhd/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03d_%03d/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/unq.%hhd/chnksz.%lx/chnkno.%lx"
 
 
 // #define MARFS_PRE_RD_FORMAT     MARFS_BUCKET_RD_FORMAT "/" MARFS_OBJID_RD_FORMAT  
@@ -636,6 +634,17 @@ typedef struct MarFS_Namespace {
 //       servers).  However, we're not using AWS, and our obj-stores do not
 //       map obj-ids to servers in the same way, so we're removing this
 //       feature.
+//
+// NOTE: We thought obj_ctime would make trashed versions of a file have a
+//       unique object-ID, because the trashed file uses an object-ID that
+//       was created then, and this one is created now.  But, obj_ctime is
+//       only a time_t (1-second resolution).  If you are overwriting a
+//       marfs object that was *just* created, you might get the same
+//       object-ID for the new file.  So, what do we do, have fuse wait for
+//       a second?  Return an error?  Neither of those seemed acceptable,
+//       so I'm adding the "unique" field.  This will always be zero,
+//       except for files that were created as a result of truncating
+//       another file of the same name, within the same second.
 
 typedef struct MarFS_XattrPre {
 
@@ -652,12 +661,13 @@ typedef struct MarFS_XattrPre {
 
    ino_t              md_inode;
    time_t             md_ctime;
-   time_t             obj_ctime;    // might be versions in the trash
+   time_t             obj_ctime;    // might be mult versions in trash
+   uint8_t            unique;       // might be mult versions in trash w/same obj_ctime
 
    size_t             chunk_size;   // from repo-config at write-time
    size_t             chunk_no;     // 0-based number of current chunk (object)
 
-   //   uint16_t      shard;   // TBD: for hashing directories across shard-nodes
+   // uint16_t           shard;        // TBD: for hashing directories across shard-nodes
 
    char               bucket[MARFS_MAX_BUCKET_SIZE];
    char               objid [MARFS_MAX_OBJID_SIZE]; // not including bucket
@@ -669,7 +679,11 @@ int print_objname(char* obj_name,      const MarFS_XattrPre* pre);
 
 // from MarFS_XattrPre to string
 int pre_2_str(char* pre_str, size_t size, MarFS_XattrPre* pre);
+
+#if 0
+// COMMENTED OUT.  This is now replaced by update_pre()  [?]
 int pre_2_url(char* url_str, size_t size, MarFS_XattrPre* pre);
+#endif
 
 // from string to MarFS_XattrPre
 // <has_objid> indicates whether pre.objid is already filled-in
@@ -824,15 +838,14 @@ int str_2_rec(RecoveryInfo* rec_info, const char* rec_info_str); // from string
 // Because we want to be able to compute an offset for chunk-info, and
 // simply seek into the MD file to find it, we want all the fields, and the
 // chunk-info-records to have known sizes and offsets.  Therfore, we leave
-// out the usual human-readability support, and just write raw numbers.
-// However, we do write them as ascii text, rather than binary, for
-// portability.
+// out the usual human-readability support, and just write raw binary,
+// (in network-byte-order).
 // ---------------------------------------------------------------------------
 
 typedef struct {
    float         config_vers;
    size_t        chunk_no;         // from MarFS_XattrPost.chunk_no
-   size_t        data_offset;      // offset of this chunk in data-stream
+   size_t        logical_offset;   // offset of this chunk in user-data
    size_t        chunk_data_bytes; // not counting recovery-info (at the end)
    CorrectInfo   correct_info;     // from MarFS_XattrPost.correct_info
    EncryptInfo   encrypt_info;     // from MarFS_XattrPost.encrypt_info

@@ -344,7 +344,7 @@ void* s3_op(void* arg) {
    __attribute__ ((unused)) IOBuf* b  = &os->iob;
 
    if ((os->op_rc = s3_op_internal(os)))
-      LOG(LOG_ERR, "failed (%s) '%s'\n", os->url, b->result);
+      LOG(LOG_ERR, "failed (%s) %d '%s'\n", os->url, os->op_rc, b->result);
    else
       LOG(LOG_INFO, "done (%s)\n", os->url);
 
@@ -358,12 +358,16 @@ void* s3_op(void* arg) {
 // This is installed as the "readfunc" which is called by curl, whenever it
 // needs more data for a PUT.  (It's a "read" of data from curl's
 // perspective.)  This function is invoked in its own thread by curl.  We
-// synchronize with stream_put(), where a user has more data to be
-// added to a stream.  The user's buffer may be larger than the size of the
-// buffer curl gives us to fill, in which case we self-enable, so the next
+// synchronize with stream_put(), where a user has more data to be added to
+// a stream.  The user's buffer may be larger than the size of the buffer
+// curl gives us to fill, in which case we self-enable, so the next
 // call-back can happen immediately.  Finally, stream_close gives us an
-// empty buffer, which tells us to signal EOF to curl, which we do by
-// returning 0.
+// empty buffer (with length 0), which tells us to signal EOF to curl,
+// which we do by returning 0.
+//
+// NOTE: We now also allow stream_abort to send length 0, but in this case
+//     with a buffer that is just ((char*)1.  We take this as a signal to
+//     return CURL_READFUNC_ABORT.
 // ---------------------------------------------------------------------------
 
 size_t streaming_readfunc(void* ptr, size_t size, size_t nmemb, void* stream) {
@@ -378,10 +382,18 @@ size_t streaming_readfunc(void* ptr, size_t size, size_t nmemb, void* stream) {
    sem_wait(&os->iob_full);
    LOG(LOG_INFO, "avail-data: %ld\n", b->avail);
 
+   // maybe we were requested to close or abort?
    if (b->write_count == 0) {
+      // called by stream_close()
       LOG(LOG_INFO, "got EOF\n");
       sem_post(&os->iob_empty); // polite
       return 0;
+   }
+   else if (b->first->buf == (char*)1) {
+      // called by stream_abort()
+      LOG(LOG_INFO, "got ABORT\n");
+      sem_post(&os->iob_empty); // polite
+      return CURL_READFUNC_ABORT;
    }
 
    // move producer's data into curl buffers.
@@ -725,6 +737,12 @@ int stream_open(ObjectStream* os, IsPut put) {
 // Fuse may call this before I/O is complete on the stream.  Therefore,
 // we shouldn't just assume that failure to join means something is wedged.
 //
+// NOTE: Co-maintain with stream_sync().
+//
+// NOTE: This doesn't "close" the stream.  For that, you need
+//       stream_close().  In fuse usage, we will first call stream_sync(),
+//       then stream_close()
+//
 // NOTE: New approach to reads: each call to marfs_read() will create a
 //       distinct GET request.  Therefore, the op should return (because of
 //       EOF for the given byte-range), at the end of each call, so we
@@ -734,11 +752,11 @@ int stream_open(ObjectStream* os, IsPut put) {
 //       to be contiguous.  Therefore, we set up a streaming readfunc, and
 //       we must signal EOF when closing.
 //
-//
 // NOTE: If there are duplicated handles, fuse will call flush for each of
 //       them.  That would imply that our pthread_join() may return EINVAL,
 //       because another thread is already trying to join.  We do not currently
 //       accomodate that.
+//
 // ---------------------------------------------------------------------------
 
 
@@ -851,6 +869,92 @@ int stream_sync(ObjectStream* os) {
 }
 
 
+// ---------------------------------------------------------------------------
+// ABORT
+//
+// Assuming a stream is open for writing, we want a way to terminate that
+// stream in such a way that the server will not think we've simply
+// fininshed writing a legitimate object.  Instead we want it to abort
+// committing this object.  This crops up in marfs ftruncate.
+//
+// NOTE: Co-maintain with stream_sync().
+//
+// NOTE: As with stream_sync(), this doesn't "close" the stream.  For that,
+//       you need stream_close().  In fuse usage, we will first call
+//       stream_abort(), then stream_close()
+//
+// NOTE: Having streaming_readfunc return CURL_READFUNC_ABORT causes the
+//       The ongoing s3_put to return something other than CURLE_OKAY,
+//       which means that AWS4C_CHECK1 returns 1 from stream_put.  This
+//       means there's no opportunity for aws4c to parse an actual retun
+//       code from a server response (because there isn't a server
+//       response).  We expect this situation, and validate it by looking
+//       for just this case.
+//
+// ---------------------------------------------------------------------------
+
+int stream_abort(ObjectStream* os) {
+
+   ///   // TBD: this should be a per-repo config-option
+   ///   static const time_t timeout_sec = 5;
+
+   // fuse may call fuse-flush multiple times (one for every open stream).
+   // but will not call flush after calling close().
+   if (! (os->flags & OSF_OPEN)) {
+      LOG(LOG_ERR, "%s isn't open\n", os->url);
+      errno = EINVAL;            /* ?? */
+      return -1;
+   }
+   else if (! (os->flags & OSF_WRITING)) {
+      LOG(LOG_ERR, "%s aborting a read-stream is not supported\n", os->url);
+      errno = ENOSYS;
+      return -1;
+   }
+
+   // See NOTE, above, regarding the difference between reads and writes.
+   void* retval;
+   if (! pthread_tryjoin_np(os->op, &retval)) {
+      LOG(LOG_INFO, "op-thread joined\n");
+      os->flags |= OSF_JOINED;
+   }
+   else {
+
+      if (os->flags & OSF_WRITING) {
+         // signal ABORT to readfunc
+         LOG(LOG_INFO, "(wr) sending (char*)1 (%x)\n", os->flags);
+         os->flags |= OSF_ABORT;
+         if (stream_put(os, (const char*)1, 1) != 1) {
+            LOG(LOG_ERR, "stream_put((char*)1) failed\n");
+            pthread_kill(os->op, SIGKILL);
+            LOG(LOG_INFO, "killed thread\n");
+         }
+      }
+
+      // check whether thread has returned.  Could mean a curl
+      // error, an S3 protocol error, or server flaking out.
+      LOG(LOG_INFO, "waiting for op-thread\n");
+      if (stream_wait(os)) {
+         LOG(LOG_ERR, "err from op-thread\n");
+         return -1;
+      }
+   }
+
+   // thread has completed
+   os->flags |= OSF_JOINED;
+   LOG(LOG_INFO, "op-thread returned %d\n", os->op_rc);
+
+   if ((os->op_rc == 1)
+       && (os->iob.read_pos == (char*)1)) {
+
+      LOG(LOG_INFO, "op-thread return is as expected for ABORT\n");
+      return 0;
+   }
+   else {
+      errno = (os->op_rc ? EINVAL : 0);
+      return os->op_rc;
+   }
+}
+
 
 // ---------------------------------------------------------------------------
 // CLOSE
@@ -881,9 +985,16 @@ int stream_close(ObjectStream* os) {
    os->flags &= ~(OSF_OPEN);
    os->flags |= OSF_CLOSED;     /* so stream_open() can identify re-opens */
 
-   LOG(LOG_INFO, "done (returning %d)\n", os->op_rc);
-   errno = (os->op_rc ? EINVAL : 0);
-   return os->op_rc;
+   int retval;
+   if ((os->op_rc == 1)
+       && (os->flags & OSF_ABORT))
+      retval = 0;
+   else {
+      errno = (os->op_rc ? EIO : 0);
+      retval = os->op_rc;
+   }
+   LOG(LOG_INFO, "done (returning %d)\n", retval);
+   return retval;
 }
 
 

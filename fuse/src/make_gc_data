@@ -9,7 +9,7 @@ fi
 # MDFS=/gpfs/marfs-gpfs/project_a
 # TRASH=/gpfs/marfs-gpfs/trash
 
-MARFS=/marfs_dbg/jti
+MARFS=/marfs/jti
 MDFS=/gpfs/marfs-gpfs/fuse/test00
 TRASH=/gpfs/marfs-gpfs/fuse/test00/trash
 

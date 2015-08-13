@@ -96,6 +96,39 @@ include the files on which a code unit depends.
 #include <utime.h>              /* for deprecated marfs_utime() */
 #include <stdio.h>
 
+
+
+// ---------------------------------------------------------------------------
+// utilities
+//
+// These are some chunks of code used in more than one fuse function.
+// Should probably be moved to another file, eventually.
+// ---------------------------------------------------------------------------
+
+// update the URL in the ObjectStream, in our FileHandle
+int update_url(ObjectStream* os, PathInfo* info) {
+   //   size_t rc;                   // for TRY
+   //   __TRY0(update_pre, &info->pre);
+   strncpy(os->url, info->pre.objid, MARFS_MAX_URL_SIZE);
+
+   // log the full URL, if possible:
+   IOBuf*        b  = &os->iob;
+   AWSContext*   ctx = ((b) ? b->context : aws_context_clone());
+
+   LOG(LOG_INFO, "generated URL %s %s/%s/%s\n",
+       ((b) ? "" : "(defaults)"),
+       ctx->S3Host, ctx->Bucket, os->url);
+
+   return 0;
+}
+
+
+
+
+// ---------------------------------------------------------------------------
+// inits
+// ---------------------------------------------------------------------------
+
 // "The return value of this function is available to all file operations
 // in the private_data field of fuse_context."  (e.g. via get_fuse_context())
 // [http://www.cs.hmc.edu/~geoff/classes/hmc.cs135.201001/homework/fuse/fuse_doc.html]
@@ -214,6 +247,26 @@ int marfs_fsyncdir (const char*            path,
 }
 
 
+// I read that FUSE will never call open() with O_TRUNC, but will instead
+// call truncate first, then open.  However, a user might still call
+// truncate() or ftruncate() explicitly.  For these cases, I guess we
+// assume the file is already open, and the filehandle is good.
+//
+// UPDATE: for 'truncate -s 0 /marfs/file' or 'echo test >
+//     /marfs/existing_file', fuse calls open() / ftruncate() / close().
+//
+// If a user calls ftruncate() they expect the file-handle to remain open.
+// Therefore, we need to leave things as though open had been called with
+// the current <path>.  That means, the new object-handle we create
+// (because the old one goes with trashed file), must be open and ready for
+// business.
+//
+// In the case where the filehandle was opened for writing, open() will
+// have an open filehandle to the MD file.  We copy away the current
+// contents of the metadata file, so we can leave the existing MD fd open,
+// however, we should ftruncate that.
+//
+
 int marfs_ftruncate(const char*            path,
                     off_t                  length,
                     struct fuse_file_info* ffi) {
@@ -221,18 +274,11 @@ int marfs_ftruncate(const char*            path,
    // *** this may not be needed until we implement write in the fuse daemon ***
    // *** may not be needed for the kind of support we want to provide ***
 
-   // Check/act on truncate-to-zero only.
-   if (length)
-      return -EPERM;
-
    PUSH_USER();
 
-   //   // resolve the full path to use to expand
-   //   PathInfo info;
-   //   memset((char*)&info, 0, sizeof(PathInfo));
-   //   EXPAND_PATH_INFO(&info, path);
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
+   // IOBuf*            b    = &fh->os.iob;                /* shorthand */
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
    CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
@@ -250,20 +296,53 @@ int marfs_ftruncate(const char*            path,
       return 0;
    }
 
+   // POSIX ftruncate returns EBADF or EINVAL, if fd not opened for writing.
+   if (! (fh->flags & FH_WRITING)) {
+      LOG(LOG_ERR, "was not opened for writing\n");
+      return -EINVAL;
+   }
+
+   // Check/act on truncate-to-zero only.
+   if (length)
+      return -EPERM;
+
 
    //***** this may or may not work – may need a trash_truncate() that uses
    //***** ftruncate since the file is already open (may need to modify the
    //***** trash_truncate to use trunc or ftrunc depending on if file is
    //***** open or not
 
-   // [jti: I think I read that FUSE will never call open() with O_TRUNC,
-   // but will instead call truncate first, then open.  However, a user
-   // might still call truncate() or ftruncate() explicitly.  For these
-   // cases, I guess we assume the file is already open, and the filehandle
-   // is good.]
-
    // copy metadata to trash, resets original file zero len and no xattr
+   // updates info->pre.objid
    TRASH_TRUNCATE(info, path);
+
+   // metadata filehandle is still open to the current MD file.
+   // That's okay, but we need to ftruncate it, as well.
+   if (fh->md_fd) {
+      if (fh->flags & FH_WRITING)
+         ftruncate(fh->md_fd, length); // (length == 0)
+   }
+
+   // object-stream is still open to the old object.  Close that in such a
+   // way that the server will not persist the PUT.
+   TRY0(stream_abort, &fh->os);
+   TRY0(stream_close, &fh->os);
+
+   // open a stream to the new object.  We assume that the libaws4c context
+   // initializations done in marfs_open are still valid.  trash_truncate()
+   // will already have updated our URL.
+   TRY0(update_url, &fh->os, info);
+   TRY0(stream_open, &fh->os, OS_PUT);
+
+   // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
+   // so marfs_open() won't assume it is a DIRECT file.)
+   if (info->ns->iwrite_repo->access_proto != PROTO_DIRECT) {
+      LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
+      info->flags |= PI_RESTART;
+      SAVE_XATTRS(info, XVT_RESTART);
+   }
+   else
+      LOG(LOG_INFO, "iwrite_repo.access_proto = DIRECT\n");
 
    POP_USER();
    return 0;
@@ -717,27 +796,20 @@ int marfs_open (const char*            path,
    // install custom context
    aws_iobuf_context(b, ctx);
 
-   { // This code should be co-maintained with some code in
-      // marfs_write().
-
-      // initialize the URL in the ObjectStream, in our FileHandle
-      // TRY0(pre_2_url, fh->os.url, MARFS_MAX_URL_SIZE, &info->pre);
-      update_pre(&info->pre);
-      strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
-      LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
-
+   // initialize the URL in the ObjectStream, in our FileHandle
+   TRY0(update_url, &fh->os, info);
 
 #if 0
-      TRY0(stream_open, &fh->os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
+   TRY0(stream_open, &fh->os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
 #else
-      // To support seek() [for reads], and allow reading at arbitrary
-      // offsets, we are now implementing each call to marfs_read() as an
-      // independent GET, with byte-ranges.  Therefore, for reads, we don't
-      // open the stream, here.
-      if (fh->flags & FH_WRITING)
-         TRY0(stream_open, &fh->os, OS_PUT);
+   // To support seek() [for reads], and allow reading at arbitrary
+   // offsets, we are now implementing each call to marfs_read() as an
+   // independent GET, with byte-ranges.  Therefore, for reads, we don't
+   // open the stream, here.
+   if (fh->flags & FH_WRITING)
+      TRY0(stream_open, &fh->os, OS_PUT);
 #endif
-   }
+
 
    POP_USER();
    return 0;
@@ -1021,8 +1093,7 @@ int marfs_read (const char*            path,
          // update the URL in the ObjectStream, in our FileHandle
          info->pre.chunk_no = chunk;
          update_pre(&info->pre);
-         strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
-         LOG(LOG_INFO, "generated URL '%s'\n", fh->os.url);
+         update_url(&fh->os, info);
       }
    }
 
@@ -1178,6 +1249,9 @@ int marfs_release (const char*            path,
           && (info->post.obj_type == OBJ_MULTI)) {
 
          TRY0(write_chunkinfo, fh->md_fd, info, os->written - fh->write_status.sys_writes);
+
+         // keep count of amount of real chunk-info written into MD file
+         info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
 
          // update count of objects, in POST
          info->post.chunks = info->pre.chunk_no +1;
@@ -1450,6 +1524,16 @@ int marfs_truncate (const char* path,
    // copy metadata to trash, resets original file zero len and no xattr
    TRASH_TRUNCATE(&info, path);
 
+   // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
+   // so marfs_open() won't assume it is a DIRECT file.)
+   if (info.ns->iwrite_repo->access_proto != PROTO_DIRECT) {
+      LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
+      info.flags |= PI_RESTART;
+      SAVE_XATTRS(&info, XVT_RESTART);
+   }
+   else
+      LOG(LOG_INFO, "iwrite_repo.access_proto = DIRECT\n");
+
    POP_USER();
    return 0;
 }
@@ -1632,8 +1716,6 @@ int marfs_write(const char*            path,
    // Trunc file to current last byte, and set end marker
 
 
-#if 1 //#if TBD
-
    // It's possible that we finished and closed the first object, without
    // knowing that it was going to be Multi, until now.  In that case, the
    // OS is closed.  (We also might have closed the previous Multi object
@@ -1644,9 +1726,8 @@ int marfs_write(const char*            path,
       info->pre.chunk_no += 1;
 
       // update the URL in the ObjectStream, in our FileHandle
-      update_pre(&info->pre);
-      strncpy(os->url, info->pre.objid, MARFS_MAX_URL_SIZE);
-      LOG(LOG_INFO, "(a) generated URL '%s'\n", os->url);
+      TRY0(update_pre, &info->pre);
+      TRY0(update_url, os, info);
 
       TRY0(stream_open, os, OS_PUT);
    }
@@ -1707,6 +1788,10 @@ int marfs_write(const char*            path,
       // MD file gets per-chunk information
       TRY0(write_chunkinfo, fh->md_fd, info, os->written - fh->write_status.sys_writes);
 
+      // keep count of amount of real chunk-info written into MD file
+      info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
+
+
       // if we still have more data to write, prepare for next iteration
       if (remain) {
 
@@ -1716,24 +1801,19 @@ int marfs_write(const char*            path,
          // update chunk-number, and generate the new obj-id
          info->pre.chunk_no += 1;
       
-         { // This code should be co-maintained with corresponding code in
-            // marfs_open().
+         // update the URL in the ObjectStream, in our FileHandle
+         TRY0(update_pre, &info->pre);
+         TRY0(update_url, os, info);
 
-            // update the URL in the ObjectStream, in our FileHandle
-            update_pre(&info->pre);
-            strncpy(fh->os.url, info->pre.objid, MARFS_MAX_URL_SIZE);
-            LOG(LOG_INFO, "(b) generated URL '%s'\n", fh->os.url);
+         // open next chunk
+         //
+         // NOTE: stream_open() wipes ObjectStream.written.  We want this
+         //     field to track the total amount written across all chunks,
+         //     so we save it before calling open, and restore it after.
+         size_t written = os->written;
+         TRY0(stream_open, os, OS_PUT);
+         os->written = written;
 
-            // open next chunk
-            //
-            // NOTE: stream_open() wipes ObjectStream.written.  We want
-            //     this field to track the total amount written across all
-            //     chunks, so we save it before calling open, and restore
-            //     it after.
-            size_t written = os->written;
-            TRY0(stream_open, os, OS_PUT);
-            os->written = written;
-         }
 
          chunk_end = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
       }
@@ -1747,19 +1827,6 @@ int marfs_write(const char*            path,
    // object, so don't write chunk-info to MD file.
    if (write_size)
       TRY_GE0(stream_put, os, buf_ptr, write_size);
-
-#else
-   // marfs_open() opened an ObjectStream for us.
-   TRY_GE0(stream_put, os, buf, size);
-   LOG(LOG_INFO, "wrote %ld, total %ld\n", rc_ssize, os->written);
-
-   // Do we really want to trunc after every write?
-   // Better would be to have a flag in xattrs, that says "incomplete".
-   // This is roughly the same as pftool's RESTART xattr.
-   // [marfs_open() now does this for us.]
-
-#endif
-
 
 
    POP_USER();

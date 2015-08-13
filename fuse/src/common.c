@@ -548,6 +548,8 @@ int stat_xattrs(PathInfo* info) {
       return -1;
    }
 
+   // initialize the object-ID fields
+   __TRY0(update_pre, &info->pre);
 
    return 0;                    /* "success" */
 }
@@ -850,7 +852,7 @@ int  trash_truncate(PathInfo*   info,
    //   stat_xattrs()    to get all file attrs/xattrs
    //   open trashdir/trashname
    //
-   //   if no xattr objtype [jti: i.e. info->xattr.obj_type == OBJ_UNI]
+   //   if no xattr objtype [jti: i.e. OBJ_UNI]
    //        copy file data to file
    //   if xattr objtype is multipart [jti: i.e. == OBJ_MULTI]
    //        copy file data until end of objlist marker
@@ -910,17 +912,21 @@ int  trash_truncate(PathInfo*   info,
    if (phy_size) {
 
       // buf used for data-transfer
-      const size_t BUF_SIZE = 64 * 1024 * 1024; /* 64 MB */
-      char         buf[BUF_SIZE];
+      const size_t BUF_SIZE = 32 * 1024 * 1024; /* 32 MB */
+      char* buf = malloc(BUF_SIZE);
+      if (!buf) {
+         LOG(LOG_ERR, "malloc %ld bytes failed\n", BUF_SIZE);
+         return -1;
+      }
 
       size_t read_size = ((phy_size < BUF_SIZE) ? phy_size : BUF_SIZE);
       size_t wr_total = 0;
 
       // copy phy-data from md_file to trash_file, one buf at a time
       ssize_t rd_count;
-      for (rd_count = read(in, buf, read_size);
-           rd_count > 0;
-           rd_count = read(in, buf, read_size)) {
+      for (rd_count = read(in, (void*)buf, read_size);
+           (read_size && (rd_count > 0));
+           rd_count = read(in, (void*)buf, read_size)) {
 
          char*  buf_ptr = buf;
          size_t remain  = rd_count;
@@ -929,6 +935,7 @@ int  trash_truncate(PathInfo*   info,
             if (wr_count < 0) {
                LOG(LOG_ERR, "err writing %s (byte %ld)\n",
                    info->trash_path, wr_total);
+               free(buf);
                return -1;
             }
             remain   -= wr_count;
@@ -939,6 +946,7 @@ int  trash_truncate(PathInfo*   info,
          size_t phy_remain = phy_size - wr_total;
          read_size = ((phy_remain < BUF_SIZE) ? phy_remain : BUF_SIZE);
       }
+      free(buf);
       if (rd_count < 0) {
          LOG(LOG_ERR, "err reading %s (byte %ld)\n",
              info->trash_path, wr_total);
@@ -947,7 +955,6 @@ int  trash_truncate(PathInfo*   info,
 
       __TRY0(close, in);
       __TRY0(close, out);
-
    }
 
    // trunc trash-file to size
@@ -957,16 +964,11 @@ int  trash_truncate(PathInfo*   info,
    // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
    // set to our trash_path.  Then save_xattrs() will just work on the
    // trash-file.
-   {  PathInfo trash_info = *info;
-      memcpy(trash_info.post.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
+   PathInfo trash_info = *info;
+   memcpy(trash_info.post.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
+   trash_info.post.flags |= POST_TRASH;
+   __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
 
-      trash_info.post.flags |= POST_TRASH;
-
-      __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
-   }
-
-   // clean out everything on the original
-   __TRY0(trunc_xattr, info);
 
    // write full-MDFS-path of original-file into trash-companion file
    __TRY0(write_trash_companion_file, info, path, &trash_time);
@@ -974,6 +976,26 @@ int  trash_truncate(PathInfo*   info,
    // update trash-file atime/mtime to support "undelete"
    __TRY0(utime, info->trash_path, &trash_time);
 
+   // clean out everything on the original
+   __TRY0(trunc_xattr, info);
+
+   // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
+   info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY | PI_PRE_INIT | PI_POST_INIT);
+   __TRY0(stat_xattrs, info);   // has none, so initialize from scratch
+
+   // NOTE: Unique-ness of Object-IDs currently comes from inode, plus
+   //     obj-ctime, plus MD-file ctime.  It's possible the trashed file
+   //     was created in the same second as this one, in which case, we'd
+   //     be setting up to overwrite the object used by the trashed file.
+   //     Adding pre.unique to the object-ID, which we increment from the
+   //     version in the trash
+   if (!strcmp(info->pre.objid, trash_info.pre.objid)) {
+      info->pre.unique = trash_info.pre.unique +1;
+      __TRY0(update_pre, &info->pre);
+      LOG(LOG_INFO, "unique: '%s'\n", info->pre.objid);
+   }
+
+   
    return 0;
 }
 
@@ -981,11 +1003,16 @@ int  trash_truncate(PathInfo*   info,
 
 //   trunc file to zero
 //   remove (not just reset but remove) all reserved xattrs
+
 int trunc_xattr(PathInfo* info) {
    XattrSpec*  spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
       lremovexattr(info->post.md_path, spec->key_name);
-   }   
+
+      info->xattrs &= ~(spec->value_type);
+      if (spec->value_type == XVT_RESTART)
+         info->flags &= ~(PI_RESTART);
+   }
    return 0;
 }
 
@@ -1062,8 +1089,8 @@ int check_quotas(PathInfo* info) {
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 //
-// <total_written> includes all user-data and system-data
-// (e.g. RecoveryInfo) written to the object.  When called by
+// <total_written> includes all user-data (but not system-data,
+// e.g. RecoveryInfo) written to the object.  When called by
 // marfs_release(), we assume the final RecoveryInfo is included in the
 // total_written.  And that only the final chunk can be less than 100%
 // full.
@@ -1077,23 +1104,23 @@ int write_chunkinfo(int                   md_fd,
                     const size_t          total_written) {
 
    const size_t chunk_info_len = sizeof(MultiChunkInfo);
-   char str[chunk_info_len];
+   char         str[chunk_info_len];
 
    const size_t recovery             = sizeof(RecoveryInfo) +8;
    const size_t user_data_per_chunk  = info->pre.chunk_size - recovery;
-   const size_t data_offset          = info->pre.chunk_no * user_data_per_chunk;
-   const size_t user_data_this_chunk = total_written - data_offset;
+   const size_t log_offset           = info->pre.chunk_no * user_data_per_chunk;
+   const size_t user_data_this_chunk = total_written - log_offset;
 
    MultiChunkInfo chunk_info = (MultiChunkInfo) {
       .config_vers      = MarFS_config_vers,
       .chunk_no         = info->pre.chunk_no,
-      .data_offset      = data_offset,
+      .logical_offset   = log_offset,
       .chunk_data_bytes = user_data_this_chunk,
       .correct_info     = info->post.correct_info,
       .encrypt_info     = info->post.encrypt_info,
    };
 
-   // convert struct to string
+   // convert struct to portable binary
    ssize_t str_count = chunkinfo_2_str(str, chunk_info_len, &chunk_info);
    if (str_count < 0) {
       LOG(LOG_ERR, "error preparing chunk-info (%ld < 0)\n",
@@ -1112,7 +1139,7 @@ int write_chunkinfo(int                   md_fd,
       return -1;
    }
 
-   // write string as raw data to MD file
+   // write portable binary to MD file
    ssize_t wr_count = write(md_fd, str, chunk_info_len);
    if (wr_count < 0) {
       LOG(LOG_ERR, "error writing chunk-info (%s)\n",
@@ -1125,6 +1152,7 @@ int write_chunkinfo(int                   md_fd,
       errno = EIO;
       return -1;
    }
+
 
    return 0;
 }
@@ -1206,9 +1234,9 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
    ///      memset(rec, 1, recovery); // stands out in objects written from /dev/zero
    ///      needs_init = 0;
    ///   }
-   static uint8_t dbg=0x11;
+   static uint8_t dbg=1;
    memset(rec, dbg, recovery); // stands out in objects written from /dev/zero
-   dbg += 0x11;
+   dbg += 1;
 
    LOG(LOG_WARNING, "first part of fake rec-info: 0x%02x,%02x,%02x,%02x\n",
        rec[0], rec[1], rec[2], rec[3]);
