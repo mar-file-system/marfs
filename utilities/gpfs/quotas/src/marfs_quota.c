@@ -620,11 +620,12 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                // Get post xattr value
                if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count, outfd)) != -1 ) {
                    xattr_ptr = &mar_xattrs[xattr_index];
-                   //if (debug)
-                   //fprintf(outfd,"post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
+                   if (debug)
+                      printf("post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
                }
 
                // scan into post xattr structure
+               // if error parsing this xattr, skip and continue
                if (parse_post_xattr(&post, xattr_ptr)) {
                   continue;             
                }
@@ -646,6 +647,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                *
                */
                if ( post.flags == POST_TRASH ) {
+                  xattr_ptr = &mar_xattrs[0];
                   /*
                      We must be in a trash fileset/directory so the next bit of code 
                      determines which fileset/project the trash belongs to so that
@@ -654,10 +656,10 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                   // Get objid xattr
                   if ((trash_index = get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count,outfd)) != -1) {
                      if (debug)
-                        fprintf(outfd,"trash index %d\n", trash_index);
+                        printf("trash index %d\n", trash_index);
                      xattr_ptr = &mar_xattrs[trash_index];
                      if (debug)
-                        fprintf(outfd,"trash found objid = %s\n", xattr_ptr->xattr_value);
+                        printf("trash found objid = %s\n", xattr_ptr->xattr_value);
                      
                      //From ojbid xattr, get the ns_name which is actually the fileset name
                      read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT"/"NON_SLASH, repo_name, ns_name); 
@@ -735,11 +737,11 @@ int parse_post_xattr (MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &post->correct_info,
                            &post->encrypt_info,
                            &post->flags,
-                           //(char*)&post->gc_path);
                            (char*)&post->md_path);
 
-   if (scanf_size == EOF || scanf_size < 9)
+   if (scanf_size == EOF || scanf_size < 9) {
       return -1;                
+   }
    post->obj_type = decode_obj_type(obj_type_code);
    return 0;
 }
@@ -787,7 +789,7 @@ void update_type(MarFS_XattrPost * xattr_post, fileset_stat * fileset_stat_ptr, 
          fileset_stat_ptr[index].obj_type.packed_count +=1;
          break;
       default:
-         printf("No type found\n");
+         printf("obj_type undefined: %d\n", xattr_post->obj_type);
    }
 }
 
