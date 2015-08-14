@@ -34,10 +34,10 @@ TRASH  = $(GPFS)/test00/trash
 
 PID = marfs_fuse.pid
 
-# LIBAWS4C := ~/projects/git/aws4c
-ifndef LIBAWS4C
-	LIBAWS4C := $(shell readlink -f ~/projects/ecs_hobo/tools/aws4c)
-endif
+# # LIBAWS4C := ~/projects/git/aws4c
+# ifndef LIBAWS4C
+# 	LIBAWS4C := $(shell readlink -f ~/projects/ecs_hobo/tools/aws4c)
+# endif
 
 # # passed in the environment by a recursive make.  (See e.g. 'fuse.dbg')
 # DEFS := $(RECURSIVE_DEFS)
@@ -46,22 +46,23 @@ endif
 # environment-variable DEBUG controls compile-flags:
 # NOTE: -DDEBUG w/value >= 1 turns on curl-conversation logging
 #
-# DEBUG = undef/null/0  --    -O3
-# DEBUG = 1             --    -O3 -DEBUG=1
-# DEBUG = <n>           --    -g  -DEBUG=<n>
+#   DEBUG = undef/null    --    -O3
+#   DEBUG = 0             --    -g  -DEBUG=0    (-g, but no logging)
+#   DEBUG = 1             --    -O3 -DEBUG=1    (-O3, plus logging)
+#   DEBUG = <n>           --    -g  -DEBUG=<n>  (libcurl transactions to stdout)
 #
 # environment-var DEBUG also controls command-line flags for fuse launch.
 #
-# DEBUG = undef/null/0  --    
-# DEBUG = 1             --    
-# DEBUG = <n>           --    -d -f  [-f means foreground, without threads]
+#   DEBUG = undef/null/0  --    
+#   DEBUG = 1             --    
+#   DEBUG = <n>           --    -d -f  [-f means foreground, without threads]
 #
 FUSE_FLAGS += -o allow_other
 ifdef DEBUG
 	ifeq ($(DEBUG),)
 		CFLAGS += -O3
 	else ifeq ($(DEBUG),0)
-		CFLAGS += -O3
+		CFLAGS += -g
 	else ifeq ($(DEBUG),1)
 		CFLAGS += -O3
 		DEFS   += DEBUG=$(DEBUG)
@@ -90,6 +91,10 @@ ifdef LOG_PREFIX
 	DEFS += LOG_PREFIX='"$(LOG_PREFIX)"'
 endif
 
+ifdef GPROF
+	CFLAGS += -pg
+endif
+
 
 # c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
 CFLAGS  += -Wall -std=c99 $(shell pkg-config fuse --cflags) -I.
@@ -102,8 +107,9 @@ LIBS    += $(shell pkg-config fuse --libs-only-l) -lm
 # stuff for aws4c
 ### LIBAWS4C = /users/jti/projects/ecs_hobo/tools/aws4c
 ### LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
-### LIBAWS4C := `readlink -f ~/projects/git/aws4c`
-LIBAWS4C = `readlink -f ~jti/projects/git/aws4c`
+### LIBAWS4C := `readlink -f ~jti/projects/git/aws4c`
+### LIBAWS4C := $( readlink -f ~jti/projects/git/aws4c )
+LIBAWS4C := $(shell readlink -f /root/projects/ecs_hobo/tools/aws4c )
 CFLAGS  += -I$(LIBAWS4C)
 LDFLAGS += -L$(LIBAWS4C)
 LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
@@ -177,8 +183,17 @@ clean: # cleanx
 #     user has overridden it with something valid.
 pre_req:
 ifeq ($(LIBAWS4C),)
-	$(error "couldn't find $(LIBAWS4C).  Consider 'make ... LIBAWS4C=<DIR>'")
+	$(error $$LIBAWS4C is empty.  Consider 'make ... LIBAWS4C=<DIR>')
+else ifeq ($(wildcard $(LIBAWS4C)/libaws4c.a),)
+	$(error couldnt find $$LIBAWS4C (in $(LIBAWS4C)/*).  Consider 'make ... LIBAWS4C=<DIR>')
 endif
+
+#	@ $(MAKE) pre_req2
+#
+# VPATH = $(LIBAWS4C)
+# pre_req2: -llibaws4c
+
+
 
 
 
@@ -192,14 +207,16 @@ fuse: fuse.std
 
 # --- specialized builds
 fuse.std: pre_req
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2
+	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=2
+	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=1
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=1
 
 fuse.lean: pre_req
 	@ $(MAKE) marfs_fuse
 
 fuse.dbg: pre_req
-	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg
-	@ $(MAKE) marfs_fuse DEBUG=2 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg
+	@ # $(MAKE) marfs_fuse USE_SYSLOG=1  USE_SPROXYD=1 DEBUG=2LOG_PREFIX=marfs_fuse.dbg
+	@ $(MAKE) marfs_fuse USE_SPROXYD=1 DEBUG=2 LOG_PREFIX=marfs_fuse.dbg
 #	@ $(MV) marfs_fuse marfs_fuse.dbg
 
 
@@ -235,7 +252,7 @@ remount: umnt
 #
 #  $ ulimit -c unlimited
 #  $ echo "core.%e-%t" > /proc/sys/kernel/core_pattern
-
+#  $ echo 1 > /proc/sys/fs/suid_dumpable
 
 # _mnt:
 # 	@ echo
@@ -347,7 +364,7 @@ reset_md:
 reset_obj:
 	@ ls_obj_w_prefix emcS3_00.-test00 ver | xargs -r -L 1 rm_obj
 
-# on the marfs-gpfs-003, syslog-ng is disabled by default.  We're the
+# on marfs-gpfs-003, syslog-ng is disabled by default.  We're the
 # only ones using it, so this seems reasonable
 reset_syslog:
 	service syslog-ng stop
@@ -380,11 +397,16 @@ gdb:
 	@ exec gdb marfs_fuse `ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'`
 
 
-# fusectl filesystem.  Under the mounted point, each existing connection
-# has a numbered subdirectory.  There's a special file named "abort" there.
-# Writing anything to that file aborts the connection.
+# fusectl filesystem.  Under thefusectl mount-point, each existing
+# connection has a numbered subdirectory.  There's a special file named
+# "abort" there.  Writing anything to that file aborts the connection.
 fusectl:
-	mount -t fusectl none /sys/fs/fuse/connections
+	@ if [[ -n `mount | grep fusectl` ]]; then \
+		  echo "fusectl already mounted" ; \
+		else \
+		  mount -t fusectl none /sys/fs/fuse/connections ; \
+		  echo "mounted fusectl" ; \
+		fi
 
 abort: fusectl
 	for A in `find /sys/fs/fuse/connections/ -name abort`; do echo $$A; echo 1 > $$A;  done
@@ -400,7 +422,7 @@ run-%: %
 mdfs-%:
 	@ echo
 	@ echo "overview of metadata for $(MDFS)/$*"
-	@ ls -l   $(MDFS)/$*
+	@ ls -li   $(MDFS)/$*
 	@ echo
 	@ # echo "xattrs:"
 	@ # (attr -l $(MDFS)/$* | grep marfs_) || echo "(none)"

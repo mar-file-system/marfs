@@ -1204,7 +1204,8 @@ int load_config(const char* config_fname) {
       .name         = "sproxyd_jti",  // repo is sproxyd: this must match fastcgi-path
       .host         = "10.135.0.21:81",
       .access_proto = PROTO_SPROXYD,
-      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
+      // .chunk_size   = (1024 * 1024 * 256), /* max MarFS object (tune to match storage) */
+      .chunk_size   = (1024 * 1024 * 512), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE),
       .auth         = AUTH_S3_AWS_MASTER,
       .compression  = COMPRESS_NONE,
@@ -1362,6 +1363,7 @@ int load_config(const char* config_fname) {
    };
    // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
+   // push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
 
 
    // Alfred
@@ -1370,7 +1372,7 @@ int load_config(const char* config_fname) {
       .mnt_suffix     = "/atorrez",  // "<mnt_top>/atorrez" comes here
 
       .md_path        = "/gpfs/marfs-gpfs/project_a/mdfs",
-      .trash_path     = "/gpfs/marfs-gpfs/project_a/trash", // NOT NEC IN THE SAME FILESET!
+      .trash_path     = "/gpfs/marfs-gpfs/trash", // NOT NEC IN THE SAME FILESET!
       .fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo", /* a file */
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -1387,7 +1389,7 @@ int load_config(const char* config_fname) {
 
       .is_root = 0,
    };
-   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_64M"));
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M"));
 
 
    // Brett, unit 

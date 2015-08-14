@@ -301,7 +301,7 @@ int stream_wait(ObjectStream* os) {
 
 int s3_op_internal(ObjectStream* os) {
    IOBuf*        b  = &os->iob;
-   AWSContext*   ctx = b->context;
+   __attribute__ ((unused)) AWSContext*   ctx = b->context;
 
    // run the GET or PUT
    int is_get = (os->flags & OSF_READING);

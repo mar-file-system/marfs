@@ -778,6 +778,7 @@ int  trash_unlink(PathInfo*   info,
    size_t rc;
    __TRY0(stat_xattrs, info);
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
+      LOG(LOG_INFO, "no xattrs\n");
       __TRY0(unlink, info->post.md_path);
       return 0;
    }
@@ -844,6 +845,7 @@ int  trash_truncate(PathInfo*   info,
    size_t rc;
    __TRY0(stat_xattrs, info);
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
+      LOG(LOG_INFO, "no xattrs\n");
       __TRY0(truncate, info->post.md_path, 0);
       return 0;
    }

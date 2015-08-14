@@ -113,7 +113,7 @@ int update_url(ObjectStream* os, PathInfo* info) {
 
    // log the full URL, if possible:
    IOBuf*        b  = &os->iob;
-   AWSContext*   ctx = ((b) ? b->context : aws_context_clone());
+   __attribute__ ((unused)) AWSContext*   ctx = ((b) ? b->context : aws_context_clone());
 
    LOG(LOG_INFO, "generated URL %s %s/%s/%s\n",
        ((b) ? "" : "(defaults)"),
@@ -148,6 +148,7 @@ void marfs_destroy (void* private_data) {
    // nothing for us to do here, we wont have dirty data when the fuse
    // daemon exits. I suppose they wait for all threads to finish before
    // leaving, so this should be ok.
+   LOG(LOG_INFO, "shutting down\n");
 }
 
 
@@ -1518,11 +1519,16 @@ int marfs_truncate (const char* path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
    CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
-   // If this is not just a normal md, it's the file data
-   STAT_XATTRS(&info); // to get xattrs
-
    // Call access syscall to check/act if allowed to truncate for this user 
    ACCESS(info.post.md_path, (W_OK));
+
+   // If this is not just a normal md, it's the file data
+   STAT_XATTRS(&info); // to get xattrs
+   if (! has_any_xattrs(&info, MARFS_ALL_XATTRS)) {
+      LOG(LOG_INFO, "no xattrs\n");
+      TRY0(truncate, info.post.md_path, size);
+      return 0;
+   }
 
    // copy metadata to trash, resets original file zero len and no xattr
    TRASH_TRUNCATE(&info, path);
@@ -2105,7 +2111,7 @@ int main(int argc, char* argv[])
    //       here.
    aws_init();
    aws_reuse_connections(1);
-#if (DEBUG >= 1)
+#if (DEBUG > 1)
    aws_set_debug(1);
 #endif
 
