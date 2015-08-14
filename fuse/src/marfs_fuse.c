@@ -338,7 +338,8 @@ int marfs_ftruncate(const char*            path,
    // so marfs_open() won't assume it is a DIRECT file.)
    if (info->ns->iwrite_repo->access_proto != PROTO_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info->flags |= PI_RESTART;
+      info->flags  |= PI_RESTART;
+      info->xattrs |= XVT_RESTART;
       SAVE_XATTRS(info, XVT_RESTART);
    }
    else
@@ -598,7 +599,8 @@ int marfs_mknod (const char* path,
    //     our internal data (e.g. in a MULTI file).
    if (info.ns->iwrite_repo->access_proto != PROTO_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info.flags |= PI_RESTART;
+      info.flags  |= PI_RESTART;
+      info.xattrs |= XVT_RESTART;
       SAVE_XATTRS(&info, XVT_RESTART);
    }
    else
@@ -1276,7 +1278,8 @@ int marfs_release (const char*            path,
    }
 
    // no longer incomplete
-   info->flags &= ~(PI_RESTART);
+   info->flags  &= ~(PI_RESTART);
+   info->xattrs &= ~(XVT_RESTART);
 
    // install xattrs
    if ((info->ns->iwrite_repo->access_proto != PROTO_DIRECT)
@@ -1528,7 +1531,8 @@ int marfs_truncate (const char* path,
    // so marfs_open() won't assume it is a DIRECT file.)
    if (info.ns->iwrite_repo->access_proto != PROTO_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info.flags |= PI_RESTART;
+      info.flags  |= PI_RESTART;
+      info.xattrs |= XVT_RESTART;
       SAVE_XATTRS(&info, XVT_RESTART);
    }
    else
