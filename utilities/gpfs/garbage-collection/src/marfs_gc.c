@@ -593,43 +593,39 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
    char *obj_name_ptr;
    int i;
 
-   // Make sure mdfs files were deleted before deleting objects
-   // We do not want objects remaining without associated gpfs files 
-   if (!delete_file(md_path_ptr, file_info_ptr)) {
-      //If multi type file then delete all objects associated with file
-      if (post_xattr->obj_type == OBJ_MULTI) {
-         for (i=0; i < post_xattr->chunks; i++ ) {
-            obj_name_ptr = strrchr(xattr_ptr->xattr_value, '.');
-            obj_name_ptr++;
-            *obj_name_ptr='\0'; 
-            sprintf(object_name, "%s%d",xattr_ptr->xattr_value,i);
-            if (delete_object(object_name,file_info_ptr) == -1) {
-               fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
-               return_value = -1;
-            }
-            else {
-               fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
-            }
-         } 
-      }
-
-      // else UNI BUT NEED to implemented other formats as developed 
-      else if (post_xattr->obj_type == OBJ_UNI) {
-         strncpy(object_name, xattr_ptr->xattr_value, strlen(xattr_ptr->xattr_value));
-         if (delete_object(object_name, file_info_ptr)  == -1 ) {
+   //If multi type file then delete all objects associated with file
+   if (post_xattr->obj_type == OBJ_MULTI) {
+      for (i=0; i < post_xattr->chunks; i++ ) {
+         obj_name_ptr = strrchr(xattr_ptr->xattr_value, '.');
+         obj_name_ptr++;
+         *obj_name_ptr='\0'; 
+         sprintf(object_name, "%s%d",xattr_ptr->xattr_value,i);
+         if (delete_object(object_name,file_info_ptr) == -1) {
             fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
             return_value = -1;
          }
          else {
             fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
          }
+      } 
+   }
+
+   // else UNI BUT NEED to implemented other formats as developed 
+   else if (post_xattr->obj_type == OBJ_UNI) {
+      strncpy(object_name, xattr_ptr->xattr_value, strlen(xattr_ptr->xattr_value));
+      if (delete_object(object_name, file_info_ptr)  == -1 ) {
+         fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+         return_value = -1;
+      }
+      else {
+         fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
       }
    }
 
    // Delete trash files
-   //delete_file(md_path_ptr, file_info_ptr); 
-   else {
-      return_value = -1;
+   // Only delete if no error deleting object
+   if (!return_value) {
+      delete_file(md_path_ptr, file_info_ptr); 
    }
    return(return_value);
 }
@@ -673,17 +669,13 @@ int delete_file(char *filename, file_info *file_info_ptr)
    else {
       fprintf(file_info_ptr->outfd,"deleted file %s\n",filename);
    }
-   // If failed removing non-path file do NOT proceed to remove
-   // path file because need to preseve objects
-   if (!return_value) {
-      print_current_time(file_info_ptr);
-      if ((unlink(path_file) == -1)) {
-         fprintf(file_info_ptr->outfd,"Error removing file %s\n",path_file);
-         return_value = -1;
-      }
-      else {
-         fprintf(file_info_ptr->outfd,"deleted file %s\n",path_file);
-      }
+   print_current_time(file_info_ptr);
+   if ((unlink(path_file) == -1)) {
+      fprintf(file_info_ptr->outfd,"Error removing file %s\n",path_file);
+      return_value = -1;
+   }
+   else {
+      fprintf(file_info_ptr->outfd,"deleted file %s\n",path_file);
    }
    return(return_value);
 }
