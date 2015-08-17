@@ -122,7 +122,8 @@ int get_xattrs(gpfs_iscan_t *iscanP,
 void print_usage();
 void init_records(fileset_info *fileset_info_buf, unsigned int record_count);
 int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
-int dump_trash(struct marfs_xattr *xattr_ptr, char *gc_path_ptr, file_info *file_info_ptr, MarFS_XattrPost *post_xattr);
+//int dump_trash(struct marfs_xattr *xattr_ptr, char *gc_path_ptr, file_info *file_info_ptr, MarFS_XattrPost *post_xattr);
+int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr, file_info *file_info_ptr, MarFS_XattrPost *post_xattr);
 int delete_object(char * object, file_info *file_info_ptr);
 int delete_file(char *filename, file_info *file_info_ptr);
 int process_packed(file_info *file_info_ptr);

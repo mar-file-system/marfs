@@ -184,8 +184,9 @@ int main(int argc, char **argv) {
 
    // NEED to get these from config when the parser is ready
    aws_read_config("atorrez");
-   s3_set_host ("10.140.0.17:9020");
+   //s3_set_host ("10.140.0.17:9020");
    //s3_set_host ("10.135.0.22:81");
+   s3_set_host ("10.135.0.21:81");
 
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,fileset_count,time_threshold_sec);
    if (file_status->is_packed) {
@@ -371,11 +372,6 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
    //unsigned int fileset_index = 0;
 
 
-  // NEED TO FIGURE OUT SIZE FOR THIS
-//   char path_file[4096];
-
-
-
 //   const char *xattr_objid_name = "user.marfs_objid";
 //   const char *xattr_post_name = "user.marfs_post";
    MarFS_XattrPost post;
@@ -383,7 +379,7 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
   
    int early_exit =0;
    int xattr_index;
-   char *gc_path_ptr;
+   char *md_path_ptr;
 
    //outfd = fopen(onameP,"w");
 
@@ -472,10 +468,12 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
                   // Talk to Jeff about this filespace used not in post xattr
                   if (debug) 
                      printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
-                  if (!strcmp(post.gc_path, "")){
+                  //if (!strcmp(post.gc_path, "")){
+                  if (post.flags != POST_TRASH){
                      if (debug) 
 			// why would this ever happen?  if in trash gc_path should be non-null
-                        printf("gc_path is NULL\n");
+                        //printf("gc_path is NULL\n");
+                        printf("trash flag not set??\n");
                   } 
                   // else trash
                   else {
@@ -486,11 +484,8 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
                         if (debug)
                            printf("found trash\n");
 
-                        gc_path_ptr = &post.gc_path[0];
-                        //create string for *.path file that needs removal also
-                        ///sprintf(path_file,"%s.path",gc_path_ptr);
-                        ///printf("%s\n",marfs_xattrs[post_index]);
-                        ///printf("path_file is %s\n", path_file);
+                        md_path_ptr = &post.md_path[0];
+
                         xattr_ptr = &mar_xattrs[0];
 
 
@@ -499,11 +494,13 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
                            xattr_ptr = &mar_xattrs[xattr_index];
                            if (debug) {
                               printf("objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
-                              printf("remove file: %s  remove object:  %s\n", gc_path_ptr, xattr_ptr->xattr_value); 
+                              printf("remove file: %s  remove object:  %s\n", md_path_ptr, xattr_ptr->xattr_value); 
                            }
-
+                           
+                           // Deterimine if object type is packed.  If so we must complete scan
+                           // to determine if all files exist for the object
                            if (post.obj_type == OBJ_PACKED) {
-                              fprintf(file_info_ptr->packedfd,"%s %s %zu\n", xattr_ptr->xattr_value, gc_path_ptr, post.chunks);
+                              fprintf(file_info_ptr->packedfd,"%s %s %zu\n", xattr_ptr->xattr_value, md_path_ptr, post.chunks);
                               file_info_ptr->is_packed = 1;
                            }
                            // TO DO:
@@ -536,7 +533,7 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
                            // Not checking return because log has error message and want to keep running 
                            // even if errors exists on certain objects or files
                            else {
-                              trash_status = dump_trash(xattr_ptr, gc_path_ptr, file_info_ptr, &post);
+                              trash_status = dump_trash(xattr_ptr, md_path_ptr, file_info_ptr, &post);
                            }
                         }
                      }
@@ -573,9 +570,9 @@ int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
                            &post->chunk_info_bytes,
                            &post->correct_info,
                            &post->encrypt_info,
-                           (char*)&post->gc_path);
-
-   if (scanf_size == EOF || scanf_size < 8)
+                           &post->flags,
+                           (char*)&post->md_path);
+   if (scanf_size == EOF || scanf_size < 9)
       return -1;   
    post->obj_type = decode_obj_type(obj_type_code);
    return 0;
@@ -587,8 +584,7 @@ Name: dump_trash
 
  This function deletes the object file as well as gpfs metadata files
 *****************************************************************************/
-int dump_trash(struct marfs_xattr *xattr_ptr, char *gc_path_ptr, 
-               //char *path_file_ptr, file_info *file_info_ptr, MarFS_XattrPost *post_xattr)
+int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr, 
                file_info *file_info_ptr, MarFS_XattrPost *post_xattr)
 {
    int return_value =0;
@@ -597,43 +593,44 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *gc_path_ptr,
    char *obj_name_ptr;
    int i;
 
-   //If multi type file then delete all objects associated with file
-   if (post_xattr->obj_type == OBJ_MULTI) {
-      for (i=0; i < post_xattr->chunks; i++ ) {
-         obj_name_ptr = strrchr(xattr_ptr->xattr_value, '.');
-         obj_name_ptr++;
-         *obj_name_ptr='\0'; 
-         sprintf(object_name, "%s%d",xattr_ptr->xattr_value,i);
-         if (delete_object(object_name,file_info_ptr) == -1) {
+   // Make sure mdfs files were deleted before deleting objects
+   // We do not want objects remaining without associated gpfs files 
+   if (!delete_file(md_path_ptr, file_info_ptr)) {
+      //If multi type file then delete all objects associated with file
+      if (post_xattr->obj_type == OBJ_MULTI) {
+         for (i=0; i < post_xattr->chunks; i++ ) {
+            obj_name_ptr = strrchr(xattr_ptr->xattr_value, '.');
+            obj_name_ptr++;
+            *obj_name_ptr='\0'; 
+            sprintf(object_name, "%s%d",xattr_ptr->xattr_value,i);
+            if (delete_object(object_name,file_info_ptr) == -1) {
+               fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+               return_value = -1;
+            }
+            else {
+               fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
+            }
+         } 
+      }
+
+      // else UNI BUT NEED to implemented other formats as developed 
+      else if (post_xattr->obj_type == OBJ_UNI) {
+         strncpy(object_name, xattr_ptr->xattr_value, strlen(xattr_ptr->xattr_value));
+         if (delete_object(object_name, file_info_ptr)  == -1 ) {
             fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
             return_value = -1;
          }
          else {
             fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
          }
-      } 
-   }
-
-   // else UNI BUT NEED to implemented other formats as developed 
-   else if (post_xattr->obj_type == OBJ_UNI) {
-      strncpy(object_name, xattr_ptr->xattr_value, strlen(xattr_ptr->xattr_value));
-      if (delete_object(object_name, file_info_ptr)  == -1 ) {
-         fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
-         return_value = -1;
       }
-      else {
-         fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
-      }
-
    }
 
    // Delete trash files
-   
-   //if ((delete_file(gc_path_ptr, file_info_ptr) == -1)) {
-   //   fprintf(file_info_ptr->outfd,"Error removing file %s\n",gc_path_ptr);
-   //   return_value = -1;
-   //}
-   delete_file(gc_path_ptr, file_info_ptr); 
+   //delete_file(md_path_ptr, file_info_ptr); 
+   else {
+      return_value = -1;
+   }
    return(return_value);
 }
 
@@ -676,14 +673,17 @@ int delete_file(char *filename, file_info *file_info_ptr)
    else {
       fprintf(file_info_ptr->outfd,"deleted file %s\n",filename);
    }
-
-   print_current_time(file_info_ptr);
-   if ((unlink(path_file) == -1)) {
-      fprintf(file_info_ptr->outfd,"Error removing file %s\n",path_file);
-      return_value = -1;
-   }
-   else {
-      fprintf(file_info_ptr->outfd,"deleted file %s\n",path_file);
+   // If failed removing non-path file do NOT proceed to remove
+   // path file because need to preseve objects
+   if (!return_value) {
+      print_current_time(file_info_ptr);
+      if ((unlink(path_file) == -1)) {
+         fprintf(file_info_ptr->outfd,"Error removing file %s\n",path_file);
+         return_value = -1;
+      }
+      else {
+         fprintf(file_info_ptr->outfd,"deleted file %s\n",path_file);
+      }
    }
    return(return_value);
 }
@@ -799,6 +799,11 @@ int process_packed(file_info *file_info_ptr)
    }
    if (df_return == -1 || obj_return == -1)
       return(-1);
+   if ((pclose(pipe_cat) == -1) || (pclose(pipe_grep) == -1)) {
+      printf("Error closing pipes\n");
+      return(-1);
+   }
+       
    else 
       return(0);
 }
