@@ -357,7 +357,7 @@ static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_bu
 /***************************************************************************** 
 Name:  get_xattr_value
 
-This function, given the name of the attribute returns the associated index
+This function, given the name of the xattr, returns the associated index
 for the value.
 
 *****************************************************************************/
@@ -524,6 +524,7 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
   
    int early_exit =0;
    int xattr_index;
+   char *md_path_ptr;
 
    //outfd = fopen(onameP,"w");
 
@@ -648,11 +649,16 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                */
                if ( post.flags == POST_TRASH ) {
                   xattr_ptr = &mar_xattrs[0];
+                  md_path_ptr = &post.md_path[0];
+
                   /*
+                  *  Below was based on objid xattr containing namespace but that 
+                  *  namespace is not the same as the gpfs namespace
+                  *  this was a misunderstanding on my part
+                  *
                      We must be in a trash fileset/directory so the next bit of code 
                      determines which fileset/project the trash belongs to so that
                      we can keep track of trash per fileset.
-                  */
                   // Get objid xattr
                   if ((trash_index = get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count,outfd)) != -1) {
                      if (debug)
@@ -665,15 +671,20 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                      read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT"/"NON_SLASH, repo_name, ns_name); 
                      // do not lookup fileset name every iteration because chances are it is the same as last
                      // iteration
+
                      if (last_trash_index != trash_index) {
                         if ((trash_index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,ns_name)) >= 0)
                            last_trash_index = trash_index;
                         else 
                            continue;
-                     }
-                     fileset_stat_ptr[last_trash_index].sum_trash += iattrP->ia_size;
-                     fileset_stat_ptr[last_trash_index].sum_trash_file_count += 1;
-                  }
+                      }
+                     //fileset_stat_ptr[last_trash_index].sum_trash += iattrP->ia_size;
+                     //fileset_stat_ptr[last_trash_index].sum_trash_file_count += 1;
+                  */
+                     trash_index = lookup_fileset_path(fileset_stat_ptr, rec_count, md_path_ptr);
+                     fileset_stat_ptr[trash_index].sum_trash += iattrP->ia_size;
+                     fileset_stat_ptr[trash_index].sum_trash_file_count += 1;
+                  //}
                }
             }
          }
@@ -793,3 +804,50 @@ void update_type(MarFS_XattrPost * xattr_post, fileset_stat * fileset_stat_ptr, 
    }
 }
 
+/****************************************************************************** 
+ * Name:  lookup_fileset_path
+ *
+ * This function uses the md_path_ptr (path to gpfs meta data file) and adds
+ * the ".path" extension so that this function cat determine the fileset
+ * name (namespace) by reading the *.path file
+
+*** ***************************************************************************/
+int lookup_fileset_path(fileset_stat *fileset_stat_ptr, size_t rec_count, 
+                        char *md_path_ptr)
+{
+  FILE *pipe_cat;
+  int i, index = -1;
+  
+  // NEED TO DEFINE CONSTANT here and in trash collector
+  char path_file[MAX_PATH_LENGTH];  
+  char cat_command[MAX_PATH_LENGTH];
+  char path[MAX_PATH_LENGTH];
+
+   // Add .path to the filename and cat the file to get path
+   sprintf(path_file,"%s.path", md_path_ptr);
+   sprintf(cat_command,"cat %s", path_file);
+   if ((pipe_cat = popen(cat_command,"r")) == NULL) {
+      printf("No path file found\n");
+      return(-1);
+   }
+   fgets(path, MAX_PATH_LENGTH, pipe_cat);
+   if (pclose(pipe_cat) == -1) {
+     printf("Error closing .path pipe\n");
+   }
+   //path variable  now contains original path from .path file
+   //now iterate throuh filesets and see if any of them
+   //match in the path
+   //This may need additional work if we come up with a
+   //standard
+   //:
+
+
+   // search the array of structures for matching fileset name
+   for (i = 0; i < rec_count; i++) {
+       if(strstr(path,fileset_stat_ptr[i].fileset_name) != NULL) {
+          index=i;
+          break;
+       }
+   } 
+   return(index);
+}

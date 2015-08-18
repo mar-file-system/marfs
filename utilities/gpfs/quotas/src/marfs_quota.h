@@ -86,10 +86,11 @@
 //#define MAX_XATTR_NAME_LEN 1024 
 
 #define MAX_FILESET_NAME_LEN 256
-
 #define SMALL_FILE_MAX 4096
 #define MEDIUM_FILE_MAX 1048576
 
+
+#define MAX_PATH_LENGTH 4096
 
 // Xattr info
 #define MAX_MARFS_XATTR 3
@@ -118,6 +119,7 @@ typedef struct fileset_stats {
       size_t sum_filespace_used;
       size_t sum_file_count;
       size_t sum_trash;
+      size_t sum_trash_file_count;
       size_t adjusted_size;
       size_t small_count;
       size_t medium_count;
@@ -142,5 +144,6 @@ static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_bu
 int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
 void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count, size_t index_start);
 void update_type(MarFS_XattrPost * xattr_post, fileset_stat * fileset_stat_ptr, int index);
+int lookup_fileset_path(fileset_stat *fileset_stat_ptr, size_t rec_count, char *md_path_ptr);
 #endif
 
