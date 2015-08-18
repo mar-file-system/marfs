@@ -1,0 +1,166 @@
+#!/bin/bash -e
+
+# This is intended to use fuse to create a realistic set of files that
+# Alfred can use to test his GC and quota scripts.  The result is a bunch
+# of UNI and MULTI files, plus a bunch of trash.
+
+
+if [[ -z `mount | grep marfs_fuse | grep -v marfs_dbg | grep -v grep` ]]; then
+    echo "MarFS fuse appears not to be mounted"
+    exit
+fi
+
+FUSE_PID=`ps -elf | grep marfs_fuse | grep -v marfs_dbg | grep -v grep | awk '{print $4}'`
+if [[ -z "$FUSE_PID" ]]; then
+    echo "MarFS fuse-process appears not to be running"
+    exit
+fi
+
+
+# MARFS=/marfs/jti
+# MARFS=/marfs_dbg/atorrez
+# MARFS=/marfs/atorrez
+if [[ $# != 1 ]]; then
+    echo "Usage $0 <marfs_dir>"
+    echo
+    echo "   <marfs_dir> is something like /marfs/blah"
+    exit
+else
+	# DIR=/gpfs/marfs-gpfs/fuse/test00/trash
+	# DIR=/gpfs/marfs-gpfs/fuse/test00/mdfs
+	 MARFS=$1
+fi
+
+
+
+# ...........................................................................
+# Support for watching changes in the numbers of open file-descriptors.  A
+# bug in fuse was formerly causing us to leave 3 file-descriptors stuck in
+# CLOSE_WAIT state, every time we truncated a file (e.g. overwriting an
+# existing file).
+#
+# Now, we clean them up, but they do still take a moment to disappear from
+# the list of open descriptors.  In order to avoid overflowing `ulimit -n`,
+# we wait a moment, if the number of open descriptors is high.
+# ...........................................................................
+
+# PID=`echo $$`
+PID=$FUSE_PID
+echo "PID '$PID'"
+
+function show_open_files() {
+    echo "open files: "`ls /proc/$PID/fd | wc -l`
+}
+show_open_files
+
+MAX_OPEN_FILES=$(( `ulimit -n` / 2 ))
+echo "max open fds: $MAX_OPEN_FILES"
+
+
+function wait_for_open_files() {
+    while (( `show_open_files | awk '{print $NF}'` > MAX_OPEN_FILES )); do
+        echo "waiting for number of open file-descriptors to fall below $MAX_OPEN_FILES"
+        sleep 2
+    done
+}
+wait_for_open_files
+
+# ...........................................................................
+# Create many files in several directories, then delete some of them,
+# And overwrite some of them.
+# ...........................................................................
+
+
+# For the multi files, we write 8 blocks of this size.
+#
+# NOTE: This script won't actually create MarFS MULTI-files, unless 8 of
+# these chunks (plus 1080 bytes of recovery-info) exceeds your
+# repo.chunksize.  Alfred is currently configured with a Repo with
+# chunksize 1M.  For this size, we'd actually expect 9 objects per multi,
+# because of the 1080 bytes of recovery=info at the end of every chunk.
+CHUNKSIZE=$((1 * 1024 * 1024))
+
+
+DIRS="d1 d2 d3 d4"
+DEL_DIRS="del1 del2 del3 del4"
+
+
+
+# make directories
+for D in $DIRS; do
+    echo "making directory $MARFS/$D"
+
+    # # NOTE: 'mkdir -p ...' not currently working
+    # mkdir $MARFS/$D
+    [[ -d $MARFS/$D ]] || mkdir $MARFS/$D
+    show_open_files
+done
+echo
+
+
+# make some UNI files
+for D in $DIRS; do
+    for i in `seq 1 200`; do
+        UNI=`printf "$MARFS/$D/uni.%03d" $i`
+
+        echo "making file $UNI"
+        echo "contents of $UNI" > $UNI
+        show_open_files
+    done
+done
+echo
+wait_for_open_files
+
+
+# make some multi-files
+for D in $DIRS; do
+    for i in `seq 1 2`; do
+        MULTI=`printf "$MARFS/$D/mul.%03d" $i`
+
+        echo "making file $MULTI"
+        dd if=/dev/zero of=$MULTI bs=$CHUNKSIZE count=8
+        done
+done
+echo
+wait_for_open_files
+
+
+# delete some files
+sync
+for D in $DIRS; do
+    for i in `seq 1 100`; do
+        UNI=`printf "$MARFS/$D/uni.%03d" $i`
+
+        echo "deleting $UNI"
+        rm -f $UNI
+        done
+done
+echo
+wait_for_open_files
+
+
+for D in $DIRS; do
+    for i in `seq 1 1`; do
+        MULTI=`printf "$MARFS/$D/mul.%03d" $i`
+
+        echo "deleting $MULTI"
+        rm -f $MULTI
+        done
+done
+echo
+
+
+# overwrite some files (to test fuse truncate)
+sync
+for D in $DIRS; do
+    for i in `seq 1 4`; do
+        UNI=`printf "$MARFS/$D/uni.%03d" $i`
+
+        for j in `seq 0 3`; do
+            echo "rewriting $UNI  ($j)"
+            echo "overwrite ($j) of $UNI" > $UNI
+        done
+    done
+done
+echo
+wait_for_open_files

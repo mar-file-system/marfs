@@ -1,0 +1,13 @@
+#!/bin/bash -e
+
+# Fuse isn't intended to support parallel writes for a given writer, but
+# many writers may write at the same time, and it shouldn't screw up.  This
+# tests that.
+
+
+for i in `seq 0 63`; do
+    echo test > /marfs/jti/parallel.`printf "%02d" $i` &
+done
+
+wait
+echo  PASS

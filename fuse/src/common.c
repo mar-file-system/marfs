@@ -901,6 +901,7 @@ int  trash_truncate(PathInfo*   info,
    if (out == -1) {
       LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
           info->trash_path, new_mode);
+      __TRY0(close, in);
       return -1;
    }
 
@@ -918,6 +919,10 @@ int  trash_truncate(PathInfo*   info,
       char* buf = malloc(BUF_SIZE);
       if (!buf) {
          LOG(LOG_ERR, "malloc %ld bytes failed\n", BUF_SIZE);
+
+         // clean-up
+         __TRY0(close, in);
+         __TRY0(close, out);
          return -1;
       }
 
@@ -937,6 +942,10 @@ int  trash_truncate(PathInfo*   info,
             if (wr_count < 0) {
                LOG(LOG_ERR, "err writing %s (byte %ld)\n",
                    info->trash_path, wr_total);
+
+               // clean-up
+               __TRY0(close, in);
+               __TRY0(close, out);
                free(buf);
                return -1;
             }
@@ -952,12 +961,17 @@ int  trash_truncate(PathInfo*   info,
       if (rd_count < 0) {
          LOG(LOG_ERR, "err reading %s (byte %ld)\n",
              info->trash_path, wr_total);
+
+         // clean-up
+         __TRY0(close, in);
+         __TRY0(close, out);
          return -1;
       }
-
-      __TRY0(close, in);
-      __TRY0(close, out);
    }
+
+   // clean-up
+   __TRY0(close, in);
+   __TRY0(close, out);
 
    // trunc trash-file to size
    __TRY0(truncate, info->trash_path, log_size);

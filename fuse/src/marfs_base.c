@@ -662,8 +662,8 @@ int str_2_pre(MarFS_XattrPre*    pre,
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
 
    post->config_vers = MarFS_config_vers;
-   post->obj_type    = OBJ_NONE;   /* figured out later */
-   post->chunks      = 1;          // updated for multi
+   post->obj_type    = OBJ_UNI;    /* will be changed to Multi, if needed */
+   post->chunks      = 1;          // will be updated for multi
    post->chunk_info_bytes = 0;
 
    //   post->flags       = 0;
@@ -1361,9 +1361,9 @@ int load_config(const char* config_fname) {
 
       .is_root = 0,
    };
-   // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
+   //   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
-   // push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
+   //   push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
 
 
    // Alfred

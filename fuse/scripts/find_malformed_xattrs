@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# We just echo the filenames of malformed files;
+# if you also want to delete them, just
+# pipe our output something like this:
+#
+#   'find_malformed_xattrs my_dir | grep -v okay | awk '{print $2}' | xargs rm'
+
+if [[ $# != 1 ]]; then
+    echo "Usage $0 <mdfs_dir>"
+    exit
+else
+	# DIR=/gpfs/marfs-gpfs/fuse/test00/trash
+	# DIR=/gpfs/marfs-gpfs/fuse/test00/mdfs
+	 DIR=$1
+fi
+
+
+for F in `find $DIR -type f | grep -v path`; do
+
+    P=`attr -qg marfs_post $F 2>/dev/null`
+    O=`attr -qg marfs_objid $F 2>/dev/null`
+
+    if [[ "$P" == "" ]]; then
+        echo "no_POST $F"
+
+    elif [[ "$P" =~ (.*/_/) ]]; then
+
+        echo "underscore_POST $F"
+
+    elif [[ "$O" == "" ]]; then
+        echo "no_OBJID $F"
+
+#    #DEBUGGING
+    else
+        echo "okay $F"
+    fi
+
+done

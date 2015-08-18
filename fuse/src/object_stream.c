@@ -338,7 +338,7 @@ int s3_op_internal(ObjectStream* os) {
 }
 
 // this runs as a separate thread, so that stream_open() can return
-// NOTE: If you compile '-O3 -Wall', stoopid gcc warns 'b' is unused 
+// NOTE: If you compile w/ logging disabled, then 'b' is unused 
 void* s3_op(void* arg) {
    ObjectStream* os = (ObjectStream*)arg;
    __attribute__ ((unused)) IOBuf* b  = &os->iob;
@@ -985,6 +985,10 @@ int stream_close(ObjectStream* os) {
    os->flags &= ~(OSF_OPEN);
    os->flags |= OSF_CLOSED;     /* so stream_open() can identify re-opens */
 
+   // don't leave file-descriptor in CLOSE_WAIT
+   LOG(LOG_INFO, "(wr) abandoning connection\n");
+   aws_reset_connection_r(os->iob.context);
+
    int retval;
    if ((os->op_rc == 1)
        && (os->flags & OSF_ABORT))
@@ -1006,7 +1010,7 @@ int stream_close(ObjectStream* os) {
 //
 // NOTE: This is used when stream_open gets an OS that has been previously
 //       opened and closed.  Therefore, we can assume that sems have been
-//       destroyed, and thread has bben joined or killed.
+//       destroyed, and thread has been joined or killed.
 //
 void stream_reset(ObjectStream* os) {
    if (! (os->flags & OSF_CLOSED)) {

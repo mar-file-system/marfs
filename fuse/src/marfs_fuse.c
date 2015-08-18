@@ -745,16 +745,20 @@ int marfs_open (const char*            path,
    }
    else if (fh->flags & FH_WRITING) {
 
-      // start out assuming write object-type is Uni.  We'll change to
-      // Multi if writes require a second object.
-      info->post.obj_type = OBJ_UNI;
+      // COMMENTED OUT. This obj_type is now set in init_post().  I want to
+      // make sure that that works correctly, before deleting this.
+      //
+      //      // start out assuming write object-type is Uni.  We'll change to
+      //      // Multi if writes require a second object.
+      //      info->post.obj_type = OBJ_UNI;
+
 
       // Don't open MD file, here.  It isn't needed until the object-size
       // exceeds the threshold for Uni
       // (i.e. Namespace.iwrite_repo->chunk_size).  If we open it here,
       // then we unnecessarily slow down writing small files.
       //
-      //      fh->md_fd = open(info->post.md_path,(O_WRONLY));  // no O_BINARY in Linux.  Not needed.
+      //      fh->md_fd = open(info->post.md_path,(O_WRONLY));  // no O_BINARY in Linux.
       //      if (fh->md_fd < 0)
       //         RETURN(-errno);
    }
@@ -2111,6 +2115,7 @@ int main(int argc, char* argv[])
    //       here.
    aws_init();
    aws_reuse_connections(1);
+
 #if (DEBUG > 1)
    aws_set_debug(1);
 #endif

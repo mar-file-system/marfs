@@ -32,6 +32,7 @@ MDFS   = $(GPFS)/test00/mdfs
 FSINFO = $(GPFS)/test00/fsinfo
 TRASH  = $(GPFS)/test00/trash
 
+# file
 PID = marfs_fuse.pid
 
 # # LIBAWS4C := ~/projects/git/aws4c
@@ -44,7 +45,7 @@ PID = marfs_fuse.pid
 
 
 # environment-variable DEBUG controls compile-flags:
-# NOTE: -DDEBUG w/value >= 1 turns on curl-conversation logging
+# NOTE: -DDEBUG w/value > 1 turns on curl-conversation logging
 #
 #   DEBUG = undef/null    --    -O3
 #   DEBUG = 0             --    -g  -DEBUG=0    (-g, but no logging)
@@ -61,11 +62,14 @@ FUSE_FLAGS += -o allow_other
 ifdef DEBUG
 	ifeq ($(DEBUG),)
 		CFLAGS += -O3
+
 	else ifeq ($(DEBUG),0)
 		CFLAGS += -g
+
 	else ifeq ($(DEBUG),1)
 		CFLAGS += -O3
 		DEFS   += DEBUG=$(DEBUG)
+
 	else
 		CFLAGS += -g
 		DEFS   += DEBUG=$(DEBUG)
@@ -76,12 +80,14 @@ else
 endif
 
 
-# currently, this just tells fuse that it's okay if ~/.awsAuth doesn't exist
+# NOTE: Confusingly, this DOES NOT control whether SPROXYD will be used.
+#    currently, this just tells fuse that it's okay if ~/.awsAuth doesn't exist
 ifdef USE_SPROXYD
 	DEFS += USE_SPROXYD=1
 endif
 
 # This tells logging.h to write via syslog(), instead of printf()
+# If USE_SYSLOG is undef, and DEBUG is undef, there is no logging output
 ifdef USE_SYSLOG
 	DEFS += USE_SYSLOG
 endif
@@ -209,7 +215,7 @@ fuse: fuse.std
 fuse.std: pre_req
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=2
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=1
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=1
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2
 
 fuse.lean: pre_req
 	@ $(MAKE) marfs_fuse
@@ -271,15 +277,11 @@ remount: umnt
 _mnt:
 	@ echo
 	@ echo "mounting at $(MNT)"
-	./marfs_fuse $(FUSE_FLAGS) $(MNT) $(LOG) & echo $$! > $(PID)
-	@ echo "PID: " `cat $(PID)`
+	./marfs_fuse $(FUSE_FLAGS) $(MNT) $(LOG) &
 	@ echo "sleeping to give background fuse a chance to start"
 	sleep 1
-
-test.mnt:
-	@ # ( bash -c "(sleep 10; echo done)" & echo $$! )
-	@ bash -c "(echo $$$$; sleep 10; echo done)" & echo "pid: $$!"; echo "ppid: $$PPID"
-
+	@ ps -elf | grep marfs_fuse | grep $(MNT) | grep -v grep | awk '{print $$4}' > $(PID)
+	@ echo "PID: " `cat $(PID)`
 
 
 
