@@ -185,8 +185,8 @@ int main(int argc, char **argv) {
    // NEED to get these from config when the parser is ready
    aws_read_config("atorrez");
    //s3_set_host ("10.140.0.17:9020");
-   //s3_set_host ("10.135.0.22:81");
-   s3_set_host ("10.135.0.21:81");
+   s3_set_host ("10.135.0.22:81");
+   //s3_set_host ("10.135.0.21:81");
 
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,fileset_count,time_threshold_sec);
    if (file_status->is_packed) {
@@ -592,6 +592,7 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
    char object_name[MARFS_MAX_OBJID_SIZE];
    char *obj_name_ptr;
    int i;
+   int delete_obj_status;
 
    //If multi type file then delete all objects associated with file
    if (post_xattr->obj_type == OBJ_MULTI) {
@@ -600,8 +601,8 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
          obj_name_ptr++;
          *obj_name_ptr='\0'; 
          sprintf(object_name, "%s%d",xattr_ptr->xattr_value,i);
-         if (delete_object(object_name,file_info_ptr) == -1) {
-            fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+         if ((delete_obj_status=delete_object(object_name,file_info_ptr)) != 0) {
+            fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code:  %d) on object %s\n", delete_obj_status,xattr_ptr->xattr_value);
             return_value = -1;
          }
          else {
@@ -613,8 +614,8 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
    // else UNI BUT NEED to implemented other formats as developed 
    else if (post_xattr->obj_type == OBJ_UNI) {
       strncpy(object_name, xattr_ptr->xattr_value, strlen(xattr_ptr->xattr_value));
-      if (delete_object(object_name, file_info_ptr)  == -1 ) {
-         fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", xattr_ptr->xattr_value);
+      if ((delete_obj_status=delete_object(object_name, file_info_ptr))  != 0 ) {
+         fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code:  %d) on object %s\n", delete_obj_status,xattr_ptr->xattr_value);
          return_value = -1;
       }
       else {
@@ -637,16 +638,22 @@ Name: delete_object
 *****************************************************************************/
 int delete_object(char * object, file_info *file_info_ptr)
 {
-   int rv;
+   //
+   int return_val;
+   CURLcode s3_return;
    IOBuf * obj_buffer = aws_iobuf_new();
 
    print_current_time(file_info_ptr);
 
-   rv = s3_delete( obj_buffer, object );
-   if (rv != 0) 
-      return -1;
-   else 
-      return 0;
+   s3_return = s3_delete( obj_buffer, object );
+   return_val=check_S3_error(s3_return, obj_buffer, S3_DELETE);
+   
+   return(return_val);
+
+   //if (rv != 0) 
+   //   return -1;
+   //else 
+   //   return 0;
 }
 
 /***************************************************************************** 
@@ -763,8 +770,8 @@ int process_packed(file_info *file_info_ptr)
          // delete objec
          if (chunk_count == count) {
 
-            if ((obj_return=delete_object(objid, file_info_ptr)) == -1) 
-               fprintf(file_info_ptr->outfd, "s3_delete error on object %s\n", objid);
+            if ((obj_return=delete_object(objid, file_info_ptr)) != 0) 
+               fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code:  %d) on object %s\n", obj_return, objid);
             else 
               fprintf(file_info_ptr->outfd, "deleted object %s\n", objid);
 
@@ -799,3 +806,35 @@ int process_packed(file_info *file_info_ptr)
    else 
       return(0);
 }
+
+
+/***************************************************************************** 
+ *
+*****************************************************************************/
+int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action )
+{
+  if ( curl_return == CURLE_OK ) {
+    //if (action == S3_CREATE || action == S3_STAT ) {
+    //  if (s3_buf->code != HTTP_OK) {
+    //    printf("Error, HTTP Code:  %d\n", s3_buf->code);
+    //    return(-1);
+    //  }
+    //}
+    if (action == S3_DELETE) {
+    //else {// action == S3_DELETE
+       if (s3_buf->code == HTTP_OK || s3_buf->code == HTTP_NO_CONTENT) {
+          return(0);
+       }
+       else {
+         printf("Error, HTTP Code:  %d\n", s3_buf->code);
+         return(s3_buf->code);
+       }
+    }
+  }
+  else {
+    printf("Error, Curl Return Code:  %d\n", curl_return);
+    return(-1);
+  }
+  return(0);
+}
+
