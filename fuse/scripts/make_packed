@@ -37,7 +37,7 @@ if [[ $# != 1 ]]; then
 # config-file.
 elif [[ $1 == "scality" ]]; then
     MOUNT="/marfs/atorrez"
-    GPFS="/gpfs/marfs-gpfs/project_a"
+    GPFS="/gpfs/marfs-gpfs/project_a/mdfs"
     HOST="http://10.135.0.22:81"
 
     function get() { URL=$1;          curl $VERBOSE $URL; }
@@ -97,9 +97,6 @@ echo "creating two objects with recognizable contents"
 dd if=/dev/zero bs=968 count=1 | tr '\0' '1' > $MOUNT/p1
 dd if=/dev/zero bs=968 count=1 | tr '\0' '2' > $MOUNT/p2
 
-# dd if=/dev/zero bs=968 count=1 conv=fsync | tr '\0' '1' > $MOUNT/p1
-# dd if=/dev/zero bs=968 count=1 conv=fsync | tr '\0' '2' > $MOUNT/p2
-
 
 # ---------------------------------------------------------------------------
 # NOTE: There appears to be a small delay, before GPFS xattrs written by
@@ -122,13 +119,13 @@ echo
 # the object-id from one of the small files that are being packed.  This
 # will have incorrect ctime, etc, but that won't matter.
 OBJID=`obj_name p1`
-echo "OBJID:           $OBJID"
+echo "p1     OBJID: $OBJID"
 
 # Change the encoded object-type from "Fuse" to "Packed"
 # NOTE: I think this is ignored in favor of info in the Post xattr.
 OBJID=`echo $OBJID | sed -E 's/F___/P___/'`
-echo "OBJID (tweaked): $OBJID"
-
+echo "packed OBJID: $OBJID"
+echo
 
 
 # --- extract "marfs_post" xattr, and adapt to become the
@@ -140,11 +137,11 @@ echo "OBJID (tweaked): $OBJID"
 # to-be-packed files, and tweak it.
 echo "POST=attr -qg marfs_post $GPFS/p1"
 POST=`attr -qg marfs_post $GPFS/p1`
-echo "POST:           $POST"
+echo "p1     POST: $POST"
 
 # Change the encoded object-type from "Uni" to "Packed"
 POST=`echo $POST | sed -E 's/\/U\//\/P\//'`
-echo "POST (tweaked): $POST"
+echo "packed POST: $POST"
 echo
 
 
