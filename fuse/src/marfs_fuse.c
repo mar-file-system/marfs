@@ -287,7 +287,7 @@ int marfs_ftruncate(const char*            path,
    // Call access() syscall to check/act if allowed to truncate for this user
    ACCESS(info->post.md_path, (W_OK));        /* for truncate? */
 
-   // stat_xattrs – or look up info stuffed into memory pointed at in fuse
+   // stat_xattrs, or look up info stuffed into memory pointed at in fuse
    // open table if this is not just a normal [object-storage case?], use
    // the md for file data
    STAT_XATTRS(info);
@@ -308,7 +308,7 @@ int marfs_ftruncate(const char*            path,
       return -EPERM;
 
 
-   //***** this may or may not work – may need a trash_truncate() that uses
+   //***** this may or may not work, may need a trash_truncate() that uses
    //***** ftruncate since the file is already open (may need to modify the
    //***** trash_truncate to use trunc or ftrunc depending on if file is
    //***** open or not
@@ -1676,7 +1676,7 @@ int marfs_write(const char*            path,
    // Make sure security is set up for accessing objrepo using iwrite_datarepo
 
    // If file has no xattrs its just a normal use the md file for data,
-   //   just do the write and return – don’t bother with all this stuff below
+   //   just do the write and return, don’t bother with all this stuff below
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
        && (info->ns->iwrite_repo->access_proto == PROTO_DIRECT)) {
       LOG(LOG_INFO, "no xattrs, and DIRECT: writing to file\n");
@@ -2043,7 +2043,7 @@ int marfs_flock(const char*            path,
 
 int marfs_link (const char* path,
                 const char* to) {
-   // for now, I think we should not allow link – its pretty complicated to do
+   // for now, I think we should not allow link, its pretty complicated to do
    LOG(LOG_INFO, "link(%s, ...) not implemented\n", path);
    return -ENOSYS;
 }

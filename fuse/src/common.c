@@ -440,7 +440,8 @@ int init_xattr_specs() {
 //
 int stat_xattrs(PathInfo* info) {
 
-   size_t rc;
+   size_t  rc;                  /* for __TRY() */
+   ssize_t str_size;
 
    if (info->flags & PI_XATTR_QUERY)
       return 0;                 // already did this
@@ -462,9 +463,11 @@ int stat_xattrs(PathInfo* info) {
          //       ctime currently found in info->st, as a result of
          //       the call to stat_regular(), above.
 
-         if (lgetxattr(info->post.md_path, spec->key_name,
-                       xattr_value_str, MARFS_MAX_XATTR_SIZE) != -1) {
+         str_size = lgetxattr(info->post.md_path, spec->key_name,
+                              xattr_value_str, MARFS_MAX_XATTR_SIZE);
+         if (str_size != -1) {
             // got the xattr-value.  Parse it into info->pre
+            xattr_value_str[str_size] = 0;
             LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
             __TRY0(str_2_pre, &info->pre, xattr_value_str, &info->st);
             LOG(LOG_INFO, "md_ctime: %016lx, obj_ctime: %016lx\n",
@@ -485,9 +488,11 @@ int stat_xattrs(PathInfo* info) {
       }
 
       case XVT_POST: {
-         if (lgetxattr(info->post.md_path, spec->key_name,
-                       xattr_value_str, MARFS_MAX_XATTR_SIZE) != -1) {
+         str_size = lgetxattr(info->post.md_path, spec->key_name,
+                              xattr_value_str, MARFS_MAX_XATTR_SIZE);
+         if (str_size != -1) {
             // got the xattr-value.  Parse it into info->pre
+            xattr_value_str[str_size] = 0;
             LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
             __TRY0(str_2_post, &info->post, xattr_value_str);
             info->xattrs |= spec->value_type; /* found this one */
@@ -766,8 +771,8 @@ int  trash_unlink(PathInfo*   info,
    assert(info->flags & PI_EXPANDED);
 
    //    If this has no xattrs (its just a normal file using the md file
-   //    for data) just unlink the file and return – we have nothing to
-   //    clean up, too bad for the user as we aren’t going to keep the
+   //    for data) just unlink the file and return we have nothing to
+   //    clean up, too bad for the user as we aren't going to keep the
    //    unlinked file in the trash.
    //
    // NOTE: The has_all_xattrs test treats any files that don't have both
@@ -838,8 +843,8 @@ int  trash_truncate(PathInfo*   info,
    assert(info->flags & PI_EXPANDED);
 
    //    If this has no xattrs (its just a normal file using the md file
-   //    for data) just trunc the file and return – we have nothing to
-   //    clean up, too bad for the user as we aren’t going to keep the
+   //    for data) just trunc the file and return we have nothing to
+   //    clean up, too bad for the user as we aren't going to keep the
    //    trunc’d file.
 
    size_t rc;
@@ -1011,7 +1016,6 @@ int  trash_truncate(PathInfo*   info,
       LOG(LOG_INFO, "unique: '%s'\n", info->pre.objid);
    }
 
-   
    return 0;
 }
 
@@ -1077,12 +1081,10 @@ int check_quotas(PathInfo* info) {
    //      __TRY0(statvfs, info->ns->fsinfo, &info->stvfs);
 
 #if TBD
-   uint64_t  names_limit = ((uint64_t)info->ns->quota_name_units *
-                            (uint64_t)info->ns->quota_names);
+   uint64_t  names_limit = (uint64_t)info->ns->quota_names;
 #endif
 
-   uint64_t space_limit = ((uint64_t)info->ns->quota_space_units *
-                           (uint64_t)info->ns->quota_space);
+   uint64_t space_limit = (uint64_t)info->ns->quota_space;
 
    // value of -1 for ns->quota_space implies unlimited
    if (space_limit >= 0) {
@@ -1228,6 +1230,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 
 #if TBD
    // add recovery-info, at the tail of the object
+   LOG(LOG_INFO, "writing recovery-info of size %ld\n", recovery);
 
    //      char objid[MARFS_MAX_OBJID_SIZE];
    //      TRY0(pre_2_str, objid, MARFS_MAX_OBJID_SIZE, &info->pre);
@@ -1240,7 +1243,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
    __TRY_GE0(stream_put, os, file_info, recovery);
 
 #else
-   LOG(LOG_WARNING, "writing fake recovery info of size %ld\n", recovery);
+   LOG(LOG_WARNING, "writing fake recovery-info of size %ld\n", recovery);
 
    // static char rec[recovery];
    static char rec[sizeof(RecoveryInfo) +8]; // stupid compiler ...

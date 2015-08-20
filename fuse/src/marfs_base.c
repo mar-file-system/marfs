@@ -183,10 +183,14 @@ int decode_namespace(char* dst, char* src) {
 
 
 // See comments above MARFS_DATA_FORMAT (in marfs_base.h)
+//
+// NOTE: This gets called twice, for every call to stat_xattrs(), and the
+//     debugging output is fairly verbose.  It seems to be working
+//     correctly, so I'm commenting out the loggging calls.
+
 int epoch_to_str(char* str, size_t size, const time_t* time) {
    struct tm tm;
 
-   // DEBUGGING
    LOG(LOG_INFO, "* epoch_to_str epoch:            %016lx\n", *time);
 
    // time_t -> struct tm
@@ -195,16 +199,16 @@ int epoch_to_str(char* str, size_t size, const time_t* time) {
       return -1;
    }
 
-   // DEBUGGING
-   __attribute__ ((unused)) struct tm* dbg = &tm;
-   LOG(LOG_INFO, "* epoch_2_str localtime:         %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
-           1900+(dbg->tm_year),
-           dbg->tm_mon,
-           dbg->tm_mday,
-           dbg->tm_hour,
-           dbg->tm_min,
-           dbg->tm_sec,
-           dbg->tm_isdst);
+   //   // DEBUGGING
+   //   __attribute__ ((unused)) struct tm* dbg = &tm;
+   //   LOG(LOG_INFO, "* epoch_2_str localtime:         %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+   //           1900+(dbg->tm_year),
+   //           dbg->tm_mon,
+   //           dbg->tm_mday,
+   //           dbg->tm_hour,
+   //           dbg->tm_min,
+   //           dbg->tm_sec,
+   //           dbg->tm_isdst);
 
    // struct tm -> string
    size_t strf_size = strftime(str, size, MARFS_DATE_FORMAT, &tm);
@@ -213,18 +217,22 @@ int epoch_to_str(char* str, size_t size, const time_t* time) {
       return -1;
    }
 
-   // DEBUGGING
-   LOG(LOG_INFO, "* epoch_2_str to-string (1)      %s\n", str);
+   //   // DEBUGGING
+   //   LOG(LOG_INFO, "* epoch_2_str to-string (1)      %s\n", str);
 
    // add DST indicator
    snprintf(str+strf_size, size-strf_size, MARFS_DST_FORMAT, tm.tm_isdst);
 
-   // DEBUGGING
-   LOG(LOG_INFO, "* epoch_2_str to-string (2)      %s\n", str);
+   //   // DEBUGGING
+   //   LOG(LOG_INFO, "* epoch_2_str to-string (2)      %s\n", str);
 
    return 0;
 }
 
+
+// NOTE: This gets called twice, for every call to save_xattrs(), and the
+//     debugging output is fairly verbose.  It seems to be working
+//     correctly, so I'm commenting out the loggging calls.
 
 int str_to_epoch(time_t* time, const char* str, size_t size) {
    struct tm tm;
@@ -250,22 +258,22 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
       return -1;
    }
 
-   // DEBUGGING
-   __attribute__ ((unused)) struct tm* dbg = &tm;
-   LOG(LOG_INFO, "* str_to_epoch from string: (1)  %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
-           1900+(dbg->tm_year),
-           dbg->tm_mon,
-           dbg->tm_mday,
-           dbg->tm_hour,
-           dbg->tm_min,
-           dbg->tm_sec,
-           dbg->tm_isdst);
+   //   // DEBUGGING
+   //   __attribute__ ((unused)) struct tm* dbg = &tm;
+   //   LOG(LOG_INFO, "* str_to_epoch from string: (1)  %4d-%02d-%02d %02d:%02d:%02d (%d)\n",
+   //           1900+(dbg->tm_year),
+   //           dbg->tm_mon,
+   //           dbg->tm_mday,
+   //           dbg->tm_hour,
+   //           dbg->tm_min,
+   //           dbg->tm_sec,
+   //           dbg->tm_isdst);
 
    // struct tm -> epoch
    *time = mktime(&tm);
 
-   // DEBUGGING
-   LOG(LOG_INFO, "* str_to_epoch epoch:            %016lx\n", *time);
+   //   // DEBUGGING
+   //   LOG(LOG_INFO, "* str_to_epoch epoch:            %016lx\n", *time);
 
    return 0;
 }
@@ -1167,11 +1175,6 @@ MarFS_Namespace* push_namespace(MarFS_Namespace* dummy, MarFS_Repo* repo) {
    ns->mnt_suffix_len = strlen(ns->mnt_suffix);
    ns->md_path_len    = strlen(ns->md_path);
 
-   // helper for find_namespace()
-   // @@@-HTTPS:
-   // This is redundant. It's done just above.
-   //ns->mnt_suffix_len = strlen(ns->mnt_suffix);
-
    _ns[_ns_count++] = ns;
    return ns;
 }
@@ -1353,11 +1356,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
-      .quota_space = 1024,          /* 1024 MB of data */
-
-      .quota_space_units = 1,
+      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
       .quota_names = 32,             /* 32 names */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 0,
    };
@@ -1381,11 +1384,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
       .quota_space = -1,                  /* no limit */
-
-      .quota_space_units = 1,
       .quota_names = -1,        /* no limit */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 0,
    };
@@ -1407,11 +1410,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
       .quota_space = -1,          /* no limit */
-
-      .quota_space_units = 1,
       .quota_names = -1,             /* no limit */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 0,
    };
@@ -1433,11 +1436,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
       .quota_space = -1,          /* no limit */
-
-      .quota_space_units = 1,
       .quota_names = -1,             /* no limit */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 0,
    };
@@ -1459,11 +1462,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
       .quota_space = -1,          /* no limit */
-
-      .quota_space_units = 1,
       .quota_names = -1,             /* no limit */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 0,
    };
@@ -1485,11 +1488,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
-      .quota_space = 1024,          /* 1024 MB of data */
-
-      .quota_space_units = 1,
+      .quota_space = (1024L * 1024 * 1024),          /* 1GB of data */
       .quota_names = 32,             /* 32 names */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 0,
    };
@@ -1511,11 +1514,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
-      .quota_space = 1024,          /* 1024 MB of data */
-
-      .quota_space_units = 1,
+      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
       .quota_names = 32,             /* 32 names */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 0,
    };
@@ -1537,11 +1540,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
-      .quota_space = 1024,          /* 1024 MB of data */
-
-      .quota_space_units = 1,
+      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
       .quota_names = 32,             /* 32 names */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 0,
    };
@@ -1564,11 +1567,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
-      .quota_space = 1024,          /* 1024 MB of data */
-
-      .quota_space_units = 1,
+      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
       .quota_names = 32,             /* 32 names */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 0,
    };
@@ -1597,11 +1600,11 @@ int load_config(const char* config_fname) {
       .dirty_pack_percent   =  0,
       .dirty_pack_threshold = 75,
 
-      .quota_space_units = (1024 * 1024), /* MB */
       .quota_space = -1,          /* no limit */
-
-      .quota_space_units = 1,
       .quota_names = -1,             /* no limit */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
 
       .is_root = 1,
    };

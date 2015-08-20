@@ -35,10 +35,20 @@ TRASH  = $(GPFS)/test00/trash
 # file
 PID = marfs_fuse.pid
 
-# # LIBAWS4C := ~/projects/git/aws4c
-# ifndef LIBAWS4C
-# 	LIBAWS4C := $(shell readlink -f ~/projects/ecs_hobo/tools/aws4c)
-# endif
+# LIBAWS4C := $(shell readlink -f ~/projects/ecs_hobo/tools/aws4c)
+#
+# NOTE: You should define LIBAWS4C in you environment, using one of the
+#       following methods:
+#
+#       [bash]  export LIBAWS4C=/my/path/to/aws4c; make ...
+#       [tcsh]  setenv LIBAWS4C /my/path/to/aws4c; make ...
+#
+#       [any]   make ... LIBAWS4C=/my/path/to/aws4c
+
+CFLAGS  += -I$(LIBAWS4C)
+LDFLAGS += -L$(LIBAWS4C)
+LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
+
 
 # # passed in the environment by a recursive make.  (See e.g. 'fuse.dbg')
 # DEFS := $(RECURSIVE_DEFS)
@@ -109,16 +119,6 @@ CFLAGS  += $(patsubst %, -D%, $(DEFS))
 # LDFLAGS += `pkg-config fuse --cflags --libs` -lm -L $(LIBAWS4C) -laws4c
 LDFLAGS += $(shell pkg-config fuse --libs-only-L)
 LIBS    += $(shell pkg-config fuse --libs-only-l) -lm
-
-# stuff for aws4c
-### LIBAWS4C = /users/jti/projects/ecs_hobo/tools/aws4c
-### LIBAWS4C = `readlink -f ~/projects/ecs_hobo/tools/aws4c`
-### LIBAWS4C := `readlink -f ~jti/projects/git/aws4c`
-### LIBAWS4C := $( readlink -f ~jti/projects/git/aws4c )
-LIBAWS4C := $(shell readlink -f /root/projects/ecs_hobo/tools/aws4c )
-CFLAGS  += -I$(LIBAWS4C)
-LDFLAGS += -L$(LIBAWS4C)
-LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
 
 
 
@@ -464,29 +464,31 @@ loc:
 	wc -l $(H) $(SRCS)
 
 # lines-of-code (including libaws4c)
-loc2:
+loc2: pre_req
 	wc -l $(H) $(SRCS)  $(LIBAWS4C)/*.{c,h}
 
 # test shell-syntax for checking Makefile-variables
 var_%:
 	@ ([ -n "$($*)" ] && echo "value: $($*)" ) || echo "empty: $*"
 
-show_env:
+printenv:
 	printenv
 
-show_inc_path:
+inc_path:
 	gcc -Wp,-v $(CFLAGS) -c -o marfs_base.o marfs_base.c
 
-show_subshell_uid:
+subshell_uid:
 	( id )
 
-show_pid:
+fuse_pid:
 	ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'
 
-show_locals:
+locals:
 	@ echo "CFLAGS     = $(CFLAGS)"
 	@ echo "LDFLAGS    = $(LDFLAGS)"
 	@ echo "FUSE_FLAGS = $(FUSE_FLAGS)"
+	@ echo "DEBUG      = $(DEBUG)"
+	@ echo "LIBAWS4C   = $(LIBAWS4C)"
 
 .PHONY: show_objects
 show_objects:

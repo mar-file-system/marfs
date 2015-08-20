@@ -224,6 +224,10 @@ extern float MarFS_config_vers;
 
 #define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/flags.%02hhX/mdfs.%s"
 
+#define MARFS_MAX_POST_STRING_WITHOUT_PATH  256 /* max */
+#define MARFS_MAX_POST_STRING_SIZE          (MARFS_MAX_POST_STRING_WITHOUT_PATH + MARFS_MAX_MD_PATH)
+
+
 #define MARFS_REC_INFO_FORMAT   "ver.%03d_%03d/inode.%010ld/mode.%08x/uid.%d/gid.%d/mtime.%s/ctime.%s/mdfs.%s"
 
 // Two files in the trash.  Original MDFS is renamed to the name computed
@@ -522,17 +526,13 @@ typedef struct MarFS_Namespace {
    uint8_t            dirty_pack_percent;   // percent dirty (observed)
    uint8_t            dirty_pack_threshold; // pftool repack if percentage above this
 
-   size_t             quota_space_units; // multiplier
    size_t             quota_space;       // space-quota in space_units
-
-   size_t             quota_name_units;  // multiplier
    size_t             quota_names;       // name-quota in name_units
 
-   uint8_t            is_root;  // special meta-namespace
+   const char*        shard_path;  // where the shards are
+   uint32_t           shard_count; // number of shards, at shard_path
 
-   // TBD:
-   //    <type>   shard;
-   //    <type>   shard_num;
+   uint8_t            is_root;  // special meta-namespace
 }  MarFS_Namespace;
 
 
@@ -728,14 +728,11 @@ typedef struct MarFS_XattrPost {
    EncryptInfo        encrypt_info;  // any info reqd to decrypt the data
    size_t             chunks;        // number ChunkInfos written in MDFS file (Multi)
    size_t             chunk_info_bytes; // total size of chunk-info in MDFS file (Multi)
-
-   // char               gc_path[MARFS_MAX_MD_PATH]; // only if file is in trash
    char               md_path[MARFS_MAX_MD_PATH]; // full path to MDFS file
    PostFlagsType      flags;
 } MarFS_XattrPost;
 
 
-#define XATTR_MAX_POST_STRING_VALUE_SIZE  256 /* max */
 
 // from MarFS_XattrPost to string
 int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post, MarFS_Repo* repo);
@@ -792,7 +789,6 @@ int str_2_shard(MarFS_XattrShard* shard, const char* shard_str); // from string
 
 typedef struct {
    float    config_vers;
-   // size_t   size;               // Size of record
    ino_t    inode;
    mode_t   mode;
    uid_t    uid;
@@ -800,6 +796,7 @@ typedef struct {
    time_t   mtime;
    time_t   ctime;
    char     mdfs_path[MARFS_MAX_MD_PATH]; // full path in the MDFS
+   char     post[MARFS_MAX_POST_STRING_WITHOUT_PATH]; // POST only has path for trash
 } RecoveryInfo;
 
 // from RecoveryInfo to string
