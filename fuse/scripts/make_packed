@@ -51,13 +51,13 @@ if [[ $# != 1 ]]; then
 # config-file.
 elif [[ $1 == "scality" ]]; then
 
-    MARFS="/marfs/jti"
-    GPFS="/gpfs/marfs-gpfs/fuse/test00/mdfs"
-    HOST="http://10.135.0.21:81"
+#    MARFS="/marfs/jti"
+#    GPFS="/gpfs/marfs-gpfs/fuse/test00/mdfs"
+#    HOST="http://10.135.0.21:81"
 
-#    MARFS="/marfs/atorrez"
-#    GPFS="/gpfs/marfs-gpfs/project_a/mdfs"
-#    HOST="http://10.135.0.22:81"
+    MARFS="/marfs/atorrez"
+    GPFS="/gpfs/marfs-gpfs/project_a/mdfs"
+    HOST="http://10.135.0.22:81"
 
     function get() { URL=$1;          curl $VERBOSE $URL; }
     function del() { URL=$1;          curl $VERBOSE -X DELETE $URL; }
