@@ -4,17 +4,31 @@
 # This script creates a dummy packed file, so we can test fuse-read on it.
 #
 # We're trying to match all the real properties that Packed files will
-# eventually have.  For example, I'm guessing that we will just concatenate
-# the contents of the member objects, including their tail-end
-# recovery-info (plus 8 more bytes).  We also want object-IDs to be
-# reliably unique, so we want a real inode in their object-IDs, which we
-# get from the first member.
+# eventually have.  In this script we just concatenate the contents of the
+# member objects, including their tail-end recovery-info (plus 8 more
+# bytes).  We also want object-IDs to be reliably unique, so we want a real
+# inode in their object-IDs, which we get from the first member.
 
 
-
+# including recovery-info.  Just a nice, round number in hex
+OBJ_SIZE=2048
 
 # This is the current value for "sizeof(RecoveryInfo)" +8
-RECOVERY=1080
+#
+# RECOVERY=1080
+RECOVERY=1336
+
+# Just so that FILE_SIZE + RECOVERY = OBJ_SIZE
+FILE_SIZE=$(( OBJ_SIZE - RECOVERY ))
+
+# Create this many packed files.  They will all be stored in the same
+# object.  We ignore anything in the config file about marfs chunksize.
+# Please consider picking a number that won't put the total size of the
+# packed object (including recovery-info) larger than the marfs
+# "chunk_size" for this repo.  There might be a good reason someone picked
+# that chanksize.
+N_OBJECTS=8
+
 
 # uncomment if you want verbose CURL output
 # VERBOSE=-v
@@ -36,16 +50,21 @@ if [[ $# != 1 ]]; then
 # the fuse-mount.  Eventually, this should read and parse the actual
 # config-file.
 elif [[ $1 == "scality" ]]; then
-    MOUNT="/marfs/atorrez"
-    GPFS="/gpfs/marfs-gpfs/project_a/mdfs"
-    HOST="http://10.135.0.22:81"
+
+    MARFS="/marfs/jti"
+    GPFS="/gpfs/marfs-gpfs/fuse/test00/mdfs"
+    HOST="http://10.135.0.21:81"
+
+#    MARFS="/marfs/atorrez"
+#    GPFS="/gpfs/marfs-gpfs/project_a/mdfs"
+#    HOST="http://10.135.0.22:81"
 
     function get() { URL=$1;          curl $VERBOSE $URL; }
     function del() { URL=$1;          curl $VERBOSE -X DELETE $URL; }
     function put() { FILE=$1; URL=$2; curl $VERBOSE -T $FILE $URL; }
 
 elif [[ $1 == "emc" ]]; then
-    MOUNT="/marfs/s3"
+    MARFS="/marfs/s3"
     GPFS="/gpfs/fs2/fuse_s3/mdfs"
     HOST="http://10.140.0.15:9020"
 
@@ -81,21 +100,30 @@ function obj_name() {
 }
 
 
+function file_name() {
+    echo "p$1"
+}
 
 
 # --- delete any old versions, so marfs is thrown off by failed
 #     xattr-modifications done by buggy earlier versions of this script
 
-rm -f $MOUNT/p1
-rm -f $MOUNT/p2
-
+for i in `seq 1 $N_OBJECTS`; do
+    F=`file_name $i`
+    echo "deleting $MARFS/$F"
+    rm -f $MARFS/$F
+done
 
 
 # --- create several small Marfs files to be packed
 
-echo "creating two objects with recognizable contents"
-dd if=/dev/zero bs=968 count=1 | tr '\0' '1' > $MOUNT/p1
-dd if=/dev/zero bs=968 count=1 | tr '\0' '2' > $MOUNT/p2
+echo "creating $N_OBJECTS small objects with recognizable contents"
+for i in `seq 1 $N_OBJECTS`; do
+    F=`file_name $i`
+    FILL=$(( i % 10 ))
+    echo -e "\tfile: $MARFS/$F"
+    dd if=/dev/zero bs=$FILE_SIZE count=1 | tr '\0' "$FILL" > $MARFS/$F
+done
 
 
 # ---------------------------------------------------------------------------
@@ -113,18 +141,19 @@ echo
 # --- extract "marfs_objid" xattr, and adapt to become
 #     the object-ID for our synthetic packed object
 
+FNAME=`file_name 1`
 
 # In order to assure we're using an objid that is consistent with the
 # running fuse client (e.g. having correct chunk-size), we'll just adapt
 # the object-id from one of the small files that are being packed.  This
 # will have incorrect ctime, etc, but that won't matter.
-OBJID=`obj_name p1`
-echo "p1     OBJID: $OBJID"
+OBJID=`obj_name $FNAME`
+echo "$FNAME           OBJID: $OBJID"
 
 # Change the encoded object-type from "Fuse" to "Packed"
 # NOTE: I think this is ignored in favor of info in the Post xattr.
 OBJID=`echo $OBJID | sed -E 's/F___/P___/'`
-echo "packed OBJID: $OBJID"
+echo "changed type OBJID: $OBJID"
 echo
 
 
@@ -135,24 +164,30 @@ echo
 
 # To get a consistent value for Post xattr, we'll borrow from one of the
 # to-be-packed files, and tweak it.
-echo "POST=attr -qg marfs_post $GPFS/p1"
-POST=`attr -qg marfs_post $GPFS/p1`
-echo "p1     POST: $POST"
+echo "POST=attr -qg marfs_post $GPFS/$FNAME"
+POST=`attr -qg marfs_post $GPFS/$FNAME`
+echo "$FNAME           POST: $POST"
 
 # Change the encoded object-type from "Uni" to "Packed"
 POST=`echo $POST | sed -E 's/\/U\//\/P\//'`
-echo "packed POST: $POST"
+echo "changed type POST: $POST"
+
+# Change the number of objects (in the packed object) to $N_OBJECTS
+POST=`echo $POST | sed -re 's/(\/objs)\.([^\/]*)(\/)/\1.##\3/'`
+POST=`echo $POST | sed -re "s/##/$N_OBJECTS/"`
+echo "changed objs POST: $POST"
 echo
 
 
 
 
-# --- the packed object just has the concatenattion of the contents of the
-#     two original objects.  Delete the originals.
+# --- the packed object just has the concatenation of the contents of the
+#     original objects.  Delete the originals.
 
 echo "gathering contents of two objects into local file tmp.packed"
 rm -f tmp.packed
-for F in p1 p2; do
+for i in `seq 1 $N_OBJECTS`; do
+    F=`file_name $i`
     OBJ=`obj_name $F`
 
     echo
@@ -175,7 +210,8 @@ echo
 
 
 OFFSET=0
-for F in p1 p2; do
+for i in `seq 1 $N_OBJECTS`; do
+    F=`file_name $i`
     echo "updating xattrs for $GPFS/$F"
 
     # Change the object-offset
@@ -190,6 +226,7 @@ for F in p1 p2; do
     OFFSET=$(( OFFSET + SIZE + RECOVERY ))
     echo
 done
+
 
 
 rm -f tmp.packed
