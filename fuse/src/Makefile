@@ -259,7 +259,7 @@ clean: # cleanx
 libmarfs.a: $(OBJS)
 	ar -cvr $@ $^
 
-.PHONY lib
+.PHONY: lib
 lib: libmarfs.a
 
 # ...........................................................................
