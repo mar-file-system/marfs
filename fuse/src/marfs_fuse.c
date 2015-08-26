@@ -1314,9 +1314,13 @@ int marfs_release (const char*            path,
 //  This seteuid() will fail.
 //
 // NOTE: Testing as myself, I notice releasedir() gets called with
-// fuse_context.uid ==0.  Other functions are all called with
-// fuse_context.uid == my_uid.  I’m ignoring push/pop UID in this case, in
-// order to be able to continue debugging.
+//     fuse_context.uid ==0.  Other functions are all called with
+//     fuse_context.uid == my_uid.  I’m ignoring push/pop UID in this case,
+//     in order to be able to continue debugging.
+//
+// NOTE: It is possible that we get called with a directory that doesn't
+//     exist!  That happens e.g. after 'rm -rf /marfs/jti/mydir' In that
+//     case, it seems the kernel calls us with <path> = "-".
 
 int marfs_releasedir (const char*            path,
                       struct fuse_file_info* ffi) {
@@ -1325,12 +1329,15 @@ int marfs_releasedir (const char*            path,
    //   PUSH_USER();
    size_t rc = 0;
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
-   EXPAND_PATH_INFO(&info, path);
+   // If path == "-", assume we are closing a deleted dir.  (see NOTE)
+   if ((path[0] != '-') || (path[1] != 0)) {
+      PathInfo info;
+      memset((char*)&info, 0, sizeof(PathInfo));
+      EXPAND_PATH_INFO(&info, path);
 
-   // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+      // Check/act on iperms from expanded_path_info_structure, this op requires RM
+      CHECK_PERMS(info.ns->iperms, (R_META));
+   }
 
    // No need for access check, just try the op
    // Appropriate  closedir call filling in fuse structure
@@ -2071,130 +2078,3 @@ int marfs_poll(const char*             path,
 #endif
 
 
-
-
-
-
-
-
-
-
-
-// ---------------------------------------------------------------------------
-// main
-// ---------------------------------------------------------------------------
-
-
-int main(int argc, char* argv[])
-{
-   size_t rc;                   /* used by "TRY" macros */
-
-   INIT_LOG();
-   LOG(LOG_INFO, "starting\n");
-
-   // Not sure why, but I've seen machines where I'm logged in as root, and
-   // I run fuse in the background, and the process has an euid of some other user.
-   // This fixes that.
-   //
-   // NOTE: This also now *requires* that marfs fuse is always only run as root.
-   __TRY0(seteuid, 0);
-
-   if (load_config("~/marfs.config")) {
-      LOG(LOG_ERR, "load_config() failed.  Quitting\n");
-      return -1;
-   }
-
-   init_xattr_specs();
-
-   // initialize libaws4c/libcurl
-   //
-   // NOTE: We're making initializations in the default-context.  These
-   //       will be copied into the per-file-handle context via
-   //       aws_context_clone(), in stream_open().  Instead of having to
-   //       make these initializations in every context, we make them once
-   //       here.
-   aws_init();
-   aws_reuse_connections(1);
-
-#if (DEBUG > 1)
-   aws_set_debug(1);
-#endif
-
-#ifdef USE_SPROXYD
-   // NOTE: sproxyd doesn't require authentication, and so it could work on
-   //     an installation without a ~/.awsAuth file.  But suppose we're
-   //     supporting some repos that use S3 and some that use sproxyd?  In
-   //     that case, the s3 requests will need this.  Loading it once
-   //     up-front, like this, at start-time, means we don't have to reload
-   //     it inside marfs_open(), for every S3 open, but it also means we
-   //     don't know whether we really need it.
-   //
-   // ALSO: At start-up time, $USER is "root".  If we want per-user S3 IDs,
-   //     then we would have to either (a) load them all now, and
-   //     dynamically pick the one we want inside marfs_open(), or (b) call
-   //     aws_read_config() inside marfs_open(), using the euid of the user
-   //     to find ~/.awsAuth.
-   int config_fail_ok = 1;
-#else
-   int config_fail_ok = 0;
-#endif
-
-   char* const user_name = (getenv("USER"));
-   if (aws_read_config(user_name)) {
-      // probably missing a line in ~/.awsAuth
-      LOG(LOG_ERR, "read-config for user '%s' failed\n", user_name);
-      if (! config_fail_ok)
-         exit(1);
-   }
-
-   struct fuse_operations marfs_oper = {
-      .init        = marfs_init,
-      .destroy     = marfs_destroy,
-
-      .access      = marfs_access,
-      .chmod       = marfs_chmod,
-      .chown       = marfs_chown,
-      .fsync       = marfs_fsync,
-      .fsyncdir    = marfs_fsyncdir,
-      .ftruncate   = marfs_ftruncate,
-      .getattr     = marfs_getattr,
-      .getxattr    = marfs_getxattr,
-      .ioctl       = marfs_ioctl,
-      .listxattr   = marfs_listxattr,
-      .mkdir       = marfs_mkdir,
-      .mknod       = marfs_mknod,
-      .open        = marfs_open,
-      .opendir     = marfs_opendir,
-      .read        = marfs_read,
-      .readdir     = marfs_readdir,
-      .readlink    = marfs_readlink,
-      .release     = marfs_release,
-      .releasedir  = marfs_releasedir,
-      .removexattr = marfs_removexattr,
-      .rename      = marfs_rename,
-      .rmdir       = marfs_rmdir,
-      .setxattr    = marfs_setxattr,
-      .statfs      = marfs_statfs,
-      .symlink     = marfs_symlink,
-      .truncate    = marfs_truncate,
-      .unlink      = marfs_unlink,
-      .utime       = marfs_utime, /* deprecated in 2.6 */
-      .utimens     = marfs_utimens,
-      .write       = marfs_write,
-#if 0
-      // not implemented
-      .bmap        = marfs_bmap,
-      .create      = marfs_create,
-      .fallocate   = marfs_fallocate /* not in 2.6 */
-      .fgetattr    = marfs_fgetattr,
-      .flock       = marfs_flock,
-      .flush       = marfs_flush,
-      .getdir      = marfs_getdir, /* deprecated in 2.6 */
-      .link        = marfs_link,
-      .lock        = marfs_lock,
-      .poll        = marfs_poll,
-#endif
-   };
-
-   return fuse_main(argc, argv, &marfs_oper, NULL);
-}
