@@ -1314,9 +1314,13 @@ int marfs_release (const char*            path,
 //  This seteuid() will fail.
 //
 // NOTE: Testing as myself, I notice releasedir() gets called with
-// fuse_context.uid ==0.  Other functions are all called with
-// fuse_context.uid == my_uid.  I’m ignoring push/pop UID in this case, in
-// order to be able to continue debugging.
+//     fuse_context.uid ==0.  Other functions are all called with
+//     fuse_context.uid == my_uid.  I’m ignoring push/pop UID in this case,
+//     in order to be able to continue debugging.
+//
+// NOTE: It is possible that we get called with a directory that doesn't
+//     exist!  That happens e.g. after 'rm -rf /marfs/jti/mydir' In that
+//     case, it seems the kernel calls us with <path> = "-".
 
 int marfs_releasedir (const char*            path,
                       struct fuse_file_info* ffi) {
@@ -1325,12 +1329,15 @@ int marfs_releasedir (const char*            path,
    //   PUSH_USER();
    size_t rc = 0;
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
-   EXPAND_PATH_INFO(&info, path);
+   // If path == "-", assume we are closing a deleted dir.  (see NOTE)
+   if ((path[0] != '-') || (path[1] != 0)) {
+      PathInfo info;
+      memset((char*)&info, 0, sizeof(PathInfo));
+      EXPAND_PATH_INFO(&info, path);
 
-   // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+      // Check/act on iperms from expanded_path_info_structure, this op requires RM
+      CHECK_PERMS(info.ns->iperms, (R_META));
+   }
 
    // No need for access check, just try the op
    // Appropriate  closedir call filling in fuse structure
