@@ -40,7 +40,7 @@ extern "C" {
    syslog((PRIO), xFMT FMT, __FILE__, __LINE__,                         \
           17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
 
-#elif DEBUG
+#elif USE_STDOUT
 // must start fuse with '-f' in order to allow stdout/stderr to work
 // NOTE: print_log call merges LOG_PREFIX w/ user format at compile-time
 #  define INIT_LOG()
@@ -52,7 +52,7 @@ extern "C" {
    ssize_t printf_log(size_t prio, const char* format, ...);
 
 #else
-// Without DEBUG or USE_SYSLOG, these become no-ops
+// Without USE_STDOUT or USE_SYSLOG, these become no-ops
 #  define INIT_LOG()
 #  define LOG(PRIO, FMT, ...)
 
