@@ -40,7 +40,7 @@ extern "C" {
    syslog((PRIO), xFMT FMT, __FILE__, __LINE__,                         \
           17-(int)strlen(__FILE__), "", __FUNCTION__, ## __VA_ARGS__)
 
-#elif USE_STDOUT
+#elif (defined USE_STDOUT)
 // must start fuse with '-f' in order to allow stdout/stderr to work
 // NOTE: print_log call merges LOG_PREFIX w/ user format at compile-time
 #  define INIT_LOG()
