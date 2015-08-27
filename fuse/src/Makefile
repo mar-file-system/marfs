@@ -83,9 +83,13 @@ all: fuse
 # non-useless shell
 SHELL = /bin/bash
 
-OBJS = logging.o marfs_base.o common.o object_stream.o marfs_fuse.o
-SRCS = logging.c marfs_base.c common.c object_stream.c marfs_fuse.c
-H    = logging.h marfs_base.h common.h object_stream.h
+# logging.* has now been moved to here
+LOGGING = ../../common/log/src
+
+OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_fuse.o
+SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_fuse.c
+H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h
+
 
 
 # pipe-to-logger works, but without -d, all fuse stdout/stderr is lost
@@ -95,15 +99,12 @@ LOG  = > fuse.log 2>&1
 
 
 
-MNT    := /marfs
+MNT   := /marfs
 
-GPFS = /gpfs/marfs-gpfs/fuse
-
-# DO NOT COMMENT ANY OF THESE OUT !!!
-# look at reset_md
+GPFS   = /gpfs/marfs-gpfs/fuse
 MDFS   = $(GPFS)/test00/mdfs
-FSINFO = $(GPFS)/test00/fsinfo
-TRASH  = $(GPFS)/test00/trash
+
+
 
 # file
 PID = marfs_fuse.pid
@@ -121,6 +122,11 @@ PID = marfs_fuse.pid
 CFLAGS  += -I$(LIBAWS4C)
 LDFLAGS += -L$(LIBAWS4C)
 LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
+
+
+# some stuff has been moved out of this spot in the tree
+
+CFLAGS  += -I$(LOGGING)
 
 
 # # passed in the environment by a recursive make.  (See e.g. 'fuse.dbg')
@@ -162,17 +168,22 @@ else
 	CFLAGS += -O3
 endif
 
+# This tells logging.h to write via syslog(), instead of printf()
+# If USE_SYSLOG is undef, and DEBUG is undef, there is no logging output
+ifdef USE_SYSLOG
+	DEFS += USE_SYSLOG
+endif
+
+ifdef USE_STDOUT
+	DEFS += USE_STDOUT
+endif
+
+
 
 # NOTE: Confusingly, this DOES NOT control whether SPROXYD will be used.
 #    currently, this just tells fuse that it's okay if ~/.awsAuth doesn't exist
 ifdef USE_SPROXYD
 	DEFS += USE_SPROXYD=1
-endif
-
-# This tells logging.h to write via syslog(), instead of printf()
-# If USE_SYSLOG is undef, and DEBUG is undef, there is no logging output
-ifdef USE_SYSLOG
-	DEFS += USE_SYSLOG
 endif
 
 # needs extra quoting to survive being read by the shell, on gcc command-lines
@@ -224,6 +235,9 @@ fromwork:
 # basics
 # ...........................................................................
 
+logging.o: $(LOGGING)/logging.c $(LOGGING)/logging.h
+	gcc -c $(CFLAGS) -o $@ $<
+
 %: %.o
 	gcc -o $@ $< $(LDFLAGS) $(LIBS)
 
@@ -244,10 +258,11 @@ cleanx:
 	ls *.c | sed -e 's/\.c$$//' | xargs -r -L 1 bash -c '[[ -x $$0 ]] && rm $$0'
 
 clean: # cleanx
-	$(RM) *.{o,i}
+	$(RM) *.{o,i,E}
 	$(RM) *~
 	$(RM) marfs_fuse
 	$(RM) core.*
+	$(RM) libmarfs.a
 
 
 
@@ -278,12 +293,6 @@ else ifeq ($(wildcard $(LIBAWS4C)/libaws4c.a),)
 	$(error couldnt find $$LIBAWS4C (in $(LIBAWS4C)/*).  Consider 'make ... LIBAWS4C=<DIR>')
 endif
 
-#	@ $(MAKE) pre_req2
-#
-# VPATH = $(LIBAWS4C)
-# pre_req2: -llibaws4c
-
-
 
 
 
@@ -305,8 +314,7 @@ fuse.lean: pre_req
 	@ $(MAKE) marfs_fuse
 
 fuse.dbg: pre_req
-	@ # $(MAKE) marfs_fuse USE_SYSLOG=1  USE_SPROXYD=1 DEBUG=2LOG_PREFIX=marfs_fuse.dbg
-	@ $(MAKE) marfs_fuse USE_SPROXYD=1 DEBUG=2 LOG_PREFIX=marfs_fuse.dbg
+	@ $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg
 #	@ $(MV) marfs_fuse marfs_fuse.dbg
 
 
@@ -435,16 +443,6 @@ test_umnt:
 # things fresh, by brute force.
 # ...........................................................................
 
-# wipe all state from MDFS
-# Create a dummy fsinfo file, for now.
-#
-# CAREFUL!!! Think what happens if one of these variables is undefined.
-#            That's why this is in a makefile.
-reset_md:
-	( [ -n "$(MDFS)" ]  && rm -rf $(MDFS)/* )
-	( [ -n "$(TRASH)" ] && rm -f $(TRASH)/* )
-	( [ -n "$(FSINFO)" ]  && rm -f $(FSINFO) )
-	touch $(FSINFO)
 
 # wipe all objects under  http://10.140.0.15:9020/emcS3_00.-test00/
 reset_obj:
