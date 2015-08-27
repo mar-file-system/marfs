@@ -87,7 +87,7 @@ OF SUCH DAMAGE.
 
 // Xattr info
 #define MAX_MARFS_XATTR 3
-#define MARFS_GC_XATTR_CNT 2
+#define MARFS_GC_XATTR_CNT 3
 #define DAY_SECONDS 24*60*60
 
 #define MAX_PACKED_NAME_SIZE 1024
