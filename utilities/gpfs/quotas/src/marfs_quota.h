@@ -97,6 +97,12 @@
 #define MARFS_QUOTA_XATTR_CNT 3
 #define MARFS_GC_XATTR_CNT 2
 
+#ifdef DEBUG
+   #define DEBUG_PRINT(fmt, ... ) fprintf(stderr, fmt, ##__VA_ARGS__);
+#else
+   #define DEBUG_PRINT(fmt, ... )
+#endif
+
 struct store_type {
   size_t uni_count;
   size_t multi_count;
