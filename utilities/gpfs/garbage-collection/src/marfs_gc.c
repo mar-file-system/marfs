@@ -195,6 +195,7 @@ int main(int argc, char **argv) {
    }
    fclose(file_status->outfd);
 
+   //TEMP TEMP TEMP FOR DEBUG
    //unlink(packed_log);
    return (0);   
 }
@@ -222,7 +223,8 @@ void print_usage()
 /***************************************************************************** 
 Name:  get_xattr_value
 
-This function, given the name of the attribute, returns the associated value.
+This function, given the name of the desired xattr, returns a 
+ptr to the structure element containing that xattr value
 
 *****************************************************************************/
 int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt) {
@@ -364,7 +366,7 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
    int xattr_count;
    char fileset_name_buffer[32];
 
-   const char *marfs_xattrs[] = {"user.marfs_post","user.marfs_objid"};
+   const char *marfs_xattrs[] = {"user.marfs_post","user.marfs_objid","user.marfs_restart"};
    int post_index=0;
    int objid_index=1;
    int marfs_xattr_cnt = MARFS_GC_XATTR_CNT;
@@ -453,6 +455,7 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
                xattr_ptr = &mar_xattrs[0];
                //if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_objid_name, xattr_ptr, outfd)) > 0) {
                if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, marfs_xattrs, marfs_xattr_cnt, xattr_ptr, file_info_ptr->outfd)) > 0) {
+                  //marfs_xattrs hs a list of xattrs found
                   xattr_ptr = &mar_xattrs[0];
                   //if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
                   if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count)) != -1 ) { 
@@ -463,6 +466,9 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
                          fprintf(stderr,"Error getting post xattr\n");
                          continue;
                      }
+                  }
+                  else {
+                    fprintf(stderr,"Error getting post xattr\n");
                   }
                   //str_2_post(&post, xattr_ptr); 
                   // Talk to Jeff about this filespace used not in post xattr
@@ -622,6 +628,10 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
          fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
       }
    }
+   // Need to implement semi-direct here.  In this case the obj_type will not have that information
+   // I will have to rely on the config parser to determine the protocol from the RepoAccessProto 
+   // structure.  I would not delete objects anymore, I would delete files so hopefully I could
+   // use delete file as is.  
 
    // Delete trash files
    // Only delete if no error deleting object
@@ -725,8 +735,8 @@ repack utility will be run on the trash directory.
 
 int process_packed(file_info *file_info_ptr)
 {
-   FILE *pipe_cat;
-   FILE *pipe_grep;
+   FILE *pipe_cat = NULL;
+   FILE *pipe_grep = NULL;
 
    char obj_buf[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
    char file_buf[MARFS_MAX_MD_PATH];
@@ -798,17 +808,28 @@ int process_packed(file_info *file_info_ptr)
    }
    if (df_return == -1 || obj_return == -1)
       return(-1);
-   if ((pclose(pipe_cat) == -1) || (pclose(pipe_grep) == -1)) {
-      printf("Error closing pipes\n");
+
+   if (pclose(pipe_cat) == -1) {
+      printf("Error closing cat pipe in process_packed\n");
       return(-1);
    }
-       
+   else if (pipe_grep != NULL) {
+      if (pclose(pipe_grep) == -1) {
+         printf("Error closing grep pipe in process_packed\n");
+         return(-1);
+      }
+      else
+         return(0);
+   }
    else 
       return(0);
 }
 
 
 /***************************************************************************** 
+ * This function determines if the return value from an s3_delete call
+ * contains an error.  It returns an HTTP error code value if one is found,
+ * -1 if curl returned an error or 0 if no error found
  *
 *****************************************************************************/
 int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action )
