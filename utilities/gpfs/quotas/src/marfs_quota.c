@@ -231,8 +231,10 @@ int j = 0;
       myNamespaceList = (struct namespace **)listObjByName("namespace", config);                   
       while (myNamespaceList[j] != (struct namespace *)NULL) {
          myNamespace = (struct namespace *)myNamespaceList[j];
-         if (debug)
-            printf("fileset:  %s\n", myNamespace->name);
+         //if (debug)
+         //   printf("fileset:  %s\n", myNamespace->name);
+         DEBUG_PRINT("%s\n", myNamespace->name);
+         //DEBUG_PRINT(("This is a test\n"));
          j++;
       }
       fileset_count = j;
@@ -581,12 +583,16 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
       // Print out inode values to output file
       // This is handy for debug at the moment
       if (iattrP->ia_inode != 3) {	/* skip the root inode */
-         if (debug) { 
-            fprintf(outfd,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
-            iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
-            iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
-            iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
-         }
+         //if (debug) { 
+            //fprintf(outfd,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
+            //iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
+            //iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
+            //iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
+            //DEBUG_PRINT("%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
+            //iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
+            //iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
+            //iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
+         //}
 
          /*
          At this point determine if the last inode fileset name matches this one.  if not,
@@ -594,8 +600,9 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          the function will return an index and this function will update appropriate 
          fields.
          */
-         if (debug) 
-            printf("%d %d\n", last_fileset_id, iattrP->ia_filesetid);
+         //if (debug) 
+            //printf("%d %d\n", last_fileset_id, iattrP->ia_filesetid);
+            //DEBUG_PRINT("%d %d\n", last_fileset_id, iattrP->ia_filesetid);
          if (last_fileset_id != iattrP->ia_filesetid) {
             gpfs_igetfilesetname(iscanP, iattrP->ia_filesetid, &fileset_name_buffer, 32); 
             struct_index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,fileset_name_buffer);
@@ -606,8 +613,9 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
          }
          fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
          fileset_stat_ptr[last_struct_index].sum_file_count+=1;
-         if (debug) 
-            printf("%d size = %llu file size sum  = %zu\n", last_struct_index,iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
+         //if (debug) 
+            //printf("%d size = %llu file size sum  = %zu\n", last_struct_index,iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
+         DEBUG_PRINT("%d size = %llu file size sum  = %zu\n", last_struct_index,iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
          fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id); 
 
          // Do we have extended attributes?
@@ -621,8 +629,9 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                // Get post xattr value
                if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count, outfd)) != -1 ) {
                    xattr_ptr = &mar_xattrs[xattr_index];
-                   if (debug)
-                      printf("post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
+                   //if (debug)
+                      //printf("post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
+                   DEBUG_PRINT("post xattr name = %s value = %s count = %d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
                }
 
                // scan into post xattr structure
@@ -635,56 +644,25 @@ int read_inodes(const char *fnameP, FILE *outfd, int fileset_id,fileset_stat *fi
                update_type(&post, fileset_stat_ptr, last_struct_index);
 
 
-               if (debug) 
-                  printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
+               //if (debug) 
+                  //printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
+               DEBUG_PRINT("found post chunk info bytes %zu\n", post.chunk_info_bytes);
                fileset_stat_ptr[last_struct_index].sum_filespace_used += post.chunk_info_bytes;
 
                /* Determine if file in trash directory
                * if this is trash there are a few steps here
                *
-               *  1)  First sum the trash in this fileset
-               *  2)  Read objid xattr to determine which fileset the trash came from
-               *  3)  Update the fileset structure with a trash size count
+               *  1)  Read post xattr to determine which fileset the trash came from
+               *  2)  Update the fileset structure with a trash size count
+               *  3)  First sum the trash in this fileset
                *
                */
                if ( post.flags == POST_TRASH ) {
                   xattr_ptr = &mar_xattrs[0];
                   md_path_ptr = &post.md_path[0];
-
-                  /*
-                  *  Below was based on objid xattr containing namespace but that 
-                  *  namespace is not the same as the gpfs namespace
-                  *  this was a misunderstanding on my part
-                  *
-                     We must be in a trash fileset/directory so the next bit of code 
-                     determines which fileset/project the trash belongs to so that
-                     we can keep track of trash per fileset.
-                  // Get objid xattr
-                  if ((trash_index = get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count,outfd)) != -1) {
-                     if (debug)
-                        printf("trash index %d\n", trash_index);
-                     xattr_ptr = &mar_xattrs[trash_index];
-                     if (debug)
-                        printf("trash found objid = %s\n", xattr_ptr->xattr_value);
-                     
-                     //From ojbid xattr, get the ns_name which is actually the fileset name
-                     read_count = sscanf(xattr_ptr->xattr_value, MARFS_BUCKET_RD_FORMAT"/"NON_SLASH, repo_name, ns_name); 
-                     // do not lookup fileset name every iteration because chances are it is the same as last
-                     // iteration
-
-                     if (last_trash_index != trash_index) {
-                        if ((trash_index = lookup_fileset(fileset_stat_ptr,rec_count,offset_start,ns_name)) >= 0)
-                           last_trash_index = trash_index;
-                        else 
-                           continue;
-                      }
-                     //fileset_stat_ptr[last_trash_index].sum_trash += iattrP->ia_size;
-                     //fileset_stat_ptr[last_trash_index].sum_trash_file_count += 1;
-                  */
-                     trash_index = lookup_fileset_path(fileset_stat_ptr, rec_count, md_path_ptr);
-                     fileset_stat_ptr[trash_index].sum_trash += iattrP->ia_size;
-                     fileset_stat_ptr[trash_index].sum_trash_file_count += 1;
-                  //}
+                  trash_index = lookup_fileset_path(fileset_stat_ptr, rec_count, md_path_ptr);
+                  fileset_stat_ptr[trash_index].sum_trash += iattrP->ia_size;
+                  fileset_stat_ptr[trash_index].sum_trash_file_count += 1;
                }
             }
          }
@@ -736,8 +714,9 @@ int parse_post_xattr (MarFS_XattrPost* post, struct marfs_xattr * post_str) {
    int   minor;
 
    char  obj_type_code;
-   if (debug)
-      printf("%s\n", post_str->xattr_value);
+   //if (debug)
+      //printf("%s\n", post_str->xattr_value);
+      DEBUG_PRINT("%s\n", post_str->xattr_value);
    // --- extract bucket, and some top-level fields
    int scanf_size = sscanf(post_str->xattr_value, MARFS_POST_FORMAT,
                            &major, &minor,
@@ -773,11 +752,11 @@ void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count,
       fprintf(outfd,"[%s]\n", fileset_stat_ptr[i].fileset_name);
       fprintf(outfd,"total_file_count:  %zu\n", fileset_stat_ptr[i].sum_file_count);
       fprintf(outfd,"total_size:   %zu (%dG)\n", fileset_stat_ptr[i].sum_size, fileset_stat_ptr[i].sum_size/GIB);
-      fprintf(outfd,"trash_file_count:  %zu\n", fileset_stat_ptr[i].sum_trash_file_count);
-      fprintf(outfd,"trash_size:   %zu\n", fileset_stat_ptr[i].sum_trash);
       fprintf(outfd,"uni count:    %zu\n", fileset_stat_ptr[i].obj_type.uni_count);
       fprintf(outfd,"multi count:  %zu\n", fileset_stat_ptr[i].obj_type.multi_count);
       fprintf(outfd,"packed count: %zu\n", fileset_stat_ptr[i].obj_type.packed_count);
+      fprintf(outfd,"trash_file_count:  %zu\n", fileset_stat_ptr[i].sum_trash_file_count);
+      fprintf(outfd,"trash_size:   %zu\n", fileset_stat_ptr[i].sum_trash);
       //fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
    }
 }
