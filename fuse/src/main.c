@@ -160,11 +160,17 @@ int main(int argc, char* argv[])
    char* const user_name = (getenv("USER"));
    if (aws_read_config(user_name)) {
       // probably missing a line in ~/.awsAuth
-      LOG(LOG_ERR, "read-config for user '%s' failed\n", user_name);
+      LOG(LOG_ERR, "aws-read-config for user '%s' failed\n", user_name);
       if (! config_fail_ok)
          exit(1);
    }
 
+   // make sure all support directories exist.  (See the config file.)
+   // This includes mdfs, fsinfo, the trash "scatter-tree", for all namespaces,
+   // plus a storage "scatter-tree" for any semi-direct repos.
+   __TRY0(init_mdfs);
+
+   // function-pointers used by fuse, to dispatch calls to our handlers.
    struct fuse_operations marfs_oper = {
       .init        = marfs_init,
       .destroy     = marfs_destroy,

@@ -701,6 +701,11 @@ int post_2_str(char*                  post_str,
    // want to trust it in those cases.  [Gary thought of an example where
    // several renames could get the path to point to the wrong file.]
    // So, let's only write it when it is needed and reliable.
+   //
+   // NOTE: Because we use the same xattr-field to point to the semi-direct
+   //     file-system *OR* to the location of the file in the trash, we can
+   //     not currently support moving semi-direct files to the trash.
+   //     Deleting a semi-direct file must just delete it.
    const char* md_path = ( ((repo->access_proto == PROTO_SEMI_DIRECT)
                             || (post->flags & POST_TRASH))
                            ? post->md_path
@@ -1208,7 +1213,8 @@ int load_config(const char* config_fname) {
       .host         = "10.135.0.21:81",
       .access_proto = PROTO_SPROXYD,
       // .chunk_size   = (1024 * 1024 * 256), /* max MarFS object (tune to match storage) */
-      .chunk_size   = (1024 * 1024 * 512), /* max MarFS object (tune to match storage) */
+      // .chunk_size   = (1024 * 1024 * 512), /* max MarFS object (tune to match storage) */
+      .chunk_size   = (1024 * 1024 * 1028), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE),
       .auth         = AUTH_S3_AWS_MASTER,
       .compression  = COMPRESS_NONE,
@@ -1296,7 +1302,7 @@ int load_config(const char* config_fname) {
       .name         = "emcS3_00",  // repo is s3: this must match existing bucket
       .host         = "10.140.0.15:9020", //"10.143.0.1:80",
       .access_proto = PROTO_S3_EMC,
-      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
+      .chunk_size   = (1024 * 1024 * 256), /* max MarFS object (tune to match storage) */
       .flags        = (REPO_ONLINE),
       .auth         = AUTH_S3_AWS_MASTER,
       .compression  = COMPRESS_NONE,
@@ -1321,6 +1327,22 @@ int load_config(const char* config_fname) {
    };
    push_repo(&r_dummy);
 
+#if TBD
+   // semi-direct experiment
+   r_dummy = (MarFS_Repo) {
+      .name         = "semi",
+      .host         = "/gpfs/marfs-gpfs/fuse/semi", //"10.143.0.1:443",
+      .access_proto = PROTO_SEMI_DIRECT,
+      .chunk_size   = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
+      .flags        = (REPO_ONLINE),
+      .auth         = AUTH_NONE,
+      .compression  = COMPRESS_NONE,
+      .correction   = CORRECT_NONE,
+      .encryption   = ENCRYPT_NONE,
+      .latency_ms   = (10 * 1000),
+   };
+   push_repo(&r_dummy);
+#endif
 
 
 
@@ -1364,9 +1386,9 @@ int load_config(const char* config_fname) {
 
       .is_root = 0,
    };
+   //   push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
    //   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
-   //   push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
 
 
    // Alfred
@@ -1525,31 +1547,30 @@ int load_config(const char* config_fname) {
    push_namespace(&ns_dummy, find_repo_by_name("emcS3_00_https"));
 
 
-   // jti testing on machine without GPFS
-   ns_dummy = (MarFS_Namespace) {
-      .name           = "xfs",
-      .mnt_suffix     = "/xfs",  // "<mnt_top>/xfs" comes here
-
-      .md_path        = "/mnt/xfs/jti/filesys/mdfs/test00",
-      .trash_path     = "/mnt/xfs/jti/filesys/trash/test00",
-      .fsinfo_path    = "/mnt/xfs/jti/filesys/fsinfo/test00",
-
-      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-
-      .dirty_pack_percent   =  0,
-      .dirty_pack_threshold = 75,
-
-      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
-      .quota_names = 32,             /* 32 names */
-
-      .shard_path  = NULL,
-      .shard_count = 0,
-
-      .is_root = 0,
-   };
-   // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
-   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
+   //   // jti testing on machine without GPFS
+   //   ns_dummy = (MarFS_Namespace) {
+   //      .name           = "xfs",
+   //      .mnt_suffix     = "/xfs",  // "<mnt_top>/xfs" comes here
+   //
+   //      .md_path        = "/mnt/xfs/jti/filesys/mdfs/test00",
+   //      .trash_path     = "/mnt/xfs/jti/filesys/trash/test00",
+   //      .fsinfo_path    = "/mnt/xfs/jti/filesys/fsinfo/test00",
+   //
+   //      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+   //      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+   //
+   //      .dirty_pack_percent   =  0,
+   //      .dirty_pack_threshold = 75,
+   //
+   //      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
+   //      .quota_names = 32,             /* 32 names */
+   //
+   //      .shard_path  = NULL,
+   //      .shard_count = 0,
+   //
+   //      .is_root = 0,
+   //   };
+   //   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
 
 
    // jti testing on machine without GPFS
@@ -1557,9 +1578,9 @@ int load_config(const char* config_fname) {
       .name           = "ext4",
       .mnt_suffix     = "/ext4",  // "<mnt_top>/ext4" comes here
 
-      .md_path        = "/root/marfs_test_filesys/mdfs",
-      .trash_path     = "/root/marfs_test_filesys/trash",
-      .fsinfo_path    = "/root/marfs_test_filesys/fsinfo",
+      .md_path        = "/root/marfs_non_gpfs/mdfs",
+      .trash_path     = "/root/marfs_non_gpfs/trash",
+      .fsinfo_path    = "/root/marfs_non_gpfs/fsinfo",
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -1577,6 +1598,34 @@ int load_config(const char* config_fname) {
    };
    // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
+
+
+#ifdef TBD
+   // jti testing semi-direct
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "semi",
+      .mnt_suffix     = "/semi",
+
+      .md_path        = "/gpfs/marfs-gpfs/fuse/semi/mdfs",
+      .trash_path     = "/gpfs/marfs-gpfs/fuse/semi/trash",
+      .fsinfo_path    = "/gpfs/marfs-gpfs/fuse/semi/fsinfo",
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
+      .quota_names = 32,             /* 32 names */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
+
+      .is_root = 0,
+   };
+   push_namespace(&ns_dummy, find_repo_by_name("semi"));
+#endif
 
 
 
@@ -1594,7 +1643,7 @@ int load_config(const char* config_fname) {
       .trash_path     = "should_never_be_used",
       .fsinfo_path    = "should_never_be_used",
 
-      .iperms = 0,
+      .iperms = ( R_META ),     /* marfs_getattr() does manual stuff */
       .bperms = 0,
 
       .dirty_pack_percent   =  0,
@@ -1651,6 +1700,10 @@ int validate_config() {
    return retval;
 }
 
+
+// ...........................................................................
+// NAMESPACES
+// ...........................................................................
 
 // Find the namespace corresponding to the mnt_suffx in a Namespace struct,
 // which corresponds with a "namespace" managed by fuse.  We might
@@ -1726,7 +1779,8 @@ MarFS_Namespace* find_namespace_by_path(const char* path) {
    for (i=0; i<_ns_count; ++i) {
       MarFS_Namespace* ns = _ns[i];
 
-      if (( ns->mnt_suffix_len == path_dup_len ) && ( !strcmp( ns->mnt_suffix, path_dup ))) {
+      if (( ns->mnt_suffix_len == path_dup_len )
+          && ( !strcmp( ns->mnt_suffix, path_dup ))) {
          free( path_dup );
          return ns;
       }
@@ -1736,8 +1790,24 @@ MarFS_Namespace* find_namespace_by_path(const char* path) {
    return NULL;
 }
 
+// Let others traverse namespaces, without knowing how they are stored
+NSIterator        namespace_iterator() {
+   return (NSIterator){ .pos = 0 };
+}
+
+MarFS_Namespace*  namespace_next(NSIterator* it) {
+   if (it->pos >= _ns_count)
+      return NULL;
+   else
+      return _ns[it->pos++];
+}
 
 
+
+
+// ...........................................................................
+// REPOS
+// ...........................................................................
 
 MarFS_Repo* find_repo(MarFS_Namespace* ns,
                       size_t           file_size,
@@ -1759,4 +1829,17 @@ MarFS_Repo* find_repo_by_name(const char* repo_name) {
          return repo;
    }
    return NULL;
+}
+
+
+// Let others traverse repos, without knowing how they are stored
+RepoIterator repo_iterator() {
+   return (RepoIterator){ .pos = 0 };
+}
+
+MarFS_Repo*  repo_next(RepoIterator* it) {
+   if (it->pos >= _repo_count)
+      return NULL;
+   else
+      return _repo[it->pos++];
 }

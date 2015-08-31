@@ -84,6 +84,7 @@ OF SUCH DAMAGE.
 
 #include <stdint.h>
 #include <sys/types.h>
+#include <dirent.h>             // DIR*
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
@@ -441,6 +442,16 @@ typedef struct {
 
 
 
+// directory-handle covers two cases:
+// (a) Listing an MDFS directory -- just need a DIR*
+// (b) List the marfs "root" directory -- need a Namespace-Iterator.
+typedef struct {
+   uint8_t     use_it;         // if so, use <it>, else use <dirp>
+   union {
+      DIR*        dirp;
+      NSIterator  it;
+   } internal;
+} MarFS_DirHandle;
 
 
 // // In C++ I'd just steal the templated Pool<T> classes from pftool, to
@@ -503,7 +514,7 @@ extern int read_chunkinfo(int md_fd, MultiChunkInfo* chnk);
 
 extern  ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info);
                               
-
+extern int init_mdfs();
 
 
 

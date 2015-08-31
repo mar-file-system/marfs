@@ -165,10 +165,11 @@ int pop_user(uid_t* saved_euid) {
 
 
 // NOTE: The Attractive Chaos tools actually include a suffix-tree data-structure.
-//       (Actually a suffix array.)  
+//       (Actually a suffix array.)
+//
 int expand_path_info(PathInfo*   info, /* side-effect */
                      const char* path) {
-   LOG(LOG_INFO, "path %s\n", path);
+   LOG(LOG_INFO, "path        %s\n", path);
 
    // (pass path, address to stuff, batch/interactive, working with existing file)
    if (! info) {
@@ -190,7 +191,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    // using MAR_mnttop and look up in MAR_namespace array, fill in all
    // MAR_namespace and MAR_repo info into a big structure to hold
    // everything we know about that path.  We also compute the full path of
-   // the corresponding entry in the MDFS (see Namespace.md_path).
+   // the corresponding entry in the MDFS (into PathInfo.pre.md_path).
    info->ns = find_namespace_by_path(path);
    if (! info->ns) {
       LOG(LOG_INFO, "no namespace for path %s\n", path);
@@ -198,10 +199,10 @@ int expand_path_info(PathInfo*   info, /* side-effect */
       return -1;            /* no such file or directory */
    }
 
-   LOG(LOG_INFO, "namespace '%s'\n", info->ns->name);
-   LOG(LOG_INFO, "mnt_path  %s\n",   info->ns->mnt_suffix);
+   LOG(LOG_INFO, "namespace   %s\n", info->ns->name);
+   LOG(LOG_INFO, "mnt_path    %s\n", info->ns->mnt_suffix);
 
-   const char* sub_path = path + info->ns->mnt_suffix_len; /* below fuse mount */
+   const char* sub_path = path + info->ns->mnt_suffix_len; /* below NS */
    int prt_count = snprintf(info->post.md_path, MARFS_MAX_MD_PATH,
                             "%s%s", info->ns->md_path, sub_path);
    if (prt_count < 0) {
@@ -221,8 +222,8 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    //      // saves us a strlen(), later
    //      info->post.md_path_len = prt_count;
 
-   LOG(LOG_INFO, "sub-path  %s\n", sub_path);
-   LOG(LOG_INFO, "md-path   %s\n", info->post.md_path);
+   LOG(LOG_INFO, "sub-path    %s\n", sub_path);
+   LOG(LOG_INFO, "md-path     %s\n", info->post.md_path);
 
 
 #if 0
@@ -266,10 +267,10 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 // Info in the trash supports three kinds of operations: (a) a Garbage
 // Collection task, that may skim through the trash, deleting "trashed"
 // files with age greater than some threshold, etc, (b) a Quota task, which
-// skims through all the indoes in the MDFS, counting totals used per
-// project, per-user, etc, but discounting storage taken up by trash, and
-// (c) an "undelete" admin function, that can restore a trashed file to its
-// original location.
+// skims through all the inodes in the MDFS (including trash), counting
+// totals used per project, per-user, etc, but discounting storage taken up
+// by trash, and (c) an "undelete" admin function, that can restore a
+// trashed file to its original location.
 //
 // Files that are moved to the trash keep only the basename (i.e. the name
 // of the file in the bottom-most directory of the full-path).  There may
@@ -280,16 +281,17 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 // We actually create two files in the trash, one that has all the xattrs
 // of the original (so that we can find the corresponding object,
 // object-type, etc) and another with contents that hold the full path of
-// the original.  We considered achieving this latter end by adding more
-// xattr info, but part of the goal here is to facilitate the GC batch
+// the original.  We considered achieving this latter objective by adding
+// more xattr info, but part of the goal here is to facilitate the GC batch
 // process, which may be doing a fast tree-walk using ILM, in GPFS.  In
 // this latter case, not all of the xattr info is part of the inode
 // data. We want to make sure the GC task can get all the info it needs
 // from the fast-access list of inodes it will see, without further calls
-// to lgetxattr(), etc.
+// to lgetxattr(), etc.  So, we want to keep the amount of xattr info
+// small.
 //
 // Each of the two files use the same path produced by expand trash_info,
-// and one of them just adds a suffix ".mdfs", with the contents as
+// and one of them just adds a suffix ".path", with the contents as
 // described above.
 
 int expand_trash_info(PathInfo*    info,
@@ -313,10 +315,24 @@ int expand_trash_info(PathInfo*    info,
       }
       __TRY0(epoch_to_str, date_string, MARFS_DATE_STRING_MAX, &now);
 
+      // Won't hurt (much) if it's already been done.
+      __TRY0(stat_regular, info);
+
+      // these are the last 3 digits (base 10), of the inode
+      ino_t   inode = info->st.st_ino; // shorthand
+      uint8_t lo  = (inode % 10);
+      uint8_t med = (inode % 100) / 10;
+      uint8_t hi  = (inode % 1000) / 100;
+
+      // FUTURE: find the actual shard to use
+      const uint32_t shard = 0;
+
       // construct trash-path
       int prt_count = snprintf(info->trash_path, MARFS_MAX_MD_PATH,
-                               "%s/%s.trash_%010ld_%s",
+                               "%s/%s.%d/%d/%d/%d/%s.trash_%010ld_%s",
                                info->ns->trash_path,
+                               info->ns->name, shard,
+                               hi, med, lo,
                                base_name,
                                info->st.st_ino,
                                date_string);
@@ -353,6 +369,7 @@ int expand_trash_info(PathInfo*    info,
       info->flags |= PI_TRASH_PATH;
    }
 
+   LOG(LOG_INFO, "trash_path  %s\n", info->trash_path);
    return 0;
 }
 
@@ -709,7 +726,6 @@ int write_trash_companion_file(PathInfo*             info,
    ssize_t rc_ssize;
 
    __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
-   LOG(LOG_INFO, "trash_path: %s\n", info->trash_path);
 
    // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
    // add MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
@@ -758,8 +774,11 @@ int write_trash_companion_file(PathInfo*             info,
 //     then fail-over to moving the data, but we're not sure whether that
 //     could add considerable overhead in the case where the rename is
 //     going to fail.  [NOTE: could we just compute this once, up front,
-//     and store it as a flag in the Repo or Namespace structs?]  So, we'll
-//     just always do a copy + unlink.
+//     and store it as a flag in the Repo or Namespace structs?]  For now,
+//     we just always do a copy + unlink.
+//
+//     On second thought, we want the inode of the truncated file to remain
+//     the same (?) Therefore, rename(2) would always be wrong.
 
 // NOTE: Should we do something to make this thread-safe (like unlink()) ?
 //
@@ -792,7 +811,6 @@ int  trash_unlink(PathInfo*   info,
    //    uniqueify name somehow with time perhaps == trashname, 
 
    __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
-   LOG(LOG_INFO, "trash_path: '%s'\n", info->trash_path);
    LOG(LOG_INFO, "md_path:    '%s'\n", info->post.md_path);
 
    //    rename file to trashname 
@@ -840,7 +858,7 @@ int  trash_truncate(PathInfo*   info,
 
    //    pass in expanded_path_info_structure and file name to be trashed
    //    rename mdfile (with all xattrs) into trashmdnamepath,
-   assert(info->flags & PI_EXPANDED);
+   assert(info->flags & PI_EXPANDED); // could just expand it ...
 
    //    If this has no xattrs (its just a normal file using the md file
    //    for data) just trunc the file and return we have nothing to
@@ -1072,6 +1090,19 @@ int trunc_xattr(PathInfo* info) {
 //       this file.  That shouldn't happen in production, but if we're
 //       testing this, and you're seeing an error in the log because this
 //       file doesn't exist, just 'touch' it.
+//
+//
+// TBD: New approach.  We should periodically parse the results of Alfred's
+//     quota-scan, and maybe store the info into respective NS structs, and
+//     set ourselves a timestamp.  If we are called and the timestamp is
+//     older than gettimeofday(), then we reparse the quota-scan output.
+//     Otherwise, we use the cached results of the previous parse.  How do
+//     we cache the results?  Well, if all we care about is size, then we
+//     take the usage reported by the scan, minus the trash-usage reported
+//     by the scan, and say they have that much space.
+//
+//     Is it worth the trouble to truncate the fsinfo file to the new size,
+//     at marfs_release()?
 
 int check_quotas(PathInfo* info) {
 
@@ -1265,3 +1296,250 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 
    return rc_ssize;
 }
+
+
+#if 1
+// Make sure the hierarchical trash directory tree exists, for all namespaces.
+//
+// The configuration-file specifies a root trash-directory for each
+// namespace, as well as a namespace-name, and shard info (for future use).
+// Supposing the trash-path in the config is "/my_trash", and the namespace-name
+// is "ns1", then the initialized trash directory looks like:
+//
+//    /my_trash/ns1.0/a/b/c
+//
+// Where "a/b/c" represents 1000 different leaf-subdirectories, with each
+// character having all the values 0-9.
+//
+// When a file with inode = "xxxxx762" (base 10) is trashed, it appears in
+// the subdir:
+//
+//    /my_trash/ns1.0/7/6/2
+//
+// The files are copied, rather than renamed, to the trash.  Therefore, the
+// file in the trash will not actually have an inode matching the
+// subdir-name.
+//
+// NOTE: We just iterate through all the namespaces doing this, but I think
+//     we will soon have namespaces that we don't want to initialize by
+//     default (e.g. because they are offline, and it is
+//     expensive/impossible to bring them online).  Therefore, we will
+//     probably want config to mark those namespaces that should be
+//     initialized like this.
+//
+int init_scatter_tree(const char*    root,
+                      const char*    ns_name,
+                      const uint32_t shard,
+                      const mode_t   mode) {
+   size_t      rc;          // for TRY0
+   // ssize_t     rc_ssize;    // for TRY_GE0
+
+   struct stat st;
+
+   LOG(LOG_INFO, "scatter_tree %s/%s.%d\n", root, ns_name, shard);
+
+   // --- assure that top-level trash-dir (from the config) exists
+   LOG(LOG_INFO, " maybe create %s\n", root);
+   rc = mkdir(root, mode);
+   if ((rc < 0) && (errno != EEXIST)) {
+      LOG(LOG_ERR, "mkdir(%s) failed\n", root);
+      return -1;
+   }
+
+   // --- create 'namespace.shard' directory-tree under <root> (if needed).
+   //     Make sure there's room for inode-based subdirs, so we don't have to
+   //     check that for each one.
+   char dir_path[MARFS_MAX_MD_PATH];
+
+   // generate the name of the 'namespace.shard' dir
+   int prt_count = snprintf(dir_path, MARFS_MAX_MD_PATH,
+                            "%s/%s.%d", root, ns_name, shard);
+   if (prt_count < 0) {
+      LOG(LOG_ERR, "snprintf(..., %s, %s) failed\n",
+          root,
+          ns_name);
+      return -1;
+   }
+   else if (prt_count >= MARFS_MAX_MD_PATH) {
+      LOG(LOG_ERR, "snprintf(..., %s, %s) truncated\n",
+          root,
+          ns_name);
+      errno = EIO;
+      return -1;
+   }
+   else if ((prt_count + strlen("/x/x/x")) >= MARFS_MAX_MD_PATH) {
+      LOG(LOG_ERR, "no room for inode-subdirs after trash_path '%s'\n",
+          dir_path);
+      errno = EIO;
+      return -1;
+   }
+
+   // create the 'namespace.shard' dir
+   LOG(LOG_INFO, " maybe create %s\n", dir_path);
+   rc = mkdir(dir_path, mode);
+   if ((rc < 0) && (errno != EEXIST)) {
+      LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
+      return -1;
+   }
+
+   // --- create the inode-based '.../ns.shard/a/b/c' subdirs (if needed)
+   //     (We're assuming they have 6 characters max: "/x/x/x")
+   //
+   //     If the last directory (in would-be create-order) doesn't
+   //     exist, then we'll assume we need to create all of them.  If it
+   //     does exist, we'll asume they all do.
+
+
+   // mark where the 'ns.shard' path ends.
+   char*        sub_dir = dir_path + strlen(dir_path);
+   // const size_t MAX_SUBDIR_SIZE = strlen("/xxx") + 1;
+
+   // check whether the last subdir exists
+   memcpy(sub_dir, "/9/9/9", 7); // incl final '/0'
+
+   LOG(LOG_INFO, " checking %s\n", dir_path);
+   if (! lstat(dir_path, &st))
+      return 0;           // skip the subdir-create loop
+   else if (errno != ENOENT) {
+      LOG(LOG_ERR, "lstat(%s) failed\n", dir_path);
+      return -1;
+   }
+
+   // subdir "/9/9/9" didn't exist: try to create all of them
+   LOG(LOG_INFO, " creating inode-subdirs\n");
+   int i, j, k;
+   for (i=0; i<=9; ++i) {
+
+      // cheaper than sprintf()
+      sub_dir[0] = '/';
+      sub_dir[1] = '0' + i;
+      sub_dir[2] = 0;
+
+      rc = mkdir(dir_path, mode);
+      if ((rc < 0) && (errno != EEXIST)) {
+         LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
+         return -1;
+      }
+
+      LOG(LOG_INFO, " creating inode-subdirs %s/*\n", dir_path);
+      for (j=0; j<=9; ++j) {
+
+         // cheaper than sprintf()
+         sub_dir[2] = '/';
+         sub_dir[3] = '0' + j;
+         sub_dir[4] = 0;
+
+         rc = mkdir(dir_path, mode);
+         if ((rc < 0) && (errno != EEXIST)) {
+            LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
+            return -1;
+         }
+
+         for (k=0; k<=9; ++k) {
+
+            // cheaper than sprintf()
+            sub_dir[4] = '/';
+            sub_dir[5] = '0' + k;
+            sub_dir[6] = 0;
+
+            // make the '.../trash/namespace.shard//a/b/c' subdir
+            rc = mkdir(dir_path, mode);
+            if ((rc < 0) && (errno != EEXIST)) {
+               LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
+               return -1;
+            }
+         }
+      }
+   }
+
+   return 0;                    // success
+}
+
+
+// NOTE: for now, all the marfs directories are chown root:root, cmod 770
+int init_mdfs() {
+   size_t  rc;                  // for TRY0
+   /// ssize_t rc_ssize;            // for TRY_GE0
+
+   struct stat st;
+
+   NSIterator       it = namespace_iterator();
+   MarFS_Namespace* ns;
+   for (ns = namespace_next(&it);
+        ns;
+        ns = namespace_next(&it)) {
+
+      const uint32_t shard = 0;   // FUTURE: make scatter-tree for each shard?
+      MarFS_Repo*    repo  = ns->iwrite_repo; // for fuse
+      mode_t         mode  = (S_IRWXU | S_IRWXG ); // default 'chmod 770'
+
+      // "root" namespace is not backed by real MD or storage, it is just
+      // so that calls to list '/' can be answered.
+      if (ns->is_root) {
+         LOG(LOG_INFO, "skipping NS %s\n", ns->name);
+         continue;
+      }
+
+      //      // only risk screwing up "jti", while debugging
+      //      if (strcmp(ns->name, "jti")) {
+      //         LOG(LOG_INFO, "skipping NS %s\n", ns->name);
+      //         continue;
+      //      }
+
+      LOG(LOG_INFO, "\n");
+      LOG(LOG_INFO, "NS %s\n", ns->name);
+
+      // create the root of the trash, if needed
+      LOG(LOG_INFO, "top-level trash dir   %s\n", ns->trash_path);
+      rc = mkdir(ns->trash_path, mode);
+      if ((rc < 0) && (errno != EEXIST)) {
+         LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_path);
+         return -1;
+      }
+      // create the scatter-tree for trash, if needed
+      __TRY0(init_scatter_tree, ns->trash_path, ns->name, shard, mode);
+
+      // create the root of the mdfs, if needed
+      LOG(LOG_INFO, "top-level MDFS dir    %s\n", ns->md_path);
+      rc = mkdir(ns->md_path, mode);
+      if ((rc < 0) && (errno != EEXIST)) {
+         LOG(LOG_ERR, "mkdir(%s) failed\n", ns->md_path);
+         return -1;
+      }
+
+      // create the fsinfo-file, if needed.  Currently, we truncate to size
+      // to represent the amount of storage used by this namespace.  This
+      // value is compared with the configured maximum, to see whether use
+      // can open a new file for writing.
+      //
+      // TBD: We could parse Alfred's quota-log, and store per-namespace
+      //     quota info into the NS structures.  We would then use these
+      //     until the next timeout, at which point fuse would reparse the
+      //     quota info into NS structs (on the next call to
+      //     check_quotas()).
+      LOG(LOG_INFO, "top-level fsinfo file %s\n", ns->fsinfo_path);
+      rc = lstat(ns->fsinfo_path, &st);
+      if (! rc) {
+         if (! S_ISREG(st.st_mode)) {
+            LOG(LOG_ERR, "not a regular file %s\n", ns->fsinfo_path);
+            return -1;
+         }
+      }
+      else if (errno == ENOENT)
+         __TRY0(truncate, ns->fsinfo_path, 0); // infinite quota, for now
+      else {
+         LOG(LOG_ERR, "stat failed %s (%s)\n", ns->fsinfo_path, strerror(errno));
+         return -1;
+      }
+
+      // create a scatter-tree for semi-direct fuse repos, if any
+      if (repo->access_proto == PROTO_SEMI_DIRECT) {
+         __TRY0(init_scatter_tree, repo->host, ns->name, shard, mode);
+      }
+   }
+
+   return 0;
+}
+
+
+#endif

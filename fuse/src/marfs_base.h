@@ -386,6 +386,9 @@ typedef enum {
 // the sproxyd daemon.  We might not have thought to give this a name that
 // is meaningful, and/or several repos could have the same name -- defaults
 // to "/proxy".)
+//
+// NOTE: In the case where access_proto == SEMI_DIRECT, <host> holds a
+//     directory where a scatter-tree will hold the semi-direct storage.
 
 typedef struct MarFS_Repo {
    const char*       name;         // (logical) name for this repo 
@@ -510,7 +513,7 @@ typedef struct MarFS_Namespace {
    const char*        name;
    const char*        mnt_suffix; // the part of path below MarFS_mnt_top
    const char*        md_path;    // path of (root of) corresponding MD FS
-   const char*        trash_path; // MDFS trash goes here
+   const char*        trash_path; // MDFS trash goes under here
    const char*        fsinfo_path;// path is trunc'ed to show global FS usage
 
    size_t             name_len;       // computed at config-load time
@@ -710,6 +713,10 @@ int update_pre(MarFS_XattrPre* pre);
 // used to build the path in PathInfo.md_path.  We could keep it there, and
 // copy to PathInfo.post, but that seems wasteful.  Instead, we'll build it
 // directly in post.
+//
+// NOTE: The <chunks> field means different things for different object-types.
+//       Multi:  <chunks> is the number of ChunkInfos written in MDFS file
+//       Packed: <chunks> is number of files stored in the object
 
 typedef enum {
    POST_TRASH           = 0x01, // file is in trash?
@@ -722,11 +729,11 @@ typedef uint8_t  PostFlagsType;
 
 typedef struct MarFS_XattrPost {
    float              config_vers;   // redundant w/ config_vers in Pre?
-   MarFS_ObjType      obj_type;
+   MarFS_ObjType      obj_type;      // type of storage
    size_t             obj_offset;    // offset of file in the obj (Packed)
    CorrectInfo        correct_info;  // correctness info  (e.g. the computed checksum)
    EncryptInfo        encrypt_info;  // any info reqd to decrypt the data
-   size_t             chunks;        // number ChunkInfos written in MDFS file (Multi)
+   size_t             chunks;        // (context-dependent.  See NOTE)
    size_t             chunk_info_bytes; // total size of chunk-info in MDFS file (Multi)
    char               md_path[MARFS_MAX_MD_PATH]; // full path to MDFS file
    PostFlagsType      flags;
@@ -869,23 +876,50 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
 extern int              load_config(const char* config_fname);
 
 
-// --- NAMESPACES
+
+// ...........................................................................
+// NAMESPACES
+// ...........................................................................
+
 extern MarFS_Namespace* find_namespace_by_name(const char* name);
 extern MarFS_Namespace* find_namespace_by_path(const char* path);
 
-// extern void*            namespace_iterator();
-// extern MarFS_Namespace* namespace_next(void**);
+
+// Let others traverse namespaces, without knowing how they are stored
+NSIterator        namespace_iterator() {
+   return (NSIterator){ .pos = 0 };
+}
+
+MarFS_Namespace*  namespace_next(NSIterator* it) {
+   if (it->pos >= _ns_count)
+      return NULL;
+   else
+      return _ns[it->pos++];
+}
 
 
 
-// --- REPOS
+// ...........................................................................
+// REPOS
+// ...........................................................................
+
 extern MarFS_Repo*      find_repo(MarFS_Namespace* ns,
                                   size_t           file_size,
                                   int              interactive_write); // bool
 extern MarFS_Repo*      find_repo_by_name(const char* name);
 
-// extern void*            repo_iterator();
-// extern MarFS_Repo*      repo_next(void**);
+
+// Let others traverse repos, without knowing how they are stored
+RepoIterator repo_iterator() {
+   return (RepoIterator){ .pos = 0 };
+}
+
+MarFS_Repo*  repo_next(RepoIterator* it) {
+   if (it->pos >= _repo_count)
+      return NULL;
+   else
+      return _repo[it->pos++];
+}
 
 
 
