@@ -87,7 +87,6 @@ OF SUCH DAMAGE.
 ******************************************************************************/
 
 char    *ProgName;
-int debug = 0;
 
 /*****************************************************************************
 Name: main
@@ -438,12 +437,13 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
       // Print out inode values to output file
       // This is handy for debug at the moment
       if (iattrP->ia_inode != 3) {	/* skip the root inode */
-         if (debug) { 
-            fprintf(file_info_ptr->outfd,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
-            iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
-            iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
-            iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
-         }
+ 
+         // This log commented out due to amount of inodes dumped
+         //LOG(LOG_INFO,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
+         //   iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,iattrP->ia_nlink,iattrP->ia_filesetid,
+         //   iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
+         //   iattrP->ia_atime.tv_sec,iattrP->ia_mtime.tv_sec, iattrP->ia_blocks, iattrP->ia_xperm );
+
          gpfs_igetfilesetname(iscanP, iattrP->ia_filesetid, &fileset_name_buffer, 32); 
          if (!strcmp(fileset_name_buffer,fileset_info_ptr[0].fileset_name)) {
 
@@ -460,8 +460,8 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
                   //if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
                   if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[post_index], xattr_count)) != -1 ) { 
                      xattr_ptr = &mar_xattrs[xattr_index];
-                     if (debug)
-                        printf("post xattr name = %s value = %s count = %d index=%d\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count,xattr_index);
+                     LOG(LOG_INFO,"post xattr name = %s value = %s count = %d index=%d\n",
+                         xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count,xattr_index);
                      if ((parse_post_xattr(&post, xattr_ptr))) {
                          fprintf(stderr,"Error getting post xattr\n");
                          continue;
@@ -472,14 +472,13 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
                   }
                   //str_2_post(&post, xattr_ptr); 
                   // Talk to Jeff about this filespace used not in post xattr
-                  if (debug) 
-                     printf("found post chunk info bytes %zu\n", post.chunk_info_bytes);
+
+                  LOG(LOG_INFO, "found post chunk info bytes %zu\n", post.chunk_info_bytes);
+
+
                   //if (!strcmp(post.gc_path, "")){
                   if (post.flags != POST_TRASH){
-                     if (debug) 
-			// why would this ever happen?  if in trash gc_path should be non-null
-                        //printf("gc_path is NULL\n");
-                        printf("trash flag not set??\n");
+                     LOG(LOG_ERR, "Trash flag is not set but in trash??\n");
                   } 
                   // else trash
                   else {
@@ -487,22 +486,19 @@ int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id,fil
                    
                      // Check if older than X days (specified by user arg)
                      if (now-day_seconds > iattrP->ia_atime.tv_sec) {
-                        if (debug)
-                           printf("found trash\n");
-
+                        LOG(LOG_INFO, "Found trash\n");
                         md_path_ptr = &post.md_path[0];
 
                         xattr_ptr = &mar_xattrs[0];
 
-
                         // Get objid xattr
                         if ((xattr_index=get_xattr_value(xattr_ptr, marfs_xattrs[objid_index], xattr_count)) != -1) { 
                            xattr_ptr = &mar_xattrs[xattr_index];
-                           if (debug) {
-                              printf("objid xattr name = %s xattr_value =%s\n",xattr_ptr->xattr_name, xattr_ptr->xattr_value);
-                              printf("remove file: %s  remove object:  %s\n", md_path_ptr, xattr_ptr->xattr_value); 
-                           }
-                           
+                           LOG(LOG_INFO, "objid xattr name = %s xattr_value =%s\n",
+                               xattr_ptr->xattr_name, xattr_ptr->xattr_value);
+                           LOG(LOG_INFO, "remove file: %s  remove object:  %s\n",
+                                md_path_ptr, xattr_ptr->xattr_value); 
+
                            // Deterimine if object type is packed.  If so we must complete scan
                            // to determine if all files exist for the object
                            if (post.obj_type == OBJ_PACKED) {
@@ -565,8 +561,7 @@ int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
    int   minor;
 
    char  obj_type_code;
-   if (debug)
-      printf("%s\n", post_str->xattr_value);
+   LOG(LOG_INFO, "Post xattr:  %s\n", post_str->xattr_value);
    // --- extract bucket, and some top-level fields
    int scanf_size = sscanf(post_str->xattr_value, MARFS_POST_FORMAT,
                            &major, &minor,
