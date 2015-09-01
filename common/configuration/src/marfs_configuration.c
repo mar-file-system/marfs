@@ -519,18 +519,6 @@ extern MarFS_Config_Ptr read_configuration( char *path ) {
   parseConfigFile( path, CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, QUIET );
   freeHeaderFile(h_page.next);
 
-/*
-  repo_rangeList = (struct repo_range **) listObjByName( "repo_range", config );
-  j = 0;
-  while ( repo_rangeList[j] != (struct repo_range *) NULL ) {
-//#ifdef _DEBUG_MARFS_CONFIGURATION
-//    LOG( LOG_INFO, "repo_rangeList[%d]->name is \"%s\".\n", j, repo_rangeList[j]->name );
-//#endif
-    j++;
-  }
-  repo_rangeCount = j;
-*/
-
   repoList = (struct repo **) listObjByName( "repo", config );
   j = 0;
   while ( repoList[j] != (struct repo *) NULL ) {
@@ -625,6 +613,7 @@ extern MarFS_Config_Ptr read_configuration( char *path ) {
       return NULL;
     }
   }
+  free( repoList );
 
   namespaceList = (struct namespace **) listObjByName( "namespace", config );
 
@@ -806,6 +795,7 @@ extern MarFS_Config_Ptr read_configuration( char *path ) {
     }
 */
   }
+  free( namespaceList );
 
   marfs_configPtr->marfs_config_name = strdup( config->config_name );
   marfs_configPtr->marfs_config_name_len = strlen( config->config_name );
@@ -829,36 +819,7 @@ extern MarFS_Config_Ptr read_configuration( char *path ) {
   fflush( stdout );
 #endif
 
-/*
- * Free the memory used by the configuration parser for all the structures whose
- * members were strings. We've converted all the strings and whatnot to the types
- * used by MarFS applications now and we have those in our own structures.
- */
-
-/*
-  for ( j = 0; j < repoCount; j++ ) {
-    free( repoList[j] );
-  }
-  free( repoList );
-*/
-
-/*
-  for ( j = 0; j < repo_rangeCount; j++ ) {
-    free( repo_rangeList[j] );
-  }
-  free( repo_rangeList );
-*/
-
-/*
-  for ( j = 0; j < namespaceCount; j++ ) {
-    free( namespaceList[j] );
-  }
-  free( namespaceList );
-*/
-
-/*
- * Return the configuration to the caller.
- */
+  freeConfigStructContent( config );
 
   return marfs_configPtr;
 }
