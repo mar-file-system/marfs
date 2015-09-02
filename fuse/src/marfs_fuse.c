@@ -380,7 +380,7 @@ int marfs_ftruncate(const char*            path,
 }
 
 
-// This is "stat()"
+// This is stat()
 int marfs_getattr (const char*  path,
                    struct stat* stp) {
    PUSH_USER();
@@ -1278,7 +1278,7 @@ int marfs_readdir (const char*            path,
 
 
 // It appears that, unlike readlink(2), we shouldn't return the number of
-// chars in the path.  Also, unlinke readlink(2), we *should* write the
+// chars in the path.  Also, unlike readlink(2), we *should* write the
 // final '\0' into the caller's buf.
 int marfs_readlink (const char* path,
                     char*       buf,

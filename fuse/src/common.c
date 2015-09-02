@@ -1475,7 +1475,9 @@ int init_mdfs() {
         ns = namespace_next(&it)) {
 
       const uint32_t shard = 0;   // FUTURE: make scatter-tree for each shard?
+#if TBD
       MarFS_Repo*    repo  = ns->iwrite_repo; // for fuse
+#endif
       mode_t         mode  = (S_IRWXU | S_IRWXG ); // default 'chmod 770'
 
       // "root" namespace is not backed by real MD or storage, it is just
