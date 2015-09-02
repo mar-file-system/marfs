@@ -491,8 +491,10 @@ int stat_xattrs(PathInfo* info) {
                 info->pre.md_ctime, info->pre.obj_ctime);
             info->xattrs |= spec->value_type; /* found this one */
          }
-         else if (errno == ENOATTR) {
-            // ENOATTR means no attr, or no access.  Treat as the former.
+         else if ((errno == ENOATTR)
+                  || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
+            // (a) ENOATTR means no attr, or no access.  Treat as the former.
+            // (b) GPFS returns EPERM for lgetxattr on symlinks.
             __TRY0(init_pre, &info->pre,
                    OBJ_FUSE, info->ns, info->ns->iwrite_repo, &info->st);
             info->flags |= PI_PRE_INIT;
@@ -514,8 +516,10 @@ int stat_xattrs(PathInfo* info) {
             __TRY0(str_2_post, &info->post, xattr_value_str);
             info->xattrs |= spec->value_type; /* found this one */
          }
-         else if (errno == ENOATTR) {
-            // ENOATTR means no attr, or no access.  Treat as the former.
+         else if ((errno == ENOATTR)
+                  || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
+            // (a) ENOATTR means no attr, or no access.  Treat as the former.
+            // (b) GPFS returns EPERM for lgetxattr on symlinks.
             __TRY0(init_post, &info->post, info->ns, info->ns->iwrite_repo);
             info->flags |= PI_POST_INIT;
          }
@@ -531,8 +535,10 @@ int stat_xattrs(PathInfo* info) {
          ssize_t val_size = lgetxattr(info->post.md_path, spec->key_name,
                                       &xattr_value_str, 2);
          if (val_size < 0) {
-            if (errno == ENOATTR)
+            if ((errno == ENOATTR)
+                || ((errno == EPERM) && S_ISLNK(info->st.st_mode)))
                break;           /* treat ENOATTR as restart=0 */
+
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
             return -1;
          }
@@ -798,6 +804,8 @@ int  trash_unlink(PathInfo*   info,
    //    POST and OBJID as though they were DIRECT, and just deletes them.
    //    Such files are malformed, lacking sufficient info to be cleaned-up
    //    when we take out the trash.
+   //
+   // NOTE: We don't put xattrs on symlinks, so they just get deleted.
    //
    size_t rc;
    __TRY0(stat_xattrs, info);
@@ -1302,8 +1310,9 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 //
 // The configuration-file specifies a root trash-directory for each
 // namespace, as well as a namespace-name, and shard info (for future use).
-// Supposing the trash-path in the config is "/my_trash", and the namespace-name
-// is "ns1", then the initialized trash directory looks like:
+// Supposing the trash-path in the config is "/my_trash", and the
+// namespace-name is "ns1", then the initialized trash directory looks
+// like:
 //
 //    /my_trash/ns1.0/a/b/c
 //
@@ -1332,7 +1341,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 //     initialized like this.
 //
 
-int init_scatter_tree(const char*    root,
+int init_scatter_tree(const char*    root_dir,
                       const char*    ns_name,
                       const uint32_t shard,
                       const mode_t   mode) {
@@ -1341,33 +1350,33 @@ int init_scatter_tree(const char*    root,
 
    struct stat st;
 
-   LOG(LOG_INFO, "scatter_tree %s/%s.%d\n", root, ns_name, shard);
+   LOG(LOG_INFO, "scatter_tree %s/%s.%d\n", root_dir, ns_name, shard);
 
    // --- assure that top-level trash-dir (from the config) exists
-   LOG(LOG_INFO, " maybe create %s\n", root);
-   rc = mkdir(root, mode);
+   LOG(LOG_INFO, " maybe create %s\n", root_dir);
+   rc = mkdir(root_dir, mode);
    if ((rc < 0) && (errno != EEXIST)) {
-      LOG(LOG_ERR, "mkdir(%s) failed\n", root);
+      LOG(LOG_ERR, "mkdir(%s) failed\n", root_dir);
       return -1;
    }
 
-   // --- create 'namespace.shard' directory-tree under <root> (if needed).
+   // --- create 'namespace.shard' directory-tree under <root_dir> (if needed).
    //     Make sure there's room for inode-based subdirs, so we don't have to
    //     check that for each one.
    char dir_path[MARFS_MAX_MD_PATH];
 
    // generate the name of the 'namespace.shard' dir
    int prt_count = snprintf(dir_path, MARFS_MAX_MD_PATH,
-                            "%s/%s.%d", root, ns_name, shard);
+                            "%s/%s.%d", root_dir, ns_name, shard);
    if (prt_count < 0) {
       LOG(LOG_ERR, "snprintf(..., %s, %s) failed\n",
-          root,
+          root_dir,
           ns_name);
       return -1;
    }
    else if (prt_count >= MARFS_MAX_MD_PATH) {
       LOG(LOG_ERR, "snprintf(..., %s, %s) truncated\n",
-          root,
+          root_dir,
           ns_name);
       errno = EIO;
       return -1;

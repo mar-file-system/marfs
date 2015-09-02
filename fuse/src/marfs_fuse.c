@@ -424,6 +424,9 @@ int marfs_getattr (const char*  path,
 
    // No need for access check, just try the op
    // appropriate statlike call filling in fuse structure (dont mess with xattrs here etc.)
+   //
+   // NOTE: kernel should already have called readlink, to get past any
+   //     symlinks.  lstat here is just to be safe.
    LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
    TRY_GE0(lstat, info.post.md_path, stp);
 
@@ -1280,6 +1283,68 @@ int marfs_readdir (const char*            path,
 // It appears that, unlike readlink(2), we shouldn't return the number of
 // chars in the path.  Also, unlike readlink(2), we *should* write the
 // final '\0' into the caller's buf.
+//
+// NOTE: We do an extra copy to avoid putting anything into the caller's
+//     buf until we know that it is "safe".  This means:
+//     (a) it is fully "canonicalized"
+//     (b) it refers to something in a MarFS namespace, or ...
+//     (c) it refers to something in this user's MDFS.
+//
+//     It's hard to check (b), because canonicalization for (a) seems to
+//     require expand_path_info(), and that puts us into MDFS space.  To
+//     convert back to "mount space", we'd need the equivalent of
+//     find_namespace_by_md_path(), which is thinkable, but more effort
+//     than we need to allow.  Instead, we'll just require (c); that the
+//     canonicalized name must be in *this* namespace (which is an easier
+//     check).
+//
+//     ON SECOND THOUGHT: It's not our job to see where a link points.
+//     readlink of "/marfs/ns/mylink" which refers to "../../test" should just return "../../test"
+//     The kernel will then create "/marfs/
+
+#if 0
+    int marfs_readlink (const char* path,
+                        char*       buf,
+                        size_t      size) {
+       PUSH_USER();
+
+       PathInfo info;
+       memset((char*)&info, 0, sizeof(PathInfo));
+       EXPAND_PATH_INFO(&info, path);
+
+       // Check/act on iperms from expanded_path_info_structure, this op requires RM
+       CHECK_PERMS(info.ns->iperms, (R_META));
+
+       // No need for access check, just try the op
+       // Appropriate readlink-like call filling in fuse structure 
+
+       /// TRY_GE0(readlink, info.post.md_path, buf, size);
+       char tmp[MARFS_MAX_MD_PATH];
+       TRY_GE0(readlink, info.post.md_path, tmp, size);
+       int count = rc_ssize;
+       if (count >= size) {
+          LOG(LOG_ERR, "no room for '\\0'\n");
+          return -ENAMETOOLONG;
+       }
+       /// buf[count] = '\0';
+       tmp[count] = '\0';
+       LOG(LOG_INFO, "readlink '%s' -> '%s' = (%d)\n", info.post.md_path, tmp, count);
+
+       // test that link destination is "safe" [see (a) and (c), in NOTE]
+       if (strncmp(tmp, info.ns->md_path, info.ns->md_path_len)) {
+          LOG(LOG_ERR, "link-dest is outside md_path '%s', for NS %s\n",
+              info.ns->md_path, info.ns->name);
+          return -EACCES;
+       }
+
+       // copy safe link-target into caller's <buf>
+       strcpy(buf, tmp);
+
+       POP_USER();
+       return 0; // return result;
+    }
+
+#else
 int marfs_readlink (const char* path,
                     char*       buf,
                     size_t      size) {
@@ -1293,7 +1358,7 @@ int marfs_readlink (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META));
 
    // No need for access check, just try the op
-   // Appropriate readlinklike call filling in fuse structure 
+   // Appropriate readlink-like call filling in fuse structure 
    TRY_GE0(readlink, info.post.md_path, buf, size);
    int count = rc_ssize;
    if (count >= size) {
@@ -1301,13 +1366,12 @@ int marfs_readlink (const char* path,
       return -ENAMETOOLONG;
    }
    buf[count] = '\0';
-
    LOG(LOG_INFO, "readlink '%s' -> '%s' = (%d)\n", info.post.md_path, buf, count);
 
    POP_USER();
    return 0; // return result;
 }
-
+#endif
 
 // [http://www.cs.hmc.edu/~geoff/classes/hmc.cs135.201001/homework/fuse/fuse_doc.html]
 //
