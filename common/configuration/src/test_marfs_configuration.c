@@ -80,10 +80,10 @@ int main( int argc, char *argv[] ) {
 
   if ( marfs_config != NULL ) {
     fprintf( stdout, "CORRECT: The members of the MarFS config structure are:\n" );
-    fprintf( stdout, "\tconfig name            : %s\n", marfs_config->marfs_config_name );
-    fprintf( stdout, "\tconfig version         : %f\n", marfs_config->marfs_config_version );
-    fprintf( stdout, "\tconfig mnttop          : %s\n", marfs_config->marfs_mnttop );
-    fprintf( stdout, "\tconfig namespace count : %lu\n", marfs_config->marfs_namespace_count );
+    fprintf( stdout, "\tconfig name            : %s\n", marfs_config->name );
+    fprintf( stdout, "\tconfig version         : %f\n", marfs_config->version );
+    fprintf( stdout, "\tconfig mnttop          : %s\n", marfs_config->mnttop );
+    fprintf( stdout, "\tconfig namespace count : %lu\n", marfs_config->namespace_count );
   } else {
     fprintf( stderr, "ERROR: Reading MarFS configuration failed.\n" );
     return 1;
@@ -186,7 +186,7 @@ int main( int argc, char *argv[] ) {
 
   namespacePtr = find_namespace_by_name( "s3" );
   if ( namespacePtr != NULL ) {
-    fprintf( stdout, "CORRECT: Namespace \"s3\" does exist and has mntpath \"%s\".\n", namespacePtr->namespace_mntpath );
+    fprintf( stdout, "CORRECT: Namespace \"s3\" does exist and has mntpath \"%s\".\n", namespacePtr->mntpath );
   } else {
     fprintf( stderr, "ERROR: Namespace \"s3\" does exist and was not found.\n" );
   }
@@ -204,7 +204,7 @@ int main( int argc, char *argv[] ) {
 
   namespacePtr = find_namespace_by_mntpath( "/s3" );
   if ( namespacePtr != NULL ) {
-    fprintf( stdout, "CORRECT: Mntpath \"/s3\" does exist and has name \"%s\".\n", namespacePtr->namespace_name );
+    fprintf( stdout, "CORRECT: Mntpath \"/s3\" does exist and has name \"%s\".\n", namespacePtr->name );
   } else {
     fprintf( stderr, "ERROR: Mntpath \"/s3\" does exist and was not found.\n" );
   }
@@ -214,11 +214,11 @@ int main( int argc, char *argv[] ) {
   repoPtr = find_repo_by_range( namespacePtr, 38 );
   if ( repoPtr != NULL ) {
     fprintf( stdout, "CORRECT: Namespace \"%s\" has a repo \"%s\" for files of size 38.\n",
-			namespacePtr->namespace_name,
-			repoPtr->repo_name );
+			namespacePtr->name,
+			repoPtr->name );
   } else {
     fprintf( stderr, "ERROR: Namespace \"%s\" should have a repo for files of size 38.\n",
-			namespacePtr->namespace_name );
+			namespacePtr->name );
   }
 
 /*
@@ -230,10 +230,10 @@ int main( int argc, char *argv[] ) {
   repoPtr = find_repo_by_range( namespacePtr, -2 );
   if ( repoPtr == NULL ) {
     fprintf( stdout, "CORRECT: Namespace \"%s\" should not have a repo for files of size -2.\n",
-			namespacePtr->namespace_name );
+			namespacePtr->name );
   } else {
     fprintf( stderr, "ERROR: Namespace \"%s\" incorrectly has a repo \"%s\" for files of size -2.\n",
-			namespacePtr->namespace_name,
+			namespacePtr->name,
                         repoPtr->repo_name );
   }
  */
@@ -245,7 +245,7 @@ int main( int argc, char *argv[] ) {
     fprintf( stdout, "CORRECT: A NULL namespace should not have a repo for files of size 38.\n" );
   } else {
     fprintf( stderr, "ERROR: A NULL namespace incorrectly has a repo \"%s\" for files of size 38.\n",
-			repoPtr->repo_name );
+			repoPtr->name );
   }
 
   fprintf( stdout, "\n" );
@@ -261,7 +261,7 @@ int main( int argc, char *argv[] ) {
 
   repoPtr = find_repo_by_name( "emcS3_00" );
   if ( repoPtr != NULL ) {
-    fprintf( stdout, "CORRECT: Repo name \"emcS3_00\" does exist and has host \"%s\".\n", repoPtr->repo_host );
+    fprintf( stdout, "CORRECT: Repo name \"emcS3_00\" does exist and has host \"%s\".\n", repoPtr->host );
   } else {
     fprintf( stderr, "ERROR: Repo name \"emcS3_00\" does exist and was not found.\n" );
   }
@@ -270,14 +270,14 @@ int main( int argc, char *argv[] ) {
 
   NSIterator nit = namespace_iterator();
   while (( namespacePtr = namespace_next( &nit )) != NULL ) {
-    fprintf( stdout, "CORRECT: Namespace name is \"%s\"\n", namespacePtr->namespace_name );
+    fprintf( stdout, "CORRECT: Namespace name is \"%s\"\n", namespacePtr->name );
   }
 
   fprintf( stdout, "\n" );
 
   RepoIterator rit = repo_iterator();
   while (( repoPtr = repo_next( &rit )) != NULL ) {
-    fprintf( stdout, "CORRECT: Repo name is \"%s\"\n", repoPtr->repo_name );
+    fprintf( stdout, "CORRECT: Repo name is \"%s\"\n", repoPtr->name );
   }
 
   return 0;

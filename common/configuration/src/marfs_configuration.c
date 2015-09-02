@@ -136,8 +136,8 @@ extern MarFS_Namespace_Ptr find_namespace_by_name( const char *name ) {
   size_t name_len = strlen( name );
 
   for ( i = 0; i < namespaceCount; ++i ) {
-    if (( marfs_namespaceList[i]->namespace_name_len == name_len ) &&
-        ( ! strcmp( marfs_namespaceList[i]->namespace_name, name ))) {
+    if (( marfs_namespaceList[i]->name_len == name_len ) &&
+        ( ! strcmp( marfs_namespaceList[i]->name, name ))) {
       return marfs_namespaceList[i];
     }
   }
@@ -174,8 +174,8 @@ extern MarFS_Namespace_Ptr find_namespace_by_mntpath( const char *mntpath ) {
  */
 
   for ( i = 0; i < namespaceCount; i++ ) {
-    if (( marfs_namespaceList[i]->namespace_mntpath_len == path_dup_len )	&&
-        ( ! strcmp( marfs_namespaceList[i]->namespace_mntpath, path_dup ))) {
+    if (( marfs_namespaceList[i]->mntpath_len == path_dup_len )	&&
+        ( ! strcmp( marfs_namespaceList[i]->mntpath, path_dup ))) {
       free( path_dup );
       return marfs_namespaceList[i];
     }
@@ -202,16 +202,31 @@ extern MarFS_Repo_Ptr find_repo_by_range	(
 
 
   if ( namespacePtr != NULL ) {
-    for ( i = 0; i < namespacePtr->namespace_repo_range_list_count; i++ ) {
-      if ((( file_size >= namespacePtr->namespace_repo_range_list[i]->repo_minsize ) &&
+    for ( i = 0; i < namespacePtr->repo_range_list_count; i++ ) {
+#ifdef _DEBUG_MARFS_CONFIGURATION
+  LOG( LOG_INFO, "File size sought is %d.\n", file_size );
+  LOG( LOG_INFO, "Namespace is \"%s\"\n", namespacePtr->name );
+  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->minsize is %d.\n", i, namespacePtr->repo_range_list[i]->minsize );
+  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->maxsize is %d.\n", i, namespacePtr->repo_range_list[i]->maxsize );
+#endif
 
-          (( file_size <= namespacePtr->namespace_repo_range_list[i]->repo_maxsize ) ||
-           ( namespacePtr->namespace_repo_range_list[i]->repo_maxsize == -1 )))) {
+      if ((( file_size >= namespacePtr->repo_range_list[i]->minsize ) &&
 
-        return namespacePtr->namespace_repo_range_list[i]->repo_ptr;
+          (( file_size <= namespacePtr->repo_range_list[i]->maxsize ) ||
+           ( namespacePtr->repo_range_list[i]->maxsize == -1 )))) {
+
+#ifdef _DEBUG_MARFS_CONFIGURATION
+  LOG( LOG_INFO, "Repo pointer for this range found and being returned.\n" );
+#endif
+
+        return namespacePtr->repo_range_list[i]->repo_ptr;
       }
     }
   }
+#ifdef _DEBUG_MARFS_CONFIGURATION
+  LOG( LOG_INFO, "Repo pointer for this range not found. Returning NULL.\n" );
+#endif
+
   return NULL;
 }
 
@@ -220,7 +235,7 @@ extern MarFS_Repo_Ptr find_repo_by_name( const char* name ) {
   int i;
 
   for ( i = 0; i < repoCount; i++ ) {
-    if ( ! strcmp( marfs_repoList[i]->repo_name, name )) {
+    if ( ! strcmp( marfs_repoList[i]->name, name )) {
       return marfs_repoList[i];
     }
   }
@@ -505,21 +520,23 @@ extern MarFS_Config_Ptr read_configuration() {
 
 
   envVal = getenv( "MARFSCONFIGRC" );
-  if ( envVal != NULL ) {
-    path = strdup( envVal );
-  } else if ( access( "/etc/marfsconfigrc", R_OK ) != -1 ) {
-    path = strdup( "/etc/marfsconfigrc" );
-  } else {
+  if ( envVal == NULL ) {
     envVal = getenv( "HOME" );
     path = (char *) malloc( strlen( envVal ) + strlen( "/.marfsconfigrc" ) + 1 );
     path = strcpy( path, envVal );
     path = strcat( path, "/.marfsconfigrc" );
 
-    if ( access( path, R_OK ) == -1 ) {
+    if ( access( path, R_OK ) != -1 ) {
+      ; // We found it in $HOME, but path is already set, so there's nothing to do.
+    } else if ( access( "/etc/marfsconfigrc", R_OK ) != -1 ) {
+      path = strdup( "/etc/marfsconfigrc" );
+    } else {
       free( path );
       LOG( LOG_ERR, "The MarFS configuration RC file is not found in its 3 locations.\n" );
       return NULL;
     }
+  } else {
+    path = strdup( envVal ); // We found it with the MARFSCONFIGRC env variable.
   }
 
 #ifdef _DEBUG_MARFS_CONFIGURATION
@@ -595,66 +612,66 @@ extern MarFS_Config_Ptr read_configuration() {
  * to its new type directly needs to be upper case for easy comparison.
  */
 
-    marfs_repoList[j]->repo_name = strdup( repoList[j]->name );
-    marfs_repoList[j]->repo_name_len = strlen( repoList[j]->name );
+    marfs_repoList[j]->name = strdup( repoList[j]->name );
+    marfs_repoList[j]->name_len = strlen( repoList[j]->name );
 
-    marfs_repoList[j]->repo_host = strdup( repoList[j]->host );
-    marfs_repoList[j]->repo_host_len = strlen( repoList[j]->host );
+    marfs_repoList[j]->host = strdup( repoList[j]->host );
+    marfs_repoList[j]->host_len = strlen( repoList[j]->host );
 
-    if ( lookup_boolean( repoList[j]->updateinplace, &( marfs_repoList[j]->repo_updateinplace ))) {
+    if ( lookup_boolean( repoList[j]->updateinplace, &( marfs_repoList[j]->updateinplace ))) {
       LOG( LOG_ERR, "Invalid updateinplace value of \"%s\".\n", repoList[j]->updateinplace );
       return NULL;
     }
 
-    if ( lookup_boolean( repoList[j]->ssl, &( marfs_repoList[j]->repo_ssl ))) {
+    if ( lookup_boolean( repoList[j]->ssl, &( marfs_repoList[j]->ssl ))) {
       LOG( LOG_ERR, "Invalid ssl value of \"%s\".\n", repoList[j]->ssl );
       return NULL;
     }
 
-    if ( lookup_accessmethod( repoList[j]->accessmethod, &( marfs_repoList[j]->repo_accessmethod ))) {
+    if ( lookup_accessmethod( repoList[j]->accessmethod, &( marfs_repoList[j]->accessmethod ))) {
       LOG( LOG_ERR, "Invalid accessmethod value of \"%s\".\n", repoList[j]->accessmethod );
       return NULL;
     }
 
     errno = 0;
-    marfs_repoList[j]->repo_chunksize = strtoull( repoList[j]->chunksize, (char **) NULL, 10 );
+    marfs_repoList[j]->chunksize = strtoull( repoList[j]->chunksize, (char **) NULL, 10 );
     if ( errno ) {
       LOG( LOG_ERR, "Invalid chunksize value of \"%s\".\n", repoList[j]->chunksize );
       return NULL;
     }
 
     errno = 0;
-    marfs_repoList[j]->repo_packsize = strtoull( repoList[j]->packsize, (char **) NULL, 10 );
+    marfs_repoList[j]->packsize = strtoull( repoList[j]->packsize, (char **) NULL, 10 );
     if ( errno ) {
       LOG( LOG_ERR, "Invalid packsize value of \"%s\".\n", repoList[j]->packsize );
       return NULL;
     }
 
-    if ( lookup_securitymethod( repoList[j]->securitymethod, &( marfs_repoList[j]->repo_securitymethod ))) {
+    if ( lookup_securitymethod( repoList[j]->securitymethod, &( marfs_repoList[j]->securitymethod ))) {
       LOG( LOG_ERR, "Invalid securitymethod value of \"%s\".\n", repoList[j]->securitymethod );
       return NULL;
     }
 
-    if ( lookup_sectype( repoList[j]->sectype, &( marfs_repoList[j]->repo_sectype ))) {
+    if ( lookup_sectype( repoList[j]->sectype, &( marfs_repoList[j]->sectype ))) {
       LOG( LOG_ERR, "Invalid sectype value of \"%s\".\n", repoList[j]->sectype );
       return NULL;
     }
 
-    if ( lookup_comptype( repoList[j]->comptype, &( marfs_repoList[j]->repo_comptype ))) {
+    if ( lookup_comptype( repoList[j]->comptype, &( marfs_repoList[j]->comptype ))) {
       LOG( LOG_ERR, "Invalid comptype value of \"%s\".\n", repoList[j]->comptype );
       return NULL;
     }
 
-    if ( lookup_correcttype( repoList[j]->correcttype, &( marfs_repoList[j]->repo_correcttype ))) {
+    if ( lookup_correcttype( repoList[j]->correcttype, &( marfs_repoList[j]->correcttype ))) {
       LOG( LOG_ERR, "Invalid correcttype value of \"%s\".\n", repoList[j]->correcttype );
       return NULL;
     }
 
-    marfs_repoList[j]->repo_onoffline = NULL;
-    marfs_repoList[j]->repo_onoffline_len = 0;
+    marfs_repoList[j]->onoffline = NULL;
+    marfs_repoList[j]->onoffline_len = 0;
 
     errno = 0;
-    marfs_repoList[j]->repo_latency = strtoull( repoList[j]->latency, (char **) NULL, 10 );
+    marfs_repoList[j]->latency = strtoull( repoList[j]->latency, (char **) NULL, 10 );
     if ( errno ) {
       LOG( LOG_ERR, "Invalid latency value of \"%s\".\n", repoList[j]->latency );
       return NULL;
@@ -687,11 +704,11 @@ extern MarFS_Config_Ptr read_configuration() {
       return NULL;
     }
 
-    marfs_namespaceList[j]->namespace_name = strdup( namespaceList[j]->name );
-    marfs_namespaceList[j]->namespace_name_len = strlen( namespaceList[j]->name );
+    marfs_namespaceList[j]->name = strdup( namespaceList[j]->name );
+    marfs_namespaceList[j]->name_len = strlen( namespaceList[j]->name );
 
-    marfs_namespaceList[j]->namespace_mntpath = strdup( namespaceList[j]->mntpath );
-    marfs_namespaceList[j]->namespace_mntpath_len = strlen( namespaceList[j]->mntpath );
+    marfs_namespaceList[j]->mntpath = strdup( namespaceList[j]->mntpath );
+    marfs_namespaceList[j]->mntpath_len = strlen( namespaceList[j]->mntpath );
 
 /*
  * Because strtok destroys the string on which it operates, we're going to
@@ -715,17 +732,17 @@ extern MarFS_Config_Ptr read_configuration() {
     tok = strtok( perms_dup, "," );
     while ( tok != NULL ) {
       if ( ! strcasecmp( tok, "RM" )) {
-        marfs_namespaceList[j]->namespace_bperms |= R_META;
+        marfs_namespaceList[j]->bperms |= R_META;
       } else if ( ! strcasecmp( tok, "WM" )) {
-        marfs_namespaceList[j]->namespace_bperms |= W_META;
+        marfs_namespaceList[j]->bperms |= W_META;
       } else if ( ! strcasecmp( tok, "RD" )) {
-        marfs_namespaceList[j]->namespace_bperms |= R_DATA;
+        marfs_namespaceList[j]->bperms |= R_DATA;
       } else if ( ! strcasecmp( tok, "WD" )) {
-        marfs_namespaceList[j]->namespace_bperms |= W_DATA;
+        marfs_namespaceList[j]->bperms |= W_DATA;
       } else if ( ! strcasecmp( tok, "TD" )) {
-        marfs_namespaceList[j]->namespace_bperms |= T_DATA;
+        marfs_namespaceList[j]->bperms |= T_DATA;
       } else if ( ! strcasecmp( tok, "UD" )) {
-        marfs_namespaceList[j]->namespace_bperms |= U_DATA;
+        marfs_namespaceList[j]->bperms |= U_DATA;
       } else {
         LOG( LOG_ERR, "Invalid bperms value of \"%s\".\n", tok );
         return NULL;
@@ -751,17 +768,17 @@ extern MarFS_Config_Ptr read_configuration() {
     tok = strtok( perms_dup, "," );
     while ( tok != NULL ) {
       if ( ! strcasecmp( tok, "RM" )) {
-        marfs_namespaceList[j]->namespace_iperms |= R_META;
+        marfs_namespaceList[j]->iperms |= R_META;
       } else if ( ! strcasecmp( tok, "WM" )) {
-        marfs_namespaceList[j]->namespace_iperms |= W_META;
+        marfs_namespaceList[j]->iperms |= W_META;
       } else if ( ! strcasecmp( tok, "RD" )) {
-        marfs_namespaceList[j]->namespace_iperms |= R_DATA;
+        marfs_namespaceList[j]->iperms |= R_DATA;
       } else if ( ! strcasecmp( tok, "WD" )) {
-        marfs_namespaceList[j]->namespace_iperms |= W_DATA;
+        marfs_namespaceList[j]->iperms |= W_DATA;
       } else if ( ! strcasecmp( tok, "TD" )) {
-        marfs_namespaceList[j]->namespace_iperms |= T_DATA;
+        marfs_namespaceList[j]->iperms |= T_DATA;
       } else if ( ! strcasecmp( tok, "UD" )) {
-        marfs_namespaceList[j]->namespace_iperms |= U_DATA;
+        marfs_namespaceList[j]->iperms |= U_DATA;
       } else {
         LOG( LOG_ERR, "Invalid iperms value of \"%s\".\n", tok );
         return NULL;
@@ -772,8 +789,8 @@ extern MarFS_Config_Ptr read_configuration() {
 
     free( perms_dup );
 
-    marfs_namespaceList[j]->namespace_mdpath = strdup( namespaceList[j]->mdpath );
-    marfs_namespaceList[j]->namespace_mdpath_len = strlen( namespaceList[j]->mdpath );
+    marfs_namespaceList[j]->mdpath = strdup( namespaceList[j]->mdpath );
+    marfs_namespaceList[j]->mdpath_len = strlen( namespaceList[j]->mdpath );
 
 /*
  * For now we'll set this to one (1). Once the configuration parser is fixed we can
@@ -795,46 +812,46 @@ extern MarFS_Config_Ptr read_configuration() {
       return NULL;
     }
 
-    marfs_repo_rangeList[0]->repo_minsize = atoi( namespaceList[j]->repo_minsize );
-    marfs_repo_rangeList[0]->repo_maxsize = atoi( namespaceList[j]->repo_maxsize );
+    marfs_repo_rangeList[0]->minsize = atoi( namespaceList[j]->minsize );
+    marfs_repo_rangeList[0]->maxsize = atoi( namespaceList[j]->maxsize );
     marfs_repo_rangeList[0]->repo_ptr = find_repo_by_name( namespaceList[j]->repo_name );
 
-    marfs_namespaceList[j]->namespace_repo_range_list = marfs_repo_rangeList;
-    marfs_namespaceList[j]->namespace_repo_range_list_count = repoRangeCount;
+    marfs_namespaceList[j]->repo_range_list = marfs_repo_rangeList;
+    marfs_namespaceList[j]->repo_range_list_count = repoRangeCount;
 
-    marfs_namespaceList[j]->namespace_trashmdpath = strdup( namespaceList[j]->trashmdpath );
-    marfs_namespaceList[j]->namespace_trashmdpath_len = strlen( namespaceList[j]->trashmdpath );
+    marfs_namespaceList[j]->trashmdpath = strdup( namespaceList[j]->trashmdpath );
+    marfs_namespaceList[j]->trashmdpath_len = strlen( namespaceList[j]->trashmdpath );
 
-    marfs_namespaceList[j]->namespace_fsinfopath = strdup( namespaceList[j]->fsinfopath );
-    marfs_namespaceList[j]->namespace_fsinfopath_len = strlen( namespaceList[j]->fsinfopath );
+    marfs_namespaceList[j]->fsinfopath = strdup( namespaceList[j]->fsinfopath );
+    marfs_namespaceList[j]->fsinfopath_len = strlen( namespaceList[j]->fsinfopath );
 
     errno = 0;
-    marfs_namespaceList[j]->namespace_quota_space = strtoll( namespaceList[j]->quota_space, (char **) NULL, 10 );
+    marfs_namespaceList[j]->quota_space = strtoll( namespaceList[j]->quota_space, (char **) NULL, 10 );
     if ( errno ) {
       LOG( LOG_ERR, "Invalid quota_space value of \"%s\".\n", namespaceList[j]->quota_space );
       return NULL;
     }
 
     errno = 0;
-    marfs_namespaceList[j]->namespace_quota_names = strtoll( namespaceList[j]->quota_names, (char **) NULL, 10 );
+    marfs_namespaceList[j]->quota_names = strtoll( namespaceList[j]->quota_names, (char **) NULL, 10 );
     if ( errno ) {
       LOG( LOG_ERR, "Invalid quota_names value of \"%s\".\n", namespaceList[j]->quota_names );
       return NULL;
     }
 
 /*
-    marfs_namespaceList[j]->namespace_namespaceshardp = strdup( namespaceList[j]->namespaceshardp );
-    marfs_namespaceList[j]->namespace_namespaceshardp_len = strlen( namespaceList[j]->namespaceshardp );
+    marfs_namespaceList[j]->namespaceshardp = strdup( namespaceList[j]->namespaceshardp );
+    marfs_namespaceList[j]->namespaceshardp_len = strlen( namespaceList[j]->namespaceshardp );
 */
-    marfs_namespaceList[j]->namespace_namespaceshardp = NULL;
-    marfs_namespaceList[j]->namespace_namespaceshardp_len = 0;
+    marfs_namespaceList[j]->namespaceshardp = NULL;
+    marfs_namespaceList[j]->namespaceshardp_len = 0;
 
 /*
     errno = 0;
-    marfs_namespaceList[j]->namespace_namespaceshardpnum = strtoull( namespaceList[j]->namespaceshardpnum, (char **) NULL, 10 );
+    marfs_namespaceList[j]->namespaceshardpnum = strtoull( namespaceList[j]->namespaceshardpnum, (char **) NULL, 10 );
 */
 
-    marfs_namespaceList[j]->namespace_namespaceshardpnum = 0;
+    marfs_namespaceList[j]->namespaceshardpnum = 0;
 
 /*
     if ( errno ) {
@@ -845,24 +862,24 @@ extern MarFS_Config_Ptr read_configuration() {
   }
   free( namespaceList );
 
-  marfs_configPtr->marfs_config_name = strdup( config->config_name );
-  marfs_configPtr->marfs_config_name_len = strlen( config->config_name );
+  marfs_configPtr->name = strdup( config->config_name );
+  marfs_configPtr->name_len = strlen( config->config_name );
 
-  marfs_configPtr->marfs_config_version = strtod( config->config_version, (char **) NULL );
+  marfs_configPtr->version = strtod( config->config_version, (char **) NULL );
 
-  marfs_configPtr->marfs_mnttop = strdup( config->mnttop );
-  marfs_configPtr->marfs_mnttop_len = strlen( config->mnttop );
+  marfs_configPtr->mnttop = strdup( config->mnttop );
+  marfs_configPtr->mnttop_len = strlen( config->mnttop );
 
-  marfs_configPtr->marfs_namespace_list = marfs_namespaceList;
-  marfs_configPtr->marfs_namespace_count = namespaceCount;
+  marfs_configPtr->namespace_list = marfs_namespaceList;
+  marfs_configPtr->namespace_count = namespaceCount;
 
 #ifdef _DEBUG_MARFS_CONFIGURATION
   LOG( LOG_INFO, "\n" );
   LOG( LOG_INFO, "The members of the config structure are:\n" );
-  LOG( LOG_INFO, "\tconfig name            : %s\n", marfs_configPtr->marfs_config_name );
-  LOG( LOG_INFO, "\tconfig version         : %f\n", marfs_configPtr->marfs_config_version );
-  LOG( LOG_INFO, "\tconfig mnttop          : %s\n", marfs_configPtr->marfs_mnttop );
-  LOG( LOG_INFO, "\tconfig namespace count : %lu\n", marfs_configPtr->marfs_namespace_count );
+  LOG( LOG_INFO, "\tconfig name            : %s\n", marfs_configPtr->name );
+  LOG( LOG_INFO, "\tconfig version         : %f\n", marfs_configPtr->version );
+  LOG( LOG_INFO, "\tconfig mnttop          : %s\n", marfs_configPtr->mnttop );
+  LOG( LOG_INFO, "\tconfig namespace count : %lu\n", marfs_configPtr->namespace_count );
   LOG( LOG_INFO, "\tconfig repo count      : %d\n", repoCount );
   fflush( stdout );
 #endif
@@ -900,18 +917,18 @@ extern int free_configuration( MarFS_Config_Ptr *config ) {
  */
 
   for ( j = 0; j < repoCount; j++ ) {
-    free( marfs_repoList[j]->repo_name );
-    free( marfs_repoList[j]->repo_host );
-    free( marfs_repoList[j]->repo_onoffline );
+    free( marfs_repoList[j]->name );
+    free( marfs_repoList[j]->host );
+    free( marfs_repoList[j]->onoffline );
     free( marfs_repoList[j] );
   }
   free( marfs_repoList );
   marfs_repoList = NULL;
 
   for ( j = 0; j < namespaceCount; j++ ) {
-    free( marfs_namespaceList[j]->namespace_name );
-    free( marfs_namespaceList[j]->namespace_mntpath );
-    free( marfs_namespaceList[j]->namespace_mdpath );
+    free( marfs_namespaceList[j]->name );
+    free( marfs_namespaceList[j]->mntpath );
+    free( marfs_namespaceList[j]->mdpath );
 
 /*
  * The only dynamically allocated part of a namespace_repo_range_list
@@ -921,22 +938,22 @@ extern int free_configuration( MarFS_Config_Ptr *config ) {
  */
 
     k = 0;
-    while( marfs_namespaceList[j]->namespace_repo_range_list[k] != NULL ) {
-      free( marfs_namespaceList[j]->namespace_repo_range_list[k] );
+    while( marfs_namespaceList[j]->repo_range_list[k] != NULL ) {
+      free( marfs_namespaceList[j]->repo_range_list[k] );
       k++;
     }
-    free( marfs_namespaceList[j]->namespace_repo_range_list );
+    free( marfs_namespaceList[j]->repo_range_list );
 
-    free( marfs_namespaceList[j]->namespace_trashmdpath );
-    free( marfs_namespaceList[j]->namespace_fsinfopath );
-    free( marfs_namespaceList[j]->namespace_namespaceshardp );
+    free( marfs_namespaceList[j]->trashmdpath );
+    free( marfs_namespaceList[j]->fsinfopath );
+    free( marfs_namespaceList[j]->namespaceshardp );
     free( marfs_namespaceList[j] );
   }
   free( marfs_namespaceList );
   marfs_namespaceList = NULL;
 
-  free( marfs_configPtr->marfs_config_name );
-  free( marfs_configPtr->marfs_mnttop );
+  free( marfs_configPtr->name );
+  free( marfs_configPtr->mnttop );
 
 /*
  * The marfs_namespace_list was assigned to point to the
@@ -944,7 +961,7 @@ extern int free_configuration( MarFS_Config_Ptr *config ) {
  * pointing at was freed. It would be an error to free it at this
  * point, so we'll just note that here and move on.
  *
- * free( marfs_configPtr->marfs_namespace_list );
+ * free( marfs_configPtr->namespace_list );
  */
 
   free( marfs_configPtr );
@@ -977,7 +994,7 @@ extern MarFS_Namespace_Ptr namespace_next( NSIterator *nsIterator ) {
   if ( nsIterator->pos >= namespaceCount ) {
     return NULL;
   } else {
-    return marfs_configPtr->marfs_namespace_list[nsIterator->pos++];
+    return marfs_configPtr->namespace_list[nsIterator->pos++];
   }
 }
 

@@ -66,21 +66,23 @@ int main( int argc, char *argv[] ) {
   fprintf( stdout, "\n" );
 
   envVal = getenv( "MARFSCONFIGRC" );
-  if ( envVal != NULL ) {
-    path = strdup( envVal );
-  } else if ( access( "/etc/marfsconfigrc", R_OK ) != -1 ) {
-    path = strdup( "/etc/marfsconfigrc" );
-  } else {
+  if ( envVal == NULL ) {
     envVal = getenv( "HOME" );
     path = (char *) malloc( strlen( envVal ) + strlen( "/.marfsconfigrc" ) + 1 );
     path = strcpy( path, envVal );
     path = strcat( path, "/.marfsconfigrc" );
 
-    if ( access( path, R_OK ) == -1 ) {
+    if ( access( path, R_OK ) != -1 ) {
+      ; // We found it in $HOME, but path is already set, so there's nothing to do.
+    } else if ( access( "/etc/marfsconfigrc", R_OK ) != -1 ) {
+      path = strdup( "/etc/marfsconfigrc" );
+    } else {
       free( path );
       fprintf( stdout, "NOT FOUND: The MarFS configuration RC file is not found in its 3 locations.\n" );
       return 0;
     }
+  } else {
+    path = strdup( envVal ); // We found it with the MARFSCONFIGRC env variable.
   }
 
   fprintf( stdout, "FOUND: The MarFS configuration RC file is \"%s\".\n", path );

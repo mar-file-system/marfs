@@ -225,22 +225,22 @@ typedef uint8_t  MarFS_Perms;
  */
 
 typedef struct marfs_repo {
-  char			*repo_name;
-  size_t		repo_name_len;
-  char			*repo_host;
-  size_t		repo_host_len;
-  MarFS_Boolean		repo_updateinplace;
-  MarFS_Boolean		repo_ssl;
-  MarFS_AccessMethod	repo_accessmethod;
-  unsigned long long	repo_chunksize;
-  unsigned long long	repo_packsize;
-  MarFS_SecurityMethod	repo_securitymethod;
-  MarFS_SecType		repo_sectype;
-  MarFS_CompType	repo_comptype;
-  MarFS_CorrectType	repo_correcttype;
-  char			*repo_onoffline;
-  size_t		repo_onoffline_len;
-  unsigned long long	repo_latency;
+  char			*name;
+  size_t		name_len;
+  char			*host;
+  size_t		host_len;
+  MarFS_Boolean		updateinplace;
+  MarFS_Boolean		ssl;
+  MarFS_AccessMethod	accessmethod;
+  unsigned long long	chunksize;
+  unsigned long long	packsize;
+  MarFS_SecurityMethod	securitymethod;
+  MarFS_SecType		sectype;
+  MarFS_CompType	comptype;
+  MarFS_CorrectType	correcttype;
+  char			*onoffline;
+  size_t		onoffline_len;
+  unsigned long long	latency;
 } MarFS_Repo, *MarFS_Repo_Ptr, **MarFS_Repo_List;
 
 /*
@@ -252,8 +252,8 @@ typedef struct marfs_repo {
  */
 
 typedef struct marfs_repo_range {
-  int			repo_minsize;
-  int			repo_maxsize;
+  int			minsize;
+  int			maxsize;
   MarFS_Repo_Ptr	repo_ptr;
 } MarFS_Repo_Range, *MarFS_Repo_Range_Ptr, **MarFS_Repo_Range_List;
 
@@ -273,11 +273,11 @@ typedef struct marfs_repo_range {
 //
 //    marfs_mnttop = /redsea
 //
-//    namespace_mntpath = /projecta
-//    namespace_mdpath    = /md/projecta
+//    mntpath = /projecta
+//    mdpath    = /md/projecta
 //
-//    namespace_mntpath = /projectb
-//    namespace_mdpath    = /md/project
+//    mntpath = /projectb
+//    mdpath    = /md/project
 //
 // User refers to /redsea/projecta and fuse/pftool translates to refer to
 // metadata file-system in /md/projecta
@@ -287,7 +287,7 @@ typedef struct marfs_repo_range {
 // distinct path-components of all namespaces seen by the config-file
 // loader.
 //
-// NOTE: For Scality sproxyd, we assume that namespace_name is identical to
+// NOTE: For Scality sproxyd, we assume that name is identical to
 //     the "driver-alias" used in sproxyd requests.  This is configured in
 //     /etc/sproxyd.conf on the repo server, as the alias of a given
 //     "driver" for "by-path" access.  This means that the mount-suffix
@@ -295,25 +295,25 @@ typedef struct marfs_repo_range {
 // ---------------------------------------------------------------------------
 
 typedef struct marfs_namespace {
-  char			*namespace_name;
-  size_t		namespace_name_len;
-  char			*namespace_mntpath;
-  size_t		namespace_mntpath_len;
-  MarFS_Perms		namespace_bperms;
-  MarFS_Perms		namespace_iperms;
-  char			*namespace_mdpath;
-  size_t		namespace_mdpath_len;
-  MarFS_Repo_Range_List	namespace_repo_range_list;
-  int			namespace_repo_range_list_count;
-  char			*namespace_trashmdpath;
-  size_t		namespace_trashmdpath_len;
-  char			*namespace_fsinfopath;
-  size_t		namespace_fsinfopath_len;
-  long long		namespace_quota_space;
-  long long		namespace_quota_names;
-  char			*namespace_namespaceshardp;
-  size_t		namespace_namespaceshardp_len;
-  unsigned long long	namespace_namespaceshardpnum;
+  char			*name;
+  size_t		name_len;
+  char			*mntpath;
+  size_t		mntpath_len;
+  MarFS_Perms		bperms;
+  MarFS_Perms		iperms;
+  char			*mdpath;
+  size_t		mdpath_len;
+  MarFS_Repo_Range_List	repo_range_list;
+  int			repo_range_list_count;
+  char			*trashmdpath;
+  size_t		trashmdpath_len;
+  char			*fsinfopath;
+  size_t		fsinfopath_len;
+  long long		quota_space;
+  long long		quota_names;
+  char			*namespaceshardp;
+  size_t		namespaceshardp_len;
+  unsigned long long	namespaceshardpnum;
 } MarFS_Namespace, *MarFS_Namespace_Ptr, **MarFS_Namespace_List;
 
 /*
@@ -341,13 +341,13 @@ typedef struct marfs_namespace {
 //           changes).
 
 typedef struct marfs_config {
-  char			*marfs_config_name;
-  size_t		marfs_config_name_len;
-  double		marfs_config_version;
-  char			*marfs_mnttop;		// NOTE: Do NOT include a final slash.
-  size_t		marfs_mnttop_len;
-  MarFS_Namespace_List	marfs_namespace_list;
-  size_t		marfs_namespace_count;
+  char			*name;
+  size_t		name_len;
+  double		version;
+  char			*mnttop;		// NOTE: Do NOT include a final slash.
+  size_t		mnttop_len;
+  MarFS_Namespace_List	namespace_list;
+  size_t		namespace_count;
 } MarFS_Config, *MarFS_Config_Ptr;
 
 /*
