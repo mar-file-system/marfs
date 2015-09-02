@@ -205,10 +205,11 @@ endif
 #     probably not allow you to build Fuse with the new config, until we
 #     have access to whatever is in Brettk's PAX directory.
 ifdef MARFS_NEW_CONFIG
-	DEFS+=NEW_CONFIG
+	DEFS    += NEW_CONFIG
 	CFLAGS  += -I$(CONFIG)
 	LDFLAGS += -L$(CONFIG)
 else
+	OBJS += marfs_base_static_config.o
 	H    += marfs_base_static_config.h
 endif
 
@@ -284,16 +285,6 @@ clean: # cleanx
 
 
 # ...........................................................................
-# library, containing everything except main()
-# ...........................................................................
-
-libmarfs.a: $(OBJS)
-	ar -cvr $@ $^
-
-.PHONY: lib
-lib: libmarfs.a
-
-# ...........................................................................
 # fuse
 # ...........................................................................
 
@@ -354,6 +345,17 @@ redo.dbg:  umnt.dbg  clean reset_syslog fuse.dbg  mnt.dbg
 # --- easy way to restart fuse, if it crashes.
 remount: umnt
 	@ make _mnt
+
+
+# ...........................................................................
+# library, containing everything except main()
+# ...........................................................................
+
+libmarfs.a: $(OBJS) pre_req
+	ar -cvr $@ $^
+
+.PHONY: lib
+lib: libmarfs.a
 
 
 # ...........................................................................
@@ -553,7 +555,7 @@ foo.multi.4096:
 	dd if=/dev/zero bs=224 count=1 | tr '\0' '4' >> foo.multi.4096
 
 
-# aplications that link with various marfs support libs
+# applications that link with various marfs support libs
 demo_%: demo_%.o $(OBJS)
 	gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
 
