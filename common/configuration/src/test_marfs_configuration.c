@@ -76,8 +76,7 @@ int main( int argc, char *argv[] ) {
   INIT_LOG();
   fprintf( stdout, "\n" );
 
-//  marfs_config = read_configuration( "/home/brettk/PA2X/config/marfs_cctest.cfg" );
-  marfs_config = read_configuration( "/Users/brettk/code/marfs_config/PA2X/config/marfs_cctest.cfg" );
+  marfs_config = read_configuration();
 
   if ( marfs_config != NULL ) {
     fprintf( stdout, "CORRECT: The members of the MarFS config structure are:\n" );
@@ -107,7 +106,7 @@ int main( int argc, char *argv[] ) {
   fprintf( stdout, "\n" );
 
   fprintf( stdout, "Re-reading the configuration to continue testing...\n" );
-  marfs_config = read_configuration( "/Users/brettk/code/marfs_config/PA2X/config/marfs_cctest.cfg" );
+  marfs_config = read_configuration(); 
 
   if ( marfs_config == NULL ) {
     fprintf( stderr, "ERROR: Reading MarFS configuration failed.\n" );

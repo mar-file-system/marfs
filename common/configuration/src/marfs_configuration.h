@@ -374,11 +374,19 @@ extern MarFS_Repo_Ptr find_repo_by_name( const char* name );
 
 
 /*
- * This function returns the configuration after reading the configuration
- * file passed to it.
+* This function returns the configuration after reading the configuration
+ * file. The configuration file is found by searching in this order:
+ *
+ * 1) Translating the MARFSCONFIGRC environment variable.
+ *   or
+ * 2) Looking for it in $HOME/.marfsconfigrc.
+ *  or
+ * 3) Looking for it in /etc/marfsconfigrc.
+ *
+ * If none of those are found, NULL is returned.
  */
 
-extern MarFS_Config_Ptr read_configuration( char *path );
+extern MarFS_Config_Ptr read_configuration();
 
 /*
  * These functions return the configuration information that was given in
