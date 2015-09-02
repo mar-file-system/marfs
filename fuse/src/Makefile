@@ -351,11 +351,11 @@ remount: umnt
 # library, containing everything except main()
 # ...........................................................................
 
-libmarfs.a: $(OBJS) pre_req
+libmarfs.a: $(OBJS)
 	ar -cvr $@ $^
 
 .PHONY: lib
-lib: libmarfs.a
+lib: pre_req libmarfs.a
 
 
 # ...........................................................................
