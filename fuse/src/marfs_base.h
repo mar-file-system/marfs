@@ -247,6 +247,13 @@ extern float MarFS_config_vers;
 
 #ifdef NEW_CONFIG
 # include "marfs_configuration.h"
+typedef MarFS_CompType      CompressionMethod;
+typedef uint64_t            CorrectInfo;
+typedef MarFS_CorrectType   CorrectionMethod;
+typedef uint64_t            EncryptInfo;
+typedef MarFS_SecType       EncryptionMethod;
+typedef MarFS_AccessMethod  RepoAccessProto;
+
 #else
 # include "marfs_base_static_config.h"
 #endif
