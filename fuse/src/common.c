@@ -1298,7 +1298,6 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 }
 
 
-#if 1
 // Make sure the hierarchical trash directory tree exists, for all namespaces.
 //
 // The configuration-file specifies a root trash-directory for each
@@ -1309,7 +1308,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 //    /my_trash/ns1.0/a/b/c
 //
 // Where "a/b/c" represents 1000 different leaf-subdirectories, with each
-// character having all the values 0-9.
+// character (a, b, or c) having all the values 0-9.
 //
 // When a file with inode = "xxxxx762" (base 10) is trashed, it appears in
 // the subdir:
@@ -1320,6 +1319,11 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 // file in the trash will not actually have an inode matching the
 // subdir-name.
 //
+// NOTE: We do not create the top-level "trash" directory, if it doesn't
+//       exist.  It was felt this should be done by some admin script that
+//       sets up all directories etc, associated with new namespaces and
+//       repos.  That way, we know what user should own them.
+//
 // NOTE: We just iterate through all the namespaces doing this, but I think
 //     we will soon have namespaces that we don't want to initialize by
 //     default (e.g. because they are offline, and it is
@@ -1327,6 +1331,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 //     probably want config to mark those namespaces that should be
 //     initialized like this.
 //
+
 int init_scatter_tree(const char*    root,
                       const char*    ns_name,
                       const uint32_t shard,
@@ -1476,7 +1481,7 @@ int init_mdfs() {
       // "root" namespace is not backed by real MD or storage, it is just
       // so that calls to list '/' can be answered.
       if (ns->is_root) {
-         LOG(LOG_INFO, "skipping NS %s\n", ns->name);
+         LOG(LOG_INFO, "skipping root NS: %s\n", ns->name);
          continue;
       }
 
@@ -1489,25 +1494,69 @@ int init_mdfs() {
       LOG(LOG_INFO, "\n");
       LOG(LOG_INFO, "NS %s\n", ns->name);
 
-      // create the root of the trash, if needed
+
+
+
+      // check whether "trash" dir exists (and create sub-dirs, if needed)
       LOG(LOG_INFO, "top-level trash dir   %s\n", ns->trash_path);
-      rc = mkdir(ns->trash_path, mode);
-      if ((rc < 0) && (errno != EEXIST)) {
-         LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_path);
+      rc = lstat(ns->trash_path, &st);
+      if (! rc) {
+         if (! S_ISDIR(st.st_mode)) {
+            LOG(LOG_ERR, "not a directory %s\n", ns->fsinfo_path);
+            return -1;
+         }
+      }
+      else if (errno == ENOENT) {
+         // LOG(LOG_ERR, "creating %s\n", ns->fsinfo_path);
+         // rc = mkdir(ns->trash_path, mode);
+         // if ((rc < 0) && (errno != EEXIST)) {
+         //   LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_path);
+         //   return -1;
+         // }
+         LOG(LOG_ERR, "doesn't exist %s\n", ns->fsinfo_path);
          return -1;
       }
+      else {
+         LOG(LOG_ERR, "stat failed %s (%s)\n", ns->fsinfo_path, strerror(errno));
+         return -1;
+      }
+
+
       // create the scatter-tree for trash, if needed
       __TRY0(init_scatter_tree, ns->trash_path, ns->name, shard, mode);
 
-      // create the root of the mdfs, if needed
+
+
+
+
+
+      // check whether mdfs top-level dir exists
       LOG(LOG_INFO, "top-level MDFS dir    %s\n", ns->md_path);
-      rc = mkdir(ns->md_path, mode);
-      if ((rc < 0) && (errno != EEXIST)) {
-         LOG(LOG_ERR, "mkdir(%s) failed\n", ns->md_path);
+      rc = lstat(ns->md_path, &st);
+      if (! rc) {
+         if (! S_ISDIR(st.st_mode)) {
+            LOG(LOG_ERR, "not a directory %s\n", ns->md_path);
+            return -1;
+         }
+      }
+      else if (errno == ENOENT) {
+         //      rc = mkdir(ns->md_path, mode);
+         //      if ((rc < 0) && (errno != EEXIST)) {
+         //         LOG(LOG_ERR, "mkdir(%s) failed\n", ns->md_path);
+         //         return -1;
+         //      }
+         LOG(LOG_ERR, "doesn't exist %s\n", ns->md_path);
+         return -1;
+      }
+      else {
+         LOG(LOG_ERR, "stat failed %s (%s)\n", ns->md_path, strerror(errno));
          return -1;
       }
 
-      // create the fsinfo-file, if needed.  Currently, we truncate to size
+
+
+
+      // check whether fsinfo-file exists.  Currently, we truncate to size
       // to represent the amount of storage used by this namespace.  This
       // value is compared with the configured maximum, to see whether use
       // can open a new file for writing.
@@ -1525,21 +1574,33 @@ int init_mdfs() {
             return -1;
          }
       }
-      else if (errno == ENOENT)
-         __TRY0(truncate, ns->fsinfo_path, 0); // infinite quota, for now
+      else if (errno == ENOENT) {
+         // __TRY0(truncate, ns->fsinfo_path, 0); // infinite quota, for now
+         LOG(LOG_ERR, "doesn't exist %s\n", ns->fsinfo_path);
+         return -1;
+      }
       else {
          LOG(LOG_ERR, "stat failed %s (%s)\n", ns->fsinfo_path, strerror(errno));
          return -1;
       }
 
+
+
+#if TBD
+      // COMMENTED OUT.  Turns out there are issues with POSIX permissions
+      // in this setup, because "who owns the directory into which the
+      // user's data-files are stored"?  It was felt that, even if the
+      // storage file-system is unshared, the fact that the parent dir
+      // (i.e. leaf dir in the scatter-tree) would have to be
+      // world-writable was not good enough protection.
+
       // create a scatter-tree for semi-direct fuse repos, if any
       if (repo->access_proto == PROTO_SEMI_DIRECT) {
          __TRY0(init_scatter_tree, repo->host, ns->name, shard, mode);
       }
+#endif
+
    }
 
    return 0;
 }
-
-
-#endif

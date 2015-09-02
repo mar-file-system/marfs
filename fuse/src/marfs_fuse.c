@@ -182,6 +182,26 @@ int marfs_access (const char* path,
    return 0;
 }
 
+
+// NOTE: we don't allow setuid or setgid.  We're using those bits for two
+//     purposes:
+//
+//     (a) on a file, the setuid-bit indicates SEMI-DIRECT mode.  In this
+//     case, the size of the MD file is not correct, because it isn't
+//     truncated to corect size, because the underlying FS is parallel, and
+//     in the case of N:1 writes, it is awkward for us to manage locking
+//     across multiple writers, so we can correctly trunc the MD file.
+//     Instead, we let the parallel FS do that (because it can).  So, to
+//     get the size, we need to go stat the PFS file, instead.  If we wrote
+//     this flag in an xattr, we'd have to read xattrs for every stat, just
+//     so we can learn whether the file-size returned by 'stat' is correct
+//     or not.
+//
+//     (b) on a directory, the setuid-bit indicates MD-sharding.  [FUTURE]
+//     In this case, the MD-directory will be a stand-in for a remote MD
+//     directory.  We hash on a namespace + directory-inode and lookup that
+//     spot in a remote-directory, to get the MD contents.
+
 int marfs_chmod(const char* path,
                 mode_t      mode) {
    PUSH_USER();
@@ -192,6 +212,11 @@ int marfs_chmod(const char* path,
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+
+   if (mode && (S_ISUID | S_ISGID)) {
+      LOG(LOG_INFO, "attempt to setuid or setgid on path '%s'\n", path);
+      return -EPERM;
+   }
 
    // No need for access check, just try the op
    // Appropriate  chmod call filling in fuse structure
@@ -401,6 +426,9 @@ int marfs_getattr (const char*  path,
    // appropriate statlike call filling in fuse structure (dont mess with xattrs here etc.)
    LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
    TRY_GE0(lstat, info.post.md_path, stp);
+
+   // mask out setuid/setgid bits.  Those are belong to us.  (see marfs_chmod())
+   stp->st_mode &= ~(S_ISUID | S_ISGID);
 
    POP_USER();
    return 0;

@@ -885,18 +885,25 @@ extern MarFS_Namespace* find_namespace_by_name(const char* name);
 extern MarFS_Namespace* find_namespace_by_path(const char* path);
 
 
-// Let others traverse namespaces, without knowing how they are stored
-NSIterator        namespace_iterator() {
-   return (NSIterator){ .pos = 0 };
-}
+// --- support for traversing namespaces (without knowing how they are stored)
+//
+// For example: here's some code to walk all Namespaces, doing something
+//
+//   NSIterator it = namespace_iterator();
+//   MarFS_Namespace*  ns;
+//   while (ns = namespace_next(&it)) {
+//      ... // do something
+//   }
 
-MarFS_Namespace*  namespace_next(NSIterator* it) {
-   if (it->pos >= _ns_count)
-      return NULL;
-   else
-      return _ns[it->pos++];
-}
+typedef struct {
+  size_t pos;
+} NSIterator;
 
+NSIterator        namespace_iterator();
+MarFS_Namespace*  namespace_next(NSIterator* it);
+
+// typedef int (*NSFunction)(MarFS_Namespace* ns); // ptr to fn that takes NS, returns int
+// extern int apply_to_namespaces(NSFunction fn);
 
 
 // ...........................................................................
@@ -909,17 +916,25 @@ extern MarFS_Repo*      find_repo(MarFS_Namespace* ns,
 extern MarFS_Repo*      find_repo_by_name(const char* name);
 
 
-// Let others traverse repos, without knowing how they are stored
-RepoIterator repo_iterator() {
-   return (RepoIterator){ .pos = 0 };
-}
+// --- support for traversing repos (without knowing how they are stored)
+//
+// For example: here's some code to walk all Repos, doing something
+//
+//   RepoIterator it = repo_iterator();
+//   MarFS_Repo*  repo;
+//   while (repo = repo_next(&it)) {
+//      ... // do something
+//   }
 
-MarFS_Repo*  repo_next(RepoIterator* it) {
-   if (it->pos >= _repo_count)
-      return NULL;
-   else
-      return _repo[it->pos++];
-}
+typedef struct {
+  size_t pos;
+} RepoIterator;
+
+extern RepoIterator     repo_iterator();
+extern MarFS_Repo*      repo_next(RepoIterator* it);
+
+// typedef int (*RepoFunction)(MarFS_Repo* repo); // ptr to fn that takes Repo, returns int
+// extern int apply_to_repos(RepoFunction fn);
 
 
 
