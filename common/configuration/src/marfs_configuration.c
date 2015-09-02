@@ -64,6 +64,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdio.h>  /* *printf, etc. need this */
 #include <ctype.h>  /* toupper needs this */
 #include <errno.h>  /* checking errno needs this */
+#include <unistd.h> /* access */
 
 #include "logging.h"
 #include "marfs_configuration.h"
@@ -92,7 +93,7 @@ static MarFS_Config_Ptr marfs_configPtr = NULL;
 static MarFS_Repo_List marfs_repoList = NULL;
 static MarFS_Namespace_List marfs_namespaceList = NULL;
 
-static int namespaceCount = 0, repo_rangeCount = 0, repoCount = 0;
+static int namespaceCount = 0, repoRangeCount = 0, repoCount = 0;
 
 
 /*****************************************************************************
@@ -478,22 +479,52 @@ extern int decode_correcttype( char code, MarFS_CorrectType *enumeration ) {
 /*****************************************************************************
  *
  * This function returns the configuration after reading the configuration
- * file passed to it.
+ * file. The configuration file is found by searching in this order:
+ *
+ * 1) Translating the MARFSCONFIGRC environment variable.
+ *   or
+ * 2) Looking for it in $HOME/.marfsconfigrc.
+ *  or
+ * 3) Looking for it in /etc/marfsconfigrc.
+ *
+ * If none of those are found, NULL is returned.
  *
  ****************************************************************************/
-extern MarFS_Config_Ptr read_configuration( char *path ) {
+extern MarFS_Config_Ptr read_configuration() {
 
   struct line h_page, pseudo_h, fld_nm_lst;        // for internal use
   struct config *config = NULL;                    // always need one of these
 
   struct namespace *namespacePtr, **namespaceList;
-//  struct repo_range *repo_rangePtr, **repo_rangeList;
+  struct repo_range *repoRangePtr, **repoRangeList;
   struct repo *repoPtr, **repoList;
   int j, k, slen;
-  char *perms_dup, *tok;
+  char *perms_dup, *tok, *envVal, *path;
   int pd_index;
   MarFS_Repo_Range_List marfs_repo_rangeList;
 
+
+  envVal = getenv( "MARFSCONFIGRC" );
+  if ( envVal != NULL ) {
+    path = strdup( envVal );
+  } else if ( access( "/etc/marfsconfigrc", R_OK ) != -1 ) {
+    path = strdup( "/etc/marfsconfigrc" );
+  } else {
+    envVal = getenv( "HOME" );
+    path = (char *) malloc( strlen( envVal ) + strlen( "/.marfsconfigrc" ) + 1 );
+    path = strcpy( path, envVal );
+    path = strcat( path, "/.marfsconfigrc" );
+
+    if ( access( path, R_OK ) == -1 ) {
+      free( path );
+      LOG( LOG_ERR, "The MarFS configuration RC file is not found in its 3 locations.\n" );
+      return NULL;
+    }
+  }
+
+#ifdef _DEBUG_MARFS_CONFIGURATION
+  LOG( LOG_INFO, "Found the MarFS configuration file at \"%s\".\n", path );
+#endif
 
   memset(&h_page,     0x00, sizeof(struct line));  // clear header page
   memset(&pseudo_h,   0x00, sizeof(struct line));  // clear pseudo headers
@@ -506,18 +537,34 @@ extern MarFS_Config_Ptr read_configuration( char *path ) {
 
   config = (struct config *) malloc( sizeof( struct config ));
   if (config == NULL) {
+    free( path );
     LOG( LOG_ERR, "Error allocating memory for the config structure.\n");
     return NULL;
   }
 
   marfs_configPtr = (MarFS_Config_Ptr) malloc( sizeof( MarFS_Config ));
   if ( marfs_configPtr == NULL) {
+    free( path );
     LOG( LOG_ERR, "Error allocating memory for the MarFS config structure.\n");
     return NULL;
   }
 
   parseConfigFile( path, CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, QUIET );
   freeHeaderFile(h_page.next);
+
+/*
+ * We're done with the path now. Give the memory back to the system.
+ */
+
+#ifdef _DEBUG_MARFS_CONFIGURATION
+  LOG( LOG_INFO, "Freeing path after parsing the MarFS configuration file.\n" );
+#endif
+
+  free( path );
+
+#ifdef _DEBUG_MARFS_CONFIGURATION
+  LOG( LOG_INFO, "Freed path after parsing the MarFS configuration file.\n" );
+#endif
 
   repoList = (struct repo **) listObjByName( "repo", config );
   j = 0;
@@ -733,13 +780,14 @@ extern MarFS_Config_Ptr read_configuration( char *path ) {
  * potentially have more than one range per namespace.
  */
 
-    repo_rangeCount = 1;
-    marfs_repo_rangeList = (MarFS_Repo_Range_List) malloc( sizeof( MarFS_Repo_Range_Ptr ) * ( repo_rangeCount + 1 ));
+    repoRangeCount = 1;
+
+    marfs_repo_rangeList = (MarFS_Repo_Range_List) malloc( sizeof( MarFS_Repo_Range_Ptr ) * ( repoRangeCount + 1 ));
     if ( marfs_repo_rangeList == NULL) {
       LOG( LOG_ERR, "Error allocating memory for the MarFS repo range list structure.\n");
       return NULL;
     }
-    marfs_repo_rangeList[repo_rangeCount] = NULL;
+    marfs_repo_rangeList[repoRangeCount] = NULL;
 
     marfs_repo_rangeList[0] = (MarFS_Repo_Range_Ptr) malloc( sizeof( MarFS_Repo_Range ));
     if ( marfs_repo_rangeList[0] == NULL) {
@@ -752,7 +800,7 @@ extern MarFS_Config_Ptr read_configuration( char *path ) {
     marfs_repo_rangeList[0]->repo_ptr = find_repo_by_name( namespaceList[j]->repo_name );
 
     marfs_namespaceList[j]->namespace_repo_range_list = marfs_repo_rangeList;
-    marfs_namespaceList[j]->namespace_repo_range_list_count = repo_rangeCount;
+    marfs_namespaceList[j]->namespace_repo_range_list_count = repoRangeCount;
 
     marfs_namespaceList[j]->namespace_trashmdpath = strdup( namespaceList[j]->trashmdpath );
     marfs_namespaceList[j]->namespace_trashmdpath_len = strlen( namespaceList[j]->trashmdpath );
@@ -819,7 +867,11 @@ extern MarFS_Config_Ptr read_configuration( char *path ) {
   fflush( stdout );
 #endif
 
-  freeConfigStructContent( config );
+/*
+ * This seems to generate an error indicating we're freeing a pointer not allocated.
+ *
+ *  freeConfigStructContent( config );
+ */
 
   return marfs_configPtr;
 }
