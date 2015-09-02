@@ -182,6 +182,26 @@ int marfs_access (const char* path,
    return 0;
 }
 
+
+// NOTE: we don't allow setuid or setgid.  We're using those bits for two
+//     purposes:
+//
+//     (a) on a file, the setuid-bit indicates SEMI-DIRECT mode.  In this
+//     case, the size of the MD file is not correct, because it isn't
+//     truncated to corect size, because the underlying FS is parallel, and
+//     in the case of N:1 writes, it is awkward for us to manage locking
+//     across multiple writers, so we can correctly trunc the MD file.
+//     Instead, we let the parallel FS do that (because it can).  So, to
+//     get the size, we need to go stat the PFS file, instead.  If we wrote
+//     this flag in an xattr, we'd have to read xattrs for every stat, just
+//     so we can learn whether the file-size returned by 'stat' is correct
+//     or not.
+//
+//     (b) on a directory, the setuid-bit indicates MD-sharding.  [FUTURE]
+//     In this case, the MD-directory will be a stand-in for a remote MD
+//     directory.  We hash on a namespace + directory-inode and lookup that
+//     spot in a remote-directory, to get the MD contents.
+
 int marfs_chmod(const char* path,
                 mode_t      mode) {
    PUSH_USER();
@@ -192,6 +212,11 @@ int marfs_chmod(const char* path,
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+
+   if (mode && (S_ISUID | S_ISGID)) {
+      LOG(LOG_INFO, "attempt to setuid or setgid on path '%s'\n", path);
+      return -EPERM;
+   }
 
    // No need for access check, just try the op
    // Appropriate  chmod call filling in fuse structure
@@ -232,6 +257,8 @@ int marfs_fsync (const char*            path,
    // I don’t know if we do anything here, I don’t think so, we will be in
    // sync at the end of each thread end
 
+   // [jti:] in the case of SEMI_DIRECT, we could fsync the storage
+
    LOG(LOG_INFO, "NOP for %s", path);
    return 0; // Just return
 }
@@ -242,6 +269,8 @@ int marfs_fsyncdir (const char*            path,
                     struct fuse_file_info* ffi) {
    // don’t think there is anything to do here, we wont have dirty data
    // unless its trash
+
+   // [jti:] in the case of SEMI_DIRECT, we could fsync the storage
 
    LOG(LOG_INFO, "NOP for %s", path);
    return 0; // just return
@@ -351,23 +380,55 @@ int marfs_ftruncate(const char*            path,
 }
 
 
-// This is "stat()"
+// This is stat()
 int marfs_getattr (const char*  path,
-                   struct stat* stbuf) {
+                   struct stat* stp) {
    PUSH_USER();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
-   LOG(LOG_INFO, "expanded  %s -> %s\n", path, info.post.md_path);
+   LOG(LOG_INFO, "expanded    %s -> %s\n", path, info.post.md_path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, R_META);
 
+   // The "root" namespace is artificial
+   // It appears to be owned by root, with X-only access to users
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+
+      // everything defaults to zero
+      memset(stp, 0, sizeof(struct stat));
+
+      // match the size of a directory in GPFS
+      stp->st_size    = 512;
+      stp->st_blksize = 512;
+      stp->st_blocks  = 1;
+
+      time_t     now = time(NULL);
+      if (now == (time_t)-1) {
+         LOG(LOG_ERR, "time() failed\n");
+         return -1;
+      }
+      stp->st_atime  = now;
+      stp->st_mtime  = now;     // TBD: use mtime of config-file, or mount-time
+      stp->st_ctime  = now;     // TBD: use ctime of config-file, or mount-time
+
+      stp->st_uid     = 0;
+      stp->st_gid     = 0;
+      stp->st_mode = (S_IFDIR | S_IRWXU | S_IRWXG | S_IXOTH ); // "drwxrwx---x."
+
+      return 0;
+   }
+
    // No need for access check, just try the op
    // appropriate statlike call filling in fuse structure (dont mess with xattrs here etc.)
    LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
-   TRY_GE0(lstat, info.post.md_path, stbuf);
+   TRY_GE0(lstat, info.post.md_path, stp);
+
+   // mask out setuid/setgid bits.  Those are belong to us.  (see marfs_chmod())
+   stp->st_mode &= ~(S_ISUID | S_ISGID);
 
    POP_USER();
    return 0;
@@ -392,6 +453,12 @@ int marfs_getxattr (const char* path,
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, (R_META));
+
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+      return -ENOATTR;          // fingers in ears, la-la-la
+   }
 
    // *** make sure they aren’t getting a reserved xattr***
    if ( !strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize) ) {
@@ -446,6 +513,13 @@ int marfs_listxattr (const char* path,
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+      size = 0;                 // amount needed for 
+      return 0;
+   }
 
    // No need for access check, just try the op
    // Appropriate  listxattr call
@@ -730,7 +804,6 @@ int marfs_open (const char*            path,
    // If no xattrs, we let user read/write directly into the file.
    // This corresponds to a file that was created in DIRECT repo-mode.
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
-      // fh->md_fd = open(info->post.md_path, (ffi->flags & (O_RDONLY | O_WRONLY | O_RDWR)));
       fh->md_fd = open(info->post.md_path, ffi->flags);
       if (fh->md_fd < 0)
          RETURN(-errno);
@@ -838,13 +911,36 @@ int marfs_opendir (const char*            path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, (R_META));
 
+   if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_DirHandle))))
+      return -ENOMEM;
+
+   MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
+
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+
+      if (geteuid()) {
+         free(dh);
+         ffi->fh = 0;
+         return -EACCES;
+      }
+
+      // root 
+      dh->use_it = 1;
+      dh->internal.it = namespace_iterator();
+      return 0;
+   }
+
    // No need for access check, just try the op
    // Appropriate  opendir call filling in fuse structure
    ///   mode_t mode = ~(fuse_get_context()->umask); /* ??? */
    ///   TRY_GE0(opendir, info.md_path, ffi->flags, mode);
    ///   TRY_GE0(opendir, info.post.md_path);
    TRY_GT0(opendir, info.post.md_path);
-   ffi->fh = rc_ssize;          /* open() successfully returned a dirp */
+
+   ///   ffi->fh = rc_ssize;          /* open() successfully returned a dirp */
+   dh->internal.dirp = (DIR*)rc_ssize;
 
    POP_USER();
    return 0;
@@ -1128,31 +1224,52 @@ int marfs_readdir (const char*            path,
 
    // No need for access check, just try the op
    // Appropriate  readdir call filling in fuse structure  (fuse does this in chunks)
-   DIR*           dirp = (DIR*)ffi->fh;
-   struct dirent* dent;
-   
-   while (1) {
-      // #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
-      //      struct dirent* dent_r;       /* for readdir_r() */
-      //      TRY0(readdir_r, dirp, dent, &dent_r);
-      //      if (! dent_r)
-      //         break;                 /* EOF */
-      //      if (filler(buf, dent_r->d_name, NULL, 0))
-      //         break;                 /* no more room in <buf>*/
+   MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
 
-      // #else
-      errno = 0;
-      TRY_GE0(readdir, dirp);
-      if (! rc_ssize) {
-         if (errno)
-            return -errno;      /* error */
-         break;                 /* EOF */
+   if (dh->use_it) {
+      NSIterator* it = &dh->internal.it;
+      while (1) {
+         MarFS_Namespace* ns = namespace_next(it);
+         if (! ns)
+            break;              // EOF
+         if (ns->is_root)
+            continue;
+         char* dir_name = (char*)ns->mnt_suffix; // we're not going to modify it
+         while (dir_name && *dir_name && *dir_name=='/')
+            ++dir_name;
+         LOG(LOG_INFO, " ns = %s -> '%s'\n", ns->name, dir_name);
+         if (filler(buf, dir_name, NULL, 0))
+            break;              // no more room in <buf>
       }
-      dent = (struct dirent*)rc_ssize;
-      if (filler(buf, dent->d_name, NULL, 0))
-         break;                 /* no more room in <buf>*/
-      // #endif
+   }
+   else {
+      /// DIR*           dirp = (DIR*)ffi->fh;
+      DIR*           dirp = dh->internal.dirp;
+      struct dirent* dent;
+   
+      while (1) {
+         // #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
+         //      struct dirent* dent_r;       /* for readdir_r() */
+         //      TRY0(readdir_r, dirp, dent, &dent_r);
+         //      if (! dent_r)
+         //         break;                 /* EOF */
+         //      if (filler(buf, dent_r->d_name, NULL, 0))
+         //         break;                 /* no more room in <buf>*/
+
+         // #else
+         errno = 0;
+         TRY_GE0(readdir, dirp);
+         if (! rc_ssize) {
+            if (errno)
+               return -errno;      /* error */
+            break;                 /* EOF */
+         }
+         dent = (struct dirent*)rc_ssize;
+         if (filler(buf, dent->d_name, NULL, 0))
+            break;                 /* no more room in <buf>*/
+         // #endif
       
+      }
    }
 
    POP_USER();
@@ -1160,8 +1277,8 @@ int marfs_readdir (const char*            path,
 }
 
 
-// It appears that, unlike readlink(), we shouldn't return the number of
-// chars in the path.  Also, unlinke readlink(), we *should* write the
+// It appears that, unlike readlink(2), we shouldn't return the number of
+// chars in the path.  Also, unlike readlink(2), we *should* write the
 // final '\0' into the caller's buf.
 int marfs_readlink (const char* path,
                     char*       buf,
@@ -1337,12 +1454,18 @@ int marfs_releasedir (const char*            path,
 
       // Check/act on iperms from expanded_path_info_structure, this op requires RM
       CHECK_PERMS(info.ns->iperms, (R_META));
-   }
 
-   // No need for access check, just try the op
-   // Appropriate  closedir call filling in fuse structure
-   DIR* dirp = (DIR*)ffi->fh;
-   TRY0(closedir, dirp);
+      // No need for access check, just try the op
+      // Appropriate  closedir call filling in fuse structure
+      MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
+      if (! dh->use_it) {
+         LOG(LOG_INFO, "not root-dir\n");
+         DIR* dirp = dh->internal.dirp;
+         TRY0(closedir, dirp);
+      }
+      free(dh);
+      ffi->fh = 0;
+   }
 
    LOG(LOG_INFO, "exit -- skipping pop_user()\n");
    //   POP_USER();
@@ -1367,6 +1490,12 @@ int marfs_removexattr (const char* path,
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+      return -EACCES;
+   }
 
    // *** make sure they aren’t removing a reserved xattr***
    if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize))
@@ -1396,9 +1525,18 @@ int marfs_rename (const char* path,
    memset((char*)&info2, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info2, to);
 
-
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "src is_root\n");
+      return -EPERM;
+   }
+   if (info2.ns->is_root) {
+      LOG(LOG_INFO, "dst is_root\n");
+      return -EPERM;
+   }
 
    // No need for access check, just try the op
    // Appropriate  rename call filling in fuse structure 
@@ -1419,6 +1557,12 @@ int marfs_rmdir (const char* path) {
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+      return -EPERM;
+   }
 
    // No need for access check, just try the op
    // Appropriate rmdirlike call filling in fuse structure 
@@ -1448,6 +1592,12 @@ int marfs_setxattr (const char* path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+      return -EPERM;
+   }
+
    // *** make sure they aren’t setting a reserved xattr***
    if ( !strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize) ) {
       LOG(LOG_ERR, "denying reserved setxattr(%s, %s, ...)\n", path, name);
@@ -1465,7 +1615,7 @@ int marfs_setxattr (const char* path,
 // The OS seems to call this from time to time, with <path>=/ (and
 // euid==0).  We could walk through all the namespaces, and accumulate
 // total usage.  (Maybe we should have a top-level fsinfo path?)  But I
-// guess we don't want to allow average users from doing this.
+// guess we don't want to allow average users to do this.
 int marfs_statfs (const char*      path,
                   struct statvfs*  statbuf) {
    PUSH_USER();
@@ -1477,8 +1627,19 @@ int marfs_statfs (const char*      path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, (R_META));
 
-   // Open and read from lazy-fsinfo data file updated by batch process  fsinfopath 
-   //    Size of file sytem is quota etc.
+   // NOTE: Until fsinfo is available, we're just ignoring.
+   return -ENOSYS;
+   //   if (geteuid()) {
+   //      LOG(LOG_ERR, "non-root can't stavfs()\n");
+   //      return -EACCES;
+   //   }
+   //   // Open and read from lazy-fsinfo data file updated by batch process fsinfopath 
+   //   // Size of file sytem is quota etc.
+   //   memset(statbuf, 0, sizeof(struct statvfs));
+   //   statbuf->f_bsize = 512;      // matches GPFS
+   //   ...
+
+
    POP_USER();
    return 0;
 }
@@ -1501,9 +1662,14 @@ int marfs_symlink (const char* target,
    memset((char*)&lnk_info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&lnk_info, linkname);   // (okay if this file doesn't exist)
 
-
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(lnk_info.ns->iperms, (R_META | W_META));
+
+   // The "root" namespace is artificial
+   if (lnk_info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+      return -EPERM;
+   }
 
    // No need for access check, just try the op
    // Appropriate  symlink call filling in fuse structure 
@@ -1532,6 +1698,12 @@ int marfs_truncate (const char* path,
 
    // Call access syscall to check/act if allowed to truncate for this user 
    ACCESS(info.post.md_path, (W_OK));
+
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+      return -EPERM;
+   }
 
    // If this is not just a normal md, it's the file data
    STAT_XATTRS(&info); // to get xattrs
@@ -1569,6 +1741,12 @@ int marfs_unlink (const char* path) {
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
    CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+      return -EPERM;
+   }
 
    // Call access() syscall to check/act if allowed to unlink for this user 
    //
@@ -1643,6 +1821,12 @@ int marfs_utimens(const char*           path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
+   // The "root" namespace is artificial
+   if (info.ns->is_root) {
+      LOG(LOG_INFO, "is_root\n");
+      return -EPERM;
+   }
+
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
@@ -1680,7 +1864,7 @@ int marfs_write(const char*            path,
    CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
    // No need to call access as we called it in open for write
-   // Make sure security is set up for accessing objrepo using iwrite_datarepo
+   // Make sure security is set up for accessing repo using iwrite_datarepo
 
    // If file has no xattrs its just a normal use the md file for data,
    //   just do the write and return, don’t bother with all this stuff below

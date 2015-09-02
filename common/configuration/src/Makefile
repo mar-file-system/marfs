@@ -2,8 +2,11 @@ SHELL = /bin/bash
 CC = gcc
 
 #PARSE_DIR = /home/brettk/PA2X
+
+### PARSE_DIR = /Users/brettk/code/marfs_config/PA2X
+### LOG_DIR = /Users/brettk/code/mar-file-system/marfs/common/log/src
 PARSE_DIR = /Users/brettk/code/marfs_config/PA2X
-LOG_DIR = /Users/brettk/code/mar-file-system/marfs/common/log/src
+LOG_DIR =   ../log/src
 
 #LIBS = -pthread
 LIBS =

@@ -86,10 +86,13 @@ SHELL = /bin/bash
 # logging.* has now been moved to here
 LOGGING = ../../common/log/src
 
+# Brett's configuration reader is (temporarily) here
+CONFIG = ../../common/configuration/src
+
+
 OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_fuse.o
 SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_fuse.c
 H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h
-
 
 
 # pipe-to-logger works, but without -d, all fuse stdout/stderr is lost
@@ -125,7 +128,6 @@ LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
 
 
 # some stuff has been moved out of this spot in the tree
-
 CFLAGS  += -I$(LOGGING)
 
 
@@ -194,6 +196,20 @@ endif
 ifdef GPROF
 	# CFLAGS += -pg
 	CFLAGS = -pg
+endif
+
+# use the old jti static-config, instead of the new.
+#
+# WARN: It seems to me that common/configuration/src/ is not yet ready to
+#     build something we can link with.  So, defining MARFS_NEW_CONFIG will
+#     probably not allow you to build Fuse with the new config, until we
+#     have access to whatever is in Brettk's PAX directory.
+ifdef MARFS_NEW_CONFIG
+	DEFS+=NEW_CONFIG
+	CFLAGS  += -I$(CONFIG)
+	LDFLAGS += -L$(CONFIG)
+else
+	H    += marfs_base_static_config.h
 endif
 
 
