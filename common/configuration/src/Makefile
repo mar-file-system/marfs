@@ -1,6 +1,7 @@
 SHELL = /bin/bash
 CC = gcc
 
+<<<<<<< HEAD
 # To make this useful to people who have Ron's parser installed in
 # arbitrary locations, I've added a requirement that you define an
 # environment variable PARSE_DIR which is the path to your install.
@@ -11,8 +12,8 @@ all:   test_marfs_configuration
 debug: test_marfs_configuration-d
 
 
-# PARSE_DIR = /Users/brettk/code/marfs_config/PA2X
-LOG_DIR   = ../../log/src
+# PARSE_DIR = ../../../../../PA2X/PA2X
+LOG_DIR =   ../../log/src
 
 #LIBS = -lpthread
 LIBS =
