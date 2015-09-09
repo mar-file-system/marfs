@@ -1,14 +1,16 @@
 SHELL = /bin/bash
 CC = gcc
 
-<<<<<<< HEAD
 # To make this useful to people who have Ron's parser installed in
 # arbitrary locations, I've added a requirement that you define an
-# environment variable PARSE_DIR which is the path to your install.
-# You can define this in your shell-init, or on the command-line,
-# using 'make ... PARSE_DIR=/my/install'    [jti]
+# environment variable PARSE_DIR which is the path to your install of Ron's
+# code.  You can define this in your shell-init, or on the command-line,
+# using 'make ... PARSE_DIR=/my/install' [jti]
 
-all:   test_marfs_configuration
+# all:   test_marfs_configuration
+# debug: test_marfs_configuration-d
+
+all:   lib tester
 debug: test_marfs_configuration-d
 
 
@@ -17,7 +19,7 @@ LOG_DIR =   $(PWD)/../../log/src
 
 #LIBS = -lpthread
 LIBS =
-OPTIONS   = -D_GNU_SOURCE -g
+OPTIONS   := -D_GNU_SOURCE -g
 PARSE_OPT = -DDATAPARSE
 LOG_OPT   = -DUSE_STDOUT -DLOG_PREFIX='"config"'
 
@@ -26,7 +28,7 @@ DEBUG   = -D_DEBUG_MARFS_CONFIGURATION
 #DEBUG   = -DDEBUG -D_DEBUG_MARFS_CONFIGURATION
 
 # BLUEPRINT=$(PWD)/marfs_configuration_blueprint.cfg
-BLUEPRINT=$(PWD)/marfs_cctest.cfg
+BLUEPRINT := $(PWD)/marfs_cctest.cfg
 
 
 
@@ -63,7 +65,7 @@ parser: parse_dir
 	@ echo; echo "#-- making datapars with $(BLUEPRINT)"
 	@ $(MAKE) -C $(PARSE_DIR) datapars CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)" conf=$(BLUEPRINT)
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
-	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)"
+	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 
 CFLAGS += -I$(PARSE_DIR) -DPARSE_DIR=$(PARSE_DIR)
 
@@ -99,12 +101,14 @@ H   = marfs_configuration.h
 
 
 libconfig.a: parser $(LOG_OBJ) $(OBJ)
+	@ echo; echo "#-- building $@"
 	ar -cvr $@ $(PARSE_OBJ)
 	ar -cvr $@ $(LOG_OBJ)
 	ar -cvr $@ $(OBJ)
 
 lib: libconfig.a
 
+LDFLAGS += -L.
 
 # ---------------------------------------------------------------------------
 # Alternate build of Brett's config-tester, using the above
@@ -114,8 +118,8 @@ lib: libconfig.a
 # LDFLAGS += -L.
 tester: libconfig.a
 	@ echo; echo "#-- building $@"
-	# $(CC) -o $@ $(CFLAGS) $(LDFLAGS) test_marfs_configuration.c -lconfig
-	$(CC) -o $@ -I$(PARSE_DIR) -I$(LOG_DIR) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) $(LOG_OPT) -L. test_marfs_configuration.c -lconfig
+	# $(CC) -o $@ -I$(PARSE_DIR) -I$(LOG_DIR) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) $(LOG_OPT) -L. test_marfs_configuration.c -lconfig
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) test_marfs_configuration.c -lconfig
 
 
 # ---------------------------------------------------------------------------
@@ -132,13 +136,7 @@ test_marfs_configuration: parse_dir
 	$(CC) $(LIBS) $(PARSE_DIR)/confpars.o $(PARSE_DIR)/parsedata.o $(PARSE_DIR)/path-switch.o $(LOG_DIR)/logging.o marfs_configuration.o test_marfs_configuration.o -o test_marfs_configuration
 
 test_marfs_configuration-d: parse_dir
-	$(CC) -c $(PARSE_DIR)/confpars.c -o $(PARSE_DIR)/confpars.o $(OPTIONS) $(PARSE_OPT) $(DEBUG)
-	$(CC) -c $(PARSE_DIR)/path-switch.c -o $(PARSE_DIR)/path-switch.o $(OPTIONS) $(PARSE_OPT) $(DEBUG)
-	$(CC) -c $(PARSE_DIR)/parsedata.c -o $(PARSE_DIR)/parsedata.o $(OPTIONS) $(PARSE_OPT) $(DEBUG)
-	$(CC) -c $(LOG_DIR)/logging.c -o $(LOG_DIR)/logging.o $(OPTIONS) $(LOG_OPT) $(DEBUG)
-	$(CC) -I$(PARSE_DIR) -I$(LOG_DIR) -c marfs_configuration.c -o marfs_configuration.o $(OPTIONS) $(PARSE_OPT) $(LOG_OPT) $(DEBUG)
-	$(CC) -I$(PARSE_DIR) -I$(LOG_DIR) -c test_marfs_configuration.c -o test_marfs_configuration.o $(OPTIONS) $(PARSE_OPT) $(LOG_OPT) $(DEBUG)
-	$(CC) $(LIBS) $(PARSE_DIR)/confpars.o $(PARSE_DIR)/parsedata.o $(PARSE_DIR)/path-switch.o $(LOG_DIR)/logging.o marfs_configuration.o test_marfs_configuration.o -o test_marfs_configuration
+	$(MAKE) test_marfs_configuration OPTIONS="$(DEBUG)"
 
 
 

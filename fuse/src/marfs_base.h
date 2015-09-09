@@ -245,7 +245,10 @@ extern float MarFS_config_vers;
 
 
 
-#ifdef NEW_CONFIG
+#ifdef STATIC_CONFIG
+# include "marfs_base_static_config.h"
+
+#else
 # include "marfs_configuration.h"
 typedef MarFS_CompType      CompressionMethod;
 typedef uint64_t            CorrectInfo;
@@ -256,9 +259,6 @@ typedef MarFS_SecType       EncryptionMethod;
 #define CORRECT_NONE        CORRECTTYPE_NONE;
 #define MarFS_mnt_top     marfs_config->mnt_top
 #define MarFS_config_vers marfs_config->version
-
-#else
-# include "marfs_base_static_config.h"
 #endif
 
 

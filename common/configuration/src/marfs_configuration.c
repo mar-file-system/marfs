@@ -258,8 +258,7 @@ int iterate_marfs_list( void **marfs_list, int ( *marfsPtrCallback )( void *marf
  ****************************************************************************/
 MarFS_Namespace_Ptr find_namespace_by_name( const char *name ) {
 
-  int              i;
-  size_t           name_len = strlen( name );
+  const size_t     name_len = strlen( name );
 
   MarFS_Namespace* ns = NULL;
   NSIterator       it = namespace_iterator();
@@ -361,8 +360,6 @@ MarFS_Repo_Ptr find_repo_by_range (
 }
 
 MarFS_Repo_Ptr find_repo_by_name( const char* name ) {
-
-  int i;
 
   MarFS_Repo*   repo = NULL;
   RepoIterator  it = repo_iterator();
@@ -1044,7 +1041,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
   LOG( LOG_INFO, "\tconfig name            : %s\n", marfs_config->name );
   LOG( LOG_INFO, "\tconfig version         : %f\n", marfs_config->version );
   LOG( LOG_INFO, "\tconfig mnt_top         : %s\n", marfs_config->mnt_top );
-  LOG( LOG_INFO, "\tconfig namespace count : %lu\n", marfs_config->namespace_count );
+  // LOG( LOG_INFO, "\tconfig namespace count : %lu\n", marfs_config->namespace_count );
   LOG( LOG_INFO, "\tconfig repo count      : %d\n", repoCount );
   fflush( stdout );
 #endif
@@ -1059,12 +1056,12 @@ static MarFS_Config_Ptr read_configuration_internal() {
 }
 
 // return 0 for success, non-zero for failure
-// We'll assume that no config is a failure.
+// We assume that no config is a failure.
+//
 int read_configuration() {
    marfs_config = read_configuration_internal();
-   return (marfs_config ? 0 : 1);
+   return ((marfs_config) ? 0 : 1);
 }
-
 
 
 

@@ -604,18 +604,31 @@ int read_config(const char* config_fname) {
 }
 
 
-// ad-hoc tests of various inconsistencies, or illegal states, that are
-// possible after read_config() has loaded a config file.
+// This is just a collection of ad-hoc tests for various inconsistencies
+// and illegal states, that wouldn't be detected by the parser.
+//
+// Return 0 for success, non-zero for failure.
+//
+
+
 int validate_config() {
-   const size_t     recovery = sizeof(RecoveryInfo) +8;
 
    int retval = 0;
    int i;
 
-   // repo checks
-   for (i=0; i<_repo_count; ++i) {
-      MarFS_Repo* repo = _repo[i];
+   const size_t     recovery = sizeof(RecoveryInfo) +8;
 
+   // repo checks
+   MarFS_Repo*   repo = NULL;
+   RepoIterator  it = repo_iterator();
+   while ((repo = repo_next(&it))) {
+
+      // chunk_size must be greater than the size of the recovery-info that
+      // is written into the tail of objects.
+      //
+      // NOTE: This shouldn't apply to repos that are DIRECT or SEMI_DIRECT
+      //     because they won't store any recovery-data.
+      //
       if (repo->chunk_size <= recovery) {
          LOG(LOG_ERR, "repo '%s' has chunk-size (%ld) "
              "less than the size of recovery-info (%ld)\n",
@@ -624,18 +637,19 @@ int validate_config() {
       }
    }
 
-#if 0
-   // TBD
-
-   // namespace checks
-   for (i=0; i<_ns_count; ++i) {
-      MarFS_Namespace* ns = _ns[i];
-      // ...
-   }
-#endif
+   //   // TBD
+   //
+   //   // namespace checks
+   //   MarFS_Namespace* ns = NULL;
+   //   NSIterator       it = namespace_iterator();
+   //   while (ns = namespace_next(&it)) {
+   //      // ...
+   //   }
 
    return retval;
 }
+
+
 
 
 

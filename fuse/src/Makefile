@@ -210,17 +210,16 @@ ifdef USE_SPROXYD
 endif
 
 
-# if MARFS_NEW_CONFIG is defined, link with the config-reader library.
-# Otherwise, use the old jti static-config.
-ifdef NEW_CONFIG
-	DEFS    += NEW_CONFIG
+# if STATIC_CONFIG is defined, use the old jti static-config.
+# Otherwise, link with the config-reader library.
+ifdef STATIC_CONFIG
+	DEFS    += STATIC_CONFIG
+	OBJS += marfs_base_static_config.o
+	H    += marfs_base_static_config.h
+else
 	CFLAGS  += -I$(CONFIG)
 	LDFLAGS += -L$(CONFIG)
 	LIBS    += -lconfig
-	# OBJS += marfs_configuration.o
-else
-	OBJS += marfs_base_static_config.o
-	H    += marfs_base_static_config.h
 endif
 
 
@@ -336,13 +335,13 @@ fuse: fuse.std
 fuse.std: pre_req
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=2
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=1
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1 STATIC_CONFIG=1
 
 fuse.lean: pre_req
-	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 STATIC_CONFIG=1
 
 fuse.dbg: pre_req
-	@ $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg LINK_LIBFUSE=1
+	@ $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg LINK_LIBFUSE=1 STATIC_CONFIG=1
 #	@ $(MV) marfs_fuse marfs_fuse.dbg
 
 
@@ -381,7 +380,7 @@ lib: pre_req libmarfs.a
 
 .PHONY: lib_new
 lib_new: pre_req clean
-	@ $(MAKE) libmarfs.a NEW_CONFIG=1
+	@ $(MAKE) libmarfs.a
 
 
 # ...........................................................................
