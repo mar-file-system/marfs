@@ -117,10 +117,17 @@ int main(int argc, char* argv[])
    // NOTE: This also now *requires* that marfs fuse is always only run as root.
    __TRY0(seteuid, 0);
 
-   if (load_config("~/marfs.config")) {
+#ifdef NEW_CONFIG
+   if (read_configuration()) {
+      LOG(LOG_ERR, "read_configuration() failed.  Quitting\n");
+      return -1;
+   }
+#else
+   if (read_config("~/marfs.config")) {
       LOG(LOG_ERR, "load_config() failed.  Quitting\n");
       return -1;
    }
+#endif
 
    init_xattr_specs();
 

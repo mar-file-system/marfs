@@ -29,12 +29,11 @@
 // FOR NOW:  Just do a simple lookup in the hard-coded vector of namespaces.
 // ---------------------------------------------------------------------------
 
-float MarFS_config_vers = 0.001;
-
+float                    MarFS_config_vers = 0.001;
 
 // top level mount point for fuse/pftool
-char*                   MarFS_mnt_top = NULL;
-size_t                  MarFS_mnt_top_len = 0;
+char*                    MarFS_mnt_top = NULL;
+size_t                   MarFS_mnt_top_len = 0;
 
 // quick-n-dirty
 // For now, this is a dynamically-allocated vector of pointers.
@@ -106,7 +105,7 @@ MarFS_Namespace* push_namespace(MarFS_Namespace* dummy, MarFS_Repo* repo) {
       LOG(LOG_ERR, "NULL namespace\n");
       exit(1);
    }
-   if (!dummy->is_root && !repo) {
+   if (!IS_ROOT_NS(dummy) && !repo) {
       LOG(LOG_ERR, "NULL repo\n");
       exit(1);
    }
@@ -136,7 +135,7 @@ MarFS_Namespace* push_namespace(MarFS_Namespace* dummy, MarFS_Repo* repo) {
 
    // these make it quicker to parse parts of the paths
    ns->name_len       = strlen(ns->name);
-   ns->mnt_suffix_len = strlen(ns->mnt_suffix);
+   ns->mnt_path_len   = strlen(ns->mnt_path);
    ns->md_path_len    = strlen(ns->md_path);
 
    _ns[_ns_count++] = ns;
@@ -145,7 +144,7 @@ MarFS_Namespace* push_namespace(MarFS_Namespace* dummy, MarFS_Repo* repo) {
 
 int validate_config();          // fwd-decl
 
-int load_config(const char* config_fname) {
+int read_config(const char* config_fname) {
 
    // config_fname is ignored, for now, but will eventually hold everythying
    if (! config_fname)
@@ -168,137 +167,138 @@ int load_config(const char* config_fname) {
    MarFS_Repo r_dummy;
 
    r_dummy = (MarFS_Repo) {
-      .name         = "sproxyd_jti",  // repo is sproxyd: this must match fastcgi-path
-      .host         = "10.135.0.21:81",
-      .access_proto = PROTO_SPROXYD,
+      .name          = "sproxyd_jti",  // repo is sproxyd: this must match fastcgi-path
+      .host          = "10.135.0.21:81",
+      .access_method = ACCESSMETHOD_SPROXYD,
       // .chunk_size   = (1024 * 1024 * 256), /* max MarFS object (tune to match storage) */
       // .chunk_size   = (1024 * 1024 * 512), /* max MarFS object (tune to match storage) */
-      .chunk_size   = (1024 * 1024 * 1028), /* max MarFS object (tune to match storage) */
-      .flags        = (REPO_ONLINE),
-      .auth         = AUTH_S3_AWS_MASTER,
-      .compression  = COMPRESS_NONE,
-      .correction   = CORRECT_NONE,
-      .encryption   = ENCRYPT_NONE,
-      .latency_ms   = (10 * 1000) };
+      .chunk_size    = (1024 * 1024 * 1028), /* max MarFS object (tune to match storage) */
+      .is_online     = 1,
+      .auth          = AUTH_S3_AWS_MASTER,
+      .compression   = COMPRESS_NONE,
+      .correction    = CORRECT_NONE,
+      .encryption    = ENCRYPT_NONE,
+      .latency_ms    = (10 * 1000) };
    push_repo(&r_dummy);
 
    // tiny, so detailed debugging (where we watch every char go over the line)
    //       won't be overwhelming at the scale needed for Multi.
    r_dummy = (MarFS_Repo) {
-      .name         = "sproxyd_2k",  // repo is sproxyd: this must match fastcgi-path
-      .host         = "10.135.0.21:81",
-      .access_proto = PROTO_SPROXYD,
-      .chunk_size   = (2048), /* i.e. max MarFS object (small for debugging) */
-      .flags        = (REPO_ONLINE),
-      .auth         = AUTH_S3_AWS_MASTER,
-      .compression  = COMPRESS_NONE,
-      .correction   = CORRECT_NONE,
-      .encryption   = ENCRYPT_NONE,
-      .latency_ms   = (10 * 1000),
+      .name          = "sproxyd_2k",  // repo is sproxyd: this must match fastcgi-path
+      .host          = "10.135.0.21:81",
+      .access_method = ACCESSMETHOD_SPROXYD,
+      .chunk_size    = (2048), /* i.e. max MarFS object (small for debugging) */
+      .is_online     = 1,
+      .auth          = AUTH_S3_AWS_MASTER,
+      .compression   = COMPRESS_NONE,
+      .correction    = CORRECT_NONE,
+      .encryption    = ENCRYPT_NONE,
+      .latency_ms    = (10 * 1000),
    };
    push_repo(&r_dummy);
 
    // For Alfred, testing GC and quota utilities
    r_dummy = (MarFS_Repo) {
-      .name         = "sproxyd_64M",  // repo is sproxyd: this must match fastcgi-path
-      .host         = "10.135.0.22:81",
-      .access_proto = PROTO_SPROXYD,
-      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
-      .flags        = (REPO_ONLINE),
-      .auth         = AUTH_S3_AWS_MASTER,
-      .compression  = COMPRESS_NONE,
-      .correction   = CORRECT_NONE,
-      .encryption   = ENCRYPT_NONE,
-      .latency_ms   = (10 * 1000) };
+      .name          = "sproxyd_64M",  // repo is sproxyd: this must match fastcgi-path
+      .host          = "10.135.0.22:81",
+      .access_method = ACCESSMETHOD_SPROXYD,
+      .chunk_size    = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
+      .is_online     = 1,
+      .auth          = AUTH_S3_AWS_MASTER,
+      .compression   = COMPRESS_NONE,
+      .correction    = CORRECT_NONE,
+      .encryption    = ENCRYPT_NONE,
+      .latency_ms    = (10 * 1000) };
    push_repo(&r_dummy);
 
    // For Brett, unit-testing, small enough to make it easy to create MULTIs
    r_dummy = (MarFS_Repo) {
-      .name         = "sproxyd_1M",  // repo is sproxyd: this must match fastcgi-path
-      .host         = "10.135.0.22:81",
-      .access_proto = PROTO_SPROXYD,
-      .chunk_size   = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
-      .flags        = (REPO_ONLINE),
-      .auth         = AUTH_S3_AWS_MASTER,
-      .compression  = COMPRESS_NONE,
-      .correction   = CORRECT_NONE,
-      .encryption   = ENCRYPT_NONE,
-      .latency_ms   = (10 * 1000)
+      .name          = "sproxyd_1M",  // repo is sproxyd: this must match fastcgi-path
+      .host          = "10.135.0.22:81",
+      .access_method = ACCESSMETHOD_SPROXYD,
+      .chunk_size    = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
+      .is_online     = 1,
+      .auth          = AUTH_S3_AWS_MASTER,
+      .compression   = COMPRESS_NONE,
+      .correction    = CORRECT_NONE,
+      .encryption    = ENCRYPT_NONE,
+      .latency_ms    = (10 * 1000)
    };
    push_repo(&r_dummy);
 
    // @@@-HTTPS: For Brett, unit-testing, small enough to make it easy to create MULTIs
    r_dummy = (MarFS_Repo) {
-      .name         = "sproxyd_1M_https",  // repo is sproxyd: this must match fastcgi-path
-      .host         = "10.135.0.22:444",
-      .access_proto = PROTO_SPROXYD,
-      .chunk_size   = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
-      .flags        = (REPO_ONLINE | REPO_SSL),
-      .auth         = AUTH_S3_AWS_MASTER,
-      .compression  = COMPRESS_NONE,
-      .correction   = CORRECT_NONE,
-      .encryption   = ENCRYPT_NONE,
-      .latency_ms   = (10 * 1000)
+      .name          = "sproxyd_1M_https",  // repo is sproxyd: this must match fastcgi-path
+      .host          = "10.135.0.22:444",
+      .access_method = ACCESSMETHOD_SPROXYD,
+      .chunk_size    = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
+      .is_online     = 1,
+      .auth          = AUTH_S3_AWS_MASTER,
+      .compression   = COMPRESS_NONE,
+      .correction    = CORRECT_NONE,
+      .encryption    = ENCRYPT_NONE,
+      .latency_ms    = (10 * 1000)
    };
    push_repo(&r_dummy);
 
    // free-for-all
    r_dummy = (MarFS_Repo) {
-      .name         = "sproxyd_pub",  // repo is sproxyd: this must match fastcgi-path
-      .host         = "10.135.0.28:81",
-      .access_proto = PROTO_SPROXYD,
-      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
-      .flags        = (REPO_ONLINE),
-      .auth         = AUTH_S3_AWS_MASTER,
-      .compression  = COMPRESS_NONE,
-      .correction   = CORRECT_NONE,
-      .encryption   = ENCRYPT_NONE,
-      .latency_ms   = (10 * 1000) };
+      .name          = "sproxyd_pub",  // repo is sproxyd: this must match fastcgi-path
+      .host          = "10.135.0.28:81",
+      .access_method = ACCESSMETHOD_SPROXYD,
+      .chunk_size    = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
+      .is_online     = 1,
+      .auth          = AUTH_S3_AWS_MASTER,
+      .compression   = COMPRESS_NONE,
+      .correction    = CORRECT_NONE,
+      .encryption    = ENCRYPT_NONE,
+      .latency_ms    = (10 * 1000) };
    push_repo(&r_dummy);
 
    // S3 on EMC ECS
    r_dummy = (MarFS_Repo) {
-      .name         = "emcS3_00",  // repo is s3: this must match existing bucket
-      .host         = "10.140.0.15:9020", //"10.143.0.1:80",
-      .access_proto = PROTO_S3_EMC,
-      .chunk_size   = (1024 * 1024 * 256), /* max MarFS object (tune to match storage) */
-      .flags        = (REPO_ONLINE),
-      .auth         = AUTH_S3_AWS_MASTER,
-      .compression  = COMPRESS_NONE,
-      .correction   = CORRECT_NONE,
-      .encryption   = ENCRYPT_NONE,
-      .latency_ms   = (10 * 1000),
+      .name          = "emcS3_00",  // repo is s3: this must match existing bucket
+      .host          = "10.140.0.15:9020", //"10.143.0.1:80",
+      .access_method = ACCESSMETHOD_S3_EMC,
+      .chunk_size    = (1024 * 1024 * 256), /* max MarFS object (tune to match storage) */
+      .is_online     = 1,
+      .auth          = AUTH_S3_AWS_MASTER,
+      .compression   = COMPRESS_NONE,
+      .correction    = CORRECT_NONE,
+      .encryption    = ENCRYPT_NONE,
+      .latency_ms    = (10 * 1000),
    };
    push_repo(&r_dummy);
 
    // @@@-HTTPS: S3 on EMC ECS
    r_dummy = (MarFS_Repo) {
-      .name         = "emcS3_00_https",  // repo is s3: this must match existing bucket
-      .host         = "10.140.0.15:9021", //"10.143.0.1:443",
-      .access_proto = PROTO_S3_EMC,
-      .chunk_size   = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
-      .flags        = (REPO_ONLINE | REPO_SSL),
-      .auth         = AUTH_S3_AWS_MASTER,
-      .compression  = COMPRESS_NONE,
-      .correction   = CORRECT_NONE,
-      .encryption   = ENCRYPT_NONE,
-      .latency_ms   = (10 * 1000),
+      .name          = "emcS3_00_https",  // repo is s3: this must match existing bucket
+      .host          = "10.140.0.15:9021", //"10.143.0.1:443",
+      .access_method = ACCESSMETHOD_S3_EMC,
+      .chunk_size    = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
+      .is_online     = 1,
+      .ssl           = 1,
+      .auth          = AUTH_S3_AWS_MASTER,
+      .compression   = COMPRESS_NONE,
+      .correction    = CORRECT_NONE,
+      .encryption    = ENCRYPT_NONE,
+      .latency_ms    = (10 * 1000),
    };
    push_repo(&r_dummy);
 
 #if TBD
    // semi-direct experiment
    r_dummy = (MarFS_Repo) {
-      .name         = "semi",
-      .host         = "/gpfs/marfs-gpfs/fuse/semi", //"10.143.0.1:443",
-      .access_proto = PROTO_SEMI_DIRECT,
-      .chunk_size   = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
-      .flags        = (REPO_ONLINE),
-      .auth         = AUTH_NONE,
-      .compression  = COMPRESS_NONE,
-      .correction   = CORRECT_NONE,
-      .encryption   = ENCRYPT_NONE,
-      .latency_ms   = (10 * 1000),
+      .name          = "semi",
+      .host          = "/gpfs/marfs-gpfs/fuse/semi", //"10.143.0.1:443",
+      .access_method = ACCESSMETHOD_SEMI_DIRECT,
+      .chunk_size    = (1024 * 1024 * 1), /* max MarFS object (tune to match storage) */
+      .is_online     = 1,
+      .auth          = AUTH_NONE,
+      .compression   = COMPRESS_NONE,
+      .correction    = CORRECT_NONE,
+      .encryption    = ENCRYPT_NONE,
+      .latency_ms    = (10 * 1000),
    };
    push_repo(&r_dummy);
 #endif
@@ -325,10 +325,10 @@ int load_config(const char* config_fname) {
    // jti testing
    ns_dummy = (MarFS_Namespace) {
       .name           = "jti",
-      .mnt_suffix     = "/jti",  // "<mnt_top>/jti" comes here
+      .mnt_path       = "/jti",  // "<mnt_top>/jti" comes here
 
       .md_path        = "/gpfs/marfs-gpfs/fuse/test00/mdfs",
-      .trash_path     = "/gpfs/marfs-gpfs/fuse/test00/trash", // NOT NEC IN THE SAME FILESET!
+      .trash_md_path  = "/gpfs/marfs-gpfs/fuse/test00/trash", // NOT NEC IN THE SAME FILESET!
       .fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo", /* a file */
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -342,8 +342,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 0,
    };
    //   push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
    //   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
@@ -353,10 +351,10 @@ int load_config(const char* config_fname) {
    // Alfred
    ns_dummy = (MarFS_Namespace) {
       .name           = "atorrez",
-      .mnt_suffix     = "/atorrez",  // "<mnt_top>/atorrez" comes here
+      .mnt_path       = "/atorrez",  // "<mnt_top>/atorrez" comes here
 
       .md_path        = "/gpfs/marfs-gpfs/project_a/mdfs",
-      .trash_path     = "/gpfs/marfs-gpfs/trash", // NOT NEC IN THE SAME FILESET!
+      .trash_md_path  = "/gpfs/marfs-gpfs/trash", // NOT NEC IN THE SAME FILESET!
       .fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo", /* a file */
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -370,8 +368,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 0,
    };
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M"));
 
@@ -379,10 +375,10 @@ int load_config(const char* config_fname) {
    // Brett, unit 
    ns_dummy = (MarFS_Namespace) {
       .name           = "brettk",
-      .mnt_suffix     = "/brettk",  // "<mnt_top>/brettk" comes here
+      .mnt_path       = "/brettk",  // "<mnt_top>/brettk" comes here
 
       .md_path        = "/gpfs/marfs-gpfs/testing/mdfs",
-      .trash_path     = "/gpfs/marfs-gpfs/testing/trash", // NOT NEC IN THE SAME FILESET!
+      .trash_md_path  = "/gpfs/marfs-gpfs/testing/trash", // NOT NEC IN THE SAME FILESET!
       .fsinfo_path    = "/gpfs/marfs-gpfs/testing/fsinfo", /* a file */
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -396,8 +392,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 0,
    };
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M"));
 
@@ -405,10 +399,10 @@ int load_config(const char* config_fname) {
    // @@@-HTTPS: Brett, unit 
    ns_dummy = (MarFS_Namespace) {
       .name           = "brettk_https",
-      .mnt_suffix     = "/brettk_https",  // "<mnt_top>/brettk_https" comes here
+      .mnt_path       = "/brettk_https",  // "<mnt_top>/brettk_https" comes here
 
       .md_path        = "/gpfs/marfs-gpfs/testing_https/mdfs",
-      .trash_path     = "/gpfs/marfs-gpfs/testing_https/trash", // NOT NEC IN THE SAME FILESET!
+      .trash_md_path  = "/gpfs/marfs-gpfs/testing_https/trash", // NOT NEC IN THE SAME FILESET!
       .fsinfo_path    = "/gpfs/marfs-gpfs/testing_https/fsinfo", /* a file */
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -422,8 +416,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 0,
    };
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M_https"));
 
@@ -431,10 +423,10 @@ int load_config(const char* config_fname) {
    // free-for-all
    ns_dummy = (MarFS_Namespace) {
       .name           = "test",
-      .mnt_suffix     = "/test",  // "<mnt_top>/test" comes here
+      .mnt_path       = "/test",  // "<mnt_top>/test" comes here
 
       .md_path        = "/gpfs/fs1/fuse_community/mdfs",
-      .trash_path     = "/gpfs/fs1/fuse_community/trash", // NOT NEC IN THE SAME FILESET!
+      .trash_md_path  = "/gpfs/fs1/fuse_community/trash", // NOT NEC IN THE SAME FILESET!
       .fsinfo_path    = "/gpfs/fs1/fuse_community/fsinfo", /* a file */
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -448,8 +440,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 0,
    };
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_pub"));
 
@@ -457,10 +447,10 @@ int load_config(const char* config_fname) {
    // EMC ECS install (with S3)
    ns_dummy = (MarFS_Namespace) {
       .name           = "s3",
-      .mnt_suffix     = "/s3",  // "<mnt_top>/s3" comes here
+      .mnt_path       = "/s3",  // "<mnt_top>/s3" comes here
 
       .md_path        = "/gpfs/fs2/fuse_s3/mdfs",
-      .trash_path     = "/gpfs/fs2/fuse_s3/trash", // NOT NEC IN THE SAME FILESET!
+      .trash_md_path  = "/gpfs/fs2/fuse_s3/trash", // NOT NEC IN THE SAME FILESET!
       .fsinfo_path    = "/gpfs/fs2/fuse_s3/fsinfo", /* a file */
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -474,8 +464,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 0,
    };
    push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
 
@@ -483,10 +471,10 @@ int load_config(const char* config_fname) {
    // @@@-HTTPS: EMC ECS install (with S3)
    ns_dummy = (MarFS_Namespace) {
       .name           = "s3_https",
-      .mnt_suffix     = "/s3_https",  // "<mnt_top>/s3_https" comes here
+      .mnt_path       = "/s3_https",  // "<mnt_top>/s3_https" comes here
 
       .md_path        = "/gpfs/fs2/fuse_s3_https/mdfs",
-      .trash_path     = "/gpfs/fs2/fuse_s3_https/trash", // NOT NEC IN THE SAME FILESET!
+      .trash_md_path  = "/gpfs/fs2/fuse_s3_https/trash", // NOT NEC IN THE SAME FILESET!
       .fsinfo_path    = "/gpfs/fs2/fuse_s3_https/fsinfo", /* a file */
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -500,8 +488,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 0,
    };
    push_namespace(&ns_dummy, find_repo_by_name("emcS3_00_https"));
 
@@ -509,10 +495,10 @@ int load_config(const char* config_fname) {
    //   // jti testing on machine without GPFS
    //   ns_dummy = (MarFS_Namespace) {
    //      .name           = "xfs",
-   //      .mnt_suffix     = "/xfs",  // "<mnt_top>/xfs" comes here
+   //      .mnt_path       = "/xfs",  // "<mnt_top>/xfs" comes here
    //
    //      .md_path        = "/mnt/xfs/jti/filesys/mdfs/test00",
-   //      .trash_path     = "/mnt/xfs/jti/filesys/trash/test00",
+   //      .trash_md_path  = "/mnt/xfs/jti/filesys/trash/test00",
    //      .fsinfo_path    = "/mnt/xfs/jti/filesys/fsinfo/test00",
    //
    //      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -526,8 +512,6 @@ int load_config(const char* config_fname) {
    //
    //      .shard_path  = NULL,
    //      .shard_count = 0,
-   //
-   //      .is_root = 0,
    //   };
    //   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
 
@@ -535,10 +519,10 @@ int load_config(const char* config_fname) {
    // jti testing on machine without GPFS
    ns_dummy = (MarFS_Namespace) {
       .name           = "ext4",
-      .mnt_suffix     = "/ext4",  // "<mnt_top>/ext4" comes here
+      .mnt_path       = "/ext4",  // "<mnt_top>/ext4" comes here
 
       .md_path        = "/root/marfs_non_gpfs/mdfs",
-      .trash_path     = "/root/marfs_non_gpfs/trash",
+      .trash_md_path  = "/root/marfs_non_gpfs/trash",
       .fsinfo_path    = "/root/marfs_non_gpfs/fsinfo",
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -552,8 +536,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 0,
    };
    // push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
@@ -563,10 +545,10 @@ int load_config(const char* config_fname) {
    // jti testing semi-direct
    ns_dummy = (MarFS_Namespace) {
       .name           = "semi",
-      .mnt_suffix     = "/semi",
+      .mnt_path       = "/semi",
 
       .md_path        = "/gpfs/marfs-gpfs/fuse/semi/mdfs",
-      .trash_path     = "/gpfs/marfs-gpfs/fuse/semi/trash",
+      .trash_md_path  = "/gpfs/marfs-gpfs/fuse/semi/trash",
       .fsinfo_path    = "/gpfs/marfs-gpfs/fuse/semi/fsinfo",
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -580,8 +562,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 0,
    };
    push_namespace(&ns_dummy, find_repo_by_name("semi"));
 #endif
@@ -593,13 +573,13 @@ int load_config(const char* config_fname) {
    // "root" is a special path
    //
    // NOTE: find_namespace_by_path() will only return this namespace if its
-   //       <path> matches our <mnt_suffix> exactly.  That's because our
-   //       mnt_suffix is (necessarily) a suffix of all paths.
+   //       <path> matches our <mnt_path> exactly.  That's because our
+   //       mnt_path is (necessarily) a suffix of all paths.
    ns_dummy = (MarFS_Namespace) {
       .name           = "root",
-      .mnt_suffix     = "/",
+      .mnt_path       = "/",
       .md_path        = "should_never_be_used",
-      .trash_path     = "should_never_be_used",
+      .trash_md_path  = "should_never_be_used",
       .fsinfo_path    = "should_never_be_used",
 
       .iperms = ( R_META ),     /* marfs_getattr() does manual stuff */
@@ -613,8 +593,6 @@ int load_config(const char* config_fname) {
 
       .shard_path  = NULL,
       .shard_count = 0,
-
-      .is_root = 1,
    };
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M"));
 
@@ -626,8 +604,8 @@ int load_config(const char* config_fname) {
 }
 
 
-// ad-hoc tests of various inconsitencies, or illegal states, that are
-// possible after load_config() has loaded a config file.
+// ad-hoc tests of various inconsistencies, or illegal states, that are
+// possible after read_config() has loaded a config file.
 int validate_config() {
    const size_t     recovery = sizeof(RecoveryInfo) +8;
 
@@ -710,12 +688,12 @@ MarFS_Namespace* find_namespace_by_name(const char* name) {
  * @@@-HTTPS:
  * The path that is passed into this function always starts with the
  * "/" character. That character and any others up to the next "/"
- * character are the namespace's mnt_suffix. A namespace's mnt_suffix
+ * character are the namespace's mnt_path. A namespace's mnt_path
  * must begin with the "/" character and not contain any other "/"
  * characters after the initial one by definition. It is the FUSE
  * mount point and we'll always use a one-level mount point.
  */
-MarFS_Namespace* find_namespace_by_path(const char* path) {
+MarFS_Namespace* find_namespace_by_mnt_path(const char* path) {
    int i;
    char *path_dup;
    char *path_dup_token;
@@ -736,8 +714,8 @@ MarFS_Namespace* find_namespace_by_path(const char* path) {
    for (i=0; i<_ns_count; ++i) {
       MarFS_Namespace* ns = _ns[i];
 
-      if (( ns->mnt_suffix_len == path_dup_len )
-          && ( !strcmp( ns->mnt_suffix, path_dup ))) {
+      if (( ns->mnt_path_len == path_dup_len )
+          && ( !strcmp( ns->mnt_path, path_dup ))) {
          free( path_dup );
          return ns;
       }
@@ -800,3 +778,71 @@ MarFS_Repo*  repo_next(RepoIterator* it) {
    else
       return _repo[it->pos++];
 }
+
+
+
+
+// Give us a pointer to your list-pointer.  Your list-pointer should start
+// out having a value of NULL.  We maintain the list of repos ASCCENDING by
+// min file-size handled.  Return false in case of conflicts.  Conflicts
+// include overlapping ranges, or gaps in ranges.  Call with <max>==-1, to
+// make range from <min> to infinity.
+int insert_in_range(RangeList**  list,
+                    size_t       min,
+                    size_t       max,
+                    MarFS_Repo*  repo) {
+
+   RangeList** insert = list;   // ptr to place to store ptr to new element
+
+   // leave <ptr> pointing to the inserted element
+   RangeList*  this;
+   for (this=*list; this; this=this->next) {
+
+      if (min < this->min) {    // insert before <this>
+
+         if (max == -1) {
+            LOG(LOG_ERR, "range [%ld, -1] includes range [%ld, %ld]\n",
+                    min, this->min, this->max);
+            return -1;
+         }
+         if (max < this->min) {
+            LOG(LOG_ERR, "gap between range [%ld, %ld] and [%ld, %ld]\n",
+                    min, max, this->min, this->max);
+            return -1;
+         }
+         if (max > this->min) {
+            LOG(LOG_ERR, "overlap in range [%ld, %ld] and [%ld, %ld]\n",
+                    min, max, this->min, this->max);
+            return -1;
+         }
+
+         // do the insert
+         break;
+      }
+      insert = &this->next;
+   }
+
+
+   RangeList* elt = (RangeList*)malloc(sizeof(RangeList));
+   elt->min  = min;
+   elt->max  = max;
+   elt->repo = repo;
+   elt->next = *insert;
+   *insert = elt;
+   return 0;                    /* success */
+}
+
+// given a file-size, find the corresponding element in a RangeList, and
+// return the corresponding repo.  insert_range() maintains repos in
+// descending order of the block-sizes they handle, to make this as quick
+// as possible.
+MarFS_Repo* find_in_range(RangeList* list,
+                          size_t     block_size) {
+   while (list) {
+      if (block_size >= list->min)
+         return list->repo;
+      list = list->next;
+   }
+   return NULL;
+}
+

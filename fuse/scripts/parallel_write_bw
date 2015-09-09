@@ -11,7 +11,7 @@
 # ISSUES:
 #
 # (1) marfs truncate takes considerable time, so we delete all the files
-#     ahead of time, to avoid adding the cost of truncate tot he
+#     ahead of time, to avoid adding the cost of truncate to the
 #     timeing-section.
 #
 # (2) If repo.chunksize is smaller than the per-task write-size, then the

@@ -366,14 +366,14 @@ int marfs_ftruncate(const char*            path,
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
-   if (info->ns->iwrite_repo->access_proto != PROTO_DIRECT) {
+   if (info->ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
       info->flags  |= PI_RESTART;
       info->xattrs |= XVT_RESTART;
       SAVE_XATTRS(info, XVT_RESTART);
    }
    else
-      LOG(LOG_INFO, "iwrite_repo.access_proto = DIRECT\n");
+      LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
 
    POP_USER();
    return 0;
@@ -395,7 +395,7 @@ int marfs_getattr (const char*  path,
 
    // The "root" namespace is artificial
    // It appears to be owned by root, with X-only access to users
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
 
       // everything defaults to zero
@@ -417,7 +417,10 @@ int marfs_getattr (const char*  path,
 
       stp->st_uid     = 0;
       stp->st_gid     = 0;
-      stp->st_mode = (S_IFDIR | S_IRWXU | S_IRWXG | S_IXOTH ); // "drwxrwx---x."
+      stp->st_mode = (S_IFDIR
+                      | (S_IRUSR | S_IXUSR)
+                      | (S_IRGRP | S_IXGRP)
+                      | S_IXOTH );            // "dr-xr-x--x."
 
       return 0;
    }
@@ -458,7 +461,7 @@ int marfs_getxattr (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META));
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
       return -ENOATTR;          // fingers in ears, la-la-la
    }
@@ -471,6 +474,11 @@ int marfs_getxattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  getxattr call filling in fuse structure
+   //
+   // NOTE: GPFS returns -1, errno==ENODATA, for
+   //     lgetxattr("system.posix_acl_access",path,0,0).  The kernel calls
+   //     us with this, for 'ls -l /marfs/jti/blah'.
+
    TRY_GE0(lgetxattr, info.post.md_path, name, (void*)value, size);
    ssize_t result = rc_ssize;
 
@@ -518,7 +526,7 @@ int marfs_listxattr (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
       size = 0;                 // amount needed for 
       return 0;
@@ -675,14 +683,14 @@ int marfs_mknod (const char* path,
    //     (which is incomplete), and could throw an error, instead of
    //     seeing it as a file-without-xattrs, and allowing readers to see
    //     our internal data (e.g. in a MULTI file).
-   if (info.ns->iwrite_repo->access_proto != PROTO_DIRECT) {
+   if (info.ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
       info.flags  |= PI_RESTART;
       info.xattrs |= XVT_RESTART;
       SAVE_XATTRS(&info, XVT_RESTART);
    }
    else
-      LOG(LOG_INFO, "iwrite_repo.access_proto = DIRECT\n");
+      LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
 
    POP_USER();
    return 0;
@@ -841,7 +849,7 @@ int marfs_open (const char*            path,
 
    // Configure a private AWSContext, for this request
    AWSContext* ctx = aws_context_clone();
-   if (PROTO_IS_S3(info->pre.repo->access_proto)) { // (includes S3_EMC)
+   if (ACCESSMETHOD_IS_S3(info->pre.repo->access_method)) { // (includes S3_EMC)
       s3_set_host_r(info->pre.repo->host, ctx);
       LOG(LOG_INFO, "host   '%s'\n", info->pre.repo->host);
 
@@ -849,20 +857,20 @@ int marfs_open (const char*            path,
       LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
    }
 
-   if (info->pre.repo->access_proto == PROTO_S3_EMC) {
+   if (info->pre.repo->access_method == ACCESSMETHOD_S3_EMC) {
       s3_enable_EMC_extensions_r(1, ctx);
 
       // For now if we're using HTTPS, I'm just assuming that it is without
       // validating the SSL certificate (curl's -k or --insecure flags). If
       // we ever get a validated certificate, we will want to put a flag
       // into the MarFS_Repo struct that says it's validated or not.
-      if ( info->pre.repo->flags & REPO_SSL ) {
+      if ( info->pre.repo->ssl ) {
         s3_https_r( 1, ctx );
         s3_https_insecure_r( 1, ctx );
       }
    }
 
-   if (info->pre.repo->access_proto == PROTO_SPROXYD) {
+   if (info->pre.repo->access_method == ACCESSMETHOD_SPROXYD) {
       s3_enable_Scality_extensions_r(1, ctx);
       s3_sproxyd_r(1, ctx);
 
@@ -870,7 +878,7 @@ int marfs_open (const char*            path,
       // validating the SSL certificate (curl's -k or --insecure flags). If
       // we ever get a validated certificate, we will want to put a flag
       // into the MarFS_Repo struct that says it's validated or not.
-      if ( info->pre.repo->flags & REPO_SSL ) {
+      if ( info->pre.repo->ssl ) {
         s3_https_r( 1, ctx );
         s3_https_insecure_r( 1, ctx );
       }
@@ -920,7 +928,7 @@ int marfs_opendir (const char*            path,
    MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
 
       if (geteuid()) {
@@ -980,7 +988,7 @@ int marfs_read (const char*            path,
    //     Just read the bytes from the file and fill in fuse read buffer
    //
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
-       && (info->ns->iwrite_repo->access_proto == PROTO_DIRECT)) {
+       && (info->ns->iwrite_repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "reading DIRECT\n");
       TRY_GE0(read, fh->md_fd, buf, size);
       return rc_ssize;
@@ -1235,9 +1243,9 @@ int marfs_readdir (const char*            path,
          MarFS_Namespace* ns = namespace_next(it);
          if (! ns)
             break;              // EOF
-         if (ns->is_root)
+         if (IS_ROOT_NS(ns))
             continue;
-         char* dir_name = (char*)ns->mnt_suffix; // we're not going to modify it
+         char* dir_name = (char*)ns->mnt_path; // we're not going to modify it
          while (dir_name && *dir_name && *dir_name=='/')
             ++dir_name;
          LOG(LOG_INFO, " ns = %s -> '%s'\n", ns->name, dir_name);
@@ -1468,7 +1476,7 @@ int marfs_release (const char*            path,
    info->xattrs &= ~(XVT_RESTART);
 
    // install xattrs
-   if ((info->ns->iwrite_repo->access_proto != PROTO_DIRECT)
+   if ((info->ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT)
        && (fh->flags & FH_WRITING)) {
    
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
@@ -1506,7 +1514,9 @@ int marfs_release (const char*            path,
 int marfs_releasedir (const char*            path,
                       struct fuse_file_info* ffi) {
    LOG(LOG_INFO, "releasedir %s\n", path);
+#ifndef LINK_LIBFUSE
    LOG(LOG_INFO, "entry -- skipping push_user(%d)\n", fuse_get_context()->uid);
+#endif
    //   PUSH_USER();
    size_t rc = 0;
 
@@ -1556,7 +1566,7 @@ int marfs_removexattr (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
       return -EACCES;
    }
@@ -1593,11 +1603,11 @@ int marfs_rename (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "src is_root\n");
       return -EPERM;
    }
-   if (info2.ns->is_root) {
+   if (IS_ROOT_NS(info2.ns)) {
       LOG(LOG_INFO, "dst is_root\n");
       return -EPERM;
    }
@@ -1623,7 +1633,7 @@ int marfs_rmdir (const char* path) {
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
       return -EPERM;
    }
@@ -1657,7 +1667,7 @@ int marfs_setxattr (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
       return -EPERM;
    }
@@ -1730,7 +1740,7 @@ int marfs_symlink (const char* target,
    CHECK_PERMS(lnk_info.ns->iperms, (R_META | W_META));
 
    // The "root" namespace is artificial
-   if (lnk_info.ns->is_root) {
+   if (IS_ROOT_NS(lnk_info.ns)) {
       LOG(LOG_INFO, "is_root\n");
       return -EPERM;
    }
@@ -1764,7 +1774,7 @@ int marfs_truncate (const char* path,
    ACCESS(info.post.md_path, (W_OK));
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
       return -EPERM;
    }
@@ -1782,14 +1792,14 @@ int marfs_truncate (const char* path,
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
-   if (info.ns->iwrite_repo->access_proto != PROTO_DIRECT) {
+   if (info.ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
       info.flags  |= PI_RESTART;
       info.xattrs |= XVT_RESTART;
       SAVE_XATTRS(&info, XVT_RESTART);
    }
    else
-      LOG(LOG_INFO, "iwrite_repo.access_proto = DIRECT\n");
+      LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
 
    POP_USER();
    return 0;
@@ -1807,7 +1817,7 @@ int marfs_unlink (const char* path) {
    CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
       return -EPERM;
    }
@@ -1886,7 +1896,7 @@ int marfs_utimens(const char*           path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // The "root" namespace is artificial
-   if (info.ns->is_root) {
+   if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
       return -EPERM;
    }
@@ -1933,7 +1943,7 @@ int marfs_write(const char*            path,
    // If file has no xattrs its just a normal use the md file for data,
    //   just do the write and return, don’t bother with all this stuff below
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
-       && (info->ns->iwrite_repo->access_proto == PROTO_DIRECT)) {
+       && (info->ns->iwrite_repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "no xattrs, and DIRECT: writing to file\n");
       TRY_GE0(write, fh->md_fd, buf, size);
       return rc_ssize;

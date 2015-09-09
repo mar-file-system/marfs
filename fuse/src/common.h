@@ -382,7 +382,7 @@ typedef struct PathInfo {
    PathInfoFlagType     flags;
 
    // char                 md_path[MARFS_MAX_MD_PATH]; // full path to MDFS file
-   char                 trash_path[MARFS_MAX_MD_PATH];
+   char                 trash_md_path[MARFS_MAX_MD_PATH];
 } PathInfo;
 
 
@@ -497,7 +497,7 @@ extern int  has_any_xattrs (PathInfo* info, XattrMaskType mask);
 
 extern int  trunc_xattr  (PathInfo* info);
 
-// need the path to initialize info->md_trash_path
+// need the path to initialize info->trash_md_path
 extern int  trash_unlink  (PathInfo* info, const char* path);
 extern int  trash_truncate(PathInfo* info, const char* path);
 

@@ -112,27 +112,17 @@ MDFS   = $(GPFS)/test00/mdfs
 # file
 PID = marfs_fuse.pid
 
-# LIBAWS4C := $(shell readlink -f ~/projects/ecs_hobo/tools/aws4c)
+
+
+# ---------------------------------------------------------------------------
+# CFLAGS, LDFLAGS, etc
 #
-# NOTE: You should define LIBAWS4C in you environment, using one of the
-#       following methods:
-#
-#       [bash]  export LIBAWS4C=/my/path/to/aws4c; make ...
-#       [tcsh]  setenv LIBAWS4C /my/path/to/aws4c; make ...
-#
-#       [any]   make ... LIBAWS4C=/my/path/to/aws4c
-
-CFLAGS  += -I$(LIBAWS4C)
-LDFLAGS += -L$(LIBAWS4C)
-LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
+# Flags for the compiler and linker depend on what target we're building, 
+# ---------------------------------------------------------------------------
 
 
-# some stuff has been moved out of this spot in the tree
-CFLAGS  += -I$(LOGGING)
-
-
-# # passed in the environment by a recursive make.  (See e.g. 'fuse.dbg')
-# DEFS := $(RECURSIVE_DEFS)
+# c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
+CFLAGS  += -Wall -std=c99 -I.
 
 
 # environment-variable DEBUG controls compile-flags:
@@ -170,6 +160,31 @@ else
 	CFLAGS += -O3
 endif
 
+ifdef GPROF
+	# CFLAGS += -pg
+	CFLAGS = -pg
+endif
+
+
+
+
+# NOTE: You should define LIBAWS4C in your environment, using one of the
+#       following methods:
+#
+#       [bash]  export LIBAWS4C=/my/path/to/aws4c; make ...
+#       [tcsh]  setenv LIBAWS4C /my/path/to/aws4c; make ...
+#
+#       [any]   make ... LIBAWS4C=/my/path/to/aws4c
+CFLAGS  += -I$(LIBAWS4C)
+LDFLAGS += -L$(LIBAWS4C)
+LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
+
+
+
+
+# Logging support has been moved its own spot in the git repo
+CFLAGS  += -I$(LOGGING)
+
 # This tells logging.h to write via syslog(), instead of printf()
 # If USE_SYSLOG is undef, and DEBUG is undef, there is no logging output
 ifdef USE_SYSLOG
@@ -180,6 +195,12 @@ ifdef USE_STDOUT
 	DEFS += USE_STDOUT
 endif
 
+# needs extra quoting to survive being read by the shell, on gcc command-lines
+ifdef LOG_PREFIX
+	DEFS += LOG_PREFIX='"$(LOG_PREFIX)"'
+endif
+
+
 
 
 # NOTE: Confusingly, this DOES NOT control whether SPROXYD will be used.
@@ -188,40 +209,36 @@ ifdef USE_SPROXYD
 	DEFS += USE_SPROXYD=1
 endif
 
-# needs extra quoting to survive being read by the shell, on gcc command-lines
-ifdef LOG_PREFIX
-	DEFS += LOG_PREFIX='"$(LOG_PREFIX)"'
-endif
 
-ifdef GPROF
-	# CFLAGS += -pg
-	CFLAGS = -pg
-endif
-
-# use the old jti static-config, instead of the new.
-#
-# WARN: It seems to me that common/configuration/src/ is not yet ready to
-#     build something we can link with.  So, defining MARFS_NEW_CONFIG will
-#     probably not allow you to build Fuse with the new config, until we
-#     have access to whatever is in Brettk's PAX directory.
-ifdef MARFS_NEW_CONFIG
+# if MARFS_NEW_CONFIG is defined, link with the config-reader library.
+# Otherwise, use the old jti static-config.
+ifdef NEW_CONFIG
 	DEFS    += NEW_CONFIG
 	CFLAGS  += -I$(CONFIG)
 	LDFLAGS += -L$(CONFIG)
+	LIBS    += -lconfig
+	# OBJS += marfs_configuration.o
 else
 	OBJS += marfs_base_static_config.o
 	H    += marfs_base_static_config.h
 endif
 
 
-# c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
-CFLAGS  += -Wall -std=c99 $(shell pkg-config fuse --cflags) -I.
+
+# If we are building the 'lib' targets for others (e.g. pftool, GC, quota,
+# etc), then we don't want to have to link with fuse proper.  For those
+# targets, LINK_LIBFUSE will not be defined.  On the other hand, when building
+# fuse, we will link with libfuse.
+CFLAGS  += $(shell pkg-config fuse --cflags)
+ifdef LINK_LIBFUSE
+	LDFLAGS += $(shell pkg-config fuse --libs-only-L)
+	LIBS    += $(shell pkg-config fuse --libs-only-l) -lm
+	DEFS    += LINK_LIBFUSE
+endif
+
+
+# assimilate all the DEFS we've added, into CFLAGS
 CFLAGS  += $(patsubst %, -D%, $(DEFS))
-
-# LDFLAGS += `pkg-config fuse --cflags --libs` -lm -L $(LIBAWS4C) -laws4c
-LDFLAGS += $(shell pkg-config fuse --libs-only-L)
-LIBS    += $(shell pkg-config fuse --libs-only-l) -lm
-
 
 
 # ...........................................................................
@@ -254,6 +271,10 @@ fromwork:
 
 logging.o: $(LOGGING)/logging.c $(LOGGING)/logging.h
 	gcc -c $(CFLAGS) -o $@ $<
+
+marfs_configuration.o: $(CONFIG)/marfs_configuration.c $(CONFIG)/marfs_configuration.h
+	gcc -c $(CFLAGS) -o $@ $<
+
 
 %: %.o
 	gcc -o $@ $< $(LDFLAGS) $(LIBS)
@@ -315,13 +336,13 @@ fuse: fuse.std
 fuse.std: pre_req
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=2
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=1
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1
 
 fuse.lean: pre_req
-	@ $(MAKE) marfs_fuse
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1
 
 fuse.dbg: pre_req
-	@ $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg
+	@ $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg LINK_LIBFUSE=1
 #	@ $(MV) marfs_fuse marfs_fuse.dbg
 
 
@@ -354,8 +375,13 @@ remount: umnt
 libmarfs.a: $(OBJS)
 	ar -cvr $@ $^
 
+
 .PHONY: lib
 lib: pre_req libmarfs.a
+
+.PHONY: lib_new
+lib_new: pre_req clean
+	@ $(MAKE) libmarfs.a NEW_CONFIG=1
 
 
 # ...........................................................................

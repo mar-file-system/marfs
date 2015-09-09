@@ -70,9 +70,9 @@ extern "C" {
 typedef enum {
   FALSE	= 0,
   TRUE	= 1
-} MarFS_Boolean;
+} MarFS_Bool;
 
-extern int lookup_boolean( const char* str, MarFS_Boolean *enumeration );
+extern int lookup_boolean( const char* str, MarFS_Bool *enumeration );
 
 
 typedef enum {
@@ -225,22 +225,23 @@ typedef uint8_t  MarFS_Perms;
  */
 
 typedef struct marfs_repo {
-  char			*name;
-  size_t		name_len;
-  char			*host;
-  size_t		host_len;
-  MarFS_Boolean		updateinplace;
-  MarFS_Boolean		ssl;
-  MarFS_AccessMethod	accessmethod;
-  unsigned long long	chunksize;
-  unsigned long long	packsize;
-  MarFS_SecurityMethod	securitymethod;
-  MarFS_SecType		sectype;
-  MarFS_CompType	comptype;
-  MarFS_CorrectType	correcttype;
-  char			*onoffline;
-  size_t		onoffline_len;
-  unsigned long long	latency;
+  char                 *name;
+  size_t                name_len;
+  char                 *host;
+  size_t                host_len;
+  MarFS_Bool            update_in_place;
+  MarFS_Bool            ssl;
+  MarFS_Bool            is_online;
+  MarFS_AccessMethod    access_method;
+  size_t                chunk_size;
+  size_t                pack_size;
+  MarFS_SecurityMethod  security_method;
+  MarFS_SecType         sec_type;
+  MarFS_CompType        comp_type;
+  MarFS_CorrectType     correct_type;
+  char                 *online_cmds;
+  size_t                online_cmds_len;
+  unsigned long long    latency;
 } MarFS_Repo, *MarFS_Repo_Ptr, **MarFS_Repo_List;
 
 /*
@@ -274,10 +275,10 @@ typedef struct marfs_repo_range {
 //    marfs_mnttop = /redsea
 //
 //    mntpath = /projecta
-//    mdpath    = /md/projecta
+//    md_path    = /md/projecta
 //
 //    mntpath = /projectb
-//    mdpath    = /md/project
+//    md_path    = /md/project
 //
 // User refers to /redsea/projecta and fuse/pftool translates to refer to
 // metadata file-system in /md/projecta
@@ -295,25 +296,26 @@ typedef struct marfs_repo_range {
 // ---------------------------------------------------------------------------
 
 typedef struct marfs_namespace {
-  char			*name;
-  size_t		name_len;
-  char			*mntpath;
-  size_t		mntpath_len;
-  MarFS_Perms		bperms;
-  MarFS_Perms		iperms;
-  char			*mdpath;
-  size_t		mdpath_len;
-  MarFS_Repo_Range_List	repo_range_list;
-  int			repo_range_list_count;
-  char			*trashmdpath;
-  size_t		trashmdpath_len;
-  char			*fsinfopath;
-  size_t		fsinfopath_len;
-  long long		quota_space;
-  long long		quota_names;
-  char			*namespaceshardp;
-  size_t		namespaceshardp_len;
-  unsigned long long	namespaceshardpnum;
+  char                 *name;
+  size_t                name_len;
+  char                 *mnt_path;
+  size_t                mnt_path_len;
+  MarFS_Perms           bperms;
+  MarFS_Perms           iperms;
+  char                 *md_path;
+  size_t                md_path_len;
+  MarFS_Repo_Ptr        iwrite_repo;
+  MarFS_Repo_Range_List repo_range_list;
+  int                   repo_range_list_count;
+  char                 *trash_md_path;
+  size_t                trash_md_path_len;
+  char                 *fsinfo_path;
+  size_t                fsinfo_path_len;
+  long long             quota_space;
+  long long             quota_names;
+  char                 *ns_shardp;
+  size_t                ns_shardp_len;
+  unsigned long long    ns_shardp_num;
 } MarFS_Namespace, *MarFS_Namespace_Ptr, **MarFS_Namespace_List;
 
 /*
@@ -341,14 +343,16 @@ typedef struct marfs_namespace {
 //           changes).
 
 typedef struct marfs_config {
-  char			*name;
-  size_t		name_len;
-  double		version;
-  char			*mnttop;		// NOTE: Do NOT include a final slash.
-  size_t		mnttop_len;
-  MarFS_Namespace_List	namespace_list;
-  size_t		namespace_count;
+  char                 *name;
+  size_t                name_len;
+  double                version;
+  char                 *mnt_top;        // NOTE: Do NOT include a final slash.
+  size_t                mnt_top_len;
+   //  MarFS_Namespace_List  namespace_list;
+   //  size_t                namespace_count;
 } MarFS_Config, *MarFS_Config_Ptr;
+
+extern  MarFS_Config_Ptr  marfs_config;
 
 /*
  * A couple functions to find a specific namespace record. We'll return
@@ -356,7 +360,7 @@ typedef struct marfs_config {
  */
 
 extern MarFS_Namespace_Ptr find_namespace_by_name( const char *name );
-extern MarFS_Namespace_Ptr find_namespace_by_mntpath( const char *mntpath );
+extern MarFS_Namespace_Ptr find_namespace_by_mnt_path( const char *mnt_path );
 
 /*
  * A couple functions to find a specific repo record. We'll return
@@ -374,19 +378,20 @@ extern MarFS_Repo_Ptr find_repo_by_name( const char* name );
 
 
 /*
-* This function returns the configuration after reading the configuration
- * file. The configuration file is found by searching in this order:
+ * Load the configuration into private static variables.
+ * They can be 
+ * return 0 for success, non-zero for failure.
+ *
+ * The configuration file is found by searching in this order: * 
  *
  * 1) Translating the MARFSCONFIGRC environment variable.
- *   or
  * 2) Looking for it in $HOME/.marfsconfigrc.
- *  or
  * 3) Looking for it in /etc/marfsconfigrc.
  *
  * If none of those are found, NULL is returned.
  */
 
-extern MarFS_Config_Ptr read_configuration();
+extern int read_configuration();
 
 /*
  * These functions return the configuration information that was given in
@@ -398,7 +403,7 @@ extern MarFS_Config_Ptr read_configuration();
 
 extern char			*get_configuration_name( MarFS_Config_Ptr config );
 extern double			get_configuration_version( MarFS_Config_Ptr config );
-extern char			*get_configuration_mnttop( MarFS_Config_Ptr config );
+extern char			*get_configuration_mnt_top( MarFS_Config_Ptr config );
 extern MarFS_Namespace_List	get_configuration_namespace_list( MarFS_Config_Ptr config );
  */
 
@@ -412,7 +417,7 @@ extern MarFS_Namespace_List	get_configuration_namespace_list( MarFS_Config_Ptr c
  * (zero) is returned on success. The config will be set to NULL.
  */
 
-extern int free_configuration( MarFS_Config_Ptr *config );
+extern int free_configuration();
 
 /*
  * --- support for traversing namespaces (without knowing how they are stored)

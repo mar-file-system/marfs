@@ -60,7 +60,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 int main( int argc, char *argv[] ) {
 
-  MarFS_Config_Ptr marfs_config;
   char sectype_code = '_';
   MarFS_SecType marfs_sectype;
   char compType_code = '_';
@@ -76,44 +75,39 @@ int main( int argc, char *argv[] ) {
   INIT_LOG();
   fprintf( stdout, "\n" );
 
-  marfs_config = read_configuration();
-
-  if ( marfs_config != NULL ) {
-    fprintf( stdout, "CORRECT: The members of the MarFS config structure are:\n" );
-    fprintf( stdout, "\tconfig name            : %s\n", marfs_config->name );
-    fprintf( stdout, "\tconfig version         : %f\n", marfs_config->version );
-    fprintf( stdout, "\tconfig mnttop          : %s\n", marfs_config->mnttop );
-    fprintf( stdout, "\tconfig namespace count : %lu\n", marfs_config->namespace_count );
-  } else {
+  if (read_configuration()) {
     fprintf( stderr, "ERROR: Reading MarFS configuration failed.\n" );
     return 1;
   }
-
+  fprintf( stdout, "CORRECT: The members of the MarFS config structure are:\n" );
+  fprintf( stdout, "\tconfig name            : %s\n", marfs_config->name );
+  fprintf( stdout, "\tconfig version         : %f\n", marfs_config->version );
+  fprintf( stdout, "\tconfig mnt-top          : %s\n", marfs_config->mnt_top );
+  // fprintf( stdout, "\tconfig namespace count : %lu\n", marfs_config->namespace_count );
   fprintf( stdout, "\n" );
 
-  ret_val = free_configuration( &marfs_config );
+  ret_val = free_configuration();
   if ( ! ret_val ) {
-    fprintf( stdout, "CORRECT: free_configuration returned %d\n", ret_val );
-    if ( marfs_config == NULL ) {
-      fprintf( stdout, "CORRECT: We freed the MarFS configuration and it is now NULL.\n" );
-    } else {
-      fprintf( stderr, "ERROR: free_configuration did not set the MarFS configuration to NULL.\n" );
-    }
+     fprintf( stdout, "CORRECT: free_configuration returned %d\n", ret_val );
+     if ( marfs_config == NULL ) {
+        fprintf( stdout, "CORRECT: We freed the MarFS configuration and it is now NULL.\n" );
+     } else {
+        fprintf( stderr, "ERROR: free_configuration did not set the MarFS configuration to NULL.\n" );
+     }
   } else {
     fprintf( stderr, "ERROR: free_configuration returned %d\n", ret_val );
   }
-
   fprintf( stdout, "\n" );
 
-  fprintf( stdout, "Re-reading the configuration to continue testing...\n" );
-  marfs_config = read_configuration(); 
 
+  fprintf( stdout, "Re-reading the configuration to continue testing...\n" );
+  read_configuration(); 
   if ( marfs_config == NULL ) {
     fprintf( stderr, "ERROR: Reading MarFS configuration failed.\n" );
     return 1;
   }
-
   fprintf( stdout, "\n" );
+
 
   if ( lookup_sectype( "none", &marfs_sectype )) {
     fprintf( stderr, "ERROR: Invalid sectype value of \"%s\".\n", "none" );
@@ -172,8 +166,8 @@ int main( int argc, char *argv[] ) {
   } else {
     fprintf( stdout, "CORRECT: Decode code of \"%c\" is %d.\n", '_',marfs_correcttype ); 
   }
-
   fprintf( stdout, "\n" );
+
 
   namespacePtr = find_namespace_by_name( "BoGuS" );
   if ( namespacePtr == NULL ) {
@@ -181,35 +175,32 @@ int main( int argc, char *argv[] ) {
   } else {
     fprintf( stderr, "ERROR: Namespace \"BoGuS\" does not exist and was found.\n" );
   }
-
   fprintf( stdout, "\n" );
 
   namespacePtr = find_namespace_by_name( "s3" );
   if ( namespacePtr != NULL ) {
-    fprintf( stdout, "CORRECT: Namespace \"s3\" does exist and has mntpath \"%s\".\n", namespacePtr->mntpath );
+    fprintf( stdout, "CORRECT: Namespace \"s3\" does exist and has mnt_path \"%s\".\n", namespacePtr->mnt_path );
   } else {
     fprintf( stderr, "ERROR: Namespace \"s3\" does exist and was not found.\n" );
   }
-
   fprintf( stdout, "\n" );
 
-  namespacePtr = find_namespace_by_mntpath( "/BoGuS" );
+
+  namespacePtr = find_namespace_by_mnt_path( "/BoGuS" );
   if ( namespacePtr == NULL ) {
     fprintf( stdout, "CORRECT: Mntpath \"/BoGuS\" does not exist.\n" );
   } else {
     fprintf( stderr, "ERROR: Mntpath \"/BoGuS\" does not exist and was found.\n" );
   }
-
   fprintf( stdout, "\n" );
 
-  namespacePtr = find_namespace_by_mntpath( "/s3" );
+
+  namespacePtr = find_namespace_by_mnt_path( "/s3" );
   if ( namespacePtr != NULL ) {
     fprintf( stdout, "CORRECT: Mntpath \"/s3\" does exist and has name \"%s\".\n", namespacePtr->name );
   } else {
     fprintf( stderr, "ERROR: Mntpath \"/s3\" does exist and was not found.\n" );
   }
-
-  fprintf( stdout, "\n" );
 
   repoPtr = find_repo_by_range( namespacePtr, 38 );
   if ( repoPtr != NULL ) {
@@ -220,6 +211,17 @@ int main( int argc, char *argv[] ) {
     fprintf( stderr, "ERROR: Namespace \"%s\" should have a repo for files of size 38.\n",
 			namespacePtr->name );
   }
+  fprintf( stdout, "\n" );
+
+  namespacePtr = find_namespace_by_mnt_path( "/" );
+  if ( namespacePtr != NULL ) {
+    fprintf( stdout, "CORRECT: Mntpath \"/\" does exist and has name \"%s\".\n", namespacePtr->name );
+  } else {
+    fprintf( stderr, "ERROR: Mntpath \"/\" does exist and was not found.\n" );
+  }
+  fprintf( stdout, "\n" );
+
+
 
 /*
  * Since the file_size argument is size_t, that is unsigned and negative numbers

@@ -135,27 +135,30 @@ extern EncryptionMethod  decode_encryption(char);
 // Repository -- describes data (object) storage
 // ---------------------------------------------------------------------------
 
+// typedef enum {
+//    REPO_ONLINE          = 0x01, // repo is online?
+//    REPO_ALLOWS_OFFLINE  = 0x02, // repo allows offline?
+//    REPO_UPDATE_IN_PLACE = 0x04, // repo allows update-in-place ?
+//    REPO_SSL             = 0x08  // e.g. use https://...
+// } RepoFlags;
+// 
+// typedef uint8_t  RepoFlagsType;
+
+typedef uint8_t MarFS_Bool;
+
+
 typedef enum {
-   REPO_ONLINE          = 0x01, // repo is online?
-   REPO_ALLOWS_OFFLINE  = 0x02, // repo allows offline?
-   REPO_UPDATE_IN_PLACE = 0x04, // repo allows update-in-place ?
-   REPO_SSL             = 0x08  // e.g. use https://...
-} RepoFlags;
+   ACCESSMETHOD_DIRECT = 0,            // data stored directly into MD files
+   ACCESSMETHOD_SEMI_DIRECT,           // data stored in separate FS, w/ reference from MD xattr
+   ACCESSMETHOD_CDMI,
+   ACCESSMETHOD_SPROXYD,               // should include installed release version
+   ACCESSMETHOD_S3,
+   ACCESSMETHOD_S3_SCALITY,            // should include installed release version
+   ACCESSMETHOD_S3_EMC,                // should include installed release version
+} MarFS_AccessMethod;
 
-typedef uint8_t  RepoFlagsType;
+#define ACCESSMETHOD_IS_S3(ACCESSMETHOD)  ((ACCESSMETHOD) & (ACCESSMETHOD_S3 | ACCESSMETHOD_S3_SCALITY | ACCESSMETHOD_S3_EMC | ACCESSMETHOD_SPROXYD))
 
-
-typedef enum {
-   PROTO_DIRECT = 0,            // data stored directly into MD files
-   PROTO_SEMI_DIRECT,           // data stored in separate FS, w/ reference from MD xattr
-   PROTO_CDMI,
-   PROTO_SPROXYD,               // should include installed release version
-   PROTO_S3,
-   PROTO_S3_SCALITY,            // should include installed release version
-   PROTO_S3_EMC,                // should include installed release version
-} RepoAccessProto;
-
-#define PROTO_IS_S3(PROTO)  ((PROTO) & (PROTO_S3 | PROTO_S3_SCALITY | PROTO_S3_EMC | PROTO_SPROXYD))
 
 
 typedef enum {
@@ -174,21 +177,28 @@ typedef enum {
 // is meaningful, and/or several repos could have the same name -- defaults
 // to "/proxy".)
 //
-// NOTE: In the case where access_proto == SEMI_DIRECT, <host> holds a
+// NOTE: In the case where access_method == SEMI_DIRECT, <host> holds a
 //     directory where a scatter-tree will hold the semi-direct storage.
 
 typedef struct MarFS_Repo {
-   const char*       name;         // (logical) name for this repo 
-   // const char*       bkt_name;     // name for S3 bucket in this repo
-   const char*       host;         // e.g. "10.140.0.15:9020"
-   RepoFlagsType     flags;
-   RepoAccessProto   access_proto;
-   size_t            chunk_size;   // max Uni-object (Cf. Namespace.range_list)
-   MarFSAuthMethod   auth;         // (current) authentication method for this repo
-   CompressionMethod compression;  // compression type
-   CorrectionMethod  correction;   // correctness type  (like CRC/checksum/etc.)
-   EncryptionMethod  encryption;   // (current) encryption method for this repo
-   uint32_t          latency_ms;   // max time to wait for a response 
+   const char*         name;         // (logical) name for this repo 
+   const char*         host;         // e.g. "10.140.0.15:9020"
+
+   //   RepoFlagsType       flags;
+   MarFS_Bool          ssl;
+   MarFS_Bool          update_in_place; // repo allows overwriting parts of data?
+   MarFS_Bool          is_online;
+
+   MarFS_AccessMethod  access_method;
+   size_t              chunk_size;   // max Uni-object (Cf. Namespace.range_list)
+   size_t              pack_size;    // max (?) size for packed objects
+   MarFSAuthMethod     auth;         // (current) authentication method for this repo
+   CompressionMethod   compression;  // compression type
+   CorrectionMethod    correction;   // correctness type  (like CRC/checksum/etc.)
+   EncryptionMethod    encryption;   // (current) encryption method for this repo
+   uint32_t            latency_ms;   // max time to wait for a response 
+   char*               online_cmds;  // command(s) to bring repo online
+   size_t              online_cmds_len;
 }  MarFS_Repo;
 
 
@@ -298,13 +308,13 @@ extern MarFS_Repo* find_in_range(RangeList*  list,
 typedef struct MarFS_Namespace {
 
    const char*        name;
-   const char*        mnt_suffix; // the part of path below MarFS_mnt_top
+   const char*        mnt_path;   // the part of path below MarFS_mnt_top
    const char*        md_path;    // path of (root of) corresponding MD FS
-   const char*        trash_path; // MDFS trash goes under here
+   const char*        trash_md_path; // MDFS trash goes under here
    const char*        fsinfo_path;// path is trunc'ed to show global FS usage
 
    size_t             name_len;       // computed at config-load time
-   size_t             mnt_suffix_len; // computed at config-load time
+   size_t             mnt_path_len;   // computed at config-load time
    size_t             md_path_len;    // computed at config-load time
 
    MarFS_Perms        iperms;   // RM/WM/RD/WD bits, for interactive (fuse)
@@ -321,8 +331,6 @@ typedef struct MarFS_Namespace {
 
    const char*        shard_path;  // where the shards are
    uint32_t           shard_count; // number of shards, at shard_path
-
-   uint8_t            is_root;  // special meta-namespace
 }  MarFS_Namespace;
 
 
@@ -339,7 +347,7 @@ typedef struct MarFS_Namespace {
 
 #define CONFIG_DEFAULT  "~/marfs.config"
 
-extern int              load_config(const char* config_fname);
+extern int              read_config(const char* config_fname);
 
 
 
@@ -347,8 +355,8 @@ extern int              load_config(const char* config_fname);
 // NAMESPACES
 // ...........................................................................
 
-extern MarFS_Namespace* find_namespace_by_name(const char* name);
-extern MarFS_Namespace* find_namespace_by_path(const char* path);
+extern MarFS_Namespace* find_namespace_by_name    (const char* name);
+extern MarFS_Namespace* find_namespace_by_mnt_path(const char* path);
 
 
 // --- support for traversing namespaces (without knowing how they are stored)

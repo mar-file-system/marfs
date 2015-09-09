@@ -188,11 +188,11 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 #endif
 
    // Take user supplied path in fuse request structure to look up info,
-   // using MAR_mnttop and look up in MAR_namespace array, fill in all
+   // using MAR_mnt_top and look up in MAR_namespace array, fill in all
    // MAR_namespace and MAR_repo info into a big structure to hold
    // everything we know about that path.  We also compute the full path of
    // the corresponding entry in the MDFS (into PathInfo.pre.md_path).
-   info->ns = find_namespace_by_path(path);
+   info->ns = find_namespace_by_mnt_path(path);
    if (! info->ns) {
       LOG(LOG_INFO, "no namespace for path %s\n", path);
       errno = ENOENT;
@@ -200,9 +200,9 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    }
 
    LOG(LOG_INFO, "namespace   %s\n", info->ns->name);
-   LOG(LOG_INFO, "mnt_path    %s\n", info->ns->mnt_suffix);
+   LOG(LOG_INFO, "mnt_path    %s\n", info->ns->mnt_path);
 
-   const char* sub_path = path + info->ns->mnt_suffix_len; /* below NS */
+   const char* sub_path = path + info->ns->mnt_path_len; /* below NS */
    int prt_count = snprintf(info->post.md_path, MARFS_MAX_MD_PATH,
                             "%s%s", info->ns->md_path, sub_path);
    if (prt_count < 0) {
@@ -230,8 +230,8 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    // Should be impossible, as long as the trash-dir is not below the mdfs-dir
 
    // don't let users into the trash
-   if (! strcmp(info->post.md_path, info->trash_path)) {
-      LOG(LOG_ERR, "users can't access trash_path (%s)\n", info->post.md_path);
+   if (! strcmp(info->post.md_path, info->trash_md_path)) {
+      LOG(LOG_ERR, "users can't access trash_md_path (%s)\n", info->post.md_path);
       errno = EPERM;
       return -1;
    }
@@ -302,7 +302,7 @@ int expand_trash_info(PathInfo*    info,
    __TRY0(expand_path_info, info, path);
 
    if (! (info->flags & PI_TRASH_PATH)) {
-      const char* sub_path  = path + info->ns->mnt_suffix_len; /* below fuse mount */
+      const char* sub_path  = path + info->ns->mnt_path_len; /* below fuse mount */
       char*       base_name = strrchr(sub_path, '/');
       base_name = (base_name ? base_name +1 : (char*)sub_path);
 
@@ -328,9 +328,9 @@ int expand_trash_info(PathInfo*    info,
       const uint32_t shard = 0;
 
       // construct trash-path
-      int prt_count = snprintf(info->trash_path, MARFS_MAX_MD_PATH,
+      int prt_count = snprintf(info->trash_md_path, MARFS_MAX_MD_PATH,
                                "%s/%s.%d/%d/%d/%d/%s.trash_%010ld_%s",
-                               info->ns->trash_path,
+                               info->ns->trash_md_path,
                                info->ns->name, shard,
                                hi, med, lo,
                                base_name,
@@ -338,7 +338,7 @@ int expand_trash_info(PathInfo*    info,
                                date_string);
       if (prt_count < 0) {
          LOG(LOG_ERR, "snprintf(..., %s, %s, %010ld, %s) failed\n",
-             info->ns->trash_path,
+             info->ns->trash_md_path,
              base_name,
              info->st.st_ino,
              date_string);
@@ -346,7 +346,7 @@ int expand_trash_info(PathInfo*    info,
       }
       else if (prt_count >= MARFS_MAX_MD_PATH) {
          LOG(LOG_ERR, "snprintf(..., %s, %s, %010ld, %s) truncated\n",
-             info->ns->trash_path,
+             info->ns->trash_md_path,
              base_name,
              info->st.st_ino,
              date_string);
@@ -355,21 +355,21 @@ int expand_trash_info(PathInfo*    info,
       }
       else if (prt_count + strlen(MARFS_TRASH_COMPANION_SUFFIX)
                >= MARFS_MAX_MD_PATH) {
-         LOG(LOG_ERR, "no room for '%s' after trash_path '%s'\n",
+         LOG(LOG_ERR, "no room for '%s' after trash_md_path '%s'\n",
              MARFS_TRASH_COMPANION_SUFFIX,
-             info->trash_path);
+             info->trash_md_path);
          errno = EIO;
          return -1;
       }
       //      else
       //         // saves us a strlen(), later
-      //         info->trash_path_len = prt_count;
+      //         info->trash_md_path_len = prt_count;
 
       // subsequent calls to expand_trash_info() are NOP.
       info->flags |= PI_TRASH_PATH;
    }
 
-   LOG(LOG_INFO, "trash_path  %s\n", info->trash_path);
+   LOG(LOG_INFO, "trash_md_path  %s\n", info->trash_md_path);
    return 0;
 }
 
@@ -444,7 +444,7 @@ int init_xattr_specs() {
 // 
 //  Need to call stat() first, so caller will know (by failing return) that
 //  failure to get xattrs means either an existing file without xattrs
-//  (i.e. Repo.access_proto=DIRECT), or a non-existent file.  We also need
+//  (i.e. Repo.access_method=DIRECT), or a non-existent file.  We also need
 //  the stat info in order to construct new xattr field-values (e.g. MD
 //  path-name.)
 //
@@ -708,7 +708,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 //
 // In addition to moving the original to the trash, the two trash functions
 // (trash_unlink() and trash_truncate()) also write the full-path of the
-// original (MarFS) file into "<trash_path>.path".  [NOTE: This is not the
+// original (MarFS) file into "<trash_md_path>.path".  [NOTE: This is not the
 // same as the path to the file, where it now resides in trash, which is
 // installed into the POST xattr by trash_unlink/trash_truncate.]
 //
@@ -731,13 +731,13 @@ int write_trash_companion_file(PathInfo*             info,
    size_t  rc;
    ssize_t rc_ssize;
 
-   __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
+   __TRY0(expand_trash_info, info, path); /* initialize info->trash_md_path */
 
    // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
    // add MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
    char companion_fname[MARFS_MAX_MD_PATH];
    __TRY_GE0(snprintf, companion_fname, MARFS_MAX_MD_PATH, "%s%s",
-             info->trash_path,
+             info->trash_md_path,
              MARFS_TRASH_COMPANION_SUFFIX);
 
    // TBD: Don't want to depend on support for open(... (O_CREAT|O_EXCL)).
@@ -818,18 +818,18 @@ int  trash_unlink(PathInfo*   info,
 #if 0
    //    uniqueify name somehow with time perhaps == trashname, 
 
-   __TRY0(expand_trash_info, info, path); /* initialize info->trash_path */
+   __TRY0(expand_trash_info, info, path); /* initialize info->trash_md_path */
    LOG(LOG_INFO, "md_path:    '%s'\n", info->post.md_path);
 
    //    rename file to trashname 
-   __TRY0(rename, info->post.md_path, info->trash_path);
+   __TRY0(rename, info->post.md_path, info->trash_md_path);
 
    // copy xattrs to the trash-file.
    // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
-   // set to our trash_path.  Then save_xattrs() will just work on the
+   // set to our trash_md_path.  Then save_xattrs() will just work on the
    // trash-file.
    {  PathInfo trash_info = *info;
-      memcpy(trash_info.post.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
+      memcpy(trash_info.post.md_path, trash_info.trash_md_path, MARFS_MAX_MD_PATH);
 
       trash_info.post.flags |= POST_TRASH;
 
@@ -928,10 +928,10 @@ int  trash_truncate(PathInfo*   info,
 
    // we'll write to trash_file
    __TRY0(expand_trash_info, info, path);
-   int out = open(info->trash_path, (O_CREAT | O_WRONLY), new_mode);
+   int out = open(info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
    if (out == -1) {
       LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
-          info->trash_path, new_mode);
+          info->trash_md_path, new_mode);
       __TRY0(close, in);
       return -1;
    }
@@ -972,7 +972,7 @@ int  trash_truncate(PathInfo*   info,
             size_t wr_count = write(out, buf_ptr, remain);
             if (wr_count < 0) {
                LOG(LOG_ERR, "err writing %s (byte %ld)\n",
-                   info->trash_path, wr_total);
+                   info->trash_md_path, wr_total);
 
                // clean-up
                __TRY0(close, in);
@@ -991,7 +991,7 @@ int  trash_truncate(PathInfo*   info,
       free(buf);
       if (rd_count < 0) {
          LOG(LOG_ERR, "err reading %s (byte %ld)\n",
-             info->trash_path, wr_total);
+             info->trash_md_path, wr_total);
 
          // clean-up
          __TRY0(close, in);
@@ -1005,14 +1005,14 @@ int  trash_truncate(PathInfo*   info,
    __TRY0(close, out);
 
    // trunc trash-file to size
-   __TRY0(truncate, info->trash_path, log_size);
+   __TRY0(truncate, info->trash_md_path, log_size);
 
    // copy xattrs to the trash-file.
    // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
-   // set to our trash_path.  Then save_xattrs() will just work on the
+   // set to our trash_md_path.  Then save_xattrs() will just work on the
    // trash-file.
    PathInfo trash_info = *info;
-   memcpy(trash_info.post.md_path, trash_info.trash_path, MARFS_MAX_MD_PATH);
+   memcpy(trash_info.post.md_path, trash_info.trash_md_path, MARFS_MAX_MD_PATH);
    trash_info.post.flags |= POST_TRASH;
    __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
 
@@ -1021,7 +1021,7 @@ int  trash_truncate(PathInfo*   info,
    __TRY0(write_trash_companion_file, info, path, &trash_time);
 
    // update trash-file atime/mtime to support "undelete"
-   __TRY0(utime, info->trash_path, &trash_time);
+   __TRY0(utime, info->trash_md_path, &trash_time);
 
    // clean out everything on the original
    __TRY0(trunc_xattr, info);
@@ -1352,13 +1352,31 @@ int init_scatter_tree(const char*    root_dir,
 
    LOG(LOG_INFO, "scatter_tree %s/%s.%d\n", root_dir, ns_name, shard);
 
+
    // --- assure that top-level trash-dir (from the config) exists
-   LOG(LOG_INFO, " maybe create %s\n", root_dir);
-   rc = mkdir(root_dir, mode);
-   if ((rc < 0) && (errno != EEXIST)) {
-      LOG(LOG_ERR, "mkdir(%s) failed\n", root_dir);
+   rc = lstat(root_dir, &st);
+   if (! rc) {
+      if (! S_ISDIR(st.st_mode)) {
+         LOG(LOG_ERR, "not a directory %s\n", root_dir);
+         return -1;
+      }
+   }
+   else if (errno == ENOENT) {
+      // LOG(LOG_ERR, "creating %s\n", root_dir);
+      // rc = mkdir(root_dir, mode);
+      // if ((rc < 0) && (errno != EEXIST)) {
+      //   LOG(LOG_ERR, "mkdir(%s) failed\n", root_dir);
+      //   return -1;
+      // }
+      LOG(LOG_ERR, "doesn't exist %s\n", root_dir);
       return -1;
    }
+   else {
+      LOG(LOG_ERR, "stat failed %s (%s)\n", root_dir, strerror(errno));
+      return -1;
+   }
+
+
 
    // --- create 'namespace.shard' directory-tree under <root_dir> (if needed).
    //     Make sure there's room for inode-based subdirs, so we don't have to
@@ -1382,7 +1400,7 @@ int init_scatter_tree(const char*    root_dir,
       return -1;
    }
    else if ((prt_count + strlen("/x/x/x")) >= MARFS_MAX_MD_PATH) {
-      LOG(LOG_ERR, "no room for inode-subdirs after trash_path '%s'\n",
+      LOG(LOG_ERR, "no room for inode-subdirs after trash_md_path '%s'\n",
           dir_path);
       errno = EIO;
       return -1;
@@ -1491,7 +1509,7 @@ int init_mdfs() {
 
       // "root" namespace is not backed by real MD or storage, it is just
       // so that calls to list '/' can be answered.
-      if (ns->is_root) {
+      if (IS_ROOT_NS(ns)) {
          LOG(LOG_INFO, "skipping root NS: %s\n", ns->name);
          continue;
       }
@@ -1509,8 +1527,8 @@ int init_mdfs() {
 
 
       // check whether "trash" dir exists (and create sub-dirs, if needed)
-      LOG(LOG_INFO, "top-level trash dir   %s\n", ns->trash_path);
-      rc = lstat(ns->trash_path, &st);
+      LOG(LOG_INFO, "top-level trash dir   %s\n", ns->trash_md_path);
+      rc = lstat(ns->trash_md_path, &st);
       if (! rc) {
          if (! S_ISDIR(st.st_mode)) {
             LOG(LOG_ERR, "not a directory %s\n", ns->fsinfo_path);
@@ -1519,9 +1537,9 @@ int init_mdfs() {
       }
       else if (errno == ENOENT) {
          // LOG(LOG_ERR, "creating %s\n", ns->fsinfo_path);
-         // rc = mkdir(ns->trash_path, mode);
+         // rc = mkdir(ns->trash_md_path, mode);
          // if ((rc < 0) && (errno != EEXIST)) {
-         //   LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_path);
+         //   LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_md_path);
          //   return -1;
          // }
          LOG(LOG_ERR, "doesn't exist %s\n", ns->fsinfo_path);
@@ -1534,7 +1552,7 @@ int init_mdfs() {
 
 
       // create the scatter-tree for trash, if needed
-      __TRY0(init_scatter_tree, ns->trash_path, ns->name, shard, mode);
+      __TRY0(init_scatter_tree, ns->trash_md_path, ns->name, shard, mode);
 
 
 
@@ -1606,7 +1624,7 @@ int init_mdfs() {
       // world-writable was not good enough protection.
 
       // create a scatter-tree for semi-direct fuse repos, if any
-      if (repo->access_proto == PROTO_SEMI_DIRECT) {
+      if (repo->access_method == ACCESSMETHOD_SEMI_DIRECT) {
          __TRY0(init_scatter_tree, repo->host, ns->name, shard, mode);
       }
 #endif

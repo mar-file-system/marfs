@@ -251,13 +251,19 @@ typedef MarFS_CompType      CompressionMethod;
 typedef uint64_t            CorrectInfo;
 typedef MarFS_CorrectType   CorrectionMethod;
 typedef uint64_t            EncryptInfo;
+typedef MarFS_SecType       MarFSAuthMethod; // new config confused re encrypt vs auth
 typedef MarFS_SecType       EncryptionMethod;
-typedef MarFS_AccessMethod  RepoAccessProto;
+#define CORRECT_NONE        CORRECTTYPE_NONE;
+#define MarFS_mnt_top     marfs_config->mnt_top
+#define MarFS_config_vers marfs_config->version
 
 #else
 # include "marfs_base_static_config.h"
 #endif
 
+
+
+#define IS_ROOT_NS(NS)  ((NS->mnt_path[0] == '/') && (NS->mnt_path_len == 1))
 
 
 // Do an in-place modification of a given namespace-name (i.e. the part of

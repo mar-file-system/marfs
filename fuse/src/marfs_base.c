@@ -159,7 +159,7 @@ DEFINE_DECODE(encryption, EncryptionMethod);
 
 
 // NOTE: <src> and <dest> can be the same
-// NOTE: we assume load_config() guarantees that no namespace contains '-'
+// NOTE: we assume read_config() guarantees that no namespace contains '-'
 int encode_namespace(char* dst, char* src) {
    int i;
    for (i=0; src[i]; ++i) {
@@ -325,9 +325,15 @@ int init_pre(MarFS_XattrPre*        pre,
    pre->config_vers  = MarFS_config_vers;
 
    pre->obj_type     = obj_type;
+#ifdef NEW_CONFIG
+   pre->compression  = repo->comp_type;
+   pre->correction   = repo->correct_type;
+   pre->encryption   = 0; /* new config doesn't accomodate "encryption" */
+#else
    pre->compression  = repo->compression;
    pre->correction   = repo->correction;
    pre->encryption   = repo->encryption;
+#endif
 
    pre->md_inode     = st->st_ino;
    pre->md_ctime     = st->st_ctime;
@@ -706,7 +712,7 @@ int post_2_str(char*                  post_str,
    //     file-system *OR* to the location of the file in the trash, we can
    //     not currently support moving semi-direct files to the trash.
    //     Deleting a semi-direct file must just delete it.
-   const char* md_path = ( ((repo->access_proto == PROTO_SEMI_DIRECT)
+   const char* md_path = ( ((repo->access_method == ACCESSMETHOD_SEMI_DIRECT)
                             || (post->flags & POST_TRASH))
                            ? post->md_path
                            : "");
@@ -972,74 +978,5 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
 #undef COPY_IN
 
    return (src - str);
-}
-
-
-
-
-
-
-// Give us a pointer to your list-pointer.  Your list-pointer should start
-// out having a value of NULL.  We maintain the list of repos ASCCENDING by
-// min file-size handled.  Return false in case of conflicts.  Conflicts
-// include overlapping ranges, or gaps in ranges.  Call with <max>==-1, to
-// make range from <min> to infinity.
-int insert_in_range(RangeList**  list,
-                    size_t       min,
-                    size_t       max,
-                    MarFS_Repo*  repo) {
-
-   RangeList** insert = list;   // ptr to place to store ptr to new element
-
-   // leave <ptr> pointing to the inserted element
-   RangeList*  this;
-   for (this=*list; this; this=this->next) {
-
-      if (min < this->min) {    // insert before <this>
-
-         if (max == -1) {
-            LOG(LOG_ERR, "range [%ld, -1] includes range [%ld, %ld]\n",
-                    min, this->min, this->max);
-            return -1;
-         }
-         if (max < this->min) {
-            LOG(LOG_ERR, "gap between range [%ld, %ld] and [%ld, %ld]\n",
-                    min, max, this->min, this->max);
-            return -1;
-         }
-         if (max > this->min) {
-            LOG(LOG_ERR, "overlap in range [%ld, %ld] and [%ld, %ld]\n",
-                    min, max, this->min, this->max);
-            return -1;
-         }
-
-         // do the insert
-         break;
-      }
-      insert = &this->next;
-   }
-
-
-   RangeList* elt = (RangeList*)malloc(sizeof(RangeList));
-   elt->min  = min;
-   elt->max  = max;
-   elt->repo = repo;
-   elt->next = *insert;
-   *insert = elt;
-   return 0;                    /* success */
-}
-
-// given a file-size, find the corresponding element in a RangeList, and
-// return the corresponding repo.  insert_range() maintains repos in
-// descending order of the block-sizes they handle, to make this as quick
-// as possible.
-MarFS_Repo* find_in_range(RangeList* list,
-                          size_t     block_size) {
-   while (list) {
-      if (block_size >= list->min)
-         return list->repo;
-      list = list->next;
-   }
-   return NULL;
 }
 
