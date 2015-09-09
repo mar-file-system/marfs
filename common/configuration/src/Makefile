@@ -13,7 +13,7 @@ debug: test_marfs_configuration-d
 
 
 # PARSE_DIR = ../../../../../PA2X/PA2X
-LOG_DIR =   ../../log/src
+LOG_DIR =   $(PWD)/../../log/src
 
 #LIBS = -lpthread
 LIBS =
