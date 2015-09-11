@@ -744,6 +744,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
     j++;
   }
   repoCount = j;
+  LOG( LOG_INFO, "parser gave us a list of %d repos.\n", repoCount );
 
   marfs_repo_list = (MarFS_Repo_List) malloc( sizeof( MarFS_Repo_Ptr ) * ( repoCount + 1 ));
   if ( marfs_repo_list == NULL) {
@@ -758,6 +759,9 @@ static MarFS_Config_Ptr read_configuration_internal() {
       LOG( LOG_ERR, "marfs_configuration.c: Error allocating memory for the MarFS repo structure.\n");
       return NULL;
     }
+
+    LOG( LOG_INFO, "processing parsed-repo \"%s\".\n", repoList[j]->name );
+
 
 /*
  * Anything that isn't staying a string and can't be converted
@@ -950,6 +954,11 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
     marfs_namespace_list[j]->md_path = strdup( namespaceList[j]->md_path );
     marfs_namespace_list[j]->md_path_len = strlen( namespaceList[j]->md_path );
+
+
+    /* iwrite_repo */
+    marfs_namespace_list[j]->iwrite_repo = find_repo_by_name( namespaceList[j]->iwrite_repo_name );
+
 
 /*
  * For now we'll set this to one (1). Once the configuration parser is fixed we can

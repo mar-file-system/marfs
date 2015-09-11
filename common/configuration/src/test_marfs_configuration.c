@@ -58,6 +58,48 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "logging.h"
 #include "marfs_configuration.h"
 
+// for now, just dump the first element
+int dump_range_list( MarFS_Repo_Range** range_list,
+                     int                range_list_count ) {
+   int i;
+   for (i=0; i<range_list_count; ++i) {
+      fprintf( stdout, "\t\t[%d] (min: %d, max: %d) -> repo '%s'\n",
+               i,
+               range_list[i]->minsize,
+               range_list[i]->maxsize,
+               (range_list[i]->repo_ptr ? range_list[i]->repo_ptr->name : "NULL") );
+   }
+}
+
+int dump_namespace( MarFS_Namespace* ns ) {
+   
+   fprintf(stdout, "Namespace\n");
+   fprintf(stdout, "\tname               '%s'\n", ns->name );
+   fprintf(stdout, "\tname_len           %ld\n",  ns->name_len);
+   fprintf(stdout, "\tmnt_path           '%s'\n", ns->mnt_path);
+   fprintf(stdout, "\tmnt_path_len       %ld\n",  ns->mnt_path_len);
+   fprintf(stdout, "\tbperms             0x%x\n", ns->bperms);
+   fprintf(stdout, "\tiperms             0x%x\n", ns->iperms);
+   fprintf(stdout, "\tmd_path            '%s'\n", ns->md_path);
+   fprintf(stdout, "\tmd_path_len        %ld\n",  ns->md_path_len);
+   fprintf(stdout, "\tiwrite_repo        '%s'\n", ns->iwrite_repo->name);
+
+   fprintf(stdout, "\trepo_range_list\n");
+   dump_range_list(ns->repo_range_list, ns->repo_range_list_count);
+
+   fprintf(stdout, "\ttrash_md_path      '%s'\n", ns->trash_md_path);
+   fprintf(stdout, "\ttrash_md_path_len  %ld\n",  ns->trash_md_path_len);
+   fprintf(stdout, "\tfsinfo_path        '%s'\n", ns->fsinfo_path);
+   fprintf(stdout, "\tfsinfo_path_len    %ld\n",  ns->fsinfo_path_len);
+   fprintf(stdout, "\tquota_space        %lld\n", ns->quota_space);
+   fprintf(stdout, "\tquota_names        %lld\n", ns->quota_names);
+   fprintf(stdout, "\tns_shardp          %d\n",   ns->ns_shardp);
+   fprintf(stdout, "\tns_shardp_len      %ld\n",  ns->ns_shardp_len);
+   fprintf(stdout, "\tns_shardp_num      %llu\n", ns->ns_shardp_num);
+   fprintf(stdout, "\n");
+}
+
+
 int main( int argc, char *argv[] ) {
 
   char sectype_code = '_';
@@ -267,14 +309,12 @@ int main( int argc, char *argv[] ) {
   } else {
     fprintf( stderr, "ERROR: Repo name \"emcS3_00\" does exist and was not found.\n" );
   }
-
   fprintf( stdout, "\n" );
 
   NSIterator nit = namespace_iterator();
   while (( namespacePtr = namespace_next( &nit )) != NULL ) {
-    fprintf( stdout, "CORRECT: Namespace name is \"%s\"\n", namespacePtr->name );
+     dump_namespace(namespacePtr);
   }
-
   fprintf( stdout, "\n" );
 
   RepoIterator rit = repo_iterator();

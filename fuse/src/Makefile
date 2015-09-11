@@ -84,10 +84,10 @@ all: fuse
 SHELL = /bin/bash
 
 # logging.* has now been moved to here
-LOGGING = ../../common/log/src
+LOGGING = $(PWD)/../../common/log/src
 
 # Brett's configuration reader is (temporarily) here
-CONFIG = ../../common/configuration/src
+CONFIG = $(PWD)/../../common/configuration/src
 
 
 OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_fuse.o
@@ -335,10 +335,12 @@ fuse: fuse.std
 fuse.std: pre_req
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=2
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=1
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1 STATIC_CONFIG=1
+	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1 STATIC_CONFIG=1
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1
 
 fuse.lean: pre_req
-	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 STATIC_CONFIG=1
+	@ # $(MAKE) marfs_fuse LINK_LIBFUSE=1 STATIC_CONFIG=1
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1
 
 fuse.dbg: pre_req
 	@ $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg LINK_LIBFUSE=1 STATIC_CONFIG=1

@@ -62,6 +62,14 @@ parser: parse_dir
 	@ $(RM) $(PARSE_DIR)/datapars
 	@ echo; echo "#-- making confpars"
 	@ $(MAKE) -C $(PARSE_DIR) confpars CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)"
+	@ # echo; echo "#-- running confpars (to generate buggy include-files)"
+	@ # $(MAKE) -C $(PARSE_DIR) confpars-run conf=$(BLUEPRINT)
+	@ # echo; echo "#-- experimental hack: fix parse-inc/path-names.inc"
+	@ # cat $(PARSE_DIR)/parse-inc/path-names.inc | awk -f fix_parser_internals.awk > foo
+	@ # mv foo $(PARSE_DIR)/parse-inc/path-names.inc
+	@ # echo; echo "#-- experimental hack: fix parse-inc/path-switch.inc"
+	@ # cat $(PARSE_DIR)/parse-inc/path-switch.inc | awk -f fix_parser_internals.awk > foo
+	@ # mv foo $(PARSE_DIR)/parse-inc/path-switch.inc
 	@ echo; echo "#-- making datapars with $(BLUEPRINT)"
 	@ $(MAKE) -C $(PARSE_DIR) datapars CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)" conf=$(BLUEPRINT)
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
@@ -86,6 +94,7 @@ logging.o: $(LOG_DIR)/logging.c $(LOG_DIR)/logging.h
 
 CFLAGS += -I$(LOG_DIR) $(LOG_OPT)
 
+
 # ---------------------------------------------------------------------------
 # build a library with Ron's parser, plus the marfs config-parser, plus logging
 # ---------------------------------------------------------------------------
@@ -97,7 +106,7 @@ H   = marfs_configuration.h
 
 %.o: %.c %.h parse_dir
 	@ echo; echo "#-- building $@"
-	gcc -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) -o $@ $<
+	gcc -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) $(DEBUG) -o $@ $<
 
 
 libconfig.a: parser $(LOG_OBJ) $(OBJ)
@@ -110,6 +119,7 @@ lib: libconfig.a
 
 LDFLAGS += -L.
 
+
 # ---------------------------------------------------------------------------
 # Alternate build of Brett's config-tester, using the above
 # ---------------------------------------------------------------------------
@@ -118,8 +128,7 @@ LDFLAGS += -L.
 # LDFLAGS += -L.
 tester: libconfig.a
 	@ echo; echo "#-- building $@"
-	# $(CC) -o $@ -I$(PARSE_DIR) -I$(LOG_DIR) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) $(LOG_OPT) -L. test_marfs_configuration.c -lconfig
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) test_marfs_configuration.c -lconfig
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $(DEBUG) test_marfs_configuration.c -lconfig
 
 
 # ---------------------------------------------------------------------------
