@@ -84,6 +84,24 @@ OF SUCH DAMAGE.
 extern "C" {
 #  endif
 
+
+
+
+typedef struct {
+  char*                 name;
+  size_t                name_len;
+  uint16_t              version_major;
+  uint16_t              version_minor;
+  char*                 mnt_top;        // NOTE: Do NOT include a final slash.
+  size_t                mnt_top_len;
+   //  MarFS_Namespace_List  namespace_list;
+   //  size_t                namespace_count;
+} MarFS_Config;
+
+extern MarFS_Config*  marfs_config;
+
+
+
 // These types are used in xattrs, so they need corresponding "lookup"
 // functions to convert strings to enumeration values.
 
@@ -348,6 +366,7 @@ typedef struct MarFS_Namespace {
 #define CONFIG_DEFAULT  "~/marfs.config"
 
 extern int              read_config(const char* config_fname);
+extern int              validate_config();
 
 
 

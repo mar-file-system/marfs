@@ -405,11 +405,18 @@ typedef enum {
 typedef uint16_t FHFlagType;
 
 
-// read() can maintain state here (see notes in WriteStatus, re
-// marfs_data).
+// read() can maintain state here
+// (see notes in WriteStatus, re marfs_data).
+//
+// If you seek() then read(), the only thing fuse sees is a change in the
+// read-offset.  Unlike writes, it is legal to read discontiguous section
+// of a marfs file.  Therefore, unlike with write, read only needs to track
+// the logical offset of the current "read heaad", to know whether the next
+// read requires a close/re-open, or con continue to use the saem stream.
+
 typedef struct {
-   // TBD ...
-   size_t        sys_reads;     // discount this much from FileHandle.os.written
+   // size_t        sys_reads;     // discount this much from FileHandle.os.written
+   size_t        log_offset;    // effective offset (shows contiguous reads)
 } ReadStatus;
 
 
@@ -424,9 +431,8 @@ typedef struct {
 // data written by the user, we can compute the appropriate size.
 
 typedef struct {
-   // TBD ...
-   RecoveryInfo  rec_info;      // (goes into tail of object)
    size_t        sys_writes;    // discount this much from FileHandle.os.written
+   RecoveryInfo  rec_info;      // (goes into tail of object)
 } WriteStatus;
 
 

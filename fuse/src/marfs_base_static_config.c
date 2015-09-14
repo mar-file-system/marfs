@@ -29,11 +29,18 @@
 // FOR NOW:  Just do a simple lookup in the hard-coded vector of namespaces.
 // ---------------------------------------------------------------------------
 
-float                    MarFS_config_vers = 0.001;
 
-// top level mount point for fuse/pftool
-char*                    MarFS_mnt_top = NULL;
-size_t                   MarFS_mnt_top_len = 0;
+///     float                    MarFS_config_vers = 0.001;
+///     
+///     // top level mount point for fuse/pftool
+///     char*                    MarFS_mnt_top = NULL;
+///     size_t                   MarFS_mnt_top_len = 0;
+
+
+static MarFS_Config  _marfs_config;
+MarFS_Config*  marfs_config = &_marfs_config;
+
+
 
 // quick-n-dirty
 // For now, this is a dynamically-allocated vector of pointers.
@@ -146,12 +153,22 @@ int validate_config();          // fwd-decl
 
 int read_config(const char* config_fname) {
 
-   // config_fname is ignored, for now, but will eventually hold everythying
-   if (! config_fname)
-      config_fname = CONFIG_DEFAULT;
+   ///   // config_fname is ignored, for now, but will eventually hold everythying
+   ///   if (! config_fname)
+   ///      config_fname = CONFIG_DEFAULT;
+   ///
+   ///   MarFS_mnt_top       = "/marfs";
+   ///   MarFS_mnt_top_len   = strlen(MarFS_mnt_top);
 
-   MarFS_mnt_top       = "/marfs";
-   MarFS_mnt_top_len   = strlen(MarFS_mnt_top);
+   _marfs_config.version_major = 0;
+   _marfs_config.version_minor = 1;
+
+   _marfs_config.mnt_top     = "/marfs";
+   _marfs_config.mnt_top_len = strlen(_marfs_config.mnt_top);
+
+   _marfs_config.name        = "static";
+   _marfs_config.name_len    = strlen(_marfs_config.name);
+
 
    // ...........................................................................
    // hard-coded repositories
@@ -597,57 +614,10 @@ int read_config(const char* config_fname) {
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M"));
 
 
-   if (validate_config())
-      return -1;
-
    return 0;                    /* success */
 }
 
 
-// This is just a collection of ad-hoc tests for various inconsistencies
-// and illegal states, that wouldn't be detected by the parser.
-//
-// Return 0 for success, non-zero for failure.
-//
-
-
-int validate_config() {
-
-   int retval = 0;
-   int i;
-
-   const size_t     recovery = sizeof(RecoveryInfo) +8;
-
-   // repo checks
-   MarFS_Repo*   repo = NULL;
-   RepoIterator  it = repo_iterator();
-   while ((repo = repo_next(&it))) {
-
-      // chunk_size must be greater than the size of the recovery-info that
-      // is written into the tail of objects.
-      //
-      // NOTE: This shouldn't apply to repos that are DIRECT or SEMI_DIRECT
-      //     because they won't store any recovery-data.
-      //
-      if (repo->chunk_size <= recovery) {
-         LOG(LOG_ERR, "repo '%s' has chunk-size (%ld) "
-             "less than the size of recovery-info (%ld)\n",
-             repo->name, repo->chunk_size, recovery);
-         retval = -1;
-      }
-   }
-
-   //   // TBD
-   //
-   //   // namespace checks
-   //   MarFS_Namespace* ns = NULL;
-   //   NSIterator       it = namespace_iterator();
-   //   while (ns = namespace_next(&it)) {
-   //      // ...
-   //   }
-
-   return retval;
-}
 
 
 

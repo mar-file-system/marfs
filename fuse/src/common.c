@@ -188,7 +188,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 #endif
 
    // Take user supplied path in fuse request structure to look up info,
-   // using MAR_mnt_top and look up in MAR_namespace array, fill in all
+   // using marfs_config->mnt_top and look up in MAR_namespace array, fill in all
    // MAR_namespace and MAR_repo info into a big structure to hold
    // everything we know about that path.  We also compute the full path of
    // the corresponding entry in the MDFS (into PathInfo.pre.md_path).
@@ -752,7 +752,7 @@ int write_trash_companion_file(PathInfo*             info,
    __TRY_GE0(write, fd, info->post.md_path, strlen(info->post.md_path));
 #else
    // write MarFS path into the trash companion
-   __TRY_GE0(write, fd, MarFS_mnt_top, MarFS_mnt_top_len);
+   __TRY_GE0(write, fd, marfs_config->mnt_top, marfs_config->mnt_top_len);
    __TRY_GE0(write, fd, path, strlen(path));
 #endif
 
@@ -1169,7 +1169,8 @@ int write_chunkinfo(int                   md_fd,
    const size_t user_data_this_chunk = total_written - log_offset;
 
    MultiChunkInfo chunk_info = (MultiChunkInfo) {
-      .config_vers      = MarFS_config_vers,
+      .config_vers_maj  = marfs_config->version_major,
+      .config_vers_min  = marfs_config->version_minor,
       .chunk_no         = info->pre.chunk_no,
       .logical_offset   = log_offset,
       .chunk_data_bytes = user_data_this_chunk,
@@ -1507,12 +1508,9 @@ int init_mdfs() {
 #endif
       mode_t         mode  = (S_IRWXU | S_IRWXG ); // default 'chmod 770'
 
-      // "root" namespace is not backed by real MD or storage, it is just
-      // so that calls to list '/' can be answered.
-      if (IS_ROOT_NS(ns)) {
-         LOG(LOG_INFO, "skipping root NS: %s\n", ns->name);
-         continue;
-      }
+
+      LOG(LOG_INFO, "\n");
+      LOG(LOG_INFO, "NS %s\n", ns->name);
 
       //      // only risk screwing up "jti", while debugging
       //      if (strcmp(ns->name, "jti")) {
@@ -1520,8 +1518,12 @@ int init_mdfs() {
       //         continue;
       //      }
 
-      LOG(LOG_INFO, "\n");
-      LOG(LOG_INFO, "NS %s\n", ns->name);
+      // "root" namespace is not backed by real MD or storage, it is just
+      // so that calls to list '/' can be answered.
+      if (IS_ROOT_NS(ns)) {
+         LOG(LOG_INFO, "skipping root NS: %s\n", ns->name);
+         continue;
+      }
 
 
 

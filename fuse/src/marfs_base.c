@@ -74,6 +74,7 @@ OF SUCH DAMAGE.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h>           /* uintmax_t, for printing ino_t with "%ju" */
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
@@ -322,7 +323,8 @@ int init_pre(MarFS_XattrPre*        pre,
    pre->repo         = repo;
    pre->ns           = ns;
 
-   pre->config_vers  = MarFS_config_vers;
+   pre->config_vers_maj = marfs_config->version_major;
+   pre->config_vers_min = marfs_config->version_minor;
 
    pre->obj_type     = obj_type;
 #ifdef STATIC_CONFIG
@@ -404,8 +406,8 @@ int update_pre(MarFS_XattrPre* pre) {
    //      return EINVAL;
 
    // config-version major and minor
-   int major = (int)floorf(pre->config_vers);
-   int minor = (int)floorf((pre->config_vers - major) * 1000.f);
+   int major = pre->config_vers_maj;
+   int minor = pre->config_vers_min;
 
    char type     = encode_obj_type(pre->obj_type);
    char compress = encode_compression(pre->compression);
@@ -537,22 +539,22 @@ int str_2_pre(MarFS_XattrPre*    pre,
    }
 
 
-   int    major;
-   int    minor;
+   uint16_t  major;
+   uint16_t  minor;
 
-   char   obj_type;              /* ignored, see NOTE above init_pre() */
-   char   compress;
-   char   correct;
-   char   encrypt;
+   char      obj_type;          /* ignored, see NOTE above init_pre() */
+   char      compress;
+   char      correct;
+   char      encrypt;
 
-   ino_t  md_inode;
+   ino_t     md_inode;
 
-   size_t chunk_size;
-   size_t chunk_no;
+   size_t    chunk_size;
+   size_t    chunk_no;
 
-   char    md_ctime_str[MARFS_DATE_STRING_MAX];
-   char    obj_ctime_str[MARFS_DATE_STRING_MAX];
-   uint8_t unique;
+   char      md_ctime_str[MARFS_DATE_STRING_MAX];
+   char      obj_ctime_str[MARFS_DATE_STRING_MAX];
+   uint8_t   unique;
 
    // --- parse bucket components
 
@@ -561,14 +563,17 @@ int str_2_pre(MarFS_XattrPre*    pre,
    //       a delimiter.  It will still be easy to construct
    //       delimiter-based S3 commands, to search for all entries with a
    //       given namespace, in a known repo.
-   char repo_name[MARFS_MAX_REPO_NAME];
+   char  repo_name[MARFS_MAX_REPO_NAME];
 
    read_count = sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT,
                        repo_name);
 
-   if (read_count == EOF)       // errno is set (?)
+   if (read_count == EOF) {     // errno is set (?)
+      LOG(LOG_ERR, " parsing bucket '%s'\n", pre->bucket);
       return -1;
+   }
    else if (read_count != 1) {
+      LOG(LOG_ERR, "parsed %d items from '%s'\n", read_count, pre->bucket);
       errno = EINVAL;            /* ?? */
       return -1;
    }
@@ -589,9 +594,12 @@ int str_2_pre(MarFS_XattrPre*    pre,
                        md_ctime_str, obj_ctime_str, &unique,
                        &chunk_size, &chunk_no);
 
-   if (read_count == EOF)       // errno is set (?)
+   if (read_count == EOF) {       // errno is set (?)
+      LOG(LOG_ERR, "EOF parsing objid '%s'\n", pre->objid);
       return -1;
+   }
    else if (read_count != 13) {
+      LOG(LOG_ERR, "parsed %d items from '%s'\n", read_count, pre->objid);
       errno = EINVAL;            /* ?? */
       return -1;
    }
@@ -601,6 +609,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
    // find repo from repo-name
    MarFS_Repo* repo = find_repo_by_name(repo_name);
    if (! repo) {
+      LOG(LOG_ERR, "couldn't find repo '%s'\n", repo_name);
       errno = EINVAL;            /* ?? */
       return -1;
    }
@@ -613,6 +622,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
    //   }
    MarFS_Namespace* ns = find_namespace_by_name(ns_name);
    if (! ns) {
+      LOG(LOG_ERR, "couldn't find namespace '%s'\n", ns_name);
       errno = EINVAL;
       return -1;
    }
@@ -627,6 +637,8 @@ int str_2_pre(MarFS_XattrPre*    pre,
    //     inode of the others.
    if ((md_inode != st->st_ino)
        && (decode_obj_type(obj_type) != OBJ_PACKED)) {
+      LOG(LOG_ERR, "non-packed obj, but MD-inode %ju != st->st_ino %ju \n",
+          (uintmax_t)md_inode, (uintmax_t)st->st_ino);
       errno = EINVAL;            /* ?? */
       return -1;
    }
@@ -637,16 +649,19 @@ int str_2_pre(MarFS_XattrPre*    pre,
 
    if (str_to_epoch(&md_ctime, md_ctime_str, MARFS_DATE_STRING_MAX)) {
       LOG(LOG_ERR, "error converting string '%s' to Pre.md_ctime\n", md_ctime_str);
+      errno = EINVAL;            /* ?? */
       return -1;
    }
    if (str_to_epoch(&obj_ctime, obj_ctime_str, MARFS_DATE_STRING_MAX)) {
       LOG(LOG_ERR, "error converting string '%s' to Pre.obj_ctime\n", obj_ctime_str);
+      errno = EINVAL;            /* ?? */
       return -1;
    }
 
 
    // --- fill in fields in Pre
-   pre->config_vers  = (float)major + ((float)minor / 1000.f);
+   pre->config_vers_maj = major;
+   pre->config_vers_min = minor;
 
    pre->md_ctime     = md_ctime;
    pre->obj_ctime    = obj_ctime;
@@ -664,7 +679,16 @@ int str_2_pre(MarFS_XattrPre*    pre,
    pre->md_inode     = md_inode; /* NOTE: from object-ID, not st->st_ino  */
 
    // validate version
-   assert (pre->config_vers == MarFS_config_vers);
+   if ((   major != marfs_config->version_major)
+       || (minor != marfs_config->version_minor)) {
+
+      LOG(LOG_ERR, "xattr vers '%d.%d' != config %d.%d\n",
+          major, minor,
+          marfs_config->version_major, marfs_config->version_minor);
+      errno = EINVAL;            /* ?? */
+      return -1;
+   }
+
    return 0;
 }
 
@@ -675,7 +699,9 @@ int str_2_pre(MarFS_XattrPre*    pre,
 // initialize -- most fields aren't known, when stat_xattr() calls us
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
 
-   post->config_vers = MarFS_config_vers;
+   post->config_vers_maj = marfs_config->version_major;
+   post->config_vers_min = marfs_config->version_minor;
+
    post->obj_type    = OBJ_UNI;    /* will be changed to Multi, if needed */
    post->chunks      = 1;          // will be updated for multi
    post->chunk_info_bytes = 0;
@@ -697,8 +723,8 @@ int post_2_str(char*                  post_str,
                MarFS_Repo*            repo) {
 
    // config-version major and minor
-   const int major = (int)floorf(post->config_vers);
-   const int minor = (int)floorf((post->config_vers - major) * 1000.f);
+   const int major = post->config_vers_maj;
+   const int minor = post->config_vers_min;
 
    // putting the md_path into the xattr is really only useful if the marfs
    // file is in the trash, or is SEMI_DIRECT.  For other types of marfs
@@ -752,9 +778,9 @@ int post_2_str(char*                  post_str,
 
 int str_2_post(MarFS_XattrPost* post, const char* post_str) {
 
-   int   major;
-   int   minor;
-   char  obj_type_code;
+   uint16_t major;
+   uint16_t minor;
+   char     obj_type_code;
 
    // --- extract bucket, and some top-level fields
    int scanf_size = sscanf(post_str, MARFS_POST_FORMAT,
@@ -775,13 +801,20 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
       return -1;            /* ?? */
    }
 
-   float version = (float)major + ((float)minor / 1000.f);
-   if (version != MarFS_config_vers) {
+   // validate version
+   if ((   major != marfs_config->version_major)
+       || (minor != marfs_config->version_minor)) {
+
+      LOG(LOG_ERR, "xattr vers '%d.%d' != config %d.%d\n",
+          major, minor,
+          marfs_config->version_major, marfs_config->version_minor);
       errno = EINVAL;            /* ?? */
       return -1;
    }
 
-   post->config_vers = version;
+   post->config_vers_maj = major;
+   post->config_vers_min = minor;
+
    post->obj_type    = decode_obj_type(obj_type_code);
    return 0;
 }
@@ -814,8 +847,8 @@ int rec_2_str(char* rec_str, const size_t max_size, const RecoveryInfo* rec) {
 
 #if 0
    // config-version major and minor
-   int major = (int)floorf(rec->config_vers);
-   int minor = (int)floorf((rec->config_vers - major) * 1000.f);
+   int major = rec->config_vers_maj;
+   int minor = rec->config_vers_min;
 
    ssize_t bytes_printed = snprintf(rec_info_str, max_size,
                                     MARFS_REC_INFO_FORMAT,
@@ -922,13 +955,8 @@ ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* 
       dest += sizeof(TYPE);                        \
    }
 
-
-   // version is copied byte-for-byte as a float (in network-byte-order)
-   UFloat32 uf = (UFloat32){ .f = chnk->config_vers };
-   uf.i = htonl(uf.i);
-   memcpy(dest, (char*)&uf.i, 4);
-   dest += sizeof(float);
-
+   COPY_OUT(chnk->config_vers_maj,  uint16_t,    htons);
+   COPY_OUT(chnk->config_vers_min,  uint16_t,    htons);
    COPY_OUT(chnk->chunk_no,         size_t,      htonll);
    COPY_OUT(chnk->logical_offset,   size_t,      htonll);
    COPY_OUT(chnk->chunk_data_bytes, size_t,      htonll);
@@ -962,13 +990,8 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
       src += sizeof(TYPE);                       \
    }
 
-   // version is copied byte-for-byte as a float (in network-byte-order)
-   UFloat32 uf;
-   memcpy((char*)&uf.i, src, 4);
-   uf.i = ntohl(uf.i);
-   chnk->config_vers = uf.f;
-   src += sizeof(float);
-
+   COPY_IN(chnk->config_vers_maj,  uint16_t,    ntohs);
+   COPY_IN(chnk->config_vers_min,  uint16_t,    ntohs);
    COPY_IN(chnk->chunk_no,         size_t,      ntohll);
    COPY_IN(chnk->logical_offset,   size_t,      ntohll);
    COPY_IN(chnk->chunk_data_bytes, size_t,      ntohll);
@@ -980,3 +1003,51 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
    return (src - str);
 }
 
+
+
+// ---------------------------------------------------------------------------
+// validate the results of read_config()
+// ---------------------------------------------------------------------------
+
+// This is just a collection of ad-hoc tests for various inconsistencies
+// and illegal states, that wouldn't be detected by the parser.
+//
+// Return 0 for success, non-zero for failure.
+//
+
+
+int validate_config() {
+
+   int   retval = 0;
+   const size_t     recovery = sizeof(RecoveryInfo) +8;
+
+   // repo checks
+   MarFS_Repo*   repo = NULL;
+   RepoIterator  it = repo_iterator();
+   while ((repo = repo_next(&it))) {
+
+      // chunk_size must be greater than the size of the recovery-info that
+      // is written into the tail of objects.
+      //
+      // NOTE: This shouldn't apply to repos that are DIRECT or SEMI_DIRECT
+      //     because they won't store any recovery-data.
+      //
+      if (repo->chunk_size <= recovery) {
+         LOG(LOG_ERR, "repo '%s' has chunk-size (%ld) "
+             "less than the size of recovery-info (%ld)\n",
+             repo->name, repo->chunk_size, recovery);
+         retval = -1;
+      }
+   }
+
+   //   // TBD
+   //
+   //   // namespace checks
+   //   MarFS_Namespace* ns = NULL;
+   //   NSIterator       it = namespace_iterator();
+   //   while (ns = namespace_next(&it)) {
+   //      // ...
+   //   }
+
+   return retval;
+}
