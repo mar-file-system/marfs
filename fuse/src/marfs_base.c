@@ -520,6 +520,11 @@ int pre_2_url(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
 //       "%z", then strptime() will simply adjust the time-zone east by an
 //       hour.  This is a really stoopid thing to do, because strftime()
 //       
+// NOTE: Some callers wont have a stat struct, and we only use it for a
+//       validation, so we'll allow it to be null, in which case we just
+//       skip the test.  (For Alfred's GC tool, these things will be in the
+//       trash, where the file inode is never going to be the same as the
+//       indo in the xattr.
 
 int str_2_pre(MarFS_XattrPre*    pre,
               const char*        pre_str, // i.e. an xattr-value
@@ -635,7 +640,8 @@ int str_2_pre(MarFS_XattrPre*    pre,
    //     then they wouldn't be reliably-unique.  Therefore, they are built
    //     with an indoe from one of their members, but it won't match the
    //     inode of the others.
-   if ((md_inode != st->st_ino)
+   if (st
+       && (md_inode != st->st_ino)
        && (decode_obj_type(obj_type) != OBJ_PACKED)) {
       LOG(LOG_ERR, "non-packed obj, but MD-inode %ju != st->st_ino %ju \n",
           (uintmax_t)md_inode, (uintmax_t)st->st_ino);
