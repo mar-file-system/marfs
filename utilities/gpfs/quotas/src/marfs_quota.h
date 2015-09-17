@@ -78,6 +78,9 @@
 #include <sys/stat.h>
 #include <math.h>               // floorf
 #include <gpfs_fcntl.h>
+// TEMP for now to allow buidling of config and usable fuse mount
+#define NEW_CONFIG
+
 #include "marfs_base.h"
 
 //#define MAX_XATTR_VAL_LEN 64
@@ -109,17 +112,19 @@ struct store_type {
   size_t packed_count;
 };
 
-struct marfs_xattr {
+typedef struct Marfs_Xattr {
 // Getting the following array sizez from gpfs_fcntl.h
   char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
   char xattr_value[GPFS_FCNTL_XATTR_MAX_VALUELEN];
 
-};
+} Marfs_Xattr;
 
-typedef struct fileset_stats {
+typedef struct Fileset_Stats {
       int fileset_id;
       char fileset_name[MAX_FILESET_NAME_LEN];
       //unsigned long long int sum_size;
+      //FIX THIS NUMBER
+      char fsinfo_path[1024];
       size_t sum_size;
       int sum_blocks;
       size_t sum_filespace_used;
@@ -131,25 +136,28 @@ typedef struct fileset_stats {
       size_t medium_count;
       size_t large_count;
       struct store_type obj_type;
-} fileset_stat;
+} Fileset_Stats;
 
 
-int read_inodes(const char *fnameP, FILE *outfd, int fileset_id, fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offset_start);
+int read_inodes(const char *fnameP, FILE *outfd, int fileset_id, Fileset_Stats *fileset_stat_ptr, size_t rec_count, size_t offset_start);
 int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
-int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt, FILE *outfd);
+int get_xattr_value(Marfs_Xattr *xattr_ptr, const char *desired_xattr, int cnt, FILE *outfd);
 int get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
                  const char **marfs_xattr,
                  int max_xattr_count,
-                 struct marfs_xattr *xattr_ptr);
+                 Marfs_Xattr *xattr_ptr);
 void print_usage();
-void init_records(fileset_stat *fileset_stat_buf, unsigned int record_count);
-int lookup_fileset(fileset_stat *fileset_stat_ptr, size_t rec_count, size_t offset_start, char *inode_fileset);
-static void fill_size_histo(const gpfs_iattr_t *iattrP, fileset_stat *fileset_buffer, int index);
-int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
-void write_fsinfo(FILE* outfd, fileset_stat* fileset_stat_ptr, size_t rec_count, size_t index_start);
-void update_type(MarFS_XattrPost * xattr_post, fileset_stat * fileset_stat_ptr, int index);
-int lookup_fileset_path(fileset_stat *fileset_stat_ptr, size_t rec_count, char *md_path_ptr);
+void init_records(Fileset_Stats *fileset_stat_buf, unsigned int record_count);
+int lookup_fileset(Fileset_Stats *fileset_stat_ptr, size_t rec_count, size_t offset_start, char *inode_fileset);
+static void fill_size_histo(const gpfs_iattr_t *iattrP, Fileset_Stats *fileset_buffer, int index);
+int parse_post_xattr(MarFS_XattrPost* post, Marfs_Xattr* post_str);
+void write_fsinfo(FILE* outfd, Fileset_Stats* fileset_stat_ptr, size_t rec_count, size_t index_start);
+void update_type(MarFS_XattrPost * xattr_post, Fileset_Stats *fileset_stat_ptr, int index);
+int lookup_fileset_path(Fileset_Stats *fileset_stat_ptr, size_t rec_count, char *md_path_ptr);
+//int read_config(Fileset_Stats *fileset_stat_ptr);
+Fileset_Stats * read_config(unsigned int *count);
+int trunc_fsinfo(FILE* outfd, Fileset_Stats* fileset_stat_ptr, size_t rec_count, size_t index_start);
 #endif
 
