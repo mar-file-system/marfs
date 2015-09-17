@@ -134,7 +134,6 @@ int main(int argc, char **argv) {
    if (rdir == NULL || 
        outf == NULL ) {   
 
-//       fileset == NULL ) {
       fprintf(stderr,"%s: no directory (-d) or output file name (-o) or \
               specified\n\n",ProgName);
       print_usage();
@@ -152,14 +151,7 @@ int main(int argc, char **argv) {
       return(-1);
    }
 
-   /*
-    *  This code assumes a set up for multiple filesets if the need ever arises 
-    *  so I am going to leave it in for now.  
-    *  Currently a struture containing one fileset
-   */
-   // Get list of filesets and count
-
-   //fileset_info_ptr = (Fileset_Info *) malloc(sizeof(*fileset_info_ptr)*fileset_count);
+   // Create structure containing fileset information
    fileset_info_ptr = (Fileset_Info *) malloc(sizeof(*fileset_info_ptr));
    if (fileset_info_ptr == NULL ) {
       fprintf(stderr,"Memory allocation failed\n");
@@ -167,8 +159,6 @@ int main(int argc, char **argv) {
    }
    init_records(fileset_info_ptr, fileset_count);
    aws_init();
-   //strcpy(fileset_info_ptr[0].fileset_name, fileset);
-   //strcpy(fileset_info_ptr->fileset_name, fileset);
 
    if (packed_log == NULL) {
       strcpy(packed_filename,"./tmp_packed_log");
@@ -180,11 +170,8 @@ int main(int argc, char **argv) {
    strcpy(file_status->packed_filename, packed_log);
    file_status->is_packed=0;
 
-   // NEED to get these from config when the parser is ready
+   // TEMP TEMP TEMP modify to root 
    aws_read_config("atorrez");
-   //s3_set_host ("10.140.0.17:9020");
-   //s3_set_host ("10.135.0.22:81");
-   //s3_set_host ("10.135.0.21:81");
 
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec);
@@ -385,18 +372,20 @@ int read_inodes(const char *fnameP,
    struct marfs_xattr mar_xattrs[MAX_MARFS_XATTR];
    struct marfs_xattr *xattr_ptr = mar_xattrs;
    int xattr_count;
-   //char fileset_name_buffer[32];
-   //char fileset_name_buffer[MARFS_MAX_NAMESPACE_NAME];
    MarFS_XattrPre pre_struct;
    MarFS_XattrPre* pre = &pre_struct;
 
+
+   // Defined xattrs as an array of const char strings with defined indexs
+   // Change MARFS_QUOTA_XATTR_CNT in marfs_gc.h if the number of xattrs
+   // changes
+   int marfs_xattr_cnt = MARFS_GC_XATTR_CNT;
    const char *marfs_xattrs[] = {"user.marfs_post",
                                  "user.marfs_objid",
                                  "user.marfs_restart"};
 
    int post_index=0;
    int objid_index=1;
-   int marfs_xattr_cnt = MARFS_GC_XATTR_CNT;
    int trash_status;
 
    MarFS_XattrPost post;
@@ -404,6 +393,8 @@ int read_inodes(const char *fnameP,
    int early_exit =0;
    int xattr_index;
    char *md_path_ptr;
+   const struct stat* st = NULL;
+   char repo_name[MARFS_MAX_REPO_NAME];
 
 
    /*
@@ -490,7 +481,9 @@ int read_inodes(const char *fnameP,
          // This will be modified as time goes on - what xattrs do we care about
             if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
                xattr_ptr = &mar_xattrs[0];
-               //if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, xattr_post_name, xattr_objid_name, xattr_ptr, outfd)) > 0) {
+               // Got ahead and get xattrs then deterimine if it is an 
+               // an actual xattr we are looking for.  If so,
+               // check if it specifies the file is trash.
                if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
                                              marfs_xattrs, marfs_xattr_cnt, 
                                              xattr_ptr, 
@@ -518,15 +511,7 @@ int read_inodes(const char *fnameP,
                   LOG(LOG_INFO, "found post chunk info bytes %zu\n", 
                       post.chunk_info_bytes);
 
-
-                  //if (!strcmp(post.gc_path, "")){
-                  /************
-                  if (post.flags != POST_TRASH){
-                     LOG(LOG_ERR, "Trash flag is not set but in trash??\n");
-                  } 
-                  // else trash
-                  else {
-                  **************/
+                  // Is this trash?
                   if (post.flags & POST_TRASH){
                      time_t now = time(0);
                    
@@ -546,33 +531,20 @@ int read_inodes(const char *fnameP,
                            LOG(LOG_INFO, "remove file: %s  remove object:  %s\n",
                                 md_path_ptr, xattr_ptr->xattr_value); 
 
-                           // TO DO:
-                           // Figure out how to get userid and host IP.  In 
-                           // xattr?? 
-                           // -- userid will be a fixed name according
-                           // to Jeff/Gary 
-                           // -- hostIP can be found in namespace namespace 
-                           // or repo info So I will need to make some calls
-                           // config file parser/routines to get this
-                           // But how do I link objectid to correct config table info?
-                           // Maybe I can pass gc.path or object Id back to parser routines 
-                           // and they will pass back host and userid?
-                           //
-                           const struct stat* st = NULL;
+                           // Going to get the repo name now from the objid xattr
+                           // To do this, must call marfs str_2_pre to parse out
+                           // the bucket name which include repo name
                            fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
                            str_2_pre(pre, xattr_ptr->xattr_value, st);
-                           char repo_name[MARFS_MAX_REPO_NAME];
 
                            sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT, repo_name);
 
-
-
-                           fprintf(stderr,"after call str_2_pre %s\n",repo_name);
                            strcpy(fileset_info_ptr->repo_name,repo_name);
-                           fprintf(stderr,"going to call read_config with repo %s\n", fileset_info_ptr->repo_name);
-
+        
+                           // Now call read config so that the hostname for 
+                           // the oject can be obtained (so that aws knows who
+                           // to talk to
                            if (!read_config_gc(fileset_info_ptr)) {
-                              fprintf(stderr,"after call read_config %s\n", fileset_info_ptr->host);
                               s3_set_host (fileset_info_ptr->host);
 
                               // Deterimine if object type is packed.  If so we 
@@ -624,8 +596,8 @@ Name: parse_post_xattr
 *****************************************************************************/
 int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
 
-   int   major;
-   int   minor;
+   uint16_t   major;
+   uint16_t   minor;
 
    char  obj_type_code;
    LOG(LOG_INFO, "Post xattr:  %s\n", post_str->xattr_value);
@@ -661,9 +633,6 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
    char *obj_name_ptr;
    int i;
    int delete_obj_status;
-
-   //printf("ACTUAL DELETE NOT HAPPENING - DEBUG\n");
-   //return(0);
 
    //If multi type file then delete all objects associated with file
    if (post_xattr->obj_type == OBJ_MULTI) {
@@ -730,10 +699,6 @@ int delete_object(char * object, File_Info *file_info_ptr)
    
    return(return_val);
 
-   //if (rv != 0) 
-   //   return -1;
-   //else 
-   //   return 0;
 }
 
 /***************************************************************************** 
@@ -925,26 +890,16 @@ int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action )
   return(0);
 }
 /******************************************************************************
- * Name read_config_repo
+ * Name read_config_gc
  * This function reads the config file in order to extract the object hostname
  * associated with the current gpfs file (from the inode scan) 
  *
 ******************************************************************************/
 int read_config_gc(Fileset_Info *fileset_info_ptr)
 {
-   //MarFS_Config_Ptr marfs_config;
    MarFS_Repo_Ptr repoPtr;
 
-   // Read the the config
-   //marfs_config = ead_configuration("/root/atorrez-test/marfs-config/PA2X/config/quota_test.cfg");
-//   if (read_configuration()) { 
-//      fprintf(stderr, "Error Reading MarFS configuration file\n");
-//      return(-1);
-//   }
-
-   // Need to call marfs_base function str_2_pre to get the repo name this may have
-   // to be done in read_inodes
-
+   //Find the correct repo so that the hostname can be determined
    LOG(LOG_INFO, "fileset repo name = %s\n", fileset_info_ptr->repo_name);
    if ((repoPtr = find_repo_by_name(fileset_info_ptr->repo_name)) == NULL) {
       fprintf(stderr, "Repo %s not found in configuration\n", fileset_info_ptr->repo_name);
