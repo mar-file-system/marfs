@@ -109,25 +109,6 @@ extern "C" {
 #  endif
 
 
-// <config_version> allows objects to be retrieved with the same
-// configuration parameters that were in effect when they were stored.
-//
-// QUESTION: This could mean that the fields of all structs are fixed for
-//           all time, and different versions simply use different values,
-//           loaded from a file.  In that case, there's no need for the
-//           structs themselves to change.
-//
-//           A much tougher alternative, is that the config structures
-//           themselves could change (in addition to the field contents).
-//           This would mean that run-time must be able to re-create
-//           whatever info is needed to drive the FUSE daemon for different
-//           historical configurations.  That could lead down some very
-//           nasty ratholes (e.g. if the entire processing approach
-//           changes).
-
-extern float MarFS_config_vers;
-
-
 // extern would not be useable in PathInfo.md_path decl, below, and we
 // don't want it dynamically-allocated.  TBD: Be sure the #define is
 // associated with the config version.
@@ -140,7 +121,7 @@ extern float MarFS_config_vers;
 // really used to allocate buffers when parsing objid xattr-values.
 //
 // // #define   MARFS_MAX_REPO_NAME       63
-// #define MARFS_MAX_REPO_NAME        52 /* BUCKET_SIZE - "ver.%03d_%03d." */
+// #define MARFS_MAX_REPO_NAME        52 /* BUCKET_SIZE - "ver.%03hu_%03hu." */
 #define MARFS_MAX_REPO_NAME         16
 
 // Allows us to allocate buffers when parsing objid
@@ -213,8 +194,8 @@ extern float MarFS_config_vers;
 #define MARFS_BUCKET_WR_FORMAT  "%s"
 
 
-#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03d_%03d/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/unq.%hhd/chnksz.%lx/chnkno.%lx"
-#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03d_%03d/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/unq.%hhd/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/unq.%hhd/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/unq.%hhd/chnksz.%lx/chnkno.%lx"
 
 
 // #define MARFS_PRE_RD_FORMAT     MARFS_BUCKET_RD_FORMAT "/" MARFS_OBJID_RD_FORMAT  
@@ -222,13 +203,13 @@ extern float MarFS_config_vers;
 
 
 
-#define MARFS_POST_FORMAT       "ver.%03d_%03d/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/flags.%02hhX/mdfs.%s"
+#define MARFS_POST_FORMAT       "ver.%03hu_%03hu/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/flags.%02hhX/mdfs.%s"
 
 #define MARFS_MAX_POST_STRING_WITHOUT_PATH  256 /* max */
 #define MARFS_MAX_POST_STRING_SIZE          (MARFS_MAX_POST_STRING_WITHOUT_PATH + MARFS_MAX_MD_PATH)
 
 
-#define MARFS_REC_INFO_FORMAT   "ver.%03d_%03d/inode.%010ld/mode.%08x/uid.%d/gid.%d/mtime.%s/ctime.%s/mdfs.%s"
+#define MARFS_REC_INFO_FORMAT   "ver.%03hu_%03hu/inode.%010ld/mode.%08x/uid.%d/gid.%d/mtime.%s/ctime.%s/mdfs.%s"
 
 // Two files in the trash.  Original MDFS is renamed to the name computed
 // in expand_trash_info().  Then another file with the same name, extended
@@ -240,7 +221,7 @@ extern float MarFS_config_vers;
 
 
 // // (see comments at MultiChunkInfo, below)
-// #define MARFS_MULTI_MD_FORMAT   "ver.%03d.%03d,off.%ld,len.%ld,obj.%s\n"
+// #define MARFS_MULTI_MD_FORMAT   "ver.%03hu.%03hu,off.%ld,len.%ld,obj.%s\n"
 
 
 
@@ -257,12 +238,14 @@ typedef uint64_t            EncryptInfo;
 typedef MarFS_SecType       MarFSAuthMethod; // new config confused re encrypt vs auth
 typedef MarFS_SecType       EncryptionMethod;
 #define CORRECT_NONE        CORRECTTYPE_NONE;
-#define MarFS_mnt_top     marfs_config->mnt_top
-#define MarFS_config_vers marfs_config->version
 #endif
 
 
+// some things can't be done in common/configuration/src
+extern int validate_config();
 
+
+// Namespace.flags was eliminated
 #define IS_ROOT_NS(NS)  ((NS->mnt_path[0] == '/') && (NS->mnt_path_len == 1))
 
 
@@ -423,7 +406,9 @@ typedef struct MarFS_XattrPre {
    const MarFS_Repo*      repo;
    const MarFS_Namespace* ns;
 
-   float              config_vers;  // (major.minor) config that file was written with
+   uint16_t           config_vers_maj;  // version of config that file was written with
+   uint16_t           config_vers_min;
+
    MarFS_ObjType      obj_type;     // This will only be { Packed, Fuse, or None }
                                     // see XattrPost for final correct type of object
 
@@ -504,7 +489,8 @@ typedef uint8_t  PostFlagsType;
 
 
 typedef struct MarFS_XattrPost {
-   float              config_vers;   // redundant w/ config_vers in Pre?
+   uint16_t           config_vers_maj; // redundant w/ config_vers in Pre?
+   uint16_t           config_vers_min; // redundant w/ config_vers in Pre?
    MarFS_ObjType      obj_type;      // type of storage
    size_t             obj_offset;    // offset of file in the obj (Packed)
    CorrectInfo        correct_info;  // correctness info  (e.g. the computed checksum)
@@ -531,7 +517,8 @@ int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo);
 // TBD: "Shard" will be used to redirect directory paths via hashing to a
 // set of shards for each directory.
 typedef struct MarFS_XattrShard {
-   float              config_vers;
+   uint16_t              config_vers_maj;
+   uint16_t              config_vers_min;
    // TBD ...
 } MarFS_XattrShard;
 
@@ -571,7 +558,8 @@ int str_2_shard(MarFS_XattrShard* shard, const char* shard_str); // from string
 // in the Post xattr.
 
 typedef struct {
-   float    config_vers;
+   uint16_t config_vers_maj;
+   uint16_t config_vers_min;
    ino_t    inode;
    mode_t   mode;
    uid_t    uid;
@@ -624,7 +612,8 @@ int str_2_rec(RecoveryInfo* rec_info, const char* rec_info_str); // from string
 // ---------------------------------------------------------------------------
 
 typedef struct {
-   float         config_vers;
+   uint16_t      config_vers_maj;
+   uint16_t      config_vers_min;
    size_t        chunk_no;         // from MarFS_XattrPost.chunk_no
    size_t        logical_offset;   // offset of this chunk in user-data
    size_t        chunk_data_bytes; // not counting recovery-info (at the end)

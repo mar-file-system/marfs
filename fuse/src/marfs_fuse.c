@@ -1837,12 +1837,11 @@ int marfs_unlink (const char* path) {
    STAT(&info);
    int call_access = 1;
    if (S_ISLNK(info.st.st_mode)) {
-      const size_t mnt_top_len = strlen(MarFS_mnt_top);
       char target[MARFS_MAX_MD_PATH];
 
       TRY_GE0(readlink, info.post.md_path, target, MARFS_MAX_MD_PATH);
-      if ((rc_ssize >= mnt_top_len)
-          && (! strncmp(MarFS_mnt_top, target, mnt_top_len)))
+      if ((rc_ssize >= marfs_config->mnt_top_len)
+          && (! strncmp(marfs_config->mnt_top, target, marfs_config->mnt_top_len)))
          call_access = 0;
       else if ((rc_ssize > 0)
                && (target[0] != '/'))

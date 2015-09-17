@@ -325,7 +325,7 @@ endif
 
 # Don't make this directly; make one of the 'fuse.foo' targets below.
 marfs_fuse: $(H) $(OBJS) main.c
-	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose marfs_fuse.c $(OBJS) $(LIBS)
+	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose main.c $(OBJS) $(LIBS)
 	gcc $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
 
 

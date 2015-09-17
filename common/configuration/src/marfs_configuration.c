@@ -1036,7 +1036,12 @@ static MarFS_Config_Ptr read_configuration_internal() {
   marfs_config->name     = strdup( config->config_name );
   marfs_config->name_len = strlen( config->config_name );
 
-  marfs_config->version = strtod( config->config_version, (char **) NULL );
+  char* version_str      = strdup(config->config_version);
+  char* version_tok      = strtok(version_str, ".");
+  marfs_config->version_major = ((version_tok) ? strtol( version_tok, NULL, 10) : 0);
+  version_tok            = strtok(NULL, ".");
+  marfs_config->version_minor = ((version_tok) ? strtol( version_tok, NULL, 10) : 0);
+  free(version_str);
 
   marfs_config->mnt_top     = strdup( config->mnt_top );
   marfs_config->mnt_top_len = strlen( config->mnt_top );
@@ -1048,7 +1053,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
   LOG( LOG_INFO, "\n" );
   LOG( LOG_INFO, "The members of the config structure are:\n" );
   LOG( LOG_INFO, "\tconfig name            : %s\n", marfs_config->name );
-  LOG( LOG_INFO, "\tconfig version         : %f\n", marfs_config->version );
+  LOG( LOG_INFO, "\tconfig version         : %d.%d\n", marfs_config->version_major, marfs_config->version_minor );
   LOG( LOG_INFO, "\tconfig mnt_top         : %s\n", marfs_config->mnt_top );
   // LOG( LOG_INFO, "\tconfig namespace count : %lu\n", marfs_config->namespace_count );
   LOG( LOG_INFO, "\tconfig repo count      : %d\n", repoCount );

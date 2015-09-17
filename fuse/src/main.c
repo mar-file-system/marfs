@@ -129,6 +129,11 @@ int main(int argc, char* argv[])
    }
 #endif
 
+   if (validate_config()) {
+      LOG(LOG_ERR, "validate_config() failed.  Quitting\n");
+      return -1;
+   }
+
    init_xattr_specs();
 
    // initialize libaws4c/libcurl

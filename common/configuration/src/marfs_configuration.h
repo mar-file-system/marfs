@@ -334,7 +334,7 @@ typedef struct marfs_namespace {
 //           loaded from a file.  In that case, there's no need for the
 //           structs themselves to change.
 //
-//           A much tougher alternative, is that the config structures
+//           A much tougher alternative is that the config structures
 //           themselves could change (in addition to the field contents).
 //           This would mean that run-time must be able to re-create
 //           whatever info is needed to drive the FUSE daemon for different
@@ -345,7 +345,8 @@ typedef struct marfs_namespace {
 typedef struct marfs_config {
   char                 *name;
   size_t                name_len;
-  double                version;
+  uint16_t              version_major;
+  uint16_t              version_minor;
   char                 *mnt_top;        // NOTE: Do NOT include a final slash.
   size_t                mnt_top_len;
    //  MarFS_Namespace_List  namespace_list;

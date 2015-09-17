@@ -123,7 +123,7 @@ int main( int argc, char *argv[] ) {
   }
   fprintf( stdout, "CORRECT: The members of the MarFS config structure are:\n" );
   fprintf( stdout, "\tconfig name            : %s\n", marfs_config->name );
-  fprintf( stdout, "\tconfig version         : %f\n", marfs_config->version );
+  fprintf( stdout, "\tconfig version         : %d.%d\n", marfs_config->version_major, marfs_config->version_minor );
   fprintf( stdout, "\tconfig mnt-top          : %s\n", marfs_config->mnt_top );
   // fprintf( stdout, "\tconfig namespace count : %lu\n", marfs_config->namespace_count );
   fprintf( stdout, "\n" );
