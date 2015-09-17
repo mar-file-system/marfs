@@ -79,39 +79,14 @@
 #include <getopt.h>
 #include <sys/types.h>
 #include "marfs_quota.h"
-/*******
-#include "config-structs.h"
-#include "confpars-structs.h"
-#include "confpars.h"
-#include "parse-types.h"
-#include "parsedata.h"
-********/
 #include "marfs_configuration.h"
-
-
 
 
 /******************************************************************************
 * This program reads gpfs inodes and extended attributes in order to provide
-* a total size value to the fsinfo file.  It is meant to run as a regularly
-* scheduled batch job.
-*
-* Features to be added/to do:
+* a summary of file counts, file sizes, and trash info for each fileset
+* This information is written to a file specified by the -o option. 
 * 
-* 1) Need to interface with config parser
-*  to:
-*   get list of filesets for scanning
-*   get count of filesets for scanning
-*
-* 3) OTHER
-*  determine extended attributes that we care about
-*     passed in as args or hard coded?
-*  determine arguments to main 
-*  block (512 bytes) held by file
-*  I consider this a perpetual process  in that we will find more and more
-*  info we want to store in fsinfo as  the project proceeds.  But 
-*  all info from attr and xattr is handy!
-*
 *
 ******************************************************************************/
 char    *ProgName;
@@ -132,26 +107,8 @@ int main(int argc, char **argv) {
    unsigned int fileset_count = 4;
    extern char *optarg;
    Fileset_Stats *fileset_stat_ptr = NULL;
-//   char * fileset_name = "root,proja,projb";
-//   char  fileset_name[] = "root,proja,projb";
-//   char  fileset_name[] = "project_a,projb,root";
-///   char  fileset_name[] = "project_a,root,project_b,project_c";
-//   char  fileset_name[] = "root";
-///   char * indv_fileset_name; 
-/*******
-   int i;
-*******/
    int fileset_scan_count = -1;
    unsigned int fileset_scan_index = 0; 
-
-/*******
-// For New parser
-struct line h_page, pseudo_h, fld_nm_lst;
-struct config *config = NULL;
-
-struct namespace **myNamespaceList, *myNamespace;
-int j = 0;
-**********/
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
       ProgName = argv[0];
@@ -178,12 +135,6 @@ int j = 0;
               specified\n",ProgName);
       exit(1);
    }
-/********
-// For New parser
-   memset(&h_page,     0x00, sizeof(struct line));     
-   memset(&pseudo_h,   0x00, sizeof(struct line));    
-   memset(&fld_nm_lst, 0x00, sizeof(struct line));      
-*********/
 
    /*
     *
@@ -229,11 +180,10 @@ int j = 0;
    */
 
    if ( fileset_scan_count <= 0 ) {
-      //fileset_count = read_config(fileset_stat_ptr); 
       fileset_stat_ptr = read_config(&fileset_count); 
 
       if (fileset_stat_ptr == NULL ) {
-         fprintf(stderr,"x problem with fileset_stat_ptr\n");
+         fprintf(stderr,"Problem with reading of configuration file\n");
          exit(1);
       }
 
@@ -245,45 +195,8 @@ int j = 0;
       }
       fileset_scan_count = fileset_count;
    }
-/**********
-   // Use Parser to dig out fileset names and to get a count of filesets
-   // fileset_scan_count init'd to -1
-   // if fileset_scan_count = 0, user wants fileset count only
-   if ( fileset_scan_count <= 0 ) {
-      config = (struct config *)malloc(sizeof(struct config)); 
-      if (config == NULL) {
-         fprintf(stderr, "malloc error on config for parser\n"); 
-         exit(1);
-      }
-      parseConfigFile("/root/atorrez-test/current/config/config-2-at", CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, QUIET); 
-      freeHeaderFile(h_page.next);                                                                 
- 
-      myNamespaceList = (struct namespace **)listObjByName("namespace", config);                   
-      while (myNamespaceList[j] != (struct namespace *)NULL) {
-         myNamespace = (struct namespace *)myNamespaceList[j];
-         LOG(LOG_INFO, "fileset %d = %s\n", j, myNamespace->name);
-         j++;
-      }
-      fileset_count = j;
-
-      // User wants to know how many filesets exists
-      // print and exit
-      if ( fileset_scan_count == 0 ) {
-         printf("fileset count = %d\n", fileset_count);
-         exit(0);
-      }
-      fileset_scan_count = fileset_count;
-
-      // Alternative to using parser 
-      //will remove eventually
-      //fileset_count = 4; 
-      //fileset_scan_count = fileset_count;
-   } 
-********/
    else {
      //do below checks here since only applies when user provides these parameters
-   
-
       if ((fileset_scan_count > fileset_count) ||
          (fileset_scan_count + fileset_scan_index > fileset_count)) {
 
@@ -293,54 +206,12 @@ int j = 0;
       }  
    }
     
-/********
-   //create structure containing all the stats that we care about
-   fileset_stat_ptr = (Fileset_Stats *) malloc(sizeof(*fileset_stat_ptr)*fileset_count);
-   if (fileset_stat_ptr == NULL ) {
-      fprintf(stderr,"Memory allocation failed on fileset_stat\n");
-      exit(1);
-   }
-**********/
-   //init_records(fileset_stat_ptr, fileset_count);
-
    // open the user defined log file
    outfd = fopen(outf,"w");
    if (outfd == NULL) {
       fprintf(stderr, "Error opening log file\n");
       exit(1);
    }
-
-/*********
-   // Now copy filset name  returned by parser into fileset info struture
-   for (i=0; i < fileset_count; i++ ) {
-      myNamespace = (struct namespace *)myNamespaceList[i];
-      strcpy(fileset_stat_ptr[i].fileset_name, myNamespace->name);
-   } 
-*********/
-
-
-   /* Alternative to using paser will remove eventually
-   ///if (debug) 
-   ///   printf("Going to tokenize\n");
-   ///indv_fileset_name = strtok(fileset_name,",");
-   ///if (debug) 
-   ///   printf("%s\n", indv_fileset_name);
-   ///i =0;
-   ///while (indv_fileset_name != NULL) {
-    ///  if (debug) 
-   ///      printf("%s\n", indv_fileset_name);
-   ///   strcpy(fileset_stat_ptr[i].fileset_name, indv_fileset_name);
-    ///  indv_fileset_name = strtok(NULL,","); 
-   ///   i++;
-   ///}
-   ///if (debug) 
-   ///   printf("Filsets count = %d\n", fileset_count);
-  
-   ///outfd = fopen(outf,"w");
-   */
-
-    
-
 
    // Add filsets to structure so that inode scan can update fileset info
    ec = read_inodes(rdir, outfd, fileset_id, fileset_stat_ptr, 
@@ -445,9 +316,6 @@ int get_xattrs(gpfs_iscan_t *iscanP,
                  unsigned int xattrLen,
                  const char **marfs_xattr,
                  int max_xattr_count,
-                 //const char * xattr_1,
-                 //const char * xattr_2,
-                 //const char * xattr_3,
                  Marfs_Xattr *xattr_ptr) {
    int rc;
    int i;
@@ -563,8 +431,6 @@ int read_inodes(const char    *fnameP,
    Marfs_Xattr mar_xattrs[MAX_MARFS_XATTR];
    Marfs_Xattr *xattr_ptr = mar_xattrs;
    int xattr_count;
-   // Need to define this size
-   //char fileset_name_buffer[32];
    char fileset_name_buffer[MARFS_MAX_NAMESPACE_NAME];
 
    int last_struct_index = -1;
@@ -575,14 +441,14 @@ int read_inodes(const char    *fnameP,
 
 
    // Defined xattrs as an array of const char strings with defined indexs
+   // Change MARFS_QUOTA_XATTR_CNT in marfs_gc.h if the number of xattrs
+   // changes
+   int marfs_xattr_cnt = MARFS_QUOTA_XATTR_CNT;
    const char *marfs_xattrs[] = {"user.marfs_post","user.marfs_objid",
                                  "user.marfs_restart"};
    int post_index=0;
-   //int restart_index=2;
-   int marfs_xattr_cnt = MARFS_QUOTA_XATTR_CNT;
 
    MarFS_XattrPost post;
-   //const char *xattr_post_name = "user.a";
   
    int early_exit =0;
    int xattr_index;
@@ -669,12 +535,6 @@ int read_inodes(const char    *fnameP,
             last_fileset_id = iattrP->ia_filesetid;
          }
 
-         //fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
-         //fileset_stat_ptr[last_struct_index].sum_file_count+=1;
-         //LOG(LOG_INFO, "%d size = %llu file size sum  = %zu\n", last_struct_index,
-         //    iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
-         //fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id); 
-
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
          if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
@@ -728,7 +588,8 @@ int read_inodes(const char    *fnameP,
                   trash_index = lookup_fileset_path(fileset_stat_ptr, 
                                                     rec_count, md_path_ptr);
                   if (trash_index == -1) {
-                     fprintf(stderr, "Error finding .path file for %s\n", fileset_stat_ptr->fileset_name);
+                     fprintf(stderr, "Error finding .path file for %s\n", 
+                             fileset_stat_ptr->fileset_name);
                      continue;
                   }
                   else {
@@ -786,8 +647,8 @@ Name: parse_post_xattr
 *****************************************************************************/
 int parse_post_xattr (MarFS_XattrPost* post, Marfs_Xattr * post_str) {
 
-   int   major;
-   int   minor;
+   uint16_t   major;
+   uint16_t   minor;
 
    char  obj_type_code;
    LOG(LOG_INFO,"%s\n", post_str->xattr_value);
