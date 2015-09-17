@@ -97,42 +97,65 @@ enum{S3_CREATE, S3_STAT, S3_DELETE};
 #define HTTP_OK 200
 #define HTTP_NO_CONTENT 204
 
+#define TMP_LOCAL_FILE_LEN 32
+
 struct marfs_xattr {
   char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
   char xattr_value[GPFS_FCNTL_XATTR_MAX_VALUELEN];
 };
 
-typedef struct fileset_info {
-      char fileset_name[MAX_FILESET_NAME_LEN];
-} fileset_info;
+typedef struct Fileset_Info {
+//   char fileset_name[MAX_FILESET_NAME_LEN];
+   char fileset_name[MARFS_MAX_NAMESPACE_NAME];
+   // CHECK THIS 
+//   char repo_name[MAX_FILESET_NAME_LEN];
+   char repo_name[MARFS_MAX_NAMESPACE_NAME];
+   char host[32];
+} Fileset_Info;
 
-typedef struct file_info {
-   char fileset_name[MAX_FILESET_NAME_LEN];
+typedef struct File_Info {
+//   char fileset_name[MAX_FILESET_NAME_LEN];
+   char fileset_name[MARFS_MAX_NAMESPACE_NAME];
    FILE *outfd;
    FILE *packedfd;
-   char packed_filename[32];
+   char packed_filename[TMP_LOCAL_FILE_LEN];
    unsigned int is_packed;
-} file_info;
+} File_Info;
 
 
-int read_inodes(const char *fnameP, file_info *file_info_ptr, int fileset_id, fileset_info *fileset_info_ptr, size_t rec_count, unsigned int day_seconds);
-int clean_exit(FILE *fd, gpfs_iscan_t *iscanP, gpfs_fssnap_handle_t *fsP, int terminate);
-int get_xattr_value(struct marfs_xattr *xattr_ptr, const char *desired_xattr, int cnt);
+int read_inodes(const char   *fnameP, 
+                File_Info    *file_info_ptr, 
+                int          fileset_id, 
+                Fileset_Info *fileset_info_ptr, 
+                size_t       rec_count, 
+                unsigned int day_seconds);
+int clean_exit(FILE                 *fd, 
+               gpfs_iscan_t         *iscanP, 
+               gpfs_fssnap_handle_t *fsP, 
+               int                  terminate);
+int get_xattr_value(struct     marfs_xattr *xattr_ptr, 
+                    const char *desired_xattr, 
+                    int        cnt);
 int get_xattrs(gpfs_iscan_t *iscanP,
-                 const char *xattrP,
-                 unsigned int xattrLen,
-                 const char **marfs_xattr,
-                 int max_xattr_count,
-                 struct marfs_xattr *xattr_ptr, FILE *outfd);
+               const char   *xattrP,
+               unsigned int xattrLen,
+               const char   **marfs_xattr,
+               int          max_xattr_count,
+               struct       marfs_xattr *xattr_ptr, 
+               FILE         *outfd);
 void print_usage();
-void init_records(fileset_info *fileset_info_buf, unsigned int record_count);
+void init_records(Fileset_Info *fileset_info_buf, unsigned int record_count);
 int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
-//int dump_trash(struct marfs_xattr *xattr_ptr, char *gc_path_ptr, file_info *file_info_ptr, MarFS_XattrPost *post_xattr);
-int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr, file_info *file_info_ptr, MarFS_XattrPost *post_xattr);
-int delete_object(char * object, file_info *file_info_ptr);
-int delete_file(char *filename, file_info *file_info_ptr);
-int process_packed(file_info *file_info_ptr);
-void print_current_time(file_info *file_info_ptr);
+//int dump_trash(struct marfs_xattr *xattr_ptr, char *gc_path_ptr, File_Info *file_info_ptr, MarFS_XattrPost *post_xattr);
+int dump_trash(struct marfs_xattr *xattr_ptr, 
+               char               *md_path_ptr,  
+               File_Info          *file_info_ptr, 
+               MarFS_XattrPost    *post_xattr);
+int delete_object(char * object, File_Info *file_info_ptr);
+int delete_file(char *filename, File_Info *file_info_ptr);
+int process_packed(File_Info *file_info_ptr);
+void print_current_time(File_Info *file_info_ptr);
 int check_S3_error(CURLcode curl_return, IOBuf *s3_buf, int action);
+int read_config_gc(Fileset_Info *fileset_info_ptr);
 #endif
 
