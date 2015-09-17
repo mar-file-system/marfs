@@ -6,15 +6,20 @@ CFLAGS += -Wall -g
 # relative paths to main marfs build
 MARFS_FUSE = ../../../../fuse/src
 LOGGING = ../../../../common/log/src
+MARFS_CONFIG = ../../../../common/configuration/src
 
-OBJS = $(MARFS_FUSE)/marfs_base.o $(MARFS_FUSE)/logging.o 
+
+#OBJS = $(MARFS_FUSE)/marfs_base.o $(MARFS_FUSE)/logging.o 
 H    = marfs_gc.h
 
 CFLAGS += -I$(MARFS_FUSE)
 CFLAGS += -I$(LOGGING)
 CFLAGS += -I$(LIBAWS4C)
+CFLAGS += -I$(MARFS_CONFIG)
 LDFLAGS += -L$(LIBAWS4C)
-LIBS += -laws4c -lgpfs -lcurl -lm 
+LDFLAGS += -L$(MARFS_FUSE)
+LDFLAGS += -L$(MARFS_CONFIG)
+LIBS += -laws4c -lgpfs -lcurl -lm -lmarfs -lconfig
 
 #Build regular marfs_gc or debug version
 marfs_gc: $(H) $(OBJS)  marfs_gc.c 
