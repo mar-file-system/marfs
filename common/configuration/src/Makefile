@@ -75,6 +75,19 @@ parser: parse_dir
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
 	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 
+parser_new: parse_dir
+	@ echo; echo "#-- cleaning $(PARSE_DIR)"
+	@ $(MAKE) -C $(PARSE_DIR) pristine
+	@ echo; echo "#-- making confpars"
+	@ $(MAKE) -C $(PARSE_DIR) base
+	@ echo; echo "#-- running confpars (to generate include-files)"
+	(cd $(PARSE_DIR); ./confpars $(BLUEPRINT) )
+	@ echo; echo "#-- running datapars with $(BLUEPRINT)"
+	@ $(MAKE) -C $(PARSE_DIR) datapars CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)" conf=$(BLUEPRINT)
+	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
+	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
+
+
 CFLAGS += -I$(PARSE_DIR) -DPARSE_DIR=$(PARSE_DIR)
 
 
@@ -126,9 +139,28 @@ LDFLAGS += -L.
 
 # CFLAGS  += -I$(PARSE_DIR) -I$(LOG_DIR) $(OPTIONS)
 # LDFLAGS += -L.
-tester: libconfig.a
+tester: libconfig.a test_marfs_configuration.c
 	@ echo; echo "#-- building $@"
 	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $(DEBUG) test_marfs_configuration.c -lconfig
+
+
+
+# ---------------------------------------------------------------------------
+# tool to allow scripts to get access to configuration details
+#
+# for example:
+#   $ marfs_config names repo   [print repo names]
+#   $ marfs_config names ns     [print namespace names]
+#   $ marfs_config repo s3      [print contents of repo with name 's3']
+#   $ marfs_config ns jti       [print contents of namespace with name 'jti']
+#   $ marfs_config config       [print top-level config details]
+#
+# ---------------------------------------------------------------------------
+
+marfs_config: libconfig.a marfs_config.c
+	@ echo; echo "#-- building $@"
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $(DEBUG) marfs_config.c -lconfig
+
 
 
 # ---------------------------------------------------------------------------
@@ -150,12 +182,18 @@ test_marfs_configuration-d: parse_dir
 
 
 clean: parse_dir
+	@ # returns non-zero if files don't exist:  $(MAKE) -C $(PARSE_DIR) clean
+	@ $(MAKE) -C $(PARSE_DIR) clean
 	$(RM) $(PARSE_DIR)/*.o
+	$(RM) $(PARSE_DIR)/parse-inc/*
+	@ #
 	$(RM) $(LOG_DIR)/*.o
 	$(RM) *.o
 	$(RM) test_marfs_configuration
+	$(RM) libconfig.a
 
 pristine: clean
-	$(RM) $(PARSE_DIR)/parse-inc/*
-	$(RM) $(PARSE_DIR)/confpars
-	$(RM) $(PARSE_DIR)/datapars
+	@ # $(RM) $(PARSE_DIR)/parse-inc/*
+	@ # $(RM) $(PARSE_DIR)/confpars
+	@ # $(RM) $(PARSE_DIR)/datapars
+	@ $(MAKE) -C $(PARSE_DIR) pristine

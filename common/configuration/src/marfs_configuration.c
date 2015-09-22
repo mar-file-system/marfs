@@ -472,6 +472,26 @@ int lookup_accessmethod( const char* str, MarFS_AccessMethod *enumeration ) {
   return 0;
 }
 
+
+static const char* accessmethod_str[] = {
+   "ACCESSMETHOD_DIRECT",
+   "ACCESSMETHOD_SEMI_DIRECT",
+   "ACCESSMETHOD_CDMI",
+   "ACCESSMETHOD_SPROXYD",
+   "ACCESSMETHOD_S3",
+   "ACCESSMETHOD_S3_SCALITY",
+   "ACCESSMETHOD_S3_EMC",
+   NULL
+};
+const char* accessmethod_string( MarFS_AccessMethod method) {
+   int i;
+   for (i=0; accessmethod_str[i]; ++i) {
+      if (i == method)
+         return accessmethod_str[i];
+   }
+   return NULL;
+}
+
 /****************************************************************************/
 
 int lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration ) {
@@ -489,6 +509,23 @@ int lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration ) 
   }
 
   return 0;
+}
+
+
+static const char* securitymethod_str[] = {
+   "SECURITYMETHOD_NONE",
+   "SECURITYMETHOD_S3_AWS_USER",
+   "SECURITYMETHOD_S3_AWS_MASTER",
+   "SECURITYMETHOD_S3_PER_OBJ",
+   NULL
+};
+const char* securitymethod_string( MarFS_SecurityMethod method ) {
+   int i;
+   for (i=0; securitymethod_str[i]; ++i) {
+      if (i == method)
+         return securitymethod_str[i];
+   }
+   return NULL;
 }
 
 /****************************************************************************/
@@ -632,6 +669,15 @@ int decode_correcttype( char code, MarFS_CorrectType *enumeration ) {
  * If none of those are found, NULL is returned.
  ****************************************************************************/
 
+#if TBD
+// Ron's most-recent commits [2015-09-21] use this, but listObjByName() is broken
+
+// new requirement for parseConfigFile [2015-09-23]
+static struct varNameTypeList vNTL;
+#endif
+
+
+
 static MarFS_Config_Ptr read_configuration_internal() {
 
   struct line h_page, pseudo_h, fld_nm_lst;        // for internal use
@@ -710,7 +756,12 @@ static MarFS_Config_Ptr read_configuration_internal() {
         return NULL;
      }
      LOG( LOG_INFO, "calling parseConfigFile, with CWD='%s'.\n", STRING(PARSE_DIR));
+#if TBD
+     // Ron's most-recent commits [2015-09-21] use this, but listObjByName() is broken
+     parseConfigFile( path, CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, &vNTL, QUIET );
+#else
      parseConfigFile( path, CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, QUIET );
+#endif
      if (chdir(orig_wd)) {
         LOG( LOG_ERR, "Couldn't restore CWD to '%s'.\n", orig_wd);
         return NULL;
@@ -1162,3 +1213,70 @@ int free_configuration() {
    return free_configuration_internal(&marfs_config);
 }
 
+
+
+// ---------------------------------------------------------------------------
+// diagnostics
+// ---------------------------------------------------------------------------
+
+// for now, just dump the first element
+int debug_range_list( MarFS_Repo_Range** range_list,
+                     int                range_list_count ) {
+   int i;
+   for (i=0; i<range_list_count; ++i) {
+      fprintf( stdout, "\t\t[%d] (min: %d, max: %d) -> repo '%s'\n",
+               i,
+               range_list[i]->minsize,
+               range_list[i]->maxsize,
+               (range_list[i]->repo_ptr ? range_list[i]->repo_ptr->name : "NULL") );
+   }
+}
+
+int debug_namespace( MarFS_Namespace* ns ) {
+   fprintf(stdout, "Namespace\n");
+   fprintf(stdout, "\tname               '%s'\n", ns->name );
+   fprintf(stdout, "\tname_len           %ld\n",  ns->name_len);
+   fprintf(stdout, "\tmnt_path           '%s'\n", ns->mnt_path);
+   fprintf(stdout, "\tmnt_path_len       %ld\n",  ns->mnt_path_len);
+   fprintf(stdout, "\tbperms             0x%x\n", ns->bperms);
+   fprintf(stdout, "\tiperms             0x%x\n", ns->iperms);
+   fprintf(stdout, "\tmd_path            '%s'\n", ns->md_path);
+   fprintf(stdout, "\tmd_path_len        %ld\n",  ns->md_path_len);
+   fprintf(stdout, "\tiwrite_repo        '%s'\n", ns->iwrite_repo->name);
+
+   fprintf(stdout, "\trepo_range_list\n");
+   debug_range_list(ns->repo_range_list, ns->repo_range_list_count);
+
+   fprintf(stdout, "\ttrash_md_path      '%s'\n", ns->trash_md_path);
+   fprintf(stdout, "\ttrash_md_path_len  %ld\n",  ns->trash_md_path_len);
+   fprintf(stdout, "\tfsinfo_path        '%s'\n", ns->fsinfo_path);
+   fprintf(stdout, "\tfsinfo_path_len    %ld\n",  ns->fsinfo_path_len);
+   fprintf(stdout, "\tquota_space        %lld\n", ns->quota_space);
+   fprintf(stdout, "\tquota_names        %lld\n", ns->quota_names);
+   fprintf(stdout, "\tns_shardp          %d\n",   ns->ns_shardp);
+   fprintf(stdout, "\tns_shardp_len      %ld\n",  ns->ns_shardp_len);
+   fprintf(stdout, "\tns_shardp_num      %llu\n", ns->ns_shardp_num);
+}
+
+
+
+int debug_repo (MarFS_Repo* repo ) {
+   fprintf(stdout, "Repo\n");
+   fprintf(stdout, "\tname             '%s'\n", repo->name);
+   fprintf(stdout, "\tname_len         %ld\n",  repo->name_len);
+   fprintf(stdout, "\thost             '%s'\n", repo->host);
+   fprintf(stdout, "\thost_len         %ld\n",  repo->host_len);
+   fprintf(stdout, "\tupdate_in_place  %d\n",   repo->update_in_place);
+   fprintf(stdout, "\tssl              %d\n",   repo->ssl);
+   fprintf(stdout, "\tis_online        %d\n",   repo->is_online);
+   fprintf(stdout, "\taccess_method    %s\n",   accessmethod_string(repo->access_method));
+   fprintf(stdout, "\tchunk_size       %ld\n",  repo->chunk_size);
+   fprintf(stdout, "\tpack_size        %ld\n",  repo->pack_size);
+   fprintf(stdout, "\tsecurity_method  %s\n",   securitymethod_string(repo->security_method));
+   fprintf(stdout, "\tsec_type         %d\n",   repo->sec_type);
+   fprintf(stdout, "\tcomp_type        %d\n",   repo->comp_type);
+   fprintf(stdout, "\tcorrect_type     %d\n",   repo->correct_type);
+   fprintf(stdout, "\tonline_cmds      '%s'\n", repo->online_cmds);
+   fprintf(stdout, "\tonline_cmds_len  %ld\n",  repo->online_cmds_len);
+   fprintf(stdout, "\tlatency          %llu\n", repo->latency);
+}
