@@ -810,6 +810,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
       LOG( LOG_ERR, "marfs_configuration.c: Error allocating memory for the MarFS repo structure.\n");
       return NULL;
     }
+    memset(marfs_repo_list[j], 0, sizeof(MarFS_Repo));
 
     LOG( LOG_INFO, "processing parsed-repo \"%s\".\n", repoList[j]->name );
 
@@ -913,6 +914,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
       LOG( LOG_ERR, "Error allocating memory for the MarFS namespace structure.\n");
       return NULL;
     }
+    memset(marfs_namespace_list[j], 0, sizeof(MarFS_Namespace));
 
     marfs_namespace_list[j]->name = strdup( namespaceList[j]->name );
     marfs_namespace_list[j]->name_len = strlen( namespaceList[j]->name );
@@ -1084,10 +1086,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
   /* CONFIG */
 
-  marfs_config->name     = strdup( config->config_name );
-  marfs_config->name_len = strlen( config->config_name );
+  marfs_config->name     = strdup( config->name );
+  marfs_config->name_len = strlen( config->name );
 
-  char* version_str      = strdup(config->config_version);
+  char* version_str      = strdup(config->version);
   char* version_tok      = strtok(version_str, ".");
   marfs_config->version_major = ((version_tok) ? strtol( version_tok, NULL, 10) : 0);
   version_tok            = strtok(NULL, ".");
@@ -1224,7 +1226,7 @@ int debug_range_list( MarFS_Repo_Range** range_list,
                      int                range_list_count ) {
    int i;
    for (i=0; i<range_list_count; ++i) {
-      fprintf( stdout, "\t\t[%d] (min: %d, max: %d) -> repo '%s'\n",
+      fprintf( stdout, "\t\t[%d] (min: %d, max: %d) -> %s\n",
                i,
                range_list[i]->minsize,
                range_list[i]->maxsize,
@@ -1234,22 +1236,22 @@ int debug_range_list( MarFS_Repo_Range** range_list,
 
 int debug_namespace( MarFS_Namespace* ns ) {
    fprintf(stdout, "Namespace\n");
-   fprintf(stdout, "\tname               '%s'\n", ns->name );
+   fprintf(stdout, "\tname               %s\n", ns->name );
    fprintf(stdout, "\tname_len           %ld\n",  ns->name_len);
-   fprintf(stdout, "\tmnt_path           '%s'\n", ns->mnt_path);
+   fprintf(stdout, "\tmnt_path           %s\n", ns->mnt_path);
    fprintf(stdout, "\tmnt_path_len       %ld\n",  ns->mnt_path_len);
    fprintf(stdout, "\tbperms             0x%x\n", ns->bperms);
    fprintf(stdout, "\tiperms             0x%x\n", ns->iperms);
-   fprintf(stdout, "\tmd_path            '%s'\n", ns->md_path);
+   fprintf(stdout, "\tmd_path            %s\n", ns->md_path);
    fprintf(stdout, "\tmd_path_len        %ld\n",  ns->md_path_len);
-   fprintf(stdout, "\tiwrite_repo        '%s'\n", ns->iwrite_repo->name);
+   fprintf(stdout, "\tiwrite_repo        %s\n", ns->iwrite_repo->name);
 
    fprintf(stdout, "\trepo_range_list\n");
    debug_range_list(ns->repo_range_list, ns->repo_range_list_count);
 
-   fprintf(stdout, "\ttrash_md_path      '%s'\n", ns->trash_md_path);
+   fprintf(stdout, "\ttrash_md_path      %s\n", ns->trash_md_path);
    fprintf(stdout, "\ttrash_md_path_len  %ld\n",  ns->trash_md_path_len);
-   fprintf(stdout, "\tfsinfo_path        '%s'\n", ns->fsinfo_path);
+   fprintf(stdout, "\tfsinfo_path        %s\n", ns->fsinfo_path);
    fprintf(stdout, "\tfsinfo_path_len    %ld\n",  ns->fsinfo_path_len);
    fprintf(stdout, "\tquota_space        %lld\n", ns->quota_space);
    fprintf(stdout, "\tquota_names        %lld\n", ns->quota_names);
@@ -1262,9 +1264,9 @@ int debug_namespace( MarFS_Namespace* ns ) {
 
 int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "Repo\n");
-   fprintf(stdout, "\tname             '%s'\n", repo->name);
+   fprintf(stdout, "\tname             %s\n", repo->name);
    fprintf(stdout, "\tname_len         %ld\n",  repo->name_len);
-   fprintf(stdout, "\thost             '%s'\n", repo->host);
+   fprintf(stdout, "\thost             %s\n", repo->host);
    fprintf(stdout, "\thost_len         %ld\n",  repo->host_len);
    fprintf(stdout, "\tupdate_in_place  %d\n",   repo->update_in_place);
    fprintf(stdout, "\tssl              %d\n",   repo->ssl);
@@ -1276,7 +1278,7 @@ int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "\tsec_type         %d\n",   repo->sec_type);
    fprintf(stdout, "\tcomp_type        %d\n",   repo->comp_type);
    fprintf(stdout, "\tcorrect_type     %d\n",   repo->correct_type);
-   fprintf(stdout, "\tonline_cmds      '%s'\n", repo->online_cmds);
+   fprintf(stdout, "\tonline_cmds      %s\n", repo->online_cmds);
    fprintf(stdout, "\tonline_cmds_len  %ld\n",  repo->online_cmds_len);
    fprintf(stdout, "\tlatency          %llu\n", repo->latency);
 }

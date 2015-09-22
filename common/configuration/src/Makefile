@@ -10,11 +10,10 @@ CC = gcc
 # all:   test_marfs_configuration
 # debug: test_marfs_configuration-d
 
-all:   lib tester
+all:   lib tester marfs_config
 debug: test_marfs_configuration-d
 
 
-# PARSE_DIR = ../../../../../PA2X/PA2X
 LOG_DIR =   $(PWD)/../../log/src
 
 #LIBS = -lpthread

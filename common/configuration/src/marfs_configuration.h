@@ -492,6 +492,12 @@ extern int iterate_marfs_list( void **marfs_list, int ( *marfsPtrCallback )( voi
  */
 
 
+
+// --- access top-level configuration parameters
+
+
+
+
 #  ifdef __cplusplus
 }
 #  endif

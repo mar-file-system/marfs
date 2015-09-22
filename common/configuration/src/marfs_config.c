@@ -63,39 +63,44 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 int
 show_usage(char* prog_name) {
-   fprintf(stderr, "Usage: %s [options]\n", prog_name);
+   fprintf(stderr, "Usage: %s [option]\n", prog_name);
    fprintf(stderr, "\n");
-   fprintf(stderr, "options:\n");
-   fprintf(stderr, "\t-h                     help\n");
-   fprintf(stderr, "\t-r [ <repo_name> ]     show named Repo (or all repo-names)\n");
-   fprintf(stderr, "\t-n [ <ns_name> ]       show named NS   (or all NS-names)\n");
-   fprintf(stderr, "\t-t [ <setting-name> ]  show named top-level parm (or all)\n");
+   fprintf(stderr, "\toptions:\n");
+   fprintf(stderr, "\t\t-h                     help\n");
+   fprintf(stderr, "\t\t-r [ <repo_name> ]     show named Repo (or all repo-names)\n");
+   fprintf(stderr, "\t\t-n [ <ns_name> ]       show named NS   (or all NS-names)\n");
+   fprintf(stderr, "\t\t-t [ <setting-name> ]  show named top-level parm (or all)\n");
    fprintf(stderr, "\n");
-   fprintf(stderr, "Can't use more than one of -r, -n, -t\n");
+   fprintf(stderr, "\tCan't use more than one of -r, -n, -t\n");
+   fprintf(stderr, "\tUse an empty-string to \n");
 }
 
 
 int main( int argc, char *argv[] ) {
-   int   c;
-   int   digit_optind = 0;
+   int    c;
+   int    digit_optind = 0;
 
-   int   usage = 0;
-   int   err = 0;
-   int   repo_opt = 0;
-   char* repo_name = NULL;
-   int   ns_opt = 0;
-   char* ns_name = NULL;
-   int   top_opt = 0;
-   char* top_name = NULL;
+   int    usage = 0;
+   int    err = 0;
+   int    repo_opt = 0;
+   char*  repo_name = NULL;
+   int    ns_opt = 0;
+   char*  ns_name = NULL;
+   int    top_opt = 0;
+   char*  top_name = NULL;
 
-   while ( (c = getopt(argc, argv, "hr::n::t::")) != -1) {
+   char** name_ptr = NULL;
 
-      int this_optind = optind ? optind : 1;
+   // NOTE: We avoid using the GNU-specific extension that supports
+   //     optional getopt args.  Instead, because there's only one option
+   //     allowed, we can assume that anything following (i.e. the
+   //     appearence of a non-option argument) is an optional argument.
+   while ( (c = getopt(argc, argv, "hrnt")) != -1) {
 
-      //        printf("\toptarg:      '%s'\n", optarg);
-      //        printf("\toptind:       %d\n", optind);
-      //        printf("\tthis_optind:  %d\n", optind);
-      //        printf("\tdigit_optind: %d\n", digit_optind);
+      //              printf("\toptarg:      '%s'\n", optarg);
+      //              printf("\toptind:       %d\n", optind);
+      //              printf("\tthis_optind:  %d\n", optind);
+      //              printf("\tdigit_optind: %d\n", digit_optind);
 
       switch (c) {
 
@@ -106,19 +111,22 @@ int main( int argc, char *argv[] ) {
       case 'n':
          printf ("option n with value '%s'\n", optarg);
          ns_opt = 1;
-         ns_name = optarg;
+         // ns_name = optarg;
+         name_ptr = &ns_name;
          break;
 
       case 'r':
          printf ("option r with value '%s'\n", optarg);
          repo_opt = 1;
-         repo_name = optarg;
+         // repo_name = optarg;
+         name_ptr = &repo_name;
          break;
 
       case 't':
          //            printf ("option t with value '%s'\n", optarg);
          top_opt = 1;
-         top_name = optarg;
+         // top_name = optarg;
+         name_ptr = &top_name;
          break;
 
       case '?':
@@ -136,17 +144,9 @@ int main( int argc, char *argv[] ) {
       }
    }
 
-   //    printf("\n\ndone parsing\n");
-   //    printf("\toptind: %d\n", optind);
-   //    printf("\targc:   %d\n", argc);
-
-   //    if (optind < argc) {
-   //        printf ("non-option ARGV-elements: ");
-   //        while (optind < argc)
-   //            printf ("%s ", argv[optind++]);
-   //        printf ("\n");
-   //    }
-
+   //   printf("\n\ndone parsing\n");
+   //   printf("\toptind: %d\n", optind);
+   //   printf("\targc:   %d\n", argc);
 
    if (usage) {
       show_usage(argv[0]);
@@ -156,6 +156,26 @@ int main( int argc, char *argv[] ) {
       show_usage(argv[0]);
       return -1;
    }
+   else if ((repo_opt + ns_opt + top_opt) == 0) {
+      show_usage(argv[0]);
+      return -1;
+   }
+
+
+   // --- repatriate a single non-option argument with a provided option
+   if (optind == (argc -1)) {
+      *name_ptr = argv[optind];
+   }
+   else if (optind != argc) {
+      //      printf ("non-option ARGV-elements: ");
+      //      while (optind < argc)
+      //         printf ("%s ", argv[optind++]);
+      //      printf ("\n");
+      show_usage(argv[0]);
+      return -1;
+   }
+
+
 
 
    if (read_configuration()) {
@@ -163,6 +183,8 @@ int main( int argc, char *argv[] ) {
       return -1;
    }
 
+
+   // option:  -r [ repo_name ]
    if (repo_opt) {
       MarFS_Repo* repo;
 
@@ -179,13 +201,15 @@ int main( int argc, char *argv[] ) {
          // --- show names of all repos
          RepoIterator rit = repo_iterator();
          while (( repo = repo_next( &rit )) != NULL ) {
-            fprintf(stdout, "%s\n", repo->name);
+            printf("%s\n", repo->name);
          }
       }
       
       return 0;
    }
 
+
+   // option:  -n [ ns_name ]
    if (ns_opt) {
       MarFS_Namespace* ns;
 
@@ -209,16 +233,34 @@ int main( int argc, char *argv[] ) {
          // --- show names of all nss
          NSIterator nit = namespace_iterator();
          while (( ns = namespace_next( &nit )) != NULL ) {
-            fprintf(stdout, "%s\n", ns->name);
+            printf("%s\n", ns->name);
          }
       }
       
       return 0;
    }
 
+
+   // option:  -t [ top-level-config-option-name ]
    if (top_opt) {
-      fprintf(stderr, "TBD\n");
-      return -1;
+      if (! top_name) {
+         // --- list of all top-level options
+         printf("mnt_top\n");
+         printf("version\n");
+         printf("name\n");
+      }
+      else if (!strncmp(top_name, "mnt_top", 7))
+         printf("%s\n", marfs_config->mnt_top);
+      else if (!strncmp(top_name, "name", 4))
+         printf("%s\n", marfs_config->name);
+      else if (!strncmp(top_name, "version", 7))
+         printf("%d.%d\n", marfs_config->version_major, marfs_config->version_minor);
+      else {
+         fprintf(stderr, "unrecognized top-level config-option: '%s'\n", top_name);
+         return -1;
+      }
+
+      return 0;
    }
 
 
