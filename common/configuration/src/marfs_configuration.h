@@ -75,6 +75,7 @@ typedef enum {
 extern int lookup_boolean( const char* str, MarFS_Bool *enumeration );
 
 
+// co-maintain with accessmethod_str[], in marfs_configuration.c
 typedef enum {
    ACCESSMETHOD_DIRECT = 0,            // data stored directly into MD files
    ACCESSMETHOD_SEMI_DIRECT,           // data stored in separate FS, w/ reference from MD xattr
@@ -87,9 +88,12 @@ typedef enum {
 
 #define ACCESSMETHOD_IS_S3(ACCESSMETHOD)  ((ACCESSMETHOD) & (ACCESSMETHOD_S3 | ACCESSMETHOD_S3_SCALITY | ACCESSMETHOD_S3_EMC | ACCESSMETHOD_SPROXYD))
 
-extern int lookup_accessmethod( const char* str, MarFS_AccessMethod *enumeration );
+extern int         lookup_accessmethod( const char* str, MarFS_AccessMethod *enumeration );
+extern const char* accessmethod_string( MarFS_AccessMethod method );
 
 
+
+// co-maintain with securitymethod_str[], in marfs_configuration.c
 typedef enum {
    SECURITYMETHOD_NONE = 0,
    SECURITYMETHOD_S3_AWS_USER,            // AWS standard, with per-user keys
@@ -97,7 +101,8 @@ typedef enum {
    SECURITYMETHOD_S3_PER_OBJ,             // (TBD) server enforces per-object-key
 } MarFS_SecurityMethod;
 
-extern int lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration );
+extern int         lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration );
+extern const char* securitymethod_string( MarFS_SecurityMethod method );
 
 
 /*
@@ -439,6 +444,9 @@ typedef struct {
 extern NSIterator          namespace_iterator();
 extern MarFS_Namespace_Ptr namespace_next( NSIterator *nsIterator );
 
+extern int                 debug_namespace( MarFS_Namespace* ns );
+
+
 /*
  * --- support for traversing repos (without knowing how they are stored)
  *
@@ -457,6 +465,8 @@ typedef struct {
 
 extern RepoIterator   repo_iterator();
 extern MarFS_Repo_Ptr repo_next( RepoIterator *repoIterator );
+
+extern int            debug_repo( MarFS_Repo* repo );
 
 /*
  * THIS IS HERE TO PRESERVE THE IDEA OF AN ITERATOR THAT CALLS A FUNCTION
@@ -480,6 +490,12 @@ extern MarFS_Repo_Ptr repo_next( RepoIterator *repoIterator );
 
 extern int iterate_marfs_list( void **marfs_list, int ( *marfsPtrCallback )( void *marfsPtr ));
  */
+
+
+
+// --- access top-level configuration parameters
+
+
 
 
 #  ifdef __cplusplus

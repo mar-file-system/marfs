@@ -89,6 +89,9 @@ LOGGING = $(PWD)/../../common/log/src
 # Brett's configuration reader is (temporarily) here
 CONFIG = $(PWD)/../../common/configuration/src
 
+# remote libs.  Re-link, if any of these are more recent than our last build.
+FUSE_DEPS =
+
 
 OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_fuse.o
 SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_fuse.c
@@ -175,10 +178,10 @@ endif
 #       [tcsh]  setenv LIBAWS4C /my/path/to/aws4c; make ...
 #
 #       [any]   make ... LIBAWS4C=/my/path/to/aws4c
-CFLAGS  += -I$(LIBAWS4C)
-LDFLAGS += -L$(LIBAWS4C)
-LIBS    += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
-
+CFLAGS    += -I$(LIBAWS4C)
+LDFLAGS   += -L$(LIBAWS4C)
+LIBS      += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
+FUSE_DEPS += $(LIBAWS4C)/libaws4c.a
 
 
 
@@ -213,13 +216,14 @@ endif
 # if STATIC_CONFIG is defined, use the old jti static-config.
 # Otherwise, link with the config-reader library.
 ifdef STATIC_CONFIG
-	DEFS    += STATIC_CONFIG
-	OBJS += marfs_base_static_config.o
-	H    += marfs_base_static_config.h
+	DEFS      += STATIC_CONFIG
+	OBJS      += marfs_base_static_config.o
+	H         += marfs_base_static_config.h
 else
-	CFLAGS  += -I$(CONFIG)
-	LDFLAGS += -L$(CONFIG)
-	LIBS    += -lconfig
+	CFLAGS    += -I$(CONFIG)
+	LDFLAGS   += -L$(CONFIG)
+	LIBS      += -lconfig
+	FUSE_DEPS += $(CONFIG)/libconfig.a
 endif
 
 
@@ -324,17 +328,22 @@ endif
 
 
 # Don't make this directly; make one of the 'fuse.foo' targets below.
-marfs_fuse: $(H) $(OBJS) main.c
+marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS)
 	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose main.c $(OBJS) $(LIBS)
 	gcc $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
 
 
 fuse: fuse.std
+lean: fuse.lean
+dbg:  fuse.dbg
+
+# e.g. 'make dbg.static'
+%.static:
+	@ $(MAKE) $* STATIC_CONFIG=1
 
 # --- specialized builds
 fuse.std: pre_req
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=2
-	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=1
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1 STATIC_CONFIG=1
 	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1
 
@@ -343,7 +352,8 @@ fuse.lean: pre_req
 	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1
 
 fuse.dbg: pre_req
-	@ $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg LINK_LIBFUSE=1 STATIC_CONFIG=1
+	@ # $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg LINK_LIBFUSE=1 STATIC_CONFIG=1
+	@ $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg LINK_LIBFUSE=1
 #	@ $(MV) marfs_fuse marfs_fuse.dbg
 
 
@@ -353,7 +363,7 @@ fuse.dbg: pre_req
 redo: redo.std
 
 # compile -O3, verbose logging
-redo.std: umnt.std  clean reset_syslog fuse.std  mnt.std
+redo.std:  umnt.std  clean reset_syslog fuse.std  mnt.std
 
 # compile -O3, no logging
 redo.lean: umnt.lean clean              fuse.lean mnt.lean

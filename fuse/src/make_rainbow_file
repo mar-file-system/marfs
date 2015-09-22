@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# I need a file with many distinct parts, so I can be sure fuse read is
+# working correctly.  This generates a file where every chunk of size
+# CHUNK_SIZE has a different set of contents.
+#
+# For example:
+#
+#   $ make_rainbow_file 8M 4
+#   $ hexdump -C foo.rainbow.8M.4
+#   00000000  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+#   *
+#   00800000  01 01 01 01 01 01 01 01  01 01 01 01 01 01 01 01  |................|
+#   *
+#   01000000  02 02 02 02 02 02 02 02  02 02 02 02 02 02 02 02  |................|
+#   *
+#   01800000  03 03 03 03 03 03 03 03  03 03 03 03 03 03 03 03  |................|
+#   *
+
+
+
+if (( $# != 2 )); then
+    echo "Usage: $0 <chunk_size> <chunk_count>"
+    exit 1
+fi
+
+CHUNK_SIZE=$1
+N_CHUNKS=$2
+
+FNAME=foo.rainbow.$CHUNK_SIZE.$N_CHUNKS
+
+
+echo "making $FNAME"
+
+
+
+rm -f $FNAME
+
+for i in `seq 0 $((N_CHUNKS -1))`; do
+    dd if=/dev/zero bs=$CHUNK_SIZE count=1 \
+        | tr '\0' `printf "\\%o" $i` \
+        >> $FNAME
+done
