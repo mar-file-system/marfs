@@ -131,9 +131,9 @@ typedef enum {
    OSF_OPEN       = 0x01,
    OSF_WRITING    = 0x02,
    OSF_READING    = 0x04,
-   OSF_LEN_CHECK  = 0x08,
+   OSF_EOB        = 0x08,
    OSF_EOF        = 0x10,
-   OSF_ABORT      = 0x20,
+   OSF_ABORT      = 0x20,       // stream_abort(), or stream_sync()
    OSF_JOINED     = 0x40,
    OSF_CLOSED     = 0x80,
 } OSFlags;
