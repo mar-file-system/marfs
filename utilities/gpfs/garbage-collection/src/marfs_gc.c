@@ -498,12 +498,14 @@ int read_inodes(const char *fnameP,
                          count = %d index=%d\n", xattr_ptr->xattr_name, \
                          xattr_ptr->xattr_value, xattr_count,xattr_index);
                      if ((parse_post_xattr(&post, xattr_ptr))) {
-                         fprintf(stderr,"Error getting post xattr\n");
+                         fprintf(stderr,"Error parsing  post xattr for inode %d\n",
+                         iattrP->ia_inode);
                          continue;
                      }
                   }
                   else {
-                    fprintf(stderr,"Error getting post xattr\n");
+                    fprintf(stderr,"Error:  Not finding post xattr for inode %d\n", 
+                            iattrP->ia_inode);
                   }
                   //str_2_post(&post, xattr_ptr); 
                   // Talk to Jeff about this filespace used not in post xattr
@@ -534,7 +536,7 @@ int read_inodes(const char *fnameP,
                            // Going to get the repo name now from the objid xattr
                            // To do this, must call marfs str_2_pre to parse out
                            // the bucket name which include repo name
-                           fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
+                           //fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
                            str_2_pre(pre, xattr_ptr->xattr_value, st);
 
                            sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT, repo_name);
@@ -709,8 +711,6 @@ this function deletes the gpfs files assoiated with an object
 int delete_file(char *filename, File_Info *file_info_ptr)
 {
    int return_value = 0;
-   // NEED TO FIGURE OUT SIZE FOR THIS
-   //char path_file[4096];
    char path_file[MARFS_MAX_MD_PATH];
    sprintf(path_file,"%s.path",filename);
    print_current_time(file_info_ptr);
@@ -848,12 +848,12 @@ int process_packed(File_Info *file_info_ptr)
       return(-1);
 
    if (pclose(pipe_cat) == -1) {
-      printf("Error closing cat pipe in process_packed\n");
+      fprintf(stderr, "Error closing cat pipe in process_packed\n");
       return(-1);
    }
    else if (pipe_grep != NULL) {
       if (pclose(pipe_grep) == -1) {
-         printf("Error closing grep pipe in process_packed\n");
+         fprintf(stderr, "Error closing grep pipe in process_packed\n");
          return(-1);
       }
       else
@@ -878,13 +878,13 @@ int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action )
           return(0);
        }
        else {
-         printf("Error, HTTP Code:  %d\n", s3_buf->code);
+         fprintf(stderr, "Error, HTTP Code:  %d\n", s3_buf->code);
          return(s3_buf->code);
        }
     }
   }
   else {
-    printf("Error, Curl Return Code:  %d\n", curl_return);
+    fprintf(stderr,"Error, Curl Return Code:  %d\n", curl_return);
     return(-1);
   }
   return(0);

@@ -97,7 +97,7 @@ enum{S3_CREATE, S3_STAT, S3_DELETE};
 #define HTTP_OK 200
 #define HTTP_NO_CONTENT 204
 
-#define TMP_LOCAL_FILE_LEN 32
+#define TMP_LOCAL_FILE_LEN 1024 
 
 struct marfs_xattr {
   char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];

@@ -1020,48 +1020,18 @@ int marfs_read (const char*            path,
    //      look up in read obj mgmt. area for which object(s)
    //      for loop objects needed to honor read, read obj data and fill in fuse read buffer
 
-#if 0
-   // Old approach, where open() opens stream, and we read contiguously from it
-   TRY_GE0(stream_get, os, buf, size);
-   LOG(LOG_INFO, "result: '%*s'\n", rc_ssize, buf);
 
-   POP_USER();
-   return rc_ssize;
-
-#elif 0
-   // new approach, where we do an open/close for every call to read().  We
-   // correctly read byte ranges (but don't handle Multi files).
-   LOG(LOG_INFO, "offset: %ld, size: %ld\n", offset, size);
-   s3_set_byte_range_r(offset, size, b->context);
-   TRY0(stream_open, os, OS_GET);
-
-   // because we are reading byte-ranges, we may see '206 Partial Content'
+   // We handle Uni, Multi, and Packed files.  In the case of MULTI files,
+   // the data that is requested may span multiple objects (we call these
+   // internal objects "chunks").  In that case, we will actually do
+   // multiple open/close actions per read(), because we must open objects
+   // individually.
    //
-   // TRY_GE0(stream_get, os, buf, size);
-   rc_ssize = stream_get(os, buf, size);
-   if ((rc_ssize < 0)
-       && (os->iob.code != 200)
-       && (os->iob.code != 206)) {
-      LOG(LOG_ERR, "stream_get returned %ld (%d '%s')\n",
-          rc_ssize, os->iob.code, os->iob.result);
-      return -1;
-   }
-
-   // // handy for debugging small things, but don't want it there always
-   // LOG(LOG_INFO, "result: '%*s'\n", rc_ssize, buf);
-
-   TRY0(stream_sync, os);
-   TRY0(stream_close, os);
-
-   POP_USER();
-   return rc_ssize;
-
-#else
-   // Newest approach, where we still do open/close per read(), and we also
-   // handle Multi files.  This means that the data that is requested may
-   // span multiple objects (we call these internal objects "chunks").  In
-   // that case, we will actually do multiple open/close actions per
-   // read(), because we must open objects individually.
+   // For performance, we restrict the number of stream close/open
+   // operations to only those that are strictly necessary (for example,
+   // when ending one Multi object and starting the next one).
+   // Specifically, if we receive multiple calls to read() that are getting
+   // contiguous data, we avoid opening a new stream on every call.
    //
    // Marfs_write (and pftool) promise that we can compute the object-IDs
    // of the chunk and offset, for the Multi-object that matches a given
@@ -1076,15 +1046,9 @@ int marfs_read (const char*            path,
    //     chunk-number.
    //
    // These assumptions mean we can easily compute the IDs of chunk(s) we
-   // need, given only the desired data-offset (i.e. the "logical" offset)
-   // and the original object-ID.
-   //
-   // NOTE: even-newer approach: for performance, we're now trying to
-   //     restrict the number of stream close/open operations to only those
-   //     that are strictly necessary (for example, when ending one Multi
-   //     object and starting the next one).  Specifically, we want to
-   //     allow multiple calls to read() that are getting contiguous data
-   //     to skip doing an open on every call.
+   // need, given only the read-offset (i.e. the "logical" offset) and the
+   // original object-ID.
+
 
 
    // In the case of "Packed" objects, many user-level files are packed
@@ -1268,9 +1232,6 @@ int marfs_read (const char*            path,
 
    POP_USER();
    return read_count;
-
-
-#endif
 }
 
 
@@ -1535,7 +1496,7 @@ int marfs_release (const char*            path,
 int marfs_releasedir (const char*            path,
                       struct fuse_file_info* ffi) {
    LOG(LOG_INFO, "releasedir %s\n", path);
-#ifndef LINK_LIBFUSE
+#ifdef LINK_LIBFUSE
    LOG(LOG_INFO, "entry -- skipping push_user(%d)\n", fuse_get_context()->uid);
 #endif
    //   PUSH_USER();
