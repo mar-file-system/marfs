@@ -474,14 +474,15 @@ int lookup_accessmethod( const char* str, MarFS_AccessMethod *enumeration ) {
 }
 
 
+// Find the config-file strings that would corresponding with a given setting.
 static const char* accessmethod_str[] = {
-   "ACCESSMETHOD_DIRECT",
-   "ACCESSMETHOD_SEMI_DIRECT",
-   "ACCESSMETHOD_CDMI",
-   "ACCESSMETHOD_SPROXYD",
-   "ACCESSMETHOD_S3",
-   "ACCESSMETHOD_S3_SCALITY",
-   "ACCESSMETHOD_S3_EMC",
+   "DIRECT",
+   "SEMI_DIRECT",
+   "CDMI",
+   "SPROXYD",
+   "S3",
+   "S3_SCALITY",
+   "S3_EMC",
    NULL
 };
 const char* accessmethod_string( MarFS_AccessMethod method) {
@@ -513,11 +514,12 @@ int lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration ) 
 }
 
 
+// Find the config-file strings that would corresponding with a given setting.
 static const char* securitymethod_str[] = {
-   "SECURITYMETHOD_NONE",
-   "SECURITYMETHOD_S3_AWS_USER",
-   "SECURITYMETHOD_S3_AWS_MASTER",
-   "SECURITYMETHOD_S3_PER_OBJ",
+   "NONE",
+   "S3_AWS_USER",
+   "S3_AWS_MASTER",
+   "S3_PER_OBJ",
    NULL
 };
 const char* securitymethod_string( MarFS_SecurityMethod method ) {
