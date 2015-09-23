@@ -68,8 +68,8 @@ extern "C" {
  */
 
 typedef enum {
-  FALSE	= 0,
-  TRUE	= 1
+  FALSE = 0,
+  TRUE  = 1
 } MarFS_Bool;
 
 extern int lookup_boolean( const char* str, MarFS_Bool *enumeration );
@@ -258,9 +258,9 @@ typedef struct marfs_repo {
  */
 
 typedef struct marfs_repo_range {
-  int			minsize;
-  int			maxsize;
-  MarFS_Repo_Ptr	repo_ptr;
+  int               min_size;
+  int               max_size;
+  MarFS_Repo_Ptr    repo_ptr;
 } MarFS_Repo_Range, *MarFS_Repo_Range_Ptr, **MarFS_Repo_Range_List;
 
 /*
@@ -376,7 +376,7 @@ extern MarFS_Namespace_Ptr find_namespace_by_mnt_path( const char *mnt_path );
  * repository for files of this size.
  */
 
-extern MarFS_Repo_Ptr find_repo_by_range	(
+extern MarFS_Repo_Ptr find_repo_by_range (
                  MarFS_Namespace_Ptr namespacePtr,
                  size_t              file_size );
 
@@ -407,10 +407,10 @@ extern int read_configuration();
  * CONTENTS OF THE MarFS_Config STRUCTURE TO GET WHATEVER MEMBER
  * IS DESIRED.
 
-extern char			*get_configuration_name( MarFS_Config_Ptr config );
-extern double			get_configuration_version( MarFS_Config_Ptr config );
-extern char			*get_configuration_mnt_top( MarFS_Config_Ptr config );
-extern MarFS_Namespace_List	get_configuration_namespace_list( MarFS_Config_Ptr config );
+extern char         *get_configuration_name( MarFS_Config_Ptr config );
+extern double        get_configuration_version( MarFS_Config_Ptr config );
+extern char         *get_configuration_mnt_top( MarFS_Config_Ptr config );
+extern MarFS_Namespace_List get_configuration_namespace_list( MarFS_Config_Ptr config );
  */
 
 /*

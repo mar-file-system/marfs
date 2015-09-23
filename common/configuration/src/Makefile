@@ -10,24 +10,25 @@ CC = gcc
 # all:   test_marfs_configuration
 # debug: test_marfs_configuration-d
 
-all:   lib tester marfs_config
+all:   libconfig.a tester marfs_config
 debug: test_marfs_configuration-d
 
 
-LOG_DIR =   $(PWD)/../../log/src
+LOG_DIR = $(PWD)/../../log/src
 
-#LIBS = -lpthread
-LIBS =
+#LIBS      = -lpthread
+LIBS       =
 OPTIONS   := -D_GNU_SOURCE -g
-PARSE_OPT = -DDATAPARSE
-LOG_OPT   = -DUSE_STDOUT -DLOG_PREFIX='"config"'
+PARSE_OPT  = -DDATAPARSE
+LOG_OPT    = -DLOG_PREFIX='"config"'
 
-DEBUG   = -D_DEBUG_MARFS_CONFIGURATION
-#DEBUG   = -DDEBUG
-#DEBUG   = -DDEBUG -D_DEBUG_MARFS_CONFIGURATION
+ifdef DEBUG
+	LOG_OPT  += -DUSE_STDOUT 
+	DBG_OPT   = -D_DEBUG_MARFS_CONFIGURATION
+endif
 
-# BLUEPRINT=$(PWD)/marfs_configuration_blueprint.cfg
-BLUEPRINT := $(PWD)/marfs_cctest.cfg
+BLUEPRINT   := $(PWD)/marfs_cctest_blueprint.cfg
+CONFIG_FILE := $(PWD)/marfs_cctest.cfg
 
 
 
@@ -44,6 +45,7 @@ endif
 PARSE_OBJ_files = confpars.o path-switch.o parsedata.o
 PARSE_OBJ       = $(patsubst %, $(PARSE_DIR)/%, $(PARSE_OBJ_files))
 
+
 # This generates a 'datapars' in PARSE_DIR, using the BLUEPRINT config.
 # This parser should then be able to parse MarFS configs that are
 # consistent with the blueprint.
@@ -53,7 +55,7 @@ PARSE_OBJ       = $(patsubst %, $(PARSE_DIR)/%, $(PARSE_OBJ_files))
 # NOTE: If you get errors about "redefining struct namespace",
 #     You probably have a mistake in the tags in your config.
 #
-parser: parse_dir
+parser_old: parse_dir
 	@ echo; echo "#-- cleaning $(PARSE_DIR)"
 	mkdir -p $(PARSE_DIR)/parse-inc
 	@ $(MAKE) -C $(PARSE_DIR) clean
@@ -69,20 +71,24 @@ parser: parse_dir
 	@ # echo; echo "#-- experimental hack: fix parse-inc/path-switch.inc"
 	@ # cat $(PARSE_DIR)/parse-inc/path-switch.inc | awk -f fix_parser_internals.awk > foo
 	@ # mv foo $(PARSE_DIR)/parse-inc/path-switch.inc
-	@ echo; echo "#-- making datapars with $(BLUEPRINT)"
-	@ $(MAKE) -C $(PARSE_DIR) datapars CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)" conf=$(BLUEPRINT)
+	@ echo; echo "#-- making datapars with $(CONFIG_FILE)"
+	@ $(MAKE) -C $(PARSE_DIR) datapars CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)" conf=$(CONFIG_FILE)
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
 	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 
-parser_new: parse_dir
+parser: parse_dir
 	@ echo; echo "#-- cleaning $(PARSE_DIR)"
 	@ $(MAKE) -C $(PARSE_DIR) pristine
-	@ echo; echo "#-- making confpars"
+	@ echo; echo "#-- making 'base'"
+	@ # $(MAKE) -C $(PARSE_DIR) confpars-d
 	@ $(MAKE) -C $(PARSE_DIR) base
-	@ echo; echo "#-- running confpars (to generate include-files)"
+	@ echo; echo "#-- running confpars (with blueprint file)"
 	(cd $(PARSE_DIR); ./confpars $(BLUEPRINT) )
-	@ echo; echo "#-- running datapars with $(BLUEPRINT)"
-	@ $(MAKE) -C $(PARSE_DIR) datapars CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)" conf=$(BLUEPRINT)
+	@ echo; echo "#-- making datapars"
+	@ # $(MAKE) -C $(PARSE_DIR) datapars-d   [fails]
+	@ $(MAKE) -C $(PARSE_DIR) datapars
+	@ echo; echo "#-- running datapars with $(CONFIG_FILE)"
+	(cd $(PARSE_DIR); ./datapars $(CONFIG_FILE) )
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
 	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 
@@ -116,9 +122,10 @@ SRC = marfs_configuration.c
 H   = marfs_configuration.h
 
 
+
 %.o: %.c %.h parse_dir
 	@ echo; echo "#-- building $@"
-	gcc -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) $(DEBUG) -o $@ $<
+	gcc -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) -DTBD -o $@ $<
 
 
 libconfig.a: parser $(LOG_OBJ) $(OBJ)
@@ -126,8 +133,6 @@ libconfig.a: parser $(LOG_OBJ) $(OBJ)
 	ar -cvr $@ $(PARSE_OBJ)
 	ar -cvr $@ $(LOG_OBJ)
 	ar -cvr $@ $(OBJ)
-
-lib: libconfig.a
 
 LDFLAGS += -L.
 
@@ -140,7 +145,7 @@ LDFLAGS += -L.
 # LDFLAGS += -L.
 tester: libconfig.a test_marfs_configuration.c
 	@ echo; echo "#-- building $@"
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $(DEBUG) test_marfs_configuration.c -lconfig
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $(DBG_OPT) test_marfs_configuration.c -lconfig
 
 
 
@@ -158,7 +163,7 @@ tester: libconfig.a test_marfs_configuration.c
 
 marfs_config: libconfig.a marfs_config.c
 	@ echo; echo "#-- building $@"
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $(DEBUG) marfs_config.c -lconfig
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) marfs_config.c -lconfig
 
 
 
@@ -176,7 +181,7 @@ test_marfs_configuration: parse_dir
 	$(CC) $(LIBS) $(PARSE_DIR)/confpars.o $(PARSE_DIR)/parsedata.o $(PARSE_DIR)/path-switch.o $(LOG_DIR)/logging.o marfs_configuration.o test_marfs_configuration.o -o test_marfs_configuration
 
 test_marfs_configuration-d: parse_dir
-	$(MAKE) test_marfs_configuration OPTIONS="$(DEBUG)"
+	$(MAKE) test_marfs_configuration OPTIONS="$(DBG_OPT)"
 
 
 
@@ -189,7 +194,7 @@ clean: parse_dir
 	$(RM) $(LOG_DIR)/*.o
 	$(RM) *.o
 	$(RM) test_marfs_configuration
-	$(RM) libconfig.a
+	$(RM) libconfig*.a
 
 pristine: clean
 	@ # $(RM) $(PARSE_DIR)/parse-inc/*

@@ -335,14 +335,14 @@ MarFS_Repo_Ptr find_repo_by_range (
 #ifdef _DEBUG_MARFS_CONFIGURATION
   LOG( LOG_INFO, "File size sought is %d.\n", file_size );
   LOG( LOG_INFO, "Namespace is \"%s\"\n", namespacePtr->name );
-  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->minsize is %d.\n", i, namespacePtr->repo_range_list[i]->minsize );
-  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->maxsize is %d.\n", i, namespacePtr->repo_range_list[i]->maxsize );
+  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->min_size is %d.\n", i, namespacePtr->repo_range_list[i]->min_size );
+  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->max_size is %d.\n", i, namespacePtr->repo_range_list[i]->max_size );
 #endif
 
-      if ((( file_size >= namespacePtr->repo_range_list[i]->minsize ) &&
+      if ((( file_size >= namespacePtr->repo_range_list[i]->min_size ) &&
 
-          (( file_size <= namespacePtr->repo_range_list[i]->maxsize ) ||
-           ( namespacePtr->repo_range_list[i]->maxsize == -1 )))) {
+          (( file_size <= namespacePtr->repo_range_list[i]->max_size ) ||
+           ( namespacePtr->repo_range_list[i]->max_size == -1 )))) {
 
 #ifdef _DEBUG_MARFS_CONFIGURATION
   LOG( LOG_INFO, "Repo pointer for this range found and being returned.\n" );
@@ -669,7 +669,7 @@ int decode_correcttype( char code, MarFS_CorrectType *enumeration ) {
  * If none of those are found, NULL is returned.
  ****************************************************************************/
 
-#if TBD
+#ifdef TBD
 // Ron's most-recent commits [2015-09-21] use this, but listObjByName() is broken
 
 // new requirement for parseConfigFile [2015-09-23]
@@ -756,7 +756,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
         return NULL;
      }
      LOG( LOG_INFO, "calling parseConfigFile, with CWD='%s'.\n", STRING(PARSE_DIR));
-#if TBD
+#ifdef TBD
      // Ron's most-recent commits [2015-09-21] use this, but listObjByName() is broken
      parseConfigFile( path, CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, &vNTL, QUIET );
 #else
@@ -786,7 +786,13 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
   /* REPOS */
 
+#ifdef TBD
+  repoList = (struct repo **) config->repo;
+#else
   repoList = (struct repo **) listObjByName( "repo", config );
+#endif
+
+
   j = 0;
   while ( repoList[j] != (struct repo *) NULL ) {
 //#ifdef _DEBUG_MARFS_CONFIGURATION
@@ -890,7 +896,11 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
   /* NAMESPACE */
 
+#ifdef TBD
+  namespaceList = (struct namespace **) config->namespace;
+#else
   namespaceList = (struct namespace **) listObjByName( "namespace", config );
+#endif
 
   j = 0;
   while ( namespaceList[j] != (struct namespace *) NULL ) {
@@ -1033,9 +1043,15 @@ static MarFS_Config_Ptr read_configuration_internal() {
       return NULL;
     }
 
-    marfs_repo_rangeList[0]->minsize = atoi( namespaceList[j]->minsize );
-    marfs_repo_rangeList[0]->maxsize = atoi( namespaceList[j]->maxsize );
+#ifdef TBD
+    marfs_repo_rangeList[0]->min_size = atoi( namespaceList[j]->range[0]->min_size );
+    marfs_repo_rangeList[0]->max_size = atoi( namespaceList[j]->range[0]->max_size );
+    marfs_repo_rangeList[0]->repo_ptr = find_repo_by_name( namespaceList[j]->range[0]->repo_name );
+#else
+    marfs_repo_rangeList[0]->min_size = atoi( namespaceList[j]->min_size );
+    marfs_repo_rangeList[0]->max_size = atoi( namespaceList[j]->max_size );
     marfs_repo_rangeList[0]->repo_ptr = find_repo_by_name( namespaceList[j]->repo_name );
+#endif
 
     marfs_namespace_list[j]->repo_range_list = marfs_repo_rangeList;
     marfs_namespace_list[j]->repo_range_list_count = repoRangeCount;
@@ -1228,8 +1244,8 @@ int debug_range_list( MarFS_Repo_Range** range_list,
    for (i=0; i<range_list_count; ++i) {
       fprintf( stdout, "\t\t[%d] (min: %d, max: %d) -> %s\n",
                i,
-               range_list[i]->minsize,
-               range_list[i]->maxsize,
+               range_list[i]->min_size,
+               range_list[i]->max_size,
                (range_list[i]->repo_ptr ? range_list[i]->repo_ptr->name : "NULL") );
    }
 }

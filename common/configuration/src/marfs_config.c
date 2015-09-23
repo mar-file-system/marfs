@@ -109,21 +109,21 @@ int main( int argc, char *argv[] ) {
          break;
 
       case 'n':
-         printf ("option n with value '%s'\n", optarg);
+         // printf ("option n with value '%s'\n", optarg);
          ns_opt = 1;
          // ns_name = optarg;
          name_ptr = &ns_name;
          break;
 
       case 'r':
-         printf ("option r with value '%s'\n", optarg);
+         // printf ("option r with value '%s'\n", optarg);
          repo_opt = 1;
          // repo_name = optarg;
          name_ptr = &repo_name;
          break;
 
       case 't':
-         //            printf ("option t with value '%s'\n", optarg);
+         // printf ("option t with value '%s'\n", optarg);
          top_opt = 1;
          // top_name = optarg;
          name_ptr = &top_name;
@@ -230,7 +230,7 @@ int main( int argc, char *argv[] ) {
          }
       }
       else {
-         // --- show names of all nss
+         // --- show names of all namespaces
          NSIterator nit = namespace_iterator();
          while (( ns = namespace_next( &nit )) != NULL ) {
             printf("%s\n", ns->name);
