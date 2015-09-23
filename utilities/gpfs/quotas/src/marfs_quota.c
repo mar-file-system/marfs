@@ -190,7 +190,7 @@ int main(int argc, char **argv) {
       // User wants to know how many filesets exists
       // print and exit
       if ( fileset_scan_count == 0 ) {
-         printf("fileset count = %d\n", fileset_count);
+         fprintf(stderr, "fileset count = %d\n", fileset_count);
          exit(0);
       }
       fileset_scan_count = fileset_count;
@@ -529,6 +529,8 @@ int read_inodes(const char    *fnameP,
                                  &fileset_name_buffer, MARFS_MAX_NAMESPACE_NAME); 
             struct_index = lookup_fileset(fileset_stat_ptr,rec_count,
                                           offset_start,fileset_name_buffer);
+            
+             LOG(LOG_INFO, "scan fileset = %s\n", fileset_name_buffer);
             if (struct_index == -1) 
                continue;
             last_struct_index = struct_index;
@@ -557,7 +559,7 @@ int read_inodes(const char    *fnameP,
 
                // scan into post xattr structure
                // if error parsing this xattr, skip and continue
-               if (parse_post_xattr(&post, xattr_ptr)) {
+               if (parse_post_xattr(&post, xattr_ptr) == -1) {
                   continue;             
                }
                fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
@@ -588,8 +590,10 @@ int read_inodes(const char    *fnameP,
                   trash_index = lookup_fileset_path(fileset_stat_ptr, 
                                                     rec_count, md_path_ptr);
                   if (trash_index == -1) {
-                     fprintf(stderr, "Error finding .path file for %s\n", 
+                     fprintf(stderr, "Error finding .path file for %s", 
                              fileset_stat_ptr->fileset_name);
+                     fprintf(stderr, "md_path =%s\n", 
+                             md_path_ptr);
                      continue;
                   }
                   else {
@@ -704,9 +708,14 @@ void write_fsinfo(FILE*         outfd,
       fprintf(outfd,"trash_size:   %zu\n", fileset_stat_ptr[i].sum_trash);
       //fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
    }
+   trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start);
 }
 /***************************************************************************** 
 Name: truncate_fsinfo 
+
+This function truncates the fsinfo file to the total size determined for 
+a particular namespace.  The fsinfo path is contained in the configuration
+file.
 
 *****************************************************************************/
 int trunc_fsinfo(FILE*         outfd, 
@@ -717,18 +726,28 @@ int trunc_fsinfo(FILE*         outfd,
    int ret;
    int i;
 
+   //  Go through all namespaces/filesets scanned
    for (i=index_start; i < rec_count+index_start; i++) {
-      ret = truncate(fileset_stat_ptr[i].fsinfo_path, 
-                     fileset_stat_ptr[i].sum_size);
-      if (ret == -1) {
-         fprintf(stderr, "Unable to truncate %s to %zu in namespace %s\n",
+      // Do not truncate fsinfo file if trash
+      if (strcmp(fileset_stat_ptr[i].fileset_name, "trash")) {
+         // do trunc
+         ret = truncate(fileset_stat_ptr[i].fsinfo_path, 
+                        fileset_stat_ptr[i].sum_size);
+         if (ret == -1) {
+            fprintf(stderr, "Unable to truncate %s to %zu in namespace %s\n",
+                   fileset_stat_ptr[i].fsinfo_path, 
+                   fileset_stat_ptr[i].sum_size, 
+                   fileset_stat_ptr[i].fileset_name); 
+            fprintf(outfd, "Unable to truncate %s to %zu in namespace %s\n",
+                   fileset_stat_ptr[i].fsinfo_path, 
+                   fileset_stat_ptr[i].sum_size, 
+                   fileset_stat_ptr[i].fileset_name); 
+         }
+         else {
+            LOG(LOG_INFO, "Truncated file %s to size %zu\n", 
                 fileset_stat_ptr[i].fsinfo_path, 
-                fileset_stat_ptr[i].sum_size, 
-                fileset_stat_ptr[i].fileset_name); 
-         fprintf(outfd, "Unable to truncate %s to %zu in namespace %s\n",
-                fileset_stat_ptr[i].fsinfo_path, 
-                fileset_stat_ptr[i].sum_size, 
-                fileset_stat_ptr[i].fileset_name); 
+                fileset_stat_ptr[i].sum_size);
+         }
       }
    }
    return 0;
@@ -757,7 +776,7 @@ void update_type(MarFS_XattrPost * xattr_post,
          fileset_stat_ptr[index].obj_type.packed_count +=1;
          break;
       default:
-         printf("obj_type undefined: %d\n", xattr_post->obj_type);
+         fprintf(stderr, "obj_type undefined: %d\n", xattr_post->obj_type);
    }
 }
 
@@ -775,7 +794,6 @@ int lookup_fileset_path(Fileset_Stats *fileset_stat_ptr, size_t rec_count,
   FILE *pipe_cat;
   int i, index = -1;
   
-  // NEED TO DEFINE CONSTANT here and in trash collector
   char path_file[MAX_PATH_LENGTH];  
   char cat_command[MAX_PATH_LENGTH];
   char path[MAX_PATH_LENGTH];
@@ -784,12 +802,12 @@ int lookup_fileset_path(Fileset_Stats *fileset_stat_ptr, size_t rec_count,
    sprintf(path_file,"%s.path", md_path_ptr);
    sprintf(cat_command,"cat %s", path_file);
    if ((pipe_cat = popen(cat_command,"r")) == NULL) {
-      printf("No path file found\n");
+      fprintf(stderr, "No path file found\n");
       return(-1);
    }
    fgets(path, MAX_PATH_LENGTH, pipe_cat);
    if (pclose(pipe_cat) == -1) {
-     printf("Error closing .path pipe\n");
+     fprintf(stderr, "Error closing .path pipe\n");
    }
    //path variable  now contains original path from .path file
    //now iterate throuh filesets and see if any of them
@@ -800,8 +818,10 @@ int lookup_fileset_path(Fileset_Stats *fileset_stat_ptr, size_t rec_count,
 
 
    // search the array of structures for matching fileset name
+   //printf("path = %s\n", path);
    for (i = 0; i < rec_count; i++) {
-       printf("AAAAAA %s %s\n", fileset_stat_ptr[i].fileset_name,path);
+       //printf("AAAAAA %s %s\n", fileset_stat_ptr[i].fileset_name,path);
+       //printf("fileset = %s\n", fileset_stat_ptr[i].fileset_name);
        if(strstr(path,fileset_stat_ptr[i].fileset_name) != NULL) {
           index=i;
           break;
@@ -853,7 +873,7 @@ Fileset_Stats *read_config(unsigned int *count)
       //Initialize structure element namespace and fsinfopath
       strcpy(fileset_stat_ptr[i-1].fileset_name, namespacePtr->name);
       strcpy(fileset_stat_ptr[i-1].fsinfo_path, namespacePtr->fsinfo_path);
-      LOG(LOG_INFO, "fileset name = %s\n", fileset_stat_ptr[i-1].fileset_name);
+      LOG(LOG_INFO, "fileset name = %s index = %d\n", fileset_stat_ptr[i-1].fileset_name, i);
       LOG(LOG_INFO, "fsinfo_path  = %s\n", fileset_stat_ptr[i-1].fsinfo_path);
    } 
    // Now add one more structure entry for trash
