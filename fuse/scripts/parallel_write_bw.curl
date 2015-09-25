@@ -1,0 +1,85 @@
+#!/bin/bash
+
+# Variation on parallel_write_bw, just writing via curl.
+# This gets ~710 MB/s for 8 tasks, writing 512MB each.
+
+
+# constants
+M=$((1024 * 1024))
+G=$((1024 * 1024 * 1024))
+
+N_TASKS=8
+# BLK_SIZE=$((512 * M))
+BLK_SIZE=$((1 * G))
+COUNT=1
+
+
+# total MB moved by all tasks
+MB_TOT=$(( (N_TASKS * BLK_SIZE * COUNT) / M ))
+
+MB_EACH=$(( (BLK_SIZE * COUNT) / M ))
+
+
+# Construct the filename for a given integer
+function filename() {
+    echo /marfs/jti/parallel.`printf "%02d" $1`
+}
+
+# testing
+function objname() {
+    echo http://10.135.0.21:81/sproxyd_jti/jti/parallel.`printf "%02d" $1`
+}
+
+function outputname() {
+    echo foo.parallel.`printf "%02d" $1`
+}
+
+# capture the individual timing of each task, to see if there are laggards
+function do_task() {
+    i=$1
+    echo "curl -T foo.zeros `objname $i` > `outputname $i`"
+    (time curl -T foo.zeros `objname $i`) > `outputname $i` 2>&1
+}
+
+
+# launch parallel jobs in the background
+# wait for all jobs to complete, before returning
+function do_tasks() {
+    # make a dummy file
+    dd if=/dev/zero of=foo.zeros bs=$BLK_SIZE count=$COUNT
+
+    # all tasks copy the same dummy file
+    for i in `seq 1 $N_TASKS`; do
+        do_task $i &
+    done
+
+    # wait for all tasks
+    echo "waiting"
+    wait
+
+    # clean up the dummy file
+    rm foo.zeros
+}
+
+
+# measure elapsed times for the parallel writes to all complete.
+# NOTE: 'time' is a real POS.
+echo "$N_TASKS parallel writers, writing $MB_EACH MB each (through fuse-mount)"
+# TIME=` (time do_tasks) 2>&1 | awk '/real/ {print $2}' `
+OUTPUT=`(time do_tasks) 2>&1`
+TIME=`echo "$OUTPUT" | awk '/real/ {print $2}' `
+
+echo -e "output:\n$OUTPUT"
+echo "timing: $TIME"
+
+
+# extract the number of seconds
+SEC=`echo $TIME \
+    | sed -re 's/^([0-9]+)m([0-9.]+)s/(60 * \1) + \2/' \
+    | bc -q`
+echo "total sec: $SEC"
+
+
+# compute bandwidth
+BW=`echo "$MB_TOT/$SEC" | bc -q`
+echo "performance: $MB_TOT MB, $SEC sec = $BW MB/s"

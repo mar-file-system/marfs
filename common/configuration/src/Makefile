@@ -27,8 +27,8 @@ ifdef DEBUG
 	DBG_OPT   = -D_DEBUG_MARFS_CONFIGURATION
 endif
 
-BLUEPRINT   := $(PWD)/marfs_cctest_blueprint.cfg
-CONFIG_FILE := $(PWD)/marfs_cctest.cfg
+BLUEPRINT   := $(PWD)/marfs_configuration_blueprint.cfg
+CONFIG      := $(PWD)/marfs_cctest.cfg
 
 
 
@@ -50,45 +50,22 @@ PARSE_OBJ       = $(patsubst %, $(PARSE_DIR)/%, $(PARSE_OBJ_files))
 # This parser should then be able to parse MarFS configs that are
 # consistent with the blueprint.
 #
-# It also generates the files in $(PARSE_OBJ)
-#
 # NOTE: If you get errors about "redefining struct namespace",
 #     You probably have a mistake in the tags in your config.
 #
-parser_old: parse_dir
-	@ echo; echo "#-- cleaning $(PARSE_DIR)"
-	mkdir -p $(PARSE_DIR)/parse-inc
-	@ $(MAKE) -C $(PARSE_DIR) clean
-	@ $(RM) $(PARSE_DIR)/confpars
-	@ $(RM) $(PARSE_DIR)/datapars
-	@ echo; echo "#-- making confpars"
-	@ $(MAKE) -C $(PARSE_DIR) confpars CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)"
-	@ # echo; echo "#-- running confpars (to generate buggy include-files)"
-	@ # $(MAKE) -C $(PARSE_DIR) confpars-run conf=$(BLUEPRINT)
-	@ # echo; echo "#-- experimental hack: fix parse-inc/path-names.inc"
-	@ # cat $(PARSE_DIR)/parse-inc/path-names.inc | awk -f fix_parser_internals.awk > foo
-	@ # mv foo $(PARSE_DIR)/parse-inc/path-names.inc
-	@ # echo; echo "#-- experimental hack: fix parse-inc/path-switch.inc"
-	@ # cat $(PARSE_DIR)/parse-inc/path-switch.inc | awk -f fix_parser_internals.awk > foo
-	@ # mv foo $(PARSE_DIR)/parse-inc/path-switch.inc
-	@ echo; echo "#-- making datapars with $(CONFIG_FILE)"
-	@ $(MAKE) -C $(PARSE_DIR) datapars CFLAGS="$(CFLAGS) $(OPTIONS) $(PARSE_OPT)" conf=$(CONFIG_FILE)
-	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
-	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
-
 parser: parse_dir
 	@ echo; echo "#-- cleaning $(PARSE_DIR)"
 	@ $(MAKE) -C $(PARSE_DIR) pristine
 	@ echo; echo "#-- making 'base'"
 	@ # $(MAKE) -C $(PARSE_DIR) confpars-d
 	@ $(MAKE) -C $(PARSE_DIR) base
-	@ echo; echo "#-- running confpars (with blueprint file)"
+	@ echo; echo "#-- running confpars with $(BLUEPRINT)"
 	(cd $(PARSE_DIR); ./confpars $(BLUEPRINT) )
 	@ echo; echo "#-- making datapars"
 	@ # $(MAKE) -C $(PARSE_DIR) datapars-d   [fails]
 	@ $(MAKE) -C $(PARSE_DIR) datapars
-	@ echo; echo "#-- running datapars with $(CONFIG_FILE)"
-	(cd $(PARSE_DIR); ./datapars $(CONFIG_FILE) )
+	@ echo; echo "#-- running datapars with $(CONFIG)"
+	(cd $(PARSE_DIR); ./datapars $(CONFIG) )
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
 	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 
@@ -125,7 +102,7 @@ H   = marfs_configuration.h
 
 %.o: %.c %.h parse_dir
 	@ echo; echo "#-- building $@"
-	gcc -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) -DTBD -o $@ $<
+	gcc -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) $(DBG_OPT) -DTBD -o $@ $<
 
 
 libconfig.a: parser $(LOG_OBJ) $(OBJ)
@@ -138,7 +115,7 @@ LDFLAGS += -L.
 
 
 # ---------------------------------------------------------------------------
-# Alternate build of Brett's config-tester, using the above
+# Alternate build of Brett's test_marfs_configuration.c, using libconfig
 # ---------------------------------------------------------------------------
 
 # CFLAGS  += -I$(PARSE_DIR) -I$(LOG_DIR) $(OPTIONS)
@@ -153,11 +130,12 @@ tester: libconfig.a test_marfs_configuration.c
 # tool to allow scripts to get access to configuration details
 #
 # for example:
-#   $ marfs_config names repo   [print repo names]
-#   $ marfs_config names ns     [print namespace names]
-#   $ marfs_config repo s3      [print contents of repo with name 's3']
-#   $ marfs_config ns jti       [print contents of namespace with name 'jti']
-#   $ marfs_config config       [print top-level config details]
+#   $ marfs_config -n           [print namespace names]
+#   $ marfs_config -n jti       [print contents of namespace with name 'jti']
+#   $ marfs_config -r           [print repo names]
+#   $ marfs_config -r s3        [print contents of repo with name 's3']
+#   $ marfs_config t            [print top-level config details]
+#   $ marfs_config t mnt_top    [print value of top-level "mnt_top" setting]
 #
 # ---------------------------------------------------------------------------
 
@@ -180,8 +158,9 @@ test_marfs_configuration: parse_dir
 	$(CC) -I$(PARSE_DIR) -I$(LOG_DIR) -c test_marfs_configuration.c -o test_marfs_configuration.o $(OPTIONS) $(PARSE_OPT) $(LOG_OPT)
 	$(CC) $(LIBS) $(PARSE_DIR)/confpars.o $(PARSE_DIR)/parsedata.o $(PARSE_DIR)/path-switch.o $(LOG_DIR)/logging.o marfs_configuration.o test_marfs_configuration.o -o test_marfs_configuration
 
+
 test_marfs_configuration-d: parse_dir
-	$(MAKE) test_marfs_configuration OPTIONS="$(DBG_OPT)"
+	$(MAKE) test_marfs_configuration DEBUG=1
 
 
 

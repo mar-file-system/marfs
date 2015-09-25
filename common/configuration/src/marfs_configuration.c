@@ -345,7 +345,8 @@ MarFS_Repo_Ptr find_repo_by_range (
            ( namespacePtr->repo_range_list[i]->max_size == -1 )))) {
 
 #ifdef _DEBUG_MARFS_CONFIGURATION
-  LOG( LOG_INFO, "Repo pointer for this range found and being returned.\n" );
+         LOG( LOG_INFO, "Repo pointer for this range is '%s'\n",
+              namespacePtr->repo_range_list[i]->repo_ptr->name );
 #endif
 
         return namespacePtr->repo_range_list[i]->repo_ptr;
@@ -473,14 +474,15 @@ int lookup_accessmethod( const char* str, MarFS_AccessMethod *enumeration ) {
 }
 
 
+// Find the config-file strings that would corresponding with a given setting.
 static const char* accessmethod_str[] = {
-   "ACCESSMETHOD_DIRECT",
-   "ACCESSMETHOD_SEMI_DIRECT",
-   "ACCESSMETHOD_CDMI",
-   "ACCESSMETHOD_SPROXYD",
-   "ACCESSMETHOD_S3",
-   "ACCESSMETHOD_S3_SCALITY",
-   "ACCESSMETHOD_S3_EMC",
+   "DIRECT",
+   "SEMI_DIRECT",
+   "CDMI",
+   "SPROXYD",
+   "S3",
+   "S3_SCALITY",
+   "S3_EMC",
    NULL
 };
 const char* accessmethod_string( MarFS_AccessMethod method) {
@@ -512,11 +514,12 @@ int lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration ) 
 }
 
 
+// Find the config-file strings that would corresponding with a given setting.
 static const char* securitymethod_str[] = {
-   "SECURITYMETHOD_NONE",
-   "SECURITYMETHOD_S3_AWS_USER",
-   "SECURITYMETHOD_S3_AWS_MASTER",
-   "SECURITYMETHOD_S3_PER_OBJ",
+   "NONE",
+   "S3_AWS_USER",
+   "S3_AWS_MASTER",
+   "S3_PER_OBJ",
    NULL
 };
 const char* securitymethod_string( MarFS_SecurityMethod method ) {
@@ -686,10 +689,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
   struct namespace *namespacePtr, **namespaceList;
   struct repo_range *repoRangePtr, **repoRangeList;
   struct repo *repoPtr, **repoList;
-  int j, k, slen;
+  int j, k, slen, repoRangeCount;
   char *perms_dup, *tok, *envVal, *path;
   int pd_index;
-  MarFS_Repo_Range_List marfs_repo_rangeList;
+  MarFS_Repo_Range_List marfs_repo_range_list;
 
 
   envVal = getenv( "MARFSCONFIGRC" );
@@ -785,13 +788,11 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
 
   /* REPOS */
-
 #ifdef TBD
   repoList = (struct repo **) config->repo;
 #else
   repoList = (struct repo **) listObjByName( "repo", config );
 #endif
-
 
   j = 0;
   while ( repoList[j] != (struct repo *) NULL ) {
@@ -910,6 +911,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
     j++;
   }
   namespaceCount = j;
+  LOG( LOG_INFO, "parser gave us a list of %d namespaces.\n", namespaceCount );
 
   marfs_namespace_list = (MarFS_Namespace_List) malloc( sizeof( MarFS_Namespace_Ptr ) * ( namespaceCount + 1 ));
   if ( marfs_namespace_list == NULL) {
@@ -1022,38 +1024,92 @@ static MarFS_Config_Ptr read_configuration_internal() {
     /* iwrite_repo */
     marfs_namespace_list[j]->iwrite_repo = find_repo_by_name( namespaceList[j]->iwrite_repo_name );
 
+    if (! marfs_namespace_list[j]->iwrite_repo) {
+        LOG( LOG_ERR, "Couldn't find iwrite_repo named \"%s\", for namespace \"%s\".\n",
+             namespaceList[j]->iwrite_repo_name,
+             marfs_namespace_list[j]->name );
+        return NULL;
+    }
 
 /*
  * For now we'll set this to one (1). Once the configuration parser is fixed we can
  * potentially have more than one range per namespace.
- */
+ *
+ * 9/22/15: We now have the ability to access a list within the namespace list.
+ *          So, this kludge of forcing one repo range per namespace is being
+ *          commented out and replaced with the repo range code that follows
+ *          this comment block.
 
     repoRangeCount = 1;
 
-    marfs_repo_rangeList = (MarFS_Repo_Range_List) malloc( sizeof( MarFS_Repo_Range_Ptr ) * ( repoRangeCount + 1 ));
-    if ( marfs_repo_rangeList == NULL) {
+    marfs_repo_range_list = (MarFS_Repo_Range_List) malloc( sizeof( MarFS_Repo_Range_Ptr ) * ( repoRangeCount + 1 ));
+    if ( marfs_repo_range_list == NULL) {
       LOG( LOG_ERR, "Error allocating memory for the MarFS repo range list structure.\n");
       return NULL;
     }
-    marfs_repo_rangeList[repoRangeCount] = NULL;
+    marfs_repo_range_list[repoRangeCount] = NULL;
 
-    marfs_repo_rangeList[0] = (MarFS_Repo_Range_Ptr) malloc( sizeof( MarFS_Repo_Range ));
-    if ( marfs_repo_rangeList[0] == NULL) {
+    marfs_repo_range_list[0] = (MarFS_Repo_Range_Ptr) malloc( sizeof( MarFS_Repo_Range ));
+    if ( marfs_repo_range_list[0] == NULL) {
       LOG( LOG_ERR, "Error allocating memory for the MarFS repo range structure.\n");
       return NULL;
     }
 
 #ifdef TBD
-    marfs_repo_rangeList[0]->min_size = atoi( namespaceList[j]->range[0]->min_size );
-    marfs_repo_rangeList[0]->max_size = atoi( namespaceList[j]->range[0]->max_size );
-    marfs_repo_rangeList[0]->repo_ptr = find_repo_by_name( namespaceList[j]->range[0]->repo_name );
+    marfs_repo_range_list[0]->min_size = atoi( namespaceList[j]->range[0]->min_size );
+    marfs_repo_range_list[0]->max_size = atoi( namespaceList[j]->range[0]->max_size );
+    marfs_repo_range_list[0]->repo_ptr = find_repo_by_name( namespaceList[j]->range[0]->repo_name );
 #else
-    marfs_repo_rangeList[0]->min_size = atoi( namespaceList[j]->min_size );
-    marfs_repo_rangeList[0]->max_size = atoi( namespaceList[j]->max_size );
-    marfs_repo_rangeList[0]->repo_ptr = find_repo_by_name( namespaceList[j]->repo_name );
+    marfs_repo_range_list[0]->min_size = atoi( namespaceList[j]->min_size );
+    marfs_repo_range_list[0]->max_size = atoi( namespaceList[j]->max_size );
+    marfs_repo_range_list[0]->repo_ptr = find_repo_by_name( namespaceList[j]->repo_name );
 #endif
+ */
 
-    marfs_namespace_list[j]->repo_range_list = marfs_repo_rangeList;
+/*
+ * The configuration parser allows access to the list of repo ranges for a namespace.
+ * Here we build the list that is assigned to the MarFS namespace structure.
+ */
+
+    k = 0;
+    while ( namespaceList[j]->range[k] != (struct range *) NULL ) {
+      k++;
+    }
+    repoRangeCount = k;
+    LOG( LOG_INFO, "parser gave us a list of %d ranges, for namespace \"%s\".\n",
+         repoRangeCount, namespaceList[j]->name );
+
+    marfs_repo_range_list = (MarFS_Repo_Range_List) malloc( sizeof( MarFS_Repo_Range_Ptr ) * ( repoRangeCount + 1 ));
+    if ( marfs_repo_range_list == NULL) {
+      LOG( LOG_ERR, "Error allocating memory for the MarFS repo range list structure.\n");
+      return NULL;
+    }
+    marfs_repo_range_list[repoRangeCount] = NULL;
+
+    for ( k = 0; k < repoRangeCount; k++ ) {
+      marfs_repo_range_list[k] = (MarFS_Repo_Range_Ptr) malloc( sizeof( MarFS_Repo_Range ));
+      if ( marfs_repo_range_list[k] == NULL) {
+        LOG( LOG_ERR, "Error allocating memory for the MarFS repo range structure.\n");
+        return NULL;
+      }
+      memset(marfs_repo_range_list[k], 0, sizeof(MarFS_Repo_Range));
+    
+      marfs_repo_range_list[k]->min_size = atoi( namespaceList[j]->range[k]->min_size );
+      marfs_repo_range_list[k]->max_size = atoi( namespaceList[j]->range[k]->max_size );
+      marfs_repo_range_list[k]->repo_ptr = find_repo_by_name( namespaceList[j]->range[k]->repo_name );
+
+      if (! marfs_repo_range_list[k]->repo_ptr ) {
+        LOG( LOG_ERR, "Couldn't find iwrite_repo named \"%s\", "
+             "for range[%d] in namespace \"%s\".\n",
+             namespaceList[j]->iwrite_repo_name,
+             k,
+             marfs_namespace_list[j]->name );
+        return NULL;
+      }
+
+    }
+
+    marfs_namespace_list[j]->repo_range_list = marfs_repo_range_list;
     marfs_namespace_list[j]->repo_range_list_count = repoRangeCount;
 
     marfs_namespace_list[j]->trash_md_path = strdup( namespaceList[j]->trash_md_path );
@@ -1237,9 +1293,9 @@ int free_configuration() {
 // diagnostics
 // ---------------------------------------------------------------------------
 
-// for now, just dump the first element
+
 int debug_range_list( MarFS_Repo_Range** range_list,
-                     int                range_list_count ) {
+                     int                 range_list_count ) {
    int i;
    for (i=0; i<range_list_count; ++i) {
       fprintf( stdout, "\t\t[%d] (min: %d, max: %d) -> %s\n",
@@ -1252,22 +1308,22 @@ int debug_range_list( MarFS_Repo_Range** range_list,
 
 int debug_namespace( MarFS_Namespace* ns ) {
    fprintf(stdout, "Namespace\n");
-   fprintf(stdout, "\tname               %s\n", ns->name );
+   fprintf(stdout, "\tname               %s\n",   ns->name );
    fprintf(stdout, "\tname_len           %ld\n",  ns->name_len);
-   fprintf(stdout, "\tmnt_path           %s\n", ns->mnt_path);
+   fprintf(stdout, "\tmnt_path           %s\n",   ns->mnt_path);
    fprintf(stdout, "\tmnt_path_len       %ld\n",  ns->mnt_path_len);
    fprintf(stdout, "\tbperms             0x%x\n", ns->bperms);
    fprintf(stdout, "\tiperms             0x%x\n", ns->iperms);
-   fprintf(stdout, "\tmd_path            %s\n", ns->md_path);
+   fprintf(stdout, "\tmd_path            %s\n",   ns->md_path);
    fprintf(stdout, "\tmd_path_len        %ld\n",  ns->md_path_len);
-   fprintf(stdout, "\tiwrite_repo        %s\n", ns->iwrite_repo->name);
+   fprintf(stdout, "\tiwrite_repo        %s\n",   ns->iwrite_repo->name);
 
    fprintf(stdout, "\trepo_range_list\n");
    debug_range_list(ns->repo_range_list, ns->repo_range_list_count);
 
-   fprintf(stdout, "\ttrash_md_path      %s\n", ns->trash_md_path);
+   fprintf(stdout, "\ttrash_md_path      %s\n",   ns->trash_md_path);
    fprintf(stdout, "\ttrash_md_path_len  %ld\n",  ns->trash_md_path_len);
-   fprintf(stdout, "\tfsinfo_path        %s\n", ns->fsinfo_path);
+   fprintf(stdout, "\tfsinfo_path        %s\n",   ns->fsinfo_path);
    fprintf(stdout, "\tfsinfo_path_len    %ld\n",  ns->fsinfo_path_len);
    fprintf(stdout, "\tquota_space        %lld\n", ns->quota_space);
    fprintf(stdout, "\tquota_names        %lld\n", ns->quota_names);
@@ -1280,9 +1336,9 @@ int debug_namespace( MarFS_Namespace* ns ) {
 
 int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "Repo\n");
-   fprintf(stdout, "\tname             %s\n", repo->name);
+   fprintf(stdout, "\tname             %s\n",   repo->name);
    fprintf(stdout, "\tname_len         %ld\n",  repo->name_len);
-   fprintf(stdout, "\thost             %s\n", repo->host);
+   fprintf(stdout, "\thost             %s\n",   repo->host);
    fprintf(stdout, "\thost_len         %ld\n",  repo->host_len);
    fprintf(stdout, "\tupdate_in_place  %d\n",   repo->update_in_place);
    fprintf(stdout, "\tssl              %d\n",   repo->ssl);
@@ -1294,7 +1350,7 @@ int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "\tsec_type         %d\n",   repo->sec_type);
    fprintf(stdout, "\tcomp_type        %d\n",   repo->comp_type);
    fprintf(stdout, "\tcorrect_type     %d\n",   repo->correct_type);
-   fprintf(stdout, "\tonline_cmds      %s\n", repo->online_cmds);
+   fprintf(stdout, "\tonline_cmds      %s\n",   repo->online_cmds);
    fprintf(stdout, "\tonline_cmds_len  %ld\n",  repo->online_cmds_len);
    fprintf(stdout, "\tlatency          %llu\n", repo->latency);
 }
