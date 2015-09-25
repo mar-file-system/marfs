@@ -479,107 +479,104 @@ int read_inodes(const char *fnameP,
 
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
-            if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
+         if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
+            xattr_ptr = &mar_xattrs[0];
+            // Got ahead and get xattrs then deterimine if it is an 
+            // an actual xattr we are looking for.  If so,
+            // check if it specifies the file is trash.
+            if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
+                                          marfs_xattrs, marfs_xattr_cnt, 
+                                          xattr_ptr, 
+                                          file_info_ptr->outfd)) > 0) {
+               //marfs_xattrs has a list of xattrs found
                xattr_ptr = &mar_xattrs[0];
-               // Got ahead and get xattrs then deterimine if it is an 
-               // an actual xattr we are looking for.  If so,
-               // check if it specifies the file is trash.
-               if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
-                                             marfs_xattrs, marfs_xattr_cnt, 
-                                             xattr_ptr, 
-                                             file_info_ptr->outfd)) > 0) {
-                  //marfs_xattrs hs a list of xattrs found
-                  xattr_ptr = &mar_xattrs[0];
-                  //if ((xattr_index=get_xattr_value(xattr_ptr, xattr_post_name, xattr_count)) != -1 ) { 
-                  if ((xattr_index=get_xattr_value(xattr_ptr, 
-                       marfs_xattrs[post_index], xattr_count)) != -1 ) { 
-                     xattr_ptr = &mar_xattrs[xattr_index];
-                     LOG(LOG_INFO,"post xattr name = %s value = %s \
-                         count = %d index=%d\n", xattr_ptr->xattr_name, \
-                         xattr_ptr->xattr_value, xattr_count,xattr_index);
-                     if ((parse_post_xattr(&post, xattr_ptr))) {
-                         fprintf(stderr,"Error parsing  post xattr for inode %d\n",
-                         iattrP->ia_inode);
-                         continue;
-                     }
-                  }
-                  else {
-                    fprintf(stderr,"Error:  Not finding post xattr for inode %d\n", 
-                            iattrP->ia_inode);
-                  }
-                  //str_2_post(&post, xattr_ptr); 
-                  // Talk to Jeff about this filespace used not in post xattr
-
-                  LOG(LOG_INFO, "found post chunk info bytes %zu\n", 
-                      post.chunk_info_bytes);
-
-                  // Is this trash?
-                  if (post.flags & POST_TRASH){
-                     time_t now = time(0);
-                   
-                     // Check if older than X days (specified by user arg)
-                     if (now-day_seconds > iattrP->ia_atime.tv_sec) {
-                        LOG(LOG_INFO, "Found trash\n");
-                        md_path_ptr = &post.md_path[0];
-
-                        xattr_ptr = &mar_xattrs[0];
-
-                        // Get objid xattr
-                        if ((xattr_index=get_xattr_value(xattr_ptr, 
-                             marfs_xattrs[objid_index], xattr_count)) != -1) { 
-                           xattr_ptr = &mar_xattrs[xattr_index];
-                           LOG(LOG_INFO, "objid xattr name = %s xattr_value =%s\n",
-                               xattr_ptr->xattr_name, xattr_ptr->xattr_value);
-                           LOG(LOG_INFO, "remove file: %s  remove object:  %s\n",
-                                md_path_ptr, xattr_ptr->xattr_value); 
-
-                           // Going to get the repo name now from the objid xattr
-                           // To do this, must call marfs str_2_pre to parse out
-                           // the bucket name which include repo name
-                           //fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
-                           str_2_pre(pre, xattr_ptr->xattr_value, st);
-
-                           sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT, repo_name);
-
-                           strcpy(fileset_info_ptr->repo_name,repo_name);
-        
-                           // Now call read config so that the hostname for 
-                           // the oject can be obtained (so that aws knows who
-                           // to talk to
-                           if (!read_config_gc(fileset_info_ptr)) {
-                              s3_set_host (fileset_info_ptr->host);
-
-                              // Deterimine if object type is packed.  If so we 
-                              // must complete scan to determine if all files 
-                              // exist for the object
-                              if (post.obj_type == OBJ_PACKED) {
-                                 fprintf(file_info_ptr->packedfd,"%s %s %zu\n", 
-                                      xattr_ptr->xattr_value, md_path_ptr, post.chunks);
-                                 file_info_ptr->is_packed = 1;
-                              }
-
-                              // MANUAL SET
-                              //s3_set_host (hostname);
-                              //s3_set_host ("10.140.0.17:9020");
-                              // FOR SPROXYD
-                              ////s3_set_host ("10.135.0.22:81");
-                              // FOR SPROXYD
-                              // MANUAL SET
-
-                              // Not checking return because log has error message
-                              // and want to keep running even if errors exists on 
-                              // certain objects or files
-                              else {
-                                 trash_status = dump_trash(xattr_ptr, md_path_ptr, 
-                                                        file_info_ptr, 
-                                                        &post);
-                              }
-                           }
-                        }
-                     }
+               if ((xattr_index=get_xattr_value(xattr_ptr, 
+                    marfs_xattrs[post_index], xattr_count)) != -1 ) { 
+                    xattr_ptr = &mar_xattrs[xattr_index];
+                  LOG(LOG_INFO,"post xattr name = %s value = %s \
+                      count = %d index=%d\n", xattr_ptr->xattr_name, \
+                      xattr_ptr->xattr_value, xattr_count,xattr_index);
+                  if ((parse_post_xattr(&post, xattr_ptr))) {
+                      fprintf(stderr,"Error parsing  post xattr for inode %d\n",
+                      iattrP->ia_inode);
+                      continue;
                   }
                }
-            }
+               else {
+                  fprintf(stderr,"Error:  Not finding post xattr for inode %d\n", 
+                          iattrP->ia_inode);
+               }
+
+               LOG(LOG_INFO, "found post chunk info bytes %zu\n", 
+                   post.chunk_info_bytes);
+
+               // Is this trash?
+               if (post.flags & POST_TRASH){
+                  time_t now = time(0);
+                   
+                  // Check if older than X days (specified by user arg)
+                  if (now-day_seconds > iattrP->ia_atime.tv_sec) {
+                     LOG(LOG_INFO, "Found trash\n");
+                     md_path_ptr = &post.md_path[0];
+
+                     xattr_ptr = &mar_xattrs[0];
+
+                     // Get objid xattr
+                     if ((xattr_index=get_xattr_value(xattr_ptr, 
+                          marfs_xattrs[objid_index], xattr_count)) != -1) { 
+                          xattr_ptr = &mar_xattrs[xattr_index];
+                        LOG(LOG_INFO, "objid xattr name = %s xattr_value =%s\n",
+                            xattr_ptr->xattr_name, xattr_ptr->xattr_value);
+                        LOG(LOG_INFO, "remove file: %s  remove object:  %s\n",
+                            md_path_ptr, xattr_ptr->xattr_value); 
+
+                        // Going to get the repo name now from the objid xattr
+                        // To do this, must call marfs str_2_pre to parse out
+                        // the bucket name which include repo name
+                        //fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
+                        str_2_pre(pre, xattr_ptr->xattr_value, st);
+
+                        sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT, repo_name);
+
+                        strcpy(fileset_info_ptr->repo_name,repo_name);
+        
+                        // Now call read config so that the hostname for 
+                        // the oject can be obtained (so that aws knows who
+                        // to talk to
+                        if (!read_config_gc(fileset_info_ptr)) {
+                            s3_set_host (fileset_info_ptr->host);
+
+                           // Deterimine if object type is packed.  If so we 
+                           // must complete scan to determine if all files 
+                           // exist for the object
+                           if (post.obj_type == OBJ_PACKED) {
+                              fprintf(file_info_ptr->packedfd,"%s %s %zu\n", 
+                                      xattr_ptr->xattr_value, md_path_ptr, post.chunks);
+                                      file_info_ptr->is_packed = 1;
+                           }
+
+                           // MANUAL SET
+                           //s3_set_host (hostname);
+                           //s3_set_host ("10.140.0.17:9020");
+                           // FOR SPROXYD
+                           ////s3_set_host ("10.135.0.22:81");
+                           // FOR SPROXYD
+                           // MANUAL SET
+
+                           // Not checking return because log has error message
+                           // and want to keep running even if errors exists on 
+                           // certain objects or files
+                           else {
+                              trash_status = dump_trash(xattr_ptr, md_path_ptr, 
+                                                        file_info_ptr, 
+                                                        &post);
+                           } // endif dump trash
+                        } // endif read config 
+                     } // endif objid xattr 
+                  } // endif days old check
+               } // endif post xattr specifies trash
+            } // endif get xattrs
+         } // endif extended attributes
 /******
  * Removing this because no need for checking if trash fileset
          }
@@ -902,7 +899,8 @@ int read_config_gc(Fileset_Info *fileset_info_ptr)
    //Find the correct repo so that the hostname can be determined
    LOG(LOG_INFO, "fileset repo name = %s\n", fileset_info_ptr->repo_name);
    if ((repoPtr = find_repo_by_name(fileset_info_ptr->repo_name)) == NULL) {
-      fprintf(stderr, "Repo %s not found in configuration\n", fileset_info_ptr->repo_name);
+      fprintf(stderr, "Repo %s not found in configuration\n", 
+              fileset_info_ptr->repo_name);
       return(-1);
    }
    else {
