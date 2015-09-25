@@ -705,8 +705,7 @@ void write_fsinfo(FILE*         outfd,
               fileset_stat_ptr[i].obj_type.packed_count);
       fprintf(outfd,"trash_file_count:  %zu\n", \
               fileset_stat_ptr[i].sum_trash_file_count);
-      fprintf(outfd,"trash_size:   %zu\n", fileset_stat_ptr[i].sum_trash);
-      //fprintf(outfd,"adjusted_size:  %zu\n", fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
+      fprintf(outfd,"trash_size:   %zu\n\n", fileset_stat_ptr[i].sum_trash);
    }
    trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start);
 }
@@ -848,8 +847,6 @@ Fileset_Stats *read_config(unsigned int *count)
    Fileset_Stats *fileset_struct = NULL;
 
    // Read the the config
-   //marfs_config = read_configuration("/root/atorrez-test/marfs-config/PA2X/config/quota_test.cfg"); 
-   //if ( marfs_config == NULL)
    if ( read_configuration()) {
       fprintf(stderr, "Error Reading MarFS configuration\n");
       return(&fileset_stat_ptr[0]);
@@ -889,5 +886,4 @@ Fileset_Stats *read_config(unsigned int *count)
    init_records(fileset_stat_ptr, i);        
    *count = i;
    return(&fileset_stat_ptr[0]);
-   //return(i);
 }
