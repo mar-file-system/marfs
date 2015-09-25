@@ -911,6 +911,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
     j++;
   }
   namespaceCount = j;
+  LOG( LOG_INFO, "parser gave us a list of %d namespaces.\n", namespaceCount );
 
   marfs_namespace_list = (MarFS_Namespace_List) malloc( sizeof( MarFS_Namespace_Ptr ) * ( namespaceCount + 1 ));
   if ( marfs_namespace_list == NULL) {
@@ -1023,6 +1024,12 @@ static MarFS_Config_Ptr read_configuration_internal() {
     /* iwrite_repo */
     marfs_namespace_list[j]->iwrite_repo = find_repo_by_name( namespaceList[j]->iwrite_repo_name );
 
+    if (! marfs_namespace_list[j]->iwrite_repo) {
+        LOG( LOG_ERR, "Couldn't find iwrite_repo named \"%s\", for namespace \"%s\".\n",
+             namespaceList[j]->iwrite_repo_name,
+             marfs_namespace_list[j]->name );
+        return NULL;
+    }
 
 /*
  * For now we'll set this to one (1). Once the configuration parser is fixed we can
@@ -1069,6 +1076,8 @@ static MarFS_Config_Ptr read_configuration_internal() {
       k++;
     }
     repoRangeCount = k;
+    LOG( LOG_INFO, "parser gave us a list of %d ranges, for namespace \"%s\".\n",
+         repoRangeCount, namespaceList[j]->name );
 
     marfs_repo_range_list = (MarFS_Repo_Range_List) malloc( sizeof( MarFS_Repo_Range_Ptr ) * ( repoRangeCount + 1 ));
     if ( marfs_repo_range_list == NULL) {
@@ -1088,6 +1097,16 @@ static MarFS_Config_Ptr read_configuration_internal() {
       marfs_repo_range_list[k]->min_size = atoi( namespaceList[j]->range[k]->min_size );
       marfs_repo_range_list[k]->max_size = atoi( namespaceList[j]->range[k]->max_size );
       marfs_repo_range_list[k]->repo_ptr = find_repo_by_name( namespaceList[j]->range[k]->repo_name );
+
+      if (! marfs_repo_range_list[k]->repo_ptr ) {
+        LOG( LOG_ERR, "Couldn't find iwrite_repo named \"%s\", "
+             "for range[%d] in namespace \"%s\".\n",
+             namespaceList[j]->iwrite_repo_name,
+             k,
+             marfs_namespace_list[j]->name );
+        return NULL;
+      }
+
     }
 
     marfs_namespace_list[j]->repo_range_list = marfs_repo_range_list;

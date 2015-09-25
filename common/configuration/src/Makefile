@@ -102,7 +102,7 @@ H   = marfs_configuration.h
 
 %.o: %.c %.h parse_dir
 	@ echo; echo "#-- building $@"
-	gcc -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) -DTBD -o $@ $<
+	gcc -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) $(DBG_OPT) -DTBD -o $@ $<
 
 
 libconfig.a: parser $(LOG_OBJ) $(OBJ)
