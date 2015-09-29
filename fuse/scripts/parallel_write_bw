@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash
 
 # Fuse isn't intended to support parallel writes for a given writer, but
 # many writers may write at the same time.
@@ -25,43 +25,62 @@
 M=$((1024 * 1024))
 G=$((1024 * 1024 * 1024))
 
-N_TASKS=8
-BSIZE=$((256 * M))
-COUNT=2
+# N_TASKS=8
+N_TASKS=4
+
+# BLK_SIZE=$((1 * G))
+# BLK_SIZE=$((512 * M))
+# BLK_SIZE=$(( (1 * G) - 1336 ))
+BLK_SIZE=$(( (512 * M) - 1336 ))
+
+COUNT=1
 
 
 # total MB moved by all tasks
-MB_TOT=$(( (N_TASKS * BSIZE * COUNT) / M ))
+MB_TOT=$(( (N_TASKS * BLK_SIZE * COUNT) / M ))
 
-MB_EACH=$(( (BSIZE * COUNT) / M ))
+MB_EACH=$(( (BLK_SIZE * COUNT) / M ))
 
+
+# Construct the filename for a given integer
+function filename() {
+    echo /marfs/jti/parallel.`printf "%02d" $1`
+}
+
+
+# testing
+function obj_name() {
+    echo http://10.135.0.21:81/sproxyd_jti/jti/`filename $1`
+}
 
 # launch parallel jobs in the background
 # wait for all jobs to complete, before returning
 function do_tasks() {
     for i in `seq 1 $N_TASKS`; do
-        FILE=/marfs/jti/parallel.`printf "%02d" $i`
-        dd if=/dev/zero of=$FILE bs=$BSIZE count=$COUNT &
+        FILE=`filename $i`
+        dd if=/dev/zero of=$FILE bs=$BLK_SIZE count=$COUNT &
     done
+    echo "waiting"
     wait
 }
 
 
-
-# delete old versions of all files, so we don't measure the cost of
-# truncating an existing file
-for i in `seq 1 $N_TASKS`; do
-    FILE=/marfs/jti/parallel.`printf "%02d" $i`
-    echo "deleting $FILE"
-    rm -f $FILE
-done
+# # delete old versions of all files, so we don't measure the cost of
+# # truncating an existing file
+# for i in `seq 1 $N_TASKS`; do
+#     FILE=`filename $i`
+#     echo "deleting $FILE"
+#     rm -f $FILE
+# done
 
 
 # measure elapsed times for the parallel writes to all complete.
 # NOTE: 'time' is a real POS.
 echo "$N_TASKS parallel writers, writing $MB_EACH MB each (through fuse-mount)"
-TIME=` (time do_tasks) 2>&1 | awk '/real/ {print $2}' `
+OUTPUT=`(time do_tasks) 2>&1`
+echo -e "output:\n$OUTPUT"
 
+TIME=`echo "$OUTPUT" | awk '/real/ {print $2}' `
 echo "timing: $TIME"
 
 
@@ -70,7 +89,6 @@ echo "timing: $TIME"
 SEC=`echo $TIME \
     | sed -re 's/^([0-9]+)m([0-9.]+)s/(60 * \1) + \2/' \
     | bc -q`
-
 echo "total sec: $SEC"
 
 

@@ -248,7 +248,7 @@ int marfs_chown (const char* path,
    return 0;
 }
 
-// Looking for "marfs_close()"?  It's called "marfs_release()".
+// --- Looking for "marfs_close()"?  It's called "marfs_release()".
 
 
 int marfs_fsync (const char*            path,
@@ -2275,7 +2275,7 @@ int marfs_flush (const char*            path,
 
 // new in 2.6, yet deprecated?
 // combines opendir(), readdir(), closedir() into one call.
-int  marfs_getdir(const char *path, fuse_dirh_t , fuse_dirfil_t) {
+int marfs_getdir(const char *path, fuse_dirh_t , fuse_dirfil_t) {
    LOG(LOG_ERR, "getdir(%s, ...) not implemented\n", path);
    return -ENOSYS;
 }
@@ -2287,6 +2287,7 @@ int marfs_flock(const char*            path,
    // don’t implement or throw error
    return 0;
 }
+
 
 int marfs_link (const char* path,
                 const char* to) {
