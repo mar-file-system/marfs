@@ -98,6 +98,88 @@ include the files on which a code unit depends.
 
 
 
+
+#define PUSH_USER()                                                     \
+   ENTRY();                                                             \
+   uid_t saved_euid = -1;                                               \
+   TRY0(push_user, &saved_euid)
+
+#define POP_USER()                                                      \
+   EXIT();                                                              \
+   TRY0(pop_user, &saved_euid);                                         \
+
+
+// push_user()
+//
+//   Save current user info from syscall into saved_user
+//   Set userid to requesting user (in fuse request structure)
+//   return 0/negative for success/error
+//
+// NOTE: setuid() doesn't allow returning to priviledged user, from
+//       unpriviledged-user.  For that, we apparently need the (BSD)
+//       seteuid().
+//
+// NOTE: If seteuid() fails, and the problem is that we lack privs to call
+//       seteuid(), this means *we* are running unpriviledged.  This could
+//       happen if we're testing the FUSE mount as a non-root user.  In
+//       this case, the <uid> argument should be the same as the <uid> of
+//       the FUSE process, which we can extract from the fuse_context.
+//       [We try the seteuid() first, for speed]
+//
+int push_user(uid_t* saved_euid) {
+#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+   //   fuse_context* ctx = fuse_get_context();
+   //   if (ctx->flags & PUSHED_USER) {
+   //      LOG(LOG_ERR, "push_user -- already pushed!\n");
+   //      return;
+   //   }
+   *saved_euid = geteuid();
+   uid_t new_uid = fuse_get_context()->uid;
+   LOG(LOG_INFO, "user %ld (euid %ld) -> (euid %ld) ...\n",
+       (size_t)getuid(), (size_t)*saved_euid, (size_t)new_uid);
+   int rc = seteuid(new_uid);
+   if (rc == -1) {
+      if ((errno == EACCES) && (new_uid == getuid())) {
+         LOG(LOG_INFO, "failed (but okay)\n");
+         return 0;              /* okay [see NOTE] */
+      }
+      else {
+         LOG(LOG_ERR, "failed!\n");
+         return -1;
+      }
+   }
+   LOG(LOG_INFO, "success\n");
+   return 0;
+#else
+#  error "No support for seteuid()"
+#endif
+}
+
+
+//  pop_user() changes the effective UID.  Here, we revert to the
+//  "real" UID.
+int pop_user(uid_t* saved_euid) {
+#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+   uid_t  new_uid = *saved_euid;
+   int rc = seteuid(new_uid);
+   if (rc == -1) {
+      if ((errno == EACCES) && (new_uid == getuid()))
+         return 0;              /* okay [see NOTE] */
+      else {
+         LOG(LOG_ERR,
+             "pop_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
+             (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
+         return -1;
+      }
+   }
+   return 0;
+#else
+#  error "No support for seteuid()"
+#endif
+}
+
+
+
 // ---------------------------------------------------------------------------
 // utilities
 //

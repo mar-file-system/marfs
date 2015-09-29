@@ -79,13 +79,12 @@ OF SUCH DAMAGE.
 
 #include "object_stream.h"      // FileHandle needs ObjectStream
 
-#define FUSE_USE_VERSION 26
-#include <fuse.h>
-
 #include <stdint.h>
 #include <sys/types.h>
-#include <dirent.h>             // DIR*
 #include <sys/stat.h>
+#include <dirent.h>             // DIR*
+#include <fcntl.h>
+#include <utime.h>
 #include <unistd.h>
 #include <errno.h>
 
@@ -238,15 +237,6 @@ typedef enum {
    LOG(LOG_INFO, "exit\n");                     \
 
 
-
-#define PUSH_USER()                                                     \
-   ENTRY();                                                             \
-   uid_t saved_euid = -1;                                               \
-   TRY0(push_user, &saved_euid)
-
-#define POP_USER()                                                      \
-   EXIT();                                                              \
-   TRY0(pop_user, &saved_euid);                                         \
 
 
 
@@ -479,9 +469,9 @@ typedef struct {
 
 
 
-
-extern int  push_user();
-extern int  pop_user();
+// strip the leading <mnt_top> from an arbitrary path.
+// Return NULL if no match.
+extern const char* marfs_sub_path(const char* path);
 
 // These initialize different parts of the PathInfo struct.
 // Calling them redundantly is cheap and harmless.

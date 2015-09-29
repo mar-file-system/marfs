@@ -93,8 +93,10 @@ CONFIG = $(PWD)/../../common/configuration/src
 FUSE_DEPS =
 
 
-OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_fuse.o
-SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_fuse.c
+### OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_fuse.o
+### SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_fuse.c
+OBJS =            logging.o marfs_base.o common.o object_stream.o
+SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c
 H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h
 
 
