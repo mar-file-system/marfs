@@ -106,7 +106,7 @@ OF SUCH DAMAGE.
 // return NULL if the path is not below there.
 // 
 const char* marfs_sub_path(const char* path) {
-   if (! strncmp(path, marfs_config->mnt_top, marfs_config->mnt_top_len))
+   if (strncmp(path, marfs_config->mnt_top, marfs_config->mnt_top_len))
       return NULL;
    else if (! path[marfs_config->mnt_top_len])
       return "/";
