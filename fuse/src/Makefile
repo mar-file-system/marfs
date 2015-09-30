@@ -93,10 +93,8 @@ CONFIG = $(PWD)/../../common/configuration/src
 FUSE_DEPS =
 
 
-### OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_fuse.o
-### SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_fuse.c
-OBJS =            logging.o marfs_base.o common.o object_stream.o
-SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c
+OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_ops.o
+SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_ops.c
 H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h
 
 
@@ -492,8 +490,8 @@ mnt.dbg: fuse.dbg umnt.dbg
 
 # okay to run this even if not mounted
 _umnt:
-	@ echo -n "unmounting $(MNT): "
-	@ (fusermount -q -u $(MNT) && echo "unmounted") || echo "already unmounted"
+	@ echo -n "unmounting $(MNT): ... "
+	@ (fusermount -q -u $(MNT) && echo "unmounted") || echo "already unmounted ?"
 
 
 umnt: umnt.std

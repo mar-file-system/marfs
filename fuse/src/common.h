@@ -133,7 +133,7 @@ typedef enum {
 // ---------------------------------------------------------------------------
 
 // Override this, if you have some fuse-handler that wants to do
-// something special before any exit.  (See e.g. marfs_open)
+// something special before any exit.  (See e.g. fuse_open)
 #define RETURN(VALUE)  return(VALUE)
 
 
@@ -163,7 +163,7 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY0(%s)\n", #FUNCTION); */                     \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "ERR TRY0(%s) returning (%ld) '%s'\n\n",         \
+         LOG(LOG_INFO, "# ERR TRY0(%s) returning (%ld) '%s'\n\n",       \
              #FUNCTION, rc, strerror(errno));                           \
          /* RETURN(-rc); */ /* negated for FUSE */                      \
          RETURN(-errno); /* negated for FUSE */                         \
@@ -176,7 +176,7 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY_GE0(%s)\n", #FUNCTION); */                  \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize < 0) {                                               \
-         LOG(LOG_INFO, "ERR GE0(%s) returning (%d) '%s'\n\n",           \
+         LOG(LOG_INFO, "# ERR GE0(%s) returning (%d) '%s'\n\n",         \
              #FUNCTION, errno, strerror(errno));                        \
          RETURN(-errno); /* negated for FUSE */                         \
       }                                                                 \
@@ -187,8 +187,8 @@ typedef enum {
    do {                                                                 \
       /* LOG(LOG_INFO, "TRY_GT0(%s)\n", #FUNCTION); */                  \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
-      if (rc_ssize <= 0) {                                               \
-         LOG(LOG_INFO, "ERR GT0(%s) returning (%d) '%s'\n\n",           \
+      if (rc_ssize <= 0) {                                              \
+         LOG(LOG_INFO, "# ERR GT0(%s) returning (%d) '%s'\n\n",         \
              #FUNCTION, errno, strerror(errno));                        \
          RETURN(-errno); /* negated for FUSE */                         \
       }                                                                 \
@@ -204,7 +204,7 @@ typedef enum {
       LOG(LOG_INFO, "__TRY0(%s)\n", #FUNCTION);                         \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "ERR __TRY0(%s) returning (%ld) '%s'\n\n",       \
+         LOG(LOG_INFO, "# ERR __TRY0(%s) returning (%ld) '%s'\n\n",     \
              #FUNCTION, rc, strerror(errno));                           \
          /* RETURN(rc);*/ /* NOT negated! */                            \
          RETURN(errno);                                                 \
@@ -216,7 +216,7 @@ typedef enum {
       LOG(LOG_INFO, "__TRY_GE0(%s)\n", #FUNCTION);                      \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize < 0) {                                               \
-         LOG(LOG_INFO, "ERR __TRY_GE0(%s) returning (%ld) '%s'\n\n",    \
+         LOG(LOG_INFO, "# ERR __TRY_GE0(%s) returning (%ld) '%s'\n\n",  \
              #FUNCTION, rc_ssize, strerror(errno));                     \
          /* RETURN(rc);*/ /* NOT negated! */                            \
          RETURN(errno);                                                 \
@@ -499,6 +499,7 @@ extern int  trash_truncate(PathInfo* info, const char* path);
 
 extern int  check_quotas  (PathInfo* info);
 
+extern int update_url(ObjectStream* os, PathInfo* info);
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 extern int write_chunkinfo(int                   md_fd,

@@ -1097,6 +1097,25 @@ int check_quotas(PathInfo* info) {
 }
 
 
+// update the URL in the ObjectStream, in our FileHandle
+int update_url(ObjectStream* os, PathInfo* info) {
+   //   size_t rc;                   // for TRY
+   //   __TRY0(update_pre, &info->pre);
+   strncpy(os->url, info->pre.objid, MARFS_MAX_URL_SIZE);
+
+   // log the full URL, if possible:
+   IOBuf*        b  = &os->iob;
+   __attribute__ ((unused)) AWSContext*   ctx = ((b) ? b->context : aws_context_clone());
+
+   LOG(LOG_INFO, "generated URL %s %s/%s/%s\n",
+       ((b) ? "" : "(defaults)"),
+       ctx->S3Host, ctx->Bucket, os->url);
+
+   return 0;
+}
+
+
+
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 //

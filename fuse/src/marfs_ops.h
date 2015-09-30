@@ -77,6 +77,28 @@ OF SUCH DAMAGE.
 #include "common.h"
 
 
+// TYPEDEF COPIED (and renamed) FROM /usr/include/fuse/fuse.h
+//
+// The point of copying it here is to avoid requiring you to have anything
+// to do with fuse, in order to define the signature for the filler
+// function that is called by our marfs_readdir().
+
+/** Function to add an entry in a readdir() operation
+ *
+ * @param buf the buffer passed to the readdir() operation
+ * @param name the file name of the directory entry
+ * @param stat file attributes, can be NULL
+ * @param off offset of the next entry or zero
+ * @return 1 if buffer is full, zero otherwise
+ */
+#include <sys/types.h>
+#include <sys/stat.h>
+typedef int (*marfs_fill_dir_t) (void *buf, const char *name,
+                                 const struct stat *stbuf, off_t off);
+
+#include <sys/statvfs.h>
+
+
 
 #  ifdef __cplusplus
 extern "C" {
@@ -112,14 +134,14 @@ int  marfs_mkdir(const char* path, mode_t mode);
 
 int  marfs_mknod(const char* path, mode_t mode, dev_t rdev);
 
-int  marfs_open(const char* path, MarFS_FileHandle* fh);
+int  marfs_open(const char* path, MarFS_FileHandle* fh, int flags);
 
 int  marfs_opendir(const char* path, MarFS_DirHandle* dh);
 
 int  marfs_read(const char* path, char* buf, size_t size, off_t offset,
                       MarFS_FileHandle* fh);
 
-int  marfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
+int  marfs_readdir(const char* path, void* buf, marfs_fill_dir_t filler,
                          off_t offseet, MarFS_DirHandle* dh);
 
 int  marfs_readlink(const char* path, char* buf, size_t size);
