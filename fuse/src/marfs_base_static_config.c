@@ -260,10 +260,10 @@ int read_config(const char* config_fname) {
 
    // free-for-all
    r_dummy = (MarFS_Repo) {
-      .name          = "sproxyd_pub",  // repo is sproxyd: this must match fastcgi-path
+      .name          = "sproxyd_28",  // repo is sproxyd: this must match fastcgi-path
       .host          = "10.135.0.28:81",
       .access_method = ACCESSMETHOD_SPROXYD,
-      .chunk_size    = (1024 * 1024 * 64), /* max MarFS object (tune to match storage) */
+      .chunk_size    = (1024 * 1024 * 513), /* max MarFS object (tune to match storage) */
       .is_online     = 1,
       .auth          = AUTH_S3_AWS_MASTER,
       .compression   = COMPRESS_NONE,
@@ -339,40 +339,14 @@ int read_config(const char* config_fname) {
 
    MarFS_Namespace ns_dummy;
 
-   // jti testing
-   ns_dummy = (MarFS_Namespace) {
-      .name           = "jti",
-      .mnt_path       = "/jti",  // "<mnt_top>/jti" comes here
-
-      .md_path        = "/gpfs/marfs-gpfs/fuse/test00/mdfs",
-      .trash_md_path  = "/gpfs/marfs-gpfs/fuse/test00/trash", // NOT NEC IN THE SAME FILESET!
-      .fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo", /* a file */
-
-      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-
-      .dirty_pack_percent   =  0,
-      .dirty_pack_threshold = 75,
-
-      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
-      .quota_names = 32,             /* 32 names */
-
-      .shard_path  = NULL,
-      .shard_count = 0,
-   };
-   //   push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
-   //   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
-   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
-
-
    // Alfred
    ns_dummy = (MarFS_Namespace) {
       .name           = "atorrez",
       .mnt_path       = "/atorrez",  // "<mnt_top>/atorrez" comes here
 
-      .md_path        = "/gpfs/marfs-gpfs/project_a/mdfs",
+      .md_path        = "/gpfs/marfs-gpfs/atorrez/mdfs",
+      .fsinfo_path    = "/gpfs/marfs-gpfs/atorrez/fsinfo", /* a file */
       .trash_md_path  = "/gpfs/marfs-gpfs/trash", // NOT NEC IN THE SAME FILESET!
-      .fsinfo_path    = "/gpfs/marfs-gpfs/fsinfo", /* a file */
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -394,9 +368,9 @@ int read_config(const char* config_fname) {
       .name           = "brettk",
       .mnt_path       = "/brettk",  // "<mnt_top>/brettk" comes here
 
-      .md_path        = "/gpfs/marfs-gpfs/testing/mdfs",
-      .trash_md_path  = "/gpfs/marfs-gpfs/testing/trash", // NOT NEC IN THE SAME FILESET!
-      .fsinfo_path    = "/gpfs/marfs-gpfs/testing/fsinfo", /* a file */
+      .md_path        = "/gpfs/marfs-gpfs/brettk/mdfs",
+      .fsinfo_path    = "/gpfs/marfs-gpfs/brettk/fsinfo", /* a file */
+      .trash_md_path  = "/gpfs/marfs-gpfs/trash", // NOT NEC IN THE SAME FILESET!
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -418,9 +392,9 @@ int read_config(const char* config_fname) {
       .name           = "brettk_https",
       .mnt_path       = "/brettk_https",  // "<mnt_top>/brettk_https" comes here
 
-      .md_path        = "/gpfs/marfs-gpfs/testing_https/mdfs",
-      .trash_md_path  = "/gpfs/marfs-gpfs/testing_https/trash", // NOT NEC IN THE SAME FILESET!
-      .fsinfo_path    = "/gpfs/marfs-gpfs/testing_https/fsinfo", /* a file */
+      .md_path        = "/gpfs/marfs-gpfs/brettk_https/mdfs",
+      .fsinfo_path    = "/gpfs/marfs-gpfs/brettk_https/fsinfo", /* a file */
+      .trash_md_path  = "/gpfs/marfs-gpfs/trash", // NOT NEC IN THE SAME FILESET!
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -436,15 +410,40 @@ int read_config(const char* config_fname) {
    };
    push_namespace(&ns_dummy, find_repo_by_name("sproxyd_1M_https"));
 
-
-   // free-for-all
+   // jti testing
    ns_dummy = (MarFS_Namespace) {
-      .name           = "test",
-      .mnt_path       = "/test",  // "<mnt_top>/test" comes here
+      .name           = "jti",
+      .mnt_path       = "/jti",  // "<mnt_top>/jti" comes here
 
-      .md_path        = "/gpfs/fs1/fuse_community/mdfs",
-      .trash_md_path  = "/gpfs/fs1/fuse_community/trash", // NOT NEC IN THE SAME FILESET!
-      .fsinfo_path    = "/gpfs/fs1/fuse_community/fsinfo", /* a file */
+      .md_path        = "/gpfs/marfs-gpfs/jti/mdfs",
+      .fsinfo_path    = "/gpfs/marfs-gpfs/jti/fsinfo", /* a file */
+      .trash_md_path  = "/gpfs/marfs-gpfs/trash", // NOT NEC IN THE SAME FILESET!
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
+      .quota_names = 32,             /* 32 names */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
+   };
+   //   push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
+   //   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_2k"));
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_jti"));
+
+
+   // Chris DeJager
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "dejager",
+      .mnt_path       = "/dejager",  // "<mnt_top>/dejager" comes here
+
+      .md_path        = "/gpfs/fs1/dejager/mdfs",
+      .fsinfo_path    = "/gpfs/fs1/dejager/fsinfo", /* a file */
+      .trash_md_path  = "/gpfs/fs1/trash", // NOT NEC IN THE SAME FILESET!
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -458,7 +457,31 @@ int read_config(const char* config_fname) {
       .shard_path  = NULL,
       .shard_count = 0,
    };
-   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_pub"));
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_28"));
+
+
+   // free-for-all
+   ns_dummy = (MarFS_Namespace) {
+      .name           = "test",
+      .mnt_path       = "/test",  // "<mnt_top>/test" comes here
+
+      .md_path        = "/gpfs/fs1/test/mdfs",
+      .fsinfo_path    = "/gpfs/fs1/test/fsinfo", /* a file */
+      .trash_md_path  = "/gpfs/fs1/trash", // NOT NEC IN THE SAME FILESET!
+
+      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
+
+      .dirty_pack_percent   =  0,
+      .dirty_pack_threshold = 75,
+
+      .quota_space = -1,          /* no limit */
+      .quota_names = -1,             /* no limit */
+
+      .shard_path  = NULL,
+      .shard_count = 0,
+   };
+   push_namespace(&ns_dummy, find_repo_by_name("sproxyd_28"));
 
 
    // EMC ECS install (with S3)
@@ -466,9 +489,9 @@ int read_config(const char* config_fname) {
       .name           = "s3",
       .mnt_path       = "/s3",  // "<mnt_top>/s3" comes here
 
-      .md_path        = "/gpfs/fs2/fuse_s3/mdfs",
-      .trash_md_path  = "/gpfs/fs2/fuse_s3/trash", // NOT NEC IN THE SAME FILESET!
-      .fsinfo_path    = "/gpfs/fs2/fuse_s3/fsinfo", /* a file */
+      .md_path        = "/gpfs/fs2/s3/mdfs",
+      .fsinfo_path    = "/gpfs/fs2/s3/fsinfo", /* a file */
+      .trash_md_path  = "/gpfs/fs2/trash", // NOT NEC IN THE SAME FILESET!
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -483,30 +506,6 @@ int read_config(const char* config_fname) {
       .shard_count = 0,
    };
    push_namespace(&ns_dummy, find_repo_by_name("emcS3_00"));
-
-
-   // @@@-HTTPS: EMC ECS install (with S3)
-   ns_dummy = (MarFS_Namespace) {
-      .name           = "s3_https",
-      .mnt_path       = "/s3_https",  // "<mnt_top>/s3_https" comes here
-
-      .md_path        = "/gpfs/fs2/fuse_s3_https/mdfs",
-      .trash_md_path  = "/gpfs/fs2/fuse_s3_https/trash", // NOT NEC IN THE SAME FILESET!
-      .fsinfo_path    = "/gpfs/fs2/fuse_s3_https/fsinfo", /* a file */
-
-      .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-      .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
-
-      .dirty_pack_percent   =  0,
-      .dirty_pack_threshold = 75,
-
-      .quota_space = (1024L * 1024 * 1024),          /* 1 GB of data */
-      .quota_names = 32,             /* 32 names */
-
-      .shard_path  = NULL,
-      .shard_count = 0,
-   };
-   push_namespace(&ns_dummy, find_repo_by_name("emcS3_00_https"));
 
 
    //   // jti testing on machine without GPFS
@@ -538,9 +537,9 @@ int read_config(const char* config_fname) {
       .name           = "ext4",
       .mnt_path       = "/ext4",  // "<mnt_top>/ext4" comes here
 
-      .md_path        = "/root/marfs_non_gpfs/mdfs",
-      .trash_md_path  = "/root/marfs_non_gpfs/trash",
-      .fsinfo_path    = "/root/marfs_non_gpfs/fsinfo",
+      .md_path        = "/non_gpfs/mdfs",
+      .trash_md_path  = "/non_gpfs/trash",
+      .fsinfo_path    = "/non_gpfs/fsinfo",
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
@@ -564,9 +563,9 @@ int read_config(const char* config_fname) {
       .name           = "semi",
       .mnt_path       = "/semi",
 
-      .md_path        = "/gpfs/marfs-gpfs/fuse/semi/mdfs",
-      .trash_md_path  = "/gpfs/marfs-gpfs/fuse/semi/trash",
-      .fsinfo_path    = "/gpfs/marfs-gpfs/fuse/semi/fsinfo",
+      .md_path        = "/gpfs/marfs-gpfs/semi/mdfs",
+      .trash_md_path  = "/gpfs/marfs-gpfs/semi/trash",
+      .fsinfo_path    = "/gpfs/marfs-gpfs/semi/fsinfo",
 
       .iperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
       .bperms = ( R_META | W_META | R_DATA | W_DATA | T_DATA | U_DATA ),
