@@ -892,7 +892,7 @@ int fuse_poll(const char*             path,
 
 int main(int argc, char* argv[])
 {
-   size_t rc;                   /* used by "TRY" macros */
+   TRY_DECLS();
 
    INIT_LOG();
    LOG(LOG_INFO, "\n");

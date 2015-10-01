@@ -249,7 +249,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
 
 int expand_trash_info(PathInfo*    info,
                       const char*  path) {
-   size_t rc;                   // __TRY() assumes this exists
+   TRY_DECLS();
 
    // won't hurt (much), if it's already been done.
    __TRY0(expand_path_info, info, path);
@@ -330,8 +330,7 @@ int expand_trash_info(PathInfo*    info,
 
 
 int stat_regular(PathInfo* info) {
-
-   size_t rc;
+   TRY_DECLS();
 
    if (info->flags & PI_STAT_QUERY)
       return 0;                 /* already called stat_regular() */
@@ -415,8 +414,7 @@ int init_xattr_specs() {
 //       has_marfs_xattrs(info, mask) to see whether we found given ones.
 //
 int stat_xattrs(PathInfo* info) {
-
-   size_t  rc;                  /* for __TRY() */
+   TRY_DECLS();
    ssize_t str_size;
 
    if (info->flags & PI_XATTR_QUERY)
@@ -577,7 +575,6 @@ int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
 // For all the attributes in <mask>, convert info xattrs to stringified values, and save
 // on info->post.md_path.
 int save_xattrs(PathInfo* info, XattrMaskType mask) {
-
    TRY_DECLS();
 
    // call stat_regular().
@@ -697,10 +694,10 @@ static
 int write_trash_companion_file(PathInfo*             info,
                                const char*           path,
                                const struct utimbuf* utim) {
-   size_t  rc;
-   ssize_t rc_ssize;
+   TRY_DECLS();
 
-   __TRY0(expand_trash_info, info, path); /* initialize info->trash_md_path */
+   /* initialize info->trash_md_path */
+   __TRY0(expand_trash_info, info, path);
 
    // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
    // add MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
@@ -781,7 +778,7 @@ int  trash_unlink(PathInfo*   info,
    //
    // NOTE: We don't put xattrs on symlinks, so they just get deleted.
    //
-   size_t rc;
+   TRY_DECLS();
    __TRY0(stat_xattrs, info);
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
@@ -852,7 +849,7 @@ int  trash_truncate(PathInfo*   info,
    //    clean up, too bad for the user as we aren't going to keep the
    //    trunc’d file.
 
-   size_t rc;
+   TRY_DECLS();
    __TRY0(stat_xattrs, info);
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
@@ -1093,8 +1090,7 @@ int trunc_xattr(PathInfo* info) {
 
 int check_quotas(PathInfo* info) {
 
-   //   size_t rc;
-
+   //   TRY_DECLS();
    //   if (! (info->flags & PI_STATVFS))
    //      __TRY0(statvfs, info->ns->fsinfo, &info->stvfs);
 
@@ -1124,7 +1120,7 @@ int check_quotas(PathInfo* info) {
 
 // update the URL in the ObjectStream, in our FileHandle
 int update_url(ObjectStream* os, PathInfo* info) {
-   //   size_t rc;                   // for TRY
+   //   TRY_DECLS();
    //   __TRY0(update_pre, &info->pre);
    strncpy(os->url, info->pre.objid, MARFS_MAX_URL_SIZE);
 
@@ -1263,8 +1259,8 @@ int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
 //     parsed.
 
 ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
+   TRY_DECLS();
    const size_t recovery   = sizeof(RecoveryInfo) +8; // written in tail of object
-   ssize_t rc_ssize;
 
 #if TBD
    // add recovery-info, at the tail of the object
@@ -1344,9 +1340,7 @@ int init_scatter_tree(const char*    root_dir,
                       const char*    ns_name,
                       const uint32_t shard,
                       const mode_t   mode) {
-   size_t      rc;          // for TRY0
-   // ssize_t     rc_ssize;    // for TRY_GE0
-
+   TRY_DECLS();
    struct stat st;
 
    LOG(LOG_INFO, "scatter_tree %s/%s.%d\n", root_dir, ns_name, shard);
@@ -1489,9 +1483,7 @@ int init_scatter_tree(const char*    root_dir,
 
 // NOTE: for now, all the marfs directories are chown root:root, cmod 770
 int init_mdfs() {
-   size_t  rc;                  // for TRY0
-   /// ssize_t rc_ssize;            // for TRY_GE0
-
+   TRY_DECLS();
    struct stat st;
 
    NSIterator       it = namespace_iterator();
