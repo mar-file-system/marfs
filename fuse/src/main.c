@@ -103,11 +103,11 @@ OF SUCH DAMAGE.
 #define PUSH_USER()                                                     \
    ENTRY();                                                             \
    uid_t saved_euid = -1;                                               \
-   TRY0(push_user, &saved_euid)
+   __TRY0(push_user, &saved_euid)
 
 #define POP_USER()                                                      \
-   EXIT();                                                              \
-   TRY0(pop_user, &saved_euid);                                         \
+   __TRY0(pop_user, &saved_euid);                                       \
+   EXIT()
 
 
 // push_user()
@@ -149,7 +149,6 @@ int push_user(uid_t* saved_euid) {
          return -1;
       }
    }
-   LOG(LOG_INFO, "success\n");
    return 0;
 #else
 #  error "No support for seteuid()"
@@ -194,11 +193,16 @@ int pop_user(uid_t* saved_euid) {
 #endif
 
 
-#define WRAP(FNCALL)                            \
-   PUSH_USER();                                 \
-   int fncall_rc = FNCALL;                      \
-   POP_USER();                                  \
-   return fncall_rc /*RETURN(rc)*/ /* caller provides semi */
+#define WRAP(FNCALL)                                   \
+   PUSH_USER();                                        \
+   int fncall_rc = FNCALL;                             \
+   POP_USER();                                         \
+   if (fncall_rc < 0) {                                \
+      LOG(LOG_ERR, "ERR %s, errno=%d '%s'\n",          \
+          #FNCALL, errno, strerror(errno));            \
+      return -errno;                                   \
+   }                                                   \
+   return fncall_rc /* caller provides semi */
 
 
 

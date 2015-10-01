@@ -156,7 +156,8 @@ int marfs_chmod(const char* path,
    if (mode & (S_ISUID | S_ISGID)) {
       LOG(LOG_ERR, "attempt to change setuid or setgid bits, on path '%s' (mode: %x)\n",
           path, mode);
-      return -EPERM;
+      errno = -EPERM;
+      return -1;
    }
 
    // No need for access check, just try the op
@@ -267,12 +268,15 @@ int marfs_ftruncate(const char*            path,
    // POSIX ftruncate returns EBADF or EINVAL, if fd not opened for writing.
    if (! (fh->flags & FH_WRITING)) {
       LOG(LOG_ERR, "was not opened for writing\n");
-      return -EINVAL;
+      errno = EINVAL;
+      return -1;
    }
 
    // Check/act on truncate-to-zero only.
-   if (length)
-      return -EPERM;
+   if (length) {
+      errno = EPERM;
+      return -1;
+   }
 
 
    //***** this may or may not work, may need a trash_truncate() that uses
@@ -388,7 +392,8 @@ int marfs_getxattr (const char* path,
                     size_t      size) {
    ENTRY();
    //   LOG(LOG_INFO, "not implemented  (path %s, key %s)\n", path, name);
-   //   return -ENOSYS;
+   //   errno = ENOSYS;
+   //   return -1;
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -400,13 +405,15 @@ int marfs_getxattr (const char* path,
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
-      return -ENOATTR;          // fingers in ears, la-la-la
+      errno = ENOATTR;          // fingers in ears, la-la-la
+      return -1;
    }
 
    // *** make sure they aren’t getting a reserved xattr***
    if ( !strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize) ) {
       LOG(LOG_ERR, "denying reserved getxattr(%s, %s, ...)\n", path, name);
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // No need for access check, just try the op
@@ -453,7 +460,8 @@ int marfs_listxattr (const char* path,
                      size_t      size) {
    ENTRY();
    //   LOG(LOG_INFO, "listxattr(%s, ...) not implemented\n", path);
-   //   return -ENOSYS;
+   //   errno = ENOSYS;
+   //   return -1;
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -512,7 +520,8 @@ int marfs_listxattr (const char* path,
          /* llistxattr() should have returned neg, in this case */
          if (name + len > end) {
             LOG(LOG_ERR, "name + len(%ld) exceeds end\n", len);
-            return -EINVAL;
+            errno = EINVAL;
+            return -1;
          }
 
          LOG(LOG_INFO, "skipping '%s'\n", name);
@@ -683,11 +692,13 @@ int marfs_open (const char*         path,
    //
    if (flags & O_CREAT) {
       LOG(LOG_ERR, "open(O_CREAT) should've been handled by mknod()\n");
-      RETURN(-ENOSYS);          /* for now */
+      errno = ENOSYS;          /* for now */
+      return -1;
    }
    else if (flags & O_TRUNC) {
       LOG(LOG_ERR, "open(O_TRUNC) should've been handled by frtuncate()\n");
-      RETURN(-ENOSYS);          /* for now */
+      errno = ENOSYS;          /* for now */
+      return -1;
    }
    else if (flags & (O_RDONLY)) {
       fh->flags |= FH_READING;
@@ -708,11 +719,13 @@ int marfs_open (const char*         path,
    if (flags & (O_RDWR)) {
       fh->flags |= (FH_READING | FH_WRITING);
       LOG(LOG_INFO, "open(O_RDWR) not implemented\n");
-      RETURN(-ENOSYS);          /* for now */
+      errno = ENOSYS;          /* for now */
+      return -1;
    }
    if (flags & (O_APPEND)) {
       LOG(LOG_INFO, "open(O_APPEND) not implemented\n");
-      RETURN(-ENOSYS);
+      errno = ENOSYS;
+      return -1;
    }
 
 
@@ -724,7 +737,7 @@ int marfs_open (const char*         path,
       fh->md_fd = open(info->post.md_path, flags);
       if (fh->md_fd < 0) {
          fh->md_fd = 0;
-         RETURN(-errno);
+         return -1;
       }
    }
    // some kinds of reads need to get info from inside the MD-file
@@ -734,7 +747,7 @@ int marfs_open (const char*         path,
       fh->md_fd = open(info->post.md_path, (O_RDONLY)); // no O_BINARY in Linux.  Not needed.
       if (fh->md_fd < 0) {
          fh->md_fd = 0;
-         RETURN(-errno);
+         return -1;
       }
    }
    else if (fh->flags & FH_WRITING) {
@@ -755,7 +768,7 @@ int marfs_open (const char*         path,
       //      fh->md_fd = open(info->post.md_path,(O_WRONLY));  // no O_BINARY in Linux.
       //      if (fh->md_fd < 0) {
       //         fh->md_fd = 0;
-      //         RETURN(-errno);
+      //         return -1;
       //      }
    }
 
@@ -837,7 +850,8 @@ int marfs_opendir (const char*       path,
 
       if (geteuid()) {
          free(dh);
-         return -EACCES;
+         errno = EACCES;
+         return -1;
       }
 
       // root 
@@ -861,7 +875,7 @@ int marfs_opendir (const char*       path,
 }
 
 // return actual number of bytes read.  0 indicates EOF.
-// negative understood to be negative errno.
+// negative means error.
 //
 // NOTE: 
 // TBD: Don't do object-interaction if file is DIRECT.  See marfs_open().
@@ -1060,12 +1074,14 @@ int marfs_read (const char*        path,
              && (os->iob.code != 206)) {
             LOG(LOG_ERR, "stream_get returned < 0: %ld '%s' (%d '%s')\n",
                 rc_ssize, strerror(errno), os->iob.code, os->iob.result);
-            return -EIO;
+            errno = EIO;
+            return -1;
          }
          if (rc_ssize < 0) {
             LOG(LOG_ERR, "stream_get returned < 0: %ld '%s' (%d '%s')\n",
                 rc_ssize, strerror(errno), os->iob.code, os->iob.result);
-            return -EIO;
+            errno = EIO;
+            return -1;
          }
          // // handy for debugging small reads (but too voluminous for normal use)
          // LOG(LOG_INFO, "result: '%*s'\n", rc_ssize, buf);
@@ -1077,7 +1093,8 @@ int marfs_read (const char*        path,
                 (chunk_offset + read_size - sub_read),
                 (chunk_offset + read_size),
                 sub_read);
-            return -EIO;
+            errno = EIO;
+            return -1;
          }
 
 
@@ -1086,7 +1103,8 @@ int marfs_read (const char*        path,
                 (chunk_offset + read_size - sub_read),
                 (chunk_offset + read_size),
                 sub_read, rc_ssize);
-            // return -EIO;
+            // errno = EIO;
+            // return -1;
          }
 
          buf_ptr       += rc_ssize;
@@ -1178,8 +1196,8 @@ int marfs_readdir (const char*        path,
          TRY_GE0(readdir, dirp);
          if (! rc_ssize) {
             if (errno)
-               return -errno;      /* error */
-            break;                 /* EOF */
+               return -1;       /* error */
+            break;              /* EOF */
          }
          dent = (struct dirent*)rc_ssize;
          if (filler(buf, dent->d_name, NULL, 0))
@@ -1237,7 +1255,8 @@ int marfs_readlink (const char* path,
    int count = rc_ssize;
    if (count >= size) {
       LOG(LOG_ERR, "no room for '\\0'\n");
-      return -ENAMETOOLONG;
+      errno = ENAMETOOLONG;
+      return -1;
    }
    buf[count] = '\0';
    LOG(LOG_INFO, "readlink '%s' -> '%s' = (%d)\n", info.post.md_path, buf, count);
@@ -1410,7 +1429,8 @@ int marfs_removexattr (const char* path,
                        const char* name) {
    ENTRY();
    //   LOG(LOG_INFO, "removexattr(%s, %s) not implemented\n", path, name);
-   //   return -ENOSYS;
+   //   errno = ENOSYS;
+   //   return -1;
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1422,12 +1442,15 @@ int marfs_removexattr (const char* path,
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
-      return -EACCES;
+      errno = EACCES;
+      return -1;
    }
 
    // *** make sure they aren’t removing a reserved xattr***
-   if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize))
-      return -EPERM;
+   if (! strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize)) {
+      errno = EPERM;
+      return -1;
+   }
 
    // No need for access check, just try the op
    // Appropriate  removexattr call filling in fuse structure 
@@ -1459,11 +1482,13 @@ int marfs_rename (const char* path,
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "src is_root\n");
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
    if (IS_ROOT_NS(info2.ns)) {
       LOG(LOG_INFO, "dst is_root\n");
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // No need for access check, just try the op
@@ -1493,7 +1518,8 @@ int marfs_rmdir (const char* path) {
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // No need for access check, just try the op
@@ -1512,10 +1538,6 @@ int marfs_setxattr (const char* path,
                     int         flags) {
    ENTRY();
 
-   //   // *** this may not be needed until we implement user xattrs in the fuse daemon ***
-   //   LOG(LOG_INFO, "not implemented\n");
-   //   return -ENOSYS;
-
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
@@ -1526,13 +1548,15 @@ int marfs_setxattr (const char* path,
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // *** make sure they aren’t setting a reserved xattr***
    if ( !strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize) ) {
       LOG(LOG_ERR, "denying reserved setxattr(%s, %s, ...)\n", path, name);
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // No need for access check, just try the op
@@ -1559,10 +1583,13 @@ int marfs_statfs (const char*      path,
    CHECK_PERMS(info.ns->iperms, (R_META));
 
    // NOTE: Until fsinfo is available, we're just ignoring.
-   return -ENOSYS;
+   errno = ENOSYS;
+   return -1;
+
    //   if (geteuid()) {
    //      LOG(LOG_ERR, "non-root can't stavfs()\n");
-   //      return -EACCES;
+   //      errno = EACCES;
+   //      return -1;
    //   }
    //   // Open and read from lazy-fsinfo data file updated by batch process fsinfopath 
    //   // Size of file sytem is quota etc.
@@ -1598,7 +1625,8 @@ int marfs_symlink (const char* target,
    // The "root" namespace is artificial
    if (IS_ROOT_NS(lnk_info.ns)) {
       LOG(LOG_INFO, "is_root\n");
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // No need for access check, just try the op
@@ -1615,8 +1643,10 @@ int marfs_truncate (const char* path,
    ENTRY();
 
    // Check/act on truncate-to-zero only.
-   if (size)
-      return -EPERM;
+   if (size) {
+      errno = EPERM;
+      return -1;
+   }
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1631,7 +1661,8 @@ int marfs_truncate (const char* path,
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // If this is not just a normal md, it's the file data
@@ -1674,7 +1705,8 @@ int marfs_unlink (const char* path) {
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // Call access() syscall to check/act if allowed to unlink for this user 
@@ -1752,7 +1784,8 @@ int marfs_utimens(const char*           path,
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
 
    // No need for access check, just try the op
@@ -1891,7 +1924,8 @@ int marfs_write(const char*        path,
       if (fill <= 0) {
          LOG(LOG_ERR, "fill %ld < 0  (written %ld, rec: %ld, wr: %ld)\n",
              fill, os->written, recovery, write_size);
-         return -EIO;
+         errno = EIO;
+         return -1;
       }
 
 
@@ -1912,7 +1946,8 @@ int marfs_write(const char*        path,
          if (fh->md_fd < 0) {
             LOG(LOG_ERR, "open %s failed (%s)\n", info->post.md_path, strerror(errno));
             fh->md_fd = 0;
-            RETURN(-errno);
+            errno = errno;
+            return -1;
          }
       }
 
@@ -2022,7 +2057,8 @@ int marfs_create(const char*        path,
    }
 
    if (info.flags & (O_APPEND | O_RDWR)) {
-      return -EPERM;
+      errno = EPERM;
+      return -1;
    }
    if (info.flags & (O_APPEND | O_TRUNC)) { /* can this happen, with create()? */
       CHECK_PERMS(info.ns->iperms, (T_DATA));
@@ -2157,7 +2193,8 @@ int marfs_link (const char* path,
    // for now, I think we should not allow link, its pretty complicated to do
    LOG(LOG_INFO, "link(%s, ...) not implemented\n", path);
    EXIT();
-   return -ENOSYS;
+   errno = ENOSYS;
+   return -1;
 }
 
 
@@ -2170,7 +2207,8 @@ int marfs_lock(const char*        path,
    // don’t support it, either don’t implement or throw error
    LOG(LOG_INFO, "lock(%s, ...) not implemented\n", path);
    EXIT();
-   return -ENOSYS;
+   errno = ENOSYS;
+   return -1;
 }
 
 

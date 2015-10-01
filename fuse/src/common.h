@@ -132,6 +132,22 @@ typedef enum {
 // test-and-return.
 // ---------------------------------------------------------------------------
 
+
+#define TRY_DECLS()                                \
+   __attribute__ ((unused)) size_t   rc = 0;       \
+   __attribute__ ((unused)) ssize_t  rc_ssize = 0
+
+// add log items when you enter/exit a function
+#define ENTRY()                                                         \
+   LOG(LOG_INFO, "\n");                                                 \
+   LOG(LOG_INFO, "-> %s\n", __FUNCTION__);                              \
+   TRY_DECLS()
+
+#define EXIT()                                               \
+   LOG(LOG_INFO, "<- %s\n", __FUNCTION__)
+
+
+
 // Override this, if you have some fuse-handler that wants to do
 // something special before any exit.  (See e.g. fuse_open)
 #define RETURN(VALUE)  return(VALUE)
@@ -149,13 +165,19 @@ typedef enum {
 //         TRY(...);
 //
 // NOTE: rc is lexically-scoped.  It's defined at the top of fuse functions
-//       via PUSH_USER().  This allows us to use TRY_GE0() on functions
-//       whose return value we care about.
+//       via ENTRY(), or PUSH_USER().  This allows us to use TRY_GE0() on
+//       functions whose return value we care about.
 //
 // NOTE: TRY macros also invert the sign of the return value, as needed for
 //       fuse.  This means they shouldn't be used within common functions,
 //       which may in turn be wrapped inside TRY() by fuse routines.
 //       [see __TRY0()]
+//
+// UPDATE: Now that utility-functions need to support both fuse and pftool,
+//       we expect everything to just return 0 for success, or -1 with
+//       errno for failure.  Most of the utility functions use TRY(), so
+//       we'll just have that return -1 plus errno, for failure.  Fuse
+//       proper can then use __TRY(), which should return -errno.
 
 
 #define TRY0(FUNCTION, ...)                                             \
@@ -163,10 +185,9 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY0(%s)\n", #FUNCTION); */                     \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "# ERR TRY0(%s) returning (%ld) '%s'\n\n",       \
-             #FUNCTION, rc, strerror(errno));                           \
-         /* RETURN(-rc); */ /* negated for FUSE */                      \
-         RETURN(-errno); /* negated for FUSE */                         \
+         LOG(LOG_INFO, "FAIL: %s (%lu), errno=%d '%s'\n\n",             \
+             #FUNCTION, rc, errno, strerror(errno));                    \
+         RETURN(-1);                                                    \
       }                                                                 \
    } while (0)
 
@@ -176,9 +197,9 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY_GE0(%s)\n", #FUNCTION); */                  \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize < 0) {                                               \
-         LOG(LOG_INFO, "# ERR GE0(%s) returning (%d) '%s'\n\n",         \
-             #FUNCTION, errno, strerror(errno));                        \
-         RETURN(-errno); /* negated for FUSE */                         \
+         LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
+             #FUNCTION, rc_ssize, errno, strerror(errno));              \
+         RETURN(-1);                                                    \
       }                                                                 \
    } while (0)
 
@@ -188,54 +209,41 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY_GT0(%s)\n", #FUNCTION); */                  \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize <= 0) {                                              \
-         LOG(LOG_INFO, "# ERR GT0(%s) returning (%d) '%s'\n\n",         \
-             #FUNCTION, errno, strerror(errno));                        \
-         RETURN(-errno); /* negated for FUSE */                         \
+         LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
+             #FUNCTION, rc_ssize, errno, strerror(errno));              \
+         RETURN(-1);                                                    \
       }                                                                 \
    } while (0)
 
 
 
 
-// FOR INTERNAL USE ONLY.  (Not for calling directly from fuse routines)
-// This version doesn't invert the value of the return-code
+
+
+// FOR INTERNAL USE (by fuse/pftool) ONLY.
+// [See "UPDATE", above]
+//
 #define __TRY0(FUNCTION, ...)                                           \
    do {                                                                 \
-      LOG(LOG_INFO, "__TRY0(%s)\n", #FUNCTION);                         \
+      LOG(LOG_INFO, "TRY0: %s\n", #FUNCTION);                           \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "# ERR __TRY0(%s) returning (%ld) '%s'\n\n",     \
-             #FUNCTION, rc, strerror(errno));                           \
-         /* RETURN(rc);*/ /* NOT negated! */                            \
-         RETURN(errno);                                                 \
+         LOG(LOG_INFO, "FAIL: %s (%lu), errno=%d '%s'\n\n",             \
+             #FUNCTION, rc, errno, strerror(errno));                    \
+         RETURN(-errno);                                                \
       }                                                                 \
    } while (0)
 
 #define __TRY_GE0(FUNCTION, ...)                                        \
    do {                                                                 \
-      LOG(LOG_INFO, "__TRY_GE0(%s)\n", #FUNCTION);                      \
+      LOG(LOG_INFO, "TRY_GE0: %s\n", #FUNCTION);                        \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize < 0) {                                               \
-         LOG(LOG_INFO, "# ERR __TRY_GE0(%s) returning (%ld) '%s'\n\n",  \
-             #FUNCTION, rc_ssize, strerror(errno));                     \
-         /* RETURN(rc);*/ /* NOT negated! */                            \
-         RETURN(errno);                                                 \
+         LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
+             #FUNCTION, rc_ssize, errno, strerror(errno));              \
+         RETURN(-errno);                                                \
       }                                                                 \
    } while (0)
-
-
-
-
-// add log items when you enter/exit a function
-#define ENTRY()                                                         \
-   LOG(LOG_INFO, "\n");                                                 \
-   LOG(LOG_INFO, "entry\n");                                            \
-   __attribute__ ((unused)) size_t   rc = 0;                            \
-   __attribute__ ((unused)) ssize_t  rc_ssize = 0
-
-#define EXIT()                                  \
-   LOG(LOG_INFO, "exit\n");                     \
-
 
 
 

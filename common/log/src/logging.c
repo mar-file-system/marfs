@@ -14,6 +14,8 @@ ssize_t printf_log(size_t prio, const char* format, ...) {
    va_list list;
    va_start(list, format);
 
+#if 0
+   // COMMENTED OUT.  This is now handled in the LOG() macro
    ssize_t written;
    if (prio <= LOG_ERR) {
       const char*  stand_out = "*** ERROR ";
@@ -33,6 +35,10 @@ ssize_t printf_log(size_t prio, const char* format, ...) {
    else {
       written = vfprintf(stderr, format, list);
    }
+#else
+   ssize_t written = vfprintf(stderr, format, list);
+#endif
+
    fflush(stderr);
    return written;
 }

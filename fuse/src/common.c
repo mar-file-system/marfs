@@ -562,7 +562,7 @@ int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
 // on info->post.md_path.
 int save_xattrs(PathInfo* info, XattrMaskType mask) {
 
-   ENTRY();
+   TRY_DECLS();
 
    // call stat_regular().
    __TRY0(stat_regular, info);
@@ -651,7 +651,6 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
       };
    }
 
-   LOG(LOG_INFO, "exit\n");
    return 0;                    /* "success" */
 }
 
