@@ -76,21 +76,33 @@ OF SUCH DAMAGE.
 
 #include "common.h"
 
-#define FUSE_USE_VERSION 26
-#include <fuse.h>
+
+// TYPEDEF COPIED (and renamed) FROM /usr/include/fuse/fuse.h
+//
+// The point of copying it here is to avoid requiring you to have anything
+// to do with fuse, in order to define the signature for the filler
+// function that is called by our marfs_readdir().
+
+/** Function to add an entry in a readdir() operation
+ *
+ * @param buf the buffer passed to the readdir() operation
+ * @param name the file name of the directory entry
+ * @param stat file attributes, can be NULL
+ * @param off offset of the next entry or zero
+ * @return 1 if buffer is full, zero otherwise
+ */
+#include <sys/types.h>
+#include <sys/stat.h>
+typedef int (*marfs_fill_dir_t) (void *buf, const char *name,
+                                 const struct stat *stbuf, off_t off);
+
+#include <sys/statvfs.h>
+
 
 
 #  ifdef __cplusplus
 extern "C" {
 #  endif
-
-// "The return value will passed in the private_data field of
-//  fuse_context to all file operations and as a parameter to the
-//  destroy() method."
-void* marfs_init(struct fuse_conn_info* conn);
-
-void  marfs_destroy(void* private_data);
-
 
 
 int  marfs_access(const char* path, int mask);
@@ -99,22 +111,22 @@ int  marfs_chmod(const char* path, mode_t mode);
 
 int  marfs_chown(const char* path, uid_t uid, gid_t gid);
 
-int  marfs_create(const char* path, mode_t mode, struct fuse_file_info* ffi);
+int  marfs_create(const char* path, mode_t mode, MarFS_FileHandle* fh);
 
-int  marfs_flush(const char* path, struct fuse_file_info* fi);
+int  marfs_flush(const char* path, MarFS_FileHandle* fh);
 
-int  marfs_fsync(const char* path, int isdatasync, struct fuse_file_info* fi);
+int  marfs_fsync(const char* path, int isdatasync, MarFS_FileHandle* fh);
 
-int  marfs_fsyncdir(const char* path, int isdatasync, struct fuse_file_info* fi);
+int  marfs_fsyncdir(const char* path, int isdatasync, MarFS_DirHandle* dh);
 
-int  marfs_ftruncate(const char* path, off_t size, struct fuse_file_info* fi);
+int  marfs_ftruncate(const char* path, off_t size, MarFS_FileHandle* fh);
 	
 int  marfs_getattr(const char* path, struct stat* stbuf);
 
 int  marfs_getxattr(const char* path, const char* name, char* value, size_t size);
 
 int  marfs_ioctl(const char* path, int cmt, void* arg,
-                 struct fuse_file_info* fi, unsigned int flags, void* data);
+                 MarFS_FileHandle* fh, unsigned int flags, void* data);
 
 int  marfs_listxattr(const char* path, char* list, size_t size);
 
@@ -122,21 +134,21 @@ int  marfs_mkdir(const char* path, mode_t mode);
 
 int  marfs_mknod(const char* path, mode_t mode, dev_t rdev);
 
-int  marfs_open(const char* path, struct fuse_file_info* fi);
+int  marfs_open(const char* path, MarFS_FileHandle* fh, int flags);
 
-int  marfs_opendir(const char* path, struct fuse_file_info* fi);
+int  marfs_opendir(const char* path, MarFS_DirHandle* dh);
 
 int  marfs_read(const char* path, char* buf, size_t size, off_t offset,
-                      struct fuse_file_info* fi);
+                      MarFS_FileHandle* fh);
 
-int  marfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
-                         off_t offseet, struct fuse_file_info* fi);
+int  marfs_readdir(const char* path, void* buf, marfs_fill_dir_t filler,
+                         off_t offseet, MarFS_DirHandle* dh);
 
 int  marfs_readlink(const char* path, char* buf, size_t size);
 
-int  marfs_release(const char* path, struct fuse_file_info* fi);
+int  marfs_release(const char* path, MarFS_FileHandle* fh);
 
-int  marfs_releasedir(const char* path, struct fuse_file_info* fi);
+int  marfs_releasedir(const char* path, MarFS_DirHandle* dh);
 
 int  marfs_removexattr(const char* path, const char* name);
 
@@ -161,7 +173,7 @@ int  marfs_utime(const char* path, struct utimbuf* tb);
 int  marfs_utimens(const char* path, const struct timespec ts[2]);
 
 int  marfs_write(const char* path, const char* buf, size_t size, off_t offset,
-                 struct fuse_file_info* fi);
+                 MarFS_FileHandle* fh);
 
 
 
@@ -171,21 +183,21 @@ int  marfs_write(const char* path, const char* buf, size_t size, off_t offset,
 int  marfs_bmap(const char* path, size_t blocksize, uint64_t* blockno);
 
 // not in 2.6
-int  marfs_fallocate(const char* path, int mode, off_t offset, off_t length, struct fuse_file_info* fi);
+int  marfs_fallocate(const char* path, int mode, off_t offset, off_t length, MarFS_FileHandle* fh);
 
 int  marfs_fgetattr(const char* path, struct stat* stbuf);
 
-int  marfs_flock(const char* path, struct fuse_file_info* fi, int op);
+int  marfs_flock(const char* path, MarFS_FileHandle* fh, int op);
 
-// deprecated in 2.6
-int  marfs_getdir(const char *path, fuse_dirh_t , fuse_dirfil_t);
+// // deprecated in 2.6
+// int  marfs_getdir(const char *path, fuse_dirh_t , fuse_dirfil_t);
 
 int  marfs_link(const char* from, const char* to);
 
-int  marfs_lock(const char* path, struct fuse_file_info* fi, int cmd,
+int  marfs_lock(const char* path, MarFS_FileHandle* fh, int cmd,
                       struct flock* locks);
 
-int  marfs_poll(const char* path, struct fuse_file_info* fi, struct fuse_pollhandle* ph, unsigned* reventsp);
+// int  marfs_poll(const char* path, MarFS_FileHandle* fh, struct fuse_pollhandle* ph, unsigned* reventsp);
 
 #endif
 

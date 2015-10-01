@@ -8,11 +8,19 @@
 M=$((1024 * 1024))
 G=$((1024 * 1024 * 1024))
 
+SOURCE=foo.zeros.512M.plus_recovery
+# SOURCE=foo.zeros.512M
+
 N_TASKS=8
+# N_TASKS=4
+
+# BLK_SIZE=$((1 * G))
 # BLK_SIZE=$((512 * M))
-BLK_SIZE=$((1 * G))
+BLK_SIZE=`ls -l $SOURCE | awk '{print $5}'`
+
 COUNT=1
 
+echo "BLK_SIZE = $BLK_SIZE"
 
 # total MB moved by all tasks
 MB_TOT=$(( (N_TASKS * BLK_SIZE * COUNT) / M ))
@@ -37,8 +45,14 @@ function outputname() {
 # capture the individual timing of each task, to see if there are laggards
 function do_task() {
     i=$1
-    echo "curl -T foo.zeros `objname $i` > `outputname $i`"
-    (time curl -T foo.zeros `objname $i`) > `outputname $i` 2>&1
+
+    # # use chunked transfer-encoding, to match what fuse has to do
+    # echo "curl -T $SOURCE -H "Transfer-Encoding: chunked" `objname $i` > `outputname $i`"
+    # (time curl -T $SOURCE -H "Transfer-Encoding: chunked" `objname $i`) > `outputname $i` 2>&1
+
+    # don't use chunked transfer-encoding
+    echo "curl -T $SOURCE `objname $i` > `outputname $i`"
+    (time curl -T $SOURCE `objname $i`) > `outputname $i` 2>&1
 }
 
 

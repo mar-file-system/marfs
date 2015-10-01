@@ -71,7 +71,7 @@ OF SUCH DAMAGE.
 
 
 #include "common.h"
-#include "marfs_fuse.h"
+#include "marfs_ops.h"
 
 /*
 @@@-HTTPS:
@@ -98,154 +98,15 @@ include the files on which a code unit depends.
 
 
 
-
-#define PUSH_USER()                                                     \
-   ENTRY();                                                             \
-   uid_t saved_euid = -1;                                               \
-   TRY0(push_user, &saved_euid)
-
-#define POP_USER()                                                      \
-   EXIT();                                                              \
-   TRY0(pop_user, &saved_euid);                                         \
-
-
-// push_user()
-//
-//   Save current user info from syscall into saved_user
-//   Set userid to requesting user (in fuse request structure)
-//   return 0/negative for success/error
-//
-// NOTE: setuid() doesn't allow returning to priviledged user, from
-//       unpriviledged-user.  For that, we apparently need the (BSD)
-//       seteuid().
-//
-// NOTE: If seteuid() fails, and the problem is that we lack privs to call
-//       seteuid(), this means *we* are running unpriviledged.  This could
-//       happen if we're testing the FUSE mount as a non-root user.  In
-//       this case, the <uid> argument should be the same as the <uid> of
-//       the FUSE process, which we can extract from the fuse_context.
-//       [We try the seteuid() first, for speed]
-//
-int push_user(uid_t* saved_euid) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
-   //   fuse_context* ctx = fuse_get_context();
-   //   if (ctx->flags & PUSHED_USER) {
-   //      LOG(LOG_ERR, "push_user -- already pushed!\n");
-   //      return;
-   //   }
-   *saved_euid = geteuid();
-   uid_t new_uid = fuse_get_context()->uid;
-   LOG(LOG_INFO, "user %ld (euid %ld) -> (euid %ld) ...\n",
-       (size_t)getuid(), (size_t)*saved_euid, (size_t)new_uid);
-   int rc = seteuid(new_uid);
-   if (rc == -1) {
-      if ((errno == EACCES) && (new_uid == getuid())) {
-         LOG(LOG_INFO, "failed (but okay)\n");
-         return 0;              /* okay [see NOTE] */
-      }
-      else {
-         LOG(LOG_ERR, "failed!\n");
-         return -1;
-      }
-   }
-   LOG(LOG_INFO, "success\n");
-   return 0;
-#else
-#  error "No support for seteuid()"
-#endif
-}
-
-
-//  pop_user() changes the effective UID.  Here, we revert to the
-//  "real" UID.
-int pop_user(uid_t* saved_euid) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
-   uid_t  new_uid = *saved_euid;
-   int rc = seteuid(new_uid);
-   if (rc == -1) {
-      if ((errno == EACCES) && (new_uid == getuid()))
-         return 0;              /* okay [see NOTE] */
-      else {
-         LOG(LOG_ERR,
-             "pop_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
-             (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
-         return -1;
-      }
-   }
-   return 0;
-#else
-#  error "No support for seteuid()"
-#endif
-}
-
-
-
 // ---------------------------------------------------------------------------
-// utilities
-//
-// These are some chunks of code used in more than one fuse function.
-// Should probably be moved to another file, eventually.
-// ---------------------------------------------------------------------------
-
-// update the URL in the ObjectStream, in our FileHandle
-int update_url(ObjectStream* os, PathInfo* info) {
-   //   size_t rc;                   // for TRY
-   //   __TRY0(update_pre, &info->pre);
-   strncpy(os->url, info->pre.objid, MARFS_MAX_URL_SIZE);
-
-   // log the full URL, if possible:
-   IOBuf*        b  = &os->iob;
-   __attribute__ ((unused)) AWSContext*   ctx = ((b) ? b->context : aws_context_clone());
-
-   LOG(LOG_INFO, "generated URL %s %s/%s/%s\n",
-       ((b) ? "" : "(defaults)"),
-       ctx->S3Host, ctx->Bucket, os->url);
-
-   return 0;
-}
-
-
-
-
-// ---------------------------------------------------------------------------
-// inits
-// ---------------------------------------------------------------------------
-
-// "The return value of this function is available to all file operations
-// in the private_data field of fuse_context."  (e.g. via get_fuse_context())
-// [http://www.cs.hmc.edu/~geoff/classes/hmc.cs135.201001/homework/fuse/fuse_doc.html]
-//
-void* marfs_init(struct fuse_conn_info* conn) {
-   conn->max_write = MARFS_WRITEBUF_MAX;
-   conn->want      = FUSE_CAP_BIG_WRITES;
-
-   // To disable: Set zero here, and clear FUSE_CAP_ASYNC_READ from <want>
-   conn->async_read = 0;
-
-   return conn;
-}
-
-// called when fuse file system exits
-void marfs_destroy (void* private_data) {
-   // nothing for us to do here, we wont have dirty data when the fuse
-   // daemon exits. I suppose they wait for all threads to finish before
-   // leaving, so this should be ok.
-   LOG(LOG_INFO, "shutting down\n");
-}
-
-
-
-
-
-// ---------------------------------------------------------------------------
-// Fuse routines in alpha order (so you can actually find them)
+// Fuse/pftool support-routines in alpha order (so you can actually find them)
 // Unimplmented functions are gathered at the bottom
 // ---------------------------------------------------------------------------
 
 
 int marfs_access (const char* path,
                   int         mask) {
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -255,12 +116,9 @@ int marfs_access (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META));
 
    // No need for access check, just try the op
-   // Appropriate  access call filling in fuse structure 
-   //
-   // jti: which fuse structure?
    TRY0(access, info.post.md_path, mask);
  
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -286,7 +144,7 @@ int marfs_access (const char* path,
 
 int marfs_chmod(const char* path,
                 mode_t      mode) {
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -295,25 +153,25 @@ int marfs_chmod(const char* path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
-   if (mode && (S_ISUID | S_ISGID)) {
-      LOG(LOG_INFO, "attempt to setuid or setgid on path '%s'\n", path);
+   if (mode & (S_ISUID | S_ISGID)) {
+      LOG(LOG_ERR, "attempt to change setuid or setgid bits, on path '%s' (mode: %x)\n",
+          path, mode);
       return -EPERM;
    }
 
    // No need for access check, just try the op
-   // Appropriate  chmod call filling in fuse structure
    // WARNING: No lchmod() on rrz.
    //          chmod() always follows links.
    TRY0(chmod, info.post.md_path, mode);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
 int marfs_chown (const char* path,
                  uid_t       uid,
                  gid_t       gid) {
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -323,10 +181,9 @@ int marfs_chown (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // No need for access check, just try the op
-   // Appropriate  chown call filling in fuse structure
    TRY0(lchown, info.post.md_path, uid, gid);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -335,26 +192,30 @@ int marfs_chown (const char* path,
 
 int marfs_fsync (const char*            path,
                  int                    isdatasync,
-                 struct fuse_file_info* ffi) {
+                 MarFS_FileHandle*      fh) {
+   ENTRY();
    // I don’t know if we do anything here, I don’t think so, we will be in
    // sync at the end of each thread end
 
    // [jti:] in the case of SEMI_DIRECT, we could fsync the storage
 
    LOG(LOG_INFO, "NOP for %s", path);
+   EXIT();
    return 0; // Just return
 }
 
 
 int marfs_fsyncdir (const char*            path,
                     int                    isdatasync,
-                    struct fuse_file_info* ffi) {
+                    MarFS_DirHandle*       dh) {
+   ENTRY();
    // don’t think there is anything to do here, we wont have dirty data
    // unless its trash
 
    // [jti:] in the case of SEMI_DIRECT, we could fsync the storage
 
    LOG(LOG_INFO, "NOP for %s", path);
+   EXIT();
    return 0; // just return
 }
 
@@ -381,14 +242,9 @@ int marfs_fsyncdir (const char*            path,
 
 int marfs_ftruncate(const char*            path,
                     off_t                  length,
-                    struct fuse_file_info* ffi) {
+                    MarFS_FileHandle*      fh) {
+   ENTRY();
 
-   // *** this may not be needed until we implement write in the fuse daemon ***
-   // *** may not be needed for the kind of support we want to provide ***
-
-   PUSH_USER();
-
-   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
    // IOBuf*            b    = &fh->os.iob;                /* shorthand */
 
@@ -457,16 +313,15 @@ int marfs_ftruncate(const char*            path,
    else
       LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
 
-// This is stat()
+// This is "stat()"
 int marfs_getattr (const char*  path,
                    struct stat* stp) {
-   PUSH_USER();
-
+   ENTRY();
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
@@ -518,7 +373,7 @@ int marfs_getattr (const char*  path,
    // mask out setuid/setgid bits.  Those are belong to us.  (see marfs_chmod())
    stp->st_mode &= ~(S_ISUID | S_ISGID);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -531,9 +386,9 @@ int marfs_getxattr (const char* path,
                     const char* name,
                     char*       value,
                     size_t      size) {
+   ENTRY();
    //   LOG(LOG_INFO, "not implemented  (path %s, key %s)\n", path, name);
    //   return -ENOSYS;
-   PUSH_USER();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -564,7 +419,7 @@ int marfs_getxattr (const char* path,
    TRY_GE0(lgetxattr, info.post.md_path, name, (void*)value, size);
    ssize_t result = rc_ssize;
 
-   POP_USER();
+   EXIT();
    return result;
 }
 
@@ -572,33 +427,33 @@ int marfs_getxattr (const char* path,
 int marfs_ioctl(const char*            path,
                 int                    cmd,
                 void*                  arg,
-                struct fuse_file_info* ffi,
+                MarFS_FileHandle*      fh,
                 unsigned int           flags,
                 void*                  data) {
+   ENTRY();
    // if we need an ioctl for something or other
-   // ***Maybe a way to get fuse deamon to read up new config file
    // *** we need a way for daemon to read up new config file without stopping
 
    LOG(LOG_INFO, "NOP for %s", path);
+   EXIT();
    return 0;
 }
 
 
 
 
-// *** this may not be needed until we implement user xattrs in the fuse daemon ***
-//
+
 // NOTE: Even though we remove reserved xattrs, user can call with empty
 //       buffer and receive back length of xattr names.  Then, when we
 //       remove reserved xattrs (in a subsequent call), user will see a
 //       different list length than the previous call lead him to expect.
+
 int marfs_listxattr (const char* path,
                      char*       list,
                      size_t      size) {
+   ENTRY();
    //   LOG(LOG_INFO, "listxattr(%s, ...) not implemented\n", path);
    //   return -ENOSYS;
-
-   PUSH_USER();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -616,14 +471,12 @@ int marfs_listxattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  listxattr call
-   // filling in fuse structure.
    // NOTE: If caller passes <list>=0, we'll be fine.
    TRY_GE0(llistxattr, info.post.md_path, list, size);
 
    // In the case where list==0, we return the size of the buffer that
    // caller would need, in order to receive all our xattr data.
    if (! list) {
-      POP_USER();
       return rc_ssize;
    }
 
@@ -679,15 +532,14 @@ int marfs_listxattr (const char* path,
       }
    }
 
-
-   POP_USER();
+   EXIT();
    return result_size;
 }
 
 
 int marfs_mkdir (const char* path,
                  mode_t      mode) {
-   PUSH_USER();
+   ENTRY();
 
    PathInfo  info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -699,10 +551,9 @@ int marfs_mkdir (const char* path,
    // Check/act on quota num files
 
    // No need for access check, just try the op
-   // Appropriate mkdirlike call filling in fuse structure 
    TRY0(mkdir, info.post.md_path, mode);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -722,12 +573,7 @@ int marfs_mkdir (const char* path,
 int marfs_mknod (const char* path,
                  mode_t      mode,
                  dev_t       rdev) {
-
-   //   // mknod() is now superceded by create().
-   //   // Making sure this never gets called ...
-   //   assert(0);
-
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -776,7 +622,7 @@ int marfs_mknod (const char* path,
    else
       LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -805,25 +651,6 @@ int marfs_mknod (const char* path,
 
 
 
-// A FileHandle is dynamically allocated in marfs_open().  We want to make
-// sure any error-returns will deallocate the file-handle.  In C++, it's
-// easy to get an object to do cleanup when it goes out of scope.  In C, we
-// need to add some code before every return, to do any cleanup that might
-// be needed before returning.
-//
-// RETURN() is used inside TRY(), which is the basis of all the test-macros
-// defined in common.h.  So, we redefine that to add our cleanup checks.
-//
-#undef RETURN
-#define RETURN(VALUE)                             \
-   do {                                           \
-      LOG(LOG_INFO, "returning %d\n", (VALUE));   \
-      free((MarFS_FileHandle*)ffi->fh);           \
-      ffi->fh = 0;                                \
-      return (VALUE);                             \
-   } while(0)
-
-
 
 // NOTE: stream_open() assumes the OS is in a pristine state.  marfs_open()
 //       currently always allocates a fresh OS (inside the new FileHandle),
@@ -831,14 +658,12 @@ int marfs_mknod (const char* path,
 //       everything clean, because we want some of that info (e.g. how much
 //       data was written).  If you decide to start reusing FileHandles,
 //       you should probably (a) assure they have been flushed/closed, and
-//       (b) wipe them clean.  [See marfs_read(), which now performs a
-//       distinct S3 request for every call, and reuses the ObjectStream
-//       inside the FileHandle.]
-int marfs_open (const char*            path,
-                struct fuse_file_info* ffi) {
-
-   assert(ffi->fh == 0);
-   PUSH_USER();
+//       (b) wipe them clean.  [See marfs_read(), which sometimes reuses
+//       the ObjectStream inside the FileHandle.]
+int marfs_open (const char*         path,
+                MarFS_FileHandle*   fh,
+                int                 flags) {
+   ENTRY();
 
    // Poke the xattr stuff into some memory for the file (poke the address
    //    of that memory into the fuse open structure so you have access to
@@ -847,10 +672,6 @@ int marfs_open (const char*            path,
    //    also poke how to access the objrepo for where/how to write and how to read
    //    also put space for read to attach a structure for object read mgmt
    //
-   if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_FileHandle))))
-      return -ENOMEM;
-
-   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    IOBuf*            b    = &fh->os.iob;                /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
    EXPAND_PATH_INFO(info, path);
@@ -860,19 +681,20 @@ int marfs_open (const char*            path,
    //   If wronly/rdwr/trunk  RM/WM/RD/WD/TD
    //   If append we don’t support that
    //
-   // NOTE: FUSE doesn't actually call open with O_TRUNC, but instead calls
-   //       truncate(), in that case.  Similarly, we won't get called with
-   //       O_CREAT, cause mknod() handles that.
-   //
-   assert(! (ffi->flags & O_CREAT));
-   assert(! (ffi->flags & O_TRUNC));
-
-   if (ffi->flags & (O_RDONLY)) {
+   if (flags & O_CREAT) {
+      LOG(LOG_ERR, "open(O_CREAT) should've been handled by mknod()\n");
+      RETURN(-ENOSYS);          /* for now */
+   }
+   else if (flags & O_TRUNC) {
+      LOG(LOG_ERR, "open(O_TRUNC) should've been handled by frtuncate()\n");
+      RETURN(-ENOSYS);          /* for now */
+   }
+   else if (flags & (O_RDONLY)) {
       fh->flags |= FH_READING;
       ACCESS(info->post.md_path, R_OK);
       CHECK_PERMS(info->ns->iperms, (R_META | R_DATA));
    }
-   else if (ffi->flags & (O_WRONLY)) {
+   else if (flags & (O_WRONLY)) {
       fh->flags |= FH_WRITING;
       ACCESS(info->post.md_path, W_OK);
       CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
@@ -883,12 +705,12 @@ int marfs_open (const char*            path,
    //   }
 
    // unsupported operations
-   if (ffi->flags & (O_RDWR)) {
+   if (flags & (O_RDWR)) {
       fh->flags |= (FH_READING | FH_WRITING);
       LOG(LOG_INFO, "open(O_RDWR) not implemented\n");
       RETURN(-ENOSYS);          /* for now */
    }
-   if (ffi->flags & (O_APPEND)) {
+   if (flags & (O_APPEND)) {
       LOG(LOG_INFO, "open(O_APPEND) not implemented\n");
       RETURN(-ENOSYS);
    }
@@ -899,7 +721,7 @@ int marfs_open (const char*            path,
    // If no xattrs, we let user read/write directly into the file.
    // This corresponds to a file that was created in DIRECT repo-mode.
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
-      fh->md_fd = open(info->post.md_path, ffi->flags);
+      fh->md_fd = open(info->post.md_path, flags);
       if (fh->md_fd < 0) {
          fh->md_fd = 0;
          RETURN(-errno);
@@ -991,19 +813,16 @@ int marfs_open (const char*            path,
       TRY0(stream_open, &fh->os, OS_PUT);
 #endif
 
-
-   POP_USER();
+   EXIT();
    return 0;
 }
-#undef RETURN
-#define RETURN(VALUE) return(VALUE)
 
 
 
 
-int marfs_opendir (const char*            path,
-                   struct fuse_file_info* ffi) {
-   PUSH_USER();
+int marfs_opendir (const char*       path,
+                   MarFS_DirHandle*  dh) {
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1012,23 +831,17 @@ int marfs_opendir (const char*            path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, (R_META));
 
-   if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_DirHandle))))
-      return -ENOMEM;
-
-   MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
-
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root\n");
 
       if (geteuid()) {
          free(dh);
-         ffi->fh = 0;
          return -EACCES;
       }
 
       // root 
-      dh->use_it = 1;
+      dh->use_it = 1;           // use iterator-member
       dh->internal.it = namespace_iterator();
       return 0;
    }
@@ -1043,7 +856,7 @@ int marfs_opendir (const char*            path,
    ///   ffi->fh = rc_ssize;          /* open() successfully returned a dirp */
    dh->internal.dirp = (DIR*)rc_ssize;
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -1053,21 +866,19 @@ int marfs_opendir (const char*            path,
 // NOTE: 
 // TBD: Don't do object-interaction if file is DIRECT.  See marfs_open().
 //
-int marfs_read (const char*            path,
-                char*                  buf,
-                size_t                 size,
-                off_t                  offset,
-                struct fuse_file_info* ffi) {
-   PUSH_USER();
+int marfs_read (const char*        path,
+                char*              buf,
+                size_t             size,
+                off_t              offset,
+                MarFS_FileHandle*  fh) {
+   ENTRY();
 
    ///   PathInfo info;
    ///   memset((char*)&info, 0, sizeof(PathInfo));
    ///   EXPAND_PATH_INFO(&info, path);
-   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
    IOBuf*            b    = &os->iob;
-
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM  RD
    CHECK_PERMS(info->ns->iperms, (R_META | R_DATA));
@@ -1312,17 +1123,17 @@ int marfs_read (const char*            path,
       }
    }
 
-   POP_USER();
+   EXIT();
    return read_count;
 }
 
 
-int marfs_readdir (const char*            path,
-                   void*                  buf,
-                   fuse_fill_dir_t        filler,
-                   off_t                  offset,
-                   struct fuse_file_info* ffi) {
-   PUSH_USER();
+int marfs_readdir (const char*        path,
+                   void*              buf,
+                   marfs_fill_dir_t   filler,
+                   off_t              offset,
+                   MarFS_DirHandle*   dh) {
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1333,8 +1144,6 @@ int marfs_readdir (const char*            path,
 
    // No need for access check, just try the op
    // Appropriate  readdir call filling in fuse structure  (fuse does this in chunks)
-   MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
-
    if (dh->use_it) {
       NSIterator* it = &dh->internal.it;
       while (1) {
@@ -1352,7 +1161,6 @@ int marfs_readdir (const char*            path,
       }
    }
    else {
-      /// DIR*           dirp = (DIR*)ffi->fh;
       DIR*           dirp = dh->internal.dirp;
       struct dirent* dent;
    
@@ -1381,7 +1189,7 @@ int marfs_readdir (const char*            path,
       }
    }
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -1415,8 +1223,7 @@ int marfs_readdir (const char*            path,
 int marfs_readlink (const char* path,
                     char*       buf,
                     size_t      size) {
-   PUSH_USER();
-
+   ENTRY();
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
@@ -1435,7 +1242,7 @@ int marfs_readlink (const char* path,
    buf[count] = '\0';
    LOG(LOG_INFO, "readlink '%s' -> '%s' = (%d)\n", info.post.md_path, buf, count);
 
-   POP_USER();
+   EXIT();
    return 0; // return result;
 }
 
@@ -1450,10 +1257,9 @@ int marfs_readlink (const char* path,
 //    don't know if that is true."
 //
 
-int marfs_release (const char*            path,
-                   struct fuse_file_info* ffi) {
-
-   PUSH_USER(); // ENTRY();
+int marfs_release (const char*        path,
+                   MarFS_FileHandle*  fh) {
+   ENTRY();
 
    // if writing there will be an objid stuffed into a address  in fuse open table
    //       seal that object if needed
@@ -1463,7 +1269,6 @@ int marfs_release (const char*            path,
    //       free the area holding that stuff
    // close the metadata file handle
 
-   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
 
@@ -1550,13 +1355,7 @@ int marfs_release (const char*            path,
    //   // ANSWER: No.
    //   sync();
 
-
-   // reclaim FileHandle allocated in marfs_open()
-   free(fh);
-   ffi->fh = 0;
-   
-
-   POP_USER(); // EXIT();
+   EXIT();
    return 0;
 }
 
@@ -1575,14 +1374,10 @@ int marfs_release (const char*            path,
 //     exist!  That happens e.g. after 'rm -rf /marfs/jti/mydir' In that
 //     case, it seems the kernel calls us with <path> = "-".
 
-int marfs_releasedir (const char*            path,
-                      struct fuse_file_info* ffi) {
+int marfs_releasedir (const char*       path,
+                      MarFS_DirHandle*  dh) {
+   ENTRY();
    LOG(LOG_INFO, "releasedir %s\n", path);
-#ifdef LINK_LIBFUSE
-   LOG(LOG_INFO, "entry -- skipping push_user(%d)\n", fuse_get_context()->uid);
-#endif
-   //   PUSH_USER();
-   size_t rc = 0;
 
    // If path == "-", assume we are closing a deleted dir.  (see NOTE)
    if ((path[0] != '-') || (path[1] != 0)) {
@@ -1595,18 +1390,14 @@ int marfs_releasedir (const char*            path,
 
       // No need for access check, just try the op
       // Appropriate  closedir call filling in fuse structure
-      MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
       if (! dh->use_it) {
          LOG(LOG_INFO, "not root-dir\n");
          DIR* dirp = dh->internal.dirp;
          TRY0(closedir, dirp);
       }
-      free(dh);
-      ffi->fh = 0;
    }
 
-   LOG(LOG_INFO, "exit -- skipping pop_user()\n");
-   //   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -1617,10 +1408,9 @@ int marfs_releasedir (const char*            path,
 //
 int marfs_removexattr (const char* path,
                        const char* name) {
+   ENTRY();
    //   LOG(LOG_INFO, "removexattr(%s, %s) not implemented\n", path, name);
    //   return -ENOSYS;
-
-   PUSH_USER();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1646,14 +1436,14 @@ int marfs_removexattr (const char* path,
    TRY0(lremovexattr, info.post.md_path, name);
 #endif
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
 
 int marfs_rename (const char* path,
                   const char* to) {
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1680,14 +1470,18 @@ int marfs_rename (const char* path,
    // Appropriate  rename call filling in fuse structure 
    TRY0(rename, info.post.md_path, info2.post.md_path);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
 // using looked up mdpath, do statxattr and get object name
+//
+// NOTE: directories don't go to the trash.  All deleted files contain
+//     metadata about their original path, so undeleting files (TBD) would
+//     also recreate any required directories.
+//
 int marfs_rmdir (const char* path) {
-   // (we wont trash directories, we will preserve full paths of all files trashed instead)
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1706,7 +1500,7 @@ int marfs_rmdir (const char* path) {
    // Appropriate rmdirlike call filling in fuse structure 
    TRY0(rmdir, info.post.md_path);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -1716,12 +1510,11 @@ int marfs_setxattr (const char* path,
                     const char* value,
                     size_t      size,
                     int         flags) {
+   ENTRY();
 
    //   // *** this may not be needed until we implement user xattrs in the fuse daemon ***
    //   LOG(LOG_INFO, "not implemented\n");
    //   return -ENOSYS;
-
-   PUSH_USER();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1746,7 +1539,7 @@ int marfs_setxattr (const char* path,
    // Appropriate  setxattr call filling in fuse structure 
    TRY0(lsetxattr, info.post.md_path, name, value, size, flags);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -1756,7 +1549,7 @@ int marfs_setxattr (const char* path,
 // guess we don't want to allow average users to do this.
 int marfs_statfs (const char*      path,
                   struct statvfs*  statbuf) {
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1777,8 +1570,7 @@ int marfs_statfs (const char*      path,
    //   statbuf->f_bsize = 512;      // matches GPFS
    //   ...
 
-
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -1791,7 +1583,7 @@ int marfs_statfs (const char*      path,
 
 int marfs_symlink (const char* target,
                    const char* linkname) {
-   PUSH_USER();
+   ENTRY();
 
    // <linkname> is given to us as a path under the fuse-mount,
    // in the usual way for fuse-functions.
@@ -1813,19 +1605,18 @@ int marfs_symlink (const char* target,
    // Appropriate  symlink call filling in fuse structure 
    TRY0(symlink, target, lnk_info.post.md_path);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
 // *** this may not be needed until we implement write in the fuse daemon ***
 int marfs_truncate (const char* path,
                     off_t       size) {
+   ENTRY();
 
    // Check/act on truncate-to-zero only.
    if (size)
       return -EPERM;
-
-   PUSH_USER();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1865,13 +1656,13 @@ int marfs_truncate (const char* path,
    else
       LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
 
 int marfs_unlink (const char* path) {
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1917,7 +1708,7 @@ int marfs_unlink (const char* path) {
    // rename file with all xattrs into trashdir, preserving objects and paths 
    TRASH_UNLINK(&info, path);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -1927,7 +1718,7 @@ int marfs_unlink (const char* path) {
 // http://fuse.sourceforge.net/doxygen/structfuse__operations.html
 int marfs_utime(const char*     path,
                 struct utimbuf* buf) {   
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1941,7 +1732,7 @@ int marfs_utime(const char*     path,
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
    TRY_GE0(utime, info.post.md_path, buf);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -1949,7 +1740,7 @@ int marfs_utime(const char*     path,
 // http://fuse.sourceforge.net/doxygen/structfuse__operations.html
 int marfs_utimens(const char*           path,
                   const struct timespec tv[2]) {   
-   PUSH_USER();
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1969,24 +1760,21 @@ int marfs_utimens(const char*           path,
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
    TRY_GE0(utimensat, 0, info.post.md_path, tv, AT_SYMLINK_NOFOLLOW);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
 
-int marfs_write(const char*            path,
-                const char*            buf,
-                size_t                 size,
-                off_t                  offset,
-                struct fuse_file_info* ffi) {
-   PUSH_USER();
+int marfs_write(const char*        path,
+                const char*        buf,
+                size_t             size,
+                off_t              offset,
+                MarFS_FileHandle*  fh) {
+   ENTRY();
+
    LOG(LOG_INFO, "%s\n", path);
    LOG(LOG_INFO, "offset: %ld, size: %ld\n", offset, size);
 
-   //   PathInfo info;
-   //   memset((char*)&info, 0, sizeof(PathInfo));
-   //   EXPAND_PATH_INFO(&info, path);
-   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
 
@@ -2172,7 +1960,7 @@ int marfs_write(const char*            path,
       TRY_GE0(stream_put, os, buf_ptr, write_size);
 
 
-   POP_USER();
+   EXIT();
    return size;
 }
 
@@ -2188,7 +1976,9 @@ int marfs_write(const char*            path,
 int marfs_bmap(const char* path,
                size_t      blocksize,
                uint64_t*   idx) {
+   ENTRY();
    // don’t support  its is for block mapping
+   EXIT();
    return 0;
 }
 
@@ -2209,10 +1999,10 @@ int marfs_bmap(const char* path,
 //       and open in one step.  This allows us to check the appropriate set
 //       of meta-perms.
 
-int marfs_create(const char*            path,
-                 mode_t                 mode,
-                 struct fuse_file_info* ffi) {
-   PUSH_USER();
+int marfs_create(const char*        path,
+                 mode_t             mode,
+                 MarFS_FileHandle*  fh) {
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -2255,18 +2045,18 @@ int marfs_create(const char*            path,
    // Appropriate mknod-like/open-create-like call filling in fuse structure
    TRY0(mknod, info.post.md_path, mode, rdev);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
 
 // obsolete, in fuse 2.6
-int marfs_fallocate(const char*            path,
-                    int                    mode,
-                    off_t                  offset,
-                    off_t                  length,
-                    struct fuse_file_info* ffi) {
-   PUSH_USER();
+int marfs_fallocate(const char*        path,
+                    int                mode,
+                    off_t              offset,
+                    off_t              length,
+                    MarFS_FileHandle*  fh) {
+   ENTRY();
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -2277,7 +2067,7 @@ int marfs_fallocate(const char*            path,
 
    // Check space quota
    //    If  we get here just return ok  this is just a check to see if you can write to the fs
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -2286,21 +2076,20 @@ int marfs_fallocate(const char*            path,
 //
 // Instead of using the <fd> (which is not yet implemented in our
 // FileHandle), I'm calling fstat on the file itself.  Good enough?
-int marfs_fgetattr(const char*            path,
-                   struct stat*           st,
-                   struct fuse_file_info* ffi) {
-   PUSH_USER();
+int marfs_fgetattr(const char*        path,
+                   struct stat*       st,
+                   MarFS_FileHandle*  fh) {
+   ENTRY();
 
    // don’t need path info    (this is for a file that is open, so everything is resolved)
    // don’t need to check on IPERMS
    // No need for access check, just try the op
    // appropriate fgetattr/fstat call filling in fuse structure (dont mess with xattrs)
-   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
 
    TRY0(lstat, info->post.md_path, st);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
@@ -2327,8 +2116,9 @@ int marfs_fgetattr(const char*            path,
 //       flush.  This seems to have the desired effect of getting fuse to
 //       do all the sync at close-time.
 
-int marfs_flush (const char*            path,
-                 struct fuse_file_info* ffi) {
+int marfs_flush (const char*        path,
+                 MarFS_FileHandle*  fh) {
+   ENTRY();
 
    //   // I don’t think we will have dirty data that we can control
    //   // I guess we could call flush on the filehandle  that is being written
@@ -2337,12 +2127,6 @@ int marfs_flush (const char*            path,
    //
    //   LOG(LOG_INFO, "NOP for %s", path);
 
-   PUSH_USER();
-
-   ///   PathInfo info;
-   ///   memset((char*)&info, 0, sizeof(PathInfo));
-   ///   EXPAND_PATH_INFO(&info, path);
-   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
    // PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
 
@@ -2350,51 +2134,43 @@ int marfs_flush (const char*            path,
    //   LOG(LOG_INFO, "synchronizing object stream %s\n", path);
    //   TRY0(stream_sync, os);
 
-   POP_USER();
+   EXIT();
    return 0;
 }
 
 
-// new in 2.6, yet deprecated?
-// combines opendir(), readdir(), closedir() into one call.
-int marfs_getdir(const char *path, fuse_dirh_t , fuse_dirfil_t) {
-   LOG(LOG_ERR, "getdir(%s, ...) not implemented\n", path);
-   return -ENOSYS;
-}
+int marfs_flock(const char*        path,
+                MarFS_FileHandle*  fh,
+                int                op) {
+   ENTRY();
 
-
-int marfs_flock(const char*            path,
-                struct fuse_file_info* ffi,
-                int                    op) {
    // don’t implement or throw error
+   EXIT();
    return 0;
 }
 
 
 int marfs_link (const char* path,
                 const char* to) {
+   ENTRY();
+
    // for now, I think we should not allow link, its pretty complicated to do
    LOG(LOG_INFO, "link(%s, ...) not implemented\n", path);
+   EXIT();
    return -ENOSYS;
 }
 
 
-int marfs_lock(const char*            path,
-               struct fuse_file_info* ffi,
-               int                    cmd,
-               struct flock*          locks) {
+int marfs_lock(const char*        path,
+               MarFS_FileHandle*  fh,
+               int                cmd,
+               struct flock*      locks) {
+   ENTRY();
+
    // don’t support it, either don’t implement or throw error
    LOG(LOG_INFO, "lock(%s, ...) not implemented\n", path);
+   EXIT();
    return -ENOSYS;
-}
-
-int marfs_poll(const char*             path,
-               struct fuse_file_info*  ffi,
-               struct fuse_pollhandle* ph,
-               unsigned*               reventsp) {
-   // either don’t implement or just return 0;
-   LOG(LOG_INFO, "poll(%s, ...) stubbed out.  Just returns 0\n", path);
-   return 0;
 }
 
 

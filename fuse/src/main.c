@@ -71,18 +71,8 @@ OF SUCH DAMAGE.
 
 
 #include "common.h"
-#include "marfs_fuse.h"
-
-/*
-@@@-HTTPS:
-This was added on 24-Jul-2015 because we need this for the RepoFlags type.
-However, it was also needed for other uses of types in marfs_base.h before
-this date. It happened that it is included in common.h. Rather than rely
-on that fact, because that could change, it is best practice to explicitly
-include the files on which a code unit depends.
-*/
-
 #include "marfs_base.h"
+#include "marfs_ops.h"
 
 #include <assert.h>
 #include <sys/types.h>
@@ -97,6 +87,774 @@ include the files on which a code unit depends.
 #include <stdio.h>
 
 
+// #include "marfs_fuse.h"
+#define FUSE_USE_VERSION 26
+#include <fuse.h>
+
+
+// ---------------------------------------------------------------------------
+// utilities
+//
+// These are some chunks of code used in more than one fuse function.
+// Should probably be moved to another file, eventually.
+// ---------------------------------------------------------------------------
+
+
+#define PUSH_USER()                                                     \
+   ENTRY();                                                             \
+   uid_t saved_euid = -1;                                               \
+   TRY0(push_user, &saved_euid)
+
+#define POP_USER()                                                      \
+   EXIT();                                                              \
+   TRY0(pop_user, &saved_euid);                                         \
+
+
+// push_user()
+//
+//   Save current user info from syscall into saved_user
+//   Set userid to requesting user (in fuse request structure)
+//   return 0/negative for success/error
+//
+// NOTE: setuid() doesn't allow returning to priviledged user, from
+//       unpriviledged-user.  For that, we apparently need the (BSD)
+//       seteuid().
+//
+// NOTE: If seteuid() fails, and the problem is that we lack privs to call
+//       seteuid(), this means *we* are running unpriviledged.  This could
+//       happen if we're testing the FUSE mount as a non-root user.  In
+//       this case, the <uid> argument should be the same as the <uid> of
+//       the FUSE process, which we can extract from the fuse_context.
+//       [We try the seteuid() first, for speed]
+//
+int push_user(uid_t* saved_euid) {
+#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+   //   fuse_context* ctx = fuse_get_context();
+   //   if (ctx->flags & PUSHED_USER) {
+   //      LOG(LOG_ERR, "push_user -- already pushed!\n");
+   //      return;
+   //   }
+   *saved_euid = geteuid();
+   uid_t new_uid = fuse_get_context()->uid;
+   LOG(LOG_INFO, "user %ld (euid %ld) -> (euid %ld) ...\n",
+       (size_t)getuid(), (size_t)*saved_euid, (size_t)new_uid);
+   int rc = seteuid(new_uid);
+   if (rc == -1) {
+      if ((errno == EACCES) && (new_uid == getuid())) {
+         LOG(LOG_INFO, "failed (but okay)\n");
+         return 0;              /* okay [see NOTE] */
+      }
+      else {
+         LOG(LOG_ERR, "failed!\n");
+         return -1;
+      }
+   }
+   LOG(LOG_INFO, "success\n");
+   return 0;
+#else
+#  error "No support for seteuid()"
+#endif
+}
+
+
+//  pop_user() changes the effective UID.  Here, we revert to the
+//  "real" UID.
+int pop_user(uid_t* saved_euid) {
+#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+   uid_t  new_uid = *saved_euid;
+   int rc = seteuid(new_uid);
+   if (rc == -1) {
+      if ((errno == EACCES) && (new_uid == getuid()))
+         return 0;              /* okay [see NOTE] */
+      else {
+         LOG(LOG_ERR,
+             "pop_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
+             (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
+         return -1;
+      }
+   }
+   return 0;
+#else
+#  error "No support for seteuid()"
+#endif
+}
+
+
+// --- wrappers just call the corresponding library-function, to support a
+//     given fuse-function.  The library-functions are meant to be used by
+//     both fuse and pftool, so they don't do seteuid(), and don't expect
+//     any fuse-related structures.
+
+#if 0
+# define WRAPPER(FN, ...)                     \
+  PUSH_USER();                                \
+  int fn_rc = FN(__VA_ARGS__);                \
+  POP_USER();                                 \
+  RETURN(fn_rc) /* caller provides semi */
+#endif
+
+
+#define WRAP(FNCALL)                            \
+   PUSH_USER();                                 \
+   int fncall_rc = FNCALL;                      \
+   POP_USER();                                  \
+   return fncall_rc /*RETURN(rc)*/ /* caller provides semi */
+
+
+
+
+// ---------------------------------------------------------------------------
+// inits
+// ---------------------------------------------------------------------------
+
+// "The return value of this function is available to all file operations
+// in the private_data field of fuse_context."  (e.g. via get_fuse_context())
+// [http://www.cs.hmc.edu/~geoff/classes/hmc.cs135.201001/homework/fuse/fuse_doc.html]
+//
+void* marfs_fuse_init(struct fuse_conn_info* conn) {
+   conn->max_write = MARFS_WRITEBUF_MAX;
+   conn->want      = FUSE_CAP_BIG_WRITES;
+
+   // To disable: Set zero here, and clear FUSE_CAP_ASYNC_READ from <want>
+   conn->async_read = 0;
+
+   return conn;
+}
+
+// called when fuse file system exits
+void marfs_fuse_exit (void* private_data) {
+   // nothing for us to do here, we wont have dirty data when the fuse
+   // daemon exits. I suppose they wait for all threads to finish before
+   // leaving, so this should be ok.
+   LOG(LOG_INFO, "shutting down\n");
+}
+
+
+
+
+
+// ---------------------------------------------------------------------------
+// Fuse routines in alpha order (so you can actually find them)
+// Unimplmented functions are gathered at the bottom
+// ---------------------------------------------------------------------------
+
+
+
+int fuse_access (const char* path,
+                 int         mask) {
+
+   WRAP( marfs_access(path, mask) );
+}
+
+
+// NOTE: we don't allow setuid or setgid.  We're using those bits for two
+//     purposes:
+//
+//     (a) on a file, the setuid-bit indicates SEMI-DIRECT mode.  In this
+//     case, the size of the MD file is not correct, because it isn't
+//     truncated to corect size, because the underlying FS is parallel, and
+//     in the case of N:1 writes, it is awkward for us to manage locking
+//     across multiple writers, so we can correctly trunc the MD file.
+//     Instead, we let the parallel FS do that (because it can).  So, to
+//     get the size, we need to go stat the PFS file, instead.  If we wrote
+//     this flag in an xattr, we'd have to read xattrs for every stat, just
+//     so we can learn whether the file-size returned by 'stat' is correct
+//     or not.
+//
+//     (b) on a directory, the setuid-bit indicates MD-sharding.  [FUTURE]
+//     In this case, the MD-directory will be a stand-in for a remote MD
+//     directory.  We hash on a namespace + directory-inode and lookup that
+//     spot in a remote-directory, to get the MD contents.
+
+int fuse_chmod(const char* path,
+               mode_t      mode) {
+
+   WRAP( marfs_chmod(path, mode) );
+}
+
+
+int fuse_chown (const char* path,
+                uid_t       uid,
+                gid_t       gid) {
+
+   WRAP( marfs_chown(path, uid, gid) );
+}
+
+// int fuse_close()   --->  it's called "fuse_release()".
+
+
+int fuse_fsync (const char*            path,
+                int                    isdatasync,
+                struct fuse_file_info* ffi) {
+
+   WRAP( marfs_fsync(path, isdatasync, (MarFS_FileHandle*)ffi->fh) );
+}
+
+
+int fuse_fsyncdir (const char*            path,
+                   int                    isdatasync,
+                   struct fuse_file_info* ffi) {
+
+   WRAP( marfs_fsyncdir(path, isdatasync, (MarFS_DirHandle*)ffi->fh) );
+}
+
+
+// I read that FUSE will never call open() with O_TRUNC, but will instead
+// call truncate first, then open.  However, a user might still call
+// truncate() or ftruncate() explicitly.  For these cases, I guess we
+// assume the file is already open, and the filehandle is good.
+//
+// UPDATE: for 'truncate -s 0 /marfs/file' or 'echo test >
+//     /marfs/existing_file', fuse calls open() / ftruncate() / close().
+//
+// If a user calls ftruncate() they expect the file-handle to remain open.
+// Therefore, we need to leave things as though open had been called with
+// the current <path>.  That means, the new object-handle we create
+// (because the old one goes with trashed file), must be open and ready for
+// business.
+//
+// In the case where the filehandle was opened for writing, open() will
+// have an open filehandle to the MD file.  We copy away the current
+// contents of the metadata file, so we can leave the existing MD fd open,
+// however, we should ftruncate that.
+//
+
+int fuse_ftruncate(const char*            path,
+                   off_t                  length,
+                   struct fuse_file_info* ffi) {
+
+   WRAP( marfs_ftruncate(path, length, (MarFS_FileHandle*)ffi->fh) );
+}
+
+
+// This is "stat()"
+int fuse_getattr (const char*  path,
+                  struct stat* stp) {
+
+   WRAP( marfs_getattr(path, stp) );
+}
+
+
+// *** this may not be needed until we implement user xattrs in the fuse daemon ***
+//
+// Kernel calls this with key 'security.capability'
+//
+int fuse_getxattr (const char* path,
+                   const char* name,
+                   char*       value,
+                   size_t      size) {
+
+   WRAP( marfs_getxattr(path, name, value, size) );
+}
+
+
+int fuse_ioctl(const char*            path,
+               int                    cmd,
+               void*                  arg,
+               struct fuse_file_info* ffi,
+               unsigned int           flags,
+               void*                  data) {
+   // if we need an ioctl for something or other
+   // ***Maybe a way to get fuse deamon to read up new config file
+   // *** we need a way for daemon to read up new config file without stopping
+
+   WRAP( marfs_ioctl(path, cmd, arg, (MarFS_FileHandle*)ffi->fh, flags, data) );
+}
+
+
+
+
+// NOTE: Even though we remove reserved xattrs, user can call with empty
+//       buffer and receive back length of xattr names.  Then, when we
+//       remove reserved xattrs (in a subsequent call), user will see a
+//       different list length than the previous call lead him to expect.
+
+int fuse_listxattr (const char* path,
+                    char*       list,
+                    size_t      size) {
+
+   WRAP( marfs_listxattr(path, list, size) );
+}
+
+
+int fuse_mkdir (const char* path,
+                mode_t      mode) {
+
+   WRAP( marfs_mkdir(path, mode) );
+}
+
+
+// [See discussion at fuse_create().]
+//
+// This only gets called when fuse determines file doesn't exist and needs
+// to be created.  If it needs to be truncated, fuse calls
+// truncate/ftruncate, before calling us.
+// 
+// It might make sense to do object-creation, and initialization of
+// PathInfo.pre, here.  However, open() is where we do tests that should be
+// done before creating the object.  Maybe we should move all those here,
+// as well?  Meanwhile, we currently construct obj-id inside stat_xattrs(),
+// in the case where MD exists but xattrs don't.
+// 
+int fuse_mknod (const char* path,
+                mode_t      mode,
+                dev_t       rdev) {
+
+   WRAP( marfs_mknod(path, mode, rdev) );
+}
+
+
+
+
+// OPEN
+//
+// We maintain a MarFS_FileHandle, which has info needed by
+// read/write/close, etc.
+//
+// Fuse will never call open() with O_CREAT or O_TRUNC.  In the O_CREAT
+// case, it will just call maknod() first.  In the O_TRUNC case, it calls
+// truncate.  Either way, these flags are stripped off.  We had a
+// conversation about the fact that mknod() doesn't have access to the
+// open-flags, whereas create() does, but decided mknod() should check
+// RM/WM/RD/WD/TD
+//
+// No need to check quotas here, that's also done in mknod.
+//
+// Fuse guarantees that it will always call close on any open files, when a
+// user-process exits.  However, if we throw an error (return non-zero)
+// *during* the open, I'm assuming the user is not considered to have that
+// file open.  Therefore, we re-#define RETURN() to add some custom
+// clean-up to the common macros.  (See discussion below.)
+
+
+
+// A FileHandle is dynamically allocated in fuse_open().  We want to make
+// sure any error-returns will deallocate the file-handle.  In C++, it's
+// easy to get an object to do cleanup when it goes out of scope.  In C, we
+// need to add some code before every return, to do any cleanup that might
+// be needed before returning.
+//
+
+
+// RETURN() is used inside TRY(), which is the basis of all the test-macros
+// defined in common.h.  So, we redefine that to add our cleanup checks.
+#if 0
+# undef RETURN
+# define RETURN(VALUE)                            \
+   do {                                           \
+      LOG(LOG_INFO, "returning %d\n", (VALUE));   \
+      free((MarFS_FileHandle*)ffi->fh);           \
+      ffi->fh = 0;                                \
+      return (VALUE);                             \
+   } while(0)
+#endif
+
+
+// NOTE: stream_open() assumes the OS is in a pristine state.  fuse_open()
+//       currently always allocates a fresh OS (inside the new FileHandle),
+//       so that assumption is safe.  stream_close() doesn't wipe
+//       everything clean, because we want some of that info (e.g. how much
+//       data was written).  If you decide to start reusing FileHandles,
+//       you should probably (a) assure they have been flushed/closed, and
+//       (b) wipe them clean.  [See fuse_read(), which now performs a
+//       distinct S3 request for every call, and reuses the ObjectStream
+//       inside the FileHandle.]
+int fuse_open (const char*            path,
+               struct fuse_file_info* ffi) {
+
+   PUSH_USER();
+
+   assert(ffi->fh == 0);
+   if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_FileHandle)))) {
+      LOG(LOG_ERR, "couldn't allocate a MarFS_FileHandle\n");
+      return -ENOMEM;
+   }
+   MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+
+   rc = marfs_open(path, fh, ffi->flags);
+
+   if (rc < 0) {
+      free(fh);
+      ffi->fh = 0;
+   }
+
+   POP_USER();
+   return rc;
+}
+
+
+
+int fuse_opendir (const char*            path,
+                  struct fuse_file_info* ffi) {
+   PUSH_USER();
+
+   assert(ffi->fh == 0);
+   if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_FileHandle)))) {
+      LOG(LOG_ERR, "couldn't allocate a MarFS_FileHandle\n");
+      return -ENOMEM;
+   }
+   MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
+
+   rc = marfs_opendir(path, dh);
+
+   if (rc < 0) {
+      free(dh);
+      ffi->fh = 0;
+   }
+
+   POP_USER();
+   return rc;
+}
+
+#if 0
+# undef RETURN
+# define RETURN(VALUE) return(VALUE)
+#endif
+
+
+// return actual number of bytes read.  0 indicates EOF.
+// negative understood to be negative errno.
+//
+// NOTE: 
+// TBD: Don't do object-interaction if file is DIRECT.  See fuse_open().
+//
+int fuse_read (const char*            path,
+               char*                  buf,
+               size_t                 size,
+               off_t                  offset,
+               struct fuse_file_info* ffi) {
+
+   WRAP( marfs_read(path, buf, size, offset, (MarFS_FileHandle*)ffi->fh) );
+}
+
+
+int fuse_readdir (const char*            path,
+                  void*                  buf,
+                  fuse_fill_dir_t        filler,
+                  off_t                  offset,
+                  struct fuse_file_info* ffi) {
+
+   WRAP( marfs_readdir(path, buf, (marfs_fill_dir_t)filler, offset, (MarFS_DirHandle*)ffi->fh) );
+}
+
+
+// It appears that, unlike readlink(2), we shouldn't return the number of
+// chars in the path.  Also, unlike readlink(2), we *should* write the
+// final '\0' into the caller's buf.
+//
+// NOTE: We do an extra copy to avoid putting anything into the caller's
+//     buf until we know that our result is "safe".  This means:
+//
+//     (a) link-contents are fully "canonicalized"
+//     (b) link-contents refer to something in a MarFS namespace, or ...
+//     (c) link-contents refer to something in this user's MDFS.
+//
+//     It's hard to check (b), because canonicalization for (a) seems to
+//     require expand_path_info(), and that puts us into MDFS space.  To
+//     convert back to "mount space", we'd need the equivalent of
+//     find_namespace_by_md_path(), which is thinkable, but more effort
+//     than we need to allow.  Instead, we'll just require (c); that the
+//     canonicalized name must be in *this* namespace (which is an easier
+//     check).
+//
+// ON SECOND THOUGHT: It's not our job to see where a link points.
+//     readlink of "/marfs/ns/mylink" which refers to "../../test" should
+//     just return "../../test" The kernel will then expand
+//     "/marfs/ns/../../test" and then use that to do whatever the
+//     operation was.  We are not allowing any subversion of the MDFS by
+//     responding with the contents of the symlink.
+
+int fuse_readlink (const char* path,
+                   char*       buf,
+                   size_t      size) {
+
+   WRAP( marfs_readlink(path, buf, size) );
+}
+
+
+// [http://www.cs.hmc.edu/~geoff/classes/hmc.cs135.201001/homework/fuse/fuse_doc.html]
+//
+//   "This is the only FUSE function that doesn't have a directly
+//    corresponding system call, although close(2) is related. Release is
+//    called when FUSE is completely done with a file; at that point, you
+//    can free up any temporarily allocated data structures. The IBM
+//    document claims that there is exactly one release per open, but I
+//    don't know if that is true."
+//
+
+int fuse_release (const char*            path,
+                  struct fuse_file_info* ffi) {
+
+   WRAP( marfs_release(path, (MarFS_FileHandle*)ffi->fh) );
+}
+
+
+//  [Like release(), this doesn't have a directly corresponding system
+//  call.]
+//
+// NOTE: This is also the only function I've seen (so far) that gets called
+//       with fuse_context->uid of 0, even when running as non-root.  In
+//       that case, seteuid() will fail.  However, we assume fuse is always
+//       run as root.
+//
+// NOTE: Testing as myself, I notice releasedir() gets called with
+//     fuse_context.uid ==0.  Other functions are all called with
+//     fuse_context.uid == my_uid.  I’m ignoring push/pop UID in this case,
+//     in order to be able to continue debugging.
+//
+// NOTE: It is possible that we get called with a directory that doesn't
+//     exist!  That happens e.g. after 'rm -rf /marfs/jti/mydir' In that
+//     case, it seems the kernel calls us with <path> = "-".
+
+int fuse_releasedir (const char*            path,
+                     struct fuse_file_info* ffi) {
+
+   // If not running as root, the seteuid() in PUSH_USER() in WRAP() will
+   // fail.  We used to have something like this, to allow that:
+   //
+   //   // PUSH_USER();
+   //   LOG(LOG_INFO, "entry -- skipping push_user(%d)\n", fuse_get_context()->uid);
+
+   WRAP( marfs_releasedir(path, (MarFS_DirHandle*)ffi->fh) );
+}
+
+
+// Kernel calls this with key 'security.capability'
+//
+int fuse_removexattr (const char* path,
+                      const char* name) {
+
+   WRAP( marfs_removexattr(path, name) );
+}
+
+
+int fuse_rename (const char* path,
+                 const char* to) {
+
+   WRAP( marfs_removexattr(path, to) );
+}
+
+
+// using looked up mdpath, do statxattr and get object name
+int fuse_rmdir (const char* path) {
+
+   WRAP( marfs_rmdir(path) );
+}
+
+
+int fuse_setxattr (const char* path,
+                   const char* name,
+                   const char* value,
+                   size_t      size,
+                   int         flags) {
+
+   WRAP( marfs_setxattr(path, name, value, size, flags) );
+}
+
+// The OS seems to call this from time to time, with <path>=/ (and
+// euid==0).  We could walk through all the namespaces, and accumulate
+// total usage.  (Maybe we should have a top-level fsinfo path?)  But I
+// guess we don't want to allow average users to do this.
+int fuse_statfs (const char*      path,
+                 struct statvfs*  statbuf) {
+
+   WRAP( marfs_statfs(path, statbuf) );
+}
+
+
+// NOTE: <target> is given as a full path.  It might or might not be under
+//     our fuse mount-point, but even if it is, we should just stuff
+//     whatever <target> we get into the symlink.  If it is something under
+//     a marfs mount, then fuse_readlink() will be called when the link is
+//     followed.
+
+int fuse_symlink (const char* target,
+                  const char* linkname) {
+
+   WRAP( marfs_symlink(target, linkname) );
+}
+
+
+// *** this may not be needed until we implement write in the fuse daemon ***
+int fuse_truncate (const char* path,
+                   off_t       size) {
+
+   WRAP( marfs_truncate(path, size) );
+}
+
+
+int fuse_unlink (const char* path) {
+
+   WRAP( marfs_unlink(path) );
+}
+
+// deprecated in 2.6
+// System is giving us timestamps that should be applied to the path.
+// http://fuse.sourceforge.net/doxygen/structfuse__operations.html
+int fuse_utime(const char*     path,
+               struct utimbuf* buf) {   
+
+   WRAP( marfs_utime(path, buf) );
+}
+
+// System is giving us timestamps that should be applied to the path.
+// http://fuse.sourceforge.net/doxygen/structfuse__operations.html
+int fuse_utimens(const char*           path,
+                 const struct timespec tv[2]) {   
+
+   WRAP( marfs_utimens(path, tv) );
+}
+
+
+int fuse_write(const char*            path,
+               const char*            buf,
+               size_t                 size,
+               off_t                  offset,
+               struct fuse_file_info* ffi) {
+
+   WRAP( marfs_write(path, buf, size, offset, (MarFS_FileHandle*)ffi->fh) );
+}
+
+
+
+
+// ---------------------------------------------------------------------------
+// unimplemented routines, for now
+// ---------------------------------------------------------------------------
+
+#if 0
+
+int fuse_bmap(const char* path,
+              size_t      blocksize,
+              uint64_t*   idx) {
+
+   // don’t support -- this is for block mapping
+   return 0;
+}
+
+
+// UNDER CONSTRUCTION
+//
+// We don’t need this as if its not present, fuse will call mknod()+open().
+// Don’t implement.
+//
+// NOTE: If create() is not defined, fuse calls mknod() then open().
+//       However, mknod() doesn't know whether the file is being opened
+//       with TRUNC or not.  Therefore, it can't formulate the correct call
+//       to CHECK_PERMS().  Therefore, it has to check all perms that
+//       *might* be checked in open() [so as to avoid the case where mknod
+//       succeeds but open() fails].
+//
+//       However, if create() is defined, fuse calls that to do the create
+//       and open in one step.  This allows us to check the appropriate set
+//       of meta-perms.
+
+int fuse_create(const char*            path,
+                mode_t                 mode,
+                struct fuse_file_info* ffi) {
+
+   WRAP( marfs_create(path, mode, (MarFS_FileHandle*)ffi->fh) );
+}
+
+
+// obsolete, in fuse 2.6
+int fuse_fallocate(const char*            path,
+                   int                    mode,
+                   off_t                  offset,
+                   off_t                  length,
+                   struct fuse_file_info* ffi) {
+
+   WRAP( marfs_fallocate(path, mode, offset, length, (MarFS_FileHandle*)ffi->fh) );
+}
+
+
+// this is really fstat() ??
+//
+// Instead of using the <fd> (which is not yet implemented in our
+// FileHandle), I'm calling fstat on the file itself.  Good enough?
+int fuse_fgetattr(const char*            path,
+                  struct stat*           st,
+                  struct fuse_file_info* ffi) {
+
+   WRAP( marfs_fgetattr(path, st, (MarFS_FileHandle*)ffi->fh) );
+}
+
+
+// Fuse "flush" is not the same as "fflush()".  Fuse flush is called as
+// part of fuse close, and shouldn't return until all I/O is complete on
+// the file-handle, such that no further I/O errors are possible.  In other
+// words, this is our last chance to return errors to the user.
+//
+// Maybe flush() is also the best place to assure that final recovery-blobs
+// are written into objects, and pending object-reads are cut short, etc,
+// ... instead of doing that in close.
+//
+// TBD: Don't do object-interaction if file is DIRECT.  See fuse_open().
+//
+// NOTE: It also appears that fuse calls stat immediately after flush.
+//       (Hard to be sure, because fuse calls stat all the time.)  I'd
+//       guess we shouldn't return until we are sure that stat will see the
+//       final state of the file.  Probably also applies to xattrs (?)
+//       But hanging here seems to cause fuse to hang.
+//
+//       BECAUSE OF THIS, we took a simpler route: move all the
+//       synchronization into fuse_release(), and don't implement fuse
+//       flush.  This seems to have the desired effect of getting fuse to
+//       do all the sync at close-time.
+
+int fuse_flush (const char*            path,
+                struct fuse_file_info* ffi) {
+
+   WRAP( marfs_flush(path, (MarFS_FileHandle*)ffi->fh) );
+}
+
+
+// new in 2.6, yet deprecated?
+// combines opendir(), readdir(), closedir() into one call.
+int fuse_getdir(const char*    path,
+                fuse_dirh_t    fdh,
+                fuse_dirfil_t  fill) {
+
+   WRAP( marfs_getdir(path, fdh, fill) );
+}
+
+
+int fuse_flock(const char*            path,
+               struct fuse_file_info* ffi,
+               int                    op) {
+
+   WRAP( marfs_flock(path, (MarFS_FileHandle*)ffi->fh, op) );
+}
+
+
+int fuse_link (const char* path,
+               const char* to) {
+
+   WRAP( marfs_link(path, to) );
+}
+
+
+int fuse_lock(const char*            path,
+              struct fuse_file_info* ffi,
+              int                    cmd,
+              struct flock*          locks) {
+
+   WRAP( marfs_lock(path, (MarFS_FileHandle*)ffi->fh, cmd, locks) );
+}
+
+int fuse_poll(const char*             path,
+              struct fuse_file_info*  ffi,
+              struct fuse_pollhandle* ph,
+              unsigned*               reventsp) {
+
+   WRAP( marfs_poll(path, (MarFS_FileHandle*)ffi->fh, ph, reventsp) );
+}
+
+
+#endif
+
+
+
 
 // ---------------------------------------------------------------------------
 // main
@@ -108,7 +866,8 @@ int main(int argc, char* argv[])
    size_t rc;                   /* used by "TRY" macros */
 
    INIT_LOG();
-   LOG(LOG_INFO, "starting\n");
+   LOG(LOG_INFO, "\n");
+   LOG(LOG_INFO, "=== FUSE starting\n");
 
    // Not sure why, but I've seen machines where I'm logged in as root, and
    // I run fuse in the background, and the process has an euid of some other user.
@@ -156,13 +915,13 @@ int main(int argc, char* argv[])
    //     supporting some repos that use S3 and some that use sproxyd?  In
    //     that case, the s3 requests will need this.  Loading it once
    //     up-front, like this, at start-time, means we don't have to reload
-   //     it inside marfs_open(), for every S3 open, but it also means we
+   //     it inside fuse_open(), for every S3 open, but it also means we
    //     don't know whether we really need it.
    //
    // ALSO: At start-up time, $USER is "root".  If we want per-user S3 IDs,
    //     then we would have to either (a) load them all now, and
-   //     dynamically pick the one we want inside marfs_open(), or (b) call
-   //     aws_read_config() inside marfs_open(), using the euid of the user
+   //     dynamically pick the one we want inside fuse_open(), or (b) call
+   //     aws_read_config() inside fuse_open(), using the euid of the user
    //     to find ~/.awsAuth.
    int config_fail_ok = 1;
 #else
@@ -184,51 +943,51 @@ int main(int argc, char* argv[])
 
    // function-pointers used by fuse, to dispatch calls to our handlers.
    struct fuse_operations marfs_oper = {
-      .init        = marfs_init,
-      .destroy     = marfs_destroy,
+      .init        = marfs_fuse_init,
+      .destroy     = marfs_fuse_exit,
 
-      .access      = marfs_access,
-      .chmod       = marfs_chmod,
-      .chown       = marfs_chown,
-      .fsync       = marfs_fsync,
-      .fsyncdir    = marfs_fsyncdir,
-      .ftruncate   = marfs_ftruncate,
-      .getattr     = marfs_getattr,
-      .getxattr    = marfs_getxattr,
-      .ioctl       = marfs_ioctl,
-      .listxattr   = marfs_listxattr,
-      .mkdir       = marfs_mkdir,
-      .mknod       = marfs_mknod,
-      .open        = marfs_open,
-      .opendir     = marfs_opendir,
-      .read        = marfs_read,
-      .readdir     = marfs_readdir,
-      .readlink    = marfs_readlink,
-      .release     = marfs_release,
-      .releasedir  = marfs_releasedir,
-      .removexattr = marfs_removexattr,
-      .rename      = marfs_rename,
-      .rmdir       = marfs_rmdir,
-      .setxattr    = marfs_setxattr,
-      .statfs      = marfs_statfs,
-      .symlink     = marfs_symlink,
-      .truncate    = marfs_truncate,
-      .unlink      = marfs_unlink,
-      .utime       = marfs_utime, /* deprecated in 2.6 */
-      .utimens     = marfs_utimens,
-      .write       = marfs_write,
+      .access      = fuse_access,
+      .chmod       = fuse_chmod,
+      .chown       = fuse_chown,
+      .ftruncate   = fuse_ftruncate,
+      .fsync       = fuse_fsync,
+      .fsyncdir    = fuse_fsyncdir,
+      .getattr     = fuse_getattr,
+      .getxattr    = fuse_getxattr,
+      .ioctl       = fuse_ioctl,
+      .listxattr   = fuse_listxattr,
+      .mkdir       = fuse_mkdir,
+      .mknod       = fuse_mknod,
+      .open        = fuse_open,
+      .opendir     = fuse_opendir,
+      .read        = fuse_read,
+      .readdir     = fuse_readdir,
+      .readlink    = fuse_readlink,
+      .release     = fuse_release,
+      .releasedir  = fuse_releasedir,
+      .removexattr = fuse_removexattr,
+      .rename      = fuse_rename,
+      .rmdir       = fuse_rmdir,
+      .setxattr    = fuse_setxattr,
+      .statfs      = fuse_statfs,
+      .symlink     = fuse_symlink,
+      .truncate    = fuse_truncate,
+      .unlink      = fuse_unlink,
+      .utime       = fuse_utime, /* deprecated in 2.6 */
+      .utimens     = fuse_utimens,
+      .write       = fuse_write,
 #if 0
       // not implemented
-      .bmap        = marfs_bmap,
-      .create      = marfs_create,
-      .fallocate   = marfs_fallocate /* not in 2.6 */
-      .fgetattr    = marfs_fgetattr,
-      .flock       = marfs_flock,
-      .flush       = marfs_flush,
-      .getdir      = marfs_getdir, /* deprecated in 2.6 */
-      .link        = marfs_link,
-      .lock        = marfs_lock,
-      .poll        = marfs_poll,
+      .bmap        = fuse_bmap,
+      .create      = fuse_create,
+      .fallocate   = fuse_fallocate /* not in 2.6 */
+      .fgetattr    = fuse_fgetattr,
+      .flock       = fuse_flock,
+      .flush       = fuse_flush,
+      .getdir      = fuse_getdir, /* deprecated in 2.6 */
+      .link        = fuse_link,
+      .lock        = fuse_lock,
+      .poll        = fuse_poll,
 #endif
    };
 

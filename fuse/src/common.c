@@ -87,79 +87,33 @@ OF SUCH DAMAGE.
 //
 // These are functions to support the MarFS fuse implementation (and pftool
 // TBD).  These should generally return zero for true, and non-zero for
-// errors.  They should not invert the values to negative, for fuse.  The
-// fuse impl takes care of that.
+// errors.  They should not invert return-values to negative, for fuse.
+// The fuse impl takes care of that.
 // ---------------------------------------------------------------------------
 
 
-
-// push_user()
+// Fuse calls the callback-functions with that part of the path that is
+// below the mount-point.  Thus, the internal support-functions (find namespace, etc)
+// and configuration settings (namespace-names, etc), are defined in terms of these
+// "sub-paths".
 //
-//   Save current user info from syscall into saved_user
-//   Set userid to requesting user (in fuse request structure)
-//   return 0/negative for success/error
+// But pftool gets absolute paths.  It needs to know (a) is this path on a
+// marfs mount-point, and (b) what is the part of the path below the
+// mount-point, so I can call the internal support-functions?  This
+// function answers both questions.
 //
-// NOTE: setuid() doesn't allow returning to priviledged user, from
-//       unpriviledged-user.  For that, we apparently need the (BSD)
-//       seteuid().
-//
-// NOTE: If seteuid() fails, and the problem is that we lack privs to call
-//       seteuid(), this means *we* are running unpriviledged.  This could
-//       happen if we're testing the FUSE mount as a non-root user.  In
-//       this case, the <uid> argument should be the same as the <uid> of
-//       the FUSE process, which we can extract from the fuse_context.
-//       [We try the seteuid() first, for speed]
-//
-int push_user(uid_t* saved_euid) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
-   //   fuse_context* ctx = fuse_get_context();
-   //   if (ctx->flags & PUSHED_USER) {
-   //      LOG(LOG_ERR, "push_user -- already pushed!\n");
-   //      return;
-   //   }
-   *saved_euid = geteuid();
-   uid_t new_uid = fuse_get_context()->uid;
-   LOG(LOG_INFO, "user %ld (euid %ld) -> (euid %ld) ...\n",
-       (size_t)getuid(), (size_t)*saved_euid, (size_t)new_uid);
-   int rc = seteuid(new_uid);
-   if (rc == -1) {
-      if ((errno == EACCES) && (new_uid == getuid())) {
-         LOG(LOG_INFO, "failed (but okay)\n");
-         return 0;              /* okay [see NOTE] */
-      }
-      else {
-         LOG(LOG_ERR, "failed!\n");
-         return -1;
-      }
-   }
-   LOG(LOG_INFO, "success\n");
-   return 0;
-#else
-#  error "No support for seteuid()"
-#endif
-}
-
-
-//  push_user() changes the effective UID.  Here, we revert to the
-//  "real" UID.
-int pop_user(uid_t* saved_euid) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
-   uid_t  new_uid = *saved_euid;
-   int rc = seteuid(new_uid);
-   if (rc == -1) {
-      if ((errno == EACCES) && (new_uid == getuid()))
-         return 0;              /* okay [see NOTE] */
-      else {
-         LOG(LOG_ERR,
-             "pop_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
-             (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
-         return -1;
-      }
-   }
-   return 0;
-#else
-#  error "No support for seteuid()"
-#endif
+// Return the part of the path below the configured marfs <mnt_top", or
+// return NULL if the path is not below there.
+// 
+const char* marfs_sub_path(const char* path) {
+   if (strncmp(path, marfs_config->mnt_top, marfs_config->mnt_top_len))
+      return NULL;
+   else if (! path[marfs_config->mnt_top_len])
+      return "/";
+   else if (path[marfs_config->mnt_top_len] != '/')
+      return NULL;
+   else
+      return path + marfs_config->mnt_top_len;
 }
 
 
@@ -1141,6 +1095,25 @@ int check_quotas(PathInfo* info) {
    // not over quota
    return 0;
 }
+
+
+// update the URL in the ObjectStream, in our FileHandle
+int update_url(ObjectStream* os, PathInfo* info) {
+   //   size_t rc;                   // for TRY
+   //   __TRY0(update_pre, &info->pre);
+   strncpy(os->url, info->pre.objid, MARFS_MAX_URL_SIZE);
+
+   // log the full URL, if possible:
+   IOBuf*        b  = &os->iob;
+   __attribute__ ((unused)) AWSContext*   ctx = ((b) ? b->context : aws_context_clone());
+
+   LOG(LOG_INFO, "generated URL %s %s/%s/%s\n",
+       ((b) ? "" : "(defaults)"),
+       ctx->S3Host, ctx->Bucket, os->url);
+
+   return 0;
+}
+
 
 
 

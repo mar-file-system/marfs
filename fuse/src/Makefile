@@ -93,8 +93,8 @@ CONFIG = $(PWD)/../../common/configuration/src
 FUSE_DEPS =
 
 
-OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_fuse.o
-SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_fuse.c
+OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_ops.o
+SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_ops.c
 H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h
 
 
@@ -143,6 +143,7 @@ CFLAGS  += -Wall -std=c99 -I.
 #   DEBUG = <n>           --    -d -f  [-f means foreground, without threads]
 #
 FUSE_FLAGS += -o allow_other
+
 ifdef DEBUG
 	ifeq ($(DEBUG),)
 		CFLAGS += -O3
@@ -163,9 +164,32 @@ else
 	CFLAGS += -O3
 endif
 
+
+# When mounted, this will accumulate profiling info into /gmon.out
+# After unmounting, you can analyze the profiling info like this:
+#
+#   gprof ./marfs_fuse /gmon.out > gmon.txt
+#
+# NOTE: gprof sucks if threads or kernel are involved.  Ours involves both.
 ifdef GPROF
-	# CFLAGS += -pg
-	CFLAGS = -pg
+	# CFLAGS = -pg
+	CFLAGS  += -pg -g
+	LDFLAGS += -pg -g
+endif
+
+# For use with valgrind:
+#
+#   make clean && make grind
+#   make mnt.grind -->  valgrind --tool=callgrind [callgrind opts] marfs_fuse [fuse opts]
+#   [run exercises]
+#   make umnt
+#   callgrind_annotate [options] callgrind.out.`cat $PID`
+#   
+ifdef GRIND
+	CFLAGS  += -g
+	LDFLAGS += -g
+	# EXEC     = valgrind --leak-check=yes
+	EXEC     = valgrind --tool=callgrind
 endif
 
 
@@ -333,9 +357,12 @@ marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS)
 	gcc $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
 
 
-fuse: fuse.std
-lean: fuse.lean
-dbg:  fuse.dbg
+fuse:  fuse.std
+fast:  fuse.fast
+lean:  fuse.lean
+dbg:   fuse.dbg
+gprof: fuse.gprof
+grind: fuse.grind
 
 # e.g. 'make dbg.static'
 %.static:
@@ -347,8 +374,16 @@ fuse.std: pre_req
 	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1 STATIC_CONFIG=1
 	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1
 
+fuse.fast: pre_req
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 LINK_LIBFUSE=1
+
+fuse.gprof: pre_req
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 LINK_LIBFUSE=1 GPROF=1
+
+fuse.grind: pre_req
+	@ $(MAKE) marfs_fuse USE_SYSLOG=1 LINK_LIBFUSE=1 GRIND=1
+
 fuse.lean: pre_req
-	@ # $(MAKE) marfs_fuse LINK_LIBFUSE=1 STATIC_CONFIG=1
 	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1
 
 fuse.dbg: pre_req
@@ -424,7 +459,7 @@ lib_new: pre_req clean
 _mnt:
 	@ echo
 	@ echo "mounting at $(MNT)"
-	./marfs_fuse $(FUSE_FLAGS) $(MNT) $(LOG) &
+	$(EXEC) ./marfs_fuse $(FUSE_FLAGS) $(MNT) $(LOG) &
 	@ echo "sleeping to give background fuse a chance to start"
 	sleep 1
 	@ ps -elf | grep marfs_fuse | grep $(MNT) | grep -v grep | awk '{print $$4}' > $(PID)
@@ -437,8 +472,11 @@ mnt: mnt.std
 mnt.std: fuse.std umnt.std
 	@ $(MAKE) _mnt DEBUG=$(DEBUG)
 
-mnt.lean: fuse.lean umnt.lean
+mnt.lean: fuse.lean umnt
 	@ $(MAKE) _mnt LOG="> /dev/null 2>&1"
+
+mnt.grind: fuse.grind umnt
+	@ $(MAKE) _mnt GRIND=1
 
 mnt.dbg: fuse.dbg umnt.dbg
 	@ $(MAKE) _mnt MNT=$(MNT)_dbg DEBUG=2 LOG="> fuse.log 2>&1"
@@ -452,15 +490,13 @@ mnt.dbg: fuse.dbg umnt.dbg
 
 # okay to run this even if not mounted
 _umnt:
-	@ echo -n "unmounting $(MNT): "
-	@ (fusermount -q -u $(MNT) && echo "unmounted") || echo "already unmounted"
+	@ echo -n "unmounting $(MNT): ... "
+	@ (fusermount -q -u $(MNT) && echo "unmounted") || echo "already unmounted ?"
 
 
 umnt: umnt.std
 
 umnt.std: _umnt
-
-umnt.lean: _umnt
 
 umnt.dbg:
 	@ $(MAKE) _umnt MNT=$(MNT)_dbg

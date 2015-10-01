@@ -960,11 +960,9 @@ int stream_close(ObjectStream* os) {
    aws_reset_connection_r(os->iob.context);
 
    int retval;
-   if ((os->op_rc > 0)  // probably '(os->op_rc == CURLE_ABORTED_BY_CALLBACK)'
-       && (os->flags & OSF_ABORT)) {
-      LOG(LOG_INFO, "*** TBD: replace 'os->op_rc > 0' with 'os->op_rc == %d\n", os->op_rc);
+   if      ((os->op_rc == CURLE_ABORTED_BY_CALLBACK)
+            && (os->flags & OSF_ABORT))
       retval = 0;
-   }
    else if ((os->op_rc == CURLE_WRITE_ERROR)
             && (os->flags & OSF_JOINED))
       retval = 0;
