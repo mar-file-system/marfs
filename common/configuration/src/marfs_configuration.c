@@ -729,6 +729,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
  */
 
   config = (struct config *) malloc( sizeof( struct config ));
+  memset(config,      0x00, sizeof(struct config));
   if (config == NULL) {
     free( path );
     LOG( LOG_ERR, "Error allocating memory for the config structure.\n");
