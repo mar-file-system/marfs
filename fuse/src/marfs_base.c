@@ -77,7 +77,6 @@ OF SUCH DAMAGE.
 #include <inttypes.h>           /* uintmax_t, for printing ino_t with "%ju" */
 #include <string.h>
 #include <errno.h>
-#include <assert.h>
 #include <arpa/inet.h>          // htonl(), etc
 
 
@@ -834,11 +833,15 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
 
 // from MarFS_XattrShard to string
 int shard_2_str(char* shard_str,        const MarFS_XattrShard* shard) {
-   assert(0);                   // TBD
+   LOG(LOG_ERR, "Not implemented\n");
+   errno = ENOSYS;
+   return -1;
 }
 // from string to MarFS_XattrShard
 int str_2_shard(MarFS_XattrShard* shard, const char* shard_str) {
-   assert(0);                   // TBD
+   LOG(LOG_ERR, "Not implemented\n");
+   errno = ENOSYS;
+   return -1;
 }
 
 
@@ -849,7 +852,9 @@ int str_2_shard(MarFS_XattrShard* shard, const char* shard_str) {
 int rec_2_str(char* rec_str, const size_t max_size, const RecoveryInfo* rec) {
 
    // UNDER CONSTRUCTION ...
-   assert(0);
+   LOG(LOG_ERR, "Not implemented\n");
+   errno = ENOSYS;
+   return -1;
 
 #if 0
    // config-version major and minor
@@ -881,7 +886,8 @@ int rec_2_str(char* rec_str, const size_t max_size, const RecoveryInfo* rec) {
 // from the tail-end of an object.  Use this to convert the string to a
 // RecoveryInfo struct.
 int str_2_rec(RecoveryInfo* rec_info, const char* rec_info_str) {
-   // TBD ...
+   LOG(LOG_ERR, "Not implemented\n");
+   errno = ENOSYS;
    return -1;
 }
 

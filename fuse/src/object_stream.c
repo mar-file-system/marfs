@@ -90,7 +90,6 @@ OF SUCH DAMAGE.
 #include <string.h>
 
 #include <errno.h>
-#include <assert.h>
 
 
 void stream_reset(ObjectStream* os);
@@ -675,9 +674,15 @@ int stream_open(ObjectStream* os, IsPut put) {
       return -1;                // already open
    }
    if (os->flags) {
-      assert(os->flags & OSF_CLOSED);
-      LOG(LOG_INFO, "stream being re-opened with %s\n", os->url);
-      stream_reset(os);
+      if (os->flags & OSF_CLOSED) {
+         LOG(LOG_INFO, "stream being re-opened with %s\n", os->url);
+         stream_reset(os);      // previously-used
+      }
+      else {
+         LOG(LOG_ERR, "%s has flags asserted, but is not CLOSED\n", os->url);
+         errno = EINVAL;
+         return -1;
+      }
    }
 
    os->flags |= OSF_OPEN;

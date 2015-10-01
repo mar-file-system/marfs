@@ -74,7 +74,6 @@ OF SUCH DAMAGE.
 #include "marfs_base.h"
 #include "marfs_ops.h"
 
-#include <assert.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
@@ -468,7 +467,11 @@ int fuse_open (const char*            path,
 
    PUSH_USER();
 
-   assert(ffi->fh == 0);
+   if (ffi->fh != 0) {
+      // failed to free the file-handle in fuse_release()?
+      LOG(LOG_ERR, "unexpected non-NULL file-handle\n");
+      return -EINVAL;
+   }
    if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_FileHandle)))) {
       LOG(LOG_ERR, "couldn't allocate a MarFS_FileHandle\n");
       return -ENOMEM;
@@ -476,7 +479,6 @@ int fuse_open (const char*            path,
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
 
    rc = marfs_open(path, fh, ffi->flags);
-
    if (rc < 0) {
       free(fh);
       ffi->fh = 0;
@@ -492,7 +494,11 @@ int fuse_opendir (const char*            path,
                   struct fuse_file_info* ffi) {
    PUSH_USER();
 
-   assert(ffi->fh == 0);
+   if (ffi->fh != 0) {
+      // failed to free the dirhandle in fuse_releasedir()?
+      LOG(LOG_ERR, "unexpected non-NULL dir-handle\n");
+      return -EINVAL;
+   }
    if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_FileHandle)))) {
       LOG(LOG_ERR, "couldn't allocate a MarFS_FileHandle\n");
       return -ENOMEM;
@@ -500,7 +506,6 @@ int fuse_opendir (const char*            path,
    MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
 
    rc = marfs_opendir(path, dh);
-
    if (rc < 0) {
       free(dh);
       ffi->fh = 0;
@@ -589,7 +594,20 @@ int fuse_readlink (const char* path,
 int fuse_release (const char*            path,
                   struct fuse_file_info* ffi) {
 
-   WRAP( marfs_release(path, (MarFS_FileHandle*)ffi->fh) );
+   PUSH_USER();
+
+   if (! ffi->fh) {
+      LOG(LOG_ERR, "unexpected NULL file-handle\n");
+      return -EINVAL;
+   }
+   MarFS_FileHandle* fh = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+
+   rc = marfs_release(path, fh);
+   free(fh);
+   ffi->fh = 0;
+
+   POP_USER();
+   return rc;
 }
 
 
@@ -613,13 +631,20 @@ int fuse_release (const char*            path,
 int fuse_releasedir (const char*            path,
                      struct fuse_file_info* ffi) {
 
-   // If not running as root, the seteuid() in PUSH_USER() in WRAP() will
-   // fail.  We used to have something like this, to allow that:
-   //
-   //   // PUSH_USER();
-   //   LOG(LOG_INFO, "entry -- skipping push_user(%d)\n", fuse_get_context()->uid);
+   PUSH_USER();
 
-   WRAP( marfs_releasedir(path, (MarFS_DirHandle*)ffi->fh) );
+   if (! ffi->fh) {
+      LOG(LOG_ERR, "unexpected NULL dir-handle\n");
+      return -EINVAL;
+   }
+   MarFS_FileHandle* dh = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+
+   rc = marfs_release(path, dh);
+   free(dh);
+   ffi->fh = 0;
+
+   POP_USER();
+   return rc;
 }
 
 

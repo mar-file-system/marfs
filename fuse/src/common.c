@@ -78,7 +78,6 @@ OF SUCH DAMAGE.
 #include <stdlib.h>             /* calloc() */
 #include <string.h>
 #include <stdio.h>              /* rename() */
-#include <assert.h>
 #include <stdarg.h>
 
 
@@ -347,7 +346,13 @@ int stat_regular(PathInfo* info) {
 
 // return non-zero if info->post.md_path exists
 int md_exists(PathInfo* info) {
-   assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
+   if (! (info->flags & PI_EXPANDED)) {
+      // NOTE: we could just expand it ...
+      LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
+      errno = EINVAL;
+      return -1;
+   }
+
    stat_regular(info);                /* no-op, if already done */
    return (info->st.st_ino != 0);
 }
@@ -505,7 +510,7 @@ int stat_xattrs(PathInfo* info) {
 
       case XVT_SHARD: {
          // TBD ...
-         LOG(LOG_ERR, "shard xattr TBD\n");
+         LOG(LOG_INFO, "shard xattr TBD\n");
          break;
       }
 
@@ -513,7 +518,8 @@ int stat_xattrs(PathInfo* info) {
       default:
          // a key was added to MarFS_attr_specs, but stat_xattrs() wasn't updated
          LOG(LOG_ERR, "unknown xattr %d = '%s'\n", spec->value_type, spec->key_name);
-         assert(0);
+         errno = EINVAL;
+         return -1;
       };
    }
 
@@ -546,12 +552,22 @@ int stat_xattrs(PathInfo* info) {
 //       is stored directly in the post.md_path.
 
 int has_all_xattrs(PathInfo* info, XattrMaskType mask) {
-   assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
+   if (! (info->flags & PI_EXPANDED)) {
+      // NOTE: we could just expand it ...
+      LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
+      errno = EINVAL;
+      return -1;
+   }
    stat_xattrs(info);                  /* no-op, if already done */
    return ((info->xattrs & mask) == mask);
 }
 int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
-   assert(info->flags & PI_EXPANDED); /* expand_path_info() was called? */
+   if (! (info->flags & PI_EXPANDED)) {
+      // NOTE: we could just expand it ...
+      LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
+      errno = EINVAL;
+      return -1;
+   }
    stat_xattrs(info);                  /* no-op, if already done */
    return (info->xattrs & mask);
 }
@@ -746,7 +762,12 @@ int  trash_unlink(PathInfo*   info,
 
    //    pass in expanded_path_info_structure and file name to be trashed
    //    rename mdfile (with all xattrs) into trashmdnamepath,
-   assert(info->flags & PI_EXPANDED);
+   if (! (info->flags & PI_EXPANDED)) {
+      // NOTE: we could just expand it ...
+      LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
+      errno = EINVAL;
+      return -1;
+   }
 
    //    If this has no xattrs (its just a normal file using the md file
    //    for data) just unlink the file and return we have nothing to
@@ -819,7 +840,12 @@ int  trash_truncate(PathInfo*   info,
 
    //    pass in expanded_path_info_structure and file name to be trashed
    //    rename mdfile (with all xattrs) into trashmdnamepath,
-   assert(info->flags & PI_EXPANDED); // could just expand it ...
+   if (! (info->flags & PI_EXPANDED)) {
+      // NOTE: we could just expand it ...
+      LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
+      errno = EINVAL;
+      return -1;
+   }
 
    //    If this has no xattrs (its just a normal file using the md file
    //    for data) just trunc the file and return we have nothing to

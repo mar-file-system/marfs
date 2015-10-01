@@ -84,7 +84,6 @@ include the files on which a code unit depends.
 
 #include "marfs_base.h"
 
-#include <assert.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
