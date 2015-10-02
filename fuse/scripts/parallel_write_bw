@@ -65,13 +65,13 @@ function do_tasks() {
 }
 
 
-# # delete old versions of all files, so we don't measure the cost of
-# # truncating an existing file
-# for i in `seq 1 $N_TASKS`; do
-#     FILE=`filename $i`
-#     echo "deleting $FILE"
-#     rm -f $FILE
-# done
+# delete old versions of all files, so we don't measure the cost of
+# truncating an existing file
+for i in `seq 1 $N_TASKS`; do
+    FILE=`filename $i`
+    echo "deleting $FILE"
+    rm -f $FILE
+done
 
 
 # measure elapsed times for the parallel writes to all complete.

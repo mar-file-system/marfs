@@ -639,7 +639,7 @@ int fuse_releasedir (const char*            path,
    }
    MarFS_FileHandle* dh = (MarFS_FileHandle*)ffi->fh; /* shorthand */
 
-   rc = marfs_release(path, dh);
+   rc = marfs_releasedir(path, dh);
    free(dh);
    ffi->fh = 0;
 
@@ -741,7 +741,26 @@ int fuse_write(const char*            path,
                off_t                  offset,
                struct fuse_file_info* ffi) {
 
+#if 0
    WRAP( marfs_write(path, buf, size, offset, (MarFS_FileHandle*)ffi->fh) );
+#else
+   // EXPERIMENT: For large writes, the kernel will call us with <size> ==
+   //   128k, and marfs_write will hand this off to the curl readfunc
+   //   thread.  Normally, the curl readfunc gets called for increments of
+   //   16k.  However, when using chunked-transfer-encoding, there is an
+   //   overhead of 12 bytes for each transfer (for the CTE header), so the
+   //   callback function actually gets called with for 8 times 16k-12,
+   //   with an extra final call for 96 bytes.
+   //
+   //   If fuse will allow us to only move 16k-96, then maybe we can be more-efficient
+   //   in our interactions with curl.
+
+   size_t reduced = size;
+   if (reduced == (128 * 1024))
+      reduced -= 96;
+
+   WRAP( marfs_write(path, buf, reduced, offset, (MarFS_FileHandle*)ffi->fh) );
+#endif
 }
 
 

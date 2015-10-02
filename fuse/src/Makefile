@@ -180,10 +180,11 @@ endif
 # For use with valgrind:
 #
 #   make clean && make grind
-#   make mnt.grind -->  valgrind --tool=callgrind [callgrind opts] marfs_fuse [fuse opts]
+#   make mnt.grind      -->  valgrind --tool=callgrind [callgrind opts] marfs_fuse [fuse opts]
 #   [run exercises]
 #   make umnt
 #   callgrind_annotate [options] callgrind.out.`cat $PID`
+#   # NOTE: there are actually 2 out-files.
 #   
 ifdef GRIND
 	CFLAGS  += -g
@@ -378,10 +379,10 @@ fuse.fast: pre_req
 	@ $(MAKE) marfs_fuse USE_SYSLOG=1 LINK_LIBFUSE=1
 
 fuse.gprof: pre_req
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 LINK_LIBFUSE=1 GPROF=1
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 GPROF=1
 
 fuse.grind: pre_req
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 LINK_LIBFUSE=1 GRIND=1
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 GRIND=1
 
 fuse.lean: pre_req
 	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1
