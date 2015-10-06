@@ -637,7 +637,7 @@ int fuse_releasedir (const char*            path,
       LOG(LOG_ERR, "unexpected NULL dir-handle\n");
       return -EINVAL;
    }
-   MarFS_FileHandle* dh = (MarFS_FileHandle*)ffi->fh; /* shorthand */
+   MarFS_DirHandle* dh = (MarFS_DirHandle*)ffi->fh; /* shorthand */
 
    rc = marfs_releasedir(path, dh);
    free(dh);
@@ -752,14 +752,16 @@ int fuse_write(const char*            path,
    //   callback function actually gets called with for 8 times 16k-12,
    //   with an extra final call for 96 bytes.
    //
-   //   If fuse will allow us to only move 16k-96, then maybe we can be more-efficient
-   //   in our interactions with curl.
+   //   If fuse will allow us to only move 16k-96, then maybe we can be
+   //   more-efficient in our interactions with curl.
+   //
+   // RESULT: This buys us about ~%20 BW improvement.
+   //
+   size_t wk_size = size;
+   if (wk_size == (128 * 1024))
+      wk_size -= 96;
 
-   size_t reduced = size;
-   if (reduced == (128 * 1024))
-      reduced -= 96;
-
-   WRAP( marfs_write(path, buf, reduced, offset, (MarFS_FileHandle*)ffi->fh) );
+   WRAP( marfs_write(path, buf, wk_size, offset, (MarFS_FileHandle*)ffi->fh) );
 #endif
 }
 
