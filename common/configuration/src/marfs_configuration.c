@@ -438,9 +438,9 @@ static int find_code_index_in_string( char *s, char c, int *index ) {
 int lookup_boolean( const char* str, MarFS_Bool *enumeration ) {
 
   if ( ! strcasecmp( str, "NO" )) {
-    *enumeration = FALSE;
+    *enumeration = _FALSE;
   } else if ( ! strcasecmp( str, "YES" )) {
-    *enumeration = TRUE;
+    *enumeration = _TRUE;
   } else {
     return -1;
   }

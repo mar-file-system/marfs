@@ -68,8 +68,8 @@ extern "C" {
  */
 
 typedef enum {
-  FALSE = 0,
-  TRUE  = 1
+   _FALSE = 0,                  // careful: FALSE/TRUE are predefined in C++
+   _TRUE  = 1
 } MarFS_Bool;
 
 extern int lookup_boolean( const char* str, MarFS_Bool *enumeration );
