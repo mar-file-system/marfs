@@ -95,38 +95,61 @@ OF SUCH DAMAGE.
 void stream_reset(ObjectStream* os);
 
 
+
+
 // ---------------------------------------------------------------------------
-// TBD
+// LOCKING
 //
-// All of the sem_waits should be replaced with something like this.  The
-// idea is that the thread doing an S3_put could have returned due to some
-// error (e.g. in curl, or S3, or server), and we could wait forever on a
-// semaphore that the readfunc is never going to post.
-
-// We should probably iterate in a loop, so that the caller can wait for as
-// long as it takes for the server to time-out and return an error code.
-
-// either wait for as long as curl allows the thread to wait, or we can
-// impose our own time-out.  If the thread does return, the server has
-// probably returned an error-code, or curl has failed for some reason.  If
-// so, then return some error-code ourselves.
-
+// Depending on whether SPINLOCKS is defined (e.g. compile with
+// -DSPINLOCKS), we either use semaphores or our new PoliteSpinLocks, to
+// synchronize between a user (e.g. fuse) calling stream_put/get and the
+// thread that receives callbacks form curl to read/write more data for the
+// user.
+//
+// With semaphores, and 4 concurrent fuse writers, we're seeing ~300k
+// context-switches/sec, on the object-servers.  That drops to ~18k
+// context-switches/sec, when using the polite spin-locks.
+//
+// I had thought this might explain the poor parallel bandwidth through fuse.
+// Unfortunately, this isn't causing an improvement, there.
 // ---------------------------------------------------------------------------
 
-#if TBD
 
-#include <time.h>
+#ifdef SPINLOCKS
 
-#define WAIT_SEM(SEM, OS)                       \
-  do {                                          \
-     int rc = timed_sem_wait((SEM), (OS));     \
-     if (rc)                                    \
-        return (rc);                            \
-  } while (0)
+// ...........................................................................
+// spinlocks
+// ...........................................................................
 
-#endif
+#define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC)                                 \
+   do {                                                                 \
+      if (PSL_wait_with_timeout((SEM_PTR), (TIMEOUT_SEC))) {            \
+         LOG(LOG_ERR, "PSL_wait_with_timeout failed. (%s)\n", strerror(errno)); \
+         return -1;                                                     \
+      }                                                                 \
+   } while (0)
+
+#define SAFE_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS)                        \
+   do {                                                                 \
+      if (PSL_wait_with_timeout((SEM_PTR), (TIMEOUT_SEC))) {            \
+         LOG(LOG_ERR, "PSL_wait_with_timeout failed. (%s) Aborting.\n", strerror(errno)); \
+         pthread_kill((OS)->op, SIGKILL);                               \
+         return -1;                                                     \
+      }                                                                 \
+   } while (0)
+
+#define WAIT(PSL)                        PSL_wait(PSL)
+#define POST(PSL)                        PSL_post(PSL)
+#define SEM_INIT(PSL, IGNORE, VALUE)     PSL_init((PSL), (VALUE))
+#define SEM_DESTROY(PSL)
 
 
+
+#else
+
+// ...........................................................................
+// semaphores
+// ...........................................................................
 
 int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
 
@@ -154,12 +177,7 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
    }
 }
 
-/* #define safe_sem_wait(SEM, TIMEOUT, OS)                              \
-   safe_sem_wait_internal((SEM), (TIMEOUT), (OS), __FILE__, __LINE__)
-   int safe_sem_wait_internal(sem_t* sem, size_t timeout_sec, ObjectStream* os, char* file, char* line) {
-*/
-
-#define SAFE_SEM_WAIT(SEM_PTR, TIMEOUT_SEC)                             \
+#define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC)                                 \
    do {                                                                 \
       if (timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))) {                   \
          LOG(LOG_ERR, "timed_sem_wait failed. (%s)\n", strerror(errno)); \
@@ -167,7 +185,7 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
       }                                                                 \
    } while (0)
 
-#define SAFE_SEM_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS)                    \
+#define SAFE_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS)                        \
    do {                                                                 \
       if (timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))) {                   \
          LOG(LOG_ERR, "timed_sem_wait failed. (%s) Aborting.\n", strerror(errno)); \
@@ -175,6 +193,14 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
          return -1;                                                     \
       }                                                                 \
    } while (0)
+
+
+#define WAIT(SEM)                        sem_wait(SEM)
+#define POST(SEM)                        sem_post(SEM)
+#define SEM_INIT(SEM, SHARED, VALUE)     sem_init((SEM), (SHARED), (VALUE))
+#define SEM_DESTROY(SEM)                 sem_destroy(SEM)
+
+#endif
 
 
 
@@ -298,7 +324,7 @@ int s3_op_internal(ObjectStream* os) {
       // should we do something with os->iob_full?  set os->flags & EOF?
       LOG(LOG_INFO, "GET complete\n");
       os->flags |= OSF_EOF;
-      sem_post(&os->iob_full);
+      POST(&os->iob_full);
       return 0;
    }
    else if (AWS4C_OK(b) ) {
@@ -352,20 +378,20 @@ size_t streaming_readfunc(void* ptr, size_t size, size_t nmemb, void* stream) {
    LOG(LOG_INFO, "curl buff %ld\n", total);
 
    // wait for producer to fill buffers
-   sem_wait(&os->iob_full);
+   WAIT(&os->iob_full);
    LOG(LOG_INFO, "avail-data: %ld\n", b->avail);
 
    // maybe we were requested to quit or abort?
    if (b->write_count == 0) {
       // called by stream_sync()
       LOG(LOG_INFO, "got EOF\n");
-      sem_post(&os->iob_empty); // polite
+      POST(&os->iob_empty); // polite
       return 0;
    }
    else if (b->first->buf == (char*)1) {
       // called by stream_abort()
       LOG(LOG_INFO, "got ABORT\n");
-      sem_post(&os->iob_empty); // polite
+      POST(&os->iob_empty); // polite
       return CURL_READFUNC_ABORT;
    }
 
@@ -380,11 +406,11 @@ size_t streaming_readfunc(void* ptr, size_t size, size_t nmemb, void* stream) {
 
    if (b->avail) {
       LOG(LOG_INFO, "iterating\n");
-      sem_post(&os->iob_full);  // next callback is pre-approved
+      POST(&os->iob_full);  // next callback is pre-approved
    }
    else {
       LOG(LOG_INFO, "done with buffer (total written %ld)\n", os->written);
-      sem_post(&os->iob_empty); // tell producer that buffer is used
+      POST(&os->iob_empty); // tell producer that buffer is used
    }
 
    return moved;
@@ -417,16 +443,49 @@ int stream_put(ObjectStream* os,
    }
    IOBuf* b = &os->iob;         // shorthand
 
+#if 0
+   // QUESTION: Does it improve performance to copy the caller's buffer,
+   //    so we can return immediately?
+   //
+   // ANSWER: No.
+   LOG(LOG_INFO, "waiting for IOBuf\n"); // readfunc done with IOBuf?
+   SAFE_WAIT(&os->iob_empty, put_timeout_sec);
+
+   static size_t tmp_size = 0;
+   static char*  tmp_buf = NULL;
+   if (size > tmp_size) {
+      if (tmp_size)
+         free(tmp_buf);
+      tmp_size = size;
+      tmp_buf = (char*) malloc(size);
+      if (! tmp_buf) {
+         errno = ENOMEM;
+         return -1;
+      }
+   }
+   memcpy(tmp_buf, buf, size);
+   
+   // install buffer into IOBuf
+   aws_iobuf_reset(b);          // doesn't affect <user_data>
+   aws_iobuf_append_static(b, tmp_buf, size);
+   LOG(LOG_INFO, "installed buffer (%ld bytes) for readfn\n", size);
+
+   // let readfunc move data
+   POST(&os->iob_full);
+
+#else
    // install buffer into IOBuf
    aws_iobuf_reset(b);          // doesn't affect <user_data>
    aws_iobuf_append_static(b, (char*)buf, size);
    LOG(LOG_INFO, "installed buffer (%ld bytes) for readfn\n", size);
 
    // let readfunc move data
-   sem_post(&os->iob_full);
+   POST(&os->iob_full);
 
    LOG(LOG_INFO, "waiting for IOBuf\n"); // readfunc done with IOBuf?
-   SAFE_SEM_WAIT(&os->iob_empty, put_timeout_sec);
+   SAFE_WAIT(&os->iob_empty, put_timeout_sec);
+
+#endif
 
    LOG(LOG_INFO, "buffer done\n"); // readfunc done with IOBuf?
    return size;
@@ -503,7 +562,7 @@ size_t streaming_writeheaderfunc(void* ptr, size_t size, size_t nitems, void* st
       if (!b->contentLen) {
          LOG(LOG_INFO, "detected EOF\n"); // readfunc done with IOBuf?
          os->flags |= OSF_EOF;                            // (or error)
-         sem_post(&os->iob_full);
+         POST(&os->iob_full);
       }
       else
          LOG(LOG_INFO, "content-length (%ld) is non-zero\n", b->contentLen);
@@ -519,21 +578,21 @@ size_t streaming_writefunc(void* ptr, size_t size, size_t nmemb, void* stream) {
    LOG(LOG_INFO, "curl-buff %ld\n", total);
 
    // wait for user-buffer, supplied to stream_get()
-   sem_wait(&os->iob_empty);
+   WAIT(&os->iob_empty);
    LOG(LOG_INFO, "user-buff %ld\n", (b->len - b->write_count));
 
    // maybe we were requested to quit?
    if (b->first == NULL) {
       // called by stream_sync()
       LOG(LOG_INFO, "got QUIT\n");
-      sem_post(&os->iob_full);
+      POST(&os->iob_full);
       return 0;           // op-thread will fail with CURLE_WRITE_ERROR (?)
    }
 
    // check for EOF on the object
    if (! total) {
       os->flags |= OSF_EOF;
-      sem_post(&os->iob_full);
+      POST(&os->iob_full);
       LOG(LOG_INFO, "EOF done\n");
       return 0;
    }
@@ -549,14 +608,14 @@ size_t streaming_writefunc(void* ptr, size_t size, size_t nmemb, void* stream) {
       if (! writable) {
          LOG(LOG_INFO, "user-buff is full\n");
          os->flags |= OSF_EOB;     // need fresh buffer from stream_get()
-         sem_post(&os->iob_full);
-         sem_wait(&os->iob_empty);
+         POST(&os->iob_full);
+         WAIT(&os->iob_empty);
 
          // maybe we were requested to quit?
          if (b->first == NULL) {
             // called by stream_sync()
             LOG(LOG_INFO, "got QUIT\n");
-            sem_post(&os->iob_full);
+            POST(&os->iob_full);
             return 0;           // op-thread will fail with CURLE_WRITE_ERROR (?)
          }
 
@@ -576,10 +635,10 @@ size_t streaming_writefunc(void* ptr, size_t size, size_t nmemb, void* stream) {
    // curl-buffer is exhausted.
    LOG(LOG_INFO, "copied all of curl-buff (writable=%ld)\n", writable);
    if (writable)
-      sem_post(&os->iob_empty); // next curl-callback is pre-approved
+      POST(&os->iob_empty); // next curl-callback is pre-approved
    else {
       os->flags |= OSF_EOB;     // need fresh buffer from stream_get()
-      sem_post(&os->iob_full);
+      POST(&os->iob_full);
    }
    return total;                /* to curl */
 }
@@ -624,11 +683,11 @@ ssize_t stream_get(ObjectStream* os,
    LOG(LOG_INFO, "got %ld-byte buffer for writefn\n", size);
 
    // let writefn move data
-   sem_post(&os->iob_empty);
+   POST(&os->iob_empty);
 
    // wait for writefn to fill our buffer
    LOG(LOG_INFO, "waiting for writefn\n");
-   SAFE_SEM_WAIT(&os->iob_full, get_timeout_sec);
+   SAFE_WAIT(&os->iob_full, get_timeout_sec);
 
    // writefn detected CURL EOF?
    if (os->flags & OSF_EOF) {
@@ -708,13 +767,13 @@ int stream_open(ObjectStream* os, IsPut put) {
 
    aws_iobuf_reset(b);          // doesn't affect <user_data> or <context>
    if (put) {
-      sem_init(&os->iob_empty, 0, 0);
-      sem_init(&os->iob_full,  0, 0);
+      SEM_INIT(&os->iob_empty, 0, 0);
+      SEM_INIT(&os->iob_full,  0, 0);
       aws_iobuf_readfunc(b, &streaming_readfunc);
    }
    else {
-      sem_init(&os->iob_empty, 0, 0);
-      sem_init(&os->iob_full,  0, 0);
+      SEM_INIT(&os->iob_empty, 0, 0);
+      SEM_INIT(&os->iob_full,  0, 0);
       aws_iobuf_headerfunc(b, &streaming_writeheaderfunc);
       aws_iobuf_writefunc(b, &streaming_writefunc);
    }
@@ -954,8 +1013,8 @@ int stream_close(ObjectStream* os) {
       return -1;
    }
 
-   sem_destroy(&os->iob_empty);
-   sem_destroy(&os->iob_full);
+   SEM_DESTROY(&os->iob_empty);
+   SEM_DESTROY(&os->iob_full);
 
    os->flags &= ~(OSF_OPEN);
    os->flags |= OSF_CLOSED;     /* so stream_open() can identify re-opens */

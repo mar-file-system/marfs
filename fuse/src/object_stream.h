@@ -118,7 +118,12 @@ OF SUCH DAMAGE.
 #include "common.h"             // only for MARFS_MAX_URL_SIZE
 #include <aws4c.h>
 #include <pthread.h>
-#include <semaphore.h>
+
+#ifdef SPINLOCKS
+#  include "spinlock.h"
+#else
+#  include <semaphore.h>
+#endif
 
 
 
@@ -142,8 +147,13 @@ typedef enum {
 typedef struct {
    // This comes from libaws4c
    IOBuf             iob;       // should be VOLATILE ?
-   sem_t             iob_empty; // e.g. stream_to_write() can add data?
-   sem_t             iob_full;  // e.g. curl readfunc can copy to PUT-stream
+#ifdef SPINLOCKS
+   struct PoliteSpinLock iob_empty; // e.g. stream_write() can add data?
+   struct PoliteSpinLock iob_full;  // e.g. curl readfunc can copy to PUT-stream
+#else
+   sem_t                 iob_empty; // e.g. stream_write() can add data?
+   sem_t                 iob_full;  // e.g. curl readfunc can copy to PUT-stream
+#endif
    pthread_t         op;        // GET/PUT
    int               op_rc;     // typically 0 or -1  (see iob.result, for curl/S3 errors)
    char              url[MARFS_MAX_URL_SIZE]; // WARNING: only valid during open_object()

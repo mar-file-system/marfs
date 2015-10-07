@@ -205,7 +205,7 @@ endif
 #       [any]   make ... LIBAWS4C=/my/path/to/aws4c
 CFLAGS    += -I$(LIBAWS4C)
 LDFLAGS   += -L$(LIBAWS4C)
-LIBS      += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread
+LIBS      += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread -lrt
 FUSE_DEPS += $(LIBAWS4C)/libaws4c.a
 
 
@@ -229,12 +229,23 @@ ifdef LOG_PREFIX
 endif
 
 
-
-
 # NOTE: Confusingly, this DOES NOT control whether SPROXYD will be used.
 #    currently, this just tells fuse that it's okay if ~/.awsAuth doesn't exist
 ifdef USE_SPROXYD
 	DEFS += USE_SPROXYD=1
+endif
+
+
+# This affects thread-locking in object-streams.c (controlling interaction
+# between object-streams and curl callbacks to op-thread).  Without this,
+# we'll use semaphores, which seem to incur huge context-switching
+# overhead.  With this, we'll use our PoliteSpinLock, which doesn't
+# actually burn a lot of CPU.
+ifdef SPINLOCKS
+	DEFS += SPINLOCKS
+	OBJS += spinlock.o spinlock_asm.o
+	H    += spinlock.h
+	LIBS += -lrt
 endif
 
 
@@ -250,7 +261,6 @@ else
 	LIBS      += -lconfig
 	FUSE_DEPS += $(CONFIG)/libconfig.a
 endif
-
 
 
 # If we are building the 'lib' targets for others (e.g. pftool, GC, quota,
@@ -308,6 +318,9 @@ marfs_configuration.o: $(CONFIG)/marfs_configuration.c $(CONFIG)/marfs_configura
 	gcc -o $@ $< $(LDFLAGS) $(LIBS)
 
 %.o: %.c %.h
+	gcc -c $(CFLAGS) -o $@ $<
+
+%.o: %.s
 	gcc -c $(CFLAGS) -o $@ $<
 
 
@@ -632,6 +645,17 @@ foo.multi.4096:
 # applications that link with various marfs support libs
 demo_%: demo_%.o $(OBJS)
 	gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
+
+# test app that links with assembly-code
+test_lock: test_lock.c spinlock_asm.s
+	gcc -g -o $@ $^ -lpthread -lrt
+
+test_lock2: test_lock2.c spinlock_asm.o spinlock.h spinlock.o
+	gcc -g -o $@ $^ -lpthread -lrt
+
+test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
+	gcc -g -o $@ $^ -lpthread -lrt
+
 
 # lines-of-code
 loc:
