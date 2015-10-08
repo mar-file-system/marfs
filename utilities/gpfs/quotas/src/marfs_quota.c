@@ -435,7 +435,8 @@ int read_inodes(const char    *fnameP,
 
    int last_struct_index = -1;
    unsigned int struct_index;
-   unsigned int trash_index = 0;
+   int fileset_trash_index = 0;
+   int trash_index = -1;
  
    unsigned int last_fileset_id = -1;
 
@@ -587,9 +588,10 @@ int read_inodes(const char    *fnameP,
                if ( post.flags & POST_TRASH ) {
                   xattr_ptr = &mar_xattrs[0];
                   md_path_ptr = &post.md_path[0];
-                  trash_index = lookup_fileset_path(fileset_stat_ptr, 
-                                                    rec_count, md_path_ptr);
-                  if (trash_index == -1) {
+                  fileset_trash_index = lookup_fileset_path(fileset_stat_ptr, 
+                                                    rec_count, &trash_index, 
+                                                    md_path_ptr);
+                  if (fileset_trash_index == -1) {
                      fprintf(stderr, "Error finding .path file for %s", 
                              fileset_stat_ptr->fileset_name);
                      fprintf(stderr, "md_path =%s\n", 
@@ -597,8 +599,13 @@ int read_inodes(const char    *fnameP,
                      continue;
                   }
                   else {
-                     fileset_stat_ptr[trash_index].sum_trash += iattrP->ia_size;
-                     fileset_stat_ptr[trash_index].sum_trash_file_count += 1;
+                     fileset_stat_ptr[fileset_trash_index].sum_trash += iattrP->ia_size;
+                     fileset_stat_ptr[fileset_trash_index].sum_trash_file_count += 1;
+                     if (trash_index != -1) {
+                        fileset_stat_ptr[trash_index].sum_size += iattrP->ia_size;
+                        fileset_stat_ptr[trash_index].sum_file_count += 1;
+
+                     } 
                   }
                }
             }
@@ -788,7 +795,7 @@ void update_type(MarFS_XattrPost * xattr_post,
 
 *** ***************************************************************************/
 int lookup_fileset_path(Fileset_Stats *fileset_stat_ptr, size_t rec_count, 
-                        char *md_path_ptr)
+                        int *trash_index, char *md_path_ptr)
 {
   FILE *pipe_cat;
   int i, index = -1;
@@ -821,9 +828,12 @@ int lookup_fileset_path(Fileset_Stats *fileset_stat_ptr, size_t rec_count,
    for (i = 0; i < rec_count; i++) {
        //printf("AAAAAA %s %s\n", fileset_stat_ptr[i].fileset_name,path);
        //printf("fileset = %s\n", fileset_stat_ptr[i].fileset_name);
-       if(strstr(path,fileset_stat_ptr[i].fileset_name) != NULL) {
+       if(strstr(path,fileset_stat_ptr[i].fileset_name) != NULL && index == -1 ) {
           index=i;
-          break;
+       }
+       // Get trash index so that quota stats may reflect all trash found
+       if(strstr("trash", fileset_stat_ptr[i].fileset_name) != NULL) {
+          *trash_index = i;
        }
    } 
    return(index);
