@@ -598,7 +598,12 @@ int marfs_mknod (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA | T_DATA));
 
    // Check/act on quotas of total-space and total-num-names
-   CHECK_QUOTAS(&info);
+   // 0=OK, 1=exceeded, -1=error
+   TRY_GE0(check_quotas, &info);
+   if (rc_ssize) {
+      errno = EDQUOT;
+      return -1;
+   }
 
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure

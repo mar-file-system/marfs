@@ -185,7 +185,7 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY0(%s)\n", #FUNCTION); */                     \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "FAIL: %s (%lu), errno=%d '%s'\n\n",             \
+         LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
              #FUNCTION, rc, errno, strerror(errno));                    \
          RETURN(-1);                                                    \
       }                                                                 \
@@ -228,7 +228,7 @@ typedef enum {
       LOG(LOG_INFO, "TRY0: %s\n", #FUNCTION);                           \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
-         LOG(LOG_INFO, "FAIL: %s (%lu), errno=%d '%s'\n\n",             \
+         LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
              #FUNCTION, rc, errno, strerror(errno));                    \
          RETURN(-errno);                                                \
       }                                                                 \
@@ -271,7 +271,6 @@ typedef enum {
    } while (0)
 
 #define ACCESS(PATH, PERMS)            TRY0(access, (PATH), (PERMS))
-#define CHECK_QUOTAS(INFO)             TRY0(check_quotas, (INFO))
 
 
 

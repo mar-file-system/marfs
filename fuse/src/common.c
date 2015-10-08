@@ -1041,7 +1041,9 @@ int trunc_xattr(PathInfo* info) {
 
 
 
-// return non-zero if there's no more space (according to user's quota).
+// return 0    if the quota is not exceeded
+// return > 0  if there's no more space (according to user's quota).
+// return < 0  for errors  (with errno)
 //
 // Namespace.fsinfo has a path to a file where info about overall
 // space-usage is maintained in a custom way.  The idea is that a batch
@@ -1109,8 +1111,11 @@ int check_quotas(PathInfo* info) {
          errno = EINVAL;
          return -1;
       }
-      if (st.st_size >= space_limit) /* 0 = OK,  1 = no-more-space */
-         return -1;
+      if (st.st_size > space_limit) { /* 0 = OK,  1 = no-more-space */
+         LOG(LOG_INFO, "quota (%lu) exceeded by %lu\n",
+             space_limit, (st.st_size - space_limit));
+         return 1;
+      }
    }
 
    // not over quota
