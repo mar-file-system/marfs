@@ -102,10 +102,11 @@ OF SUCH DAMAGE.
 #define PUSH_USER()                                                     \
    ENTRY();                                                             \
    uid_t saved_euid = -1;                                               \
-   __TRY0(push_user, &saved_euid)
+   gid_t saved_egid = -1;                                               \
+   __TRY0(push_user, &saved_euid, &saved_egid)
 
 #define POP_USER()                                                      \
-   __TRY0(pop_user, &saved_euid);                                       \
+   __TRY0(pop_user, &saved_euid, &saved_egid);                          \
    EXIT()
 
 
@@ -126,18 +127,36 @@ OF SUCH DAMAGE.
 //       the FUSE process, which we can extract from the fuse_context.
 //       [We try the seteuid() first, for speed]
 //
-int push_user(uid_t* saved_euid) {
+int push_user(uid_t* saved_euid, gid_t* saved_egid) {
 #if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
    //   fuse_context* ctx = fuse_get_context();
    //   if (ctx->flags & PUSHED_USER) {
    //      LOG(LOG_ERR, "push_user -- already pushed!\n");
    //      return;
    //   }
+   int rc;
+
+   *saved_egid = getegid();
+   gid_t new_gid = fuse_get_context()->gid;
+   LOG(LOG_INFO, "user %ld (egid %ld) -> (egid %ld) ...\n",
+       (size_t)getgid(), (size_t)*saved_egid, (size_t)new_gid);
+   rc = setegid(new_gid);
+   if (rc == -1) {
+      if ((errno == EACCES) && (new_gid == getgid())) {
+         LOG(LOG_INFO, "failed (but okay)\n");
+         return 0;              /* okay [see NOTE] */
+      }
+      else {
+         LOG(LOG_ERR, "failed!\n");
+         return -1;
+      }
+   }
+
    *saved_euid = geteuid();
    uid_t new_uid = fuse_get_context()->uid;
    LOG(LOG_INFO, "user %ld (euid %ld) -> (euid %ld) ...\n",
        (size_t)getuid(), (size_t)*saved_euid, (size_t)new_uid);
-   int rc = seteuid(new_uid);
+   rc = seteuid(new_uid);
    if (rc == -1) {
       if ((errno == EACCES) && (new_uid == getuid())) {
          LOG(LOG_INFO, "failed (but okay)\n");
@@ -148,19 +167,22 @@ int push_user(uid_t* saved_euid) {
          return -1;
       }
    }
+
    return 0;
 #else
-#  error "No support for seteuid()"
+#  error "No support for seteuid()/setegid()"
 #endif
 }
 
 
 //  pop_user() changes the effective UID.  Here, we revert to the
 //  "real" UID.
-int pop_user(uid_t* saved_euid) {
+int pop_user(uid_t* saved_euid, gid_t* saved_egid) {
 #if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+   int rc;
+
    uid_t  new_uid = *saved_euid;
-   int rc = seteuid(new_uid);
+   rc = seteuid(new_uid);
    if (rc == -1) {
       if ((errno == EACCES) && (new_uid == getuid()))
          return 0;              /* okay [see NOTE] */
@@ -171,9 +193,23 @@ int pop_user(uid_t* saved_euid) {
          return -1;
       }
    }
+
+   gid_t  new_gid = *saved_egid;
+   rc = setegid(new_gid);
+   if (rc == -1) {
+      if ((errno == EACCES) && (new_gid == getgid()))
+         return 0;              /* okay [see NOTE] */
+      else {
+         LOG(LOG_ERR,
+             "pop_user -- user %ld (egid %ld) failed setegid(%ld)!\n",
+             (size_t)getgid(), (size_t)getegid(), (size_t)new_gid);
+         return -1;
+      }
+   }
+
    return 0;
 #else
-#  error "No support for seteuid()"
+#  error "No support for seteuid()/setegid()"
 #endif
 }
 
