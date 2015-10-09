@@ -514,7 +514,7 @@ int fuse_open (const char*            path,
    }
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
 
-   rc = marfs_open(path, fh, ffi->flags);
+   rc = marfs_open(path, fh, ffi->flags, OSOF_CTE);
    if (rc < 0) {
       free(fh);
       ffi->fh = 0;

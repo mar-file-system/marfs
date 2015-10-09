@@ -134,7 +134,7 @@ int  marfs_mkdir(const char* path, mode_t mode);
 
 int  marfs_mknod(const char* path, mode_t mode, dev_t rdev);
 
-int  marfs_open(const char* path, MarFS_FileHandle* fh, int flags);
+int  marfs_open(const char* path, MarFS_FileHandle* fh, int flags, OSOpenFlags str_flags);
 
 int  marfs_opendir(const char* path, MarFS_DirHandle* dh);
 

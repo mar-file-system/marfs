@@ -297,7 +297,7 @@ WORK = 10.146.0.2
 
 # only works on ccstargate, or cc-gate
 fromwork:
-	rsync -Pvaurl root@$(WORK):/root/projects/marfs/git/ ~/projects/marfs/git
+	rsync -Pvaurl  --exclude=foo.tcpdump\* root@$(WORK):/root/projects/marfs/git/ ~/projects/marfs/git
 	rsync -Pvaurl root@$(WORK):/root/projects/ecs_hobo/tools/aws4c/ ~/projects/ecs_hobo/tools/aws4c
 	rsync -Pvaurl root@$(WORK):/root/projects/ecs_hobo/tools/curl_tools/ ~/projects/ecs_hobo/tools/curl_tools
 

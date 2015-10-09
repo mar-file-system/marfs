@@ -132,6 +132,7 @@ extern "C" {
 #  endif
 
 
+// internal flags in an ObjectStream
 typedef enum {
    OSF_OPEN       = 0x01,
    OSF_WRITING    = 0x02,
@@ -143,22 +144,40 @@ typedef enum {
    OSF_CLOSED     = 0x80,
 } OSFlags;
 
+// flags for call to stream_open()
+typedef enum {
+   OSOF_CTE       = 0x01,       // use chunked transfer-encoding
+} OSOpenFlags;
+
+
+//  For stream_write(), the op-thread runs s3_put(), and acts as a
+//  consumer.  It waits for iob_full to be set by stream_write(), and then
+//  begins to interact with the streaming_readfunc() to move data to curl
+//  [curl is "reading" the data we are writing] Meanwhile stream_write()
+//  waits for the thread to set iob_empty, before returning.
+//
+//  For stream_read(), the op-thread runs s3_get(), and acts as a producer.
+//  It waits for iob_empty to be set by stream_read(), and then begins to
+//  interact with the streaming_writefunc() to move data from curl [curl is
+//  "writing" the data we are reading] Meanwhile stream_read() waits for
+//  the thread to set iob_full, before returning.
 
 typedef struct {
    // This comes from libaws4c
    IOBuf             iob;       // should be VOLATILE ?
 #ifdef SPINLOCKS
-   struct PoliteSpinLock iob_empty; // e.g. stream_write() can add data?
-   struct PoliteSpinLock iob_full;  // e.g. curl readfunc can copy to PUT-stream
+   struct PoliteSpinLock iob_empty;
+   struct PoliteSpinLock iob_full;
 #else
-   sem_t                 iob_empty; // e.g. stream_write() can add data?
-   sem_t                 iob_full;  // e.g. curl readfunc can copy to PUT-stream
+   sem_t                 iob_empty;
+   sem_t                 iob_full;
 #endif
    pthread_t         op;        // GET/PUT
    int               op_rc;     // typically 0 or -1  (see iob.result, for curl/S3 errors)
    char              url[MARFS_MAX_URL_SIZE]; // WARNING: only valid during open_object()
    size_t            written;   // bytes written-to/read-from stream
    volatile OSFlags  flags;
+   OSOpenFlags       open_flags; // caller's open flags, for when we need to close/repoen
 } ObjectStream;
 
 
@@ -168,9 +187,8 @@ typedef enum {
 } IsPut;
 
 
-
 // initialize os.url, before calling
-int     stream_open(ObjectStream* os, IsPut put);
+int     stream_open(ObjectStream* os, IsPut put, OSOpenFlags flags);
 
 int     stream_put(ObjectStream* os, const char* buf, size_t size);
 ssize_t stream_get(ObjectStream* os, char* buf,       size_t size);

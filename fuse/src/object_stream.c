@@ -724,7 +724,7 @@ ssize_t stream_get(ObjectStream* os,
 //       
 // ---------------------------------------------------------------------------
 
-int stream_open(ObjectStream* os, IsPut put) {
+int stream_open(ObjectStream* os, IsPut put, OSOpenFlags open_flags) {
    LOG(LOG_INFO, "%s\n", ((put) ? "PUT" : "GET"));
 
    if (os->flags & OSF_OPEN) {
@@ -752,18 +752,26 @@ int stream_open(ObjectStream* os, IsPut put) {
       os->flags |= OSF_READING;
 
 
-   IOBuf* b = &os->iob;         // shorthand
+   // caller's open-flags, in case we need to close/repoen (e.g. for Multi)
+   os->open_flags = open_flags;
+
+   // shorthand
+   IOBuf* b = &os->iob;
 
    // readfunc/writefunc just get the IOBuf from libaws4c, but they need
    // the ObjectStream.  So IOBuf now has a pointer to allow this.
    b->user_data = os;
 
    // install copy of global default-context as per-connection context 
-   if (! b->context)
+   if (! b->context) {
+      LOG(LOG_INFO, "No context.  Cloning from defaults.\n");
       aws_iobuf_context(b, aws_context_clone());
+   }
 
    AWSContext* ctx = b->context;
-   s3_chunked_transfer_encoding_r(1, ctx);
+
+   if (open_flags & OSOF_CTE)
+      s3_chunked_transfer_encoding_r(1, ctx);
 
    aws_iobuf_reset(b);          // doesn't affect <user_data> or <context>
    if (put) {

@@ -246,7 +246,8 @@ int marfs_ftruncate(const char*            path,
    ENTRY();
 
    PathInfo*         info = &fh->info;                  /* shorthand */
-   // IOBuf*            b    = &fh->os.iob;                /* shorthand */
+   ObjectStream*     os   = &fh->os;
+   // IOBuf*            b    = &fh->os.iob;
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
    CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
@@ -296,14 +297,14 @@ int marfs_ftruncate(const char*            path,
 
    // object-stream is still open to the old object.  Close that in such a
    // way that the server will not persist the PUT.
-   TRY0(stream_abort, &fh->os);
-   TRY0(stream_close, &fh->os);
+   TRY0(stream_abort, os);
+   TRY0(stream_close, os);
 
    // open a stream to the new object.  We assume that the libaws4c context
    // initializations done in marfs_open are still valid.  trash_truncate()
    // will already have updated our URL.
-   TRY0(update_url, &fh->os, info);
-   TRY0(stream_open, &fh->os, OS_PUT);
+   TRY0(update_url, os, info);
+   TRY0(stream_open, os, OS_PUT, os->open_flags);
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
@@ -662,9 +663,6 @@ int marfs_mknod (const char* path,
 // file open.  Therefore, we re-#define RETURN() to add some custom
 // clean-up to the common macros.  (See discussion below.)
 
-
-
-
 // NOTE: stream_open() assumes the OS is in a pristine state.  marfs_open()
 //       currently always allocates a fresh OS (inside the new FileHandle),
 //       so that assumption is safe.  stream_close() doesn't wipe
@@ -673,9 +671,34 @@ int marfs_mknod (const char* path,
 //       you should probably (a) assure they have been flushed/closed, and
 //       (b) wipe them clean.  [See marfs_read(), which sometimes reuses
 //       the ObjectStream inside the FileHandle.]
+
+// NOTE: We now take an additional set of "stream" flags, which are
+//       ultimately passed to stream_open().  These allow the underlying
+//       stream to be given different properties, for the needs of fuse
+//       versus pftool.  Currently, this is only used for setting CTE on
+//       write streams used by fuse.
+//
+//       For example, Fuse write doesn't know how big the file will be, so
+//       it can't tell the server (in the PUT header) how many bytes are
+//       going to be written, so it must write with
+//       chunked-transfer-encoding, which is somewhat less effecient,
+//       especially at the server.  Thus, fuse would use stream_flags ==
+//       OSOF_CTE.
+//
+//       On the other hand, pftool *does* know how big the file it's
+//       writing is going to be.  Therefore, pftool could supply
+//       stream_flags=0.  The "content-length" header will be computed in
+//       stream_write as either (a) the size of the iobuf contents, or (b)
+//       the size of the file being copied.  Either way, pftool can't do
+//       another write to the same stream (without closing and re-opening),
+//       because the content-length header will already have said how much
+//       data is coming.
+
+
 int marfs_open (const char*         path,
                 MarFS_FileHandle*   fh,
-                int                 flags) {
+                int                 flags,
+                OSOpenFlags         stream_flags) {
    ENTRY();
 
    // Poke the xattr stuff into some memory for the file (poke the address
@@ -685,8 +708,10 @@ int marfs_open (const char*         path,
    //    also poke how to access the objrepo for where/how to write and how to read
    //    also put space for read to attach a structure for object read mgmt
    //
-   IOBuf*            b    = &fh->os.iob;                /* shorthand */
    PathInfo*         info = &fh->info;                  /* shorthand */
+   ObjectStream*     os   = &fh->os;
+   IOBuf*            b    = &fh->os.iob;
+
    EXPAND_PATH_INFO(info, path);
 
    // Check/act on iperms from expanded_path_info_structure
@@ -817,17 +842,18 @@ int marfs_open (const char*         path,
    aws_iobuf_context(b, ctx);
 
    // initialize the URL in the ObjectStream, in our FileHandle
-   TRY0(update_url, &fh->os, info);
+   TRY0(update_url, os, info);
 
+   os->open_flags = stream_flags; // save caller's flags, for re-open
 #if 0
-   TRY0(stream_open, &fh->os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET));
+   TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET), stream_flags);
 #else
    // To support seek() [for reads], and allow reading at arbitrary
    // offsets, we are now implementing each call to marfs_read() as an
    // independent GET, with byte-ranges.  Therefore, for reads, we don't
    // open the stream, here.
    if (fh->flags & FH_WRITING)
-      TRY0(stream_open, &fh->os, OS_PUT);
+      TRY0(stream_open, os, OS_PUT, stream_flags);
 #endif
 
    EXIT();
@@ -1056,7 +1082,7 @@ int marfs_read (const char*        path,
          //     probably should allow os->written to be reset.
          //
          size_t written = os->written;
-         TRY0(stream_open, os, OS_GET);
+         TRY0(stream_open, os, OS_GET, os->open_flags);
          os->written = written;
       }
 
@@ -1141,7 +1167,7 @@ int marfs_read (const char*        path,
          // update the URL in the ObjectStream, in our FileHandle
          info->pre.chunk_no = chunk;
          update_pre(&info->pre);
-         update_url(&fh->os, info);
+         update_url(os, info);
       }
    }
 
@@ -1327,6 +1353,9 @@ int marfs_release (const char*        path,
       TRY0(stream_close, os);
    }
 #endif
+
+   // free aws4c resources
+   aws_iobuf_reset_hard(&os->iob);
 
    // close MD file, if it's open
    if (fh->md_fd) {
@@ -1896,7 +1925,7 @@ int marfs_write(const char*        path,
       TRY0(update_pre, &info->pre);
       TRY0(update_url, os, info);
 
-      TRY0(stream_open, os, OS_PUT);
+      TRY0(stream_open, os, OS_PUT, os->open_flags);
    }
 
    // Span across objects for "Multi" format.  Repo.chunk_size is the
@@ -1981,7 +2010,7 @@ int marfs_write(const char*        path,
          //     field to track the total amount written across all chunks,
          //     so we save it before calling open, and restore it after.
          size_t written = os->written;
-         TRY0(stream_open, os, OS_PUT);
+         TRY0(stream_open, os, OS_PUT, os->open_flags);
          os->written = written;
 
 
