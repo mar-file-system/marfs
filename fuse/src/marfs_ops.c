@@ -698,7 +698,7 @@ int marfs_mknod (const char* path,
 int marfs_open (const char*         path,
                 MarFS_FileHandle*   fh,
                 int                 flags,
-                OSOpenFlags         stream_flags) {
+                int                 stream_flags) {
    ENTRY();
 
    // Poke the xattr stuff into some memory for the file (poke the address
