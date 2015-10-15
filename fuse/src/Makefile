@@ -142,7 +142,9 @@ CFLAGS  += -Wall -std=c99 -I.
 #   DEBUG = 1             --    
 #   DEBUG = <n>           --    -d -f  [-f means foreground, without threads]
 #
-FUSE_FLAGS += -o allow_other
+
+# FUSE_FLAGS += -o allow_other
+FUSE_FLAGS += -o allow_other -o direct_io
 
 ifdef DEBUG
 	ifeq ($(DEBUG),)
@@ -366,10 +368,9 @@ endif
 
 
 # Don't make this directly; make one of the 'fuse.foo' targets below.
-marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS)
+marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS) lib
 	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose main.c $(OBJS) $(LIBS)
 	gcc $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
-
 
 fuse:  fuse.std
 fast:  fuse.fast
@@ -378,32 +379,30 @@ dbg:   fuse.dbg
 gprof: fuse.gprof
 grind: fuse.grind
 
+
 # e.g. 'make dbg.static'
 %.static:
 	@ $(MAKE) $* STATIC_CONFIG=1
 
+
 # --- specialized builds
 fuse.std: pre_req
-	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 USE_SPROXYD=1 DEBUG=2
-	@ # $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1 STATIC_CONFIG=1
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 DEBUG=2 LINK_LIBFUSE=1
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 USE_SYSLOG=1 DEBUG=2
 
 fuse.fast: pre_req
-	@ $(MAKE) marfs_fuse USE_SYSLOG=1 LINK_LIBFUSE=1
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 USE_SYSLOG=1
+
+fuse.lean: pre_req
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 
+
+fuse.dbg: pre_req
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 USE_STDOUT=1 DEBUG=2 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg
 
 fuse.gprof: pre_req
 	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 GPROF=1
 
 fuse.grind: pre_req
 	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 GRIND=1
-
-fuse.lean: pre_req
-	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1
-
-fuse.dbg: pre_req
-	@ # $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg LINK_LIBFUSE=1 STATIC_CONFIG=1
-	@ $(MAKE) marfs_fuse DEBUG=2 USE_STDOUT=1 USE_SPROXYD=1 LOG_PREFIX=marfs_fuse.dbg LINK_LIBFUSE=1
-#	@ $(MV) marfs_fuse marfs_fuse.dbg
 
 
 
