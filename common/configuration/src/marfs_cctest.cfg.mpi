@@ -1,0 +1,67 @@
+<config>
+
+<name>CCstar Testbed</name>
+
+<version>0.1</version>
+
+<mnt_top>/marfs</mnt_top>
+
+
+
+<repo>
+  <name>proxy</name>
+  <host>10.135.0.%d:81</host>
+  <host_offset>30</host_offset>
+  <host_count>4</host_count>
+  <update_in_place>no</update_in_place>
+  <ssl>no</ssl>
+  <access_method>SPROXYD</access_method>
+  <chunk_size>2147483648</chunk_size>
+  <pack_size>0</pack_size>
+  <security_method>S3_AWS_MASTER</security_method>
+  <sec_type>NONE</sec_type>
+  <comp_type>NONE</comp_type>
+  <correct_type>NONE</correct_type>
+  <latency>10000</latency>
+</repo>
+
+
+
+// testing
+<namespace>
+  <name>jti</name>
+  <mnt_path>/jti</mnt_path>
+  <bperms>RM,WM,RD,WD,TD,UD</bperms>
+  <iperms>RM,WM,RD,WD,TD,UD</iperms>
+  <iwrite_repo_name>proxy</iwrite_repo_name>
+  <range>
+    <min_size>0</min_size>
+    <max_size>-1</max_size>
+    <repo_name>proxy</repo_name>
+  </range>
+  <md_path>/gpfs/marfs-gpfs/jti/mdfs</md_path>
+  <trash_md_path>/gpfs/marfs-gpfs/trash</trash_md_path>
+  <fsinfo_path>/gpfs/marfs-gpfs/jti/fsinfo</fsinfo_path>
+  <quota_space>-1</quota_space>
+  <quota_names>32</quota_names>
+</namespace>
+
+<namespace>
+  <name>root</name>
+  <mnt_path>/</mnt_path>
+  <bperms>NONE</bperms>
+  <iperms>RM</iperms>
+  <iwrite_repo_name>proxy</iwrite_repo_name>
+  <range>
+    <min_size>0</min_size>
+    <max_size>-1</max_size>
+    <repo_name>proxy</repo_name>
+  </range>
+  <md_path>/should_never_be_used</md_path>
+  <trash_md_path>/should_never_be_used</trash_md_path>
+  <fsinfo_path>/should_never_be_used</fsinfo_path>
+  <quota_space>-1</quota_space>
+  <quota_names>-1</quota_names>
+</namespace>
+
+</config>

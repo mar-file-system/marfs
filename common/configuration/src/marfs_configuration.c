@@ -834,6 +834,51 @@ static MarFS_Config_Ptr read_configuration_internal() {
     marfs_repo_list[j]->host = strdup( repoList[j]->host );
     marfs_repo_list[j]->host_len = strlen( repoList[j]->host );
 
+    if (repoList[j]->host_offset) {
+       errno = 0;
+       unsigned long temp = strtoul( repoList[j]->host_offset, NULL, 10 );
+       if ( errno ) {
+          LOG( LOG_ERR, "Invalid host_offset value of \"%s\".\n", repoList[j]->host_offset );
+          return NULL;
+       }
+       else if (temp > 255) { // marfs_repo_list[j]->host_offset is uint8_t
+          LOG( LOG_ERR, "Invalid host_offset value of \"%s\".\n", repoList[j]->host_offset );
+          return NULL;
+       }
+       marfs_repo_list[j]->host_offset = (uint8_t)temp;
+    }
+    else
+       marfs_repo_list[j]->host_offset = 0;
+
+    if (repoList[j]->host_count) {
+       errno = 0;
+       unsigned long temp = strtoul( repoList[j]->host_count, NULL, 10 );
+       if ( errno ) {
+          LOG( LOG_ERR, "Invalid host_count value of \"%s\".\n", repoList[j]->host_count );
+          return NULL;
+       }
+       else if (temp > 255) { // marfs_repo_list[j]->host_count is uint8_t
+          LOG( LOG_ERR, "Invalid host_count value of \"%s\".\n", repoList[j]->host_count );
+          return NULL;
+       }
+       marfs_repo_list[j]->host_count = (uint8_t)temp;
+
+       // if user specifies a host_count > 1, then host must be a format-string
+       if (temp > 1) {
+          if (! strstr(marfs_repo_list[j]->host, "%d")) {
+             LOG( LOG_ERR,
+                  "If host_count>1, then host must include '%d'.  " 
+                  "This will be used to print a randomized per-thread host-name, something like "
+                  "'sprintf(host_name, config.host, "
+                  "config.host_offset + (rand() % config.host_count))'\n" );
+             return NULL;
+          }
+       }
+    }
+    else
+       marfs_repo_list[j]->host_count = 1;
+
+
     if ( lookup_boolean( repoList[j]->update_in_place, &( marfs_repo_list[j]->update_in_place ))) {
       LOG( LOG_ERR, "Invalid update_in_place value of \"%s\".\n", repoList[j]->update_in_place );
       return NULL;
@@ -1341,6 +1386,8 @@ int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "\tname_len         %ld\n",  repo->name_len);
    fprintf(stdout, "\thost             %s\n",   repo->host);
    fprintf(stdout, "\thost_len         %ld\n",  repo->host_len);
+   fprintf(stdout, "\thost_offset      %d\n",   repo->host_offset);
+   fprintf(stdout, "\thost_count       %d\n",   repo->host_count);
    fprintf(stdout, "\tupdate_in_place  %d\n",   repo->update_in_place);
    fprintf(stdout, "\tssl              %d\n",   repo->ssl);
    fprintf(stdout, "\tis_online        %d\n",   repo->is_online);

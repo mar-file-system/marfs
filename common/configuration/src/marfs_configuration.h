@@ -230,23 +230,25 @@ typedef uint8_t  MarFS_Perms;
  */
 
 typedef struct marfs_repo {
-  char                 *name;
-  size_t                name_len;
-  char                 *host;
-  size_t                host_len;
-  MarFS_Bool            update_in_place;
-  MarFS_Bool            ssl;
-  MarFS_Bool            is_online;
-  MarFS_AccessMethod    access_method;
-  size_t                chunk_size;
-  size_t                pack_size;
-  MarFS_SecurityMethod  security_method;
-  MarFS_SecType         sec_type;
-  MarFS_CompType        comp_type;
-  MarFS_CorrectType     correct_type;
-  char                 *online_cmds;
-  size_t                online_cmds_len;
-  unsigned long long    latency;
+   char                 *name;
+   size_t                name_len;
+   char                 *host;
+   size_t                host_len;
+   uint8_t               host_offset; // for round-robin within a repo
+   uint8_t               host_count;
+   MarFS_Bool            update_in_place;
+   MarFS_Bool            ssl;
+   MarFS_Bool            is_online;
+   MarFS_AccessMethod    access_method;
+   size_t                chunk_size;
+   size_t                pack_size;
+   MarFS_SecurityMethod  security_method;
+   MarFS_SecType         sec_type;
+   MarFS_CompType        comp_type;
+   MarFS_CorrectType     correct_type;
+   char                 *online_cmds;
+   size_t                online_cmds_len;
+   unsigned long long    latency;
 } MarFS_Repo, *MarFS_Repo_Ptr, **MarFS_Repo_List;
 
 /*
