@@ -146,6 +146,7 @@ typedef enum {
 
 // flags for call to stream_open()
 typedef enum {
+   OSOF_NONE      = 0,
    OSOF_CTE       = 0x01,       // use chunked transfer-encoding
 } OSOpenFlags;
 
@@ -177,7 +178,9 @@ typedef struct {
    char              url[MARFS_MAX_URL_SIZE]; // WARNING: only valid during open_object()
    size_t            written;   // bytes written-to/read-from stream
    volatile OSFlags  flags;
-   OSOpenFlags       open_flags; // caller's open flags, for when we need to close/repoen
+
+   // OSOpenFlags       open_flags; // caller's open flags, for when we need to close/repoen
+   curl_off_t        open_size; // caller's open-size, for close/reopen in marfs_ftruncate()
 } ObjectStream;
 
 
@@ -188,7 +191,7 @@ typedef enum {
 
 
 // initialize os.url, before calling
-int     stream_open(ObjectStream* os, IsPut put, OSOpenFlags flags);
+int     stream_open(ObjectStream* os, IsPut put, curl_off_t content_length);
 
 int     stream_put(ObjectStream* os, const char* buf, size_t size);
 ssize_t stream_get(ObjectStream* os, char* buf,       size_t size);

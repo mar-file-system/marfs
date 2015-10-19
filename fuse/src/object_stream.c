@@ -724,7 +724,7 @@ ssize_t stream_get(ObjectStream* os,
 //       
 // ---------------------------------------------------------------------------
 
-int stream_open(ObjectStream* os, IsPut put, OSOpenFlags open_flags) {
+int stream_open(ObjectStream* os, IsPut put, curl_off_t content_length) {
    LOG(LOG_INFO, "%s\n", ((put) ? "PUT" : "GET"));
 
    if (os->flags & OSF_OPEN) {
@@ -752,8 +752,11 @@ int stream_open(ObjectStream* os, IsPut put, OSOpenFlags open_flags) {
       os->flags |= OSF_READING;
 
 
-   // caller's open-flags, in case we need to close/repoen (e.g. for Multi)
-   os->open_flags = open_flags;
+   // caller's open-flags, in case we need to close/repoen
+   // (e.g. for Multi, or marfs_ftruncate())
+   //
+   //   os->open_flags = open_flags;
+   os->open_size = content_length;
 
    // shorthand
    IOBuf* b = &os->iob;
@@ -770,7 +773,9 @@ int stream_open(ObjectStream* os, IsPut put, OSOpenFlags open_flags) {
 
    AWSContext* ctx = b->context;
 
-   if (open_flags & OSOF_CTE)
+   if (content_length)
+      s3_set_content_length_r(content_length, ctx);
+   else
       s3_chunked_transfer_encoding_r(1, ctx);
 
    aws_iobuf_reset(b);          // doesn't affect <user_data> or <context>
@@ -1075,8 +1080,10 @@ void stream_reset(ObjectStream* os) {
 
 #else
    aws_iobuf_reset(&os->iob);
-   os->op_rc = 0;
-   os->written = 0;
-   os->flags = 0;
+   os->op_rc      = 0;
+   os->written    = 0;
+   os->flags      = 0;
+   // os->open_flags = 0;
+   os->open_size  = 0;
 #endif
 }

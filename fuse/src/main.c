@@ -84,7 +84,7 @@ OF SUCH DAMAGE.
 #include <string.h>
 #include <utime.h>              /* for deprecated marfs_utime() */
 #include <stdio.h>
-
+#include <time.h>
 
 // #include "marfs_fuse.h"
 #define FUSE_USE_VERSION 26
@@ -514,7 +514,7 @@ int fuse_open (const char*            path,
    }
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
 
-   rc = marfs_open(path, fh, ffi->flags, OSOF_CTE);
+   rc = marfs_open(path, fh, ffi->flags, 0); /* content-length unknown */
    if (rc < 0) {
       free(fh);
       ffi->fh = 0;
@@ -980,6 +980,7 @@ int main(int argc, char* argv[])
    }
 
    init_xattr_specs();
+
 
    // initialize libaws4c/libcurl
    //

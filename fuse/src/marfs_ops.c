@@ -225,8 +225,9 @@ int marfs_fsyncdir (const char*            path,
 // truncate() or ftruncate() explicitly.  For these cases, I guess we
 // assume the file is already open, and the filehandle is good.
 //
-// UPDATE: for 'truncate -s 0 /marfs/file' or 'echo test >
-//     /marfs/existing_file', fuse calls open() / ftruncate() / close().
+// UPDATE: Fuse uses open/ftruncate in the following cases:
+//    'truncate -s 0 /marfs/file'          --> open() / ftruncate() / close()
+//    'echo test > /marfs/existing_file',  --> open() / ftruncate()
 //
 // If a user calls ftruncate() they expect the file-handle to remain open.
 // Therefore, we need to leave things as though open had been called with
@@ -304,7 +305,7 @@ int marfs_ftruncate(const char*            path,
    // initializations done in marfs_open are still valid.  trash_truncate()
    // will already have updated our URL.
    TRY0(update_url, os, info);
-   TRY0(stream_open, os, OS_PUT, os->open_flags);
+   TRY0(stream_open, os, OS_PUT, os->open_size);
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
@@ -693,12 +694,20 @@ int marfs_mknod (const char* path,
 //       another write to the same stream (without closing and re-opening),
 //       because the content-length header will already have said how much
 //       data is coming.
+//
+// UPDATE: Instead of passing a flag to stream_open() to [not] set CTE, and
+//       then another argument to install the content-length, stream_open
+//       now just takes a content-length argument.  If zero, it implies
+//       writing chunked transfer-encoding for an unknown length.  If
+//       non-zero, it implies installing that specific length, and writing
+//       non-CTE.
 
 
 int marfs_open (const char*         path,
                 MarFS_FileHandle*   fh,
                 int                 flags,
-                int                 stream_flags) {
+                /// int                 stream_flags,
+                curl_off_t          content_length) { // use 0 for unknown
    ENTRY();
 
    // Poke the xattr stuff into some memory for the file (poke the address
@@ -804,8 +813,53 @@ int marfs_open (const char*         path,
    // Configure a private AWSContext, for this request
    AWSContext* ctx = aws_context_clone();
    if (ACCESSMETHOD_IS_S3(info->pre.repo->access_method)) { // (includes S3_EMC)
-      s3_set_host_r(info->pre.repo->host, ctx);
-      LOG(LOG_INFO, "host   '%s'\n", info->pre.repo->host);
+
+      // If the conifguration specifies more than one host in the repo,
+      // Then we expect the following features in the config:
+      //    marfs_config.host         = "10.135.0.%d:81"   (for example)
+      //    marfs_config.host_offset  = 15                 (for example)
+      //    marfs_config.host_count   = 4                  (for example)
+      //
+      // This allows us to generate a valid random IP address in a select
+      // set of IP ranges.
+      //
+      // NOTE: If you want to have DNS round-robin do this for you, you
+      //     would just set marfs_config.host to a name that your DNS
+      //     service knows, and set host_count=1.
+      const size_t HOST_BUF_SIZE = 512;
+      char         host_buf[HOST_BUF_SIZE];
+      char*        host_name = info->pre.repo->host;
+      if (info->pre.repo->host_count > 1) {
+
+         // seed the random-number generator from the clock
+         // (i.e. in case we need to close/reopen)
+         struct timespec ts;
+         __TRY0(clock_gettime, CLOCK_MONOTONIC_RAW, &ts);
+         union {
+            long         l;
+            unsigned int ui;
+         } down_cast;
+         down_cast.l = ts.tv_nsec;
+         info->seed = down_cast.ui;
+
+         // uint8_t octet = (info->pre.repo->host_offset
+         //                  + (rand_r(&info->seed) % info->pre.repo->host_count));
+         // uint8_t octet = (info->pre.repo->host_offset
+         //                  + (rand() % info->pre.repo->host_count));
+         // uint8_t octet = (info->pre.repo->host_offset
+         //                  + (ts.tv_nsec % info->pre.repo->host_count));
+         uint8_t octet = (info->pre.repo->host_offset
+                          + (rand_r(&info->seed) % info->pre.repo->host_count));
+         snprintf(host_buf, HOST_BUF_SIZE,
+                  info->pre.repo->host, octet);
+         host_name = host_buf;
+      }
+
+
+      // install the host and bucket
+      s3_set_host_r(host_name, ctx);
+      LOG(LOG_INFO, "host   '%s'\n", host_name);
+      fprintf(stderr, "host   '%s'\n", host_name);
 
       s3_set_bucket_r(info->pre.bucket, ctx);
       LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
@@ -844,16 +898,18 @@ int marfs_open (const char*         path,
    // initialize the URL in the ObjectStream, in our FileHandle
    TRY0(update_url, os, info);
 
-   os->open_flags = stream_flags; // save caller's flags, for re-open
+   // save caller's open-args, for re-open (e.g. for Multi, or marfs_ftruncate())
+   os->open_size = content_length;
+
 #if 0
-   TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET), stream_flags);
+   TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET), content_length);
 #else
    // To support seek() [for reads], and allow reading at arbitrary
    // offsets, we are now implementing each call to marfs_read() as an
    // independent GET, with byte-ranges.  Therefore, for reads, we don't
    // open the stream, here.
    if (fh->flags & FH_WRITING)
-      TRY0(stream_open, os, OS_PUT, stream_flags);
+      TRY0(stream_open, os, OS_PUT, content_length);
 #endif
 
    EXIT();
@@ -1082,7 +1138,7 @@ int marfs_read (const char*        path,
          //     probably should allow os->written to be reset.
          //
          size_t written = os->written;
-         TRY0(stream_open, os, OS_GET, os->open_flags);
+         TRY0(stream_open, os, OS_GET, read_size);
          os->written = written;
       }
 
@@ -1925,7 +1981,7 @@ int marfs_write(const char*        path,
       TRY0(update_pre, &info->pre);
       TRY0(update_url, os, info);
 
-      TRY0(stream_open, os, OS_PUT, os->open_flags);
+      TRY0(stream_open, os, OS_PUT, 0);
    }
 
    // Span across objects for "Multi" format.  Repo.chunk_size is the
@@ -2010,7 +2066,7 @@ int marfs_write(const char*        path,
          //     field to track the total amount written across all chunks,
          //     so we save it before calling open, and restore it after.
          size_t written = os->written;
-         TRY0(stream_open, os, OS_PUT, os->open_flags);
+         TRY0(stream_open, os, OS_PUT, 0);
          os->written = written;
 
 
