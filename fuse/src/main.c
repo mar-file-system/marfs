@@ -521,7 +521,9 @@ int fuse_open (const char*            path,
    }
 
    POP_USER();
-   return rc;
+   if (rc)
+      return -errno;
+   return 0;
 }
 
 
@@ -548,7 +550,9 @@ int fuse_opendir (const char*            path,
    }
 
    POP_USER();
-   return rc;
+   if (rc)
+      return -errno;
+   return 0;
 }
 
 #if 0
@@ -643,7 +647,9 @@ int fuse_release (const char*            path,
    ffi->fh = 0;
 
    POP_USER();
-   return rc;
+   if (rc)
+      return -errno;
+   return 0;
 }
 
 
@@ -680,7 +686,9 @@ int fuse_releasedir (const char*            path,
    ffi->fh = 0;
 
    POP_USER();
-   return rc;
+   if (rc)
+      return -errno;
+   return 0;
 }
 
 
