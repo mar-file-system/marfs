@@ -180,7 +180,6 @@ typedef struct {
    volatile OSFlags  flags;
 
    // OSOpenFlags       open_flags; // caller's open flags, for when we need to close/repoen
-   curl_off_t        open_size; // caller's open-size, for close/reopen in marfs_ftruncate()
 } ObjectStream;
 
 

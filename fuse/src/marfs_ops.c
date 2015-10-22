@@ -304,8 +304,13 @@ int marfs_ftruncate(const char*            path,
    // open a stream to the new object.  We assume that the libaws4c context
    // initializations done in marfs_open are still valid.  trash_truncate()
    // will already have updated our URL.
+   fh->write_status.data_req    = fh->write_status.data_remain;
+   if (fh->write_status.data_req > info->pre.repo->chunk_size) {
+      fh->write_status.data_req = info->pre.repo->chunk_size;
+   }
+
    TRY0(update_url, os, info);
-   TRY0(stream_open, os, OS_PUT, os->open_size);
+   TRY0(stream_open, os, OS_PUT, fh->write_status.data_req);
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
@@ -898,18 +903,30 @@ int marfs_open (const char*         path,
    // initialize the URL in the ObjectStream, in our FileHandle
    TRY0(update_url, os, info);
 
-   // save caller's open-args, for re-open (e.g. for Multi, or marfs_ftruncate())
-   os->open_size = content_length;
+   // explicit content-length in requests is faster to Scality sproxy
+   // througha connector.  Save info so we only write MarFS chunk-size
+   // values at a time.
+   //
+   // NOTE: When overwriting an existing file, fuse gets called with open,
+   //     then ftruncate, but MarFS fuse ftruncate does
+   //     abort-stream/move-to-trash/open-new-name.  So, we need to track
+   //     the remaining data-size as it is right now.  (Also, we may
+   //     someday want marfs_write() to retry failed writes a few times.)
+   fh->write_status.data_remain = content_length;
+   fh->write_status.data_req    = fh->write_status.data_remain;
+   if (fh->write_status.data_req > info->pre.repo->chunk_size) {
+      fh->write_status.data_req = info->pre.repo->chunk_size;
+   }
 
 #if 0
-   TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET), content_length);
+   TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET), fh->write_status.data_req);
 #else
    // To support seek() [for reads], and allow reading at arbitrary
    // offsets, we are now implementing each call to marfs_read() as an
    // independent GET, with byte-ranges.  Therefore, for reads, we don't
    // open the stream, here.
    if (fh->flags & FH_WRITING)
-      TRY0(stream_open, os, OS_PUT, content_length);
+      TRY0(stream_open, os, OS_PUT, fh->write_status.data_req);
 #endif
 
    EXIT();
@@ -1971,8 +1988,8 @@ int marfs_write(const char*        path,
    // It's possible that we finished and closed the first object, without
    // knowing that it was going to be Multi, until now.  In that case, the
    // OS is closed.  (We also might have closed the previous Multi object
-   // without knowing there would be more written.  This works for that,
-   // too.)
+   // without knowing there would be more written.  This works for both
+   // cases.)
    if (os->flags & OSF_CLOSED) {
       info->post.obj_type = OBJ_MULTI;
       info->pre.chunk_no += 1;
@@ -1981,7 +1998,16 @@ int marfs_write(const char*        path,
       TRY0(update_pre, &info->pre);
       TRY0(update_url, os, info);
 
-      TRY0(stream_open, os, OS_PUT, 0);
+      // this works, whether the open() was done with a specific size (so
+      // we are writing requests that can have content-length headers), or
+      // was done with size 0 (so we are writing requests that use chunked
+      // transfer-encoding).
+      fh->write_status.data_remain -= fh->write_status.data_req;
+      fh->write_status.data_req     = fh->write_status.data_remain;
+      if (fh->write_status.data_req > info->pre.repo->chunk_size) {
+         fh->write_status.data_req = info->pre.repo->chunk_size;
+      }
+      TRY0(stream_open, os, OS_PUT, fh->write_status.data_req);
    }
 
    // Span across objects for "Multi" format.  Repo.chunk_size is the
@@ -2062,11 +2088,22 @@ int marfs_write(const char*        path,
 
          // open next chunk
          //
-         // NOTE: stream_open() wipes ObjectStream.written.  We want this
-         //     field to track the total amount written across all chunks,
-         //     so we save it before calling open, and restore it after.
+         // NOTE: stream_open() wipes ObjectStream.written.  We want
+         //     OS.written to track the total amount written across all
+         //     chunks, so we save it before calling open, and restore it
+         //     after.
          size_t written = os->written;
-         TRY0(stream_open, os, OS_PUT, 0);
+
+         // this works, whether the open() was done with a specific size (so
+         // we are writing requests that can have content-length headers), or
+         // was done with size 0 (so we are writing requests that use chunked
+         // transfer-encoding).
+         fh->write_status.data_remain -= fh->write_status.data_req;
+         fh->write_status.data_req     = fh->write_status.data_remain;
+         if (fh->write_status.data_req > info->pre.repo->chunk_size) {
+            fh->write_status.data_req = info->pre.repo->chunk_size;
+         }
+         TRY0(stream_open, os, OS_PUT, fh->write_status.data_req);
          os->written = written;
 
 

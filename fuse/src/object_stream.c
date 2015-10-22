@@ -234,7 +234,8 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
 static
 int stream_wait(ObjectStream* os) {
 
-   static const size_t  TIMEOUT_SECS = 10;
+   //   static const size_t  TIMEOUT_SECS = 10;
+   static const size_t  TIMEOUT_SECS = 20;
 
    struct timespec timeout;
    if (clock_gettime(CLOCK_REALTIME, &timeout)) {
@@ -355,8 +356,8 @@ void* s3_op(void* arg) {
 // PUT (write)
 //
 // This is installed as the "readfunc" which is called by curl, whenever it
-// needs more data for a PUT.  (It's a "read" of data from curl's
-// perspective.)  This function is invoked in its own thread by curl.  We
+// needs more data for a PUT.  (From curl's perspective, it's a "read" of
+// our PUT data.)  This function is invoked in its own thread by curl.  We
 // synchronize with stream_put(), where a user has more data to be added to
 // a stream.  The user's buffer may be larger than the size of the buffer
 // curl gives us to fill, in which case we self-enable, so the next
@@ -428,7 +429,8 @@ int stream_put(ObjectStream* os,
                const char*   buf,
                size_t        size) {
 
-   static const int put_timeout_sec = 10; /* totally made up out of thin air */
+   //   static const int put_timeout_sec = 10; /* totally made up out of thin air */
+   static const int put_timeout_sec = 20; /* totally made up out of thin air */
 
    LOG(LOG_INFO, "entry\n");
    if (! (os->flags & OSF_OPEN)) {
@@ -496,7 +498,8 @@ int stream_put(ObjectStream* os,
 // GET (read)
 
 // curl calls streaming_writefunc with some incoming data on a GET, which
-// we are supposed to "write" somewhere.  We interact with stream_get(), to
+// we are supposed to "write" somewhere.  (From curl's perspective, it's a
+// "write" of data to our GET buffer.)  We interact with stream_get(), to
 // write our data into a buffer that a caller provided to stream_get().
 //
 // streaming_writefunc() is more complex than streaming_readfunc(), because we
@@ -756,7 +759,6 @@ int stream_open(ObjectStream* os, IsPut put, curl_off_t content_length) {
    // (e.g. for Multi, or marfs_ftruncate())
    //
    //   os->open_flags = open_flags;
-   os->open_size = content_length;
 
    // shorthand
    IOBuf* b = &os->iob;
@@ -1084,6 +1086,5 @@ void stream_reset(ObjectStream* os) {
    os->written    = 0;
    os->flags      = 0;
    // os->open_flags = 0;
-   os->open_size  = 0;
 #endif
 }

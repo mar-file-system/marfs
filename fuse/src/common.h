@@ -427,10 +427,29 @@ typedef struct {
 // purely-system-related writes in FileHandle.write_status.sys_writes.
 // Thus, when it comes time to truncate the MDFS file to the size of the
 // data written by the user, we can compute the appropriate size.
+//
+// In the case where someone calls marfs_open() with a specific
+// content-length, we can pass this on to stream_open(), which converts it
+// into a HTTP Content-Length header.  Scality sproxyd streams without
+// content-length header (i.e. with chunked transfer-encoding) are
+// apparently buffered until the stream closes, before being forward to
+// storage (e.g. an entire MarFS chunk).  On the other hand, streams with
+// content-lengths are forwarded as they are received.  Fuse doesn't know
+// the size of the stream, so it can't take advantage of this, but pftool
+// does, so it can.
+//
+// ... HOWEVER, we still need to break long pftool writes with given size
+// into MarFS chunks (pftool could do it, but we have all the expertise
+// here).  When opened with a given size (i.e. invoking the content-length
+// approach), data_remain holds the entire remaining size, including the
+// current open.  We only decrement the data_remain by the previous
+// request-size when we are reopening at an object-boundary.
 
 typedef struct {
    size_t        sys_writes;    // discount this much from FileHandle.os.written
    RecoveryInfo  rec_info;      // (goes into tail of object)
+   size_t        data_remain;   // remaining size (incl current req)
+   size_t        data_req;      // current request
 } WriteStatus;
 
 
