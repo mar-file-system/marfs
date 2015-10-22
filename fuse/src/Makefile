@@ -370,7 +370,8 @@ endif
 # Don't make this directly; make one of the 'fuse.foo' targets below.
 marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS) lib
 	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose main.c $(OBJS) $(LIBS)
-	gcc $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
+	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
+	gcc $(CFLAGS) -o $@ $(LDFLAGS) -L$(PWD) main.c $(LIBS) -lmarfs
 
 fuse:  fuse.std
 fast:  fuse.fast
