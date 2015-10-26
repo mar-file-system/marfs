@@ -1034,9 +1034,21 @@ int stream_close(ObjectStream* os) {
    os->flags &= ~(OSF_OPEN);
    os->flags |= OSF_CLOSED;     /* so stream_open() can identify re-opens */
 
+#if 0
+   // COMMENTED OUT.  Connections are apparently not getting stuck in
+   // CLOSE_WAIT, anymore, and forcibly resetting like this causes open()
+   // to take significantly longer, such that heavily-loaded sproxyd
+   // servers more-frequently fail to respond to the Expect-100-Continue
+   // within the (default) 1 second.
+   //
+   // If you have to uncomment this someday, consider simultaneously either
+   // (a) do not add an expect-continue header, or (b) use the
+   // CURLOPT_EXPECT_100_TIMEOUT_MS options (requires libcurl >= 7.38)
+
    // don't leave file-descriptor in CLOSE_WAIT
    LOG(LOG_INFO, "abandoning connection\n");
    aws_reset_connection_r(os->iob.context);
+#endif
 
    int retval;
    if      ((os->op_rc == CURLE_ABORTED_BY_CALLBACK)
