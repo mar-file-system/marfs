@@ -514,14 +514,14 @@ int fuse_open (const char*            path,
    }
    MarFS_FileHandle* fh   = (MarFS_FileHandle*)ffi->fh; /* shorthand */
 
-   rc = marfs_open(path, fh, ffi->flags, 0); /* content-length unknown */
-   if (rc < 0) {
+   rc_ssize = marfs_open(path, fh, ffi->flags, 0); /* content-length unknown */
+   if (rc_ssize < 0) {
       free(fh);
       ffi->fh = 0;
    }
 
    POP_USER();
-   if (rc)
+   if (rc_ssize)
       return -errno;
    return 0;
 }
@@ -537,20 +537,20 @@ int fuse_opendir (const char*            path,
       LOG(LOG_ERR, "unexpected non-NULL dir-handle\n");
       return -EINVAL;
    }
-   if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_FileHandle)))) {
+   if (! (ffi->fh = (uint64_t) calloc(1, sizeof(MarFS_DirHandle)))) {
       LOG(LOG_ERR, "couldn't allocate a MarFS_FileHandle\n");
       return -ENOMEM;
    }
    MarFS_DirHandle* dh   = (MarFS_DirHandle*)ffi->fh; /* shorthand */
 
-   rc = marfs_opendir(path, dh);
-   if (rc < 0) {
+   rc_ssize = marfs_opendir(path, dh);
+   if (rc_ssize < 0) {
       free(dh);
       ffi->fh = 0;
    }
 
    POP_USER();
-   if (rc)
+   if (rc_ssize)
       return -errno;
    return 0;
 }
@@ -642,12 +642,12 @@ int fuse_release (const char*            path,
    }
    MarFS_FileHandle* fh = (MarFS_FileHandle*)ffi->fh; /* shorthand */
 
-   rc = marfs_release(path, fh);
+   rc_ssize = marfs_release(path, fh);
    free(fh);
    ffi->fh = 0;
 
    POP_USER();
-   if (rc)
+   if (rc_ssize)
       return -errno;
    return 0;
 }
@@ -681,12 +681,12 @@ int fuse_releasedir (const char*            path,
    }
    MarFS_DirHandle* dh = (MarFS_DirHandle*)ffi->fh; /* shorthand */
 
-   rc = marfs_releasedir(path, dh);
+   rc_ssize = marfs_releasedir(path, dh);
    free(dh);
    ffi->fh = 0;
 
    POP_USER();
-   if (rc)
+   if (rc_ssize)
       return -errno;
    return 0;
 }

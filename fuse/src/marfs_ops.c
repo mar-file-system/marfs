@@ -952,7 +952,6 @@ int marfs_opendir (const char*       path,
       LOG(LOG_INFO, "is_root\n");
 
       if (geteuid()) {
-         free(dh);
          errno = EACCES;
          return -1;
       }
