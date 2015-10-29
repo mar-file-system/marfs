@@ -962,6 +962,9 @@ int marfs_opendir (const char*       path,
       return 0;
    }
 
+   // set dh->use_it to false so that we know to use the dirp
+   dh->use_it = 0;
+
    // No need for access check, just try the op
    // Appropriate  opendir call filling in fuse structure
    ///   mode_t mode = ~(fuse_get_context()->umask); /* ??? */
