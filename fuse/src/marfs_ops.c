@@ -303,18 +303,17 @@ int marfs_ftruncate(const char*            path,
 
    // open a stream to the new object.  We assume that the libaws4c context
    // initializations done in marfs_open are still valid.  trash_truncate()
-   // will already have updated our URL.
-   fh->write_status.data_req    = fh->write_status.data_remain;
-   if (fh->write_status.data_req > info->pre.repo->chunk_size) {
-      fh->write_status.data_req = info->pre.repo->chunk_size;
-   }
-
+   // will already have updated our URL.  Assume data_remain is still valid
+   // (i.e. there was no prior request that completed).  If we exceed the
+   // logical chunk boundary, our request should also include the size of
+   // the recovery-info, to be written at the tail.
+   size_t open_size = get_stream_open_size(fh, 0);
    TRY0(update_url, os, info);
-   TRY0(stream_open, os, OS_PUT, fh->write_status.data_req);
+   TRY0(stream_open, os, OS_PUT, open_size, 0);
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
-   if (info->ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
+   if (info->pre.repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
       info->flags  |= PI_RESTART;
       info->xattrs |= XVT_RESTART;
@@ -633,7 +632,8 @@ int marfs_mknod (const char* path,
    //     (which is incomplete), and could throw an error, instead of
    //     seeing it as a file-without-xattrs, and allowing readers to see
    //     our internal data (e.g. in a MULTI file).
-   if (info.ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
+   STAT_XATTRS(&info);
+   if (info.pre.repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
       info.flags  |= PI_RESTART;
       info.xattrs |= XVT_RESTART;
@@ -708,12 +708,12 @@ int marfs_mknod (const char* path,
 //       non-CTE.
 
 
-int marfs_open (const char*         path,
-                MarFS_FileHandle*   fh,
-                int                 flags,
-                /// int                 stream_flags,
-                curl_off_t          content_length) { // use 0 for unknown
+int marfs_open(const char*         path,
+               MarFS_FileHandle*   fh,
+               int                 flags,
+               curl_off_t          content_length) { // use 0 for unknown
    ENTRY();
+   LOG(LOG_INFO, "flags=(oct)%02o, content-length: %ld\n", flags, content_length);
 
    // Poke the xattr stuff into some memory for the file (poke the address
    //    of that memory into the fuse open structure so you have access to
@@ -733,13 +733,25 @@ int marfs_open (const char*         path,
    //   If wronly/rdwr/trunk  RM/WM/RD/WD/TD
    //   If append we don’t support that
    //
-   if (flags & O_CREAT) {
+   // unsupported operations
+   if (flags & (O_APPEND)) {
+      LOG(LOG_INFO, "open(O_APPEND) not implemented\n");
+      errno = ENOSYS;
+      return -1;
+   }
+   else if (flags & O_CREAT) {
       LOG(LOG_ERR, "open(O_CREAT) should've been handled by mknod()\n");
       errno = ENOSYS;          /* for now */
       return -1;
    }
    else if (flags & O_TRUNC) {
       LOG(LOG_ERR, "open(O_TRUNC) should've been handled by frtuncate()\n");
+      errno = ENOSYS;          /* for now */
+      return -1;
+   }
+   else if (flags & (O_RDWR)) {
+      fh->flags |= (FH_READING | FH_WRITING);
+      LOG(LOG_INFO, "open(O_RDWR) not implemented\n");
       errno = ENOSYS;          /* for now */
       return -1;
    }
@@ -758,21 +770,9 @@ int marfs_open (const char*         path,
    //      CHECK_PERMS(info->ns->iperms, (T_DATA));
    //   }
 
-   // unsupported operations
-   if (flags & (O_RDWR)) {
-      fh->flags |= (FH_READING | FH_WRITING);
-      LOG(LOG_INFO, "open(O_RDWR) not implemented\n");
-      errno = ENOSYS;          /* for now */
-      return -1;
-   }
-   if (flags & (O_APPEND)) {
-      LOG(LOG_INFO, "open(O_APPEND) not implemented\n");
-      errno = ENOSYS;
-      return -1;
-   }
-
 
    STAT_XATTRS(info);
+
 
    // If no xattrs, we let user read/write directly into the file.
    // This corresponds to a file that was created in DIRECT repo-mode.
@@ -795,25 +795,69 @@ int marfs_open (const char*         path,
    }
    else if (fh->flags & FH_WRITING) {
 
-      // COMMENTED OUT. This obj_type is now set in init_post().  I want to
-      // make sure that that works correctly, before deleting this.
-      //
-      //      // start out assuming write object-type is Uni.  We'll change to
-      //      // Multi if writes require a second object.
-      //      info->post.obj_type = OBJ_UNI;
-
-
       // Don't open MD file, here.  It isn't needed until the object-size
       // exceeds the threshold for Uni
       // (i.e. Namespace.iwrite_repo->chunk_size).  If we open it here,
       // then we unnecessarily slow down writing small files.
       //
-      //      fh->md_fd = open(info->post.md_path,(O_WRONLY));  // no O_BINARY in Linux.
+      //      fh->md_fd = open(info->post.md_path, (O_WRONLY));  // no O_BINARY in Linux.
       //      if (fh->md_fd < 0) {
       //         fh->md_fd = 0;
       //         return -1;
       //      }
+      LOG(LOG_INFO, "writing\n");
+
+
+      // An exception is the case where (potentially) multiple writers are
+      // writing the file in service of pftool.  This is "risky" behavior,
+      // because it is up to the caller to assure that objects are only
+      // written to proper offsets.  But they took on that risk when they
+      // called marfs_open_at_offset().
+      if (fh->flags & FH_ALLOW_RISKY) {
+
+         LOG(LOG_INFO, "writing risky\n");
+
+         const size_t recovery   = sizeof(RecoveryInfo) +8; // sys bytes, per chunk
+         size_t       chunk_size = info->pre.repo->chunk_size - recovery;
+         size_t       chunk_no   = (fh->open_offset / chunk_size);
+
+         // assure that the offset is on a chunk-boundary
+         if (fh->open_offset % chunk_size) {
+            LOG(LOG_ERR, "opening for write not at chunk-boundary (%s, %ld, %ld)\n",
+                path, fh->open_offset, content_length);
+            LOG(LOG_ERR, "repo '%s' has chunksize=%ld (logical=%ld)\n",
+                info->pre.repo->name, info->pre.repo->chunk_size, chunk_size);
+            errno = EFAULT;        // most feasible-looking POSIX-compliant error?
+            return -1;
+         }
+
+         fh->md_fd = open(info->post.md_path, (O_WRONLY));  // no O_BINARY in Linux.
+         if (fh->md_fd < 0) {
+            fh->md_fd = 0;
+            return -1;
+         }
+
+         // position md_fd at the proper place for MultiChunkInfo for this chunk
+         size_t chunk_info_offset = (chunk_no * sizeof(MultiChunkInfo));
+         TRY_GE0(lseek, fh->md_fd, chunk_info_offset, SEEK_SET);
+         LOG(LOG_INFO, "chunkinfo offset=%ld, (open_offset=%ld) length=%ld\n",
+             chunk_info_offset, fh->open_offset, content_length);
+
+         // update URL for this chunk
+         info->pre.chunk_no = chunk_no;
+         update_pre(&info->pre);
+         // update_url(os, info); // can't do this here ...
+
+         // set marfs_objid.obj_type such that pftool can recognize that it
+         // must do additional cleanup after closing.  (Actually done in
+         // marfs_utime().)
+         info->pre.obj_type = OBJ_Nto1;
+      }
+
+      // see get_stream_open_size()
+      fh->write_status.data_remain = content_length;
    }
+
 
    // Configure a private AWSContext, for this request
    AWSContext* ctx = aws_context_clone();
@@ -848,10 +892,6 @@ int marfs_open (const char*         path,
          info->seed = down_cast.ui;
 
          // uint8_t octet = (info->pre.repo->host_offset
-         //                  + (rand_r(&info->seed) % info->pre.repo->host_count));
-         // uint8_t octet = (info->pre.repo->host_offset
-         //                  + (rand() % info->pre.repo->host_count));
-         // uint8_t octet = (info->pre.repo->host_offset
          //                  + (ts.tv_nsec % info->pre.repo->host_count));
          uint8_t octet = (info->pre.repo->host_offset
                           + (rand_r(&info->seed) % info->pre.repo->host_count));
@@ -864,7 +904,7 @@ int marfs_open (const char*         path,
       // install the host and bucket
       s3_set_host_r(host_name, ctx);
       LOG(LOG_INFO, "host   '%s'\n", host_name);
-      fprintf(stderr, "host   '%s'\n", host_name);
+      fprintf(stderr, "host   '%s'\n", host_name); // pftool feedback, for now
 
       s3_set_bucket_r(info->pre.bucket, ctx);
       LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
@@ -903,34 +943,79 @@ int marfs_open (const char*         path,
    // initialize the URL in the ObjectStream, in our FileHandle
    TRY0(update_url, os, info);
 
-   // explicit content-length in requests is faster to Scality sproxy
-   // througha connector.  Save info so we only write MarFS chunk-size
-   // values at a time.
+   // explicit content-length is faster, in requests through a Scality
+   // sproxyd connector.  Save info so we only write MarFS chunk-size
+   // values per stream_open().
    //
    // NOTE: When overwriting an existing file, fuse gets called with open,
-   //     then ftruncate, but MarFS fuse ftruncate does
+   //     then ftruncate, but marfs_ftruncate() does
    //     abort-stream/move-to-trash/open-new-name.  So, we need to track
    //     the remaining data-size as it is right now.  (Also, we may
    //     someday want marfs_write() to retry failed writes a few times.)
-   fh->write_status.data_remain = content_length;
-   fh->write_status.data_req    = fh->write_status.data_remain;
-   if (fh->write_status.data_req > info->pre.repo->chunk_size) {
-      fh->write_status.data_req = info->pre.repo->chunk_size;
-   }
+   size_t open_size = get_stream_open_size(fh, 0);
 
 #if 0
-   TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET), fh->write_status.data_req);
+   TRY0(stream_open, os, ((fh->flags & FH_WRITING) ? OS_PUT : OS_GET), open_size, 0);
 #else
    // To support seek() [for reads], and allow reading at arbitrary
-   // offsets, we are now implementing each call to marfs_read() as an
-   // independent GET, with byte-ranges.  Therefore, for reads, we don't
-   // open the stream, here.
+   // offsets, we let marfs_read() determine the offset where it should
+   // open, so it can do its own GET, with byte-ranges.  Therefore, for
+   // reads, we don't open the stream, here.
    if (fh->flags & FH_WRITING)
-      TRY0(stream_open, os, OS_PUT, fh->write_status.data_req);
+      TRY0(stream_open, os, OS_PUT, open_size, 0);
 #endif
 
    EXIT();
    return 0;
+}
+
+
+// This is a potentially-risky variant of marfs_open(), which assumes you
+// know what you are doing.
+//
+// (a) If you are reading, then opening with offset is more efficient than
+//     opening without an offset and then closing and re-opening in your
+//     first call to marfs_read().  open_at_offset() for read is not risky.
+//
+// (b) However, if you are writing, you can potentially create unreadable
+//     Multi files, by creating objects that are not at the proper logical
+//     offset in the total data, or by failing to make a final pass to
+//     clean-up file-size and xattrs.  *That* is risky.  If you are pftool,
+//     you are smart enough to only call this with offsets at the
+//     boundaries of Multi objects, and to write full-sized objects when
+//     you do (except possibly the last object).  If you are FUSE, you
+//     probably do not know enough to be using this function, [unless you
+//     are some super FUSE-client from the future, where parallel streams
+//     are written to known offsets in a Multi file, in which case, we
+//     saulte you!]
+//
+// NOTE: If you are opening for writing at offset 0, we have to assume
+//     there are more than 1 writers.  This is because we need everyone to
+//     agree that the POST xattr should have type MULTI.  Otherwise, there
+//     is a race condition at close-time to update the xattr.
+//
+int marfs_open_at_offset(const char*         path,
+                         MarFS_FileHandle*   fh,
+                         int                 flags,
+                         curl_off_t          offset,
+                         curl_off_t          content_length) {
+   TRY_DECLS();
+   LOG(LOG_INFO, "opening at offset=%ld, length=%ld\n", offset, content_length);
+
+   if (flags & (O_WRONLY | O_RDWR)) {
+
+      // FH_ALLOW_RISKY implies N:1 writing from pftool
+      LOG(LOG_INFO, "allowing N:1 writes\n");
+      fh->flags |= FH_ALLOW_RISKY;
+      fh->write_status.sys_req = sizeof(RecoveryInfo) + 8;
+   }
+
+   // keep track of the offset for close/re-open
+   fh->open_offset = offset;
+
+   // TBD: update_pre(), to install correct chunk-number, for writes?
+
+   return marfs_open(path, fh, flags, content_length);
 }
 
 
@@ -1008,7 +1093,7 @@ int marfs_read (const char*        path,
    //     Just read the bytes from the file and fill in fuse read buffer
    //
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
-       && (info->ns->iwrite_repo->access_method == ACCESSMETHOD_DIRECT)) {
+       && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "reading DIRECT\n");
       TRY_GE0(read, fh->md_fd, buf, size);
       return rc_ssize;
@@ -1117,7 +1202,7 @@ int marfs_read (const char*        path,
    if ((  offset != fh->read_status.log_offset)
        && (os->flags & OSF_OPEN)) {
 
-      LOG(LOG_WARNING, "discontiguous read detected: gap %ld-%ld\n",
+      LOG(LOG_INFO, "discontiguous read detected: gap %ld-%ld\n",
           fh->read_status.log_offset, offset);
 
       TRY0(stream_sync, os);
@@ -1148,17 +1233,14 @@ int marfs_read (const char*        path,
          // open-ended byte-range, starting at offset in this chunk
          s3_set_byte_range_r(chunk_offset, -1, b->context);
 
-         // NOTE: stream_open() wipes ObjectStream.written.  We want
-         //     this field to track the total amount read across all
-         //     chunks, so we save it before calling open, and restore
-         //     it after.
+         // NOTE: stream_open() potentially wipes ObjectStream.written.  We
+         //     want this field to track the total amount read across all
+         //     chunks, so we provide an argument to preserve it.
          //
          // NOTE: In the case of discontiguous reads (see above), we
          //     probably should allow os->written to be reset.
          //
-         size_t written = os->written;
-         TRY0(stream_open, os, OS_GET, read_size);
-         os->written = written;
+         TRY0(stream_open, os, OS_GET, read_size, 1);
       }
 
       // Because we are reading byte-ranges, we may see '206 Partial Content'.
@@ -1380,6 +1462,13 @@ int marfs_readlink (const char* path,
 //    document claims that there is exactly one release per open, but I
 //    don't know if that is true."
 //
+// NOTE: The FH_ALLOW_RISKY flag, in FH->flags, means that multiple writers
+//    may be writing the file (e.g. from pftool).  They take responsibility
+//    for only writing complete chunks, and only writing at chunk
+//    boundaries.  But they can't be sure how big the file is at close
+//    time, or how much chunk-info will utimately be written, so we don't
+//    do that at close() time.  Instead, pftool will do a final
+//    (single-threaded) update when it is setting the modification-time.
 
 int marfs_release (const char*        path,
                    MarFS_FileHandle*  fh) {
@@ -1439,7 +1528,8 @@ int marfs_release (const char*        path,
       if ((fh->flags & FH_WRITING)
           && (info->post.obj_type == OBJ_MULTI)) {
 
-         TRY0(write_chunkinfo, fh->md_fd, info, os->written - fh->write_status.sys_writes);
+         TRY0(write_chunkinfo, fh->md_fd, info,
+              fh->open_offset, os->written - fh->write_status.sys_writes);
 
          // keep count of amount of real chunk-info written into MD file
          info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
@@ -1463,7 +1553,8 @@ int marfs_release (const char*        path,
 
    // truncate length to reflect length of data
    if ((fh->flags & FH_WRITING)
-       && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
+       && has_any_xattrs(info, MARFS_ALL_XATTRS)
+       && !(fh->flags & FH_ALLOW_RISKY)) {
       TRY0(truncate, info->post.md_path, os->written - fh->write_status.sys_writes);
    }
 
@@ -1472,8 +1563,9 @@ int marfs_release (const char*        path,
    info->xattrs &= ~(XVT_RESTART);
 
    // install xattrs
-   if ((info->ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT)
-       && (fh->flags & FH_WRITING)) {
+   if ((info->pre.repo->access_method != ACCESSMETHOD_DIRECT)
+       && (fh->flags & FH_WRITING)
+       && !(fh->flags & FH_ALLOW_RISKY)) {
    
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
    }
@@ -1856,6 +1948,15 @@ int marfs_unlink (const char* path) {
 // deprecated in 2.6
 // System is giving us timestamps that should be applied to the path.
 // http://fuse.sourceforge.net/doxygen/structfuse__operations.html
+//
+// NOTE If opened N:1 (identifiable because the marfs_objid xattr will have
+//     obj-type OBJ_Nto1), this is our chance to reconcile things that
+//     parallel writers couldn't do without locking, such as xattrs, and
+//     file-size.  It's even possible that only one chunk was written, so
+//     we couldn't know for sure that the POST.obj_type should be Multi,
+//     until now.  (We can find out by counting MultiChunkInfos in the
+//     metadata file.)
+//
 int marfs_utime(const char*     path,
                 struct utimbuf* buf) {   
    ENTRY();
@@ -1878,6 +1979,15 @@ int marfs_utime(const char*     path,
 
 // System is giving us timestamps that should be applied to the path.
 // http://fuse.sourceforge.net/doxygen/structfuse__operations.html
+//
+// NOTE If opened N:1 (identifiable because the marfs_objid xattr will have
+//     obj-type OBJ_Nto1), this is our chance to reconcile things that
+//     parallel writers couldn't do without locking, such as xattrs, and
+//     file-size.  It's even possible that only one chunk was written, so
+//     we couldn't know for sure that the POST.obj_type should be Multi,
+//     until now.  (We can find out by counting MultiChunkInfos in the
+//     metadata file.)
+//
 int marfs_utimens(const char*           path,
                   const struct timespec tv[2]) {   
    ENTRY();
@@ -1914,7 +2024,7 @@ int marfs_write(const char*        path,
    ENTRY();
 
    LOG(LOG_INFO, "%s\n", path);
-   LOG(LOG_INFO, "offset: %ld, size: %ld\n", offset, size);
+   LOG(LOG_INFO, "offset: (%ld)+%ld, size: %ld\n", fh->open_offset, offset, size);
 
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
@@ -1930,12 +2040,12 @@ int marfs_write(const char*        path,
    CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
    // No need to call access as we called it in open for write
-   // Make sure security is set up for accessing repo using iwrite_datarepo
+   // Make sure security is set up for accessing the selected repo
 
    // If file has no xattrs its just a normal use the md file for data,
    //   just do the write and return, don’t bother with all this stuff below
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
-       && (info->ns->iwrite_repo->access_method == ACCESSMETHOD_DIRECT)) {
+       && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "no xattrs, and DIRECT: writing to file\n");
       TRY_GE0(write, fh->md_fd, buf, size);
       return rc_ssize;
@@ -1960,7 +2070,8 @@ int marfs_write(const char*        path,
    //     user-data.  To compute this, we subtract the amount of non-user
    //     data, written by MarFS.  That amount is tracked in
    //     fh->write_status.sys_writes.
-   size_t log_offset = (os->written - fh->write_status.sys_writes);
+   //
+   size_t log_offset = (fh->open_offset + os->written - fh->write_status.sys_writes);
    if ( offset != log_offset) {
       LOG(LOG_ERR, "non-contig write: offset %ld, after %ld (+ %ld)\n",
           offset, log_offset, fh->write_status.sys_writes);
@@ -2000,54 +2111,58 @@ int marfs_write(const char*        path,
       TRY0(update_pre, &info->pre);
       TRY0(update_url, os, info);
 
-      // this works, whether the open() was done with a specific size (so
-      // we are writing requests that can have content-length headers), or
-      // was done with size 0 (so we are writing requests that use chunked
-      // transfer-encoding).
-      fh->write_status.data_remain -= fh->write_status.data_req;
-      fh->write_status.data_req     = fh->write_status.data_remain;
-      if (fh->write_status.data_req > info->pre.repo->chunk_size) {
-         fh->write_status.data_req = info->pre.repo->chunk_size;
-      }
-      TRY0(stream_open, os, OS_PUT, fh->write_status.data_req);
+      // NOTE: stream_open() potentially wipes ObjectStream.written.  We
+      //     want this field to track the total amount written, across all
+      //     chunks, within a given open(), so we preserve it.
+      size_t open_size = get_stream_open_size(fh, 1);
+      TRY0(stream_open, os, OS_PUT, open_size, 1);
    }
 
-   // Span across objects for "Multi" format.  Repo.chunk_size is the
-   // maximum size of an individual object written by MarFS.  Check whether
-   // this write will put us over (leaving room at the end for
-   // recovery-info).  If so, then write as much data into this object as
-   // can fit (minus size of recovery-info), write the recovery-info into
-   // the tail, close the object, open a new one, and resume writing there.
+   // Span across objects, for "Multi" format.  Repo.chunk_size is the
+   // maximum size of an individual object written by MarFS (including
+   // user-inaccessible recovery-info, written at the end).  We refer to
+   // the "logical end" of a block as the place where recovery info begins.
+   // Similarly, the logical offset is the amount of user data (not
+   // counting recovery info) in all chunks of a multi, up to some point.
+   // Here, <log_end> refers to the offset in the user's data corresponding
+   // with the logical-end of a chunk.
+   //
+   // If this write goes past the logical end of this chunk, then write as
+   // much data into this object as can fit (minus size of recovery-info),
+   // write the recovery-info into the tail, close the object, open a new
+   // one, and resume writing there.
    //
    // For each chunk of a Multi object, we also write a corresponding copy
    // of the object-ID into the MD file.  The MD file is not opened for us
    // in marfs_open(), because it wasn't known until now that we'd need it.
    size_t       write_size = size;
    const size_t recovery   = sizeof(RecoveryInfo) +8; // written in tail of object
-   size_t       chunk_end  = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
+   size_t       log_end    = (info->pre.chunk_no +1) * (info->pre.chunk_size - recovery);
    char*        buf_ptr    = (char*)buf;
 
-   while ((os->written + write_size + recovery) >= chunk_end) {
+   while (write_size && ((log_offset + write_size) >= log_end)) {
 
       // write <fill> more bytes, to fill this object
-      ssize_t fill   = chunk_end - (os->written + recovery);
+      ssize_t fill   = log_end - log_offset;
       size_t  remain = write_size - fill; // remaining after <fill>
 
-      LOG(LOG_INFO, "iterating: written=%ld, fill=%ld, rec=%ld, remain=%ld, chnksz=%ld\n",
-          os->written, fill, recovery, remain, info->pre.chunk_size);
+      LOG(LOG_INFO, "iterating: "
+          "loff=%ld, wr=%ld, fill=%ld, remain=%ld, chnksz=%ld, rec=%ld\n",
+          log_offset, write_size, fill, remain, info->pre.chunk_size, recovery);
 
       // possible silly config: (recovery > chunk_size)
       // This config is now ruled out by validate_config() ?
       if (fill <= 0) {
-         LOG(LOG_ERR, "fill %ld < 0  (written %ld, rec: %ld, wr: %ld)\n",
-             fill, os->written, recovery, write_size);
+         LOG(LOG_ERR, "fill=%ld <= 0  (wr=%ld, writ=%ld-%ld)\n",
+             fill, write_size, os->written, fh->write_status.sys_writes);
          errno = EIO;
          return -1;
       }
 
 
       TRY_GE0(stream_put, os, buf_ptr, fill);
-      buf_ptr += fill;
+      buf_ptr    += fill;
+      log_offset += fill;
 
       TRY_GE0(write_recoveryinfo, os, info);
       fh->write_status.sys_writes += rc_ssize; // track non-user-data written
@@ -2069,7 +2184,8 @@ int marfs_write(const char*        path,
       }
 
       // MD file gets per-chunk information
-      TRY0(write_chunkinfo, fh->md_fd, info, os->written - fh->write_status.sys_writes);
+      TRY0(write_chunkinfo, fh->md_fd, info,
+           fh->open_offset, (os->written - fh->write_status.sys_writes));
 
       // keep count of amount of real chunk-info written into MD file
       info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
@@ -2083,39 +2199,28 @@ int marfs_write(const char*        path,
 
          // update chunk-number, and generate the new obj-id
          info->pre.chunk_no += 1;
-      
+
          // update the URL in the ObjectStream, in our FileHandle
          TRY0(update_pre, &info->pre);
          TRY0(update_url, os, info);
 
+         // pos in user-data corresponding to the logical end of a chunk
+         log_end += (info->pre.repo->chunk_size - recovery);
+
          // open next chunk
          //
-         // NOTE: stream_open() wipes ObjectStream.written.  We want
-         //     OS.written to track the total amount written across all
-         //     chunks, so we save it before calling open, and restore it
-         //     after.
-         size_t written = os->written;
-
-         // this works, whether the open() was done with a specific size (so
-         // we are writing requests that can have content-length headers), or
-         // was done with size 0 (so we are writing requests that use chunked
-         // transfer-encoding).
-         fh->write_status.data_remain -= fh->write_status.data_req;
-         fh->write_status.data_req     = fh->write_status.data_remain;
-         if (fh->write_status.data_req > info->pre.repo->chunk_size) {
-            fh->write_status.data_req = info->pre.repo->chunk_size;
-         }
-         TRY0(stream_open, os, OS_PUT, fh->write_status.data_req);
-         os->written = written;
-
-
-         chunk_end = ((info->pre.chunk_no +1) * (info->pre.chunk_size));
+         // NOTE: stream_open() potentially wipes ObjectStream.written.  We
+         //     want this field to track the total amount written, across all
+         //     chunks, within a given open(), so we preserve it.
+         size_t open_size = get_stream_open_size(fh, 1);
+         TRY0(stream_open, os, OS_PUT, open_size, 1);
       }
 
       // compute limits of new chunk
       write_size = remain;
    }
-   LOG(LOG_INFO, "done iterating\n");
+   LOG(LOG_INFO, "done iterating (with final %ld)\n", write_size);
+
 
    // write more data into object. This amount doesn't finish out any
    // object, so don't write chunk-info to MD file.

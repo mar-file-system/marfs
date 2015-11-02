@@ -189,8 +189,9 @@ typedef enum {
 } IsPut;
 
 
-// initialize os.url, before calling
-int     stream_open(ObjectStream* os, IsPut put, curl_off_t content_length);
+// Initialize os.url, before calling.  Use <preserve_os_written> to prevent
+// resetting the count of data written, in os->written
+int     stream_open(ObjectStream* os, IsPut put, curl_off_t content_length, uint8_t preserve_os_written);
 
 int     stream_put(ObjectStream* os, const char* buf, size_t size);
 ssize_t stream_get(ObjectStream* os, char* buf,       size_t size);

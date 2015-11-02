@@ -303,6 +303,7 @@ typedef enum {
    
 } XattrValueType;
 
+// shorthand for useful XattrValueType combinations
 #define MARFS_MD_XATTRS   (XVT_PRE | XVT_POST)     /* MD-related XattrValueTypes */
 #define MARFS_ALL_XATTRS  (XVT_PRE | XVT_POST | XVT_RESTART | XVT_SHARD)  /* all XattrValueTypes */
 
@@ -395,9 +396,10 @@ typedef struct PathInfo {
 // ...........................................................................
 
 typedef enum {
-   FH_READING    = 0x01,        // might someday allow O_RDWR
-   FH_WRITING    = 0x02,        // might someday allow O_RDWR
-   FH_DIRECT     = 0x04,        // i.e. PathInfo.xattrs has no MD_
+   FH_READING      = 0x01,        // might someday allow O_RDWR
+   FH_WRITING      = 0x02,        // might someday allow O_RDWR
+   FH_DIRECT       = 0x04,        // i.e. PathInfo.xattrs has no MD_
+   FH_ALLOW_RISKY  = 0x08,        // implies pftool calling. (Can write N:1)
 } FHFlags;
 
 typedef uint16_t FHFlagType;
@@ -440,16 +442,42 @@ typedef struct {
 //
 // ... HOWEVER, we still need to break long pftool writes with given size
 // into MarFS chunks (pftool could do it, but we have all the expertise
-// here).  When opened with a given size (i.e. invoking the content-length
-// approach), data_remain holds the entire remaining size, including the
-// current open.  We only decrement the data_remain by the previous
-// request-size when we are reopening at an object-boundary.
+// here).  Meanwhile, fuse writes may also cross object-boundaries.
+//
+// stream_open() uses chunked-transfer-encoding when called with
+// content_length=0.  Users then call marfs_write repeatedly, which closes
+// and repoens new objects as needed, writting recovery-info at the end of
+// each.  When called with content-length non-zero, stream_open() installs
+// that as the content-length for the request.  In this case, pftool would
+// be calling with the size of a logical chunk of user-data, expecting to
+// write a complete object (or possibly a smaller size for the final part
+// of a multi).  We add to the size of the request, so as to cover the
+// recovery-info at the tail.  (Note that an individual pftool task may
+// write multiple chunks to the same open "file".)
+//
+// In order to handle both cases, we track a content-length provided at
+// open time in FileHandle.data_remain.  In the case of fuse this will be
+// zero, as will user_req, and sys_req.  For pftool, data_remain will be
+// the total size of user-data to be written.  When closing/reopening at
+// object boundaries, we want to decrement this by the amount of user-data
+// in the previous request.  However, we want the actual request to also
+// include room for the recovery-info written at the end.  Thus, we need
+// both user_req and sys_req, to track these two things.
+//
+// Both schemes (fuse and pftool) can now be handled by giving user_req +
+// sys_req as the content-length argument to stream_open().  When closing a
+// chunk, we can always write recovery-info at the tail.  We only decrement
+// the data_remain by the previous request-size when we are reopening at an
+// object-boundary (i.e. when making the next request).  This allows
+// close-and-reopen to correctly track the remaining size, without getting
+// screwed by truncate.
 
 typedef struct {
    size_t        sys_writes;    // discount this much from FileHandle.os.written
    RecoveryInfo  rec_info;      // (goes into tail of object)
-   size_t        data_remain;   // remaining size (incl current req)
-   size_t        data_req;      // current request
+   size_t        data_remain;   // remaining user-data size (incl current req)
+   size_t        user_req;      // part of current request for user-data
+   size_t        sys_req;       // part of current request for sys-data (recovery-info)
 } WriteStatus;
 
 
@@ -458,11 +486,14 @@ typedef struct {
    PathInfo      info;          // includes xattrs, MDFS path, etc
    int           md_fd;         // opened for reading meta-data, or data
    FHFlagType    flags;
+   curl_off_t    open_offset;   // [see comments at marfs_open_with_offset()]
    ReadStatus    read_status;   // buffer_management, current_offset, etc
    WriteStatus   write_status;  // buffer-management, etc
    ObjectStream  os;            // handle for streaming access to objects
 } MarFS_FileHandle;
 
+// fuse/pftool-agnostic updates of data_remain, etc. (see comments, above)
+size_t get_stream_open_size(MarFS_FileHandle* fh, uint8_t decrement);
 
 
 // directory-handle covers two cases:
@@ -499,6 +530,8 @@ typedef struct {
 // strip the leading <mnt_top> from an arbitrary path.
 // Return NULL if no match.
 extern const char* marfs_sub_path(const char* path);
+                              
+extern int  init_mdfs();
 
 // These initialize different parts of the PathInfo struct.
 // Calling them redundantly is cheap and harmless.
@@ -526,19 +559,36 @@ extern int  trash_truncate(PathInfo* info, const char* path);
 
 extern int  check_quotas  (PathInfo* info);
 
-extern int update_url(ObjectStream* os, PathInfo* info);
+extern int  update_url(ObjectStream* os, PathInfo* info);
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
-extern int write_chunkinfo(int                   md_fd,
-                           const PathInfo* const info,
-                           const size_t          total_written);
+extern int     write_chunkinfo(int                   md_fd,
+                               const PathInfo* const info,
+                               size_t                open_offset,
+                               size_t                user_data_written);
 
-extern int read_chunkinfo(int md_fd, MultiChunkInfo* chnk);
+extern int     read_chunkinfo (int md_fd, MultiChunkInfo* chnk);
+
+extern ssize_t count_chunkinfo(int md_fd, MultiChunkInfo* chnk);
 
 
-extern  ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info);
-                              
-extern int init_mdfs();
+extern ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info);
+
+
+// support for pftool, doing N:1 writes
+extern ssize_t get_chunksize(const char* path,
+                             size_t      file_size,
+                             uint8_t     adjust_for_recovery_info);
+
+extern ssize_t get_chunksize_with_info(PathInfo*   info,
+                                       size_t      file_size,
+                                       uint8_t     adjust_for_recovery_info);
+
+
+// support for pftool, before opening, and after closing.
+// This is called once, single-threaded, before/after any parallel activity.
+extern int     batch_pre_process (const char* path, size_t file_size);
+extern int     batch_post_process(const char* path, size_t file_size);
 
 
 

@@ -142,7 +142,7 @@ CorrectionMethod lookup_correction(const char* token) {
 
 
 // encode_obj_type() / decode_obj_type()
-DEFINE_ENCODE(obj_type, MarFS_ObjType, "_UMPSF");
+DEFINE_ENCODE(obj_type, MarFS_ObjType, "_UMPSFN");
 DEFINE_DECODE(obj_type, MarFS_ObjType);
 
 // encode_compression() / decode_compression()
@@ -377,7 +377,7 @@ int init_pre(MarFS_XattrPre*        pre,
 //       separately.
 //
 // NOTE: Packed objects are created externally, but read by fuse.  They
-//       can't be presumed to have an indoe that matches the actual inode
+//       can't be presumed to have an inode that matches the actual inode
 //       of the MDFS file.  Therefore, in the case of packed, we should
 //       avoid updating that field.  (However, because we're using an
 //       sprintf() we'll just assume that the "inode" for packed files is

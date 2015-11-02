@@ -194,8 +194,8 @@ extern "C" {
 #define MARFS_BUCKET_WR_FORMAT  "%s"
 
 
-#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/unq.%hhd/chnksz.%lx/chnkno.%lx"
-#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/unq.%hhd/chnksz.%lx/chnkno.%lx"
+#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/unq.%hhd/chnksz.%lx/chnkno.%lu"
+#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/unq.%hhd/chnksz.%lx/chnkno.%lu"
 
 
 // #define MARFS_PRE_RD_FORMAT     MARFS_BUCKET_RD_FORMAT "/" MARFS_OBJID_RD_FORMAT  
@@ -278,7 +278,8 @@ typedef enum {
    OBJ_MULTI,          // file spans multiple objs (list of objs as chunks)
    OBJ_PACKED,         // multiple files per objects
    OBJ_STRIPED,        // (like Lustre does it)
-   OBJ_FUSE,           // written by FUSE.  (i.e. not packed, maybe uni/multi.
+   OBJ_FUSE,           // written by FUSE.   (implies not-packed, maybe uni/multi)
+   OBJ_Nto1,           // written by pftool. (implies not-packed, maybe uni/multi)
                        // Only used in object-ID, not in Post xattr)
 } MarFS_ObjType;
 
@@ -395,21 +396,21 @@ int str_to_epoch(time_t* time, const char* str, size_t size);
 //       was created then, and this one is created now.  But, obj_ctime is
 //       only a time_t (1-second resolution).  If you are overwriting a
 //       marfs object that was *just* created, you might get the same
-//       object-ID for the new file.  So, what do we do, have fuse wait for
-//       a second?  Return an error?  Neither of those seemed acceptable,
-//       so I'm adding the "unique" field.  This will always be zero,
-//       except for files that were created as a result of truncating
-//       another file of the same name, within the same second.
+//       object-ID for the new file.  So, do we have fuse wait for a
+//       second?  Return an error?  Neither of those seemed acceptable, so
+//       I'm adding the "unique" field.  This will always be zero, except
+//       for files that were created as a result of truncating another file
+//       of the same name, within the same second.
 
 typedef struct MarFS_XattrPre {
 
-   const MarFS_Repo*      repo;
-   const MarFS_Namespace* ns;
+   const MarFS_Repo*      repo;     // as recorded in an object-ID
+   const MarFS_Namespace* ns;       // as recorded in an object-ID
 
    uint16_t           config_vers_maj;  // version of config that file was written with
    uint16_t           config_vers_min;
 
-   MarFS_ObjType      obj_type;     // This will only be { Packed, Fuse, or None }
+   MarFS_ObjType      obj_type;     // This will only be { Packed, Fuse, Nto1, or None }
                                     // see XattrPost for final correct type of object
 
    CompressionMethod  compression;  // in addition to erasure-coding

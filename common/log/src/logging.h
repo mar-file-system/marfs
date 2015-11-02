@@ -39,7 +39,7 @@ extern "C" {
 #  define LOG(PRIO, FMT, ...)                                           \
    syslog((PRIO), xFMT FMT, __FILE__, __LINE__,                         \
           17-(int)strlen(__FILE__), "", __FUNCTION__,                   \
-          (((PRIO)<=LOG_ERR) ? "# " : ""), ## __VA_ARGS__)
+          (((PRIO)<=LOG_ERR) ? "#ERR " : ""), ## __VA_ARGS__)
 
 #elif (defined USE_STDOUT)
 // must start fuse with '-f' in order to allow stdout/stderr to work
@@ -49,7 +49,7 @@ extern "C" {
 #  define LOG(PRIO, FMT, ...)                                           \
    printf_log((PRIO), LOG_PREFIX xFMT FMT, __FILE__, __LINE__,          \
               17-(int)strlen(__FILE__), "", __FUNCTION__,               \
-              (((PRIO)<=LOG_ERR) ? "# " : ""), ## __VA_ARGS__)
+              (((PRIO)<=LOG_ERR) ? "#ERR " : ""), ## __VA_ARGS__)
 
    ssize_t printf_log(size_t prio, const char* format, ...);
 

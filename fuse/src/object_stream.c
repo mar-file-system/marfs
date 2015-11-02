@@ -92,7 +92,7 @@ OF SUCH DAMAGE.
 #include <errno.h>
 
 
-void stream_reset(ObjectStream* os);
+void stream_reset(ObjectStream* os, uint8_t preserve_os_written);
 
 
 
@@ -575,6 +575,7 @@ size_t streaming_writeheaderfunc(void* ptr, size_t size, size_t nitems, void* st
 
 
 size_t streaming_writefunc(void* ptr, size_t size, size_t nmemb, void* stream) {
+
    IOBuf*        b     = (IOBuf*)stream;
    ObjectStream* os    = (ObjectStream*)b->user_data;
    size_t        total = (size * nmemb);
@@ -727,7 +728,10 @@ ssize_t stream_get(ObjectStream* os,
 //       
 // ---------------------------------------------------------------------------
 
-int stream_open(ObjectStream* os, IsPut put, curl_off_t content_length) {
+int stream_open(ObjectStream* os,
+                IsPut         put,
+                curl_off_t    content_length,
+                uint8_t       preserve_os_written) {
    LOG(LOG_INFO, "%s\n", ((put) ? "PUT" : "GET"));
 
    if (os->flags & OSF_OPEN) {
@@ -738,7 +742,7 @@ int stream_open(ObjectStream* os, IsPut put, curl_off_t content_length) {
    if (os->flags) {
       if (os->flags & OSF_CLOSED) {
          LOG(LOG_INFO, "stream being re-opened with %s\n", os->url);
-         stream_reset(os);      // previously-used
+         stream_reset(os, preserve_os_written); // previously-used
       }
       else {
          LOG(LOG_ERR, "%s has flags asserted, but is not CLOSED\n", os->url);
@@ -748,12 +752,13 @@ int stream_open(ObjectStream* os, IsPut put, curl_off_t content_length) {
    }
 
    os->flags |= OSF_OPEN;
-   os->written = 0;             // total read/written through OS
    if (put)
       os->flags |= OSF_WRITING;
    else
       os->flags |= OSF_READING;
 
+   if (! preserve_os_written)
+      os->written = 0;          // total read/written through OS
 
    // caller's open-flags, in case we need to close/repoen
    // (e.g. for Multi, or marfs_ftruncate())
@@ -912,7 +917,7 @@ int stream_sync(ObjectStream* os) {
    }
    else {
       LOG(LOG_INFO, "op-thread returned %d\n", os->op_rc);
-      errno = (os->op_rc ? EINVAL : 0);
+      errno = (os->op_rc ? EIO : 0);
       return os->op_rc;
    }
 }
@@ -1076,7 +1081,8 @@ int stream_close(ObjectStream* os) {
 //       opened and closed.  Therefore, we can assume that sems have been
 //       destroyed, and thread has been joined or killed.
 //
-void stream_reset(ObjectStream* os) {
+void stream_reset(ObjectStream* os,
+                  uint8_t       preserve_os_written) {
    if (! (os->flags & OSF_CLOSED)) {
       LOG(LOG_ERR, "We require a stream that was previously opened\n");
       return;
@@ -1095,8 +1101,10 @@ void stream_reset(ObjectStream* os) {
 #else
    aws_iobuf_reset(&os->iob);
    os->op_rc      = 0;
-   os->written    = 0;
    os->flags      = 0;
    // os->open_flags = 0;
+
+   if (! preserve_os_written)
+      os->written = 0;
 #endif
 }

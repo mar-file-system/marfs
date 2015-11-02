@@ -541,6 +541,81 @@ int stat_xattrs(PathInfo* info) {
 }
 
 
+// When pftool is calling, we're in batch mode.  Find the appropriate repo,
+// based on total file-size that will be written here.  (This operation is
+// done at stat-time.)  Any subsequent pftool tasks that are writing chunks
+// will get the repo from the parsed xattrs.  File is not necessarily open
+// at this time, so we have to make a costly call to stat_xattrs().
+//
+// The xattrs will be initialized (e.g. via init_pre()), in the call to
+// stat_xattrs().
+int batch_pre_process(const char* path, size_t file_size) {
+   TRY_DECLS();
+   LOG(LOG_INFO, "%s, %ld\n", path, file_size);
+
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+
+   EXPAND_PATH_INFO(&info, path);
+   STAT_XATTRS(&info);
+
+   // update the Pre.repo to match the batch-repo corresponding to file-size,
+   // in the namespace for this path.
+   MarFS_Repo* repo = find_repo_by_range(info.ns, file_size);
+   if (! repo) {
+      LOG(LOG_ERR, "no batch-repo for ns '%s', size=%ld\n",
+          info.ns->name, file_size);
+      return -1;
+   }
+   LOG(LOG_INFO, "batch-repo for ns '%s', size=%ld -> '%s'\n",
+       info.ns->name, file_size, repo->name);
+
+   // xattrs always have the raw chunksize (including recovery-info)
+   info.pre.repo       = repo;
+   info.pre.chunk_size = repo->chunk_size;
+   info.pre.obj_type   = OBJ_Nto1;
+
+   update_pre(&info.pre);        // ?
+
+   // POST is also required by stat_xattrs().
+   // we have enough info to fill it
+   const size_t recovery   = sizeof(RecoveryInfo) +8; // sys bytes, per chunk
+   size_t       chunk_size = repo->chunk_size - recovery;
+   size_t       n_chunks   = file_size / chunk_size;
+   if ((n_chunks * chunk_size) < file_size)
+      ++ n_chunks;              // round up
+
+   info.post.obj_type         = ((n_chunks > 1) ? OBJ_MULTI : OBJ_UNI);
+   info.post.chunks           = n_chunks;
+   info.post.chunk_info_bytes = n_chunks * sizeof(MultiChunkInfo);
+
+   // save Pre and Post
+   SAVE_XATTRS(&info, (XVT_PRE | XVT_POST));
+
+   LOG(LOG_INFO, "done.\n");
+   return 0;
+}
+
+
+// Called single-threaded from pftool in update_stats(), after all parallel
+// activity to create <path> has completed.
+int batch_post_process(const char* path, size_t file_size) {
+   TRY_DECLS();
+   LOG(LOG_INFO, "%s, %ld\n", path, file_size);
+
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+   EXPAND_PATH_INFO(&info, path);
+
+   STAT_XATTRS(&info);
+   if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
+      TRY0(truncate, info.post.md_path, file_size);
+   }
+   else
+      LOG(LOG_INFO, "no xattrs\n");
+
+   return 0;
+}
 
 // Return non-zero if info->post.md_path has ALL/ANY of the reserved xattrs
 // indicated in <mask>.  Else, zero.
@@ -634,7 +709,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          // If the flag isn't set, then don't install (or remove) the xattr.
          if (info->flags & (PI_RESTART)) {
             LOG(LOG_INFO, "XVT_RESTART\n");
-            xattr_value_str[0] = 1;
+            xattr_value_str[0] = '1';
             xattr_value_str[1] = 0; // in case someone tries strlen
             __TRY0(lsetxattr, info->post.md_path,
                    spec->key_name, xattr_value_str, 2, 0);
@@ -828,7 +903,8 @@ int  trash_unlink(PathInfo*   info,
 // [trash_dup_file]
 // This is used to implement truncate/ftruncate
 //
-// Copy trashed MD file into trash area, does NOT unlink original.
+// Copy trashed MD file into trash area, plus all its xattrs.
+// Does NOT unlink original.
 // Does NOT do anything with object-storage.
 // Wipes all xattrs on original, and truncs to zero.
 //
@@ -1141,8 +1217,6 @@ int update_url(ObjectStream* os, PathInfo* info) {
 }
 
 
-
-
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 //
 // <total_written> includes all user-data (but not system-data,
@@ -1154,18 +1228,41 @@ int update_url(ObjectStream* os, PathInfo* info) {
 // We use "sizeof(RecoveryInfo) +8" everywhere, because the final 8 bytes
 // in an object hold the index of the begining of the RecoveryInfo, within
 // the object.
+//
+// NOTE: When writing through fuse, there is a a long sequence of writes
+//    which are arbitrarily sized, with respect to the size of a
+//    marfs-chunk.  Therefore, the total data written can be tracked in the
+//    ObjectStream in a MarFS_FileHandle, and any system-writes
+//    (recovery-info) can be subtracted.  This use-case needs to preserve
+//    the total amount of data-written, so that the MD file can be
+//    truncated to the proper size at close time.
+//
+//    On the other hand, fuse may spawn many tasks writing to the same file
+//    (see FH_ALLOW_RISKY).  We assure that they all start writing at
+//    logical chunk-boundaries, and we expect pftool to assure that they
+//    all (except possibly the last) write full-sized chunks.  But these
+//    will not have OS.written matching what would be expected at a given
+//    chunk, if they had been writing through fuse.
+//
+//    In both cases, if we have the logical offset that was used at
+//    open-time (i.e. 0 for fuse, some block-boundary for pftool), then we
+//    can fill out the chunk-info.  And, in both cases, OS.written should
+//    be preserved,
+
 
 int write_chunkinfo(int                   md_fd,
                     const PathInfo* const info,
-                    const size_t          total_written) {
-
-   const size_t chunk_info_len = sizeof(MultiChunkInfo);
-   char         str[chunk_info_len];
+                    size_t                open_offset,
+                    size_t                user_data_written) {
 
    const size_t recovery             = sizeof(RecoveryInfo) +8;
    const size_t user_data_per_chunk  = info->pre.chunk_size - recovery;
    const size_t log_offset           = info->pre.chunk_no * user_data_per_chunk;
-   const size_t user_data_this_chunk = total_written - log_offset;
+   const size_t user_data_this_chunk = user_data_written - log_offset;
+
+   const size_t chunk_info_len = sizeof(MultiChunkInfo);
+   char         str[chunk_info_len];
+
 
    MultiChunkInfo chunk_info = (MultiChunkInfo) {
       .config_vers_maj  = marfs_config->version_major,
@@ -1214,7 +1311,7 @@ int write_chunkinfo(int                   md_fd,
    return 0;
 }
 
-// read MultiChunkInfo for given chunk, from file
+// read MultiChunkInfo for the next chunk, from file
 int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
    static const size_t chunk_info_len = sizeof(MultiChunkInfo);
 
@@ -1225,7 +1322,7 @@ int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
           strerror(errno));
       return -1;
    }
-   if (rd_count != chunk_info_len) {
+   else if (rd_count != chunk_info_len) {
       LOG(LOG_ERR, "error reading chunk-info (%ld != %ld)\n",
           rd_count, chunk_info_len);
       errno = EIO;
@@ -1239,7 +1336,7 @@ int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
       errno = EIO;
       return -1;
    }
-   if (str_count != chunk_info_len) {
+   else if (str_count != chunk_info_len) {
       LOG(LOG_ERR, "error preparing chunk-info (%ld != %ld)\n",
           str_count, chunk_info_len);
       errno = EIO;
@@ -1250,7 +1347,108 @@ int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
 }
 
 
+// This is intended to count the number of valid MultiChunkInfo records in
+// a file.  It was used from pftool, in the case of N:1 writes, where the
+// writers can't be sure who wrote last, so they can't maintain the correct
+// file-size.  But, then, I realized we have the source-file handy, so we
+// can just stat it to get the proper destination-size.
+//
+// However, I want to keep this around, because it could be used to check
+// for whether a file was completely copied, in a restart situation.
+//
+// return count of chunks, or -1 if there's an error.  <chnk> gets the
+// final MultiChunkInfo.
+//
+// NOTE: We don't want to parse as deeply as read_chunkinfo() does, just
+//     count valid chunks.
+//
+// caller could do something like this:
+//
+//       STAT_XATTRS(&info); // to get xattrs
+//       if ((has_all_xattrs(&info, XVT_PRE))
+//           && (info.pre.obj_type == OBJ_Nto1)
+//           && (info.post.obj_type == OBJ_MULTI)) {
+//    
+//          const size_t recovery = sizeof(RecoveryInfo) +8; // written in tail of object
+//    
+//          // find the MarFS logical file-size by counting MultiChunkInfo
+//          // objects, written into the metadata file.  There will always be at
+//          // least one, even if file received no writes (?)
+//          int md_fd = open(info.post.md_path, (O_RDONLY));  // no O_BINARY in Linux.
+//          if (md_fd < 0) {
+//             // fh->md_fd = 0;
+//             return -1;
+//          }
+//          MultiChunkInfo final_chunk;      // gets final chunk-contents
+//          ssize_t n_chunks = count_chunkinfo(md_fd, &final_chunk);
+//          close(md_fd);
+//          if (n_chunks < 0) {
+//             return -1;
+//          }
+//    
+//          size_t logical_size = final_chunk.chunk_data_bytes;
+//          if (n_chunks)
+//              logical_size += ((n_chunks -1) * (info.pre.repo->chunk_size - recovery));
+//    
+//          // truncate file to logical-size indicated in chunk-data
+//          TRY0(truncate, info.post.md_path, logical_size);
+//    
+//          // Some xattr fields were unknown until now
+//          info.post.obj_type         = ((n_chunks > 1) ? OBJ_MULTI : OBJ_UNI);
+//          info.post.chunks           = ((n_chunks > 1) ? n_chunks : 0);
+//          info.post.chunk_info_bytes = ((n_chunks > 1)
+//                                        ? (n_chunks * sizeof(MultiChunkInfo))
+//                                        : 0);
+//          info.flags &= ~(PI_RESTART);
+//    
+//          SAVE_XATTRS(&info, MARFS_ALL_XATTRS);
+//       }
 
+ssize_t count_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
+   static const size_t chunk_info_len = sizeof(MultiChunkInfo);
+   char str[chunk_info_len];
+   ssize_t result = 0;
+
+   while (1) {
+      ssize_t rd_count = read(md_fd, str, chunk_info_len);
+      if (rd_count < 0) {
+         LOG(LOG_ERR, "error reading chunk-info (%s)\n",
+             strerror(errno));
+         return -1;
+      }
+      else if (rd_count == 0) {
+
+         // EOF.  If we have encountered any MultiChunkInfos, then
+         // parse the last one into caller's struct.
+         if (result) {
+            ssize_t str_count = str_2_chunkinfo(chnk, str, rd_count);
+            if (str_count < 0) {
+               LOG(LOG_ERR, "error preparing chunk-info (%ld < 0)\n",
+                   str_count);
+               errno = EIO;
+               return -1;
+            }
+            if (str_count != chunk_info_len) {
+               LOG(LOG_ERR, "error preparing chunk-info (%ld != %ld)\n",
+                   str_count, chunk_info_len);
+               errno = EIO;
+               return -1;
+            }
+         }
+         return result;
+
+      }
+      else if (rd_count != chunk_info_len) {
+         LOG(LOG_ERR, "error reading chunk-info #%ld (%ld != %ld)\n",
+             result, rd_count, chunk_info_len);
+         errno = EIO;
+         return -1;
+      }
+
+      // one more valid MultiChunkInfo ...
+      ++ result;
+   }
+}
 
 
 
@@ -1303,6 +1501,64 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 #endif
 
    return rc_ssize;
+}
+
+
+// For N:1 writes, pftool needs the marfs chunksize, minus recovery-info
+// size, so that it can allocate chunks to tasks such that they will write
+// an integral number of marfs chunks (except possibly for the last one),
+// into a MULTI object.
+//
+// This adjusted size may depend on the size of the file being written, as
+// well. (MarFS supports using different repos for different file-sizes,
+// but, in practice, this might not tend to apply to the ranges of files
+// that would be chunked by pftool.)
+// 
+ssize_t get_chunksize(const char* path,
+                      size_t      file_size,
+                      uint8_t     subtract_recovery_info) {
+   TRY_DECLS();
+
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+   EXPAND_PATH_INFO(&info, path);
+
+   return get_chunksize_with_info(&info, file_size, subtract_recovery_info);
+}
+
+ssize_t get_chunksize_with_info(PathInfo*   info,
+                                size_t      file_size,
+                                uint8_t     subtract_recovery_info) {
+
+   MarFS_Repo* repo = find_repo_by_range(info->ns, file_size);
+
+   if (subtract_recovery_info)
+      return repo->chunk_size - (sizeof(RecoveryInfo) +8);
+   else
+      return repo->chunk_size;
+}
+
+// See discussion above MarFS_FileHandle decl.
+// FH.sys_req is fixed at open-time.
+size_t get_stream_open_size(MarFS_FileHandle* fh, uint8_t decrement) {
+   PathInfo* info      = &fh->info;
+   size_t    log_chunk = info->pre.repo->chunk_size - (sizeof(RecoveryInfo) +8);
+
+   if (decrement) // previous request completed ...
+      fh->write_status.data_remain -= fh->write_status.user_req;
+
+   fh->write_status.user_req = fh->write_status.data_remain;
+   if (fh->write_status.user_req > log_chunk) {
+      fh->write_status.user_req = log_chunk;
+   }
+
+   LOG(LOG_INFO, "returning %ld+%ld rem=%ld, lchnk=%ld, decr=%d\n",
+       fh->write_status.user_req,
+       fh->write_status.sys_req,
+       fh->write_status.data_remain,
+       log_chunk,
+       decrement);
+   return fh->write_status.user_req + fh->write_status.sys_req;
 }
 
 

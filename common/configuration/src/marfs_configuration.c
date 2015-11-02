@@ -323,20 +323,19 @@ MarFS_Namespace_Ptr find_namespace_by_mnt_path( const char *mnt_path ) {
  * repository for files of this size.
  *
  ****************************************************************************/
-MarFS_Repo_Ptr find_repo_by_range (
-                 MarFS_Namespace_Ptr	namespacePtr,
-                 size_t                 file_size  ) {   
-
+MarFS_Repo_Ptr find_repo_by_range (MarFS_Namespace_Ptr	namespacePtr,
+                                   size_t                file_size  ) {   
   int i;
-
 
   if ( namespacePtr != NULL ) {
     for ( i = 0; i < namespacePtr->repo_range_list_count; i++ ) {
 #ifdef _DEBUG_MARFS_CONFIGURATION
   LOG( LOG_INFO, "File size sought is %d.\n", file_size );
   LOG( LOG_INFO, "Namespace is \"%s\"\n", namespacePtr->name );
-  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->min_size is %d.\n", i, namespacePtr->repo_range_list[i]->min_size );
-  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->max_size is %d.\n", i, namespacePtr->repo_range_list[i]->max_size );
+  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->min_size is %d.\n",
+       i, namespacePtr->repo_range_list[i]->min_size );
+  LOG( LOG_INFO, "Namespace's repo_range_list[%d]->max_size is %d.\n",
+       i, namespacePtr->repo_range_list[i]->max_size );
 #endif
 
       if ((( file_size >= namespacePtr->repo_range_list[i]->min_size ) &&
