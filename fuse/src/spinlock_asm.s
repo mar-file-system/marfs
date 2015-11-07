@@ -26,20 +26,20 @@ length: .quad   . - string
 .type   spin_lock, @function              #<-Important
 
 spin_lock:
-   push    %rbp                   # save caller's stack base-pointer
-   mov     %rsp,%rbp              # our base-pointer is the current stack-pointer
+   pushq    %rbp                   # save caller's stack base-pointer
+   movq     %rsp,%rbp              # our base-pointer is the current stack-pointer
 
-	mov    $1,%edx
+   mov      $1,%edx
 
 spin:
    # spin until the lock-location holds zero
    # (then store that in EAX)
 
-   mov    (%rdi),%eax             # parm1 is ptr to lock-value
+   mov     (%rdi),%eax             # parm1 is ptr to lock-value
    test    %eax,%eax
    jnz     spin                   # someone else has the lock
-	
-	# # Now, EAX is zero, loaded from (RDI)
+
+   # # Now, EAX is zero, loaded from (RDI)
    # # try to set lock to 1, assuring nobody else (using this code) does the same
    # if EAX == (destination):
    #    destination <-- source (i.e. EDX)
@@ -48,11 +48,12 @@ spin:
    #    EAX         <-- destination
    #    EFLAGS      <-- (EAX - destination)
    
-  lock cmpxchg %edx,(%rdi)     # atomic try-lock src,dest
-	test     %eax,%eax
+ lock cmpxchg %edx,(%rdi)     # atomic try-lock src,dest
+   test     %eax,%eax
    jnz      spin               # someone got in first
 
 return:
-   mov %rsp,%rbp
-   pop %rbp
+   movq %rsp,%rbp
+   popq %rbp
+
    ret

@@ -155,7 +155,7 @@ int marfs_chmod(const char* path,
    if (mode & (S_ISUID | S_ISGID)) {
       LOG(LOG_ERR, "attempt to change setuid or setgid bits, on path '%s' (mode: %x)\n",
           path, mode);
-      errno = -EPERM;
+      errno = EPERM;
       return -1;
    }
 
@@ -904,7 +904,7 @@ int marfs_open(const char*         path,
       // install the host and bucket
       s3_set_host_r(host_name, ctx);
       LOG(LOG_INFO, "host   '%s'\n", host_name);
-      fprintf(stderr, "host   '%s'\n", host_name); // pftool feedback, for now
+      // fprintf(stderr, "host   '%s'\n", host_name); // for debugging pftool
 
       s3_set_bucket_r(info->pre.bucket, ctx);
       LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
@@ -945,7 +945,8 @@ int marfs_open(const char*         path,
 
    // explicit content-length is faster, in requests through a Scality
    // sproxyd connector.  Save info so we only write MarFS chunk-size
-   // values per stream_open().
+   // values per stream_open() [including recovery-info, if called through
+   // marfs_open_at_offset()]
    //
    // NOTE: When overwriting an existing file, fuse gets called with open,
    //     then ftruncate, but marfs_ftruncate() does
@@ -1015,7 +1016,8 @@ int marfs_open_at_offset(const char*         path,
 
    // TBD: update_pre(), to install correct chunk-number, for writes?
 
-   return marfs_open(path, fh, flags, content_length);
+   TRY0(marfs_open, path, fh, flags, content_length);
+   return 0;
 }
 
 
@@ -1507,10 +1509,13 @@ int marfs_release (const char*        path,
    //     open, in an attempt to avoid extra calls to stream_close/reopen.
    if (fh->os.flags & OSF_OPEN) {
 
-      if (fh->flags & FH_WRITING) {
-         // add final recovery-info, at the tail of the object
-         TRY_GE0(write_recoveryinfo, os, info);
-         fh->write_status.sys_writes += rc_ssize; // accumulate non-user-data written
+      if (! (fh->os.flags & OSF_ERRORS)) {
+
+         if (fh->flags & FH_WRITING) {
+            // add final recovery-info, at the tail of the object
+            TRY_GE0(write_recoveryinfo, os, info);
+            fh->write_status.sys_writes += rc_ssize; // accumulate non-user-data written
+         }
       }
 
       TRY0(stream_sync, os);
@@ -1524,21 +1529,24 @@ int marfs_release (const char*        path,
    // close MD file, if it's open
    if (fh->md_fd) {
 
-      // If obj-type is Multi, write the final MultiChunkInfo into the MD file.
-      if ((fh->flags & FH_WRITING)
-          && (info->post.obj_type == OBJ_MULTI)) {
+      if (! (fh->os.flags & OSF_ERRORS)) {
 
-         TRY0(write_chunkinfo, fh->md_fd, info,
-              fh->open_offset, os->written - fh->write_status.sys_writes);
+         // If obj-type is Multi, write the final MultiChunkInfo into the MD file.
+         if ((fh->flags & FH_WRITING)
+             && (info->post.obj_type == OBJ_MULTI)) {
 
-         // keep count of amount of real chunk-info written into MD file
-         info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
+            TRY0(write_chunkinfo, fh->md_fd, info,
+                 fh->open_offset, os->written - fh->write_status.sys_writes);
 
-         // update count of objects, in POST
-         info->post.chunks = info->pre.chunk_no +1;
+            // keep count of amount of real chunk-info written into MD file
+            info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
 
-         // reset current chunk-number, so xattrs will represent obj 0
-         info->pre.chunk_no = 0;
+            // update count of objects, in POST
+            info->post.chunks = info->pre.chunk_no +1;
+
+            // reset current chunk-number, so xattrs will represent obj 0
+            info->pre.chunk_no = 0;
+         }
       }
 
       ///      // QUESTION: does adding an fsync here cause the xattrs to appear
@@ -1551,12 +1559,18 @@ int marfs_release (const char*        path,
       fh->md_fd = 0;
    }
 
+   if (fh->os.flags & OSF_ERRORS) {
+      EXIT();
+      return 0;
+   }
+      
    // truncate length to reflect length of data
    if ((fh->flags & FH_WRITING)
        && has_any_xattrs(info, MARFS_ALL_XATTRS)
        && !(fh->flags & FH_ALLOW_RISKY)) {
       TRY0(truncate, info->post.md_path, os->written - fh->write_status.sys_writes);
    }
+
 
    // no longer incomplete
    info->flags  &= ~(PI_RESTART);

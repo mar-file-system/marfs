@@ -578,10 +578,12 @@ extern ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info);
 // support for pftool, doing N:1 writes
 extern ssize_t get_chunksize(const char* path,
                              size_t      file_size,
+                             size_t      desired_chunk_size,
                              uint8_t     adjust_for_recovery_info);
 
 extern ssize_t get_chunksize_with_info(PathInfo*   info,
                                        size_t      file_size,
+                                       size_t      desired_chunk_size,
                                        uint8_t     adjust_for_recovery_info);
 
 

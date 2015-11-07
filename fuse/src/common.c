@@ -1514,8 +1514,11 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 // but, in practice, this might not tend to apply to the ranges of files
 // that would be chunked by pftool.)
 // 
+// TBD: Allow writing multiple chunks per pftool task, by rounding the return
+//     value to be a multiple of logical chunks.
 ssize_t get_chunksize(const char* path,
                       size_t      file_size,
+                      size_t      desired_chunk_size,
                       uint8_t     subtract_recovery_info) {
    TRY_DECLS();
 
@@ -1523,11 +1526,12 @@ ssize_t get_chunksize(const char* path,
    memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
-   return get_chunksize_with_info(&info, file_size, subtract_recovery_info);
+   return get_chunksize_with_info(&info, file_size, desired_chunk_size, subtract_recovery_info);
 }
 
 ssize_t get_chunksize_with_info(PathInfo*   info,
                                 size_t      file_size,
+                                size_t      desired_chunk_size,
                                 uint8_t     subtract_recovery_info) {
 
    MarFS_Repo* repo = find_repo_by_range(info->ns, file_size);
