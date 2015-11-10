@@ -202,6 +202,10 @@ typedef struct MarFS_Repo {
    const char*         name;         // (logical) name for this repo 
    const char*         host;         // e.g. "10.140.0.15:9020"
 
+   size_t              host_len;
+   uint8_t             host_offset; // for round-robin within a repo
+   uint8_t             host_count;
+
    //   RepoFlagsType       flags;
    MarFS_Bool          ssl;
    MarFS_Bool          update_in_place; // repo allows overwriting parts of data?
@@ -407,6 +411,10 @@ extern MarFS_Repo*      find_repo(MarFS_Namespace* ns,
                                   size_t           file_size,
                                   int              interactive_write); // bool
 extern MarFS_Repo*      find_repo_by_name(const char* name);
+
+extern MarFS_Repo*      find_repo_by_range (MarFS_Namespace* namespacePtr,
+                                            size_t           file_size );
+
 
 
 // --- support for traversing repos (without knowing how they are stored)

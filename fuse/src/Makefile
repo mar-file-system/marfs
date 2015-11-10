@@ -664,10 +664,6 @@ foo.multi.4096:
 	dd if=/dev/zero bs=224 count=1 | tr '\0' '4' >> foo.multi.4096
 
 
-# applications that link with various marfs support libs
-demo_%: demo_%.o $(OBJS)
-	gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
-
 # test app that links with assembly-code
 test_lock: test_lock.c spinlock_asm.s
 	gcc -g -o $@ $^ -lpthread -lrt
@@ -677,6 +673,20 @@ test_lock2: test_lock2.c spinlock_asm.o spinlock.h spinlock.o
 
 test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
 	gcc -g -o $@ $^ -lpthread -lrt
+
+
+# test-apps that may potentially use any of the various marfs support libs
+demo_%: demo_%.o $(OBJS)
+	gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
+
+test_%: test_%.c $(OBJS)
+	echo "test_$*"
+	@ $(MAKE) _test_$* LINK_LIBFUSE=1
+
+_test_%:
+	echo "_test_$*"
+	@# gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
+	gcc $(CFLAGS) -o test_$* $(LDFLAGS) -L$(PWD) test_$*.c $(OBJS) $(LIBS) -lmarfs
 
 
 # lines-of-code
