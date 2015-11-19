@@ -385,7 +385,6 @@ typedef struct PathInfo {
 } PathInfo;
 
 
-
 // ...........................................................................
 // FileHandle
 //
@@ -399,7 +398,7 @@ typedef enum {
    FH_READING      = 0x01,        // might someday allow O_RDWR
    FH_WRITING      = 0x02,        // might someday allow O_RDWR
    FH_DIRECT       = 0x04,        // i.e. PathInfo.xattrs has no MD_
-   FH_ALLOW_RISKY  = 0x08,        // implies pftool calling. (Can write N:1)
+   FH_Nto1_WRITES  = 0x10,        // implies pftool calling. (Can write N:1)
 } FHFlags;
 
 typedef uint16_t FHFlagType;
@@ -409,14 +408,38 @@ typedef uint16_t FHFlagType;
 // (see notes in WriteStatus, re marfs_data).
 //
 // If you seek() then read(), the only thing fuse sees is a change in the
-// read-offset.  Unlike writes, it is legal to read discontiguous section
+// read-offset.  Unlike writes, it is legal to read discontiguous sections
 // of a marfs file.  Therefore, unlike with write, read only needs to track
-// the logical offset of the current "read heaad", to know whether the next
-// read requires a close/re-open, or con continue to use the saem stream.
+// the logical offset of the current "read head", to know whether the next
+// read requires a close/re-open, or can continue to use the same stream.
+//
+// The "logical offset" is the position in the user's data for this file.
+// For a multi-object, this ignores the recovery-info at the tail of all
+// previous objects.  For a packed-object, this ignores all the packed
+// "objects" in the object-data, before this object.
+//
+// When reading via fuse, the total amount to be read is not known at
+// open-time, so we use open-ended byte-ranges with the requests.  Note
+// that when reading with open-ended byte-ranges, the server may actually
+// move more data than the user ends up wanting, but we don't know how much
+// they will want until they explicitly close (or implicitly close by
+// seeking to a different offset).  In these cases, stream_sync() has to
+// tell curl that it doesn't want any more data, which results in the GET
+// request returning an error code, which stream_sync() must identify and
+// hide, in order to return success.
+//
+// In the case of pftool, we know the read-length at open-time, so we can
+// allow reading of continuous spans using explicit byte-ranges, which
+// avoids having the server move more data than necessary
+// (e.g. recovery-info, or other objects in a PACKED), and may be more
+// efficient.  In this case, the request will terminate with movement of
+// the final char, and stream_sync() should not expect further callbacks
+// made on the writefunc, (so there will be no need for trapping
+// error-codes, etc, as described above).
 
 typedef struct {
-   // size_t        sys_reads;     // discount this much from FileHandle.os.written
    size_t        log_offset;    // effective offset (shows contiguous reads)
+   size_t        data_remain;   // the unread part of marfs_open_at_offset()
 } ReadStatus;
 
 
@@ -493,7 +516,7 @@ typedef struct {
 } MarFS_FileHandle;
 
 // fuse/pftool-agnostic updates of data_remain, etc. (see comments, above)
-size_t get_stream_open_size(MarFS_FileHandle* fh, uint8_t decrement);
+size_t  get_stream_wr_open_size(MarFS_FileHandle* fh, uint8_t decrement);
 
 
 // directory-handle covers two cases:
