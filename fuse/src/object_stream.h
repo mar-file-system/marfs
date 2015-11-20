@@ -134,15 +134,26 @@ extern "C" {
 
 // internal flags in an ObjectStream
 typedef enum {
-   OSF_OPEN       = 0x01,
-   OSF_WRITING    = 0x02,
-   OSF_READING    = 0x04,
-   OSF_EOB        = 0x08,
-   OSF_EOF        = 0x10,
-   OSF_ABORT      = 0x20,       // stream_abort(), or stream_sync()
-   OSF_JOINED     = 0x40,
-   OSF_CLOSED     = 0x80,
+   OSF_OPEN       = 0x0001,
+   OSF_WRITING    = 0x0002,
+   OSF_READING    = 0x0004,
+   //   OSF_LENGTH     = 0x0008,
+
+   OSF_EOB        = 0x0010,
+   OSF_EOF        = 0x0020,
+   OSF_TIMEOUT    = 0x0040,     // failed SAFE_WAIT() in stream_put/get
+   OSF_TIMEOUT_K  = 0x0080,     // SAFE_WAIT_KILL() in stream_put/get
+
+   OSF_ABORT      = 0x0100,       // stream_abort(), or stream_sync()
+   OSF_JOINED     = 0x0200,
+   OSF_CLOSED     = 0x0400,
 } OSFlags;
+typedef uint16_t OSFlags_t;
+
+// These are all the OSFlags that imply that errors happened on an open
+// stream, so stream_sync() should take note
+#define OSF_ERRORS (OSF_TIMEOUT | OSF_TIMEOUT_K)
+
 
 // flags for call to stream_open()
 typedef enum {
@@ -165,7 +176,7 @@ typedef enum {
 
 typedef struct {
    // This comes from libaws4c
-   IOBuf             iob;       // should be VOLATILE ?
+   IOBuf               iob;       // should be VOLATILE ?
 #ifdef SPINLOCKS
    struct PoliteSpinLock iob_empty;
    struct PoliteSpinLock iob_full;
@@ -173,11 +184,12 @@ typedef struct {
    sem_t                 iob_empty;
    sem_t                 iob_full;
 #endif
-   pthread_t         op;        // GET/PUT
-   int               op_rc;     // typically 0 or -1  (see iob.result, for curl/S3 errors)
-   char              url[MARFS_MAX_URL_SIZE]; // WARNING: only valid during open_object()
-   size_t            written;   // bytes written-to/read-from stream
-   volatile OSFlags  flags;
+   pthread_t           op;        // GET/PUT
+   int                 op_rc;     // typically 0 or -1  (see iob.result, for curl/S3 errors)
+   char                url[MARFS_MAX_URL_SIZE]; // WARNING: only valid during open_object()
+   size_t              written;   // bytes written-to/read-from stream
+   size_t              content_len;
+   volatile OSFlags_t  flags;
 
    // OSOpenFlags       open_flags; // caller's open flags, for when we need to close/repoen
 } ObjectStream;

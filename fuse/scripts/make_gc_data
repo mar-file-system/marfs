@@ -44,14 +44,14 @@ fi
 # we wait a moment, if the number of open descriptors is high.
 # ...........................................................................
 
-# PID=`echo $$`
-PID=$FUSE_PID
-echo "PID '$PID'"
+
+echo "FUSE_PID '$FUSE_PID'"
 
 function show_open_files() {
-    echo "open files: "`ls /proc/$PID/fd | wc -l`
+    echo "open files: "`ls /proc/$FUSE_PID/fd | wc -l`
 }
 show_open_files
+
 
 MAX_OPEN_FILES=$(( `ulimit -n` / 2 ))
 echo "max open fds: $MAX_OPEN_FILES"
@@ -64,6 +64,7 @@ function wait_for_open_files() {
     done
 }
 wait_for_open_files
+
 
 # ...........................................................................
 # Create many files in several directories, then delete some of them,

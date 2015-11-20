@@ -2,19 +2,14 @@
 
 if [[ -z `mount | grep marfs_fuse` ]]; then
     echo "MarFS fuse appears not to be mounted"
-    exit
+    exit 1
+elif (( $# != 1 )); then
+    echo "Usage: $0 <marfs_directory>"
+    exit 1
 fi
 
-
-# MARFS=/marfs/jti
-# # MDFS=/gpfs/marfs-gpfs/fuse/test00
-# # TRASH=/gpfs/marfs-gpfs/fuse/test00/trash
-
-
-# MARFS=/marfs_dbg/atorrez
-MARFS=/marfs/atorrez
-# MDFS=/gpfs/marfs-gpfs/project_a
-# TRASH=/gpfs/marfs-gpfs/trash
+# MARFS=/marfs/atorrez
+MARFS=$1
 
 
 
@@ -41,7 +36,8 @@ echo
 
 # make some UNI files
 for D in $DIRS; do
-    for i in `seq 1 200`; do
+#    for i in `seq 1 200`; do
+    for i in `seq 1 2`; do
         UNI=`printf "$MARFS/$D/uni.%03d" $i`
 
         echo "making file $UNI"

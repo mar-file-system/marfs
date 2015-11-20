@@ -989,7 +989,7 @@ int  trash_truncate(PathInfo*   info,
    }
 
    // MD files are trunc'ed to their "logical" size (the size of the data
-   // they represent.  They may also contain some "system" data (blobs we
+   // they represent).  They may also contain some "system" data (blobs we
    // have tucked inside, to track object-storage.  Move the physical data,
    // then trunc to logical size.
    off_t log_size = info->st.st_size;
@@ -1238,7 +1238,7 @@ int update_url(ObjectStream* os, PathInfo* info) {
 //    truncated to the proper size at close time.
 //
 //    On the other hand, fuse may spawn many tasks writing to the same file
-//    (see FH_ALLOW_RISKY).  We assure that they all start writing at
+//    (see FH_Nto1_WRITES).  We assure that they all start writing at
 //    logical chunk-boundaries, and we expect pftool to assure that they
 //    all (except possibly the last) write full-sized chunks.  But these
 //    will not have OS.written matching what would be expected at a given
@@ -1514,8 +1514,11 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
 // but, in practice, this might not tend to apply to the ranges of files
 // that would be chunked by pftool.)
 // 
+// TBD: Allow writing multiple chunks per pftool task, by rounding the return
+//     value to be a multiple of logical chunks.
 ssize_t get_chunksize(const char* path,
                       size_t      file_size,
+                      size_t      desired_chunk_size,
                       uint8_t     subtract_recovery_info) {
    TRY_DECLS();
 
@@ -1523,11 +1526,12 @@ ssize_t get_chunksize(const char* path,
    memset((char*)&info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(&info, path);
 
-   return get_chunksize_with_info(&info, file_size, subtract_recovery_info);
+   return get_chunksize_with_info(&info, file_size, desired_chunk_size, subtract_recovery_info);
 }
 
 ssize_t get_chunksize_with_info(PathInfo*   info,
                                 size_t      file_size,
+                                size_t      desired_chunk_size,
                                 uint8_t     subtract_recovery_info) {
 
    MarFS_Repo* repo = find_repo_by_range(info->ns, file_size);
@@ -1538,9 +1542,15 @@ ssize_t get_chunksize_with_info(PathInfo*   info,
       return repo->chunk_size;
 }
 
-// See discussion above MarFS_FileHandle decl.
-// FH.sys_req is fixed at open-time.
-size_t get_stream_open_size(MarFS_FileHandle* fh, uint8_t decrement) {
+// The returns the value that will ultimately become a "Content-Length"
+// header in the PUT request.  If it is zero, then no header will be used,
+// on instead the PUT will use chunked-transfer-encoding.
+//
+// See discussion above the WriteStatus decl, in common.h
+//
+// NOTE: FH.sys_req is fixed at open-time.
+//
+size_t get_stream_wr_open_size(MarFS_FileHandle* fh, uint8_t decrement) {
    PathInfo* info      = &fh->info;
    size_t    log_chunk = info->pre.repo->chunk_size - (sizeof(RecoveryInfo) +8);
 
@@ -1560,6 +1570,7 @@ size_t get_stream_open_size(MarFS_FileHandle* fh, uint8_t decrement) {
        decrement);
    return fh->write_status.user_req + fh->write_status.sys_req;
 }
+
 
 
 // Make sure the hierarchical trash directory tree exists, for all namespaces.

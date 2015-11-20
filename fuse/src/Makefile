@@ -298,11 +298,31 @@ WORK = 10.146.0.2
 
 
 # only works on ccstargate, or cc-gate
-fromwork:
-	rsync -Pvaurl  --exclude=foo.\* root@$(WORK):/root/projects/marfs/git/ ~/projects/marfs/git
-	rsync -Pvaurl root@$(WORK):/root/projects/ecs_hobo/tools/aws4c/ ~/projects/ecs_hobo/tools/aws4c
-	rsync -Pvaurl root@$(WORK):/root/projects/ecs_hobo/tools/curl_tools/ ~/projects/ecs_hobo/tools/curl_tools
-	rsync -Pvaurl --exclude jti\*/f\* root@$(WORK):/root/projects/ecs_hobo/pftool/ ~/projects/ecs_hobo/pftool
+fromwork.Makefile:
+	rsync -Pvaurl root@$(WORK):/root/projects/git/marfs/fuse/src/Makefile .
+
+# only works on ccstargate, or cc-gate
+fromwork: fromwork.Makefile
+	for DIR in marfs aws4c PA2X pftool; do \
+	rsync -Pvaurl --exclude=foo.\* --exclude=jti\*/f\* --exclude=core\* \
+	              --exclude=messages\* \
+		           --del --sparse root@$(WORK):/root/projects/git/$$DIR/   ~/projects/git/$$DIR ; \
+	done
+
+	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/tools/ ~/projects/tools
+	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin/   ~/projects/bin
+	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin2/  ~/projects/bin2
+
+# for use on cc-gate, to rsync out to the VLE
+tovle: # fromwork
+	rsync -Pvaurl --exclude=foo.\* --exclude=jti\*/f\* --exclude=core.\* \
+	              --del --sparse ~/projects/git/   ~/send.dir/git
+	rsync -Pvaurl --del --sparse ~/projects/tools/ ~/send.dir/tools
+	rsync -Pvaurl --del --sparse ~/projects/bin/   ~/send.dir/bin
+	rsync -Pvaurl --del --sparse ~/projects/bin2/  ~/send.dir/bin2
+	@ echo
+	@ echo "*** sending ..."
+	~/send
 
 
 
@@ -644,10 +664,6 @@ foo.multi.4096:
 	dd if=/dev/zero bs=224 count=1 | tr '\0' '4' >> foo.multi.4096
 
 
-# applications that link with various marfs support libs
-demo_%: demo_%.o $(OBJS)
-	gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
-
 # test app that links with assembly-code
 test_lock: test_lock.c spinlock_asm.s
 	gcc -g -o $@ $^ -lpthread -lrt
@@ -657,6 +673,20 @@ test_lock2: test_lock2.c spinlock_asm.o spinlock.h spinlock.o
 
 test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
 	gcc -g -o $@ $^ -lpthread -lrt
+
+
+# test-apps that may potentially use any of the various marfs support libs
+demo_%: demo_%.o $(OBJS)
+	gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
+
+test_%: test_%.c $(OBJS)
+	echo "test_$*"
+	@ $(MAKE) _test_$* LINK_LIBFUSE=1
+
+_test_%:
+	echo "_test_$*"
+	@# gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
+	gcc $(CFLAGS) -o test_$* $(LDFLAGS) -L$(PWD) test_$*.c $(OBJS) $(LIBS) -lmarfs
 
 
 # lines-of-code
