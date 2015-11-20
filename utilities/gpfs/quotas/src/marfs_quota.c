@@ -223,11 +223,14 @@ int main(int argc, char **argv) {
 
 /***************************************************************************** 
 Name: init_records 
-
+This function initializes all running counts and sizes in the Fileset_Stats
+structure.  This is the structure that contains namespace/fileset counts 
+and sizes
 *****************************************************************************/
 void init_records(Fileset_Stats *fileset_stat_buf, unsigned int record_count)
 {
-   //memset(fileset_stat_buf, 0, (size_t)record_count * sizeof(Fileset_Stats)); 
+   //Cannot use memset because read_config has already populated
+   //namespace_name so just zero out counts.
    int i;
    for (i=0; i< record_count; i++) {
       fileset_stat_buf[i].sum_size=0;
@@ -244,6 +247,8 @@ void init_records(Fileset_Stats *fileset_stat_buf, unsigned int record_count)
       fileset_stat_buf[i].obj_type.uni_count=0;
       fileset_stat_buf[i].obj_type.multi_count=0;
       fileset_stat_buf[i].obj_type.packed_count=0;
+      fileset_stat_buf[i].sum_restart_size=0;
+      fileset_stat_buf[i].sum_restart_file_count=0;
    }
 }
 
@@ -326,6 +331,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
    unsigned int xattrBufLen = xattrLen;
    int printable;
    int xattr_count =0;
+   int desired_xattr = 0;
 
    /*  Loop through attributes */
    while ((xattrBufP != NULL) && (xattrBufLen > 0)) {
@@ -345,6 +351,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
          if (!strcmp(nameP, marfs_xattr[i])) {
             strcpy(xattr_ptr->xattr_name, nameP);
             xattr_count++;
+            desired_xattr =1;
          }
       }
 
@@ -359,29 +366,32 @@ int get_xattrs(gpfs_iscan_t *iscanP,
 ***********/
       // Now get associated value 
       // Determine if printible characters
-      if (valueLen > 0 && xattr_count > 0) {
-         printable = 0;
-         if (valueLen > 1) {
-            printable = 1;
-            for (i = 0; i < (valueLen-1); i++)
-               if (!isprint(valueP[i]))
-                  printable = 0;
-            if (printable) {
-               if (valueP[valueLen-1] == '\0')
-                  valueLen -= 1;
-               else if (!isprint(valueP[valueLen-1]))
-                  printable = 0;
+      if (desired_xattr) {
+         if (valueLen > 0 && xattr_count > 0) {
+            printable = 0;
+            if (valueLen > 1) {
+               printable = 1;
+               for (i = 0; i < (valueLen-1); i++)
+                  if (!isprint(valueP[i]))
+                     printable = 0;
+               if (printable) {
+                  if (valueP[valueLen-1] == '\0')
+                     valueLen -= 1;
+                  else if (!isprint(valueP[valueLen-1]))
+                     printable = 0;
+               }
             }
-         }
 
-         //create string from xattr value char array
-         for (i = 0; i < valueLen; i++) {
-            if (printable) {
-              xattr_ptr->xattr_value[i] = valueP[i]; 
-            }
-         }
-         xattr_ptr->xattr_value[valueLen] = '\0'; 
-         xattr_ptr++;
+            //create string from xattr value char array
+            for (i = 0; i < valueLen; i++) {
+               if (printable) {
+                  xattr_ptr->xattr_value[i] = valueP[i]; 
+                }
+             }
+             xattr_ptr->xattr_value[valueLen] = '\0'; 
+             xattr_ptr++;
+          }
+          desired_xattr=0;
       }
    } // endwhile
    return(xattr_count);
@@ -448,6 +458,7 @@ int read_inodes(const char    *fnameP,
    const char *marfs_xattrs[] = {"user.marfs_post","user.marfs_objid",
                                  "user.marfs_restart"};
    int post_index=0;
+   int restart_index=2;
 
    MarFS_XattrPost post;
   
@@ -540,7 +551,7 @@ int read_inodes(const char    *fnameP,
 
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
-         if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
+         if (iattrP->ia_xperm & EXTENDED_ATTR_FLAG && xattr_len >0 ) {
             xattr_ptr = &mar_xattrs[0];
             // get marfs xattrs and associated values
             if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
@@ -556,6 +567,13 @@ int read_inodes(const char    *fnameP,
 
                    LOG(LOG_INFO, "post xattr name = %s value = %s count = %d\n",
                    xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
+               }
+               // If restart xattr keep stats on this as well
+               else if ((xattr_index=get_xattr_value(xattr_ptr,
+                                                marfs_xattrs[restart_index],
+                                                xattr_count, outfd)) != -1 ) {
+                  fileset_stat_ptr[last_struct_index].sum_restart_size+=iattrP->ia_size;
+                  fileset_stat_ptr[last_struct_index].sum_restart_file_count+=1;
                }
 
                // scan into post xattr structure
@@ -700,19 +718,22 @@ void write_fsinfo(FILE*         outfd,
  
    for (i=index_start; i < rec_count+index_start; i++) {
       fprintf(outfd,"[%s]\n", fileset_stat_ptr[i].fileset_name);
-      fprintf(outfd,"total_file_count:  %zu\n", \
+      fprintf(outfd,"total_file_count:    %zu\n", \
               fileset_stat_ptr[i].sum_file_count);
-      fprintf(outfd,"total_size:   %zu (%zuG)\n", fileset_stat_ptr[i].sum_size,\
+      fprintf(outfd,"total_size:          %zu (%zuG)\n", fileset_stat_ptr[i].sum_size,\
                fileset_stat_ptr[i].sum_size/GIB);
-      fprintf(outfd,"uni count:    %zu\n", \
+      fprintf(outfd,"uni count:           %zu\n", \
               fileset_stat_ptr[i].obj_type.uni_count);
-      fprintf(outfd,"multi count:  %zu\n", \
+      fprintf(outfd,"multi count:         %zu\n", \
               fileset_stat_ptr[i].obj_type.multi_count);
-      fprintf(outfd,"packed count: %zu\n", \
+      fprintf(outfd,"packed count:        %zu\n", \
               fileset_stat_ptr[i].obj_type.packed_count);
-      fprintf(outfd,"trash_file_count:  %zu\n", \
+      fprintf(outfd,"restart_file_count:  %zu\n", \
+              fileset_stat_ptr[i].sum_restart_file_count);
+      fprintf(outfd,"restart_size:        %zu\n", fileset_stat_ptr[i].sum_restart_size);
+      fprintf(outfd,"trash_file_count:    %zu\n", \
               fileset_stat_ptr[i].sum_trash_file_count);
-      fprintf(outfd,"trash_size:   %zu\n\n", fileset_stat_ptr[i].sum_trash);
+      fprintf(outfd,"trash_size:          %zu\n\n", fileset_stat_ptr[i].sum_trash);
    }
    trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start);
 }
