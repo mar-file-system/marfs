@@ -253,6 +253,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
    unsigned int xattrBufLen = xattrLen;
    int printable;
    int xattr_count =0;
+   int desired_xattr = 0;
 
    /*  Loop through attributes */
    while ((xattrBufP != NULL) && (xattrBufLen > 0)) {
@@ -274,6 +275,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
          if (!strcmp(nameP, marfs_xattr[i])) {
             strcpy(xattr_ptr->xattr_name, nameP);
             xattr_count++;
+            desired_xattr = 1;
          }
       }
 
@@ -286,29 +288,31 @@ int get_xattrs(gpfs_iscan_t *iscanP,
             continue;
       }
 ***********/
-    
-      if (valueLen > 0 && xattr_count > 0 ) {
-         printable = 0;
-         if (valueLen > 1) {
-            printable = 1;
-            for (i = 0; i < (valueLen-1); i++)
-               if (!isprint(valueP[i]))
-                  printable = 0;
-            if (printable) {
-               if (valueP[valueLen-1] == '\0')
-                  valueLen -= 1;
-               else if (!isprint(valueP[valueLen-1]))
-                  printable = 0;
+      if (desired_xattr) { 
+         if (valueLen > 0 && xattr_count > 0 ) {
+            printable = 0;
+            if (valueLen > 1) {
+               printable = 1;
+               for (i = 0; i < (valueLen-1); i++)
+                  if (!isprint(valueP[i]))
+                     printable = 0;
+               if (printable) {
+                  if (valueP[valueLen-1] == '\0')
+                     valueLen -= 1;
+                  else if (!isprint(valueP[valueLen-1]))
+                     printable = 0;
+               }
             }
-         }
 
-         for (i = 0; i < valueLen; i++) {
-            if (printable) {
-              xattr_ptr->xattr_value[i] = valueP[i]; 
+            for (i = 0; i < valueLen; i++) {
+               if (printable) {
+                 xattr_ptr->xattr_value[i] = valueP[i]; 
+               }
             }
+            xattr_ptr->xattr_value[valueLen] = '\0'; 
+            xattr_ptr++;
          }
-         xattr_ptr->xattr_value[valueLen] = '\0'; 
-         xattr_ptr++;
+         desired_xattr = 0;
       }
    } // endwhile
    return(xattr_count);
@@ -479,7 +483,7 @@ int read_inodes(const char *fnameP,
 
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
-         if (iattrP->ia_xperm == 2 && xattr_len >0 ) {
+         if (iattrP->ia_xperm & EXTENDED_ATTR_FLAG && xattr_len >0 ) {
             xattr_ptr = &mar_xattrs[0];
             // Got ahead and get xattrs then deterimine if it is an 
             // an actual xattr we are looking for.  If so,
