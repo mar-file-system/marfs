@@ -755,15 +755,17 @@ int marfs_open(const char*         path,
       errno = ENOSYS;          /* for now */
       return -1;
    }
-   else if (flags & (O_RDONLY)) {
-      fh->flags |= FH_READING;
-      ACCESS(info->post.md_path, R_OK);
-      CHECK_PERMS(info->ns->iperms, (R_META | R_DATA));
-   }
    else if (flags & (O_WRONLY)) {
       fh->flags |= FH_WRITING;
       ACCESS(info->post.md_path, W_OK);
       CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   }
+   else {
+      // NOTE: O_RDONLY is not actually a flag!
+      //       It's just the absence of O_WRONLY!
+      fh->flags |= FH_READING;
+      ACCESS(info->post.md_path, R_OK);
+      CHECK_PERMS(info->ns->iperms, (R_META | R_DATA));
    }
 
    //   if (info->flags & (O_TRUNC)) {
@@ -843,15 +845,15 @@ int marfs_open(const char*         path,
          LOG(LOG_INFO, "chunkinfo offset=%ld, (open_offset=%ld) length=%ld\n",
              chunk_info_offset, fh->open_offset, content_length);
 
-         // update URL for this chunk
-         info->pre.chunk_no = chunk_no;
-         update_pre(&info->pre);
-         // update_url(os, info); // can't do this here ...
-
          // set marfs_objid.obj_type such that pftool can recognize that it
          // must do additional cleanup after closing.  (Actually done in
          // marfs_utime().)
          info->pre.obj_type = OBJ_Nto1;
+
+         // update URL for this chunk
+         info->pre.chunk_no = chunk_no;
+         update_pre(&info->pre);
+         // update_url(os, info); // can't do this here ...
       }
    }
 
@@ -860,49 +862,10 @@ int marfs_open(const char*         path,
    AWSContext* ctx = aws_context_clone();
    if (ACCESSMETHOD_IS_S3(info->pre.repo->access_method)) { // (includes S3_EMC)
 
-      // If the conifguration specifies more than one host in the repo,
-      // Then we expect the following features in the configuration:
-      //
-      //    marfs_config.host         = "10.135.0.%d:81"   (for example)
-      //    marfs_config.host_offset  = 15                 (for example)
-      //    marfs_config.host_count   = 4                  (for example)
-      //
-      // This allows us to generate a valid random IP address w/in a
-      // selected range IP-addrs.
-      //
-      // NOTE: If you want to have DNS round-robin do this for you, you
-      //     would just set repo.host (in the conifguration) to a name that
-      //     your DNS service knows, and set host_count=1.
-      const size_t HOST_BUF_SIZE = 512;
-      char         host_buf[HOST_BUF_SIZE];
-      char*        host_name = info->pre.repo->host;
-      if (info->pre.repo->host_count > 1) {
-
-         // seed the random-number generator from the clock
-         // (i.e. in case we need to close/reopen)
-         struct timespec ts;
-         __TRY0(clock_gettime, CLOCK_MONOTONIC_RAW, &ts);
-         union {
-            long         l;
-            unsigned int ui;
-         } down_cast;
-         down_cast.l = ts.tv_nsec;
-         info->seed = down_cast.ui;
-
-         // uint8_t octet = (info->pre.repo->host_offset
-         //                  + (ts.tv_nsec % info->pre.repo->host_count));
-         uint8_t octet = (info->pre.repo->host_offset
-                          + (rand_r(&info->seed) % info->pre.repo->host_count));
-         snprintf(host_buf, HOST_BUF_SIZE,
-                  info->pre.repo->host, octet);
-         host_name = host_buf;
-      }
-
-
       // install the host and bucket
-      s3_set_host_r(host_name, ctx);
-      LOG(LOG_INFO, "host   '%s'\n", host_name);
-      // fprintf(stderr, "host   '%s'\n", host_name); // for debugging pftool
+      s3_set_host_r(info->pre.host, ctx);
+      LOG(LOG_INFO, "host   '%s'\n", info->pre.host);
+      // fprintf(stderr, "host   '%s'\n", info->pre.host); // for debugging pftool
 
       s3_set_bucket_r(info->pre.bucket, ctx);
       LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
@@ -1256,6 +1219,12 @@ int marfs_read (const char*        path,
 
 
       if (! (os->flags & OSF_OPEN)) {
+
+         // update the URL in the ObjectStream, in our FileHandle
+         info->pre.chunk_no = chunk_no;
+         update_pre(&info->pre);
+         update_url(os, info);
+
          // request data from the offset in this chunk, to the end of
          // logical data in this chunk, or to offset+size, whichever comes
          // first.
@@ -1352,11 +1321,6 @@ int marfs_read (const char*        path,
          chunk_no      += 1;
          chunk_offset   = 0;
          chunk_remain   = data1;
-
-         // update the URL in the ObjectStream, in our FileHandle
-         info->pre.chunk_no = chunk_no;
-         update_pre(&info->pre);
-         update_url(os, info);
 
          // prepare for next iteration
          open_size    = (max_read < chunk_remain) ? max_read : chunk_remain;

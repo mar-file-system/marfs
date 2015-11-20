@@ -1315,7 +1315,7 @@ int write_chunkinfo(int                   md_fd,
 int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
    static const size_t chunk_info_len = sizeof(MultiChunkInfo);
 
-   char str[chunk_info_len];
+   char    str[chunk_info_len];
    ssize_t rd_count = read(md_fd, str, chunk_info_len);
    if (rd_count < 0) {
       LOG(LOG_ERR, "error reading chunk-info (%s)\n",
@@ -1345,6 +1345,19 @@ int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
 
    return 0;
 }
+
+// Seek to the location of a given chunk.
+// [e.g. Then call read_chunkinfo().]
+// We assume the MD fd is already open
+//
+int seek_chunkinfo(int md_fd, size_t chunk_no) {
+   TRY_DECLS();
+   const size_t chunk_info_len = sizeof(MultiChunkInfo);
+
+   off_t offset = chunk_no * chunk_info_len;
+   TRY_GE0(lseek, md_fd, offset, SEEK_SET);
+}
+
 
 
 // This is intended to count the number of valid MultiChunkInfo records in
@@ -1404,10 +1417,10 @@ int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
 //          SAVE_XATTRS(&info, MARFS_ALL_XATTRS);
 //       }
 
-ssize_t count_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
-   static const size_t chunk_info_len = sizeof(MultiChunkInfo);
-   char str[chunk_info_len];
-   ssize_t result = 0;
+ssize_t count_chunkinfo(int md_fd) {
+   const size_t  chunk_info_len = sizeof(MultiChunkInfo);
+   char          str[chunk_info_len];
+   ssize_t       result = 0;
 
    while (1) {
       ssize_t rd_count = read(md_fd, str, chunk_info_len);
@@ -1417,32 +1430,29 @@ ssize_t count_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
          return -1;
       }
       else if (rd_count == 0) {
-
-         // EOF.  If we have encountered any MultiChunkInfos, then
-         // parse the last one into caller's struct.
-         if (result) {
-            ssize_t str_count = str_2_chunkinfo(chnk, str, rd_count);
-            if (str_count < 0) {
-               LOG(LOG_ERR, "error preparing chunk-info (%ld < 0)\n",
-                   str_count);
-               errno = EIO;
-               return -1;
-            }
-            if (str_count != chunk_info_len) {
-               LOG(LOG_ERR, "error preparing chunk-info (%ld != %ld)\n",
-                   str_count, chunk_info_len);
-               errno = EIO;
-               return -1;
-            }
-         }
-         return result;
-
+         return result;         // EOF
       }
       else if (rd_count != chunk_info_len) {
          LOG(LOG_ERR, "error reading chunk-info #%ld (%ld != %ld)\n",
              result, rd_count, chunk_info_len);
          errno = EIO;
          return -1;
+      }
+      else {
+         // Got a full-sized MultiChunkInfo.  However, it might be
+         // all-zeros, if we're reading from a part of the MD file that is
+         // sparse (e.g. because several pftool workers are doing N:1
+         // writes to different regions of the file).
+         int empty = 1;
+         int i;
+         for (i=0; i<chunk_info_len; ++i) {
+            if (str[i]) {
+               empty = 0;       // found non-zero
+               break;
+            }
+         }
+         if (empty)
+            return result;      // chunkinfo was all-zeros
       }
 
       // one more valid MultiChunkInfo ...

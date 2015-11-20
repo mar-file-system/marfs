@@ -592,7 +592,9 @@ extern int     write_chunkinfo(int                   md_fd,
 
 extern int     read_chunkinfo (int md_fd, MultiChunkInfo* chnk);
 
-extern ssize_t count_chunkinfo(int md_fd, MultiChunkInfo* chnk);
+extern int     seek_chunkinfo(int md_fd, size_t chunk_no);
+
+extern ssize_t count_chunkinfo(int md_fd);
 
 
 extern ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info);

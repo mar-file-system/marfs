@@ -109,6 +109,9 @@ extern "C" {
 #  endif
 
 
+// Not part of the constrained S3 object-names, so any reasonable number will do
+#define   MARFS_MAX_HOST_SIZE      128
+
 // extern would not be useable in PathInfo.md_path decl, below, and we
 // don't want it dynamically-allocated.  TBD: Be sure the #define is
 // associated with the config version.
@@ -426,6 +429,10 @@ typedef struct MarFS_XattrPre {
    size_t             chunk_no;     // 0-based number of current chunk (object)
 
    // uint16_t           shard;        // TBD: for hashing directories across shard-nodes
+
+   // for randomized IP-addresses in configurations with host_count > 1
+   unsigned int       seed;
+   char               host  [MARFS_MAX_HOST_SIZE];
 
    char               bucket[MARFS_MAX_BUCKET_SIZE];
    char               objid [MARFS_MAX_OBJID_SIZE]; // not including bucket

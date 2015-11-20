@@ -310,15 +310,14 @@ int stream_wait(ObjectStream* os) {
 // ---------------------------------------------------------------------------
 
 // This just allows us to use AWS_CHECK(), returning an int, where s3_op
-// has to return return void*.  We return 0 for success, non-zero for
-// failure.
+// has to return void*.  We return 0 for success, non-zero for failure.
 //
 // Any errors from curl, S3, etc, will be found in os->iob->result.
 // If there are any, we'll be returning non-zero.
 //
-// TBD: If we return non-zero on a GET, writefunc will be stranded waiting for us.
-// Now, it will time-out on its sem_wait and report an error.  Therefore,
-//      we should return zero on all legitimate cases.
+// TBD: If we return non-zero on a GET, writefunc will be stranded waiting
+//      for us.  Now, it will time-out on its sem_wait and report an error.
+//      Therefore, we should return zero on all legitimate cases.
 
 int s3_op_internal(ObjectStream* os) {
    IOBuf*        b  = &os->iob;

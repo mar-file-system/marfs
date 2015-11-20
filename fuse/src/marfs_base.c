@@ -346,6 +346,27 @@ int init_pre(MarFS_XattrPre*        pre,
 
    // pre->shard = ...;    // TBD: for hashing directories across shard nodes
 
+
+   // prepare random seed, if configuration uses host-randomization
+   if (repo->host_count > 1) {
+
+      // seed the random-number generator from the clock
+      // (i.e. in case we need to close/reopen)
+      struct timespec ts;
+      if (clock_gettime, CLOCK_MONOTONIC_RAW, &ts) {
+         LOG(LOG_ERR, "clock_gettime() failed; %s\n", strerror(errno));
+         return -1;
+      }
+
+      union {
+         long         l;
+         unsigned int ui;
+      } down_cast;
+
+      down_cast.l = ts.tv_nsec;
+      pre->seed   = down_cast.ui;
+   }                  
+
    // generate bucket and obj-id
    return update_pre(pre);
 }
@@ -382,6 +403,20 @@ int init_pre(MarFS_XattrPre*        pre,
 //       avoid updating that field.  (However, because we're using an
 //       sprintf() we'll just assume that the "inode" for packed files is
 //       always zero.)
+//
+// NOTE: If the conifguration specifies more than one host in the repo,
+//       Then we expect the following features in the configuration:
+//
+//    marfs_config.host         = "10.135.0.%d:81"   (for example)
+//    marfs_config.host_offset  = 15                 (for example)
+//    marfs_config.host_count   = 4                  (for example)
+//
+//       This allows us to generate a valid random IP address w/in a
+//       selected range IP-addrs (e.g. 10.135.0.15-18)
+//
+//       If you want to have DNS round-robin do this for you, you would
+//       just set repo.host (in the conifguration) to a name that your DNS
+//       service knows, and set host_count=1.
 
 int update_pre(MarFS_XattrPre* pre) {
 
@@ -426,7 +461,7 @@ int update_pre(MarFS_XattrPre* pre) {
       return -1;
    }
    if (epoch_to_str(obj_ctime_str, MARFS_DATE_STRING_MAX, &pre->obj_ctime)) {
-      LOG(LOG_ERR, "error converting Pre.md_time to string\n");
+      LOG(LOG_ERR, "error converting Pre.obj_time to string\n");
       return -1;
    }
 
@@ -443,6 +478,23 @@ int update_pre(MarFS_XattrPre* pre) {
       return errno;
    if (write_count >= MARFS_MAX_OBJID_SIZE) /* overflow */
       return EINVAL;
+
+
+   // generate host, if necessary
+   if (pre->repo->host_count > 1) {
+      uint8_t octet = (pre->repo->host_offset
+                       + (rand_r(&pre->seed) % pre->repo->host_count));
+      write_count = snprintf(pre->host, MARFS_MAX_HOST_SIZE,
+                             pre->repo->host, octet);
+
+      if (write_count < 0)
+         return errno;
+      if (write_count >= MARFS_MAX_OBJID_SIZE) /* overflow */
+         return EINVAL;
+   }
+   else
+      strncpy(pre->host, pre->repo->host, MARFS_MAX_HOST_SIZE);
+
 
    return 0;
 }
@@ -980,8 +1032,8 @@ ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* 
    return (dest - str);
 }
 
-// <str> holds raw data read from an Multi MD file, representing one chunk.
-// Parse it into a MultiChunkInfo.
+// <str> holds binary data (in network-byte-order) read from an Multi MD
+// file, representing one chunk.  Parse it into a MultiChunkInfo.
 ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_len) {
 
    // We require str_len >= sizeof(MultiChunkInfo), even though it's
