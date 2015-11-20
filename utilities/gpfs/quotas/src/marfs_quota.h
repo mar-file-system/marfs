@@ -106,6 +106,9 @@
    #define DEBUG_PRINT(fmt, ... )
 #endif
 
+// GPFS API gpfs_iattr ia_xperm bits
+#define EXTENDED_ATTR_FLAG 0x0002
+
 struct store_type {
   size_t uni_count;
   size_t multi_count;
@@ -132,6 +135,8 @@ typedef struct Fileset_Stats {
       size_t sum_trash;
       size_t sum_trash_file_count;
       size_t adjusted_size;
+      size_t sum_restart_size;
+      size_t sum_restart_file_count;
       size_t small_count;
       size_t medium_count;
       size_t large_count;
