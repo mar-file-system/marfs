@@ -99,13 +99,15 @@ enum{S3_CREATE, S3_STAT, S3_DELETE};
 
 #define TMP_LOCAL_FILE_LEN 1024 
 
+// GPFS API gpfs_iattr ia_xperm bits
+#define EXTENDED_ATTR_FLAG 0x0002
+
 struct marfs_xattr {
   char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
   char xattr_value[GPFS_FCNTL_XATTR_MAX_VALUELEN];
 };
 
 typedef struct Fileset_Info {
-//   char fileset_name[MAX_FILESET_NAME_LEN];
    char fileset_name[MARFS_MAX_NAMESPACE_NAME];
    // CHECK THIS 
 //   char repo_name[MAX_FILESET_NAME_LEN];
@@ -114,7 +116,6 @@ typedef struct Fileset_Info {
 } Fileset_Info;
 
 typedef struct File_Info {
-//   char fileset_name[MAX_FILESET_NAME_LEN];
    char fileset_name[MARFS_MAX_NAMESPACE_NAME];
    FILE *outfd;
    FILE *packedfd;
@@ -146,7 +147,6 @@ int get_xattrs(gpfs_iscan_t *iscanP,
 void print_usage();
 void init_records(Fileset_Info *fileset_info_buf, unsigned int record_count);
 int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
-//int dump_trash(struct marfs_xattr *xattr_ptr, char *gc_path_ptr, File_Info *file_info_ptr, MarFS_XattrPost *post_xattr);
 int dump_trash(struct marfs_xattr *xattr_ptr, 
                char               *md_path_ptr,  
                File_Info          *file_info_ptr, 
