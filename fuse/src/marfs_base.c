@@ -353,7 +353,7 @@ int init_pre(MarFS_XattrPre*        pre,
       // seed the random-number generator from the clock
       // (i.e. in case we need to close/reopen)
       struct timespec ts;
-      if (clock_gettime, CLOCK_MONOTONIC_RAW, &ts) {
+      if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts)) {
          LOG(LOG_ERR, "clock_gettime() failed; %s\n", strerror(errno));
          return -1;
       }
@@ -367,8 +367,9 @@ int init_pre(MarFS_XattrPre*        pre,
       pre->seed   = down_cast.ui;
    }                  
 
-   // generate bucket and obj-id
-   return update_pre(pre);
+   //   // generate bucket and obj-id
+   //   return update_pre(pre);
+   return 0;
 }
 
 
