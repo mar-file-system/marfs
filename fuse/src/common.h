@@ -378,9 +378,8 @@ typedef struct PathInfo {
    XattrMaskType        xattrs; // OR'ed XattrValueTypes, use has_any_xattrs()
 
    PathInfoFlagType     flags;
-   unsigned int         seed;   // for rand_r()
 
-   // char                 md_path[MARFS_MAX_MD_PATH]; // full path to MDFS file
+   // char                 md_path[MARFS_MAX_MD_PATH]; // now in PathInfo.post
    char                 trash_md_path[MARFS_MAX_MD_PATH];
 } PathInfo;
 
