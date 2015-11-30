@@ -282,6 +282,34 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
 // xattrs
 // ---------------------------------------------------------------------------
 
+// If the repo uses host randomization, it will have a host name like
+// "10.0.0.%d:81", and host_count greater than 1.  (See update_pre().)  We
+// generate a randomw seed that is used to produce the value to be printed
+// where the "%d" is.
+
+int init_pre_seed(MarFS_XattrPre* pre, MarFS_Repo* repo) {
+   // prepare random seed, if configuration uses host-randomization
+   if (repo->host_count > 1) {
+
+      // seed the random-number generator from the clock
+      // (i.e. in case we need to close/reopen)
+      struct timespec ts;
+      if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts)) {
+         LOG(LOG_ERR, "clock_gettime() failed; %s\n", strerror(errno));
+         return -1;
+      }
+
+      union {
+         long         l;
+         unsigned int ui;
+      } down_cast;
+
+      down_cast.l = ts.tv_nsec;
+      pre->seed   = down_cast.ui;
+   }
+
+   return 0;
+}
 
 // Fill in fields, construct new obj-ID, etc.  This is called to initialize
 // a brand new MarFS_XattrPre, in the case where a file didn't already have
@@ -346,26 +374,10 @@ int init_pre(MarFS_XattrPre*        pre,
 
    // pre->shard = ...;    // TBD: for hashing directories across shard nodes
 
-
-   // prepare random seed, if configuration uses host-randomization
-   if (repo->host_count > 1) {
-
-      // seed the random-number generator from the clock
-      // (i.e. in case we need to close/reopen)
-      struct timespec ts;
-      if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts)) {
-         LOG(LOG_ERR, "clock_gettime() failed; %s\n", strerror(errno));
-         return -1;
-      }
-
-      union {
-         long         l;
-         unsigned int ui;
-      } down_cast;
-
-      down_cast.l = ts.tv_nsec;
-      pre->seed   = down_cast.ui;
-   }                  
+   // generate random-seed, if needed
+   if (init_pre_seed(pre, repo)) {
+      return -1;
+   }
 
    //   // generate bucket and obj-id
    //   return update_pre(pre);
@@ -744,6 +756,13 @@ int str_2_pre(MarFS_XattrPre*    pre,
           major, minor,
           marfs_config->version_major, marfs_config->version_minor);
       errno = EINVAL;            /* ?? */
+      return -1;
+   }
+
+   // generate random-seed, if needed
+   if (init_pre_seed(pre, repo)) {
+      LOG(LOG_ERR, "couldn't generate random-seed\n", ns_name);
+      errno = EINVAL;
       return -1;
    }
 
