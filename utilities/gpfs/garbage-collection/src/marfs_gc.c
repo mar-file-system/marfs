@@ -100,6 +100,7 @@ int main(int argc, char **argv) {
    char *outf = NULL;
    char *rdir = NULL;
    char *packed_log = NULL;
+   char *aws_user_name = NULL;
    char packed_filename[MAX_PACKED_NAME_SIZE];
    //unsigned int uid = 0;
    int fileset_id = -1;
@@ -109,22 +110,19 @@ int main(int argc, char **argv) {
    unsigned int time_threshold_sec=0;
  
    Fileset_Info *fileset_info_ptr;
-   //char *fileset = NULL;
 
    if ((ProgName = strrchr(argv[0],'/')) == NULL)
       ProgName = argv[0];
    else
       ProgName++;
 
-   while ((c=getopt(argc,argv,"d:t:p:ho:")) != EOF) {
+   while ((c=getopt(argc,argv,"d:t:p:ho:u:")) != EOF) {
       switch (c) {
          case 'd': rdir = optarg; break;
          case 'o': outf = optarg; break;
          case 't': time_threshold_sec=atoi(optarg) * DAY_SECONDS; break;
-/*********
-         case 'f': fileset = optarg; break; 
-*********/
          case 'p': packed_log = optarg; break;
+         case 'u': aws_user_name = optarg; break;
          case 'h': print_usage();
          default:
             exit(0);
@@ -132,10 +130,11 @@ int main(int argc, char **argv) {
    }
    
    if (rdir == NULL || 
-       outf == NULL ) {   
+       outf == NULL || 
+       aws_user_name == NULL ) {
 
-      fprintf(stderr,"%s: no directory (-d) or output file name (-o) or \
-              specified\n\n",ProgName);
+      fprintf(stderr,"%s: no directory (-d) or output file name (-o) or\
+ aws user name (-u) specified\n\n",ProgName);
       print_usage();
       exit(1);
    }
@@ -165,13 +164,14 @@ int main(int argc, char **argv) {
       packed_log = packed_filename;
    }
 
+   // open associated log file and packed log file
    file_status->outfd = fopen(outf,"w");
    file_status->packedfd = fopen(packed_log, "w");
    strcpy(file_status->packed_filename, packed_log);
    file_status->is_packed=0;
 
-   // TEMP TEMP TEMP modify to root 
-   aws_read_config("atorrez");
+   // Configure aws for user specified on command line
+   aws_read_config(aws_user_name);
 
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec);
@@ -201,8 +201,8 @@ Name: print_usage
 *****************************************************************************/
 void print_usage()
 {
-   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file \
-           [-p packed_tmp_file] [-t time_threshold-days] [-h] \n",ProgName);
+   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file -u aws_user_name\
+ [-p packed_tmp_file] [-t time_threshold-days] [-h] \n\n",ProgName);
 }
 
 
@@ -398,7 +398,6 @@ int read_inodes(const char *fnameP,
    int xattr_index;
    char *md_path_ptr;
    const struct stat* st = NULL;
-   char repo_name[MARFS_MAX_REPO_NAME];
 
 
    /*
@@ -415,7 +414,6 @@ int read_inodes(const char *fnameP,
    /*
     *  Open the inode file for an inode scan with xattrs
    */
-  //if ((iscanP = gpfs_open_inodescan(fsP, NULL, NULL)) == NULL) {
    if ((iscanP = gpfs_open_inodescan_with_xattrs(fsP, NULL, -1, NULL, NULL)) 
            == NULL) {
       rc = errno;
@@ -540,42 +538,30 @@ int read_inodes(const char *fnameP,
                         //fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
                         str_2_pre(pre, xattr_ptr->xattr_value, st);
 
-                        sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT, repo_name);
+                        update_pre(pre);
 
-                        strcpy(fileset_info_ptr->repo_name,repo_name);
-        
-                        // Now call read config so that the hostname for 
-                        // the oject can be obtained (so that aws knows who
-                        // to talk to
-                        if (!read_config_gc(fileset_info_ptr)) {
-                            s3_set_host (fileset_info_ptr->host);
 
-                           // Deterimine if object type is packed.  If so we 
-                           // must complete scan to determine if all files 
-                           // exist for the object
-                           if (post.obj_type == OBJ_PACKED) {
-                              fprintf(file_info_ptr->packedfd,"%s %s %zu\n", 
-                                      xattr_ptr->xattr_value, md_path_ptr, post.chunks);
-                                      file_info_ptr->is_packed = 1;
-                           }
+                         s3_set_host(pre->host);
 
-                           // MANUAL SET
-                           //s3_set_host (hostname);
-                           //s3_set_host ("10.140.0.17:9020");
-                           // FOR SPROXYD
-                           ////s3_set_host ("10.135.0.22:81");
-                           // FOR SPROXYD
-                           // MANUAL SET
+                         // Deterimine if object type is packed.  If so we 
+                         // must complete scan to determine if all files 
+                         // exist for the object
+                         if (post.obj_type == OBJ_PACKED) {
+                            fprintf(file_info_ptr->packedfd,"%s %s %zu %s %s %s\n", 
+                                    xattr_ptr->xattr_value, md_path_ptr, post.chunks,
+                                    pre->host, pre->bucket, pre->objid);
+                                    file_info_ptr->is_packed = 1;
+                         }
 
-                           // Not checking return because log has error message
-                           // and want to keep running even if errors exists on 
-                           // certain objects or files
-                           else {
-                              trash_status = dump_trash(xattr_ptr, md_path_ptr, 
+
+                         // Not checking return because log has error message
+                         // and want to keep running even if errors exists on 
+                         // certain objects or files
+                         else {
+                            trash_status = dump_trash(xattr_ptr, md_path_ptr, 
                                                         file_info_ptr, 
-                                                        &post);
-                           } // endif dump trash
-                        } // endif read config 
+                                                        &post, pre);
+                         } // endif dump trash
                      } // endif objid xattr 
                   } // endif days old check
                } // endif post xattr specifies trash
@@ -628,7 +614,8 @@ Name: dump_trash
  This function deletes the object file as well as gpfs metadata files
 *****************************************************************************/
 int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr, 
-               File_Info *file_info_ptr, MarFS_XattrPost *post_xattr)
+               File_Info *file_info_ptr, MarFS_XattrPost *post_xattr,
+               MarFS_XattrPre *pre_ptr)
 {
    int return_value =0;
 
@@ -636,15 +623,17 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
    char *obj_name_ptr;
    int i;
    int delete_obj_status;
+   int multi_flag = 0;
 
    //If multi type file then delete all objects associated with file
    if (post_xattr->obj_type == OBJ_MULTI) {
       for (i=0; i < post_xattr->chunks; i++ ) {
-         obj_name_ptr = strrchr(xattr_ptr->xattr_value, '.');
+         multi_flag = 1;
+         obj_name_ptr = strrchr(pre_ptr->objid, '.');
          obj_name_ptr++;
          *obj_name_ptr='\0'; 
-         sprintf(object_name, "%s%d",xattr_ptr->xattr_value,i);
-         if ((delete_obj_status=delete_object(object_name,file_info_ptr)) != 0) {
+         sprintf(object_name, "%s%d",pre_ptr->objid,i);
+         if ((delete_obj_status=delete_object(object_name,file_info_ptr, pre_ptr, multi_flag)) != 0) {
             fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
                     %d) on object %s\n", delete_obj_status, \
                     xattr_ptr->xattr_value);
@@ -660,7 +649,7 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
    else if (post_xattr->obj_type == OBJ_UNI) {
       strncpy(object_name, xattr_ptr->xattr_value, 
               strlen(xattr_ptr->xattr_value));
-      if ((delete_obj_status=delete_object(object_name, file_info_ptr)) != 0 ) {
+      if ((delete_obj_status=delete_object(object_name, file_info_ptr, pre_ptr, multi_flag)) != 0 ) {
          fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code:  %d) \
                  on object %s\n", delete_obj_status,xattr_ptr->xattr_value);
          return_value = -1;
@@ -688,7 +677,10 @@ Name: delete_object
 
  This function deletes the object and returns -1 if error, 0 if successful
 *****************************************************************************/
-int delete_object(char * object, File_Info *file_info_ptr)
+int delete_object(char *object,
+                  File_Info *file_info_ptr,
+                  MarFS_XattrPre *pre_ptr,
+                  int is_multi)
 {
    //
    int return_val;
@@ -697,9 +689,14 @@ int delete_object(char * object, File_Info *file_info_ptr)
 
    print_current_time(file_info_ptr);
 
-   s3_return = s3_delete( obj_buffer, object );
-   return_val=check_S3_error(s3_return, obj_buffer, S3_DELETE);
+   s3_set_bucket(pre_ptr->bucket);
    
+   if ( is_multi )
+      s3_return = s3_delete( obj_buffer, object );
+   else 
+      s3_return = s3_delete( obj_buffer, pre_ptr->objid );
+      
+   return_val=check_S3_error(s3_return, obj_buffer, S3_DELETE);
    return(return_val);
 
 }
@@ -762,7 +759,7 @@ exist for a particular object.  The function is passed in a filename that
 contains a list of all PACKED entries found in the scan.
 The format of the files is:
 
-object_name file_name total_file_count
+object_name file_name total_file_count host bucket objid
 
 This function sorts by object name then proceeds to count how many files
 exists for that object_name.  If the files counted equal the total file_count,
@@ -787,6 +784,9 @@ int process_packed(File_Info *file_info_ptr)
    int chunk_count;
    char filename[MARFS_MAX_MD_PATH];
    int count = 0;
+   MarFS_XattrPre pre_struct;
+   MarFS_XattrPre* pre_ptr = &pre_struct;
+   int multi_flag = 0;
    
    // create command to cat and sort the list of objects that are packed
    sprintf(cat_command, "cat %s | sort", file_info_ptr->packed_filename);
@@ -809,7 +809,8 @@ int process_packed(File_Info *file_info_ptr)
 
    //In a loop get all lines from the file
    while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
-      sscanf(obj_buf,"%s %s %d", objid, filename, &chunk_count);
+      sscanf(obj_buf,"%s %s %d %s %s %s", objid, filename, &chunk_count, 
+             pre_ptr->host, pre_ptr->bucket, pre_ptr->objid);
       // if objid the same - keep counting files
       if (!strcmp(last_objid,objid)) {
          count++;
@@ -817,7 +818,7 @@ int process_packed(File_Info *file_info_ptr)
          // delete objec
          if (chunk_count == count) {
 
-            if ((obj_return=delete_object(objid, file_info_ptr)) != 0) 
+            if ((obj_return=delete_object(objid, file_info_ptr, pre_ptr, multi_flag)) != 0) 
                fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
                        %d) on object %s\n", obj_return, objid);
             else 
