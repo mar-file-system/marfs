@@ -106,9 +106,6 @@
    #define DEBUG_PRINT(fmt, ... )
 #endif
 
-// GPFS API gpfs_iattr ia_xperm bits
-#define EXTENDED_ATTR_FLAG 0x0002
-
 struct store_type {
   size_t uni_count;
   size_t multi_count;
