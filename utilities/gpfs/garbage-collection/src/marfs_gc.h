@@ -150,8 +150,9 @@ int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
 int dump_trash(struct marfs_xattr *xattr_ptr, 
                char               *md_path_ptr,  
                File_Info          *file_info_ptr, 
-               MarFS_XattrPost    *post_xattr);
-int delete_object(char * object, File_Info *file_info_ptr);
+               MarFS_XattrPost    *post_xattr,
+               MarFS_XattrPre     *pre_ptr);
+int delete_object(char * object, File_Info *file_info_ptr,MarFS_XattrPre *pre_ptr, int is_mult);
 int delete_file(char *filename, File_Info *file_info_ptr);
 int process_packed(File_Info *file_info_ptr);
 void print_current_time(File_Info *file_info_ptr);
