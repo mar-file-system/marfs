@@ -131,8 +131,8 @@ int main(int argc, char **argv) {
    }
    
    if (rdir == NULL || outf == NULL) {
-      fprintf(stderr,"%s: no directory (-d) or output file name (-o) \
-              specified\n",ProgName);
+      fprintf(stderr,"%s: no directory (-d) or output file name (-o)\
+ specified\n",ProgName);
       exit(1);
    }
 
@@ -259,9 +259,9 @@ Name: print_usage
 void print_usage()
 {
    fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file [-c fileset_count]\
-            [-i start_index] [-f fileset_id]\n",ProgName);
-   fprintf(stderr, "NOTE: -c and -i are optional.  Default behavior will be \
-           to try to match all filesets defined in config\n");
+ [-i start_index] [-f fileset_id]\n",ProgName);
+   fprintf(stderr, "NOTE: -c and -i are optional.  Default behavior will be\
+ to try to match all filesets defined in config\n");
    fprintf(stderr, "See README for information\n");
 }
 
