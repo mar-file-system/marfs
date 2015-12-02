@@ -99,9 +99,6 @@ enum{S3_CREATE, S3_STAT, S3_DELETE};
 
 #define TMP_LOCAL_FILE_LEN 1024 
 
-// GPFS API gpfs_iattr ia_xperm bits
-#define EXTENDED_ATTR_FLAG 0x0002
-
 struct marfs_xattr {
   char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
   char xattr_value[GPFS_FCNTL_XATTR_MAX_VALUELEN];
