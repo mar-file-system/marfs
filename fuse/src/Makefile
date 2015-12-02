@@ -304,7 +304,7 @@ fromwork.Makefile:
 # only works on ccstargate, or cc-gate
 fromwork: fromwork.Makefile
 	for DIR in marfs aws4c PA2X pftool; do \
-	rsync -Pvaurl --exclude=foo.\* --exclude=jti\*/f\* --exclude=core\* \
+	rsync -Pvaurl --exclude=foo\* --exclude=jti\*/f\* --exclude=core\* \
 	              --exclude=messages\* \
 		           --del --sparse root@$(WORK):/root/projects/git/$$DIR/   ~/projects/git/$$DIR ; \
 	done
