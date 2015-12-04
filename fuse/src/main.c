@@ -704,7 +704,7 @@ int fuse_removexattr (const char* path,
 int fuse_rename (const char* path,
                  const char* to) {
 
-   WRAP( marfs_removexattr(path, to) );
+   WRAP( marfs_rename(path, to) );
 }
 
 
