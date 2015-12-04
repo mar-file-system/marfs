@@ -254,7 +254,7 @@ int stream_wait(ObjectStream* os) {
    if (os->flags & OSF_JOINED)
       return 0;
 
-   //   static const size_t  TIMEOUT_SECS = 10;
+   // static const size_t  TIMEOUT_SECS = 10;
    static const size_t  TIMEOUT_SECS = 20;
 
    struct timespec timeout;
@@ -466,7 +466,7 @@ int stream_put(ObjectStream* os,
                const char*   buf,
                size_t        size) {
 
-   //   static const int put_timeout_sec = 10; /* totally made up out of thin air */
+   // static const int put_timeout_sec = 10; /* totally made up out of thin air */
    static const int put_timeout_sec = 20; /* totally made up out of thin air */
 
    LOG(LOG_INFO, "(%08lx) entry\n", (size_t)os);

@@ -74,10 +74,11 @@ OF SUCH DAMAGE.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <inttypes.h>           /* uintmax_t, for printing ino_t with "%ju" */
+#include <limits.h>          // HOST_NAME_MAX
+#include <inttypes.h>        // uintmax_t, for printing ino_t with "%ju"
 #include <string.h>
 #include <errno.h>
-#include <arpa/inet.h>          // htonl(), etc
+#include <arpa/inet.h>       // htonl(), etc
 
 
 // ---------------------------------------------------------------------------
@@ -287,7 +288,7 @@ int str_to_epoch(time_t* time, const char* str, size_t size) {
 // generate a randomw seed that is used to produce the value to be printed
 // where the "%d" is.
 
-int init_pre_seed(MarFS_XattrPre* pre, MarFS_Repo* repo) {
+int init_pre_seed(MarFS_XattrPre* pre, const MarFS_Repo* repo) {
    // prepare random seed, if configuration uses host-randomization
    if (repo->host_count > 1) {
 
@@ -306,6 +307,30 @@ int init_pre_seed(MarFS_XattrPre* pre, MarFS_Repo* repo) {
 
       down_cast.l = ts.tv_nsec;
       pre->seed   = down_cast.ui;
+   }
+
+   return 0;
+}
+
+// this hash is used to assure that all tasks on the same host will
+// target the same server (or set of servers).  See update_pre().
+//
+int init_pre_hostname_hash(MarFS_XattrPre* pre, const MarFS_Repo* repo) {
+   // prepare hostname-hash, if configuration uses host-randomization
+   if (repo->host_count > 1) {
+
+      char hostname[HOST_NAME_MAX]; // see quibbles in gethostname(2) manpage
+      if (gethostname(hostname, HOST_NAME_MAX)) {
+         LOG(LOG_ERR, "gethostname() failed; %s\n", strerror(errno));
+         return -1;
+      }
+
+      uint8_t hash = 0;
+      char*   name_ptr;
+      for (name_ptr=hostname; *name_ptr; ++name_ptr) {
+         hash += *name_ptr;
+      }
+      pre->hostname_hash = hash;
    }
 
    return 0;
@@ -376,6 +401,10 @@ int init_pre(MarFS_XattrPre*        pre,
 
    // generate random-seed, if needed
    if (init_pre_seed(pre, repo)) {
+      return -1;
+   }
+   // experimental alternative to random-seed
+   if (init_pre_hostname_hash(pre, repo)) {
       return -1;
    }
 
@@ -495,8 +524,33 @@ int update_pre(MarFS_XattrPre* pre) {
 
    // generate host, if necessary
    if (pre->repo->host_count > 1) {
+
+#if 0
+      // This method allows tasks on a given host to talk to all the
+      // servers in the configured range, at random.  Each request will
+      // potentially have a distinct host IP-addr.
       uint8_t octet = (pre->repo->host_offset
                        + (rand_r(&pre->seed) % pre->repo->host_count));
+#elif 1
+      // The method above may be contributing to an 'incast' problem, for
+      // reads.  The method here is an alternative.  Tasks on any given
+      // host will all target a specific server in the configured range.
+      uint8_t      octet  = (pre->repo->host_offset
+                             + (pre->hostname_hash
+                                % (int)pre->repo->host_count));
+#else
+      // QUES:  but, what if that server is down?
+      // ANS:   okay, each host targets one of two specific servers,
+      //        with randomization only between those two servers.
+      //
+      // No server will get requests from more than one host, as long as
+      // the number of servers is at least 2x the number of client hosts.
+      unsigned int binary = rand_r(&pre->seed) / (RAND_MAX / 2); // 0 or 1
+      uint8_t      octet  = (pre->repo->host_offset
+                             + ( ((2 * pre->hostname_hash) + binary)
+                                 % (int)pre->repo->host_count));
+#endif
+
       write_count = snprintf(pre->host, MARFS_MAX_HOST_SIZE,
                              pre->repo->host, octet);
 
@@ -761,10 +815,17 @@ int str_2_pre(MarFS_XattrPre*    pre,
 
    // generate random-seed, if needed
    if (init_pre_seed(pre, repo)) {
-      LOG(LOG_ERR, "couldn't generate random-seed\n", ns_name);
+      LOG(LOG_ERR, "couldn't generate random-seed\n");
       errno = EINVAL;
       return -1;
    }
+   // experimental alternative to random-seed
+   if (init_pre_hostname_hash(pre, repo)) {
+      LOG(LOG_ERR, "couldn't generate hostname-hash\n");
+      errno = EINVAL;
+      return -1;
+   }
+
 
    return 0;
 }

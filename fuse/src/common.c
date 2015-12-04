@@ -1356,6 +1356,7 @@ int seek_chunkinfo(int md_fd, size_t chunk_no) {
 
    off_t offset = chunk_no * chunk_info_len;
    TRY_GE0(lseek, md_fd, offset, SEEK_SET);
+   return 0;
 }
 
 

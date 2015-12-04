@@ -431,7 +431,8 @@ typedef struct MarFS_XattrPre {
    // uint16_t           shard;        // TBD: for hashing directories across shard-nodes
 
    // for randomized IP-addresses in configurations with host_count > 1
-   unsigned int       seed;
+   unsigned int       seed;         // for randomization of hosts
+   unsigned int       hostname_hash;// subverts randomization, if non-zero
    char               host  [MARFS_MAX_HOST_SIZE];
 
    char               bucket[MARFS_MAX_BUCKET_SIZE];

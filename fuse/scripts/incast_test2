@@ -1,0 +1,36 @@
+#!/bin/bash                                                                                                                                                                                                                                       
+
+# time (for k in `seq 0 7`; do for i in `seq 1 8`; do URL=`getfattr -d /gpfs/gpfs_test/atorrez/mdfs/jti/dest/128x1G/f00$i | tr '"' ' ' | grep objid | awk '{print $NF}'`; RANGE="$(( k*(1024**3)/8 ))-$(( (k+1)*(1024**3)/8 -1 ))"; cur-s -r $RANGE http://10.10.0.1:81/$URL > /dev/null & done; wait; done)
+
+function piecewise() {
+    URL=$1
+    HOST=$2
+    for k in `seq 0 7`; do
+        RANGE="$(( k*(1024**3)/8 ))-$(( (k+1)*(1024**3)/8 -1 ))"
+        echo "Range = $RANGE"
+        curl -s -r $RANGE http://10.10.0.${HOST}:81/$URL > /dev/null
+    done
+}
+
+declare -a PIDS
+function quit() {
+    echo "quitting"
+    echo "doing: kill -INT ${PIDS[@]}"
+    eval "kill -INT ${PIDS[@]}"
+    exit 1
+}
+
+trap quit INT
+
+
+# 48 parallel tasks,  Each one reads a sequential series of 1G/8 pieces.
+for i in `seq 1 48`; do
+    FNAME=`printf "f%03d" $i`
+    URL=`getfattr -d /gpfs/gpfs_test/atorrez/mdfs/jti/dest/128x1G/$FNAME | tr '"' ' ' | grep objid | awk '{print $NF}'`
+
+    # piecewise $URL $(( ((i-1)%12) +1)) &
+    piecewise $URL 3 &
+
+    PIDS=($PIDS $!)
+done
+wait
