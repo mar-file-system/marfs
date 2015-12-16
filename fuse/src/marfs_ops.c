@@ -87,6 +87,7 @@ include the files on which a code unit depends.
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
+#include <limits.h>             // ULONG_MAX, etc
 #include <attr/xattr.h>
 #include <dirent.h>
 #include <unistd.h>
@@ -1218,7 +1219,8 @@ int marfs_read (const char*        path,
    // this chunk, which might be smaller than <size>.  It is incremented at
    // the tail of the loop, to advance through additional chunks, if
    // necessary.  read_size always gets us to the end of logical data in
-   // this chunk, or to the end of caller's request, or to EOF.
+   // this chunk, or to the end of caller's request, or to
+   // repo.max_request_size, or to EOF.
    while (read_size) {
 
       // read as much user-data as we have room for from the current chunk
@@ -1228,10 +1230,11 @@ int marfs_read (const char*        path,
           read_size, chunk_remain, open_size);
 
 
-      // e.g. we read to the end of max_request_size, but there's still
-      //      more in this chunk.
+      // e.g. we read to the end of max_request_size on a previous call to
+      //      marfs_read(), but there's still more in this chunk.
       if ((os->flags & OSF_OPEN)
           && (os->flags & OSF_EOF)) {
+         LOG(LOG_INFO, "closing stream at EOF\n");
          TRY0(stream_sync, os);
          TRY0(stream_close, os);
       }
@@ -1822,8 +1825,8 @@ int marfs_setxattr (const char* path,
 // euid==0).  We could walk through all the namespaces, and accumulate
 // total usage.  (Maybe we should have a top-level fsinfo path?)  But I
 // guess we don't want to allow average users to do this.
-int marfs_statfs (const char*      path,
-                  struct statvfs*  statbuf) {
+int marfs_statvfs (const char*      path,
+                   struct statvfs*  statbuf) {
    ENTRY();
 
    PathInfo info;
@@ -1833,20 +1836,107 @@ int marfs_statfs (const char*      path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, (R_META));
 
-   // NOTE: Until fsinfo is available, we're just ignoring.
-   errno = ENOSYS;
-   return -1;
+   //   // NOTE: Until fsinfo is available, we're just ignoring.
+   //   errno = ENOSYS;
+   //   return -1;
 
    //   if (geteuid()) {
    //      LOG(LOG_ERR, "non-root can't stavfs()\n");
    //      errno = EACCES;
    //      return -1;
    //   }
-   //   // Open and read from lazy-fsinfo data file updated by batch process fsinfopath 
-   //   // Size of file sytem is quota etc.
-   //   memset(statbuf, 0, sizeof(struct statvfs));
-   //   statbuf->f_bsize = 512;      // matches GPFS
-   //   ...
+
+   // wipe caller's statbuf
+   memset(statbuf, 0, sizeof(struct statvfs));
+
+
+   // Gather total storage accounted for in fsinfo files of all namespaces.
+   //
+   // TBD: The tool that crawls the MDFS and updates fsinfo for all the
+   //      namespaces (truncating to the size of storage used by all
+   //      non-trash files in that namespace), coould also update one for
+   //      the "root" namespace (i.e. truncating to a size that is the sum
+   //      of all the fsinfos in all the namespaces).  Then we could do
+   //      this with a single stat.
+   // 
+   size_t           used = 0;
+   struct stat      st;
+   NSIterator       it = namespace_iterator();
+   MarFS_Namespace* root_ns = NULL;
+   MarFS_Namespace* ns;
+
+#if 0
+   // Accumulate sum of storage noted in all the fsinfo files.
+   // Also, find the root namespace.
+   for (ns = namespace_next(&it);
+        ns;
+        ns = namespace_next(&it)) {
+
+      LOG(LOG_INFO, "checking fsinfo for NS '%s'\n", ns->name);
+      if (IS_ROOT_NS(info.ns)) {
+         root_ns = ns;          // save for later
+         continue;
+      }
+      else if (! ns->fsinfo_path)
+         continue;
+      else if (stat(ns->fsinfo_path, &st)) {
+         LOG(LOG_ERR, "couldn't stat '%s' for NS %s (%s)\n",
+             ns->fsinfo_path, ns->name, strerror(errno));
+      }
+      else {
+         used += st.st_size;
+         LOG(LOG_INFO, "fsinfo for '%s' = %lu\n", ns->name, st.st_size);
+      }
+   }
+   LOG(LOG_INFO, "used = %lu\n", used);
+
+#else
+   // Just find the root namespace.  We do not currently make use of the
+   // accumulated sum of used storage recorded in the fsinfo files.
+   for (ns = namespace_next(&it);
+        ns;
+        ns = namespace_next(&it)) {
+
+      if (IS_ROOT_NS(info.ns)) {
+         root_ns = ns;          // save for later
+         break;
+      }
+   }
+#endif
+
+   // Get free/used info from the MDFS.
+   //
+   // The "root" filesystem now has its md_path set to the top of the MDFS
+   // (e.g. to the root fileset in a GPFS installation, where the other
+   // namespaces are explicit filesets under that.  We can stat that
+   // to get the free/used inode counts.
+   //
+   // TBD: We use the MDFS as the basis for blocksize.  Gary suggests we
+   //      might be able to improve performance by reporting something else
+   //      here.
+
+   // defaults, if we couldn't statvfs root_ns->md_path
+   // lifted from stavfs("/gpfs/marfs-gpfs")
+   static const unsigned long BSIZE = 16384;        // from GPFS
+   statbuf->f_bsize   = BSIZE; /* file system block size */
+   statbuf->f_frsize  = BSIZE; /* fragment size */
+   statbuf->f_blocks  = ULONG_MAX/BSIZE;     /* size of fs in f_frsize units */
+   statbuf->f_bfree   = ULONG_MAX/BSIZE;     /* # free blocks */
+   statbuf->f_bavail  = ULONG_MAX/BSIZE;     /* # free blocks for non-root */
+   statbuf->f_files   = 1;     /* # inodes */
+   statbuf->f_ffree   = ULONG_MAX -1;     /* # free inodes */
+   statbuf->f_favail  = ULONG_MAX -1;     /* # free inodes for non-root */
+   statbuf->f_fsid    = 0;     /* file system ID */
+   statbuf->f_flag    = 0;     /* mount flags */
+   statbuf->f_namemax = 255;     /* maximum filename length */
+
+   // try to run stavfs(), to override defaults.
+   if (root_ns) {
+      int rc = statvfs(root_ns->md_path, statbuf);
+      LOG(LOG_INFO, "statvfs of root ns returned %d %s\n",
+          rc, (rc ? strerror(errno) : ""));
+   }
+
 
    EXIT();
    return 0;

@@ -728,10 +728,10 @@ int fuse_setxattr (const char* path,
 // euid==0).  We could walk through all the namespaces, and accumulate
 // total usage.  (Maybe we should have a top-level fsinfo path?)  But I
 // guess we don't want to allow average users to do this.
-int fuse_statfs (const char*      path,
+int fuse_statvfs (const char*      path,
                  struct statvfs*  statbuf) {
 
-   WRAP( marfs_statfs(path, statbuf) );
+   WRAP( marfs_statvfs(path, statbuf) );
 }
 
 
@@ -1064,7 +1064,7 @@ int main(int argc, char* argv[])
       .rename      = fuse_rename,
       .rmdir       = fuse_rmdir,
       .setxattr    = fuse_setxattr,
-      .statfs      = fuse_statfs,
+      .statfs      = fuse_statvfs,
       .symlink     = fuse_symlink,
       .truncate    = fuse_truncate,
       .unlink      = fuse_unlink,

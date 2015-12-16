@@ -163,7 +163,7 @@ int  marfs_rmdir(const char* path);
 int  marfs_setxattr(const char* path, const char* name,
                           const char* value, size_t size, int flags);
 
-int  marfs_statfs(const char* path, struct statvfs* stbuf);
+int  marfs_statvfs(const char* path, struct statvfs* stbuf);
 
 int  marfs_symlink(const char* to, const char* from);
 
