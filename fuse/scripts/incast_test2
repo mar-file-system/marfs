@@ -1,22 +1,95 @@
-#!/bin/bash                                                                                                                                                                                                                                       
+#!/bin/bash
 
 # time (for k in `seq 0 7`; do for i in `seq 1 8`; do URL=`getfattr -d /gpfs/gpfs_test/atorrez/mdfs/jti/dest/128x1G/f00$i | tr '"' ' ' | grep objid | awk '{print $NF}'`; RANGE="$(( k*(1024**3)/8 ))-$(( (k+1)*(1024**3)/8 -1 ))"; cur-s -r $RANGE http://10.10.0.1:81/$URL > /dev/null & done; wait; done)
 
-function piecewise() {
+function url_to_fname() {
+    URL="$1"
+    echo $URL | sed -e 's/\//_/g'
+}
+
+# For a given object-ID (i.e. the part of the URL after the host),
+# request that object in a sequence of 8 requests for consecutive
+# byte-ranges.  Wait for each range to complete, before starting the
+# next.  Caller can tell us what server to use.  Caller can also say
+# what client to make the request from.  (Otherwise, we'll make the
+# request from the localhost.)
+#
+# LO and HI allows caller to specify a set of byte-ranges to read.
+# This lets us experiment with reading parts of the same object from
+# different servers, and/or on different FTAs, as we would do if we
+# used pftool chunksize to split up marfs-chunk-sized requests into
+# smaller ones.
+#
+# Perform retries, if any of the sub-ranges take more than $TIME_LIMIT
+#
+function sequence_of_ranges() {
     URL=$1
-    HOST=$2
-    for k in `seq 0 7`; do
+    SERVER=$2
+    CLIENT=$3
+
+    # Q: How much does writing to GPFS affect performance?
+    # A: A lot!  Read BW (dstat "recv") appears to drop from ~1400 MB/s to ~700 MB/s
+    DEST=/dev/null
+    # DEST=/gpfs/gpfs_test/jti/tmp/`url_to_fname $URL`
+
+    LO=`( (($4)) && echo $4 ) || echo 0`
+    HI=`( (($5)) && echo $5 ) || echo 7`
+
+    for k in `seq $LO $HI`; do
+
+        # given breaking the request up into 8 parts, compute
+        # byte-ranges for request k/8
         RANGE="$(( k*(1024**3)/8 ))-$(( (k+1)*(1024**3)/8 -1 ))"
-        echo "Range = $RANGE"
-        curl -s -r $RANGE http://10.10.0.${HOST}:81/$URL > /dev/null
+
+        # perform retries, if request gets no response
+        TIME_LIMIT=10
+        RC=124
+        while (( RC == 124 )); do
+
+            # if <client> was provided, run the request remotely on client.
+            # otherwise, run it from the local host.
+            if [[ -z "$CLIENT" ]]; then
+                echo "${SERVER} Range= $RANGE"
+                timeout $TIME_LIMIT curl -s -r $RANGE http://10.10.0.${SERVER}:81/$URL > $DEST
+                RC=$?
+            else
+                CHOST="tr-fta0${CLIENT}-int"
+                SHOST="10.10.0.${SERVER}"
+
+                echo "${SHOST} -> ${CHOST} Range= $RANGE"
+                timeout $TIME_LIMIT ssh $CHOST "curl -s -r $RANGE http://${SHOST}:81/$URL > $DEST"
+                RC=$?
+            fi
+
+            (( RC == 124 )) && echo "timed out.  retrying ..."
+        done
+
     done
 }
+
+function alternate_seqs0() {
+    URL=$1
+    sequence_of_ranges $URL 3 3 0 0
+    sequence_of_ranges $URL 4 3 1 1
+    sequence_of_ranges $URL 3 3 4 4
+    sequence_of_ranges $URL 4 3 5 5
+}
+function alternate_seqs1() {
+    URL=$1
+    sequence_of_ranges $URL 4 4 7 7
+    sequence_of_ranges $URL 3 4 6 6
+    sequence_of_ranges $URL 4 4 3 3
+    sequence_of_ranges $URL 3 4 2 2
+}
+
 
 declare -a PIDS
 function quit() {
     echo "quitting"
-    echo "doing: kill -INT ${PIDS[@]}"
-    eval "kill -INT ${PIDS[@]}"
+    # echo "doing: kill -INT ${PIDS[@]}"
+    # eval "kill -INT ${PIDS[@]}"
+    ps -elf | grep incast_test2 | grep -v grep
+    ps -elf | grep incast_test2 | grep -v grep | awk '{print $4}' | xargs kill -KILL
     exit 1
 }
 
@@ -24,13 +97,67 @@ trap quit INT
 
 
 # 48 parallel tasks,  Each one reads a sequential series of 1G/8 pieces.
-for i in `seq 1 48`; do
+time (for i in `seq 1 48`; do
+
     FNAME=`printf "f%03d" $i`
     URL=`getfattr -d /gpfs/gpfs_test/atorrez/mdfs/jti/dest/128x1G/$FNAME | tr '"' ' ' | grep objid | awk '{print $NF}'`
 
-    # piecewise $URL $(( ((i-1)%12) +1)) &
-    piecewise $URL 3 &
+    # --- spread requests across all 12 servers server
+
+    # to all, from FTA 3
+    # sequence_of_ranges $URL $(( ((i-1)%12) +1)) 3 &
+
+    # to all, from FTA 3,4
+    # sequence_of_ranges $URL $(( ((i-1)%12) +1)) $(( ((i-1)%2) +3))  &
+
+    # to all, from FTA 2,3,4
+    sequence_of_ranges $URL $(( ((i-1)%12) +1)) $(( ((i-1)%3) +2))  &
+
+
+
+    # --- send all requests to the same server
+
+    # (from localhost)
+    # sequence_of_ranges $URL 3 &
+
+    # (single server, single client)
+    # sequence_of_ranges $URL 3 3 &
+
+    # (two servers, single client)
+    # sequence_of_ranges $URL $(( ((i-1)%2) +3)) 3 &
+
+    # (single server, two clients)
+    # sequence_of_ranges $URL 3 $(( ((i-1)%2) +3)) &
+
+    # (two servers, two clients)
+    sequence_of_ranges $URL $(( ((i-1)%2) +3)) $(( ((i-1)%2) +3))  &
+
+
+    # --- read part 0-3 from one server, 4-7 from another
+    #
+    #     This will tell us whether using small pftool chunksize
+    #     (which spreads different chunk reads to different workers)
+    #     will have a problem, if we set up host-randomization to make
+    #     all reqs go to hash of requesting hostname (for IB opt).
+
+    # (two servers, single client)
+    # sequence_of_ranges $URL 3 3 0 3 &
+    # sequence_of_ranges $URL 4 3 4 7 &
+
+    # (two servers, two clients)
+    # sequence_of_ranges $URL 3 3 0 3 &
+    # sequence_of_ranges $URL 4 4 4 7 &
+
+    # (two servers, two clients, sub-ranges out-of-order)
+    #      NOTE: This requires increasing TIME_LIMIT, to get any results
+    # alternate_seqs0 $URL &
+    # alternate_seqs1 $URL &
+
+
+    # avoid "ssh_exchange_identification: Connection closed by remote host"
+    # resulting from attempting too many ssh connections in a short period
+    usleep 50000
 
     PIDS=($PIDS $!)
 done
-wait
+wait)

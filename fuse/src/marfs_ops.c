@@ -1188,6 +1188,16 @@ int marfs_read (const char*        path,
        && (open_size > fh->read_status.data_remain))
       open_size = fh->read_status.data_remain;
 
+   // Config may specify reads requests of less-than-chunksize.  [We saw
+   // "incast" problems on one 10GbE installation, which seemed to be
+   // mitigated by breaking large requests up into smaller ones.  This is
+   // now a per-repo configuration parameter.  Given an erasure-coding
+   // schema (n = k + m), the config parm should probably be set to a
+   // multiple of the number of data blocks (k) * data block size.]
+   if (info->pre.repo->max_request_size
+       && (open_size > info->pre.repo->max_request_size))
+      open_size = info->pre.repo->max_request_size;
+
    size_t read_size    = ((size < open_size) ? size : open_size); // for this chunk
 
    char*  buf_ptr      = buf;
@@ -1216,6 +1226,15 @@ int marfs_read (const char*        path,
           "rdsz=%lu, chrem=%lu, open=%lu\n",
           chunk_no, offset, fh->read_status.log_offset, chunk_offset,
           read_size, chunk_remain, open_size);
+
+
+      // e.g. we read to the end of max_request_size, but there's still
+      //      more in this chunk.
+      if ((os->flags & OSF_OPEN)
+          && (os->flags & OSF_EOF)) {
+         TRY0(stream_sync, os);
+         TRY0(stream_close, os);
+      }
 
 
       if (! (os->flags & OSF_OPEN)) {
@@ -1278,6 +1297,9 @@ int marfs_read (const char*        path,
 
          // Q: This might legitimately happen if stream_get() hits EOF?
          // A: No, read_size was adjusted to account for logical EOF
+         //
+         // Q: Yeah, but maybe we just used up max_request_size, and now we
+         //    need another request?
          if (rc_ssize == 0) {
             LOG(LOG_ERR, "request for range %ld-%ld (%ld bytes) returned 0 bytes\n",
                 (chunk_offset + read_size - sub_read),
@@ -1307,29 +1329,38 @@ int marfs_read (const char*        path,
       // at the end of the amount requested for this read().
       read_count    += read_size;
       max_read      -= read_size;
+      chunk_remain  -= read_size;
 
       fh->read_status.log_offset  += read_size;
       if (fh->read_status.data_remain)
          fh->read_status.data_remain -= read_size;
 
-      // reading another chunk?
+      // reading more?
       if (read_count < size) {
 
          TRY0(stream_sync, os);
          TRY0(stream_close, os);
 
-         chunk_no      += 1;
-         chunk_offset   = 0;
-         chunk_remain   = data1;
+         // ready to move on to the next chunk?
+         if (! chunk_remain) {
+            chunk_no      += 1;
+            chunk_offset   = 0;
+            chunk_remain   = data1;
+         }
 
          // prepare for next iteration
          open_size    = (max_read < chunk_remain) ? max_read : chunk_remain;
+
          if (fh->read_status.data_remain
              && (open_size > fh->read_status.data_remain))
             open_size = fh->read_status.data_remain;
          
+         if (info->pre.repo->max_request_size
+             && (open_size > info->pre.repo->max_request_size))
+            open_size = info->pre.repo->max_request_size;
+
          size_t size_remain = size - read_count;
-         read_size      = ((size_remain < open_size) ? size_remain : open_size);
+         read_size          = ((size_remain < open_size) ? size_remain : open_size);
       }
       else
          read_size      = 0;

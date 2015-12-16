@@ -375,8 +375,9 @@ int init_pre(MarFS_XattrPre*        pre,
    pre->repo         = repo;
    pre->ns           = ns;
 
-   pre->config_vers_maj = marfs_config->version_major;
-   pre->config_vers_min = marfs_config->version_minor;
+   // captures the version of the software, not what's in the config-file
+   pre->config_vers_maj = MARFS_CONFIG_MAJOR; // marfs_config->version_major;
+   pre->config_vers_min = MARFS_CONFIG_MINOR; // marfs_config->version_minor;
 
    pre->obj_type     = obj_type;
 #ifdef STATIC_CONFIG
@@ -525,13 +526,13 @@ int update_pre(MarFS_XattrPre* pre) {
    // generate host, if necessary
    if (pre->repo->host_count > 1) {
 
-#if 0
+#if 1
       // This method allows tasks on a given host to talk to all the
       // servers in the configured range, at random.  Each request will
       // potentially have a distinct host IP-addr.
       uint8_t octet = (pre->repo->host_offset
                        + (rand_r(&pre->seed) % pre->repo->host_count));
-#elif 1
+#elif 0
       // The method above may be contributing to an 'incast' problem, for
       // reads.  The method here is an alternative.  Tasks on any given
       // host will all target a specific server in the configured range.
@@ -782,6 +783,35 @@ int str_2_pre(MarFS_XattrPre*    pre,
       return -1;
    }
 
+   // validate version
+   // NOTE: This just assures us that we know how to parse this thing.
+   //
+   //   //   if ((   major != marfs_config->version_major)
+   //   //       || (minor != marfs_config->version_minor)) {
+   //   //      LOG(LOG_ERR, "xattr vers '%d.%d' != config %d.%d\n",
+   //   //          major, minor,
+   //   //          marfs_config->version_major, marfs_config->version_minor);
+   //   //      errno = EINVAL;            /* ?? */
+   //   //      return -1;
+   //   //   }
+   //
+   //   if ( major != MARFS_CONFIG_VERSION) {
+   //      LOG(LOG_ERR, "xattr vers '%d.%d' Parser expected 0.x\n",
+   //          major, minor);
+   //      errno = EINVAL;
+   //      return -1;
+   //   }
+   //
+   if ((   major != MARFS_CONFIG_MAJOR)
+       || (minor >  MARFS_CONFIG_MINOR)) {
+      LOG(LOG_ERR, "xattr vers '%d.%d' != config %d.%d\n",
+          major, minor,
+          MARFS_CONFIG_MAJOR, MARFS_CONFIG_MINOR);
+      errno = EINVAL;
+      return -1;
+   }
+   
+
 
    // --- fill in fields in Pre
    pre->config_vers_maj = major;
@@ -801,17 +831,6 @@ int str_2_pre(MarFS_XattrPre*    pre,
    pre->chunk_size   = chunk_size;
    pre->chunk_no     = chunk_no;
    pre->md_inode     = md_inode; /* NOTE: from object-ID, not st->st_ino  */
-
-   // validate version
-   if ((   major != marfs_config->version_major)
-       || (minor != marfs_config->version_minor)) {
-
-      LOG(LOG_ERR, "xattr vers '%d.%d' != config %d.%d\n",
-          major, minor,
-          marfs_config->version_major, marfs_config->version_minor);
-      errno = EINVAL;            /* ?? */
-      return -1;
-   }
 
    // generate random-seed, if needed
    if (init_pre_seed(pre, repo)) {
@@ -837,8 +856,10 @@ int str_2_pre(MarFS_XattrPre*    pre,
 // initialize -- most fields aren't known, when stat_xattr() calls us
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
 
-   post->config_vers_maj = marfs_config->version_major;
-   post->config_vers_min = marfs_config->version_minor;
+   //   post->config_vers_maj = marfs_config->version_major;
+   //   post->config_vers_min = marfs_config->version_minor;
+   post->config_vers_maj = MARFS_CONFIG_MAJOR;
+   post->config_vers_min = MARFS_CONFIG_MINOR;
 
    post->obj_type    = OBJ_UNI;    /* will be changed to Multi, if needed */
    post->chunks      = 1;          // will be updated for multi
@@ -940,15 +961,33 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str) {
    }
 
    // validate version
-   if ((   major != marfs_config->version_major)
-       || (minor != marfs_config->version_minor)) {
-
+   // NOTE: This just assures us that we know how to parse this thing.
+   //
+   //   //   if ((   major != marfs_config->version_major)
+   //   //       || (minor != marfs_config->version_minor)) {
+   //   //      LOG(LOG_ERR, "xattr vers '%d.%d' != config %d.%d\n",
+   //   //          major, minor,
+   //   //          marfs_config->version_major, marfs_config->version_minor);
+   //   //      errno = EINVAL;            /* ?? */
+   //   //      return -1;
+   //   //   }
+   //
+   //   if ( major != 0) {
+   //      LOG(LOG_ERR, "xattr vers '%d.%d' Parser expected 0.x\n",
+   //          major, minor);
+   //      errno = EINVAL;
+   //      return -1;
+   //   }
+   //
+   if ((   major != MARFS_CONFIG_MAJOR)
+       || (minor >  MARFS_CONFIG_MINOR)) {
       LOG(LOG_ERR, "xattr vers '%d.%d' != config %d.%d\n",
           major, minor,
-          marfs_config->version_major, marfs_config->version_minor);
-      errno = EINVAL;            /* ?? */
+          MARFS_CONFIG_MAJOR, MARFS_CONFIG_MINOR);
+      errno = EINVAL;
       return -1;
    }
+
 
    post->config_vers_maj = major;
    post->config_vers_min = minor;

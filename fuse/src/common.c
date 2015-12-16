@@ -1265,8 +1265,8 @@ int write_chunkinfo(int                   md_fd,
 
 
    MultiChunkInfo chunk_info = (MultiChunkInfo) {
-      .config_vers_maj  = marfs_config->version_major,
-      .config_vers_min  = marfs_config->version_minor,
+      .config_vers_maj  = MARFS_CONFIG_MAJOR, // marfs_config->version_major,
+      .config_vers_min  = MARFS_CONFIG_MINOR, // marfs_config->version_minor,
       .chunk_no         = info->pre.chunk_no,
       .logical_offset   = log_offset,
       .chunk_data_bytes = user_data_this_chunk,

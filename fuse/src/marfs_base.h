@@ -561,11 +561,6 @@ int str_2_shard(MarFS_XattrShard* shard, const char* shard_str); // from string
 //     metadata.  But you could do that.
 // ---------------------------------------------------------------------------
 
-// OBSOLETE?  The recovery info is just the contents of the Post xattr?
-// [Plus the MDFS filename.]  Objects already have (most of) the Pre xattr
-// in their obj-id.  What remains unknown is MDFS filename, etc, which in
-// in the Post xattr.
-
 typedef struct {
    uint16_t config_vers_maj;
    uint16_t config_vers_min;

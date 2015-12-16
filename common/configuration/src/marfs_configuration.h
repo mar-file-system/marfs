@@ -62,6 +62,51 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 extern "C" {
 #  endif
 
+
+// ...........................................................................
+// This is the version of the SOFTWARE.  This shows up in 2 places:
+//
+// (1) config-file parsing.  In this case the config-file will have a
+//     version, and the parser compares it with the defines here, to
+//     assure that it is competent to perform the parse.
+//
+// (2) xattr parsing.  Any objects written by this software will have
+//     xattrs identifying their config SW version.  When parsing xattrs
+//     (e.g. in str_2_pre()), we can thus be sure we know which version of
+//     the software wrote those xattrs.  This also identifies potential
+//     changes in chunk-info written into MD files for Multis, or in the
+//     recovery-info written into the tail of objects.
+//     
+// These two are somewhat independent.  config-version identifies
+// config-reader parser that's needed.  This may relate to what information
+// is kept in xattrs, but might not affect xattrs.  Meanwhile,
+// recovery-info formats could change without any changes to the config
+// reader.
+//
+// For now, we are just glossing the problem.  What goes into object-IDs is
+// what is found in MARFS_CONFIG_MAJOR/MINOR, so changes to either (1) or
+// (2) above, should be reflected in changes these #defines.
+//
+// --- HISTORY
+//
+// 0.1  First cut.
+//
+// 0.2 Added Repo.max_request_size.  Will be defaulted (to 0) by reader,
+//     for older config-files.  No changes to xattrs, MD, or objects.
+//      
+
+#define MARFS_CONFIG_MAJOR  0
+#define MARFS_CONFIG_MINOR  2
+
+// TBD for (2):
+//
+// #define MARFS_SW_MAJOR  0
+// #define MARFS_SW_MINOR  2
+
+// ...........................................................................
+
+
+
 /*
  * Here are several enumeration types that we will need for various
  * members of the MarFS configuration structs.
@@ -241,6 +286,7 @@ typedef struct marfs_repo {
    MarFS_Bool            is_online;
    MarFS_AccessMethod    access_method;
    size_t                chunk_size;
+   size_t                max_request_size; // use 0 for unconstrained
    size_t                pack_size;
    MarFS_SecurityMethod  security_method;
    MarFS_SecType         sec_type;

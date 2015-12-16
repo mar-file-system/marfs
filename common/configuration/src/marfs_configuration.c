@@ -900,6 +900,18 @@ static MarFS_Config_Ptr read_configuration_internal() {
       return NULL;
     }
 
+    // repo.max_request_size was added in blueprint version 0.2.
+    // Allow old configurations to be parsed by defaulting to 0
+    marfs_repo_list[j]->max_request_size = 0;
+    if (repoList[j]->max_request_size) {
+       errno = 0;
+       marfs_repo_list[j]->max_request_size = strtoull( repoList[j]->max_request_size, (char **) NULL, 10 );
+       if ( errno ) {
+          LOG( LOG_ERR, "Invalid max_request_size value of \"%s\".\n", repoList[j]->max_request_size );
+          return NULL;
+       }
+    }
+
     errno = 0;
     marfs_repo_list[j]->pack_size = strtoull( repoList[j]->pack_size, (char **) NULL, 10 );
     if ( errno ) {
@@ -1212,6 +1224,16 @@ static MarFS_Config_Ptr read_configuration_internal() {
   version_tok            = strtok(NULL, ".");
   marfs_config->version_minor = ((version_tok) ? strtol( version_tok, NULL, 10) : 0);
   free(version_str);
+
+  // make sure this SW handles this config-file version
+  if ((   marfs_config->version_major != MARFS_CONFIG_MAJOR)
+      || (marfs_config->version_minor >  MARFS_CONFIG_MINOR)) {
+     LOG( LOG_ERR, "Config-reader %d.%d found incompatible config vers %d.%d\n",
+          MARFS_CONFIG_MAJOR, MARFS_CONFIG_MINOR,
+          marfs_config->version_major, marfs_config->version_minor);
+     return NULL;
+  }
+
 
   marfs_config->mnt_top     = strdup( config->mnt_top );
   marfs_config->mnt_top_len = strlen( config->mnt_top );
