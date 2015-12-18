@@ -1859,8 +1859,6 @@ int marfs_statvfs (const char*      path,
    //      of all the fsinfos in all the namespaces).  Then we could do
    //      this with a single stat.
    // 
-   size_t           used = 0;
-   struct stat      st;
    NSIterator       it = namespace_iterator();
    MarFS_Namespace* root_ns = NULL;
    MarFS_Namespace* ns;
@@ -1868,6 +1866,8 @@ int marfs_statvfs (const char*      path,
 #if 0
    // Accumulate sum of storage noted in all the fsinfo files.
    // Also, find the root namespace.
+   size_t           used = 0;
+   struct stat      st;
    for (ns = namespace_next(&it);
         ns;
         ns = namespace_next(&it)) {
@@ -1893,50 +1893,64 @@ int marfs_statvfs (const char*      path,
 #else
    // Just find the root namespace.  We do not currently make use of the
    // accumulated sum of used storage recorded in the fsinfo files.
-   for (ns = namespace_next(&it);
-        ns;
-        ns = namespace_next(&it)) {
+   if (IS_ROOT_NS(info.ns))
+      root_ns = ns;
+   else {
+      for (ns = namespace_next(&it);
+           ns;
+           ns = namespace_next(&it)) {
 
-      if (IS_ROOT_NS(info.ns)) {
-         root_ns = ns;          // save for later
-         break;
+         if (IS_ROOT_NS(ns)) {
+            root_ns = ns;          // save for later
+            break;
+         }
       }
    }
 #endif
 
-   // Get free/used info from the MDFS.
+   // Get free/used info regarding inodes from the MDFS.
    //
-   // The "root" filesystem now has its md_path set to the top of the MDFS
-   // (e.g. to the root fileset in a GPFS installation, where the other
-   // namespaces are explicit filesets under that.  We can stat that
-   // to get the free/used inode counts.
+   // The "root" filesystem now can have its md_path set to the top of the
+   // MDFS (e.g. to the root fileset in a GPFS installation, where the
+   // other namespaces are explicit filesets under that, or elsewhere.
+   //
+   // statvfs() supports NFS exports, where we might want to export
+   // individual namespaces, or the root namespace.  We'll try to return
+   // statvfs of the md_path, if possible.  Otherwise, fall back to the
+   // root NS.  If that fails, return defaults that suggest we've got tons
+   // of room.  (Real quotas will be enforced when they try to create new
+   // files.)
    //
    // TBD: We use the MDFS as the basis for blocksize.  Gary suggests we
    //      might be able to improve performance by reporting something else
    //      here.
 
-   // defaults, if we couldn't statvfs root_ns->md_path
-   // lifted from stavfs("/gpfs/marfs-gpfs")
-   static const unsigned long BSIZE = 16384;        // from GPFS
-   statbuf->f_bsize   = BSIZE; /* file system block size */
-   statbuf->f_frsize  = BSIZE; /* fragment size */
-   statbuf->f_blocks  = ULONG_MAX/BSIZE;     /* size of fs in f_frsize units */
-   statbuf->f_bfree   = ULONG_MAX/BSIZE;     /* # free blocks */
-   statbuf->f_bavail  = ULONG_MAX/BSIZE;     /* # free blocks for non-root */
-   statbuf->f_files   = 1;     /* # inodes */
-   statbuf->f_ffree   = ULONG_MAX -1;     /* # free inodes */
-   statbuf->f_favail  = ULONG_MAX -1;     /* # free inodes for non-root */
-   statbuf->f_fsid    = 0;     /* file system ID */
-   statbuf->f_flag    = 0;     /* mount flags */
-   statbuf->f_namemax = 255;     /* maximum filename length */
+   if (IS_ROOT_NS(info.ns)
+       && stat_regular(&info)) {
 
-   // try to run stavfs(), to override defaults.
-   if (root_ns) {
-      int rc = statvfs(root_ns->md_path, statbuf);
-      LOG(LOG_INFO, "statvfs of root ns returned %d %s\n",
-          rc, (rc ? strerror(errno) : ""));
+      // backward compatibility, for old configs that still have non-existent
+      // md_path installed into root NS.
+      LOG(LOG_INFO, "couldn't stat md_path '%s' for root ns '%s' %s\n",
+          info.ns->md_path, info.ns->name, strerror(errno));
+
+      // defaults, if we couldn't statvfs root_ns->md_path
+      // lifted from stavfs("/gpfs/marfs-gpfs")
+      static const unsigned long BSIZE = 16384;        // from GPFS
+      statbuf->f_bsize   = BSIZE; /* file system block size */
+      statbuf->f_frsize  = BSIZE; /* fragment size */
+      statbuf->f_blocks  = ULONG_MAX/BSIZE;     /* size of fs in f_frsize units */
+      statbuf->f_bfree   = ULONG_MAX/BSIZE;     /* # free blocks */
+      statbuf->f_bavail  = ULONG_MAX/BSIZE;     /* # free blocks for non-root */
+      statbuf->f_files   = 1;     /* # inodes */
+      statbuf->f_ffree   = ULONG_MAX -1;     /* # free inodes */
+      statbuf->f_favail  = ULONG_MAX -1;     /* # free inodes for non-root */
+      statbuf->f_fsid    = 0;     /* file system ID */
+      statbuf->f_flag    = 0;     /* mount flags */
+      statbuf->f_namemax = 255;     /* maximum filename length */
+
    }
-
+   else
+      TRY0(statvfs, info.ns->md_path, statbuf);
 
    EXIT();
    return 0;
