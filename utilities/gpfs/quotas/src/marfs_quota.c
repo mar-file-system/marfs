@@ -630,7 +630,7 @@ int read_inodes(const char    *fnameP,
          }
       }
    } // endwhile
-   write_fsinfo(outfd, fileset_stat_ptr, rec_count, offset_start);
+   write_fsinfo(outfd, fileset_stat_ptr, rec_count, offset_start, fnameP);
    clean_exit(outfd, iscanP, fsP, early_exit);
    return(rc);
 }
@@ -711,7 +711,8 @@ This function prints various fileset information to the fs_info file
 void write_fsinfo(FILE*         outfd, 
                   Fileset_Stats *fileset_stat_ptr, 
                   size_t        rec_count, 
-                  size_t        index_start)
+                  size_t        index_start,
+                  const char    *root_dir)
 {
    size_t i;
    int GIB = 1024*1024*1024;
@@ -735,7 +736,7 @@ void write_fsinfo(FILE*         outfd,
               fileset_stat_ptr[i].sum_trash_file_count);
       fprintf(outfd,"trash_size:          %zu\n\n", fileset_stat_ptr[i].sum_trash);
    }
-   trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start);
+   trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start, root_dir);
 }
 /***************************************************************************** 
 Name: truncate_fsinfo 
@@ -748,24 +749,25 @@ file.
 int trunc_fsinfo(FILE*         outfd, 
                  Fileset_Stats *fileset_stat_ptr, 
                  size_t        rec_count, 
-                 size_t        index_start)
+                 size_t        index_start,
+                 const char    *root_dir_fsinfo)
 {
    int ret;
    int i;
+   size_t sum_total = 0;
+   char   root_fsinfo_path[256];
+   char   *root_fsinfo = &root_fsinfo_path[0];
 
    //  Go through all namespaces/filesets scanned
    for (i=index_start; i < rec_count+index_start; i++) {
       // Do not truncate fsinfo file if trash
       if (strcmp(fileset_stat_ptr[i].fileset_name, "trash")) {
-         // do trunc
+         // truncate namespace fsinfo file 
          ret = truncate(fileset_stat_ptr[i].fsinfo_path, 
                         fileset_stat_ptr[i].sum_size);
          if (ret == -1) {
-            fprintf(stderr, "Unable to truncate %s to %zu in namespace %s\n",
-                   fileset_stat_ptr[i].fsinfo_path, 
-                   fileset_stat_ptr[i].sum_size, 
-                   fileset_stat_ptr[i].fileset_name); 
-            fprintf(outfd, "Unable to truncate %s to %zu in namespace %s\n",
+            fprintf(outfd, 
+                  "Error:  Unable to truncate %s to %zu in namespace %s\n",
                    fileset_stat_ptr[i].fsinfo_path, 
                    fileset_stat_ptr[i].sum_size, 
                    fileset_stat_ptr[i].fileset_name); 
@@ -774,8 +776,21 @@ int trunc_fsinfo(FILE*         outfd,
             LOG(LOG_INFO, "Truncated file %s to size %zu\n", 
                 fileset_stat_ptr[i].fsinfo_path, 
                 fileset_stat_ptr[i].sum_size);
+            sum_total += fileset_stat_ptr[i].sum_size;
          }
       }
+   }
+   // now create a truncated fsinfo file at the root level
+   sprintf(root_fsinfo,"%s/%s", root_dir_fsinfo,"fsinfo");
+   fprintf(outfd, "All filesets total size =  %zu\n", sum_total);
+   if ((ret = truncate(root_fsinfo, sum_total)) == -1) { 
+            fprintf(outfd, 
+                    "Error:  Unable to truncate root fsinfo %s to %zu\n", 
+                    root_fsinfo, sum_total);
+   }
+   else {
+            fprintf(outfd, "Truncated root fsinfo %s to %zu\n", root_fsinfo, 
+                    sum_total);
    }
    return 0;
 }
