@@ -99,6 +99,7 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
+#if 0
 #define PUSH_USER()                                                     \
    ENTRY();                                                             \
    uid_t saved_euid = -1;                                               \
@@ -108,6 +109,39 @@ OF SUCH DAMAGE.
 #define POP_USER()                                                      \
    __TRY0(pop_user, &saved_euid, &saved_egid);                          \
    EXIT()
+
+
+#else
+// once-per-thread dynamic allocation of storage to hold uid/gid for push/pop                                                                                                                  
+typedef struct PerThreadContext {
+   uid_t uid;                    /* original uid */
+   gid_t gid;                    /* original gid */
+} PerThreadContext;
+
+// adapted from pthread_key_create(3P) manpage ...                                                                                                                                             
+static pthread_key_t  key;
+static pthread_once_t key_once = PTHREAD_ONCE_INIT;
+
+static void delete_key(void* key_value) { free(key_value); }
+
+static void make_key() { (void) pthread_key_create(&key, delete_key); }
+
+#define PUSH_USER()                                                     \
+   ENTRY();                                                             \
+   pthread_once(&key_once, make_key);                                   \
+   PerThreadContext* ctx = (PerThreadContext*)pthread_getspecific(key); \
+   if (! ctx) {                                                         \
+      ctx = (PerThreadContext*)malloc(sizeof(PerThreadContext));        \
+      pthread_setspecific(key, ctx);                                    \
+   }                                                                    \
+   __TRY0(push_user, &ctx->uid, &ctx->gid)
+
+#define POP_USER()                                                      \
+   __TRY0(pop_user, &ctx->uid, &ctx->gid);                              \
+   EXIT()
+
+#endif
+
 
 
 // push_user()
@@ -136,10 +170,11 @@ int push_user(uid_t* saved_euid, gid_t* saved_egid) {
    //   }
    int rc;
 
+   LOG(LOG_INFO, "gid %u:  egid [%u](%u) -> (%u)\n",
+       getgid(), *saved_egid, getegid(), fuse_get_context()->gid);
+
    *saved_egid = getegid();
    gid_t new_gid = fuse_get_context()->gid;
-   LOG(LOG_INFO, "user %ld (egid %ld) -> (egid %ld) ...\n",
-       (size_t)getgid(), (size_t)*saved_egid, (size_t)new_gid);
    rc = setegid(new_gid);
    if (rc == -1) {
       if ((errno == EACCES) && (new_gid == getgid())) {
@@ -152,10 +187,11 @@ int push_user(uid_t* saved_euid, gid_t* saved_egid) {
       }
    }
 
+   LOG(LOG_INFO, "uid %u:  euid [%u](%u) -> (%u)\n",
+       getuid(), *saved_euid, geteuid(), fuse_get_context()->uid);
+
    *saved_euid = geteuid();
    uid_t new_uid = fuse_get_context()->uid;
-   LOG(LOG_INFO, "user %ld (euid %ld) -> (euid %ld) ...\n",
-       (size_t)getuid(), (size_t)*saved_euid, (size_t)new_uid);
    rc = seteuid(new_uid);
    if (rc == -1) {
       if ((errno == EACCES) && (new_uid == getuid())) {
@@ -164,6 +200,10 @@ int push_user(uid_t* saved_euid, gid_t* saved_egid) {
       }
       else {
          LOG(LOG_ERR, "failed!\n");
+
+         // restore pushed egid
+         setegid(*saved_egid);
+
          return -1;
       }
    }
@@ -181,28 +221,35 @@ int pop_user(uid_t* saved_euid, gid_t* saved_egid) {
 #if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
    int rc;
 
+   LOG(LOG_INFO, "uid %u:  euid (%u) <- (%u)\n",
+       getuid(), *saved_euid, geteuid());
+
    uid_t  new_uid = *saved_euid;
    rc = seteuid(new_uid);
    if (rc == -1) {
-      if ((errno == EACCES) && (new_uid == getuid()))
+      if ((errno == EACCES) && (new_uid == getuid())) {
+         LOG(LOG_INFO, "failed (but okay)\n");
          return 0;              /* okay [see NOTE] */
+      }
       else {
-         LOG(LOG_ERR,
-             "pop_user -- user %ld (euid %ld) failed seteuid(%ld)!\n",
-             (size_t)getuid(), (size_t)geteuid(), (size_t)new_uid);
+         LOG(LOG_ERR, "failed\n");
          return -1;
       }
    }
 
+
+   LOG(LOG_INFO, "gid %u:  egid (%u) <- (%u)\n",
+       getgid(), *saved_egid, getegid());
+
    gid_t  new_gid = *saved_egid;
    rc = setegid(new_gid);
    if (rc == -1) {
-      if ((errno == EACCES) && (new_gid == getgid()))
+      if ((errno == EACCES) && (new_gid == getgid())) {
+         LOG(LOG_INFO, "failed (but okay)\n");
          return 0;              /* okay [see NOTE] */
+      }
       else {
-         LOG(LOG_ERR,
-             "pop_user -- user %ld (egid %ld) failed setegid(%ld)!\n",
-             (size_t)getgid(), (size_t)getegid(), (size_t)new_gid);
+         LOG(LOG_ERR, "failed!\n");
          return -1;
       }
    }
