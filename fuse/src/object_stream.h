@@ -155,13 +155,6 @@ typedef uint16_t OSFlags_t;
 #define OSF_ERRORS (OSF_TIMEOUT | OSF_TIMEOUT_K)
 
 
-// flags for call to stream_open()
-typedef enum {
-   OSOF_NONE      = 0,
-   OSOF_CTE       = 0x01,       // use chunked transfer-encoding
-} OSOpenFlags;
-
-
 //  For stream_write(), the op-thread runs s3_put(), and acts as a
 //  consumer.  It waits for iob_full to be set by stream_write(), and then
 //  begins to interact with the streaming_readfunc() to move data to curl

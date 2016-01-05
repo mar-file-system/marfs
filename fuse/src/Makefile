@@ -313,8 +313,8 @@ fromwork: fromwork.Makefile
 	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin/   ~/projects/bin
 	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin2/  ~/projects/bin2
 
-# for use on cc-gate, to rsync out to the VLE
-tovle: # fromwork
+# for use on cc-gate, to rsync out to ODSU
+toodsu: # fromwork
 	rsync -Pvaurl --exclude=foo.\* --exclude=jti\*/f\* --exclude=core.\* \
 	              --del --sparse ~/projects/git/   ~/send.dir/git
 	rsync -Pvaurl --del --sparse ~/projects/tools/ ~/send.dir/tools

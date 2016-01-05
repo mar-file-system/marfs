@@ -679,7 +679,7 @@ int marfs_mknod (const char* path,
 //       (b) wipe them clean.  [See marfs_read(), which sometimes reuses
 //       the ObjectStream inside the FileHandle.]
 
-// NOTE: We now take an additional set of "stream" flags, which are
+// NOTE: We take an additional set of "stream" flags, which are
 //       ultimately passed to stream_open().  These allow the underlying
 //       stream to be given different properties, for the needs of fuse
 //       versus pftool.  Currently, this is only used for setting CTE on
@@ -1067,6 +1067,18 @@ int marfs_read (const char*        path,
       LOG(LOG_INFO, "reading DIRECT\n");
       TRY_GE0(read, fh->md_fd, buf, size);
       return rc_ssize;
+   }
+
+   // This could be e.g. a file written Nto1 from pftool, in which there
+   // were some write-errors.  Such files are legit, because pftool can do
+   // another pass and write the parts that are missing.  But we don't let
+   // anyone try to read the file until that's been done.  In this case, it
+   // will still have the RESTART xattr.  [TBD? Try to allow reading
+   // regions that were successfully written?]
+   if (has_any_xattrs(info, XVT_RESTART)) {
+      LOG(LOG_ERR, "has RESTART\n");
+      errno = EINVAL;
+      return -1;
    }
 
    // discontiguous read could happen if fuse calls seek().
@@ -1511,6 +1523,11 @@ int marfs_readlink (const char* path,
 //    time, or how much chunk-info will utimately be written, so we don't
 //    do that at close() time.  Instead, pftool will do a final
 //    (single-threaded) update when it is setting the modification-time.
+//
+// NOTE: we return "success" (0) if we are able to do our job, even in the
+//    case where we see timeout-related errors in the stream.  Those errors
+//    will already have returned failure from some open/read/write call.
+//    Our job is just to do the close.
 
 int marfs_release (const char*        path,
                    MarFS_FileHandle*  fh) {
@@ -1601,7 +1618,7 @@ int marfs_release (const char*        path,
 
    if (fh->os.flags & OSF_ERRORS) {
       EXIT();
-      return 0;
+      return 0;                 /* the "close" was successful */
    }
       
    // truncate length to reflect length of data
@@ -1616,7 +1633,7 @@ int marfs_release (const char*        path,
    info->flags  &= ~(PI_RESTART);
    info->xattrs &= ~(XVT_RESTART);
 
-   // install xattrs
+   // install xattrs (unless writing N:1)
    if ((info->pre.repo->access_method != ACCESSMETHOD_DIRECT)
        && (fh->flags & FH_WRITING)
        && !(fh->flags & FH_Nto1_WRITES)) {
@@ -1894,7 +1911,7 @@ int marfs_statvfs (const char*      path,
    // Just find the root namespace.  We do not currently make use of the
    // accumulated sum of used storage recorded in the fsinfo files.
    if (IS_ROOT_NS(info.ns))
-      root_ns = ns;
+      root_ns = info.ns;
    else {
       for (ns = namespace_next(&it);
            ns;

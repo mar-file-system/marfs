@@ -599,6 +599,16 @@ int batch_pre_process(const char* path, size_t file_size) {
 
 // Called single-threaded from pftool in update_stats(), after all parallel
 // activity to create <path> has completed.
+//
+// NOTE: the truncate() changes mtime, so pftool must not call utime()
+//     until after this.
+//
+// NOTE: In the case of pftool (the only caller of
+//     batch_pre/post_process()), we install PRE and POST in the
+//     pre-process call, and pre and post won't have changed by the time we
+//     get to post-process (in the case of pftool), so we only need to
+//     remove RESTART.  RESTART indicates, among other things that a file
+//     wasn't completely written, so MarFS will prevent reads to it.
 int batch_post_process(const char* path, size_t file_size) {
    TRY_DECLS();
    LOG(LOG_INFO, "%s, %ld\n", path, file_size);
@@ -609,7 +619,19 @@ int batch_post_process(const char* path, size_t file_size) {
 
    STAT_XATTRS(&info);
    if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
+
+      // truncate to final size
       TRY0(truncate, info.post.md_path, file_size);
+
+      // remove "restart" xattr.  [Can't do this at close-time, in the case
+      // of N:1 files, so we do it here, for them.]
+      ///      if (has_all_xattrs(&info, XVT_RESTART)) {
+      info.flags  &= ~(PI_RESTART);
+      info.xattrs &= ~(XVT_RESTART);
+      SAVE_XATTRS(&info, (XVT_RESTART));
+      ///      }
+      // SAVE_XATTRS(&info, (XVT_PRE | XVT_POST | XVT_RESTART));
+
    }
    else
       LOG(LOG_INFO, "no xattrs\n");

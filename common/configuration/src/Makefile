@@ -56,16 +56,22 @@ PARSE_OBJ       = $(patsubst %, $(PARSE_DIR)/%, $(PARSE_OBJ_files))
 parser: parse_dir
 	@ echo; echo "#-- cleaning $(PARSE_DIR)"
 	@ $(MAKE) -C $(PARSE_DIR) pristine
+
 	@ echo; echo "#-- making 'base'"
 	@ # $(MAKE) -C $(PARSE_DIR) confpars-d
 	@ $(MAKE) -C $(PARSE_DIR) base
+
 	@ echo; echo "#-- running confpars with $(BLUEPRINT)"
+	@ # (cd $(PARSE_DIR); ./confpars $(BLUEPRINT); echo 0 )
 	(cd $(PARSE_DIR); ./confpars $(BLUEPRINT) )
+
 	@ echo; echo "#-- making datapars"
 	@ # $(MAKE) -C $(PARSE_DIR) datapars-d   [fails]
 	@ $(MAKE) -C $(PARSE_DIR) datapars
+
 	@ echo; echo "#-- running datapars with $(CONFIG)"
 	(cd $(PARSE_DIR); ./datapars $(CONFIG) )
+
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
 	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 

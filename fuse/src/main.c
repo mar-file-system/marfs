@@ -163,11 +163,7 @@ static void make_key() { (void) pthread_key_create(&key, delete_key); }
 //
 int push_user(uid_t* saved_euid, gid_t* saved_egid) {
 #if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
-   //   fuse_context* ctx = fuse_get_context();
-   //   if (ctx->flags & PUSHED_USER) {
-   //      LOG(LOG_ERR, "push_user -- already pushed!\n");
-   //      return;
-   //   }
+
    int rc;
 
    LOG(LOG_INFO, "gid %u:  egid [%u](%u) -> (%u)\n",
