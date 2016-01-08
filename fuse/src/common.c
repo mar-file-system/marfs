@@ -991,7 +991,6 @@ int  trash_truncate(PathInfo*   info,
    // mode_t new_mode = info->st.st_mode & (ACCESSPERMS); // ACCESSPERMS is only BSD
    mode_t new_mode = info->st.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO); // more-portable
 
-
    // we'll read from md_file
    int in = open(info->post.md_path, O_RDONLY);
    if (in == -1) {

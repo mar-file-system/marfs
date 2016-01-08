@@ -397,6 +397,7 @@ int marfs_getxattr (const char* path,
                     char*       value,
                     size_t      size) {
    ENTRY();
+   LOG(LOG_INFO, "key         %s\n", name);
    //   LOG(LOG_INFO, "not implemented  (path %s, key %s)\n", path, name);
    //   errno = ENOSYS;
    //   return -1;

@@ -85,6 +85,7 @@ OF SUCH DAMAGE.
 #include <utime.h>              /* for deprecated marfs_utime() */
 #include <stdio.h>
 #include <time.h>
+#include <sys/syscall.h>
 
 // #include "marfs_fuse.h"
 #define FUSE_USE_VERSION 26
@@ -99,26 +100,35 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
+typedef struct PerThreadContext {
+   uid_t uid;                    /* original uid */
+   gid_t gid;                    /* original gid */
+   int   pushed;                 // detect double-push
+   uid_t new_uid;
+   gid_t new_gid;
+} PerThreadContext;
+
+
 #if 0
+
+// We use local variables to hold pushed euid/egid.  These should be
+// thread-local (i.e. on the stack), and therefore thread-safe.
+
 #define PUSH_USER()                                                     \
    ENTRY();                                                             \
-   uid_t saved_euid = -1;                                               \
-   gid_t saved_egid = -1;                                               \
-   __TRY0(push_user, &saved_euid, &saved_egid)
+   PerThreadContext ctx;                                                \
+   __TRY0(push_user, &ctx)
 
 #define POP_USER()                                                      \
-   __TRY0(pop_user, &saved_euid, &saved_egid);                          \
+   __TRY0(pop_user, &ctx);                                              \
    EXIT()
 
 
 #else
-// once-per-thread dynamic allocation of storage to hold uid/gid for push/pop                                                                                                                  
-typedef struct PerThreadContext {
-   uid_t uid;                    /* original uid */
-   gid_t gid;                    /* original gid */
-} PerThreadContext;
 
-// adapted from pthread_key_create(3P) manpage ...                                                                                                                                             
+// once-per-thread dynamic allocation of storage to hold uid/gid for push/pop
+// adapted from pthread_key_create(3P) manpage ...
+
 static pthread_key_t  key;
 static pthread_once_t key_once = PTHREAD_ONCE_INIT;
 
@@ -126,18 +136,19 @@ static void delete_key(void* key_value) { free(key_value); }
 
 static void make_key() { (void) pthread_key_create(&key, delete_key); }
 
-#define PUSH_USER()                                                     \
+#  define PUSH_USER()                                                   \
    ENTRY();                                                             \
    pthread_once(&key_once, make_key);                                   \
    PerThreadContext* ctx = (PerThreadContext*)pthread_getspecific(key); \
    if (! ctx) {                                                         \
       ctx = (PerThreadContext*)malloc(sizeof(PerThreadContext));        \
+      memset(ctx, 0, sizeof(PerThreadContext));                         \
       pthread_setspecific(key, ctx);                                    \
    }                                                                    \
-   __TRY0(push_user, &ctx->uid, &ctx->gid)
+   __TRY0(push_user2, ctx)
 
-#define POP_USER()                                                      \
-   __TRY0(pop_user, &ctx->uid, &ctx->gid);                              \
+#  define POP_USER()                                                    \
+   __TRY0(pop_user2, ctx);                                              \
    EXIT()
 
 #endif
@@ -161,32 +172,43 @@ static void make_key() { (void) pthread_key_create(&key, delete_key); }
 //       the FUSE process, which we can extract from the fuse_context.
 //       [We try the seteuid() first, for speed]
 //
-int push_user(uid_t* saved_euid, gid_t* saved_egid) {
+// NOTE: If push_user() fails (returns non-zero), pop_user() will not be
+//       run.  So, push_user() should leave things as they were, if it's
+//       going to fail.  If push_user() succeeds, pop_user() will attempt
+//       to restore both saved values.  So, push_user() should push both
+//       euid and egid, if it going to report success.
+
+int push_user(PerThreadContext* ctx) {
 #if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
 
    int rc;
 
-   LOG(LOG_INFO, "gid %u:  egid [%u](%u) -> (%u)\n",
-       getgid(), *saved_egid, getegid(), fuse_get_context()->gid);
+   //   LOG(LOG_INFO, "gid %u:  egid [%u](%u) -> (%u)\n",
+   //       getgid(), ctx->gid, getegid(), fuse_get_context()->gid);
+  LOG(LOG_INFO, "%u/%x @0x%lx  gid %u:  egid [%u](%u) -> (%u)\n",
+      syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+      getgid(), ctx->gid, getegid(), fuse_get_context()->gid);
 
-   *saved_egid = getegid();
+   ctx->gid = getegid();
    gid_t new_gid = fuse_get_context()->gid;
    rc = setegid(new_gid);
    if (rc == -1) {
       if ((errno == EACCES) && (new_gid == getgid())) {
-         LOG(LOG_INFO, "failed (but okay)\n");
-         return 0;              /* okay [see NOTE] */
+         LOG(LOG_INFO, "failed (but okay)\n"); /* okay [see NOTE] */
       }
       else {
          LOG(LOG_ERR, "failed!\n");
-         return -1;
+         return -1;             // no changes were made
       }
    }
 
-   LOG(LOG_INFO, "uid %u:  euid [%u](%u) -> (%u)\n",
-       getuid(), *saved_euid, geteuid(), fuse_get_context()->uid);
+   //   LOG(LOG_INFO, "uid %u:  euid [%u](%u) -> (%u)\n",
+   //       getuid(), ctx->uid, geteuid(), fuse_get_context()->uid);
+   LOG(LOG_INFO, "%u/%x @0x%lx  uid %u:  euid [%u](%u) -> (%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       getuid(), ctx->uid, geteuid(), fuse_get_context()->uid);
 
-   *saved_euid = geteuid();
+   ctx->uid = geteuid();
    uid_t new_uid = fuse_get_context()->uid;
    rc = seteuid(new_uid);
    if (rc == -1) {
@@ -194,13 +216,17 @@ int push_user(uid_t* saved_euid, gid_t* saved_egid) {
          LOG(LOG_INFO, "failed (but okay)\n");
          return 0;              /* okay [see NOTE] */
       }
-      else {
+
+      // try to restore egid from before push
+      if (! setegid(ctx->gid)) {
          LOG(LOG_ERR, "failed!\n");
+         return -1;             // restored to initial conditions
+      }
 
-         // restore pushed egid
-         setegid(*saved_egid);
-
-         return -1;
+      else {
+         LOG(LOG_ERR, "failed -- couldn't restore egid %d!\n", ctx->gid);
+         exit(EXIT_FAILURE);  // don't leave thread stuck with wrong egid
+         // return -1;
       }
    }
 
@@ -213,31 +239,38 @@ int push_user(uid_t* saved_euid, gid_t* saved_egid) {
 
 //  pop_user() changes the effective UID.  Here, we revert to the
 //  "real" UID.
-int pop_user(uid_t* saved_euid, gid_t* saved_egid) {
+int pop_user(PerThreadContext* ctx) {
 #if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
    int rc;
 
-   LOG(LOG_INFO, "uid %u:  euid (%u) <- (%u)\n",
-       getuid(), *saved_euid, geteuid());
+   //   LOG(LOG_INFO, "uid %u:  euid (%u) <- (%u)\n",
+   //       getuid(), ctx->uid, geteuid());
+   LOG(LOG_INFO, "%u/%x @0x%lx  uid %u:  euid (%u) <- (%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       getuid(), ctx->uid, geteuid());
 
-   uid_t  new_uid = *saved_euid;
+   uid_t  new_uid = ctx->uid;
    rc = seteuid(new_uid);
    if (rc == -1) {
       if ((errno == EACCES) && (new_uid == getuid())) {
-         LOG(LOG_INFO, "failed (but okay)\n");
-         return 0;              /* okay [see NOTE] */
+         LOG(LOG_INFO, "failed (but okay)\n"); /* okay [see NOTE] */
       }
       else {
          LOG(LOG_ERR, "failed\n");
-         return -1;
+         exit(EXIT_FAILURE);    // don't leave thread stuck with wrong euid
+         // return -1;
       }
    }
 
 
-   LOG(LOG_INFO, "gid %u:  egid (%u) <- (%u)\n",
-       getgid(), *saved_egid, getegid());
+   //   LOG(LOG_INFO, "gid %u:  egid (%u) <- (%u)\n",
+   //       getgid(), ctx->gid, getegid());
+   LOG(LOG_INFO, "%u/%x @0x%lx  gid %u:  egid (%u) <- (%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       getgid(), ctx->gid, getegid());
 
-   gid_t  new_gid = *saved_egid;
+
+   gid_t  new_gid = ctx->gid;
    rc = setegid(new_gid);
    if (rc == -1) {
       if ((errno == EACCES) && (new_gid == getgid())) {
@@ -246,7 +279,8 @@ int pop_user(uid_t* saved_euid, gid_t* saved_egid) {
       }
       else {
          LOG(LOG_ERR, "failed!\n");
-         return -1;
+         exit(EXIT_FAILURE);    // don't leave thread stuck with wrong euid
+         // return -1;
       }
    }
 
@@ -255,6 +289,142 @@ int pop_user(uid_t* saved_euid, gid_t* saved_egid) {
 #  error "No support for seteuid()/setegid()"
 #endif
 }
+
+
+
+// seteuid() / setegid() affect an entire process.
+// setfsuid() / setfsgid() affect only the calling thread.
+
+// setfs fns don't return error codes.  On success, they return the
+// previous value.  On failure they return the new value.  If the
+// argument is invalid, they return -1.
+
+// failures in setfs* also don't set errno, but __TRY() assumes non-zero
+// retrun has set errno, so we'll do it ourselves.
+
+int push_user2(PerThreadContext* ctx) {
+#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+
+   if (ctx->pushed) {
+      LOG(LOG_ERR, "%u/%x @0x%lx double-push -> %u\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          fuse_get_context()->uid);
+      errno = EPERM;
+      return -1;
+   }
+
+   LOG(LOG_INFO, "%u/%x @0x%lx  gid %u(%u) -> [%u]\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       getgid(), getegid(), fuse_get_context()->gid);
+
+   gid_t old_gid = getegid();
+   gid_t new_gid = fuse_get_context()->gid;
+   gid_t set_gid = setfsgid(new_gid);
+
+   if ((set_gid == new_gid) && (new_gid != old_gid)) {
+      LOG(LOG_ERR, "%u/%x @0x%lx failed [%u]\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          set_gid);
+      setfsgid(old_gid);
+      errno = EACCES;
+      return -1;
+   }
+   else {
+      ctx->gid     = old_gid;
+      ctx->new_gid = new_gid;
+   }
+
+   //  LOG(LOG_INFO, "uid %u:  euid [%u](%u) -> (%u)\n",
+   //      getuid(), ctx->uid, geteuid(), fuse_get_context()->uid);
+   LOG(LOG_INFO, "%u/%x @0x%lx  uid %u(%u) -> [%u]\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       getuid(), geteuid(), fuse_get_context()->uid);
+
+   uid_t old_uid = geteuid();
+   uid_t new_uid = fuse_get_context()->uid;
+   uid_t set_uid = setfsuid(new_uid);
+
+   if ((set_uid == new_uid) && (new_uid != old_uid)) {
+      LOG(LOG_ERR, "%u/%x @0x%lx failed [%u]\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          set_uid);
+      setfsgid(old_gid);
+      setfsuid(old_uid);
+      errno = EACCES;
+      return -1;
+   }
+   else {
+      ctx->uid     = old_uid;
+      ctx->new_uid = new_uid;
+   }
+
+   // allow detection of 2 pushes without a pop
+   ctx->pushed = 1;
+  
+   return 0;
+
+#else
+#  error "No support for seteuid()/setegid()"
+#endif
+}
+
+
+int pop_user2(PerThreadContext* ctx) {
+#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+
+   int rc = 0;
+
+   //  LOG(LOG_INFO, "gid %u:  egid (%u) <- (%u)\n",
+   //      getgid(), ctx->gid, getegid());
+   LOG(LOG_INFO, "%u/%x @0x%lx  gid [%u] <- %u(%u)[%u]\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       ctx->gid, getgid(), getegid(), ctx->new_gid);
+
+   gid_t old_gid = fuse_get_context()->gid;
+   gid_t new_gid = ctx->gid;
+   gid_t set_gid = setfsgid(new_gid);
+
+   if ((set_gid == new_gid) && (new_gid != old_gid)) {
+      LOG(LOG_ERR, "%u/%x @0x%lx failed [%u]\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          set_gid);
+      rc = -1;
+   }
+
+   //  LOG(LOG_INFO, "uid %u:  euid (%u) <- (%u)\n",
+   //      getuid(), ctx->uid, geteuid());
+   LOG(LOG_INFO, "%u/%x @0x%lx  uid [%u] <- %u(%u)[%u]\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       ctx->uid, getuid(), geteuid(), ctx->new_uid);
+
+   uid_t old_uid = fuse_get_context()->uid;
+   uid_t new_uid = ctx->uid;
+   uid_t set_uid = setfsuid(new_uid);
+
+   if ((set_uid == new_uid) && (new_uid != old_uid)) {
+      LOG(LOG_ERR, "%u/%x @0x%lx failed [%u]\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          set_uid);
+      rc = -1;
+   }
+
+   // allow detection of 2 pushes without a pop
+   ctx->pushed = 0;
+
+   if (rc)
+      errno = EACCES;
+
+   return rc;
+
+
+#else
+#  error "No support for seteuid()/setegid()"
+#endif
+}
+
+
+
+
 
 
 // --- wrappers just call the corresponding library-function, to support a
