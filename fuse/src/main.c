@@ -117,6 +117,7 @@ typedef struct PerThreadContext {
 #define PUSH_USER()                                                     \
    ENTRY();                                                             \
    PerThreadContext ctx;                                                \
+   memset(&ctx, 0, sizeof(PerThreadContext));                           \
    __TRY0(push_user, &ctx)
 
 #define POP_USER()                                                      \
@@ -124,7 +125,7 @@ typedef struct PerThreadContext {
    EXIT()
 
 
-#else
+#elif 0
 
 // once-per-thread dynamic allocation of storage to hold uid/gid for push/pop
 // adapted from pthread_key_create(3P) manpage ...
@@ -149,6 +150,23 @@ static void make_key() { (void) pthread_key_create(&key, delete_key); }
 
 #  define POP_USER()                                                    \
    __TRY0(pop_user2, ctx);                                              \
+   EXIT()
+
+
+#else
+
+// using "saved" uid/gid to hold the state.
+// using syscalls to get thread-safety, based on this:
+// http://stackoverflow.com/questions/1223600/change-uid-gid-only-of-one-thread-in-linux
+
+#define PUSH_USER()                                                     \
+   ENTRY();                                                             \
+   PerThreadContext ctx;                                                \
+   memset(&ctx, 0, sizeof(PerThreadContext));                           \
+   __TRY0(push_user3, &ctx)
+
+#define POP_USER()                                                      \
+   __TRY0(pop_user3, &ctx);                                             \
    EXIT()
 
 #endif
@@ -291,7 +309,7 @@ int pop_user(PerThreadContext* ctx) {
 }
 
 
-
+// ...........................................................................
 // seteuid() / setegid() affect an entire process.
 // setfsuid() / setfsgid() affect only the calling thread.
 
@@ -334,8 +352,6 @@ int push_user2(PerThreadContext* ctx) {
       ctx->new_gid = new_gid;
    }
 
-   //  LOG(LOG_INFO, "uid %u:  euid [%u](%u) -> (%u)\n",
-   //      getuid(), ctx->uid, geteuid(), fuse_get_context()->uid);
    LOG(LOG_INFO, "%u/%x @0x%lx  uid %u(%u) -> [%u]\n",
        syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
        getuid(), geteuid(), fuse_get_context()->uid);
@@ -424,6 +440,173 @@ int pop_user2(PerThreadContext* ctx) {
 
 
 
+// ...........................................................................
+// Trying yet again.  There's a bug, or something in setfsgid(), regarding
+// directories with gid=root.  Try calling setreseuid/setresdguid via
+// direct syscalls to get thread safety.
+
+int push_user3(PerThreadContext* ctx) {
+#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+
+   int rc;
+
+   // check for two pushes without a pop
+   if (ctx->pushed) {
+      LOG(LOG_ERR, "%u/%x @0x%lx double-push -> %u\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          fuse_get_context()->uid);
+      errno = EPERM;
+      return -1;
+   }
+
+   // get current real/effective/saved gid
+   gid_t old_rgid;
+   gid_t old_egid;
+   gid_t old_sgid;
+
+   rc = syscall(SYS_getresgid, &old_rgid, &old_egid, &old_sgid);
+   if (rc) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  getresgid() failed\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      exit(EXIT_FAILURE);       // fuse should fail
+   }
+
+   // gid to push
+   gid_t new_egid = fuse_get_context()->gid;
+
+   // install the new egid, and save the current one
+   LOG(LOG_INFO, "%u/%x @0x%lx  gid %u(%u) -> (%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       old_rgid, old_egid, new_egid);
+
+   rc = syscall(SYS_setresgid, -1, new_egid, old_egid);
+   if (rc == -1) {
+      if ((errno == EACCES) && ((new_egid == old_egid) || (new_egid == old_rgid))) {
+         LOG(LOG_INFO, "failed (but okay)\n"); /* okay [see NOTE] */
+      }
+      else {
+         LOG(LOG_ERR, "failed!\n");
+         return -1;             // no changes were made
+      }
+   }
+
+   // get current real/effect/saved uid
+   uid_t old_ruid;
+   uid_t old_euid;
+   uid_t old_suid;
+
+   rc = syscall(SYS_getresuid, &old_ruid, &old_euid, &old_suid);
+   if (rc) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  getresuid() failed\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      exit(EXIT_FAILURE);       // fuse should fail
+   }
+
+   // uid to push
+   gid_t new_euid = fuse_get_context()->uid;
+
+   // install the new euid, and save the current one
+   LOG(LOG_INFO, "%u/%x @0x%lx  uid %u(%u) -> (%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       old_ruid, old_euid, new_euid);
+
+   rc = syscall(SYS_setresuid, -1, new_euid, old_euid);
+   if (rc == -1) {
+      if ((errno == EACCES) && ((new_euid == old_ruid) || (new_euid == old_euid))) {
+         LOG(LOG_INFO, "failed (but okay)\n");
+         return 0;              /* okay [see NOTE] */
+      }
+
+      // try to restore gid from before push
+      rc = syscall(SYS_setresgid, -1, old_egid, -1);
+      if (! rc) {
+         LOG(LOG_ERR, "failed!\n");
+         return -1;             // restored to initial conditions
+      }
+      else {
+         LOG(LOG_ERR, "failed -- couldn't restore egid %d!\n", old_egid);
+         exit(EXIT_FAILURE);  // don't leave thread stuck with wrong egid
+         // return -1;
+      }
+   }
+
+   return 0;
+#else
+#  error "No support for seteuid()/setegid()"
+#endif
+}
+
+
+//  pop_user() changes the effective UID.  Here, we revert to the
+//  euid from before the push.
+int pop_user3(PerThreadContext* ctx) {
+#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+
+   int rc;
+
+   uid_t old_ruid;
+   uid_t old_euid;
+   uid_t old_suid;
+
+   rc = syscall(SYS_getresuid, &old_ruid, &old_euid, &old_suid);
+   if (rc) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  getresuid() failed\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      exit(EXIT_FAILURE);       // fuse should fail
+   }
+
+   LOG(LOG_INFO, "%u/%x @0x%lx  uid (%u) <- %u(%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       old_suid, old_ruid, old_euid);
+
+   rc = syscall(SYS_setresuid, -1, old_suid, -1);
+   if (rc == -1) {
+      if ((errno == EACCES) && ((old_suid == old_ruid) || (old_suid == old_euid))) {
+         LOG(LOG_INFO, "failed (but okay)\n"); /* okay [see NOTE] */
+      }
+      else {
+         LOG(LOG_ERR, "failed\n");
+         exit(EXIT_FAILURE);    // don't leave thread stuck with wrong euid
+         // return -1;
+      }
+   }
+
+
+
+   gid_t old_rgid;
+   gid_t old_egid;
+   gid_t old_sgid;
+
+   rc = syscall(SYS_getresgid, &old_rgid, &old_egid, &old_sgid);
+   if (rc) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  getresgid() failed\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      exit(EXIT_FAILURE);       // fuse should fail
+   }
+
+   LOG(LOG_INFO, "%u/%x @0x%lx  gid (%u) <- %u(%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       old_sgid, old_rgid, old_euid);
+
+   rc = syscall(SYS_setresgid, -1, old_sgid, -1);
+   if (rc == -1) {
+      if ((errno == EACCES) && ((old_sgid == old_rgid) || (old_sgid == old_egid))) {
+         LOG(LOG_INFO, "failed (but okay)\n");
+         return 0;              /* okay [see NOTE] */
+      }
+      else {
+         LOG(LOG_ERR, "failed!\n");
+         exit(EXIT_FAILURE);    // don't leave thread stuck with wrong egid
+         // return -1;
+      }
+   }
+
+   return 0;
+#else
+#  error "No support for seteuid()/setegid()"
+#endif
+}
+
 
 
 
@@ -431,15 +614,6 @@ int pop_user2(PerThreadContext* ctx) {
 //     given fuse-function.  The library-functions are meant to be used by
 //     both fuse and pftool, so they don't do seteuid(), and don't expect
 //     any fuse-related structures.
-
-#if 0
-# define WRAPPER(FN, ...)                     \
-  PUSH_USER();                                \
-  int fn_rc = FN(__VA_ARGS__);                \
-  POP_USER();                                 \
-  RETURN(fn_rc) /* caller provides semi */
-#endif
-
 
 #define WRAP(FNCALL)                                   \
    PUSH_USER();                                        \
