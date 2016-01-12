@@ -441,9 +441,21 @@ int pop_user2(PerThreadContext* ctx) {
 
 
 // ...........................................................................
-// Trying yet again.  There's a bug, or something in setfsgid(), regarding
-// directories with gid=root.  Try calling setreseuid/setresdguid via
-// direct syscalls to get thread safety.
+// Trying yet again.  There's a bug, or something, in setfsgid(), regarding
+// directories with gid=root.  Here, we try calling setresuid/setresdgid
+// via direct syscalls, instead of using setfsuid/setfsgid, to get thread
+// safety.
+//
+// This does appear to result in per-thread changes to euid/egid, but it
+// doesn't resolve the problem with Linux incorrectly allowing access for
+// arbitrary users to directories that have group=0, and group-rwx access.
+
+// The manpages for setfs*id functions suggest that the set of developers
+// who care about per-thread changes to fs*id is very small, and that the
+// reasons for not using e*id instead are poorly understood (e.g. to do
+// with obsolete vulnerabilities in receiving signals).  In addition, the
+// setfs*id functions are not protable beyond Linux.  Therefore, it seems
+// safer to rely on an implementation based on sete*id().
 
 int push_user3(PerThreadContext* ctx) {
 #if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
@@ -885,6 +897,21 @@ int fuse_mknod (const char* path,
 //       (b) wipe them clean.  [See fuse_read(), which now performs a
 //       distinct S3 request for every call, and reuses the ObjectStream
 //       inside the FileHandle.]
+//
+// NOTE: In the context of fuse, the kernel will call mknod() before
+//       open(), if the file doesn't exist.  If the file does exist, the
+//       kernel will call ftruncate() after opening.  We've relaied on
+//       that.
+//
+//       However, when exporting the fuse-mount over NFS, we don't get the
+//       mknod / ftruncate calls automatically.  Therefore, we have to
+//       detect this situation.  The following seem to be appropriate
+//       conditions to trigger our own call to ftruncate() in the NFS
+//       context only: (a) the file has non-zero size [from getattr()], and
+//       (b) the file doesn't have Pre.obj_type==OBJ_Nto1 (as would be the
+//       case with pftool down concurrent opens of the file at different
+//       offsets).  This is done inside marfs_open(), if needed.
+
 int fuse_open (const char*            path,
                struct fuse_file_info* ffi) {
 
@@ -910,6 +937,7 @@ int fuse_open (const char*            path,
    POP_USER();
    if (rc_ssize)
       return -errno;
+
    return 0;
 }
 
@@ -1172,21 +1200,29 @@ int fuse_write(const char*            path,
                off_t                  offset,
                struct fuse_file_info* ffi) {
 
-#if 0
+#if 1
    WRAP( marfs_write(path, buf, size, offset, (MarFS_FileHandle*)ffi->fh) );
 #else
    // EXPERIMENT: For large writes, the kernel will call us with <size> ==
-   //   128k, and marfs_write will hand this off to the curl readfunc
-   //   thread.  Normally, the curl readfunc gets called for increments of
-   //   16k.  However, when using chunked-transfer-encoding, there is an
-   //   overhead of 12 bytes for each transfer (for the CTE header), so the
-   //   callback function actually gets called with for 8 times 16k-12,
-   //   with an extra final call for 96 bytes.
+   //     128k, and marfs_write will hand this off to the curl readfunc
+   //     thread.  Normally, the curl readfunc gets called for increments
+   //     of 16k.  However, when using chunked-transfer-encoding, there is
+   //     an overhead of 12 bytes for each transfer (for the CTE header),
+   //     so the callback function actually gets called with for 8 times
+   //     16k-12, with an extra final call for 96 bytes.
    //
-   //   If fuse will allow us to only move 16k-96, then maybe we can be
-   //   more-efficient in our interactions with curl.
+   //     If fuse will allow us to only move 16k-96, then maybe we can be
+   //     more-efficient in our interactions with curl.
    //
    // RESULT: This buys us about ~%20 BW improvement.
+   //
+   // REVISITED: Measuring with a single task running against fuse, it's no
+   //     longer clear what this buys (because BW for a move of 32G varies
+   //     widely).  Furthermore, NFS (being the knucklehead that it is)
+   //     apparently does close/open/seek, whenever a call to write returns
+   //     less than was attempted.  That won't work with MarFS.  Therefore,
+   //     in the interest of supporting NFS, we'll leave this approach
+   //     commented-out.
    //
    size_t wk_size = size;
    if (wk_size == (128 * 1024))

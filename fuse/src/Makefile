@@ -527,6 +527,7 @@ mnt.dbg: fuse.dbg umnt.dbg
 _umnt:
 	@ echo -n "unmounting $(MNT): ... "
 	@ (fusermount -q -u $(MNT) && echo "unmounted") || echo "already unmounted ?"
+	@ rm -f $(PID)
 
 
 umnt: umnt.std

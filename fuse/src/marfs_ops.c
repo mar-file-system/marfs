@@ -725,7 +725,7 @@ int marfs_open(const char*         path,
    //    also put space for read to attach a structure for object read mgmt
    //
    PathInfo*         info = &fh->info;                  /* shorthand */
-   ObjectStream*     os   = &fh->os;
+   ObjectStream*     os  = &fh->os;
    IOBuf*            b    = &fh->os.iob;
 
    EXPAND_PATH_INFO(info, path);
@@ -925,6 +925,20 @@ int marfs_open(const char*         path,
 
       TRY0(stream_open, os, OS_PUT, open_size, 0);
    }
+
+
+   // Accomodate NFS trying to open an existing file.
+   // Unlike fuse, it won't automatically call ftruncate() after open().
+   // (See NOTE above fuse_open(), in main.c)
+   if ((fh->flags & FH_WRITING)
+       && (info->pre.obj_type != OBJ_Nto1)
+       && (info->st.st_size)) {
+
+      LOG(LOG_INFO, "assuming NFS needs ftruncate(%s, 0, ...)\n",
+          info->post.md_path);
+      TRY0(marfs_ftruncate, path, 0, fh);
+   }
+
 
    EXIT();
    return 0;
