@@ -858,14 +858,8 @@ int fuse_mknod (const char* path,
 //
 // No need to check quotas here, that's also done in mknod.
 //
-// Fuse guarantees that it will always call close on any open files, when a
-// user-process exits.  However, if we throw an error (return non-zero)
-// *during* the open, I'm assuming the user is not considered to have that
-// file open.  Therefore, we re-#define RETURN() to add some custom
-// clean-up to the common macros.  (See discussion below.)
-
-
-
+// TBD: NFS doesn't call mknod!
+//
 // A FileHandle is dynamically allocated in fuse_open().  We want to make
 // sure any error-returns will deallocate the file-handle.  In C++, it's
 // easy to get an object to do cleanup when it goes out of scope.  In C, we
@@ -873,19 +867,6 @@ int fuse_mknod (const char* path,
 // be needed before returning.
 //
 
-
-// RETURN() is used inside TRY(), which is the basis of all the test-macros
-// defined in common.h.  So, we redefine that to add our cleanup checks.
-#if 0
-# undef RETURN
-# define RETURN(VALUE)                            \
-   do {                                           \
-      LOG(LOG_INFO, "returning %d\n", (VALUE));   \
-      free((MarFS_FileHandle*)ffi->fh);           \
-      ffi->fh = 0;                                \
-      return (VALUE);                             \
-   } while(0)
-#endif
 
 
 // NOTE: stream_open() assumes the OS is in a pristine state.  fuse_open()
@@ -970,10 +951,6 @@ int fuse_opendir (const char*            path,
    return 0;
 }
 
-#if 0
-# undef RETURN
-# define RETURN(VALUE) return(VALUE)
-#endif
 
 
 // return actual number of bytes read.  0 indicates EOF.

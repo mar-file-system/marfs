@@ -87,16 +87,21 @@ extern "C" {
 // what is found in MARFS_CONFIG_MAJOR/MINOR, so changes to either (1) or
 // (2) above, should be reflected in changes these #defines.
 //
-// --- HISTORY
+// HISTORY
 //
-// 0.1  First cut.
+// -- 0.1  First cut.
 //
-// 0.2 Added Repo.max_request_size.  Will be defaulted (to 0) by reader,
-//     for older config-files.  No changes to xattrs, MD, or objects.
-//      
+// -- 0.2 Added Repo.max_request_size.  Will be defaulted (to 0) by reader,
+//        for older config-files.  No changes to xattrs, MD, or objects.
+//
+// -- 0.3 Added HTTP_DIGEST as an option for Repo.security_method
+//
+//        Changed Repo.max_request_size to Repo.max_get_size, because I
+//        couldn't stand how ambiguous it was.
+
 
 #define MARFS_CONFIG_MAJOR  0
-#define MARFS_CONFIG_MINOR  2
+#define MARFS_CONFIG_MINOR  3
 
 // TBD for (2):
 //
@@ -144,6 +149,7 @@ typedef enum {
    SECURITYMETHOD_S3_AWS_USER,            // AWS standard, with per-user keys
    SECURITYMETHOD_S3_AWS_MASTER,          // AWS standard, with a private "master" key
    SECURITYMETHOD_S3_PER_OBJ,             // (TBD) server enforces per-object-key
+   SECURITYMETHOD_HTTP_DIGEST,            // libcurl "digest" mode, w/ encypted user/pass
 } MarFS_SecurityMethod;
 
 extern int         lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration );
@@ -286,7 +292,7 @@ typedef struct marfs_repo {
    MarFS_Bool            is_online;
    MarFS_AccessMethod    access_method;
    size_t                chunk_size;
-   size_t                max_request_size; // use 0 for unconstrained
+   size_t                max_get_size; // use 0 for unconstrained
    size_t                pack_size;
    MarFS_SecurityMethod  security_method;
    MarFS_SecType         sec_type;

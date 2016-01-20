@@ -340,45 +340,64 @@ int marfs_getattr (const char*  path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, R_META);
 
-   // The "root" namespace is artificial
-   // It appears to be owned by root, with X-only access to users
-   if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
-
-      // everything defaults to zero
-      memset(stp, 0, sizeof(struct stat));
-
-      // match the size of a directory in GPFS
-      stp->st_size    = 512;
-      stp->st_blksize = 512;
-      stp->st_blocks  = 1;
-
-      time_t     now = time(NULL);
-      if (now == (time_t)-1) {
-         LOG(LOG_ERR, "time() failed\n");
-         return -1;
-      }
-      stp->st_atime  = now;
-      stp->st_mtime  = now;     // TBD: use mtime of config-file, or mount-time
-      stp->st_ctime  = now;     // TBD: use ctime of config-file, or mount-time
-
-      stp->st_uid     = 0;
-      stp->st_gid     = 0;
-      stp->st_mode = (S_IFDIR
-                      | (S_IRUSR | S_IXUSR)
-                      | (S_IRGRP | S_IXGRP)
-                      | S_IXOTH );            // "dr-xr-x--x."
-
-      return 0;
-   }
-
-   // No need for access check, just try the op
-   // appropriate statlike call filling in fuse structure (dont mess with xattrs here etc.)
+   // The "root" namespace is artificial.  If it is configured to refer to
+   // a real MDFS path, then stat'ing the root-NS will look at that path.
+   // Otherwise, we gin up fake data such that the root-dir appears to be
+   // owned by root, with X-only access to users.  For blocksizes, etc, we
+   // match what statvfs("/gpfs/gpfs_test/") returned, on the ODSU
+   // test-bed.
    //
-   // NOTE: kernel should already have called readlink, to get past any
-   //     symlinks.  lstat here is just to be safe.
-   LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
-   TRY_GE0(lstat, info.post.md_path, stp);
+   // In either case, it may be confusing to non-root users if the
+   // indicated accessibility of the directory differs from what is allowed
+   // in marfs_opendir().
+   if (IS_ROOT_NS(info.ns)) {
+
+      LOG(LOG_INFO, "is_root_ns\n");
+      if (! stat_regular(&info)) {
+         *stp = info.st;        // root md_path exists.  Use that.
+      }
+      else {
+
+         // everything defaults to zero
+         memset(stp, 0, sizeof(struct stat));
+
+         // match the results for GPFS-mount on the test-bed
+
+         // stp->st_size    = 16384; // ccstar test-bed
+         // stp->st_blksize = 16384;
+         stp->st_size    = 262144;  // ODSU test-bed
+         stp->st_blksize = 262144;
+
+         stp->st_blocks  = 1;
+
+         time_t     now = time(NULL);
+         if (now == (time_t)-1) {
+            LOG(LOG_ERR, "time() failed\n");
+            return -1;
+         }
+         stp->st_atime  = now;
+         stp->st_mtime  = now;     // TBD: use mtime of config-file, or mount-time
+         stp->st_ctime  = now;     // TBD: use ctime of config-file, or mount-time
+
+         stp->st_uid     = 0;
+         stp->st_gid     = 0;
+         stp->st_mode = (S_IFDIR
+                         | (S_IRUSR | S_IXUSR)
+                         | (S_IRGRP | S_IXGRP)
+                         | S_IXOTH );            // "dr-xr-x--x."
+      }
+
+
+   }
+   else  {
+      // (Not root-NS.)  No need for access check, just try the op
+      // appropriate statlike call filling in fuse structure (dont mess with xattrs here etc.)
+      //
+      // NOTE: kernel should already have called readlink, to get past any
+      //     symlinks.  lstat here is just to be safe.
+      LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
+      TRY_GE0(lstat, info.post.md_path, stp);
+   }
 
    // mask out setuid/setgid bits.  Those are belong to us.  (see marfs_chmod())
    stp->st_mode &= ~(S_ISUID | S_ISGID);
@@ -411,7 +430,7 @@ int marfs_getxattr (const char* path,
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
       errno = ENOATTR;          // fingers in ears, la-la-la
       return -1;
    }
@@ -479,7 +498,7 @@ int marfs_listxattr (const char* path,
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
       size = 0;                 // amount needed for 
       return 0;
    }
@@ -665,12 +684,6 @@ int marfs_mknod (const char* path,
 //
 // No need to check quotas here, that's also done in mknod.
 //
-// Fuse guarantees that it will always call close on any open files, when a
-// user-process exits.  However, if we throw an error (return non-zero)
-// *during* the open, I'm assuming the user is not considered to have that
-// file open.  Therefore, we re-#define RETURN() to add some custom
-// clean-up to the common macros.  (See discussion below.)
-
 // NOTE: stream_open() assumes the OS is in a pristine state.  marfs_open()
 //       currently always allocates a fresh OS (inside the new FileHandle),
 //       so that assumption is safe.  stream_close() doesn't wipe
@@ -899,6 +912,10 @@ int marfs_open(const char*         path,
       }
    }
 
+   if (info->pre.repo->security_method == SECURITYMETHOD_HTTP_DIGEST) {
+      s3_http_digest_r(1, ctx);
+   }
+
    // install custom context
    aws_iobuf_context(b, ctx);
 
@@ -927,9 +944,18 @@ int marfs_open(const char*         path,
    }
 
 
+#if 0
+   // COMMENTED OUT.  Turns out NFS calls truncate() on the same path,
+   // after opening a file that exists.  In other words, it assumes we can
+   // correlate action on some path with the status of some other open
+   // file-descriptor to that path, such as the one we have here.  That's a
+   // dumb assumption.  Bottom line, for this and other reasons, NFS is not
+   // really usable on top of MarFS fuse, at the moment.
+
    // Accomodate NFS trying to open an existing file.
    // Unlike fuse, it won't automatically call ftruncate() after open().
    // (See NOTE above fuse_open(), in main.c)
+   //
    if ((fh->flags & FH_WRITING)
        && (info->pre.obj_type != OBJ_Nto1)
        && (info->st.st_size)) {
@@ -938,6 +964,7 @@ int marfs_open(const char*         path,
           info->post.md_path);
       TRY0(marfs_ftruncate, path, 0, fh);
    }
+#endif
 
 
    EXIT();
@@ -1018,14 +1045,19 @@ int marfs_opendir (const char*       path,
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
 
+#if 0
+      // COMMENTED OUT.
+
+      // prevent non-root users from listing namespaces.
       if (geteuid()) {
          errno = EACCES;
          return -1;
       }
+#endif
 
-      // root 
+      // EUID=0
       dh->use_it = 1;           // use iterator-member
       dh->internal.it = namespace_iterator();
       return 0;
@@ -1101,6 +1133,7 @@ int marfs_read (const char*        path,
    if (offset != fh->read_status.log_offset) {
 
       if (os->flags & OSF_OPEN) {
+
          LOG(LOG_INFO, "discontiguous read detected: gap %lu-%lu\n",
              fh->read_status.log_offset, offset);
 
@@ -1222,9 +1255,9 @@ int marfs_read (const char*        path,
    // now a per-repo configuration parameter.  Given an erasure-coding
    // schema (n = k + m), the config parm should probably be set to a
    // multiple of the number of data blocks (k) * data block size.]
-   if (info->pre.repo->max_request_size
-       && (open_size > info->pre.repo->max_request_size))
-      open_size = info->pre.repo->max_request_size;
+   if (info->pre.repo->max_get_size
+       && (open_size > info->pre.repo->max_get_size))
+      open_size = info->pre.repo->max_get_size;
 
    size_t read_size    = ((size < open_size) ? size : open_size); // for this chunk
 
@@ -1247,7 +1280,7 @@ int marfs_read (const char*        path,
    // the tail of the loop, to advance through additional chunks, if
    // necessary.  read_size always gets us to the end of logical data in
    // this chunk, or to the end of caller's request, or to
-   // repo.max_request_size, or to EOF.
+   // repo.max_get_size, or to EOF.
    while (read_size) {
 
       // read as much user-data as we have room for from the current chunk
@@ -1257,7 +1290,7 @@ int marfs_read (const char*        path,
           read_size, chunk_remain, open_size);
 
 
-      // e.g. we read to the end of max_request_size on a previous call to
+      // e.g. we read to the end of max_get_size on a previous call to
       //      marfs_read(), but there's still more in this chunk.
       if ((os->flags & OSF_OPEN)
           && (os->flags & OSF_EOF)) {
@@ -1328,7 +1361,7 @@ int marfs_read (const char*        path,
          // Q: This might legitimately happen if stream_get() hits EOF?
          // A: No, read_size was adjusted to account for logical EOF
          //
-         // Q: Yeah, but maybe we just used up max_request_size, and now we
+         // Q: Yeah, but maybe we just used up max_get_size, and now we
          //    need another request?
          if (rc_ssize == 0) {
             LOG(LOG_ERR, "request for range %ld-%ld (%ld bytes) returned 0 bytes\n",
@@ -1385,9 +1418,9 @@ int marfs_read (const char*        path,
              && (open_size > fh->read_status.data_remain))
             open_size = fh->read_status.data_remain;
          
-         if (info->pre.repo->max_request_size
-             && (open_size > info->pre.repo->max_request_size))
-            open_size = info->pre.repo->max_request_size;
+         if (info->pre.repo->max_get_size
+             && (open_size > info->pre.repo->max_get_size))
+            open_size = info->pre.repo->max_get_size;
 
          size_t size_remain = size - read_count;
          read_size          = ((size_remain < open_size) ? size_remain : open_size);
@@ -1449,7 +1482,7 @@ int marfs_readdir (const char*        path,
 
          // #else
          errno = 0;
-         TRY_GE0(readdir, dirp);
+         rc_ssize = (ssize_t)readdir(dirp);
          if (! rc_ssize) {
             if (errno)
                return -1;       /* error */
@@ -1714,9 +1747,6 @@ int marfs_releasedir (const char*       path,
 int marfs_removexattr (const char* path,
                        const char* name) {
    ENTRY();
-   //   LOG(LOG_INFO, "removexattr(%s, %s) not implemented\n", path, name);
-   //   errno = ENOSYS;
-   //   return -1;
 
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1727,7 +1757,7 @@ int marfs_removexattr (const char* path,
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
       errno = EACCES;
       return -1;
    }
@@ -1767,12 +1797,12 @@ int marfs_rename (const char* path,
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "src is_root\n");
+      LOG(LOG_INFO, "src is_root_ns\n");
       errno = EPERM;
       return -1;
    }
    if (IS_ROOT_NS(info2.ns)) {
-      LOG(LOG_INFO, "dst is_root\n");
+      LOG(LOG_INFO, "dst is_root_ns\n");
       errno = EPERM;
       return -1;
    }
@@ -1803,7 +1833,7 @@ int marfs_rmdir (const char* path) {
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
       errno = EPERM;
       return -1;
    }
@@ -1833,7 +1863,7 @@ int marfs_setxattr (const char* path,
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
       errno = EPERM;
       return -1;
    }
@@ -1867,16 +1897,6 @@ int marfs_statvfs (const char*      path,
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, (R_META));
-
-   //   // NOTE: Until fsinfo is available, we're just ignoring.
-   //   errno = ENOSYS;
-   //   return -1;
-
-   //   if (geteuid()) {
-   //      LOG(LOG_ERR, "non-root can't stavfs()\n");
-   //      errno = EACCES;
-   //      return -1;
-   //   }
 
    // wipe caller's statbuf
    memset(statbuf, 0, sizeof(struct statvfs));
@@ -1979,7 +1999,6 @@ int marfs_statvfs (const char*      path,
       statbuf->f_fsid    = 0;     /* file system ID */
       statbuf->f_flag    = 0;     /* mount flags */
       statbuf->f_namemax = 255;     /* maximum filename length */
-
    }
    else
       TRY0(statvfs, info.ns->md_path, statbuf);
@@ -2011,7 +2030,7 @@ int marfs_symlink (const char* target,
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(lnk_info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
       errno = EPERM;
       return -1;
    }
@@ -2047,7 +2066,7 @@ int marfs_truncate (const char* path,
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
       errno = EPERM;
       return -1;
    }
@@ -2091,7 +2110,7 @@ int marfs_unlink (const char* path) {
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
       errno = EPERM;
       return -1;
    }
@@ -2188,7 +2207,7 @@ int marfs_utimens(const char*           path,
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
-      LOG(LOG_INFO, "is_root\n");
+      LOG(LOG_INFO, "is_root_ns\n");
       errno = EPERM;
       return -1;
    }
@@ -2260,10 +2279,25 @@ int marfs_write(const char*        path,
    //
    size_t log_offset = (fh->open_offset + os->written - fh->write_status.sys_writes);
    if ( offset != log_offset) {
+
       LOG(LOG_ERR, "non-contig write: offset %ld, after %ld (+ %ld)\n",
           offset, log_offset, fh->write_status.sys_writes);
+#if 0
+      // NFS EXPERIMENT.  Multiple NFS threads on the server-side make
+      // calls to write() at different offsets, writing their own buffers.
+      // The blind assumption that the underlying file-system supports
+      // sparse files (aka N-to-1) is mistaken, in our case.
+      //
+      // Q: what if we just return 0?  Will that get NFS to back off?  (It
+      //   is, of course, perfectly legitimate for us to return 0 as the
+      //   number of bytes that were written.)
+      //
+      // A: No.  NFS returns an error to the client, if we do this.
+      return 0;
+#else
       errno = EINVAL;
       return -1;
+#endif
    }
 
    // If first write allocate space for current obj being written put addr
@@ -2365,7 +2399,7 @@ int marfs_write(const char*        path,
          if (fh->md_fd < 0) {
             LOG(LOG_ERR, "open %s failed (%s)\n", info->post.md_path, strerror(errno));
             fh->md_fd = 0;
-            errno = errno;
+            errno = EIO;
             return -1;
          }
       }
@@ -2414,6 +2448,22 @@ int marfs_write(const char*        path,
    if (write_size)
       TRY_GE0(stream_put, os, buf_ptr, write_size);
 
+#if 0
+   // EXPERIMENT for NFS
+   //
+   // Q: do we have to maintain the size of the file, so that getattr()
+   //    will see it?
+   //
+   // A: Not sure.  Seemed to work okay without this costly addition.
+   //    However, NFS is not playing nicely in other departments, so this
+   //    point has become moot.
+
+   if ((fh->flags & FH_WRITING)
+       && has_any_xattrs(info, MARFS_ALL_XATTRS)
+       && !(fh->flags & FH_Nto1_WRITES)) {
+      TRY0(truncate, info->post.md_path, os->written - fh->write_status.sys_writes);
+   }
+#endif
 
    EXIT();
    return size;

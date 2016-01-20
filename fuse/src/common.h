@@ -148,9 +148,15 @@ typedef enum {
 
 
 
+// For example, the errno set by stream_sync() might be inappropriate to
+// return from marfs_read() versus marfs_release().  You could tailor the
+// errno that TRY(...) will return, by changing PRE_RETURN().
+#define PRE_RETURN()
+
 // Override this, if you have some fuse-handler that wants to do
-// something special before any exit.  (See e.g. fuse_open)
+// something special before any error-return.  (See e.g. fuse_open)
 #define RETURN(VALUE)  return(VALUE)
+
 
 
 
@@ -185,6 +191,7 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY0(%s)\n", #FUNCTION); */                     \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
+         PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
              #FUNCTION, rc, errno, strerror(errno));                    \
          RETURN(-1);                                                    \
@@ -197,6 +204,7 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY_GE0(%s)\n", #FUNCTION); */                  \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize < 0) {                                               \
+         PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
              #FUNCTION, rc_ssize, errno, strerror(errno));              \
          RETURN(-1);                                                    \
@@ -209,6 +217,7 @@ typedef enum {
       /* LOG(LOG_INFO, "TRY_GT0(%s)\n", #FUNCTION); */                  \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize <= 0) {                                              \
+         PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
              #FUNCTION, rc_ssize, errno, strerror(errno));              \
          RETURN(-1);                                                    \
@@ -228,6 +237,7 @@ typedef enum {
       LOG(LOG_INFO, "TRY0: %s\n", #FUNCTION);                           \
       rc = (size_t)FUNCTION(__VA_ARGS__);                               \
       if (rc) {                                                         \
+         PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
              #FUNCTION, rc, errno, strerror(errno));                    \
          RETURN(-errno);                                                \
@@ -239,6 +249,7 @@ typedef enum {
       LOG(LOG_INFO, "TRY_GE0: %s\n", #FUNCTION);                        \
       rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
       if (rc_ssize < 0) {                                               \
+         PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
              #FUNCTION, rc_ssize, errno, strerror(errno));              \
          RETURN(-errno);                                                \

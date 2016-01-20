@@ -472,12 +472,12 @@ int stream_put(ObjectStream* os,
    LOG(LOG_INFO, "(%08lx) entry\n", (size_t)os);
    if (! (os->flags & OSF_OPEN)) {
       LOG(LOG_ERR, "(%08lx) %s isn't open\n", (size_t)os, os->url);
-      errno = EINVAL;            /* ?? */
+      errno = EBADF;
       return -1;
    }
    if (! (os->flags & OSF_WRITING)) {
       LOG(LOG_ERR, "(%08lx) %s isn't open for writing\n", (size_t)os, os->url);
-      errno = EINVAL;            /* ?? */
+      errno = EBADF;
       return -1;
    }
    IOBuf* b = &os->iob;         // shorthand
@@ -712,12 +712,12 @@ ssize_t stream_get(ObjectStream* os,
    LOG(LOG_INFO, "entry\n");
    if (! (os->flags & OSF_OPEN)) {
       LOG(LOG_ERR, "%s isn't open\n", os->url);
-      errno = EINVAL;            /* ?? */
+      errno = EBADF;
       return -1;
    }
    if (! (os->flags & OSF_READING)) {
       LOG(LOG_ERR, "%s isn't open for reading\n", os->url);
-      errno = EINVAL;            /* ?? */
+      errno = EBADF;
       return -1;
    }
    if (os->flags & OSF_EOF) {
@@ -788,7 +788,8 @@ ssize_t stream_get(ObjectStream* os,
 //      A better plan is to present the offset in the curl header, and let
 //      the server skip to our offset, before sending anything.  However,
 //      that implies that stream_open wouldn't actually complete until the
-//      first stream_get is issued.
+//      first stream_get is issued.  (Or, better yet, stream_open shouldn't
+//      be called until the first stream_get is issued.)
 //
 // We now allow providing a content-length.  If it's non-zero (and we're
 // writing), it will go into the curl request header.  Otherwise (if we're
@@ -817,8 +818,8 @@ int stream_open(ObjectStream* os,
           curl_major, curl_minor, curl_patch);
 
    if (os->flags & OSF_OPEN) {
-      LOG(LOG_ERR, "%s is already open\n", os->url);
-      errno = EINVAL;
+      LOG(LOG_ERR, "%s is already open (for writing)\n", os->url);
+      errno = EEXIST;           // as though (O_CREAT|O_EXCL) ? Will NFS leave us alone?
       return -1;                // already open
    }
    if (os->flags) {
@@ -828,7 +829,7 @@ int stream_open(ObjectStream* os,
       }
       else {
          LOG(LOG_ERR, "%s has flags asserted, but is not CLOSED\n", os->url);
-         errno = EINVAL;
+         errno = EBADF;         // ???
          return -1;
       }
    }
@@ -886,6 +887,7 @@ int stream_open(ObjectStream* os,
    LOG(LOG_INFO, "starting thread\n");
    if (pthread_create(&os->op, NULL, &s3_op, os)) {
       LOG(LOG_ERR, "pthread_create failed: '%s'\n", strerror(errno));
+      errno = EIO;  // "something mysterious" went wrong with your write
       return -1;
    }
    return 0;

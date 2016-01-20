@@ -505,6 +505,8 @@ int lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration ) 
     *enumeration = SECURITYMETHOD_S3_AWS_MASTER;
   } else if ( ! strcasecmp( str, "S3_PER_OBJ" )) {
     *enumeration = SECURITYMETHOD_S3_PER_OBJ;
+  } else if ( ! strcasecmp( str, "HTTP_DIGEST" )) {
+    *enumeration = SECURITYMETHOD_HTTP_DIGEST;
   } else {
     return -1;
   }
@@ -519,6 +521,7 @@ static const char* securitymethod_str[] = {
    "S3_AWS_USER",
    "S3_AWS_MASTER",
    "S3_PER_OBJ",
+   "HTTP_DIGEST",
    NULL
 };
 const char* securitymethod_string( MarFS_SecurityMethod method ) {
@@ -900,14 +903,14 @@ static MarFS_Config_Ptr read_configuration_internal() {
       return NULL;
     }
 
-    // repo.max_request_size was added in blueprint version 0.2.
-    // Allow old configurations to be parsed by defaulting to 0
-    marfs_repo_list[j]->max_request_size = 0;
-    if (repoList[j]->max_request_size) {
+    // repo.max_get_size was added in version 0.2.
+    // Allow old configurations to be parsed by assigning a default (of 0)
+    marfs_repo_list[j]->max_get_size = 0;
+    if (repoList[j]->max_get_size) {
        errno = 0;
-       marfs_repo_list[j]->max_request_size = strtoull( repoList[j]->max_request_size, (char **) NULL, 10 );
+       marfs_repo_list[j]->max_get_size = strtoull( repoList[j]->max_get_size, (char **) NULL, 10 );
        if ( errno ) {
-          LOG( LOG_ERR, "Invalid max_request_size value of \"%s\".\n", repoList[j]->max_request_size );
+          LOG( LOG_ERR, "Invalid max_get_size value of \"%s\".\n", repoList[j]->max_get_size );
           return NULL;
        }
     }
