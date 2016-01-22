@@ -100,6 +100,15 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
+
+#if 0
+// ...........................................................................
+// rev 1
+// ...........................................................................
+
+// We use local variables to hold pushed euid/egid.  These should be
+// thread-local (i.e. on the stack), and therefore thread-safe.
+
 typedef struct PerThreadContext {
    uid_t uid;                    /* original uid */
    gid_t gid;                    /* original gid */
@@ -108,69 +117,15 @@ typedef struct PerThreadContext {
    gid_t new_gid;
 } PerThreadContext;
 
-
-#if 0
-
-// We use local variables to hold pushed euid/egid.  These should be
-// thread-local (i.e. on the stack), and therefore thread-safe.
-
-#define PUSH_USER()                                                     \
+#  define PUSH_USER(UNUSED)                                             \
    ENTRY();                                                             \
    PerThreadContext ctx;                                                \
    memset(&ctx, 0, sizeof(PerThreadContext));                           \
    __TRY0(push_user, &ctx)
 
-#define POP_USER()                                                      \
+#  define POP_USER()                                                    \
    __TRY0(pop_user, &ctx);                                              \
    EXIT()
-
-
-#elif 0
-
-// once-per-thread dynamic allocation of storage to hold uid/gid for push/pop
-// adapted from pthread_key_create(3P) manpage ...
-
-static pthread_key_t  key;
-static pthread_once_t key_once = PTHREAD_ONCE_INIT;
-
-static void delete_key(void* key_value) { free(key_value); }
-
-static void make_key() { (void) pthread_key_create(&key, delete_key); }
-
-#  define PUSH_USER()                                                   \
-   ENTRY();                                                             \
-   pthread_once(&key_once, make_key);                                   \
-   PerThreadContext* ctx = (PerThreadContext*)pthread_getspecific(key); \
-   if (! ctx) {                                                         \
-      ctx = (PerThreadContext*)malloc(sizeof(PerThreadContext));        \
-      memset(ctx, 0, sizeof(PerThreadContext));                         \
-      pthread_setspecific(key, ctx);                                    \
-   }                                                                    \
-   __TRY0(push_user2, ctx)
-
-#  define POP_USER()                                                    \
-   __TRY0(pop_user2, ctx);                                              \
-   EXIT()
-
-
-#else
-
-// using "saved" uid/gid to hold the state.
-// using syscalls to get thread-safety, based on this:
-// http://stackoverflow.com/questions/1223600/change-uid-gid-only-of-one-thread-in-linux
-
-#define PUSH_USER()                                                     \
-   ENTRY();                                                             \
-   PerThreadContext ctx;                                                \
-   memset(&ctx, 0, sizeof(PerThreadContext));                           \
-   __TRY0(push_user3, &ctx)
-
-#define POP_USER()                                                      \
-   __TRY0(pop_user3, &ctx);                                             \
-   EXIT()
-
-#endif
-
 
 
 // push_user()
@@ -197,7 +152,7 @@ static void make_key() { (void) pthread_key_create(&key, delete_key); }
 //       euid and egid, if it going to report success.
 
 int push_user(PerThreadContext* ctx) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+#  if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
 
    int rc;
 
@@ -249,16 +204,16 @@ int push_user(PerThreadContext* ctx) {
    }
 
    return 0;
-#else
+#  else
 #  error "No support for seteuid()/setegid()"
-#endif
+#  endif
 }
 
 
 //  pop_user() changes the effective UID.  Here, we revert to the
 //  "real" UID.
 int pop_user(PerThreadContext* ctx) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+#  if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
    int rc;
 
    //   LOG(LOG_INFO, "uid %u:  euid (%u) <- (%u)\n",
@@ -303,10 +258,53 @@ int pop_user(PerThreadContext* ctx) {
    }
 
    return 0;
-#else
+#  else
 #  error "No support for seteuid()/setegid()"
-#endif
+#  endif
 }
+
+
+
+#elif 0
+
+// ...........................................................................
+// rev 2
+// ...........................................................................
+
+// once-per-thread dynamic allocation of storage to hold uid/gid for push/pop
+// adapted from pthread_key_create(3P) manpage ...
+
+typedef struct PerThreadContext {
+   uid_t uid;                    /* original uid */
+   gid_t gid;                    /* original gid */
+   int   pushed;                 // detect double-push
+   uid_t new_uid;
+   gid_t new_gid;
+} PerThreadContext;
+
+static pthread_key_t  key;
+static pthread_once_t key_once = PTHREAD_ONCE_INIT;
+
+static void delete_key(void* key_value) { free(key_value); }
+
+static void make_key() { (void) pthread_key_create(&key, delete_key); }
+
+#  define PUSH_USER(UNUSED)                                             \
+   ENTRY();                                                             \
+   pthread_once(&key_once, make_key);                                   \
+   PerThreadContext* ctx = (PerThreadContext*)pthread_getspecific(key); \
+   if (! ctx) {                                                         \
+      ctx = (PerThreadContext*)malloc(sizeof(PerThreadContext));        \
+      memset(ctx, 0, sizeof(PerThreadContext));                         \
+      pthread_setspecific(key, ctx);                                    \
+   }                                                                    \
+   __TRY0(push_user2, ctx)
+
+#  define POP_USER()                                                    \
+   __TRY0(pop_user2, ctx);                                              \
+   EXIT()
+
+
 
 
 // ...........................................................................
@@ -321,7 +319,7 @@ int pop_user(PerThreadContext* ctx) {
 // retrun has set errno, so we'll do it ourselves.
 
 int push_user2(PerThreadContext* ctx) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+#  if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
 
    if (ctx->pushed) {
       LOG(LOG_ERR, "%u/%x @0x%lx double-push -> %u\n",
@@ -379,14 +377,14 @@ int push_user2(PerThreadContext* ctx) {
   
    return 0;
 
-#else
+#  else
 #  error "No support for seteuid()/setegid()"
-#endif
+#  endif
 }
 
 
 int pop_user2(PerThreadContext* ctx) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+#  if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
 
    int rc = 0;
 
@@ -433,11 +431,37 @@ int pop_user2(PerThreadContext* ctx) {
    return rc;
 
 
-#else
+#  else
 #  error "No support for seteuid()/setegid()"
-#endif
+#  endif
 }
 
+
+
+#elif 0
+
+// ...........................................................................
+// rev 3
+// ...........................................................................
+
+// using "saved" uid/gid to hold the state, so no state needed in Context.
+// using syscalls to get thread-safety, based on this:
+// http://stackoverflow.com/questions/1223600/change-uid-gid-only-of-one-thread-in-linux
+
+typedef struct PerThreadContext {
+   int   pushed;                 // detect double-push
+} PerThreadContext;
+
+
+#  define PUSH_USER(UNUSED)                                             \
+   ENTRY();                                                             \
+   PerThreadContext ctx;                                                \
+   memset(&ctx, 0, sizeof(PerThreadContext));                           \
+   __TRY0(push_user3, &ctx)
+
+#  define POP_USER()                                                    \
+   __TRY0(pop_user3, &ctx);                                             \
+   EXIT()
 
 
 // ...........................................................................
@@ -457,8 +481,8 @@ int pop_user2(PerThreadContext* ctx) {
 // setfs*id functions are not protable beyond Linux.  Therefore, it seems
 // safer to rely on an implementation based on sete*id().
 
-int push_user3(PerThreadContext* ctx) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+int push_user3(PerThreadContext* ctx, int groups_too) {
+#  if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
 
    int rc;
 
@@ -543,16 +567,16 @@ int push_user3(PerThreadContext* ctx) {
    }
 
    return 0;
-#else
+#  else
 #  error "No support for seteuid()/setegid()"
-#endif
+#  endif
 }
 
 
 //  pop_user() changes the effective UID.  Here, we revert to the
 //  euid from before the push.
 int pop_user3(PerThreadContext* ctx) {
-#if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+#   if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
 
    int rc;
 
@@ -614,10 +638,353 @@ int pop_user3(PerThreadContext* ctx) {
    }
 
    return 0;
-#else
+#  else
 #  error "No support for seteuid()/setegid()"
-#endif
+#  endif
 }
+
+
+#else
+
+// ...........................................................................
+// rev 4
+// ...........................................................................
+
+#  include <grp.h>
+#  include <pwd.h>
+#  include <limits.h>             // NGROUPS_MAX
+
+// using "saved" uid/gid to hold the state, so no state needed in Context.
+// using syscalls to get thread-safety, based on this:
+// http://stackoverflow.com/questions/1223600/change-uid-gid-only-of-one-thread-in-linux
+
+typedef struct PerThreadContext {
+   int   pushed;                 // detect double-push
+   int   pushed_groups;          // need to pop groups, too?
+
+   gid_t groups[NGROUPS_MAX];    // orig group list of *process*
+   int   group_ct;               // size of <groups>
+} PerThreadContext;
+
+
+#  define PUSH_USER(GROUPS_TOO)                                         \
+   ENTRY();                                                             \
+   PerThreadContext ctx;                                                \
+   memset(&ctx, 0, sizeof(PerThreadContext));                           \
+   __TRY0(push_user4, &ctx, (GROUPS_TOO))
+
+#  define POP_USER()                                                    \
+   __TRY0(pop_user4, &ctx);                                             \
+   EXIT()
+
+
+// If <push_groups> is non-zero, we also save the current per-process
+// group-list, lookup the group-list for the new euid, and install that as
+// the process group-list.  Apparently, Linux processes have a group-list.
+// Setting euid/egid doesn't change the set of groups associated with this
+// process (well, setegid() adds one element).  Presumably, this is an
+// efficiency hack, to avoid having to lookup groups all the time.
+// However, it means that after setting euid/eguid, files that ought to be
+// inaccessible to the new user, based on group-access, might be
+// accessible.
+//
+// For example, if we start fuse as root, the initial process group-list is
+// just (0).  After seteuid(500), setegid(500), the process group-list is
+// (500, 0).  This user will be able to read the following directory:
+//
+//    drwxrwx---. 2 root root 4096 Jan 21 14:49 secret_root_stuff
+//
+// However, chgrp 500 on this file will fail:
+//
+//    -rwxrwx---. 1 500 502 0 Jan 15 08:31 share_with_502
+//
+// even if user 500 is a member of group 502.  That's because the
+// group-list of the process is (500, 0), which doesn't include 502.
+//
+// The solution to both these problems is to have push_user() save the
+// original process group-list, go get the group-list for user 500, and
+// install it as the process group-list.  We have to do this before
+// seteuid(), because it requires reading /etc/passwd.  Then, we undo these
+// actions in pop_user().
+//
+// That sounds expensive.  We probably don't want to do it when we don't
+// have to, like in write().  So, we'll make it an option.
+
+int push_groups4(PerThreadContext* ctx) {
+
+   TRY_DECLS();
+   uid_t uid = fuse_get_context()->uid;
+   gid_t gid = fuse_get_context()->gid;
+
+   // check for two pushes without a pop
+   if (ctx->pushed_groups) {
+      LOG(LOG_ERR, "%u/%x @0x%lx double-push (groups) -> %u\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          uid);
+      errno = EPERM;
+      return -1;
+   }
+
+   // save the group-list for the current process
+   ctx->group_ct = getgroups(sizeof(ctx->groups), ctx->groups);
+   if (ctx->group_ct < 0) {
+      // ctx->group_ct = 0; // ?
+      LOG(LOG_ERR, "%u/%x @0x%lx  getgroups() failed\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      return -1;
+   }
+
+   // find user-name from uid
+   struct passwd  pwd;
+   struct passwd* result;
+   const size_t   STR_BUF_LEN = 1024; // probably enough
+   char           str_buf[STR_BUF_LEN];
+   if (getpwuid_r(uid, &pwd, str_buf, STR_BUF_LEN, &result)) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  getpwuid_r() failed: %s\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          strerror(errno));
+      return -EINVAL;
+   }
+   else if (! result) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  No passwd entries found, for uid %u\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          uid);
+      return -EINVAL;
+   }
+   LOG(LOG_INFO, "%u/%x @0x%lx  uid %u = user '%s'\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       uid, result->pw_name);
+      
+
+   // find group-membership of user, using user-name
+   gid_t groups[NGROUPS_MAX +1];
+   int   ngroups = NGROUPS_MAX +1;
+   int   group_ct = getgrouplist(result->pw_name, gid, groups, &ngroups);
+   if (group_ct < 0) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  No passwd entries found, for user '%s'\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          result->pw_name);
+      return -1;
+   }
+
+   // DEBUGGING
+   int i;
+   for (i=0; i<group_ct; ++i) {
+      LOG(LOG_INFO, "%u/%x @0x%lx  group = %u\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          groups[i]);
+   }
+
+   // change group membership of process
+   TRY0(setgroups, ngroups, groups);
+
+   ctx->pushed_groups = 1;   // so we can pop
+   return 0;
+}
+
+
+int push_user4(PerThreadContext* ctx, int push_groups) {
+#  if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+
+   int rc;
+
+   // check for two pushes without a pop
+   if (ctx->pushed) {
+      LOG(LOG_ERR, "%u/%x @0x%lx double-push -> %u\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          fuse_get_context()->uid);
+      errno = EPERM;
+      return -1;
+   }
+
+   // --- maybe install the user's group-list (see comments, above)
+   if (push_groups) {
+      if (push_groups4(ctx)) {
+         return -1;
+      }
+   }
+
+   // get current real/effective/saved gid
+   gid_t old_rgid;
+   gid_t old_egid;
+   gid_t old_sgid;
+
+   rc = syscall(SYS_getresgid, &old_rgid, &old_egid, &old_sgid);
+   if (rc) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  getresgid() failed\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      exit(EXIT_FAILURE);       // fuse should fail
+   }
+
+   // gid to push
+   gid_t new_egid = fuse_get_context()->gid;
+
+   // install the new egid, and save the current one
+   LOG(LOG_INFO, "%u/%x @0x%lx  gid %u(%u) -> (%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       old_rgid, old_egid, new_egid);
+
+   rc = syscall(SYS_setresgid, -1, new_egid, old_egid);
+   if (rc == -1) {
+      if ((errno == EACCES) && ((new_egid == old_egid) || (new_egid == old_rgid))) {
+         LOG(LOG_INFO, "failed (but okay)\n"); /* okay [see NOTE] */
+      }
+      else {
+         LOG(LOG_ERR, "failed!\n");
+         return -1;             // no changes were made
+      }
+   }
+
+   // get current real/effect/saved uid
+   uid_t old_ruid;
+   uid_t old_euid;
+   uid_t old_suid;
+
+   rc = syscall(SYS_getresuid, &old_ruid, &old_euid, &old_suid);
+   if (rc) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  getresuid() failed\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      exit(EXIT_FAILURE);       // fuse should fail
+   }
+
+   // uid to push
+   gid_t new_euid = fuse_get_context()->uid;
+
+   // install the new euid, and save the current one
+   LOG(LOG_INFO, "%u/%x @0x%lx  uid %u(%u) -> (%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       old_ruid, old_euid, new_euid);
+
+   rc = syscall(SYS_setresuid, -1, new_euid, old_euid);
+   if (rc == -1) {
+      if ((errno == EACCES) && ((new_euid == old_ruid) || (new_euid == old_euid))) {
+         LOG(LOG_INFO, "failed (but okay)\n");
+         return 0;              /* okay [see NOTE] */
+      }
+
+      // try to restore gid from before push
+      rc = syscall(SYS_setresgid, -1, old_egid, -1);
+      if (! rc) {
+         LOG(LOG_ERR, "failed!\n");
+         return -1;             // restored to initial conditions
+      }
+      else {
+         LOG(LOG_ERR, "failed -- couldn't restore egid %d!\n", old_egid);
+         exit(EXIT_FAILURE);  // don't leave thread stuck with wrong egid
+         // return -1;
+      }
+   }
+
+   return 0;
+#  else
+#  error "No support for seteuid()/setegid()"
+#  endif
+}
+
+
+// restore the group-membership of the current process to what it was
+// before push_groups4()
+int pop_groups4(PerThreadContext* ctx) {
+   TRY_DECLS();
+
+   // DEBUGGING
+   int i;
+   for (i=0; i<ctx->group_ct; ++i) {
+      LOG(LOG_INFO, "%u/%x @0x%lx  group = %u\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+          ctx->groups[i]);
+   }
+
+   TRY0(setgroups, ctx->group_ct, ctx->groups);
+
+   ctx->pushed_groups = 0;
+   return 0;
+}
+
+//  pop_user() changes the effective UID.  Here, we revert to the
+//  euid from before the push.
+int pop_user4(PerThreadContext* ctx) {
+#  if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+
+   int rc;
+
+   uid_t old_ruid;
+   uid_t old_euid;
+   uid_t old_suid;
+
+   rc = syscall(SYS_getresuid, &old_ruid, &old_euid, &old_suid);
+   if (rc) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  getresuid() failed\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      exit(EXIT_FAILURE);       // fuse should fail
+   }
+
+   LOG(LOG_INFO, "%u/%x @0x%lx  uid (%u) <- %u(%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       old_suid, old_ruid, old_euid);
+
+   rc = syscall(SYS_setresuid, -1, old_suid, -1);
+   if (rc == -1) {
+      if ((errno == EACCES) && ((old_suid == old_ruid) || (old_suid == old_euid))) {
+         LOG(LOG_INFO, "failed (but okay)\n"); /* okay [see NOTE] */
+      }
+      else {
+         LOG(LOG_ERR, "failed\n");
+         exit(EXIT_FAILURE);    // don't leave thread stuck with wrong euid
+         // return -1;
+      }
+   }
+
+
+
+   gid_t old_rgid;
+   gid_t old_egid;
+   gid_t old_sgid;
+
+   rc = syscall(SYS_getresgid, &old_rgid, &old_egid, &old_sgid);
+   if (rc) {
+      LOG(LOG_ERR, "%u/%x @0x%lx  getresgid() failed\n",
+          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      exit(EXIT_FAILURE);       // fuse should fail
+   }
+
+   LOG(LOG_INFO, "%u/%x @0x%lx  gid (%u) <- %u(%u)\n",
+       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+       old_sgid, old_rgid, old_euid);
+
+   rc = syscall(SYS_setresgid, -1, old_sgid, -1);
+   if (rc == -1) {
+      if ((errno == EACCES) && ((old_sgid == old_rgid) || (old_sgid == old_egid))) {
+         LOG(LOG_INFO, "failed (but okay)\n");
+         return 0;              /* okay [see NOTE] */
+      }
+      else {
+         LOG(LOG_ERR, "failed!\n");
+         exit(EXIT_FAILURE);    // don't leave thread stuck with wrong egid
+         // return -1;
+      }
+   }
+
+
+
+   if (ctx->pushed_groups) {
+      if (pop_groups4(ctx))
+         return -1;
+   }
+
+
+   return 0;
+#  else
+#  error "No support for seteuid()/setegid()"
+#  endif
+}
+
+
+#endif
+
+
+
+
 
 
 
@@ -627,8 +994,8 @@ int pop_user3(PerThreadContext* ctx) {
 //     both fuse and pftool, so they don't do seteuid(), and don't expect
 //     any fuse-related structures.
 
-#define WRAP(FNCALL)                                   \
-   PUSH_USER();                                        \
+#define WRAP_internal(GROUPS_TOO, FNCALL)              \
+   PUSH_USER(GROUPS_TOO);                              \
    int fncall_rc = FNCALL;                             \
    POP_USER();                                         \
    if (fncall_rc < 0) {                                \
@@ -637,6 +1004,14 @@ int pop_user3(PerThreadContext* ctx) {
       return -errno;                                   \
    }                                                   \
    return fncall_rc /* caller provides semi */
+
+// This version doesn't call push/pop_groups()
+#define WRAP(FNCALL)                                   \
+   WRAP_internal(0, (FNCALL));
+
+// This version DOES call push/pop_groups()
+#define WRAP_PLUS(FNCALL)                              \
+   WRAP_internal(1, (FNCALL));
 
 
 
@@ -681,7 +1056,7 @@ void marfs_fuse_exit (void* private_data) {
 int fuse_access (const char* path,
                  int         mask) {
 
-   WRAP( marfs_access(path, mask) );
+   WRAP_PLUS( marfs_access(path, mask) );
 }
 
 
@@ -707,15 +1082,27 @@ int fuse_access (const char* path,
 int fuse_chmod(const char* path,
                mode_t      mode) {
 
-   WRAP( marfs_chmod(path, mode) );
+   WRAP_PLUS( marfs_chmod(path, mode) );
 }
 
 
+// int fuse_chown_helper(const char* path,
+//                       uid_t       uid,
+//                       gid_t       gid) {
+//    ENTRY();
+//    TRY0(setegid, gid);
+//    rc = marfs_chown(path, uid, gid);
+//    EXIT();
+//    return rc;
+// }
 int fuse_chown (const char* path,
                 uid_t       uid,
                 gid_t       gid) {
 
-   WRAP( marfs_chown(path, uid, gid) );
+   //   WRAP( marfs_chown(path, uid, gid) );
+   //   //   WRAP( fuse_chown_helper(path, uid, gid) );
+   //   // TBD: WRAP2( gid, fuse_chown_helper(path, uid, gid) );
+   WRAP_PLUS( marfs_chown(path, uid, gid) );
 }
 
 // int fuse_close()   --->  it's called "fuse_release()".
@@ -761,7 +1148,7 @@ int fuse_ftruncate(const char*            path,
                    off_t                  length,
                    struct fuse_file_info* ffi) {
 
-   WRAP( marfs_ftruncate(path, length, (MarFS_FileHandle*)ffi->fh) );
+   WRAP_PLUS( marfs_ftruncate(path, length, (MarFS_FileHandle*)ffi->fh) );
 }
 
 
@@ -769,7 +1156,7 @@ int fuse_ftruncate(const char*            path,
 int fuse_getattr (const char*  path,
                   struct stat* stp) {
 
-   WRAP( marfs_getattr(path, stp) );
+   WRAP_PLUS( marfs_getattr(path, stp) );
 }
 
 
@@ -782,7 +1169,7 @@ int fuse_getxattr (const char* path,
                    char*       value,
                    size_t      size) {
 
-   WRAP( marfs_getxattr(path, name, value, size) );
+   WRAP_PLUS( marfs_getxattr(path, name, value, size) );
 }
 
 
@@ -818,7 +1205,7 @@ int fuse_listxattr (const char* path,
 int fuse_mkdir (const char* path,
                 mode_t      mode) {
 
-   WRAP( marfs_mkdir(path, mode) );
+   WRAP_PLUS( marfs_mkdir(path, mode) );
 }
 
 
@@ -838,7 +1225,7 @@ int fuse_mknod (const char* path,
                 mode_t      mode,
                 dev_t       rdev) {
 
-   WRAP( marfs_mknod(path, mode, rdev) );
+   WRAP_PLUS( marfs_mknod(path, mode, rdev) );
 }
 
 
@@ -896,7 +1283,7 @@ int fuse_mknod (const char* path,
 int fuse_open (const char*            path,
                struct fuse_file_info* ffi) {
 
-   PUSH_USER();
+   PUSH_USER(1);
 
    if (ffi->fh != 0) {
       // failed to free the file-handle in fuse_release()?
@@ -926,7 +1313,7 @@ int fuse_open (const char*            path,
 
 int fuse_opendir (const char*            path,
                   struct fuse_file_info* ffi) {
-   PUSH_USER();
+   PUSH_USER(1);
 
    if (ffi->fh != 0) {
       // failed to free the dirhandle in fuse_releasedir()?
@@ -1009,7 +1396,7 @@ int fuse_readlink (const char* path,
                    char*       buf,
                    size_t      size) {
 
-   WRAP( marfs_readlink(path, buf, size) );
+   WRAP_PLUS( marfs_readlink(path, buf, size) );
 }
 
 
@@ -1026,7 +1413,7 @@ int fuse_readlink (const char* path,
 int fuse_release (const char*            path,
                   struct fuse_file_info* ffi) {
 
-   PUSH_USER();
+   PUSH_USER(0);
 
    if (! ffi->fh) {
       LOG(LOG_ERR, "unexpected NULL file-handle\n");
@@ -1065,7 +1452,7 @@ int fuse_release (const char*            path,
 int fuse_releasedir (const char*            path,
                      struct fuse_file_info* ffi) {
 
-   PUSH_USER();
+   PUSH_USER(0);
 
    if (! ffi->fh) {
       LOG(LOG_ERR, "unexpected NULL dir-handle\n");
@@ -1089,21 +1476,21 @@ int fuse_releasedir (const char*            path,
 int fuse_removexattr (const char* path,
                       const char* name) {
 
-   WRAP( marfs_removexattr(path, name) );
+   WRAP_PLUS( marfs_removexattr(path, name) );
 }
 
 
 int fuse_rename (const char* path,
                  const char* to) {
 
-   WRAP( marfs_rename(path, to) );
+   WRAP_PLUS( marfs_rename(path, to) );
 }
 
 
 // using looked up mdpath, do statxattr and get object name
 int fuse_rmdir (const char* path) {
 
-   WRAP( marfs_rmdir(path) );
+   WRAP_PLUS( marfs_rmdir(path) );
 }
 
 
@@ -1113,17 +1500,21 @@ int fuse_setxattr (const char* path,
                    size_t      size,
                    int         flags) {
 
-   WRAP( marfs_setxattr(path, name, value, size, flags) );
+   WRAP_PLUS( marfs_setxattr(path, name, value, size, flags) );
 }
 
 // The OS seems to call this from time to time, with <path>=/ (and
 // euid==0).  We could walk through all the namespaces, and accumulate
 // total usage.  (Maybe we should have a top-level fsinfo path?)  But I
 // guess we don't want to allow average users to do this.
+//
+// This is also called by the client when initiating an NFS/sshfs/etc a
+// mount over NFS/sshfs.
+
 int fuse_statvfs (const char*      path,
                  struct statvfs*  statbuf) {
 
-   WRAP( marfs_statvfs(path, statbuf) );
+   WRAP_PLUS( marfs_statvfs(path, statbuf) );
 }
 
 
@@ -1136,7 +1527,7 @@ int fuse_statvfs (const char*      path,
 int fuse_symlink (const char* target,
                   const char* linkname) {
 
-   WRAP( marfs_symlink(target, linkname) );
+   WRAP_PLUS( marfs_symlink(target, linkname) );
 }
 
 
@@ -1144,13 +1535,13 @@ int fuse_symlink (const char* target,
 int fuse_truncate (const char* path,
                    off_t       size) {
 
-   WRAP( marfs_truncate(path, size) );
+   WRAP_PLUS( marfs_truncate(path, size) );
 }
 
 
 int fuse_unlink (const char* path) {
 
-   WRAP( marfs_unlink(path) );
+   WRAP_PLUS( marfs_unlink(path) );
 }
 
 // deprecated in 2.6
@@ -1159,7 +1550,7 @@ int fuse_unlink (const char* path) {
 int fuse_utime(const char*     path,
                struct utimbuf* buf) {   
 
-   WRAP( marfs_utime(path, buf) );
+   WRAP_PLUS( marfs_utime(path, buf) );
 }
 
 // System is giving us timestamps that should be applied to the path.
@@ -1167,7 +1558,7 @@ int fuse_utime(const char*     path,
 int fuse_utimens(const char*           path,
                  const struct timespec tv[2]) {   
 
-   WRAP( marfs_utimens(path, tv) );
+   WRAP_PLUS( marfs_utimens(path, tv) );
 }
 
 
@@ -1247,7 +1638,7 @@ int fuse_create(const char*            path,
                 mode_t                 mode,
                 struct fuse_file_info* ffi) {
 
-   WRAP( marfs_create(path, mode, (MarFS_FileHandle*)ffi->fh) );
+   WRAP_PLUS( marfs_create(path, mode, (MarFS_FileHandle*)ffi->fh) );
 }
 
 
@@ -1258,7 +1649,7 @@ int fuse_fallocate(const char*            path,
                    off_t                  length,
                    struct fuse_file_info* ffi) {
 
-   WRAP( marfs_fallocate(path, mode, offset, length, (MarFS_FileHandle*)ffi->fh) );
+   WRAP_PLUS( marfs_fallocate(path, mode, offset, length, (MarFS_FileHandle*)ffi->fh) );
 }
 
 
@@ -1270,7 +1661,7 @@ int fuse_fgetattr(const char*            path,
                   struct stat*           st,
                   struct fuse_file_info* ffi) {
 
-   WRAP( marfs_fgetattr(path, st, (MarFS_FileHandle*)ffi->fh) );
+   WRAP_PLUS( marfs_fgetattr(path, st, (MarFS_FileHandle*)ffi->fh) );
 }
 
 
