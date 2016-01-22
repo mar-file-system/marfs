@@ -63,7 +63,7 @@ parser: parse_dir
 
 	@ echo; echo "#-- running confpars with $(BLUEPRINT)"
 	@ # (cd $(PARSE_DIR); ./confpars $(BLUEPRINT); echo 0 )
-	(cd $(PARSE_DIR); ./confpars $(BLUEPRINT) )
+	(cd $(PARSE_DIR); mkdir -p parse-inc; ./confpars $(BLUEPRINT) )
 
 	@ echo; echo "#-- making datapars"
 	@ # $(MAKE) -C $(PARSE_DIR) datapars-d   [fails]
