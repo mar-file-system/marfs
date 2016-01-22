@@ -1,0 +1,48 @@
+#!/bin/bash
+
+if (( $# != 2 )); then
+   echo "Usage $0 <fname> <make_auth_required>"
+   echo
+   echo "If <make_auth_required> is non-zero, use proxy1"
+   echo "Otherwise, use proxy2"
+   exit 1
+fi
+
+FILE=$1
+AUTH=$2
+
+if (( AUTH )); then
+    PROX=proxy1
+else
+    PROX=proxy2
+fi
+
+
+
+# get old marfs obj-ID
+URL=`attr -q -g marfs_objid $FILE 2> /dev/null`
+if [[ -z "$URL" ]]; then
+    echo "No marfs_objid for $FILE"
+    exit 0
+fi
+
+# update with appropriate proxy-name
+NEW_URL=`echo $URL | sed -re "s/proxy([^/]*)\//$PROX\//"`
+
+
+# # DEBUGGING
+# echo "file: $FILE"
+# echo "auth: $AUTH"
+# echo "prox: $PROX"
+# echo "old:  $URL"
+# echo "new:  $NEW_URL"
+# exit 0
+
+
+# install retrofitted obj-ID
+attr -q -s marfs_objid -V $NEW_URL $FILE 2> /dev/null
+if (( $? )); then
+    echo "Couldn't update marfs_objid for $FILE"
+    exit 1
+fi
+
