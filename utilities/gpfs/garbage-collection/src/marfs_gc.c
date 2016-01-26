@@ -108,6 +108,7 @@ int main(int argc, char **argv) {
    unsigned int fileset_count = 1;
    extern char *optarg;
    unsigned int time_threshold_sec=0;
+   unsigned int delete_flag = 0;
  
    Fileset_Info *fileset_info_ptr;
 
@@ -116,13 +117,14 @@ int main(int argc, char **argv) {
    else
       ProgName++;
 
-   while ((c=getopt(argc,argv,"d:t:p:ho:u:")) != EOF) {
+   while ((c=getopt(argc,argv,"d:t:p:hno:u:")) != EOF) {
       switch (c) {
          case 'd': rdir = optarg; break;
          case 'o': outf = optarg; break;
          case 't': time_threshold_sec=atoi(optarg) * DAY_SECONDS; break;
          case 'p': packed_log = optarg; break;
          case 'u': aws_user_name = optarg; break;
+         case 'n': delete_flag = 1; break;
          case 'h': print_usage();
          default:
             exit(0);
@@ -169,6 +171,7 @@ int main(int argc, char **argv) {
    file_status->packedfd = fopen(packed_log, "w");
    strcpy(file_status->packed_filename, packed_log);
    file_status->is_packed=0;
+   file_status->no_delete = delete_flag;
 
    // Configure aws for user specified on command line
    aws_read_config(aws_user_name);
@@ -202,7 +205,8 @@ Name: print_usage
 void print_usage()
 {
    fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file -u aws_user_name\
- [-p packed_tmp_file] [-t time_threshold-days] [-h] \n\n",ProgName);
+ [-p packed_tmp_file] [-t time_threshold-days] [-n] [-h] \n\n",ProgName);
+   fprintf(stderr, "where -n = no delete and -h = help\n\n");
 }
 
 
@@ -640,7 +644,8 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
             return_value = -1;
          }
          else {
-            fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
+            if (!file_info_ptr->no_delete)
+               fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
          }
       } 
    }
@@ -655,7 +660,8 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
          return_value = -1;
       }
       else {
-         fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
+         if (!file_info_ptr->no_delete)
+            fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
       }
    }
    // Need to implement semi-direct here.  In this case the obj_type will not
@@ -668,6 +674,9 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
    // Only delete if no error deleting object
    if (!return_value) {
       delete_file(md_path_ptr, file_info_ptr); 
+   }
+   else {
+      fprintf(file_info_ptr->outfd, "Object error no file deletion of %s\n", md_path_ptr);
    }
    return(return_value);
 }
@@ -692,13 +701,25 @@ int delete_object(char *object,
    s3_set_bucket(pre_ptr->bucket);
    
    if ( is_multi )
-      s3_return = s3_delete( obj_buffer, object );
+      // Check if no delete just print to log
+      if ( file_info_ptr->no_delete )
+         fprintf(file_info_ptr->outfd,"ID'd multi object %s\n", object);
+      // else delete object
+      else 
+         s3_return = s3_delete( obj_buffer, object );
    else 
-      s3_return = s3_delete( obj_buffer, pre_ptr->objid );
+      // Check if no delete just print to log
+      if ( file_info_ptr->no_delete )
+         fprintf(file_info_ptr->outfd,"ID' uni object %s\n", pre_ptr->objid);
+      // else delete object
+      else 
+         s3_return = s3_delete( obj_buffer, pre_ptr->objid );
       
-   return_val=check_S3_error(s3_return, obj_buffer, S3_DELETE);
+   if ( file_info_ptr->no_delete )
+      return_val = 0;
+   else 
+      return_val=check_S3_error(s3_return, obj_buffer, S3_DELETE);
    return(return_val);
-
 }
 
 /***************************************************************************** 
@@ -712,7 +733,15 @@ int delete_file(char *filename, File_Info *file_info_ptr)
    char path_file[MARFS_MAX_MD_PATH];
    sprintf(path_file,"%s.path",filename);
    print_current_time(file_info_ptr);
+  
+   // Check if no_delete option so that no files or objects deleted 
+   if (file_info_ptr->no_delete) {
+      fprintf(file_info_ptr->outfd,"ID'd file %s\n", filename);
+      fprintf(file_info_ptr->outfd,"ID'd path file %s\n", path_file);
+      return(return_value);
+   }
 
+   // Delete files
    if ((unlink(filename) == -1)) {
       fprintf(file_info_ptr->outfd,"Error removing file %s\n",filename);
       return_value = -1;
