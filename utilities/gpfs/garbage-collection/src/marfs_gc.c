@@ -542,6 +542,7 @@ int read_inodes(const char *fnameP,
                         //fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
                         str_2_pre(pre, xattr_ptr->xattr_value, st);
 
+                        check_security_access(pre);
                         update_pre(pre);
 
 
@@ -943,3 +944,35 @@ int read_config_gc(Fileset_Info *fileset_info_ptr)
       return(0);
    }
 }
+void check_security_access(MarFS_XattrPre *pre)
+{
+   if (pre->repo->security_method == SECURITYMETHOD_HTTP_DIGEST)
+      s3_http_digest(1);
+
+   if (pre->repo->access_method == ACCESSMETHOD_S3_EMC) {
+      s3_enable_EMC_extensions(1);
+
+      // For now if we're using HTTPS, I'm just assuming that it is without
+      // validating the SSL certificate (curl's -k or --insecure flags). If
+      // we ever get a validated certificate, we will want to put a flag
+      // into the MarFS_Repo struct that says it's validated or not.
+      if (pre->repo->ssl ) {
+         s3_https( 1 );
+         s3_https_insecure( 1 );
+       }
+   }
+   else if (pre->repo->access_method == ACCESSMETHOD_SPROXYD) {
+      s3_enable_Scality_extensions(1);
+      s3_sproxyd(1);
+
+      // For now if we're using HTTPS, I'm just assuming that it is without
+      // validating the SSL certificate (curl's -k or --insecure flags). If
+      // we ever get a validated certificate, we will want to put a flag
+      // into the MarFS_Repo struct that says it's validated or not.
+      if (pre->repo->ssl ) {
+         s3_https( 1 );
+         s3_https_insecure( 1 );
+      }
+   }
+}
+
