@@ -118,6 +118,7 @@ typedef struct File_Info {
    FILE *packedfd;
    char packed_filename[TMP_LOCAL_FILE_LEN];
    unsigned int is_packed;
+   unsigned int no_delete;
 } File_Info;
 
 
