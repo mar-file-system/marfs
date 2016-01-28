@@ -151,7 +151,7 @@ typedef enum {
 typedef uint16_t OSFlags_t;
 
 // These are all the OSFlags that imply that errors happened on an open
-// stream, so stream_sync() should take note
+// stream, so stream_sync()/marfs_release() should take note
 #define OSF_ERRORS (OSF_TIMEOUT | OSF_TIMEOUT_K)
 
 

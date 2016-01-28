@@ -757,7 +757,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
    //     can't possibly have the correct inode in their object-ID, in all
    //     cases.  But we don't want them to have all-zeros, either, because
    //     then they wouldn't be reliably-unique.  Therefore, they are built
-   //     with an indoe from one of their members, but it won't match the
+   //     with an inode from one of their members, but it won't match the
    //     inode of the others.
    if (st
        && (md_inode != st->st_ino)

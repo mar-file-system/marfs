@@ -74,18 +74,21 @@ OF SUCH DAMAGE.
 #include "marfs_base.h"
 #include "marfs_ops.h"
 
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <attr/xattr.h>
 #include <dirent.h>
-#include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
 #include <utime.h>              /* for deprecated marfs_utime() */
 #include <stdio.h>
 #include <time.h>
+
+// syscall(2) manpage says do this
+#define _GNU_SOURCE
+#include <unistd.h>
 #include <sys/syscall.h>
+#include <sys/types.h>
 
 // #include "marfs_fuse.h"
 #define FUSE_USE_VERSION 26
