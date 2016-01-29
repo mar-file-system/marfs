@@ -118,6 +118,7 @@ typedef struct File_Info {
    FILE *packedfd;
    char packed_filename[TMP_LOCAL_FILE_LEN];
    unsigned int is_packed;
+   unsigned int no_delete;
 } File_Info;
 
 
@@ -155,5 +156,6 @@ int process_packed(File_Info *file_info_ptr);
 void print_current_time(File_Info *file_info_ptr);
 int check_S3_error(CURLcode curl_return, IOBuf *s3_buf, int action);
 int read_config_gc(Fileset_Info *fileset_info_ptr);
+void check_security_access(MarFS_XattrPre *pre);
 #endif
 
