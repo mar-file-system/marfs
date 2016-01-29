@@ -251,18 +251,11 @@ ifdef SPINLOCKS
 endif
 
 
-# if STATIC_CONFIG is defined, use the old jti static-config.
-# Otherwise, link with the config-reader library.
-ifdef STATIC_CONFIG
-	DEFS      += STATIC_CONFIG
-	OBJS      += marfs_base_static_config.o
-	H         += marfs_base_static_config.h
-else
-	CFLAGS    += -I$(CONFIG)
-	LDFLAGS   += -L$(CONFIG)
-	LIBS      += -lconfig
-	FUSE_DEPS += $(CONFIG)/libconfig.a
-endif
+# link with the config-reader library.
+CFLAGS    += -I$(CONFIG)
+LDFLAGS   += -L$(CONFIG)
+LIBS      += -lconfig
+FUSE_DEPS += $(CONFIG)/libconfig.a
 
 
 # If we are building the 'lib' targets for others (e.g. pftool, GC, quota,
@@ -402,9 +395,6 @@ gprof: fuse.gprof
 grind: fuse.grind
 
 
-# e.g. 'make dbg.static'
-%.static:
-	@ $(MAKE) $* STATIC_CONFIG=1
 
 
 # --- specialized builds

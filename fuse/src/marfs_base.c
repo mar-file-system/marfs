@@ -82,44 +82,6 @@ OF SUCH DAMAGE.
 
 
 // ---------------------------------------------------------------------------
-// translations from strings used in config-files
-// ---------------------------------------------------------------------------
-
-// const char*   obj_type_name(MarFS_ObjType type) {
-//    switch (type) {
-//    case OBJ_UNI:     return "uni";
-//    case OBJ_MULTI:   return "multi";
-//    case OBJ_PACKED:  return "packed";
-//    case OBJ_STRIPED: return "striped";
-//    case OBJ_NONE:    return "none";
-// 
-//    default:
-//       LOG(LOG_ERR, "Unrecognized obj_type: %u\n", type);
-//       exit(1);
-//    }
-// }
-
-MarFS_ObjType lookup_obj_type(const char* token) {
-   if      (! strcmp(token, "none"))     return OBJ_NONE;
-   else if (! strcmp(token, "uni"))      return OBJ_UNI;
-   else if (! strcmp(token, "multi"))    return OBJ_MULTI;
-   else if (! strcmp(token, "packed"))   return OBJ_PACKED;
-   else if (! strcmp(token, "striped"))  return OBJ_STRIPED;
-
-   LOG(LOG_ERR, "Unrecognized obj_type: %s\n", token);
-   exit(1);
-}
-
-// When parsing a config file, translate strings representing
-// correction-methods, into the corresponding enum.
-CorrectionMethod lookup_correction(const char* token) {
-   if      (! strcmp(token, "none"))     return CORRECT_NONE;
-
-   LOG(LOG_ERR, "Unrecognized correction_method: %s\n", token);
-   exit(1);
-}
-
-// ---------------------------------------------------------------------------
 // translations to/from strings used in obj-ids
 // ---------------------------------------------------------------------------
 
@@ -142,21 +104,23 @@ CorrectionMethod lookup_correction(const char* token) {
    }
 
 
-// encode_obj_type() / decode_obj_type()
+// --- encode_obj_type() / decode_obj_type()
 DEFINE_ENCODE(obj_type, MarFS_ObjType, "_UMPSFN");
 DEFINE_DECODE(obj_type, MarFS_ObjType);
 
-// encode_compression() / decode_compression()
-DEFINE_ENCODE(compression, CompressionMethod, "_R");
-DEFINE_DECODE(compression, CompressionMethod);
+// --- encode_compression() / decode_compression()
+// DEFINE_ENCODE(compression, MarFS_CompType, "_R");
+DEFINE_ENCODE(compression, MarFS_CompType, "_");
+DEFINE_DECODE(compression, MarFS_CompType);
 
-// encode_correction() / decode_correction()
-DEFINE_ENCODE(correction, CorrectionMethod, "_CKHRE");
-DEFINE_DECODE(correction, CorrectionMethod);
+// --- encode_correction() / decode_correction()
+// DEFINE_ENCODE(correction, MarFS_CorrectType, "_CKHRE");
+DEFINE_ENCODE(correction, MarFS_CorrectType, "_");
+DEFINE_DECODE(correction, MarFS_CorrectType);
 
-// encode_encryption() / decode_encryption()
-DEFINE_ENCODE(encryption, EncryptionMethod, "_");
-DEFINE_DECODE(encryption, EncryptionMethod);
+// --- encode_encryption() / decode_encryption()
+DEFINE_ENCODE(encryption, MarFS_EncryptType, "_");
+DEFINE_DECODE(encryption, MarFS_EncryptType);
 
 
 // NOTE: <src> and <dest> can be the same

@@ -176,16 +176,14 @@ extern "C" {
 //
 //   /
 //
-//   <object_type>            { _=NONE, Uni, Multi, Packed, Striped, Fuse }
-//   <compress>               { _=NONE, Run_length }
-//   <correct>                { _=NONE, cRc, checKsum, Hash, Rais, Erasure }
-//   <encrypt>                { _=NONE, ? }
+//   <object_type>            { NONE, Uni, Multi, Packed, Striped, Fuse }
+//   <compress>               { NONE }
+//   <correct>                { NONE }  (TBD?:  cRc, checKsum, Hash, RAID, Erasure)
+//   <encrypt>                { NONE }
 //   /inode.<inode>           [64-bits as 16 hex digits]
 //   /obj_ctime.<obj_ctime>   [see MARFS_DATE_FORMAT]
 //   /md_ctime.<md_ctime>     [see MARFS_DATE_FORMAT]
-//   /ns.<namespace>
-//   
-//   /mdfs<MDFS_path>
+
 
 #define NON_SLASH           "%[^/]"
 #define NON_DOT             "%[^./]"
@@ -229,19 +227,13 @@ extern "C" {
 
 
 
-#ifdef STATIC_CONFIG
-# include "marfs_base_static_config.h"
-
-#else
 # include "marfs_configuration.h"
-typedef MarFS_CompType      CompressionMethod;
+
+
+// types for correction/encryption info, encoded into obj-iDs
+// These would be e.g. the encryption-key, itself (?)
 typedef uint64_t            CorrectInfo;
-typedef MarFS_CorrectType   CorrectionMethod;
 typedef uint64_t            EncryptInfo;
-typedef MarFS_SecType       MarFSAuthMethod; // new config confused re encrypt vs auth
-typedef MarFS_SecType       EncryptionMethod;
-#define CORRECT_NONE        CORRECTTYPE_NONE;
-#endif
 
 
 // some things can't be done in common/configuration/src
@@ -416,9 +408,9 @@ typedef struct MarFS_XattrPre {
    MarFS_ObjType      obj_type;     // This will only be { Packed, Fuse, Nto1, or None }
                                     // see XattrPost for final correct type of object
 
-   CompressionMethod  compression;  // in addition to erasure-coding
-   CorrectionMethod   correction;   // (e.g. CRC/checksum/etc.)
-   EncryptionMethod   encryption;   // data-encryption (e.g. sha-256)
+   MarFS_CompType     compression;  // in addition to erasure-coding
+   MarFS_CorrectType  correction;   // (e.g. CRC/checksum/etc.)
+   MarFS_EncryptType  encryption;   // data-encryption (e.g. sha-256)
 
    ino_t              md_inode;
    time_t             md_ctime;

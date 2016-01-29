@@ -63,8 +63,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 int main( int argc, char *argv[] ) {
 
-  char sectype_code = '_';
-  MarFS_SecType marfs_sectype;
+  char enctype_code = '_';
+  MarFS_EncryptType marfs_enctype;
   char compType_code = '_';
   MarFS_CompType marfs_comptype;
   char comptype_code = '_';
@@ -112,22 +112,22 @@ int main( int argc, char *argv[] ) {
   fprintf( stdout, "\n" );
 
 
-  if ( lookup_sectype( "none", &marfs_sectype )) {
-    fprintf( stderr, "ERROR: Invalid sectype value of \"%s\".\n", "none" );
+  if ( lookup_enctype( "none", &marfs_enctype )) {
+    fprintf( stderr, "ERROR: Invalid enctype value of \"%s\".\n", "none" );
   } else {
-    fprintf( stdout, "CORRECT: SecType value of \"%s\" translates to %d.\n", "none", marfs_sectype );
+    fprintf( stdout, "CORRECT: EncryptType value of \"%s\" translates to %d.\n", "none", marfs_enctype );
   }
 
-  if ( encode_sectype( SECTYPE_NONE, &code )) {
-    fprintf( stderr, "ERROR: Invalid enumeration value of %d.\n", SECTYPE_NONE );
+  if ( encode_enctype( ENCRYPTTYPE_NONE, &code )) {
+    fprintf( stderr, "ERROR: Invalid enumeration value of %d.\n", ENCRYPTTYPE_NONE );
   } else {
-    fprintf( stdout, "CORRECT: Encode value of %d is \"%c\".\n", SECTYPE_NONE, code );
+    fprintf( stdout, "CORRECT: Encode value of %d is \"%c\".\n", ENCRYPTTYPE_NONE, code );
   }
 
-  if ( decode_sectype( '_', &marfs_sectype )) {
+  if ( decode_enctype( '_', &marfs_enctype )) {
     fprintf( stderr, "ERROR: Invalid code of \"%c\".\n", '_' );
   } else {
-    fprintf( stdout, "CORRECT: Decode code of \"%c\" is %d.\n", '_',marfs_sectype ); 
+    fprintf( stdout, "CORRECT: Decode code of \"%c\" is %d.\n", '_',marfs_enctype ); 
   }
 
   fprintf( stdout, "\n" );

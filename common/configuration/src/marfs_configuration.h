@@ -125,6 +125,8 @@ typedef enum {
 extern int lookup_boolean( const char* str, MarFS_Bool *enumeration );
 
 
+// ...........................................................................
+
 // co-maintain with accessmethod_str[], in marfs_configuration.c
 typedef enum {
    ACCESSMETHOD_DIRECT = 0,            // data stored directly into MD files
@@ -142,6 +144,7 @@ extern int         lookup_accessmethod( const char* str, MarFS_AccessMethod *enu
 extern const char* accessmethod_string( MarFS_AccessMethod method );
 
 
+// ...........................................................................
 
 // co-maintain with securitymethod_str[], in marfs_configuration.c
 typedef enum {
@@ -156,34 +159,35 @@ extern int         lookup_securitymethod( const char* str, MarFS_SecurityMethod 
 extern const char* securitymethod_string( MarFS_SecurityMethod method );
 
 
+// ...........................................................................
 /*
  * These types are used in xattrs, so they need corresponding "lookup"
  * functions to convert strings to enumeration values.
  */
 
 typedef enum {
-   SECTYPE_NONE = 0,
-} MarFS_SecType;
-
-/*
- * I don't know why we have this type yet, so it may be deleted. @@@
- */
-
-typedef unsigned long long SecTypeInfo;  // e.g. encryption key (doesn't go into object-ID)
-
-typedef enum {
    COMPTYPE_NONE = 0,
 } MarFS_CompType;
+
 
 typedef enum {
    CORRECTTYPE_NONE = 0,
 } MarFS_CorrectType;
 
-/*
- * I don't know why we have this type yet, so it may be deleted. @@@
- */
+// // this type is for per-object correction-values, stored in obj-ID
+// // It is now maintained in marfs_base.{c,h}
+// typedef uint64_t CorrectTypeInfo;  // e.g. checksum
 
-typedef unsigned long long CorrectTypeInfo;  // e.g. checksum
+
+typedef enum {
+   ENCRYPTTYPE_NONE = 0,
+} MarFS_EncryptType;
+
+// // this type is for per-object -values, stored in obj-ID
+// // It is now maintained in marfs_base.{c,h}
+// typedef uint64_t EncryptTypeInfo;  // e.g. encryption key (doesn't go into object-ID)
+
+
 
 
 /*
@@ -208,10 +212,6 @@ typedef unsigned long long CorrectTypeInfo;  // e.g. checksum
  * to the enumeration for that code and 0 (zero) is returned.
  */
 
-extern int lookup_sectype( const char* str, MarFS_SecType *enumeration );
-extern int encode_sectype( MarFS_SecType enumeration, char *code );
-extern int decode_sectype( char code, MarFS_SecType *enumeration );
-
 extern int lookup_comptype( const char* str, MarFS_CompType *enumeration );
 extern int encode_comptype( MarFS_CompType enumeration, char *code );
 extern int decode_comptype( char code, MarFS_CompType *enumeration );
@@ -219,6 +219,13 @@ extern int decode_comptype( char code, MarFS_CompType *enumeration );
 extern int lookup_correcttype( const char* str, MarFS_CorrectType *enumeration );
 extern int encode_correcttype( MarFS_CorrectType enumeration, char *code );
 extern int decode_correcttype( char code, MarFS_CorrectType *enumeration );
+
+extern int lookup_enctype( const char* str, MarFS_EncryptType *enumeration );
+extern int encode_enctype( MarFS_EncryptType enumeration, char *code );
+extern int decode_enctype( char code, MarFS_EncryptType *enumeration );
+
+
+
 
 /*
  * We may not need this repository flags stuff if we strictly follow
@@ -241,18 +248,26 @@ typedef uint8_t  MarFS_RepoFlagsType;
  *
  * (a) Access to the object-side storage is (partly) mediated by access to
  * the metadata filesystem.  The POSIX permissions on a metadata file
- * control access to the underlying data.  For example:
+ * control access to the underlying data.  For example, given the following
+ * permissions on a metadata file, the corresponding marfs data can only be
+ * overwritten by user jti.
+ *
+ *   -rw-r--r--. 1 jti jti 5 Jan 28 09:52 /gpfs/marfs-gpfs/jti/mdfs/test_20160128_095227.30
  * 
- * (b) However, in addition there are ExtraPerms which allow users to be
- * given per-file read/write access to data/metadata.
+ * (b) However, in addition there are iPerms and bPerms which allow broad
+ * controls to be imposed on top of an entire namespace (for interactive or
+ * batch accesses, respectively).  These controls are specified in the
+ * configuration, and apply to all files in a given namespace.  So, for
+ * example, all users could be shut out from writing metadata.  That would
+ * mean no chmod/chown/rename/create/delete/etc.
  * 
- * RD = read  DATA
- * WD = write
- * TD = truncate
- * UD = unlink
+ *   RD = read  DATA
+ *   WD = write
+ *   TD = truncate
+ *   UD = unlink
  * 
- * RM = read  METADATA
- * WM = write
+ *   RM = read  METADATA
+ *   WM = write
  * 
  * There is additional security on the object-side, so that users who gain
  * access to object data for one file can not access or delete that object
@@ -295,7 +310,7 @@ typedef struct marfs_repo {
    size_t                max_get_size; // use 0 for unconstrained
    size_t                pack_size;
    MarFS_SecurityMethod  security_method;
-   MarFS_SecType         sec_type;
+   MarFS_EncryptType     enc_type;
    MarFS_CompType        comp_type;
    MarFS_CorrectType     correct_type;
    char                 *online_cmds;
