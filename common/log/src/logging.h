@@ -5,6 +5,7 @@
 #include <syslog.h>             // we always need priority-names
 #include <unistd.h>             // ssize_t
 #include <stdarg.h>             // va_arg
+#include <pthread.h>            // pthread_self()
 
 #include <stdio.h>
 
@@ -28,7 +29,9 @@ extern "C" {
 #  define LOG_PREFIX  "marfs_fuse"
 #endif
 
-#define xFMT  " [%s:%4d]%*s %-21s | %s"
+/// // without pthread_self()
+/// #define xFMT  " [%s:%4d]%*s %-21s | %s"
+#define xFMT  " %08x %s:%-4d%*s %-21.21s | %s"
 
 
 #ifdef USE_SYSLOG
@@ -37,8 +40,11 @@ extern "C" {
 #  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PID, LOG_USER)
 
 #  define LOG(PRIO, FMT, ...)                                           \
-   syslog((PRIO), xFMT FMT, __FILE__, __LINE__,                         \
-          17-(int)strlen(__FILE__), "", __FUNCTION__,                   \
+   syslog((PRIO), xFMT FMT,                                             \
+          (unsigned int)pthread_self(),                                 \
+          __FILE__, __LINE__,                                           \
+          17-(int)strlen(__FILE__), "",                                 \
+          __FUNCTION__,                                                 \
           (((PRIO)<=LOG_ERR) ? "#ERR " : ""), ## __VA_ARGS__)
 
 #elif (defined USE_STDOUT)
@@ -47,8 +53,11 @@ extern "C" {
 #  define INIT_LOG()
 
 #  define LOG(PRIO, FMT, ...)                                           \
-   printf_log((PRIO), LOG_PREFIX xFMT FMT, __FILE__, __LINE__,          \
-              17-(int)strlen(__FILE__), "", __FUNCTION__,               \
+   printf_log((PRIO), LOG_PREFIX xFMT FMT,                              \
+              (unsigned int)pthread_self(),                             \
+              __FILE__, __LINE__,                                       \
+              17-(int)strlen(__FILE__), "",                             \
+              __FUNCTION__,                                             \
               (((PRIO)<=LOG_ERR) ? "#ERR " : ""), ## __VA_ARGS__)
 
    ssize_t printf_log(size_t prio, const char* format, ...);

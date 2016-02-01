@@ -922,6 +922,7 @@ int marfs_open(const char*         path,
    // initialize the URL in the ObjectStream, in our FileHandle
    TRY0(update_url, os, info);
 
+
    // To support seek() [for reads], and allow reading at arbitrary
    // offsets, we let marfs_read() determine the offset where it should
    // open, so it can do its own GET, with byte-ranges.  Therefore, for
@@ -1615,7 +1616,6 @@ int marfs_release (const char*        path,
    if (fh->os.flags & OSF_OPEN) {
 
       if (! (fh->os.flags & OSF_ERRORS)) {
-
          if (fh->flags & FH_WRITING) {
             // add final recovery-info, at the tail of the object
             TRY_GE0(write_recoveryinfo, os, info);

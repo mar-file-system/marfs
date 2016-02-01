@@ -397,11 +397,8 @@ static void stringToUpper( char *stringToConvert ) {
  ****************************************************************************/
 static int find_code_index_in_string( char *s, char c, int *index ) {
 
-  char *ptr;
-
-
-  ptr = strchr( s, c );
-  if ( ptr != NULL ) {
+  char *ptr = strchr( s, c );
+  if ( ptr ) {
     *index = ((int) ( ptr - s ));
   } else {
     return -1;
@@ -449,6 +446,26 @@ int lookup_boolean( const char* str, MarFS_Bool *enumeration ) {
 
 /****************************************************************************/
 
+// Find the config-file strings that would corresponding with a given setting.
+static const char* accessmethod_str[] = {
+   "DIRECT",
+   "SEMI_DIRECT",
+   "CDMI",
+   "SPROXYD",
+   "S3",
+   "S3_SCALITY",
+   "S3_EMC",
+   NULL
+};
+const char* accessmethod_string( MarFS_AccessMethod method) {
+   int i;
+   for (i=0; accessmethod_str[i]; ++i) {
+      if (i == method)
+         return accessmethod_str[i];
+   }
+   return NULL;
+}
+
 int lookup_accessmethod( const char* str, MarFS_AccessMethod *enumeration ) {
 
   if ( ! strcasecmp( str, "DIRECT" )) {
@@ -473,27 +490,26 @@ int lookup_accessmethod( const char* str, MarFS_AccessMethod *enumeration ) {
 }
 
 
+
+/****************************************************************************/
+
 // Find the config-file strings that would corresponding with a given setting.
-static const char* accessmethod_str[] = {
-   "DIRECT",
-   "SEMI_DIRECT",
-   "CDMI",
-   "SPROXYD",
-   "S3",
-   "S3_SCALITY",
-   "S3_EMC",
+static const char* securitymethod_str[] = {
+   "NONE",
+   "S3_AWS_USER",
+   "S3_AWS_MASTER",
+   "S3_PER_OBJ",
+   "HTTP_DIGEST",
    NULL
 };
-const char* accessmethod_string( MarFS_AccessMethod method) {
+const char* securitymethod_string( MarFS_SecurityMethod method ) {
    int i;
-   for (i=0; accessmethod_str[i]; ++i) {
+   for (i=0; securitymethod_str[i]; ++i) {
       if (i == method)
-         return accessmethod_str[i];
+         return securitymethod_str[i];
    }
    return NULL;
 }
-
-/****************************************************************************/
 
 int lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration ) {
 
@@ -515,32 +531,14 @@ int lookup_securitymethod( const char* str, MarFS_SecurityMethod *enumeration ) 
 }
 
 
-// Find the config-file strings that would corresponding with a given setting.
-static const char* securitymethod_str[] = {
-   "NONE",
-   "S3_AWS_USER",
-   "S3_AWS_MASTER",
-   "S3_PER_OBJ",
-   "HTTP_DIGEST",
-   NULL
-};
-const char* securitymethod_string( MarFS_SecurityMethod method ) {
-   int i;
-   for (i=0; securitymethod_str[i]; ++i) {
-      if (i == method)
-         return securitymethod_str[i];
-   }
-   return NULL;
-}
-
 /****************************************************************************/
 
-static char sectype_index[] = "_";
+static char enc_type_index[] = "_";
 
-int lookup_sectype( const char* str, MarFS_SecType *enumeration ) {
+int lookup_enctype( const char* str, MarFS_EncryptType *enumeration ) {
 
   if ( ! strcasecmp( str, "NONE" )) {
-    *enumeration = SECTYPE_NONE;
+    *enumeration = ENCRYPTTYPE_NONE;
   } else {
     return -1;
   }
@@ -548,12 +546,12 @@ int lookup_sectype( const char* str, MarFS_SecType *enumeration ) {
   return 0;
 }
 
-int encode_sectype( MarFS_SecType enumeration, char *code ) {
+int encode_enctype( MarFS_EncryptType enumeration, char *code ) {
 
-  if (( enumeration >= SECTYPE_NONE )	&&
-      ( enumeration <= SECTYPE_NONE )) {
+  if (( enumeration >= ENCRYPTTYPE_NONE )	&&
+      ( enumeration <= ENCRYPTTYPE_NONE )) {
 
-    *code = sectype_index[enumeration];
+    *code = enc_type_index[enumeration];
   } else {
     return -1;
   }
@@ -561,13 +559,11 @@ int encode_sectype( MarFS_SecType enumeration, char *code ) {
   return 0;
 }
 
-int decode_sectype( char code, MarFS_SecType *enumeration ) {
+int decode_enctype( char code, MarFS_EncryptType *enumeration ) {
 
   int index;
-
-
-  if ( ! find_code_index_in_string( sectype_index, code, &index )) {
-    *enumeration = (MarFS_SecType) index;
+  if ( ! find_code_index_in_string( enc_type_index, code, &index )) {
+    *enumeration = (MarFS_EncryptType) index;
   } else {
     return -1;
   }
@@ -606,8 +602,6 @@ int encode_comptype( MarFS_CompType enumeration, char *code ) {
 int decode_comptype( char code, MarFS_CompType *enumeration ) {
 
   int index;
-
-
   if ( ! find_code_index_in_string( comptype_index, code, &index )) {
     *enumeration = (MarFS_CompType) index;
   } else {
@@ -659,7 +653,7 @@ int decode_correcttype( char code, MarFS_CorrectType *enumeration ) {
   return 0;
 }
 
-/****************************************************************************/
+
 
 
 /*****************************************************************************
@@ -674,12 +668,9 @@ int decode_correcttype( char code, MarFS_CorrectType *enumeration ) {
  * If none of those are found, NULL is returned.
  ****************************************************************************/
 
-#ifdef TBD
-// Ron's most-recent commits [2015-09-21] use this, but listObjByName() is broken
 
 // new requirement for parseConfigFile [2015-09-23]
 static struct varNameTypeList vNTL;
-#endif
 
 
 
@@ -762,12 +753,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
         return NULL;
      }
      LOG( LOG_INFO, "calling parseConfigFile, with CWD='%s'.\n", STRING(PARSE_DIR));
-#ifdef TBD
+
      // Ron's most-recent commits [2015-09-21] use this, but listObjByName() is broken
      parseConfigFile( path, CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, &vNTL, QUIET );
-#else
-     parseConfigFile( path, CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, QUIET );
-#endif
+
      if (chdir(orig_wd)) {
         LOG( LOG_ERR, "Couldn't restore CWD to '%s'.\n", orig_wd);
         return NULL;
@@ -791,11 +780,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
 
   /* REPOS */
-#ifdef TBD
   repoList = (struct repo **) config->repo;
-#else
-  repoList = (struct repo **) listObjByName( "repo", config );
-#endif
 
   j = 0;
   while ( repoList[j] != (struct repo *) NULL ) {
@@ -927,8 +912,8 @@ static MarFS_Config_Ptr read_configuration_internal() {
       return NULL;
     }
 
-    if ( lookup_sectype( repoList[j]->sec_type, &( marfs_repo_list[j]->sec_type ))) {
-      LOG( LOG_ERR, "Invalid sec_type value of \"%s\".\n", repoList[j]->sec_type );
+    if ( lookup_enctype( repoList[j]->enc_type, &( marfs_repo_list[j]->enc_type ))) {
+      LOG( LOG_ERR, "Invalid enc_type value of \"%s\".\n", repoList[j]->enc_type );
       return NULL;
     }
 
@@ -957,11 +942,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
   /* NAMESPACE */
 
-#ifdef TBD
   namespaceList = (struct namespace **) config->namespace;
-#else
-  namespaceList = (struct namespace **) listObjByName( "namespace", config );
-#endif
 
   j = 0;
   while ( namespaceList[j] != (struct namespace *) NULL ) {
@@ -1115,15 +1096,9 @@ static MarFS_Config_Ptr read_configuration_internal() {
       return NULL;
     }
 
-#ifdef TBD
     marfs_repo_range_list[0]->min_size = atoi( namespaceList[j]->range[0]->min_size );
     marfs_repo_range_list[0]->max_size = atoi( namespaceList[j]->range[0]->max_size );
     marfs_repo_range_list[0]->repo_ptr = find_repo_by_name( namespaceList[j]->range[0]->repo_name );
-#else
-    marfs_repo_range_list[0]->min_size = atoi( namespaceList[j]->min_size );
-    marfs_repo_range_list[0]->max_size = atoi( namespaceList[j]->max_size );
-    marfs_repo_range_list[0]->repo_ptr = find_repo_by_name( namespaceList[j]->repo_name );
-#endif
  */
 
 /*
@@ -1419,7 +1394,7 @@ int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "\tchunk_size       %ld\n",  repo->chunk_size);
    fprintf(stdout, "\tpack_size        %ld\n",  repo->pack_size);
    fprintf(stdout, "\tsecurity_method  %s\n",   securitymethod_string(repo->security_method));
-   fprintf(stdout, "\tsec_type         %d\n",   repo->sec_type);
+   fprintf(stdout, "\tenc_type         %d\n",   repo->enc_type);
    fprintf(stdout, "\tcomp_type        %d\n",   repo->comp_type);
    fprintf(stdout, "\tcorrect_type     %d\n",   repo->correct_type);
    fprintf(stdout, "\tonline_cmds      %s\n",   repo->online_cmds);

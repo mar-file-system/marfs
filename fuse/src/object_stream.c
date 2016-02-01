@@ -1068,7 +1068,6 @@ int stream_sync(ObjectStream* os) {
          }
       }
 
-
       // check whether thread has returned.  Could mean a curl
       // error, an S3 protocol error, or server flaking out.
       LOG(LOG_INFO, "waiting for op-thread\n");
@@ -1078,9 +1077,19 @@ int stream_sync(ObjectStream* os) {
       }
    }
 
-
    // thread has completed
    os->flags |= OSF_JOINED;
+
+   // maybe reduce the number of connections in CLOSE_WAIT, by
+   // resetting connections on timed-out obj-streams.
+   IOBuf*      b   = &os->iob;
+   AWSContext* ctx = b->context;
+   if (ctx->ch) {
+      LOG(LOG_INFO, "resetting connections in curl-handle\n");
+      curl_easy_cleanup(ctx->ch);
+      ctx->ch = NULL;
+   }
+
 
    if ((   os->flags & OSF_READING)
        && (os->op_rc == CURLE_WRITE_ERROR)) {
