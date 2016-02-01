@@ -610,7 +610,7 @@ int read_inodes(const char    *fnameP,
                                                     rec_count, &trash_index, 
                                                     md_path_ptr);
                   if (fileset_trash_index == -1) {
-                     fprintf(stderr, "Error finding .path file for %s", 
+                     fprintf(stderr, "Error finding .path file for %s ", 
                              fileset_stat_ptr->fileset_name);
                      fprintf(stderr, "md_path =%s\n", 
                              md_path_ptr);
