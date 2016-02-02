@@ -109,15 +109,34 @@ extern "C" {
 #  endif
 
 
+// ---------------------------------------------------------------------------
+//                                WARNING
+//
+// If you change any of these constants, you may also need to increment
+// CONFIG_VERS_MINOR/MAJOR.  For example, some of these constants affect
+// the way recovery-info is encoded at the end of objects.  For recovery to
+// be reliable, changes in the structure of per-object-recovery-info need
+// to be reflected in special cases within the parsers, selected via the
+// version-number recorded in the recovery-info.  Similarly, there are
+// defns here that affect the layout of data in xattr strings, which
+// control how MD for a given file is understood, and must be reliably
+// parsed based on version-number.
+//
+// It's possible to make changes that don't require changing the
+// version-number, but be careful with assumptions.
+// ---------------------------------------------------------------------------
+
+
 // Not part of the constrained S3 object-names, so any reasonable number will do
 #define   MARFS_MAX_HOST_SIZE      128
 
 // extern would not be useable in PathInfo.md_path decl, below, and we
 // don't want it dynamically-allocated.  TBD: Be sure the #define is
 // associated with the config version.
-#define   MARFS_MAX_MD_PATH       1024
+#define   MARFS_MAX_MD_PATH       1024 /* path in MDFS */
+#define   MARFS_MAX_NS_PATH       1024 /* path in namespace */
 #define   MARFS_MAX_BUCKET_SIZE     63
-#define   MARFS_MAX_OBJID_SIZE    1024
+#define   MARFS_MAX_OBJID_SIZE     256
 
 // Must fit in an S3 bucket (max 63 chars), with room left for
 // namespace-name.  We also leave room for terminal '\0', because this is
@@ -125,16 +144,16 @@ extern "C" {
 //
 // // #define   MARFS_MAX_REPO_NAME       63
 // #define MARFS_MAX_REPO_NAME        52 /* BUCKET_SIZE - "ver.%03hu_%03hu." */
-#define MARFS_MAX_REPO_NAME         16
+#define   MARFS_MAX_REPO_NAME         16
 
 // Allows us to allocate buffers when parsing objid
 // xattr-values.  If this is going to go into the
 // "bucket" part of the object-ID, then it must fit there, with
 // enough room left over to fit MAX_REPO_NAME
-#define MARFS_MAX_NAMESPACE_NAME   (MARFS_MAX_BUCKET_SIZE - MARFS_MAX_REPO_NAME)
+#define   MARFS_MAX_NAMESPACE_NAME   (MARFS_MAX_BUCKET_SIZE - MARFS_MAX_REPO_NAME)
 
 // "http://.../<bucket>/<objid>"
-#define   MARFS_MAX_URL_SIZE      (128 + MARFS_MAX_BUCKET_SIZE + MARFS_MAX_OBJID_SIZE)
+#define   MARFS_MAX_URL_SIZE         (10 + MARFS_MAX_HOST_SIZE + 2 + MARFS_MAX_BUCKET_SIZE + MARFS_MAX_OBJID_SIZE)
 
 
 
@@ -198,19 +217,54 @@ extern "C" {
 #define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/unq.%hhd/chnksz.%lx/chnkno.%lu"
 #define MARFS_OBJID_WR_FORMAT   "%s/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/unq.%hhd/chnksz.%lx/chnkno.%lu"
 
-
 // #define MARFS_PRE_RD_FORMAT     MARFS_BUCKET_RD_FORMAT "/" MARFS_OBJID_RD_FORMAT  
 #define MARFS_PRE_RD_FORMAT     NON_SLASH "/%s" 
+
+#define MARFS_MAX_PRE_SIZE      (MARFS_MAX_BUCKET_SIZE + 1 + MARFS_MAX_OBJID_SIZE) /* max */
 
 
 
 #define MARFS_POST_FORMAT       "ver.%03hu_%03hu/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/flags.%02hhX/mdfs.%s"
 
-#define MARFS_MAX_POST_STRING_WITHOUT_PATH  256 /* max */
-#define MARFS_MAX_POST_STRING_SIZE          (MARFS_MAX_POST_STRING_WITHOUT_PATH + MARFS_MAX_MD_PATH)
+#define MARFS_MAX_POST_SIZE_WITHOUT_PATH  256 /* max */
+#define MARFS_MAX_POST_SIZE               (MARFS_MAX_POST_SIZE_WITHOUT_PATH + MARFS_MAX_MD_PATH)
 
 
-#define MARFS_REC_INFO_FORMAT   "ver.%03hu_%03hu/inode.%010ld/mode.%08x/uid.%d/gid.%d/mtime.%s/ctime.%s/mdfs.%s"
+// first part of the recovery-info
+// (if you change this, you should also change MARFS_CONFIG_MAJOR/MINOR)
+#define MARFS_REC_HEAD_FORMAT   "HEAD:/rsize.%08d/ver.%03hu_%03hu/dsize.%lu/mode.oct%08o/uid.%d/gid.%d/md_mtime.0x%016lx"
+#define MARFS_REC_HEAD_SIZE     256 /* max */
+
+// last part of the recovery-info
+// (if you change this, you should also change MARFS_CONFIG_MAJOR/MINOR)
+#define MARFS_REC_TAIL_FORMAT   "TAIL:/nfiles.0x%016lx/recoff.0x%016lx"
+#define MARFS_REC_TAIL_SIZE     58 /* incl terminal-null */
+
+
+// This is the part of recovery-info that is written for Uni or Multi, and
+// one of these is written for each Packed file in an object.  This doesn't
+// include the final RECOVERY_INFO_TAIL, written once per-object, at the
+// end of all recovery-info, for Uni, Multi, or Packed.
+#define MARFS_REC_BODY_SIZE                     \
+   (                                            \
+    MARFS_REC_HEAD_SIZE + 1 +                   \
+    MARFS_MAX_PRE_SIZE  + 1 +                   \
+    MARFS_MAX_POST_SIZE + 1 +                   \
+    MARFS_MAX_MD_PATH   + 1                     \
+   )
+
+
+// This is the (max) size of a single recovery-info (e.g. Uni/Multi)
+// including the final tail.  In the case of packed, we'd have many of the
+// "body" units, with a single "tail" unit.
+// 
+#define MARFS_REC_UNI_SIZE                      \
+   (                                            \
+    MARFS_REC_BODY_SIZE +                       \
+    MARFS_REC_TAIL_SIZE + 1                     \
+   )
+
+
 
 // Two files in the trash.  Original MDFS is renamed to the name computed
 // in expand_trash_info().  Then another file with the same name, extended
@@ -294,6 +348,12 @@ int epoch_to_str(char* str, size_t size, const time_t* time);
 int str_to_epoch(time_t* time, const char* str, size_t size);
 
 
+// ---------------------------------------------------------------------------
+// Only used for writing recovery-info
+// ---------------------------------------------------------------------------
+
+int stat_to_str(char* str, size_t size, const struct stat* st);
+int str_to_stat(struct stat* st, const char* str, size_t size);
 
 
 // ---------------------------------------------------------------------------
@@ -397,13 +457,20 @@ int str_to_epoch(time_t* time, const char* str, size_t size);
 //       for files that were created as a result of truncating another file
 //       of the same name, within the same second.
 
+typedef uint8_t PreFlagsType;
+
+typedef enum {
+   PF_UPDATED = 0x01            // old stringifications are obsolete
+} PreFlags;
+
+
 typedef struct MarFS_XattrPre {
 
    const MarFS_Repo*      repo;     // as recorded in an object-ID
    const MarFS_Namespace* ns;       // as recorded in an object-ID
 
-   uint16_t           config_vers_maj;  // version of config that file was written with
-   uint16_t           config_vers_min;
+   ConfigVersType     config_vers_maj;  // version of config that file was written with
+   ConfigVersType     config_vers_min;
 
    MarFS_ObjType      obj_type;     // This will only be { Packed, Fuse, Nto1, or None }
                                     // see XattrPost for final correct type of object
@@ -421,6 +488,7 @@ typedef struct MarFS_XattrPre {
    size_t             chunk_no;     // 0-based number of current chunk (object)
 
    // uint16_t           shard;        // TBD: for hashing directories across shard-nodes
+   PreFlagsType       flags;
 
    // for randomized IP-addresses in configurations with host_count > 1
    unsigned int       seed;         // for randomization of hosts
@@ -490,8 +558,8 @@ typedef uint8_t  PostFlagsType;
 
 
 typedef struct MarFS_XattrPost {
-   uint16_t           config_vers_maj; // redundant w/ config_vers in Pre?
-   uint16_t           config_vers_min; // redundant w/ config_vers in Pre?
+   ConfigVersType     config_vers_maj; // redundant w/ config_vers in Pre?
+   ConfigVersType     config_vers_min; // redundant w/ config_vers in Pre?
    MarFS_ObjType      obj_type;      // type of storage
    size_t             obj_offset;    // offset of file in the obj (Packed)
    CorrectInfo        correct_info;  // correctness info  (e.g. the computed checksum)
@@ -505,7 +573,7 @@ typedef struct MarFS_XattrPost {
 
 
 // from MarFS_XattrPost to string
-int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post, MarFS_Repo* repo);
+int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post, const MarFS_Repo* repo, int add_md_path);
 
 // from string to MarFS_XattrPost
 int str_2_post(MarFS_XattrPost* post, const char* post_str); // from string
@@ -518,8 +586,8 @@ int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo);
 // TBD: "Shard" will be used to redirect directory paths via hashing to a
 // set of shards for each directory.
 typedef struct MarFS_XattrShard {
-   uint16_t              config_vers_maj;
-   uint16_t              config_vers_min;
+   ConfigVersType     config_vers_maj;
+   ConfigVersType     config_vers_min;
    // TBD ...
 } MarFS_XattrShard;
 
@@ -534,43 +602,221 @@ int str_2_shard(MarFS_XattrShard* shard, const char* shard_str); // from string
 
 
 
+#if 0
+// COMMENTED OUT.  The RecoveryInfo structure is not used during writing of
+// recovery-info.  For that, see write_recoveryinfo(), in common.c.
+//
+// We don't yet support actually reading recovery-info.  During recovery,
+// we would want to quickly load the stored recovery-info into a struct.
+// We might only be looking to recover files with specific metadata
+// properties.  This structure would be used for that purpose.
+
+
+
 // ---------------------------------------------------------------------------
 // RecoveryInfo
 //
-// This is a record that has information mostly from stat() of the metadata
-// file in human-readable form.  This thing is written directly into the
-// object itself.
+// We capture some metadata info at file-creation time, and store it in the
+// object-store, along with the user data.  The purpose is to allow
+// regeneration of the key metadata associated with a user's file, should
+// the MDFS be damaged or destroyed.  This is only information as it
+// existed at creation-time; it isn't maintained during
+// chmod/chown/rename/etc.
 //
-// This is recovery information captured at create time only; it is not
-// updated upon metadata changes like chmod, chown, rename, etc.
-// Therefore, yes, it is probably out-of-date.  It's purpose is to allow
-// regenerating some semblance of the MDFS, using only the contents of
-// objects, in the event of a catastrophic meltdown of the MDFS.
+// Recovery-info is currently meant to be human-readable, so it's all just
+// ASCII text.  Someday, we can consider optimizing storage of this data
+// (and potentially recovery), by saving it in a binary format (e.g. a
+// formatted set of network-byte-order values.  In order to avoid any
+// dependence on compiler-versions, to determine the specific layout or
+// size of the recovery-info, we write it all by hand, in
+// write_recoveryinfo().
+//
+// PACKED objects keep their per-object recovery-info at the tail of their
+// local data, within in the larger object, when they are packed together.
+// (i.e. [data1][recovery1][packed2][recovery2]...)  This allows packing to
+// be done without any reprocessing of the recovery info for the packed
+// objects, which remains correct.
+//
+// Recovery-information is captured at create-time; it is not updated upon
+// metadata changes like chmod, chown, rename, etc.  Therefore, yes, it is
+// probably out-of-date.  Its purpose is to allow regenerating some
+// semblance of the MDFS, using only the contents of objects, in the event
+// of a catastrophic meltdown of the MDFS.  It would be disastrous
+// performance implications to try to maintain it, after creation.
+//
+//
+// TBD:
+//
+// We don't actually have any support in place for reading recovery-info
+// from objects.  When we do, this structure would be populated with data
+// retrieved from the recovery-info in an object.
+//
+// We don't necessarily want to go to the expense of parsing the PRE and
+// POST xattr strings into Pre and Post structs (e.g. if we only want to
+// restore certain pathnames, then we only need that parsing after we've
+// found a matching pathname.
+//
+// So, there would probably be two levels of operation for this struct:
+//
+// (a) capture the strings from the recovery info, without any
+//     dynamic-allocation (e.g. just using the buffer holding recovery-info
+//     you got form the object.
+//
+// (b) parse out and initalize Pre, Post, and stat structs, from this info.
+//
+//
+// FORMAT:
+//
+// // Our goal is to write a fixed size of data, in a format we can read-back,
+// // regardless of compiler or compiler-version.  The data is the members of
+// // the RecoveryInfo struct, each converted to network-byte-order.  The
+// // actual struct generated by the compiler may involve some alignment
+// // padding, but padding and (therefore) the size of the struct could change
+// // between compilers, or compiler versions.  So, we don't want to just write
+// // the serialized structure contents (because they would be byte-order
+// // specific), nor even all the fields as individual network-byte-order
+// // values (because the padding might be compiler-specific).
+// //
+// // Therefore, we define a static size which is big enough to store all the
+// // members of the struct, and we save them out as a series of
+// // correctly-sized, unaligned, network-byte-order bytes, filling that size.
+// // We put our own padding at a known spot in the middle.  (See
+// // recoveryinfo_2_str(), and str_2_recoveryinfo().)
+// //
+// // We also need a fixed size that this storage will require, so that
+// // e.g. marfs_write() can reserve exactly the proper number of bytes at the
+// // tail-end of an object-stream, such that the addition of the RecoveryInfo
+// // will fill up the object to exactly Repo.chunk_size, specified in the
+// // configuration.
+// //
+// // We need known values to appear at the very beginning and the very end of
+// // the stored data (i.e. version-numbers at the beginning, and data-sizes
+// // at the very end), as explained in the RECOVERY section.
+// //
+// // The simplest thing is to use sizeof(RecoveryInfo) as the criteria for
+// // how much storage is needed, though the objects may actually take up
+// // less, and insert our own custom padding in a way that doesn't depend on
+// // the compiler's layout of structs.
+//
+//
+// RECOVERY:
+//
+// In the event that metadata is lost, we can recover it in a limited way
+// (MD as it existed at the time objects were written), as follows:
+//
+//   (a) Read the last 8 bytes of data in the object. This holds the size
+//       of the RecoveryInfo.
+//
+//   (b) Read the next-to-last 8 bytes of data.  This holds the size of the
+//       data itself (not counting RecoveryInfo).
+//
+//   (c) Skip to the beginning of the recovery-info.  This points to stored
+//       software version numbers.  Call str_2_recoveryinfo().  This will
+//       use the version-numbers to understand how to recover the rest of
+//       the stored recovery-info into a RecoveryInfo struct.
+//
+//   (d) Skip to the beginning of the data.  (Using info from step (b).)
+//       You can now generate metadata for this object, using the
+//       RecoveryInfo.
+//
+//   (e) If this is a packed object, step (d) might not have moved all the
+//       way to the beginning of the object-data.  In that case, go to step
+//       (a), again.
+//    
 //
 // NOTE: Now that we are using Scality sproxyd, we have the further problem
 //     that you can't easily get a list of "all existing objects".
 //     Instead, you'd have to do some grovelling through low-level scality
 //     metadata.  But you could do that.
+//
+// NOTE:  We actually save the object-ID.  Why?  Presumably, if you can read
+//     the recovery-info out of the object, then you already have the object-ID, right?
+//     In some object-systems (e.g. sproxyd), the user-level object-ID is hashed (etc)
+//     to produce the internal key, which is the ID used internally.  Our object-IDs
+//     encode some information
+//
+//
+
 // ---------------------------------------------------------------------------
 
+// We're "hardcoding" the types, to guarantee we know how big each member
+// is.  Shouldn't be a problem if this size is larger than the size your
+// compiler uses for the corresponding type (e.g. gid_t), as long as you
+// aren't trying to recover (e.g.) an inode on a machine that says inode_t
+// is 32-bits, where the recovery-info actually has more than 32
+// significant digits.
+//
+// *** WARNING: If you change any of these, you MUST also change
+// MARFS_CONFIG_MAJOR/MINOR, in marfs_configuration.h, and the
+// recoveryinf_2_str() / str_2_recoveryinfo() functions, to handle the new
+// version.
+//
 typedef struct {
-   uint16_t config_vers_maj;
-   uint16_t config_vers_min;
-   ino_t    inode;
-   mode_t   mode;
-   uid_t    uid;
-   gid_t    gid;
-   time_t   mtime;
-   time_t   ctime;
-   char     mdfs_path[MARFS_MAX_MD_PATH]; // full path in the MDFS
-   char     post[MARFS_MAX_POST_STRING_WITHOUT_PATH]; // POST only has path for trash
+   ConfigVersType config_vers_maj;
+   ConfigVersType config_vers_min;
+   mode_t         mode;               //    assumed uint32_t
+   uid_t          uid;                //    assumed uint32_t
+   gid_t          gid;                //    assumed uint32_t
+   time_t         mtime;              //    assumed uint64_t
+
+   // NOTE: It's possible someone could want to change the pre-defined size
+   //       of e.g. info.md_path.  Then, we might be hosed, if we need to
+   //       read previously-written recovery-info into this struct.  We
+   //       could protect against this problem, by putting warnings around
+   //       the #defines of these sizes: "if you change these sizes, you
+   //       must also change MARFS_CONFIG_MARJOR/MINOR, and make changes in
+   //       str_2_secoveryinfo() to accomodate the different versions."
+   //
+   //       But that's ugly, and error-prone.  Instead, we'll store them as
+   //       string-pointer.  If you are ever doing recovery, you'll
+   //       probably be glad if recoveryinfo_2_str() is just easy, and it
+   //       just works.
+
+   //   char     mdfs_path[MARFS_MAX_MD_PATH]; // full path in the MDFS
+   //   char     pre[MARFS_MAX_BUCKET_SIZE + MARFS_MAX_OBJID_SIZE]; // obj-ID
+   //   char     post[MARFS_MAX_POST_STRING_WITHOUT_PATH]; // POST only has path for trash
+
+   //   char*           mdfs_path; // full path in the MDFS   (*** don't free() this)
+   //   MarFS_XattrPre  pre; // obj-ID
+   //   MarFS_XattrPost post; // POST only has path for trash
+
+   // call str_2_pre() and str_2_post(), if you want to examine the
+   // contents of the pre/post strings.
+
+   char*         mdfs_path; // full path in the MDFS        (*** don't free() this)
+   char*         pre_str;   // obj-ID                       (*** don't free() this)
+   char*         post_str;  // POST only has path for trash (*** don't free() this)
+
+   // the pointers above just point into this.
+   char*          str_data;
+   
+   // NOTE: We are depending on the following being the last data in the
+   //       structure generated by the compiler.  This is important because
+   //       these will be written into the tail of all objects, and
+   //       recovery of a lost MDFS will depend on reading these two values
+   //       correctly, so the rest of the recovery-info can be discovered.
+   //       They are aligned, and end on an aligned boundary, so the
+   //       compiler should have no need to add padding after them.  Right?
+   //
+   //       We currently only have gcc 4.4.7, so we can't use '-std=c11'
+   //       and do a static, compile-time check (e.g. with "static_assert
+   //       (sizeof(RecoveryInfo) == ...").  Therefore, we really should
+   //       validate this dynamically ... maybe in validate_config()?
+   //     
+   uint64_t       user_data_size;      // user-data, in this object only
+   uint64_t       rec_data_off;        // recovery-info data, offset in object
+
 } RecoveryInfo;
 
-// from RecoveryInfo to string
-int rec_2_str(char* rec_info_str, const size_t max_size, const RecoveryInfo* rec_info);
+
+
+// // from RecoveryInfo to string
+// int recoveryinfo_2_str(char* rec_info_str, const size_t max_size, const RecoveryInfo* rec_info);
 
 // from string to RecoveryInfo
-int str_2_rec(RecoveryInfo* rec_info, const char* rec_info_str); // from string
+int str_2_recoveryinfo(RecoveryInfo* rec_info, const char* rec_str, size_t str_size); // from string
+
+#endif
 
 
 
@@ -608,13 +854,13 @@ int str_2_rec(RecoveryInfo* rec_info, const char* rec_info_str); // from string
 // ---------------------------------------------------------------------------
 
 typedef struct {
-   uint16_t      config_vers_maj;
-   uint16_t      config_vers_min;
-   size_t        chunk_no;         // from MarFS_XattrPost.chunk_no
-   size_t        logical_offset;   // offset of this chunk in user-data
-   size_t        chunk_data_bytes; // not counting recovery-info (at the end)
-   CorrectInfo   correct_info;     // from MarFS_XattrPost.correct_info
-   EncryptInfo   encrypt_info;     // from MarFS_XattrPost.encrypt_info
+   ConfigVersType config_vers_maj;
+   ConfigVersType config_vers_min;
+   size_t         chunk_no;         // from MarFS_XattrPost.chunk_no
+   size_t         logical_offset;   // offset of this chunk in user-data
+   size_t         chunk_data_bytes; // not counting recovery-info (at the end)
+   CorrectInfo    correct_info;     // from MarFS_XattrPost.correct_info
+   EncryptInfo    encrypt_info;     // from MarFS_XattrPost.encrypt_info
 } MultiChunkInfo;
 
 ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* chnk);

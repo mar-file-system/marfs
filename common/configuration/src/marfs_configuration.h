@@ -98,10 +98,14 @@ extern "C" {
 //
 //        Changed Repo.max_request_size to Repo.max_get_size, because I
 //        couldn't stand how ambiguous it was.
+//
+// -- 0.4 Now generating real recovery-info into the tails of objects
 
 
 #define MARFS_CONFIG_MAJOR  0
-#define MARFS_CONFIG_MINOR  3
+#define MARFS_CONFIG_MINOR  4
+
+typedef uint16_t   ConfigVersType; // one value each for major and minor
 
 // TBD for (2):
 //

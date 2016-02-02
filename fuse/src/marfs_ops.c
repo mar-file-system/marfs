@@ -832,9 +832,9 @@ int marfs_open(const char*         path,
       // called marfs_open_at_offset().
       if (fh->flags & FH_Nto1_WRITES) {
 
-         LOG(LOG_INFO, "writing risky\n");
+         LOG(LOG_INFO, "writing N:1\n");
 
-         const size_t recovery   = sizeof(RecoveryInfo) +8; // sys bytes, per chunk
+         const size_t recovery   = MARFS_REC_UNI_SIZE; // sys bytes, per chunk
          size_t       chunk_size = info->pre.repo->chunk_size - recovery;
          size_t       chunk_no   = (fh->open_offset / chunk_size);
 
@@ -871,6 +871,16 @@ int marfs_open(const char*         path,
          // update_url(os, info); // can't do this here ...
       }
    }
+
+
+   // Install namespace-path (e.g. for writing into recovery-info)
+   size_t path_len = strlen(path);
+   if (path_len >= MARFS_MAX_NS_PATH) {
+      LOG(LOG_ERR, "path '%s' longer than max %d\n", path, MARFS_MAX_NS_PATH);
+      errno = EIO;
+      return -1;
+   }
+   strncpy(fh->ns_path, path, path_len +1);
 
 
    // Configure a private AWSContext, for this request
@@ -1015,7 +1025,7 @@ int marfs_open_at_offset(const char*         path,
       fh->flags |= FH_Nto1_WRITES;
 
       // for get_stream_wr_open_size()
-      fh->write_status.sys_req = sizeof(RecoveryInfo) + 8;
+      fh->write_status.sys_req     = MARFS_REC_UNI_SIZE;
       fh->write_status.data_remain = content_length;
    }
    else {
@@ -1235,7 +1245,7 @@ int marfs_read (const char*        path,
    }
 
    // portions of each chunk that are used for system-data vs. user-data.
-   const size_t recovery   = sizeof(RecoveryInfo) +8; // sys bytes, per chunk
+   const size_t recovery   = MARFS_REC_UNI_SIZE; // sys bytes, per chunk
    const size_t data1      = (info->pre.chunk_size - recovery); // log bytes, per chunk
 
    size_t chunk_no     = phy_offset / data1; // only non-zero for Multi
@@ -1617,9 +1627,9 @@ int marfs_release (const char*        path,
 
       if (! (fh->os.flags & OSF_ERRORS)) {
          if (fh->flags & FH_WRITING) {
+
             // add final recovery-info, at the tail of the object
-            TRY_GE0(write_recoveryinfo, os, info);
-            fh->write_status.sys_writes += rc_ssize; // accumulate non-user-data written
+            TRY_GE0(write_recoveryinfo, os, info, fh);
          }
       }
 
@@ -2357,7 +2367,7 @@ int marfs_write(const char*        path,
    // of the object-ID into the MD file.  The MD file is not opened for us
    // in marfs_open(), because it wasn't known until now that we'd need it.
    size_t       write_size = size;
-   const size_t recovery   = sizeof(RecoveryInfo) +8; // written in tail of object
+   const size_t recovery   = MARFS_REC_UNI_SIZE; // written in tail of object
    size_t       log_end    = (info->pre.chunk_no +1) * (info->pre.chunk_size - recovery);
    char*        buf_ptr    = (char*)buf;
 
@@ -2385,8 +2395,8 @@ int marfs_write(const char*        path,
       buf_ptr    += fill;
       log_offset += fill;
 
-      TRY_GE0(write_recoveryinfo, os, info);
-      fh->write_status.sys_writes += rc_ssize; // track non-user-data written
+      TRY_GE0(write_recoveryinfo, os, info, fh);
+
 
       // close the object
       LOG(LOG_INFO, "closing chunk: %ld\n", info->pre.chunk_no);

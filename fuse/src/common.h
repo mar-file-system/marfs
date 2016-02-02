@@ -366,6 +366,7 @@ extern XattrSpec*  MarFS_xattr_specs;
 
 
 typedef uint8_t  PathInfoFlagType;
+
 typedef enum {
    PI_RESTART      = 0x01,      // file is incomplete (see stat_xattrs())
    PI_EXPANDED     = 0x02,      // expand_path_info() was called?
@@ -389,8 +390,6 @@ typedef struct PathInfo {
    XattrMaskType        xattrs; // OR'ed XattrValueTypes, use has_any_xattrs()
 
    PathInfoFlagType     flags;
-
-   // char                 md_path[MARFS_MAX_MD_PATH]; // now in PathInfo.post
    char                 trash_md_path[MARFS_MAX_MD_PATH];
 } PathInfo;
 
@@ -473,7 +472,7 @@ typedef struct {
 // the size of the stream, so it can't take advantage of this, but pftool
 // does, so it can.
 //
-// ... HOWEVER, we still need to break long pftool writes with given size
+// HOWEVER, we still need to break long pftool writes with given size
 // into MarFS chunks (pftool could do it, but we have all the expertise
 // here).  Meanwhile, fuse writes may also cross object-boundaries.
 //
@@ -489,13 +488,19 @@ typedef struct {
 // write multiple chunks to the same open "file".)
 //
 // In order to handle both cases, we track a content-length provided at
-// open time in FileHandle.data_remain.  In the case of fuse this will be
-// zero, as will user_req, and sys_req.  For pftool, data_remain will be
-// the total size of user-data to be written.  When closing/reopening at
-// object boundaries, we want to decrement this by the amount of user-data
-// in the previous request.  However, we want the actual request to also
-// include room for the recovery-info written at the end.  Thus, we need
-// both user_req and sys_req, to track these two things.
+// open time in FileHandle.data_remain.  In the case of fuse this could be
+// zero, as would be user_req, and sys_req.  However, for performance, fuse
+// may also pick content-length = chunksize.  This implies a precomputed
+// size of the recover-info that we write into the tail of the object.
+// That can be accommdated by adding padding into the rec-info, at the
+// indicated place.  (see marfs_base.h).
+
+// For pftool, data_remain will be the total size of user-data to be
+// written.  When closing/reopening at object boundaries, we want to
+// decrement this by the amount of user-data in the previous request.
+// However, we want the actual request to also include room for the
+// recovery-info written at the end.  Thus, we need both user_req and
+// sys_req, to track these two things.
 //
 // Both schemes (fuse and pftool) can now be handled by giving user_req +
 // sys_req as the content-length argument to stream_open().  When closing a
@@ -504,19 +509,31 @@ typedef struct {
 // object-boundary (i.e. when making the next request).  This allows
 // close-and-reopen to correctly track the remaining size, without getting
 // screwed by truncate.
+//
+// Recovery-info must know the amount of user-data writen into the file.
+// In the case of a multi, we could assume that recovery-info is always
+// padded to a fixed size.  The user-data would then be chunksize -
+// recinfosize.  At thge tail of a multi, we could divide the total written
+// by this amount, and the remainder would be the amount in the final
+// chunk.  However, that's likely to be complicated abnd obscure.  An
+// easier approach is to record the amount of user-data written each time
+// we write recovery-info.  Then teh amount of user-data in the current
+// chunk is just the difference from the mark as it was when we last wrote
+// recovery-info (accounting for sys_writes).
 
 typedef struct {
    size_t        sys_writes;    // discount this much from FileHandle.os.written
-   RecoveryInfo  rec_info;      // (goes into tail of object)
    size_t        data_remain;   // remaining user-data size (incl current req)
    size_t        user_req;      // part of current request for user-data
    size_t        sys_req;       // part of current request for sys-data (recovery-info)
+   size_t        rec_info_mark; // total user-data written as of last rec-info mark
 } WriteStatus;
 
 
 
 typedef struct {
    PathInfo      info;          // includes xattrs, MDFS path, etc
+   char          ns_path[MARFS_MAX_NS_PATH];  // path in NS, not in MDFS
    int           md_fd;         // opened for reading meta-data, or data
    FHFlagType    flags;
    curl_off_t    open_offset;   // [see comments at marfs_open_with_offset()]
@@ -607,7 +624,7 @@ extern int     seek_chunkinfo(int md_fd, size_t chunk_no);
 extern ssize_t count_chunkinfo(int md_fd);
 
 
-extern ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info);
+extern ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* fh);
 
 
 // support for pftool, doing N:1 writes

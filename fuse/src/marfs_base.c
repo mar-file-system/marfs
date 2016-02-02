@@ -427,6 +427,8 @@ int init_pre(MarFS_XattrPre*        pre,
 
 int update_pre(MarFS_XattrPre* pre) {
 
+   pre->flags |= PF_UPDATED;    // re-stringification may be needed
+
    // --- generate bucket-name
 
    int write_count;
@@ -434,9 +436,11 @@ int update_pre(MarFS_XattrPre* pre) {
                           MARFS_BUCKET_WR_FORMAT,
                           pre->repo->name);
    if (write_count < 0)
-      return errno;
-   if (write_count == MARFS_MAX_BUCKET_SIZE) /* overflow */
-      return EINVAL;
+      return -1;
+   if (write_count == MARFS_MAX_BUCKET_SIZE) { /* overflow */
+      errno = EINVAL;
+      return -1;
+   }
 
 
    // --- generate obj-id
@@ -447,21 +451,21 @@ int update_pre(MarFS_XattrPre* pre) {
    //      return EINVAL;
 
    // config-version major and minor
-   int major = pre->config_vers_maj;
-   int minor = pre->config_vers_min;
+   ConfigVersType major = pre->config_vers_maj;
+   ConfigVersType minor = pre->config_vers_min;
 
-   char type     = encode_obj_type(pre->obj_type);
-   char compress = encode_compression(pre->compression);
-   char correct  = encode_correction(pre->correction);
-   char encrypt  = encode_encryption(pre->encryption);
+   char           type     = encode_obj_type(pre->obj_type);
+   char           compress = encode_compression(pre->compression);
+   char           correct  = encode_correction(pre->correction);
+   char           encrypt  = encode_encryption(pre->encryption);
 
    // PACKED objects have a real inode-value in their object-ID (in order
    // to assure unique-ness).  But it might not match this particular file.
    // Therefore, for packed objects, we should leave it as is.
 
    // prepare date-string components
-   char md_ctime_str[MARFS_DATE_STRING_MAX];
-   char obj_ctime_str[MARFS_DATE_STRING_MAX];
+   char           md_ctime_str[MARFS_DATE_STRING_MAX];
+   char          obj_ctime_str[MARFS_DATE_STRING_MAX];
 
    if (epoch_to_str(md_ctime_str, MARFS_DATE_STRING_MAX, &pre->md_ctime)) {
       LOG(LOG_ERR, "error converting Pre.md_time to string\n");
@@ -482,9 +486,11 @@ int update_pre(MarFS_XattrPre* pre) {
                           md_ctime_str, obj_ctime_str, pre->unique,
                           pre->chunk_size, pre->chunk_no);
    if (write_count < 0)
-      return errno;
-   if (write_count >= MARFS_MAX_OBJID_SIZE) /* overflow */
-      return EINVAL;
+      return -1;
+   if (write_count >= MARFS_MAX_OBJID_SIZE) { /* overflow */
+      errno = EINVAL;
+      return -1;
+   }
 
 
    // generate host, if necessary
@@ -520,9 +526,11 @@ int update_pre(MarFS_XattrPre* pre) {
                              pre->repo->host, octet);
 
       if (write_count < 0)
-         return errno;
-      if (write_count >= MARFS_MAX_OBJID_SIZE) /* overflow */
-         return EINVAL;
+         return -1;
+      if (write_count >= MARFS_MAX_OBJID_SIZE) { /* overflow */
+         errno = EINVAL;
+         return -1;
+      }
    }
    else
       strncpy(pre->host, pre->repo->host, MARFS_MAX_HOST_SIZE);
@@ -551,9 +559,11 @@ int pre_2_str(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
                               pre->bucket,
                               pre->objid);
    if (write_count < 0)
-      return errno;
-   if (write_count == max_size)   /* overflow */
-      return EINVAL;
+      return -1;
+   if (write_count == max_size) {  /* overflow */
+      errno = EINVAL;
+      return -1;
+   }
 
    return 0;
 }
@@ -561,7 +571,7 @@ int pre_2_str(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
 
 
 #if 0
-// COMMETNED OUT.  I think this is now replaced by update_pre()  [?]
+// COMMENTED OUT.  I think this is now replaced by update_pre()  [?]
 
 int pre_2_url(char* pre_str, size_t max_size, MarFS_XattrPre* pre) {
 
@@ -840,29 +850,43 @@ int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
 
 
 // from MarFS_XattrPost to string
+//
+// <repo> is the repo> that was written to.
+//
+// <add_md_path> allows future version of write_recoveryinfo() to stringify
+// post without setting POST_TRASH in MarFS_XattrPost.flags.
+
 int post_2_str(char*                  post_str,
                size_t                 max_size,
                const MarFS_XattrPost* post,
-               MarFS_Repo*            repo) {
+               const MarFS_Repo*      repo,
+               int                    add_md_path) {
 
    // config-version major and minor
-   const int major = post->config_vers_maj;
-   const int minor = post->config_vers_min;
+   const ConfigVersType major = post->config_vers_maj;
+   const ConfigVersType minor = post->config_vers_min;
 
-   // putting the md_path into the xattr is really only useful if the marfs
-   // file is in the trash, or is SEMI_DIRECT.  For other types of marfs
-   // files, this md_path will be wrong as soon as the user renames it (or
-   // a parent-directory) to some other path.  Therefore, one would never
+   // putting the md_path into the xattr is only useful if the marfs file
+   // is in the trash, or is SEMI_DIRECT.  For other types of marfs files,
+   // this md_path will be wrong as soon as the user renames it (or a
+   // parent-directory) to some other path.  Therefore, one would never
    // want to trust it in those cases.  [Gary thought of an example where
-   // several renames could get the path to point to the wrong file.]
-   // So, let's only write it when it is needed and reliable.
+   // several renames could get the path to point to the wrong file.]  So,
+   // let's only write it when it is needed and reliable.
+   //
+   // We now also use this function to stringify POST for writing into the
+   // recovery-info at the tail of an object.  In that case, we also want
+   // the MD path, though the file will not be in the trash.  Yes, this may
+   // be wrong, as described above, but it's purpose is just to capture the
+   // path as it existed at object-creation-time.
    //
    // NOTE: Because we use the same xattr-field to point to the semi-direct
    //     file-system *OR* to the location of the file in the trash, we can
    //     not currently support moving semi-direct files to the trash.
    //     Deleting a semi-direct file must just delete it.
    const char* md_path = ( ((repo->access_method == ACCESSMETHOD_SEMI_DIRECT)
-                            || (post->flags & POST_TRASH))
+                            || (post->flags & POST_TRASH)
+                            || add_md_path)
                            ? post->md_path
                            : "");
 
@@ -984,59 +1008,6 @@ int str_2_shard(MarFS_XattrShard* shard, const char* shard_str) {
 
 
 
-// from RecoveryInfo to string
-int rec_2_str(char* rec_str, const size_t max_size, const RecoveryInfo* rec) {
-
-   // UNDER CONSTRUCTION ...
-   LOG(LOG_ERR, "Not implemented\n");
-   errno = ENOSYS;
-   return -1;
-
-#if 0
-   // config-version major and minor
-   int major = rec->config_vers_maj;
-   int minor = rec->config_vers_min;
-
-   ssize_t bytes_printed = snprintf(rec_info_str, max_size,
-                                    MARFS_REC_INFO_FORMAT,
-                                    major, minor,
-                                    rec->inode,
-                                    rec->mode,
-                                    rec->uid,
-                                    rec->gid,
-                                    mtime,
-                                    ctime,
-                                    post->md_path);
-   if (bytes_printed < 0)
-      return -1;                  // errno is set
-   if (bytes_printed == max_size) {   /* overflow */
-      errno = EINVAL;
-      return -1;
-   }
-
-#endif
-   return 0;
-}
-
-// from string to RecoveryInfo.  Presumabl,y the string is what you got
-// from the tail-end of an object.  Use this to convert the string to a
-// RecoveryInfo struct.
-int str_2_rec(RecoveryInfo* rec_info, const char* rec_info_str) {
-   LOG(LOG_ERR, "Not implemented\n");
-   errno = ENOSYS;
-   return -1;
-}
-
-
-// // this is just a sketch.
-// int get_recovery_string() { }
-// int get_next_recovery_string(RecoveryInfo* info) { }
-
-
-
-
-
-
 
 // htonll() / ntohll() are not provided in our environment.  <endian.h> or
 // <byteswap.h> make things easier, but these are non-standard.  Also, we're
@@ -1076,11 +1047,81 @@ uint64_t ntohll(uint64_t ll) {
       return ll;
 }
 
+// TO STRING
+// perform a conversion (e.g. htons()), while moving data of type TYPE from
+// SOURCE (variable) to DEST (string).  DEST is updated to a point just
+// after the copied data.
+#define COPY_OUT(DEST, SOURCE, TYPE, CONVERSION_FN)  \
+   {  TYPE temp = CONVERSION_FN (SOURCE);            \
+      memcpy(DEST, (char*)&temp, sizeof(TYPE));      \
+      DEST += sizeof(TYPE);                          \
+   }
 
-typedef union {
-   float    f;
-   uint32_t i;
-} UFloat32;
+// FROM STRING
+// perform a conversion (e.g. ntohs()), while moving data of type TYPE from
+// SOURCE (string) to DEST (variable).  SOURCE is updated to a point just
+// after the used data.
+#define COPY_IN(DEST, SOURCE, TYPE, CONVERSION_FN)  \
+   {  TYPE temp;                                    \
+      memcpy((char*)&temp, SOURCE, sizeof(TYPE));   \
+      DEST = CONVERSION_FN( temp );                 \
+      SOURCE += sizeof(TYPE);                       \
+   }
+
+
+
+
+#if 0
+// UNDER CONSTRUCTION ...
+
+// from string to RecoveryInfo.  Presumably the string is what you got
+// from the tail-end of an object.  Use this to convert the string to a
+// RecoveryInfo struct.
+int str_2_recoveryinfo(RecoveryInfo* rec,
+                       const char*   rec_str,
+                       const size_t  str_size) {
+   LOG(LOG_ERR, "Not implemented\n");
+   errno = ENOSYS;
+   return -1;
+
+
+   char* rec_data_size_ptr = rec_str + str_size - sizeof(uint64_t);
+   char* obj_data_size_ptr = rec_data_size_ptr  - sizeof(uint64_t);
+
+   char* src = rec_str;
+
+   COPY_IN(rec->config_vers_maj,  src, ConfigVersType, ntohs);
+   COPY_IN(rec->config_vers_min,  src, ConfigVersType, ntohs);
+   COPY_IN(rec->inode,            src, uint64_t,       ntohll);
+   COPY_IN(rec->mode,             src, uint32_t,       ntohl);
+   COPY_IN(rec->uid,              src, uint32_t,       ntohl);
+   COPY_IN(rec->gid,              src, uint32_t,       ntohl);
+   COPY_IN(rec->mtime,            src, uint64_t,       ntohll);
+   COPY_IN(rec->ctime,            src, uint64_t,       ntohll);
+
+   rec->mdfs_path = src;
+   src += strlen(rec->mdfs_path);
+
+   rec->pre = src;
+   src += strlen(rec->pre);
+
+   rec->post = src;
+   src += strlen(rec->post);
+
+   rec->str_data = rec_str;     // points to caller's data
+
+   return 0;
+}
+
+
+// // this is just a sketch.
+// int get_recovery_string() { }
+// int get_next_recovery_string(RecoveryInfo* info) { }
+
+#endif
+
+
+
 
 // We write MultiChunkInfo as binary data (in network-byte-order) in hopes
 // that this will speed-up treating the MD file as a big index, during
@@ -1097,21 +1138,13 @@ ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* 
    }
    char* dest = str;
 
-#define COPY_OUT(SOURCE, TYPE, CONVERSION_FN)       \
-   {  TYPE temp = CONVERSION_FN (SOURCE);           \
-      memcpy(dest, (char*)&temp, sizeof(TYPE));    \
-      dest += sizeof(TYPE);                        \
-   }
-
-   COPY_OUT(chnk->config_vers_maj,  uint16_t,    htons);
-   COPY_OUT(chnk->config_vers_min,  uint16_t,    htons);
-   COPY_OUT(chnk->chunk_no,         size_t,      htonll);
-   COPY_OUT(chnk->logical_offset,   size_t,      htonll);
-   COPY_OUT(chnk->chunk_data_bytes, size_t,      htonll);
-   COPY_OUT(chnk->correct_info,     CorrectInfo, htonll);
-   COPY_OUT(chnk->encrypt_info,     EncryptInfo, htonll);
-
-#undef COPY_OUT
+   COPY_OUT(dest, chnk->config_vers_maj,  ConfigVersType, htons);
+   COPY_OUT(dest, chnk->config_vers_min,  ConfigVersType, htons);
+   COPY_OUT(dest, chnk->chunk_no,         size_t,         htonll);
+   COPY_OUT(dest, chnk->logical_offset,   size_t,         htonll);
+   COPY_OUT(dest, chnk->chunk_data_bytes, size_t,         htonll);
+   COPY_OUT(dest, chnk->correct_info,     CorrectInfo,    htonll);
+   COPY_OUT(dest, chnk->encrypt_info,     EncryptInfo,    htonll);
 
    return (dest - str);
 }
@@ -1131,22 +1164,13 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
    }
    char* src = (char*)str;
 
-#define COPY_IN(DEST, TYPE, CONVERSION_FN)       \
-   {  TYPE temp;                                 \
-      memcpy((char*)&temp, src, sizeof(TYPE));   \
-      DEST = CONVERSION_FN( temp );              \
-      src += sizeof(TYPE);                       \
-   }
-
-   COPY_IN(chnk->config_vers_maj,  uint16_t,    ntohs);
-   COPY_IN(chnk->config_vers_min,  uint16_t,    ntohs);
-   COPY_IN(chnk->chunk_no,         size_t,      ntohll);
-   COPY_IN(chnk->logical_offset,   size_t,      ntohll);
-   COPY_IN(chnk->chunk_data_bytes, size_t,      ntohll);
-   COPY_IN(chnk->correct_info,     CorrectInfo, ntohll);
-   COPY_IN(chnk->encrypt_info,     EncryptInfo, ntohll);
-
-#undef COPY_IN
+   COPY_IN(chnk->config_vers_maj,  src, ConfigVersType, ntohs);
+   COPY_IN(chnk->config_vers_min,  src, ConfigVersType, ntohs);
+   COPY_IN(chnk->chunk_no,         src, size_t,         ntohll);
+   COPY_IN(chnk->logical_offset,   src, size_t,         ntohll);
+   COPY_IN(chnk->chunk_data_bytes, src, size_t,         ntohll);
+   COPY_IN(chnk->correct_info,     src, CorrectInfo,    ntohll);
+   COPY_IN(chnk->encrypt_info,     src, EncryptInfo,    ntohll);
 
    return (src - str);
 }
@@ -1166,8 +1190,8 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
 
 int validate_config() {
 
-   int   retval = 0;
-   const size_t     recovery = sizeof(RecoveryInfo) +8;
+   int           retval = 0;
+   const size_t  recovery = MARFS_REC_UNI_SIZE;
 
    // repo checks
    MarFS_Repo*   repo = NULL;

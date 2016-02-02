@@ -575,11 +575,11 @@ int batch_pre_process(const char* path, size_t file_size) {
    info.pre.chunk_size = repo->chunk_size;
    info.pre.obj_type   = OBJ_Nto1;
 
-   update_pre(&info.pre);        // ?
+   TRY0(update_pre, &info.pre);        // ?
 
    // POST is also required by stat_xattrs().
    // we have enough info to fill it
-   const size_t recovery   = sizeof(RecoveryInfo) +8; // sys bytes, per chunk
+   const size_t recovery   = MARFS_REC_UNI_SIZE; // sys bytes, per chunk
    size_t       chunk_size = repo->chunk_size - recovery;
    size_t       n_chunks   = file_size / chunk_size;
    if ((n_chunks * chunk_size) < file_size)
@@ -709,7 +709,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 
       case XVT_POST: {
          __TRY0(post_2_str, xattr_value_str, MARFS_MAX_XATTR_SIZE,
-                &info->post, info->ns->iwrite_repo);
+                &info->post, info->ns->iwrite_repo, (info->post.flags & POST_TRASH));
          LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
          __TRY0(lsetxattr, info->post.md_path,
                 spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0);
@@ -1246,11 +1246,7 @@ int update_url(ObjectStream* os, PathInfo* info) {
 // total_written.  And that only the final chunk can be less than 100%
 // full.
 //
-// We use "sizeof(RecoveryInfo) +8" everywhere, because the final 8 bytes
-// in an object hold the index of the begining of the RecoveryInfo, within
-// the object.
-//
-// NOTE: When writing through fuse, there is a a long sequence of writes
+// NOTE: When writing through fuse, there is a long sequence of writes
 //    which are arbitrarily sized, with respect to the size of a
 //    marfs-chunk.  Therefore, the total data written can be tracked in the
 //    ObjectStream in a MarFS_FileHandle, and any system-writes
@@ -1276,7 +1272,7 @@ int write_chunkinfo(int                   md_fd,
                     size_t                open_offset,
                     size_t                user_data_written) {
 
-   const size_t recovery             = sizeof(RecoveryInfo) +8;
+   const size_t recovery             = MARFS_REC_UNI_SIZE;
    const size_t user_data_per_chunk  = info->pre.chunk_size - recovery;
    const size_t log_offset           = info->pre.chunk_no * user_data_per_chunk;
    const size_t user_data_this_chunk = user_data_written - log_offset;
@@ -1404,7 +1400,7 @@ int seek_chunkinfo(int md_fd, size_t chunk_no) {
 //           && (info.pre.obj_type == OBJ_Nto1)
 //           && (info.post.obj_type == OBJ_MULTI)) {
 //    
-//          const size_t recovery = sizeof(RecoveryInfo) +8; // written in tail of object
+//          const size_t recovery = MARFS_REC_UNI_SIZE; // written in tail of object
 //    
 //          // find the MarFS logical file-size by counting MultiChunkInfo
 //          // objects, written into the metadata file.  There will always be at
@@ -1484,38 +1480,34 @@ ssize_t count_chunkinfo(int md_fd) {
 
 
 
-// write appropriate RecoveryInfo into an object.  Moved this here so it
+// write appropriate recovery-info into an object.  Moved this here so it
 // could be shared by marfs_write() and marfs_release()
 //
-// NOTE: We actually write "sizeof(RecoveryInfo)+8", because the final 8
-//     bytes are a value that indicate the size of the RecoveryInfo.  This
-//     allows RecoveryInfo written by earlier versions of the software
-//     (e.g. when RecoveryInfo was different) to be properly located and
-//     parsed.
+// NOTE: We write several distinct null-terminated strings, instead of a
+//     single string.  That's because each of these strings has its own
+//     parser, e.g. str_2_pre(), and I'm not positive that any given
+//     delimiter between them would be guaranteed easy to find.
 
-ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
+ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* fh) {
+
+   // compute the amount of user-data written into this object This will be
+   // the total amount of user-data written to this file-handle, minus the
+   // total-amount written as of the provious write to this file-handle.
+   // (This should work for pftool, as well.)
+   size_t user_data          = (os->written - fh->write_status.sys_writes);
+   size_t user_data_this_obj = (user_data - fh->write_status.rec_info_mark);
+
+#if 0
+   // This version just writes some fake data, so we can exercise
+   // fuse/pftool to (a) get the mechanics of writing recovery-info, and
+   // (b) assure we don't return recovery-info to users as part of a read.
+
    TRY_DECLS();
-   const size_t recovery   = sizeof(RecoveryInfo) +8; // written in tail of object
-
-#if TBD
-   // add recovery-info, at the tail of the object
-   LOG(LOG_INFO, "writing recovery-info of size %ld\n", recovery);
-
-   //      char objid[MARFS_MAX_OBJID_SIZE];
-   //      TRY0(pre_2_str, objid, MARFS_MAX_OBJID_SIZE, &info->pre);
-   //      TRY_GE0(write, fh->md_fd, objid, MARFS_MAX_OBJID_SIZE);
-   //      info->post.chunk_info_bytes += MARFS_MAX_OBJID_SIZE;
-   //      info->post.chunk_info_bytes += MARFS_MAX_OBJID_SIZE;
-
-   char file_info[...];
-   __TRY_GE0(file_info_2_str, fh->write_status.file_info);
-   __TRY_GE0(stream_put, os, file_info, recovery);
-
-#else
+   const size_t recovery = MARFS_REC_UNI_SIZE; // written in tail of object
    LOG(LOG_WARNING, "writing fake recovery-info of size %ld\n", recovery);
 
-   // static char rec[recovery];
-   static char rec[sizeof(RecoveryInfo) +8]; // stupid compiler ...
+   // static char rec[recovery];  // stupid compiler can't handle this
+   static char  rec[MARFS_REC_UNI_SIZE];
 
    ///   static int  needs_init=1;
    ///   if (needs_init) {
@@ -1529,10 +1521,145 @@ ssize_t write_recoveryinfo(ObjectStream* os, const PathInfo* const info) {
    LOG(LOG_WARNING, "first part of fake rec-info: 0x%02x,%02x,%02x,%02x\n",
        rec[0], rec[1], rec[2], rec[3]);
    __TRY_GE0(stream_put, os, rec, recovery);
+   ssize_t wrote = rc_ssize;
+
+#else
+
+   TRY_DECLS();
+   char  rec[MARFS_REC_BODY_SIZE + MARFS_REC_TAIL_SIZE];
+   //   char* pos = &rec[0];
+
+
+   //   // convert mtime to date-time string in our standard format
+   //   char       date_string[MARFS_DATE_STRING_MAX];
+   //   __TRY0(epoch_to_str, date_string, MARFS_DATE_STRING_MAX, &info->st.st_mtime);
+
+
+   // write the HEAD, with leading recovery-info.  These values include
+   // size of the record, version info, and some stat-info (that which is
+   // not redundant with info in the pre/post string, coming later)
+   int write_count;
+   write_count = snprintf(rec, MARFS_REC_HEAD_SIZE,
+                          MARFS_REC_HEAD_FORMAT,
+                          MARFS_REC_UNI_SIZE,
+                          info->pre.config_vers_maj,
+                          info->pre.config_vers_min,
+                          user_data_this_obj,
+                          info->st.st_mode, // initialized in mknod/open ?
+                          info->st.st_uid,  // mknod/open ?
+                          info->st.st_gid,  // mknod/open ?
+                          (uint64_t)info->st.st_mtime); // mknod/open ?
+
+   if (write_count < 0)
+      return -1;
+   if (write_count == MARFS_REC_HEAD_SIZE) { /* overflow */
+      LOG(LOG_ERR, "problem writing HEAD\n");
+      errno = EIO;
+      return -1;
+   }
+   size_t  idx    = write_count +1;
+   ssize_t remain = MARFS_REC_UNI_SIZE - idx;
+
+
+   // write the PRE xattr string
+   TRY0(pre_2_str, &rec[idx], remain, &info->pre);
+
+   idx += strlen(&rec[idx]) +1;
+   remain = MARFS_REC_UNI_SIZE - idx;
+   if (remain < 0) {
+      LOG(LOG_ERR, "out of room for recovery-info\n");
+      errno = EIO;
+      return -1;
+   }
+
+   // write the POST xattr string (including the MDFS path)
+   TRY0(post_2_str, &rec[idx], remain, &info->post, info->pre.repo, 0);
+
+   idx += strlen(&rec[idx]) +1;
+   remain = MARFS_REC_UNI_SIZE - idx;
+   if (remain < 0) {
+      LOG(LOG_ERR, "out of room for recovery-info\n");
+      errno = EIO;
+      return -1;
+   }
+
+   // write MarFS namespace path. (This not the MDFS path.)
+   write_count = snprintf(&rec[idx], MARFS_MAX_NS_PATH,
+                          "PATH:%s",
+                          fh->ns_path);
+   if (write_count < 0)
+      return -1;
+   if (write_count == MARFS_MAX_NS_PATH) { /* overflow */
+      LOG(LOG_ERR, "problem writing NS path\n");
+      errno = EIO;
+      return -1;
+   }
+
+   idx += write_count +1;
+   remain = MARFS_REC_UNI_SIZE - idx;
+   if (remain < 0) {
+      LOG(LOG_ERR, "out of room for recovery-info\n");
+      errno = EIO;
+      return -1;
+   }
+   
+
+   // add padding, leaving room for the final 2 64-bit values
+   ssize_t padding = remain - MARFS_REC_TAIL_SIZE;
+   if (padding < 0) {
+      LOG(LOG_ERR, "out of room for recovery-info\n");
+      errno = EIO;
+      return -1;
+   }
+   memset(&rec[idx], 0, padding);
+
+   idx += padding;
+   remain = MARFS_REC_UNI_SIZE - idx;
+
+   // write the TAIL.  After all the recovery-infos in an object, we print
+   // two values, so that they can be found during recovery, when we might
+   // have no knowledge of the structure of the object.  The next-to-last
+   // number says how many files have user data in this object.  (This will
+   // also be the number of recovery-info records).  The last number
+   // indicates where in this object all the recovery-info starts.  Given
+   // this, a recovery-tool can set about parsing out the recovery-info,
+   // and regenerating the MDFS as it existed at the time the individual
+   // objects were created.
+   write_count = snprintf(&rec[idx], MARFS_REC_TAIL_SIZE,
+                          MARFS_REC_TAIL_FORMAT,
+                          (uint64_t)1,                    // N files in this object
+                          (uint64_t)user_data_this_obj);  // offset of rec-info
+   if (write_count < 0)
+      return -1;
+   if (write_count == MARFS_REC_TAIL_SIZE) { /* overflow */
+      LOG(LOG_ERR, "problem writing TAIL\n");
+      errno = EIO;
+      return -1;
+   }
+
+   // write the buffer we have generated into the tail of the object
+   TRY_GE0(stream_put, os, rec, MARFS_REC_UNI_SIZE);
+   ssize_t wrote = rc_ssize;
+
+   if (wrote != MARFS_REC_UNI_SIZE) {
+      LOG(LOG_ERR, "wrote %ld bytes, instead of %ld\n", wrote, (uint64_t)MARFS_REC_UNI_SIZE);
+      errno = EIO;
+      return -1;
+   }
 
 #endif
 
-   return rc_ssize;
+
+   if (wrote > (ssize_t)(int)-1) {
+      
+   }
+
+   // Maintain file-handle
+   fh->write_status.sys_writes    += wrote;     // track non-user-data written
+   fh->write_status.rec_info_mark  = user_data; // note user-data written as of now
+
+
+   return wrote;
 }
 
 
@@ -1569,7 +1696,7 @@ ssize_t get_chunksize_with_info(PathInfo*   info,
    MarFS_Repo* repo = find_repo_by_range(info->ns, file_size);
 
    if (subtract_recovery_info)
-      return repo->chunk_size - (sizeof(RecoveryInfo) +8);
+      return repo->chunk_size - MARFS_REC_UNI_SIZE;
    else
       return repo->chunk_size;
 }
@@ -1584,7 +1711,7 @@ ssize_t get_chunksize_with_info(PathInfo*   info,
 //
 size_t get_stream_wr_open_size(MarFS_FileHandle* fh, uint8_t decrement) {
    PathInfo* info      = &fh->info;
-   size_t    log_chunk = info->pre.repo->chunk_size - (sizeof(RecoveryInfo) +8);
+   size_t    log_chunk = info->pre.repo->chunk_size - MARFS_REC_UNI_SIZE;
 
    if (decrement) // previous request completed ...
       fh->write_status.data_remain -= fh->write_status.user_req;
