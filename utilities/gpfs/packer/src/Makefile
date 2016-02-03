@@ -1,4 +1,4 @@
-all: marfs_packer
+all: marfs_pack
 
 
 CFLAGS += -Wall -g 
@@ -35,7 +35,7 @@ else ifeq ($(wildcard $(LIBAWS4C)/libaws4c.a),)
 endif
 
 #Dependancy on AWS4C path
-marfs_packer: marfs_packer.std
+marfs_pack: marfs_packer.std
 marfs_packer.std: pre_req
 	@ $(MAKE) marfs_packer
        
