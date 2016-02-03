@@ -1541,9 +1541,9 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
    int write_count;
    write_count = snprintf(rec, MARFS_REC_HEAD_SIZE,
                           MARFS_REC_HEAD_FORMAT,
-                          MARFS_REC_UNI_SIZE,
                           info->pre.config_vers_maj,
                           info->pre.config_vers_min,
+                          MARFS_REC_UNI_SIZE,
                           user_data_this_obj,
                           info->st.st_mode, // initialized in mknod/open ?
                           info->st.st_uid,  // mknod/open ?
