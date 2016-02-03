@@ -144,7 +144,7 @@ CFLAGS  += -Wall -std=c99 -I.
 #
 
 # FUSE_FLAGS += -o allow_other
-FUSE_FLAGS += -o allow_other -o direct_io
+FUSE_FLAGS += -o allow_other,direct_io,use_ino
 
 ifdef DEBUG
 	ifeq ($(DEBUG),)
