@@ -232,7 +232,7 @@ extern "C" {
 
 // first part of the recovery-info
 // (if you change this, you should also change MARFS_CONFIG_MAJOR/MINOR)
-#define MARFS_REC_HEAD_FORMAT   "HEAD:/rsize.%08d/ver.%03hu_%03hu/dsize.%lu/mode.oct%08o/uid.%d/gid.%d/md_mtime.0x%016lx"
+#define MARFS_REC_HEAD_FORMAT   "HEAD:/ver.%03hu_%03hu/rsize.%08d/dsize.%lu/mode.oct%08o/uid.%d/gid.%d/md_mtime.0x%016lx"
 #define MARFS_REC_HEAD_SIZE     256 /* max */
 
 // last part of the recovery-info

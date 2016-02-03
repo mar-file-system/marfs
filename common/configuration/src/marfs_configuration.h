@@ -100,10 +100,12 @@ extern "C" {
 //        couldn't stand how ambiguous it was.
 //
 // -- 0.4 Now generating real recovery-info into the tails of objects
+//
+// -- 0.5 moved version-string as first thing after "HEAD:/", in rec-info
 
 
 #define MARFS_CONFIG_MAJOR  0
-#define MARFS_CONFIG_MINOR  4
+#define MARFS_CONFIG_MINOR  5
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
