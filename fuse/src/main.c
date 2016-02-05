@@ -176,9 +176,7 @@ int push_groups4(PerThreadContext* ctx) {
 
    // check for two pushes without a pop
    if (ctx->pushed_groups) {
-      LOG(LOG_ERR, "%u/%x @0x%lx double-push (groups) -> %u\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-          uid);
+      LOG(LOG_ERR, "double-push (groups) -> %u\n", uid);
       errno = EPERM;
       return -1;
    }
@@ -187,8 +185,7 @@ int push_groups4(PerThreadContext* ctx) {
    ctx->group_ct = getgroups(sizeof(ctx->groups), ctx->groups);
    if (ctx->group_ct < 0) {
       // ctx->group_ct = 0; // ?
-      LOG(LOG_ERR, "%u/%x @0x%lx  getgroups() failed\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      LOG(LOG_ERR, "getgroups() failed\n");
       return -1;
    }
 
@@ -198,19 +195,14 @@ int push_groups4(PerThreadContext* ctx) {
    const size_t   STR_BUF_LEN = 1024; // probably enough
    char           str_buf[STR_BUF_LEN];
    if (getpwuid_r(uid, &pwd, str_buf, STR_BUF_LEN, &result)) {
-      LOG(LOG_ERR, "%u/%x @0x%lx  getpwuid_r() failed: %s\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-          strerror(errno));
+      LOG(LOG_ERR, "getpwuid_r() failed: %s\n", strerror(errno));
       return -EINVAL;
    }
    else if (! result) {
-      LOG(LOG_ERR, "%u/%x @0x%lx  No passwd entries found, for uid %u\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-          uid);
+      LOG(LOG_ERR, "No passwd entries found, for uid %u\n", uid);
       return -EINVAL;
    }
-   LOG(LOG_INFO, "%u/%x @0x%lx  uid %u = user '%s'\n",
-       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+   LOG(LOG_INFO, "uid %u = user '%s'\n",
        uid, result->pw_name);
       
 
@@ -219,8 +211,7 @@ int push_groups4(PerThreadContext* ctx) {
    int   ngroups = NGROUPS_MAX +1;
    int   group_ct = getgrouplist(result->pw_name, gid, groups, &ngroups);
    if (group_ct < 0) {
-      LOG(LOG_ERR, "%u/%x @0x%lx  No passwd entries found, for user '%s'\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
+      LOG(LOG_ERR, "No passwd entries found, for user '%s'\n",
           result->pw_name);
       return -1;
    }
@@ -228,9 +219,7 @@ int push_groups4(PerThreadContext* ctx) {
    // DEBUGGING
    int i;
    for (i=0; i<group_ct; ++i) {
-      LOG(LOG_INFO, "%u/%x @0x%lx  group = %u\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-          groups[i]);
+      LOG(LOG_INFO, "group = %u\n", groups[i]);
    }
 
    // change group membership of process
@@ -248,9 +237,7 @@ int push_user4(PerThreadContext* ctx, int push_groups) {
 
    // check for two pushes without a pop
    if (ctx->pushed) {
-      LOG(LOG_ERR, "%u/%x @0x%lx double-push -> %u\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-          fuse_get_context()->uid);
+      LOG(LOG_ERR, "double-push -> %u\n", fuse_get_context()->uid);
       errno = EPERM;
       return -1;
    }
@@ -269,8 +256,7 @@ int push_user4(PerThreadContext* ctx, int push_groups) {
 
    rc = syscall(SYS_getresgid, &old_rgid, &old_egid, &old_sgid);
    if (rc) {
-      LOG(LOG_ERR, "%u/%x @0x%lx  getresgid() failed\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      LOG(LOG_ERR, "getresgid() failed\n");
       exit(EXIT_FAILURE);       // fuse should fail
    }
 
@@ -278,10 +264,7 @@ int push_user4(PerThreadContext* ctx, int push_groups) {
    gid_t new_egid = fuse_get_context()->gid;
 
    // install the new egid, and save the current one
-   LOG(LOG_INFO, "%u/%x @0x%lx  gid %u(%u) -> (%u)\n",
-       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-       old_rgid, old_egid, new_egid);
-
+   LOG(LOG_INFO, "gid %u(%u) -> (%u)\n", old_rgid, old_egid, new_egid);
    rc = syscall(SYS_setresgid, -1, new_egid, old_egid);
    if (rc == -1) {
       if ((errno == EACCES) && ((new_egid == old_egid) || (new_egid == old_rgid))) {
@@ -300,8 +283,7 @@ int push_user4(PerThreadContext* ctx, int push_groups) {
 
    rc = syscall(SYS_getresuid, &old_ruid, &old_euid, &old_suid);
    if (rc) {
-      LOG(LOG_ERR, "%u/%x @0x%lx  getresuid() failed\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      LOG(LOG_ERR, "getresuid() failed\n");
       exit(EXIT_FAILURE);       // fuse should fail
    }
 
@@ -309,10 +291,7 @@ int push_user4(PerThreadContext* ctx, int push_groups) {
    gid_t new_euid = fuse_get_context()->uid;
 
    // install the new euid, and save the current one
-   LOG(LOG_INFO, "%u/%x @0x%lx  uid %u(%u) -> (%u)\n",
-       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-       old_ruid, old_euid, new_euid);
-
+   LOG(LOG_INFO, "uid %u(%u) -> (%u)\n", old_ruid, old_euid, new_euid);
    rc = syscall(SYS_setresuid, -1, new_euid, old_euid);
    if (rc == -1) {
       if ((errno == EACCES) && ((new_euid == old_ruid) || (new_euid == old_euid))) {
@@ -348,9 +327,7 @@ int pop_groups4(PerThreadContext* ctx) {
    // DEBUGGING
    int i;
    for (i=0; i<ctx->group_ct; ++i) {
-      LOG(LOG_INFO, "%u/%x @0x%lx  group = %u\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-          ctx->groups[i]);
+      LOG(LOG_INFO, "group = %u\n", ctx->groups[i]);
    }
 
    TRY0(setgroups, ctx->group_ct, ctx->groups);
@@ -372,15 +349,11 @@ int pop_user4(PerThreadContext* ctx) {
 
    rc = syscall(SYS_getresuid, &old_ruid, &old_euid, &old_suid);
    if (rc) {
-      LOG(LOG_ERR, "%u/%x @0x%lx  getresuid() failed\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      LOG(LOG_ERR, "getresuid() failed\n");
       exit(EXIT_FAILURE);       // fuse should fail
    }
 
-   LOG(LOG_INFO, "%u/%x @0x%lx  uid (%u) <- %u(%u)\n",
-       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-       old_suid, old_ruid, old_euid);
-
+   LOG(LOG_INFO, "uid (%u) <- %u(%u)\n", old_suid, old_ruid, old_euid);
    rc = syscall(SYS_setresuid, -1, old_suid, -1);
    if (rc == -1) {
       if ((errno == EACCES) && ((old_suid == old_ruid) || (old_suid == old_euid))) {
@@ -401,15 +374,11 @@ int pop_user4(PerThreadContext* ctx) {
 
    rc = syscall(SYS_getresgid, &old_rgid, &old_egid, &old_sgid);
    if (rc) {
-      LOG(LOG_ERR, "%u/%x @0x%lx  getresgid() failed\n",
-          syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx);
+      LOG(LOG_ERR, "getresgid() failed\n");
       exit(EXIT_FAILURE);       // fuse should fail
    }
 
-   LOG(LOG_INFO, "%u/%x @0x%lx  gid (%u) <- %u(%u)\n",
-       syscall(SYS_gettid), (unsigned int)pthread_self(), (size_t)ctx,
-       old_sgid, old_rgid, old_euid);
-
+   LOG(LOG_INFO, "gid (%u) <- %u(%u)\n", old_sgid, old_rgid, old_euid);
    rc = syscall(SYS_setresgid, -1, old_sgid, -1);
    if (rc == -1) {
       if ((errno == EACCES) && ((old_sgid == old_rgid) || (old_sgid == old_egid))) {
