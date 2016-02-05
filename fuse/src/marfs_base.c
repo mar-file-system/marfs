@@ -434,7 +434,7 @@ int update_pre(MarFS_XattrPre* pre) {
    int write_count;
    write_count = snprintf(pre->bucket, MARFS_MAX_BUCKET_SIZE,
                           MARFS_BUCKET_WR_FORMAT,
-                          pre->repo->name);
+                          pre->ns->alias);
    if (write_count < 0)
       return -1;
    if (write_count == MARFS_MAX_BUCKET_SIZE) { /* overflow */
@@ -446,7 +446,7 @@ int update_pre(MarFS_XattrPre* pre) {
    // --- generate obj-id
 
    //   // convert '/' to '-' in namespace-name
-   //   char ns_name[MARFS_MAX_NAMESPACE_NAME];
+   //   char ns_name[MARFS_MAX_NS_NAME];
    //   if (encode_namespace(ns_name, (char*)pre->ns->mnt_suffix))
    //      return EINVAL;
 
@@ -479,8 +479,9 @@ int update_pre(MarFS_XattrPre* pre) {
    // put all components together
    write_count = snprintf(pre->objid, MARFS_MAX_OBJID_SIZE,
                           MARFS_OBJID_WR_FORMAT,
-                          pre->ns->name /* ns_name */ ,
+                          pre->repo->name,
                           major, minor,
+                          pre->ns->name,
                           type, compress, correct, encrypt,
                           (uint64_t)pre->md_inode,
                           md_ctime_str, obj_ctime_str, pre->unique,
@@ -656,15 +657,12 @@ int str_2_pre(MarFS_XattrPre*    pre,
 
    // --- parse bucket components
 
-   // NOTE: We put repo first, because it seems less-likely we'll want a
-   //       dot in a repo-name, than in a namespace, and we're using dot as
-   //       a delimiter.  It will still be easy to construct
-   //       delimiter-based S3 commands, to search for all entries with a
-   //       given namespace, in a known repo.
-   char  repo_name[MARFS_MAX_REPO_NAME];
+   // having ns_alias first allows new namespaces to use existing sproxyd
+   // fastcgi proxy names, eliminating server-side config, in such cases.
+   char  ns_alias [MARFS_MAX_NS_ALIAS_NAME];
 
    read_count = sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT,
-                       repo_name);
+                       ns_alias);
 
    if (read_count == EOF) {     // errno is set (?)
       LOG(LOG_ERR, " parsing bucket '%s'\n", pre->bucket);
@@ -678,15 +676,21 @@ int str_2_pre(MarFS_XattrPre*    pre,
 
    // --- parse "obj-id" components (i.e. the part below bucket)
 
+   // have repo second allows Scality driver-alias to be used to create
+   // alternative repos (e.g. with different erasure-coding schema),
+   // without having to create another ring.
+   char  repo_name[MARFS_MAX_REPO_NAME];
+
    // Holds namespace-name from obj-id, so we can decode_namespace(), then
    // find the corresponding namespace, for Pre.ns.  Do we ever care about
    // this?  The only reason we need it is because update_pre() uses it to
    // re-encode the bucket string.
-   char  ns_name[MARFS_MAX_NAMESPACE_NAME];
+   char  ns_name[MARFS_MAX_OBJID_SIZE]; // more than enough
    
    read_count = sscanf(pre->objid, MARFS_OBJID_RD_FORMAT,
-                       ns_name,
+                       repo_name,
                        &major, &minor,
+                       ns_name,
                        &obj_type, &compress, &correct, &encrypt,
                        &md_inode,
                        md_ctime_str, obj_ctime_str, &unique,
@@ -696,7 +700,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
       LOG(LOG_ERR, "EOF parsing objid '%s'\n", pre->objid);
       return -1;
    }
-   else if (read_count != 13) {
+   else if (read_count != 14) {
       LOG(LOG_ERR, "parsed %d items from '%s'\n", read_count, pre->objid);
       errno = EINVAL;            /* ?? */
       return -1;

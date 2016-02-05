@@ -135,22 +135,20 @@ extern "C" {
 // associated with the config version.
 #define   MARFS_MAX_MD_PATH       1024 /* path in MDFS */
 #define   MARFS_MAX_NS_PATH       1024 /* path in namespace */
-#define   MARFS_MAX_BUCKET_SIZE     63
+#define   MARFS_MAX_BUCKET_SIZE     63 /* S3 spec */
 #define   MARFS_MAX_OBJID_SIZE     256
 
 // Must fit in an S3 bucket (max 63 chars), with room left for
 // namespace-name.  We also leave room for terminal '\0', because this is
 // really used to allocate buffers when parsing objid xattr-values.
-//
-// // #define   MARFS_MAX_REPO_NAME       63
-// #define MARFS_MAX_REPO_NAME        52 /* BUCKET_SIZE - "ver.%03hu_%03hu." */
-#define   MARFS_MAX_REPO_NAME         16
+#define   MARFS_MAX_NS_ALIAS_NAME         16
+
 
 // Allows us to allocate buffers when parsing objid
 // xattr-values.  If this is going to go into the
 // "bucket" part of the object-ID, then it must fit there, with
-// enough room left over to fit MAX_REPO_NAME
-#define   MARFS_MAX_NAMESPACE_NAME   (MARFS_MAX_BUCKET_SIZE - MARFS_MAX_REPO_NAME)
+// enough room left over to fit MAX_NS_ALIAS_NAME
+#define   MARFS_MAX_REPO_NAME   (MARFS_MAX_BUCKET_SIZE - MARFS_MAX_NS_ALIAS_NAME)
 
 // "http://.../<bucket>/<objid>"
 #define   MARFS_MAX_URL_SIZE         (10 + MARFS_MAX_HOST_SIZE + 2 + MARFS_MAX_BUCKET_SIZE + MARFS_MAX_OBJID_SIZE)
@@ -214,8 +212,8 @@ extern "C" {
 #define MARFS_BUCKET_WR_FORMAT  "%s"
 
 
-#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/unq.%hhd/chnksz.%lx/chnkno.%lu"
-#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03hu_%03hu/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/unq.%hhd/chnksz.%lx/chnkno.%lu"
+#define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03hu_%03hu/ns.%[^/]/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/unq.%hhd/chnksz.%lx/chnkno.%lu"
+#define MARFS_OBJID_WR_FORMAT   "%s/ver.%03hu_%03hu/ns.%s/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/unq.%hhd/chnksz.%lx/chnkno.%lu"
 
 // #define MARFS_PRE_RD_FORMAT     MARFS_BUCKET_RD_FORMAT "/" MARFS_OBJID_RD_FORMAT  
 #define MARFS_PRE_RD_FORMAT     NON_SLASH "/%s" 

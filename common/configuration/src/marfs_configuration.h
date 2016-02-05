@@ -102,10 +102,13 @@ extern "C" {
 // -- 0.4 Now generating real recovery-info into the tails of objects
 //
 // -- 0.5 moved version-string as first thing after "HEAD:/", in rec-info
+//
+// -- 1.0 new objids, with http://host:port/ns_alias/repo/vers/ns/...
+//        Makes adding new namespaces simpler for admins.
+//        Allows repos to select sproxyd driver-alias.
 
-
-#define MARFS_CONFIG_MAJOR  0
-#define MARFS_CONFIG_MINOR  5
+#define MARFS_CONFIG_MAJOR  1
+#define MARFS_CONFIG_MINOR  0
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
@@ -368,16 +371,26 @@ typedef struct marfs_repo_range {
 // distinct path-components of all namespaces seen by the config-file
 // loader.
 //
-// NOTE: For Scality sproxyd, we assume that name is identical to
-//     the "driver-alias" used in sproxyd requests.  This is configured in
-//     /etc/sproxyd.conf on the repo server, as the alias of a given
-//     "driver" for "by-path" access.  This means that the mount-suffix
-//     used here actually selects which sproxyd driver is to be used.b
+// NOTE: Formerly, we used the namespace.name as the second token in
+//     generated URLs.  For Scality sproxyd, this corresponds to the
+//     "driver-alias", in the sproxyd config.  However, (a) there are only
+//     a limited number available, and (b) adding a new one requires
+//     mucking with the config and restarting services.  So, we've added a
+//     distinct "alias" to simplify marfs config.  The alias will now go
+//     into the first token in generated URLs (matching sproxyd fastcgi
+//     proxy, or S3 bucket).  The true namespace.name will also go into the
+//     URL, but further down in the "path".
+//
+//     This new scheme will make it easier to proliferate namespaces
+//     without a lot of server admin.
+//
 // ---------------------------------------------------------------------------
 
 typedef struct marfs_namespace {
   char                 *name;
   size_t                name_len;
+  char                 *alias;
+  size_t                alias_len;
   char                 *mnt_path;
   size_t                mnt_path_len;
   MarFS_Perms           bperms;

@@ -25,6 +25,8 @@ LOG_OPT    = -DLOG_PREFIX='"config"'
 ifdef DEBUG
 	LOG_OPT  += -DUSE_STDOUT 
 	DBG_OPT   = -D_DEBUG_MARFS_CONFIGURATION
+else
+	LOG_OPT  += -DUSE_SYSLOG 
 endif
 
 BLUEPRINT   := $(PWD)/marfs_configuration_blueprint.cfg

@@ -972,6 +972,17 @@ static MarFS_Config_Ptr read_configuration_internal() {
     marfs_namespace_list[j]->name = strdup( namespaceList[j]->name );
     marfs_namespace_list[j]->name_len = strlen( namespaceList[j]->name );
 
+    if ( namespaceList[j]->alias == NULL) {
+       LOG( LOG_ERR, "MarFS namespace '%s' has no alias.\n", namespaceList[j]->name);
+       return NULL;
+    }
+    marfs_namespace_list[j]->alias = strdup( namespaceList[j]->alias );
+    marfs_namespace_list[j]->alias_len = strlen( namespaceList[j]->alias );
+
+    if ( namespaceList[j]->mnt_path == NULL) {
+       LOG( LOG_ERR, "MarFS namespace '%s' has no mnt_path.\n", namespaceList[j]->name);
+      return NULL;
+    }
     marfs_namespace_list[j]->mnt_path = strdup( namespaceList[j]->mnt_path );
     marfs_namespace_list[j]->mnt_path_len = strlen( namespaceList[j]->mnt_path );
 
