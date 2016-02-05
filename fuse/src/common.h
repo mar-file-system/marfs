@@ -609,7 +609,8 @@ extern int  trash_truncate(PathInfo* info, const char* path);
 
 extern int  check_quotas  (PathInfo* info);
 
-extern int  update_url(ObjectStream* os, PathInfo* info);
+extern int  update_url     (ObjectStream* os, PathInfo* info);
+extern int  update_timeouts(ObjectStream* os, PathInfo* info);
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 extern int     write_chunkinfo(int                   md_fd,

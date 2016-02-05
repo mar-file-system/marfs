@@ -936,6 +936,26 @@ static MarFS_Config_Ptr read_configuration_internal() {
       LOG( LOG_ERR, "Invalid latency value of \"%s\".\n", repoList[j]->latency );
       return NULL;
     }
+
+    errno = 0;
+    unsigned long wr_timeout = (repoList[j]->write_timeout
+                                ? strtoul( repoList[j]->write_timeout, (char **) NULL, 10 )
+                                : 0);
+    if ( errno || (wr_timeout > (uint16_t)-1)) {
+      LOG( LOG_ERR, "Invalid write_timeout value \"%s\".\n", repoList[j]->write_timeout );
+      return NULL;
+    }
+    marfs_repo_list[j]->write_timeout = wr_timeout;
+
+    errno = 0;
+    unsigned long rd_timeout = (repoList[j]->read_timeout
+                                ? strtoul( repoList[j]->read_timeout, (char **) NULL, 10 )
+                                : 0);
+    if ( errno || (rd_timeout > (uint16_t)-1)) {
+      LOG( LOG_ERR, "Invalid read_timeout value \"%s\".\n", repoList[j]->read_timeout );
+      return NULL;
+    }
+    marfs_repo_list[j]->read_timeout = rd_timeout;
   }
   free( repoList );
 

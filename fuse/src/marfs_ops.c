@@ -308,9 +308,11 @@ int marfs_ftruncate(const char*            path,
    // (i.e. there was no prior request that completed).  If we exceed the
    // logical chunk boundary, our request should also include the size of
    // the recovery-info, to be written at the tail.
-   size_t open_size = get_stream_wr_open_size(fh, 0);
+   size_t   open_size  = get_stream_wr_open_size(fh, 0);
+   uint16_t wr_timeout = info->pre.repo->write_timeout;
+
    TRY0(update_url, os, info);
-   TRY0(stream_open, os, OS_PUT, open_size, 0);
+   TRY0(stream_open, os, OS_PUT, open_size, 0, wr_timeout);
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
@@ -932,7 +934,6 @@ int marfs_open(const char*         path,
    // initialize the URL in the ObjectStream, in our FileHandle
    TRY0(update_url, os, info);
 
-
    // To support seek() [for reads], and allow reading at arbitrary
    // offsets, we let marfs_read() determine the offset where it should
    // open, so it can do its own GET, with byte-ranges.  Therefore, for
@@ -949,9 +950,10 @@ int marfs_open(const char*         path,
       //     abort-stream/move-to-trash/open-new-name.  So, we need to track
       //     the remaining data-size as it is right now.  (Also, we may
       //     someday want marfs_write() to retry failed writes a few times.)
-      size_t open_size = get_stream_wr_open_size(fh, 0);
+      size_t   open_size  = get_stream_wr_open_size(fh, 0);
+      uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-      TRY0(stream_open, os, OS_PUT, open_size, 0);
+      TRY0(stream_open, os, OS_PUT, open_size, 0, wr_timeout);
    }
 
 
@@ -1283,6 +1285,8 @@ int marfs_read (const char*        path,
       return -1;
    }
 
+   uint16_t rd_timeout = info->pre.repo->read_timeout;
+
    // Starting at the appropriate chunk and offset to match caller's
    // logical offset in the multi-object data, move through successive
    // chunks, reading contiguous user-data (skipping recovery-info), until
@@ -1332,7 +1336,7 @@ int marfs_read (const char*        path,
          //     content_length provided in stream_open().  Therefore, we
          //     let written be wiped.
          //
-         TRY0(stream_open, os, OS_GET, open_size, 0);
+         TRY0(stream_open, os, OS_GET, open_size, 0, rd_timeout);
       }
 
       // Because we are reading byte-ranges, we may see '206 Partial Content'.
@@ -2345,8 +2349,10 @@ int marfs_write(const char*        path,
       // NOTE: stream_open() potentially wipes ObjectStream.written.  We
       //     want this field to track the total amount written, across all
       //     chunks, within a given open(), so we preserve it.
-      size_t open_size = get_stream_wr_open_size(fh, 1);
-      TRY0(stream_open, os, OS_PUT, open_size, 1);
+      size_t   open_size  = get_stream_wr_open_size(fh, 1);
+      uint16_t wr_timeout = info->pre.repo->write_timeout;
+
+      TRY0(stream_open, os, OS_PUT, open_size, 1, wr_timeout);
    }
 
    // Span across objects, for "Multi" format.  Repo.chunk_size is the
@@ -2443,8 +2449,10 @@ int marfs_write(const char*        path,
          // NOTE: stream_open() potentially wipes ObjectStream.written.  We
          //     want this field to track the total amount written, across all
          //     chunks, within a given open(), so we preserve it.
-         size_t open_size = get_stream_wr_open_size(fh, 1);
-         TRY0(stream_open, os, OS_PUT, open_size, 1);
+         size_t   open_size  = get_stream_wr_open_size(fh, 1);
+         uint16_t wr_timeout = info->pre.repo->write_timeout;
+
+         TRY0(stream_open, os, OS_PUT, open_size, 1, wr_timeout);
       }
 
       // compute limits of new chunk

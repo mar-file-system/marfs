@@ -182,6 +182,8 @@ typedef struct {
    char                url[MARFS_MAX_URL_SIZE]; // WARNING: only valid during open_object()
    size_t              written;   // bytes written-to/read-from stream
    size_t              content_len;
+   uint16_t            timeout;   // zero uses hardwired default for GET/PUT timeout
+
    volatile OSFlags_t  flags;
 
    // OSOpenFlags       open_flags; // caller's open flags, for when we need to close/repoen
@@ -196,7 +198,11 @@ typedef enum {
 
 // Initialize os.url, before calling.  Use <preserve_os_written> to prevent
 // resetting the count of data written, in os->written
-int     stream_open(ObjectStream* os, IsPut put, curl_off_t content_length, uint8_t preserve_os_written);
+int     stream_open(ObjectStream* os,
+                    IsPut         put,
+                    curl_off_t    content_length,
+                    uint8_t       preserve_os_written,
+                    uint16_t      timeout);
 
 int     stream_put(ObjectStream* os, const char* buf, size_t size);
 ssize_t stream_get(ObjectStream* os, char* buf,       size_t size);

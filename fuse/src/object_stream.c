@@ -254,15 +254,15 @@ int stream_wait(ObjectStream* os) {
    if (os->flags & OSF_JOINED)
       return 0;
 
-   // static const size_t  TIMEOUT_SECS = 10;
-   static const size_t  TIMEOUT_SECS = 20;
+   static const size_t  default_timeout = 20;
+   size_t timeout_sec = (os->timeout ? os->timeout : default_timeout);
 
    struct timespec timeout;
    if (clock_gettime(CLOCK_REALTIME, &timeout)) {
       LOG(LOG_ERR, "failed to get timer '%s'\n", strerror(errno));
       return -1;                // errno is set
    }
-   timeout.tv_sec += TIMEOUT_SECS;
+   timeout.tv_sec += timeout_sec;
 
 
    int   rc;
@@ -466,8 +466,8 @@ int stream_put(ObjectStream* os,
                const char*   buf,
                size_t        size) {
 
-   // static const int put_timeout_sec = 10; /* totally made up out of thin air */
-   static const int put_timeout_sec = 20; /* totally made up out of thin air */
+   static const uint16_t default_timeout = 20; /* totally made up out of thin air */
+   uint16_t timeout_sec = (os->timeout ? os->timeout : default_timeout);
 
    LOG(LOG_INFO, "(%08lx) entry\n", (size_t)os);
    if (! (os->flags & OSF_OPEN)) {
@@ -487,9 +487,11 @@ int stream_put(ObjectStream* os,
    //    so we can return immediately?
    //
    // ANSWER: No.
-   LOG(LOG_INFO, "(%08lx) waiting for IOBuf\n", (size_t)os); // readfunc done with IOBuf?
-   SAFE_WAIT(&os->iob_empty, put_timeout_sec, os);
-   //   SAFE_WAIT_KILL(&os->iob_empty, put_timeout_sec, os);
+
+   // readfunc done with IOBuf?
+   LOG(LOG_INFO, "(%08lx) waiting %ds for IOBuf\n", (size_t)os, timeout_sec); 
+   SAFE_WAIT(&os->iob_empty, timeout_sec, os);
+   //   SAFE_WAIT_KILL(&os->iob_empty, timeout_sec, os);
 
    static size_t tmp_size = 0;
    static char*  tmp_buf = NULL;
@@ -522,9 +524,11 @@ int stream_put(ObjectStream* os,
    // let readfunc move data
    POST(&os->iob_full);
 
-   LOG(LOG_INFO, "(%08lx) waiting for IOBuf\n", (size_t)os); // readfunc done with IOBuf?
-   SAFE_WAIT(&os->iob_empty, put_timeout_sec, os);
-   //   SAFE_WAIT_KILL(&os->iob_empty, put_timeout_sec, os);
+   // readfunc done with IOBuf?
+   LOG(LOG_INFO, "(%08lx) waiting %ds for IOBuf\n",
+       (size_t)os, timeout_sec);
+   SAFE_WAIT(&os->iob_empty, timeout_sec, os);
+   //   SAFE_WAIT_KILL(&os->iob_empty, timeout_sec, os);
 
 #endif
 
@@ -704,8 +708,8 @@ ssize_t stream_get(ObjectStream* os,
                    char*         buf,
                    size_t        size) {
 
-   // static const int get_timeout_sec = 10; /* totally made up out of thin air */
-   static const int get_timeout_sec = 20; /* totally made up out of thin air */
+   static const uint16_t default_timeout = 20; /* totally made up out of thin air */
+   uint16_t timeout_sec = (os->timeout ? os->timeout : default_timeout);
 
    IOBuf* b = &os->iob;     // shorthand
 
@@ -753,9 +757,9 @@ ssize_t stream_get(ObjectStream* os,
    POST(&os->iob_empty);
 
    // wait for writefn to fill our buffer
-   LOG(LOG_INFO, "waiting for writefn\n");
-   SAFE_WAIT(&os->iob_full, get_timeout_sec, os);
-   //   SAFE_WAIT_KILL(&os->iob_full, get_timeout_sec, os);
+   LOG(LOG_INFO, "waiting %ds for writefn\n", timeout_sec);
+   SAFE_WAIT(&os->iob_full, timeout_sec, os);
+   //   SAFE_WAIT_KILL(&os->iob_full, timeout_sec, os);
 
    // writefn detected CURL EOF?
    if (os->flags & OSF_EOF) {
@@ -807,8 +811,10 @@ ssize_t stream_get(ObjectStream* os,
 int stream_open(ObjectStream* os,
                 IsPut         put,
                 curl_off_t    content_length,
-                uint8_t       preserve_os_written) {
-   LOG(LOG_INFO, "%s\n", ((put) ? "PUT" : "GET"));
+                uint8_t       preserve_os_written,
+                uint16_t      timeout) {
+
+   LOG(LOG_INFO, "%s  (timeout=%hu)\n", ((put) ? "PUT" : "GET"), timeout);
 
    curl_version_info_data* vers_data = curl_version_info(CURLVERSION_NOW);
    __attribute__ ((unused)) uint8_t curl_major = (vers_data->version_num >> 16) & 0xff;
@@ -833,6 +839,8 @@ int stream_open(ObjectStream* os,
          return -1;
       }
    }
+
+   os->timeout = timeout;
 
    os->flags |= OSF_OPEN;
    if (put)
@@ -942,8 +950,6 @@ int stream_open(ObjectStream* os,
 // wait for the S3 GET/PUT to complete
 int stream_sync(ObjectStream* os) {
 
-   ///   // TBD: this should be a per-repo config-option
-   ///   static const time_t timeout_sec = 5;
    void* retval;
 
    // fuse may call fuse-flush multiple times (one for every open stream).
@@ -1130,9 +1136,6 @@ int stream_sync(ObjectStream* os) {
 // ---------------------------------------------------------------------------
 
 int stream_abort(ObjectStream* os) {
-
-   ///   // TBD: this should be a per-repo config-option
-   ///   static const time_t timeout_sec = 5;
 
    // fuse may call fuse-flush multiple times (one for every open stream).
    // but will not call flush after calling close().

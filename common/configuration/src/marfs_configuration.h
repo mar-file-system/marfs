@@ -325,6 +325,8 @@ typedef struct marfs_repo {
    char                 *online_cmds;
    size_t                online_cmds_len;
    unsigned long long    latency;
+   uint32_t              write_timeout;
+   uint32_t              read_timeout;
 } MarFS_Repo, *MarFS_Repo_Ptr, **MarFS_Repo_List;
 
 /*
