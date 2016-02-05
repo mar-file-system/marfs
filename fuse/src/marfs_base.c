@@ -344,15 +344,10 @@ int init_pre(MarFS_XattrPre*        pre,
    pre->config_vers_min = MARFS_CONFIG_MINOR; // marfs_config->version_minor;
 
    pre->obj_type     = obj_type;
-#ifdef STATIC_CONFIG
-   pre->compression  = repo->compression;
-   pre->correction   = repo->correction;
-   pre->encryption   = repo->encryption;
-#else
+
    pre->compression  = repo->comp_type;
    pre->correction   = repo->correct_type;
-   pre->encryption   = 0; /* new config doesn't accomodate "encryption" */
-#endif
+   pre->encryption   = repo->enc_type;
 
    pre->md_inode     = st->st_ino;
    pre->md_ctime     = st->st_ctime;
