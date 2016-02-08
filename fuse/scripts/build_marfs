@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# We assume the following are defined
+#  AWS4C
+#  PA2X
+#  CONFIG
+#  FUSE
+
+
+# # For example:
+#
+# BASE=/root/jti/send.dir
+# GIT=$BASE/git
+# export AWS4C=$GIT/aws4c
+# export PA2X=$GIT/PA2X
+# export CONFIG=$GIT/marfs/common/configuration/src
+# export FUSE=$GIT/marfs/fuse/src
+# export MARFSCONFIGRC=$BASE/git/common/configuration/src/marfs_odsu.cfg
+
+
+
+
+
+
+# --- build everything for marfs: libaws4c, libconfig, libmarfs, marfs_fuse
+#     
+#     usage:  build_marfs [ <code> ]
+#       <code> 0/empty = compile -03, without logging
+#       <code> 1       = compile -03, with logging to syslog
+#       <code> 2       = compile -g,  with logging to syslog
+#       <code> 3       = compile -g,  without logging
+
+CODE=$1
+(( CODE )) || CODE=0
+
+case $CODE in
+    0)
+        FUSE_ARGS="lean"
+        ;;
+    1)
+        FUSE_ARGS="fast"
+        ;;
+    2)
+        FUSE_ARGS="DEBUG=0"
+        AWS4C_ARGS="DEBUG=1"
+        ;;
+    3)
+        FUSE_ARGS="lean DEBUG=0"
+        AWS4C_ARGS="DEBUG=1"
+        ;;
+    *)
+        echo "$0 unexpected arg $CODE"
+        return 1;
+esac
+
+echo "FUSE_ARGS='$FUSE_ARGS'"
+echo "AWS4C_ARGS='$AWS4C_ARGS'"
+echo
+
+echo
+echo "making LIBAWS4C"
+( cd $AWS4C && make clean && make $AWS4C_ARGS ) \
+    || (echo "couldn't build $AWS4C"  && return 1)
+
+echo
+echo "making PA2X directory"
+( cd $PA2X && mkdir -p parse-inc ) \
+    || (echo "couldn't mkdir -p $PA2X/parse-inc"  && return 1)
+
+echo
+echo "making LIBCONFIG"
+( cd $CONFIG && make clean && make PARSE_DIR=$PA2X ) \
+    || (echo "couldn't build $CONFIG" && return 1)
+
+echo
+echo "making LIBMARFS"
+( cd $FUSE && make clean && make $FUSE_ARGS LIBAWS4C=$AWS4C ) \
+    || (echo "couldn't build $FUSE"   && return 1)
