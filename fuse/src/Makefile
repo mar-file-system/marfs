@@ -399,7 +399,8 @@ grind: fuse.grind
 
 # --- specialized builds
 fuse.std: pre_req
-	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 USE_SYSLOG=1 DEBUG=2
+	@ # $(MAKE) marfs_fuse LINK_LIBFUSE=1 USE_SYSLOG=1 DEBUG=2
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 USE_SYSLOG=1
 
 fuse.fast: pre_req
 	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 USE_SYSLOG=1
