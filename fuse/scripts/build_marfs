@@ -3,26 +3,40 @@
 # We assume the following are defined
 #  AWS4C
 #  PA2X
-#  CONFIG
-#  FUSE
+#  MARFS
 
 
 # # For example:
 #
 # BASE=/root/jti/send.dir
 # GIT=$BASE/git
+#
 # export AWS4C=$GIT/aws4c
 # export PA2X=$GIT/PA2X
-# export CONFIG=$GIT/marfs/common/configuration/src
-# export FUSE=$GIT/marfs/fuse/src
-# export MARFSCONFIGRC=$BASE/git/common/configuration/src/marfs_odsu.cfg
+# export MARFS=$GIT/marfs
+
+
+if [ -z "$AWS4C" ]; then
+    echo "AWS4C undefined.  Set it to the location of your aws4c install"
+    exit 1
+elif [ -z "$PA2X" ]; then
+    echo "PA2X undefined.  Set it to the location of your PA2X install"
+    exit 1
+elif [ -z "$MARFS" ]; then
+    echo "MARFS undefined.  Set it to the location of your marfs install"
+    exit 1
+fi
+
+
+# convenience
+CONFIG=$MARFS/common/configuration/src
+FUSE=$MARFS/fuse/src
 
 
 
 
 
-
-# --- build everything for marfs: libaws4c, libconfig, libmarfs, marfs_fuse
+# --- build everything for marfs:  libaws4c, libconfig, libmarfs, marfs_fuse
 #     
 #     usage:  build_marfs [ <code> ]
 #       <code> 0/empty = compile -03, without logging
@@ -35,18 +49,22 @@ CODE=$1
 
 case $CODE in
     0)
+        CONFIG_ARGS="DEBUG=0 CONFIG=$MARFSCONFIGRC"
         FUSE_ARGS="lean"
         ;;
     1)
+        CONFIG_ARGS="CONFIG=$MARFSCONFIGRC"
         FUSE_ARGS="fast"
         ;;
     2)
-        FUSE_ARGS="DEBUG=0"
         AWS4C_ARGS="DEBUG=1"
+        CONFIG_ARGS="DEBUG=1 CONFIG=$MARFSCONFIGRC"
+        FUSE_ARGS="DEBUG=0"
         ;;
     3)
-        FUSE_ARGS="lean DEBUG=0"
+        CONFIG_ARGS="DEBUG=4 CONFIG=$MARFSCONFIGRC"
         AWS4C_ARGS="DEBUG=1"
+        FUSE_ARGS="lean DEBUG=0"
         ;;
     *)
         echo "$0 unexpected arg $CODE"
@@ -58,21 +76,29 @@ echo "AWS4C_ARGS='$AWS4C_ARGS'"
 echo
 
 echo
-echo "making LIBAWS4C"
-( cd $AWS4C && make clean && make $AWS4C_ARGS ) \
-    || (echo "couldn't build $AWS4C"  && return 1)
+echo "making libaws4c"
+if ! ( cd $AWS4C && make clean && make $AWS4C_ARGS ); then
+    echo "couldn't build $AWS4C"
+    exit 1
+fi
 
 echo
-echo "making PA2X directory"
-( cd $PA2X && mkdir -p parse-inc ) \
-    || (echo "couldn't mkdir -p $PA2X/parse-inc"  && return 1)
+echo "making required PA2X directory"
+if ! ( cd $PA2X && mkdir -p parse-inc ); then
+    echo "couldn't mkdir -p $PA2X/parse-inc"
+    exit 1
+fi
 
 echo
-echo "making LIBCONFIG"
-( cd $CONFIG && make clean && make PARSE_DIR=$PA2X ) \
-    || (echo "couldn't build $CONFIG" && return 1)
+echo "making libconfig"
+if !( cd $CONFIG && make clean && make $CONFIG_ARGS PARSE_DIR=$PA2X ); then
+    echo "couldn't build $CONFIG"
+    exit 1
+fi
 
 echo
-echo "making LIBMARFS"
-( cd $FUSE && make clean && make $FUSE_ARGS LIBAWS4C=$AWS4C ) \
-    || (echo "couldn't build $FUSE"   && return 1)
+echo "making libmarfs"
+if !( cd $FUSE && make clean && make $FUSE_ARGS LIBAWS4C=$AWS4C ); then
+    echo "couldn't build $FUSE"
+    exit 1
+fi

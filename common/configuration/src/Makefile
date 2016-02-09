@@ -18,16 +18,49 @@ LOG_DIR = $(PWD)/../../log/src
 
 #LIBS      = -lpthread
 LIBS       =
-OPTIONS   := -D_GNU_SOURCE -g
+OPTIONS   := -D_GNU_SOURCE
 PARSE_OPT  = -DDATAPARSE
 LOG_OPT    = -DLOG_PREFIX='"config"'
 
+
+# DEBUG=undef   -- -O3, read_configuration() errs to syslog
+# DEBUG=0       -- -O3, no logging
+# DEBUG=1       -- -g,  read_configuration() errs to syslog
+# DEBUG=2       -- -g,  read_configuration() errs to stdout
+# DEBUG=3       -- -g,  read_configuration() errs to stdout, plus diagnostics
+# DEBUG=4       -- -g,  no logging
+#
 ifdef DEBUG
-	LOG_OPT  += -DUSE_STDOUT 
-	DBG_OPT   = -D_DEBUG_MARFS_CONFIGURATION
+	ifeq ($(DEBUG),0)
+		OPTIONS  += -O3
+
+	else ifeq ($(DEBUG),1)
+		OPTIONS  += -g
+		LOG_OPT  += -DUSE_SYSLOG
+
+	else ifeq ($(DEBUG),2)
+		OPTIONS  += -g
+		LOG_OPT  += -DUSE_STDOUT
+
+	else ifeq ($(DEBUG),3)
+		OPTIONS  += -g
+		LOG_OPT  += -DUSE_STDOUT
+		DBG_OPT   = -D_DEBUG_MARFS_CONFIGURATION
+
+	else ifeq ($(DEBUG),4)
+		OPTIONS  += -g
+
+	else
+		$error "unrecognized DEBUG value: '$(DEBUG)'"
+
+	endif
+
 else
-	LOG_OPT  += -DUSE_SYSLOG 
+	OPTIONS  += -O3
+	LOG_OPT  += -DUSE_SYSLOG
 endif
+
+
 
 BLUEPRINT   := $(PWD)/marfs_configuration_blueprint.cfg
 CONFIG      := $(PWD)/marfs_cctest.cfg
@@ -74,6 +107,7 @@ parser: parse_dir
 	@ echo; echo "#-- running datapars with $(CONFIG)"
 	(cd $(PARSE_DIR); ./datapars $(CONFIG) )
 
+	@ # NOTE: This is the only time PA2X's Makefile will honor our CFLAGS settings.
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
 	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 
@@ -130,7 +164,7 @@ LDFLAGS += -L.
 # LDFLAGS += -L.
 tester: libconfig.a test_marfs_configuration.c
 	@ echo; echo "#-- building $@"
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $(DBG_OPT) test_marfs_configuration.c -lconfig
+	$(CC) -o $@ $(CFLAGS) $(OPTIONS) $(LDFLAGS) $(DBG_OPT) test_marfs_configuration.c -lconfig
 
 
 
@@ -149,7 +183,7 @@ tester: libconfig.a test_marfs_configuration.c
 
 marfs_config: libconfig.a marfs_config.c
 	@ echo; echo "#-- building $@"
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) marfs_config.c -lconfig
+	$(CC) -o $@ $(CFLAGS) $(OPTIONS) $(LDFLAGS) marfs_config.c -lconfig
 
 
 
