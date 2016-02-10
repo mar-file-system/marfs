@@ -1194,8 +1194,8 @@ int validate_config() {
 
    // repo checks
    MarFS_Repo*   repo = NULL;
-   RepoIterator  it = repo_iterator();
-   while ((repo = repo_next(&it))) {
+   RepoIterator  rit = repo_iterator();
+   while ((repo = repo_next(&rit))) {
 
       // chunk_size must be greater than the size of the recovery-info that
       // is written into the tail of objects.
@@ -1211,14 +1211,19 @@ int validate_config() {
       }
    }
 
-   //   // TBD
-   //
-   //   // namespace checks
-   //   MarFS_Namespace* ns = NULL;
-   //   NSIterator       it = namespace_iterator();
-   //   while (ns = namespace_next(&it)) {
-   //      // ...
-   //   }
+   // namespace checks
+   MarFS_Namespace* ns = NULL;
+   NSIterator       nit = namespace_iterator();
+   while ((ns = namespace_next(&nit))) {
+
+      // assure NS name (plus terminal NULL) doesn't exceed the length we defined
+      if (ns->name_len >= MARFS_MAX_NAMESPACE_NAME) {
+         LOG(LOG_ERR, "NS name '%s' has length %ld,"
+             " exceeding the limit (%ld)\n",
+             ns->name, ns->name_len, MARFS_MAX_NAMESPACE_NAME);
+         retval = -1;
+      }
+   }
 
    return retval;
 }

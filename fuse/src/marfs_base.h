@@ -144,6 +144,16 @@ extern "C" {
 // really used to allocate buffers when parsing objid xattr-values.
 #define   MARFS_MAX_NS_ALIAS_NAME         16
 
+// Namespace name is no longer constrained as to its length, because it is
+// now the NS "alias", rather than the name, which goes into the part of
+// the URL that corresponds to an S3 bucket.  However, some users of the
+// library would like to know how big a buffer should be, to be big enough
+// to hold any namespace name.  One thing we can say about NS name is that
+// it must not be bigger than an obj-ID (because it is a part of the
+// obj-ID).  So, we'll provide that, and enforce it in
+// read_configuration().
+#define   MARFS_MAX_NAMESPACE_NAME         MARFS_MAX_OBJID_SIZE
+
 
 // Allows us to allocate buffers when parsing objid
 // xattr-values.  If this is going to go into the
