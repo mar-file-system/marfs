@@ -81,6 +81,10 @@
 #include <sys/types.h>
 #include <attr/xattr.h>
 #include "marfs_packer.h"
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 MarFS_Repo_Ptr find_repo_by_name2( const char* name ) {
 
   MarFS_Repo*   repo = NULL;
@@ -95,6 +99,10 @@ MarFS_Repo_Ptr find_repo_by_name2( const char* name ) {
   return NULL;
 }
 
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int post_2_str2(char*                  post_str,
                size_t                 max_size,
                const MarFS_XattrPost2 *post){
@@ -134,6 +142,10 @@ int post_2_str2(char*                  post_str,
    return 0;
 }
 
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int str_2_pre2(MarFS_XattrPre*    pre,
               const char*        pre_str, // i.e. an xattr-value
               const struct stat* st) {
@@ -211,7 +223,7 @@ int str_2_pre2(MarFS_XattrPre*    pre,
       return -1;
    }
    else if (read_count != 13) {
-     printf("parsed %d items from '%s'\n", read_count, pre->objid);
+     //printf("parsed %d items from '%s'\n", read_count, pre->objid);
       return -1;
    }
 
@@ -305,6 +317,10 @@ int str_2_pre2(MarFS_XattrPre*    pre,
    return 0;
 }
 
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int str_2_post2(MarFS_XattrPost2* post, const char* post_str) {
 
    uint16_t major;
@@ -334,17 +350,25 @@ int str_2_post2(MarFS_XattrPost2* post, const char* post_str) {
 }
 
 struct walk_path paths[10240000];
+//struct walk_path paths[1024];
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen){
-	gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path(fnameP);
+	//gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path(fnameP);
 	int counter = 0;
 	const gpfs_iattr_t *iattrP;
 	const char *xattrBP;
 	unsigned int xattr_len;
-	register gpfs_iscan_t *iscanP = gpfs_open_inodescan_with_xattrs(fsP, NULL, -1, NULL, NULL);
+	//register gpfs_iscan_t *iscanP = gpfs_open_inodescan_with_xattrs(fsP, NULL, -1, NULL, NULL);
 	int rc;
 	const char* nameP;
 	const char* valueP;
 	unsigned int valueLen;
+
+	gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path(fnameP);
+	register gpfs_iscan_t *iscanP = gpfs_open_inodescan_with_xattrs(fsP, NULL, -1, NULL, NULL);
         while (1){
                 rc = gpfs_next_inode_with_xattrs(iscanP,0x7FFFFFFF,&iattrP,&xattrBP, &xattr_len);
                 if ((iattrP == NULL) || (iattrP->ia_inode > 0x7FFFFFFF))
@@ -361,7 +385,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 				//	strcpy(pre, valueP);
 					str_2_pre2(&pre, valueP, valueLen);
 		//			printf("inode:=%d\n", iattrP->ia_inode);
-		//			printf("%s\n",valueP);
+					//printf("%s\n",valueP);
 				}
                                 if (strcmp(nameP, "user.marfs_post") == 0){
   /*                                     scanf_size = sscanf(valueP, MARFS_POST_FORMAT,
@@ -376,8 +400,9 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
                                                                           &md_path);*/
 					MarFS_XattrPost2 post;
 					rc = str_2_post2(&post, valueP);
-					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 422490 && iattrP->ia_inode <= 422694){
-                                           printf("%d\n", iattrP->ia_size);
+					//if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 422490 && iattrP->ia_inode <= 422694){
+					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==39 && post.obj_type == OBJ_UNI ){
+                                           //printf("%d\n", iattrP->ia_size);
 
 					//if (post.flags != POST_TRASH && post.chunk_info_bytes <= obj_size && post.obj_type == OBJ_UNI){
 						//printf("adding object now!!\n");
@@ -409,62 +434,139 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 }
 
 //int get_objects(struct marfs_inode *unpacked, int unpacked_size, list*  packed, int *packed_size, int obj_size_max){
+/******************************************************************************
+* Name  get_objects
+* This function determines how many objects can be packed into a single object.
+* It iterates through all the inodes found that meet the packing criteria and 
+* creates link lists for all the inodes that fit in one object.  The target 
+* object size is determine by obj_size_max which is passed into this function
+* If more than one object is created in this function, the objects are joined
+* in a link list as well.
+* 
+******************************************************************************/
 int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  packed, int *packed_size, int obj_size_max){
-	int cur_size=0;	
+	//int cur_size=0;	
+	int sum_obj_size=0;	
 	int i;
 	int count=0;
-	int temp_count =0;
-	//item * curr, * head;
-	inode_lnklist *curr, *head;
-	head = NULL;
-	obj_lnklist *curr2, *head2;
-	head2 = NULL;
-	curr2=NULL;
+	int temp_count = 0;
+        int obj_cnt = 0;
+	inode_lnklist *sub_objects, *sub_obj_head;
+	obj_lnklist *main_object, *main_obj_head;
+        main_object = NULL;
+
+        // initial link list node creation
+        //main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist));
+        //sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist));
+	main_obj_head = NULL;
+        sub_obj_head = NULL;
+  
+
+
+        // There are three conditions for packing objects
+        // -objects add up to less than exact size of target object
+        // -objects add up to the exact size of target object
+        // -objects add up to > greater than size of target object
+        //  and less than another target object      
+
+        // Note this code can be consolidated with function calls or
+        // MACROs but just trying to get functionality first.
+        int need_main = -1;
+   
+        // loop through all inodes found
 	for (i = 0; i < unpacked_size; i++){
-		int length = unpacked[i].size;
-		if(length < obj_size_max) {
-			if (cur_size+length <= obj_size_max){
-				cur_size += length;
-				printf("adding to obj size=%d!!\n", cur_size);
-			} else {
-				//printf("starting new obj:%d\n", count);
-				count++;
-				//printf("\n%d\n", temp[01].size);
-				temp_count++;		
-				//curr2 = (list *)malloc(sizeof(list));
-				curr2 = (obj_lnklist *)malloc(sizeof(obj_lnklist));
-				curr2->val = curr;
-				curr2->count= temp_count;
-				curr2->next = head2;
-				head2 = curr2;
-				head = NULL;
-				printf("appending packed object!!\n");
-				//printf("\n%d\n", packed[0]);
-				cur_size =0;
-			}
-			//curr = (item *)malloc(sizeof(item));
-			curr = (inode_lnklist *)malloc(sizeof(inode_lnklist));
-      			curr->val = unpacked[i];
-      			curr->next  = head;
-      			head = curr;
-			temp_count=0;	
-		}
+           printf("i = %d\n", i);
+           sum_obj_size+=unpacked[i].size; 
+           obj_cnt++;
+           // add upp sizes of each object
+           if (sum_obj_size < obj_size_max) {
+              sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist));
+              sub_objects->val = unpacked[i];
+              sub_objects->next  = sub_obj_head;
+              sub_obj_head = sub_objects;
+              printf("sum size = %d\n", sum_obj_size);
+           }
+            // check if sum is equal to or greater than target object
+           else if (sum_obj_size >= obj_size_max) {
+               // if the sum of the objects = the target file size
+               // terminate the sub_objects link list 
+               // and create a new main_object entry in the linked list
+               if(sum_obj_size == obj_size_max) {
+                  printf("Equal %d\n", sum_obj_size);
+                  sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist));
+                  sub_objects->val = unpacked[i];
+                  sub_objects->next  = sub_obj_head;
+                  sub_obj_head = NULL;
+
+                  // Add main object stuff here
+                  main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist));
+                  main_object->val = sub_objects;
+                  main_object->count=obj_cnt;
+                  main_object->next = main_obj_head;
+                  main_obj_head = main_object;
+                  obj_cnt = 0;
+                  count++;
+                  sum_obj_size = 0;
+                  need_main = 0;
+               }
+               // else the size is greater than the target object size so
+               // terminate sub_object link list and create a new main object
+               // link here.  
+               // also start a new sub_object linked list
+               else { 
+                  //create a new main object
+                  printf("XX\n");
+                  main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist));
+                  main_object->val = sub_objects;
+                  main_object->count= obj_cnt;
+                  main_object->next = main_obj_head;
+                  main_obj_head = main_object;
+                  sub_obj_head=NULL;
+                  count++;
+                  sum_obj_size = 0;
+                  obj_cnt++;
+                  sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist));
+                  sub_objects->val = unpacked[i];
+                  sub_objects->next  = NULL;
+                  sub_obj_head = sub_objects;
+
+                  need_main = -1;
+               }
+           }
 	}
-	curr = head;
-	count++;
+        // done summing sizes, create target object if at least one not created or 
+        // picking remainder from else above
+        if (need_main == -1) {
+           printf("YY\n");
+           main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist));
+           main_object->val = sub_objects;
+           main_object->count=obj_cnt;
+           main_object->next = main_obj_head;
+           count++;
+        }
+        //main_object->next = NULL;
+
+
 	*packed_size = count;
-	if(curr2 == NULL){
-		packed = NULL;
-	} else {
-		*packed = *curr2;
-	}
+	*packed = *main_object;
+        printf("sub object count %d\n", packed->count);
+        printf("main object count %d\n", count);
+        if (packed->val == NULL) {
+           printf("NULL value\n");
+        }
 	return 0;
 }
 //int pack_up(list * objects, MarFS_Repo* repo, MarFS_Namespace* ns){
+/******************************************************************************
+* Name pack_up
+* This function goes throught the main object link list and reads all data from
+* the associated sub objects (using s3_get).
+* It then writes the data to the new object using s3_put
+******************************************************************************/
 int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 	//printf("let's packup!\n");
 	char *pre;
-        s3_set_host("10.10.0.1:81/");
+        //s3_set_host("10.10.0.1:81/");
 	srand(time(NULL));
 	int r = rand();
 	int count = 0;
@@ -479,21 +581,34 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 	//list * objtemp;
 	obj_lnklist *objtemp;
 //	printf("ptr location:=%d", &objects);
+        // Iterated through the link list of packed objects
 	while(objects){
 		
 		printf("outer step1\n");
+                // point to associated link sub_object link list
                 object = objects->val;
-		if(object == NULL)
+		if(objects->val == NULL) {
+		   printf("NULL object\n");
 			break;
+                }
 		MarFS_XattrPre packed_pre;
+                
+                // get the pre xattr and md_inode value
 		packed_pre = object->val.pre;
 		packed_pre.md_inode = r;
+
+                // get the post xattr for the sub_object and set the object
+                // type to PACKED
 		MarFS_XattrPost2 packed_post;
 		packed_post = object->val.post;
 		packed_post.obj_type = OBJ_PACKED;	
 		packed_pre.obj_type = OBJ_PACKED;
 		count = 0;	
+
+                // Now iterate through the sub_objects and update lengths, offset
+                // type, namespace, repo
                 while(object) {
+                        printf("Getting inode info %d\n", count);
 			object->val.offset = nb->len;
 			object->val.post.obj_offset = nb->len;
 			object->val.post.obj_type = OBJ_PACKED;	
@@ -506,12 +621,20 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 			unpacked_post = object->val.post;
 			char the_post[MARFS_MAX_XATTR_SIZE];
 //			post_2_str2(the_post, MARFS_MAX_XATTR_SIZE, &unpacked_post);
-			//update_pre(&object->val.pre);
+                        check_security_access(&object->val.pre);
+			update_pre(&object->val.pre);
+                        s3_set_host(&object->val.pre.host);
+
+                        // get object_data
 			s3_get(nb,url);
+
+                        // ********Why is this repeated here?
 			object->val.pre = packed_pre;
 			object->val.pre.ns = ns;
 			object->val.pre.repo = repo;
-			object->val.pre.obj_type = 3;
+			//object->val.pre.obj_type = 3;
+			object->val.pre.obj_type = OBJ_PACKED;
+                        // ********Why is this repeated here?
 			object = object->next ;
 			count++;
                 }
@@ -523,13 +646,19 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 		packed_pre.repo = repo;
 
 		char pre_str[MARFS_MAX_XATTR_SIZE];
-		packed_pre.obj_type = 3;
+		//packed_pre.obj_type = 3;
+		packed_pre.obj_type = OBJ_PACKED;
 		pre_2_str(pre_str, MARFS_MAX_XATTR_SIZE, &packed_pre);	
 		r = rand();
+                check_security_access(&packed_pre);
 		update_pre(&packed_pre);
 		printf("pre_str:=%s\n", pre_str);
 		r = rand();
-		s3_put(nb,pre_str);
+
+		// write data to new object
+		//s3_put(nb,pre_str);
+		//
+
                 aws_iobuf_reset(nb);
 		objects = objects->next;
 		if (objects)
@@ -541,6 +670,12 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 
 
 //int set_md(list * objects){
+/******************************************************************************
+* Name set_md
+* This function updates the metadata associated with all objects that were 
+* packed into a single object 
+* 
+******************************************************************************/
 int set_md(obj_lnklist *objects){
 	printf("got to set md\n");
 	//item * object;	
@@ -584,6 +719,10 @@ int set_md(obj_lnklist *objects){
 }
 
 
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int set_xattrs(int inode, int xattr){
 /* set the xattr stuff according to struct 
  * Don't forget new offsets, which will include size+recovery info
@@ -591,17 +730,25 @@ int set_xattrs(int inode, int xattr){
  * */
 return 0;
 } 
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int setup_config(){
         int rc = read_configuration();
 	init_xattr_specs();
 	printf("config rc:%d\n", rc);
         aws_init();
-//	aws_read_config("atorrez");
+//	aws_read_config("root");
         aws_reuse_connections(1);
         aws_set_debug(0);
         aws_read_config("root");
         return 0;
 }
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int trash_inode(int inode){                                                                                                                                                                                
 /*
  *
@@ -611,8 +758,13 @@ int trash_inode(int inode){
  */
         return 0;
 }
+
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int fasttreewalk(char* path, int inode){
-        gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path("/gpfs/gpfs_test/");
+        gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path("/gpfs/marfs-gpfs");
 
 	gpfs_ifile_t *file;
 	if(inode == -1)
@@ -643,11 +795,15 @@ int fasttreewalk(char* path, int inode){
 	}
 return 0;
 }
+
 #define max 1024
 struct walk_path stack[max], data;
 int top, option, reply;
 
-
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int push( struct walk_path stack[max],int *top, struct walk_path *data)
 {
 	if( *top == max -1 )
@@ -660,6 +816,10 @@ int push( struct walk_path stack[max],int *top, struct walk_path *data)
 	} // else
 } // push
 
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int pop( struct walk_path stack[max], int *top, struct walk_path *data)
 {
 	if( *top == -1 )
@@ -673,6 +833,10 @@ int pop( struct walk_path stack[max], int *top, struct walk_path *data)
 } // pop
 
 
+/******************************************************************************
+* Name fasttreewalk2
+* 
+******************************************************************************/
 int fasttreewalk2(char* path, int inode){
 	struct walk_path dpath;
 	struct walk_path rdpath;
@@ -693,6 +857,8 @@ int fasttreewalk2(char* path, int inode){
 				break;
 			dpath.inode = dirP->d_ino;
 			strcpy(dpath.path,dirP->d_name);
+
+                        //if(dirP->d_type == GPFS_DE_DIR)
 			if(dirP->d_type == 4){
 				if (!(strcmp(dirP->d_name, ".") == 0) && !(strcmp(dirP->d_name, "..") == 0)){
 					strcpy(dpath.parent, walkP.parent);
@@ -701,6 +867,7 @@ int fasttreewalk2(char* path, int inode){
 					push(stack, &top, &dpath);
 					strcpy(dpath.parent, walkP.path);
 				}
+                        //if(dirP->d_type == GPFS_DE_REG)
 			}else if (dirP->d_type == 8){
 					strcpy(dpath.parent, path);
 					strcat(dpath.parent, walkP.parent);
@@ -709,8 +876,19 @@ int fasttreewalk2(char* path, int inode){
 					paths[dpath.inode] = dpath;
 			}
 		}
+                if (file) {
+                   gpfs_iclose(file);
+                }
 	}
+        if (fsP) {
+           gpfs_free_fssnaphandle(fsP);
+        }
+    
 }
+/******************************************************************************
+* Name 
+* 
+******************************************************************************/
 int get_marfs_path(char * patht, char marfs[]){
 	char *mnt_top = marfs_config->mnt_top;
         MarFS_Namespace *ns;
@@ -740,17 +918,88 @@ int get_marfs_path(char * patht, char marfs[]){
 
 
 }
-int main(){
-	char  *patht = "/gpfs/gpfs_test/atorrez/mdfs/cphoffma/small/dir115/file14";
+/******************************************************************************
+* Name check_security_access 
+* This function determines and sets appropriate security options for
+* the target storage solution.
+* 
+******************************************************************************/
+void check_security_access(MarFS_XattrPre *pre)
+{
+   if (pre->repo->security_method == SECURITYMETHOD_HTTP_DIGEST)
+      s3_http_digest(1);
 
-	const char * fnameP = "/gpfs/gpfs_test";
-	int max_object_size = 1073741824; //1GiB
+   if (pre->repo->access_method == ACCESSMETHOD_S3_EMC) {
+      s3_enable_EMC_extensions(1);
+
+      // For now if we're using HTTPS, I'm just assuming that it is without
+      // validating the SSL certificate (curl's -k or --insecure flags). If
+      // we ever get a validated certificate, we will want to put a flag
+      // into the MarFS_Repo struct that says it's validated or not.
+      if (pre->repo->ssl ) {
+         s3_https( 1 );
+         s3_https_insecure( 1 );
+       }
+   }
+   else if (pre->repo->access_method == ACCESSMETHOD_SPROXYD) {
+      s3_enable_Scality_extensions(1);
+      s3_sproxyd(1);
+
+      // For now if we're using HTTPS, I'm just assuming that it is without
+      // validating the SSL certificate (curl's -k or --insecure flags). If
+      // we ever get a validated certificate, we will want to put a flag
+      // into the MarFS_Repo struct that says it's validated or not.
+      if (pre->repo->ssl ) {
+         s3_https( 1 );
+         s3_https_insecure( 1 );
+      }
+   }
+}
+void print_usage()
+{
+
+  return;
+}
+/******************************************************************************
+* Name  main
+* 
+******************************************************************************/
+int main(int argc, char **argv){
+	//char  *patht = "/gpfs/gpfs_test/atorrez/mdfs/cphoffma/small/dir115/file14";
+
+	//const char * fnameP = "/gpfs/marfs-gpfs";
+	//int max_object_size = 1073741824; //1GiB
+	//int max_object_size = 7721; //1GiB
+	int max_object_size = 7800; //1GiB
 	//int max_object_size = 107374182400; //1GiB
 	//int max_object_size = 38; //1GiB
 	//int max_object_size = 314572800; //300 MB
 //	int max_object_size = 107374182; //100 MB
-	struct marfs_inode unpacked[102400];
+       
+        // I had to comment this out I was getting a seg fault with this allocation
+	//struct marfs_inode unpacked[102400];
+	struct marfs_inode unpacked[1024];
 	int unpackedLen=0;
+
+        int c;
+        char *rdir = NULL;
+        char *patht = NULL;
+        char *fnameP = NULL;
+        int pack_object_size;
+        char *ns = NULL; 
+
+        while ((c=getopt(argc,argv,"d:p:s:n:h")) != EOF) {
+           switch(c) {
+              case 'd': fnameP = optarg; break;
+              case 'p': patht = optarg; break;
+              case 's': pack_object_size;  break;
+              case 'n': ns = optarg; break;
+              case 'h': print_usage();
+              default:
+                 exit(0);
+           }
+        }
+
 	fasttreewalk2(fnameP, -1);
 	int rc = get_inodes(fnameP,max_object_size, unpacked, &unpackedLen);
 	if (rc != 0){
@@ -761,7 +1010,7 @@ int main(){
 	//get_marfs_path(patht);
 	printf("mnt_top:=%s\n", marfs_config->mnt_top);
 	MarFS_Namespace* namespace;
-	namespace = find_namespace_by_name("bparc");
+	namespace = find_namespace_by_name(ns);
 	MarFS_Repo* repo = namespace->iwrite_repo;
 	
 	if (rc != 0){
@@ -772,8 +1021,11 @@ int main(){
 	obj_lnklist packed;
 	int packedLen = 0;
 	rc = get_objects(unpacked, unpackedLen, &packed, &packedLen, max_object_size);
+        if (packed.val == NULL) {
+           printf("NULL value\n");
+        }
         printf("%d %d\n", unpackedLen, packedLen);
-//	rc = pack_up(&packed, repo, namespace);
+	rc = pack_up(&packed, repo, namespace);
 //	set_md(&packed);
 
 	return rc;
