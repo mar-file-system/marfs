@@ -815,9 +815,17 @@ static MarFS_Config_Ptr read_configuration_internal() {
  * to its new type directly needs to be upper case for easy comparison.
  */
 
+    if (! repoList[j]->name) {
+      LOG( LOG_ERR, "Found an empty Repo.name.\n" );
+      return NULL;
+    }
     marfs_repo_list[j]->name = strdup( repoList[j]->name );
     marfs_repo_list[j]->name_len = strlen( repoList[j]->name );
 
+    if (! repoList[j]->host) {
+      LOG( LOG_ERR, "Repo '%s' has an empty <host>.\n", repoList[j]->name );
+      return NULL;
+    }
     marfs_repo_list[j]->host = strdup( repoList[j]->host );
     marfs_repo_list[j]->host_len = strlen( repoList[j]->host );
 
@@ -881,6 +889,11 @@ static MarFS_Config_Ptr read_configuration_internal() {
       return NULL;
     }
 
+
+    if (! repoList[j]->chunk_size) {
+       LOG( LOG_ERR, "Repo '%s' has no chunk_size.\n", repoList[j]->name );
+      return NULL;
+    }
     errno = 0;
     marfs_repo_list[j]->chunk_size = strtoull( repoList[j]->chunk_size, (char **) NULL, 10 );
     if ( errno ) {
@@ -900,6 +913,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
        }
     }
 
+    if (! repoList[j]->pack_size) {
+       LOG( LOG_ERR, "Repo '%s' has no pack_size.\n", repoList[j]->name );
+      return NULL;
+    }
     errno = 0;
     marfs_repo_list[j]->pack_size = strtoull( repoList[j]->pack_size, (char **) NULL, 10 );
     if ( errno ) {
@@ -930,6 +947,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
     marfs_repo_list[j]->online_cmds = NULL;
     marfs_repo_list[j]->online_cmds_len = 0;
 
+    if (! repoList[j]->latency) {
+       LOG( LOG_ERR, "Repo '%s' has no latency.\n", repoList[j]->name );
+      return NULL;
+    }
     errno = 0;
     marfs_repo_list[j]->latency = strtoull( repoList[j]->latency, (char **) NULL, 10 );
     if ( errno ) {
@@ -937,6 +958,9 @@ static MarFS_Config_Ptr read_configuration_internal() {
       return NULL;
     }
 
+    // default Repo.write_timeout = 0 means we will fall back to constants
+    // hardcoded in object_stream.c
+    // TBD: Use a constant defined in a header file, and put that in here.
     errno = 0;
     unsigned long wr_timeout = (repoList[j]->write_timeout
                                 ? strtoul( repoList[j]->write_timeout, (char **) NULL, 10 )
@@ -947,6 +971,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
     }
     marfs_repo_list[j]->write_timeout = wr_timeout;
 
+
+    // default Repo.read_timeout = 0 means we will fall back to constants
+    // hardcoded in object_stream.c
+    // TBD: Use a constant defined in a header file, and put that in here.
     errno = 0;
     unsigned long rd_timeout = (repoList[j]->read_timeout
                                 ? strtoul( repoList[j]->read_timeout, (char **) NULL, 10 )
@@ -983,23 +1011,27 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
   for ( j = 0; j < namespaceCount; j++ ) {
     marfs_namespace_list[j] = (MarFS_Namespace_Ptr) malloc( sizeof( MarFS_Namespace ));
-    if ( marfs_namespace_list[j] == NULL) {
+    if ( ! marfs_namespace_list[j] ) {
       LOG( LOG_ERR, "Error allocating memory for the MarFS namespace structure.\n");
       return NULL;
     }
     memset(marfs_namespace_list[j], 0, sizeof(MarFS_Namespace));
 
+    if (! namespaceList[j]->name) {
+      LOG( LOG_ERR, "Found an empty Namespace.name.\n" );
+      return NULL;
+    }
     marfs_namespace_list[j]->name = strdup( namespaceList[j]->name );
     marfs_namespace_list[j]->name_len = strlen( namespaceList[j]->name );
 
-    if ( namespaceList[j]->alias == NULL) {
+    if ( ! namespaceList[j]->alias ) {
        LOG( LOG_ERR, "MarFS namespace '%s' has no alias.\n", namespaceList[j]->name);
        return NULL;
     }
     marfs_namespace_list[j]->alias = strdup( namespaceList[j]->alias );
     marfs_namespace_list[j]->alias_len = strlen( namespaceList[j]->alias );
 
-    if ( namespaceList[j]->mnt_path == NULL) {
+    if ( ! namespaceList[j]->mnt_path ) {
        LOG( LOG_ERR, "MarFS namespace '%s' has no mnt_path.\n", namespaceList[j]->name);
       return NULL;
     }
@@ -1089,6 +1121,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
     free( perms_dup );
 
+    if ( ! namespaceList[j]->md_path ) {
+       LOG( LOG_ERR, "MarFS namespace '%s' has no md_path.\n", namespaceList[j]->md_path);
+      return NULL;
+    }
     marfs_namespace_list[j]->md_path = strdup( namespaceList[j]->md_path );
     marfs_namespace_list[j]->md_path_len = strlen( namespaceList[j]->md_path );
 
@@ -1115,14 +1151,14 @@ static MarFS_Config_Ptr read_configuration_internal() {
     repoRangeCount = 1;
 
     marfs_repo_range_list = (MarFS_Repo_Range_List) malloc( sizeof( MarFS_Repo_Range_Ptr ) * ( repoRangeCount + 1 ));
-    if ( marfs_repo_range_list == NULL) {
+    if ( ! marfs_repo_range_list ) {
       LOG( LOG_ERR, "Error allocating memory for the MarFS repo range list structure.\n");
       return NULL;
     }
     marfs_repo_range_list[repoRangeCount] = NULL;
 
     marfs_repo_range_list[0] = (MarFS_Repo_Range_Ptr) malloc( sizeof( MarFS_Repo_Range ));
-    if ( marfs_repo_range_list[0] == NULL) {
+    if ( ! marfs_repo_range_list[0] ) {
       LOG( LOG_ERR, "Error allocating memory for the MarFS repo range structure.\n");
       return NULL;
     }
@@ -1146,7 +1182,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
          repoRangeCount, namespaceList[j]->name );
 
     marfs_repo_range_list = (MarFS_Repo_Range_List) malloc( sizeof( MarFS_Repo_Range_Ptr ) * ( repoRangeCount + 1 ));
-    if ( marfs_repo_range_list == NULL) {
+    if ( ! marfs_repo_range_list ) {
       LOG( LOG_ERR, "Error allocating memory for the MarFS repo range list structure.\n");
       return NULL;
     }
@@ -1154,7 +1190,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
     for ( k = 0; k < repoRangeCount; k++ ) {
       marfs_repo_range_list[k] = (MarFS_Repo_Range_Ptr) malloc( sizeof( MarFS_Repo_Range ));
-      if ( marfs_repo_range_list[k] == NULL) {
+      if ( ! marfs_repo_range_list[k] ) {
         LOG( LOG_ERR, "Error allocating memory for the MarFS repo range structure.\n");
         return NULL;
       }
@@ -1178,19 +1214,37 @@ static MarFS_Config_Ptr read_configuration_internal() {
     marfs_namespace_list[j]->repo_range_list = marfs_repo_range_list;
     marfs_namespace_list[j]->repo_range_list_count = repoRangeCount;
 
+    if ( ! namespaceList[j]->trash_md_path ) {
+       LOG( LOG_ERR, "MarFS namespace '%s' has no trash_md_path.\n", namespaceList[j]->name);
+      return NULL;
+    }
     marfs_namespace_list[j]->trash_md_path = strdup( namespaceList[j]->trash_md_path );
     marfs_namespace_list[j]->trash_md_path_len = strlen( namespaceList[j]->trash_md_path );
 
+
+    if ( ! namespaceList[j]->fsinfo_path ) {
+       LOG( LOG_ERR, "MarFS namespace '%s' has no fsinfo_path.\n", namespaceList[j]->name);
+      return NULL;
+    }
     marfs_namespace_list[j]->fsinfo_path = strdup( namespaceList[j]->fsinfo_path );
     marfs_namespace_list[j]->fsinfo_path_len = strlen( namespaceList[j]->fsinfo_path );
 
+
+    if ( ! namespaceList[j]->quota_space ) {
+       LOG( LOG_ERR, "MarFS namespace '%s' has no quota_space.\n", namespaceList[j]->quota_space );
+      return NULL;
+    }
     errno = 0;
-    marfs_namespace_list[j]->quota_space = strtoll( namespaceList[j]->quota_space, (char **) NULL, 10 );
-    if ( errno ) {
+    marfs_namespace_list[j]->quota_space = strtoll( namespaceList[j]->quota_space, (char **) NULL, 10 );   if ( errno ) {
       LOG( LOG_ERR, "Invalid quota_space value of \"%s\".\n", namespaceList[j]->quota_space );
       return NULL;
     }
 
+
+    if ( ! namespaceList[j]->quota_names ) {
+       LOG( LOG_ERR, "MarFS namespace '%s' has no quota_names.\n", namespaceList[j]->quota_names );
+      return NULL;
+    }
     errno = 0;
     marfs_namespace_list[j]->quota_names = strtoll( namespaceList[j]->quota_names, (char **) NULL, 10 );
     if ( errno ) {
@@ -1199,6 +1253,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
     }
 
 /*
+    if ( ! namespaceList[j]->ns_shardp ) {
+       LOG( LOG_ERR, "MarFS namespace '%s' has no ns_shardp.\n", namespaceList[j]->name);
+      return NULL;
+    }
     marfs_namespace_list[j]->ns_shardp = strdup( namespaceList[j]->ns_shardp );
     marfs_namespace_list[j]->ns_shardp_len = strlen( namespaceList[j]->ns_shardp );
 */
@@ -1206,6 +1264,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
     marfs_namespace_list[j]->ns_shardp_len = 0;
 
 /*
+    if ( ! namespaceList[j]->ns_shardp_num ) {
+       LOG( LOG_ERR, "MarFS namespace '%s' has no ns_shardp_num.\n", namespaceList[j]->ns_shardp_num );
+      return NULL;
+    }
     errno = 0;
     marfs_namespace_list[j]->ns_shardp_num = strtoull( namespaceList[j]->ns_shardp_num, (char **) NULL, 10 );
 */
@@ -1224,9 +1286,17 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
   /* CONFIG */
 
+  if ( ! config->name ) {
+     LOG( LOG_ERR, "MarFS config has no name.\n" );
+     return NULL;
+  }
   marfs_config->name     = strdup( config->name );
   marfs_config->name_len = strlen( config->name );
 
+  if ( ! config->version ) {
+     LOG( LOG_ERR, "MarFS config '%s' has no version.\n", config->name);
+     return NULL;
+  }
   char* version_str      = strdup(config->version);
   char* version_tok      = strtok(version_str, ".");
   marfs_config->version_major = ((version_tok) ? strtol( version_tok, NULL, 10) : 0);
@@ -1244,6 +1314,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
   }
 
 
+  if ( ! config->mnt_top ) {
+     LOG( LOG_ERR, "MarFS config '%s' has no mnt_top.\n", config->name);
+     return NULL;
+  }
   marfs_config->mnt_top     = strdup( config->mnt_top );
   marfs_config->mnt_top_len = strlen( config->mnt_top );
 
