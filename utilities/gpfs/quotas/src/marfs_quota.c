@@ -81,7 +81,6 @@
 #include "marfs_quota.h"
 #include "marfs_configuration.h"
 
-
 /******************************************************************************
 * This program reads gpfs inodes and extended attributes in order to provide
 * a summary of file counts, file sizes, and trash info for each fileset
@@ -761,7 +760,8 @@ int trunc_fsinfo(FILE*         outfd,
    //  Go through all namespaces/filesets scanned
    for (i=index_start; i < rec_count+index_start; i++) {
       // Do not truncate fsinfo file if trash
-      if (strcmp(fileset_stat_ptr[i].fileset_name, "trash")) {
+      if ((strcmp(fileset_stat_ptr[i].fileset_name, "trash") !=0)  && 
+         (strcmp(fileset_stat_ptr[i].fileset_name, "root") != 0) ) {
          // truncate namespace fsinfo file 
          ret = truncate(fileset_stat_ptr[i].fsinfo_path, 
                         fileset_stat_ptr[i].sum_size);
