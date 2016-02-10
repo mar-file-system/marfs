@@ -80,15 +80,16 @@ OF SUCH DAMAGE.
 // you might not get 'struct timespec'.  see:
 // http://stackoverflow.com/questions/3875197/linux-gcc-with-std-c99-complains-about-not-knowing-struct-timespec
 
-#if __STDC_VERSION__ >= 199901L
-#  define _XOPEN_SOURCE 700       /* POSIX 2008 */
-// #  define _XOPEN_SOURCE 600    /* POSIX 2004 */
-#else
-#  define _XOPEN_SOURCE 500       /* POSIX 1995 */
+#ifndef _XOPEN_SOURCE
+#  if __STDC_VERSION__ >= 199901L
+#    define _XOPEN_SOURCE 700       /* POSIX 2008 */
+// #    define _XOPEN_SOURCE 600    /* POSIX 2004 */
+#  else
+#    define _XOPEN_SOURCE 500       /* POSIX 1995 */
+#  endif
 #endif
 
 #include <time.h>
-// #include "time.h.local_copy.experiments"
 
 // #undef _XOPEN_SOURCE
 // #undef __USE_XOPEN
