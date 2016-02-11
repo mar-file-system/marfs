@@ -122,8 +122,11 @@ int post_2_str2(char*                  post_str,
    //     file-system *OR* to the location of the file in the trash, we can
    //     not currently support moving semi-direct files to the trash.
    //     Deleting a semi-direct file must just delete it.
+   
+   const char* md_path = "";
    ssize_t bytes_printed = snprintf(post_str, max_size,
-                                    MARFS_POST_FORMAT2,
+                                    //MARFS_POST_FORMAT2,
+                                    MARFS_POST_FORMAT,
                                     major, minor,
                                     encode_obj_type(post->obj_type),
                                     post->obj_offset,
@@ -131,7 +134,8 @@ int post_2_str2(char*                  post_str,
                                     post->chunk_info_bytes,
                                     post->correct_info,
                                     post->encrypt_info,
-                                    post->flags
+                                    post->flags,
+                                    post->md_path
                                     );
    if (bytes_printed < 0)
       return -1;                  // errno is set
@@ -146,7 +150,10 @@ int post_2_str2(char*                  post_str,
 * Name 
 * 
 ******************************************************************************/
-int str_2_pre2(MarFS_XattrPre*    pre,
+
+
+
+int stub_str_2_pre2(MarFS_XattrPre*    pre,
               const char*        pre_str, // i.e. an xattr-value
               const struct stat* st) {
 
@@ -326,7 +333,8 @@ int str_2_post2(MarFS_XattrPost2* post, const char* post_str) {
    uint16_t major;
    uint16_t minor;
    char     obj_type_code;
-   int scanf_size = sscanf(post_str, MARFS_POST_FORMAT2,
+   //int scanf_size = sscanf(post_str, MARFS_POST_FORMAT2,
+   int scanf_size = sscanf(post_str, MARFS_POST_FORMAT,
                            &major, &minor,
                            &obj_type_code,
                            &post->obj_offset,
@@ -367,6 +375,10 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 	const char* valueP;
 	unsigned int valueLen;
 
+        int i;
+        int printable;
+        int ret;
+
 	gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path(fnameP);
 	register gpfs_iscan_t *iscanP = gpfs_open_inodescan_with_xattrs(fsP, NULL, -1, NULL, NULL);
         while (1){
@@ -381,9 +393,50 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 
                         while ((xattrBufP != NULL) && (xattrBufLen > 0)) {
                                 rc = gpfs_next_xattr(iscanP, &xattrBufP, &xattrBufLen, &nameP, &valueLen, &valueP);
+                                if (rc != 0) {
+                                   rc = errno;
+                                   fprintf(stderr, "gpfs_next_xattr: %s\n", strerror(rc));
+                                   return(-1);
+                                }
+                                if (nameP == NULL)
+                                   break;
+
+                                // TEMP
+                                // TEMP
+                                if (iattrP->ia_inode >= 246233 && iattrP->ia_inode<=246237) {
+                                // TEMP
+                                // TEMP
 				if (strcmp(nameP, "user.marfs_objid") == 0){
 				//	strcpy(pre, valueP);
-					str_2_pre2(&pre, valueP, valueLen);
+					//str_2_pre2(&pre, valueP, valueLen);
+
+                                   if (valueLen > 0 ) {
+                                       printable = 0;
+                                       if (valueLen > 1) {
+                                          printable = 1;
+                                          for (i = 0; i < (valueLen-1); i++)
+                                              if (!isprint(valueP[i]))
+                                                 printable = 0;
+                                          if (printable) {
+                                             if (valueP[valueLen-1] == '\0')
+                                                valueLen -= 1;
+                                             else if (!isprint(valueP[valueLen-1]))
+                                                printable = 0;
+                                          }
+                                       }
+
+                                       //for (i = 0; i < valueLen; i++) {
+                                       //    if (printable) {
+                                       //       xattr_ptr->xattr_value[i] = valueP[i];
+                                       //    }
+                                       //}
+                                       //xattr_ptr->xattr_value[valueLen] = '\0';
+                                       //xattr_ptr++;
+                                   }
+
+                                   printf("%s %d\n", valueP, valueLen);
+				   ret = str_2_pre(&pre, valueP, NULL);
+                                   
 		//			printf("inode:=%d\n", iattrP->ia_inode);
 					//printf("%s\n",valueP);
 				}
@@ -401,7 +454,8 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 					MarFS_XattrPost2 post;
 					rc = str_2_post2(&post, valueP);
 					//if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 422490 && iattrP->ia_inode <= 422694){
-					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==39 && post.obj_type == OBJ_UNI ){
+					//if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 15200 && iattrP->ia_inode <= 15204){
+					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI && iattrP->ia_inode >=246233 && iattrP->ia_inode<=246237 ){
                                            //printf("%d\n", iattrP->ia_size);
 
 					//if (post.flags != POST_TRASH && post.chunk_info_bytes <= obj_size && post.obj_type == OBJ_UNI){
@@ -417,6 +471,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 						//inode[counter].size = post.chunk_info_bytes;
 						inode[counter].size = iattrP->ia_size;
 					        strcpy(inode[counter].path,paths[iattrP->ia_inode].parent);
+                                                printf("path assigned =%s\n", paths[iattrP->ia_inode].parent);
 						inode[counter].post = post;	
 						inode[counter].pre = pre;
 						//strcpy(inode[counter].pre,pre);
@@ -425,10 +480,12 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 						//printf("TRASH FOUND!\n");
 					}
                                 }
+                                }
                         }
                 }
         }
 	*marfs_inodeLen = counter;
+        printf("counter value %d\n",counter);
 	gpfs_close_inodescan(fsP);
 	return rc;
 }
@@ -610,13 +667,14 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
                 while(object) {
                         printf("Getting inode info %d\n", count);
 			object->val.offset = nb->len;
+                        printf("nb length = %d\n", nb->len);
 			object->val.post.obj_offset = nb->len;
 			object->val.post.obj_type = OBJ_PACKED;	
                         char url[MARFS_MAX_XATTR_SIZE];
 			object->val.pre.ns = ns;
 	                object->val.pre.repo = repo;
 	                pre_2_str(url, MARFS_MAX_XATTR_SIZE, &object->val.pre);
-			//printf("unpacked url:=%s\n", url);
+			printf("unpacked url:=%s\n", url);
 			MarFS_XattrPost2 unpacked_post ;
 			unpacked_post = object->val.post;
 			char the_post[MARFS_MAX_XATTR_SIZE];
@@ -632,12 +690,14 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 			object->val.pre = packed_pre;
 			object->val.pre.ns = ns;
 			object->val.pre.repo = repo;
-			//object->val.pre.obj_type = 3;
-			object->val.pre.obj_type = OBJ_PACKED;
+			object->val.pre.obj_type = 3;
+			//object->val.pre.obj_type = OBJ_PACKED;
                         // ********Why is this repeated here?
 			object = object->next ;
 			count++;
                 }
+                printf("count = %d\n", count);
+                
 		packed_post.chunks = count;
 		packed_post.chunk_info_bytes = nb->len;
 		//char post_str[MARFS_MAX_XATTR_SIZE];
@@ -646,8 +706,8 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 		packed_pre.repo = repo;
 
 		char pre_str[MARFS_MAX_XATTR_SIZE];
-		//packed_pre.obj_type = 3;
-		packed_pre.obj_type = OBJ_PACKED;
+		packed_pre.obj_type = 3;
+		//packed_pre.obj_type = OBJ_PACKED;
 		pre_2_str(pre_str, MARFS_MAX_XATTR_SIZE, &packed_pre);	
 		r = rand();
                 check_security_access(&packed_pre);
@@ -656,13 +716,13 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 		r = rand();
 
 		// write data to new object
-		//s3_put(nb,pre_str);
+		s3_put(nb,pre_str);
 		//
 
                 aws_iobuf_reset(nb);
-		objects = objects->next;
 		if (objects)
 			objects->count = count;
+		objects = objects->next;
 		count=0;
         }
 	return 0;
@@ -688,12 +748,14 @@ int set_md(obj_lnklist *objects){
                 object = objects->val;
                 while(object) {
 			char *path = object->val.path;
+			  printf("path=%s\n", path);
+  
 			struct stat statbuf;
 			stat(path, &statbuf);
 			if (statbuf.st_atime != object->val.atime || statbuf.st_mtime != object->val.mtime || statbuf.st_ctime != object->val.ctime){
-//				printf("changed path:=%s\n", path);
+				printf("changed path:=%s\n", path);
 			}else{
-/*				char marfs_path[1024];
+				char marfs_path[1024];
 				get_marfs_path(path, &marfs_path);
 				object->val.pre.obj_type = OBJ_PACKED;
 				object->val.post.chunks = objects->count;
@@ -704,11 +766,11 @@ int set_md(obj_lnklist *objects){
 				FILE *fp;
 				fp = fopen(object->val.path, "w+");
 				fclose(fp);
-				//printf("count:=%d paths:=%s\n", objects->count, object->val.path);
-				//printf("obj_type:=%s\n", pre);
+				printf("count:=%d paths:=%s\n", objects->count, object->val.path);
+				printf("obj_type:=%s\n", pre);
 				//getxattr(path,"user.marfs_objid",  value, MARFS_MAX_XATTR_SIZE);
 				setxattr(path, "user.marfs_objid", pre, strlen(pre), 0);
-				setxattr(path, "user.marfs_post", post, strlen(post), 0);*/
+				setxattr(path, "user.marfs_post", post, strlen(post), 0);
 			}
                         object = object->next ;
                 }
@@ -797,8 +859,8 @@ return 0;
 }
 
 #define max 1024
-struct walk_path stack[max], data;
-int top, option, reply;
+//struct walk_path stack[max], data;
+//int top, option, reply;
 
 /******************************************************************************
 * Name 
@@ -842,15 +904,27 @@ int fasttreewalk2(char* path, int inode){
 	struct walk_path rdpath;
 	rdpath.inode = 3;
 	strcpy(rdpath.path,path);
+
+        // HAD TO SET THIS otherwise first pop was pulling garbage
+	strcpy(rdpath.parent,"");
+        //
+
 	printf("parent:=%s\n", rdpath.path);
+
+        struct walk_path stack[max], data;
+        int top, option, reply;
+
 	int rc = push(stack,&top, &rdpath);
+
 	gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path(path);
         gpfs_ifile_t *file;
         gpfs_direntx64_t *dirP;
 	struct walk_path walkP;
+
 	while ( top >= 1){
 		rc = pop(stack, &top,&walkP);
         	file = gpfs_iopen64(fsP,walkP.inode, O_RDONLY, NULL, NULL);
+                 
 	        while(1){
 	                rc = gpfs_ireaddir64(file, &dirP);
 			if(dirP == NULL)
@@ -970,7 +1044,7 @@ int main(int argc, char **argv){
 	//const char * fnameP = "/gpfs/marfs-gpfs";
 	//int max_object_size = 1073741824; //1GiB
 	//int max_object_size = 7721; //1GiB
-	int max_object_size = 7800; //1GiB
+	int max_object_size = 190; //1GiB
 	//int max_object_size = 107374182400; //1GiB
 	//int max_object_size = 38; //1GiB
 	//int max_object_size = 314572800; //300 MB
@@ -987,6 +1061,7 @@ int main(int argc, char **argv){
         char *fnameP = NULL;
         int pack_object_size;
         char *ns = NULL; 
+        int ret;
 
         while ((c=getopt(argc,argv,"d:p:s:n:h")) != EOF) {
            switch(c) {
@@ -1000,13 +1075,23 @@ int main(int argc, char **argv){
            }
         }
 
+        // TO DO
+        // This needs error checking OR really setup_config needs error checking
+	ret = setup_config();
+        // TO DO
+
 	fasttreewalk2(fnameP, -1);
 	int rc = get_inodes(fnameP,max_object_size, unpacked, &unpackedLen);
 	if (rc != 0){
 		printf("GPFS Inode Scan Failed, quitting!\n");
 		return -1;
 	}
-	rc = setup_config();
+        if (unpackedLen == 0) {
+           printf("No valid packer objects found, Exiting now\n");
+           return -1;
+        }
+
+	////rc = setup_config();
 	//get_marfs_path(patht);
 	printf("mnt_top:=%s\n", marfs_config->mnt_top);
 	MarFS_Namespace* namespace;
@@ -1026,7 +1111,7 @@ int main(int argc, char **argv){
         }
         printf("%d %d\n", unpackedLen, packedLen);
 	rc = pack_up(&packed, repo, namespace);
-//	set_md(&packed);
+	set_md(&packed);
 
 	return rc;
 }
