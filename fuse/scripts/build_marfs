@@ -87,28 +87,32 @@ echo "AWS4C_ARGS='$AWS4C_ARGS'"
 echo
 
 echo
-echo "making libaws4c"
+echo "### making libaws4c"
+echo "### ( cd $AWS4C && make clean && make $AWS4C_ARGS )"
 if ! ( cd $AWS4C && make clean && make $AWS4C_ARGS ); then
     echo "couldn't build $AWS4C"
     exit 1
 fi
 
 echo
-echo "making required PA2X directory"
+echo "### making required PA2X directory"
+echo "### ( cd $PA2X && mkdir -p parse-inc )"
 if ! ( cd $PA2X && mkdir -p parse-inc ); then
     echo "couldn't mkdir -p $PA2X/parse-inc"
     exit 1
 fi
 
 echo
-echo "making libconfig"
+echo "### making libconfig"
+echo "### ( cd $CONFIG && make clean && make $CONFIG_ARGS PARSE_DIR=$PA2X )"
 if !( cd $CONFIG && make clean && make $CONFIG_ARGS PARSE_DIR=$PA2X ); then
     echo "couldn't build $CONFIG"
     exit 1
 fi
 
 echo
-echo "making libmarfs"
+echo "### making libmarfs"
+echo "### ( cd $FUSE && make clean && make $FUSE_ARGS LIBAWS4C=$AWS4C )"
 if !( cd $FUSE && make clean && make $FUSE_ARGS LIBAWS4C=$AWS4C ); then
     echo "couldn't build $FUSE"
     exit 1
