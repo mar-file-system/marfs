@@ -79,7 +79,10 @@
 #include <stdlib.h>
 #include <gpfs_fcntl.h>
 #include <sys/types.h>
+#include <ctype.h>
 #include <attr/xattr.h>
+#include "marfs_base.h"
+#include "common.h"
 #include "marfs_packer.h"
 /******************************************************************************
 * Name 
@@ -91,7 +94,7 @@ MarFS_Repo_Ptr find_repo_by_name2( const char* name ) {
   RepoIterator  it = repo_iterator();
 
 	//printf("starting repo iterator\n");
-  while (repo = repo_next(&it)) {
+  while ((repo = repo_next(&it))) {
     if ( ! strcmp( repo->name, name )) {
       return repo;
     }
@@ -99,6 +102,8 @@ MarFS_Repo_Ptr find_repo_by_name2( const char* name ) {
   return NULL;
 }
 
+// TO DO
+// make calls to marfs_base to do this work
 /******************************************************************************
 * Name 
 * 
@@ -123,10 +128,10 @@ int post_2_str2(char*                  post_str,
    //     not currently support moving semi-direct files to the trash.
    //     Deleting a semi-direct file must just delete it.
    
-   const char* md_path = "";
+   //const char* md_path = "";
    ssize_t bytes_printed = snprintf(post_str, max_size,
-                                    //MARFS_POST_FORMAT2,
-                                    MARFS_POST_FORMAT,
+                                    MARFS_POST_FORMAT2,
+                                    //MARFS_POST_FORMAT,
                                     major, minor,
                                     encode_obj_type(post->obj_type),
                                     post->obj_offset,
@@ -146,184 +151,9 @@ int post_2_str2(char*                  post_str,
    return 0;
 }
 
-/******************************************************************************
-* Name 
-* 
-******************************************************************************/
 
-
-
-int stub_str_2_pre2(MarFS_XattrPre*    pre,
-              const char*        pre_str, // i.e. an xattr-value
-              const struct stat* st) {
-
-   // parse bucket and objid separately
-   int read_count;
-
-   read_count = sscanf(pre_str, MARFS_PRE_RD_FORMAT,
-                       pre->bucket,
-                       pre->objid);
-   if (read_count == EOF){       // errno is set (?)
-      return -1;
-}
-   if (read_count != 2) {
-      return -1;
-   }
-
-
-   uint16_t  major;
-   uint16_t  minor;
-
-   char      obj_type;          /* ignored, see NOTE above init_pre() */
-   char      compress;
-   char      correct;
-   char      encrypt;
-
-   ino_t     md_inode;
-
-   size_t    chunk_size;
-   size_t    chunk_no;
-
-   char      md_ctime_str[MARFS_DATE_STRING_MAX];
-   char      obj_ctime_str[MARFS_DATE_STRING_MAX];
-   uint8_t   unique;
-
-   // --- parse bucket components
-
-   // NOTE: We put repo first, because it seems less-likely we'll want a
-   //       dot in a repo-name, than in a namespace, and we're using dot as
-   //       a delimiter.  It will still be easy to construct
-   //       delimiter-based S3 commands, to search for all entries with a
-   //       given namespace, in a known repo.
-   char  repo_name[MARFS_MAX_REPO_NAME];
-
-   read_count = sscanf(pre->bucket, MARFS_BUCKET_RD_FORMAT,
-                       repo_name);
-
-   if (read_count == EOF) {     // errno is set (?)
-      printf(" parsing bucket '%s'\n", pre->bucket);
-      return -1;
-   }
-   else if (read_count != 1) {
-      printf("parsed %d items from '%s'\n", read_count, pre->bucket);
-      return -1;
-   }
-
-   // --- parse "obj-id" components (i.e. the part below bucket)
-
-   // Holds namespace-name from obj-id, so we can decode_namespace(), then
-   // find the corresponding namespace, for Pre.ns.  Do we ever care about
-   // this?  The only reason we need it is because update_pre() uses it to
-   // re-encode the bucket string.
-   char  ns_name[MARFS_MAX_NAMESPACE_NAME];
-   
-   read_count = sscanf(pre->objid, MARFS_OBJID_RD_FORMAT,
-                       ns_name,
-                       &major, &minor,
-                       &obj_type, &compress, &correct, &encrypt,
-                       &md_inode,
-                       md_ctime_str, obj_ctime_str, &unique,
-                       &chunk_size, &chunk_no);
-
-   if (read_count == EOF) {       // errno is set (?)
-      printf("EOF parsing objid '%s'\n", pre->objid);
-      return -1;
-   }
-   else if (read_count != 13) {
-     //printf("parsed %d items from '%s'\n", read_count, pre->objid);
-      return -1;
-   }
-
-   // --- conversions and validation
-
-   // find repo from repo-name
-   MarFS_Repo* repo = find_repo_by_name2(repo_name);
-   if (! repo) {
-//      printf("couldn't find repo '%s'\n", repo_name);
-  //    printf("couldn't find repo '%s'\n", repo_name);
-
-	//printf("return step 8\n");
-//     return -1;
-   }
-
-   // find namespace from namespace-name
-   //
-   //   if (decode_namespace(ns_name, ns_name)) {
-   //      errno = EINVAL;
-   //      return -1;
-   //   }
-   MarFS_Namespace* ns = find_namespace_by_name(ns_name);
-   if ( ! ns) {
-   //   printf("couldn't find namespace '%s'\n", ns_name);
-//	printf("return step 8\n");
-//      return -1;
-   }
-
-   // should we believe the inode in the obj-id, or the one in caller's stat struct?
-   //
-   // NOTE: Packed objects (if they contain more than one logical object)
-   //     can't possibly have the correct inode in their object-ID, in all
-   //     cases.  But we don't want them to have all-zeros, either, because
-   //     then they wouldn't be reliably-unique.  Therefore, they are built
-   //     with an indoe from one of their members, but it won't match the
-   //     inode of the others.
-/*   if (st
-       && (md_inode != st->st_ino)
-       && (decode_obj_type(obj_type) != OBJ_PACKED)) {
-      LOG(LOG_ERR, "non-packed obj, but MD-inode %ju != st->st_ino %ju \n",
-          (uintmax_t)md_inode, (uintmax_t)st->st_ino);
-	printf("return step 9\n");
-      return -1;
-   }
-*/
-   // parse encoded time-stamps
-   time_t  md_ctime;
-   time_t  obj_ctime;
-   if (str_to_epoch(&md_ctime, md_ctime_str, MARFS_DATE_STRING_MAX)) {
-      printf("error converting string '%s' to Pre.md_ctime\n", md_ctime_str);
-      return -1;
-   }
-   //printf("ob_ctime_str:=%s\n", obj_ctime_str);
-   if (str_to_epoch(&obj_ctime, obj_ctime_str, MARFS_DATE_STRING_MAX)) {
-      LOG(LOG_ERR, "error converting string '%s' to Pre.obj_ctime\n", obj_ctime_str);
-      return -1;
-   }
-
-
-   // --- fill in fields in Pre
-   pre->config_vers_maj = major;
-   pre->config_vers_min = minor;
-
-   pre->md_ctime     = md_ctime;
-   pre->obj_ctime    = obj_ctime;
-   pre->unique       = unique;
-
-   pre->obj_type     = decode_obj_type(obj_type);
-   pre->compression  = decode_compression(compress);
-   pre->correction   = decode_correction(correct);
-   pre->encryption   = decode_encryption(encrypt);
-
-   pre->ns           = ns;
-   pre->repo         = repo;
-   pre->chunk_size   = chunk_size;
-   pre->chunk_no     = chunk_no;
-   pre->md_inode     = md_inode; /* NOTE: from object-ID, not st->st_ino  */
-
-   // va/fidate version
-/*   if ((   major != marfs_config->version_major)
-       || (minor != marfs_config->version_minor)) {
-
-	printf("return step 17\n");
-      LOG(LOG_ERR, "xattr vers '%d.%d' != config %d.%d\n",
-          major, minor,
-          marfs_config->version_major, marfs_config->version_minor);
-	printf("return step 12\n");
-      return -1;
-   }*/
-
-   return 0;
-}
-
+// TO DO
+// make calls to marfs_base to do this work
 /******************************************************************************
 * Name 
 * 
@@ -333,8 +163,8 @@ int str_2_post2(MarFS_XattrPost2* post, const char* post_str) {
    uint16_t major;
    uint16_t minor;
    char     obj_type_code;
-   //int scanf_size = sscanf(post_str, MARFS_POST_FORMAT2,
-   int scanf_size = sscanf(post_str, MARFS_POST_FORMAT,
+   int scanf_size = sscanf(post_str, MARFS_POST_FORMAT2,
+   //int scanf_size = sscanf(post_str, MARFS_POST_FORMAT,
                            &major, &minor,
                            &obj_type_code,
                            &post->obj_offset,
@@ -360,7 +190,11 @@ int str_2_post2(MarFS_XattrPost2* post, const char* post_str) {
 struct walk_path paths[10240000];
 //struct walk_path paths[1024];
 /******************************************************************************
-* Name 
+* Name get_inodes
+* This function uses an performs an inode scan of the gpfs file system.  It
+* looks for MarFS type files and stores away the information in an array of
+* struct inode.  The inode array has been pre-filled with file path info
+* via the fasttreewalk function.
 * 
 ******************************************************************************/
 int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen){
@@ -403,7 +237,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 
                                 // TEMP
                                 // TEMP
-                                if (iattrP->ia_inode >= 246233 && iattrP->ia_inode<=246237) {
+                                if (iattrP->ia_inode >= 246276 && iattrP->ia_inode<=246280) {
                                 // TEMP
                                 // TEMP
 				if (strcmp(nameP, "user.marfs_objid") == 0){
@@ -455,7 +289,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 					rc = str_2_post2(&post, valueP);
 					//if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 422490 && iattrP->ia_inode <= 422694){
 					//if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 15200 && iattrP->ia_inode <= 15204){
-					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI && iattrP->ia_inode >=246233 && iattrP->ia_inode<=246237 ){
+					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI && iattrP->ia_inode >=246276 && iattrP->ia_inode<=246280 ){
                                            //printf("%d\n", iattrP->ia_size);
 
 					//if (post.flags != POST_TRASH && post.chunk_info_bytes <= obj_size && post.obj_type == OBJ_UNI){
@@ -486,7 +320,10 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
         }
 	*marfs_inodeLen = counter;
         printf("counter value %d\n",counter);
-	gpfs_close_inodescan(fsP);
+        if (fsP) {
+           gpfs_free_fssnaphandle(fsP);
+        }
+	gpfs_close_inodescan(iscanP);
 	return rc;
 }
 
@@ -506,7 +343,7 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
 	int sum_obj_size=0;	
 	int i;
 	int count=0;
-	int temp_count = 0;
+	//int temp_count = 0;
         int obj_cnt = 0;
 	inode_lnklist *sub_objects, *sub_obj_head;
 	obj_lnklist *main_object, *main_obj_head;
@@ -622,21 +459,20 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
 ******************************************************************************/
 int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 	//printf("let's packup!\n");
-	char *pre;
+//	char *pre;
         //s3_set_host("10.10.0.1:81/");
 	srand(time(NULL));
 	int r = rand();
 	int count = 0;
-
 	
 	IOBuf *nb = aws_iobuf_new();
 	//item *object;
 	inode_lnklist *object;
-	char newpre[10240];
-	struct ObjectStream * get;
-	struct ObjectStream * put;
+//	char newpre[10240];
+//	struct ObjectStream * get;
+//	struct ObjectStream * put;
 	//list * objtemp;
-	obj_lnklist *objtemp;
+//	obj_lnklist *objtemp;
 //	printf("ptr location:=%d", &objects);
         // Iterated through the link list of packed objects
 	while(objects){
@@ -666,9 +502,9 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
                 // type, namespace, repo
                 while(object) {
                         printf("Getting inode info %d\n", count);
-			object->val.offset = nb->len;
-                        printf("nb length = %d\n", nb->len);
-			object->val.post.obj_offset = nb->len;
+			object->val.offset = nb->write_count;
+                        printf("nb length = %ld\n", nb->write_count);
+			object->val.post.obj_offset = nb->write_count;
 			object->val.post.obj_type = OBJ_PACKED;	
                         char url[MARFS_MAX_XATTR_SIZE];
 			object->val.pre.ns = ns;
@@ -677,11 +513,13 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 			printf("unpacked url:=%s\n", url);
 			MarFS_XattrPost2 unpacked_post ;
 			unpacked_post = object->val.post;
-			char the_post[MARFS_MAX_XATTR_SIZE];
+
+			//char the_post[MARFS_MAX_XATTR_SIZE];
+
 //			post_2_str2(the_post, MARFS_MAX_XATTR_SIZE, &unpacked_post);
                         check_security_access(&object->val.pre);
 			update_pre(&object->val.pre);
-                        s3_set_host(&object->val.pre.host);
+                        s3_set_host(object->val.pre.host);
 
                         // get object_data
 			s3_get(nb,url);
@@ -740,9 +578,10 @@ int set_md(obj_lnklist *objects){
 	printf("got to set md\n");
 	//item * object;	
 	inode_lnklist *object;
-        int count = 0;
+        //int count = 0;
 	char pre[MARFS_MAX_XATTR_SIZE];
 	char post[MARFS_MAX_XATTR_SIZE];
+        char *pre_ptr = &pre[0];
 	printf("got to set md2\n");
         while(objects){
                 object = objects->val;
@@ -756,16 +595,34 @@ int set_md(obj_lnklist *objects){
 				printf("changed path:=%s\n", path);
 			}else{
 				char marfs_path[1024];
-				get_marfs_path(path, &marfs_path);
+                                char *marfs_path_ptr = &marfs_path[0];
+                                // TO DO 
+                                // I do not think this call is required
+                                // path already has the path to the file
+				//get_marfs_path(path, &marfs_path);
+
+				get_marfs_path(path, marfs_path_ptr);
+                                // TO DO 
 				object->val.pre.obj_type = OBJ_PACKED;
 				object->val.post.chunks = objects->count;
-				pre_2_str(&pre, MARFS_MAX_XATTR_SIZE, &object->val.pre);
+				//pre_2_str(&pre, MARFS_MAX_XATTR_SIZE, &object->val.pre);
+				pre_2_str(pre_ptr, MARFS_MAX_XATTR_SIZE, &object->val.pre);
 				post_2_str2(post, MARFS_MAX_XATTR_SIZE, &object->val.post);
+                           
+                                // TO DO 
+                                // Is this really required?  It has a bug right now 
+                                // where path is duplicated
 				remove(marfs_path);
 				printf("remove marfs_path:=%s\n", marfs_path);			
+                                // TO DO 
+
+                                // TO DO 
+                                // Because of above statements, is this required?
 				FILE *fp;
 				fp = fopen(object->val.path, "w+");
 				fclose(fp);
+                                // TO DO 
+
 				printf("count:=%d paths:=%s\n", objects->count, object->val.path);
 				printf("obj_type:=%s\n", pre);
 				//getxattr(path,"user.marfs_objid",  value, MARFS_MAX_XATTR_SIZE);
@@ -793,15 +650,21 @@ int set_xattrs(int inode, int xattr){
 return 0;
 } 
 /******************************************************************************
-* Name 
+* Name setup_config
+* This function reads the configuration file and initializes the configuration
 * 
 ******************************************************************************/
 int setup_config(){
-        int rc = read_configuration();
+        // read MarFS configuration file
+        if (read_configuration()) {
+           fprintf(stderr, "Error Reading MarFS configuration file\n");
+           return(-1);
+        }
+        // Initialize MarFS xattr specs 
 	init_xattr_specs();
-	printf("config rc:%d\n", rc);
+
+        // Initialize aws
         aws_init();
-//	aws_read_config("root");
         aws_reuse_connections(1);
         aws_set_debug(0);
         aws_read_config("root");
@@ -825,6 +688,7 @@ int trash_inode(int inode){
 * Name 
 * 
 ******************************************************************************/
+/**************
 int fasttreewalk(char* path, int inode){
         gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path("/gpfs/marfs-gpfs");
 
@@ -857,18 +721,19 @@ int fasttreewalk(char* path, int inode){
 	}
 return 0;
 }
+****************/
 
-#define max 1024
+//#define max 1024
 //struct walk_path stack[max], data;
 //int top, option, reply;
 
 /******************************************************************************
-* Name 
-* 
+* Name push
+* Use with fasttreewalk to build up directory paths while travesing dir tree 
 ******************************************************************************/
-int push( struct walk_path stack[max],int *top, struct walk_path *data)
+int push( struct walk_path stack[MAX_STACK_SIZE],int *top, struct walk_path *data)
 {
-	if( *top == max -1 )
+	if( *top == MAX_STACK_SIZE -1 )
 		return(-1);
 	else
 	{
@@ -879,10 +744,11 @@ int push( struct walk_path stack[max],int *top, struct walk_path *data)
 } // push
 
 /******************************************************************************
-* Name 
+* Name pop
+* Use with fasttreewalk to build up directory paths while travesing dir tree 
 * 
 ******************************************************************************/
-int pop( struct walk_path stack[max], int *top, struct walk_path *data)
+int pop( struct walk_path stack[MAX_STACK_SIZE], int *top, struct walk_path *data)
 {
 	if( *top == -1 )
 		return(-1);
@@ -897,9 +763,10 @@ int pop( struct walk_path stack[max], int *top, struct walk_path *data)
 
 /******************************************************************************
 * Name fasttreewalk2
+* This function uses gpfs API calls to walk t a directory tree
 * 
 ******************************************************************************/
-int fasttreewalk2(char* path, int inode){
+void fasttreewalk2(char* path, int inode){
 	struct walk_path dpath;
 	struct walk_path rdpath;
 	rdpath.inode = 3;
@@ -911,14 +778,16 @@ int fasttreewalk2(char* path, int inode){
 
 	printf("parent:=%s\n", rdpath.path);
 
-        struct walk_path stack[max], data;
-        int top, option, reply;
+        //struct walk_path stack[max], data;
+        struct walk_path stack[MAX_STACK_SIZE];
+        //int top, option, reply;
+        int top;
 
 	int rc = push(stack,&top, &rdpath);
 
 	gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path(path);
         gpfs_ifile_t *file;
-        gpfs_direntx64_t *dirP;
+        const gpfs_direntx64_t *dirP;
 	struct walk_path walkP;
 
 	while ( top >= 1){
@@ -932,8 +801,8 @@ int fasttreewalk2(char* path, int inode){
 			dpath.inode = dirP->d_ino;
 			strcpy(dpath.path,dirP->d_name);
 
-                        //if(dirP->d_type == GPFS_DE_DIR)
-			if(dirP->d_type == 4){
+                        if(dirP->d_type == GPFS_DE_DIR) {
+			//if(dirP->d_type == 4){
 				if (!(strcmp(dirP->d_name, ".") == 0) && !(strcmp(dirP->d_name, "..") == 0)){
 					strcpy(dpath.parent, walkP.parent);
 					strcat(dpath.parent, "/");
@@ -941,8 +810,8 @@ int fasttreewalk2(char* path, int inode){
 					push(stack, &top, &dpath);
 					strcpy(dpath.parent, walkP.path);
 				}
-                        //if(dirP->d_type == GPFS_DE_REG)
-			}else if (dirP->d_type == 8){
+                        } else if(dirP->d_type == GPFS_DE_REG) {
+			//}else if (dirP->d_type == 8){
 					strcpy(dpath.parent, path);
 					strcat(dpath.parent, walkP.parent);
 					strcat(dpath.parent, "/");
@@ -963,7 +832,8 @@ int fasttreewalk2(char* path, int inode){
 * Name 
 * 
 ******************************************************************************/
-int get_marfs_path(char * patht, char marfs[]){
+//int get_marfs_path(char * patht, char *marfs[]){
+void get_marfs_path(char * patht, char *marfs){
 	char *mnt_top = marfs_config->mnt_top;
         MarFS_Namespace *ns;
 //	printf("got to get_marfs_path step1\n");
@@ -972,9 +842,13 @@ int get_marfs_path(char * patht, char marfs[]){
         char the_path[1024000];
 	char empty[1024] = {0};
 	strcpy(marfs, empty);
-        while(ns = namespace_next(&ns_iter)){
+        //while(ns = namespace_next(&ns_iter)){
+        while((ns = namespace_next(&ns_iter))){
                 if(strstr(patht, ns->md_path)){
-        		char the_path[1024000];
+                        // TO DO 
+                        // NOT SURE WHY THIS IS HERE 
+        		//char the_path[1024000];
+        		//
 			strcpy(the_path, empty);
                         strcat(the_path, mnt_top);
                         strcat(the_path, ns->mnt_path);
@@ -1056,7 +930,7 @@ int main(int argc, char **argv){
 	int unpackedLen=0;
 
         int c;
-        char *rdir = NULL;
+        //char *rdir = NULL;
         char *patht = NULL;
         char *fnameP = NULL;
         int pack_object_size;
@@ -1067,7 +941,7 @@ int main(int argc, char **argv){
            switch(c) {
               case 'd': fnameP = optarg; break;
               case 'p': patht = optarg; break;
-              case 's': pack_object_size;  break;
+              case 's': pack_object_size = atoi(optarg);  break;
               case 'n': ns = optarg; break;
               case 'h': print_usage();
               default:
@@ -1075,14 +949,18 @@ int main(int argc, char **argv){
            }
         }
 
-        // TO DO
-        // This needs error checking OR really setup_config needs error checking
-	ret = setup_config();
-        // TO DO
-
+        // Read configuration and initialize aws
+	if ( setup_config() == -1 ) {
+           fprintf(stderr,"Initializing Configs and Aws failed, quitting!!\n");
+           return -1;
+        }
+       
+        // Use gpfs API to walk the tree and hash paths via inode number 
 	fasttreewalk2(fnameP, -1);
-	int rc = get_inodes(fnameP,max_object_size, unpacked, &unpackedLen);
-	if (rc != 0){
+ 
+        // Perform gpfs inode scan 
+	ret = get_inodes(fnameP,max_object_size, unpacked, &unpackedLen);
+	if (ret != 0){
 		printf("GPFS Inode Scan Failed, quitting!\n");
 		return -1;
 	}
@@ -1091,28 +969,35 @@ int main(int argc, char **argv){
            return -1;
         }
 
-	////rc = setup_config();
-	//get_marfs_path(patht);
 	printf("mnt_top:=%s\n", marfs_config->mnt_top);
+
 	MarFS_Namespace* namespace;
 	namespace = find_namespace_by_name(ns);
 	MarFS_Repo* repo = namespace->iwrite_repo;
+
+
+        // TO DO
+        // figure out how and why namespace is used 
+        // 
 	
-	if (rc != 0){
-		printf("Initializing Configs and Aws failed, quitting!!\n");
-		return -2;
-	}
-	//list packed;
+	//Declare object type for linklist that will contain all packed objects
 	obj_lnklist packed;
+
 	int packedLen = 0;
-	rc = get_objects(unpacked, unpackedLen, &packed, &packedLen, max_object_size);
+        
+        // Identify all all objects that can be packed
+	ret = get_objects(unpacked, unpackedLen, &packed, &packedLen, max_object_size);
         if (packed.val == NULL) {
            printf("NULL value\n");
         }
         printf("%d %d\n", unpackedLen, packedLen);
-	rc = pack_up(&packed, repo, namespace);
+
+        // repack small objects into larger object
+	ret = pack_up(&packed, repo, namespace);
+   
+        // Update metadata information
 	set_md(&packed);
 
-	return rc;
+	return ret;
 }
 
