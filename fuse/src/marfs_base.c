@@ -1219,7 +1219,7 @@ int validate_config() {
       // assure NS name (plus terminal NULL) doesn't exceed the length we defined
       if (ns->name_len >= MARFS_MAX_NAMESPACE_NAME) {
          LOG(LOG_ERR, "NS name '%s' has length %ld,"
-             " exceeding the limit (%ld)\n",
+             " exceeding the limit (%d)\n",
              ns->name, ns->name_len, MARFS_MAX_NAMESPACE_NAME);
          retval = -1;
       }
