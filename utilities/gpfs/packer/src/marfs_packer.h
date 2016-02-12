@@ -72,9 +72,13 @@
 #include <aws4c.h>
 //#include <object_stream.h>
 #include <marfs_base.h>
-       char* MARFS_POST_FORMAT2 = "ver.%03hu_%03hu/%c/off.%d/objs.%d/bytes.%d/corr.%016ld/crypt.%016ld/flags.%02hhX/mdfs.%c";
+
+#define MAX_STACK_SIZE 1024
+
+       char* MARFS_POST_FORMAT2 = "ver.%03hu_%03hu/%c/off.%d/objs.%d/bytes.%d/corr.%016ld/crypt.%016ld/flags.%02hhX/mdfs.%s";
        //works char* MARFS_POST_FORMAT2 = "ver.%03hu_%03hu/%c/off.%d/objs.%d/bytes.%d/corr.%016ld/crypt.%016ld/flags.%02d/mdfs.%c";
        //char* MARFS_POST_FORMAT2 = "ver.%03hu_%03hu/%c/off.%d/objs.%d/bytes.%d/corr.%016d/crypt.%016d/flags.%02hhX/mdfs.%c";
+
 
 
 typedef struct MarFS_XattrPost2 {
@@ -129,3 +133,19 @@ typedef struct obj_lnklist {
    struct inode_lnklist *val;
 } obj_lnklist;
 
+int post_2_str2(char* post_str, size_t max_size, const MarFS_XattrPost2 *post);
+int str_2_post2(MarFS_XattrPost2* post, const char* post_str);
+int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen);
+int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  packed, int *packed_size, int obj_size_max);
+int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns);
+int set_md(obj_lnklist *objects);
+int set_xattrs(int inode, int xattr);
+int setup_config();
+int trash_inode(int inode); 
+int fasttreewalk(char* path, int inode);
+int push( struct walk_path stack[MAX_STACK_SIZE],int *top, struct walk_path *data);
+int pop( struct walk_path stack[MAX_STACK_SIZE], int *top, struct walk_path *data);
+void fasttreewalk2(char* path, int inode);
+void get_marfs_path(char * patht, char marfs[]);
+void check_security_access(MarFS_XattrPre *pre);
+void print_usage();
