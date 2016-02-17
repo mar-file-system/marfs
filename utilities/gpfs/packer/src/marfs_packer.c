@@ -197,7 +197,7 @@ struct walk_path paths[10240000];
 * via the fasttreewalk function.
 * 
 ******************************************************************************/
-int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen){
+int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace){
 	//gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path(fnameP);
 	int counter = 0;
 	const gpfs_iattr_t *iattrP;
@@ -212,6 +212,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
         int i;
         int printable;
         int ret;
+        char fileset_name_buffer[MARFS_MAX_NAMESPACE_NAME];
 
 	gpfs_fssnap_handle_t *fsP = gpfs_get_fssnaphandle_by_path(fnameP);
 	register gpfs_iscan_t *iscanP = gpfs_open_inodescan_with_xattrs(fsP, NULL, -1, NULL, NULL);
@@ -225,6 +226,10 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
                         MarFS_XattrPre pre; 
 
 
+                        gpfs_igetfilesetname(iscanP, iattrP->ia_filesetid,
+                                             &fileset_name_buffer, MARFS_MAX_NAMESPACE_NAME);
+  
+                        if (!strcmp(fileset_name_buffer, namespace)) {
                         while ((xattrBufP != NULL) && (xattrBufLen > 0)) {
                                 rc = gpfs_next_xattr(iscanP, &xattrBufP, &xattrBufLen, &nameP, &valueLen, &valueP);
                                 if (rc != 0) {
@@ -237,7 +242,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 
                                 // TEMP
                                 // TEMP
-                                if (iattrP->ia_inode >= 246386 && iattrP->ia_inode<=246390) {
+                                if (iattrP->ia_inode >= 246391 && iattrP->ia_inode<=246395) {
                                 // TEMP
                                 // TEMP
 				if (strcmp(nameP, "user.marfs_objid") == 0){
@@ -289,7 +294,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 					rc = str_2_post2(&post, valueP);
 					//if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 422490 && iattrP->ia_inode <= 422694){
 					//if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 15200 && iattrP->ia_inode <= 15204){
-					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI && iattrP->ia_inode >=246386 && iattrP->ia_inode<=246390 ){
+					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI && iattrP->ia_inode >=246391 && iattrP->ia_inode<=246395 ){
                                            //printf("%d\n", iattrP->ia_size);
 
 					//if (post.flags != POST_TRASH && post.chunk_info_bytes <= obj_size && post.obj_type == OBJ_UNI){
@@ -316,6 +321,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
                                 }
                                 }
                         }
+                        } // temp endif strcmp fileset name
                 }
         }
 	*marfs_inodeLen = counter;
@@ -957,12 +963,16 @@ int main(int argc, char **argv){
            fprintf(stderr,"Initializing Configs and Aws failed, quitting!!\n");
            return -1;
         }
+
+	MarFS_Namespace* namespace;
+	namespace = find_namespace_by_name(ns);
+	MarFS_Repo* repo = namespace->iwrite_repo;
        
         // Use gpfs API to walk the tree and hash paths via inode number 
 	fasttreewalk2(fnameP, -1);
  
         // Perform gpfs inode scan 
-	ret = get_inodes(fnameP,max_object_size, unpacked, &unpackedLen);
+	ret = get_inodes(fnameP,max_object_size, unpacked, &unpackedLen, ns);
 	if (ret != 0){
 		printf("GPFS Inode Scan Failed, quitting!\n");
 		return -1;
@@ -974,9 +984,9 @@ int main(int argc, char **argv){
 
 	printf("mnt_top:=%s\n", marfs_config->mnt_top);
 
-	MarFS_Namespace* namespace;
-	namespace = find_namespace_by_name(ns);
-	MarFS_Repo* repo = namespace->iwrite_repo;
+	//MarFS_Namespace* namespace;
+	//namespace = find_namespace_by_name(ns);
+	//MarFS_Repo* repo = namespace->iwrite_repo;
 
 
         // TO DO
