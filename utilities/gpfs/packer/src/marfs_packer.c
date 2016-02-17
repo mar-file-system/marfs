@@ -237,7 +237,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 
                                 // TEMP
                                 // TEMP
-                                if (iattrP->ia_inode >= 246276 && iattrP->ia_inode<=246280) {
+                                if (iattrP->ia_inode >= 246386 && iattrP->ia_inode<=246390) {
                                 // TEMP
                                 // TEMP
 				if (strcmp(nameP, "user.marfs_objid") == 0){
@@ -289,7 +289,7 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int 
 					rc = str_2_post2(&post, valueP);
 					//if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 422490 && iattrP->ia_inode <= 422694){
 					//if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && post.obj_type == OBJ_UNI && iattrP->ia_inode >= 15200 && iattrP->ia_inode <= 15204){
-					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI && iattrP->ia_inode >=246276 && iattrP->ia_inode<=246280 ){
+					if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI && iattrP->ia_inode >=246386 && iattrP->ia_inode<=246390 ){
                                            //printf("%d\n", iattrP->ia_size);
 
 					//if (post.flags != POST_TRASH && post.chunk_info_bytes <= obj_size && post.obj_type == OBJ_UNI){
@@ -613,7 +613,7 @@ int set_md(obj_lnklist *objects){
                                 // Is this really required?  It has a bug right now 
                                 // where path is duplicated
 				remove(marfs_path);
-				printf("remove marfs_path:=%s\n", marfs_path);			
+				printf("remove marfs_path:=%s\n", marfs_path_ptr);			
                                 // TO DO 
 
                                 // TO DO 
@@ -829,7 +829,9 @@ void fasttreewalk2(char* path, int inode){
     
 }
 /******************************************************************************
-* Name 
+* Name get_marfs_path
+* This function, given a metadata path, determines the fuse mount path for a 
+* file and returns it via the marfs pointer. 
 * 
 ******************************************************************************/
 //int get_marfs_path(char * patht, char *marfs[]){
@@ -860,6 +862,7 @@ void get_marfs_path(char * patht, char *marfs){
                         }
                         strcat(the_path, ending);
                         strcat(marfs,the_path);
+                        break;
                 }
         }
 
@@ -978,8 +981,9 @@ int main(int argc, char **argv){
 
         // TO DO
         // figure out how and why namespace is used 
-        // 
-	
+        // NOT sure why it needs to be specified because read namespace 
+        // should be target namespace or am I confused? 
+        //	
 	//Declare object type for linklist that will contain all packed objects
 	obj_lnklist packed;
 
