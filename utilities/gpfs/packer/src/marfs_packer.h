@@ -85,14 +85,15 @@ typedef struct MarFS_XattrPost2 {
    uint16_t           config_vers_maj; // redundant w/ config_vers in Pre?
    uint16_t           config_vers_min; // redundant w/ config_vers in Pre?
    MarFS_ObjType      obj_type;      // type of storage
-   int            obj_offset;    // offset of file in the obj (Packed)
-   int            chunks;        // (context-dependent.  See NOTE)
-   int             chunk_info_bytes; // total size of chunk-info in MDFS file (Multi)
+   int                obj_offset;    // offset of file in the obj (Packed)
+   int                chunks;        // (context-dependent.  See NOTE)
+   int                chunk_info_bytes; // total size of chunk-info in MDFS file (Multi)
    CorrectInfo        correct_info;  // correctness info  (e.g. the computed checksum)
    EncryptInfo        encrypt_info;  // any info reqd to decrypt the data
-   PostFlagsType	flags;
+   PostFlagsType      flags;
    char               md_path[MARFS_MAX_MD_PATH]; // full path to MDFS file
 } MarFS_XattrPost2;
+
 struct walk_path{
 	int inode;
 	char path[1024];
@@ -135,7 +136,7 @@ typedef struct obj_lnklist {
 
 int post_2_str2(char* post_str, size_t max_size, const MarFS_XattrPost2 *post);
 int str_2_post2(MarFS_XattrPost2* post, const char* post_str);
-int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen);
+int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace);
 int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  packed, int *packed_size, int obj_size_max);
 int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns);
 int set_md(obj_lnklist *objects);
