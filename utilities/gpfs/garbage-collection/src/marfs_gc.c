@@ -540,7 +540,8 @@ int read_inodes(const char *fnameP,
                         // To do this, must call marfs str_2_pre to parse out
                         // the bucket name which include repo name
                         //fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
-                        str_2_pre(pre, xattr_ptr->xattr_value, st);
+                        if (str_2_pre(pre, xattr_ptr->xattr_value, st) != 0)
+                           continue;
 
                         check_security_access(pre);
                         update_pre(pre);
