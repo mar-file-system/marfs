@@ -502,7 +502,7 @@ int read_inodes(const char *fnameP,
                   LOG(LOG_INFO,"post xattr name = %s value = %s \
                       count = %d index=%d\n", xattr_ptr->xattr_name, \
                       xattr_ptr->xattr_value, xattr_count,xattr_index);
-                  if ((parse_post_xattr(&post, xattr_ptr))) {
+                  if ((str_2_post(&post, xattr_ptr->xattr_value,1))) {
                       fprintf(stderr,"Error parsing  post xattr for inode %d\n",
                       iattrP->ia_inode);
                       continue;
@@ -582,37 +582,6 @@ int read_inodes(const char *fnameP,
    clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
    return(rc);
 }
-
-/***************************************************************************** 
-Name: parse_post_xattr 
-
- parse an xattr-value string into a MarFS_XattrPost
-
-*****************************************************************************/
-int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr * post_str) {
-
-   uint16_t   major;
-   uint16_t   minor;
-
-   char  obj_type_code;
-   LOG(LOG_INFO, "Post xattr:  %s\n", post_str->xattr_value);
-   // --- extract bucket, and some top-level fields
-   int scanf_size = sscanf(post_str->xattr_value, MARFS_POST_FORMAT,
-                           &major, &minor,
-                           &obj_type_code,
-                           &post->obj_offset,
-                           &post->chunks,
-                           &post->chunk_info_bytes,
-                           &post->correct_info,
-                           &post->encrypt_info,
-                           &post->flags,
-                           (char*)&post->md_path);
-   if (scanf_size == EOF || scanf_size < 9)
-      return -1;   
-   post->obj_type = decode_obj_type(obj_type_code);
-   return 0;
-}
-
 
 /***************************************************************************** 
 Name: dump_trash 
@@ -845,6 +814,7 @@ int process_packed(File_Info *file_info_ptr)
       // if objid the same - keep counting files
       if (!strcmp(last_objid,objid)) {
          count++;
+         //printf("count: %d chunk_count: %d\n", count, chunk_count);
          // If file count == chuck count - all files accounted for
          // delete objec
          if (chunk_count == count) {
