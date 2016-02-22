@@ -95,7 +95,7 @@ FUSE_DEPS =
 
 OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_ops.o
 SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_ops.c
-H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h
+H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h marfs_ops.h
 
 
 # pipe-to-logger works, but without -d, all fuse stdout/stderr is lost
@@ -682,12 +682,30 @@ _test_%:
 
 
 # lines-of-code
-loc:
-	wc -l $(H) $(SRCS)
+CODE = $(H) $(SRCS) main.c \
+	$(CONFIG)/marfs_configuration.{c,h} $(CONFIG)/marfs_config.c
 
 # lines-of-code (including libaws4c)
+CODE2 = $(CODE) \
+	$(LIBAWS4C)/aws4c*.{c,h} $(LIBAWS4C)/test_aws.c
+
+# --- line-of code (include blank lines)
+loc:
+	cat $(CODE) | wc -l
+
 loc2: pre_req
-	wc -l $(H) $(SRCS)  $(LIBAWS4C)/*.{c,h}
+	cat $(CODE2) | wc -l
+
+# --- non-blank lines
+nb_loc:
+	cat $(CODE) | egrep -v '^$$' | wc -l
+
+nb_loc2: pre_req
+	cat $(CODE2) | egrep -v '^$$' | wc -l
+
+
+
+
 
 # test shell-syntax for checking Makefile-variables
 var_%:
