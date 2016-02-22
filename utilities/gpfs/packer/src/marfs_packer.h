@@ -1,3 +1,5 @@
+#ifndef MARFS_PACKER_H
+#define MARFS_PACKER_H
 /*
  * This file is part of MarFS, which is released under the BSD license.
  *
@@ -74,6 +76,7 @@
 #include <marfs_base.h>
 
 #define MAX_STACK_SIZE 1024
+#define MAX_SCAN_FILE_COUNT 1024
 
        char* MARFS_POST_FORMAT2 = "ver.%03hu_%03hu/%c/off.%d/objs.%d/bytes.%d/corr.%016ld/crypt.%016ld/flags.%02hhX/mdfs.%s";
        //works char* MARFS_POST_FORMAT2 = "ver.%03hu_%03hu/%c/off.%d/objs.%d/bytes.%d/corr.%016ld/crypt.%016ld/flags.%02d/mdfs.%c";
@@ -113,7 +116,8 @@ struct marfs_inode {
         MarFS_XattrPre pre;
 //        char pre[1215];
 //      char post[1215];
-        MarFS_XattrPost2 post;
+//        MarFS_XattrPost2 post;
+        MarFS_XattrPost post;
 };
 //typedef struct list_el item;
 //typedef struct list_olist list;
@@ -150,3 +154,11 @@ void fasttreewalk2(char* path, int inode);
 void get_marfs_path(char * patht, char marfs[]);
 void check_security_access(MarFS_XattrPre *pre);
 void print_usage();
+int walk_and_scan_control (char* top_level_path, size_t max_object_size,
+                            size_t sole_obj_size, const char* ns,
+                            MarFS_Repo* repo, MarFS_Namespace* namespace);
+int get_inodes_new(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace);
+int find_inode(size_t inode_number);
+int pack_and_write(char* top_level_path, size_t max_object_size, MarFS_Repo* repo, MarFS_Namespace* namespace, const char *ns);
+#endif
+
