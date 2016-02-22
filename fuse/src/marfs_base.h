@@ -585,7 +585,7 @@ typedef struct MarFS_XattrPost {
 int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post, const MarFS_Repo* repo, int add_md_path);
 
 // from string to MarFS_XattrPost
-int str_2_post(MarFS_XattrPost* post, const char* post_str); // from string
+int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset); // from string
 
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo);
 

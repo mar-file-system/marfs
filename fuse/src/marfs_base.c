@@ -920,13 +920,26 @@ int post_2_str(char*                  post_str,
 //     if we call expand_path_info() then stat_xattrs() (which calls
 //     str_2_post()), for a file that is neither trash nor SEMI, we want to
 //     avoid affecting md_path.
+//
+// Meaning of <reset>
+//
+//     When fuse calls, the POST object already has md_path installed.  (In
+//     fact, that is the path from which we read the xattr string-value.)
+//     In that case, we also expect the parsed md_path from the xattr-value
+//     to be empty, so the original is not overwritten.  However, some
+//     other callers (e.g. MD inode scans) are calling with a raw POST
+//     object, which they want to be initialized entirely from the string.
+//     Those callers should call with <reset> being non-zero.
 
 
-int str_2_post(MarFS_XattrPost* post, const char* post_str) {
+int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset) {
 
    uint16_t major;
    uint16_t minor;
    char     obj_type_code;
+
+   if (reset)
+      post->md_path[0] = 0;
 
    // --- extract bucket, and some top-level fields
    int scanf_size = sscanf(post_str, MARFS_POST_FORMAT,

@@ -144,7 +144,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    // using marfs_config->mnt_top and look up in MAR_namespace array, fill in all
    // MAR_namespace and MAR_repo info into a big structure to hold
    // everything we know about that path.  We also compute the full path of
-   // the corresponding entry in the MDFS (into PathInfo.pre.md_path).
+   // the corresponding entry in the MDFS (into PathInfo.post.md_path).
    info->ns = find_namespace_by_mnt_path(path);
    if (! info->ns) {
       LOG(LOG_INFO, "no namespace for path %s\n", path);
@@ -470,7 +470,7 @@ int stat_xattrs(PathInfo* info) {
             // got the xattr-value.  Parse it into info->pre
             xattr_value_str[str_size] = 0;
             LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
-            __TRY0(str_2_post, &info->post, xattr_value_str);
+            __TRY0(str_2_post, &info->post, xattr_value_str, 0);
             info->xattrs |= spec->value_type; /* found this one */
          }
          else if ((errno == ENOATTR)
