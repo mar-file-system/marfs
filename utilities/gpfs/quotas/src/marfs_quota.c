@@ -577,7 +577,7 @@ int read_inodes(const char    *fnameP,
 
                // scan into post xattr structure
                // if error parsing this xattr, skip and continue
-               if (parse_post_xattr(&post, xattr_ptr) == -1) {
+               if (str_2_post(&post, xattr_ptr->xattr_value, 1) == -1) {
                   continue;             
                }
                fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
@@ -665,41 +665,6 @@ int lookup_fileset(Fileset_Stats *fileset_stat_ptr,
       return(-1);
    }
 }   
-
-/***************************************************************************** 
-//Name: str_2_post 
-Name: parse_post_xattr
-
- parse an xattr-value string into a MarFS_XattrPost
-
-*****************************************************************************/
-int parse_post_xattr (MarFS_XattrPost* post, Marfs_Xattr * post_str) {
-
-   uint16_t   major;
-   uint16_t   minor;
-
-   char  obj_type_code;
-   LOG(LOG_INFO,"%s\n", post_str->xattr_value);
-
-   // --- extract bucket, and some top-level fields
-   int scanf_size = sscanf(post_str->xattr_value, MARFS_POST_FORMAT,
-                           &major, &minor,
-                           &obj_type_code,
-                           &post->obj_offset,
-                           &post->chunks,
-                           &post->chunk_info_bytes,
-                           &post->correct_info,
-                           &post->encrypt_info,
-                           &post->flags,
-                           (char*)&post->md_path);
-
-   if (scanf_size == EOF || scanf_size < 9) {
-      return -1;                
-   }
-   post->obj_type = decode_obj_type(obj_type_code);
-   return 0;
-}
-
 
 /***************************************************************************** 
 Name: write_fsinfo 
