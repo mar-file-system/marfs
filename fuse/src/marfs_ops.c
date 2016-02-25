@@ -1680,7 +1680,8 @@ int marfs_release (const char*        path,
 
    if (fh->os.flags & OSF_ERRORS) {
       EXIT();
-      return 0;                 /* the "close" was successful */
+      // return 0;                 /* the "close" was successful */
+      return -1;                /* "close" was successful, but need to report errs */
    }
       
    // truncate length to reflect length of data

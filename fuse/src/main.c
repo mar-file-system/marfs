@@ -850,8 +850,10 @@ int fuse_release (const char*            path,
    ffi->fh = 0;
 
    POP_USER();
-   if (rc_ssize)
+   if (rc_ssize) {
+      LOG(LOG_ERR, "failed: errno=%d '%s'\n", errno, strerror(errno));
       return -errno;
+   }
    return 0;
 }
 
@@ -889,8 +891,10 @@ int fuse_releasedir (const char*            path,
    ffi->fh = 0;
 
    POP_USER();
-   if (rc_ssize)
+   if (rc_ssize) {
+      LOG(LOG_ERR, "failed: errno=%d '%s'\n", errno, strerror(errno));
       return -errno;
+   }
    return 0;
 }
 
