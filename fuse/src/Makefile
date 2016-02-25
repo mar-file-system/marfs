@@ -93,9 +93,9 @@ CONFIG = $(PWD)/../../common/configuration/src
 FUSE_DEPS =
 
 
-OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_ops.o
-SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_ops.c
-H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h marfs_ops.h
+OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_ops.o push_user.o
+SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_ops.c push_user.c
+H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h marfs_ops.h push_user.h
 
 
 # pipe-to-logger works, but without -d, all fuse stdout/stderr is lost
