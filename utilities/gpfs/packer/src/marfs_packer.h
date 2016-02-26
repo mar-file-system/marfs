@@ -151,10 +151,16 @@ void check_security_access(MarFS_XattrPre *pre);
 void print_usage();
 int walk_and_scan_control (char* top_level_path, size_t max_object_size,
                             size_t small_obj_size, const char* ns,
-                            MarFS_Repo* repo, MarFS_Namespace* namespace);
-int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace, size_t small_obj_size, struct walk_path *paths);
+                            MarFS_Repo* repo, MarFS_Namespace* namespace,
+                            uint8_t no_pack_flag);
+//int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace, size_t small_obj_size, struct walk_path *paths);
+int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode,
+               int *marfs_inodeLen, size_t *sum_size, const char* namespace,
+               size_t small_obj_size, struct walk_path *paths);
 int find_inode(size_t inode_number, struct walk_path *paths);
-int pack_and_write(char* top_level_path, size_t max_object_size, MarFS_Repo* repo, MarFS_Namespace* namespace, const char *ns, size_t small_obj_size, struct walk_path *paths);
+int pack_and_write(char* top_level_path, size_t max_object_size, MarFS_Repo* repo, 
+                   MarFS_Namespace* namespace, const char *ns, size_t small_obj_size, 
+                   struct walk_path *paths, uint8_t no_pack);
 int parse_size_arg(char *input_size, uint64_t *out_value);
 #endif
 
