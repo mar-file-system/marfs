@@ -81,6 +81,7 @@ OF SUCH DAMAGE.
 // http://stackoverflow.com/questions/3875197/linux-gcc-with-std-c99-complains-about-not-knowing-struct-timespec
 
 #ifndef _XOPEN_SOURCE
+#  define _XOPEN_SOURCE_WAS_UNDEF 1
 #  if __STDC_VERSION__ >= 199901L
 #    define _XOPEN_SOURCE 700       /* POSIX 2008 */
 // #    define _XOPEN_SOURCE 600    /* POSIX 2004 */
@@ -91,8 +92,10 @@ OF SUCH DAMAGE.
 
 #include <time.h>
 
-// #undef _XOPEN_SOURCE
-// #undef __USE_XOPEN
+#if  _XOPEN_SOURCE_WAS_UNDEF
+#  undef _XOPEN_SOURCE
+// #  undef __USE_XOPEN
+#endif
 
 
 

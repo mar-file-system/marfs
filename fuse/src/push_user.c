@@ -83,10 +83,20 @@ OF SUCH DAMAGE.
 #include <stdio.h>
 #include <time.h>
 
+
+// syscall(2) manpage says do this, but still getting "implicit decl" warnings
 #define _GNU_SOURCE
 #include <unistd.h>
+#include <sys/types.h>
 #include <sys/syscall.h>
 
+
+// fine, you want decls, here are decls ...
+#ifndef _BSD_SOURCE
+int syscall(int number, ...);
+int getgrouplist(const char *user, gid_t group, gid_t *groups, int *ngroups); 
+int setgroups(size_t size, const gid_t *list); 
+#endif
 
 
 

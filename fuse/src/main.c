@@ -85,10 +85,7 @@ OF SUCH DAMAGE.
 #include <stdio.h>
 #include <time.h>
 
-// syscall(2) manpage says do this
-#define _GNU_SOURCE
 #include <unistd.h>
-#include <sys/syscall.h>
 #include <sys/types.h>
 
 // #include "marfs_fuse.h"
