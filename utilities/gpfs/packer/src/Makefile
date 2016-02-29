@@ -21,9 +21,13 @@ LDFLAGS += -L$(MARFS_FUSE)
 LDFLAGS += -L$(MARFS_CONFIG)
 LIBS += -laws4c -lgpfs -lcurl -lm -lmarfs -lconfig
 
+DEBUG = -DUSE_STDOUT
+
 #Build regular marfs_packer or debug version
 marfs_packer: $(H) $(OBJS)  marfs_packer.c 
 	gcc $(CFLAGS) $(LDFLAGS) -o marfs_packer marfs_packer.c $(OBJS) $(LIBS)
+marfs_packer_debug: $(H) $(OBJS)  marfs_packer.c 
+	gcc $(CFLAGS) $(LDFLAGS) $(DEBUG) -o marfs_packer marfs_packer.c $(OBJS) $(LIBS)
 
 # From Jeff's marfs makefile.  This make sure an AWS4C path exists
 # in order to build.

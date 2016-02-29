@@ -1,3 +1,5 @@
+#ifndef MARFS_PACKER_H
+#define MARFS_PACKER_H
 /*
  * This file is part of MarFS, which is released under the BSD license.
  *
@@ -75,11 +77,12 @@
 
 #define MAX_STACK_SIZE 1024
 
-       char* MARFS_POST_FORMAT2 = "ver.%03hu_%03hu/%c/off.%d/objs.%d/bytes.%d/corr.%016ld/crypt.%016ld/flags.%02hhX/mdfs.%s";
-       //works char* MARFS_POST_FORMAT2 = "ver.%03hu_%03hu/%c/off.%d/objs.%d/bytes.%d/corr.%016ld/crypt.%016ld/flags.%02d/mdfs.%c";
-       //char* MARFS_POST_FORMAT2 = "ver.%03hu_%03hu/%c/off.%d/objs.%d/bytes.%d/corr.%016d/crypt.%016d/flags.%02hhX/mdfs.%c";
 
+// This defines how many paths the treewalk will work on at a time
+#define MAX_SCAN_FILE_COUNT 1024
 
+#define MAX_PATH_LENGTH 1024
+//#define MAX_SCAN_FILE_COUNT 5 
 
 typedef struct MarFS_XattrPost2 {
    uint16_t           config_vers_maj; // redundant w/ config_vers in Pre?
@@ -113,7 +116,8 @@ struct marfs_inode {
         MarFS_XattrPre pre;
 //        char pre[1215];
 //      char post[1215];
-        MarFS_XattrPost2 post;
+//        MarFS_XattrPost2 post;
+        MarFS_XattrPost post;
 };
 //typedef struct list_el item;
 //typedef struct list_olist list;
@@ -134,19 +138,29 @@ typedef struct obj_lnklist {
    struct inode_lnklist *val;
 } obj_lnklist;
 
-int post_2_str2(char* post_str, size_t max_size, const MarFS_XattrPost2 *post);
-int str_2_post2(MarFS_XattrPost2* post, const char* post_str);
-int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace);
 int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  packed, int *packed_size, int obj_size_max);
 int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns);
 int set_md(obj_lnklist *objects);
 int set_xattrs(int inode, int xattr);
 int setup_config();
 int trash_inode(int inode); 
-int fasttreewalk(char* path, int inode);
 int push( struct walk_path stack[MAX_STACK_SIZE],int *top, struct walk_path *data);
 int pop( struct walk_path stack[MAX_STACK_SIZE], int *top, struct walk_path *data);
-void fasttreewalk2(char* path, int inode);
 void get_marfs_path(char * patht, char marfs[]);
 void check_security_access(MarFS_XattrPre *pre);
 void print_usage();
+int walk_and_scan_control (char* top_level_path, size_t max_object_size,
+                            size_t small_obj_size, const char* ns,
+                            MarFS_Repo* repo, MarFS_Namespace* namespace,
+                            uint8_t no_pack_flag);
+//int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace, size_t small_obj_size, struct walk_path *paths);
+int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode,
+               int *marfs_inodeLen, size_t *sum_size, const char* namespace,
+               size_t small_obj_size, struct walk_path *paths);
+int find_inode(size_t inode_number, struct walk_path *paths);
+int pack_and_write(char* top_level_path, size_t max_object_size, MarFS_Repo* repo, 
+                   MarFS_Namespace* namespace, const char *ns, size_t small_obj_size, 
+                   struct walk_path *paths, uint8_t no_pack);
+int parse_size_arg(char *input_size, uint64_t *out_value);
+#endif
+

@@ -144,7 +144,6 @@ int get_xattrs(gpfs_iscan_t *iscanP,
                FILE         *outfd);
 void print_usage();
 void init_records(Fileset_Info *fileset_info_buf, unsigned int record_count);
-int parse_post_xattr(MarFS_XattrPost* post, struct marfs_xattr* post_str);
 int dump_trash(struct marfs_xattr *xattr_ptr, 
                char               *md_path_ptr,  
                File_Info          *file_info_ptr, 
