@@ -73,6 +73,16 @@ OF SUCH DAMAGE.
 */
 
 
+// ---------------------------------------------------------------------------
+// MarFS  MetaData Abstraction Layer (MDAL)
+//
+// This is an abstract interface used for interaction with the MD part of
+// MarFS.  MarFS will already do checking to avoid e.g. calling open() on a
+// MarFS file-handle which has already been opened, or calling read/write
+// after an open fails.  And so forth.  The MDAL implementations need only
+// do the simplest part of what their interface suggests.
+// ---------------------------------------------------------------------------
+
 
 #include <stdint.h>
 #include <unistd.h>
@@ -84,19 +94,28 @@ OF SUCH DAMAGE.
 #include <stdio.h>
 
 
-// Individual implementations might need extra state, to be shared across
-// some or all calls with the same file-handle, or even across
-// file-handles.  Our first cut at this is to provide an extra Context
-// argument to all calls.  Individual implementations can allocate storage
-// here for their own structs, etc.
+// MDAL_Context
 //
-// The MarFS calls to the MDAL implementation will not touch the contents
-// of the Context, except that we call init_mdal_context() when MarFS
-// file-handles are created, and delete_mdal_context() when MarFS
+// This is per-file-handle state.  Think of it as equivalent to a
+// file-descriptor. Individual implementations might need extra state, to
+// be shared across some or all calls with the same file-handle (e.g. POSIX
+// needs a file-descriptor).  Our first cut at this is to provide an extra
+// Context argument to all MDAL calls.  Individual implementations can
+// allocate storage here for whatever state they need.
+//
+// There is also global-state in each MDAL struct (not to be confused with
+// MDAL_Context).  This can be initialized (if needed) in mdal_ctx_init().
+// It will initially be NULL.  If desired, one could use mdal_ctx_init()
+// to associate individual contexts to have a link to the global state.
+//
+// The MarFS calls to the MDAL implementation functions will not touch the
+// contents of the Context, except that we call init_mdal_context() when
+// MarFS file-handles are created, and delete_mdal_context() when MarFS
 // file-handles are destroyed.
 // 
 
-typedef struct MDAL_Context {
+typedef struct {
+   uint32_t  flags;
    union {
       void*     ptr;
       size_t    sz;
@@ -104,45 +123,64 @@ typedef struct MDAL_Context {
    } data;
 } MDAL_Context;
 
+// fwd-decl
+struct MDAL;
+
+
+typedef struct {
+   MDAL_Context ctx;
+   struct MDAL* mdal;
+} MDAL_FileHandle;
+
+
+// initialize/destroy context, if desired.
+//
+//   -- init    is called before any other ops (per file-handle).
+//   -- destroy is called when a file-handle is being destroyed.
+//
+typedef  int     (*mdal_ctx_init)   (MDAL_Context* ctx, struct MDAL* mdal);
+typedef  int     (*mdal_ctx_destroy)(MDAL_Context* ctx, struct MDAL* mdal);
+
+
+// --- file ops
+
+typedef  int     (*mdal_open) (MDAL_Context* ctx, const char* path, int flags);
+typedef  int     (*mdal_close)(MDAL_Context* ctx);
+
+typedef  ssize_t (*mdal_write)(MDAL_Context* ctx, void* buf, size_t count);
+typedef  ssize_t (*mdal_read) (MDAL_Context* ctx, void* buf, size_t count);
+
+typedef  ssize_t (*mdal_getxattr)(MDAL_Context* ctx, const char* path,
+                                  const char* name, void* value, size_t size);
+typedef  ssize_t (*mdal_setxattr)(MDAL_Context* ctx, const char* path,
+                                  const char* name, void* value, size_t size,
+                                  int flags);
+
+// --- directory-ops
+// These all return 0 for success, -1 (plus errno) for failure.
+// Any required state must be maintained in the context.
+
+typedef  int     (*mdal_mkdir)  (MDAL_Context* ctx, const char* path, mode_t mode);
+typedef  int     (*mdal_opendir)(MDAL_Context* ctx, const char* path);
+typedef  int     (*mdal_readdir)(MDAL_Context*      ctx,
+                                 const char*        path,
+                                 void*              buf,
+                                 marfs_fill_dir_t   filler,
+                                 off_t              offset);
+// typedef  int     (*mdal_readdir_r)(MDAL_Context* ctx,
+//                                           struct dirent* entry, struct dirent** result);
+typedef  int     (*mdal_closedir)(MDAL_Context* ctx);
+
+
+
+
+
 
 typedef enum MDAL_Type {
    MDAL_POSIX  = 0x01,
    MDAL_PVFS2  = 0x02,
    MDAL_IOFSL  = 0x04,
 } MDAL_Type;
-
-
-
-struct MDAL;  // fwd-decl
-
-
-// initialize/destroy context, if desired.
-//   init    is called before any other ops.
-//   destroy is called when a file-handle is being destroyed.
-//
-typedef  int     (*mdal_ctx_init)   (MDAL_Context* ctx, struct MDAL* mdal);
-typedef  int     (*mdal_ctx_destroy)(MDAL_Context* ctx, struct MDAL* mdal);
-
-typedef  int     (*mdal_open) (MDAL_Context* ctx, const char* path, int flags);
-typedef  int     (*mdal_close)(MDAL_Context* ctx, int fd);
-
-typedef  ssize_t (*mdal_write)(MDAL_Context* ctx, int fd, void* buf, size_t count);
-typedef  ssize_t (*mdal_read) (MDAL_Context* ctx, int fd, void* buf, size_t count);
-
-typedef  ssize_t (*mdal_getxattr) (MDAL_Context* ctx, const char* path,
-                                   const char* name, void* value, size_t size);
-typedef  ssize_t (*mdal_setxattr) (MDAL_Context* ctx, const char* path,
-                                   const char* name, void* value, size_t size,
-                                   int flags);
-
-typedef  int            (*mdal_mkdir)    (MDAL_Context* ctx, const char* path, mode_t mode);
-typedef  DIR*           (*mdal_opendir)  (MDAL_Context* ctx, const char* path);
-typedef  struct dirent* (*mdal_readdir)  (MDAL_Context* ctx, DIR* dirp);
-typedef  int            (*mdal_readdir_r)(MDAL_Context* ctx, DIR* dirp,
-                                          struct dirent* entry, struct dirent** result);
-typedef  int            (*mdal_closedir)  (MDAL_Context* ctx, DIR* dirp);
-
-
 
 
 // This is a collection of function-ptrs
@@ -164,13 +202,14 @@ typedef struct MDAL {
    mdal_mkdir       mkdir;
    mdal_opendir     opendir;
    mdal_readdir     readdir;
-   mdal_readdir_r   readdir_r;
+   // mdal_readdir_r   readdir_r;
    mdal_closedir    closedir;
 
 } MDAL;
 
 
-MDAL* find_mdal(MDAL_Type type);
+// find or create an MDAL of the given type
+MDAL* get_mdal(MDAL_Type type);
 
 
 

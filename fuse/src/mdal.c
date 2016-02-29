@@ -77,11 +77,23 @@ OF SUCH DAMAGE.
 #include "mdal.h"
 
 #include <stdlib.h>             // malloc()
+#include <errno.h>
 
 
 // ================================================================
 // POSIX
 // ================================================================
+
+
+// POSIX needs a file-descriptor.  We'll just use ctx->data.i for that.
+
+// typedef struct {
+//    int fd
+// } MDAL_Context_Posix;
+
+#define POSIX_FD(CTX)   (CTX)->data.i
+#define POSIX_DIRP(CTX) (CTX)->data.ptr
+
 
 
 int     mdal_posix_ctx_init(MDAL_Context* ctx, MDAL* mdal) {
@@ -93,22 +105,26 @@ int     mdal_posix_ctx_destroy(MDAL_Context* ctx, MDAL* mdal) {
 }
 
 
+
+
 int     mdal_posix_open(MDAL_Context* ctx, const char* path, int flags) {
-   return open(path, flags);
-   
+   POSIX_FD(ctx) = open(path, flags);
+   return POSIX_FD(ctx);
 }
 
-int     mdal_posix_close(MDAL_Context* ctx, int fd) {
-   return close(fd);
+int     mdal_posix_close(MDAL_Context* ctx) {
+   int retval = close(POSIX_FD(ctx));
+   POSIX_FD(ctx) = 0;
+   return retval;
 }
 
 
-ssize_t mdal_posix_read(MDAL_Context* ctx, int fd, void* buf, size_t count) {
-   return read(fd, buf, count);
+ssize_t mdal_posix_read (MDAL_Context* ctx, void* buf, size_t count) {
+   return read(POSIX_FD(ctx), buf, count);
 }
 
-ssize_t mdal_posix_write(MDAL_Context* ctx, int fd, void* buf, size_t count) {
-   return write(fd, buf, count);
+ssize_t mdal_posix_write(MDAL_Context* ctx, void* buf, size_t count) {
+   return write(POSIX_FD(ctx), buf, count);
 }
 
 
@@ -124,34 +140,71 @@ ssize_t mdal_posix_setxattr(MDAL_Context* ctx, const char* path,
 }
 
 
-int            mdal_posix_mkdir (MDAL_Context* ctx, const char* path, mode_t mode) {
-   return mkdir(path, mode);
+
+
+int     mdal_posix_mkdir (MDAL_Context* ctx, const char* path, mode_t mode) {
+   return mkdir(path, mode);   
 }
 
 
-DIR*           mdal_posix_opendir (MDAL_Context* ctx, const char* path) {
-   return opendir(path);
+int     mdal_posix_opendir (MDAL_Context* ctx, const char* path) {
+   POSIX_DIRP(ctx) = opendir(path);
+   return ((POSIX_DIRP(ctx) == NULL) ? -1 : 0);
 }
 
 
-struct dirent* mdal_posix_readdir (MDAL_Context* ctx, DIR* dirp) {
-   return readdir(dirp);
+// lifted from marfs_readdir()
+int     mdal_posix_readdir (MDAL_Context*      ctx,
+                            const char*        path,
+                            void*              buf,
+                            marfs_fill_dir_t   filler,
+                            off_t              offset) {
+
+   DIR*           dirp = POSIX_DIRP(ctx);
+   struct dirent* dent;
+   ssize_t        rc_ssize;
+
+   while (1) {
+      // #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
+      //      struct dirent* dent_r;       /* for readdir_r() */
+      //      TRY0(readdir_r, dirp, dent, &dent_r);
+      //      if (! dent_r)
+      //         break;                 /* EOF */
+      //      if (filler(buf, dent_r->d_name, NULL, 0))
+      //         break;                 /* no more room in <buf>*/
+
+      // #else
+      errno = 0;
+      rc_ssize = (ssize_t)readdir(dirp);
+      if (! rc_ssize) {
+         if (errno)
+            return -1;       /* error */
+         break;              /* EOF */
+      }
+      dent = (struct dirent*)rc_ssize;
+      if (filler(buf, dent->d_name, NULL, 0))
+         break;                 /* no more room in <buf>*/
+      // #endif
+      
+   }
+
+   return 0;
 }
 
 
-int            mdal_posix_readdir_r(MDAL_Context* ctx, DIR* dirp,
-                                    struct dirent* entry, struct dirent** result) {
-#if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
-   return readdir_r(dirp, entry, result);
-#else
-# error "No support for readdir_r()"
-   LOG(LOG_ERR, "No support for readdir_r()\n");
-#endif
-}
+// int            mdal_posix_readdir_r(MDAL_Context* ctx, DIR* dirp,
+//                                     struct dirent* entry, struct dirent** result) {
+// #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
+//    return readdir_r(POSIX_DIRP(dirp), entry, result);
+// #else
+// # error "No support for readdir_r()"
+//    LOG(LOG_ERR, "No support for readdir_r()\n");
+// #endif
+// }
 
 
-int            mdal_posix_closedir (MDAL_Context* ctx, DIR* dirp) {
-   return closedir(dirp);
+int     mdal_posix_closedir (MDAL_Context* ctx) {
+   return closedir((DIR*)POSIX_DIRP(ctx));
 }
 
 
@@ -167,11 +220,14 @@ int            mdal_posix_closedir (MDAL_Context* ctx, DIR* dirp) {
 static
 int mdal_init(MDAL* mdal, MDAL_Type type) {
 
-   mdal->type         = type;
-   mdal->global_state = NULL;
+   // zero everything, so if we forget to update something it will be obvious
+   memset(mdal, 0, sizeof(MDAL));
 
+   mdal->type = type;
    switch (type) {
+
    case MDAL_POSIX:
+      mdal->global_state = NULL;
       mdal->ctx_init     = &mdal_posix_ctx_init;
       mdal->ctx_destroy  = &mdal_posix_ctx_destroy;
       mdal->open         = &mdal_posix_open;
@@ -183,7 +239,7 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->mkdir        = &mdal_posix_mkdir;
       mdal->opendir      = &mdal_posix_opendir;
       mdal->readdir      = &mdal_posix_readdir;
-      mdal->readdir_r    = &mdal_posix_readdir_r;
+      // mdal->readdir_r    = &mdal_posix_readdir_r;
       mdal->closedir     = &mdal_posix_closedir;
       break;
 
@@ -207,7 +263,7 @@ static MDAL*  mdal_vec[MAX_MDAL];
 static size_t mdal_count = 0;
 
 
-MDAL* find_mdal(MDAL_Type type) {
+MDAL* get_mdal(MDAL_Type type) {
 
    int i;
    for (i=0; i<mdal_count; ++i) {

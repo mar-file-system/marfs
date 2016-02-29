@@ -1466,6 +1466,9 @@ int marfs_readdir (const char*        path,
 
    // No need for access check, just try the op
    // Appropriate  readdir call filling in fuse structure  (fuse does this in chunks)
+
+   // <use_it> is used in the case where opendir() dtected that we are
+   // operating on the NS root-dir.  Otherwise, we use a standard DIR*.
    if (dh->use_it) {
       NSIterator* it = &dh->internal.it;
       while (1) {

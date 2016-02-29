@@ -557,6 +557,10 @@ typedef struct {
    } internal;
 } MarFS_DirHandle;
 
+// used to fill out directory-entries, in marfs_readdir().
+typedef int (*marfs_fill_dir_t) (void *buf, const char *name,
+                                 const struct stat *stbuf, off_t off);
+
 
 // // In C++ I'd just steal the templated Pool<T> classes from pftool, to
 // // allow us to re-use dynamically-allocate objects.  Here, I'll make a
