@@ -98,24 +98,12 @@
 * 
 ******************************************************************************/
 int main(int argc, char **argv){
-        //char  *patht = "/gpfs/gpfs_test/atorrez/mdfs/cphoffma/small/dir115/file14";
-
-        //const char * fnameP = "/gpfs/marfs-gpfs";
-        //int max_object_size = 1073741824; //1GiB
-        //int max_object_size = 7721; //1GiB
-        //int max_object_size = 4000; //1GiB
-        //int max_object_size = 107374182400; //1GiB
-        //int max_object_size = 38; //1GiB
-        //int max_object_size = 314572800; //300 MB
-//      int max_object_size = 107374182; //100 MB
-
 /********
         // I had to comment this out I was getting a seg fault with this allocation
         //struct marfs_inode unpacked[102400];
         struct marfs_inode unpacked[1024];
         int unpackedLen=0;
 ***********/
-        LOG(LOG_INFO, "Starting in main\n");
         int c;
         //char *rdir = NULL;
        // char *patht = NULL;
@@ -170,9 +158,6 @@ int main(int argc, char **argv){
  twice as big as objects to pack size (-s).\n\n");
            print_usage();
         }
-        // TEMP
-        //return 0;
-        //
         // Read configuration and initialize aws
         if ( setup_config() == -1 ) {
            fprintf(stderr,"Error:  Initializing Configs and Aws failed, quitting!!\n");
@@ -245,9 +230,6 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
 	obj_lnklist *main_object, *main_obj_head;
         main_object = NULL;
 
-        // initial link list node creation
-        //main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist));
-        //sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist));
 	main_obj_head = NULL;
         sub_obj_head = NULL;
   
@@ -343,7 +325,6 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
         }
 	return 0;
 }
-//int pack_up(list * objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 /******************************************************************************
 * Name pack_up
 * This function goes throught the main object link list and reads all data from
@@ -351,22 +332,13 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
 * It then writes the data to the new object using s3_put
 ******************************************************************************/
 int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
-	//printf("let's packup!\n");
-//	char *pre;
-        //s3_set_host("10.10.0.1:81/");
 	srand(time(NULL));
 	int r = rand();
 	int count = 0;
 	
 	IOBuf *nb = aws_iobuf_new();
-	//item *object;
 	inode_lnklist *object;
-//	char newpre[10240];
-//	struct ObjectStream * get;
-//	struct ObjectStream * put;
-	//list * objtemp;
-//	obj_lnklist *objtemp;
-//	printf("ptr location:=%d", &objects);
+
         // Iterated through the link list of packed objects
 	while(objects){
 	        LOG(LOG_INFO,"outer while\n");
@@ -381,15 +353,6 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
                 // get the pre xattr and md_inode value
 		packed_pre = object->val.pre;
 
-                // NOT SURE why random going to comment out and let set_md set inode
-		//packed_pre.md_inode = r;
-
-                // get the post xattr for the sub_object and set the object
-                // type to PACKED
-		//MarFS_XattrPost2 packed_post;
-		///MarFS_XattrPost packed_post;
-		///packed_post = object->val.post;
-		///packed_post.obj_type = OBJ_PACKED;	
 		packed_pre.obj_type = OBJ_PACKED;
 		count = 0;	
 
@@ -408,12 +371,6 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 	                object->val.pre.repo = repo;
 	                pre_2_str(url, MARFS_MAX_XATTR_SIZE, &object->val.pre);
                         LOG(LOG_INFO, "unpacked url:=%s\n", url);
-			//MarFS_XattrPost2 unpacked_post ;
-
-			///MarFS_XattrPost unpacked_post ;
-			///unpacked_post = object->val.post;
-
-			//char the_post[MARFS_MAX_XATTR_SIZE];
 
                         check_security_access(&object->val.pre);
 			update_pre(&object->val.pre);
@@ -422,22 +379,13 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
                         // get object_data
 			s3_get(nb,url);
 
-                        // ********Why is this repeated here?
 			object->val.pre = packed_pre;
-			///object->val.pre.ns = ns;
-			///object->val.pre.repo = repo;
-			///object->val.pre.obj_type = 3;
 			object->val.pre.obj_type = OBJ_PACKED;
-                        // ********Why is this repeated here?
 			object = object->next ;
 			count++;
                 }
                 LOG(LOG_INFO, "count = %d\n", count);
                 
-		///packed_post.chunks = count;
-		///packed_post.chunk_info_bytes = nb->len;
-		//char post_str[MARFS_MAX_XATTR_SIZE];
-
 		packed_pre.ns = ns;	
 		packed_pre.repo = repo;
 
@@ -464,8 +412,6 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns){
 	return 0;
 }
 
-
-//int set_md(list * objects){
 /******************************************************************************
 * Name set_md
 * This function updates the metadata associated with all objects that were 
@@ -483,9 +429,6 @@ int set_md(obj_lnklist *objects){
         time_t obj_md_ctime;
         time_t obj_ctime;
 	char marfs_path[1024];
-	//char marfs_path[MAX_PATH_LENGTH];
-        //char *marfs_path_ptr = &marfs_path[0];
-        //char *marfs_path_ptr = NULL;
 
         LOG(LOG_INFO, "got to set md\n");
         while(objects){
@@ -500,11 +443,6 @@ int set_md(obj_lnklist *objects){
                                 LOG(LOG_INFO, "changed path:=%s\n", path);
                                 LOG(LOG_INFO, "stat of path = %ld  stat from object = %ld\n", statbuf.st_atime, object->val.atime);
 			}else{
-                                // TO DO 
-                                // DOES this need to be here?
-				//char marfs_path[1024];
-                                //char *marfs_path_ptr = &marfs_path[0];
-                                
                                 // objid xattr will be set to match inode and ctime for first object in packed
                                 if (count == 0) {
                                   obj_inode =  object->val.pre.md_inode; 
@@ -534,6 +472,8 @@ int set_md(obj_lnklist *objects){
                                 // Remove the files via fuse mount
 				remove(marfs_path);
                                 LOG(LOG_INFO, "remove marfs_path:=%s\n", marfs_path);			
+                                
+                                // Open new gpfs file and truncate to the corret size
 				FILE *fp;
 				fp = fopen(object->val.path, "w+");
 				fclose(fp);
@@ -605,10 +545,6 @@ int trash_inode(int inode){
         return 0;
 }
 
-//#define max 1024
-//struct walk_path stack[max], data;
-//int top, option, reply;
-
 /******************************************************************************
 * Name push
 * Use with fasttreewalk to build up directory paths while travesing dir tree 
@@ -656,29 +592,18 @@ void get_marfs_path(char * patht, char *marfs){
 //	printf("got to get_marfs_path step1\n");
         NSIterator ns_iter;
         ns_iter = namespace_iterator();
-        ///char the_path[1024000];
-        //char the_path[1024];
-	//char empty[1024] = {0};
-        //char ending[1024];
         char the_path[MAX_PATH_LENGTH] = {0};
-	//char empty[MAX_PATH_LENGTH] = {0};
         char ending[MAX_PATH_LENGTH];
         int i;
         int index;
-	//strcpy(marfs, empty);
-        //while(ns = namespace_next(&ns_iter)){
+
         while((ns = namespace_next(&ns_iter))){
                 if(strstr(patht, ns->md_path)){
-                        // TO DO 
-                        // NOT SURE WHY THIS IS HERE 
-        		//char the_path[1024000];
-        		//
-			//strcpy(the_path, empty);
+
+                        // build path using mount point and md_path
                         strcat(the_path, mnt_top);
                         strcat(the_path, ns->mnt_path);
 
-                        //char ending[1024];
-                        //int i;
                         for(i = strlen(ns->md_path); i < strlen(patht); i++){
                                 index = i - strlen(ns->md_path);
                                 ending[index] = *(patht+i);
@@ -757,9 +682,6 @@ int walk_and_scan_control (char* top_level_path, size_t max_object_size,
                             uint8_t no_pack)
 {
 //   struct marfs_inode unpacked[1024]; // Chris originally had this set to 102400 but that caused problems
-//   int unpackedLen = 0;
-//   obj_lnklist    packed;
-//   int packedLen = 0;
    struct walk_path dpath;
    struct walk_path rdpath;
    int reg_file_cnt =0;
@@ -861,6 +783,8 @@ int walk_and_scan_control (char* top_level_path, size_t max_object_size,
 
 /******************************************************************************
  * Name:  get_inodes 
+ * This function performs a gpfs inode scan looking for candidate
+ * objects for packing
 ******************************************************************************/
 int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, 
                int *marfs_inodeLen, size_t *sum_size, const char* namespace, 
@@ -875,8 +799,6 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode,
    const char* valueP;
    unsigned int valueLen;
 
-   //int i;
-   //int printable;
    int ret;
    char fileset_name_buffer[MARFS_MAX_NAMESPACE_NAME];
 
@@ -884,12 +806,6 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode,
    register gpfs_iscan_t *iscanP = gpfs_open_inodescan_with_xattrs(fsP, NULL, -1, NULL, NULL);
 
    size_t inode_index;
-
-   // Based on paths found (hashed by inode number) determine min and max inode
-   // search parameters
-   //size_t inode_start = (inode_offset-1) * MAX_WALK_PATHS;
-   //size_t inode_end =   inode_offset * (MAX_WALK_PATHS-1);
- 
 
    // While getting inodes
    while (1){
@@ -932,26 +848,11 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode,
                      //if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI && iattrP->ia_inode >=185676 && iattrP->ia_inode<=185684 ){
                      //if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI ){
                      //
-                     if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==small_obj_size && post.obj_type == OBJ_UNI ){
+                     if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size<=small_obj_size && post.obj_type == OBJ_UNI ){
                      // TO DO: make sure counter does not exceed MAX_SCAN_FILE_SIZE - can only keep so much info
                      // TEMP
                      // TEMP
 
-                        // NEED to see if current inode exists in array of paths
-                        // if so update path
-                        // call find_inode  which returns an index to paths array
-
-                        ///inode[counter].inode =  iattrP->ia_inode;
-                        ///inode[counter].atime = iattrP->ia_atime.tv_sec;
-                        ///inode[counter].mtime = iattrP->ia_mtime.tv_sec;
-                        ///inode[counter].ctime = iattrP->ia_ctime.tv_sec;
-                        //inode[counter].size = post.chunk_info_bytes;
-                        ///inode[counter].size = iattrP->ia_size;
-
-                        // NEED to see if current inode exists in array of paths
-                        // from tree walk.  call find_inode to see if it exists.
-                        // find_inode returns an index to the matching path  
-                        
                         if ((inode_index = find_inode(iattrP->ia_inode, paths)) == -1) {
                            // Exit out of this
                            break;
@@ -986,11 +887,6 @@ int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode,
             } // endwhile 
          //} // endif strcmp fileset name
       } // endif inode != 3
-      //if ( counter == MAX_SCAN_FILE_COUNT) {
-      //   printf ("Hit maximum count for upacked objects returning from inode scan\n"); 
-      //   break;
-       
- 
    } // endwhile
    *marfs_inodeLen = counter;
    LOG(LOG_INFO, "counter value %d\n",counter);
@@ -1051,12 +947,14 @@ int pack_and_write(char* top_level_path, size_t max_object_size,
       return -1;
    }
    if (no_pack) {
-      fprintf(stdout, "Found %d objects to pack with total size of %ld\n", unpackedLen, unpacked_sum_size);
+      fprintf(stdout, "Found %d objects to pack with total size of %ld\n", 
+              unpackedLen, unpacked_sum_size);
       return 0;
    }
    // No potential packer objects fount
    if (unpackedLen == 0) {
-      fprintf(stderr, "No valid packer objects found, Exiting now\n");
+      fprintf(stderr, "No valid packer objects found, continuing with path \
+hunking or Exiting now\n");
       return -1;
    }
     
