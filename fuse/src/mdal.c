@@ -74,7 +74,7 @@ OF SUCH DAMAGE.
 
 #include "logging.h"
 #include "common.h"
-#include "MDAL.h"
+#include "mdal.h"
 
 #include <stdlib.h>             // malloc()
 
