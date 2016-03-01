@@ -149,8 +149,7 @@ DEFS += _XOPEN_SOURCE=700
 #   DEBUG = <n>           --    -d -f  [-f means foreground, without threads]
 #
 
-# FUSE_FLAGS += -o allow_other
-FUSE_FLAGS += -o allow_other,direct_io,use_ino
+FUSE_FLAGS += -o allow_other,direct_io,use_ino,intr
 
 ifdef DEBUG
 	ifeq ($(DEBUG),)
