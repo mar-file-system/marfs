@@ -151,13 +151,18 @@ int main(int argc, char **argv){
            print_usage();
            exit(-1);
         }
-        LOG(LOG_INFO, "obj size = %lld\n", (unsigned long long int)pack_obj_size);
-        LOG(LOG_INFO, "small obj size = %lld\n", (unsigned long long int)small_obj_size);
-        if (small_obj_size > pack_obj_size || small_obj_size*2 > pack_obj_size) {
-           fprintf(stderr,"Error:  object pack size (-p) should be at least\
- twice as big as objects to pack size (-s).\n\n");
-           print_usage();
-        }
+        //LOG(LOG_INFO, "obj size = %lld\n", (unsigned long long int)pack_obj_size);
+        //LOG(LOG_INFO, "small obj size = %lld\n", (unsigned long long int)small_obj_size);
+        //if (small_obj_size > pack_obj_size || small_obj_size*2 > pack_obj_size) {
+        //   fprintf(stderr,"Error:  object pack size (-p) should be at least\ twice as big as objects to pack size (-s).\n\n");
+        //   print_usage();
+        //}
+  
+        // Get rid of trailing / in gpfs path if one exists
+        size_t path_len = strlen(fnameP);
+        if (path_len > 0 && fnameP[path_len-1] == '/')
+           fnameP[path_len -1] = '\0';
+
         // Read configuration and initialize aws
         if ( setup_config() == -1 ) {
            fprintf(stderr,"Error:  Initializing Configs and Aws failed, quitting!!\n");
@@ -176,16 +181,23 @@ int main(int argc, char **argv){
          
         // TO DO 
         //printf("object chunk size from repo:  %ld\n", repo->chunk_size);
-        // want to implement repo chunk size as pack_obj_size
-        // we can then remove from argument list
-        // only there for testing
-        // This is what the call will look like:
-        //walk_and_scan_control (fnameP, repo->chunk_size, small_obj_size, 
-        //                       ns, repo, namespace);
+        // want to implement repo chunk size as pack_obj_size and
+        // repo->pack_size will replace small_object_size
+        // we can then remove them from argument list
+        // only there for testing now
+        // Also issue 102 call for a pack_threshold that would set a lower
+        // bounds on the amount to pack - some percentage of chunk_size
+        //
+        // This is what the modified call will look like:
+        //walk_and_scan_control (fnameP, repo->chunk_size, repo->pack_size, 
+        //                       ns, repo, namespace,repo->pack_threshold);
         // TO DO
         //
-        walk_and_scan_control (fnameP, pack_obj_size, small_obj_size, 
+
+        walk_and_scan_control (fnameP, repo->chunk_size, small_obj_size, 
                                ns, repo, namespace, no_pack_flag);
+        //walk_and_scan_control (fnameP, pack_obj_size, small_obj_size, 
+        //                       ns, repo, namespace, no_pack_flag);
         return 0;
 }
 
@@ -219,7 +231,7 @@ MarFS_Repo_Ptr find_repo_by_name2( const char* name ) {
 * in a link list as well.
 * 
 ******************************************************************************/
-int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  packed, int *packed_size, int obj_size_max){
+int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  packed, int *packed_size, size_t obj_size_max){
 	//int cur_size=0;	
 	int sum_obj_size=0;	
 	int i;
@@ -488,6 +500,8 @@ int set_md(obj_lnklist *objects){
 				//getxattr(path,"user.marfs_objid",  value, MARFS_MAX_XATTR_SIZE);
 				setxattr(path, "user.marfs_objid", pre, strlen(pre), 0);
 				setxattr(path, "user.marfs_post", post, strlen(post), 0);
+                                fprintf(stdout, "Packed file:  %s  into object:  %s\n", 
+                                        object->val.path, pre);
 			}
                         object = object->next ;
                 }
@@ -659,13 +673,12 @@ void check_security_access(MarFS_XattrPre *pre)
 void print_usage()
 {
   fprintf(stderr,"Usage: ./marfs_packer -d gpfs_path -n namespace\
-  [-p packed_object_size] [-s objects_to_pack_size] [-h] \n\n");
-  fprintf(stderr, "where -p = maximum size of packed object in the following formats:\n");
-  fprintf(stderr, "    -p value[k],[m],[g],[kB],[mB],[gB]\n"); 
+  [-s objects_to_pack_size] [-l] [-h] \n\n");
   fprintf(stderr, "where -s = maximum size of small objects to pack in the following formats: \n");
   fprintf(stderr, "    -s value[k],[m],[g],[kB],[mB],[gB]\n");
   fprintf(stderr, "Note:  k, m, and g are base2\n");
   fprintf(stderr, "       kB, mB, and gB are base10 \n");
+  fprintf(stderr, "where -l = provide summary only - do not pack\n");
   fprintf(stderr, "where -h = help\n\n");
 }
 
@@ -786,7 +799,7 @@ int walk_and_scan_control (char* top_level_path, size_t max_object_size,
  * This function performs a gpfs inode scan looking for candidate
  * objects for packing
 ******************************************************************************/
-int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, 
+int get_inodes(const char *fnameP, size_t obj_size, struct marfs_inode *inode, 
                int *marfs_inodeLen, size_t *sum_size, const char* namespace, 
                size_t small_obj_size, struct walk_path *paths)
 {
