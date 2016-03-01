@@ -14,7 +14,8 @@ all:   libconfig.a tester marfs_config
 debug: test_marfs_configuration-d
 
 
-LOG_DIR = $(PWD)/../../log/src
+LOG_DIR  = $(PWD)/../../log/src
+
 
 #LIBS      = -lpthread
 LIBS       =
@@ -136,9 +137,11 @@ CFLAGS += -I$(LOG_DIR) $(LOG_OPT)
 # build a library with Ron's parser, plus the marfs config-parser, plus logging
 # ---------------------------------------------------------------------------
 
-OBJ = marfs_configuration.o
-SRC = marfs_configuration.c
-H   = marfs_configuration.h
+FNAME_ROOTS = marfs_configuration mdal
+
+OBJ = $(patsubst %, %.o, $(FNAME_ROOTS))
+SRC = $(patsubst %, %.c, $(FNAME_ROOTS))
+H   = $(patsubst %, %.h, $(FNAME_ROOTS))
 
 
 

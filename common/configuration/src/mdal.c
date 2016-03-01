@@ -73,7 +73,6 @@ OF SUCH DAMAGE.
 
 
 #include "logging.h"
-#include "common.h"
 #include "mdal.h"
 
 #include <stdlib.h>             // malloc()
@@ -263,7 +262,7 @@ static MDAL*  mdal_vec[MAX_MDAL];
 static size_t mdal_count = 0;
 
 
-MDAL* get_mdal(MDAL_Type type) {
+MDAL* get_MDAL(MDAL_Type type) {
 
    int i;
    for (i=0; i<mdal_count; ++i) {
@@ -282,7 +281,10 @@ MDAL* get_mdal(MDAL_Type type) {
       return NULL;
    }
    
-   mdal_init(new_mdal, type);
+   if (mdal_init(new_mdal, type)) {
+      LOG(LOG_ERR, "Couldn't initialize MDAL (0x%02x)\n", (unsigned)type);
+      return NULL;
+   }
 
    mdal_vec[mdal_count] = new_mdal;
    ++ mdal_count;

@@ -55,7 +55,9 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "stdint.h"
+#include "mdal.h"
+
+#include <stdint.h>
 
 
 #  ifdef __cplusplus
@@ -389,28 +391,30 @@ typedef struct marfs_repo_range {
 // ---------------------------------------------------------------------------
 
 typedef struct marfs_namespace {
-  char                 *name;
-  size_t                name_len;
-  char                 *alias;
-  size_t                alias_len;
-  char                 *mnt_path;
-  size_t                mnt_path_len;
-  MarFS_Perms           bperms;
-  MarFS_Perms           iperms;
-  char                 *md_path;
-  size_t                md_path_len;
-  MarFS_Repo_Ptr        iwrite_repo;
-  MarFS_Repo_Range_List repo_range_list;
-  int                   repo_range_list_count;
-  char                 *trash_md_path;
-  size_t                trash_md_path_len;
-  char                 *fsinfo_path;
-  size_t                fsinfo_path_len;
-  long long             quota_space;
-  long long             quota_names;
-  char                 *ns_shardp;
-  size_t                ns_shardp_len;
-  unsigned long long    ns_shardp_num;
+   char                 *name;
+   size_t                name_len;
+   char                 *alias;
+   size_t                alias_len;
+   char                 *mnt_path;
+   size_t                mnt_path_len;
+   MarFS_Perms           bperms;
+   MarFS_Perms           iperms;
+   char                 *md_path;
+   size_t                md_path_len;
+   MarFS_Repo_Ptr        iwrite_repo;
+   MarFS_Repo_Range_List repo_range_list;
+   int                   repo_range_list_count;
+   char                 *trash_md_path;
+   size_t                trash_md_path_len;
+   char                 *fsinfo_path;
+   size_t                fsinfo_path_len;
+   long long             quota_space;
+   long long             quota_names;
+   MDAL                 *dir_MDAL;
+   MDAL                 *file_MDAL;
+   char                 *ns_shardp;
+   size_t                ns_shardp_len;
+   unsigned long long    ns_shardp_num;
 } MarFS_Namespace, *MarFS_Namespace_Ptr, **MarFS_Namespace_List;
 
 /*

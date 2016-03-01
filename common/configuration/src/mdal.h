@@ -132,6 +132,10 @@ typedef struct {
    struct MDAL* mdal;
 } MDAL_FileHandle;
 
+// used to fill out directory-entries, in marfs_readdir().
+typedef int (*marfs_fill_dir_t) (void *buf, const char *name,
+                                 const struct stat *stbuf, off_t off);
+
 
 // initialize/destroy context, if desired.
 //
@@ -209,7 +213,7 @@ typedef struct MDAL {
 
 
 // find or create an MDAL of the given type
-MDAL* get_mdal(MDAL_Type type);
+MDAL* get_MDAL(MDAL_Type type);
 
 
 
