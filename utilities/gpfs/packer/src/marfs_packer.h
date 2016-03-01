@@ -79,7 +79,7 @@
 
 
 // This defines how many paths the treewalk will work on at a time
-#define MAX_SCAN_FILE_COUNT 1024
+#define MAX_SCAN_FILE_COUNT 1024 
 
 #define MAX_PATH_LENGTH 1024
 //#define MAX_SCAN_FILE_COUNT 5 
@@ -138,7 +138,7 @@ typedef struct obj_lnklist {
    struct inode_lnklist *val;
 } obj_lnklist;
 
-int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  packed, int *packed_size, int obj_size_max);
+int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  packed, int *packed_size, size_t obj_size_max);
 int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns);
 int set_md(obj_lnklist *objects);
 int set_xattrs(int inode, int xattr);
@@ -154,7 +154,7 @@ int walk_and_scan_control (char* top_level_path, size_t max_object_size,
                             MarFS_Repo* repo, MarFS_Namespace* namespace,
                             uint8_t no_pack_flag);
 //int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace, size_t small_obj_size, struct walk_path *paths);
-int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode,
+int get_inodes(const char *fnameP, size_t obj_size, struct marfs_inode *inode,
                int *marfs_inodeLen, size_t *sum_size, const char* namespace,
                size_t small_obj_size, struct walk_path *paths);
 int find_inode(size_t inode_number, struct walk_path *paths);
