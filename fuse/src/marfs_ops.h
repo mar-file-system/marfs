@@ -93,9 +93,6 @@ OF SUCH DAMAGE.
  */
 #include <sys/types.h>
 #include <sys/stat.h>
-typedef int (*marfs_fill_dir_t) (void *buf, const char *name,
-                                 const struct stat *stbuf, off_t off);
-
 #include <sys/statvfs.h>
 
 
@@ -146,7 +143,7 @@ int  marfs_read(const char* path, char* buf, size_t size, off_t offset,
                       MarFS_FileHandle* fh);
 
 int  marfs_readdir(const char* path, void* buf, marfs_fill_dir_t filler,
-                         off_t offseet, MarFS_DirHandle* dh);
+                         off_t offset, MarFS_DirHandle* dh);
 
 int  marfs_readlink(const char* path, char* buf, size_t size);
 

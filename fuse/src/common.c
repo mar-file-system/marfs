@@ -413,6 +413,11 @@ int init_xattr_specs() {
 //       return non-zero when something goes wrong.  Caller can call
 //       has_marfs_xattrs(info, mask) to see whether we found given ones.
 //
+
+// NOTE: if pftool is calling, it will already have called
+//       batch_pre_process(), which will have initialized xattrs
+//       (e.g. correct repo, etc).
+
 int stat_xattrs(PathInfo* info) {
    TRY_DECLS();
    ssize_t str_size;
@@ -436,7 +441,6 @@ int stat_xattrs(PathInfo* info) {
          // NOTE: If obj doesn't exist, its md_ctime will match the
          //       ctime currently found in info->st, as a result of
          //       the call to stat_regular(), above.
-
          str_size = lgetxattr(info->post.md_path, spec->key_name,
                               xattr_value_str, MARFS_MAX_XATTR_SIZE);
          if (str_size != -1) {

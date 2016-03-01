@@ -6,6 +6,7 @@
 #include <unistd.h>             // ssize_t
 #include <stdarg.h>             // va_arg
 #include <pthread.h>            // pthread_self()
+#include <string.h>             // strlen()
 
 #include <stdio.h>
 

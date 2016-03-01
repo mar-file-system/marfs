@@ -93,9 +93,12 @@ CONFIG = $(PWD)/../../common/configuration/src
 FUSE_DEPS =
 
 
-OBJS =            logging.o marfs_base.o common.o object_stream.o marfs_ops.o
-SRCS = $(LOGGING)/logging.c marfs_base.c common.c object_stream.c marfs_ops.c
-H    = $(LOGGING)/logging.h marfs_base.h common.h object_stream.h marfs_ops.h
+# These are files where .c, .o, .h all make sense
+FNAME_ROOTS = marfs_base common object_stream marfs_ops push_user mdal
+
+OBJS =            logging.o $(patsubst %, %.o, $(FNAME_ROOTS))
+SRCS = $(LOGGING)/logging.c $(patsubst %, %.c, $(FNAME_ROOTS))
+H    = $(LOGGING)/logging.h $(patsubst %, %.h, $(FNAME_ROOTS))
 
 
 # pipe-to-logger works, but without -d, all fuse stdout/stderr is lost
@@ -104,12 +107,7 @@ LOG  = > fuse.log 2>&1
 
 
 
-
 MNT   := /marfs
-
-GPFS   = /gpfs/marfs-gpfs/fuse
-MDFS   = $(GPFS)/test00/mdfs
-
 
 
 # file
@@ -127,6 +125,14 @@ PID = marfs_fuse.pid
 # c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
 CFLAGS  += -Wall -std=c99 -I.
 
+# 700 = Single UNIX Spec v4.
+#
+# We use:
+#  -- strptime()
+#  -- readdir_r()
+#  -- utimensat(... AT_SYMLINK_NOFOLLOW)
+DEFS += _XOPEN_SOURCE=700
+
 
 # environment-variable DEBUG controls compile-flags:
 # NOTE: -DDEBUG w/value > 1 turns on curl-conversation logging
@@ -143,8 +149,7 @@ CFLAGS  += -Wall -std=c99 -I.
 #   DEBUG = <n>           --    -d -f  [-f means foreground, without threads]
 #
 
-# FUSE_FLAGS += -o allow_other
-FUSE_FLAGS += -o allow_other,direct_io,use_ino
+FUSE_FLAGS += -o allow_other,direct_io,use_ino,intr
 
 ifdef DEBUG
 	ifeq ($(DEBUG),)
@@ -624,15 +629,15 @@ run-%: %
 #  e.g. 'make mdfs-foo' shows ...filesys/mdfs/test00/foo
 mdfs-%:
 	@ echo
-	@ echo "overview of metadata for $(MDFS)/$*"
-	@ ls -li   $(MDFS)/$*
+	@ echo "overview of metadata for $*"
+	@ ls -li   $*
 	@ echo
 	@ # echo "xattrs:"
-	@ # (attr -l $(MDFS)/$* | grep marfs_) || echo "(none)"
+	@ # (attr -l $* | grep marfs_) || echo "(none)"
 	@ echo
-	@ ( attr -g marfs_objid $(MDFS)/$* 2>/dev/null || echo "N/A")
+	@ ( attr -g marfs_objid $* 2>/dev/null || echo "N/A")
 	@ echo
-	@ ( attr -g marfs_post  $(MDFS)/$* 2>/dev/null || echo "N/A")
+	@ ( attr -g marfs_post  $* 2>/dev/null || echo "N/A")
 
 
 # ...........................................................................
