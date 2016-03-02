@@ -1621,18 +1621,34 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
    remain = MARFS_REC_UNI_SIZE - idx;
 
    // write the TAIL.  After all the recovery-infos in an object, we print
-   // two values, so that they can be found during recovery, when we might
-   // have no knowledge of the structure of the object.  The next-to-last
-   // number says how many files have user data in this object.  (This will
-   // also be the number of recovery-info records).  The last number
-   // indicates where in this object all the recovery-info starts.  Given
-   // this, a recovery-tool can set about parsing out the recovery-info,
-   // and regenerating the MDFS as it existed at the time the individual
-   // objects were created.
+   // two values, so that the recovery-info can be parsed out during
+   // recovery, when we might have no knowledge of the structure of the
+   // object.  (1) The next-to-last number says how many files have user
+   // data in this object.  (This will also be the number of recovery-info
+   // records).  (2) The last number indicates the length of all the
+   // recovery-info (including the tail!).  Given this, a recovery-tool can
+   // set about parsing out the recovery-info, and regenerating the MDFS as
+   // it existed at the time the individual objects were created.
+   //
+   // Q: Why not just put the *offset* of the start of recovery-info into
+   //    the final value?
+   //
+   // A: Putting the length here allows the packer to work in two different
+   //    ways.  (a) The original spec said we would combine data at the
+   //    beginning of the packed object, and segregate recovery-info at the
+   //    end.  This is easy on the recovery, but less efficient for the
+   //    packer (which is, we hope, the much more common operation).  (b)
+   //    lay the small objects with their contiguous rec-info (and tail)
+   //    right into the packed object.  (i.e. data1, rec1, tail1, data2,
+   //    rec2, tail2, ...)  For recovery to work in this case, without
+   //    doing any adjustment of the objects being packed, the rec-info
+   //    tail should have length, rather than offset, of the recovery-info.
+
    write_count = snprintf(&rec[idx], MARFS_REC_TAIL_SIZE,
                           MARFS_REC_TAIL_FORMAT,
-                          (uint64_t)1,                    // N files in this object
-                          (uint64_t)user_data_this_obj);  // offset of rec-info
+                          (uint64_t)1,                          // N files in this object
+                          // (uint64_t)user_data_this_obj);     // offset of rec-info
+                          (uint64_t)idx + MARFS_REC_TAIL_SIZE); // length of rec-info
    if (write_count < 0)
       return -1;
    if (write_count == MARFS_REC_TAIL_SIZE) { /* overflow */
