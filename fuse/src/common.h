@@ -186,40 +186,40 @@ typedef enum {
 //       proper can then use __TRY(), which should return -errno.
 
 
-#define TRY0(FUNCTION, ...)                                             \
+#define TRY0(FNCALL)                                                    \
    do {                                                                 \
-      /* LOG(LOG_INFO, "TRY0(%s)\n", #FUNCTION); */                     \
-      rc = (size_t)FUNCTION(__VA_ARGS__);                               \
+      /* LOG(LOG_INFO, "TRY0(%s)\n", #FNCALL); */                       \
+      rc = (size_t)FNCALL;                                              \
       if (rc) {                                                         \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
-             #FUNCTION, rc, errno, strerror(errno));                    \
+             #FNCALL, rc, errno, strerror(errno));                      \
          RETURN(-1);                                                    \
       }                                                                 \
    } while (0)
 
 // e.g. open() returns -1 or an fd.
-#define TRY_GE0(FUNCTION, ...)                                          \
+#define TRY_GE0(FNCALL)                                                 \
    do {                                                                 \
-      /* LOG(LOG_INFO, "TRY_GE0(%s)\n", #FUNCTION); */                  \
-      rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
+      /* LOG(LOG_INFO, "TRY_GE0(%s)\n", #FNCALL); */                    \
+      rc_ssize = (ssize_t)FNCALL;                                       \
       if (rc_ssize < 0) {                                               \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
-             #FUNCTION, rc_ssize, errno, strerror(errno));              \
+             #FNCALL, rc_ssize, errno, strerror(errno));                \
          RETURN(-1);                                                    \
       }                                                                 \
    } while (0)
 
 // e.g. opendir() returns a pointer or NULL
-#define TRY_GT0(FUNCTION, ...)                                          \
+#define TRY_GT0(FNCALL)                                                 \
    do {                                                                 \
-      /* LOG(LOG_INFO, "TRY_GT0(%s)\n", #FUNCTION); */                  \
-      rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
+      /* LOG(LOG_INFO, "TRY_GT0(%s)\n", #FNCALL); */                    \
+      rc_ssize = (ssize_t)FNCALL;                                       \
       if (rc_ssize <= 0) {                                              \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
-             #FUNCTION, rc_ssize, errno, strerror(errno));              \
+             #FNCALL, rc_ssize, errno, strerror(errno));                \
          RETURN(-1);                                                    \
       }                                                                 \
    } while (0)
@@ -232,26 +232,26 @@ typedef enum {
 // FOR INTERNAL USE (by fuse/pftool) ONLY.
 // [See "UPDATE", above]
 //
-#define __TRY0(FUNCTION, ...)                                           \
+#define __TRY0(FNCALL)                                                  \
    do {                                                                 \
-      LOG(LOG_INFO, "TRY0: %s\n", #FUNCTION);                           \
-      rc = (size_t)FUNCTION(__VA_ARGS__);                               \
+      LOG(LOG_INFO, "TRY0: %s\n", #FNCALL);                             \
+      rc = (size_t)FNCALL;                                              \
       if (rc) {                                                         \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
-             #FUNCTION, rc, errno, strerror(errno));                    \
+             #FNCALL, rc, errno, strerror(errno));                      \
          RETURN(-errno);                                                \
       }                                                                 \
    } while (0)
 
-#define __TRY_GE0(FUNCTION, ...)                                        \
+#define __TRY_GE0(FNCALL)                                               \
    do {                                                                 \
-      LOG(LOG_INFO, "TRY_GE0: %s\n", #FUNCTION);                        \
-      rc_ssize = (ssize_t)FUNCTION(__VA_ARGS__);                        \
+      LOG(LOG_INFO, "TRY_GE0: %s\n", #FNCALL);                          \
+      rc_ssize = (ssize_t)FNCALL;                                       \
       if (rc_ssize < 0) {                                               \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
-             #FUNCTION, rc_ssize, errno, strerror(errno));              \
+             #FNCALL, rc_ssize, errno, strerror(errno));                \
          RETURN(-errno);                                                \
       }                                                                 \
    } while (0)
@@ -260,15 +260,15 @@ typedef enum {
 
 
 
-#define EXPAND_PATH_INFO(INFO, PATH)   TRY0(expand_path_info, (INFO), (PATH))
-#define TRASH_UNLINK(INFO, PATH)       TRY0(trash_unlink,     (INFO), (PATH))
-#define TRASH_TRUNCATE(INFO, PATH)     TRY0(trash_truncate,   (INFO), (PATH))
-#define TRASH_NAME(INFO, PATH)         TRY0(trash_name,       (INFO), (PATH))
+#define EXPAND_PATH_INFO(INFO, PATH)   TRY0( expand_path_info((INFO), (PATH)) )
+#define TRASH_UNLINK(INFO, PATH)       TRY0( trash_unlink((INFO), (PATH)) )
+#define TRASH_TRUNCATE(INFO, PATH)     TRY0( trash_truncate((INFO), (PATH)) )
+#define TRASH_NAME(INFO, PATH)         TRY0( trash_name((INFO), (PATH)) )
 
-#define STAT_XATTRS(INFO)              TRY0(stat_xattrs, (INFO))
-#define STAT(INFO)                     TRY0(stat_regular, (INFO))
+#define STAT_XATTRS(INFO)              TRY0( stat_xattrs((INFO)) )
+#define STAT(INFO)                     TRY0( stat_regular((INFO)) )
 
-#define SAVE_XATTRS(INFO, MASK)        TRY0(save_xattrs, (INFO), (MASK))
+#define SAVE_XATTRS(INFO, MASK)        TRY0( save_xattrs((INFO), (MASK)) )
 
 
 
@@ -281,7 +281,7 @@ typedef enum {
          return -EACCES;   /* should be EPERM? (i.e. being root wouldn't help) */ \
    } while (0)
 
-#define ACCESS(PATH, PERMS)            TRY0(access, (PATH), (PERMS))
+#define ACCESS(PATH, PERMS)            TRY0( access((PATH), (PERMS)) )
 
 
 

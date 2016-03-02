@@ -186,7 +186,7 @@ int push_groups4(PerThreadContext* ctx, uid_t uid, gid_t gid) {
    }
 
    // change group membership of process
-   TRY0(setgroups, ngroups, groups);
+   TRY0( setgroups(ngroups, groups) );
 
    ctx->pushed_groups = 1;   // so we can pop
    return 0;
@@ -291,7 +291,7 @@ int pop_groups4(PerThreadContext* ctx) {
       LOG(LOG_INFO, "group = %u\n", ctx->groups[i]);
    }
 
-   TRY0(setgroups, ctx->group_ct, ctx->groups);
+   TRY0( setgroups(ctx->group_ct, ctx->groups) );
 
    ctx->pushed_groups = 0;
    return 0;

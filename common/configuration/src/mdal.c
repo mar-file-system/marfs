@@ -166,7 +166,7 @@ int     mdal_posix_readdir (MDAL_Context*      ctx,
    while (1) {
       // #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
       //      struct dirent* dent_r;       /* for readdir_r() */
-      //      TRY0(readdir_r, dirp, dent, &dent_r);
+      //      TRY0( readdir_r(dirp, dent, &dent_r) );
       //      if (! dent_r)
       //         break;                 /* EOF */
       //      if (filler(buf, dent_r->d_name, NULL, 0))

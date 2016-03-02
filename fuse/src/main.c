@@ -106,13 +106,13 @@ OF SUCH DAMAGE.
    ENTRY();                                                             \
    PerThreadContext ctx;                                                \
    memset(&ctx, 0, sizeof(PerThreadContext));                           \
-   __TRY0(push_user4, &ctx,                                             \
-          fuse_get_context()->uid,                                      \
-          fuse_get_context()->gid,                                      \
-          (GROUPS_TOO))
+   __TRY0( push_user4(&ctx,                                             \
+                      fuse_get_context()->uid,                          \
+                      fuse_get_context()->gid,                          \
+                      (GROUPS_TOO)) )
 
 #define POP_USER()                                                      \
-   __TRY0(pop_user4, &ctx);                                             \
+   __TRY0( pop_user4(&ctx) );                                           \
    EXIT()
 
 
@@ -218,7 +218,7 @@ int fuse_chmod(const char* path,
 //                       uid_t       uid,
 //                       gid_t       gid) {
 //    ENTRY();
-//    TRY0(setegid, gid);
+//    TRY0( setegid(gid) );
 //    rc = marfs_chown(path, uid, gid);
 //    EXIT();
 //    return rc;
@@ -891,7 +891,7 @@ int main(int argc, char* argv[])
    // This fixes that.
    //
    // NOTE: This also now *requires* that marfs fuse is always only run as root.
-   __TRY0(seteuid, 0);
+   __TRY0( seteuid(0) );
 
    if (read_configuration()) {
       LOG(LOG_ERR, "read_configuration() failed.  Quitting\n");
@@ -950,7 +950,7 @@ int main(int argc, char* argv[])
    // make sure all support directories exist.  (See the config file.)
    // This includes mdfs, fsinfo, the trash "scatter-tree", for all namespaces,
    // plus a storage "scatter-tree" for any semi-direct repos.
-   __TRY0(init_mdfs);
+   __TRY0( init_mdfs() );
 
    // function-pointers used by fuse, to dispatch calls to our handlers.
    struct fuse_operations marfs_oper = {
