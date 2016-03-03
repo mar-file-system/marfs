@@ -608,7 +608,7 @@ void get_marfs_path(char * patht, char *marfs){
         NSIterator ns_iter;
         ns_iter = namespace_iterator();
         char the_path[MAX_PATH_LENGTH] = {0};
-        char ending[MAX_PATH_LENGTH];
+        char ending[MAX_PATH_LENGTH] = {0};
         int i;
         int index;
 
@@ -625,7 +625,7 @@ void get_marfs_path(char * patht, char *marfs){
                         }
                         ending[index+1] = '\0';
                         strcat(the_path, ending);
-                        strcat(marfs,the_path);
+                        strcpy(marfs,the_path);
                         break;
                 }
         }
@@ -961,9 +961,8 @@ int pack_and_write(char* top_level_path, size_t max_object_size,
       return -1;
    }
    if (no_pack) {
-      fprintf(stdout, "Found %d objects to pack with total size of %ld\
- and a pack size of %ld\n", 
-              unpackedLen, unpacked_sum_size, max_object_size);
+      fprintf(stdout, "Objects will pack in size %ld  Found %d objects to pack with total size of %ld\n",
+              max_object_size, unpackedLen, unpacked_sum_size);
       fprintf(stdout, "Note:  total size does not include recovery info.\n");
       return 0;
    }
