@@ -55,7 +55,9 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "stdint.h"
+#include "mdal.h"
+
+#include <stdint.h>
 
 
 #  ifdef __cplusplus
@@ -106,9 +108,15 @@ extern "C" {
 // -- 1.0 new objids, with http://host:port/ns_alias/repo/vers/ns/...
 //        Makes adding new namespaces simpler for admins.
 //        Allows repos to select sproxyd driver-alias.
+//
+// -- 1.1 recovery-info tail has *length* of recovery-info, rather than
+//        offset.  This allows recovery in the more-efficient case where
+//        the packer combines small objects without segregating the
+//        recovery-info at the end of the packed object.  Format of the
+//        object tail also uses "reclen" instead of "recoff".
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  0
+#define MARFS_CONFIG_MINOR  1
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
@@ -389,28 +397,30 @@ typedef struct marfs_repo_range {
 // ---------------------------------------------------------------------------
 
 typedef struct marfs_namespace {
-  char                 *name;
-  size_t                name_len;
-  char                 *alias;
-  size_t                alias_len;
-  char                 *mnt_path;
-  size_t                mnt_path_len;
-  MarFS_Perms           bperms;
-  MarFS_Perms           iperms;
-  char                 *md_path;
-  size_t                md_path_len;
-  MarFS_Repo_Ptr        iwrite_repo;
-  MarFS_Repo_Range_List repo_range_list;
-  int                   repo_range_list_count;
-  char                 *trash_md_path;
-  size_t                trash_md_path_len;
-  char                 *fsinfo_path;
-  size_t                fsinfo_path_len;
-  long long             quota_space;
-  long long             quota_names;
-  char                 *ns_shardp;
-  size_t                ns_shardp_len;
-  unsigned long long    ns_shardp_num;
+   char                 *name;
+   size_t                name_len;
+   char                 *alias;
+   size_t                alias_len;
+   char                 *mnt_path;
+   size_t                mnt_path_len;
+   MarFS_Perms           bperms;
+   MarFS_Perms           iperms;
+   char                 *md_path;
+   size_t                md_path_len;
+   MarFS_Repo_Ptr        iwrite_repo;
+   MarFS_Repo_Range_List repo_range_list;
+   int                   repo_range_list_count;
+   char                 *trash_md_path;
+   size_t                trash_md_path_len;
+   char                 *fsinfo_path;
+   size_t                fsinfo_path_len;
+   long long             quota_space;
+   long long             quota_names;
+   MDAL                 *dir_MDAL;
+   MDAL                 *file_MDAL;
+   char                 *ns_shardp;
+   size_t                ns_shardp_len;
+   unsigned long long    ns_shardp_num;
 } MarFS_Namespace, *MarFS_Namespace_Ptr, **MarFS_Namespace_List;
 
 /*

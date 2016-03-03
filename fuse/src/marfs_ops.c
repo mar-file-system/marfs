@@ -116,7 +116,7 @@ int marfs_access (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META));
 
    // No need for access check, just try the op
-   TRY0(access, info.post.md_path, mask);
+   TRY0( access(info.post.md_path, mask) );
  
    EXIT();
    return 0;
@@ -163,7 +163,7 @@ int marfs_chmod(const char* path,
    // No need for access check, just try the op
    // WARNING: No lchmod() on rrz.
    //          chmod() always follows links.
-   TRY0(chmod, info.post.md_path, mode);
+   TRY0( chmod(info.post.md_path, mode) );
 
    EXIT();
    return 0;
@@ -182,7 +182,7 @@ int marfs_chown (const char* path,
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
    // No need for access check, just try the op
-   TRY0(lchown, info.post.md_path, uid, gid);
+   TRY0( lchown(info.post.md_path, uid, gid) );
 
    EXIT();
    return 0;
@@ -263,7 +263,7 @@ int marfs_ftruncate(const char*            path,
    STAT_XATTRS(info);
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
-      TRY0(ftruncate, fh->md_fd, length);
+      TRY0( ftruncate(fh->md_fd, length) );
       return 0;
    }
 
@@ -299,8 +299,8 @@ int marfs_ftruncate(const char*            path,
 
    // object-stream is still open to the old object.  Close that in such a
    // way that the server will not persist the PUT.
-   TRY0(stream_abort, os);
-   TRY0(stream_close, os);
+   TRY0( stream_abort(os) );
+   TRY0( stream_close(os) );
 
    // open a stream to the new object.  We assume that the libaws4c context
    // initializations done in marfs_open are still valid.  trash_truncate()
@@ -311,8 +311,8 @@ int marfs_ftruncate(const char*            path,
    size_t   open_size  = get_stream_wr_open_size(fh, 0);
    uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-   TRY0(update_url, os, info);
-   TRY0(stream_open, os, OS_PUT, open_size, 0, wr_timeout);
+   TRY0( update_url(os, info) );
+   TRY0( stream_open(os, OS_PUT, open_size, 0, wr_timeout) );
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
@@ -398,7 +398,7 @@ int marfs_getattr (const char*  path,
       // NOTE: kernel should already have called readlink, to get past any
       //     symlinks.  lstat here is just to be safe.
       LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
-      TRY_GE0(lstat, info.post.md_path, stp);
+      TRY_GE0( lstat(info.post.md_path, stp) );
    }
 
    // mask out setuid/setgid bits.  Those are belong to us.  (see marfs_chmod())
@@ -451,7 +451,7 @@ int marfs_getxattr (const char* path,
    //     lgetxattr("system.posix_acl_access",path,0,0).  The kernel calls
    //     us with this, for 'ls -l /marfs/jti/blah'.
 
-   TRY_GE0(lgetxattr, info.post.md_path, name, (void*)value, size);
+   TRY_GE0( lgetxattr(info.post.md_path, name, (void*)value, size) );
    ssize_t result = rc_ssize;
 
    EXIT();
@@ -508,7 +508,7 @@ int marfs_listxattr (const char* path,
    // No need for access check, just try the op
    // Appropriate  listxattr call
    // NOTE: If caller passes <list>=0, we'll be fine.
-   TRY_GE0(llistxattr, info.post.md_path, list, size);
+   TRY_GE0( llistxattr(info.post.md_path, list, size) );
 
    // In the case where list==0, we return the size of the buffer that
    // caller would need, in order to receive all our xattr data.
@@ -588,7 +588,7 @@ int marfs_mkdir (const char* path,
    // Check/act on quota num files
 
    // No need for access check, just try the op
-   TRY0(mkdir, info.post.md_path, mode);
+   TRY0( mkdir(info.post.md_path, mode) );
 
    EXIT();
    return 0;
@@ -628,7 +628,7 @@ int marfs_mknod (const char* path,
 
    // Check/act on quotas of total-space and total-num-names
    // 0=OK, 1=exceeded, -1=error
-   TRY_GE0(check_quotas, &info);
+   TRY_GE0( check_quotas(&info) );
    if (rc_ssize) {
       errno = EDQUOT;
       return -1;
@@ -636,7 +636,7 @@ int marfs_mknod (const char* path,
 
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
-   TRY0(mknod, info.post.md_path, mode, rdev);
+   TRY0( mknod(info.post.md_path, mode, rdev) );
    LOG(LOG_INFO, "mode: (octal) 0%o\n", mode); // debugging
 
    // PROBLEM: marfs_open() assumes that a file that exists, which doesn't
@@ -858,7 +858,7 @@ int marfs_open(const char*         path,
 
          // position md_fd at the proper place for MultiChunkInfo for this chunk
          size_t chunk_info_offset = (chunk_no * sizeof(MultiChunkInfo));
-         TRY_GE0(lseek, fh->md_fd, chunk_info_offset, SEEK_SET);
+         TRY_GE0( lseek(fh->md_fd, chunk_info_offset, SEEK_SET) );
          LOG(LOG_INFO, "chunkinfo offset=%ld, (open_offset=%ld) length=%ld\n",
              chunk_info_offset, fh->open_offset, content_length);
 
@@ -932,7 +932,7 @@ int marfs_open(const char*         path,
    aws_iobuf_context(b, ctx);
 
    // initialize the URL in the ObjectStream, in our FileHandle
-   TRY0(update_url, os, info);
+   TRY0( update_url(os, info) );
 
    // To support seek() [for reads], and allow reading at arbitrary
    // offsets, we let marfs_read() determine the offset where it should
@@ -953,7 +953,7 @@ int marfs_open(const char*         path,
       size_t   open_size  = get_stream_wr_open_size(fh, 0);
       uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-      TRY0(stream_open, os, OS_PUT, open_size, 0, wr_timeout);
+      TRY0( stream_open(os, OS_PUT, open_size, 0, wr_timeout) );
    }
 
 
@@ -975,7 +975,7 @@ int marfs_open(const char*         path,
 
       LOG(LOG_INFO, "assuming NFS needs ftruncate(%s, 0, ...)\n",
           info->post.md_path);
-      TRY0(marfs_ftruncate, path, 0, fh);
+      TRY0( marfs_ftruncate(path, 0, fh) );
    }
 #endif
 
@@ -1038,7 +1038,7 @@ int marfs_open_at_offset(const char*         path,
 
    // TBD: update_pre(), to install correct chunk-number, for writes?
 
-   TRY0(marfs_open, path, fh, flags, content_length);
+   TRY0( marfs_open(path, fh, flags, content_length) );
    return 0;
 }
 
@@ -1082,9 +1082,9 @@ int marfs_opendir (const char*       path,
    // No need for access check, just try the op
    // Appropriate  opendir call filling in fuse structure
    ///   mode_t mode = ~(fuse_get_context()->umask); /* ??? */
-   ///   TRY_GE0(opendir, info.md_path, ffi->flags, mode);
-   ///   TRY_GE0(opendir, info.post.md_path);
-   TRY_GT0(opendir, info.post.md_path);
+   ///   TRY_GE0( opendir(info.md_path, ffi->flags, mode) );
+   ///   TRY_GE0( opendir(info.post.md_path) );
+   TRY_GT0( opendir(info.post.md_path) );
 
    ///   ffi->fh = rc_ssize;          /* open() successfully returned a dirp */
    dh->internal.dirp = (DIR*)rc_ssize;
@@ -1125,7 +1125,7 @@ int marfs_read (const char*        path,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
        && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "reading DIRECT\n");
-      TRY_GE0(read, fh->md_fd, buf, size);
+      TRY_GE0( read(fh->md_fd, buf, size) );
       return rc_ssize;
    }
 
@@ -1150,8 +1150,8 @@ int marfs_read (const char*        path,
          LOG(LOG_INFO, "discontiguous read detected: gap %lu-%lu\n",
              fh->read_status.log_offset, offset);
 
-         TRY0(stream_sync, os);
-         TRY0(stream_close, os);
+         TRY0( stream_sync(os) );
+         TRY0( stream_close(os) );
       }
 
       fh->read_status.log_offset = offset;
@@ -1310,8 +1310,8 @@ int marfs_read (const char*        path,
       if ((os->flags & OSF_OPEN)
           && (os->flags & OSF_EOF)) {
          LOG(LOG_INFO, "closing stream at EOF\n");
-         TRY0(stream_sync, os);
-         TRY0(stream_close, os);
+         TRY0( stream_sync(os) );
+         TRY0( stream_close(os) );
       }
 
 
@@ -1336,7 +1336,7 @@ int marfs_read (const char*        path,
          //     content_length provided in stream_open().  Therefore, we
          //     let written be wiped.
          //
-         TRY0(stream_open, os, OS_GET, open_size, 0, rd_timeout);
+         TRY0( stream_open(os, OS_GET, open_size, 0, rd_timeout) );
       }
 
       // Because we are reading byte-ranges, we may see '206 Partial Content'.
@@ -1416,8 +1416,8 @@ int marfs_read (const char*        path,
       // reading more?
       if (read_count < size) {
 
-         TRY0(stream_sync, os);
-         TRY0(stream_close, os);
+         TRY0( stream_sync(os) );
+         TRY0( stream_close(os) );
 
          // ready to move on to the next chunk?
          if (! chunk_remain) {
@@ -1492,7 +1492,7 @@ int marfs_readdir (const char*        path,
       while (1) {
          // #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
          //      struct dirent* dent_r;       /* for readdir_r() */
-         //      TRY0(readdir_r, dirp, dent, &dent_r);
+         //      TRY0( readdir_r(dirp, dent, &dent_r) );
          //      if (! dent_r)
          //         break;                 /* EOF */
          //      if (filler(buf, dent_r->d_name, NULL, 0))
@@ -1558,7 +1558,7 @@ int marfs_readlink (const char* path,
 
    // No need for access check, just try the op
    // Appropriate readlink-like call filling in fuse structure 
-   TRY_GE0(readlink, info.post.md_path, buf, size);
+   TRY_GE0( readlink(info.post.md_path, buf, size) );
    int count = rc_ssize;
    if (count >= size) {
       LOG(LOG_ERR, "no room for '\\0'\n");
@@ -1615,13 +1615,13 @@ int marfs_release (const char*        path,
    // data, so it should return 0 to curl.  For reads, the writefunc may be
    // waiting for another buffer to fill, so it can be told to terminate.
 #if 0
-   TRY0(stream_sync, os);
-   TRY0(stream_close, os);
+   TRY0( stream_sync(os) );
+   TRY0( stream_close(os) );
 #elif 0
    // New approach.  read() handles its own open/read/close
    if (fh->flags & FH_WRITING) {
-      TRY0(stream_sync, os);
-      TRY0(stream_close, os);
+      TRY0( stream_sync(os) );
+      TRY0( stream_close(os) );
    }
 #else
    // Newer approach.  read() handles its own open/read/close write(). In
@@ -1636,12 +1636,12 @@ int marfs_release (const char*        path,
          if (fh->flags & FH_WRITING) {
 
             // add final recovery-info, at the tail of the object
-            TRY_GE0(write_recoveryinfo, os, info, fh);
+            TRY_GE0( write_recoveryinfo(os, info, fh) );
          }
       }
 
-      TRY0(stream_sync, os);
-      TRY0(stream_close, os);
+      TRY0( stream_sync(os) );
+      TRY0( stream_close(os) );
    }
 #endif
 
@@ -1657,8 +1657,10 @@ int marfs_release (const char*        path,
          if ((fh->flags & FH_WRITING)
              && (info->post.obj_type == OBJ_MULTI)) {
 
-            TRY0(write_chunkinfo, fh->md_fd, info,
-                 fh->open_offset, os->written - fh->write_status.sys_writes);
+            TRY0( write_chunkinfo(fh->md_fd,
+                                  info,
+                                  fh->open_offset,
+                                  (os->written - fh->write_status.sys_writes)) );
 
             // keep count of amount of real chunk-info written into MD file
             info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
@@ -1675,9 +1677,9 @@ int marfs_release (const char*        path,
       ///      //     immediately on GPFS files, instead of being delayed?
       ///      //     [NOTE: We also moved SAVE_XATTRS() earlier, for this test.]
       ///      // ANSWER:  No.
-      ///      TRY0(fsync, fh->md_fd);
+      ///      TRY0( fsync(fh->md_fd) );
 
-      TRY0(close, fh->md_fd);
+      TRY0( close(fh->md_fd) );
       fh->md_fd = 0;
    }
 
@@ -1691,7 +1693,7 @@ int marfs_release (const char*        path,
    if ((fh->flags & FH_WRITING)
        && has_any_xattrs(info, MARFS_ALL_XATTRS)
        && !(fh->flags & FH_Nto1_WRITES)) {
-      TRY0(truncate, info->post.md_path, os->written - fh->write_status.sys_writes);
+      TRY0( truncate(info->post.md_path, os->written - fh->write_status.sys_writes) );
    }
 
 
@@ -1749,7 +1751,7 @@ int marfs_releasedir (const char*       path,
       if (! dh->use_it) {
          LOG(LOG_INFO, "not root-dir\n");
          DIR* dirp = dh->internal.dirp;
-         TRY0(closedir, dirp);
+         TRY0( closedir(dirp) );
       }
    }
 
@@ -1790,7 +1792,7 @@ int marfs_removexattr (const char* path,
    // Appropriate  removexattr call filling in fuse structure 
 
 #if 0 // for speed, we just ignore this
-   TRY0(lremovexattr, info.post.md_path, name);
+   TRY0( lremovexattr(info.post.md_path, name) );
 #endif
 
    EXIT();
@@ -1827,7 +1829,7 @@ int marfs_rename (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  rename call filling in fuse structure 
-   TRY0(rename, info.post.md_path, info2.post.md_path);
+   TRY0( rename(info.post.md_path, info2.post.md_path) );
 
    EXIT();
    return 0;
@@ -1858,7 +1860,7 @@ int marfs_rmdir (const char* path) {
 
    // No need for access check, just try the op
    // Appropriate rmdirlike call filling in fuse structure 
-   TRY0(rmdir, info.post.md_path);
+   TRY0( rmdir(info.post.md_path) );
 
    EXIT();
    return 0;
@@ -1895,7 +1897,7 @@ int marfs_setxattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  setxattr call filling in fuse structure 
-   TRY0(lsetxattr, info.post.md_path, name, value, size, flags);
+   TRY0( lsetxattr(info.post.md_path, name, value, size, flags) );
 
    EXIT();
    return 0;
@@ -2019,7 +2021,7 @@ int marfs_statvfs (const char*      path,
       statbuf->f_namemax = 255;     /* maximum filename length */
    }
    else
-      TRY0(statvfs, info.ns->md_path, statbuf);
+      TRY0( statvfs(info.ns->md_path, statbuf) );
 
    EXIT();
    return 0;
@@ -2055,7 +2057,7 @@ int marfs_symlink (const char* target,
 
    // No need for access check, just try the op
    // Appropriate  symlink call filling in fuse structure 
-   TRY0(symlink, target, lnk_info.post.md_path);
+   TRY0( symlink(target, lnk_info.post.md_path) );
 
    EXIT();
    return 0;
@@ -2093,7 +2095,7 @@ int marfs_truncate (const char* path,
    STAT_XATTRS(&info); // to get xattrs
    if (! has_any_xattrs(&info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
-      TRY0(truncate, info.post.md_path, size);
+      TRY0( truncate(info.post.md_path, size) );
       return 0;
    }
 
@@ -2150,7 +2152,7 @@ int marfs_unlink (const char* path) {
    if (S_ISLNK(info.st.st_mode)) {
       char target[MARFS_MAX_MD_PATH];
 
-      TRY_GE0(readlink, info.post.md_path, target, MARFS_MAX_MD_PATH);
+      TRY_GE0( readlink(info.post.md_path, target, MARFS_MAX_MD_PATH) );
       if ((rc_ssize >= marfs_config->mnt_top_len)
           && (! strncmp(marfs_config->mnt_top, target, marfs_config->mnt_top_len)))
          call_access = 0;
@@ -2195,7 +2197,7 @@ int marfs_utime(const char*     path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
-   TRY_GE0(utime, info.post.md_path, buf);
+   TRY_GE0( utime(info.post.md_path, buf) );
 
    EXIT();
    return 0;
@@ -2233,7 +2235,7 @@ int marfs_utimens(const char*           path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
-   TRY_GE0(utimensat, 0, info.post.md_path, tv, AT_SYMLINK_NOFOLLOW);
+   TRY_GE0( utimensat(0, info.post.md_path, tv, AT_SYMLINK_NOFOLLOW) );
 
    EXIT();
    return 0;
@@ -2271,7 +2273,7 @@ int marfs_write(const char*        path,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
        && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "no xattrs, and DIRECT: writing to file\n");
-      TRY_GE0(write, fh->md_fd, buf, size);
+      TRY_GE0( write(fh->md_fd, buf, size) );
       return rc_ssize;
    }
 
@@ -2347,8 +2349,8 @@ int marfs_write(const char*        path,
       info->pre.chunk_no += 1;
 
       // update the URL in the ObjectStream, in our FileHandle
-      TRY0(update_pre, &info->pre);
-      TRY0(update_url, os, info);
+      TRY0( update_pre(&info->pre) );
+      TRY0( update_url(os, info) );
 
       // NOTE: stream_open() potentially wipes ObjectStream.written.  We
       //     want this field to track the total amount written, across all
@@ -2356,7 +2358,7 @@ int marfs_write(const char*        path,
       size_t   open_size  = get_stream_wr_open_size(fh, 1);
       uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-      TRY0(stream_open, os, OS_PUT, open_size, 1, wr_timeout);
+      TRY0( stream_open(os, OS_PUT, open_size, 1, wr_timeout) );
    }
 
    // Span across objects, for "Multi" format.  Repo.chunk_size is the
@@ -2401,17 +2403,17 @@ int marfs_write(const char*        path,
       }
 
 
-      TRY_GE0(stream_put, os, buf_ptr, fill);
+      TRY_GE0( stream_put(os, buf_ptr, fill) );
       buf_ptr    += fill;
       log_offset += fill;
 
-      TRY_GE0(write_recoveryinfo, os, info, fh);
+      TRY_GE0( write_recoveryinfo(os, info, fh) );
 
 
       // close the object
       LOG(LOG_INFO, "closing chunk: %ld\n", info->pre.chunk_no);
-      TRY0(stream_sync, os);
-      TRY0(stream_close, os);
+      TRY0( stream_sync(os) );
+      TRY0( stream_close(os) );
 
       // if we haven't already opened the MD file, do it now.
       if (! fh->md_fd) {
@@ -2425,8 +2427,10 @@ int marfs_write(const char*        path,
       }
 
       // MD file gets per-chunk information
-      TRY0(write_chunkinfo, fh->md_fd, info,
-           fh->open_offset, (os->written - fh->write_status.sys_writes));
+      TRY0( write_chunkinfo(fh->md_fd,
+                            info,
+                            fh->open_offset,
+                            (os->written - fh->write_status.sys_writes)) );
 
       // keep count of amount of real chunk-info written into MD file
       info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
@@ -2442,8 +2446,8 @@ int marfs_write(const char*        path,
          info->pre.chunk_no += 1;
 
          // update the URL in the ObjectStream, in our FileHandle
-         TRY0(update_pre, &info->pre);
-         TRY0(update_url, os, info);
+         TRY0( update_pre(&info->pre) );
+         TRY0( update_url(os, info) );
 
          // pos in user-data corresponding to the logical end of a chunk
          log_end += (info->pre.repo->chunk_size - recovery);
@@ -2456,7 +2460,7 @@ int marfs_write(const char*        path,
          size_t   open_size  = get_stream_wr_open_size(fh, 1);
          uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-         TRY0(stream_open, os, OS_PUT, open_size, 1, wr_timeout);
+         TRY0( stream_open(os, OS_PUT, open_size, 1, wr_timeout) );
       }
 
       // compute limits of new chunk
@@ -2468,7 +2472,7 @@ int marfs_write(const char*        path,
    // write more data into object. This amount doesn't finish out any
    // object, so don't write chunk-info to MD file.
    if (write_size)
-      TRY_GE0(stream_put, os, buf_ptr, write_size);
+      TRY_GE0( stream_put(os, buf_ptr, write_size) );
 
 #if 0
    // EXPERIMENT for NFS
@@ -2483,7 +2487,7 @@ int marfs_write(const char*        path,
    if ((fh->flags & FH_WRITING)
        && has_any_xattrs(info, MARFS_ALL_XATTRS)
        && !(fh->flags & FH_Nto1_WRITES)) {
-      TRY0(truncate, info->post.md_path, os->written - fh->write_status.sys_writes);
+      TRY0( truncate(info->post.md_path, os->written - fh->write_status.sys_writes) );
    }
 #endif
 
@@ -2571,7 +2575,7 @@ int marfs_create(const char*        path,
    // Check/act on quota num names
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
-   TRY0(mknod, info.post.md_path, mode, rdev);
+   TRY0( mknod(info.post.md_path, mode, rdev) );
 
    EXIT();
    return 0;
@@ -2615,7 +2619,7 @@ int marfs_fgetattr(const char*        path,
    // appropriate fgetattr/fstat call filling in fuse structure (dont mess with xattrs)
    PathInfo*         info = &fh->info;                  /* shorthand */
 
-   TRY0(lstat, info->post.md_path, st);
+   TRY0( lstat(info->post.md_path, st) );
 
    EXIT();
    return 0;
@@ -2660,7 +2664,7 @@ int marfs_flush (const char*        path,
 
    //   // shouldn't do this for DIRECT files!  See marfs_open().
    //   LOG(LOG_INFO, "synchronizing object stream %s\n", path);
-   //   TRY0(stream_sync, os);
+   //   TRY0( stream_sync(os) );
 
    EXIT();
    return 0;

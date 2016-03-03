@@ -119,7 +119,9 @@ typedef struct {
    union {
       void*     ptr;
       size_t    sz;
-      uint32_t  i;
+      ssize_t   ssz;
+      uint32_t  u;
+      int32_t   i;
    } data;
 } MDAL_Context;
 
@@ -131,6 +133,10 @@ typedef struct {
    MDAL_Context ctx;
    struct MDAL* mdal;
 } MDAL_FileHandle;
+
+// used to fill out directory-entries, in marfs_readdir().
+typedef int (*marfs_fill_dir_t) (void *buf, const char *name,
+                                 const struct stat *stbuf, off_t off);
 
 
 // initialize/destroy context, if desired.
@@ -155,6 +161,8 @@ typedef  ssize_t (*mdal_getxattr)(MDAL_Context* ctx, const char* path,
 typedef  ssize_t (*mdal_setxattr)(MDAL_Context* ctx, const char* path,
                                   const char* name, void* value, size_t size,
                                   int flags);
+typedef  int     (*mdal_ftruncate)(MDAL_Context* ctx, off_t length);
+
 
 // --- directory-ops
 // These all return 0 for success, -1 (plus errno) for failure.
@@ -198,6 +206,7 @@ typedef struct MDAL {
    mdal_write       write;
    mdal_getxattr    getxattr;
    mdal_setxattr    setxattr;
+   mdal_ftruncate   ftruncate;
 
    mdal_mkdir       mkdir;
    mdal_opendir     opendir;
@@ -209,7 +218,7 @@ typedef struct MDAL {
 
 
 // find or create an MDAL of the given type
-MDAL* get_mdal(MDAL_Type type);
+MDAL* get_MDAL(MDAL_Type type);
 
 
 

@@ -249,8 +249,8 @@ extern "C" {
 
 // last part of the recovery-info
 // (if you change this, you should also change MARFS_CONFIG_MAJOR/MINOR)
-#define MARFS_REC_TAIL_FORMAT   "TAIL:/nfiles.0x%016lx/recoff.0x%016lx"
-#define MARFS_REC_TAIL_SIZE     58 /* incl terminal-null */
+#define MARFS_REC_TAIL_FORMAT   "TAIL:/nfiles.0x%016lx/reclen.0x%016lx"
+#define MARFS_REC_TAIL_SIZE     58 /* incl terminal-null, which will be printed */
 
 
 // This is the part of recovery-info that is written for Uni or Multi, and

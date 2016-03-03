@@ -73,7 +73,6 @@ OF SUCH DAMAGE.
 
 
 #include "logging.h"
-#include "common.h"
 #include "mdal.h"
 
 #include <stdlib.h>             // malloc()
@@ -139,6 +138,10 @@ ssize_t mdal_posix_setxattr(MDAL_Context* ctx, const char* path,
    return setxattr(path, name, value, size, flags);
 }
 
+int     mdal_ftruncate(MDAL_Context* ctx, off_t length) {
+   return ftruncate(POSIX_FD(ctx), length);
+}
+
 
 
 
@@ -167,7 +170,7 @@ int     mdal_posix_readdir (MDAL_Context*      ctx,
    while (1) {
       // #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
       //      struct dirent* dent_r;       /* for readdir_r() */
-      //      TRY0(readdir_r, dirp, dent, &dent_r);
+      //      TRY0( readdir_r(dirp, dent, &dent_r) );
       //      if (! dent_r)
       //         break;                 /* EOF */
       //      if (filler(buf, dent_r->d_name, NULL, 0))
@@ -236,6 +239,8 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->read         = &mdal_posix_read;
       mdal->getxattr     = &mdal_posix_getxattr;
       mdal->setxattr     = &mdal_posix_setxattr;
+      mdal->ftruncate    = &mdal_ftruncate;
+
       mdal->mkdir        = &mdal_posix_mkdir;
       mdal->opendir      = &mdal_posix_opendir;
       mdal->readdir      = &mdal_posix_readdir;
@@ -263,7 +268,7 @@ static MDAL*  mdal_vec[MAX_MDAL];
 static size_t mdal_count = 0;
 
 
-MDAL* get_mdal(MDAL_Type type) {
+MDAL* get_MDAL(MDAL_Type type) {
 
    int i;
    for (i=0; i<mdal_count; ++i) {
@@ -282,7 +287,10 @@ MDAL* get_mdal(MDAL_Type type) {
       return NULL;
    }
    
-   mdal_init(new_mdal, type);
+   if (mdal_init(new_mdal, type)) {
+      LOG(LOG_ERR, "Couldn't initialize MDAL (0x%02x)\n", (unsigned)type);
+      return NULL;
+   }
 
    mdal_vec[mdal_count] = new_mdal;
    ++ mdal_count;

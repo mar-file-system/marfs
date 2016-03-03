@@ -67,6 +67,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <unistd.h> /* access */
 
 #include "logging.h"
+#include "mdal.h"
 #include "marfs_configuration.h"
 #include "parse-inc/config-structs.h"
 #include "confpars-structs.h"
@@ -656,6 +657,23 @@ int decode_correcttype( char code, MarFS_CorrectType *enumeration ) {
 
 
 
+/***************************************************************************/
+
+
+int lookup_MDAL_type(const char* type_name, MDAL_Type* type) {
+   if (     ! strcasecmp(type_name, "POSIX"))
+      *type = MDAL_POSIX;
+   else if (! strcasecmp(type_name, "PVFS2"))
+      *type = MDAL_PVFS2;
+   else if (! strcasecmp(type_name, "IOFSL"))
+      *type = MDAL_IOFSL;
+   else
+      return -1;
+
+   return 0;
+}
+
+
 /*****************************************************************************
  *
  * This function returns the configuration after reading the configuration
@@ -1231,7 +1249,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
 
     if ( ! namespaceList[j]->quota_space ) {
-       LOG( LOG_ERR, "MarFS namespace '%s' has no quota_space.\n", namespaceList[j]->quota_space );
+       LOG( LOG_ERR, "MarFS namespace '%s' has no quota_space.\n", namespaceList[j]->name );
       return NULL;
     }
     errno = 0;
@@ -1242,7 +1260,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
 
     if ( ! namespaceList[j]->quota_names ) {
-       LOG( LOG_ERR, "MarFS namespace '%s' has no quota_names.\n", namespaceList[j]->quota_names );
+       LOG( LOG_ERR, "MarFS namespace '%s' has no quota_names.\n", namespaceList[j]->name );
       return NULL;
     }
     errno = 0;
@@ -1251,6 +1269,52 @@ static MarFS_Config_Ptr read_configuration_internal() {
       LOG( LOG_ERR, "Invalid quota_names value of \"%s\".\n", namespaceList[j]->quota_names );
       return NULL;
     }
+
+
+
+    // default to POSIX, for backward-compatibility
+    // [co-maintain with tests, below]
+    MDAL_Type dir_MDAL_type = MDAL_POSIX;
+    if ( ! namespaceList[j]->dir_MDAL ) {
+       LOG( LOG_INFO, "MarFS namespace '%s' has no dir_MDAL. Defaulting to POSIX\n",
+            namespaceList[j]->name );
+    }
+    else if ( lookup_MDAL_type(namespaceList[j]->dir_MDAL, &dir_MDAL_type) ) {
+       LOG( LOG_ERR, "Unknown dir_MDAL name \"%s\".\n", namespaceList[j]->dir_MDAL );
+       return NULL;
+    }
+
+    MDAL* dir_MDAL = get_MDAL(dir_MDAL_type);
+    if ( ! dir_MDAL ) {
+       LOG( LOG_ERR, "Couldn't find MDAL named \"%s\".\n", namespaceList[j]->dir_MDAL );
+       return NULL;
+    }
+    marfs_namespace_list[j]->dir_MDAL = dir_MDAL;
+
+
+
+    // default to POSIX, for backward-compatibility
+    // [co-maintain with tests, above]
+    MDAL_Type file_MDAL_type = MDAL_POSIX;
+    if ( ! namespaceList[j]->file_MDAL ) {
+       LOG( LOG_INFO, "MarFS namespace '%s' has no file_MDAL. Defaulting to POSIX\n",
+            namespaceList[j]->name );
+    }
+    else if ( lookup_MDAL_type(namespaceList[j]->file_MDAL, &file_MDAL_type) ) {
+       LOG( LOG_ERR, "Unknown file_MDAL name \"%s\".\n", namespaceList[j]->file_MDAL );
+       return NULL;
+    }
+
+    MDAL* file_MDAL = get_MDAL(file_MDAL_type);
+    if ( ! file_MDAL ) {
+       LOG( LOG_ERR, "Couldn't find MDAL named \"%s\".\n", namespaceList[j]->file_MDAL );
+       return NULL;
+    }
+    marfs_namespace_list[j]->file_MDAL = file_MDAL;
+
+
+
+
 
 /*
     if ( ! namespaceList[j]->ns_shardp ) {
