@@ -263,7 +263,11 @@ int marfs_ftruncate(const char*            path,
    STAT_XATTRS(info);
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
+#ifdef USE_MDAL
+      TRY0( F_OP(ftruncate, fh, length) );
+#else
       TRY0( ftruncate(fh->md_fd, length) );
+#endif
       return 0;
    }
 
@@ -292,10 +296,17 @@ int marfs_ftruncate(const char*            path,
 
    // metadata filehandle is still open to the current MD file.
    // That's okay, but we need to ftruncate it, as well.
+#ifdef USE_MDAL
+   if (F_OP(is_open, fh)) {
+      if (fh->flags & FH_WRITING)
+         F_OP(ftruncate, fh, length); // (length == 0)
+   }
+#else
    if (fh->md_fd) {
       if (fh->flags & FH_WRITING)
          ftruncate(fh->md_fd, length); // (length == 0)
    }
+#endif
 
    // object-stream is still open to the old object.  Close that in such a
    // way that the server will not persist the PUT.
@@ -740,7 +751,7 @@ int marfs_open(const char*         path,
    //    also put space for read to attach a structure for object read mgmt
    //
    PathInfo*         info = &fh->info;                  /* shorthand */
-   ObjectStream*     os  = &fh->os;
+   ObjectStream*     os   = &fh->os;
    IOBuf*            b    = &fh->os.iob;
 
    EXPAND_PATH_INFO(info, path);
@@ -792,25 +803,42 @@ int marfs_open(const char*         path,
 
    STAT_XATTRS(info);
 
+#ifdef USE_MDAL
+   // copy MDALs from NS to FileHandle
+   F_MDAL(fh) = info->pre.ns->file_MDAL;
+
+   // allow MDAL implementation to do any initializations necessary
+   F_OP(f_init, fh, F_MDAL(fh));
+#endif
 
    // If no xattrs, we let user read/write directly into the file.
    // This corresponds to a file that was created in DIRECT repo-mode.
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
+#ifdef USE_MDAL
+      if (! F_OP(open, fh, info->post.md_path, flags))
+         return -1;
+#else
       fh->md_fd = open(info->post.md_path, flags);
       if (fh->md_fd < 0) {
          fh->md_fd = 0;
          return -1;
       }
+#endif
    }
    // some kinds of reads need to get info from inside the MD-file
    else if ((fh->flags & FH_READING)
             && ((info->post.obj_type == OBJ_MULTI)
                 || (info->post.obj_type == OBJ_PACKED))) {
+#ifdef USE_MDAL
+      if (! F_OP(open, fh, info->post.md_path, (O_RDONLY)))
+         return -1;
+#else
       fh->md_fd = open(info->post.md_path, (O_RDONLY)); // no O_BINARY in Linux.  Not needed.
       if (fh->md_fd < 0) {
          fh->md_fd = 0;
          return -1;
       }
+#endif
    }
    else if (fh->flags & FH_WRITING) {
       LOG(LOG_INFO, "writing\n");
@@ -850,15 +878,25 @@ int marfs_open(const char*         path,
             return -1;
          }
 
+#ifdef USE_MDAL
+         if (! F_OP(open, fh, info->post.md_path, (O_WRONLY)))
+            return -1;
+#else
          fh->md_fd = open(info->post.md_path, (O_WRONLY));  // no O_BINARY in Linux.
          if (fh->md_fd < 0) {
             fh->md_fd = 0;
             return -1;
          }
+#endif
 
          // position md_fd at the proper place for MultiChunkInfo for this chunk
          size_t chunk_info_offset = (chunk_no * sizeof(MultiChunkInfo));
+#ifdef USE_MDAL
+         TRY_GE0( F_OP(lseek, fh, chunk_info_offset, SEEK_SET) );
+#else
          TRY_GE0( lseek(fh->md_fd, chunk_info_offset, SEEK_SET) );
+#endif
+
          LOG(LOG_INFO, "chunkinfo offset=%ld, (open_offset=%ld) length=%ld\n",
              chunk_info_offset, fh->open_offset, content_length);
 
@@ -1076,18 +1114,30 @@ int marfs_opendir (const char*       path,
       return 0;
    }
 
-   // set dh->use_it to false so that we know to use the dirp
+   // set dh->use_it to false so that we know to use the dirp/MDAL-impl
    dh->use_it = 0;
 
    // No need for access check, just try the op
    // Appropriate  opendir call filling in fuse structure
    ///   mode_t mode = ~(fuse_get_context()->umask); /* ??? */
+
+#if USE_MDAL
+   D_MDAL(dh) = info.ns->dir_MDAL;
+
+   // allow MDAL implementation to do any initializations necessary
+   D_OP(d_init, dh, D_MDAL(dh));
+
+   TRY_GT0( D_OP(opendir, dh, info.post.md_path) );
+
+#else
    ///   TRY_GE0( opendir(info.md_path, ffi->flags, mode) );
    ///   TRY_GE0( opendir(info.post.md_path) );
    TRY_GT0( opendir(info.post.md_path) );
 
    ///   ffi->fh = rc_ssize;          /* open() successfully returned a dirp */
    dh->internal.dirp = (DIR*)rc_ssize;
+#endif
+
 
    EXIT();
    return 0;
@@ -1125,7 +1175,11 @@ int marfs_read (const char*        path,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
        && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "reading DIRECT\n");
+#ifdef USE_MDAL
+      TRY_GE0( F_OP(read, fh, buf, size) );
+#else
       TRY_GE0( read(fh->md_fd, buf, size) );
+#endif
       return rc_ssize;
    }
 
@@ -1466,6 +1520,7 @@ int marfs_readdir (const char*        path,
 
    // No need for access check, just try the op
    // Appropriate  readdir call filling in fuse structure  (fuse does this in chunks)
+   int retval = 0;
 
    // <use_it> is used in the case where opendir() dtected that we are
    // operating on the NS root-dir.  Otherwise, we use a standard DIR*.
@@ -1486,10 +1541,17 @@ int marfs_readdir (const char*        path,
       }
    }
    else {
+
+#ifdef USE_MDAL
+      retval = D_OP(readdir, dh, path, buf, filler, offset);
+
+#else
       DIR*           dirp = dh->internal.dirp;
       struct dirent* dent;
-   
+
       while (1) {
+         errno = 0;
+
          // #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
          //      struct dirent* dent_r;       /* for readdir_r() */
          //      TRY0( readdir_r(dirp, dent, &dent_r) );
@@ -1499,23 +1561,23 @@ int marfs_readdir (const char*        path,
          //         break;                 /* no more room in <buf>*/
 
          // #else
-         errno = 0;
          rc_ssize = (ssize_t)readdir(dirp);
          if (! rc_ssize) {
             if (errno)
-               return -1;       /* error */
+               retval = -1;     /* error */
             break;              /* EOF */
          }
          dent = (struct dirent*)rc_ssize;
          if (filler(buf, dent->d_name, NULL, 0))
             break;                 /* no more room in <buf>*/
          // #endif
-      
       }
+#endif
+
    }
 
    EXIT();
-   return 0;
+   return retval;
 }
 
 
@@ -1649,7 +1711,12 @@ int marfs_release (const char*        path,
    aws_iobuf_reset_hard(&os->iob);
 
    // close MD file, if it's open
-   if (fh->md_fd) {
+#ifdef USE_MDAL
+   if (F_OP(is_open, fh))
+#else
+   if (fh->md_fd)
+#endif                  
+   {
 
       if (! (fh->os.flags & OSF_ERRORS)) {
 
@@ -1657,7 +1724,7 @@ int marfs_release (const char*        path,
          if ((fh->flags & FH_WRITING)
              && (info->post.obj_type == OBJ_MULTI)) {
 
-            TRY0( write_chunkinfo(fh->md_fd,
+            TRY0( write_chunkinfo(fh,
                                   info,
                                   fh->open_offset,
                                   (os->written - fh->write_status.sys_writes)) );
@@ -1679,8 +1746,13 @@ int marfs_release (const char*        path,
       ///      // ANSWER:  No.
       ///      TRY0( fsync(fh->md_fd) );
 
+#ifdef USE_MDAL
+      TRY0( F_OP(close, fh) );
+      TRY0( F_OP(f_destroy, fh, F_MDAL(fh)) );
+#else
       TRY0( close(fh->md_fd) );
       fh->md_fd = 0;
+#endif
    }
 
    if (fh->os.flags & OSF_ERRORS) {
@@ -1750,8 +1822,14 @@ int marfs_releasedir (const char*       path,
       // Appropriate  closedir call filling in fuse structure
       if (! dh->use_it) {
          LOG(LOG_INFO, "not root-dir\n");
+
+#ifdef USE_MDAL
+         TRY0( D_OP(closedir, dh) );
+         TRY0( D_OP(d_destroy, dh, D_MDAL(dh)) );
+#else
          DIR* dirp = dh->internal.dirp;
          TRY0( closedir(dirp) );
+#endif
       }
    }
 
@@ -1791,9 +1869,11 @@ int marfs_removexattr (const char* path,
    // No need for access check, just try the op
    // Appropriate  removexattr call filling in fuse structure 
 
-#if 0 // for speed, we just ignore this
+   // #ifdef USE_MDAL
+   //    TRY0( F_OP(lremovexattr, fh, info.post.md_path, name) );
+   // #else
    TRY0( lremovexattr(info.post.md_path, name) );
-#endif
+   // #endif
 
    EXIT();
    return 0;
@@ -1829,7 +1909,11 @@ int marfs_rename (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  rename call filling in fuse structure 
+#ifdef USE_MDAL
+   TRY0( CTX_FREE_OP(rename, info.ns, info.post.md_path, info2.post.md_path) );
+#else
    TRY0( rename(info.post.md_path, info2.post.md_path) );
+#endif
 
    EXIT();
    return 0;
@@ -2273,7 +2357,11 @@ int marfs_write(const char*        path,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
        && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "no xattrs, and DIRECT: writing to file\n");
+#ifdef USE_MDAL
+      TRY_GE0( F_OP(write, fh, buf, size) );
+#else
       TRY_GE0( write(fh->md_fd, buf, size) );
+#endif
       return rc_ssize;
    }
 
@@ -2416,6 +2504,15 @@ int marfs_write(const char*        path,
       TRY0( stream_close(os) );
 
       // if we haven't already opened the MD file, do it now.
+#ifdef USE_MDAL
+      if (! F_OP(is_open, fh)) {
+         if (! F_OP(open, fh, info->post.md_path, (O_WRONLY)) ) {
+            LOG(LOG_ERR, "open %s failed (%s)\n", info->post.md_path, strerror(errno));
+            errno = EIO;
+            return -1;
+         }
+      }
+#else
       if (! fh->md_fd) {
          fh->md_fd = open(info->post.md_path, (O_WRONLY));// no O_BINARY in Linux.  Not needed.
          if (fh->md_fd < 0) {
@@ -2425,9 +2522,10 @@ int marfs_write(const char*        path,
             return -1;
          }
       }
+#endif
 
       // MD file gets per-chunk information
-      TRY0( write_chunkinfo(fh->md_fd,
+      TRY0( write_chunkinfo(fh,
                             info,
                             fh->open_offset,
                             (os->written - fh->write_status.sys_writes)) );

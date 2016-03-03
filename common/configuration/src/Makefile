@@ -63,6 +63,13 @@ endif
 
 
 
+# For testing new MDAL code
+#
+ifdef USE_MDAL
+	DEFS += USE_MDAL
+endif
+
+
 BLUEPRINT   := $(PWD)/marfs_configuration_blueprint.cfg
 CONFIG      := $(PWD)/marfs_cctest.cfg
 

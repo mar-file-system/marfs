@@ -76,7 +76,7 @@ OF SUCH DAMAGE.
 
 // Must come before anything else that might include <time.h>
 #include "marfs_base.h"
-
+#include "mdal.h"               // abstraction for MD file/dir ops
 #include "object_stream.h"      // FileHandle needs ObjectStream
 
 #include <stdint.h>
@@ -532,30 +532,103 @@ typedef struct {
 
 
 typedef struct {
-   PathInfo      info;          // includes xattrs, MDFS path, etc
-   char          ns_path[MARFS_MAX_NS_PATH];  // path in NS, not in MDFS
-   int           md_fd;         // opened for reading meta-data, or data
-   FHFlagType    flags;
-   curl_off_t    open_offset;   // [see comments at marfs_open_with_offset()]
-   ReadStatus    read_status;   // buffer_management, current_offset, etc
-   WriteStatus   write_status;  // buffer-management, etc
-   ObjectStream  os;            // handle for streaming access to objects
+   MDAL_Context  ctx;
+   struct MDAL*  mdal;
+} MDAL_Handle;
+
+
+
+typedef struct {
+   PathInfo        info;          // includes xattrs, MDFS path, etc
+   char            ns_path[MARFS_MAX_NS_PATH];  // path in NS, not in MDFS
+
+#ifdef USE_MDAL
+   MDAL_Handle     f_handle;     // file-oriented MDAL ops
+#else
+   int             md_fd;         // opened for reading meta-data, or data
+#endif
+
+   curl_off_t      open_offset;  // [see comments at marfs_open_with_offset()]
+   ReadStatus      read_status;  // buffer_management, current_offset, etc
+   WriteStatus     write_status; // buffer-management, etc
+   ObjectStream    os;           // handle for streaming access to objects
+
+   FHFlagType      flags;
 } MarFS_FileHandle;
+
+
+#ifdef USE_MDAL
+// shorthand
+#  define F_CTX(FH)          &(FH)->f_handle.ctx
+#  define F_MDAL(FH)         (FH)->f_handle.mdal
+
+#  define F_OP(OP,FH, ...) (*(FH)->f_handle.mdal->OP)(F_CTX(FH), ##__VA_ARGS__)
+/*
+ #  define F_OP(OP,FH, ...)                                            \
+   do {                                                               \
+   if (! (*(FH)->f_handle.mdal->OP)) {                                \
+      LOG(LOG_ERR, "Function " #OP " not implemented for MDAL!\n");   \
+      exit(EXIT_FAILURE);                                             \
+   }                                                                  \
+   else {                                                             \
+      (*(FH)->f_handle.mdal->OP)(F_CTX(FH), ##__VA_ARGS__);           \
+   } while (0)
+*/
+#endif
+
+
+// some ops (e.g. rename()) have no file-descriptor/context.  For these,
+// we'll just use the MDAL from the NS to select the implementation, and
+// call the function without passing a context.  [Or, should we initialize
+// a MDAL_Context, call with that, then destroy?]
+#ifdef USE_MDAL
+#  define CTX_FREE_OP(OP,NS, ...)   (*(NS)->file_MDAL->OP)(__VA_ARGS__)
+#endif
+
+
 
 // fuse/pftool-agnostic updates of data_remain, etc. (see comments, above)
 size_t  get_stream_wr_open_size(MarFS_FileHandle* fh, uint8_t decrement);
+
+
 
 
 // directory-handle covers two cases:
 // (a) Listing an MDFS directory -- just need a DIR*
 // (b) List the marfs "root" directory -- need a Namespace-Iterator.
 typedef struct {
-   uint8_t     use_it;         // if so, use <it>, else use <dirp>
+   uint8_t   use_it;         // if non-zero, use <it>, else use internal.dirp/d_handle
+
    union {
+#ifdef USE_MDAL
+      MDAL_Handle d_handle;  // dir-oriented MDAL ops
+#else
       DIR*        dirp;
+#endif
       NSIterator  it;
    } internal;
+
 } MarFS_DirHandle;
+
+
+#ifdef USE_MDAL
+// shorthand
+#  define D_CTX(DH)          &(DH)->internal.d_handle.ctx
+#  define D_MDAL(DH)         (DH)->internal.d_handle.mdal
+
+#  define D_OP(OP,DH, ...)   (*(DH)->internal.d_handle.mdal->OP)(D_CTX(DH), ##__VA_ARGS__)
+/*
+#  define D_OP(OP,DH, ...)                                            \
+   do {                                                               \
+   if (! (*(DH)->internal.d_handle.mdal->OP)) {                       \
+      LOG(LOG_ERR, "Function " #OP " not implemented for MDAL!\n");   \
+      exit(EXIT_FAILURE);                                             \
+   }                                                                  \
+   else {                                                             \
+      (*(DH)->internal.d_handle.mdal->OP)(D_CTX(DH), ##__VA_ARGS__);  \
+   } while (0)
+*/
+#endif
 
 
 
@@ -614,16 +687,16 @@ extern int  update_url     (ObjectStream* os, PathInfo* info);
 extern int  update_timeouts(ObjectStream* os, PathInfo* info);
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
-extern int     write_chunkinfo(int                   md_fd,
+extern int     write_chunkinfo(MarFS_FileHandle*     fh,
                                const PathInfo* const info,
                                size_t                open_offset,
                                size_t                user_data_written);
 
-extern int     read_chunkinfo (int md_fd, MultiChunkInfo* chnk);
+extern int     read_chunkinfo (MarFS_FileHandle* fh, MultiChunkInfo* chnk);
 
-extern int     seek_chunkinfo(int md_fd, size_t chunk_no);
+extern int     seek_chunkinfo (MarFS_FileHandle* fh, size_t chunk_no);
 
-extern ssize_t count_chunkinfo(int md_fd);
+extern ssize_t count_chunkinfo(MarFS_FileHandle* fh);
 
 
 extern ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* fh);

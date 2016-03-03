@@ -202,6 +202,13 @@ endif
 
 
 
+# For testing new MDAL code
+#
+ifdef USE_MDAL
+	DEFS += USE_MDAL
+endif
+
+
 
 # NOTE: You should define LIBAWS4C in your environment, using one of the
 #       following methods:
