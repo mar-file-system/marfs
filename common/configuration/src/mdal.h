@@ -119,7 +119,9 @@ typedef struct {
    union {
       void*     ptr;
       size_t    sz;
-      uint32_t  i;
+      ssize_t   ssz;
+      uint32_t  u;
+      int32_t   i;
    } data;
 } MDAL_Context;
 
@@ -159,6 +161,8 @@ typedef  ssize_t (*mdal_getxattr)(MDAL_Context* ctx, const char* path,
 typedef  ssize_t (*mdal_setxattr)(MDAL_Context* ctx, const char* path,
                                   const char* name, void* value, size_t size,
                                   int flags);
+typedef  int     (*mdal_ftruncate)(MDAL_Context* ctx, off_t length);
+
 
 // --- directory-ops
 // These all return 0 for success, -1 (plus errno) for failure.
@@ -202,6 +206,7 @@ typedef struct MDAL {
    mdal_write       write;
    mdal_getxattr    getxattr;
    mdal_setxattr    setxattr;
+   mdal_ftruncate   ftruncate;
 
    mdal_mkdir       mkdir;
    mdal_opendir     opendir;

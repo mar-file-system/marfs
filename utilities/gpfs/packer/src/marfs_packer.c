@@ -255,7 +255,7 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
 
         // Note this code can be consolidated with function calls or
         // MACROs but just trying to get functionality first.
-        int need_main = -1;
+        int need_main;
    
         // loop through all inodes found
 	for (i = 0; i < unpacked_size; i++){
@@ -269,6 +269,7 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
               sub_objects->next  = sub_obj_head;
               sub_obj_head = sub_objects;
               LOG(LOG_INFO, "adding sum size = %d\n", sum_obj_size);
+              need_main = -1;
            }
             // check if sum is equal to or greater than target object
            else if (sum_obj_size >= obj_size_max) {
@@ -960,14 +961,16 @@ int pack_and_write(char* top_level_path, size_t max_object_size,
       return -1;
    }
    if (no_pack) {
-      fprintf(stdout, "Found %d objects to pack with total size of %ld\n", 
-              unpackedLen, unpacked_sum_size);
+      fprintf(stdout, "Found %d objects to pack with total size of %ld\
+ and a pack size of %ld\n", 
+              unpackedLen, unpacked_sum_size, max_object_size);
+      fprintf(stdout, "Note:  total size does not include recovery info.\n");
       return 0;
    }
    // No potential packer objects fount
    if (unpackedLen == 0) {
       fprintf(stderr, "No valid packer objects found, continuing with path \
-hunking or Exiting now\n");
+chunking or Exiting now\n");
       return -1;
    }
     

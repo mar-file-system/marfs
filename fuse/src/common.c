@@ -252,7 +252,7 @@ int expand_trash_info(PathInfo*    info,
    TRY_DECLS();
 
    // won't hurt (much), if it's already been done.
-   __TRY0(expand_path_info, info, path);
+   __TRY0( expand_path_info(info, path) );
 
    if (! (info->flags & PI_TRASH_PATH)) {
       const char* sub_path  = path + info->ns->mnt_path_len; /* below fuse mount */
@@ -266,10 +266,10 @@ int expand_trash_info(PathInfo*    info,
          LOG(LOG_ERR, "time() failed\n");
          return -1;
       }
-      __TRY0(epoch_to_str, date_string, MARFS_DATE_STRING_MAX, &now);
+      __TRY0( epoch_to_str(date_string, MARFS_DATE_STRING_MAX, &now) );
 
       // Won't hurt (much) if it's already been done.
-      __TRY0(stat_regular, info);
+      __TRY0( stat_regular(info) );
 
       // these are the last 3 digits (base 10), of the inode
       ino_t   inode = info->st.st_ino; // shorthand
@@ -336,7 +336,7 @@ int stat_regular(PathInfo* info) {
       return 0;                 /* already called stat_regular() */
 
    memset(&(info->st), 0, sizeof(struct stat));
-   __TRY0(lstat, info->post.md_path, &info->st);
+   __TRY0( lstat(info->post.md_path, &info->st) );
 
    info->flags |= PI_STAT_QUERY;
    return 0;
@@ -426,7 +426,7 @@ int stat_xattrs(PathInfo* info) {
       return 0;                 // already did this
 
    // call stat_regular().
-   __TRY0(stat_regular, info);
+   __TRY0( stat_regular(info) );
 
    // go through the list of reserved Xattrs, and install string values into
    // fields of the corresponding structs, in PathInfo.
@@ -447,7 +447,7 @@ int stat_xattrs(PathInfo* info) {
             // got the xattr-value.  Parse it into info->pre
             xattr_value_str[str_size] = 0;
             LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
-            __TRY0(str_2_pre, &info->pre, xattr_value_str, &info->st);
+            __TRY0( str_2_pre(&info->pre, xattr_value_str, &info->st) );
             LOG(LOG_INFO, "md_ctime: %016lx, obj_ctime: %016lx\n",
                 info->pre.md_ctime, info->pre.obj_ctime);
             info->xattrs |= spec->value_type; /* found this one */
@@ -456,8 +456,8 @@ int stat_xattrs(PathInfo* info) {
                   || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
             // (a) ENOATTR means no attr, or no access.  Treat as the former.
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
-            __TRY0(init_pre, &info->pre,
-                   OBJ_FUSE, info->ns, info->ns->iwrite_repo, &info->st);
+            __TRY0( init_pre(&info->pre, OBJ_FUSE, info->ns,
+                             info->ns->iwrite_repo, &info->st) );
             info->flags |= PI_PRE_INIT;
          }
          else {
@@ -474,14 +474,14 @@ int stat_xattrs(PathInfo* info) {
             // got the xattr-value.  Parse it into info->pre
             xattr_value_str[str_size] = 0;
             LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
-            __TRY0(str_2_post, &info->post, xattr_value_str, 0);
+            __TRY0( str_2_post(&info->post, xattr_value_str, 0) );
             info->xattrs |= spec->value_type; /* found this one */
          }
          else if ((errno == ENOATTR)
                   || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
             // (a) ENOATTR means no attr, or no access.  Treat as the former.
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
-            __TRY0(init_post, &info->post, info->ns, info->ns->iwrite_repo);
+            __TRY0( init_post(&info->post, info->ns, info->ns->iwrite_repo) );
             info->flags |= PI_POST_INIT;
          }
          else {
@@ -539,7 +539,7 @@ int stat_xattrs(PathInfo* info) {
    }
 
    // initialize the object-ID fields
-   __TRY0(update_pre, &info->pre);
+   __TRY0( update_pre(&info->pre) );
 
    return 0;                    /* "success" */
 }
@@ -579,7 +579,7 @@ int batch_pre_process(const char* path, size_t file_size) {
    info.pre.chunk_size = repo->chunk_size;
    info.pre.obj_type   = OBJ_Nto1;
 
-   TRY0(update_pre, &info.pre);        // ?
+   TRY0( update_pre(&info.pre) );        // ?
 
    // POST is also required by stat_xattrs().
    // we have enough info to fill it
@@ -625,7 +625,7 @@ int batch_post_process(const char* path, size_t file_size) {
    if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
 
       // truncate to final size
-      TRY0(truncate, info.post.md_path, file_size);
+      TRY0( truncate(info.post.md_path, file_size) );
 
       // remove "restart" xattr.  [Can't do this at close-time, in the case
       // of N:1 files, so we do it here, for them.]
@@ -679,7 +679,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
    TRY_DECLS();
 
    // call stat_regular().
-   __TRY0(stat_regular, info);
+   __TRY0( stat_regular(info) );
 
 
    // go through the list of reserved Xattrs, and install string values into
@@ -704,19 +704,20 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          //       the call to stat_regular(), above.
 
          // create the new xattr-value from info->pre
-         __TRY0(pre_2_str, xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->pre);
+         __TRY0( pre_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->pre) );
          LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
-         __TRY0(lsetxattr, info->post.md_path,
-                spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0);
+         __TRY0( lsetxattr(info->post.md_path,
+                           spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
          break;
       }
 
       case XVT_POST: {
-         __TRY0(post_2_str, xattr_value_str, MARFS_MAX_XATTR_SIZE,
-                &info->post, info->ns->iwrite_repo, (info->post.flags & POST_TRASH));
+         __TRY0( post_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE,
+                            &info->post, info->ns->iwrite_repo,
+                            (info->post.flags & POST_TRASH)) );
          LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
-         __TRY0(lsetxattr, info->post.md_path,
-                spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0);
+         __TRY0( lsetxattr(info->post.md_path,
+                           spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
          break;
       }
 
@@ -737,8 +738,8 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
             LOG(LOG_INFO, "XVT_RESTART\n");
             xattr_value_str[0] = '1';
             xattr_value_str[1] = 0; // in case someone tries strlen
-            __TRY0(lsetxattr, info->post.md_path,
-                   spec->key_name, xattr_value_str, 2, 0);
+            __TRY0( lsetxattr(info->post.md_path,
+                              spec->key_name, xattr_value_str, 2, 0) );
          }
          else {
             ssize_t val_size = lremovexattr(info->post.md_path, spec->key_name);
@@ -798,36 +799,36 @@ int write_trash_companion_file(PathInfo*             info,
    TRY_DECLS();
 
    /* initialize info->trash_md_path */
-   __TRY0(expand_trash_info, info, path);
+   __TRY0( expand_trash_info(info, path) );
 
    // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
    // add MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
    char companion_fname[MARFS_MAX_MD_PATH];
-   __TRY_GE0(snprintf, companion_fname, MARFS_MAX_MD_PATH, "%s%s",
-             info->trash_md_path,
-             MARFS_TRASH_COMPANION_SUFFIX);
+   __TRY_GE0( snprintf(companion_fname, MARFS_MAX_MD_PATH, "%s%s",
+                       info->trash_md_path,
+                       MARFS_TRASH_COMPANION_SUFFIX) );
 
    // TBD: Don't want to depend on support for open(... (O_CREAT|O_EXCL)).
    //      Should just stat() the companion-file, before opening, to assure
    //      it doesn't already exist.
    LOG(LOG_INFO, "companion:  %s\n", companion_fname);
-   __TRY_GE0(open, companion_fname, (O_WRONLY|O_CREAT), info->st.st_mode);
+   __TRY_GE0( open(companion_fname, (O_WRONLY|O_CREAT), info->st.st_mode) );
    int fd = rc_ssize;
 
 #if 1
    // write MDFS path into the trash companion
-   __TRY_GE0(write, fd, info->post.md_path, strlen(info->post.md_path));
+   __TRY_GE0( write(fd, info->post.md_path, strlen(info->post.md_path)) );
 #else
    // write MarFS path into the trash companion
-   __TRY_GE0(write, fd, marfs_config->mnt_top, marfs_config->mnt_top_len);
-   __TRY_GE0(write, fd, path, strlen(path));
+   __TRY_GE0( write(fd, marfs_config->mnt_top, marfs_config->mnt_top_len) );
+   __TRY_GE0( write(fd, path, strlen(path)) );
 #endif
 
-   __TRY0(close, fd);
+   __TRY0( close(fd) );
 
    // maybe install ctime/atime to support "undelete"
    if (utim)
-      __TRY0(utime, companion_fname, utim);
+      __TRY0( utime(companion_fname, utim) );
 
    return 0;
 }
@@ -880,21 +881,21 @@ int  trash_unlink(PathInfo*   info,
    // NOTE: We don't put xattrs on symlinks, so they just get deleted.
    //
    TRY_DECLS();
-   __TRY0(stat_xattrs, info);
+   __TRY0( stat_xattrs(info) );
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
-      __TRY0(unlink, info->post.md_path);
+      __TRY0( unlink(info->post.md_path) );
       return 0;
    }
 
 #if 0
    //    uniqueify name somehow with time perhaps == trashname, 
 
-   __TRY0(expand_trash_info, info, path); /* initialize info->trash_md_path */
+   __TRY0( expand_trash_info(info, path) ); /* initialize info->trash_md_path */
    LOG(LOG_INFO, "md_path:    '%s'\n", info->post.md_path);
 
    //    rename file to trashname 
-   __TRY0(rename, info->post.md_path, info->trash_md_path);
+   __TRY0( rename(info->post.md_path, info->trash_md_path) );
 
    // copy xattrs to the trash-file.
    // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
@@ -905,11 +906,11 @@ int  trash_unlink(PathInfo*   info,
 
       trash_info.post.flags |= POST_TRASH;
 
-      __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
+      __TRY0( save_xattrs(&trash_info, MARFS_ALL_XATTRS) );
    }
 
    // write full-MDFS-path of original-file into similarly-named file
-   __TRY0(write_trash_companion_file, info, path);
+   __TRY0( write_trash_companion_file(info, path) );
 
 #else
 
@@ -917,8 +918,8 @@ int  trash_unlink(PathInfo*   info,
    // be possible (e.g. because trash will be in a different fileset, or
    // filesystem).  It was thought we shouldn't even *try* the rename
    // first.  Instead, we'll copy to the trash, then unlink the original.
-   __TRY0(trash_truncate, info, path);
-   __TRY0(unlink, info->post.md_path);
+   __TRY0( trash_truncate(info, path) );
+   __TRY0( unlink(info->post.md_path) );
 
 #endif
 
@@ -952,10 +953,10 @@ int  trash_truncate(PathInfo*   info,
    //    trunc’d file.
 
    TRY_DECLS();
-   __TRY0(stat_xattrs, info);
+   __TRY0( stat_xattrs(info) );
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
-      __TRY0(truncate, info->post.md_path, 0);
+      __TRY0( truncate(info->post.md_path, 0) );
       return 0;
    }
 
@@ -974,7 +975,7 @@ int  trash_truncate(PathInfo*   info,
    //
    //   close
 
-   __TRY0(stat_regular, info);
+   __TRY0( stat_regular(info) );
 
    // capture atime of the original, so this can be saved as the ctime of
    // the trash file.  This will allow "undelete" to restore the original
@@ -1004,12 +1005,12 @@ int  trash_truncate(PathInfo*   info,
    }
 
    // we'll write to trash_file
-   __TRY0(expand_trash_info, info, path);
+   __TRY0( expand_trash_info(info, path) );
    int out = open(info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
    if (out == -1) {
       LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
           info->trash_md_path, new_mode);
-      __TRY0(close, in);
+      __TRY0( close(in) );
       return -1;
    }
 
@@ -1029,8 +1030,8 @@ int  trash_truncate(PathInfo*   info,
          LOG(LOG_ERR, "malloc %ld bytes failed\n", BUF_SIZE);
 
          // clean-up
-         __TRY0(close, in);
-         __TRY0(close, out);
+         __TRY0( close(in) );
+         __TRY0( close(out) );
          return -1;
       }
 
@@ -1052,8 +1053,8 @@ int  trash_truncate(PathInfo*   info,
                    info->trash_md_path, wr_total);
 
                // clean-up
-               __TRY0(close, in);
-               __TRY0(close, out);
+               __TRY0( close(in) );
+               __TRY0( close(out) );
                free(buf);
                return -1;
             }
@@ -1071,18 +1072,18 @@ int  trash_truncate(PathInfo*   info,
              info->trash_md_path, wr_total);
 
          // clean-up
-         __TRY0(close, in);
-         __TRY0(close, out);
+         __TRY0( close(in) );
+         __TRY0( close(out) );
          return -1;
       }
    }
 
    // clean-up
-   __TRY0(close, in);
-   __TRY0(close, out);
+   __TRY0( close(in) );
+   __TRY0( close(out) );
 
    // trunc trash-file to size
-   __TRY0(truncate, info->trash_md_path, log_size);
+   __TRY0( truncate(info->trash_md_path, log_size) );
 
    // copy xattrs to the trash-file.
    // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
@@ -1091,21 +1092,21 @@ int  trash_truncate(PathInfo*   info,
    PathInfo trash_info = *info;
    memcpy(trash_info.post.md_path, trash_info.trash_md_path, MARFS_MAX_MD_PATH);
    trash_info.post.flags |= POST_TRASH;
-   __TRY0(save_xattrs, &trash_info, MARFS_ALL_XATTRS);
+   __TRY0( save_xattrs(&trash_info, MARFS_ALL_XATTRS) );
 
 
    // write full-MDFS-path of original-file into trash-companion file
-   __TRY0(write_trash_companion_file, info, path, &trash_time);
+   __TRY0( write_trash_companion_file(info, path, &trash_time) );
 
    // update trash-file atime/mtime to support "undelete"
-   __TRY0(utime, info->trash_md_path, &trash_time);
+   __TRY0( utime(info->trash_md_path, &trash_time) );
 
    // clean out everything on the original
-   __TRY0(trunc_xattr, info);
+   __TRY0( trunc_xattr(info) );
 
    // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
    info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY | PI_PRE_INIT | PI_POST_INIT);
-   __TRY0(stat_xattrs, info);   // has none, so initialize from scratch
+   __TRY0( stat_xattrs(info) );   // has none, so initialize from scratch
 
    // NOTE: Unique-ness of Object-IDs currently comes from inode, plus
    //     obj-ctime, plus MD-file ctime.  It's possible the trashed file
@@ -1115,7 +1116,7 @@ int  trash_truncate(PathInfo*   info,
    //     version in the trash
    if (!strcmp(info->pre.objid, trash_info.pre.objid)) {
       info->pre.unique = trash_info.pre.unique +1;
-      __TRY0(update_pre, &info->pre);
+      __TRY0( update_pre(&info->pre) );
       LOG(LOG_INFO, "unique: '%s'\n", info->pre.objid);
    }
 
@@ -1195,7 +1196,7 @@ int check_quotas(PathInfo* info) {
 
    //   TRY_DECLS();
    //   if (! (info->flags & PI_STATVFS))
-   //      __TRY0(statvfs, info->ns->fsinfo, &info->stvfs);
+   //      __TRY0( statvfs(info->ns->fsinfo, &info->stvfs) );
 
 #if TBD
    uint64_t  names_limit = (uint64_t)info->ns->quota_names;
@@ -1227,7 +1228,7 @@ int check_quotas(PathInfo* info) {
 // update the URL in the ObjectStream, in our FileHandle
 int update_url(ObjectStream* os, PathInfo* info) {
    //   TRY_DECLS();
-   //   __TRY0(update_pre, &info->pre);
+   //   __TRY0( update_pre(&info->pre) );
    strncpy(os->url, info->pre.objid, MARFS_MAX_URL_SIZE);
 
    // log the full URL, if possible:
@@ -1376,7 +1377,7 @@ int seek_chunkinfo(int md_fd, size_t chunk_no) {
    const size_t chunk_info_len = sizeof(MultiChunkInfo);
 
    off_t offset = chunk_no * chunk_info_len;
-   TRY_GE0(lseek, md_fd, offset, SEEK_SET);
+   TRY_GE0( lseek(md_fd, offset, SEEK_SET) );
    return 0;
 }
 
@@ -1426,7 +1427,7 @@ int seek_chunkinfo(int md_fd, size_t chunk_no) {
 //              logical_size += ((n_chunks -1) * (info.pre.repo->chunk_size - recovery));
 //    
 //          // truncate file to logical-size indicated in chunk-data
-//          TRY0(truncate, info.post.md_path, logical_size);
+//          TRY0( truncate(info.post.md_path, logical_size) );
 //    
 //          // Some xattr fields were unknown until now
 //          info.post.obj_type         = ((n_chunks > 1) ? OBJ_MULTI : OBJ_UNI);
@@ -1524,7 +1525,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
 
    LOG(LOG_WARNING, "first part of fake rec-info: 0x%02x,%02x,%02x,%02x\n",
        rec[0], rec[1], rec[2], rec[3]);
-   __TRY_GE0(stream_put, os, rec, recovery);
+   __TRY_GE0( stream_put(os, rec, recovery) );
    ssize_t wrote = rc_ssize;
 
 #else
@@ -1536,7 +1537,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
 
    //   // convert mtime to date-time string in our standard format
    //   char       date_string[MARFS_DATE_STRING_MAX];
-   //   __TRY0(epoch_to_str, date_string, MARFS_DATE_STRING_MAX, &info->st.st_mtime);
+   //   __TRY0( epoch_to_str(date_string, MARFS_DATE_STRING_MAX, &info->st.st_mtime) );
 
 
    // write the HEAD, with leading recovery-info.  These values include
@@ -1566,7 +1567,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
 
 
    // write the PRE xattr string
-   TRY0(pre_2_str, &rec[idx], remain, &info->pre);
+   TRY0( pre_2_str(&rec[idx], remain, &info->pre) );
 
    idx += strlen(&rec[idx]) +1;
    remain = MARFS_REC_UNI_SIZE - idx;
@@ -1577,7 +1578,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
    }
 
    // write the POST xattr string (including the MDFS path)
-   TRY0(post_2_str, &rec[idx], remain, &info->post, info->pre.repo, 0);
+   TRY0( post_2_str(&rec[idx], remain, &info->post, info->pre.repo, 0) );
 
    idx += strlen(&rec[idx]) +1;
    remain = MARFS_REC_UNI_SIZE - idx;
@@ -1621,18 +1622,34 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
    remain = MARFS_REC_UNI_SIZE - idx;
 
    // write the TAIL.  After all the recovery-infos in an object, we print
-   // two values, so that they can be found during recovery, when we might
-   // have no knowledge of the structure of the object.  The next-to-last
-   // number says how many files have user data in this object.  (This will
-   // also be the number of recovery-info records).  The last number
-   // indicates where in this object all the recovery-info starts.  Given
-   // this, a recovery-tool can set about parsing out the recovery-info,
-   // and regenerating the MDFS as it existed at the time the individual
-   // objects were created.
+   // two values, so that the recovery-info can be parsed out during
+   // recovery, when we might have no knowledge of the structure of the
+   // object.  (1) The next-to-last number says how many files have user
+   // data in this object.  (This will also be the number of recovery-info
+   // records).  (2) The last number indicates the length of all the
+   // recovery-info (including the tail!).  Given this, a recovery-tool can
+   // set about parsing out the recovery-info, and regenerating the MDFS as
+   // it existed at the time the individual objects were created.
+   //
+   // Q: Why not just put the *offset* of the start of recovery-info into
+   //    the final value?
+   //
+   // A: Putting the length here allows the packer to work in two different
+   //    ways.  (a) The original spec said we would combine data at the
+   //    beginning of the packed object, and segregate recovery-info at the
+   //    end.  This is easy on the recovery, but less efficient for the
+   //    packer (which is, we hope, the much more common operation).  (b)
+   //    lay the small objects with their contiguous rec-info (and tail)
+   //    right into the packed object.  (i.e. data1, rec1, tail1, data2,
+   //    rec2, tail2, ...)  For recovery to work in this case, without
+   //    doing any adjustment of the objects being packed, the rec-info
+   //    tail should have length, rather than offset, of the recovery-info.
+
    write_count = snprintf(&rec[idx], MARFS_REC_TAIL_SIZE,
                           MARFS_REC_TAIL_FORMAT,
-                          (uint64_t)1,                    // N files in this object
-                          (uint64_t)user_data_this_obj);  // offset of rec-info
+                          (uint64_t)1,                          // N files in this object
+                          // (uint64_t)user_data_this_obj);     // offset of rec-info
+                          (uint64_t)idx + MARFS_REC_TAIL_SIZE); // length of rec-info
    if (write_count < 0)
       return -1;
    if (write_count == MARFS_REC_TAIL_SIZE) { /* overflow */
@@ -1642,7 +1659,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
    }
 
    // write the buffer we have generated into the tail of the object
-   TRY_GE0(stream_put, os, rec, MARFS_REC_UNI_SIZE);
+   TRY_GE0( stream_put(os, rec, MARFS_REC_UNI_SIZE) );
    ssize_t wrote = rc_ssize;
 
    if (wrote != MARFS_REC_UNI_SIZE) {
@@ -1979,7 +1996,7 @@ int init_mdfs() {
 
 
       // create the scatter-tree for trash, if needed
-      __TRY0(init_scatter_tree, ns->trash_md_path, ns->name, shard, mode);
+      __TRY0( init_scatter_tree(ns->trash_md_path, ns->name, shard, mode) );
 
 
 
@@ -2031,7 +2048,7 @@ int init_mdfs() {
          }
       }
       else if (errno == ENOENT) {
-         // __TRY0(truncate, ns->fsinfo_path, 0); // infinite quota, for now
+         // __TRY0( truncate(ns->fsinfo_path, 0) ); // infinite quota, for now
          LOG(LOG_ERR, "doesn't exist %s\n", ns->fsinfo_path);
          return -1;
       }
@@ -2052,7 +2069,7 @@ int init_mdfs() {
 
       // create a scatter-tree for semi-direct fuse repos, if any
       if (repo->access_method == ACCESSMETHOD_SEMI_DIRECT) {
-         __TRY0(init_scatter_tree, repo->host, ns->name, shard, mode);
+         __TRY0( init_scatter_tree(repo->host, ns->name, shard, mode) );
       }
 #endif
 

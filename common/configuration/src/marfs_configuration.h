@@ -108,9 +108,15 @@ extern "C" {
 // -- 1.0 new objids, with http://host:port/ns_alias/repo/vers/ns/...
 //        Makes adding new namespaces simpler for admins.
 //        Allows repos to select sproxyd driver-alias.
+//
+// -- 1.1 recovery-info tail has *length* of recovery-info, rather than
+//        offset.  This allows recovery in the more-efficient case where
+//        the packer combines small objects without segregating the
+//        recovery-info at the end of the packed object.  Format of the
+//        object tail also uses "reclen" instead of "recoff".
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  0
+#define MARFS_CONFIG_MINOR  1
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 

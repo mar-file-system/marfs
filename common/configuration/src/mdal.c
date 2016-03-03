@@ -138,6 +138,10 @@ ssize_t mdal_posix_setxattr(MDAL_Context* ctx, const char* path,
    return setxattr(path, name, value, size, flags);
 }
 
+int     mdal_ftruncate(MDAL_Context* ctx, off_t length) {
+   return ftruncate(POSIX_FD(ctx), length);
+}
+
 
 
 
@@ -166,7 +170,7 @@ int     mdal_posix_readdir (MDAL_Context*      ctx,
    while (1) {
       // #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
       //      struct dirent* dent_r;       /* for readdir_r() */
-      //      TRY0(readdir_r, dirp, dent, &dent_r);
+      //      TRY0( readdir_r(dirp, dent, &dent_r) );
       //      if (! dent_r)
       //         break;                 /* EOF */
       //      if (filler(buf, dent_r->d_name, NULL, 0))
@@ -235,6 +239,8 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->read         = &mdal_posix_read;
       mdal->getxattr     = &mdal_posix_getxattr;
       mdal->setxattr     = &mdal_posix_setxattr;
+      mdal->ftruncate    = &mdal_ftruncate;
+
       mdal->mkdir        = &mdal_posix_mkdir;
       mdal->opendir      = &mdal_posix_opendir;
       mdal->readdir      = &mdal_posix_readdir;
