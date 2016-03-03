@@ -167,8 +167,14 @@ int main(int argc, char **argv) {
    }
 
    // open associated log file and packed log file
-   file_status->outfd = fopen(outf,"w");
-   file_status->packedfd = fopen(packed_log, "w");
+   if ((file_status->outfd = fopen(outf,"w")) == NULL){ 
+      fprintf(stderr, "Failed to open %s\n", outf);
+      exit(1);
+   }
+   if ((file_status->packedfd = fopen(packed_log, "w"))==NULL){ 
+      fprintf(stderr, "Failed to open %s\n", packed_log);
+      exit(1);
+   }
    strcpy(file_status->packed_filename, packed_log);
    file_status->is_packed=0;
    file_status->no_delete = delete_flag;
