@@ -264,7 +264,10 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
            obj_cnt++;
            // add upp sizes of each object
            if (sum_obj_size < obj_size_max) {
-              sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist));
+              if ((sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist)))==NULL) {
+                 fprintf(stderr, "Error allocating memory\n");
+                 return -1;
+              }
               sub_objects->val = unpacked[i];
               sub_objects->next  = sub_obj_head;
               sub_obj_head = sub_objects;
@@ -278,13 +281,19 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
                // and create a new main_object entry in the linked list
                if(sum_obj_size == obj_size_max) {
                   LOG(LOG_INFO, "Equal sum %d\n", sum_obj_size);
-                  sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist));
+                  if ((sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist)))==NULL) {
+                     fprintf(stderr, "Error allocating memory\n");
+                     return -1;
+                  }
                   sub_objects->val = unpacked[i];
                   sub_objects->next  = sub_obj_head;
                   sub_obj_head = NULL;
 
                   // Add main object stuff here
-                  main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist));
+                  if ((main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist)))==NULL) {
+                     fprintf(stderr, "Error allocating memory\n");
+                     return -1;
+                  }
                   main_object->val = sub_objects;
                   main_object->count=obj_cnt;
                   main_object->next = main_obj_head;
@@ -300,7 +309,10 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
                // also start a new sub_object linked list
                else { 
                   //create a new main object
-                  main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist));
+                  if ((main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist)))==NULL) {
+                     fprintf(stderr, "Error allocating memory\n");
+                     return -1;
+                  }
                   main_object->val = sub_objects;
                   main_object->count= obj_cnt;
                   main_object->next = main_obj_head;
@@ -309,7 +321,10 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
                   count++;
                   sum_obj_size = 0;
                   obj_cnt++;
-                  sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist));
+                  if ((sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist)))==NULL) {
+                     fprintf(stderr, "Error allocating memory\n");
+                     return -1;
+                  }
                   sub_objects->val = unpacked[i];
                   sub_objects->next  = NULL;
                   sub_obj_head = sub_objects;
@@ -321,7 +336,10 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  p
         // done summing sizes, create target object if at least one not created or 
         // picking remainder from else above
         if (need_main == -1) {
-           main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist));
+           if ((main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist)))==NULL) {
+              fprintf(stderr, "Error allocating memory\n");
+              return -1;
+           }
            main_object->val = sub_objects;
            main_object->count=obj_cnt;
            main_object->next = main_obj_head;
@@ -483,7 +501,8 @@ int set_md(obj_lnklist *objects){
 				post_2_str(post, MARFS_MAX_XATTR_SIZE, &object->val.post,object->val.pre.repo,0);
                            
                                 // Remove the files via fuse mount
-				remove(marfs_path);
+                                if ((remove(marfs_path))==-1)
+                                   fprintf(stderr, "Error removing %s\n", marfs_path);
                                 LOG(LOG_INFO, "remove marfs_path:=%s\n", marfs_path);			
                                 
                                 // Open new gpfs file and truncate to the corret size
@@ -820,6 +839,8 @@ int get_inodes(const char *fnameP, size_t obj_size, struct marfs_inode *inode,
    register gpfs_iscan_t *iscanP = gpfs_open_inodescan_with_xattrs(fsP, NULL, -1, NULL, NULL);
 
    size_t inode_index;
+   IOBuf *head_buf = aws_iobuf_new();
+   char *object;
 
    // While getting inodes
    while (1){
@@ -852,6 +873,7 @@ int get_inodes(const char *fnameP, size_t obj_size, struct marfs_inode *inode,
                   if (strcmp(nameP, "user.marfs_objid") == 0){
                      LOG(LOG_INFO,"%s %d\n", valueP, valueLen);
                      ret = str_2_pre(&pre, valueP, NULL);
+                     object=strdup(valueP);
                   }
                   // else if post xattr - conver to post structure
                   else if (strcmp(nameP, "user.marfs_post") == 0){
@@ -862,7 +884,7 @@ int get_inodes(const char *fnameP, size_t obj_size, struct marfs_inode *inode,
                      //if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI && iattrP->ia_inode >=185676 && iattrP->ia_inode<=185684 ){
                      //if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size==40 && post.obj_type == OBJ_UNI ){
                      //
-                     if (post.flags != POST_TRASH && iattrP->ia_size <= obj_size && iattrP->ia_size<=small_obj_size && post.obj_type == OBJ_UNI ){
+                     if (post.flags != POST_TRASH && iattrP->ia_size > 0 && iattrP->ia_size<=small_obj_size && post.obj_type == OBJ_UNI ){
                      // TO DO: make sure counter does not exceed MAX_SCAN_FILE_SIZE - can only keep so much info
                      // TEMP
                      // TEMP
@@ -873,6 +895,19 @@ int get_inodes(const char *fnameP, size_t obj_size, struct marfs_inode *inode,
                         }
                         // inode found in paths structure so place path in inode structure 
                         else {
+                           check_security_access(&pre);
+                           update_pre(&pre);
+                           s3_set_host(pre.host);
+                           s3_head(head_buf, object);
+                           if (head_buf->contentLen != iattrP->ia_size + MARFS_REC_UNI_SIZE) {
+                              fprintf(stderr, "Object Error on %s\n", inode[counter].path);
+                              fprintf(stderr, "Read object of size %ld but metadata thinks size is %lld\n", head_buf->contentLen, iattrP->ia_size+MARFS_REC_UNI_SIZE);
+                              fprintf(stderr, "Skipping this file\n");
+                              aws_iobuf_reset_hard(head_buf);
+                              break;
+                           }
+                           aws_iobuf_reset_hard(head_buf);
+
                            inode[counter].inode =  iattrP->ia_inode;
                            inode[counter].atime = iattrP->ia_atime.tv_sec;
                            inode[counter].mtime = iattrP->ia_mtime.tv_sec;
@@ -890,6 +925,7 @@ int get_inodes(const char *fnameP, size_t obj_size, struct marfs_inode *inode,
                            //strcpy(inode[counter].pre,pre);
                            counter++;
                            *sum_size += iattrP->ia_size;
+
                            // if counter matches the number of paths found in treewalk
                            // might as well stop looking
                            if (counter == MAX_SCAN_FILE_COUNT) {
