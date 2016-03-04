@@ -84,10 +84,13 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
+#include "marfs_configuration.h" // MDAL_Type
+
 #include <stdint.h>
 #include <unistd.h>
-#include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <attr/xattr.h>
 #include <dirent.h>
 
@@ -207,13 +210,6 @@ typedef  int     (*mdal_closedir)(MDAL_Context* ctx);
 
 
 
-
-
-typedef enum MDAL_Type {
-   MDAL_POSIX  = 0x01,
-   MDAL_PVFS2  = 0x02,
-   MDAL_IOFSL  = 0x04,
-} MDAL_Type;
 
 
 // This is a collection of function-ptrs

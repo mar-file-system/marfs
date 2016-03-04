@@ -63,12 +63,6 @@ endif
 
 
 
-# For testing new MDAL code
-#
-ifdef USE_MDAL
-	DEFS += USE_MDAL
-endif
-
 
 BLUEPRINT   := $(PWD)/marfs_configuration_blueprint.cfg
 CONFIG      := $(PWD)/marfs_cctest.cfg
@@ -144,7 +138,7 @@ CFLAGS += -I$(LOG_DIR) $(LOG_OPT)
 # build a library with Ron's parser, plus the marfs config-parser, plus logging
 # ---------------------------------------------------------------------------
 
-FNAME_ROOTS = marfs_configuration mdal
+FNAME_ROOTS = marfs_configuration
 
 OBJ = $(patsubst %, %.o, $(FNAME_ROOTS))
 SRC = $(patsubst %, %.c, $(FNAME_ROOTS))

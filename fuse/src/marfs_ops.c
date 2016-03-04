@@ -804,6 +804,7 @@ int marfs_open(const char*         path,
    STAT_XATTRS(info);
 
 #ifdef USE_MDAL
+
    // copy MDALs from NS to FileHandle
    F_MDAL(fh) = info->pre.ns->file_MDAL;
 

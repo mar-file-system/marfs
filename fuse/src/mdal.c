@@ -88,6 +88,8 @@ OF SUCH DAMAGE.
 // context before-opening / after-closing for file-oriented or
 // directory-oriented operations.
 int     default_mdal_file_ctx_init(MDAL_Context* ctx, MDAL* mdal) {
+   ctx->flags   = 0;
+   ctx->data.sz = 0;
    return 0;
 }
 int     default_mdal_file_ctx_destroy(MDAL_Context* ctx, MDAL* mdal) {
@@ -97,6 +99,8 @@ int     default_mdal_file_ctx_destroy(MDAL_Context* ctx, MDAL* mdal) {
 
 
 int     default_mdal_dir_ctx_init (MDAL_Context* ctx, MDAL* mdal) {
+   ctx->flags   = 0;
+   ctx->data.sz = 0;
    return 0;
 }
 int     default_mdal_dir_ctx_destroy (MDAL_Context* ctx, MDAL* mdal) {

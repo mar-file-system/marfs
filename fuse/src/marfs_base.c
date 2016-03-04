@@ -70,6 +70,7 @@ OF SUCH DAMAGE.
 */
 
 #include "marfs_base.h"
+#include "mdal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1205,7 +1206,7 @@ int validate_config() {
    int           retval = 0;
    const size_t  recovery = MARFS_REC_UNI_SIZE;
 
-   // repo checks
+   // --- repo checks
    MarFS_Repo*   repo = NULL;
    RepoIterator  rit = repo_iterator();
    while ((repo = repo_next(&rit))) {
@@ -1224,7 +1225,8 @@ int validate_config() {
       }
    }
 
-   // namespace checks
+
+   // --- namespace checks
    MarFS_Namespace* ns = NULL;
    NSIterator       nit = namespace_iterator();
    while ((ns = namespace_next(&nit))) {
@@ -1236,7 +1238,27 @@ int validate_config() {
              ns->name, ns->name_len, MARFS_MAX_NAMESPACE_NAME);
          retval = -1;
       }
+
+      // configuration just parsed the MDAL type.
+      // Go find the corresponding MDAL and install
+      MDAL* dir_MDAL = get_MDAL(ns->dir_MDAL_type);
+      if ( ! dir_MDAL ) {
+         LOG( LOG_ERR, "Couldn't find MDAL named \"%s\".\n",
+              MDAL_type_name(ns->dir_MDAL_type) );
+         retval = -1;
+      }
+      ns->dir_MDAL = dir_MDAL;
+
+      MDAL* file_MDAL = get_MDAL(ns->file_MDAL_type);
+      if ( ! file_MDAL ) {
+         LOG( LOG_ERR, "Couldn't find MDAL named \"%s\".\n",
+              MDAL_type_name(ns->file_MDAL_type) );
+         retval = -1;
+      }
+      ns->file_MDAL = file_MDAL;
+
    }
+
 
    return retval;
 }

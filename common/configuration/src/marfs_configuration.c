@@ -67,7 +67,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <unistd.h> /* access */
 
 #include "logging.h"
-#include "mdal.h"
 #include "marfs_configuration.h"
 #include "parse-inc/config-structs.h"
 #include "confpars-structs.h"
@@ -673,6 +672,15 @@ int lookup_MDAL_type(const char* type_name, MDAL_Type* type) {
    return 0;
 }
 
+const char* MDAL_type_name(MDAL_Type type) {
+   switch (type) {
+   case MDAL_POSIX:   return (const char*)"POSIX";
+   case MDAL_PVFS2:   return (const char*)"PVFS2";
+   case MDAL_IOFSL:   return (const char*)"IOFSL";
+   default:  return NULL;
+   }
+}
+
 
 /*****************************************************************************
  *
@@ -1273,7 +1281,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
 
     // default to POSIX, for backward-compatibility
-    // [co-maintain with tests, below]
+    // [co-maintain with file_MDAL tests, below]
     MDAL_Type dir_MDAL_type = MDAL_POSIX;
     if ( ! namespaceList[j]->dir_MDAL ) {
        LOG( LOG_INFO, "MarFS namespace '%s' has no dir_MDAL. Defaulting to POSIX\n",
@@ -1283,18 +1291,13 @@ static MarFS_Config_Ptr read_configuration_internal() {
        LOG( LOG_ERR, "Unknown dir_MDAL name \"%s\".\n", namespaceList[j]->dir_MDAL );
        return NULL;
     }
-
-    MDAL* dir_MDAL = get_MDAL(dir_MDAL_type);
-    if ( ! dir_MDAL ) {
-       LOG( LOG_ERR, "Couldn't find MDAL named \"%s\".\n", namespaceList[j]->dir_MDAL );
-       return NULL;
-    }
-    marfs_namespace_list[j]->dir_MDAL = dir_MDAL;
+    marfs_namespace_list[j]->dir_MDAL_type = dir_MDAL_type;
+    marfs_namespace_list[j]->dir_MDAL      = NULL; // see validate_config() in libmarfs
 
 
 
     // default to POSIX, for backward-compatibility
-    // [co-maintain with tests, above]
+    // [co-maintain with dir_MDAL tests, above]
     MDAL_Type file_MDAL_type = MDAL_POSIX;
     if ( ! namespaceList[j]->file_MDAL ) {
        LOG( LOG_INFO, "MarFS namespace '%s' has no file_MDAL. Defaulting to POSIX\n",
@@ -1304,13 +1307,8 @@ static MarFS_Config_Ptr read_configuration_internal() {
        LOG( LOG_ERR, "Unknown file_MDAL name \"%s\".\n", namespaceList[j]->file_MDAL );
        return NULL;
     }
-
-    MDAL* file_MDAL = get_MDAL(file_MDAL_type);
-    if ( ! file_MDAL ) {
-       LOG( LOG_ERR, "Couldn't find MDAL named \"%s\".\n", namespaceList[j]->file_MDAL );
-       return NULL;
-    }
-    marfs_namespace_list[j]->file_MDAL = file_MDAL;
+    marfs_namespace_list[j]->file_MDAL_type = file_MDAL_type;
+    marfs_namespace_list[j]->file_MDAL      = NULL; // see validate_config() in libmarfs
 
 
 
