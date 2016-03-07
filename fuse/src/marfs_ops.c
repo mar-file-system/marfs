@@ -462,7 +462,11 @@ int marfs_getxattr (const char* path,
    //     lgetxattr("system.posix_acl_access",path,0,0).  The kernel calls
    //     us with this, for 'ls -l /marfs/jti/blah'.
 
+#ifdef USE_MDAL
+   TRY_GE0( F_OP_NOCTX(lgetxattr, info.ns, info.post.md_path, name, (void*)value, size) );
+#else
    TRY_GE0( lgetxattr(info.post.md_path, name, (void*)value, size) );
+#endif
    ssize_t result = rc_ssize;
 
    EXIT();
@@ -519,7 +523,11 @@ int marfs_listxattr (const char* path,
    // No need for access check, just try the op
    // Appropriate  listxattr call
    // NOTE: If caller passes <list>=0, we'll be fine.
+#ifdef USE_MDAL
+   TRY_GE0( F_OP_NOCTX(llistxattr, info.ns, info.post.md_path, list, size) );
+#else
    TRY_GE0( llistxattr(info.post.md_path, list, size) );
+#endif
 
    // In the case where list==0, we return the size of the buffer that
    // caller would need, in order to receive all our xattr data.
@@ -804,7 +812,6 @@ int marfs_open(const char*         path,
    STAT_XATTRS(info);
 
 #ifdef USE_MDAL
-
    // copy static MDAL ptr from NS to FileHandle
    F_MDAL(fh) = info->pre.ns->file_MDAL;
    LOG(LOG_INFO, "file MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
@@ -1872,11 +1879,11 @@ int marfs_removexattr (const char* path,
    // No need for access check, just try the op
    // Appropriate  removexattr call filling in fuse structure 
 
-   // #ifdef USE_MDAL
-   //    TRY0( F_OP(lremovexattr, fh, info.post.md_path, name) );
-   // #else
+#ifdef USE_MDAL
+   TRY0( F_OP_NOCTX(lremovexattr, info.ns, info.post.md_path, name) );
+#else
    TRY0( lremovexattr(info.post.md_path, name) );
-   // #endif
+#endif
 
    EXIT();
    return 0;
@@ -1984,7 +1991,11 @@ int marfs_setxattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  setxattr call filling in fuse structure 
+#ifdef USE_MDAL
+   TRY0( F_OP_NOCTX(lsetxattr, info.ns, info.post.md_path, name, value, size, flags) );
+#else
    TRY0( lsetxattr(info.post.md_path, name, value, size, flags) );
+#endif
 
    EXIT();
    return 0;

@@ -559,10 +559,11 @@ typedef struct {
 
 #ifdef USE_MDAL
 // shorthand
-#  define F_CTX(FH)          &(FH)->f_handle.ctx
-#  define F_MDAL(FH)         (FH)->f_handle.mdal
+#  define F_CTX(FH)              &(FH)->f_handle.ctx
+#  define F_MDAL(FH)             (FH)->f_handle.mdal
 
-#  define F_OP(OP,FH, ...) (*(FH)->f_handle.mdal->OP)(F_CTX(FH), ##__VA_ARGS__)
+#  define F_OP(OP,FH, ...)       (*(FH)->f_handle.mdal->OP)(F_CTX(FH), ##__VA_ARGS__)
+#  define F_OP_NOCTX(OP,NS, ...) (*(NS)->file_MDAL->OP)(__VA_ARGS__)
 /*
  #  define F_OP(OP,FH, ...)                                            \
    do {                                                               \

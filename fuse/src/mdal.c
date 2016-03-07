@@ -125,6 +125,7 @@ int     default_mdal_dir_ctx_destroy (MDAL_Context* ctx, MDAL* mdal) {
 
 
 
+// --- file-ops
 
 void*   posix_mdal_open(MDAL_Context* ctx, const char* path, int flags) {
    POSIX_FD(ctx) = open(path, flags);
@@ -151,17 +152,6 @@ ssize_t posix_mdal_write(MDAL_Context* ctx, const void* buf, size_t count) {
 }
 
 
-ssize_t posix_mdal_getxattr(MDAL_Context* ctx, const char* path,
-                            const char* name, void* value, size_t size) {
-   return getxattr(path, name, value, size);
-}
-
-
-ssize_t posix_mdal_setxattr(MDAL_Context* ctx, const char* path,
-                            const char* name, void* value, size_t size, int flags) {
-   return setxattr(path, name, value, size, flags);
-}
-
 int     posix_mdal_ftruncate(MDAL_Context* ctx, off_t length) {
    return ftruncate(POSIX_FD(ctx), length);
 }
@@ -169,13 +159,36 @@ int     posix_mdal_ftruncate(MDAL_Context* ctx, off_t length) {
 off_t   posix_mdal_lseek(MDAL_Context* ctx, off_t offset, int whence) {
    return lseek(POSIX_FD(ctx), offset, whence);
 }
+
+
+// --- file-ops (context-free)
+
 int     posix_mdal_rename(const char* from, const char* to) {
    return rename(from, to);
+}
+
+ssize_t posix_mdal_lgetxattr(const char* path, const char* name,
+                             void* value, size_t size) {
+   return lgetxattr(path, name, value, size);
+}
+
+ssize_t posix_mdal_lsetxattr(const char* path, const char* name,
+                             const void* value, size_t size, int flags) {
+   return lsetxattr(path, name, value, size, flags);
+}
+
+int     posix_mdal_lremovexattr(const char* path, const char* name) {
+   return lremovexattr(path, name);
+}
+
+ssize_t posix_mdal_llistxattr(const char* path, char* list, size_t size) {
+   return llistxattr(path, list, size);
 }
 
 
 
 
+// --- directory-ops
 
 int     posix_mdal_mkdir (MDAL_Context* ctx, const char* path, mode_t mode) {
    return mkdir(path, mode);   
@@ -274,11 +287,14 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->close        = &posix_mdal_close;
       mdal->write        = &posix_mdal_write;
       mdal->read         = &posix_mdal_read;
-      mdal->getxattr     = &posix_mdal_getxattr;
-      mdal->setxattr     = &posix_mdal_setxattr;
       mdal->ftruncate    = &posix_mdal_ftruncate;
       mdal->lseek        = &posix_mdal_lseek;
+
       mdal->rename       = &posix_mdal_rename;
+      mdal->lgetxattr    = &posix_mdal_lgetxattr;
+      mdal->lsetxattr    = &posix_mdal_lsetxattr;
+      mdal->lremovexattr = &posix_mdal_lremovexattr;
+      mdal->llistxattr   = &posix_mdal_llistxattr;
 
       mdal->mkdir        = &posix_mdal_mkdir;
       mdal->opendir      = &posix_mdal_opendir;
