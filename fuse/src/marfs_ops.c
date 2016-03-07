@@ -805,8 +805,9 @@ int marfs_open(const char*         path,
 
 #ifdef USE_MDAL
 
-   // copy MDALs from NS to FileHandle
+   // copy static MDAL ptr from NS to FileHandle
    F_MDAL(fh) = info->pre.ns->file_MDAL;
+   LOG(LOG_INFO, "file MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
 
    // allow MDAL implementation to do any initializations necessary
    F_OP(f_init, fh, F_MDAL(fh));
@@ -1124,6 +1125,7 @@ int marfs_opendir (const char*       path,
 
 #if USE_MDAL
    D_MDAL(dh) = info.ns->dir_MDAL;
+   LOG(LOG_INFO, "dir MDAL: %s\n", MDAL_type_name(D_MDAL(dh)->type));
 
    // allow MDAL implementation to do any initializations necessary
    D_OP(d_init, dh, D_MDAL(dh));
