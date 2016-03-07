@@ -383,6 +383,7 @@ clean: # cleanx
 #
 # (a) Make sure that either the default value for LIBAWS4C is valid, or
 #     user has overridden it with something valid.
+.PHONY: pre_req
 pre_req:
 ifeq ($(LIBAWS4C),)
 	$(error $$LIBAWS4C is empty.  Consider 'make ... LIBAWS4C=<DIR>')
@@ -394,7 +395,7 @@ endif
 
 
 # Don't make this directly; make one of the 'fuse.foo' targets below.
-marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS) lib
+marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS) libmarfs.a
 	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose main.c $(OBJS) $(LIBS)
 	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
 	gcc $(CFLAGS) -o $@ $(LDFLAGS) -L$(PWD) main.c $(LIBS) -lmarfs
@@ -456,16 +457,13 @@ remount: umnt
 # library, containing everything except main()
 # ...........................................................................
 
-libmarfs.a: $(OBJS)
+libmarfs.a: $(OBJS) | pre_req
 	ar -cvr $@ $^
 
 
 .PHONY: lib
-lib: pre_req libmarfs.a
+lib: libmarfs.a | pre_req
 
-.PHONY: lib_new
-lib_new: pre_req clean
-	@ $(MAKE) libmarfs.a
 
 
 # ...........................................................................
@@ -507,7 +505,7 @@ _mnt:
 
 mnt: mnt.std
 
-mnt.std: fuse.std umnt.std
+mnt.std: marfs_fuse umnt.std
 	@ $(MAKE) _mnt DEBUG=$(DEBUG)
 
 mnt.lean: fuse.lean umnt
