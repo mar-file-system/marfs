@@ -1272,7 +1272,7 @@ int update_url(ObjectStream* os, PathInfo* info) {
 //    be preserved,
 
 
-int write_chunkinfo(int                   md_fd,
+int write_chunkinfo(MarFS_FileHandle*     fh,
                     const PathInfo* const info,
                     size_t                open_offset,
                     size_t                user_data_written) {
@@ -1316,7 +1316,11 @@ int write_chunkinfo(int                   md_fd,
    }
 
    // write portable binary to MD file
-   ssize_t wr_count = write(md_fd, str, chunk_info_len);
+#ifdef USE_MDAL
+   ssize_t wr_count = F_OP(write, fh, str, chunk_info_len);
+#else
+   ssize_t wr_count = write(fh->md_fd, str, chunk_info_len);
+#endif
    if (wr_count < 0) {
       LOG(LOG_ERR, "error writing chunk-info (%s)\n",
           strerror(errno));
@@ -1334,11 +1338,15 @@ int write_chunkinfo(int                   md_fd,
 }
 
 // read MultiChunkInfo for the next chunk, from file
-int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
+int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
    static const size_t chunk_info_len = sizeof(MultiChunkInfo);
 
    char    str[chunk_info_len];
-   ssize_t rd_count = read(md_fd, str, chunk_info_len);
+#ifdef USE_MDAL
+   ssize_t rd_count = F_OP(read, fh, str, chunk_info_len);
+#else
+   ssize_t rd_count = read(fh->md_fd, str, chunk_info_len);
+#endif
    if (rd_count < 0) {
       LOG(LOG_ERR, "error reading chunk-info (%s)\n",
           strerror(errno));
@@ -1372,12 +1380,16 @@ int read_chunkinfo(int md_fd, MultiChunkInfo* chnk) {
 // [e.g. Then call read_chunkinfo().]
 // We assume the MD fd is already open
 //
-int seek_chunkinfo(int md_fd, size_t chunk_no) {
+int seek_chunkinfo(MarFS_FileHandle* fh, size_t chunk_no) {
    TRY_DECLS();
    const size_t chunk_info_len = sizeof(MultiChunkInfo);
 
    off_t offset = chunk_no * chunk_info_len;
-   TRY_GE0( lseek(md_fd, offset, SEEK_SET) );
+#ifdef USE_MDAL
+   TRY_GE0( F_OP(lseek, fh, offset, SEEK_SET) );
+#else
+   TRY_GE0( lseek(fh->md_fd, offset, SEEK_SET) );
+#endif
    return 0;
 }
 
@@ -1410,14 +1422,23 @@ int seek_chunkinfo(int md_fd, size_t chunk_no) {
 //          // find the MarFS logical file-size by counting MultiChunkInfo
 //          // objects, written into the metadata file.  There will always be at
 //          // least one, even if file received no writes (?)
+//       #ifdef USE_MDAL
+//          if (! F_OP(open, fh, info.post.md_path, (O_RDONLY)))  // no O_BINARY in Linux.
+//             return -1;
+//       #else
 //          int md_fd = open(info.post.md_path, (O_RDONLY));  // no O_BINARY in Linux.
 //          if (md_fd < 0) {
 //             // fh->md_fd = 0;
 //             return -1;
 //          }
+//       #endif
 //          MultiChunkInfo final_chunk;      // gets final chunk-contents
-//          ssize_t n_chunks = count_chunkinfo(md_fd, &final_chunk);
-//          close(md_fd);
+//          ssize_t n_chunks = count_chunkinfo(fh, &final_chunk);
+//       #ifdef USE_MDAL
+//          close(fh->md_fd);
+//       #else
+//          F_OP(close, fh);
+//       #endif
 //          if (n_chunks < 0) {
 //             return -1;
 //          }
@@ -1440,13 +1461,17 @@ int seek_chunkinfo(int md_fd, size_t chunk_no) {
 //          SAVE_XATTRS(&info, MARFS_ALL_XATTRS);
 //       }
 
-ssize_t count_chunkinfo(int md_fd) {
+ssize_t count_chunkinfo(MarFS_FileHandle* fh) {
    const size_t  chunk_info_len = sizeof(MultiChunkInfo);
    char          str[chunk_info_len];
    ssize_t       result = 0;
 
    while (1) {
-      ssize_t rd_count = read(md_fd, str, chunk_info_len);
+#ifdef USE_MDAL
+      ssize_t rd_count = F_OP(read, fh, str, chunk_info_len);
+#else
+      ssize_t rd_count = read(fh->md_fd, str, chunk_info_len);
+#endif
       if (rd_count < 0) {
          LOG(LOG_ERR, "error reading chunk-info (%s)\n",
              strerror(errno));

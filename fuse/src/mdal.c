@@ -79,6 +79,36 @@ OF SUCH DAMAGE.
 #include <errno.h>
 
 
+// ===========================================================================
+// DEFAULT
+// ===========================================================================
+// 
+
+// Use these if you don't need to do anything special to initialize the
+// context before-opening / after-closing for file-oriented or
+// directory-oriented operations.
+int     default_mdal_file_ctx_init(MDAL_Context* ctx, MDAL* mdal) {
+   ctx->flags   = 0;
+   ctx->data.sz = 0;
+   return 0;
+}
+int     default_mdal_file_ctx_destroy(MDAL_Context* ctx, MDAL* mdal) {
+   return 0;
+}
+
+
+
+int     default_mdal_dir_ctx_init (MDAL_Context* ctx, MDAL* mdal) {
+   ctx->flags   = 0;
+   ctx->data.sz = 0;
+   return 0;
+}
+int     default_mdal_dir_ctx_destroy (MDAL_Context* ctx, MDAL* mdal) {
+   return 0;
+}
+
+
+
 // ================================================================
 // POSIX
 // ================================================================
@@ -95,69 +125,71 @@ OF SUCH DAMAGE.
 
 
 
-int     mdal_posix_ctx_init(MDAL_Context* ctx, MDAL* mdal) {
-   return 0;
-}
 
-int     mdal_posix_ctx_destroy(MDAL_Context* ctx, MDAL* mdal) {
-   return 0;
-}
-
-
-
-
-int     mdal_posix_open(MDAL_Context* ctx, const char* path, int flags) {
+void*   posix_mdal_open(MDAL_Context* ctx, const char* path, int flags) {
    POSIX_FD(ctx) = open(path, flags);
+   return ctx;
+}
+
+int     posix_mdal_is_open(MDAL_Context* ctx) {
    return POSIX_FD(ctx);
 }
 
-int     mdal_posix_close(MDAL_Context* ctx) {
+int     posix_mdal_close(MDAL_Context* ctx) {
    int retval = close(POSIX_FD(ctx));
    POSIX_FD(ctx) = 0;
    return retval;
 }
 
 
-ssize_t mdal_posix_read (MDAL_Context* ctx, void* buf, size_t count) {
+ssize_t posix_mdal_read (MDAL_Context* ctx, void* buf, size_t count) {
    return read(POSIX_FD(ctx), buf, count);
 }
 
-ssize_t mdal_posix_write(MDAL_Context* ctx, void* buf, size_t count) {
+ssize_t posix_mdal_write(MDAL_Context* ctx, const void* buf, size_t count) {
    return write(POSIX_FD(ctx), buf, count);
 }
 
 
-ssize_t mdal_posix_getxattr(MDAL_Context* ctx, const char* path,
-                      const char* name, void* value, size_t size) {
+ssize_t posix_mdal_getxattr(MDAL_Context* ctx, const char* path,
+                            const char* name, void* value, size_t size) {
    return getxattr(path, name, value, size);
 }
 
 
-ssize_t mdal_posix_setxattr(MDAL_Context* ctx, const char* path,
+ssize_t posix_mdal_setxattr(MDAL_Context* ctx, const char* path,
                             const char* name, void* value, size_t size, int flags) {
    return setxattr(path, name, value, size, flags);
 }
 
-int     mdal_ftruncate(MDAL_Context* ctx, off_t length) {
+int     posix_mdal_ftruncate(MDAL_Context* ctx, off_t length) {
    return ftruncate(POSIX_FD(ctx), length);
+}
+
+off_t   posix_mdal_lseek(MDAL_Context* ctx, off_t offset, int whence) {
+   return lseek(POSIX_FD(ctx), offset, whence);
+}
+int     posix_mdal_rename(const char* from, const char* to) {
+   return rename(from, to);
 }
 
 
 
 
-int     mdal_posix_mkdir (MDAL_Context* ctx, const char* path, mode_t mode) {
+
+int     posix_mdal_mkdir (MDAL_Context* ctx, const char* path, mode_t mode) {
    return mkdir(path, mode);   
 }
 
 
-int     mdal_posix_opendir (MDAL_Context* ctx, const char* path) {
+void*   posix_mdal_opendir (MDAL_Context* ctx, const char* path) {
    POSIX_DIRP(ctx) = opendir(path);
-   return ((POSIX_DIRP(ctx) == NULL) ? -1 : 0);
+   return POSIX_DIRP(ctx);
 }
 
 
 // lifted from marfs_readdir()
-int     mdal_posix_readdir (MDAL_Context*      ctx,
+int     posix_mdal_readdir (MDAL_Context*      ctx,
                             const char*        path,
                             void*              buf,
                             marfs_fill_dir_t   filler,
@@ -195,7 +227,7 @@ int     mdal_posix_readdir (MDAL_Context*      ctx,
 }
 
 
-// int            mdal_posix_readdir_r(MDAL_Context* ctx, DIR* dirp,
+// int            posix_mdal_readdir_r(MDAL_Context* ctx, DIR* dirp,
 //                                     struct dirent* entry, struct dirent** result) {
 // #if _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _BSD_SOURCE || _SVID_SOURCE || _POSIX_SOURCE
 //    return readdir_r(POSIX_DIRP(dirp), entry, result);
@@ -206,7 +238,7 @@ int     mdal_posix_readdir (MDAL_Context*      ctx,
 // }
 
 
-int     mdal_posix_closedir (MDAL_Context* ctx) {
+int     posix_mdal_closedir (MDAL_Context* ctx) {
    return closedir((DIR*)POSIX_DIRP(ctx));
 }
 
@@ -231,21 +263,30 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
 
    case MDAL_POSIX:
       mdal->global_state = NULL;
-      mdal->ctx_init     = &mdal_posix_ctx_init;
-      mdal->ctx_destroy  = &mdal_posix_ctx_destroy;
-      mdal->open         = &mdal_posix_open;
-      mdal->close        = &mdal_posix_close;
-      mdal->write        = &mdal_posix_write;
-      mdal->read         = &mdal_posix_read;
-      mdal->getxattr     = &mdal_posix_getxattr;
-      mdal->setxattr     = &mdal_posix_setxattr;
-      mdal->ftruncate    = &mdal_ftruncate;
 
-      mdal->mkdir        = &mdal_posix_mkdir;
-      mdal->opendir      = &mdal_posix_opendir;
-      mdal->readdir      = &mdal_posix_readdir;
-      // mdal->readdir_r    = &mdal_posix_readdir_r;
-      mdal->closedir     = &mdal_posix_closedir;
+      mdal->f_init       = &default_mdal_file_ctx_init;
+      mdal->f_destroy    = &default_mdal_file_ctx_destroy;
+
+      mdal->d_init       = &default_mdal_dir_ctx_init;
+      mdal->d_destroy    = &default_mdal_dir_ctx_destroy;
+
+      mdal->open         = &posix_mdal_open;
+      mdal->close        = &posix_mdal_close;
+      mdal->write        = &posix_mdal_write;
+      mdal->read         = &posix_mdal_read;
+      mdal->getxattr     = &posix_mdal_getxattr;
+      mdal->setxattr     = &posix_mdal_setxattr;
+      mdal->ftruncate    = &posix_mdal_ftruncate;
+      mdal->lseek        = &posix_mdal_lseek;
+      mdal->rename       = &posix_mdal_rename;
+
+      mdal->mkdir        = &posix_mdal_mkdir;
+      mdal->opendir      = &posix_mdal_opendir;
+      mdal->readdir      = &posix_mdal_readdir;
+      // mdal->readdir_r    = &posix_mdal_readdir_r;
+      mdal->closedir     = &posix_mdal_closedir;
+
+      mdal->is_open      = &posix_mdal_is_open;
       break;
 
       // TBD ...

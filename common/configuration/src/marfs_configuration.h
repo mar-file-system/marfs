@@ -55,7 +55,6 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "mdal.h"
 
 #include <stdint.h>
 
@@ -242,6 +241,15 @@ extern int encode_enctype( MarFS_EncryptType enumeration, char *code );
 extern int decode_enctype( char code, MarFS_EncryptType *enumeration );
 
 
+typedef enum MDAL_Type {
+   MDAL_POSIX  = 0x01,
+   MDAL_PVFS2  = 0x02,
+   MDAL_IOFSL  = 0x04,
+} MDAL_Type;
+
+const char* MDAL_type_name(MDAL_Type type);
+
+struct MDAL; // fwd-decl
 
 
 /*
@@ -396,6 +404,7 @@ typedef struct marfs_repo_range {
 //
 // ---------------------------------------------------------------------------
 
+
 typedef struct marfs_namespace {
    char                 *name;
    size_t                name_len;
@@ -416,8 +425,10 @@ typedef struct marfs_namespace {
    size_t                fsinfo_path_len;
    long long             quota_space;
    long long             quota_names;
-   MDAL                 *dir_MDAL;
-   MDAL                 *file_MDAL;
+   MDAL_Type             dir_MDAL_type;
+   struct MDAL          *dir_MDAL;
+   MDAL_Type             file_MDAL_type;
+   struct MDAL          *file_MDAL;
    char                 *ns_shardp;
    size_t                ns_shardp_len;
    unsigned long long    ns_shardp_num;

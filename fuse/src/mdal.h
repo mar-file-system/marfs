@@ -84,14 +84,22 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
+#include "marfs_configuration.h" // MDAL_Type
+
 #include <stdint.h>
 #include <unistd.h>
-#include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <attr/xattr.h>
 #include <dirent.h>
 
 #include <stdio.h>
+
+
+#  ifdef __cplusplus
+extern "C" {
+#  endif
 
 
 // MDAL_Context
@@ -125,14 +133,18 @@ typedef struct {
    } data;
 } MDAL_Context;
 
+
+// MDAL function signatures
+//
+// Q: Does it really matter if the MDAL_Context is the first argument?
+//
+// A: There are macros in common.h which assume this.  Of course, they
+//    could be extended, if it's *really* important.
+
+
+
 // fwd-decl
 struct MDAL;
-
-
-typedef struct {
-   MDAL_Context ctx;
-   struct MDAL* mdal;
-} MDAL_FileHandle;
 
 // used to fill out directory-entries, in marfs_readdir().
 typedef int (*marfs_fill_dir_t) (void *buf, const char *name,
@@ -144,32 +156,48 @@ typedef int (*marfs_fill_dir_t) (void *buf, const char *name,
 //   -- init    is called before any other ops (per file-handle).
 //   -- destroy is called when a file-handle is being destroyed.
 //
-typedef  int     (*mdal_ctx_init)   (MDAL_Context* ctx, struct MDAL* mdal);
-typedef  int     (*mdal_ctx_destroy)(MDAL_Context* ctx, struct MDAL* mdal);
+typedef  int     (*mdal_file_ctx_init)   (MDAL_Context* ctx, struct MDAL* mdal);
+typedef  int     (*mdal_dir_ctx_init)    (MDAL_Context* ctx, struct MDAL* mdal);
+
+typedef  int     (*mdal_file_ctx_destroy)(MDAL_Context* ctx, struct MDAL* mdal);
+typedef  int     (*mdal_dir_ctx_destroy) (MDAL_Context* ctx, struct MDAL* mdal);
 
 
 // --- file ops
 
-typedef  int     (*mdal_open) (MDAL_Context* ctx, const char* path, int flags);
+// return NULL from mdal_open(), for failure 
+// This value is only checked for NULL/non-NULL
+typedef  void*   (*mdal_open) (MDAL_Context* ctx, const char* path, int flags);
 typedef  int     (*mdal_close)(MDAL_Context* ctx);
 
-typedef  ssize_t (*mdal_write)(MDAL_Context* ctx, void* buf, size_t count);
-typedef  ssize_t (*mdal_read) (MDAL_Context* ctx, void* buf, size_t count);
+typedef  ssize_t (*mdal_write)(MDAL_Context* ctx, const void* buf, size_t count);
+typedef  ssize_t (*mdal_read) (MDAL_Context* ctx, void*       buf, size_t count);
 
 typedef  ssize_t (*mdal_getxattr)(MDAL_Context* ctx, const char* path,
                                   const char* name, void* value, size_t size);
 typedef  ssize_t (*mdal_setxattr)(MDAL_Context* ctx, const char* path,
                                   const char* name, void* value, size_t size,
                                   int flags);
+
 typedef  int     (*mdal_ftruncate)(MDAL_Context* ctx, off_t length);
+typedef  off_t   (*mdal_lseek)(MDAL_Context* ctx, off_t offset, int whence);
+
+typedef  int     (*mdal_rename)(const char* from, const char* to);
+
+// some tests.  Return non-zero for TRUE.
+// TBD: gather these into a single function, with a test_type argument?
+//      (easier to default/extend?)
+typedef  int     (*mdal_is_open) (MDAL_Context* ctx);
 
 
 // --- directory-ops
-// These all return 0 for success, -1 (plus errno) for failure.
+// opendir() should return some non-null pointer for success, NULL for failure.
+// (It won't be used for anything.).
+// The others return 0 for success, -1 (plus errno) for failure.
 // Any required state must be maintained in the context.
 
 typedef  int     (*mdal_mkdir)  (MDAL_Context* ctx, const char* path, mode_t mode);
-typedef  int     (*mdal_opendir)(MDAL_Context* ctx, const char* path);
+typedef  void*   (*mdal_opendir)(MDAL_Context* ctx, const char* path);
 typedef  int     (*mdal_readdir)(MDAL_Context*      ctx,
                                  const char*        path,
                                  void*              buf,
@@ -184,21 +212,17 @@ typedef  int     (*mdal_closedir)(MDAL_Context* ctx);
 
 
 
-typedef enum MDAL_Type {
-   MDAL_POSIX  = 0x01,
-   MDAL_PVFS2  = 0x02,
-   MDAL_IOFSL  = 0x04,
-} MDAL_Type;
-
-
 // This is a collection of function-ptrs
 // They capture a given implementation of interaction with an MDFS.
 typedef struct MDAL {
    MDAL_Type        type;
    void*            global_state;
 
-   mdal_ctx_init    ctx_init;
-   mdal_ctx_destroy ctx_destroy;
+   mdal_file_ctx_init    f_init;
+   mdal_file_ctx_destroy f_destroy;
+
+   mdal_dir_ctx_init     d_init;
+   mdal_dir_ctx_destroy  d_destroy;
 
    mdal_open        open;
    mdal_close       close;
@@ -207,6 +231,8 @@ typedef struct MDAL {
    mdal_getxattr    getxattr;
    mdal_setxattr    setxattr;
    mdal_ftruncate   ftruncate;
+   mdal_lseek       lseek;
+   mdal_rename      rename;
 
    mdal_mkdir       mkdir;
    mdal_opendir     opendir;
@@ -214,6 +240,7 @@ typedef struct MDAL {
    // mdal_readdir_r   readdir_r;
    mdal_closedir    closedir;
 
+   mdal_is_open     is_open;
 } MDAL;
 
 
@@ -229,5 +256,8 @@ MDAL* get_MDAL(MDAL_Type type);
 
 
 
+#  ifdef __cplusplus
+}
+#  endif
 
 #endif
