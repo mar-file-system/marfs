@@ -205,7 +205,7 @@ endif
 # For testing new MDAL code
 #
 ifdef USE_MDAL
-	DEFS += USE_MDAL
+	DEFS += USE_MDAL=$(USE_MDAL)
 endif
 
 

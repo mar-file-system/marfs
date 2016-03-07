@@ -542,7 +542,7 @@ typedef struct {
    PathInfo        info;          // includes xattrs, MDFS path, etc
    char            ns_path[MARFS_MAX_NS_PATH];  // path in NS, not in MDFS
 
-#ifdef USE_MDAL
+#if USE_MDAL
    MDAL_Handle     f_handle;     // file-oriented MDAL ops
 #else
    int             md_fd;         // opened for reading meta-data, or data
@@ -557,7 +557,7 @@ typedef struct {
 } MarFS_FileHandle;
 
 
-#ifdef USE_MDAL
+#if USE_MDAL
 // shorthand
 #  define F_CTX(FH)              &(FH)->f_handle.ctx
 #  define F_MDAL(FH)             (FH)->f_handle.mdal
@@ -582,7 +582,7 @@ typedef struct {
 // we'll just use the MDAL from the NS to select the implementation, and
 // call the function without passing a context.  [Or, should we initialize
 // a MDAL_Context, call with that, then destroy?]
-#ifdef USE_MDAL
+#if USE_MDAL
 #  define CTX_FREE_OP(OP,NS, ...)   (*(NS)->file_MDAL->OP)(__VA_ARGS__)
 #endif
 
@@ -601,7 +601,7 @@ typedef struct {
    uint8_t   use_it;         // if non-zero, use <it>, else use internal.dirp/d_handle
 
    union {
-#ifdef USE_MDAL
+#if USE_MDAL
       MDAL_Handle d_handle;  // dir-oriented MDAL ops
 #else
       DIR*        dirp;
@@ -612,7 +612,7 @@ typedef struct {
 } MarFS_DirHandle;
 
 
-#ifdef USE_MDAL
+#if USE_MDAL
 // shorthand
 #  define D_CTX(DH)          &(DH)->internal.d_handle.ctx
 #  define D_MDAL(DH)         (DH)->internal.d_handle.mdal

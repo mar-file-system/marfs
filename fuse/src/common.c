@@ -1316,7 +1316,7 @@ int write_chunkinfo(MarFS_FileHandle*     fh,
    }
 
    // write portable binary to MD file
-#ifdef USE_MDAL
+#if USE_MDAL
    ssize_t wr_count = F_OP(write, fh, str, chunk_info_len);
 #else
    ssize_t wr_count = write(fh->md_fd, str, chunk_info_len);
@@ -1342,7 +1342,7 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
    static const size_t chunk_info_len = sizeof(MultiChunkInfo);
 
    char    str[chunk_info_len];
-#ifdef USE_MDAL
+#if USE_MDAL
    ssize_t rd_count = F_OP(read, fh, str, chunk_info_len);
 #else
    ssize_t rd_count = read(fh->md_fd, str, chunk_info_len);
@@ -1385,7 +1385,7 @@ int seek_chunkinfo(MarFS_FileHandle* fh, size_t chunk_no) {
    const size_t chunk_info_len = sizeof(MultiChunkInfo);
 
    off_t offset = chunk_no * chunk_info_len;
-#ifdef USE_MDAL
+#if USE_MDAL
    TRY_GE0( F_OP(lseek, fh, offset, SEEK_SET) );
 #else
    TRY_GE0( lseek(fh->md_fd, offset, SEEK_SET) );
@@ -1422,7 +1422,7 @@ int seek_chunkinfo(MarFS_FileHandle* fh, size_t chunk_no) {
 //          // find the MarFS logical file-size by counting MultiChunkInfo
 //          // objects, written into the metadata file.  There will always be at
 //          // least one, even if file received no writes (?)
-//       #ifdef USE_MDAL
+//       #if USE_MDAL
 //          if (! F_OP(open, fh, info.post.md_path, (O_RDONLY)))  // no O_BINARY in Linux.
 //             return -1;
 //       #else
@@ -1434,7 +1434,7 @@ int seek_chunkinfo(MarFS_FileHandle* fh, size_t chunk_no) {
 //       #endif
 //          MultiChunkInfo final_chunk;      // gets final chunk-contents
 //          ssize_t n_chunks = count_chunkinfo(fh, &final_chunk);
-//       #ifdef USE_MDAL
+//       #if USE_MDAL
 //          close(fh->md_fd);
 //       #else
 //          F_OP(close, fh);
@@ -1467,7 +1467,7 @@ ssize_t count_chunkinfo(MarFS_FileHandle* fh) {
    ssize_t       result = 0;
 
    while (1) {
-#ifdef USE_MDAL
+#if USE_MDAL
       ssize_t rd_count = F_OP(read, fh, str, chunk_info_len);
 #else
       ssize_t rd_count = read(fh->md_fd, str, chunk_info_len);

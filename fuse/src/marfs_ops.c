@@ -263,7 +263,7 @@ int marfs_ftruncate(const char*            path,
    STAT_XATTRS(info);
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
-#ifdef USE_MDAL
+#if USE_MDAL
       TRY0( F_OP(ftruncate, fh, length) );
 #else
       TRY0( ftruncate(fh->md_fd, length) );
@@ -296,7 +296,7 @@ int marfs_ftruncate(const char*            path,
 
    // metadata filehandle is still open to the current MD file.
    // That's okay, but we need to ftruncate it, as well.
-#ifdef USE_MDAL
+#if USE_MDAL
    if (F_OP(is_open, fh)) {
       if (fh->flags & FH_WRITING)
          F_OP(ftruncate, fh, length); // (length == 0)
@@ -462,7 +462,7 @@ int marfs_getxattr (const char* path,
    //     lgetxattr("system.posix_acl_access",path,0,0).  The kernel calls
    //     us with this, for 'ls -l /marfs/jti/blah'.
 
-#ifdef USE_MDAL
+#if USE_MDAL
    TRY_GE0( F_OP_NOCTX(lgetxattr, info.ns, info.post.md_path, name, (void*)value, size) );
 #else
    TRY_GE0( lgetxattr(info.post.md_path, name, (void*)value, size) );
@@ -523,7 +523,7 @@ int marfs_listxattr (const char* path,
    // No need for access check, just try the op
    // Appropriate  listxattr call
    // NOTE: If caller passes <list>=0, we'll be fine.
-#ifdef USE_MDAL
+#if USE_MDAL
    TRY_GE0( F_OP_NOCTX(llistxattr, info.ns, info.post.md_path, list, size) );
 #else
    TRY_GE0( llistxattr(info.post.md_path, list, size) );
@@ -811,19 +811,21 @@ int marfs_open(const char*         path,
 
    STAT_XATTRS(info);
 
-#ifdef USE_MDAL
+#if USE_MDAL
    // copy static MDAL ptr from NS to FileHandle
    F_MDAL(fh) = info->pre.ns->file_MDAL;
-   LOG(LOG_INFO, "file MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
+   LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
 
    // allow MDAL implementation to do any initializations necessary
    F_OP(f_init, fh, F_MDAL(fh));
+#else
+   LOG(LOG_INFO, "ignoring file-MDAL: %s\n", MDAL_type_name(info->pre.ns->file_MDAL->type));
 #endif
 
    // If no xattrs, we let user read/write directly into the file.
    // This corresponds to a file that was created in DIRECT repo-mode.
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
-#ifdef USE_MDAL
+#if USE_MDAL
       if (! F_OP(open, fh, info->post.md_path, flags))
          return -1;
 #else
@@ -838,7 +840,7 @@ int marfs_open(const char*         path,
    else if ((fh->flags & FH_READING)
             && ((info->post.obj_type == OBJ_MULTI)
                 || (info->post.obj_type == OBJ_PACKED))) {
-#ifdef USE_MDAL
+#if USE_MDAL
       if (! F_OP(open, fh, info->post.md_path, (O_RDONLY)))
          return -1;
 #else
@@ -887,7 +889,7 @@ int marfs_open(const char*         path,
             return -1;
          }
 
-#ifdef USE_MDAL
+#if USE_MDAL
          if (! F_OP(open, fh, info->post.md_path, (O_WRONLY)))
             return -1;
 #else
@@ -900,7 +902,7 @@ int marfs_open(const char*         path,
 
          // position md_fd at the proper place for MultiChunkInfo for this chunk
          size_t chunk_info_offset = (chunk_no * sizeof(MultiChunkInfo));
-#ifdef USE_MDAL
+#if USE_MDAL
          TRY_GE0( F_OP(lseek, fh, chunk_info_offset, SEEK_SET) );
 #else
          TRY_GE0( lseek(fh->md_fd, chunk_info_offset, SEEK_SET) );
@@ -1132,7 +1134,7 @@ int marfs_opendir (const char*       path,
 
 #if USE_MDAL
    D_MDAL(dh) = info.ns->dir_MDAL;
-   LOG(LOG_INFO, "dir MDAL: %s\n", MDAL_type_name(D_MDAL(dh)->type));
+   LOG(LOG_INFO, "dir-MDAL: %s\n", MDAL_type_name(D_MDAL(dh)->type));
 
    // allow MDAL implementation to do any initializations necessary
    D_OP(d_init, dh, D_MDAL(dh));
@@ -1140,6 +1142,8 @@ int marfs_opendir (const char*       path,
    TRY_GT0( D_OP(opendir, dh, info.post.md_path) );
 
 #else
+   LOG(LOG_INFO, "ignoring dir-MDAL: %s\n", MDAL_type_name(info.ns->dir_MDAL->type));
+
    ///   TRY_GE0( opendir(info.md_path, ffi->flags, mode) );
    ///   TRY_GE0( opendir(info.post.md_path) );
    TRY_GT0( opendir(info.post.md_path) );
@@ -1185,7 +1189,7 @@ int marfs_read (const char*        path,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
        && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "reading DIRECT\n");
-#ifdef USE_MDAL
+#if USE_MDAL
       TRY_GE0( F_OP(read, fh, buf, size) );
 #else
       TRY_GE0( read(fh->md_fd, buf, size) );
@@ -1552,7 +1556,7 @@ int marfs_readdir (const char*        path,
    }
    else {
 
-#ifdef USE_MDAL
+#if USE_MDAL
       retval = D_OP(readdir, dh, path, buf, filler, offset);
 
 #else
@@ -1721,7 +1725,7 @@ int marfs_release (const char*        path,
    aws_iobuf_reset_hard(&os->iob);
 
    // close MD file, if it's open
-#ifdef USE_MDAL
+#if USE_MDAL
    if (F_OP(is_open, fh))
 #else
    if (fh->md_fd)
@@ -1756,7 +1760,7 @@ int marfs_release (const char*        path,
       ///      // ANSWER:  No.
       ///      TRY0( fsync(fh->md_fd) );
 
-#ifdef USE_MDAL
+#if USE_MDAL
       TRY0( F_OP(close, fh) );
       TRY0( F_OP(f_destroy, fh, F_MDAL(fh)) );
 #else
@@ -1833,7 +1837,7 @@ int marfs_releasedir (const char*       path,
       if (! dh->use_it) {
          LOG(LOG_INFO, "not root-dir\n");
 
-#ifdef USE_MDAL
+#if USE_MDAL
          TRY0( D_OP(closedir, dh) );
          TRY0( D_OP(d_destroy, dh, D_MDAL(dh)) );
 #else
@@ -1879,7 +1883,7 @@ int marfs_removexattr (const char* path,
    // No need for access check, just try the op
    // Appropriate  removexattr call filling in fuse structure 
 
-#ifdef USE_MDAL
+#if USE_MDAL
    TRY0( F_OP_NOCTX(lremovexattr, info.ns, info.post.md_path, name) );
 #else
    TRY0( lremovexattr(info.post.md_path, name) );
@@ -1919,7 +1923,7 @@ int marfs_rename (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  rename call filling in fuse structure 
-#ifdef USE_MDAL
+#if USE_MDAL
    TRY0( CTX_FREE_OP(rename, info.ns, info.post.md_path, info2.post.md_path) );
 #else
    TRY0( rename(info.post.md_path, info2.post.md_path) );
@@ -1991,7 +1995,7 @@ int marfs_setxattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  setxattr call filling in fuse structure 
-#ifdef USE_MDAL
+#if USE_MDAL
    TRY0( F_OP_NOCTX(lsetxattr, info.ns, info.post.md_path, name, value, size, flags) );
 #else
    TRY0( lsetxattr(info.post.md_path, name, value, size, flags) );
@@ -2371,7 +2375,7 @@ int marfs_write(const char*        path,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
        && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "no xattrs, and DIRECT: writing to file\n");
-#ifdef USE_MDAL
+#if USE_MDAL
       TRY_GE0( F_OP(write, fh, buf, size) );
 #else
       TRY_GE0( write(fh->md_fd, buf, size) );
@@ -2518,7 +2522,7 @@ int marfs_write(const char*        path,
       TRY0( stream_close(os) );
 
       // if we haven't already opened the MD file, do it now.
-#ifdef USE_MDAL
+#if USE_MDAL
       if (! F_OP(is_open, fh)) {
          if (! F_OP(open, fh, info->post.md_path, (O_WRONLY)) ) {
             LOG(LOG_ERR, "open %s failed (%s)\n", info->post.md_path, strerror(errno));
