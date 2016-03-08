@@ -928,7 +928,7 @@ int get_inodes(const char *fnameP, size_t obj_size, struct marfs_inode *inode,
 
                            // if counter matches the number of paths found in treewalk
                            // might as well stop looking
-                           if (counter == MAX_SCAN_FILE_COUNT) {
+                           if (counter == MAX_SCAN_FILE_COUNT-1) {
                               break;
                            }
                         }
