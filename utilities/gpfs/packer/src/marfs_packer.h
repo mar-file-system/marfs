@@ -138,9 +138,18 @@ typedef struct obj_lnklist {
    struct inode_lnklist *val;
 } obj_lnklist;
 
-int get_objects(struct marfs_inode *unpacked, int unpacked_size, obj_lnklist*  packed, int *packed_size, size_t obj_size_max);
+typedef struct pack_vars {
+   size_t max_object_size;
+   size_t small_object_size;
+   FILE *outfd;
+} pack_vars;
+
+
+
+int get_objects(struct marfs_inode *unpacked, int unpacked_size, 
+		obj_lnklist*  packed, int *packed_size, pack_vars *pack_params);
 int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns);
-int set_md(obj_lnklist *objects);
+int set_md(obj_lnklist *objects, pack_vars *pack_params);
 int set_xattrs(int inode, int xattr);
 int setup_config();
 int trash_inode(int inode); 
@@ -149,18 +158,18 @@ int pop( struct walk_path stack[MAX_STACK_SIZE], int *top, struct walk_path *dat
 void get_marfs_path(char * patht, char marfs[]);
 void check_security_access(MarFS_XattrPre *pre);
 void print_usage();
-int walk_and_scan_control (char* top_level_path, size_t max_object_size,
-                            size_t small_obj_size, const char* ns,
+int walk_and_scan_control (char* top_level_path, const char* ns,
                             MarFS_Repo* repo, MarFS_Namespace* namespace,
-                            uint8_t no_pack_flag);
+                            uint8_t no_pack_flag, pack_vars *pack_params);
 //int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace, size_t small_obj_size, struct walk_path *paths);
-int get_inodes(const char *fnameP, size_t obj_size, struct marfs_inode *inode,
+int get_inodes(const char *fnameP, struct marfs_inode *inode,
                int *marfs_inodeLen, size_t *sum_size, const char* namespace,
-               size_t small_obj_size, struct walk_path *paths);
+               struct walk_path *paths, pack_vars *pack_params);
 int find_inode(size_t inode_number, struct walk_path *paths);
-int pack_and_write(char* top_level_path, size_t max_object_size, MarFS_Repo* repo, 
-                   MarFS_Namespace* namespace, const char *ns, size_t small_obj_size, 
-                   struct walk_path *paths, uint8_t no_pack);
+int pack_and_write(char* top_level_path, MarFS_Repo* repo, 
+                   MarFS_Namespace* namespace, const char *ns, 
+                   struct walk_path *paths, uint8_t no_pack,
+		   pack_vars *pack_params);
 int parse_size_arg(char *input_size, uint64_t *out_value);
 #endif
 
