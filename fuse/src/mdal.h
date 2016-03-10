@@ -188,6 +188,7 @@ typedef  int     (*mdal_is_open) (MDAL_Context* ctx);
 // just operate on raw pathnames.  The argument will be the full path to
 // the MDFS file.
 
+typedef  int     (*mdal_mknod) (const char* path, mode_t mode, dev_t dev);
 typedef  int     (*mdal_lstat) (const char* path, struct stat* st);
 typedef  int     (*mdal_rename)(const char* from, const char* to);
 typedef  ssize_t (*mdal_lgetxattr)   (const char* path, const char* name,
@@ -241,6 +242,7 @@ typedef struct MDAL {
    mdal_ftruncate     ftruncate;
    mdal_lseek         lseek;
 
+   mdal_mknod         mknod;
    mdal_lstat         lstat;
    mdal_rename        rename;
    mdal_lgetxattr     lgetxattr;
