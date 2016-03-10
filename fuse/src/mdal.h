@@ -87,9 +87,9 @@ OF SUCH DAMAGE.
 #include "marfs_configuration.h" // MDAL_Type
 
 #include <stdint.h>
-#include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <fcntl.h>
 #include <attr/xattr.h>
 #include <dirent.h>
@@ -188,8 +188,8 @@ typedef  int     (*mdal_is_open) (MDAL_Context* ctx);
 // just operate on raw pathnames.  The argument will be the full path to
 // the MDFS file.
 
+typedef  int     (*mdal_lstat) (const char* path, struct stat* st);
 typedef  int     (*mdal_rename)(const char* from, const char* to);
-
 typedef  ssize_t (*mdal_lgetxattr)   (const char* path, const char* name,
                                       void* value, size_t size);
 typedef  ssize_t (*mdal_lsetxattr)   (const char* path, const char* name,
@@ -241,6 +241,7 @@ typedef struct MDAL {
    mdal_ftruncate     ftruncate;
    mdal_lseek         lseek;
 
+   mdal_lstat         lstat;
    mdal_rename        rename;
    mdal_lgetxattr     lgetxattr;
    mdal_lsetxattr     lsetxattr;
@@ -250,7 +251,6 @@ typedef struct MDAL {
    mdal_mkdir         mkdir;
    mdal_opendir       opendir;
    mdal_readdir       readdir;
-   // mdal_readdir_r     readdir_r;
    mdal_closedir      closedir;
 
    mdal_is_open       is_open;

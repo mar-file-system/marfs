@@ -409,7 +409,11 @@ int marfs_getattr (const char*  path,
       // NOTE: kernel should already have called readlink, to get past any
       //     symlinks.  lstat here is just to be safe.
       LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
-      TRY_GE0( lstat(info.post.md_path, stp) );
+#if USE_MDAL
+      TRY0( F_OP_NOCTX(lstat, info.ns, info.post.md_path, stp) );
+#else
+      TRY0( lstat(info.post.md_path, stp) );
+#endif
    }
 
    // mask out setuid/setgid bits.  Those are belong to us.  (see marfs_chmod())

@@ -336,7 +336,11 @@ int stat_regular(PathInfo* info) {
       return 0;                 /* already called stat_regular() */
 
    memset(&(info->st), 0, sizeof(struct stat));
+#if USE_MDAL
+   __TRY0( F_OP_NOCTX(lstat, info->ns, info->post.md_path, &info->st) );
+#else
    __TRY0( lstat(info->post.md_path, &info->st) );
+#endif
 
    info->flags |= PI_STAT_QUERY;
    return 0;
