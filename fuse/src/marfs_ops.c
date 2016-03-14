@@ -409,7 +409,11 @@ int marfs_getattr (const char*  path,
       // NOTE: kernel should already have called readlink, to get past any
       //     symlinks.  lstat here is just to be safe.
       LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
-      TRY_GE0( lstat(info.post.md_path, stp) );
+#if USE_MDAL
+      TRY0( F_OP_NOCTX(lstat, info.ns, info.post.md_path, stp) );
+#else
+      TRY0( lstat(info.post.md_path, stp) );
+#endif
    }
 
    // mask out setuid/setgid bits.  Those are belong to us.  (see marfs_chmod())
@@ -655,7 +659,11 @@ int marfs_mknod (const char* path,
 
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
+#if USE_MDAL
+   TRY0( F_OP_NOCTX(mknod, info.ns, info.post.md_path, mode, rdev) );
+#else
    TRY0( mknod(info.post.md_path, mode, rdev) );
+#endif
    LOG(LOG_INFO, "mode: (octal) 0%o\n", mode); // debugging
 
    // PROBLEM: marfs_open() assumes that a file that exists, which doesn't

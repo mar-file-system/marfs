@@ -336,7 +336,11 @@ int stat_regular(PathInfo* info) {
       return 0;                 /* already called stat_regular() */
 
    memset(&(info->st), 0, sizeof(struct stat));
+#if USE_MDAL
+   __TRY0( F_OP_NOCTX(lstat, info->ns, info->post.md_path, &info->st) );
+#else
    __TRY0( lstat(info->post.md_path, &info->st) );
+#endif
 
    info->flags |= PI_STAT_QUERY;
    return 0;
@@ -1789,7 +1793,8 @@ size_t get_stream_wr_open_size(MarFS_FileHandle* fh, uint8_t decrement) {
 //    /my_trash/ns1.0/a/b/c
 //
 // Where "a/b/c" represents 1000 different leaf-subdirectories, with each
-// character (a, b, or c) having all the values 0-9.
+// character (a, b, or c) having all the values 0-9.  (We think of "a" and
+// "b" as "branch" directories, and "c" as a "leaf" directory.)
 //
 // When a file with inode = "xxxxx762" (base 10) is trashed, it appears in
 // the subdir:
@@ -1813,10 +1818,13 @@ size_t get_stream_wr_open_size(MarFS_FileHandle* fh, uint8_t decrement) {
 //     initialized like this.
 //
 
-int init_scatter_tree(const char*    root_dir,
-                      const char*    ns_name,
-                      const uint32_t shard,
-                      const mode_t   mode) {
+
+// call init_scatter_tree(), not this.
+int init_scatter_tree_internal(const char*    root_dir,
+                               const char*    ns_name,
+                               const uint32_t shard,
+                               const mode_t   branch_mode,
+                               const mode_t   leaf_mode) {
    TRY_DECLS();
    struct stat st;
 
@@ -1878,7 +1886,7 @@ int init_scatter_tree(const char*    root_dir,
 
    // create the 'namespace.shard' dir
    LOG(LOG_INFO, " maybe create %s\n", dir_path);
-   rc = mkdir(dir_path, mode);
+   rc = mkdir(dir_path, branch_mode);
    if ((rc < 0) && (errno != EEXIST)) {
       LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
       return -1;
@@ -1897,6 +1905,7 @@ int init_scatter_tree(const char*    root_dir,
    // const size_t MAX_SUBDIR_SIZE = strlen("/xxx") + 1;
 
    // check whether the last subdir exists
+   // if not, we'll build/rebuild the entire tree.
    memcpy(sub_dir, "/9/9/9", 7); // incl final '/0'
 
    LOG(LOG_INFO, " checking %s\n", dir_path);
@@ -1908,44 +1917,44 @@ int init_scatter_tree(const char*    root_dir,
    }
 
    // subdir "/9/9/9" didn't exist: try to create all of them
+   // initialize "/i"
    LOG(LOG_INFO, " creating inode-subdirs\n");
    int i, j, k;
    for (i=0; i<=9; ++i) {
 
-      // cheaper than sprintf()
       sub_dir[0] = '/';
       sub_dir[1] = '0' + i;
       sub_dir[2] = 0;
 
-      rc = mkdir(dir_path, mode);
+      rc = mkdir(dir_path, branch_mode);
       if ((rc < 0) && (errno != EEXIST)) {
          LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
          return -1;
       }
 
+      // initialize "/i/j"
       LOG(LOG_INFO, " creating inode-subdirs %s/*\n", dir_path);
       for (j=0; j<=9; ++j) {
 
-         // cheaper than sprintf()
          sub_dir[2] = '/';
          sub_dir[3] = '0' + j;
          sub_dir[4] = 0;
 
-         rc = mkdir(dir_path, mode);
+         rc = mkdir(dir_path, branch_mode);
          if ((rc < 0) && (errno != EEXIST)) {
             LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
             return -1;
          }
 
+         // initialize "/i/j/k"
          for (k=0; k<=9; ++k) {
 
-            // cheaper than sprintf()
             sub_dir[4] = '/';
             sub_dir[5] = '0' + k;
             sub_dir[6] = 0;
 
             // make the '.../trash/namespace.shard//a/b/c' subdir
-            rc = mkdir(dir_path, mode);
+            rc = mkdir(dir_path, leaf_mode);
             if ((rc < 0) && (errno != EEXIST)) {
                LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
                return -1;
@@ -1956,6 +1965,22 @@ int init_scatter_tree(const char*    root_dir,
 
    return 0;                    // success
 }
+
+int init_scatter_tree(const char*    root_dir,
+                      const char*    ns_name,
+                      const uint32_t shard,
+                      const mode_t   branch_mode,
+                      const mode_t   leaf_mode) {
+
+   // temporarily suppress original umask, so we can avoid interfering with
+   // desired mode-args given in the arguments.
+   mode_t umask_orig = umask(0);
+   int rc = init_scatter_tree_internal(root_dir, ns_name, shard, branch_mode, leaf_mode);
+   umask(umask_orig);
+
+   return rc;
+}
+
 
 
 // NOTE: for now, all the marfs directories are chown root:root, cmod 770
@@ -1973,7 +1998,8 @@ int init_mdfs() {
 #if TBD
       MarFS_Repo*    repo  = ns->iwrite_repo; // for fuse
 #endif
-      mode_t         mode  = (S_IRWXU | S_IRWXG ); // default 'chmod 770'
+      mode_t         branch_mode  = (S_IRWXU | S_IXOTH );     // 'chmod 701'
+      mode_t         leaf_mode    = (branch_mode | S_IWOTH ); // 'chmod 703'
 
 
       LOG(LOG_INFO, "\n");
@@ -2021,7 +2047,7 @@ int init_mdfs() {
 
 
       // create the scatter-tree for trash, if needed
-      __TRY0( init_scatter_tree(ns->trash_md_path, ns->name, shard, mode) );
+      __TRY0( init_scatter_tree(ns->trash_md_path, ns->name, shard, branch_mode, leaf_mode) );
 
 
 
@@ -2094,7 +2120,7 @@ int init_mdfs() {
 
       // create a scatter-tree for semi-direct fuse repos, if any
       if (repo->access_method == ACCESSMETHOD_SEMI_DIRECT) {
-         __TRY0( init_scatter_tree(repo->host, ns->name, shard, mode) );
+         __TRY0( init_scatter_tree(repo->host, ns->name, shard, branch_mode, leaf_mode) );
       }
 #endif
 
