@@ -245,7 +245,7 @@ MarFS_Repo_Ptr find_repo_by_name2( const char* name ) {
 * 
 ******************************************************************************/
 int get_objects(struct marfs_inode *unpacked, int unpacked_size, 
-		obj_lnklist*  packed, int *packed_size, pack_vars *packed_params){
+		obj_lnklist**  packed, int *packed_size, pack_vars *packed_params){
 	//int cur_size=0;	
 	int sum_obj_size=0;	
 	int i;
@@ -363,9 +363,10 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size,
 
 
 	*packed_size = count;
-	*packed = *main_object;
+	*packed = main_object;
         LOG(LOG_INFO, "sub object count: %d  main_object_count: %d\n", packed->count, count);
-        if (packed->val == NULL) {
+        if (main_object->val == NULL) {
+           fprintf(stderr, "Value is null\n");
            LOG(LOG_INFO, "NULL value\n");
         }
 	return 0;
@@ -560,7 +561,7 @@ int set_md(obj_lnklist *objects, pack_vars *pack_params)
 * Name 
 * 
 ******************************************************************************/
-int set_xattrs(int inode, int xattr){
+int set_xattrs(size_t inode, int xattr){
 /* set the xattr stuff according to struct 
  * Don't forget new offsets, which will include size+recovery info
  * All new meta data ctime is all the same for each packed like object
@@ -592,7 +593,7 @@ int setup_config(){
 * Name 
 * 
 ******************************************************************************/
-int trash_inode(int inode){                                                                                                                                                                                
+int trash_inode(size_t inode){                                                                                                                                                                                
 /*
  *
  *   
@@ -738,7 +739,7 @@ int walk_and_scan_control (char* top_level_path, const char* ns,
 {
 //   struct marfs_inode unpacked[1024]; // Chris originally had this set to 102400 but that caused problems
    struct walk_path dpath;
-   struct walk_path rdpath;
+   struct walk_path rdpath = {0};
    int reg_file_cnt =0;
    int i;
    struct walk_path paths[MAX_SCAN_FILE_COUNT];  
@@ -755,7 +756,7 @@ int walk_and_scan_control (char* top_level_path, const char* ns,
    //struct walk_path stack[max], data;
    struct walk_path stack[MAX_STACK_SIZE];
    //int top, option, reply;
-   int top;
+   int top = 0;
 
    int rc = push(stack,&top, &rdpath);
 
@@ -1037,7 +1038,7 @@ int pack_and_write(char* top_level_path, MarFS_Repo* repo,
    //struct marfs_inode unpacked[1024]; // Chris originally had this set to 102400 but that caused problems
    struct marfs_inode unpacked[MAX_SCAN_FILE_COUNT]; // Chris originally had this set to 102400 but that caused problems
    int unpackedLen = 0;
-   obj_lnklist    packed;
+   obj_lnklist    *packed=NULL;
    int packedLen = 0;
    int ret;
    size_t unpacked_sum_size = 0;
@@ -1057,7 +1058,7 @@ int pack_and_write(char* top_level_path, MarFS_Repo* repo,
       fprintf(pack_params->outfd, "Note:  total size does not include recovery info.\n");
       return 0;
    }
-   // No potential packer objects fount
+   // No potential packer objects found
    if (unpackedLen == 0) {
       fprintf(stderr, "No valid packer objects found - continuing with path \
 chunking or Exiting now\n");
@@ -1068,16 +1069,18 @@ chunking or Exiting now\n");
    else {
       // create link-lists for objects found
       ret = get_objects(unpacked, unpackedLen, &packed, &packedLen, pack_params);
-      if (packed.val == NULL) {
+      if (packed->val == NULL) {
          LOG(LOG_INFO, "found NULL value even though inode scan found something\n");
+         fprintf(stderr, "found NULL value even though inode scan found something\n");
          return -1;
       }   
       LOG(LOG_INFO, "%d %d\n", unpackedLen, packedLen);
       // repack small objects into larger object
-      ret = pack_up(&packed, repo, namespace);
+      ret = pack_up(packed, repo, namespace);
 
       // Update metadata information
-      set_md(&packed, pack_params);
+      set_md(packed, pack_params);
+      free_objects(packed);
    }
    return 0;
 }
@@ -1164,4 +1167,26 @@ int parse_size_arg(char *chbytes, uint64_t *out_value)
 
    *out_value = insize * (uint64_t)atol(chbytes);
    return 0;
+}
+
+/******************************************************************************
+* Name free_objects
+* 
+* Free objects link list memory
+******************************************************************************/
+void free_objects(obj_lnklist *objects)
+{
+   obj_lnklist *temp_obj=NULL;
+   inode_lnklist *temp_inode;
+   inode_lnklist *object;
+
+   while((temp_obj=objects)!=NULL) {
+      object = objects->val;
+      while((temp_inode=object) != NULL) {
+         object = object->next;
+         free(temp_inode);
+      }
+      objects = objects->next;
+      free(temp_obj);
+   }
 }
