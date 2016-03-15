@@ -860,7 +860,7 @@ int get_inodes(const char *fnameP, struct marfs_inode *inode,
 
    size_t inode_index;
    IOBuf *head_buf = aws_iobuf_new();
-   char *object;
+   char *object = NULL;
    int printable;
    int i;
 
@@ -992,6 +992,10 @@ int get_inodes(const char *fnameP, struct marfs_inode *inode,
             } // endwhile 
          } // endif strcmp fileset name
       } // endif inode != 3
+      if (object != NULL) {
+         free(object);
+         object = NULL;
+      }
    } // endwhile
    *marfs_inodeLen = counter;
       gpfs_close_inodescan(iscanP);
