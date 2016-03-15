@@ -98,7 +98,7 @@ typedef struct MarFS_XattrPost2 {
 } MarFS_XattrPost2;
 
 struct walk_path{
-	int inode;
+	size_t inode;
 	char path[1024];
 	char parent[1024];
 };
@@ -107,7 +107,7 @@ struct marfs_inode {
 	time_t atime;
 	time_t ctime;
 	time_t mtime;
-        int inode;
+        size_t inode;
         int size;
         int offset;
 	char path[1024];
@@ -147,12 +147,12 @@ typedef struct pack_vars {
 
 
 int get_objects(struct marfs_inode *unpacked, int unpacked_size, 
-		obj_lnklist*  packed, int *packed_size, pack_vars *pack_params);
+		obj_lnklist**  packed, int *packed_size, pack_vars *pack_params);
 int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns);
 int set_md(obj_lnklist *objects, pack_vars *pack_params);
-int set_xattrs(int inode, int xattr);
+int set_xattrs(size_t inode, int xattr);
 int setup_config();
-int trash_inode(int inode); 
+int trash_inode(size_t inode); 
 int push( struct walk_path stack[MAX_STACK_SIZE],int *top, struct walk_path *data);
 int pop( struct walk_path stack[MAX_STACK_SIZE], int *top, struct walk_path *data);
 void get_marfs_path(char * patht, char marfs[]);
@@ -171,5 +171,6 @@ int pack_and_write(char* top_level_path, MarFS_Repo* repo,
                    struct walk_path *paths, uint8_t no_pack,
 		   pack_vars *pack_params);
 int parse_size_arg(char *input_size, uint64_t *out_value);
+void free_objects(obj_lnklist *objects);
 #endif
 
