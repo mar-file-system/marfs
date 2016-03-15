@@ -163,7 +163,11 @@ int marfs_chmod(const char* path,
    // No need for access check, just try the op
    // WARNING: No lchmod() on rrz.
    //          chmod() always follows links.
+#if USE_MDAL
+   TRY0( F_OP_NOCTX(chmod, info.ns, info.post.md_path, mode) );
+#else
    TRY0( chmod(info.post.md_path, mode) );
+#endif
 
    EXIT();
    return 0;
