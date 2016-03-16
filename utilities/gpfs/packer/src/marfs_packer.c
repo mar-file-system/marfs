@@ -83,6 +83,7 @@
 #include <attr/xattr.h>
 #include "marfs_base.h"
 #include "common.h"
+#include "marfs_ops.h"
 #include "marfs_packer.h"
 
 
@@ -525,7 +526,7 @@ int set_md(obj_lnklist *objects, pack_vars *pack_params)
             post_2_str(post, MARFS_MAX_XATTR_SIZE, &object->val.post,object->val.pre.repo,0);
                            
             // Remove the files via fuse mount
-            if ((remove(marfs_path))==-1)
+            if ((marfs_unlink(marfs_sub_path(marfs_path)))==-1)
                fprintf(stderr, "Error removing %s\n", marfs_path);
             LOG(LOG_INFO, "remove marfs_path:=%s\n", marfs_path);			
                                
