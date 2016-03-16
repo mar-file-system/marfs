@@ -171,6 +171,10 @@ int     posix_mknod(const char* path, mode_t mode, dev_t dev) {
    return mknod(path, mode, dev);
 }
 
+int     posix_chmod(const char* path, mode_t mode) {
+   return chmod(path, mode);
+}
+
 int     posix_lstat(const char* path, struct stat* st) {
    return lstat(path, st);
 }
@@ -299,6 +303,7 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->lseek        = &posix_lseek;
 
       mdal->mknod        = &posix_mknod;
+      mdal->chmod        = &posix_chmod;
       mdal->lstat        = &posix_lstat;
       mdal->rename       = &posix_rename;
       mdal->lgetxattr    = &posix_lgetxattr;
