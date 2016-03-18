@@ -153,8 +153,8 @@ int marfs_chmod(const char* path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
-   if (mode & (S_ISUID | S_ISGID)) {
-      LOG(LOG_ERR, "attempt to change setuid or setgid bits, on path '%s' (mode: %x)\n",
+   if (mode & S_ISUID) {
+      LOG(LOG_ERR, "attempt to change setuid bits, on path '%s' (mode: %x)\n",
           path, mode);
       errno = EPERM;
       return -1;
@@ -420,8 +420,8 @@ int marfs_getattr (const char*  path,
 #endif
    }
 
-   // mask out setuid/setgid bits.  Those are belong to us.  (see marfs_chmod())
-   stp->st_mode &= ~(S_ISUID | S_ISGID);
+   // mask out setuid bits.  Those are belong to us.  (see marfs_chmod())
+   stp->st_mode &= ~(S_ISUID);
 
    EXIT();
    return 0;
