@@ -117,7 +117,7 @@ int  marfs_fsync(const char* path, int isdatasync, MarFS_FileHandle* fh);
 int  marfs_fsyncdir(const char* path, int isdatasync, MarFS_DirHandle* dh);
 
 int  marfs_ftruncate(const char* path, off_t size, MarFS_FileHandle* fh);
-	
+
 int  marfs_getattr(const char* path, struct stat* stbuf);
 
 int  marfs_getxattr(const char* path, const char* name, char* value, size_t size);
@@ -170,6 +170,8 @@ int  marfs_unlink(const char* path);
 
 // deprecated in 2.6
 int  marfs_utime(const char* path, struct utimbuf* tb);
+
+int  marfs_utimensat(const char* path, const struct timespec times[2], int flags);
 
 int  marfs_utimens(const char* path, const struct timespec ts[2]);
 

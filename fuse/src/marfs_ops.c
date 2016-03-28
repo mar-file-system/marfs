@@ -2298,7 +2298,7 @@ int marfs_unlink (const char* path) {
 //     metadata file.)
 //
 int marfs_utime(const char*     path,
-                struct utimbuf* buf) {   
+                struct utimbuf* buf) {
    ENTRY();
 
    PathInfo info;
@@ -2316,6 +2316,32 @@ int marfs_utime(const char*     path,
    EXIT();
    return 0;
 }
+
+// If pftool uses marfs_utime(), we'll only set the destination atime/mtime
+// to the second, truncating the microseconds component.  Comparisons will
+// still show them the same (if we use st.st_atime, instead of st.st_atim),
+// but everyone will wonder why the microseconds are always different.
+int marfs_utimensat(const char*           path,
+                    const struct timespec times[2],
+                    int                   flags) {
+   ENTRY();
+
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+   EXPAND_PATH_INFO(&info, path);
+
+   // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
+   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+
+   // No need for access check, just try the op
+   // Appropriate  utimens call filling in fuse structure
+   // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
+   TRY_GE0( utimensat(AT_FDCWD, info.post.md_path, times, flags) );
+
+   EXIT();
+   return 0;
+}
+
 
 // System is giving us timestamps that should be applied to the path.
 // http://fuse.sourceforge.net/doxygen/structfuse__operations.html
