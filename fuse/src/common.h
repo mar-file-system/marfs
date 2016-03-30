@@ -281,8 +281,12 @@ typedef enum {
          return -EACCES;   /* should be EPERM? (i.e. being root wouldn't help) */ \
    } while (0)
 
+// this follows symlinks!
 #define ACCESS(PATH, PERMS)            TRY0( access((PATH), (PERMS)) )
 
+// With these args, this doesn't follow symlinks
+#define FACCESSAT(PATH, PERMS)                                          \
+   TRY0( faccessat(0, (PATH), (PERMS), (AT_EACCESS | AT_SYMLINK_NOFOLLOW) )
 
 
 // ---------------------------------------------------------------------------

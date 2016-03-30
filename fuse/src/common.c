@@ -737,7 +737,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          //      [However, you'd want to be sure that no two processes
          //      would ever be racing to read/modify/write such an xattr.]
 
-         // If the flag isn't set, then don't install (or remove) the xattr.
+         // If the flag isn't set, then remove the xattr.
          if (info->flags & (PI_RESTART)) {
             LOG(LOG_INFO, "XVT_RESTART\n");
             xattr_value_str[0] = '1';
@@ -892,40 +892,12 @@ int  trash_unlink(PathInfo*   info,
       return 0;
    }
 
-#if 0
-   //    uniqueify name somehow with time perhaps == trashname, 
-
-   __TRY0( expand_trash_info(info, path) ); /* initialize info->trash_md_path */
-   LOG(LOG_INFO, "md_path:    '%s'\n", info->post.md_path);
-
-   //    rename file to trashname 
-   __TRY0( rename(info->post.md_path, info->trash_md_path) );
-
-   // copy xattrs to the trash-file.
-   // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
-   // set to our trash_md_path.  Then save_xattrs() will just work on the
-   // trash-file.
-   {  PathInfo trash_info = *info;
-      memcpy(trash_info.post.md_path, trash_info.trash_md_path, MARFS_MAX_MD_PATH);
-
-      trash_info.post.flags |= POST_TRASH;
-
-      __TRY0( save_xattrs(&trash_info, MARFS_ALL_XATTRS) );
-   }
-
-   // write full-MDFS-path of original-file into similarly-named file
-   __TRY0( write_trash_companion_file(info, path) );
-
-#else
-
    // we no longer assume that a simple rename into the trash will always
    // be possible (e.g. because trash will be in a different fileset, or
    // filesystem).  It was thought we shouldn't even *try* the rename
    // first.  Instead, we'll copy to the trash, then unlink the original.
    __TRY0( trash_truncate(info, path) );
    __TRY0( unlink(info->post.md_path) );
-
-#endif
 
    return 0;
 }
@@ -1000,96 +972,110 @@ int  trash_truncate(PathInfo*   info,
    // mode_t new_mode = info->st.st_mode & (ACCESSPERMS); // ACCESSPERMS is only BSD
    mode_t new_mode = info->st.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO); // more-portable
 
-   // we'll read from md_file
-   int in = open(info->post.md_path, O_RDONLY);
-   if (in == -1) {
-      LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
-          info->post.md_path, new_mode);
-      return -1;
-   }
-
    // we'll write to trash_file
    __TRY0( expand_trash_info(info, path) );
-   int out = open(info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
-   if (out == -1) {
-      LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
-          info->trash_md_path, new_mode);
-      __TRY0( close(in) );
-      return -1;
+
+   // This is untested code to move symlinks to the named trash-file.
+   // Because links also don't have (MarFS) xattrs, they will already have
+   // been simply unlinked above.
+   if (S_ISLNK(info->st.st_mode)) {
+      char target[MARFS_MAX_MD_PATH];
+      __TRY_GE0( readlink(info->post.md_path, target, MARFS_MAX_MD_PATH) );
+      __TRY0( symlink(target, info->trash_md_path) );
+      __TRY0( chmod(info->trash_md_path, new_mode) );
    }
 
-   // MD files are trunc'ed to their "logical" size (the size of the data
-   // they represent).  They may also contain some "system" data (blobs we
-   // have tucked inside, to track object-storage.  Move the physical data,
-   // then trunc to logical size.
-   off_t log_size = info->st.st_size;
-   off_t phy_size = info->post.chunk_info_bytes;
-
-   if (phy_size) {
-
-      // buf used for data-transfer
-      const size_t BUF_SIZE = 32 * 1024 * 1024; /* 32 MB */
-      char* buf = malloc(BUF_SIZE);
-      if (!buf) {
-         LOG(LOG_ERR, "malloc %ld bytes failed\n", BUF_SIZE);
-
-         // clean-up
+   else {
+      // read from md_file
+      int in = open(info->post.md_path, O_RDONLY);
+      if (in == -1) {
+         LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
+             info->post.md_path, new_mode);
+         return -1;
+      }
+      // write to trash file
+      int out = open(info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
+      if (out == -1) {
+         LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
+             info->trash_md_path, new_mode);
          __TRY0( close(in) );
-         __TRY0( close(out) );
          return -1;
       }
 
-      size_t read_size = ((phy_size < BUF_SIZE) ? phy_size : BUF_SIZE);
-      size_t wr_total = 0;
+      // MD files are trunc'ed to their "logical" size (the size of the data
+      // they represent).  They may also contain some "system" data (blobs we
+      // have tucked inside, to track object-storage.  Move the physical data,
+      // then trunc to logical size.
+      off_t log_size = info->st.st_size;
+      off_t phy_size = info->post.chunk_info_bytes;
 
-      // copy phy-data from md_file to trash_file, one buf at a time
-      ssize_t rd_count;
-      for (rd_count = read(in, (void*)buf, read_size);
-           (read_size && (rd_count > 0));
-           rd_count = read(in, (void*)buf, read_size)) {
+      if (phy_size) {
 
-         char*  buf_ptr = buf;
-         size_t remain  = rd_count;
-         while (remain) {
-            size_t wr_count = write(out, buf_ptr, remain);
-            if (wr_count < 0) {
-               LOG(LOG_ERR, "err writing %s (byte %ld)\n",
-                   info->trash_md_path, wr_total);
+         // buf used for data-transfer
+         const size_t BUF_SIZE = 32 * 1024 * 1024; /* 32 MB */
+         char* buf = malloc(BUF_SIZE);
+         if (!buf) {
+            LOG(LOG_ERR, "malloc %ld bytes failed\n", BUF_SIZE);
 
-               // clean-up
-               __TRY0( close(in) );
-               __TRY0( close(out) );
-               free(buf);
-               return -1;
-            }
-            remain   -= wr_count;
-            wr_total += wr_count;
-            buf_ptr  += wr_count;
+            // clean-up
+            __TRY0( close(in) );
+            __TRY0( close(out) );
+            return -1;
          }
 
-         size_t phy_remain = phy_size - wr_total;
-         read_size = ((phy_remain < BUF_SIZE) ? phy_remain : BUF_SIZE);
-      }
-      free(buf);
-      if (rd_count < 0) {
-         LOG(LOG_ERR, "err reading %s (byte %ld)\n",
-             info->trash_md_path, wr_total);
+         size_t read_size = ((phy_size < BUF_SIZE) ? phy_size : BUF_SIZE);
+         size_t wr_total = 0;
 
-         // clean-up
-         __TRY0( close(in) );
-         __TRY0( close(out) );
-         return -1;
+         // copy phy-data from md_file to trash_file, one buf at a time
+         ssize_t rd_count;
+         for (rd_count = read(in, (void*)buf, read_size);
+              (read_size && (rd_count > 0));
+              rd_count = read(in, (void*)buf, read_size)) {
+
+            char*  buf_ptr = buf;
+            size_t remain  = rd_count;
+            while (remain) {
+               size_t wr_count = write(out, buf_ptr, remain);
+               if (wr_count < 0) {
+                  LOG(LOG_ERR, "err writing %s (byte %ld)\n",
+                      info->trash_md_path, wr_total);
+
+                  // clean-up
+                  __TRY0( close(in) );
+                  __TRY0( close(out) );
+                  free(buf);
+                  return -1;
+               }
+               remain   -= wr_count;
+               wr_total += wr_count;
+               buf_ptr  += wr_count;
+            }
+
+            size_t phy_remain = phy_size - wr_total;
+            read_size = ((phy_remain < BUF_SIZE) ? phy_remain : BUF_SIZE);
+         }
+         free(buf);
+         if (rd_count < 0) {
+            LOG(LOG_ERR, "err reading %s (byte %ld)\n",
+                info->trash_md_path, wr_total);
+
+            // clean-up
+            __TRY0( close(in) );
+            __TRY0( close(out) );
+            return -1;
+         }
       }
+
+      // clean-up
+      __TRY0( close(in) );
+      __TRY0( close(out) );
+
+      // trunc trash-file to size
+      __TRY0( truncate(info->trash_md_path, log_size) );
    }
 
-   // clean-up
-   __TRY0( close(in) );
-   __TRY0( close(out) );
-
-   // trunc trash-file to size
-   __TRY0( truncate(info->trash_md_path, log_size) );
-
-   // copy xattrs to the trash-file.
+   // copy any xattrs to the trash-file.
+   //
    // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
    // set to our trash_md_path.  Then save_xattrs() will just work on the
    // trash-file.
@@ -1098,15 +1084,14 @@ int  trash_truncate(PathInfo*   info,
    trash_info.post.flags |= POST_TRASH;
    __TRY0( save_xattrs(&trash_info, MARFS_ALL_XATTRS) );
 
-
-   // write full-MDFS-path of original-file into trash-companion file
-   __TRY0( write_trash_companion_file(info, path, &trash_time) );
-
    // update trash-file atime/mtime to support "undelete"
    __TRY0( utime(info->trash_md_path, &trash_time) );
 
-   // clean out everything on the original
+   // clean out marfs xattrs on the original
    __TRY0( trunc_xattr(info) );
+
+   // write full-MDFS-path of original-file into trash-companion file
+   __TRY0( write_trash_companion_file(info, path, &trash_time) );
 
    // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
    info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY | PI_PRE_INIT | PI_POST_INIT);
