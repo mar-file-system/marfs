@@ -153,8 +153,8 @@ int marfs_chmod(const char* path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
    CHECK_PERMS(info.ns->iperms, (R_META | W_META));
 
-   if (mode & (S_ISUID | S_ISGID)) {
-      LOG(LOG_ERR, "attempt to change setuid or setgid bits, on path '%s' (mode: %x)\n",
+   if (mode & S_ISUID) {
+      LOG(LOG_ERR, "attempt to change setuid bits, on path '%s' (mode: %x)\n",
           path, mode);
       errno = EPERM;
       return -1;
@@ -420,8 +420,8 @@ int marfs_getattr (const char*  path,
 #endif
    }
 
-   // mask out setuid/setgid bits.  Those are belong to us.  (see marfs_chmod())
-   stp->st_mode &= ~(S_ISUID | S_ISGID);
+   // mask out setuid bits.  Those are belong to us.  (see marfs_chmod())
+   stp->st_mode &= ~(S_ISUID);
 
    EXIT();
    return 0;
@@ -831,7 +831,7 @@ int marfs_open(const char*         path,
    // allow MDAL implementation to do any initializations necessary
    F_OP(f_init, fh, F_MDAL(fh));
 #else
-   LOG(LOG_INFO, "ignoring file-MDAL: %s\n", MDAL_type_name(info->pre.ns->file_MDAL->type));
+   LOG(LOG_INFO, "ignoring file-MDAL\n");
 #endif
 
    // If no xattrs, we let user read/write directly into the file.
@@ -1154,7 +1154,7 @@ int marfs_opendir (const char*       path,
    TRY_GT0( D_OP(opendir, dh, info.post.md_path) );
 
 #else
-   LOG(LOG_INFO, "ignoring dir-MDAL: %s\n", MDAL_type_name(info.ns->dir_MDAL->type));
+   LOG(LOG_INFO, "ignoring dir-MDAL\n");
 
    ///   TRY_GE0( opendir(info.md_path, ffi->flags, mode) );
    ///   TRY_GE0( opendir(info.post.md_path) );
@@ -2251,31 +2251,16 @@ int marfs_unlink (const char* path) {
 
    // Call access() syscall to check/act if allowed to unlink for this user 
    //
-   // NOTE: if path is a symlink, pointing to another marfs file, access()
-   //       will hang forever, because it will require interaction with us,
-   //       but we're unavailable until we return from this.  Therefore, in
-   //       the case of a symlink, which points to a marfs-file, we skip
-   //       the call to access().  How do we know if it's a marfs file?
-   //       Well, if it's an absolute path with our same mount-point, or
-   //       it's a relative path, then we'll assume it's a marfs file.
-   //       This doesn't mean user gets to rename links she shouldn't be
-   //       touching: if there is insufficient permission, the op will
-   //       fail.
-   STAT(&info);
-   int call_access = 1;
-   if (S_ISLNK(info.st.st_mode)) {
-      char target[MARFS_MAX_MD_PATH];
+   // PROBLEM: access() follows symlinks.  We are unlinking the
+   //       symlink, not the thing it points to.  trash_unlink()
+   //       just unlinks them outright (because they don't have
+   //       xattrs).  There's also untested code there, to try to
+   //       move symlinks to the trash.  If you want to do that,
+   //       look at trash_unlink().
+   //
+   //       Meanwhile, we can skip access().
 
-      TRY_GE0( readlink(info.post.md_path, target, MARFS_MAX_MD_PATH) );
-      if ((rc_ssize >= marfs_config->mnt_top_len)
-          && (! strncmp(marfs_config->mnt_top, target, marfs_config->mnt_top_len)))
-         call_access = 0;
-      else if ((rc_ssize > 0)
-               && (target[0] != '/'))
-         call_access = 0;
-   }
-   if (call_access)
-      ACCESS(info.post.md_path, (W_OK));
+   STAT(&info);
 
    // rename file with all xattrs into trashdir, preserving objects and paths 
    TRASH_UNLINK(&info, path);
@@ -2298,7 +2283,7 @@ int marfs_unlink (const char* path) {
 //     metadata file.)
 //
 int marfs_utime(const char*     path,
-                struct utimbuf* buf) {   
+                struct utimbuf* buf) {
    ENTRY();
 
    PathInfo info;
@@ -2316,6 +2301,32 @@ int marfs_utime(const char*     path,
    EXIT();
    return 0;
 }
+
+// If pftool uses marfs_utime(), we'll only set the destination atime/mtime
+// to the second, truncating the microseconds component.  Comparisons will
+// still show them the same (if we use st.st_atime, instead of st.st_atim),
+// but everyone will wonder why the microseconds are always different.
+int marfs_utimensat(const char*           path,
+                    const struct timespec times[2],
+                    int                   flags) {
+   ENTRY();
+
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+   EXPAND_PATH_INFO(&info, path);
+
+   // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
+   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+
+   // No need for access check, just try the op
+   // Appropriate  utimens call filling in fuse structure
+   // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
+   TRY_GE0( utimensat(AT_FDCWD, info.post.md_path, times, flags) );
+
+   EXIT();
+   return 0;
+}
+
 
 // System is giving us timestamps that should be applied to the path.
 // http://fuse.sourceforge.net/doxygen/structfuse__operations.html

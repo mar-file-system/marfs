@@ -878,7 +878,9 @@ int stream_open(ObjectStream* os,
          s3_chunked_transfer_encoding_r(1, ctx);       // only used for PUT/POST
    }
 
-   aws_iobuf_reset_lite(b);          // doesn't affect <user_data> or <context>
+   // aws_iobuf_reset_lite(b);          // doesn't affect <user_data> or <context>
+   aws_iobuf_reset(b);          // doesn't affect <user_data> or <context>
+
    if (put) {
       SEM_INIT(&os->iob_empty, 0, 0);
       SEM_INIT(&os->iob_full,  0, 0);
