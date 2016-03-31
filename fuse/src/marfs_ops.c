@@ -831,7 +831,7 @@ int marfs_open(const char*         path,
    // allow MDAL implementation to do any initializations necessary
    F_OP(f_init, fh, F_MDAL(fh));
 #else
-   LOG(LOG_INFO, "ignoring file-MDAL: %s\n", MDAL_type_name(info->pre.ns->file_MDAL->type));
+   LOG(LOG_INFO, "ignoring file-MDAL\n");
 #endif
 
    // If no xattrs, we let user read/write directly into the file.
@@ -1154,7 +1154,7 @@ int marfs_opendir (const char*       path,
    TRY_GT0( D_OP(opendir, dh, info.post.md_path) );
 
 #else
-   LOG(LOG_INFO, "ignoring dir-MDAL: %s\n", MDAL_type_name(info.ns->dir_MDAL->type));
+   LOG(LOG_INFO, "ignoring dir-MDAL\n");
 
    ///   TRY_GE0( opendir(info.md_path, ffi->flags, mode) );
    ///   TRY_GE0( opendir(info.post.md_path) );
