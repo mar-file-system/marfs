@@ -777,13 +777,16 @@ int process_packed(File_Info *file_info_ptr)
 {
    FILE *pipe_cat = NULL;
    FILE *pipe_grep = NULL;
+   FILE *pipe_wc = NULL;
 
    char obj_buf[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
    char file_buf[MARFS_MAX_MD_PATH];
+   char wc_buf[64];
    char objid[MARFS_MAX_OBJID_SIZE];
    char last_objid[MARFS_MAX_OBJID_SIZE];
    char grep_command[MARFS_MAX_MD_PATH+MAX_PACKED_NAME_SIZE+64];
    char cat_command[MAX_PACKED_NAME_SIZE];
+   char wc_command[MAX_PACKED_NAME_SIZE];
    int obj_return;
    int df_return;
 
@@ -793,6 +796,7 @@ int process_packed(File_Info *file_info_ptr)
    MarFS_XattrPre pre_struct;
    MarFS_XattrPre* pre_ptr = &pre_struct;
    int multi_flag = 0;
+   int wc_count;
    
    // create command to cat and sort the list of objects that are packed
    sprintf(cat_command, "cat %s | sort", file_info_ptr->packed_filename);
@@ -818,16 +822,36 @@ int process_packed(File_Info *file_info_ptr)
       sscanf(obj_buf,"%s %s %d %s %s %s", objid, filename, &chunk_count, 
              pre_ptr->host, pre_ptr->bucket, pre_ptr->objid);
       // if objid the same - keep counting files
-      if (!strcmp(last_objid,objid)) {
+      if (!strcmp(last_objid,objid) || chunk_count==1) {
          count++;
          //printf("count: %d chunk_count: %d\n", count, chunk_count);
          // If file count == chuck count - all files accounted for
          // delete objec
-         if (chunk_count == count) {
-
+         if (chunk_count == count || chunk_count==1) {
+             // So make sure that the chunk_count (from xattr) matches the number
+             // of files found 
+             sprintf(wc_command, "grep %s %s | wc -l", objid, file_info_ptr->packed_filename);
+             if (( pipe_wc = popen(wc_command, "r")) == NULL) {
+                fprintf(stderr, "Error with popen\n");
+                return(-1); 
+             }
+             while(fgets(wc_buf,1024, pipe_wc)) {
+                sscanf(wc_buf, "%d", &wc_count);
+             }
+             if (wc_count != chunk_count) {
+                fprintf(stderr, "object %s has %d files while chunk count is %d\n", objid, wc_count, chunk_count);
+                continue;
+             }
+             pclose(pipe_wc);
+             //If we get here coounts are matching up
+            // Go ahead and start deleting
             if ((obj_return=delete_object(objid, file_info_ptr, pre_ptr, multi_flag)) != 0) 
                fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
                        %d) on object %s\n", obj_return, objid);
+
+            else if ( file_info_ptr->no_delete) 
+              fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", objid);
+
             else 
               fprintf(file_info_ptr->outfd, "deleted object %s\n", objid);
 
