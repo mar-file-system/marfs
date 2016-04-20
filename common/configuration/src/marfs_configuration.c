@@ -939,6 +939,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
        }
     }
 
+#if 0
     if (! repoList[j]->pack_size) {
        LOG( LOG_ERR, "Repo '%s' has no pack_size.\n", repoList[j]->name );
       return NULL;
@@ -949,6 +950,87 @@ static MarFS_Config_Ptr read_configuration_internal() {
       LOG( LOG_ERR, "Invalid pack_size value of \"%s\".\n", repoList[j]->pack_size );
       return NULL;
     }
+#else
+
+    // max number of files to be allowed in a packed file.
+    // -1 means no maximum.  0 means no packing.
+    if (! repoList[j]->max_pack_file_count) {
+       LOG( LOG_ERR, "Repo '%s' has no max_pack_file_count.\n",
+            repoList[j]->name );
+      return NULL;
+    }
+    errno = 0;
+    marfs_repo_list[j]->max_pack_file_count
+       = strtoll( repoList[j]->max_pack_file_count, (char **) NULL, 10 );
+    if ( errno ) {
+      LOG( LOG_ERR, "Invalid max_pack_file_count value of \"%s\".\n",
+           repoList[j]->max_pack_file_count );
+      return NULL;
+    }
+
+
+    // if max_pack_file_count = 0, packing is disabled, and we ignore all
+    // other packing-related parameters.  This means you don't have to make
+    // up meaningless values for fields that are going to be ignored.
+    if (! marfs_repo_list[j]->max_pack_file_count) {
+
+       // packing is disabled.  Allow config to ignore other
+       // packing-related parameters.
+       marfs_repo_list[j]->min_pack_file_count = -1;
+       marfs_repo_list[j]->min_pack_file_size = -1;
+       marfs_repo_list[j]->max_pack_file_size = -1;
+    }
+    else {
+
+       // packing is enabled.  The other packing-related parameters will be
+       // parssed and validated.
+
+       if (! repoList[j]->min_pack_file_count) {
+          LOG( LOG_ERR, "Repo '%s' has no min_pack_file_count.\n",
+               repoList[j]->name );
+          return NULL;
+       }
+       errno = 0;
+       marfs_repo_list[j]->min_pack_file_count
+          = strtoll( repoList[j]->min_pack_file_count, (char **) NULL, 10 );
+       if ( errno ) {
+          LOG( LOG_ERR, "Invalid min_pack_file_count value of \"%s\".\n",
+               repoList[j]->min_pack_file_count );
+          return NULL;
+       }
+
+
+       if (! repoList[j]->max_pack_file_size) {
+          LOG( LOG_ERR, "Repo '%s' has no max_pack_file_size.\n",
+               repoList[j]->name );
+          return NULL;
+       }
+       errno = 0;
+       marfs_repo_list[j]->max_pack_file_size
+          = strtoll( repoList[j]->max_pack_file_size, (char **) NULL, 10 );
+       if ( errno ) {
+          LOG( LOG_ERR, "Invalid max_pack_file_size value of \"%s\".\n",
+               repoList[j]->max_pack_file_size );
+          return NULL;
+       }
+
+
+       if (! repoList[j]->min_pack_file_size) {
+          LOG( LOG_ERR, "Repo '%s' has no min_pack_file_size.\n", repoList[j]->name );
+          return NULL;
+       }
+       errno = 0;
+       marfs_repo_list[j]->min_pack_file_size
+          = strtoll( repoList[j]->min_pack_file_size, (char **) NULL, 10 );
+       if ( errno ) {
+          LOG( LOG_ERR, "Invalid min_pack_file_size value of \"%s\".\n",
+               repoList[j]->min_pack_file_size );
+          return NULL;
+       }
+
+    }
+
+#endif
 
     if ( lookup_securitymethod( repoList[j]->security_method, &( marfs_repo_list[j]->security_method ))) {
       LOG( LOG_ERR, "Invalid security_method value of \"%s\".\n", repoList[j]->security_method );
@@ -1548,23 +1630,26 @@ int debug_namespace( MarFS_Namespace* ns ) {
 
 int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "Repo\n");
-   fprintf(stdout, "\tname             %s\n",   repo->name);
-   fprintf(stdout, "\tname_len         %ld\n",  repo->name_len);
-   fprintf(stdout, "\thost             %s\n",   repo->host);
-   fprintf(stdout, "\thost_len         %ld\n",  repo->host_len);
-   fprintf(stdout, "\thost_offset      %d\n",   repo->host_offset);
-   fprintf(stdout, "\thost_count       %d\n",   repo->host_count);
-   fprintf(stdout, "\tupdate_in_place  %d\n",   repo->update_in_place);
-   fprintf(stdout, "\tssl              %d\n",   repo->ssl);
-   fprintf(stdout, "\tis_online        %d\n",   repo->is_online);
-   fprintf(stdout, "\taccess_method    %s\n",   accessmethod_string(repo->access_method));
-   fprintf(stdout, "\tchunk_size       %ld\n",  repo->chunk_size);
-   fprintf(stdout, "\tpack_size        %ld\n",  repo->pack_size);
-   fprintf(stdout, "\tsecurity_method  %s\n",   securitymethod_string(repo->security_method));
-   fprintf(stdout, "\tenc_type         %d\n",   repo->enc_type);
-   fprintf(stdout, "\tcomp_type        %d\n",   repo->comp_type);
-   fprintf(stdout, "\tcorrect_type     %d\n",   repo->correct_type);
-   fprintf(stdout, "\tonline_cmds      %s\n",   repo->online_cmds);
-   fprintf(stdout, "\tonline_cmds_len  %ld\n",  repo->online_cmds_len);
-   fprintf(stdout, "\tlatency          %llu\n", repo->latency);
+   fprintf(stdout, "\tname                %s\n",   repo->name);
+   fprintf(stdout, "\tname_len            %ld\n",  repo->name_len);
+   fprintf(stdout, "\thost                %s\n",   repo->host);
+   fprintf(stdout, "\thost_len            %ld\n",  repo->host_len);
+   fprintf(stdout, "\thost_offset         %d\n",   repo->host_offset);
+   fprintf(stdout, "\thost_count          %d\n",   repo->host_count);
+   fprintf(stdout, "\tupdate_in_place     %d\n",   repo->update_in_place);
+   fprintf(stdout, "\tssl                 %d\n",   repo->ssl);
+   fprintf(stdout, "\tis_online           %d\n",   repo->is_online);
+   fprintf(stdout, "\taccess_method       %s\n",   accessmethod_string(repo->access_method));
+   fprintf(stdout, "\tchunk_size          %ld\n",  repo->chunk_size);
+   fprintf(stdout, "\tsecurity_method     %s\n",   securitymethod_string(repo->security_method));
+   fprintf(stdout, "\tenc_type            %d\n",   repo->enc_type);
+   fprintf(stdout, "\tcomp_type           %d\n",   repo->comp_type);
+   fprintf(stdout, "\tcorrect_type        %d\n",   repo->correct_type);
+   fprintf(stdout, "\tmax_pack_file_count %ld\n",  repo->max_pack_file_count);
+   fprintf(stdout, "\tmin_pack_file_count %ld\n",  repo->min_pack_file_count);
+   fprintf(stdout, "\tmax_pack_file_size  %ld\n",  repo->max_pack_file_size);
+   fprintf(stdout, "\tmin_pack_file_size  %ld\n",  repo->min_pack_file_size);
+   fprintf(stdout, "\tonline_cmds         %s\n",   repo->online_cmds);
+   fprintf(stdout, "\tonline_cmds_len     %ld\n",  repo->online_cmds_len);
+   fprintf(stdout, "\tlatency             %llu\n", repo->latency);
 }

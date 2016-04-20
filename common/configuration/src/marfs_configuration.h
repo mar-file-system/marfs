@@ -113,9 +113,12 @@ extern "C" {
 //        the packer combines small objects without segregating the
 //        recovery-info at the end of the packed object.  Format of the
 //        object tail also uses "reclen" instead of "recoff".
+//
+// -- 1.2 config parsing changes. removed repo.pack_size.  Added
+//        repo.min/max_pack_file_size, and repo.min/max_pack_file_count.
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  1
+#define MARFS_CONFIG_MINOR  2
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
@@ -323,21 +326,28 @@ typedef uint8_t  MarFS_Perms;
 typedef struct marfs_repo {
    char                 *name;
    size_t                name_len;
+
    char                 *host;
    size_t                host_len;
    uint8_t               host_offset; // for round-robin within a repo
    uint8_t               host_count;
+
    MarFS_Bool            update_in_place;
    MarFS_Bool            ssl;
    MarFS_Bool            is_online;
    MarFS_AccessMethod    access_method;
    size_t                chunk_size;
    size_t                max_get_size; // use 0 for unconstrained
-   size_t                pack_size;
    MarFS_SecurityMethod  security_method;
    MarFS_EncryptType     enc_type;
    MarFS_CompType        comp_type;
    MarFS_CorrectType     correct_type;
+
+   ssize_t               min_pack_file_size; // use -1 for unconstrained
+   ssize_t               max_pack_file_size;
+   ssize_t               min_pack_file_count;
+   ssize_t               max_pack_file_count;
+
    char                 *online_cmds;
    size_t                online_cmds_len;
    unsigned long long    latency;
