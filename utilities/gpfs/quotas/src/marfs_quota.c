@@ -315,7 +315,7 @@ Name:  get_xattrs
 This function fills the xattr struct with all xattr key value pairs
 
 *****************************************************************************/
-int get_xattrs(gpfs_iscan_t *iscanP,
+size_t get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
                  const char **marfs_xattr,
@@ -329,7 +329,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
    const char *xattrBufP = xattrP;
    unsigned int xattrBufLen = xattrLen;
    int printable;
-   int xattr_count =0;
+   size_t xattr_count = 0;
    int desired_xattr = 0;
 
    /*  Loop through attributes */
@@ -448,6 +448,7 @@ int read_inodes(const char    *fnameP,
    int trash_index = -1;
  
    unsigned int last_fileset_id = -1;
+   size_t non_marfs_inode_cnt=0;
 
 
    // Defined xattrs as an array of const char strings with defined indexs
@@ -626,10 +627,18 @@ int read_inodes(const char    *fnameP,
                   }
                }
             }
+            // else file is non-marfs but has other type of xattr
+            else {
+               non_marfs_inode_cnt +=1;
+            }
+         }
+         // else no xattr so non marfs
+         else {
+            non_marfs_inode_cnt +=1;
          }
       }
    } // endwhile
-   write_fsinfo(outfd, fileset_stat_ptr, rec_count, offset_start, fnameP);
+   write_fsinfo(outfd, fileset_stat_ptr, rec_count, offset_start, fnameP, non_marfs_inode_cnt);
    clean_exit(outfd, iscanP, fsP, early_exit);
    return(rc);
 }
@@ -676,7 +685,8 @@ void write_fsinfo(FILE*         outfd,
                   Fileset_Stats *fileset_stat_ptr, 
                   size_t        rec_count, 
                   size_t        index_start,
-                  const char    *root_dir)
+                  const char    *root_dir,
+                  size_t        non_marfs_cnt)
 {
    size_t i;
    int GIB = 1024*1024*1024;
@@ -700,6 +710,7 @@ void write_fsinfo(FILE*         outfd,
               fileset_stat_ptr[i].sum_trash_file_count);
       fprintf(outfd,"trash_size:          %zu\n\n", fileset_stat_ptr[i].sum_trash);
    }
+   fprintf(outfd,"non-marfs inode count:  %zu\n\n", non_marfs_cnt);
    trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start, root_dir);
 }
 /***************************************************************************** 
@@ -827,7 +838,6 @@ int lookup_fileset_path(Fileset_Stats *fileset_stat_ptr, size_t rec_count,
    // search the array of structures for matching fileset name
    //printf("path = %s\n", path);
    for (i = 0; i < rec_count; i++) {
-       //printf("AAAAAA %s %s\n", fileset_stat_ptr[i].fileset_name,path);
        //printf("fileset = %s\n", fileset_stat_ptr[i].fileset_name);
        if(strstr(path,fileset_stat_ptr[i].fileset_name) != NULL && index == -1 ) {
           index=i;
