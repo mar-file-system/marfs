@@ -711,7 +711,7 @@ void write_fsinfo(FILE*         outfd,
       fprintf(outfd,"trash_size:          %zu\n\n", fileset_stat_ptr[i].sum_trash);
    }
    fprintf(outfd,"non-marfs inode count:  %zu\n\n", non_marfs_cnt);
-   trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start, root_dir);
+   trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start, root_dir, non_marfs_cnt);
 }
 /***************************************************************************** 
 Name: truncate_fsinfo 
@@ -725,12 +725,13 @@ int trunc_fsinfo(FILE*         outfd,
                  Fileset_Stats *fileset_stat_ptr, 
                  size_t        rec_count, 
                  size_t        index_start,
-                 const char    *root_dir_fsinfo)
+                 const char    *root_dir_fsinfo,
+                 size_t        non_marfs_cnt)
 {
    int ret;
    int i;
    size_t sum_total = 0;
-   char   root_fsinfo_path[256];
+   char   root_fsinfo_path[MAX_PATH_LENGTH];
    char   *root_fsinfo = &root_fsinfo_path[0];
 
    //  Go through all namespaces/filesets scanned
@@ -767,6 +768,16 @@ int trunc_fsinfo(FILE*         outfd,
    else {
             fprintf(outfd, "Truncated root fsinfo %s to %zu\n", root_fsinfo, 
                     sum_total);
+   }
+   sprintf(root_fsinfo,"%s/%s", root_dir_fsinfo,"fsinfo.inodes");
+   if ((ret = truncate(root_fsinfo, non_marfs_cnt)) == -1) { 
+            fprintf(outfd, 
+                    "Error:  Unable to truncate root fsinfo.inodes %s to %zu\n", 
+                    root_fsinfo, non_marfs_cnt);
+   }
+   else {
+            fprintf(outfd, "Truncated root fsinfo %s to %zu\n", root_fsinfo, 
+                    non_marfs_cnt);
    }
    return 0;
 }
