@@ -158,6 +158,6 @@ void write_fsinfo(FILE* outfd, Fileset_Stats* fileset_stat_ptr, size_t rec_count
 void update_type(MarFS_XattrPost * xattr_post, Fileset_Stats *fileset_stat_ptr, int index);
 int lookup_fileset_path(Fileset_Stats *fileset_stat_ptr, size_t rec_count, int *trash_index, char *md_path_ptr);
 Fileset_Stats * read_config(unsigned int *count);
-int trunc_fsinfo(FILE* outfd, Fileset_Stats* fileset_stat_ptr, size_t rec_count, size_t index_start, const char *root_dir_fsinfo);
+int trunc_fsinfo(FILE* outfd, Fileset_Stats* fileset_stat_ptr, size_t rec_count, size_t index_start, const char *root_dir_fsinfo, size_t non_marfs_cnt);
 #endif
 
