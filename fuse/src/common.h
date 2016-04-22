@@ -680,7 +680,7 @@ extern int  init_xattr_specs();
 extern int  has_all_xattrs (PathInfo* info, XattrMaskType mask);
 extern int  has_any_xattrs (PathInfo* info, XattrMaskType mask);
 
-extern int  trunc_xattr  (PathInfo* info);
+extern int  trunc_xattrs  (PathInfo* info);
 
 // need the path to initialize info->trash_md_path
 extern int  trash_unlink  (PathInfo* info, const char* path);

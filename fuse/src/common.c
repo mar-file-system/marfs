@@ -933,6 +933,7 @@ int  trash_truncate(PathInfo*   info,
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
       __TRY0( truncate(info->post.md_path, 0) );
+      __TRY0( trunc_xattrs(info) ); // didn't have all, but might have had some
       return 0;
    }
 
@@ -1088,7 +1089,7 @@ int  trash_truncate(PathInfo*   info,
    __TRY0( utime(info->trash_md_path, &trash_time) );
 
    // clean out marfs xattrs on the original
-   __TRY0( trunc_xattr(info) );
+   __TRY0( trunc_xattrs(info) );
 
    // write full-MDFS-path of original-file into trash-companion file
    __TRY0( write_trash_companion_file(info, path, &trash_time) );
@@ -1114,10 +1115,9 @@ int  trash_truncate(PathInfo*   info,
 
 
 
-//   trunc file to zero
-//   remove (not just reset but remove) all reserved xattrs
+// remove (not just reset but remove) all reserved xattrs
 
-int trunc_xattr(PathInfo* info) {
+int trunc_xattrs(PathInfo* info) {
    XattrSpec*  spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
       lremovexattr(info->post.md_path, spec->key_name);
@@ -1265,13 +1265,13 @@ int write_chunkinfo(MarFS_FileHandle*     fh,
                     const PathInfo* const info,
                     size_t                open_offset,
                     size_t                user_data_written) {
-
+   TRY_DECLS();
    const size_t recovery             = MARFS_REC_UNI_SIZE;
    const size_t user_data_per_chunk  = info->pre.chunk_size - recovery;
    const size_t log_offset           = info->pre.chunk_no * user_data_per_chunk;
    const size_t user_data_this_chunk = user_data_written - log_offset;
 
-   const size_t chunk_info_len = sizeof(MultiChunkInfo);
+   const size_t chunk_info_len    = sizeof(MultiChunkInfo);
    char         str[chunk_info_len];
 
 
@@ -1303,6 +1303,9 @@ int write_chunkinfo(MarFS_FileHandle*     fh,
       errno = EIO;
       return -1;
    }
+
+   // seek to offset for this chunk, in MD file
+   TRY0(seek_chunkinfo(fh, info->pre.chunk_no));
 
    // write portable binary to MD file
 #if USE_MDAL
@@ -1371,13 +1374,13 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
 //
 int seek_chunkinfo(MarFS_FileHandle* fh, size_t chunk_no) {
    TRY_DECLS();
-   const size_t chunk_info_len = sizeof(MultiChunkInfo);
+   const size_t chunk_info_len    = sizeof(MultiChunkInfo);
+   off_t        chunk_info_offset = chunk_no * chunk_info_len;
 
-   off_t offset = chunk_no * chunk_info_len;
 #if USE_MDAL
-   TRY_GE0( F_OP(lseek, fh, offset, SEEK_SET) );
+   TRY_GE0( F_OP(lseek, fh, chunk_info_offset, SEEK_SET) );
 #else
-   TRY_GE0( lseek(fh->md_fd, offset, SEEK_SET) );
+   TRY_GE0( lseek(fh->md_fd, chunk_info_offset, SEEK_SET) );
 #endif
    return 0;
 }

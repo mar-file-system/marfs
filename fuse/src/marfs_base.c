@@ -1162,7 +1162,7 @@ ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* 
    return (dest - str);
 }
 
-// <str> holds binary data (in network-byte-order) read from an Multi MD
+// <str> holds binary data (in network-byte-order) read from a Multi MD
 // file, representing one chunk.  Parse it into a MultiChunkInfo.
 ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_len) {
 
