@@ -84,6 +84,12 @@
 #define MAX_PATH_LENGTH 1024
 //#define MAX_SCAN_FILE_COUNT 5 
 
+// S3 Error checking
+enum{S3_GET, S3_PUT};
+#define HTTP_OK 200
+#define HTTP_NO_CONTENT 204
+//
+
 typedef struct MarFS_XattrPost2 {
    uint16_t           config_vers_maj; // redundant w/ config_vers in Pre?
    uint16_t           config_vers_min; // redundant w/ config_vers in Pre?
@@ -141,6 +147,10 @@ typedef struct obj_lnklist {
 typedef struct pack_vars {
    size_t max_object_size;
    size_t small_object_size;
+   ssize_t min_pack_file_size;
+   ssize_t max_pack_file_size;
+   ssize_t min_pack_file_count;
+   ssize_t max_pack_file_count;
    FILE *outfd;
 } pack_vars;
 
@@ -165,12 +175,13 @@ int walk_and_scan_control (char* top_level_path, const char* ns,
 int get_inodes(const char *fnameP, struct marfs_inode *inode,
                int *marfs_inodeLen, size_t *sum_size, const char* namespace,
                struct walk_path *paths, pack_vars *pack_params);
-int find_inode(size_t inode_number, struct walk_path *paths);
+int find_inode(size_t inode_number, struct walk_path *paths, pack_vars *pack_params);
 int pack_and_write(char* top_level_path, MarFS_Repo* repo, 
                    MarFS_Namespace* namespace, const char *ns, 
                    struct walk_path *paths, uint8_t no_pack,
 		   pack_vars *pack_params);
-int parse_size_arg(char *input_size, uint64_t *out_value);
 void free_objects(obj_lnklist *objects);
+void free_sub_objects(inode_lnklist *sub_objects);
+int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action );
 #endif
 
