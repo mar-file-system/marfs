@@ -1,4 +1,4 @@
-/*
+ /*
  * This file is part of MarFS, which is released under the BSD license.
  *
  *
@@ -465,6 +465,7 @@ int read_inodes(const char    *fnameP,
    int early_exit =0;
    int xattr_index;
    char *md_path_ptr;
+   int trash_tabulated = 0;
 
    //outfd = fopen(onameP,"w");
 
@@ -542,13 +543,13 @@ int read_inodes(const char    *fnameP,
             struct_index = lookup_fileset(fileset_stat_ptr,rec_count,
                                           offset_start,fileset_name_buffer);
             
-             LOG(LOG_INFO, "scan fileset = %s\n", fileset_name_buffer);
+             LOG(LOG_INFO, "scan fileset = %s struct_index = %di inode = %d\n", 
+                 fileset_name_buffer,struct_index,iattrP->ia_inode);
             if (struct_index == -1) 
                continue;
             last_struct_index = struct_index;
             last_fileset_id = iattrP->ia_filesetid;
          }
-
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
          if (iattrP->ia_xperm & GPFS_IAXPERM_XATTR && xattr_len >0 ) {
@@ -584,9 +585,15 @@ int read_inodes(const char    *fnameP,
                fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
                fileset_stat_ptr[last_struct_index].sum_file_count+=1;
                LOG(LOG_INFO, "struct index = %d size = %llu file size sum\
-                   = %zu\n", last_struct_index,
-               iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
+                   = %zu inode=%d\n", last_struct_index,
+               iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size,iattrP->ia_inode);
                fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id); 
+           
+               //if trash and in trash fileset set flag so that non trash fileset files
+               //can still be counted
+               trash_tabulated=0;
+               if (!strcmp(fileset_name_buffer,"trash")) 
+                  trash_tabulated=1; 
 
                // Determine obj_type and update counts
                update_type(&post, fileset_stat_ptr, last_struct_index);
@@ -616,10 +623,18 @@ int read_inodes(const char    *fnameP,
                              md_path_ptr);
                      continue;
                   }
+                  // No error so update counts            
                   else {
+                     // Update trash quota info based on what fileset trash came from 
                      fileset_stat_ptr[fileset_trash_index].sum_trash += iattrP->ia_size;
                      fileset_stat_ptr[fileset_trash_index].sum_trash_file_count += 1;
-                     if (trash_index != -1) {
+                     // Update total trash statistics 
+                     // trash_tabulated is the case where a trash fileset exists so
+                     // counts are taken care of above
+                     // The following condition is if trash exists but not in a 
+                     // trash fileset
+                     if (!trash_tabulated && trash_index != -1) {
+                        update_type(&post, fileset_stat_ptr, trash_index);
                         fileset_stat_ptr[trash_index].sum_size += iattrP->ia_size;
                         fileset_stat_ptr[trash_index].sum_file_count += 1;
 
