@@ -1093,11 +1093,13 @@ int pack_and_write(char* top_level_path, MarFS_Repo* repo,
    int packedLen = 0;
    int ret;
    size_t unpacked_sum_size = 0;
+   int return_val = 0;
 
    // perform an inode scan and look for candidate objects for packing
    ret = get_inodes(top_level_path, unpacked, &unpackedLen, &unpacked_sum_size, ns, paths, pack_params);
    if (ret != 0){
       fprintf(stderr, "GPFS Inode Scan Failed, quitting!\n");
+      free(unpacked);
       return -1;
    }
    if (no_pack) {
@@ -1113,13 +1115,14 @@ int pack_and_write(char* top_level_path, MarFS_Repo* repo,
       fprintf(stdout, "Packing did not meet min_pack_file_count requirement of %zu\n", 
               pack_params->min_pack_file_count);
       }
-      return 0;
+      return_val=0;
    }
    // No potential packer objects found
-   if (unpackedLen == 0) {
+   else if (unpackedLen == 0) {
       fprintf(stderr, "No valid packer objects found in this chunk - continuing with path \
 chunking or Exiting now\n");
-      return -1;
+      //return -1;
+      return_val=-1;
    }
     
    // Found objects that can be packed
@@ -1127,19 +1130,20 @@ chunking or Exiting now\n");
       // create link-lists for objects found
       ret = get_objects(unpacked, unpackedLen, &packed, &packedLen, pack_params);
       if (ret == -1) {
-         return -1;
+         return_val = -1;
       }
+      else {
+         LOG(LOG_INFO, "%d %d\n", unpackedLen, packedLen);
+         // repack small objects into larger object
+         ret = pack_up(packed, repo, namespace);
 
-      LOG(LOG_INFO, "%d %d\n", unpackedLen, packedLen);
-      // repack small objects into larger object
-      ret = pack_up(packed, repo, namespace);
-
-      // Update metadata information
-      set_md(packed, pack_params);
-      free_objects(packed);
+         // Update metadata information
+         set_md(packed, pack_params);
+         free_objects(packed);
+      }
    }
    free(unpacked);
-   return 0;
+   return return_val;
 }
 /******************************************************************************
 * Name free_objects
