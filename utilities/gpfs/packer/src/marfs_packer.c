@@ -109,40 +109,22 @@ int main(int argc, char **argv){
         //char *rdir = NULL;
        // char *patht = NULL;
         char *fnameP = NULL;
-        //unsigned int pack_obj_size = 1073741824;
-        uint64_t pack_obj_size = 4000;
         char *ns = NULL;
-        uint64_t small_obj_size = 1048576;
         uint8_t no_pack_flag = 0;
+
+        int min_file_cnt = 10;
+        int max_file_cnt  =1024;
+        int min_file_size = 1; 
+        int max_file_size = 1048576;
 
         char *outf = NULL;
         pack_vars pack_elements;
         pack_vars *pack_elements_ptr =&pack_elements;
 
         //while ((c=getopt(argc,argv,"d:p:s:n:h")) != EOF) {
-        while ((c=getopt(argc,argv,"d:p:s:n:o:lh")) != EOF) {
+        while ((c=getopt(argc,argv,"d:n:o:lh")) != EOF) {
            switch(c) {
               case 'd': fnameP = optarg; break;
-              case 'p': 
-                 { 
-                    char *tmp = strdup(optarg);
-                    if (( parse_size_arg(tmp, &pack_obj_size))==-1){
-                       print_usage();
-                       exit(-1);
-                    }
-                    break;
-                 }
-                 //pack_obj_size = atoi(optarg);  break;
-              case 's': 
-                 {
-                    char *tmp = strdup(optarg);
-                    if (( parse_size_arg(tmp, &small_obj_size))==-1){
-                       print_usage();
-                       exit(-1);
-                    }
-                    break;
-                 }
-                 //small_obj_size = atoi(optarg);  break;
               case 'n': ns = optarg; break;
               case 'o' : outf = optarg; break;
               case 'l' : no_pack_flag = 1; break;
@@ -158,13 +140,6 @@ int main(int argc, char **argv){
            exit(-1);
         }
 
-        //LOG(LOG_INFO, "obj size = %lld\n", (unsigned long long int)pack_obj_size);
-        //LOG(LOG_INFO, "small obj size = %lld\n", (unsigned long long int)small_obj_size);
-        //if (small_obj_size > pack_obj_size || small_obj_size*2 > pack_obj_size) {
-        //   fprintf(stderr,"Error:  object pack size (-p) should be at least\ twice as big as objects to pack size (-s).\n\n");
-        //   print_usage();
-        //}
-  
         // Get rid of trailing / in gpfs path if one exists
         size_t path_len = strlen(fnameP);
         if (path_len > 0 && fnameP[path_len-1] == '/')
@@ -178,38 +153,73 @@ int main(int argc, char **argv){
 
         MarFS_Namespace* namespace;
         namespace = find_namespace_by_name(ns);
-        //MarFS_Repo* repo = namespace->iwrite_repo;
+
         // Find the correct repo - the one with the largest range
         MarFS_Repo* repo = find_repo_by_range(namespace, (size_t)-1);
-        // Start the process by first walking the directory tree to associate 
-        // inodes with directory paths
-        // Once the paths are established perform a inode scan to find candidates
-        // for packing.  If objects found, pack, write and update xattrs.
          
-        // TO DO 
-        //printf("object chunk size from repo:  %ld\n", repo->chunk_size);
-        // want to implement repo chunk size as pack_obj_size and
-        // repo->pack_size will replace small_object_size
-        // we can then remove them from argument list
-        // only there for testing now
-        // Also issue 102 call for a pack_threshold that would set a lower
-        // bounds on the amount to pack - some percentage of chunk_size
-        //
-        // This is what the modified call will look like:
-        //walk_and_scan_control (fnameP, repo->chunk_size, repo->pack_size, 
-        //                       ns, repo, namespace,repo->pack_threshold);
-        // TO DO
-        //
         pack_elements_ptr->max_object_size = repo->chunk_size;
-        pack_elements_ptr->small_object_size = small_obj_size;
+        fprintf(stdout, "Setting pack size to config chunk size value: %zu\n", 
+                pack_elements_ptr->max_object_size);
+
+        // Get packing parameters from config or use defaults;
+        if (repo->max_pack_file_count == 0){
+           fprintf(stderr, "Config file has max_pack_file_count set to 0\n");
+           fprintf(stderr, "No packing will be done\n");
+           return -1;
+        }
+        else if (repo->max_pack_file_count == -1) {
+           pack_elements_ptr->max_pack_file_count  = max_file_cnt;
+           fprintf(stdout, "Setting max_pack_file_count to default value: %d\n", 
+                   max_file_cnt);
+        }
+        else {
+           pack_elements_ptr->max_pack_file_count  = repo->max_pack_file_count;
+           fprintf(stdout, "Setting max_pack_file_count to config value: %zu\n", 
+                   pack_elements_ptr->max_pack_file_count);
+        }
+        if (repo->min_pack_file_size == -1) {
+           pack_elements_ptr->min_pack_file_size = min_file_size;
+           fprintf(stdout, "Setting min_pack_file_size to default value: %d\n", 
+                   min_file_size);
+        }
+        else {
+           pack_elements_ptr->min_pack_file_size = repo->min_pack_file_size;
+           fprintf(stdout, "Setting min_pack_file_size to config value: %zu\n", 
+                   pack_elements_ptr->min_pack_file_size);
+        }
+        if (repo->max_pack_file_size == -1) {
+           pack_elements_ptr->max_pack_file_size = max_file_size;
+           fprintf(stdout, "Setting min_pack_file_size to default value: %d\n", 
+                   max_file_size);
+        }
+        else {
+           pack_elements_ptr->max_pack_file_size = repo->max_pack_file_size;
+           fprintf(stdout, "Setting max_pack_file_size to config value: %zu\n", 
+                   pack_elements_ptr->max_pack_file_size);
+        }
+        
+        if (repo->min_pack_file_count == -1) {
+           pack_elements_ptr->min_pack_file_count = min_file_cnt;
+           fprintf(stdout, "Setting min_pack_file_couun to default value: %d\n", 
+                   min_file_cnt);
+        }
+        else { 
+           pack_elements_ptr->min_pack_file_count = repo->min_pack_file_count;
+           fprintf(stdout, "Setting min_pack_file_count to config value: %zu\n", 
+                   pack_elements_ptr->min_pack_file_count);
+        }
+
         if ((pack_elements_ptr->outfd = fopen(outf, "w"))==NULL) {
            fprintf(stderr, "Failed to open %s\n", outf);
            exit(1);
         }
+
+        // Start the process by first walking the directory tree to associate 
+        // inodes with directory paths
+        // Once the paths are established perform a inode scan to find candidates
+        // for packing.  If objects found, pack, write and update xattrs.
         walk_and_scan_control (fnameP, ns, repo, namespace, no_pack_flag, 
                                pack_elements_ptr);
-        //walk_and_scan_control (fnameP, pack_obj_size, small_obj_size, 
-        //                       ns, repo, namespace, no_pack_flag);
         //                        
         fclose(pack_elements_ptr->outfd);
         return 0;
@@ -310,10 +320,10 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size,
                      return -1;
                   }
                   main_object->val = sub_objects;
-                  main_object->count=obj_cnt;
+                  //main_object->count=obj_cnt;
                   main_object->next = main_obj_head;
                   main_obj_head = main_object;
-                  obj_cnt = 0;
+                  //obj_cnt = 0;
                   count++;
                   sum_obj_size = 0;
                   need_main = 0;
@@ -329,13 +339,13 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size,
                      return -1;
                   }
                   main_object->val = sub_objects;
-                  main_object->count= obj_cnt;
+                  //main_object->count= obj_cnt;
                   main_object->next = main_obj_head;
                   main_obj_head = main_object;
                   sub_obj_head=NULL;
                   count++;
                   sum_obj_size = 0;
-                  obj_cnt++;
+                  //obj_cnt++;
                   if ((sub_objects = (inode_lnklist *)malloc(sizeof(inode_lnklist)))==NULL) {
                      fprintf(stderr, "Error allocating memory\n");
                      return -1;
@@ -350,27 +360,38 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size,
 	}
         // done summing sizes, create target object if at least one not created or 
         // picking remainder from else above
-        if (need_main == -1) {
+        if (need_main == -1 && obj_cnt >= packed_params->min_pack_file_count) {
            if ((main_object = (obj_lnklist *)malloc(sizeof(obj_lnklist)))==NULL) {
               fprintf(stderr, "Error allocating memory\n");
               return -1;
            }
            main_object->val = sub_objects;
-           main_object->count=obj_cnt;
+           //main_object->count=obj_cnt;
            main_object->next = main_obj_head;
            count++;
         }
+        //else if (obj_cnt < packed_params->min_pack_file_count) {
+        //    free_sub_objects(sub_objects);
+        //}
         //main_object->next = NULL;
 
-
-	*packed_size = count;
-	*packed = main_object;
-        LOG(LOG_INFO, "sub object count: %d  main_object_count: %d\n", packed->count, count);
-        if (main_object->val == NULL) {
-           fprintf(stderr, "Value is null\n");
-           LOG(LOG_INFO, "NULL value\n");
+        if (obj_cnt < packed_params->min_pack_file_count) {
+            free_sub_objects(sub_objects);
+	    *packed_size = 0;
+            fprintf(stderr, "Number of objects to pack does not minimum requirements %d\n", obj_cnt);
+            return -1;
         }
-	return 0;
+        else {
+	   *packed_size = count;
+	   *packed = main_object;
+           LOG(LOG_INFO, "main_object_count: %d\n", count);
+           if (main_object->val == NULL) {
+              LOG(LOG_INFO, "found NULL value even though inode scan found something\n");
+              fprintf(stderr, "found NULL value even though inode scan found something\n");
+              return -1;
+           }
+	   return 0;
+        }
 }
 /******************************************************************************
 * Name pack_up
@@ -388,6 +409,7 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns)
    inode_lnklist *object;
    char url[MARFS_MAX_XATTR_SIZE];
    char pre_str[MARFS_MAX_XATTR_SIZE];
+   CURLcode s3_return;
 
    // Iterated through the link list of packed objects
    while(objects){
@@ -427,7 +449,8 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns)
          s3_set_host(object->val.pre.host);
 
          // get object_data
-         s3_get(nb,url);
+         s3_return = s3_get(nb,url);
+         check_S3_error(s3_return, nb, S3_GET);
 
 	 object->val.pre = packed_pre;
 	 object->val.pre.obj_type = OBJ_PACKED;
@@ -450,7 +473,8 @@ int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns)
       r = rand();
 
       // write data to new object
-      s3_put(nb,pre_str);
+      s3_return = s3_put(nb,pre_str);
+      check_S3_error(s3_return, nb, S3_PUT);
       //
 
       aws_iobuf_reset(nb);
@@ -718,11 +742,7 @@ void check_security_access(MarFS_XattrPre *pre)
 void print_usage()
 {
   fprintf(stderr,"Usage: ./marfs_packer -d gpfs_path -n namespace -o log_file\
-  [-s objects_to_pack_size] [-l] [-h] \n\n");
-  fprintf(stderr, "where -s = maximum size of small objects to pack in the following formats: \n");
-  fprintf(stderr, "    -s value[k],[m],[g],[kB],[mB],[gB]\n");
-  fprintf(stderr, "Note:  k, m, and g are base2\n");
-  fprintf(stderr, "       kB, mB, and gB are base10 \n");
+  [-l] [-h] \n\n");
   fprintf(stderr, "where -l = provide summary only - do not pack\n");
   fprintf(stderr, "where -h = help\n\n");
 }
@@ -743,7 +763,17 @@ int walk_and_scan_control (char* top_level_path, const char* ns,
    struct walk_path rdpath = {0};
    int reg_file_cnt =0;
    int i;
-   struct walk_path paths[MAX_SCAN_FILE_COUNT];  
+   struct walk_path *paths;
+   int ret;
+
+   // To do 
+   // dynamically create this using max_pack_file_count
+   //struct walk_path paths[MAX_SCAN_FILE_COUNT];  
+   if ((paths = (struct walk_path *)malloc(sizeof(struct walk_path)*pack_params->max_pack_file_count)) ==NULL) {
+      fprintf(stderr, "Error allocating memory\n");   
+      return(-1);
+   }
+
 
    rdpath.inode = 3;
    strcpy(rdpath.path,top_level_path);
@@ -811,9 +841,11 @@ int walk_and_scan_control (char* top_level_path, const char* ns,
 
             reg_file_cnt++;
             LOG(LOG_INFO, "file count %d\n", reg_file_cnt);
-            if (reg_file_cnt == MAX_SCAN_FILE_COUNT ) {
-            //if (reg_file_cnt == 100 ) {
-               pack_and_write(top_level_path, repo, namespace, ns, &paths[0], no_pack, pack_params);
+            //if (reg_file_cnt == MAX_SCAN_FILE_COUNT ) {
+            if (reg_file_cnt == pack_params->max_pack_file_count ) {
+               ret = pack_and_write(top_level_path, repo, namespace, ns, &paths[0], no_pack, pack_params);
+               if (ret == -1)
+                  goto clean_and_free;        
                reg_file_cnt = 0;
             } // endif reg_file_cnt 
             }
@@ -826,14 +858,17 @@ int walk_and_scan_control (char* top_level_path, const char* ns,
    // If any leftovers, pack the rest now
    if (reg_file_cnt !=0) {
       // zero out remaining buffer
-      for ( i = reg_file_cnt; i < MAX_SCAN_FILE_COUNT; i++) {
+      //for ( i = reg_file_cnt; i < MAX_SCAN_FILE_COUNT; i++) {
+      for ( i = reg_file_cnt; i < pack_params->max_pack_file_count; i++) {
           paths[i].inode = -1;
       }
-      pack_and_write(top_level_path, repo, namespace, ns, &paths[0], no_pack, pack_params);
+      ret = pack_and_write(top_level_path, repo, namespace, ns, &paths[0], no_pack, pack_params);
    } 
+clean_and_free:
    if (fsP) {
       gpfs_free_fssnaphandle(fsP);
    }
+   free(paths);
    return 0;
 }
 
@@ -940,10 +975,13 @@ int get_inodes(const char *fnameP, struct marfs_inode *inode,
                   rc = str_2_post(&post, valueP, 1);
 
                   // Check if this is a relevant object for packing 
-                  if (post.flags != POST_TRASH && iattrP->ia_size > 0 && iattrP->ia_size<=pack_params->small_object_size && post.obj_type == OBJ_UNI ){
+                  if (post.flags != POST_TRASH && iattrP->ia_size > 0 && 
+                      iattrP->ia_size<=pack_params->max_pack_file_size && 
+                      iattrP->ia_size>=pack_params->min_pack_file_size && 
+                      post.obj_type == OBJ_UNI ){
                      
                      // Does this inode match an inode from the treewalk path discovery
-                     if ((inode_index = find_inode(iattrP->ia_inode, paths)) == -1) {
+                     if ((inode_index = find_inode(iattrP->ia_inode, paths, pack_params)) == -1) {
                         // Exit out of this
                         break;
                      }
@@ -984,7 +1022,8 @@ int get_inodes(const char *fnameP, struct marfs_inode *inode,
 
                         // if counter matches the number of paths found in treewalk
                         // might as well stop looking
-                        if (counter == MAX_SCAN_FILE_COUNT-1) {
+                        //if (counter == MAX_SCAN_FILE_COUNT-1) {
+                        if (counter == pack_params->max_pack_file_count-1) {
                            break;
                         }
                      }
@@ -1012,11 +1051,12 @@ int get_inodes(const char *fnameP, struct marfs_inode *inode,
 * This needs to be replaced by a btree search
 * 
 ******************************************************************************/
-int find_inode(size_t inode_number, struct walk_path *paths) 
+int find_inode(size_t inode_number, struct walk_path *paths, pack_vars *pack_params) 
 {
    int i;
 
-   for (i=0; i<MAX_SCAN_FILE_COUNT; i++) {
+   //for (i=0; i<MAX_SCAN_FILE_COUNT; i++) {
+   for (i=0; i<pack_params->max_pack_file_count; i++) {
       if (inode_number == paths[i].inode) {
         LOG(LOG_INFO, "inode and parent: %d %s\n", paths[i].inode, paths[i].parent);
         return i;
@@ -1040,140 +1080,71 @@ int pack_and_write(char* top_level_path, MarFS_Repo* repo,
                    struct walk_path *paths, uint8_t no_pack,
                    pack_vars *pack_params)
 {
+  struct marfs_inode *unpacked;
    //struct marfs_inode unpacked[1024]; // Chris originally had this set to 102400 but that caused problems
-   struct marfs_inode unpacked[MAX_SCAN_FILE_COUNT]; // Chris originally had this set to 102400 but that caused problems
+   //struct marfs_inode unpacked[MAX_SCAN_FILE_COUNT]; // Chris originally had this set to 102400 but that caused problems
+  if ((unpacked = (struct marfs_inode *)malloc(sizeof(struct marfs_inode)*pack_params->max_pack_file_count)) ==NULL) {
+     fprintf(stderr, "Error allocating memory\n");
+     return(-1);
+  }
+
    int unpackedLen = 0;
    obj_lnklist    *packed=NULL;
    int packedLen = 0;
    int ret;
    size_t unpacked_sum_size = 0;
+   int return_val = 0;
 
    // perform an inode scan and look for candidate objects for packing
    ret = get_inodes(top_level_path, unpacked, &unpackedLen, &unpacked_sum_size, ns, paths, pack_params);
    if (ret != 0){
       fprintf(stderr, "GPFS Inode Scan Failed, quitting!\n");
+      free(unpacked);
       return -1;
    }
    if (no_pack) {
+      if (unpackedLen >= pack_params->min_pack_file_count) {
       fprintf(stdout, "Objects will pack in size %ld  Found %d objects to pack with total size of %ld\n",
               pack_params->max_object_size, unpackedLen, unpacked_sum_size);
       fprintf(pack_params->outfd, "Objects will pack in size %ld  Found %d objects to pack with total size of %ld\n",
               pack_params->max_object_size, unpackedLen, unpacked_sum_size);
       fprintf(stdout, "Note:  total size does not include recovery info.\n");
       fprintf(pack_params->outfd, "Note:  total size does not include recovery info.\n");
-      return 0;
+      }
+      else {
+      fprintf(stdout, "Packing did not meet min_pack_file_count requirement of %zu\n", 
+              pack_params->min_pack_file_count);
+      }
+      return_val=0;
    }
    // No potential packer objects found
-   if (unpackedLen == 0) {
-      fprintf(stderr, "No valid packer objects found - continuing with path \
+   else if (unpackedLen == 0) {
+      fprintf(stderr, "No valid packer objects found in this chunk - continuing with path \
 chunking or Exiting now\n");
-      return -1;
+      //return -1;
+      return_val=-1;
    }
     
    // Found objects that can be packed
    else {
       // create link-lists for objects found
       ret = get_objects(unpacked, unpackedLen, &packed, &packedLen, pack_params);
-      if (packed->val == NULL) {
-         LOG(LOG_INFO, "found NULL value even though inode scan found something\n");
-         fprintf(stderr, "found NULL value even though inode scan found something\n");
-         return -1;
-      }   
-      LOG(LOG_INFO, "%d %d\n", unpackedLen, packedLen);
-      // repack small objects into larger object
-      ret = pack_up(packed, repo, namespace);
+      if (ret == -1) {
+         return_val = -1;
+      }
+      else {
+         LOG(LOG_INFO, "%d %d\n", unpackedLen, packedLen);
+         // repack small objects into larger object
+         ret = pack_up(packed, repo, namespace);
 
-      // Update metadata information
-      set_md(packed, pack_params);
-      free_objects(packed);
+         // Update metadata information
+         set_md(packed, pack_params);
+         free_objects(packed);
+      }
    }
-   return 0;
+   free(unpacked);
+   return return_val;
 }
-/******************************************************************************
-* Name parse_size_arg
-* This function parses the input parameters for packed object size and
-* small object size
-* Formats include:
-*
-* -p size_value[k],[m],[g],[kB],[mB],[gB]  
-* -s size_value[k],[m],[g],[kB],[mB],[gB]  
-*
-*  where k, m, and g are base2 and kB, mB, gB are base 10
-******************************************************************************/
-int parse_size_arg(char *chbytes, uint64_t *out_value)
-{
-
-   char last, next_last;
-   unsigned long long int insize = 0;
-
-   last = chbytes[strlen(chbytes) - 1];
-   next_last = chbytes[strlen(chbytes) - 2];
- 
-   // If not a digit determine if k,m,g for base 2 or B for base 10
-   if( !isdigit(last))
-     switch(last){
-     case 'k':
-       if(insize == 0) insize = 1024;
-     case 'm':
-       if(insize == 0) insize = 1048576;
-     case 'g':
-       if( !isdigit(next_last)){
-         fprintf(stderr,"Error: Unknown multiplicative suffix (%c%c) for input string %s.\n",
-                 next_last, last, chbytes);
-         return -1;
-       }
-       chbytes[strlen(chbytes) - 1] = '\0';
-       if(insize == 0) insize = 1073741824;
-       break;
-     // If 'B' do decimal settings
-     case 'B':
-       if( isdigit(next_last)){
-         fprintf(stderr,"Error: Unknown multiplicative suffix (%c) for input string %s.\n",
-                 last, chbytes);
-         return -1;
-       }
-       // look at character befor 'B'
-       chbytes[strlen(chbytes) - 1] = '\0';
-       last = chbytes[strlen(chbytes) - 1];
-       next_last = chbytes[strlen(chbytes) - 2];
-
-       if( !isdigit(next_last)){
-         fprintf(stderr,"Error: Unknown multiplicative suffix (%cB) for input string %s.\n",
-                 last, chbytes);
-         return -1;
-       }
-
-       switch(last){
-       case 'k':
-         if(insize == 0) insize = 1000;
-       case 'm':
-         if(insize == 0) insize = 1000000;
-       case 'g':
-         if(insize == 0) insize = 10000000000ULL;
-         chbytes[strlen(chbytes) - 1] = '\0';
-         break;
-       default:
-         fprintf(stderr,"Error: Unknown multiplicative suffix (%cB) for input string %s.\n",
-                 last, chbytes);
-         return -1;
-         break;
-       }
-
-       break;
-     default:
-       fprintf(stderr,"Error: Unknown multiplicative suffix (%c) for input string %s.\n",
-               last, chbytes);
-       return -1;
-     }
-   // last character is a digit so just use user arg as is
-   else{
-     insize = 1;
-   }
-
-   *out_value = insize * (uint64_t)atol(chbytes);
-   return 0;
-}
-
 /******************************************************************************
 * Name free_objects
 * 
@@ -1195,3 +1166,45 @@ void free_objects(obj_lnklist *objects)
       free(temp_obj);
    }
 }
+/******************************************************************************
+* Name free_sub_objects
+* 
+* Free objects link list memory
+******************************************************************************/
+void free_sub_objects(inode_lnklist *sub_objects)
+{
+   inode_lnklist *temp_inode;
+   inode_lnklist *object;
+
+   object = sub_objects;
+   while((temp_inode=object) != NULL) {
+         object = object->next;
+         free(temp_inode);
+   }
+}
+
+/******************************************************************************
+* Name check_S3_error  
+* 
+* Check for s3 errors           
+******************************************************************************/
+int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action )
+{
+  if ( curl_return == CURLE_OK ) {
+    if (action == S3_GET || action == S3_PUT ) {
+       if (s3_buf->code == HTTP_OK || s3_buf->code == HTTP_NO_CONTENT) {
+          return(0);
+       }
+       else {
+         fprintf(stderr, "Error, HTTP Code:  %d\n", s3_buf->code);
+         return(s3_buf->code);
+       }
+    }
+  }
+  else {
+    fprintf(stderr,"Error, Curl Return Code:  %d\n", curl_return);
+    return(-1);
+  }
+  return(0);
+}
+

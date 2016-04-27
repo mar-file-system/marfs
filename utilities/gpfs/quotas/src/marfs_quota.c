@@ -1,4 +1,4 @@
-/*
+ /*
  * This file is part of MarFS, which is released under the BSD license.
  *
  *
@@ -315,7 +315,7 @@ Name:  get_xattrs
 This function fills the xattr struct with all xattr key value pairs
 
 *****************************************************************************/
-int get_xattrs(gpfs_iscan_t *iscanP,
+size_t get_xattrs(gpfs_iscan_t *iscanP,
                  const char *xattrP,
                  unsigned int xattrLen,
                  const char **marfs_xattr,
@@ -329,7 +329,7 @@ int get_xattrs(gpfs_iscan_t *iscanP,
    const char *xattrBufP = xattrP;
    unsigned int xattrBufLen = xattrLen;
    int printable;
-   int xattr_count =0;
+   size_t xattr_count = 0;
    int desired_xattr = 0;
 
    /*  Loop through attributes */
@@ -448,6 +448,7 @@ int read_inodes(const char    *fnameP,
    int trash_index = -1;
  
    unsigned int last_fileset_id = -1;
+   size_t non_marfs_inode_cnt=0;
 
 
    // Defined xattrs as an array of const char strings with defined indexs
@@ -464,6 +465,7 @@ int read_inodes(const char    *fnameP,
    int early_exit =0;
    int xattr_index;
    char *md_path_ptr;
+   int trash_tabulated = 0;
 
    //outfd = fopen(onameP,"w");
 
@@ -541,13 +543,13 @@ int read_inodes(const char    *fnameP,
             struct_index = lookup_fileset(fileset_stat_ptr,rec_count,
                                           offset_start,fileset_name_buffer);
             
-             LOG(LOG_INFO, "scan fileset = %s\n", fileset_name_buffer);
+             LOG(LOG_INFO, "scan fileset = %s struct_index = %di inode = %d\n", 
+                 fileset_name_buffer,struct_index,iattrP->ia_inode);
             if (struct_index == -1) 
                continue;
             last_struct_index = struct_index;
             last_fileset_id = iattrP->ia_filesetid;
          }
-
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
          if (iattrP->ia_xperm & GPFS_IAXPERM_XATTR && xattr_len >0 ) {
@@ -583,9 +585,15 @@ int read_inodes(const char    *fnameP,
                fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
                fileset_stat_ptr[last_struct_index].sum_file_count+=1;
                LOG(LOG_INFO, "struct index = %d size = %llu file size sum\
-                   = %zu\n", last_struct_index,
-               iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size);
+                   = %zu inode=%d\n", last_struct_index,
+               iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size,iattrP->ia_inode);
                fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id); 
+           
+               //if trash and in trash fileset set flag so that non trash fileset files
+               //can still be counted
+               trash_tabulated=0;
+               if (!strcmp(fileset_name_buffer,"trash")) 
+                  trash_tabulated=1; 
 
                // Determine obj_type and update counts
                update_type(&post, fileset_stat_ptr, last_struct_index);
@@ -615,10 +623,18 @@ int read_inodes(const char    *fnameP,
                              md_path_ptr);
                      continue;
                   }
+                  // No error so update counts            
                   else {
+                     // Update trash quota info based on what fileset trash came from 
                      fileset_stat_ptr[fileset_trash_index].sum_trash += iattrP->ia_size;
                      fileset_stat_ptr[fileset_trash_index].sum_trash_file_count += 1;
-                     if (trash_index != -1) {
+                     // Update total trash statistics 
+                     // trash_tabulated is the case where a trash fileset exists so
+                     // counts are taken care of above
+                     // The following condition is if trash exists but not in a 
+                     // trash fileset
+                     if (!trash_tabulated && trash_index != -1) {
+                        update_type(&post, fileset_stat_ptr, trash_index);
                         fileset_stat_ptr[trash_index].sum_size += iattrP->ia_size;
                         fileset_stat_ptr[trash_index].sum_file_count += 1;
 
@@ -626,10 +642,18 @@ int read_inodes(const char    *fnameP,
                   }
                }
             }
+            // else file is non-marfs but has other type of xattr
+            else {
+               non_marfs_inode_cnt +=1;
+            }
+         }
+         // else no xattr so non marfs
+         else {
+            non_marfs_inode_cnt +=1;
          }
       }
    } // endwhile
-   write_fsinfo(outfd, fileset_stat_ptr, rec_count, offset_start, fnameP);
+   write_fsinfo(outfd, fileset_stat_ptr, rec_count, offset_start, fnameP, non_marfs_inode_cnt);
    clean_exit(outfd, iscanP, fsP, early_exit);
    return(rc);
 }
@@ -676,7 +700,8 @@ void write_fsinfo(FILE*         outfd,
                   Fileset_Stats *fileset_stat_ptr, 
                   size_t        rec_count, 
                   size_t        index_start,
-                  const char    *root_dir)
+                  const char    *root_dir,
+                  size_t        non_marfs_cnt)
 {
    size_t i;
    int GIB = 1024*1024*1024;
@@ -700,7 +725,8 @@ void write_fsinfo(FILE*         outfd,
               fileset_stat_ptr[i].sum_trash_file_count);
       fprintf(outfd,"trash_size:          %zu\n\n", fileset_stat_ptr[i].sum_trash);
    }
-   trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start, root_dir);
+   fprintf(outfd,"non-marfs inode count:  %zu\n\n", non_marfs_cnt);
+   trunc_fsinfo(outfd, fileset_stat_ptr, rec_count, index_start, root_dir, non_marfs_cnt);
 }
 /***************************************************************************** 
 Name: truncate_fsinfo 
@@ -714,12 +740,13 @@ int trunc_fsinfo(FILE*         outfd,
                  Fileset_Stats *fileset_stat_ptr, 
                  size_t        rec_count, 
                  size_t        index_start,
-                 const char    *root_dir_fsinfo)
+                 const char    *root_dir_fsinfo,
+                 size_t        non_marfs_cnt)
 {
    int ret;
    int i;
    size_t sum_total = 0;
-   char   root_fsinfo_path[256];
+   char   root_fsinfo_path[MAX_PATH_LENGTH];
    char   *root_fsinfo = &root_fsinfo_path[0];
 
    //  Go through all namespaces/filesets scanned
@@ -756,6 +783,16 @@ int trunc_fsinfo(FILE*         outfd,
    else {
             fprintf(outfd, "Truncated root fsinfo %s to %zu\n", root_fsinfo, 
                     sum_total);
+   }
+   sprintf(root_fsinfo,"%s/%s", root_dir_fsinfo,"fsinfo.inodes");
+   if ((ret = truncate(root_fsinfo, non_marfs_cnt)) == -1) { 
+            fprintf(outfd, 
+                    "Error:  Unable to truncate root fsinfo.inodes %s to %zu\n", 
+                    root_fsinfo, non_marfs_cnt);
+   }
+   else {
+            fprintf(outfd, "Truncated root fsinfo %s to %zu\n", root_fsinfo, 
+                    non_marfs_cnt);
    }
    return 0;
 }
@@ -827,7 +864,6 @@ int lookup_fileset_path(Fileset_Stats *fileset_stat_ptr, size_t rec_count,
    // search the array of structures for matching fileset name
    //printf("path = %s\n", path);
    for (i = 0; i < rec_count; i++) {
-       //printf("AAAAAA %s %s\n", fileset_stat_ptr[i].fileset_name,path);
        //printf("fileset = %s\n", fileset_stat_ptr[i].fileset_name);
        if(strstr(path,fileset_stat_ptr[i].fileset_name) != NULL && index == -1 ) {
           index=i;
