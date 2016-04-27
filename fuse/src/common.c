@@ -1460,7 +1460,10 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
       errno = EIO;
       return -1;
    }
-   else if (str_count != chunk_info_len) {
+   // NOTE: Value can legitimately be less than sizeof(MultiChunkInfo),
+   //     because chunkinfo_2_str() and str_2_chunkinfo() do not write/read
+   //     the implicit padding that may exist in the MultiChunkInfo struct.
+   else if (str_count > chunk_info_len) {
       LOG(LOG_ERR, "error preparing chunk-info (%ld != %ld)\n",
           str_count, chunk_info_len);
       errno = EIO;
