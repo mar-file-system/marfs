@@ -1260,7 +1260,7 @@ int open_md(MarFS_FileHandle* fh) {
    }
    else {
       LOG(LOG_ERR, "illegal flags %d for '%s' not allowed\n",
-          flags, info->post.md_path);
+          fh->flags, info->post.md_path);
       errno = EIO;
       return -1;
    }
