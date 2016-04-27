@@ -261,12 +261,14 @@ int marfs_ftruncate(const char*            path,
    // Call access() syscall to check/act if allowed to truncate for this user
    ACCESS(info->post.md_path, (W_OK));        /* for truncate? */
 
+   TRY0(open_md(fh));
+
    // stat_xattrs, or look up info stuffed into memory pointed at in fuse
    // open table if this is not just a normal [object-storage case?], use
    // the md for file data
    STAT_XATTRS(info);
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
-      LOG(LOG_INFO, "no xattrs\n");
+      LOG(LOG_INFO, "no xattrs.  Treating as DIRECT.\n");
 #if USE_MDAL
       TRY0( F_OP(ftruncate, fh, length) );
 #else
@@ -282,7 +284,7 @@ int marfs_ftruncate(const char*            path,
       return -1;
    }
 
-   // Check/act on truncate-to-zero only.
+   // We only allow truncate-to-zero on non-DIRECT repos.
    if (length) {
       errno = EPERM;
       return -1;
@@ -300,6 +302,8 @@ int marfs_ftruncate(const char*            path,
 
    // metadata filehandle is still open to the current MD file.
    // That's okay, but we need to ftruncate it, as well.
+   TRY0(open_md(fh));
+
 #if USE_MDAL
    if (F_OP(is_open, fh)) {
       if (fh->flags & FH_WRITING)
@@ -834,9 +838,19 @@ int marfs_open(const char*         path,
    LOG(LOG_INFO, "ignoring file-MDAL\n");
 #endif
 
-   // If no xattrs, we let user read/write directly into the file.
-   // This corresponds to a file that was created in DIRECT repo-mode.
+   // If no xattrs, we let user read/write directly on the file.
+   // This implies a file that created in DIRECT repo-mode,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
+      LOG(LOG_INFO, "no xattrs.  Opening as DIRECT.\n");
+
+      //      // Wrong.  The repo might not have DIRECT-mode now.
+      //      if (info->pre.repo->access_method != ACCESSMETHOD_DIRECT) {
+      //         LOG(LOG_INFO, "Has RESTART, but (%s) repo->access_method != DIRECT\n",
+      //             info->pre.repo->name);
+      //         errno = EINVAL;
+      //         return -1;
+      //      }
+
 #if USE_MDAL
       if (! F_OP(open, fh, info->post.md_path, flags))
          return -1;
@@ -848,41 +862,14 @@ int marfs_open(const char*         path,
       }
 #endif
    }
-   // some kinds of reads need to get info from inside the MD-file
-   else if ((fh->flags & FH_READING)
-            && ((info->post.obj_type == OBJ_MULTI)
-                || (info->post.obj_type == OBJ_PACKED))) {
-#if USE_MDAL
-      if (! F_OP(open, fh, info->post.md_path, (O_RDONLY)))
-         return -1;
-#else
-      fh->md_fd = open(info->post.md_path, (O_RDONLY)); // no O_BINARY in Linux.  Not needed.
-      if (fh->md_fd < 0) {
-         fh->md_fd = 0;
-         return -1;
-      }
-#endif
-   }
+
    else if (fh->flags & FH_WRITING) {
       LOG(LOG_INFO, "writing\n");
 
-      // Don't open MD file, here.  It isn't needed until the object-size
-      // exceeds the threshold for Uni
-      // (i.e. Namespace.iwrite_repo->chunk_size).  If we open it here,
-      // then we unnecessarily slow down writing small files.
-      //
-      //      fh->md_fd = open(info->post.md_path, (O_WRONLY));  // no O_BINARY in Linux.
-      //      if (fh->md_fd < 0) {
-      //         fh->md_fd = 0;
-      //         return -1;
-      //      }
-
-
-      // An exception is the case where (potentially) multiple writers are
-      // writing the file in service of pftool.  This is "risky" behavior,
-      // because it is up to the caller to assure that objects are only
-      // written to proper offsets.  But they took on that risk when they
-      // called marfs_open_at_offset().
+      // Support for pftool N:1, where (potentially) multiple writers are
+      // writing different parts of the file.  It's up to the caller to
+      // assure that objects are only written to proper offsets.  Caller
+      // took on that risk when they called marfs_open_at_offset().
       if (fh->flags & FH_Nto1_WRITES) {
 
          LOG(LOG_INFO, "writing N:1\n");
@@ -900,28 +887,6 @@ int marfs_open(const char*         path,
             errno = EFAULT;        // most feasible-looking POSIX-compliant error?
             return -1;
          }
-
-#if USE_MDAL
-         if (! F_OP(open, fh, info->post.md_path, (O_WRONLY)))
-            return -1;
-#else
-         fh->md_fd = open(info->post.md_path, (O_WRONLY));  // no O_BINARY in Linux.
-         if (fh->md_fd < 0) {
-            fh->md_fd = 0;
-            return -1;
-         }
-#endif
-
-         // position md_fd at the proper place for MultiChunkInfo for this chunk
-         size_t chunk_info_offset = (chunk_no * sizeof(MultiChunkInfo));
-#if USE_MDAL
-         TRY_GE0( F_OP(lseek, fh, chunk_info_offset, SEEK_SET) );
-#else
-         TRY_GE0( lseek(fh->md_fd, chunk_info_offset, SEEK_SET) );
-#endif
-
-         LOG(LOG_INFO, "chunkinfo offset=%ld, (open_offset=%ld) length=%ld\n",
-             chunk_info_offset, fh->open_offset, content_length);
 
          // set marfs_objid.obj_type such that pftool can recognize that it
          // must do additional cleanup after closing.  (Actually done in
@@ -1198,8 +1163,9 @@ int marfs_read (const char*        path,
    //   File has no xattr objtype
    //     Just read the bytes from the file and fill in fuse read buffer
    //
-   if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
-       && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
+   if ((! has_any_xattrs(info, MARFS_ALL_XATTRS))
+       // && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)
+       ) {
       LOG(LOG_INFO, "reading DIRECT\n");
 #if USE_MDAL
       TRY_GE0( F_OP(read, fh, buf, size) );
@@ -1209,13 +1175,21 @@ int marfs_read (const char*        path,
       return rc_ssize;
    }
 
+   else if (has_any_xattrs(info, MARFS_MD_XATTRS)
+            && (! has_all_xattrs(info, MARFS_MD_XATTRS))) {
+      LOG(LOG_ERR, "has some, but not all MARFS_MD_XATTRS\n");
+      errno = EINVAL;
+      return -1;
+   }
+
    // This could be e.g. a file written Nto1 from pftool, in which there
-   // were some write-errors.  Such files are legit, because pftool can do
-   // another pass and write the parts that are missing.  But we don't let
-   // anyone try to read the file until that's been done.  In this case, it
-   // will still have the RESTART xattr.  [TBD? Try to allow reading
-   // regions that were successfully written?]
-   if (has_any_xattrs(info, XVT_RESTART)) {
+   // were some write-errors, or the job was stopped before all parts were
+   // written.  Such files are legit, because pftool can do another pass
+   // and write the parts that are missing.  But we don't let anyone try to
+   // read the file until that's been done.  In this case, it will still
+   // have the RESTART xattr.  [TBD? allow reading regions that were
+   // successfully written?]
+   else if (has_all_xattrs(info, XVT_RESTART)) {
       LOG(LOG_ERR, "has RESTART\n");
       errno = EINVAL;
       return -1;
@@ -1274,7 +1248,8 @@ int marfs_read (const char*        path,
    // operations to only those that are strictly necessary (for example,
    // when ending one Multi object and starting the next one).
    // Specifically, if we receive multiple calls to read() that are getting
-   // contiguous data, we avoid opening a new stream on every call.
+   // contiguous data, we avoid opening a new stream on every call (by
+   // leaving the stream open).
    //
    // Marfs_write (and pftool) promise that we can compute the object-IDs
    // of the chunk and offset, for the Multi-object that matches a given
@@ -1285,7 +1260,7 @@ int marfs_read (const char*        path,
    //     end, which we must skip over).
    //
    // (b) Object-IDs are all the same as the object-ID in the "objid"
-   //     xattr, but changing the final ".0" to the appropriate
+   //     xattr, changing only the final ".0" to the appropriate
    //     chunk-number.
    //
    // These assumptions mean we can easily compute the IDs of chunk(s) we
@@ -1747,13 +1722,16 @@ int marfs_release (const char*        path,
       if (! (fh->os.flags & OSF_ERRORS)) {
 
          // If obj-type is Multi, write the final MultiChunkInfo into the MD file.
+         // (unless pftool is writting N:1, in which case we'll do that in post_process)
          if ((fh->flags & FH_WRITING)
              && (info->post.obj_type == OBJ_MULTI)) {
 
-            TRY0( write_chunkinfo(fh,
-                                  info,
-                                  fh->open_offset,
-                                  (os->written - fh->write_status.sys_writes)) );
+            if (info->pre.obj_type != OBJ_Nto1) {
+               TRY0( write_chunkinfo(fh,
+                                     // fh->open_offset,
+                                     (os->written - fh->write_status.sys_writes),
+                                     0) );
+            }
 
             // keep count of amount of real chunk-info written into MD file
             info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
@@ -2544,32 +2522,13 @@ int marfs_write(const char*        path,
       TRY0( stream_sync(os) );
       TRY0( stream_close(os) );
 
-      // if we haven't already opened the MD file, do it now.
-#if USE_MDAL
-      if (! F_OP(is_open, fh)) {
-         if (! F_OP(open, fh, info->post.md_path, (O_WRONLY)) ) {
-            LOG(LOG_ERR, "open %s failed (%s)\n", info->post.md_path, strerror(errno));
-            errno = EIO;
-            return -1;
-         }
-      }
-#else
-      if (! fh->md_fd) {
-         fh->md_fd = open(info->post.md_path, (O_WRONLY));// no O_BINARY in Linux.  Not needed.
-         if (fh->md_fd < 0) {
-            LOG(LOG_ERR, "open %s failed (%s)\n", info->post.md_path, strerror(errno));
-            fh->md_fd = 0;
-            errno = EIO;
-            return -1;
-         }
-      }
-#endif
-
       // MD file gets per-chunk information
-      TRY0( write_chunkinfo(fh,
-                            info,
-                            fh->open_offset,
-                            (os->written - fh->write_status.sys_writes)) );
+      if (info->pre.obj_type != OBJ_Nto1) {
+         TRY0( write_chunkinfo(fh,
+                               // fh->open_offset,
+                               (os->written - fh->write_status.sys_writes),
+                               0) );
+      }
 
       // keep count of amount of real chunk-info written into MD file
       info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
