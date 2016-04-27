@@ -339,9 +339,9 @@ typedef enum {
    OBJ_MULTI,          // file spans multiple objs (list of objs as chunks)
    OBJ_PACKED,         // multiple files per objects
    OBJ_STRIPED,        // (like Lustre does it)
-   OBJ_FUSE,           // written by FUSE.   (implies not-packed, maybe uni/multi)
-   OBJ_Nto1,           // written by pftool. (implies not-packed, maybe uni/multi)
-                       // Only used in object-ID, not in Post xattr)
+                       // Only used in object-ID, not in Post xattr:
+   OBJ_FUSE,           //   written by FUSE.   (implies not-packed, maybe uni/multi)
+   OBJ_Nto1,           //   written by pftool. (implies not-packed, maybe uni/multi)
 } MarFS_ObjType;
 
 // extern const char*   obj_type_name(MarFS_ObjType type);

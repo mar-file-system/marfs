@@ -931,8 +931,9 @@ int  trash_truncate(PathInfo*   info,
    TRY_DECLS();
    __TRY0( stat_xattrs(info) );
    if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
-      LOG(LOG_INFO, "no xattrs\n");
+      LOG(LOG_INFO, "incomplete xattrs\n");
       __TRY0( truncate(info->post.md_path, 0) );
+      __TRY0( trunc_xattrs(info) ); // didn't have all, but might have had some
       return 0;
    }
 
@@ -1088,7 +1089,7 @@ int  trash_truncate(PathInfo*   info,
    __TRY0( utime(info->trash_md_path, &trash_time) );
 
    // clean out marfs xattrs on the original
-   __TRY0( trunc_xattr(info) );
+   __TRY0( trunc_xattrs(info) );
 
    // write full-MDFS-path of original-file into trash-companion file
    __TRY0( write_trash_companion_file(info, path, &trash_time) );
@@ -1114,10 +1115,9 @@ int  trash_truncate(PathInfo*   info,
 
 
 
-//   trunc file to zero
-//   remove (not just reset but remove) all reserved xattrs
+// remove (not just reset but remove) all reserved xattrs
 
-int trunc_xattr(PathInfo* info) {
+int trunc_xattrs(PathInfo* info) {
    XattrSpec*  spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
       lremovexattr(info->post.md_path, spec->key_name);
@@ -1232,6 +1232,100 @@ int update_url(ObjectStream* os, PathInfo* info) {
 }
 
 
+// Assure MD is open.
+//
+// WARNING: This is somewhat dodgy.  We *ought* to just look at fh->flags.
+//     If they include FH_WRITING, then open for writing, or if FH_READING,
+//     then open for reading.  However, this needs to be called from
+//     pftools MARFS_Path, which may not have "opened" the FileHandle
+//     itself, and so there would be no flags in fh->flags.
+//
+//     The problem is that we are allowing someone to screw up the
+//     direction in which the MD fd is opened.
+
+int open_md(MarFS_FileHandle* fh) {
+
+   PathInfo* info = &fh->info;
+
+   int         flags;
+   const char* flags_str;
+
+   if (fh->flags & FH_WRITING) {
+      flags     =  O_WRONLY;
+      flags_str = "O_WRONLY";
+   }
+   else if (fh->flags & FH_READING) {
+      flags     =  O_RDONLY;
+      flags_str = "O_RDONLY";
+   }
+   else {
+      LOG(LOG_ERR, "illegal flags %d for '%s' not allowed\n",
+          fh->flags, info->post.md_path);
+      errno = EIO;
+      return -1;
+   }
+      
+
+   // if we haven't already opened the MD file, do it now.
+#if USE_MDAL
+   if (! F_OP(is_open, fh)) {
+      if (! F_OP(open, fh, info->post.md_path, flags) ) {
+         LOG(LOG_ERR, "open_md(%s,%s) failed: %s\n",
+             info->post.md_path, flags_str, strerror(errno));
+         errno = EIO;
+         return -1;
+      }
+   }
+#else
+   if (! fh->md_fd) {
+      fh->md_fd = open(info->post.md_path, flags);
+      if (fh->md_fd < 0) {
+         LOG(LOG_ERR, "open_md(%s,%s) failed: %s\n",
+             info->post.md_path, flags_str, strerror(errno));
+         fh->md_fd = 0;
+         errno = EIO;
+         return -1;
+      }
+   }
+#endif
+
+   LOG(LOG_INFO, "open_md(%s,%s) ok\n", info->post.md_path, flags_str);
+   return 0;
+}
+
+
+// non-zero = true, 0 = false
+int is_open_md(MarFS_FileHandle* fh) {
+#if USE_MDAL
+   return F_OP(is_open, fh);
+#else
+   return (fh->md_fd != 0);
+#endif
+}
+
+
+// Seek to the location of a given chunk.
+// [e.g. Then call read_chunkinfo().]
+// We assume the MD fd is already open
+//
+int seek_chunkinfo(MarFS_FileHandle* fh, size_t chunk_no) {
+   TRY_DECLS();
+   const size_t chunk_info_len    = sizeof(MultiChunkInfo);
+   off_t        chunk_info_offset = chunk_no * chunk_info_len;
+
+#if USE_MDAL
+   TRY_GE0( F_OP(lseek, fh, chunk_info_offset, SEEK_SET) );
+#else
+   TRY_GE0( lseek(fh->md_fd, chunk_info_offset, SEEK_SET) );
+#endif
+
+   LOG(LOG_INFO, "chunk=%ld, sizeof chunkinfo=%ld, chunkinfo_offset=%ld\n",
+       chunk_no, chunk_info_len, chunk_info_offset);
+
+   return 0;
+}
+
+
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 //
 // <total_written> includes all user-data (but not system-data,
@@ -1240,40 +1334,43 @@ int update_url(ObjectStream* os, PathInfo* info) {
 // total_written.  And that only the final chunk can be less than 100%
 // full.
 //
-// NOTE: When writing through fuse, there is a long sequence of writes
-//    which are arbitrarily sized, with respect to the size of a
-//    marfs-chunk.  Therefore, the total data written can be tracked in the
-//    ObjectStream in a MarFS_FileHandle, and any system-writes
-//    (recovery-info) can be subtracted.  This use-case needs to preserve
-//    the total amount of data-written, so that the MD file can be
-//    truncated to the proper size at close time.
+// NOTE: When writing through fuse, there may be a long sequence of writes
+//    that are arbitrarily-sized with respect to the size of a marfs-chunk.
+//    Therefore, the total data written can be tracked in the ObjectStream
+//    in a MarFS_FileHandle, and any system-writes (recovery-info) can be
+//    subtracted.  In this case, <user_data_written> is the total amount of
+//    user-data written, so far.
 //
-//    On the other hand, fuse may spawn many tasks writing to the same file
-//    (see FH_Nto1_WRITES).  We assure that they all start writing at
-//    logical chunk-boundaries, and we expect pftool to assure that they
-//    all (except possibly the last) write full-sized chunks.  But these
-//    will not have OS.written matching what would be expected at a given
-//    chunk, if they had been writing through fuse.
+//    On the other hand, pftool may have many tasks writing to the same
+//    file (see OBJ_Nto1).  Pftool assures that they all start writing at
+//    logical chunk-boundaries, and that they all (except possibly the
+//    last) write full-sized chunks.  In this case, <user_data_written>
+//    is just the amount written to this chunk.
 //
-//    In both cases, if we have the logical offset that was used at
-//    open-time (i.e. 0 for fuse, some block-boundary for pftool), then we
-//    can fill out the chunk-info.  And, in both cases, OS.written should
-//    be preserved,
-
-
+//    <size_is_per_chunk> is true from pftool, and false from fuse.
+//
+//    //    In both cases, if we have the logical offset that was used at
+//    //    open-time (i.e. 0 for fuse, or some block-boundary for pftool),
+//    //    then we can fill out the chunk-info.  And, in both cases,
+//    //    OS.written should be preserved.
+//
 int write_chunkinfo(MarFS_FileHandle*     fh,
-                    const PathInfo* const info,
-                    size_t                open_offset,
-                    size_t                user_data_written) {
+                    // size_t                open_offset,
+                    size_t                user_data_written,
+                    int                   size_is_per_chunk) {
+   TRY_DECLS();
+
+   PathInfo* info = &fh->info;
 
    const size_t recovery             = MARFS_REC_UNI_SIZE;
    const size_t user_data_per_chunk  = info->pre.chunk_size - recovery;
    const size_t log_offset           = info->pre.chunk_no * user_data_per_chunk;
-   const size_t user_data_this_chunk = user_data_written - log_offset;
+   const size_t user_data_this_chunk = (size_is_per_chunk
+                                        ? user_data_written
+                                        : (user_data_written - log_offset));
 
-   const size_t chunk_info_len = sizeof(MultiChunkInfo);
+   const size_t chunk_info_len    = sizeof(MultiChunkInfo);
    char         str[chunk_info_len];
-
 
    MultiChunkInfo chunk_info = (MultiChunkInfo) {
       .config_vers_maj  = MARFS_CONFIG_MAJOR, // marfs_config->version_major,
@@ -1304,7 +1401,15 @@ int write_chunkinfo(MarFS_FileHandle*     fh,
       return -1;
    }
 
+   TRY0(open_md(fh));
+
+   // seek to offset for this chunk, in MD file
+   TRY0(seek_chunkinfo(fh, info->pre.chunk_no));
+
    // write portable binary to MD file
+   LOG(LOG_INFO, "chunk=%ld, open_offset=%ld, data_length=%ld\n",
+       info->pre.chunk_no, fh->open_offset, user_data_this_chunk);
+
 #if USE_MDAL
    ssize_t wr_count = F_OP(write, fh, str, chunk_info_len);
 #else
@@ -1355,7 +1460,10 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
       errno = EIO;
       return -1;
    }
-   else if (str_count != chunk_info_len) {
+   // NOTE: Value can legitimately be less than sizeof(MultiChunkInfo),
+   //     because chunkinfo_2_str() and str_2_chunkinfo() do not write/read
+   //     the implicit padding that may exist in the MultiChunkInfo struct.
+   else if (str_count > chunk_info_len) {
       LOG(LOG_ERR, "error preparing chunk-info (%ld != %ld)\n",
           str_count, chunk_info_len);
       errno = EIO;
@@ -1365,22 +1473,6 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
    return 0;
 }
 
-// Seek to the location of a given chunk.
-// [e.g. Then call read_chunkinfo().]
-// We assume the MD fd is already open
-//
-int seek_chunkinfo(MarFS_FileHandle* fh, size_t chunk_no) {
-   TRY_DECLS();
-   const size_t chunk_info_len = sizeof(MultiChunkInfo);
-
-   off_t offset = chunk_no * chunk_info_len;
-#if USE_MDAL
-   TRY_GE0( F_OP(lseek, fh, offset, SEEK_SET) );
-#else
-   TRY_GE0( lseek(fh->md_fd, offset, SEEK_SET) );
-#endif
-   return 0;
-}
 
 
 

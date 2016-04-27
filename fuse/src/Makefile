@@ -125,6 +125,10 @@ PID = marfs_fuse.pid
 # c99 needed for gcc 4.4.7 to know snprintf(), and floorf()
 CFLAGS  += -Wall -std=c99 -I.
 
+# This adds runtime checking against smashing the stack
+CFLAGS += -fstack-protector-all
+
+
 # 700 = Single UNIX Spec v4.
 #
 # We use:
@@ -679,16 +683,17 @@ test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
 
 # test-apps that may potentially use any of the various marfs support libs
 demo_%: demo_%.o $(OBJS)
-	gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
+	@ # gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
+	@ echo "demo: $*"
+	@ $(MAKE) _app_demo_$* LINK_LIBFUSE=1
 
-test_%: test_%.c $(OBJS)
-	echo "test_$*"
-	@ $(MAKE) _test_$* LINK_LIBFUSE=1
+test_%: test_%.c
+	@ echo "test: $*"
+	@ $(MAKE) _app_test_$* LINK_LIBFUSE=1
 
-_test_%:
-	echo "_test_$*"
-	@# gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
-	gcc $(CFLAGS) -o test_$* $(LDFLAGS) -L$(PWD) test_$*.c $(OBJS) $(LIBS) -lmarfs
+_app_%: libmarfs.a
+	@ echo "making: _app_$*"
+	gcc $(CFLAGS) -o $* $(LDFLAGS) -L$(PWD) $*.c -lmarfs $(LIBS)
 
 
 # lines-of-code

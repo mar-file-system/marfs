@@ -680,7 +680,7 @@ extern int  init_xattr_specs();
 extern int  has_all_xattrs (PathInfo* info, XattrMaskType mask);
 extern int  has_any_xattrs (PathInfo* info, XattrMaskType mask);
 
-extern int  trunc_xattr  (PathInfo* info);
+extern int  trunc_xattrs  (PathInfo* info);
 
 // need the path to initialize info->trash_md_path
 extern int  trash_unlink  (PathInfo* info, const char* path);
@@ -691,11 +691,17 @@ extern int  check_quotas  (PathInfo* info);
 extern int  update_url     (ObjectStream* os, PathInfo* info);
 extern int  update_timeouts(ObjectStream* os, PathInfo* info);
 
+// currently just opens for writing.
+extern int  open_md        (MarFS_FileHandle* fh);
+extern int  is_open_md     (MarFS_FileHandle* fh);
+
 // write MultiChunkInfo (as binary data in network-byte-order), into file
+// From fuse, <user_data_written> is total from zero. From pftool, it's the
+// amount in this block.
 extern int     write_chunkinfo(MarFS_FileHandle*     fh,
-                               const PathInfo* const info,
-                               size_t                open_offset,
-                               size_t                user_data_written);
+                               // size_t                open_offset,
+                               size_t                user_data_written,
+                               int                   size_is_per_chunk);
 
 extern int     read_chunkinfo (MarFS_FileHandle* fh, MultiChunkInfo* chnk);
 

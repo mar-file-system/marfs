@@ -1162,8 +1162,17 @@ ssize_t chunkinfo_2_str(char* str, const size_t max_size, const MultiChunkInfo* 
    return (dest - str);
 }
 
-// <str> holds binary data (in network-byte-order) read from an Multi MD
+// <str> holds binary data (in network-byte-order) read from a Multi MD
 // file, representing one chunk.  Parse it into a MultiChunkInfo.
+//
+// NOTE: We return the actual amount of data read.  In practice, the
+//    MultiChunkInfo struct takes 48 bytes, but there are only 44 bytes of
+//    data-values.  (4 bytes of padding, betw config_vers_min and
+//    chunk_no.)  chunkinfo_2_str() will have written 44 bytes, but
+//    write_chunkinfo() will write on 48-byte boundaries (because of the
+//    sizeof MultiChunkInfo).  Therefore, when reading, we will also only
+//    read 44 bytes.  Therefore, callers should be aware that our
+//    return-value can legitimately be <= the <str_len> argument.
 ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_len) {
 
    // We require str_len >= sizeof(MultiChunkInfo), even though it's
