@@ -75,10 +75,19 @@ main(int argc, char* argv[]) {
    PathInfo* info = &fh.info;
    strncpy(info->post.md_path, md_path, MARFS_MAX_MD_PATH); // use argv[1]
    info->post.md_path[MARFS_MAX_MD_PATH -1] = 0;
+
+#if 0
+   // OOPS.  stat_xattrs() doesn't work in the trash.  To get it to work,
+   // we'd read the trash-companion file (e.g. <md_path> + ".path"), to get
+   // the name of the original file, then expand_path_info() on that, to
+   // install info->ns.  That would allow items in the trash that don't
+   // have a PRE or POST, to be defaulted.
+
    if (stat_xattrs(info)) {    // parse all xattrs for the MD file
       fprintf(stderr, "stat_xattrs() failed for MD file: '%s'\n", md_path);
       return -1;
    }
+#endif
 
    // assure the MD is open for reading
    fh.flags |= FH_READING;
