@@ -421,6 +421,14 @@ int init_xattr_specs() {
 // NOTE: if pftool is calling, it will already have called
 //       batch_pre_process(), which will have initialized xattrs
 //       (e.g. correct repo, etc).
+//
+// NOTE: This isn't intended for (and won't work for) files in the trash.
+//       The problem is that expand_path_info() won't find the namespace
+//       for such files, so default initializations of PRE and POST will
+//       segfault.  If you want to look at a file in the trash, you should
+//       first read the original path out of the trash "companion" file
+//       (*.path), then expand_path_info() on that, then change
+//       post.md_path to the trash file, then stat_xattrs().
 
 int stat_xattrs(PathInfo* info) {
    TRY_DECLS();
@@ -532,15 +540,6 @@ int stat_xattrs(PathInfo* info) {
    // subsequent calls can skip processing
    info->flags |= PI_XATTR_QUERY;
 
-
-   // if you have ANY of the MarFS xattrs, you should have ALL of them
-   // NOTE: These will call stat_xattrs(), but skip out because of PI_XATTR_QUERY
-   if (has_any_xattrs(info, MARFS_MD_XATTRS)
-       && ! has_all_xattrs(info, MARFS_MD_XATTRS)) {
-      LOG(LOG_ERR, "%s -- incomplete MD xattrs\n", info->post.md_path);
-      errno = EINVAL;            /* ?? */
-      return -1;
-   }
 
    // initialize the object-ID fields
    __TRY0( update_pre(&info->pre) );
@@ -857,7 +856,22 @@ int write_trash_companion_file(PathInfo*             info,
 //
 //     On second thought, we want the inode of the truncated file to remain
 //     the same (?) Therefore, rename(2) would always be wrong.
-
+//
+// UPDATE: Fuse always installs RESTART on new files.  Previously, it only
+//    installed PRE and POST when closing files.  It still installs POST at
+//    close of all files, and also installs PRE at close of Uni files.
+//    However, for Multi files, fuse now installs PRE (aka OBJID), at the
+//    time when a file first becomes N:1.  At that point there is at least
+//    one object associated with the file, and the MD file has chunk-info
+//    about which objects have been written.  If fuse were then to crash,
+//    and this file were to be trashed, GC could reclaim the storage for
+//    any objects that had been written, by crawling the MD file with
+//    read_chunkinfo(), and using that plus the object-ID to generate
+//    objids for the chunks.  So, if the file only has RESTART (can only
+//    happen if fuse crashed [or is still running in a separate task!]),
+//    then no associated object was successfully written, so it might as
+//    well just be deleted as though it were DIRECT.
+//
 // NOTE: Should we do something to make this thread-safe (like unlink()) ?
 //
 int  trash_unlink(PathInfo*   info,
@@ -877,17 +891,14 @@ int  trash_unlink(PathInfo*   info,
    //    clean up, too bad for the user as we aren't going to keep the
    //    unlinked file in the trash.
    //
-   // NOTE: The has_all_xattrs test treats any files that don't have both
-   //    POST and OBJID as though they were DIRECT, and just deletes them.
-   //    Such files are malformed, lacking sufficient info to be cleaned-up
-   //    when we take out the trash.
+   // See "UPDATE", above
    //
-   // NOTE: We don't put xattrs on symlinks, so they just get deleted.
+   // NOTE: We don't put xattrs on symlinks, so they also get deleted here.
    //
    TRY_DECLS();
    __TRY0( stat_xattrs(info) );
-   if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
-      LOG(LOG_INFO, "no xattrs\n");
+   if (! has_all_xattrs(info, XVT_PRE)) {
+      LOG(LOG_INFO, "incomplete xattrs\n"); // not enough to reclaim objs
       __TRY0( unlink(info->post.md_path) );
       return 0;
    }
@@ -927,11 +938,13 @@ int  trash_truncate(PathInfo*   info,
    //    for data) just trunc the file and return we have nothing to
    //    clean up, too bad for the user as we aren't going to keep the
    //    trunc’d file.
+   //
+   // See "UPDATE", above trash_unlink()
 
    TRY_DECLS();
    __TRY0( stat_xattrs(info) );
-   if (! has_all_xattrs(info, MARFS_MD_XATTRS)) {
-      LOG(LOG_INFO, "incomplete xattrs\n");
+   if (! has_all_xattrs(info, XVT_PRE)) {
+      LOG(LOG_INFO, "incomplete xattrs\n"); // see "UPDATE" in trash_unlink().
       __TRY0( truncate(info->post.md_path, 0) );
       __TRY0( trunc_xattrs(info) ); // didn't have all, but might have had some
       return 0;
@@ -1008,7 +1021,9 @@ int  trash_truncate(PathInfo*   info,
       // have tucked inside, to track object-storage.  Move the physical data,
       // then trunc to logical size.
       off_t log_size = info->st.st_size;
-      off_t phy_size = info->post.chunk_info_bytes;
+      off_t phy_size = (has_all_xattrs(info, XVT_POST)
+                        ? info->post.chunk_info_bytes
+                        : info->st.st_size); // fuse crashed?  Can still GC.
 
       if (phy_size) {
 
@@ -1077,13 +1092,26 @@ int  trash_truncate(PathInfo*   info,
 
    // copy any xattrs to the trash-file.
    //
-   // ugly-but-simple: make a duplicate PathInfo, but with post.md_path
-   // set to our trash_md_path.  Then save_xattrs() will just work on the
+   // ugly-but-simple: make a duplicate PathInfo, but with post.md_path set
+   // to our trash_md_path.  Then save_xattrs() will just work on the
    // trash-file.
    PathInfo trash_info = *info;
    memcpy(trash_info.post.md_path, trash_info.trash_md_path, MARFS_MAX_MD_PATH);
    trash_info.post.flags |= POST_TRASH;
-   __TRY0( save_xattrs(&trash_info, MARFS_ALL_XATTRS) );
+
+   //   // Save only those xattrs that were non-default in the original
+   //   // PathInfo.  (Does that make sense?)
+   //   __TRY0( save_xattrs(&trash_info, info->xattrs) );
+   //
+   // we know it has at least one chunk, because it has PRE.
+   // Help GC to delete objects.
+   if (has_all_xattrs(info, XVT_RESTART)
+       && (info->pre.obj_type == OBJ_FUSE)) {
+
+      trash_info.post.chunks           = info->st.st_size / sizeof(MultiChunkInfo);
+      trash_info.post.chunk_info_bytes = trash_info.post.chunks * sizeof(MultiChunkInfo);
+   }
+   __TRY0( save_xattrs(&trash_info, (info->xattrs | XVT_POST)) ); // GC needs POST
 
    // update trash-file atime/mtime to support "undelete"
    __TRY0( utime(info->trash_md_path, &trash_time) );

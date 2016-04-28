@@ -390,7 +390,7 @@ int init_pre(MarFS_XattrPre*        pre,
 // obj-id for the new chunk, so you can generate a new URL, for the
 // ObjectStream.  [*** WAIT!  In this case, we are supposed to keep the
 // same object-id, all-except for the chunk-number.  *** OKAY: What we're
-// doing here is updaing the objid from the struct-member-values.  If the
+// doing here is updating the objid from the struct-member-values.  If the
 // ctimes haven't been changed, then that part of the objid wont change.
 // In this case, you'd just be changing the chunk-number, to get the new
 // objid.]
@@ -725,7 +725,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
       return -1;
    }
 
-   // should we believe the inode in the obj-id, or the one in caller's stat struct?
+   // Q: should we believe the inode in the obj-id, or the one in caller's stat struct?
    //
    // NOTE: Packed objects (if they contain more than one logical object)
    //     can't possibly have the correct inode in their object-ID, in all
@@ -733,6 +733,16 @@ int str_2_pre(MarFS_XattrPre*    pre,
    //     then they wouldn't be reliably-unique.  Therefore, they are built
    //     with an inode from one of their members, but it won't match the
    //     inode of the others.
+   //
+   // NOTE: If the file has been moved to the trash, the xattr-string is
+   //    still an object-ID, and it won't match the st.st_ino in that case
+   //    either.  (How do we test whether it's in the trash?  Maybe look at
+   //    repo->trash_path, and see whether we're in there?)
+
+#if 0
+   // A: Caller wants us to parse an xattr string.  Just parse it!  It's
+   //    just an object ID!  We don't need to validate inode values.
+
    if (st
        && (md_inode != st->st_ino)
        && (decode_obj_type(obj_type) != OBJ_PACKED)) {
@@ -741,6 +751,7 @@ int str_2_pre(MarFS_XattrPre*    pre,
       errno = EINVAL;            /* ?? */
       return -1;
    }
+#endif
 
    // parse encoded time-stamps
    time_t  md_ctime;

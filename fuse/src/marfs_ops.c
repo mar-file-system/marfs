@@ -2452,6 +2452,15 @@ int marfs_write(const char*        path,
    // without knowing there would be more written.  This works for both
    // cases.)
    if (os->flags & OSF_CLOSED) {
+
+      // when writing through fuse, and object first transitions
+      // to Multi, add objid, so, if fuse crashes, the resulting
+      // object can still be GC'ed by crawling the MD chunkinfo.
+      if ((info->post.obj_type != OBJ_MULTI) // implies fuse
+          && (info->pre.chunk_no == 0)) {
+         SAVE_XATTRS(info, XVT_PRE);
+      }
+
       info->post.obj_type = OBJ_MULTI;
       info->pre.chunk_no += 1;
 
@@ -2523,6 +2532,7 @@ int marfs_write(const char*        path,
       TRY0( stream_close(os) );
 
       // MD file gets per-chunk information
+      // pftool (OBJ_Nto1) will install chunkinfo directly.
       if (info->pre.obj_type != OBJ_Nto1) {
          TRY0( write_chunkinfo(fh,
                                // fh->open_offset,
@@ -2536,6 +2546,14 @@ int marfs_write(const char*        path,
 
       // if we still have more data to write, prepare for next iteration
       if (remain) {
+
+         // when writing through fuse, and object first transitions
+         // to Multi, add objid, so, if fuse crashes, the resulting
+         // object can still be GC'ed by crawling the MD chunkinfo.
+         if ((info->post.obj_type != OBJ_MULTI) // implies fuse
+             && (info->pre.chunk_no == 0)) {
+            SAVE_XATTRS(info, XVT_PRE);
+         }
 
          // MarFS file-type is definitely "Multi", now
          info->post.obj_type = OBJ_MULTI;
