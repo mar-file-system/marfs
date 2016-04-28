@@ -546,9 +546,14 @@ int set_md(obj_lnklist *objects, pack_vars *pack_params)
             object->val.pre.obj_type = OBJ_PACKED;
             object->val.post.chunks = objects->count;
             LOG(LOG_INFO, "set md count = %d\n", objects->count);
-            pre_2_str(pre_ptr, MARFS_MAX_XATTR_SIZE, &object->val.pre);
-            post_2_str(post, MARFS_MAX_XATTR_SIZE, &object->val.post,object->val.pre.repo,0);
-                           
+            if ((pre_2_str(pre_ptr, MARFS_MAX_XATTR_SIZE, &object->val.pre)) == -1 ) {
+               fprintf(stderr, "Error converting pre xattr to string\n");
+               return -1;
+            }
+            if ((post_2_str(post, MARFS_MAX_XATTR_SIZE, &object->val.post,object->val.pre.repo,0)) == -1) {
+               fprintf(stderr, "Error converting post xattr to string\n");
+               return -1;
+            }
             // Remove the files via fuse mount
             if ((marfs_unlink(marfs_sub_path(marfs_path)))==-1)
                fprintf(stderr, "Error removing %s\n", marfs_path);
@@ -567,8 +572,8 @@ int set_md(obj_lnklist *objects, pack_vars *pack_params)
             LOG(LOG_INFO, "obj_type:=%s\n", pre);
             LOG(LOG_INFO, "post: %s\n", post);
 	    //getxattr(path,"user.marfs_objid",  value, MARFS_MAX_XATTR_SIZE);
-            setxattr(path, "user.marfs_objid", pre, strlen(pre), 0);
-            setxattr(path, "user.marfs_post", post, strlen(post), 0);
+            setxattr(path, "user.marfs_objid", pre, strlen(pre)+1, 0);
+            setxattr(path, "user.marfs_post", post, strlen(post)+1, 0);
             fprintf(pack_params->outfd, "Packed file:  %s  into object:  %s\n", 
                     object->val.path, pre);
 	 } // end else
