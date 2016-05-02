@@ -1327,9 +1327,23 @@ int is_open_md(MarFS_FileHandle* fh) {
 #if USE_MDAL
    return F_OP(is_open, fh);
 #else
-   return (fh->md_fd != 0);
+   return (fh->md_fd > 0);
 #endif
 }
+
+
+int close_md(MarFS_FileHandle* fh) {
+   TRY_DECLS();
+#if USE_MDAL
+   TRY0( F_OP(close, fh) );
+   TRY0( F_OP(f_destroy, fh, F_MDAL(fh)) );
+#else
+   TRY0( close(fh->md_fd) );
+   fh->md_fd = 0;
+#endif
+   return 0;
+}
+      
 
 
 // Seek to the location of a given chunk.

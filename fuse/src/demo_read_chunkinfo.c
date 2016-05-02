@@ -103,6 +103,7 @@ main(int argc, char* argv[]) {
       show_chunkinfo(&chunk_info);
    }
 
+   close_md(&fh);
 
    printf("done.\n");
    return 0;
