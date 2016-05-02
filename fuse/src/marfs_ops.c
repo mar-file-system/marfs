@@ -258,6 +258,27 @@ int marfs_ftruncate(const char*            path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
    CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
 
+   // POSIX ftruncate returns EBADF or EINVAL, if fd not opened for writing.
+   if (! (fh->flags & FH_WRITING)) {
+      LOG(LOG_ERR, "was not opened for writing\n");
+      errno = EINVAL;
+      return -1;
+   }
+
+   // On non-DIRECT repos, we only allow truncate-to-zero.
+   if (length) {
+      errno = EPERM;
+      return -1;
+   }
+
+   // object-stream is still open to the old object (if we were opened for
+   // writing).  Close that in such a way that the server will not persist
+   // the PUT.  Do this before any MD access checks, so that we will abort
+   // the stream even if something goes wrong doing the MD access.
+   TRY0( stream_abort(os) );
+   TRY0( stream_close(os) );
+
+
    // Call access() syscall to check/act if allowed to truncate for this user
    ACCESS(info->post.md_path, (W_OK));        /* for truncate? */
 
@@ -276,24 +297,6 @@ int marfs_ftruncate(const char*            path,
 #endif
       return 0;
    }
-
-   // POSIX ftruncate returns EBADF or EINVAL, if fd not opened for writing.
-   if (! (fh->flags & FH_WRITING)) {
-      LOG(LOG_ERR, "was not opened for writing\n");
-      errno = EINVAL;
-      return -1;
-   }
-
-   // On non-DIRECT repos, we only allow truncate-to-zero.
-   if (length) {
-      errno = EPERM;
-      return -1;
-   }
-
-   // object-stream is still open to the old object.  Close that in such a
-   // way that the server will not persist the PUT.
-   TRY0( stream_abort(os) );
-   TRY0( stream_close(os) );
 
 
    //***** this may or may not work, may need a trash_truncate() that uses

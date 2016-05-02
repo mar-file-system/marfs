@@ -1300,7 +1300,6 @@ int open_md(MarFS_FileHandle* fh) {
       if (! F_OP(open, fh, info->post.md_path, flags) ) {
          LOG(LOG_ERR, "open_md(%s,%s) failed: %s\n",
              info->post.md_path, flags_str, strerror(errno));
-         errno = EIO;
          return -1;
       }
    }
@@ -1311,7 +1310,6 @@ int open_md(MarFS_FileHandle* fh) {
          LOG(LOG_ERR, "open_md(%s,%s) failed: %s\n",
              info->post.md_path, flags_str, strerror(errno));
          fh->md_fd = 0;
-         errno = EIO;
          return -1;
       }
    }
