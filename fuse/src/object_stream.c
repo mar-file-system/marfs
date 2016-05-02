@@ -842,12 +842,6 @@ int stream_open(ObjectStream* os,
 
    os->timeout = timeout;
 
-   os->flags |= OSF_OPEN;
-   if (put)
-      os->flags |= OSF_WRITING;
-   else
-      os->flags |= OSF_READING;
-
    if (! preserve_os_written)
       os->written = 0;          // total read/written through OS
 
@@ -900,6 +894,13 @@ int stream_open(ObjectStream* os,
       errno = EIO;  // "something mysterious" went wrong with your write
       return -1;
    }
+
+   os->flags |= OSF_OPEN;
+   if (put)
+      os->flags |= OSF_WRITING;
+   else
+      os->flags |= OSF_READING;
+
    return 0;
 }
 

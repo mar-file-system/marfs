@@ -284,11 +284,16 @@ int marfs_ftruncate(const char*            path,
       return -1;
    }
 
-   // We only allow truncate-to-zero on non-DIRECT repos.
+   // On non-DIRECT repos, we only allow truncate-to-zero.
    if (length) {
       errno = EPERM;
       return -1;
    }
+
+   // object-stream is still open to the old object.  Close that in such a
+   // way that the server will not persist the PUT.
+   TRY0( stream_abort(os) );
+   TRY0( stream_close(os) );
 
 
    //***** this may or may not work, may need a trash_truncate() that uses
@@ -315,11 +320,6 @@ int marfs_ftruncate(const char*            path,
          ftruncate(fh->md_fd, length); // (length == 0)
    }
 #endif
-
-   // object-stream is still open to the old object.  Close that in such a
-   // way that the server will not persist the PUT.
-   TRY0( stream_abort(os) );
-   TRY0( stream_close(os) );
 
    // open a stream to the new object.  We assume that the libaws4c context
    // initializations done in marfs_open are still valid.  trash_truncate()
@@ -1695,7 +1695,7 @@ int marfs_release (const char*        path,
    //     open, in an attempt to avoid extra calls to stream_close/reopen.
    if (fh->os.flags & OSF_OPEN) {
 
-      if (! (fh->os.flags & OSF_ERRORS)) {
+      if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
          if (fh->flags & FH_WRITING) {
 
             // add final recovery-info, at the tail of the object
@@ -1712,14 +1712,9 @@ int marfs_release (const char*        path,
    aws_iobuf_reset_hard(&os->iob);
 
    // close MD file, if it's open
-#if USE_MDAL
-   if (F_OP(is_open, fh))
-#else
-   if (fh->md_fd)
-#endif                  
-   {
+   if (is_open_md(fh)) {
 
-      if (! (fh->os.flags & OSF_ERRORS)) {
+      if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
 
          // If obj-type is Multi, write the final MultiChunkInfo into the MD file.
          // (unless pftool is writting N:1, in which case we'll do that in post_process)
@@ -1744,27 +1739,19 @@ int marfs_release (const char*        path,
          }
       }
 
-      ///      // QUESTION: does adding an fsync here cause the xattrs to appear
-      ///      //     immediately on GPFS files, instead of being delayed?
-      ///      //     [NOTE: We also moved SAVE_XATTRS() earlier, for this test.]
-      ///      // ANSWER:  No.
-      ///      TRY0( fsync(fh->md_fd) );
-
-#if USE_MDAL
-      TRY0( F_OP(close, fh) );
-      TRY0( F_OP(f_destroy, fh, F_MDAL(fh)) );
-#else
-      TRY0( close(fh->md_fd) );
-      fh->md_fd = 0;
-#endif
+      close_md(fh);
    }
 
    if (fh->os.flags & OSF_ERRORS) {
       EXIT();
-      // return 0;                 /* the "close" was successful */
-      return -1;                /* "close" was successful, but need to report errs */
+      // return 0;       /* the "close" was successful */
+      return -1;      /* "close" was successful, but need to report errs */
    }
-      
+   else if (fh->os.flags & OSF_ABORT) {
+      EXIT();
+      return 0;       /* the "close" was successful */
+   }
+
    // truncate length to reflect length of data
    if ((fh->flags & FH_WRITING)
        && has_any_xattrs(info, MARFS_ALL_XATTRS)
@@ -1784,10 +1771,6 @@ int marfs_release (const char*        path,
    
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
    }
-   //   // QUESTION: Does sync cause GPFS xattrs to be immediately visible to
-   //   //     direct readers?
-   //   // ANSWER: No.
-   //   sync();
 
    EXIT();
    return 0;
