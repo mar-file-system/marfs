@@ -106,4 +106,33 @@ int pop_groups4(PerThreadContext* ctx);
 int pop_user4(PerThreadContext* ctx);
 
 
+
+
+#define __PUSH_USER(GROUPS_TOO)                                         \
+   ENTRY();                                                             \
+   PerThreadContext ctx;                                                \
+   memset(&ctx, 0, sizeof(PerThreadContext));                           \
+   __TRY0( push_user4(&ctx,                                             \
+                      fuse_get_context()->uid,                          \
+                      fuse_get_context()->gid,                          \
+                      (GROUPS_TOO)) )
+
+#define PUSH_USER(GROUPS_TOO, UID, GID)                                 \
+   PerThreadContext ctx;                                                \
+   memset(&ctx, 0, sizeof(PerThreadContext));                           \
+   TRY0( push_user4(&ctx, (UID), (GID), (GROUPS_TOO)) )
+
+
+
+#define __POP_USER()                                                    \
+   __TRY0( pop_user4(&ctx) );                                           \
+   EXIT()
+
+#define POP_USER()                                                    \
+   TRY0( pop_user4(&ctx) );                                           \
+
+
+
+
+
 #endif

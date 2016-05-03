@@ -101,31 +101,15 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
-
-#define PUSH_USER(GROUPS_TOO)                                           \
-   ENTRY();                                                             \
-   PerThreadContext ctx;                                                \
-   memset(&ctx, 0, sizeof(PerThreadContext));                           \
-   __TRY0( push_user4(&ctx,                                             \
-                      fuse_get_context()->uid,                          \
-                      fuse_get_context()->gid,                          \
-                      (GROUPS_TOO)) )
-
-#define POP_USER()                                                      \
-   __TRY0( pop_user4(&ctx) );                                           \
-   EXIT()
-
-
-
 // --- wrappers just call the corresponding library-function, to support a
 //     given fuse-function.  The library-functions are meant to be used by
 //     both fuse and pftool, so they don't do seteuid(), and don't expect
 //     any fuse-related structures.
 
 #define WRAP_internal(GROUPS_TOO, FNCALL)              \
-   PUSH_USER(GROUPS_TOO);                              \
+   __PUSH_USER(GROUPS_TOO);                              \
    int fncall_rc = FNCALL;                             \
-   POP_USER();                                         \
+   __POP_USER();                                         \
    if (fncall_rc < 0) {                                \
       LOG(LOG_ERR, "ERR %s, errno=%d '%s'\n",          \
           #FNCALL, errno, strerror(errno));            \
@@ -141,6 +125,33 @@ OF SUCH DAMAGE.
 #define WRAP_PLUS(FNCALL)                              \
    WRAP_internal(1, (FNCALL));
 
+
+
+// We can set an error flag before calling WRAP( ... ), then unset the
+// flag afterwards.  If the wrapped function fails (returns early), then
+// error-flag will remain.
+//
+// NOTE: This is only useful for those functions that receive a fuse ffi
+//    (file-handle) argument, because we don't have any state to correlate
+//    paths with file-handles.  The point of setting the flag in the
+//    file-handle is that other file-handle functions (e.g. release()) can
+//    see the flag.
+//
+// NOTE: This is currently only set up to support setting a single flag
+//    (e.g. FH_WR_ABORT).  More logic would be needed to handle a bunch of
+//    flags OR'ed together.
+
+#define PRE_WRAP(FFI, FLAG) /* WILL NOT WORK FOR MULTIPLE FLAGS */    \
+   MarFS_FileHandle* fh_ptr = (MarFS_FileHandle*)ffi->fh;             \
+   FHFlagType before = fh_ptr->flags;                                 \
+   FHFlagType flag   = (FLAG); /* WILL NOT WORK FOR MULTIPLE FLAGS */ \
+   fh_ptr->flags |= (FLAG)
+
+#define POST_WRAP()                             \
+   do {                                         \
+      if (!(before & flag))                     \
+       fh_ptr->flags &= ~(flag);                \
+   } while (0)
 
 
 
@@ -411,7 +422,7 @@ int fuse_mknod (const char* path,
 int fuse_open (const char*            path,
                struct fuse_file_info* ffi) {
 
-   PUSH_USER(1);
+   __PUSH_USER(1);
 
    if (ffi->fh != 0) {
       // failed to free the file-handle in fuse_release()?
@@ -430,7 +441,7 @@ int fuse_open (const char*            path,
       ffi->fh = 0;
    }
 
-   POP_USER();
+   __POP_USER();
    if (rc_ssize)
       return -errno;
 
@@ -441,7 +452,7 @@ int fuse_open (const char*            path,
 
 int fuse_opendir (const char*            path,
                   struct fuse_file_info* ffi) {
-   PUSH_USER(1);
+   __PUSH_USER(1);
 
    if (ffi->fh != 0) {
       // failed to free the dirhandle in fuse_releasedir()?
@@ -460,7 +471,7 @@ int fuse_opendir (const char*            path,
       ffi->fh = 0;
    }
 
-   POP_USER();
+   __POP_USER();
    if (rc_ssize)
       return -errno;
    return 0;
@@ -541,7 +552,7 @@ int fuse_readlink (const char* path,
 int fuse_release (const char*            path,
                   struct fuse_file_info* ffi) {
 
-   PUSH_USER(0);
+   __PUSH_USER(0);
 
    if (! ffi->fh) {
       LOG(LOG_ERR, "unexpected NULL file-handle\n");
@@ -553,7 +564,7 @@ int fuse_release (const char*            path,
    free(fh);
    ffi->fh = 0;
 
-   POP_USER();
+   __POP_USER();
    if (rc_ssize) {
       LOG(LOG_ERR, "failed: errno=%d '%s'\n", errno, strerror(errno));
       return -errno;
@@ -582,7 +593,7 @@ int fuse_release (const char*            path,
 int fuse_releasedir (const char*            path,
                      struct fuse_file_info* ffi) {
 
-   PUSH_USER(0);
+   __PUSH_USER(0);
 
    if (! ffi->fh) {
       LOG(LOG_ERR, "unexpected NULL dir-handle\n");
@@ -594,7 +605,7 @@ int fuse_releasedir (const char*            path,
    free(dh);
    ffi->fh = 0;
 
-   POP_USER();
+   __POP_USER();
    if (rc_ssize) {
       LOG(LOG_ERR, "failed: errno=%d '%s'\n", errno, strerror(errno));
       return -errno;
