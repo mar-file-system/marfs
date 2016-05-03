@@ -291,9 +291,13 @@ CFLAGS  += $(patsubst %, -D%, $(DEFS))
 
 
 # ...........................................................................
-# back and forth to test node
+# back and forth to test clusters
 #
-# [see ./init_test_node, to initialize a test node with everything I need]
+# Develop on Hb's cluster (WORK)
+# backup to cc-gate
+#
+# copy from cc-gate to tr-fta-master (ODSU)
+# copy from cc-gate to cc-fta-master (CCFTA)
 # ...........................................................................
 
 # WORK = 10.146.0.3
@@ -306,11 +310,12 @@ WORK = 10.146.0.2
 	# rsync -Pvaurl ~/projects/ecs_hobo/tools/curl_tools/ root@$(WORK):/root/projects/ecs_hobo/tools/curl_tools
 
 
-# only works on ccstargate, or cc-gate
+# only works on cc-gate
 fromwork.Makefile:
 	rsync -Pvaurl root@$(WORK):/root/projects/git/marfs/fuse/src/Makefile .
 
-# only works on ccstargate, or cc-gate
+# only works on cc-gate
+# update ~/projects
 fromwork: fromwork.Makefile
 	for DIR in marfs aws4c PA2X pftool; do \
 	rsync -Pvaurl --exclude=foo\* --exclude=jti\*/f\* --exclude=core\* \
@@ -322,17 +327,35 @@ fromwork: fromwork.Makefile
 	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin/   ~/projects/bin
 	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin2/  ~/projects/bin2
 
-# for use on cc-gate, to rsync out to ODSU
-toodsu: # fromwork
+
+# for use on cc-gate, to rsync out to ODSU, or CCFTAs
+# This is prep for <toodsu> and <toccfta>
+# copy ~/projects to ~/send.dir
+update_send.dir: # fromwork
 	rsync -Pvaurl --exclude=foo.\* --exclude=jti\*/f\* --exclude=core.\* \
 	              --del --sparse ~/projects/git/   ~/send.dir/git
 	rsync -Pvaurl --del --sparse ~/projects/tools/ ~/send.dir/tools
 	rsync -Pvaurl --del --sparse ~/projects/bin/   ~/send.dir/bin
 	rsync -Pvaurl --del --sparse ~/projects/bin2/  ~/send.dir/bin2
+
+# [on cc-gate]
+# copy ~/send.dir to /root/jti/send.dir on tr-fta-master
+toodsu: update_send.dir
 	@ echo
 	@ echo "*** sending ..."
 	~/send
 
+
+# until we fix up DNS on cc-fta*
+CC-FTA-MASTER=10.150.0.250
+
+# [on cc-gate]
+# copy ~/send.dir to /root/jti/send.dir on cc-fta-master
+toccfta: update_send.dir
+	@ echo
+	@ echo "*** sending ..."
+	echo rsync -Pvaurl --del --sparse ~jti/send.dir/ root@$(CC-FTA-MASTER):~/jti/send.dir
+	rsync -Pvaurl --del --sparse ~jti/send.dir/ root@$(CC-FTA-MASTER):~/jti/send.dir
 
 
 # ...........................................................................
@@ -372,6 +395,7 @@ clean: # cleanx
 	$(RM) *.{o,i,E}
 	$(RM) *~
 	$(RM) marfs_fuse
+	$(RM) marfs_pipe
 	$(RM) core.*
 	$(RM) libmarfs.a
 
@@ -576,9 +600,9 @@ test_umnt:
 # ...........................................................................
 
 
-# wipe all objects under  http://10.140.0.15:9020/emcS3_00.-test00/
-reset_obj:
-	@ ls_obj_w_prefix emcS3_00.-test00 ver | xargs -r -L 1 rm_obj
+# # wipe all objects under  http://10.140.0.15:9020/emcS3_00.-test00/
+# reset_obj:
+# 	@ ls_obj_w_prefix emcS3_00.-test00 ver | xargs -r -L 1 rm_obj
 
 # on marfs-gpfs-003, syslog-ng is disabled by default.  We're the
 # only ones using it, so this seems reasonable
@@ -613,7 +637,7 @@ gdb:
 	@ exec gdb marfs_fuse `ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'`
 
 
-# fusectl filesystem.  Under thefusectl mount-point, each existing
+# fusectl filesystem.  Under the fusectl mount-point, each existing
 # connection has a numbered subdirectory.  There's a special file named
 # "abort" there.  Writing anything to that file aborts the connection.
 fusectl:
@@ -633,42 +657,22 @@ run-%: %
 	RUN $* $(MNT)/test00
 
 
+# ...........................................................................
+# "marfspipe" is an application that lets you pipe into a marfs file
+# without going through fuse.  For example:
+#
+#    tar -czvf - /scratch/mydir | marfspipe /marfs/project/mydir.tgz
+#
+# ...........................................................................
 
-# show quick diagnostics of the guts of an MDFS file
-#  e.g. 'make mdfs-foo' shows ...filesys/mdfs/test00/foo
-mdfs-%:
-	@ echo
-	@ echo "overview of metadata for $*"
-	@ ls -li   $*
-	@ echo
-	@ # echo "xattrs:"
-	@ # (attr -l $* | grep marfs_) || echo "(none)"
-	@ echo
-	@ ( attr -g marfs_objid $* 2>/dev/null || echo "N/A")
-	@ echo
-	@ ( attr -g marfs_post  $* 2>/dev/null || echo "N/A")
-
+marfs_pipe: marfs_pipe_main.c
+	@ $(MAKE) _app_marfs_pipe_main
+	mv marfs_pipe_main marfs_pipe
+	chmod u+s marfs_pipe
 
 # ...........................................................................
 # various testing
 # ...........................................................................
-
-# hello3: hello3.o $(OBJS)
-# 	gcc $(CFLAGS) -o $@ $(LDFLAGS) $^ $(LIBS)
-
-# For testing with repo.chunk_size=2048, and sizeof(RecoveryInfo)+8=1080 That
-# leaves 968 of user-data, per object.  We want the individual objects to
-# have recognizable contents, so when we read the contents back, it will be
-# obvious that correct contents were written into each object.  That means,
-# we want successive 968-byte chunks of input to have different values.
-.PHONY: foo.multi.4096
-foo.multi.4096:
-	dd if=/dev/zero bs=968 count=1 | tr '\0' '0' >  foo.multi.4096
-	dd if=/dev/zero bs=968 count=1 | tr '\0' '1' >> foo.multi.4096
-	dd if=/dev/zero bs=968 count=1 | tr '\0' '2' >> foo.multi.4096
-	dd if=/dev/zero bs=968 count=1 | tr '\0' '3' >> foo.multi.4096
-	dd if=/dev/zero bs=224 count=1 | tr '\0' '4' >> foo.multi.4096
-
 
 # test app that links with assembly-code
 test_lock: test_lock.c spinlock_asm.s
@@ -744,11 +748,3 @@ locals:
 	@ echo "FUSE_FLAGS = $(FUSE_FLAGS)"
 	@ echo "DEBUG      = $(DEBUG)"
 	@ echo "LIBAWS4C   = $(LIBAWS4C)"
-
-.PHONY: show_objects
-show_objects:
-	./show_objects
-
-.PHONY: show_trash
-show_trash:
-	./show_trash
