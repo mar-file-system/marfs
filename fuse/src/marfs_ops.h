@@ -175,8 +175,8 @@ int  marfs_utimensat(const char* path, const struct timespec times[2], int flags
 
 int  marfs_utimens(const char* path, const struct timespec ts[2]);
 
-int  marfs_write(const char* path, const char* buf, size_t size, off_t offset,
-                 MarFS_FileHandle* fh);
+ssize_t  marfs_write(const char* path, const char* buf, size_t size, off_t offset,
+                     MarFS_FileHandle* fh);
 
 
 

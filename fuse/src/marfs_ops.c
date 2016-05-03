@@ -783,22 +783,30 @@ int marfs_open(const char*         path,
 
    EXPAND_PATH_INFO(info, path);
 
+
    // Check/act on iperms from expanded_path_info_structure
    //   If readonly RM/RD 
    //   If wronly/rdwr/trunk  RM/WM/RD/WD/TD
    //   If append we don’t support that
-   //
+
+   // in the case of fuse, this should've been done already as a separate
+   // call.  But other callers may expect open() to support this.
+   if (flags & O_CREAT) {
+      if (stat_regular(info))
+         TRY0( marfs_mknod(path, flags, 0) );
+   }
+
    // unsupported operations
    if (flags & (O_APPEND)) {
       LOG(LOG_INFO, "open(O_APPEND) not implemented\n");
       errno = ENOSYS;
       return -1;
    }
-   else if (flags & O_CREAT) {
-      LOG(LOG_ERR, "open(O_CREAT) should've been handled by mknod()\n");
-      errno = ENOSYS;          /* for now */
-      return -1;
-   }
+   ///   else if (flags & O_CREAT) {
+   ///      LOG(LOG_ERR, "open(O_CREAT) should've been handled by mknod()\n");
+   ///      errno = ENOSYS;          /* for now */
+   ///      return -1;
+   ///   }
    else if (flags & O_TRUNC) {
       LOG(LOG_ERR, "open(O_TRUNC) should've been handled by frtuncate()\n");
       errno = ENOSYS;          /* for now */
@@ -2331,11 +2339,11 @@ int marfs_utimens(const char*           path,
 }
 
 
-int marfs_write(const char*        path,
-                const char*        buf,
-                size_t             size,
-                off_t              offset,
-                MarFS_FileHandle*  fh) {
+ssize_t marfs_write(const char*        path,
+                    const char*        buf,
+                    size_t             size,
+                    off_t              offset,
+                    MarFS_FileHandle*  fh) {
    ENTRY();
 
    LOG(LOG_INFO, "%s\n", path);
