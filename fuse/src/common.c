@@ -860,17 +860,18 @@ int write_trash_companion_file(PathInfo*             info,
 // UPDATE: Fuse always installs RESTART on new files.  Previously, it only
 //    installed PRE and POST when closing files.  It still installs POST at
 //    close of all files, and also installs PRE at close of Uni files.
-//    However, for Multi files, fuse now installs PRE (aka OBJID), at the
-//    time when a file first becomes N:1.  At that point there is at least
-//    one object associated with the file, and the MD file has chunk-info
-//    about which objects have been written.  If fuse were then to crash,
-//    and this file were to be trashed, GC could reclaim the storage for
-//    any objects that had been written, by crawling the MD file with
-//    read_chunkinfo(), and using that plus the object-ID to generate
-//    objids for the chunks.  So, if the file only has RESTART (can only
-//    happen if fuse crashed [or is still running in a separate task!]),
-//    then no associated object was successfully written, so it might as
-//    well just be deleted as though it were DIRECT.
+//    However, for Multi files, fuse now installs PRE and POST, at the time
+//    when a file first becomes N:1.  At that point, there is at least one
+//    object associated with the file, and the MD file has chunk-info about
+//    which objects have been written.  If fuse were then to crash, and
+//    this file were to later be trashed, GC could still reclaim the
+//    storage for any objects that had been written, by crawling the MD
+//    file with read_chunkinfo(), and using that plus the object-ID to
+//    generate objids for the chunks.  So, if the file only has RESTART
+//    (can only happen if fuse crashed while writing a Uni, [or if another
+//    fuse is still writing the file!]), then no associated object was
+//    successfully written, and we just delete it outright, here, as though
+//    it were DIRECT.
 //
 // NOTE: Should we do something to make this thread-safe (like unlink()) ?
 //
@@ -891,7 +892,7 @@ int  trash_unlink(PathInfo*   info,
    //    clean up, too bad for the user as we aren't going to keep the
    //    unlinked file in the trash.
    //
-   // See "UPDATE", above
+   // NOTE: See "UPDATE", above
    //
    // NOTE: We don't put xattrs on symlinks, so they also get deleted here.
    //
@@ -939,7 +940,7 @@ int  trash_truncate(PathInfo*   info,
    //    clean up, too bad for the user as we aren't going to keep the
    //    trunc’d file.
    //
-   // See "UPDATE", above trash_unlink()
+   // NOTE: See "UPDATE", above trash_unlink()
 
    TRY_DECLS();
    __TRY0( stat_xattrs(info) );
@@ -1108,6 +1109,7 @@ int  trash_truncate(PathInfo*   info,
    if (has_all_xattrs(info, XVT_RESTART)
        && (info->pre.obj_type == OBJ_FUSE)) {
 
+      trash_info.post.obj_type         = OBJ_MULTI;
       trash_info.post.chunks           = info->st.st_size / sizeof(MultiChunkInfo);
       trash_info.post.chunk_info_bytes = trash_info.post.chunks * sizeof(MultiChunkInfo);
    }

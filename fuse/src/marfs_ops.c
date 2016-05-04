@@ -1727,8 +1727,9 @@ int marfs_release (const char*        path,
 
       if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
 
-         // If obj-type is Multi, write the final MultiChunkInfo into the MD file.
-         // (unless pftool is writting N:1, in which case we'll do that in post_process)
+         // If obj-type is Multi, write the final MultiChunkInfo into the
+         // MD file.  (unless pftool is writting N:1, in which case it will
+         // do that in post_process)
          if ((fh->flags & FH_WRITING)
              && (info->post.obj_type == OBJ_MULTI)) {
 
@@ -2447,14 +2448,20 @@ ssize_t marfs_write(const char*        path,
    // cases.)
    if (os->flags & OSF_CLOSED) {
 
-      // when writing through fuse, and object first transitions
-      // to Multi, add objid, so, if fuse crashes, the resulting
-      // object can still be GC'ed by crawling the MD chunkinfo.
+      // NEW MULTI: When writing through fuse, and object first transitions
+      // to Multi, save objid, so, if fuse crashes, the resulting object(s)
+      // can still be GC'ed by crawling the MD chunkinfo.  We aren't going
+      // to maintain POST every time we write a new object for this multi
+      // (e.g. chunks, and chunk_info_bytes), so it will always be wrong,
+      // until release().  However, trash_truncate() can generate a POST,
+      // for incomplete files (i.e. if fuse crashes before we close thyis
+      // object), so GC can have correct info.
       if ((info->post.obj_type != OBJ_MULTI) // implies fuse
           && (info->pre.chunk_no == 0)) {
+
          SAVE_XATTRS(info, XVT_PRE);
       }
-
+      // MarFS file-type is definitely "Multi", now
       info->post.obj_type = OBJ_MULTI;
       info->pre.chunk_no += 1;
 
@@ -2541,14 +2548,12 @@ ssize_t marfs_write(const char*        path,
       // if we still have more data to write, prepare for next iteration
       if (remain) {
 
-         // when writing through fuse, and object first transitions
-         // to Multi, add objid, so, if fuse crashes, the resulting
-         // object can still be GC'ed by crawling the MD chunkinfo.
+         // NEW MULTI: (see earlier comment re "NEW MULTI")
          if ((info->post.obj_type != OBJ_MULTI) // implies fuse
              && (info->pre.chunk_no == 0)) {
+
             SAVE_XATTRS(info, XVT_PRE);
          }
-
          // MarFS file-type is definitely "Multi", now
          info->post.obj_type = OBJ_MULTI;
 
