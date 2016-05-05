@@ -18,6 +18,7 @@ MARFS=$1
 CHUNKSIZE=$((1 * 1024 * 1024))
 
 DIRS="d1 d2 d3 mixed"
+#DIRS="d4"
 #DIRS="mix_files"
 #DEL_DIRS="del1 del2 del3 del4"
 
@@ -38,7 +39,7 @@ echo
 # make some UNI files
 for D in $DIRS; do
     for i in `seq 1 100`; do
-#    for i in `seq 1 2`; do
+#    for i in `seq 1 9`; do
         UNI=`printf "$MARFS/$D/uni.%03d" $i`
 
         echo "making file $UNI"

@@ -558,9 +558,17 @@ int read_inodes(const char    *fnameP,
             if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
                                           marfs_xattrs, marfs_xattr_cnt, 
                                           xattr_ptr)) > 0) {
+               // If restart xattr keep stats on this as well
                xattr_ptr = &mar_xattrs[0];
+               if ((xattr_index=get_xattr_value(xattr_ptr,
+                                                marfs_xattrs[restart_index],
+                                                xattr_count, outfd)) != -1 ) {
+                  fileset_stat_ptr[last_struct_index].sum_restart_size+=iattrP->ia_size;
+                  fileset_stat_ptr[last_struct_index].sum_restart_file_count+=1;
+               }
 
                // Get post xattr value
+               xattr_ptr = &mar_xattrs[0];
                if ((xattr_index=get_xattr_value(xattr_ptr, 
                                                 marfs_xattrs[post_index],
                                                 xattr_count, outfd)) != -1 ) {
@@ -569,14 +577,6 @@ int read_inodes(const char    *fnameP,
                    LOG(LOG_INFO, "post xattr name = %s value = %s count = %d\n",
                    xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
                }
-               // If restart xattr keep stats on this as well
-               else if ((xattr_index=get_xattr_value(xattr_ptr,
-                                                marfs_xattrs[restart_index],
-                                                xattr_count, outfd)) != -1 ) {
-                  fileset_stat_ptr[last_struct_index].sum_restart_size+=iattrP->ia_size;
-                  fileset_stat_ptr[last_struct_index].sum_restart_file_count+=1;
-               }
-
                // scan into post xattr structure
                // if error parsing this xattr, skip and continue
                if (str_2_post(&post, xattr_ptr->xattr_value, 1) == -1) {

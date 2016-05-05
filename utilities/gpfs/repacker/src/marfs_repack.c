@@ -214,7 +214,7 @@ int find_repack_objects(char *fnameP, repack_objects **objects_ptr) {
                //fprintf(stdout, "xattr = %s\n", post_xattr);
                rc = str_2_post(&post, post_xattr, 1);
                files->offset = post.obj_offset;
-               //fprintf(stdout, "xattr = %s offset=%ld\n", post_xattr,post.obj_offset);
+               fprintf(stdout, "filename %s xattr = %s offset=%ld\n", files->filename, post_xattr,post.obj_offset);
             }
             files->next =  files_head;
             files_head = files;
@@ -265,26 +265,17 @@ int pack_objects(repack_objects *objects)
    //MarFS_XattrPre* pre = &pre_struct;
    MarFS_XattrPre pre;
    IOBuf *nb = aws_iobuf_new();
+   IOBuf *put_buf = aws_iobuf_new();
    char url[MARFS_MAX_XATTR_SIZE];
+   char test_obj[1024];
    obj_files *files;
    int ret;
+   char *data_ptr = NULL;
 
 
    // Also, if file_count =1 do i make uni or?
    //
    //
-/********
-   while (objects) {
-      fprintf(stdout, "object = %s\n", objects->objid);
-      fprintf(stdout, "file count = %ld chunks = %ld\n", objects->pack_count, objects->chunk_count);
-      files = objects->files_ptr;
-      while (files) {
-         fprintf(stdout, "file = %s\n", files->filename);
-	 files = files->next;
-      }
-      objects=objects->next;
-   }
-**********/
    while (objects) { 
       // need inner loop to get files for each object
       // If chunk_count == file count no need to pack
@@ -299,41 +290,67 @@ int pack_objects(repack_objects *objects)
          objects=objects->next;
          continue;
       }
+      // Not quite sure how this next condition could happen
+      // TO DO:  make only one contion chunk_count > file_count
+      // all others continue
+      if (objects->pack_count > objects->chunk_count) {
+         objects=objects->next;
+         continue;
+      }
 
       fprintf(stdout, "object = %s\n", objects->objid);
       fprintf(stdout, "file count = %ld chunks = %ld\n", objects->pack_count, objects->chunk_count);
       files = objects->files_ptr;
       write_offset = 0;
       ret=str_2_pre(&pre, objects->objid, NULL);
-      fprintf(stdout,"return = %d PRE host = %ld\n", ret,pre.md_inode);
+      sprintf(test_obj,"%s.test3",objects->objid);
+
+
+      fprintf(stdout,"new object name =%s\n", test_obj);
+  
+      //aws_iobuf_reset(nb);
+
       while (files) {
-         fprintf(stdout, "file = %s\n", files->filename);
+         //fprintf(stdout, "file = %s offset=%ld\n", files->filename, files->offset);
 
          stat(files->filename, &statbuf);
          obj_raw_size = statbuf.st_size;
          obj_size = obj_raw_size + MARFS_REC_UNI_SIZE;
-         write_offset+=obj_size-1;
+         //fprintf(stdout, "obj_size = %ld REC SIZE = %d\n", obj_size,MARFS_REC_UNI_SIZE);
+         //write_offset+=obj_size;
 
-         //check_security_access(pre);
-         //update_pre(pre);
-         //s3_set_host(pre.host);
+         check_security_access(&pre);
+         update_pre(&pre);
+         s3_set_host(pre.host);
          //offset = objects->files_ptr->offset;
-         fprintf(stdout, "file %s will get re-written at offset %ld\n",
-                 files->filename, write_offset);
+         offset = files->offset;
+         //fprintf(stdout, "file %s will get re-written at offset %ld\n",
+         //        files->filename, write_offset);
 
          // get object_data
-         //s3_set_byte_range(offset, obj_size);
-//         s3_get(nb,url);
+         //aws_iobuf_extend_static(nb, data_ptr, obj_size);
+         s3_set_byte_range(offset, obj_size);
+         aws_iobuf_extend_static(nb, data_ptr, obj_size);
+         fprintf(stdout, "going to get file %s from object %s at offset %ld\n", files->filename, objects->objid, offset);
+         s3_get(nb,objects->objid);
+         fprintf(stdout, "Read buffer write count = %ld  len = %ld\n", nb->write_count, nb->len);
+         // may have to copy nb to a new buffer 
+         // then write 
      
 
          //write data 
          // How do I specify offset?
+         aws_iobuf_reset_hard(nb);
+         fprintf(stdout, "going to write to object %s at offset %ld with size %ld\n", test_obj, write_offset,obj_size);
+         aws_iobuf_append_static(nb, data_ptr, nb->len);
          //s3_set_byte_range(write_offset,obj_size);
-//         s3_put(nb,url);
-         offset += obj_size; 
+         //s3_put(io_buf,test_obj);
+         write_offset += obj_size; 
          //aws_iobuf_reset(nb);
 	 files = files->next;
       }
+      s3_put(nb,test_obj);
+      aws_iobuf_reset_hard(nb);
       objects=objects->next;
    }
    return 0;
