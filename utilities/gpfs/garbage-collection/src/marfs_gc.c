@@ -636,7 +636,6 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
       PathInfo* info = &fh.info;
       strncpy(info->post.md_path, md_path_ptr, MARFS_MAX_MD_PATH); // use argv[1]
       info->post.md_path[MARFS_MAX_MD_PATH -1] = 0;
-      fprintf(stderr, "Found restart md path = %s\n", info->post.md_path);
       if (stat_xattrs(info)) {    // parse all xattrs for the MD file
          fprintf(stderr, "stat_xattrs() failed for MD file: '%s'\n", md_path_ptr);
          return -1;
