@@ -36,7 +36,7 @@ echo
 
 # make some UNI files
 #FILE="16"
-for D in $DIRS; dok
+for D in $DIRS; do
     for i in `seq 1 2200`; do
     #for i in $FILE; do
 #    for i in `seq 1 2`; do

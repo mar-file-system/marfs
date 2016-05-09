@@ -119,6 +119,8 @@ typedef struct File_Info {
    char packed_filename[TMP_LOCAL_FILE_LEN];
    unsigned int is_packed;
    unsigned int no_delete;
+   MarFS_ObjType obj_type;
+   unsigned int restart_found;
 } File_Info;
 
 

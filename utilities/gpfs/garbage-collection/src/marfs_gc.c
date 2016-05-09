@@ -79,6 +79,7 @@ OF SUCH DAMAGE.
 #include "marfs_gc.h"
 #include "aws4c.h"
 #include "marfs_configuration.h"
+#include "common.h"
 
 /******************************************************************************
 * This program scans the inodes looking specifically at trash filesets.  It will
@@ -313,7 +314,6 @@ int get_xattrs(gpfs_iscan_t *iscanP,
                      printable = 0;
                }
             }
-
             for (i = 0; i < valueLen; i++) {
                if (printable) {
                  xattr_ptr->xattr_value[i] = valueP[i]; 
@@ -392,7 +392,8 @@ int read_inodes(const char *fnameP,
 
    // Defined xattrs as an array of const char strings with defined indexs
    // Change MARFS_QUOTA_XATTR_CNT in marfs_gc.h if the number of xattrs
-   // changes
+   // changes.  Order matters here so make sure array elements match
+   // index definitions
    int marfs_xattr_cnt = MARFS_GC_XATTR_CNT;
    const char *marfs_xattrs[] = {"user.marfs_post",
                                  "user.marfs_objid",
@@ -400,6 +401,10 @@ int read_inodes(const char *fnameP,
 
    int post_index=0;
    int objid_index=1;
+   int restart_index=2;
+   //
+   //
+
    int trash_status;
 
    MarFS_XattrPost post;
@@ -518,7 +523,6 @@ int read_inodes(const char *fnameP,
                   fprintf(stderr,"Error:  Not finding post xattr for inode %d\n", 
                           iattrP->ia_inode);
                }
-
                LOG(LOG_INFO, "found post chunk info bytes %zu\n", 
                    post.chunk_info_bytes);
 
@@ -548,6 +552,16 @@ int read_inodes(const char *fnameP,
                         //fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
                         if (str_2_pre(pre, xattr_ptr->xattr_value, st) != 0)
                            continue;
+
+                        // Now check if we have restart xattr which may imply
+                        // OBJ_FUSE or OBJ_Nto1 which requires 
+                        // special handling in dump_trash
+                        xattr_ptr = &mar_xattrs[0];
+                        file_info_ptr->restart_found = 0;
+                        if ((xattr_index=get_xattr_value(xattr_ptr,
+                             marfs_xattrs[restart_index], xattr_count)) != -1 ) {
+                                file_info_ptr->restart_found = 1;
+                        }
 
                         check_security_access(pre);
                         update_pre(pre);
@@ -601,13 +615,64 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
    int return_value =0;
 
    char object_name[MARFS_MAX_OBJID_SIZE];
-   char *obj_name_ptr;
+   char *obj_name_ptr, *id_ptr;
    int i;
    int delete_obj_status;
    int multi_flag = 0;
 
+   // This is the case where a file in trash has a RESTART xattr
+   // and the obj_type = N to 1.  It exists because pftool did not
+   // complete the N to 1 creation.
+   // We need to determine what chunks exists and delete their 
+   // associated objects
+   if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_Nto1) {
+
+      // initialize a list of known MarFS xattrs, used by stat_xattrs(), etc.
+      init_xattr_specs();
+      // Used demo_read_chunkinfo form marfs/fuse to incorporate this section
+      MarFS_FileHandle fh;
+      memset(&fh, 0, sizeof(MarFS_FileHandle));
+
+      PathInfo* info = &fh.info;
+      strncpy(info->post.md_path, md_path_ptr, MARFS_MAX_MD_PATH); // use argv[1]
+      info->post.md_path[MARFS_MAX_MD_PATH -1] = 0;
+      if (stat_xattrs(info)) {    // parse all xattrs for the MD file
+         fprintf(stderr, "stat_xattrs() failed for MD file: '%s'\n", md_path_ptr);
+         return -1;
+      }
+
+      // assure the MD is open for reading
+      fh.flags |= FH_READING;
+      if (open_md(&fh)) {
+         fprintf(stderr, "open_md() failed for MD file: '%s'\n", md_path_ptr);
+         return -1;
+      }
+      id_ptr = strrchr(pre_ptr->objid, '.');
+      
+      // read chunkinfo and create object name so that it can be deleted
+      MultiChunkInfo chunk_info;
+      while (! read_chunkinfo(&fh, &chunk_info)) {
+         if (chunk_info.chunk_data_bytes != 0 ) {
+            obj_name_ptr = id_ptr;
+            obj_name_ptr++;
+            *obj_name_ptr='\0'; 
+            sprintf(object_name, "%s%ld",pre_ptr->objid,chunk_info.chunk_no);
+            if ((delete_obj_status=delete_object(object_name,file_info_ptr, pre_ptr, multi_flag)) != 0) {
+               fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
+                       %d) on object %s\n", delete_obj_status, \
+                       xattr_ptr->xattr_value);
+               return_value = -1;
+            }
+            else {
+               if (!file_info_ptr->no_delete)
+                  fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
+           }
+         }
+      }
+      close_md(&fh);
+   }
    //If multi type file then delete all objects associated with file
-   if (post_xattr->obj_type == OBJ_MULTI) {
+   else if (post_xattr->obj_type == OBJ_MULTI) {
       for (i=0; i < post_xattr->chunks; i++ ) {
          multi_flag = 1;
          obj_name_ptr = strrchr(pre_ptr->objid, '.');
@@ -630,7 +695,7 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
    // else UNI BUT NEED to implemented other formats as developed 
    else if (post_xattr->obj_type == OBJ_UNI) {
       strncpy(object_name, xattr_ptr->xattr_value, 
-              strlen(xattr_ptr->xattr_value));
+              (strlen(xattr_ptr->xattr_value)+1));
       if ((delete_obj_status=delete_object(object_name, file_info_ptr, pre_ptr, multi_flag)) != 0 ) {
          fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code:  %d) \
                  on object %s\n", delete_obj_status,xattr_ptr->xattr_value);
@@ -676,8 +741,21 @@ int delete_object(char *object,
    print_current_time(file_info_ptr);
 
    s3_set_bucket(pre_ptr->bucket);
-   
-   if ( is_multi )
+   if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_Nto1) {
+      if ( file_info_ptr->no_delete )
+         fprintf(file_info_ptr->outfd,"ID'd incomplete Nto1 multi object %s\n", object);
+      // else delete object
+      else 
+         s3_return = s3_delete( obj_buffer, object );
+   }
+   else if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_FUSE) {
+      if ( file_info_ptr->no_delete )
+         fprintf(file_info_ptr->outfd,"ID'd incomplete FUSE multi object %s\n", object);
+      // else delete object
+      else 
+         s3_return = s3_delete( obj_buffer, object );
+   }
+   else if ( is_multi )
       // Check if no delete just print to log
       if ( file_info_ptr->no_delete )
          fprintf(file_info_ptr->outfd,"ID'd multi object %s\n", object);

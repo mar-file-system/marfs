@@ -850,7 +850,7 @@ int walk_and_scan_control (char* top_level_path, const char* ns,
             if (reg_file_cnt == pack_params->max_pack_file_count ) {
                ret = pack_and_write(top_level_path, repo, namespace, ns, &paths[0], no_pack, pack_params);
                if (ret == -1)
-                  goto clean_and_free;        
+                  break;
                reg_file_cnt = 0;
             } // endif reg_file_cnt 
             }
@@ -869,7 +869,7 @@ int walk_and_scan_control (char* top_level_path, const char* ns,
       }
       ret = pack_and_write(top_level_path, repo, namespace, ns, &paths[0], no_pack, pack_params);
    } 
-clean_and_free:
+  //clean_and_free:
    if (fsP) {
       gpfs_free_fssnaphandle(fsP);
    }
@@ -1102,6 +1102,7 @@ int pack_and_write(char* top_level_path, MarFS_Repo* repo,
 
    // perform an inode scan and look for candidate objects for packing
    ret = get_inodes(top_level_path, unpacked, &unpackedLen, &unpacked_sum_size, ns, paths, pack_params);
+   LOG(LOG_INFO, "Found %d objects to pack\n", unpackedLen);
    if (ret != 0){
       fprintf(stderr, "GPFS Inode Scan Failed, quitting!\n");
       free(unpacked);
@@ -1117,7 +1118,8 @@ int pack_and_write(char* top_level_path, MarFS_Repo* repo,
       fprintf(pack_params->outfd, "Note:  total size does not include recovery info.\n");
       }
       else {
-      fprintf(stdout, "Packing did not meet min_pack_file_count requirement of %zu\n", 
+      fprintf(stdout, "Packing did not meet min_pack_file_count requirement of %zu - \
+continuing with path chunking or Exiting now\n", 
               pack_params->min_pack_file_count);
       }
       return_val=0;
