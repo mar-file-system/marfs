@@ -948,6 +948,12 @@ int stream_open(ObjectStream* os,
 //       because another thread is already trying to join.  We do not currently
 //       accomodate that.
 //
+// NOTE: If stream_sync() fails in e.g. marfs_write(), then marfs_write()
+//       will report an error, and evntually the file will be closed
+//       (either by fuse or by pftool).  marfs_release() will then call
+//       stream_sync() again, as part of the normal close.  We should be
+//       robust against that.
+//
 // ---------------------------------------------------------------------------
 
 // wait for the S3 GET/PUT to complete
@@ -964,13 +970,17 @@ int stream_sync(ObjectStream* os) {
    }
 
    // See NOTE, above, regarding the difference between reads and writes.
-   if (! pthread_tryjoin_np(os->op, &retval)) {
+   if (os->flags & OSF_JOINED) {
+      LOG(LOG_INFO, "already joined\n");
+   }
+   else if (! pthread_tryjoin_np(os->op, &retval)) {
       LOG(LOG_INFO, "op-thread joined\n");
       os->flags |= OSF_JOINED;
    }
    else {
 
       int cancel = 0;
+      int wait   = 1;
 
       // If a stream_get/put timed-out waiting for their
       // writefunc/readfunc, then the locks are likely in an inconsistent
@@ -992,8 +1002,7 @@ int stream_sync(ObjectStream* os) {
       else if (os->flags & OSF_TIMEOUT_K) {
          LOG(LOG_INFO, "timed-out thread already killed\n");
          LOG(LOG_INFO, "op-thread returned %d\n", os->op_rc);
-         errno = (os->op_rc ? EIO : 0);
-         return os->op_rc;
+         wait = 0;
       }
 
       // Our installed version of libcurl is 7.19.7.  We are experimenting
@@ -1079,10 +1088,12 @@ int stream_sync(ObjectStream* os) {
 
       // check whether thread has returned.  Could mean a curl
       // error, an S3 protocol error, or server flaking out.
-      LOG(LOG_INFO, "waiting for op-thread\n");
-      if (stream_wait(os)) {
-         LOG(LOG_ERR, "err joining op-thread ('%s')\n", strerror(errno));
-         return -1;
+      if (wait) {
+         LOG(LOG_INFO, "waiting for op-thread\n");
+         if (stream_wait(os)) {
+            LOG(LOG_ERR, "err joining op-thread ('%s')\n", strerror(errno));
+            return -1;
+         }
       }
    }
 
@@ -1108,7 +1119,14 @@ int stream_sync(ObjectStream* os) {
    }
    else {
       LOG(LOG_INFO, "op-thread returned %d\n", os->op_rc);
-      errno = (os->op_rc ? EIO : 0);
+      // errno = (os->op_rc ? EIO : 0);
+      if (os->op_rc) {
+         os->flags |= OSF_THREAD_ERR;
+         errno = EIO;
+      }
+      else
+         errno = 0;
+
       return os->op_rc;
    }
 }
