@@ -107,7 +107,7 @@ LOG  = > fuse.log 2>&1
 
 
 
-MNT   := /marfs
+MNT := /marfs
 
 
 # file

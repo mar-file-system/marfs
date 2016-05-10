@@ -121,7 +121,7 @@ void stream_reset(ObjectStream* os, uint8_t preserve_os_written);
 // spinlocks
 // ...........................................................................
 
-#define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC, OS_PTR)                         \
+# define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC, OS_PTR)                        \
    do {                                                                 \
       if (PSL_wait_with_timeout((SEM_PTR), (TIMEOUT_SEC))) {            \
          LOG(LOG_ERR, "PSL_wait_with_timeout failed. (%s)\n", strerror(errno)); \
@@ -130,7 +130,7 @@ void stream_reset(ObjectStream* os, uint8_t preserve_os_written);
       }                                                                 \
    } while (0)
 
-#define SAFE_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS_PTR)                    \
+# define SAFE_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS_PTR)                   \
    do {                                                                 \
       if (PSL_wait_with_timeout((SEM_PTR), (TIMEOUT_SEC))) {            \
          LOG(LOG_ERR, "PSL_wait_with_timeout failed. (%s)  Killing thread.\n", strerror(errno)); \
@@ -146,10 +146,10 @@ void stream_reset(ObjectStream* os, uint8_t preserve_os_written);
       }                                                                 \
    } while (0)
 
-#define WAIT(PSL)                        PSL_wait(PSL)
-#define POST(PSL)                        PSL_post(PSL)
-#define SEM_INIT(PSL, IGNORE, VALUE)     PSL_init((PSL), (VALUE))
-#define SEM_DESTROY(PSL)
+# define WAIT(PSL)                        PSL_wait(PSL)
+# define POST(PSL)                        PSL_post(PSL)
+# define SEM_INIT(PSL, IGNORE, VALUE)     PSL_init((PSL), (VALUE))
+# define SEM_DESTROY(PSL)
 
 
 
@@ -185,7 +185,7 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
    }
 }
 
-#define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC, OS_PTR)                         \
+# define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC, OS_PTR)                        \
    do {                                                                 \
       if (timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))) {                   \
          LOG(LOG_ERR, "timed_sem_wait failed. (%s)\n", strerror(errno)); \
@@ -194,7 +194,7 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
       }                                                                 \
    } while (0)
 
-#define SAFE_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS_PTR)                    \
+# define SAFE_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS_PTR)                   \
    do {                                                                 \
       if (timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))) {                   \
          LOG(LOG_ERR, "timed_sem_wait failed. (%s)  Killing thread.\n", strerror(errno)); \
@@ -211,10 +211,10 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
    } while (0)
 
 
-#define WAIT(SEM)                        sem_wait(SEM)
-#define POST(SEM)                        sem_post(SEM)
-#define SEM_INIT(SEM, SHARED, VALUE)     sem_init((SEM), (SHARED), (VALUE))
-#define SEM_DESTROY(SEM)                 sem_destroy(SEM)
+# define WAIT(SEM)                        sem_wait(SEM)
+# define POST(SEM)                        sem_post(SEM)
+# define SEM_INIT(SEM, SHARED, VALUE)     sem_init((SEM), (SHARED), (VALUE))
+# define SEM_DESTROY(SEM)                 sem_destroy(SEM)
 
 #endif
 

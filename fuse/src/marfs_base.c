@@ -1221,7 +1221,7 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
 //
 
 
-int validate_config() {
+int validate_configuration() {
 
    int           retval = 0;
    const size_t  recovery = MARFS_REC_UNI_SIZE;

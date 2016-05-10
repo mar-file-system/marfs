@@ -408,10 +408,10 @@ typedef struct PathInfo {
 // ...........................................................................
 
 typedef enum {
-   FH_READING      = 0x01,        // might someday allow O_RDWR
-   FH_WRITING      = 0x02,        // might someday allow O_RDWR
-   FH_DIRECT       = 0x04,        // i.e. PathInfo.xattrs has no MD_
-   FH_Nto1_WRITES  = 0x10,        // implies pftool calling. (Can write N:1)
+   FH_READING      = 0x0001,        // might someday allow O_RDWR
+   FH_WRITING      = 0x0002,        // might someday allow O_RDWR
+   FH_DIRECT       = 0x0004,        // i.e. PathInfo.xattrs has no MD_
+   FH_Nto1_WRITES  = 0x0010,        // implies pftool calling. (Can write N:1)
 } FHFlags;
 
 typedef uint16_t FHFlagType;
@@ -543,13 +543,13 @@ typedef struct {
 
 
 typedef struct {
-   PathInfo        info;          // includes xattrs, MDFS path, etc
+   PathInfo        info;         // includes xattrs, MDFS path, etc
    char            ns_path[MARFS_MAX_NS_PATH];  // path in NS, not in MDFS
 
 #if USE_MDAL
    MDAL_Handle     f_handle;     // file-oriented MDAL ops
 #else
-   int             md_fd;         // opened for reading meta-data, or data
+   int             md_fd;        // opened for reading meta-data, or data
 #endif
 
    curl_off_t      open_offset;  // [see comments at marfs_open_with_offset()]

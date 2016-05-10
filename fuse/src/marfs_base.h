@@ -303,7 +303,7 @@ typedef uint64_t            EncryptInfo;
 
 
 // some things can't be done in common/configuration/src
-extern int validate_config();
+extern int validate_configuration();
 
 
 // Namespace.flags was eliminated

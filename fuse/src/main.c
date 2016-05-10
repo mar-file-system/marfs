@@ -908,9 +908,8 @@ int main(int argc, char* argv[])
       LOG(LOG_ERR, "read_configuration() failed.  Quitting\n");
       return -1;
    }
-
-   if (validate_config()) {
-      LOG(LOG_ERR, "validate_config() failed.  Quitting\n");
+   if (validate_configuration()) {
+      LOG(LOG_ERR, "validate_configuration() failed.  Quitting\n");
       return -1;
    }
 
