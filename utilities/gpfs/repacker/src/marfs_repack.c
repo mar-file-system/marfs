@@ -213,7 +213,7 @@ int find_repack_objects(char *fnameP, repack_objects **objects_ptr) {
             if ((getxattr(files->filename, "user.marfs_post", &post_xattr, 1024) != -1)) {
                //fprintf(stdout, "xattr = %s\n", post_xattr);
                rc = str_2_post(&post, post_xattr, 1);
-               files->offset = post.obj_offset;
+               files->initial_offset = post.obj_offset;
                fprintf(stdout, "filename %s xattr = %s offset=%ld\n", files->filename, post_xattr,post.obj_offset);
             }
             files->next =  files_head;
@@ -267,10 +267,13 @@ int pack_objects(repack_objects *objects)
    IOBuf *nb = aws_iobuf_new();
    IOBuf *put_buf = aws_iobuf_new();
    char url[MARFS_MAX_XATTR_SIZE];
-   char test_obj[1024];
+   char test_obj[2048];
    obj_files *files;
    int ret;
    char *data_ptr = NULL;
+   char *obj_ptr;
+   CURLcode s3_return;
+   char pre_str[MARFS_MAX_XATTR_SIZE];
 
 
    // Also, if file_count =1 do i make uni or?
@@ -303,7 +306,10 @@ int pack_objects(repack_objects *objects)
       files = objects->files_ptr;
       write_offset = 0;
       ret=str_2_pre(&pre, objects->objid, NULL);
-      sprintf(test_obj,"%s.test3",objects->objid);
+      sprintf(test_obj,"%s.teste",objects->objid);
+
+      //Make this a unique object since it derived from an existing object 
+      pre.unique++;    
 
 
       fprintf(stdout,"new object name =%s\n", test_obj);
@@ -314,51 +320,80 @@ int pack_objects(repack_objects *objects)
          //fprintf(stdout, "file = %s offset=%ld\n", files->filename, files->offset);
 
          stat(files->filename, &statbuf);
+
+
          obj_raw_size = statbuf.st_size;
          obj_size = obj_raw_size + MARFS_REC_UNI_SIZE;
+         files->size = obj_size;
+
          //fprintf(stdout, "obj_size = %ld REC SIZE = %d\n", obj_size,MARFS_REC_UNI_SIZE);
          //write_offset+=obj_size;
+         if ((obj_ptr = (char *)malloc(obj_size))==NULL) {
+            fprintf(stderr, "Error allocating memory\n");
+            return -1;
+         }
 
          check_security_access(&pre);
          update_pre(&pre);
          s3_set_host(pre.host);
          //offset = objects->files_ptr->offset;
-         offset = files->offset;
+
+         offset = files->initial_offset;
          //fprintf(stdout, "file %s will get re-written at offset %ld\n",
          //        files->filename, write_offset);
 
          // get object_data
-         //aws_iobuf_extend_static(nb, data_ptr, obj_size);
          s3_set_byte_range(offset, obj_size);
-         aws_iobuf_extend_static(nb, data_ptr, obj_size);
-         fprintf(stdout, "going to get file %s from object %s at offset %ld\n", files->filename, objects->objid, offset);
-         s3_get(nb,objects->objid);
+         aws_iobuf_extend_static(nb, obj_ptr, obj_size);
+         fprintf(stdout, "going to get file %s from object %s at offset %ld and size %ld\n", files->filename, objects->objid, offset, obj_size);
+         s3_return = s3_get(nb,objects->objid);
+         check_S3_error(s3_return, nb, S3_GET);
+
          fprintf(stdout, "Read buffer write count = %ld  len = %ld\n", nb->write_count, nb->len);
          // may have to copy nb to a new buffer 
          // then write 
      
 
-         //write data 
-         // How do I specify offset?
-         aws_iobuf_reset_hard(nb);
-         fprintf(stdout, "going to write to object %s at offset %ld with size %ld\n", test_obj, write_offset,obj_size);
-         aws_iobuf_append_static(nb, data_ptr, nb->len);
-         //s3_set_byte_range(write_offset,obj_size);
-         //s3_put(io_buf,test_obj);
          write_offset += obj_size; 
-         //aws_iobuf_reset(nb);
+         files->new_offset = write_offset;
 	 files = files->next;
       }
-      s3_put(nb,test_obj);
+      // create object string for put
+      pre_2_str(pre_str, MARFS_MAX_XATTR_SIZE,&pre);
+     
+      fprintf(stdout, "Going to write to object %s\n", pre_str);
+      //s3_put(nb,test_obj);
+      s3_put(nb,pre_str);
+      check_S3_error(s3_return, nb, S3_PUT); 
+
       aws_iobuf_reset_hard(nb);
+//      aws_iobuf_reset(nb);
       objects=objects->next;
    }
    return 0;
 }
 
 
-int update_meta()
+int update_meta(repack_objects *objects)
 {
+  char marfs_path[1024];
+  obj_files *files;
+  char *path = NULL;
+
+
+  while(objects) {
+     files = objects->files_ptr;
+     while (files) {
+        get_marfs_path(path,&marfs_path[0]);
+
+
+     }
+  }
+  // Things to do:
+  // Loop through files and delete existing
+  // create and trunc new ones
+  // setxattrs on these new files using files->new_offset 
+     
   return 0;
 }
 /******************************************************************************
@@ -411,6 +446,68 @@ void check_security_access(MarFS_XattrPre *pre)
       if (pre->repo->ssl ) {
          s3_https( 1 );
          s3_https_insecure( 1 );
+      }
+   }
+}
+/******************************************************************************
+ * * Name check_S3_error  
+ * * 
+ * * Check for s3 errors           
+ * ******************************************************************************/
+int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action )
+{
+  if ( curl_return == CURLE_OK ) {
+    if (action == S3_GET || action == S3_PUT ) {
+       if (s3_buf->code == HTTP_OK || s3_buf->code == HTTP_NO_CONTENT) {
+          return(0);
+       }
+       else {
+         fprintf(stderr, "Error, HTTP Code:  %d\n", s3_buf->code);
+         return(s3_buf->code);
+       }
+    }
+  }
+  else {
+    fprintf(stderr,"Error, Curl Return Code:  %d\n", curl_return);
+    return(-1);
+  }
+  return(0);
+}
+/******************************************************************************
+* Name get_marfs_path
+* This function, given a metadata path, determines the fuse mount path for a 
+* file and returns it via the marfs pointer. 
+* 
+******************************************************************************/
+//int get_marfs_path(char * patht, char *marfs[]){
+//NOTE THIS was taken from marfs_packer but needs 
+//modification to look at md_trash_path as opposed to md_path
+//since this works in the trash to repack.
+void get_marfs_path(char * patht, char *marfs)
+{
+   char *mnt_top = marfs_config->mnt_top;
+   MarFS_Namespace *ns;
+   NSIterator ns_iter;
+   ns_iter = namespace_iterator();
+   char the_path[MAX_PATH_LENGTH] = {0};
+   char ending[MAX_PATH_LENGTH] = {0};
+   int i;
+   int index;
+
+   while ((ns = namespace_next(&ns_iter))){
+      if (strstr(patht, ns->md_path)){
+         // build path using mount point and md_path
+         strcat(the_path, mnt_top);
+         strcat(the_path, ns->mnt_path);
+
+         for (i = strlen(ns->md_path); i < strlen(patht); i++){
+            index = i - strlen(ns->md_path);
+            ending[index] = *(patht+i);
+         }
+         ending[index+1] = '\0';
+         strcat(the_path, ending);
+         strcpy(marfs,the_path);
+         break;
       }
    }
 }
