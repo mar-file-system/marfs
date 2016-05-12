@@ -75,9 +75,17 @@
 //#include <object_stream.h>
 #include <marfs_base.h>
 
+enum{S3_GET, S3_PUT};
+#define HTTP_OK 200
+#define HTTP_NO_CONTENT 204
+
+#define MAX_PATH_LENGTH 1024
+
 typedef struct obj_files {
   char filename[1024];
-  size_t offset;
+  size_t initial_offset;
+  size_t size;
+  size_t new_offset;
   struct obj_files *next;
   char pre_xattr[1024];
 } obj_files;
@@ -95,5 +103,7 @@ int pack_objects(repack_objects *objects);
 int update_meta();
 void check_security_access(MarFS_XattrPre *pre);
 int setup_config();
+int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action );
+void get_marfs_path(char * patht, char *marfs);
 
 #endif
