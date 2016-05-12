@@ -1872,7 +1872,7 @@ ssize_t get_chunksize_with_info(PathInfo*   info,
 
 // The returns the value that will ultimately become a "Content-Length"
 // header in the PUT request.  If it is zero, then no header will be used,
-// on instead the PUT will use chunked-transfer-encoding.
+// and instead the PUT will use chunked-transfer-encoding.
 //
 // See discussion above the WriteStatus decl, in common.h
 //

@@ -1714,8 +1714,8 @@ int marfs_release (const char*        path,
          }
       }
 
-      TRY0( stream_sync(os) );
-      TRY0( stream_close(os) );
+      stream_sync(os);   // TRY0( stream_sync(os) );
+      stream_close(os);  // TRY0( stream_close(os) );
    }
 #endif
 
@@ -1757,7 +1757,8 @@ int marfs_release (const char*        path,
    if (fh->os.flags & OSF_ERRORS) {
       EXIT();
       // return 0;       /* the "close" was successful */
-      return -1;      /* "close" was successful, but need to report errs */
+      // return -1;      /* "close" was successful, but need to report errs */
+      return 0; // errs should be reported at EOF by marfs_write(), etc ?
    }
    else if (fh->os.flags & OSF_ABORT) {
       EXIT();

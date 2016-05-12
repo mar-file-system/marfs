@@ -144,15 +144,18 @@ typedef enum {
    OSF_TIMEOUT    = 0x0040,     // failed SAFE_WAIT() in stream_put/get
    OSF_TIMEOUT_K  = 0x0080,     // SAFE_WAIT_KILL() in stream_put/get
 
-   OSF_ABORT      = 0x0100,       // stream_abort(), or stream_sync()
+   OSF_ABORT      = 0x0100,     // stream_abort(), or stream_sync()
    OSF_JOINED     = 0x0200,
    OSF_CLOSED     = 0x0400,
+
+   OSF_THREAD_ERR = 0x1000,     // thread returned non-zero (curl err)
+
 } OSFlags;
 typedef uint16_t OSFlags_t;
 
 // These are all the OSFlags that imply that errors happened on an open
 // stream, so stream_sync()/marfs_release() should take note
-#define OSF_ERRORS (OSF_TIMEOUT | OSF_TIMEOUT_K)
+#define OSF_ERRORS (OSF_TIMEOUT | OSF_TIMEOUT_K | OSF_THREAD_ERR)
 
 
 //  For stream_write(), the op-thread runs s3_put(), and acts as a
