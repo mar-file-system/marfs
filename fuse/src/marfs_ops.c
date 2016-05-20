@@ -992,6 +992,10 @@ int marfs_open(const char*         path,
 
       TRY0( stream_open(os, OS_PUT, open_size, 0, wr_timeout) );
    }
+   else {
+      SEM_INIT(&os->read_lock, 0, 1);
+      os->flags |= OSF_RLOCK_INIT;
+   }
 
 
 #if 0
@@ -1145,19 +1149,104 @@ int marfs_opendir (const char*       path,
    return 0;
 }
 
+
+// With an NFS-mount on top of fuse, where nfsd has more than one thread,
+// we sometimes receive concurrent reads at different offsets on the same
+// file-handle.  These reads would both be interacting with the same
+// object-stream, which would cause corruption in the file-handle and/or
+// errors in the stream-interaction. So, we must allow only one thread at a
+// time to read on a given file-handle.  We do that by adding a lock.
+// Because our existing lock support is all associated with ObjectStream,
+// we added the new read_lock there.  Because the old marfs_read() might
+// return from multip[le places without warning, we just wrap it, to insure
+// we always do the unlock.
+//
+// TBD: That still doesn't address the problem that out-of-order requests
+// result in a close/reopen, which is very inefficient. However, a reader
+// might legitimately try to read from multiple positions, without reading
+// the intervening gap.  One approach would be to queue the out-of-order
+// request for a while, and see if intervening requests take care of the
+// gap.  But then NFS starts trying wider and wider gaps.  So, we'll just
+// trying failing the out-of-order request and see whether NFS gets the
+// message.
+
+// fwd-decl
+static ssize_t marfs_read_internal (const char*        path,
+                                    char*              buf,
+                                    size_t             size,
+                                    off_t              offset,
+                                    MarFS_FileHandle*  fh);
+
+ssize_t marfs_read (const char*        path,
+                    char*              buf,
+                    size_t             size,
+                    off_t              offset,
+                    MarFS_FileHandle*  fh) {
+   ENTRY();
+   LOG(LOG_INFO, "%s, fh=0x%lx, off=%lu, size=%lu\n", path, (size_t)fh, offset, size);
+
+   ObjectStream*     os   = &fh->os; // shorthand
+
+   static const uint16_t default_timeout = 20; /* totally made up out of thin air */
+   uint16_t timeout_sec = (os->timeout ? os->timeout : default_timeout);
+
+   LOG(LOG_INFO, "(%08lx) waiting %ds for read-lock\n", (size_t)os, timeout_sec); 
+   SAFE_WAIT(&os->read_lock, timeout_sec, os);
+
+#if 1
+   // If it's NFS calling, there may be another thread that could solve our
+   // discintiguous read by doing its own contiguous read ahead of us.
+   // Give it a chance.
+   int discontig_retries = 5;
+   while ((os->flags & OSF_OPEN)                    // already did some reading
+          && (offset != fh->read_status.log_offset) // this one is discontig
+          && discontig_retries--) {
+
+      LOG(LOG_INFO, "(%08lx) deferring discontig read (remaining retries: %d)\n",
+          (size_t)os, discontig_retries); 
+
+      // let any blocked read threads proceed
+      POST(&os->read_lock);
+      /// sched_yield();
+      usleep(20000);            // 20 ms
+      SAFE_WAIT(&os->read_lock, timeout_sec, os);
+   }
+
+#else
+   if ((os->flags & OSF_OPEN)                       // already did some reading
+       && (offset != fh->read_status.log_offset)) { // this one is discontig
+
+      LOG(LOG_ERR, "(%08lx) punting discontig read back to NFS (?)\n",
+          (size_t)os);
+
+      errno = EINVAL;
+      rc_ssize = -1;
+   }
+   else
+
+#endif
+
+   rc_ssize = marfs_read_internal(path, buf, size, offset, fh);
+
+   POST(&os->read_lock);
+
+   EXIT();
+   return rc_ssize;
+}
+
 // return actual number of bytes read.  0 indicates EOF.
 // negative means error.
 //
 // NOTE: 
 // TBD: Don't do object-interaction if file is DIRECT.  See marfs_open().
 //
-int marfs_read (const char*        path,
-                char*              buf,
-                size_t             size,
-                off_t              offset,
-                MarFS_FileHandle*  fh) {
+static ssize_t marfs_read_internal (const char*        path,
+                                    char*              buf,
+                                    size_t             size,
+                                    off_t              offset,
+                                    MarFS_FileHandle*  fh) {
    ENTRY();
-   LOG(LOG_INFO, "%s, off=%lu, size=%lu\n", path, offset, size);
+   LOG(LOG_INFO, "%s, fh=0x%lx, off=%lu, size=%lu\n", path, (size_t)fh, offset, size);
 
    ///   PathInfo info;
    ///   memset((char*)&info, 0, sizeof(PathInfo));
@@ -1754,6 +1843,10 @@ int marfs_release (const char*        path,
       close_md(fh);
    }
 
+   // new lock controls access to read() for multi-threaded nfsd
+   if (os->flags & OSF_RLOCK_INIT)
+      SEM_DESTROY(&os->read_lock);
+
    if (fh->os.flags & OSF_ERRORS) {
       EXIT();
       // return 0;       /* the "close" was successful */
@@ -1793,7 +1886,7 @@ int marfs_release (const char*        path,
 //  [Like release(), this doesn't have a directly corresponding system
 //  call.]  This is also the only function I've seen (so far) that gets
 //  called with fuse_context->uid of 0, even when running as non-root.
-//  This seteuid() will fail.
+//  Thus, seteuid() would fail.
 //
 // NOTE: Testing as myself, I notice releasedir() gets called with
 //     fuse_context.uid ==0.  Other functions are all called with
@@ -1801,7 +1894,7 @@ int marfs_release (const char*        path,
 //     in order to be able to continue debugging.
 //
 // NOTE: It is possible that we get called with a directory that doesn't
-//     exist!  That happens e.g. after 'rm -rf /marfs/jti/mydir' In that
+//     exist!  That happens e.g. after 'rm -rf /marfs/jti/mydir'. In that
 //     case, it seems the kernel calls us with <path> = "-".
 
 int marfs_releasedir (const char*       path,

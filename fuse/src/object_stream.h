@@ -132,12 +132,113 @@ extern "C" {
 #  endif
 
 
+// ---------------------------------------------------------------------------
+// LOCKING
+//
+// Depending on whether SPINLOCKS is defined (e.g. compile with
+// -DSPINLOCKS), we either use semaphores or our new PoliteSpinLocks, to
+// synchronize between a user (e.g. fuse) calling stream_put/get and the
+// thread that receives callbacks form curl to read/write more data for the
+// user.
+//
+// With semaphores, and 4 concurrent fuse writers, we're seeing ~300k
+// context-switches/sec, on the object-servers.  That drops to ~18k
+// context-switches/sec, when using the polite spin-locks.
+//
+// I had thought this might explain the poor parallel bandwidth through fuse.
+// Unfortunately, this isn't causing an improvement, there.
+// ---------------------------------------------------------------------------
+
+
+#ifdef SPINLOCKS
+
+// ...........................................................................
+// spinlocks
+// ...........................................................................
+
+# define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC, OS_PTR)                        \
+   do {                                                                 \
+      if (PSL_wait_with_timeout((SEM_PTR), (TIMEOUT_SEC))) {            \
+         LOG(LOG_ERR, "PSL_wait_with_timeout failed. (%s)\n", strerror(errno)); \
+         (OS_PTR)->flags |= OSF_TIMEOUT;                                \
+         return -1;                                                     \
+      }                                                                 \
+   } while (0)
+
+# define SAFE_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS_PTR)                   \
+   do {                                                                 \
+      if (PSL_wait_with_timeout((SEM_PTR), (TIMEOUT_SEC))) {            \
+         LOG(LOG_ERR, "PSL_wait_with_timeout failed. (%s)  Killing thread.\n", strerror(errno)); \
+         (OS_PTR)->flags |= OSF_TIMEOUT_K;                              \
+         /* pthread_kill((OS_PTR)->op, SIGKILL); */                     \
+         pthread_cancel((OS_PTR)->op);                                  \
+                                                                        \
+         LOG(LOG_INFO, "waiting for terminated op-thread\n");           \
+         if (stream_wait(os)) {                                         \
+            LOG(LOG_ERR, "err joining op-thread ('%s')\n", strerror(errno)); \
+         }                                                              \
+         return -1;                                                     \
+      }                                                                 \
+   } while (0)
+
+# define WAIT(PSL)                        PSL_wait(PSL)
+# define POST(PSL)                        PSL_post(PSL)
+# define SEM_INIT(PSL, IGNORE, VALUE)     PSL_init((PSL), (VALUE))
+# define SEM_DESTROY(PSL)
+
+
+
+#else
+
+// ...........................................................................
+// semaphores
+// ...........................................................................
+
+int timed_sem_wait(sem_t* sem, size_t timeout_sec);
+
+# define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC, OS_PTR)                        \
+   do {                                                                 \
+      if (timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))) {                   \
+         LOG(LOG_ERR, "timed_sem_wait failed. (%s)\n", strerror(errno)); \
+         (OS_PTR)->flags |= OSF_TIMEOUT;                                \
+         return -1;                                                     \
+      }                                                                 \
+   } while (0)
+
+# define SAFE_WAIT_KILL(SEM_PTR, TIMEOUT_SEC, OS_PTR)                   \
+   do {                                                                 \
+      if (timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))) {                   \
+         LOG(LOG_ERR, "timed_sem_wait failed. (%s)  Killing thread.\n", strerror(errno)); \
+         (OS_PTR)->flags |= OSF_TIMEOUT_K;                              \
+         /* pthread_kill((OS_PTR)->op, SIGKILL); */                     \
+         pthread_cancel((OS_PTR)->op);                                  \
+                                                                        \
+         LOG(LOG_INFO, "waiting for terminated op-thread\n");           \
+         if (stream_wait(os)) {                                         \
+            LOG(LOG_ERR, "err joining op-thread ('%s')\n", strerror(errno)); \
+         }                                                              \
+         return -1;                                                     \
+      }                                                                 \
+   } while (0)
+
+
+# define WAIT(SEM)                        sem_wait(SEM)
+# define POST(SEM)                        sem_post(SEM)
+# define SEM_INIT(SEM, SHARED, VALUE)     sem_init((SEM), (SHARED), (VALUE))
+# define SEM_DESTROY(SEM)                 sem_destroy(SEM)
+
+#endif
+
+
+
+
 // internal flags in an ObjectStream
 typedef enum {
    OSF_OPEN       = 0x0001,
    OSF_WRITING    = 0x0002,
    OSF_READING    = 0x0004,
    //   OSF_LENGTH     = 0x0008,
+   OSF_RLOCK_INIT = 0x0008,
 
    OSF_EOB        = 0x0010,
    OSF_EOF        = 0x0020,
@@ -176,9 +277,11 @@ typedef struct {
 #ifdef SPINLOCKS
    struct PoliteSpinLock iob_empty;
    struct PoliteSpinLock iob_full;
+   struct PoliteSpinLock read_lock; // concurrent NFS reads
 #else
    sem_t                 iob_empty;
    sem_t                 iob_full;
+   sem_t                 read_lock; // concurrent NFS reads
 #endif
    pthread_t           op;        // GET/PUT
    int                 op_rc;     // typically 0 or -1  (see iob.result, for curl/S3 errors)
