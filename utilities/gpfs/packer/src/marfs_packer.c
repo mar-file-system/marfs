@@ -152,11 +152,17 @@ int main(int argc, char **argv){
         }
 
         MarFS_Namespace* namespace;
-        namespace = find_namespace_by_name(ns);
+        if ((namespace = find_namespace_by_name(ns))==NULL) {
+           fprintf(stderr, "Namespace specified by -n  not found\n");
+           exit(-1); 
+        }
 
         // Find the correct repo - the one with the largest range
         MarFS_Repo* repo = find_repo_by_range(namespace, (size_t)-1);
-         
+        if (repo == NULL) {
+           fprintf(stderr, "Repo not found\n");
+           exit(-1);
+        } 
         pack_elements_ptr->max_object_size = repo->chunk_size;
         fprintf(stdout, "Setting pack size to config chunk size value: %zu\n", 
                 pack_elements_ptr->max_object_size);
@@ -846,11 +852,12 @@ int walk_and_scan_control (char* top_level_path, const char* ns,
 
             reg_file_cnt++;
             LOG(LOG_INFO, "file count %d\n", reg_file_cnt);
-            //if (reg_file_cnt == MAX_SCAN_FILE_COUNT ) {
             if (reg_file_cnt == pack_params->max_pack_file_count ) {
                ret = pack_and_write(top_level_path, repo, namespace, ns, &paths[0], no_pack, pack_params);
-               if (ret == -1)
+               if (ret == -1) {
+                  reg_file_cnt = 0;
                   break;
+               }
                reg_file_cnt = 0;
             } // endif reg_file_cnt 
             }

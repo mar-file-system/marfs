@@ -497,17 +497,15 @@ int read_inodes(const char *fnameP,
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
          if (iattrP->ia_xperm & GPFS_IAXPERM_XATTR && xattr_len >0 ) {
-            xattr_ptr = &mar_xattrs[0];
             // Got ahead and get xattrs then deterimine if it is an 
             // an actual xattr we are looking for.  If so,
             // check if it specifies the file is trash.
             if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
                                           marfs_xattrs, marfs_xattr_cnt, 
-                                          xattr_ptr, 
+                                          &mar_xattrs[0], 
                                           file_info_ptr->outfd)) > 0) {
                //marfs_xattrs has a list of xattrs found
-               xattr_ptr = &mar_xattrs[0];
-               if ((xattr_index=get_xattr_value(xattr_ptr, 
+               if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                     marfs_xattrs[post_index], xattr_count)) != -1 ) { 
                     xattr_ptr = &mar_xattrs[xattr_index];
                   LOG(LOG_INFO,"post xattr name = %s value = %s \
@@ -535,10 +533,9 @@ int read_inodes(const char *fnameP,
                      LOG(LOG_INFO, "Found trash\n");
                      md_path_ptr = &post.md_path[0];
 
-                     xattr_ptr = &mar_xattrs[0];
 
                      // Get objid xattr
-                     if ((xattr_index=get_xattr_value(xattr_ptr, 
+                     if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                           marfs_xattrs[objid_index], xattr_count)) != -1) { 
                           xattr_ptr = &mar_xattrs[xattr_index];
                         LOG(LOG_INFO, "objid xattr name = %s xattr_value =%s\n",
@@ -556,9 +553,8 @@ int read_inodes(const char *fnameP,
                         // Now check if we have restart xattr which may imply
                         // OBJ_FUSE or OBJ_Nto1 which requires 
                         // special handling in dump_trash
-                        xattr_ptr = &mar_xattrs[0];
                         file_info_ptr->restart_found = 0;
-                        if ((xattr_index=get_xattr_value(xattr_ptr,
+                        if ((xattr_index=get_xattr_value(&mar_xattrs[0],
                              marfs_xattrs[restart_index], xattr_count)) != -1 ) {
                                 file_info_ptr->restart_found = 1;
                         }

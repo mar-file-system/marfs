@@ -553,14 +553,13 @@ int read_inodes(const char    *fnameP,
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
          if (iattrP->ia_xperm & GPFS_IAXPERM_XATTR && xattr_len >0 ) {
-            xattr_ptr = &mar_xattrs[0];
+
             // get marfs xattrs and associated values
             if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
                                           marfs_xattrs, marfs_xattr_cnt, 
-                                          xattr_ptr)) > 0) {
+                                          &mar_xattrs[0])) > 0) {
                // If restart xattr keep stats on this as well
-               xattr_ptr = &mar_xattrs[0];
-               if ((xattr_index=get_xattr_value(xattr_ptr,
+               if ((xattr_index=get_xattr_value(&mar_xattrs[0],
                                                 marfs_xattrs[restart_index],
                                                 xattr_count, outfd)) != -1 ) {
                   fileset_stat_ptr[last_struct_index].sum_restart_size+=iattrP->ia_size;
@@ -568,8 +567,7 @@ int read_inodes(const char    *fnameP,
                }
 
                // Get post xattr value
-               xattr_ptr = &mar_xattrs[0];
-               if ((xattr_index=get_xattr_value(xattr_ptr, 
+               if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                                                 marfs_xattrs[post_index],
                                                 xattr_count, outfd)) != -1 ) {
                    xattr_ptr = &mar_xattrs[xattr_index];
