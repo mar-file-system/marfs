@@ -41,12 +41,13 @@ function usage() {
     echo "build everything for marfs:  libaws4c, libconfig, libmarfs, marfs_fuse"
     echo ""
     echo "usage:  $PROG [ <code> [ <mdal> ] ]"
-    echo "  <code> 0  = compile -03, without logging"
-    echo "  <code> 1  = compile -03, with logging to syslog"
+    echo "  <code> 0  = compile -O3, without logging"
+    echo "  <code> 1  = compile -O3, with logging to syslog"
     echo "  <code> 2  = compile -g,  with logging to syslog"
     echo "  <code> 3  = compile -g,  without logging"
     echo
-    echo "  <mdal> non-zero = build to use MDAL"
+    echo "  <mdal> 0 = don't use MDAL"
+    echo "  <mdal> 1 = use MDAL"
     echo
 }
 
