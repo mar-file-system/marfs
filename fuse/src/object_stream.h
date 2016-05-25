@@ -156,6 +156,11 @@ extern "C" {
 // spinlocks
 // ...........................................................................
 
+// return non-zero if we timed-out without getting the lock
+# define TIMED_WAIT(SEM_PTR, TIMEOUT_SEC)          \
+   PSL_wait_with_timeout((SEM_PTR), (TIMEOUT_SEC))
+
+
 # define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC, OS_PTR)                        \
    do {                                                                 \
       if (PSL_wait_with_timeout((SEM_PTR), (TIMEOUT_SEC))) {            \
@@ -186,7 +191,7 @@ extern "C" {
 # define SEM_INIT(PSL, IGNORE, VALUE)     PSL_init((PSL), (VALUE))
 # define SEM_DESTROY(PSL)
 
-
+typedef struct PoliteSpinLock    SEM_T;
 
 #else
 
@@ -195,6 +200,12 @@ extern "C" {
 // ...........................................................................
 
 int timed_sem_wait(sem_t* sem, size_t timeout_sec);
+
+
+// return non-zero if we timed-out without getting the lock
+# define TIMED_WAIT(SEM_PTR, TIMEOUT_SEC)       \
+   timed_sem_wait((SEM_PTR), (TIMEOUT_SEC))
+
 
 # define SAFE_WAIT(SEM_PTR, TIMEOUT_SEC, OS_PTR)                        \
    do {                                                                 \
@@ -226,6 +237,8 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec);
 # define POST(SEM)                        sem_post(SEM)
 # define SEM_INIT(SEM, SHARED, VALUE)     sem_init((SEM), (SHARED), (VALUE))
 # define SEM_DESTROY(SEM)                 sem_destroy(SEM)
+
+typedef sem_t  SEM_T;
 
 #endif
 
@@ -274,15 +287,11 @@ typedef uint16_t OSFlags_t;
 typedef struct {
    // This comes from libaws4c
    IOBuf               iob;       // should be VOLATILE ?
-#ifdef SPINLOCKS
-   struct PoliteSpinLock iob_empty;
-   struct PoliteSpinLock iob_full;
-   struct PoliteSpinLock read_lock; // concurrent NFS reads
-#else
-   sem_t                 iob_empty;
-   sem_t                 iob_full;
-   sem_t                 read_lock; // concurrent NFS reads
-#endif
+
+   SEM_T               iob_empty;
+   SEM_T               iob_full;
+   SEM_T               read_lock; // concurrent NFS reads
+
    pthread_t           op;        // GET/PUT
    int                 op_rc;     // typically 0 or -1  (see iob.result, for curl/S3 errors)
    char                url[MARFS_MAX_URL_SIZE]; // WARNING: only valid during open_object()

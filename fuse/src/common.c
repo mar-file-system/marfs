@@ -2247,3 +2247,121 @@ int init_mdfs() {
 
    return 0;
 }
+
+
+
+
+// see marfs_read().  This is the new scheme to allow multiple NFS read
+// threads on the same file-handle to avoid doing any close/reopens on the
+// object-stream.  Caller is holding FH.OS.read_lock, so we're thread-safe.
+// Insert caller's offset into the queue.  Each queue-element includes a
+// lock that that reader is waiting on.  Return them a pointer to their
+// lock, so they can wait on it.
+
+ReadQueueElt* enqueue_reader(off_t offset, MarFS_FileHandle* fh) {
+
+   ReadQueueElt* elt    = (ReadQueueElt*)calloc(1, sizeof(ReadQueueElt));
+   if (! elt) {
+      LOG(LOG_ERR, "couldn't allocate ReadQueueElt for offset %lu\n", offset);
+      return NULL;
+   }
+   elt->offset = offset;
+   SEM_INIT(&elt->lock, 0, 0);
+   elt->next   = NULL;
+
+   ReadQueueElt* q      = fh->read_status.read_queue;
+   ReadQueueElt* q_next = (q ? q->next : NULL);
+   while (q
+          && q_next
+          && (offset > q_next->offset)) {
+
+      q      = q->next;
+      q_next = q_next->next;
+   }
+
+   if (! q) {
+      fh->read_status.read_queue = elt;
+   }
+   else if (offset < q->offset) {
+      fh->read_status.read_queue = elt;
+      elt->next = q;
+   }
+   else {
+      q->next = elt;
+      elt->next = q_next;
+
+      if (q->rewinding)
+         elt->rewinding = 1;
+   }
+
+
+   return elt;
+}
+
+
+// When any reader finishes, it checks to see whether there is an enqueued
+// reader that is now ready to go.  If so, let him go.
+void check_read_queue(MarFS_FileHandle* fh) {
+   ReadQueueElt* q = fh->read_status.read_queue;
+
+   if (q
+       && (fh->read_status.log_offset == q->offset)) {
+
+      LOG(LOG_INFO, "releasing reader at %lu\n", q->offset);
+      POST(&q->lock);
+   }
+}
+
+// The queue is maintained in (ascending) order of offsets, so the only
+// reader that should ever be dequeued is the one at the front of the
+// queue.  That reader has now finished waiting, and just wants us to clean
+// up the queue.
+void dequeue_reader(off_t offset, MarFS_FileHandle* fh) {
+
+   ReadQueueElt* q = fh->read_status.read_queue;
+   if (! q) {
+      LOG(LOG_ERR, "No queue!\n");
+      return;
+   }
+   else if (offset != q->offset) {
+      LOG(LOG_ERR, "offset %lu doesn't match front of queue %lu\n",
+          offset, q->offset);
+      return;
+   }
+
+   fh->read_status.read_queue = q->next;
+
+   SEM_DESTROY(&q->lock);
+   free(q);
+}
+
+// Give marfs_release() a way to clean up all pending readers
+void terminate_all_readers(MarFS_FileHandle* fh) {
+
+   if (! (fh->flags & FH_MULTI_THR))
+      return;
+
+   ObjectStream*     os   = &fh->os; // shorthand
+
+   WAIT(&os->read_lock);
+   fh->flags |= FH_RELEASING;   // message to waking sleepers
+
+   ReadQueueElt* q;
+   for (q = fh->read_status.read_queue;
+        q;
+        q = q->next) {
+
+      // unlock head-of-queue
+      LOG(LOG_INFO, "releasing reader at %lu\n", q->offset);
+      POST(&q->lock);
+
+      // wait for him to dequeue himself
+      while (q == fh->read_status.read_queue) {
+         POST(&os->read_lock);
+         sched_yield();
+         WAIT(&os->read_lock);
+      }
+   }
+
+   POST(&os->read_lock);
+}

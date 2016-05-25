@@ -1150,6 +1150,8 @@ int marfs_opendir (const char*       path,
 }
 
 
+// [For more details, see "stupid NFS tricks" in common.h]
+//
 // With an NFS-mount on top of fuse, where nfsd has more than one thread,
 // we sometimes receive concurrent reads at different offsets on the same
 // file-handle.  These reads would both be interacting with the same
@@ -1161,14 +1163,11 @@ int marfs_opendir (const char*       path,
 // return from multip[le places without warning, we just wrap it, to insure
 // we always do the unlock.
 //
-// TBD: That still doesn't address the problem that out-of-order requests
-// result in a close/reopen, which is very inefficient. However, a reader
-// might legitimately try to read from multiple positions, without reading
-// the intervening gap.  One approach would be to queue the out-of-order
-// request for a while, and see if intervening requests take care of the
-// gap.  But then NFS starts trying wider and wider gaps.  So, we'll just
-// trying failing the out-of-order request and see whether NFS gets the
-// message.
+// To address the problem that a reader might legitimately want to read
+// from multiple positions, without reading the intervening gap, we don't
+// lock and enqueue pending requests until we have determined that there
+// are deifinitely multiple threads reading on the same file-handle.  In
+// that case, we assume it is NFS reading the whole thing sequentially
 
 // fwd-decl
 static ssize_t marfs_read_internal (const char*        path,
@@ -1176,6 +1175,8 @@ static ssize_t marfs_read_internal (const char*        path,
                                     size_t             size,
                                     off_t              offset,
                                     MarFS_FileHandle*  fh);
+
+
 
 ssize_t marfs_read (const char*        path,
                     char*              buf,
@@ -1193,41 +1194,120 @@ ssize_t marfs_read (const char*        path,
    LOG(LOG_INFO, "(%08lx) waiting %ds for read-lock\n", (size_t)os, timeout_sec); 
    SAFE_WAIT(&os->read_lock, timeout_sec, os);
 
-#if 1
-   // If it's NFS calling, there may be another thread that could solve our
-   // discintiguous read by doing its own contiguous read ahead of us.
-   // Give it a chance.
+
+   // If this is a discontiguous read, and it's NFS calling, then there may
+   // be another thread that could consume from the stream such that our
+   // discontiguous read would become contiguous.  Give it a chance.
    int discontig_retries = 5;
    while ((os->flags & OSF_OPEN)                    // already did some reading
-          && (offset != fh->read_status.log_offset) // this one is discontig
+          && !(fh->flags & FH_MULTI_THR)            // not sure if NFS threads are reading
+          && (offset != fh->read_status.log_offset) // our read is discontig
           && discontig_retries--) {
 
-      LOG(LOG_INFO, "(%08lx) deferring discontig read (remaining retries: %d)\n",
-          (size_t)os, discontig_retries); 
+      LOG(LOG_INFO, "(%08lx) deferring discontig read at %lu != %lu (remaining retries: %d)\n",
+          (size_t)os, offset, fh->read_status.log_offset, discontig_retries);
+
+      // note the stream-offset as it is now
+      off_t str_offset_before = fh->read_status.log_offset;
 
       // let any blocked read threads proceed
       POST(&os->read_lock);
+
       /// sched_yield();
       usleep(20000);            // 20 ms
       SAFE_WAIT(&os->read_lock, timeout_sec, os);
+
+      // if someone else moved the ball, then there is someone else
+      if (fh->read_status.log_offset != str_offset_before)
+         fh->flags |= FH_MULTI_THR;
    }
 
+
+   // The retry-loop above allows some discontig-reads to fall into their
+   // proper place without an expensive close/reopen, in the case where
+   // multiple NFS threads are reading at different offsets on the same
+   // file-handle.  But some readers would use up their retries and go on
+   // to do the close/reopen, which really destroys BW.
+   //
+   // So, we add this secondary enhancement: If the loop above *ever*
+   // notices that the current stream-offset changed during one of the
+   // waits above, then we conclude that there are multiple threads reading
+   // on the same file-handle.  (We'll also assume that only nfsd would be
+   // arrogant enough to try that, and we'll assume that the client is
+   // reading sequentially through the entire file.  We're assuming someone
+   // isn't seeking on their NFS-mounted MarFS file).
+   //
+   // After we've detected this situation, we'll thenceforth (for the life
+   // of the file-handle) fall over to this better scheme: enqueue
+   // out-of-order reads along with their offset onto a queue in the
+   // file-handle, keeping the queue in ascending order of offsets.  Each
+   // queue-element includes a lock that its owning thread is waiting on.
+   // When any read() finishes, and the queue is non-empty, check whether
+   // the current stream-position matches the offset at the front of the
+   // queue.  If so, post the lock tha that reader is waiting on.  (The
+   // released reader-thread is the one who then pops the quueue.)
+   //
+   // NOTE: We always hold the read_lock while manipulating
+   //     FH.read_status.read_queue
+   if ((fh->flags & FH_MULTI_THR)
+       && (offset != fh->read_status.log_offset)) {
+
+      ReadQueueElt* elt = enqueue_reader(offset, fh);
+      SEM_T* wait_sem   = &elt->lock;
+      POST(&os->read_lock);     // let other readers go
+
+      LOG(LOG_INFO, "(%08lx) waiting for read at %lu\n", (size_t)os, offset);
+#if 0
+      WAIT(wait_sem);           // wait our turn
 #else
-   if ((os->flags & OSF_OPEN)                       // already did some reading
-       && (offset != fh->read_status.log_offset)) { // this one is discontig
+      static const size_t timeout_sec = 30;
+      while (TIMED_WAIT(wait_sem, timeout_sec)) { // wait our turn
 
-      LOG(LOG_ERR, "(%08lx) punting discontig read back to NFS (?)\n",
-          (size_t)os);
+         // timed-out, waiting for new reads at offsets ahead of us to read
+         // us into order.  If we're still at the front of the queue, (and
+         // some other waiting reader ahead of us didn't already do the
+         // close/reopen), then let us go ahead and do the close/reopen
+         // ourselves.  We set the "rewinding" flag in the other current
+         // queue members, so they won't also decide to do this.
+         WAIT(&os->read_lock);
+         LOG(LOG_INFO, "(%08lx) queued read at %lu timed out\n", (size_t)os, offset);
+         if ((! elt->rewinding)
+             && (elt == fh->read_status.read_queue)) {
 
-      errno = EINVAL;
-      rc_ssize = -1;
-   }
-   else
+            LOG(LOG_INFO, "(%08lx) queued read at %lu going ahead\n", (size_t)os, offset);
+            ReadQueueElt* q;
+            for (q=fh->read_status.read_queue; q; q=q->next)
+               q->rewinding = 1;
 
+            POST(&os->read_lock);
+            break;
+         }
+         POST(&os->read_lock);
+      }
 #endif
+      LOG(LOG_INFO, "(%08lx) done waiting for read at %lu\n", (size_t)os, offset);
+
+      // other threads advanced the offset to our position, or else we
+      // timed out waiting for that.  [Or, marfs_release() is shutting us
+      // down.]  Either way, it's time to get on with things.  In the
+      // former case, marfs_read_internal() will not have to close/reopen,
+      // and in the latter case it will.  If downstream readers don't time
+      // out immediately after us, they might be able to take advantage of
+      // the re-opened strream.
+      WAIT(&os->read_lock);     // our turn now
+      dequeue_reader(offset, fh);
+
+      // maybe marfs_release() is just shutting us down?
+      if (fh->flags & FH_RELEASING) {
+         POST(&os->read_lock);
+         LOG(LOG_INFO, "(%08lx) abandoning read at %lu\n", (size_t)os, offset);
+         return 0;
+      }
+   }
 
    rc_ssize = marfs_read_internal(path, buf, size, offset, fh);
 
+   check_read_queue(fh);        // maybe another waiter can go
    POST(&os->read_lock);
 
    EXIT();
@@ -1800,6 +1880,11 @@ int marfs_release (const char*        path,
 
             // add final recovery-info, at the tail of the object
             TRY_GE0( write_recoveryinfo(os, info, fh) );
+         }
+         else {
+
+            // release any pending read threads
+            terminate_all_readers(fh);
          }
       }
 
