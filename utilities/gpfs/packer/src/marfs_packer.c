@@ -85,6 +85,7 @@
 #include "common.h"
 #include "marfs_ops.h"
 #include "marfs_packer.h"
+#include "utilities_common.h"
 
 
 
@@ -605,27 +606,6 @@ int set_xattrs(size_t inode, int xattr){
 return 0;
 } 
 /******************************************************************************
-* Name setup_config
-* This function reads the configuration file and initializes the configuration
-* 
-******************************************************************************/
-int setup_config(){
-        // read MarFS configuration file
-        if (read_configuration()) {
-           fprintf(stderr, "Error Reading MarFS configuration file\n");
-           return(-1);
-        }
-        // Initialize MarFS xattr specs 
-	init_xattr_specs();
-
-        // Initialize aws
-        aws_init();
-        aws_reuse_connections(1);
-        aws_set_debug(0);
-        aws_read_config("root");
-        return 0;
-}
-/******************************************************************************
 * Name 
 * 
 ******************************************************************************/
@@ -709,44 +689,6 @@ void get_marfs_path(char * patht, char *marfs){
                 }
         }
 }
-/******************************************************************************
-* Name check_security_access 
-* This function determines and sets appropriate security options for
-* the target storage solution.
-* 
-******************************************************************************/
-void check_security_access(MarFS_XattrPre *pre)
-{
-   if (pre->repo->security_method == SECURITYMETHOD_HTTP_DIGEST)
-      s3_http_digest(1);
-
-   if (pre->repo->access_method == ACCESSMETHOD_S3_EMC) {
-      s3_enable_EMC_extensions(1);
-
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if (pre->repo->ssl ) {
-         s3_https( 1 );
-         s3_https_insecure( 1 );
-       }
-   }
-   else if (pre->repo->access_method == ACCESSMETHOD_SPROXYD) {
-      s3_enable_Scality_extensions(1);
-      s3_sproxyd(1);
-
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if (pre->repo->ssl ) {
-         s3_https( 1 );
-         s3_https_insecure( 1 );
-      }
-   }
-}
-
 /******************************************************************************
  * Name:  print_usage
 ******************************************************************************/
@@ -1001,15 +943,20 @@ int get_inodes(const char *fnameP, struct marfs_inode *inode,
                      else {
                         // Verify that gpfs file size matches object size
                         check_security_access(&pre);
-                        update_pre(&pre);
-                        s3_set_host(pre.host);
-                        s3_head(head_buf, object);
-                        if (head_buf->contentLen != iattrP->ia_size + MARFS_REC_UNI_SIZE) {
-                           fprintf(stderr, "Object Error on %s\n", inode[counter].path);
-                           fprintf(stderr, "Read object of size %ld but metadata thinks size is %lld\n", head_buf->contentLen, iattrP->ia_size+MARFS_REC_UNI_SIZE);
-                           fprintf(stderr, "Skipping this file\n");
-                           aws_iobuf_reset_hard(head_buf);
+                        if ((update_pre(&pre)) != -1) {
+                           s3_set_host(pre.host);
+                           s3_head(head_buf, object);
+                           if (head_buf->contentLen != iattrP->ia_size + MARFS_REC_UNI_SIZE) {
+                              fprintf(stderr, "Object Error on %s\n", object);
+                              fprintf(stderr, "Read object of size %ld but metadata thinks size is %lld\n", head_buf->contentLen, iattrP->ia_size+MARFS_REC_UNI_SIZE);
+                              fprintf(stderr, "Skipping this file\n");
+                              aws_iobuf_reset_hard(head_buf);
                               break;
+                           }
+                        }
+                        else {
+                           fprintf(stderr, "Error updating pre for object %s\n", object);
+                           break;
                         }
                         aws_iobuf_reset_hard(head_buf);
 
@@ -1196,29 +1143,3 @@ void free_sub_objects(inode_lnklist *sub_objects)
          free(temp_inode);
    }
 }
-
-/******************************************************************************
-* Name check_S3_error  
-* 
-* Check for s3 errors           
-******************************************************************************/
-int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action )
-{
-  if ( curl_return == CURLE_OK ) {
-    if (action == S3_GET || action == S3_PUT ) {
-       if (s3_buf->code == HTTP_OK || s3_buf->code == HTTP_NO_CONTENT) {
-          return(0);
-       }
-       else {
-         fprintf(stderr, "Error, HTTP Code:  %d\n", s3_buf->code);
-         return(s3_buf->code);
-       }
-    }
-  }
-  else {
-    fprintf(stderr,"Error, Curl Return Code:  %d\n", curl_return);
-    return(-1);
-  }
-  return(0);
-}
-
