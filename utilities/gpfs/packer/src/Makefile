@@ -7,6 +7,7 @@ CFLAGS += -Wall -g
 MARFS_FUSE = ../../../../fuse/src
 LOGGING = ../../../../common/log/src
 MARFS_CONFIG = ../../../../common/configuration/src
+UTILITIES_COMMON = ../../common/src
 
 
 #OBJS = $(MARFS_FUSE)/marfs_base.o $(MARFS_FUSE)/logging.o 
@@ -16,10 +17,12 @@ CFLAGS += -I$(MARFS_FUSE)
 CFLAGS += -I$(LOGGING)
 CFLAGS += -I$(LIBAWS4C)
 CFLAGS += -I$(MARFS_CONFIG)
+CFLAGS += -I$(UTILITIES_COMMON)
 LDFLAGS += -L$(LIBAWS4C)
 LDFLAGS += -L$(MARFS_FUSE)
 LDFLAGS += -L$(MARFS_CONFIG)
-LIBS += -laws4c -lgpfs -lcurl -lm -lmarfs -lconfig
+LDFLAGS += -L$(UTILITIES_COMMON)
+LIBS += -laws4c -lgpfs -lcurl -lm -lmarfs -lconfig -lutil_comm
 
 DEBUG = -DUSE_STDOUT
 
