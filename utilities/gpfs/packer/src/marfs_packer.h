@@ -84,12 +84,6 @@
 #define MAX_PATH_LENGTH 1024
 //#define MAX_SCAN_FILE_COUNT 5 
 
-// S3 Error checking
-enum{S3_GET, S3_PUT};
-#define HTTP_OK 200
-#define HTTP_NO_CONTENT 204
-//
-
 typedef struct MarFS_XattrPost2 {
    uint16_t           config_vers_maj; // redundant w/ config_vers in Pre?
    uint16_t           config_vers_min; // redundant w/ config_vers in Pre?
@@ -117,30 +111,18 @@ struct marfs_inode {
         int size;
         int offset;
 	char path[1024];
-        //char url[MARFS_MAX_URL_SIZE];
-//      struct MarFS_XattrPost mpost;   
         MarFS_XattrPre pre;
-//        char pre[1215];
-//      char post[1215];
-//        MarFS_XattrPost2 post;
         MarFS_XattrPost post;
 };
-//typedef struct list_el item;
-//typedef struct list_olist list;
-//struct list_el {
 typedef struct inode_lnklist {
 	struct marfs_inode val;
 	int count;
-	//struct list_el * next;
 	struct inode_lnklist *next;
 } inode_lnklist;
 
-//struct list_olist {
 typedef struct obj_lnklist {
-   //struct list_olist * next;
    struct obj_lnklist *next;
    int count;
-   //struct item * val;
    struct inode_lnklist *val;
 } obj_lnklist;
 
@@ -161,17 +143,14 @@ int get_objects(struct marfs_inode *unpacked, int unpacked_size,
 int pack_up(obj_lnklist *objects, MarFS_Repo* repo, MarFS_Namespace* ns);
 int set_md(obj_lnklist *objects, pack_vars *pack_params);
 int set_xattrs(size_t inode, int xattr);
-int setup_config();
 int trash_inode(size_t inode); 
 int push( struct walk_path stack[MAX_STACK_SIZE],int *top, struct walk_path *data);
 int pop( struct walk_path stack[MAX_STACK_SIZE], int *top, struct walk_path *data);
 void get_marfs_path(char * patht, char marfs[]);
-void check_security_access(MarFS_XattrPre *pre);
 void print_usage();
 int walk_and_scan_control (char* top_level_path, const char* ns,
                             MarFS_Repo* repo, MarFS_Namespace* namespace,
                             uint8_t no_pack_flag, pack_vars *pack_params);
-//int get_inodes(const char *fnameP, int obj_size, struct marfs_inode *inode, int *marfs_inodeLen, const char* namespace, size_t small_obj_size, struct walk_path *paths);
 int get_inodes(const char *fnameP, struct marfs_inode *inode,
                int *marfs_inodeLen, size_t *sum_size, const char* namespace,
                struct walk_path *paths, pack_vars *pack_params);
@@ -182,6 +161,5 @@ int pack_and_write(char* top_level_path, MarFS_Repo* repo,
 		   pack_vars *pack_params);
 void free_objects(obj_lnklist *objects);
 void free_sub_objects(inode_lnklist *sub_objects);
-int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action );
 #endif
 
