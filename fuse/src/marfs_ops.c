@@ -1875,17 +1875,17 @@ int marfs_release (const char*        path,
    //     open, in an attempt to avoid extra calls to stream_close/reopen.
    if (fh->os.flags & OSF_OPEN) {
 
-      if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
-         if (fh->flags & FH_WRITING) {
+      if (fh->flags & FH_WRITING) {
+         if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
 
             // add final recovery-info, at the tail of the object
             TRY_GE0( write_recoveryinfo(os, info, fh) );
          }
-         else {
+      }
+      else {
 
-            // release any pending read threads
-            terminate_all_readers(fh);
-         }
+         // release any pending read threads
+         terminate_all_readers(fh);
       }
 
       stream_sync(os);   // TRY0( stream_sync(os) );
