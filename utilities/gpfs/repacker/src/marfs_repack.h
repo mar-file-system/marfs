@@ -75,10 +75,6 @@
 //#include <object_stream.h>
 #include <marfs_base.h>
 
-enum{S3_GET, S3_PUT};
-#define HTTP_OK 200
-#define HTTP_NO_CONTENT 204
-
 #define MAX_PATH_LENGTH 1024
 #define MAX_CMD_LENGTH 1024
 
@@ -108,9 +104,6 @@ typedef struct repack_objects {
 int find_repack_objects(File_Handles *file_info, repack_objects **objects);
 int pack_objects(File_Handles *file_info, repack_objects *objects);
 int update_meta(File_Handles *file_info, repack_objects *objects);
-void check_security_access(MarFS_XattrPre *pre);
-int setup_config();
-int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action );
 void get_marfs_path(char * patht, char *marfs);
 void free_objects(repack_objects *objects);
 void print_usage();

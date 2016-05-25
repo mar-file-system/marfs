@@ -86,6 +86,7 @@
 #include "common.h"
 #include "marfs_ops.h"
 #include "marfs_repack.h"
+#include "utilities_common.h"
 
 
 /******************************************************************************
@@ -374,8 +375,10 @@ int pack_objects(File_Handles *file_info, repack_objects *objects)
          //        files->filename, write_offset);
 
          // get object_data
+         // Using byte range to get data for particular offsets
          s3_set_byte_range(offset, obj_size);
-         aws_iobuf_extend_static(nb, obj_ptr, obj_size);
+         // Use extend to get more buffering capability on each get
+         aws_iobuf_extend_dynamic(nb, obj_ptr, obj_size);
          LOG(LOG_INFO, "going to get file %s from object %s at offset %ld and size %ld\n", files->filename, objects->objid, offset, obj_size);
          fprintf(file_info->outfd, "Getting file %s from object %s at offset %ld and size %ld\n", files->filename, objects->objid, offset, obj_size);
          s3_return = s3_get(nb,objects->objid);
@@ -389,7 +392,6 @@ int pack_objects(File_Handles *file_info, repack_objects *objects)
          files->new_offset = write_offset;
          write_offset += obj_size; 
 	 files = files->next;
-         free(obj_ptr);
       }
       // create object string for put
       pre_2_str(pre_str, MARFS_MAX_XATTR_SIZE,&pre);
@@ -398,12 +400,12 @@ int pack_objects(File_Handles *file_info, repack_objects *objects)
      
       LOG(LOG_INFO, "Going to write to object %s\n", pre_str);
       fprintf(file_info->outfd, "Writing file to object %s\n", pre_str);
-      //s3_put(nb,test_obj);
+
+      // Write data back to new object
       s3_put(nb,pre_str);
       check_S3_error(s3_return, nb, S3_PUT); 
 
       aws_iobuf_reset_hard(nb);
-//      aws_iobuf_reset(nb);
       objects=objects->next;
    }
    return 0;
@@ -458,87 +460,6 @@ int update_meta(File_Handles *file_info, repack_objects *objects)
      objects=objects->next;
   }
   return 0;
-}
-/******************************************************************************
-* Name setup_config
-* This function reads the configuration file and initializes the configuration
-* 
-******************************************************************************/
-int setup_config(){
-        // read MarFS configuration file
-        if (read_configuration()) {
-           fprintf(stderr, "Error Reading MarFS configuration file\n");
-           return(-1);
-        }
-        // Initialize MarFS xattr specs 
-        init_xattr_specs();
-
-        // Initialize aws
-        aws_init();
-        aws_reuse_connections(1);
-        aws_set_debug(0);
-        aws_read_config("root");
-        return 0;
-}
-/******************************************************************************
-* Name:  check_security_access
-*
-* 
-******************************************************************************/
-void check_security_access(MarFS_XattrPre *pre)
-{
-   if (pre->repo->security_method == SECURITYMETHOD_HTTP_DIGEST)
-      s3_http_digest(1);
-
-   if (pre->repo->access_method == ACCESSMETHOD_S3_EMC) {
-      s3_enable_EMC_extensions(1);
-
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if (pre->repo->ssl ) {
-         s3_https( 1 );
-         s3_https_insecure( 1 );
-       }
-   }
-   else if (pre->repo->access_method == ACCESSMETHOD_SPROXYD) {
-      s3_enable_Scality_extensions(1);
-      s3_sproxyd(1);
-
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if (pre->repo->ssl ) {
-         s3_https( 1 );
-         s3_https_insecure( 1 );
-      }
-   }
-}
-/******************************************************************************
-* Name check_S3_error  
-* 
-* Check for s3 errors           
-******************************************************************************/
-int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action )
-{
-  if ( curl_return == CURLE_OK ) {
-    if (action == S3_GET || action == S3_PUT ) {
-       if (s3_buf->code == HTTP_OK || s3_buf->code == HTTP_NO_CONTENT) {
-          return(0);
-       }
-       else {
-         fprintf(stderr, "Error, HTTP Code:  %d\n", s3_buf->code);
-         return(s3_buf->code);
-       }
-    }
-  }
-  else {
-    fprintf(stderr,"Error, Curl Return Code:  %d\n", curl_return);
-    return(-1);
-  }
-  return(0);
 }
 /******************************************************************************
  * * Name free_objects
