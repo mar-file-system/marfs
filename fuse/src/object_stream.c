@@ -95,9 +95,8 @@ OF SUCH DAMAGE.
 void stream_reset(ObjectStream* os, uint8_t preserve_os_written);
 
 
-
-
-// suuport for semaphore-based locking.  (See object_stream.h)
+#ifndef SPINLOCKS
+// support for semaphore-based locking.  (See object_stream.h)
 int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
 
    struct timespec timeout;
@@ -123,7 +122,7 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
       return -1;                // something else went wrong
    }
 }
-
+#endif
 
 
 // ---------------------------------------------------------------------------
