@@ -739,7 +739,7 @@ extern int  update_url     (ObjectStream* os, PathInfo* info);
 extern int  update_timeouts(ObjectStream* os, PathInfo* info);
 
 // currently just opens for writing.
-extern int  open_md   (MarFS_FileHandle* fh);
+extern int  open_md   (MarFS_FileHandle* fh, int writing_p);
 extern int  is_open_md(MarFS_FileHandle* fh);
 extern int  close_md  (MarFS_FileHandle* fh);
 
