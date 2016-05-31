@@ -1264,37 +1264,48 @@ int update_url(ObjectStream* os, PathInfo* info) {
 
 // Assure MD is open.
 //
-// WARNING: This is somewhat dodgy.  We *ought* to just look at fh->flags.
-//     If they include FH_WRITING, then open for writing, or if FH_READING,
-//     then open for reading.  However, this needs to be called from
-//     pftools MARFS_Path, which may not have "opened" the FileHandle
-//     itself, and so there would be no flags in fh->flags.
+// NOTE: It would be simpler to just look at fh->flags.  If they include
+//     FH_WRITING, then open for writing, or if FH_READING, then open for
+//     reading.  However, this needs to be called from pftools MARFS_Path,
+//     in some rank which may not have "opened" the FileHandle, and so
+//     there would be no flags in fh->flags.  For example,
+//     write_chunkinfo() is now called from a rank that is distinct from
+//     the rank that opens the destination file-handle for writing.
 //
-//     The problem is that we are allowing someone to screw up the
-//     direction in which the MD fd is opened.
+//     The issue is that by taking a read/write argument, open_md() is
+//     allowing someone to screw up the direction in which the MD fd is
+//     opened.  (Should be easy to notice, though.)
 
-int open_md(MarFS_FileHandle* fh) {
+int open_md(MarFS_FileHandle* fh, int writing_p) {
 
    PathInfo* info = &fh->info;
 
    int         flags;
    const char* flags_str;
 
-   if (fh->flags & FH_WRITING) {
+   if (writing_p) {
       flags     =  O_WRONLY;
       flags_str = "O_WRONLY";
    }
-   else if (fh->flags & FH_READING) {
+   else {
       flags     =  O_RDONLY;
       flags_str = "O_RDONLY";
    }
-   else {
-      LOG(LOG_ERR, "illegal flags %d for '%s' not allowed\n",
-          fh->flags, info->post.md_path);
-      errno = EIO;
-      return -1;
+
+   // if we haven't already initialized the FileHandle MD, do it now.
+#if USE_MDAL
+   if (! F_MDAL(fh)) {
+      // copy static MDAL ptr from NS to FileHandle
+      F_MDAL(fh) = info->pre.ns->file_MDAL;
+      LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
+
+      // allow MDAL implementation to do custom initializations
+      F_OP(f_init, fh, F_MDAL(fh));
    }
-      
+#else
+   LOG(LOG_INFO, "ignoring file-MDAL\n");
+#endif
+
 
    // if we haven't already opened the MD file, do it now.
 #if USE_MDAL
@@ -1323,9 +1334,14 @@ int open_md(MarFS_FileHandle* fh) {
 
 
 // non-zero = true, 0 = false
+//
+// NOTE: A case where <fh> doesn't have an MDAL is in pftool, in
+//     Pool<MARFS_Path>::get(), supporting factory creation, where the
+//     initial object is default-constructed, and is being replaced by a
+//     new object.  The destructor of the old object calls here.
 int is_open_md(MarFS_FileHandle* fh) {
 #if USE_MDAL
-   return F_OP(is_open, fh);
+   return (F_MDAL(fh) ? F_OP(is_open, fh) : 0);
 #else
    return (fh->md_fd > 0);
 #endif
@@ -1443,7 +1459,7 @@ int write_chunkinfo(MarFS_FileHandle*     fh,
       return -1;
    }
 
-   TRY0(open_md(fh));
+   TRY0( open_md(fh, 1) );
 
    // seek to offset for this chunk, in MD file
    TRY0(seek_chunkinfo(fh, info->pre.chunk_no));
@@ -1476,8 +1492,11 @@ int write_chunkinfo(MarFS_FileHandle*     fh,
 // read MultiChunkInfo for the next chunk, from file
 int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
    static const size_t chunk_info_len = sizeof(MultiChunkInfo);
+   char                str[chunk_info_len];
+   TRY_DECLS();
 
-   char    str[chunk_info_len];
+   TRY0( open_md(fh, 0) );
+
 #if USE_MDAL
    ssize_t rd_count = F_OP(read, fh, str, chunk_info_len);
 #else
