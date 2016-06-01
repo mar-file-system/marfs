@@ -3,15 +3,20 @@
 #
 # This script reads the gpfs target directory (with packed objects) provided and
 # uses file size and offset from xattr to read the object back into a file.
-# The object is then compared to the unpacked object
+# The object is then compared to the packed object prior to repacking.
 #
-# The sequence for testing object packing:
-#
-# run make_uni scripts
-# run get_unpacked_object
-# run marfs_packer
-# run get_packed_object > log 
-# Check if log has ERROR otherwise unpacked object matched packed object
+# The sequence for testing object repacking:
+#  run make_uni_mixed script
+#  run marfs_pack utility
+#  remove some files from the packed object (in gpfs directory)
+#  run get_partially_packed script
+#  move the files to trash (via fuse mount (rm -rf dir))
+#  run marfs_gc utility to create tmp_packed_log  this will show that not all files 
+#         exist for packed object
+#  run ./marfs_repack utility to repack objects identified in tmp_packed log
+#  run verify_repack_object to verify repacked object files  match files 
+#         prior to packing
+#   
 #
 
 if [[ $# != 2 ]]; then
