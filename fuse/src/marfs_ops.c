@@ -282,7 +282,7 @@ int marfs_ftruncate(const char*            path,
    // Call access() syscall to check/act if allowed to truncate for this user
    ACCESS(info->post.md_path, (W_OK));        /* for truncate? */
 
-   TRY0(open_md(fh));
+   TRY0( open_md(fh, 1) );
 
    // stat_xattrs, or look up info stuffed into memory pointed at in fuse
    // open table if this is not just a normal [object-storage case?], use
@@ -310,7 +310,7 @@ int marfs_ftruncate(const char*            path,
 
    // metadata filehandle is still open to the current MD file.
    // That's okay, but we need to ftruncate it, as well.
-   TRY0(open_md(fh));
+   TRY0( open_md(fh, 1) );
 
 #if USE_MDAL
    if (F_OP(is_open, fh)) {
@@ -838,17 +838,6 @@ int marfs_open(const char*         path,
 
    STAT_XATTRS(info);
 
-#if USE_MDAL
-   // copy static MDAL ptr from NS to FileHandle
-   F_MDAL(fh) = info->pre.ns->file_MDAL;
-   LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
-
-   // allow MDAL implementation to do any initializations necessary
-   F_OP(f_init, fh, F_MDAL(fh));
-#else
-   LOG(LOG_INFO, "ignoring file-MDAL\n");
-#endif
-
    // If no xattrs, we let user read/write directly on the file.
    // This implies a file that created in DIRECT repo-mode,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
@@ -862,16 +851,7 @@ int marfs_open(const char*         path,
       //         return -1;
       //      }
 
-#if USE_MDAL
-      if (! F_OP(open, fh, info->post.md_path, flags))
-         return -1;
-#else
-      fh->md_fd = open(info->post.md_path, flags);
-      if (fh->md_fd < 0) {
-         fh->md_fd = 0;
-         return -1;
-      }
-#endif
+      TRY0( open_md(fh, (fh->flags & FH_WRITING)) );
    }
 
    else if (fh->flags & FH_WRITING) {
@@ -1875,17 +1855,17 @@ int marfs_release (const char*        path,
    //     open, in an attempt to avoid extra calls to stream_close/reopen.
    if (fh->os.flags & OSF_OPEN) {
 
-      if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
-         if (fh->flags & FH_WRITING) {
+      if (fh->flags & FH_WRITING) {
+         if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
 
             // add final recovery-info, at the tail of the object
             TRY_GE0( write_recoveryinfo(os, info, fh) );
          }
-         else {
+      }
+      else {
 
-            // release any pending read threads
-            terminate_all_readers(fh);
-         }
+         // release any pending read threads
+         terminate_all_readers(fh);
       }
 
       stream_sync(os);   // TRY0( stream_sync(os) );
@@ -1896,35 +1876,39 @@ int marfs_release (const char*        path,
    // free aws4c resources
    aws_iobuf_reset_hard(&os->iob);
 
+   if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
+
+      // If obj-type is Multi, write the final MultiChunkInfo into the
+      // MD file.  (unless pftool is writting N:1, in which case it will
+      // do that in post_process)
+      if ((fh->flags & FH_WRITING)
+          && (info->post.obj_type == OBJ_MULTI)) {
+
+         if (info->pre.obj_type != OBJ_Nto1) {
+            TRY0( write_chunkinfo(fh,
+                                  // fh->open_offset,
+                                  (os->written - fh->write_status.sys_writes),
+                                  0) );
+         }
+
+         // keep count of amount of real chunk-info written into MD file
+         info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
+
+         // update count of objects, in POST
+         info->post.chunks = info->pre.chunk_no +1;
+
+         // reset current chunk-number, so xattrs will represent obj 0
+         info->pre.chunk_no = 0;
+      }
+   }
+
+   // new lock controls access to read() for multi-threaded nfsd
+   if (os->flags & OSF_RLOCK_INIT)
+      SEM_DESTROY(&os->read_lock);
+
    // close MD file, if it's open
    if (is_open_md(fh)) {
-
-      if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
-
-         // If obj-type is Multi, write the final MultiChunkInfo into the
-         // MD file.  (unless pftool is writting N:1, in which case it will
-         // do that in post_process)
-         if ((fh->flags & FH_WRITING)
-             && (info->post.obj_type == OBJ_MULTI)) {
-
-            if (info->pre.obj_type != OBJ_Nto1) {
-               TRY0( write_chunkinfo(fh,
-                                     // fh->open_offset,
-                                     (os->written - fh->write_status.sys_writes),
-                                     0) );
-            }
-
-            // keep count of amount of real chunk-info written into MD file
-            info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
-
-            // update count of objects, in POST
-            info->post.chunks = info->pre.chunk_no +1;
-
-            // reset current chunk-number, so xattrs will represent obj 0
-            info->pre.chunk_no = 0;
-         }
-      }
-
+      LOG(LOG_INFO, "closing MD\n");
       close_md(fh);
    }
 
