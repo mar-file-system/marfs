@@ -3,15 +3,7 @@
 #
 # This script reads the gpfs target directory (with packed objects) provided and
 # uses file size and offset from xattr to read the object back into a file.
-# The object is then compared to the unpacked object
 #
-# The sequence for testing object packing:
-#
-# run make_uni scripts
-# run get_unpacked_object
-# run marfs_packer
-# run get_packed_object > log 
-# Check if log has ERROR otherwise unpacked object matched packed object
 #
 
 if [[ $# != 1 ]]; then
