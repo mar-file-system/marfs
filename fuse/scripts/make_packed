@@ -1,84 +1,257 @@
-#!/bin/bash -e
+#!/bin/bash
 
 # fuse doesn't create packed files, but it has to be able to read them.
 # This script creates a dummy packed file, so we can test fuse-read on it.
 #
 # We're trying to match all the real properties that Packed files will
 # eventually have.  In this script we just concatenate the contents of the
-# member objects, including their tail-end recovery-info (plus 8 more
-# bytes).  We also want object-IDs to be reliably unique, so we want a real
-# inode in their object-IDs, which we get from the first member.
-
-
-# including recovery-info.  Just a nice, round number in hex
-OBJ_SIZE=2048
-
-# This is the current value for "sizeof(RecoveryInfo)" +8
+# member objects, including their tail-end recovery-info.  We want
+# object-IDs to be reliably unique, so we want a real inode in the
+# object-IDs, which we get from the first member.
 #
-# RECOVERY=1080
-RECOVERY=1336
+# type  'make_packed' to see usage
+#
+# Here's an example, creating 4 packed files by default:
+#
+#    cd $MARFS/fuse/src
+#    ../scripts/build_marfs 3 1
+#    make mnt
+#    mkdir /marfs/ns/packed
+#    ../scripts/make_packed  [options]  /marfs/ns/packed  pack
+#
+# Currently, you have to enter the obj-storage password (for repos with
+# Repo.security_method = HTTP_DIGEST).  I suggest you just copy the
+# password into your kill-ring, and then paste it everytime you need it.
+# (Don't accidentally yank it onto the command line.)
 
-# Just so that FILE_SIZE + RECOVERY = OBJ_SIZE
-FILE_SIZE=$(( OBJ_SIZE - RECOVERY ))
 
-# Create this many packed files.  They will all be stored in the same
-# object.  We ignore anything in the config file about marfs chunksize.
-# Please consider picking a number that won't put the total size of the
-# packed object (including recovery-info) larger than the marfs
-# "chunk_size" for this repo.  There might be a good reason someone picked
-# that chanksize.
-N_OBJECTS=8
+# This is the current value for "sizeof(RecoveryInfo)"
+# We should validate it in this script (by checking obj-sizes), but we don't.
+RECOVERY=2943
 
+CHUNK_SIZE="(unknown chunksize)"
 
-# uncomment if you want verbose CURL output
-# VERBOSE=-v
-VERBOSE=-s
 
 function usage() {
-    echo "Usage: $0 <repo>"
+    echo "$0  [ options ] <marfs_path> <fname_prefix>"
     echo
-    echo " where <repo> is 'scality' or 'emc'"
+    echo " <marfs_path>    is e.g. '/marfs/namespace/mydir'"
+    echo " <fname_prefix>  is e.g. 'my_file'"
+    echo
+    echo "options:"
+    echo "  -s <size>      file-size, not incl size of recovery-info ($RECOVERY bytes)"
+    echo "  -c <count>     file-count"
+    echo "  -v             show verbose curl dialogue"
+    echo "  -d             show debugging output, then quit without making changes"
+    echo
+    echo "  Generate <count> files of <size> bytes each, then pack them."
+    echo "  ((size + $RECOVERY) * count) must be < $CHUNK_SIZE"
     echo
 }
 
+function dbg() {
+    echo "FILE_SIZE:    $FILE_SIZE"
+    echo "FILE_COUNT:   $FILE_COUNT"
+    echo "MARFS_PATH:   $MARFS_PATH"
+    echo "PREFIX:       $PREFIX"
+    echo "MNT_TOP:      '$MNT_TOP'"
+    echo "NS:           '$NS'"
+    echo "TAIL:         '$TAIL'"
+    echo "NS_GUTS:      '$NS_GUTS'"
+    echo "MDFS:         '$MDFS'"
+    echo "IWRITE_REPO:  '$IWRITE_REPO'"
+    echo "REPO_GUTS:    '$REPO_GUTS'"
+    echo "HOST_PATTERN: '$HOST_PATTERN'"
+    echo "HOST_COUNT:   '$HOST_COUNT'"
+    echo "HOST_OFFSET:  '$HOST_OFFSET'"
+    echo "HOST:         '$HOST'"
+    echo "ACC_METHOD:   '$ACC_METHOD'"
+    echo "SEC_METHOD:   '$SEC_METHOD'"
+    echo "CURLOPTS:     '$CURLOPTS'"
+}
 
-if [[ $# != 1 ]]; then
+
+# --- defaults
+
+# File-size doesn't include the size of recovery-info added to objects.
+# Default file size results in packed object offsets that are on 4k boundaries.
+FILE_SIZE=$((4096 - RECOVERY))
+
+FILE_COUNT=4
+
+VERBOSE=0
+DEBUG=0
+
+# built in marfs/common/configuration/src
+CONFIG=marfs_config
+
+
+# --- parse command-line options
+
+OPT_STRING="hdvs:c:"
+getopts $OPT_STRING ARG
+RETVAL=$?
+
+while (( ! $RETVAL )); do
+   # echo "iterating ... (RETVAL=$RETVAL, OPTIND=$OPTIND, OPTARG=$OPTARG)"
+
+	case $ARG in
+		(h) usage; exit ;;
+
+		(d) DEBUG=1 ;;
+
+		(s) FILE_SIZE=$OPTARG ;;
+
+		(c) FILE_COUNT=$OPTARG ;;
+
+		(v) VERBOSE=$((VERBOSE +1)) ;;
+
+		(?) echo "ERROR"; usage; exit ;;
+		(*) echo "Unknown arg '$ARG'" ;;
+	esac
+
+   getopts "$OPT_STRING" ARG
+	RETVAL=$?
+
+done
+
+
+# parse positional args
+
+# MARFS_PATH=`echo $1 | sed -e 's,/$,,'`
+MARFS_PATH=`echo ${@:$OPTIND:1} | sed -e 's,/$,,'`
+
+# PREFIX=$2
+PREFIX=${@:$OPTIND+1:1}
+
+
+
+# --- validation
+if (( $# < 2 )); then
     usage
-    exit 1
+    exit
+fi
 
-# For now we're hardwiring these variables to match the hardwired config in
-# the fuse-mount.  Eventually, this should read and parse the actual
-# config-file.
-elif [[ $1 == "scality" ]]; then
 
-#    MARFS="/marfs/jti"
-#    GPFS="/gpfs/marfs-gpfs/fuse/test00/mdfs"
-#    HOST="http://10.135.0.21:81"
+# --- computed values related to Namespace
 
-    MARFS="/marfs/atorrez"
-    GPFS="/gpfs/marfs-gpfs/project_a/mdfs"
-    HOST="http://10.135.0.22:81"
+# mount-point for MarFS fuse
+MNT_TOP=`$CONFIG -t mnt_top`
+if [[ -z "$MNT_TOP" ]]; then
+    echo "Couldn't find 'mnt_top'"
+    exit
+fi
 
-    function get() { URL=$1;          curl $VERBOSE $URL; }
-    function del() { URL=$1;          curl $VERBOSE -X DELETE $URL; }
-    function put() { FILE=$1; URL=$2; curl $VERBOSE -T $FILE $URL; }
 
-elif [[ $1 == "emc" ]]; then
-    MARFS="/marfs/s3"
-    GPFS="/gpfs/fs2/fuse_s3/mdfs"
-    HOST="http://10.140.0.15:9020"
+# namespace, extracted from the "marfs_path" cmd-line argument
+NS=`echo $MARFS_PATH | sed -e "s,$MNT_TOP,," | tr '/' ' ' | awk '{print $1}'`
+if [[ -z "$NS" ]]; then
+    echo "Couldn't find namespace in '$MARFS_PATH'"
+    exit
+fi
 
-    function get() { URL=$1;          s3curl.pl --id=jti             -- $VERBOSE $URL; }
-    function del() { URL=$1;          s3curl.pl --id=jti             -- $VERBOSE -X DELETE $URL; }
-    function put() { FILE=$1; URL=$2; s3curl.pl --id=jti --put $FILE -- $VERBOSE $URL; }
+MARFS_TAIL=`echo $MARFS_PATH | sed -e "s,$MNT_TOP,,; s,^/,,; s,^$NS,,; s,^/,,"`
+
+
+# avoid calling 'marfs_config -n $NS' for each different parameter
+NS_GUTS=`$CONFIG -n $NS`
+
+
+# path to the MDFS, underlying the namespace computed above
+MDFS=`echo "$NS_GUTS" | awk '/[ \t]md_path[ \t]/{print $2}' | sed -e 's,/$,,'`
+if [[ -z "$MDFS" ]]; then
+    echo "Couldn't find md_path for namespace '$NS'"
+    exit
+fi
+MDFS="$MDFS/$MARFS_TAIL"
+
+
+# The repo to be used for interactive-writing, in the given namespace
+IWRITE_REPO=`echo "$NS_GUTS" | awk '/iwrite_repo/{print $2}'`
+if [[ -z "$IWRITE_REPO" ]]; then
+    echo "Couldn't find iwrite_repo for namespace '$NS'"
+    exit
+fi
+
+
+
+
+# --- computed values related to Repo
+
+
+# avoid calling 'marfs_config -r $IWRITE_REPO' for each different parameter
+REPO_GUTS=`$CONFIG -r $IWRITE_REPO`
+if [[ -z "$REPO_GUTS" ]]; then
+    echo "Couldn't find repo '$IWRITE_REPO'"
+    exit
+fi
+
+# chhunk_size is the maximum object-size for this repo
+CHUNK_SIZE=`echo "$REPO_GUTS" | awk '/chunk_size/{print $2}'`
+
+# compute the host from a combination of attributes
+HOST_PATTERN=`echo "$REPO_GUTS" | awk '/[ \t]host[ \t]/{print $2}'`
+HOST_COUNT=`  echo "$REPO_GUTS" | awk '/host_count/{print $2}'`
+HOST_OFFSET=` echo "$REPO_GUTS" | awk '/host_offset/{print $2}'`
+
+HOST=
+if (( HOST_COUNT > 1 )); then
+    HOST=`printf "http://$HOST_PATTERN" $HOST_OFFSET`
+else
+    HOST="http://$HOST_PATTERN"
+fi
+if [[ -z "$HOST" ]]; then
+    echo "Couldn't generate host"
+    exit
+fi
+
+# options to curl
+CURLOPTS=-s
+if (( VERBOSE )); then
+    CURLOPTS=-v
+fi
+
+# access-method (e.g. "SPROXYD") tells us how to get at storage
+ACC_METHOD=`echo "$REPO_GUTS" | awk '/access_method/{print $2}'`
+if [[ $ACC_METHOD == "SPROXYD" ]]; then
+
+    function get() { URL=$1;          curl $CURLOPTS $URL; }
+    function del() { URL=$1;          curl $CURLOPTS -X DELETE $URL; }
+    function put() { FILE=$1; URL=$2; curl $CURLOPTS -T $FILE $URL; }
+
+elif [[ $ACC_METHOD == "S3_EMC" ]]; then
+
+    # not tested recently.  Probably broken.
+    function get() { URL=$1;          s3curl.pl --id=$USER             -- $CURLOPTS $URL; }
+    function del() { URL=$1;          s3curl.pl --id=$USER             -- $CURLOPTS -X DELETE $URL; }
+    function put() { FILE=$1; URL=$2; s3curl.pl --id=$USER --put $FILE -- $CURLOPTS $URL; }
 
 else
     usage
     exit 1
-
 fi
 
 
+# security-method (e.g. "HTTP_DIGEST") indicates password-protection, etc
+SEC_METHOD=`echo "$REPO_GUTS" | awk '/security_method/{print $2}'`
+if [[ $SEC_METHOD == "HTTP_DIGEST" ]]; then
+    CURLOPTS+=" -u root --digest"
+fi
+
+
+# command-line -d means "show me all the settings without doing anything"
+if (( DEBUG )); then
+    dbg
+    exit
+fi
+
+
+# --- more validation we couldn't do until now
+if (( ( (FILE_SIZE + RECOVERY) * FILE_COUNT ) > CHUNK_SIZE )); then
+    echo "Size of the packed object would exceed chunk_size $CHUNK_SIZE for $IWRITE_REPO"
+    usage
+    exit
+fi
 
 
 
@@ -87,7 +260,7 @@ fi
 # xattr and return the corresponding object-ID.
 #
 # ---------------------------------------------------------------------------
-# NOTE: There appears to be a small delay, before GPFS xattrs written by
+# NOTE: There appears to be a small delay, before MDFS xattrs written by
 # one process will be seen by other processes, unless we sync.
 # ---------------------------------------------------------------------------
 
@@ -95,44 +268,46 @@ fi
 function obj_name() {
     FILE=$1
     sync
-    OBJ=`attr -q -g marfs_objid $GPFS/$FILE`
+    OBJ=`attr -q -g marfs_objid $MDFS/$FILE`
     echo "$OBJ"
 }
 
 
 function file_name() {
-    echo "p$1"
+    echo "$PREFIX$1"
 }
 
 
-# --- delete any old versions, so marfs is thrown off by failed
+# --- delete any old versions, so marfs is not thrown off by failed
 #     xattr-modifications done by buggy earlier versions of this script
+#
+#     NOTE: We delete through fuse, so these will end up in the trash
 
-for i in `seq 1 $N_OBJECTS`; do
+for i in `seq 1 $FILE_COUNT`; do
     F=`file_name $i`
-    echo "deleting $MARFS/$F"
-    rm -f $MARFS/$F
+    echo "deleting $MARFS_PATH/$F"
+    rm -f $MARFS_PATH/$F
 done
 
 
 # --- create several small Marfs files to be packed
 
-echo "creating $N_OBJECTS small objects with recognizable contents"
-for i in `seq 1 $N_OBJECTS`; do
+echo "creating $FILE_COUNT small objects with recognizable contents"
+for i in `seq 1 $FILE_COUNT`; do
     F=`file_name $i`
     FILL=$(( i % 10 ))
-    echo -e "\tfile: $MARFS/$F"
-    dd if=/dev/zero bs=$FILE_SIZE count=1 | tr '\0' "$FILL" > $MARFS/$F
+    echo -e "\tfile: $MARFS_PATH/$F"
+    dd if=/dev/zero bs=$FILE_SIZE count=1 | tr '\0' "$FILL" > $MARFS_PATH/$F
 done
 
 
 # ---------------------------------------------------------------------------
-# NOTE: There appears to be a small delay, before GPFS xattrs written by
+# NOTE: There appears to be a small delay, before MDFS xattrs written by
 # fuse will be seen by other processes, unless we sync.
 # ---------------------------------------------------------------------------
 
 ### sleep 1
-### sync $GPFS/p1
+### sync $MDFS/p1
 sync
 echo
 
@@ -164,37 +339,36 @@ echo
 
 # To get a consistent value for Post xattr, we'll borrow from one of the
 # to-be-packed files, and tweak it.
-echo "POST=attr -qg marfs_post $GPFS/$FNAME"
-POST=`attr -qg marfs_post $GPFS/$FNAME`
+echo "POST=attr -qg marfs_post $MDFS/$FNAME"
+POST=`attr -qg marfs_post $MDFS/$FNAME`
 echo "$FNAME           POST: $POST"
 
 # Change the encoded object-type from "Uni" to "Packed"
 POST=`echo $POST | sed -E 's/\/U\//\/P\//'`
 echo "changed type POST: $POST"
 
-# Change the number of objects (in the packed object) to $N_OBJECTS
+# Change the number of objects (in the packed object) to $FILE_COUNT
 POST=`echo $POST | sed -re 's/(\/objs)\.([^\/]*)(\/)/\1.##\3/'`
-POST=`echo $POST | sed -re "s/##/$N_OBJECTS/"`
+POST=`echo $POST | sed -re "s/##/$FILE_COUNT/"`
 echo "changed objs POST: $POST"
 echo
-
 
 
 
 # --- the packed object just has the concatenation of the contents of the
 #     original objects.  Delete the originals.
 
-echo "gathering contents of two objects into local file tmp.packed"
+echo "gathering contents of $FILE_COUNT objects into local file tmp.packed"
 rm -f tmp.packed
-for i in `seq 1 $N_OBJECTS`; do
+for i in `seq 1 $FILE_COUNT`; do
     F=`file_name $i`
     OBJ=`obj_name $F`
 
     echo
-    echo "gathering $HOST/$OBJ"
+    echo "reading $HOST/$OBJ"
     get $HOST/$OBJ >> tmp.packed
 
-    echo "deleting the original"
+    echo "deleting the original object"
     del $HOST/$OBJ
 done
 echo
@@ -206,22 +380,23 @@ put tmp.packed $HOST/$OBJID
 echo
 
 
+
+
 # --- update the xattrs of the originals, since they are now packed
 
-
 OFFSET=0
-for i in `seq 1 $N_OBJECTS`; do
+for i in `seq 1 $FILE_COUNT`; do
     F=`file_name $i`
-    echo "updating xattrs for $GPFS/$F"
+    echo "updating xattrs for $MDFS/$F"
 
     # Change the object-offset
     POST=`echo $POST | sed -E "s/off.([0-9]+)\//off.$OFFSET\//"`
     echo "POST (2): $POST"
 
-    attr -s marfs_objid -V $OBJID $GPFS/$F
-    attr -s marfs_post  -V $POST  $GPFS/$F
+    attr -s marfs_objid -V $OBJID $MDFS/$F
+    attr -s marfs_post  -V $POST  $MDFS/$F
 
-    SIZE=`stat -c "%s" $GPFS/$F`
+    SIZE=`stat -c "%s" $MDFS/$F`
 
     OFFSET=$(( OFFSET + SIZE + RECOVERY ))
     echo
