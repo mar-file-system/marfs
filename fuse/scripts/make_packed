@@ -56,7 +56,7 @@ function dbg() {
     echo "PREFIX:       $PREFIX"
     echo "MNT_TOP:      '$MNT_TOP'"
     echo "NS:           '$NS'"
-    echo "TAIL:         '$TAIL'"
+    echo "MARFS_TAIL:   '$MARFS_TAIL'"
     echo "NS_GUTS:      '$NS_GUTS'"
     echo "MDFS:         '$MDFS'"
     echo "IWRITE_REPO:  '$IWRITE_REPO'"
@@ -292,7 +292,7 @@ done
 
 # --- create several small Marfs files to be packed
 
-echo "creating $FILE_COUNT small objects with recognizable contents"
+echo "creating $FILE_COUNT ${FILE_SIZE}-byte files with recognizable contents"
 for i in `seq 1 $FILE_COUNT`; do
     F=`file_name $i`
     FILL=$(( i % 10 ))
@@ -305,11 +305,22 @@ done
 # NOTE: There appears to be a small delay, before MDFS xattrs written by
 # fuse will be seen by other processes, unless we sync.
 # ---------------------------------------------------------------------------
-
-### sleep 1
-### sync $MDFS/p1
 sync
 echo
+
+# Nope. Even the sync we did above is not enough to get GPFS, a parallel
+# file system with distributed metadata, to establish coherence between
+# the MD seen by our process and that created by fuse.  We'll wait ...
+for i in `seq 1 $FILE_COUNT`; do
+    F=`file_name $i`
+
+    while [[ -z `obj_name $F` ]]; do
+        echo "waiting for GPFS to synchronize xattrs on $F, written by fuse"
+        sleep 1
+        sync
+    done
+done
+
 
 
 
@@ -317,6 +328,7 @@ echo
 #     the object-ID for our synthetic packed object
 
 FNAME=`file_name 1`
+
 
 # In order to assure we're using an objid that is consistent with the
 # running fuse client (e.g. having correct chunk-size), we'll just adapt
