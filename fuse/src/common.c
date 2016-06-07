@@ -633,7 +633,11 @@ int batch_post_process(const char* path, size_t file_size) {
    if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
 
       // truncate to final size
+#if USE_MDAL
+      TRY0( F_OP_NOCTX(truncate, info.ns, info.post.md_path, file_size) );
+#else
       TRY0( truncate(info.post.md_path, file_size) );
+#endif
 
       // As in release(), we take note of whether RESTART was saved with
       // a restrictive mode, which we couldn't originally install because
@@ -969,8 +973,15 @@ int  trash_truncate(PathInfo*   info,
    __TRY0( stat_xattrs(info) );
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // see "UPDATE" in trash_unlink().
+
+#if USE_MDAL
+      __TRY0( F_OP_NOCTX(truncate, info->ns, info->post.md_path, 0) );
+#else
       __TRY0( truncate(info->post.md_path, 0) );
+#endif
+
       __TRY0( trunc_xattrs(info) ); // didn't have all, but might have had some
+
       return 0;
    }
 
@@ -1111,7 +1122,11 @@ int  trash_truncate(PathInfo*   info,
       __TRY0( close(out) );
 
       // trunc trash-file to size
+#if USE_MDAL
+      __TRY0( F_OP_NOCTX(truncate, info->ns, info->trash_md_path, log_size) );
+#else
       __TRY0( truncate(info->trash_md_path, log_size) );
+#endif
    }
 
    // copy any xattrs to the trash-file.
@@ -1611,7 +1626,11 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
 //              logical_size += ((n_chunks -1) * (info.pre.repo->chunk_size - recovery));
 //    
 //          // truncate file to logical-size indicated in chunk-data
+//       #if USE_MDAL
+//          TRY0( F_OP_NOCTX(truncate, info.ns, info.post.md_path, logical_size) );
+//       #else
 //          TRY0( truncate(info.post.md_path, logical_size) );
+//       #endif
 //    
 //          // Some xattr fields were unknown until now
 //          info.post.obj_type         = ((n_chunks > 1) ? OBJ_MULTI : OBJ_UNI);

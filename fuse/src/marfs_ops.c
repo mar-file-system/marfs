@@ -311,17 +311,10 @@ int marfs_ftruncate(const char*            path,
    // metadata filehandle is still open to the current MD file.
    // That's okay, but we need to ftruncate it, as well.
    TRY0( open_md(fh, 1) );
-
 #if USE_MDAL
-   if (F_OP(is_open, fh)) {
-      if (fh->flags & FH_WRITING)
-         F_OP(ftruncate, fh, length); // (length == 0)
-   }
+   F_OP(ftruncate, fh, length); // (length == 0)
 #else
-   if (fh->md_fd) {
-      if (fh->flags & FH_WRITING)
-         ftruncate(fh->md_fd, length); // (length == 0)
-   }
+   ftruncate(fh->md_fd, length); // (length == 0)
 #endif
 
    // open a stream to the new object.  We assume that the libaws4c context
@@ -1960,7 +1953,12 @@ int marfs_release (const char*        path,
        && !(fh->flags & FH_Nto1_WRITES)
        && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
 
-      TRY0( truncate(info->post.md_path, os->written - fh->write_status.sys_writes) );
+      off_t size = os->written - fh->write_status.sys_writes;
+#if USE_MDAL
+      TRY0( F_OP_NOCTX(truncate, info->ns, info->post.md_path, size) );
+#else
+      TRY0( truncate(info->post.md_path, size) );
+#endif
    }
 
 
@@ -2396,7 +2394,11 @@ int marfs_truncate (const char* path,
    STAT_XATTRS(&info); // to get xattrs
    if (! has_any_xattrs(&info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
+#if USE_MDAL
+      TRY0( F_OP_NOCTX(truncate, info.ns, info.post.md_path, size) );
+#else
       TRY0( truncate(info.post.md_path, size) );
+#endif
       return 0;
    }
 
@@ -2815,7 +2817,13 @@ ssize_t marfs_write(const char*        path,
    if ((fh->flags & FH_WRITING)
        && has_any_xattrs(info, MARFS_ALL_XATTRS)
        && !(fh->flags & FH_Nto1_WRITES)) {
-      TRY0( truncate(info->post.md_path, os->written - fh->write_status.sys_writes) );
+
+      off_t size = os->written - fh->write_status.sys_writes;
+# if USE_MDAL
+      TRY0( F_OP_NOCTX(truncate, info->ns, info->post.md_path, size) );
+# else
+      TRY0( truncate(info->post.md_path, size) );
+# endif
    }
 #endif
 
