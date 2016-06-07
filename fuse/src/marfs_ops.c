@@ -340,9 +340,8 @@ int marfs_ftruncate(const char*            path,
    // so marfs_open() won't assume it is a DIRECT file.)
    if (info->pre.repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info->flags  |= PI_RESTART;
       info->xattrs |= XVT_RESTART;
-      SAVE_XATTRS(info, XVT_RESTART);
+      SAVE_XATTRS(info, XVT_RESTART); // already done in open() ?
    }
    else
       LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
@@ -641,6 +640,12 @@ int marfs_mkdir (const char* path,
 // as well?  Meanwhile, we currently construct obj-id inside stat_xattrs(),
 // in the case where MD exists but xattrs don't.
 // 
+// NOTE: This is not actually opening the file, so we allow mknod() to
+//    possibly install a mode that is not readable or writeable, which
+//    would affect the ability to install xattrs.  We shouldn't do the
+//    trick of stashing the intended mode on the RESTART xattr, to preserve
+//    writability of xattrs on the file.  that will be done, if needed, at
+//    open-time.
 int marfs_mknod (const char* path,
                  mode_t      mode,
                  dev_t       rdev) {
@@ -668,6 +673,17 @@ int marfs_mknod (const char* path,
       return -1;
    }
 
+   // if mode would prevent installing RESTART xattr,
+   // then create with a more-lenient mode, at first.
+   // Save the bits to be XORed in the final state.
+   const mode_t user_rw   = (S_IRUSR | S_IWUSR);
+   mode_t       orig_mode = mode; // save intended final mode
+   mode_t       missing   = (mode & user_rw) ^ user_rw;
+   if (missing) {
+      LOG(LOG_INFO, "mode: (octal) 0%o, missing: 0%o\n", mode, missing);
+      mode |= missing;          // more-permissive mode
+   }
+
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
 #if USE_MDAL
@@ -675,7 +691,7 @@ int marfs_mknod (const char* path,
 #else
    TRY0( mknod(info.post.md_path, mode, rdev) );
 #endif
-   LOG(LOG_INFO, "mode: (octal) 0%o\n", mode); // debugging
+   LOG(LOG_INFO, "mode: (octal) 0%o\n", mode);
 
    // PROBLEM: marfs_open() assumes that a file that exists, which doesn't
    //     have xattrs, is something that was created when
@@ -693,15 +709,27 @@ int marfs_mknod (const char* path,
    //     (which is incomplete), and could throw an error, instead of
    //     seeing it as a file-without-xattrs, and allowing readers to see
    //     our internal data (e.g. in a MULTI file).
+   //
+   // NOTE: If needed, marfs_open() also installs readable-writable
+   //     access-mode bits, in order to allow xattrs to be manipulated.  In
+   //     that case, it will preserve the original mode-bits into the
+   //     RESTART xattr.  (NOTE: As long as there is a RESTART xattr, all
+   //     access to the file is prohibited by libmarfs.)
+   //
    STAT_XATTRS(&info);
    if (info.pre.repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info.flags  |= PI_RESTART;
+
       info.xattrs |= XVT_RESTART;
+      if (missing) {
+         info.restart.mode   = orig_mode; // desired final mode
+         info.restart.flags |= RESTART_MODE_VALID;
+      }
       SAVE_XATTRS(&info, XVT_RESTART);
    }
    else
       LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
+
 
    EXIT();
    return 0;
@@ -843,7 +871,7 @@ int marfs_open(const char*         path,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs.  Opening as DIRECT.\n");
 
-      //      // Wrong.  The repo might not have DIRECT-mode now.
+      //      // Wrong.  The repo might no longer have DIRECT-mode.
       //      if (info->pre.repo->access_method != ACCESSMETHOD_DIRECT) {
       //         LOG(LOG_INFO, "Has RESTART, but (%s) repo->access_method != DIRECT\n",
       //             info->pre.repo->name);
@@ -1929,23 +1957,46 @@ int marfs_release (const char*        path,
 
    // truncate length to reflect length of data
    if ((fh->flags & FH_WRITING)
-       && has_any_xattrs(info, MARFS_ALL_XATTRS)
-       && !(fh->flags & FH_Nto1_WRITES)) {
+       && !(fh->flags & FH_Nto1_WRITES)
+       && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
+
       TRY0( truncate(info->post.md_path, os->written - fh->write_status.sys_writes) );
    }
 
 
+   // Note whether RESTART is preserving a more-restrictive mode
+   mode_t  final_mode; // intended final mode?
+   int     install_final_mode = 0;
+   if (has_any_xattrs(info, XVT_RESTART)
+       && (info->restart.flags & RESTART_MODE_VALID)) {
+
+      final_mode = info->restart.mode;
+      install_final_mode = 1;
+   }
+
    // no longer incomplete
-   info->flags  &= ~(PI_RESTART);
    info->xattrs &= ~(XVT_RESTART);
 
-   // install xattrs (unless writing N:1)
+   // update xattrs (unless writing N:1), while we still can
    if ((info->pre.repo->access_method != ACCESSMETHOD_DIRECT)
        && (fh->flags & FH_WRITING)
        && !(fh->flags & FH_Nto1_WRITES)) {
-   
+
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
+
+      // install final access-mode, if needed. (We might have added our own
+      // more-permissive access-mode-bits in open(), in order to allow
+      // manipulating xattrs while the file was open.  If so, we preserved
+      // the desired final mode in RESTART.)
+      if (install_final_mode) {
+#if USE_MDAL
+         TRY0( F_OP_NOCTX(chmod, info->ns, info->post.md_path, info->restart.mode) );
+#else
+         TRY0( chmod(info->post.md_path, info->restart.mode) );
+#endif
+      }
    }
+
 
    EXIT();
    return 0;
@@ -2356,7 +2407,6 @@ int marfs_truncate (const char* path,
    // so marfs_open() won't assume it is a DIRECT file.)
    if (info.ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info.flags  |= PI_RESTART;
       info.xattrs |= XVT_RESTART;
       SAVE_XATTRS(&info, XVT_RESTART);
    }

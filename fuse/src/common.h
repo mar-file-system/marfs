@@ -372,13 +372,10 @@ extern XattrSpec*  MarFS_xattr_specs;
 typedef uint8_t  PathInfoFlagType;
 
 typedef enum {
-   PI_RESTART      = 0x01,      // file is incomplete (see stat_xattrs())
-   PI_EXPANDED     = 0x02,      // expand_path_info() was called?
-   PI_STAT_QUERY   = 0x04,      // i.e. maybe PathInfo.st empty for a reason
-   PI_XATTR_QUERY  = 0x08,      // i.e. maybe PathInfo.xattr empty for a reason
-   PI_PRE_INIT     = 0x10,      // "pre"  field has been initialized from scratch (unused?)
-   PI_POST_INIT    = 0x20,      // "post" field has been initialized from scratch (unused?)
-   PI_TRASH_PATH   = 0x40,      // expand_trash_info() was called?
+   PI_EXPANDED     = 0x01,      // expand_path_info() was called?
+   PI_STAT_QUERY   = 0x02,      // i.e. maybe PathInfo.st empty for a reason
+   PI_XATTR_QUERY  = 0x04,      // i.e. maybe PathInfo.xattr empty for a reason
+   PI_TRASH_PATH   = 0x08,      // expand_trash_info() was called?
    //   PI_STATVFS      = 0x80,      // stvfs has been initialized from Namespace.fsinfo?
 } PathInfoFlagValue;
 
@@ -390,8 +387,11 @@ typedef struct PathInfo {
 
    MarFS_XattrPre       pre;
    MarFS_XattrPost      post;
+   MarFS_XattrRestart   restart;
    MarFS_XattrShard     shard;
-   XattrMaskType        xattrs; // OR'ed XattrValueTypes, use has_any_xattrs()
+
+   XattrMaskType        xattrs;      // OR'ed XattrValueTypes, use has_any_xattrs()
+   XattrMaskType        xattr_inits; // OR'ed XattrValueTypes, use has_any_xattrs()
 
    PathInfoFlagType     flags;
    char                 trash_md_path[MARFS_MAX_MD_PATH];

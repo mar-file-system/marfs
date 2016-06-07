@@ -116,9 +116,13 @@ extern "C" {
 //
 // -- 1.2 config parsing changes. removed repo.pack_size.  Added
 //        repo.min/max_pack_file_size, and repo.min/max_pack_file_count.
+//
+// -- 1.3 restart xattrs include an optional mode, which will be installed
+//        at close-time.  This allows read-only files to be opened RW, so
+//        that we can install xattrs.
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  2
+#define MARFS_CONFIG_MINOR  3
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 

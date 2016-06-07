@@ -470,7 +470,7 @@ int stat_xattrs(PathInfo* info) {
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
             __TRY0( init_pre(&info->pre, OBJ_FUSE, info->ns,
                              info->ns->iwrite_repo, &info->st) );
-            info->flags |= PI_PRE_INIT;
+            info->xattr_inits |= spec->value_type; /* initialized this one */
          }
          else {
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
@@ -494,7 +494,7 @@ int stat_xattrs(PathInfo* info) {
             // (a) ENOATTR means no attr, or no access.  Treat as the former.
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
             __TRY0( init_post(&info->post, info->ns, info->ns->iwrite_repo) );
-            info->flags |= PI_POST_INIT;
+            info->xattr_inits |= spec->value_type; /* initialized this one */
          }
          else {
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
@@ -504,21 +504,26 @@ int stat_xattrs(PathInfo* info) {
       }
 
       case XVT_RESTART: {
-         info->flags &= ~(PI_RESTART); /* default = NOT in restart mode */
-         ssize_t val_size = lgetxattr(info->post.md_path, spec->key_name,
-                                      &xattr_value_str, 2);
-         if (val_size < 0) {
-            if ((errno == ENOATTR)
-                || ((errno == EPERM) && S_ISLNK(info->st.st_mode)))
-               break;           /* treat ENOATTR as restart=0 */
-
+         str_size = lgetxattr(info->post.md_path, spec->key_name,
+                              &xattr_value_str, MARFS_MAX_XATTR_SIZE);
+         if (str_size != -1) {
+            // got the xattr-value.  Parse it into info->pre
+            xattr_value_str[str_size] = 0;
+            LOG(LOG_INFO, "XVT_RESTART %s\n", xattr_value_str);
+            __TRY0( str_2_restart(&info->restart, xattr_value_str) );
+            info->xattrs |= spec->value_type; /* found this one */
+         }
+         else if ((errno == ENOATTR)
+                  || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
+            // (a) ENOATTR means no attr, or no access.  Treat as the former.
+            // (b) GPFS returns EPERM for lgetxattr on symlinks.
+            __TRY0( init_restart(&info->restart) );
+            info->xattr_inits |= spec->value_type; /* initialized this one */
+         }
+         else {
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
             return -1;
          }
-         LOG(LOG_INFO, "XVT_RESTART\n");
-         info->xattrs |= spec->value_type; /* found this one */
-         if (val_size && (xattr_value_str[0] & ~'0')) /* value is not '0' */
-            info->flags |= PI_RESTART;
          break;
       }
 
@@ -630,15 +635,32 @@ int batch_post_process(const char* path, size_t file_size) {
       // truncate to final size
       TRY0( truncate(info.post.md_path, file_size) );
 
+      // As in release(), we take note of whether RESTART was saved with
+      // a restrictive mode, which we couldn't originally install because
+      // would've prevented manipulating xattrs.  If so, then (after removing
+      // the RESTART xattr) install the more-restrictive mode.
+      int    install_new_mode = 0;
+      mode_t new_mode;
+      if (has_all_xattrs(&info, XVT_RESTART)
+          && (info.restart.flags & RESTART_MODE_VALID)) {
+
+         install_new_mode = 1;
+         new_mode = info.restart.mode;
+      }
+
       // remove "restart" xattr.  [Can't do this at close-time, in the case
       // of N:1 files, so we do it here, for them.]
-      ///      if (has_all_xattrs(&info, XVT_RESTART)) {
-      info.flags  &= ~(PI_RESTART);
       info.xattrs &= ~(XVT_RESTART);
       SAVE_XATTRS(&info, (XVT_RESTART));
-      ///      }
-      // SAVE_XATTRS(&info, (XVT_PRE | XVT_POST | XVT_RESTART));
 
+      // install more-restrictive mode, if needed.
+      if (install_new_mode) {
+#if USE_MDAL
+         TRY0( F_OP_NOCTX(chmod, info.ns, info.post.md_path, new_mode) );
+#else
+         TRY0( chmod(info.post.md_path, new_mode) );
+#endif
+      }
    }
    else
       LOG(LOG_INFO, "no xattrs\n");
@@ -731,18 +753,19 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          //      scan for files to restart (when restarting pftool) would
          //      just be "find inodes that have xattr with key 'flags'
          //      having value matching a given bit-pattern", rather than
-         //      "find inodes that have xattr with key 'restart'"
+         //      "find inodes that have the following xattrs"
          //
          //      [However, you'd want to be sure that no two processes
-         //      would ever be racing to read/modify/write such an xattr.]
+         //      would ever be racing to read/modify/write the flags
+         //      xattr.]
 
          // If the flag isn't set, then remove the xattr.
-         if (info->flags & (PI_RESTART)) {
-            LOG(LOG_INFO, "XVT_RESTART\n");
-            xattr_value_str[0] = '1';
-            xattr_value_str[1] = 0; // in case someone tries strlen
+         if (info->xattrs & XVT_RESTART) {
+            __TRY0( restart_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE,
+                                  &info->restart) );
+            LOG(LOG_INFO, "XVT_RESTART: %s\n", xattr_value_str);
             __TRY0( lsetxattr(info->post.md_path,
-                              spec->key_name, xattr_value_str, 2, 0) );
+                              spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
          }
          else {
             ssize_t val_size = lremovexattr(info->post.md_path, spec->key_name);
@@ -1125,7 +1148,8 @@ int  trash_truncate(PathInfo*   info,
    __TRY0( write_trash_companion_file(info, path, &trash_time) );
 
    // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
-   info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY | PI_PRE_INIT | PI_POST_INIT);
+   info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY);
+   info->xattr_inits = 0;
    __TRY0( stat_xattrs(info) );   // has none, so initialize from scratch
 
    // NOTE: Unique-ness of Object-IDs currently comes from inode, plus
@@ -1151,10 +1175,7 @@ int trunc_xattrs(PathInfo* info) {
    XattrSpec*  spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
       lremovexattr(info->post.md_path, spec->key_name);
-
       info->xattrs &= ~(spec->value_type);
-      if (spec->value_type == XVT_RESTART)
-         info->flags &= ~(PI_RESTART);
    }
    return 0;
 }
@@ -1598,7 +1619,7 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
 //          info.post.chunk_info_bytes = ((n_chunks > 1)
 //                                        ? (n_chunks * sizeof(MultiChunkInfo))
 //                                        : 0);
-//          info.flags &= ~(PI_RESTART);
+//          info.xattrs &= ~(XVT_RESTART);
 //    
 //          SAVE_XATTRS(&info, MARFS_ALL_XATTRS);
 //       }
