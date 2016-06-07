@@ -412,6 +412,7 @@ typedef enum {
    FH_WRITING      = 0x02,        // might someday allow O_RDWR
    FH_DIRECT       = 0x04,        // i.e. PathInfo.xattrs has no MD_
    FH_Nto1_WRITES  = 0x10,        // implies pftool calling. (Can write N:1)
+   FH_PACKED       = 0x20,        // the object in the file handle is packed
 } FHFlags;
 
 typedef uint16_t FHFlagType;
@@ -556,6 +557,9 @@ typedef struct {
    ReadStatus      read_status;  // buffer_management, current_offset, etc
    WriteStatus     write_status; // buffer-management, etc
    ObjectStream    os;           // handle for streaming access to objects
+   curl_off_t      objectSize;   // The size of the object for packed files
+   int             fileCount;    // The number of files that have been packed
+                                 // into the file
 
    FHFlagType      flags;
 } MarFS_FileHandle;

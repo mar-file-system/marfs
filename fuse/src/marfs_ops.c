@@ -783,6 +783,14 @@ int marfs_open(const char*         path,
 
    EXPAND_PATH_INFO(info, path);
 
+   // we need to check if it is a packed file and should not be
+   if(
+         fh->flags & FH_PACKED &&
+         content_length > info->pre.repo->max_pack_file_size
+         ) {
+      return -2;
+   }
+
 
    // Check/act on iperms from expanded_path_info_structure
    //   If readonly RM/RD 
@@ -968,29 +976,40 @@ int marfs_open(const char*         path,
    // install custom context
    aws_iobuf_context(b, ctx);
 
-   // initialize the URL in the ObjectStream, in our FileHandle
-   TRY0( update_url(os, info) );
+   // we need to check if we need a new stream
+   if (
+         !(fh->flags & FH_PACKED)
+         || NULL == os
+         || fh->objectSize+content_length > info->pre.repo->chunk_size
+         || fh->fileCount+1 > info->pre.repo->max_pack_file_count
+         ) {
+      // we need to close the current object stream and open a new one if it is a packed object
+      if( fh->flags & FH_PACKED ) {
+         marfs_release_fh(fh);
+      }
+      TRY0( update_url(os, info) );
 
-   // To support seek() [for reads], and allow reading at arbitrary
-   // offsets, we let marfs_read() determine the offset where it should
-   // open, so it can do its own GET, with byte-ranges.  Therefore, for
-   // reads, we don't open the stream, here.
-   if (fh->flags & FH_WRITING) {
+      // To support seek() [for reads], and allow reading at arbitrary
+      // offsets, we let marfs_read() determine the offset where it should
+      // open, so it can do its own GET, with byte-ranges.  Therefore, for
+      // reads, we don't open the stream, here.
+      if (fh->flags & FH_WRITING) {
 
-      // explicit content-length is faster, in requests through a Scality
-      // sproxyd connector.  Save info so we only write MarFS chunk-size
-      // values per stream_open() [including recovery-info, if called through
-      // marfs_open_at_offset()]
-      //
-      // NOTE: When overwriting an existing file, fuse gets called with open,
-      //     then ftruncate, but marfs_ftruncate() does
-      //     abort-stream/move-to-trash/open-new-name.  So, we need to track
-      //     the remaining data-size as it is right now.  (Also, we may
-      //     someday want marfs_write() to retry failed writes a few times.)
-      size_t   open_size  = get_stream_wr_open_size(fh, 0);
-      uint16_t wr_timeout = info->pre.repo->write_timeout;
+         // explicit content-length is faster, in requests through a Scality
+         // sproxyd connector.  Save info so we only write MarFS chunk-size
+         // values per stream_open() [including recovery-info, if called through
+         // marfs_open_at_offset()]
+         //
+         // NOTE: When overwriting an existing file, fuse gets called with open,
+         //     then ftruncate, but marfs_ftruncate() does
+         //     abort-stream/move-to-trash/open-new-name.  So, we need to track
+         //     the remaining data-size as it is right now.  (Also, we may
+         //     someday want marfs_write() to retry failed writes a few times.)
+         size_t   open_size  = get_stream_wr_open_size(fh, 0);
+         uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-      TRY0( stream_open(os, OS_PUT, open_size, 0, wr_timeout) );
+         TRY0( stream_open(os, OS_PUT, open_size, 0, wr_timeout) );
+      }
    }
 
 
@@ -1019,6 +1038,36 @@ int marfs_open(const char*         path,
 
    EXIT();
    return 0;
+}
+
+// This open command allows you to provide an alreay populated fh for
+// marfs to work with. This allows marfs to create a packed file
+// by resuing a curl stream if there is still room in the current object.
+//
+// If there is not room the stream is closed and a new one is created.
+//
+// It only makes sense to use this on a create call.
+//
+// -2 will be returned if the content_length exceeds the max packed size
+int  marfs_open_packed   (const char* path, MarFS_FileHandle* fh, int flags,
+                          curl_off_t content_length) {
+   // if you are trying to read the file just use regular open
+   if(!(flags & O_WRONLY)) {
+      return -2;
+   }
+
+   if( 0 >= content_length) {
+      return -2;
+   }
+
+   // if the flag is not already set go ahead set and clear the data structure
+   if( !(fh->flags & FH_PACKED)) {
+      memset(fh, 0, sizeof(MarFS_FileHandle));
+      fh->flags |= FH_PACKED;
+   }
+
+   // run open
+   return marfs_open(path, fh, flags, content_length);
 }
 
 
@@ -1715,12 +1764,18 @@ int marfs_release (const char*        path,
       }
 
       stream_sync(os);   // TRY0( stream_sync(os) );
-      stream_close(os);  // TRY0( stream_close(os) );
+
+      // we will not close the stream for packed files
+      if( !(fh->flags & FH_PACKED) ) {
+         stream_close(os);  // TRY0( stream_close(os) );
+      }
    }
 #endif
 
-   // free aws4c resources
-   aws_iobuf_reset_hard(&os->iob);
+   // free aws4c resources if the file is not packed
+   if( !(fh->flags & FH_PACKED) ) {
+      aws_iobuf_reset_hard(&os->iob);
+   }
 
    // close MD file, if it's open
    if (is_open_md(fh)) {
@@ -1784,6 +1839,25 @@ int marfs_release (const char*        path,
    
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
    }
+
+   EXIT();
+   return 0;
+}
+
+
+// If we are sharing a file handle to write to a packed object we need to
+// close the stream once we are completly done. Before a program exists it
+// needs to call this on all file handles that it used as packed
+int marfs_release_fh(MarFS_FileHandle* fh) {
+   ENTRY();
+   LOG(LOG_INFO, "release_fh\n");
+
+   ObjectStream*     os   = &fh->os;
+
+   stream_close(os);
+
+   // free aws4c resources
+   aws_iobuf_reset_hard(&os->iob);
 
    EXIT();
    return 0;
