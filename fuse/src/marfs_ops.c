@@ -783,15 +783,6 @@ int marfs_open(const char*         path,
 
    EXPAND_PATH_INFO(info, path);
 
-   // we need to check if it is a packed file and should not be
-   if(
-         fh->flags & FH_PACKED &&
-         content_length > info->pre.repo->max_pack_file_size
-         ) {
-      return -2;
-   }
-
-
    // Check/act on iperms from expanded_path_info_structure
    //   If readonly RM/RD 
    //   If wronly/rdwr/trunk  RM/WM/RD/WD/TD
@@ -845,6 +836,15 @@ int marfs_open(const char*         path,
 
 
    STAT_XATTRS(info);
+   // we need to check if it is a packed file and should not be
+   if(
+         fh->flags & FH_PACKED &&
+         content_length > info->pre.repo->max_pack_file_size
+         ) {
+      return -2;
+   }
+
+
 
 #if USE_MDAL
    // copy static MDAL ptr from NS to FileHandle
@@ -917,6 +917,22 @@ int marfs_open(const char*         path,
          update_pre(&info->pre);
          // update_url(os, info); // can't do this here ...
       }
+
+      if( fh->flags & FH_PACKED ) {
+         if (
+               NULL == os
+               || fh->objectSize+content_length > info->pre.repo->chunk_size
+               || fh->fileCount+1 > info->pre.repo->max_pack_file_count
+            ) {
+            // we need to close the current object stream and open a new one if it is a packed object
+            marfs_release_fh(fh);
+         }
+
+         // set the object type
+         info->pre.obj_type = OBJ_PACKED;
+         update_pre(&info->pre);
+      }
+
    }
 
 
@@ -983,10 +999,6 @@ int marfs_open(const char*         path,
          || fh->objectSize+content_length > info->pre.repo->chunk_size
          || fh->fileCount+1 > info->pre.repo->max_pack_file_count
          ) {
-      // we need to close the current object stream and open a new one if it is a packed object
-      if( fh->flags & FH_PACKED ) {
-         marfs_release_fh(fh);
-      }
       TRY0( update_url(os, info) );
 
       // To support seek() [for reads], and allow reading at arbitrary
@@ -1059,6 +1071,9 @@ int  marfs_open_packed   (const char* path, MarFS_FileHandle* fh, int flags,
    if( 0 >= content_length) {
       return -2;
    }
+
+   // TODO: check to see if it is opened
+   // fh->flags FH_OPED or fh->os.flags 
 
    // if the flag is not already set go ahead set and clear the data structure
    if( !(fh->flags & FH_PACKED)) {
@@ -1763,10 +1778,9 @@ int marfs_release (const char*        path,
          }
       }
 
-      stream_sync(os);   // TRY0( stream_sync(os) );
-
       // we will not close the stream for packed files
       if( !(fh->flags & FH_PACKED) ) {
+         stream_sync(os);   // TRY0( stream_sync(os) );
          stream_close(os);  // TRY0( stream_close(os) );
       }
    }
@@ -1854,6 +1868,7 @@ int marfs_release_fh(MarFS_FileHandle* fh) {
 
    ObjectStream*     os   = &fh->os;
 
+   stream_sync(os);
    stream_close(os);
 
    // free aws4c resources
