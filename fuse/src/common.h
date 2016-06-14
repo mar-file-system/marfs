@@ -372,13 +372,10 @@ extern XattrSpec*  MarFS_xattr_specs;
 typedef uint8_t  PathInfoFlagType;
 
 typedef enum {
-   PI_RESTART      = 0x01,      // file is incomplete (see stat_xattrs())
-   PI_EXPANDED     = 0x02,      // expand_path_info() was called?
-   PI_STAT_QUERY   = 0x04,      // i.e. maybe PathInfo.st empty for a reason
-   PI_XATTR_QUERY  = 0x08,      // i.e. maybe PathInfo.xattr empty for a reason
-   PI_PRE_INIT     = 0x10,      // "pre"  field has been initialized from scratch (unused?)
-   PI_POST_INIT    = 0x20,      // "post" field has been initialized from scratch (unused?)
-   PI_TRASH_PATH   = 0x40,      // expand_trash_info() was called?
+   PI_EXPANDED     = 0x01,      // expand_path_info() was called?
+   PI_STAT_QUERY   = 0x02,      // i.e. maybe PathInfo.st empty for a reason
+   PI_XATTR_QUERY  = 0x04,      // i.e. maybe PathInfo.xattr empty for a reason
+   PI_TRASH_PATH   = 0x08,      // expand_trash_info() was called?
    //   PI_STATVFS      = 0x80,      // stvfs has been initialized from Namespace.fsinfo?
 } PathInfoFlagValue;
 
@@ -390,8 +387,11 @@ typedef struct PathInfo {
 
    MarFS_XattrPre       pre;
    MarFS_XattrPost      post;
+   MarFS_XattrRestart   restart;
    MarFS_XattrShard     shard;
-   XattrMaskType        xattrs; // OR'ed XattrValueTypes, use has_any_xattrs()
+
+   XattrMaskType        xattrs;      // OR'ed XattrValueTypes, use has_any_xattrs()
+   XattrMaskType        xattr_inits; // OR'ed XattrValueTypes, use has_any_xattrs()
 
    PathInfoFlagType     flags;
    char                 trash_md_path[MARFS_MAX_MD_PATH];
@@ -408,10 +408,12 @@ typedef struct PathInfo {
 // ...........................................................................
 
 typedef enum {
-   FH_READING      = 0x0001,        // might someday allow O_RDWR
-   FH_WRITING      = 0x0002,        // might someday allow O_RDWR
-   FH_DIRECT       = 0x0004,        // i.e. PathInfo.xattrs has no MD_
-   FH_Nto1_WRITES  = 0x0010,        // implies pftool calling. (Can write N:1)
+   FH_READING         = 0x0001,  // might someday allow O_RDWR
+   FH_WRITING         = 0x0002,  // might someday allow O_RDWR
+   FH_DIRECT          = 0x0004,  // i.e. PathInfo.xattrs has no MD_
+   FH_Nto1_WRITES     = 0x0010,  // implies pftool calling. (Can write N:1)
+   FH_MULTI_THR       = 0x0020,  // multi-threaded reads of FH (i.e. NFS)
+   FH_RELEASING       = 0x0040,  // added to inform multi-thr during release
 } FHFlags;
 
 typedef uint16_t FHFlagType;
@@ -449,10 +451,55 @@ typedef uint16_t FHFlagType;
 // the final char, and stream_sync() should not expect further callbacks
 // made on the writefunc, (so there will be no need for trapping
 // error-codes, etc, as described above).
+//
+// STUPID NFS TRICKS
+//
+// When a MarFS fuse-mount is exported over NFS, nfsd reads with multiple
+// threads at different offsets on the same filehandle.  This means some
+// fuse threads handling read will be asked to read at an offset that
+// doesn't match the current stream position.  The default way to handle
+// readds at a discontiguous offset is to close the stream and reopn.  With
+// an object-stream back-end, this means terminating the GET, and starting
+// a new GET.  Then, of course, a different fuse thread will eventually
+// want to read the part we skipped over.  The result is horrendously-bad
+// BW through NFS.
+//
+// We can get some relief from this by having threads block for a moment to
+// allow other threads the chance to read the intervening part of the
+// stream, so we avoid the close/reopen, in some cases.  But this means
+// adding delays into the read, and nfsd also just gets more and more
+// ambitious, trying wider and wider offsets that are decreasingly likely
+// to be filled.
+//
+// So, the new approach to this problem is to first notice whether delaying
+// to give other threads a chance to fill in the gaps ever results in some
+// of that gap being (even partially) filled.  If so, then we know there
+// are multiple-threads doing the reading on the same file-handle, and we
+// can be fairly sure that only NFS would be arrogant enough to try
+// something like that.  In turn, we make our own bold assumption that
+// readers over NFS are really reading the whole file sequentially (so a
+// request for an out-of-order offset will always eventually find that the
+// stream before it has been consumed).  Therefore, any out-of-order reader
+// can put his offset on a queue, along with a new lock.  Then he can wait
+// on that new lock.  Everyone who finishes a read will check the queue to
+// see if someone is waiting at exactly the offset as it stands after the
+// current read, and, if so, they will post the corresponding lock upon
+// which that other reader is waiting, at which point the other reader can
+// maintain the queue and proceed with his read.  That's what the
+// "read_queue" stuff is, in this file.  See also marfs_read().
+
+typedef struct ReadQueueElt {
+   off_t                offset;
+   SEM_T                lock;      // thread waits to read at <offset>
+   int                  rewinding; // other waiter doing close/reopen
+   struct ReadQueueElt* next;
+} ReadQueueElt;
+
 
 typedef struct {
    size_t        log_offset;    // effective offset (shows contiguous reads)
    size_t        data_remain;   // the unread part of marfs_open_at_offset()
+   ReadQueueElt* read_queue;    // out-of-order reads from NFS threads
 } ReadStatus;
 
 
@@ -692,7 +739,7 @@ extern int  update_url     (ObjectStream* os, PathInfo* info);
 extern int  update_timeouts(ObjectStream* os, PathInfo* info);
 
 // currently just opens for writing.
-extern int  open_md   (MarFS_FileHandle* fh);
+extern int  open_md   (MarFS_FileHandle* fh, int writing_p);
 extern int  is_open_md(MarFS_FileHandle* fh);
 extern int  close_md  (MarFS_FileHandle* fh);
 
@@ -730,6 +777,12 @@ extern ssize_t get_chunksize_with_info(PathInfo*   info,
 // This is called once, single-threaded, before/after any parallel activity.
 extern int     batch_pre_process (const char* path, size_t file_size);
 extern int     batch_post_process(const char* path, size_t file_size);
+
+// support for marfs_read() when fuse is expoerted over NFS
+extern ReadQueueElt* enqueue_reader(off_t offset, MarFS_FileHandle* fh);
+extern void          dequeue_reader(off_t offset, MarFS_FileHandle* fh);
+extern void          check_read_queue     (MarFS_FileHandle* fh);
+extern void          terminate_all_readers(MarFS_FileHandle* fh);
 
 
 

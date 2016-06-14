@@ -92,11 +92,6 @@ OF SUCH DAMAGE.
 
 #define MAX_PACKED_NAME_SIZE 1024
 
-// S3 Error checking
-enum{S3_CREATE, S3_STAT, S3_DELETE};
-#define HTTP_OK 200
-#define HTTP_NO_CONTENT 204
-
 #define TMP_LOCAL_FILE_LEN 1024 
 
 struct marfs_xattr {
@@ -155,8 +150,6 @@ int delete_object(char * object, File_Info *file_info_ptr,MarFS_XattrPre *pre_pt
 int delete_file(char *filename, File_Info *file_info_ptr);
 int process_packed(File_Info *file_info_ptr);
 void print_current_time(File_Info *file_info_ptr);
-int check_S3_error(CURLcode curl_return, IOBuf *s3_buf, int action);
 int read_config_gc(Fileset_Info *fileset_info_ptr);
-void check_security_access(MarFS_XattrPre *pre);
 #endif
 

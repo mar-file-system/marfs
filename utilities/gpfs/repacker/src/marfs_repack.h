@@ -75,35 +75,37 @@
 //#include <object_stream.h>
 #include <marfs_base.h>
 
-enum{S3_GET, S3_PUT};
-#define HTTP_OK 200
-#define HTTP_NO_CONTENT 204
-
 #define MAX_PATH_LENGTH 1024
+#define MAX_CMD_LENGTH 1024
+
+typedef struct File_Handles {
+   FILE *outfd;
+   char packed_log[MAX_PATH_LENGTH];
+} File_Handles;
 
 typedef struct obj_files {
-  char filename[1024];
-  size_t initial_offset;
+  char filename[MAX_PATH_LENGTH];
+  size_t original_offset;
   size_t size;
   size_t new_offset;
   struct obj_files *next;
-  char pre_xattr[1024];
+  char pre_xattr[MARFS_MAX_XATTR_SIZE];
 } obj_files;
 
 typedef struct repack_objects {
   size_t pack_count;
   size_t chunk_count;
-  char objid[1024];
+  char objid[MARFS_MAX_XATTR_SIZE];
+  char new_objid[MARFS_MAX_XATTR_SIZE];
   struct obj_files *files_ptr;
   struct repack_objects *next;
 } repack_objects;
 
-int find_repack_objects(char *fnameP, repack_objects **objects);
-int pack_objects(repack_objects *objects);
-int update_meta();
-void check_security_access(MarFS_XattrPre *pre);
-int setup_config();
-int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action );
+int find_repack_objects(File_Handles *file_info, repack_objects **objects);
+int pack_objects(File_Handles *file_info, repack_objects *objects);
+int update_meta(File_Handles *file_info, repack_objects *objects);
 void get_marfs_path(char * patht, char *marfs);
+void free_objects(repack_objects *objects);
+void print_usage();
 
 #endif

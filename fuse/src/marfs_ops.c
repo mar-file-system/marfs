@@ -282,7 +282,7 @@ int marfs_ftruncate(const char*            path,
    // Call access() syscall to check/act if allowed to truncate for this user
    ACCESS(info->post.md_path, (W_OK));        /* for truncate? */
 
-   TRY0(open_md(fh));
+   TRY0( open_md(fh, 1) );
 
    // stat_xattrs, or look up info stuffed into memory pointed at in fuse
    // open table if this is not just a normal [object-storage case?], use
@@ -310,18 +310,11 @@ int marfs_ftruncate(const char*            path,
 
    // metadata filehandle is still open to the current MD file.
    // That's okay, but we need to ftruncate it, as well.
-   TRY0(open_md(fh));
-
+   TRY0( open_md(fh, 1) );
 #if USE_MDAL
-   if (F_OP(is_open, fh)) {
-      if (fh->flags & FH_WRITING)
-         F_OP(ftruncate, fh, length); // (length == 0)
-   }
+   F_OP(ftruncate, fh, length); // (length == 0)
 #else
-   if (fh->md_fd) {
-      if (fh->flags & FH_WRITING)
-         ftruncate(fh->md_fd, length); // (length == 0)
-   }
+   ftruncate(fh->md_fd, length); // (length == 0)
 #endif
 
    // open a stream to the new object.  We assume that the libaws4c context
@@ -340,9 +333,8 @@ int marfs_ftruncate(const char*            path,
    // so marfs_open() won't assume it is a DIRECT file.)
    if (info->pre.repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info->flags  |= PI_RESTART;
       info->xattrs |= XVT_RESTART;
-      SAVE_XATTRS(info, XVT_RESTART);
+      SAVE_XATTRS(info, XVT_RESTART); // already done in open() ?
    }
    else
       LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
@@ -641,6 +633,12 @@ int marfs_mkdir (const char* path,
 // as well?  Meanwhile, we currently construct obj-id inside stat_xattrs(),
 // in the case where MD exists but xattrs don't.
 // 
+// NOTE: This is not actually opening the file, so we allow mknod() to
+//    possibly install a mode that is not readable or writeable, which
+//    would affect the ability to install xattrs.  We shouldn't do the
+//    trick of stashing the intended mode on the RESTART xattr, to preserve
+//    writability of xattrs on the file.  that will be done, if needed, at
+//    open-time.
 int marfs_mknod (const char* path,
                  mode_t      mode,
                  dev_t       rdev) {
@@ -668,6 +666,17 @@ int marfs_mknod (const char* path,
       return -1;
    }
 
+   // if mode would prevent installing RESTART xattr,
+   // then create with a more-lenient mode, at first.
+   // Save the bits to be XORed in the final state.
+   const mode_t user_rw   = (S_IRUSR | S_IWUSR);
+   mode_t       orig_mode = mode; // save intended final mode
+   mode_t       missing   = (mode & user_rw) ^ user_rw;
+   if (missing) {
+      LOG(LOG_INFO, "mode: (octal) 0%o, missing: 0%o\n", mode, missing);
+      mode |= missing;          // more-permissive mode
+   }
+
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
 #if USE_MDAL
@@ -675,7 +684,7 @@ int marfs_mknod (const char* path,
 #else
    TRY0( mknod(info.post.md_path, mode, rdev) );
 #endif
-   LOG(LOG_INFO, "mode: (octal) 0%o\n", mode); // debugging
+   LOG(LOG_INFO, "mode: (octal) 0%o\n", mode);
 
    // PROBLEM: marfs_open() assumes that a file that exists, which doesn't
    //     have xattrs, is something that was created when
@@ -693,15 +702,27 @@ int marfs_mknod (const char* path,
    //     (which is incomplete), and could throw an error, instead of
    //     seeing it as a file-without-xattrs, and allowing readers to see
    //     our internal data (e.g. in a MULTI file).
+   //
+   // NOTE: If needed, marfs_open() also installs readable-writable
+   //     access-mode bits, in order to allow xattrs to be manipulated.  In
+   //     that case, it will preserve the original mode-bits into the
+   //     RESTART xattr.  (NOTE: As long as there is a RESTART xattr, all
+   //     access to the file is prohibited by libmarfs.)
+   //
    STAT_XATTRS(&info);
    if (info.pre.repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info.flags  |= PI_RESTART;
+
       info.xattrs |= XVT_RESTART;
+      if (missing) {
+         info.restart.mode   = orig_mode; // desired final mode
+         info.restart.flags |= RESTART_MODE_VALID;
+      }
       SAVE_XATTRS(&info, XVT_RESTART);
    }
    else
       LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
+
 
    EXIT();
    return 0;
@@ -838,23 +859,12 @@ int marfs_open(const char*         path,
 
    STAT_XATTRS(info);
 
-#if USE_MDAL
-   // copy static MDAL ptr from NS to FileHandle
-   F_MDAL(fh) = info->pre.ns->file_MDAL;
-   LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
-
-   // allow MDAL implementation to do any initializations necessary
-   F_OP(f_init, fh, F_MDAL(fh));
-#else
-   LOG(LOG_INFO, "ignoring file-MDAL\n");
-#endif
-
    // If no xattrs, we let user read/write directly on the file.
    // This implies a file that created in DIRECT repo-mode,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs.  Opening as DIRECT.\n");
 
-      //      // Wrong.  The repo might not have DIRECT-mode now.
+      //      // Wrong.  The repo might no longer have DIRECT-mode.
       //      if (info->pre.repo->access_method != ACCESSMETHOD_DIRECT) {
       //         LOG(LOG_INFO, "Has RESTART, but (%s) repo->access_method != DIRECT\n",
       //             info->pre.repo->name);
@@ -862,16 +872,7 @@ int marfs_open(const char*         path,
       //         return -1;
       //      }
 
-#if USE_MDAL
-      if (! F_OP(open, fh, info->post.md_path, flags))
-         return -1;
-#else
-      fh->md_fd = open(info->post.md_path, flags);
-      if (fh->md_fd < 0) {
-         fh->md_fd = 0;
-         return -1;
-      }
-#endif
+      TRY0( open_md(fh, (fh->flags & FH_WRITING)) );
    }
 
    else if (fh->flags & FH_WRITING) {
@@ -1150,6 +1151,8 @@ int marfs_opendir (const char*       path,
 }
 
 
+// [For more details, see "stupid NFS tricks" in common.h]
+//
 // With an NFS-mount on top of fuse, where nfsd has more than one thread,
 // we sometimes receive concurrent reads at different offsets on the same
 // file-handle.  These reads would both be interacting with the same
@@ -1161,14 +1164,11 @@ int marfs_opendir (const char*       path,
 // return from multip[le places without warning, we just wrap it, to insure
 // we always do the unlock.
 //
-// TBD: That still doesn't address the problem that out-of-order requests
-// result in a close/reopen, which is very inefficient. However, a reader
-// might legitimately try to read from multiple positions, without reading
-// the intervening gap.  One approach would be to queue the out-of-order
-// request for a while, and see if intervening requests take care of the
-// gap.  But then NFS starts trying wider and wider gaps.  So, we'll just
-// trying failing the out-of-order request and see whether NFS gets the
-// message.
+// To address the problem that a reader might legitimately want to read
+// from multiple positions, without reading the intervening gap, we don't
+// lock and enqueue pending requests until we have determined that there
+// are deifinitely multiple threads reading on the same file-handle.  In
+// that case, we assume it is NFS reading the whole thing sequentially
 
 // fwd-decl
 static ssize_t marfs_read_internal (const char*        path,
@@ -1176,6 +1176,8 @@ static ssize_t marfs_read_internal (const char*        path,
                                     size_t             size,
                                     off_t              offset,
                                     MarFS_FileHandle*  fh);
+
+
 
 ssize_t marfs_read (const char*        path,
                     char*              buf,
@@ -1193,41 +1195,120 @@ ssize_t marfs_read (const char*        path,
    LOG(LOG_INFO, "(%08lx) waiting %ds for read-lock\n", (size_t)os, timeout_sec); 
    SAFE_WAIT(&os->read_lock, timeout_sec, os);
 
-#if 1
-   // If it's NFS calling, there may be another thread that could solve our
-   // discintiguous read by doing its own contiguous read ahead of us.
-   // Give it a chance.
+
+   // If this is a discontiguous read, and it's NFS calling, then there may
+   // be another thread that could consume from the stream such that our
+   // discontiguous read would become contiguous.  Give it a chance.
    int discontig_retries = 5;
    while ((os->flags & OSF_OPEN)                    // already did some reading
-          && (offset != fh->read_status.log_offset) // this one is discontig
+          && !(fh->flags & FH_MULTI_THR)            // not sure if NFS threads are reading
+          && (offset != fh->read_status.log_offset) // our read is discontig
           && discontig_retries--) {
 
-      LOG(LOG_INFO, "(%08lx) deferring discontig read (remaining retries: %d)\n",
-          (size_t)os, discontig_retries); 
+      LOG(LOG_INFO, "(%08lx) deferring discontig read at %lu != %lu (remaining retries: %d)\n",
+          (size_t)os, offset, fh->read_status.log_offset, discontig_retries);
+
+      // note the stream-offset as it is now
+      off_t str_offset_before = fh->read_status.log_offset;
 
       // let any blocked read threads proceed
       POST(&os->read_lock);
+
       /// sched_yield();
       usleep(20000);            // 20 ms
       SAFE_WAIT(&os->read_lock, timeout_sec, os);
+
+      // if someone else moved the ball, then there is someone else
+      if (fh->read_status.log_offset != str_offset_before)
+         fh->flags |= FH_MULTI_THR;
    }
 
+
+   // The retry-loop above allows some discontig-reads to fall into their
+   // proper place without an expensive close/reopen, in the case where
+   // multiple NFS threads are reading at different offsets on the same
+   // file-handle.  But some readers would use up their retries and go on
+   // to do the close/reopen, which really destroys BW.
+   //
+   // So, we add this secondary enhancement: If the loop above *ever*
+   // notices that the current stream-offset changed during one of the
+   // waits above, then we conclude that there are multiple threads reading
+   // on the same file-handle.  (We'll also assume that only nfsd would be
+   // arrogant enough to try that, and we'll assume that the client is
+   // reading sequentially through the entire file.  We're assuming someone
+   // isn't seeking on their NFS-mounted MarFS file).
+   //
+   // After we've detected this situation, we'll thenceforth (for the life
+   // of the file-handle) fall over to this better scheme: enqueue
+   // out-of-order reads along with their offset onto a queue in the
+   // file-handle, keeping the queue in ascending order of offsets.  Each
+   // queue-element includes a lock that its owning thread is waiting on.
+   // When any read() finishes, and the queue is non-empty, check whether
+   // the current stream-position matches the offset at the front of the
+   // queue.  If so, post the lock tha that reader is waiting on.  (The
+   // released reader-thread is the one who then pops the quueue.)
+   //
+   // NOTE: We always hold the read_lock while manipulating
+   //     FH.read_status.read_queue
+   if ((fh->flags & FH_MULTI_THR)
+       && (offset != fh->read_status.log_offset)) {
+
+      ReadQueueElt* elt = enqueue_reader(offset, fh);
+      SEM_T* wait_sem   = &elt->lock;
+      POST(&os->read_lock);     // let other readers go
+
+      LOG(LOG_INFO, "(%08lx) waiting for read at %lu\n", (size_t)os, offset);
+#if 0
+      WAIT(wait_sem);           // wait our turn
 #else
-   if ((os->flags & OSF_OPEN)                       // already did some reading
-       && (offset != fh->read_status.log_offset)) { // this one is discontig
+      static const size_t timeout_sec = 30;
+      while (TIMED_WAIT(wait_sem, timeout_sec)) { // wait our turn
 
-      LOG(LOG_ERR, "(%08lx) punting discontig read back to NFS (?)\n",
-          (size_t)os);
+         // timed-out, waiting for new reads at offsets ahead of us to read
+         // us into order.  If we're still at the front of the queue, (and
+         // some other waiting reader ahead of us didn't already do the
+         // close/reopen), then let us go ahead and do the close/reopen
+         // ourselves.  We set the "rewinding" flag in the other current
+         // queue members, so they won't also decide to do this.
+         WAIT(&os->read_lock);
+         LOG(LOG_INFO, "(%08lx) queued read at %lu timed out\n", (size_t)os, offset);
+         if ((! elt->rewinding)
+             && (elt == fh->read_status.read_queue)) {
 
-      errno = EINVAL;
-      rc_ssize = -1;
-   }
-   else
+            LOG(LOG_INFO, "(%08lx) queued read at %lu going ahead\n", (size_t)os, offset);
+            ReadQueueElt* q;
+            for (q=fh->read_status.read_queue; q; q=q->next)
+               q->rewinding = 1;
 
+            POST(&os->read_lock);
+            break;
+         }
+         POST(&os->read_lock);
+      }
 #endif
+      LOG(LOG_INFO, "(%08lx) done waiting for read at %lu\n", (size_t)os, offset);
+
+      // other threads advanced the offset to our position, or else we
+      // timed out waiting for that.  [Or, marfs_release() is shutting us
+      // down.]  Either way, it's time to get on with things.  In the
+      // former case, marfs_read_internal() will not have to close/reopen,
+      // and in the latter case it will.  If downstream readers don't time
+      // out immediately after us, they might be able to take advantage of
+      // the re-opened strream.
+      WAIT(&os->read_lock);     // our turn now
+      dequeue_reader(offset, fh);
+
+      // maybe marfs_release() is just shutting us down?
+      if (fh->flags & FH_RELEASING) {
+         POST(&os->read_lock);
+         LOG(LOG_INFO, "(%08lx) abandoning read at %lu\n", (size_t)os, offset);
+         return 0;
+      }
+   }
 
    rc_ssize = marfs_read_internal(path, buf, size, offset, fh);
 
+   check_read_queue(fh);        // maybe another waiter can go
    POST(&os->read_lock);
 
    EXIT();
@@ -1795,12 +1876,17 @@ int marfs_release (const char*        path,
    //     open, in an attempt to avoid extra calls to stream_close/reopen.
    if (fh->os.flags & OSF_OPEN) {
 
-      if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
-         if (fh->flags & FH_WRITING) {
+      if (fh->flags & FH_WRITING) {
+         if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
 
             // add final recovery-info, at the tail of the object
             TRY_GE0( write_recoveryinfo(os, info, fh) );
          }
+      }
+      else {
+
+         // release any pending read threads
+         terminate_all_readers(fh);
       }
 
       stream_sync(os);   // TRY0( stream_sync(os) );
@@ -1811,35 +1897,39 @@ int marfs_release (const char*        path,
    // free aws4c resources
    aws_iobuf_reset_hard(&os->iob);
 
+   if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
+
+      // If obj-type is Multi, write the final MultiChunkInfo into the
+      // MD file.  (unless pftool is writting N:1, in which case it will
+      // do that in post_process)
+      if ((fh->flags & FH_WRITING)
+          && (info->post.obj_type == OBJ_MULTI)) {
+
+         if (info->pre.obj_type != OBJ_Nto1) {
+            TRY0( write_chunkinfo(fh,
+                                  // fh->open_offset,
+                                  (os->written - fh->write_status.sys_writes),
+                                  0) );
+         }
+
+         // keep count of amount of real chunk-info written into MD file
+         info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
+
+         // update count of objects, in POST
+         info->post.chunks = info->pre.chunk_no +1;
+
+         // reset current chunk-number, so xattrs will represent obj 0
+         info->pre.chunk_no = 0;
+      }
+   }
+
+   // new lock controls access to read() for multi-threaded nfsd
+   if (os->flags & OSF_RLOCK_INIT)
+      SEM_DESTROY(&os->read_lock);
+
    // close MD file, if it's open
    if (is_open_md(fh)) {
-
-      if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
-
-         // If obj-type is Multi, write the final MultiChunkInfo into the
-         // MD file.  (unless pftool is writting N:1, in which case it will
-         // do that in post_process)
-         if ((fh->flags & FH_WRITING)
-             && (info->post.obj_type == OBJ_MULTI)) {
-
-            if (info->pre.obj_type != OBJ_Nto1) {
-               TRY0( write_chunkinfo(fh,
-                                     // fh->open_offset,
-                                     (os->written - fh->write_status.sys_writes),
-                                     0) );
-            }
-
-            // keep count of amount of real chunk-info written into MD file
-            info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
-
-            // update count of objects, in POST
-            info->post.chunks = info->pre.chunk_no +1;
-
-            // reset current chunk-number, so xattrs will represent obj 0
-            info->pre.chunk_no = 0;
-         }
-      }
-
+      LOG(LOG_INFO, "closing MD\n");
       close_md(fh);
    }
 
@@ -1860,23 +1950,51 @@ int marfs_release (const char*        path,
 
    // truncate length to reflect length of data
    if ((fh->flags & FH_WRITING)
-       && has_any_xattrs(info, MARFS_ALL_XATTRS)
-       && !(fh->flags & FH_Nto1_WRITES)) {
-      TRY0( truncate(info->post.md_path, os->written - fh->write_status.sys_writes) );
+       && !(fh->flags & FH_Nto1_WRITES)
+       && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
+
+      off_t size = os->written - fh->write_status.sys_writes;
+#if USE_MDAL
+      TRY0( F_OP_NOCTX(truncate, info->ns, info->post.md_path, size) );
+#else
+      TRY0( truncate(info->post.md_path, size) );
+#endif
    }
 
 
+   // Note whether RESTART is preserving a more-restrictive mode
+   mode_t  final_mode; // intended final mode?
+   int     install_final_mode = 0;
+   if (has_any_xattrs(info, XVT_RESTART)
+       && (info->restart.flags & RESTART_MODE_VALID)) {
+
+      final_mode = info->restart.mode;
+      install_final_mode = 1;
+   }
+
    // no longer incomplete
-   info->flags  &= ~(PI_RESTART);
    info->xattrs &= ~(XVT_RESTART);
 
-   // install xattrs (unless writing N:1)
+   // update xattrs (unless writing N:1), while we still can
    if ((info->pre.repo->access_method != ACCESSMETHOD_DIRECT)
        && (fh->flags & FH_WRITING)
        && !(fh->flags & FH_Nto1_WRITES)) {
-   
+
       SAVE_XATTRS(info, MARFS_ALL_XATTRS);
+
+      // install final access-mode, if needed. (We might have added our own
+      // more-permissive access-mode-bits in open(), in order to allow
+      // manipulating xattrs while the file was open.  If so, we preserved
+      // the desired final mode in RESTART.)
+      if (install_final_mode) {
+#if USE_MDAL
+         TRY0( F_OP_NOCTX(chmod, info->ns, info->post.md_path, info->restart.mode) );
+#else
+         TRY0( chmod(info->post.md_path, info->restart.mode) );
+#endif
+      }
    }
+
 
    EXIT();
    return 0;
@@ -2276,7 +2394,11 @@ int marfs_truncate (const char* path,
    STAT_XATTRS(&info); // to get xattrs
    if (! has_any_xattrs(&info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
+#if USE_MDAL
+      TRY0( F_OP_NOCTX(truncate, info.ns, info.post.md_path, size) );
+#else
       TRY0( truncate(info.post.md_path, size) );
+#endif
       return 0;
    }
 
@@ -2287,7 +2409,6 @@ int marfs_truncate (const char* path,
    // so marfs_open() won't assume it is a DIRECT file.)
    if (info.ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info.flags  |= PI_RESTART;
       info.xattrs |= XVT_RESTART;
       SAVE_XATTRS(&info, XVT_RESTART);
    }
@@ -2696,7 +2817,13 @@ ssize_t marfs_write(const char*        path,
    if ((fh->flags & FH_WRITING)
        && has_any_xattrs(info, MARFS_ALL_XATTRS)
        && !(fh->flags & FH_Nto1_WRITES)) {
-      TRY0( truncate(info->post.md_path, os->written - fh->write_status.sys_writes) );
+
+      off_t size = os->written - fh->write_status.sys_writes;
+# if USE_MDAL
+      TRY0( F_OP_NOCTX(truncate, info->ns, info->post.md_path, size) );
+# else
+      TRY0( truncate(info->post.md_path, size) );
+# endif
    }
 #endif
 

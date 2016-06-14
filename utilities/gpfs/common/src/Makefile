@@ -1,36 +1,33 @@
-all: marfs_pack
+all: utilities_com 
 
 
-CFLAGS += -Wall -g 
+CFLAGS += -Wall -g -c
 
 # relative paths to main marfs build
 MARFS_FUSE = ../../../../fuse/src
 LOGGING = ../../../../common/log/src
 MARFS_CONFIG = ../../../../common/configuration/src
-UTILITIES_COMMON = ../../common/src
 
 
 #OBJS = $(MARFS_FUSE)/marfs_base.o $(MARFS_FUSE)/logging.o 
-H    = marfs_packer.h
+H    = utilities_common.h
 
 CFLAGS += -I$(MARFS_FUSE)
 CFLAGS += -I$(LOGGING)
 CFLAGS += -I$(LIBAWS4C)
 CFLAGS += -I$(MARFS_CONFIG)
-CFLAGS += -I$(UTILITIES_COMMON)
 LDFLAGS += -L$(LIBAWS4C)
 LDFLAGS += -L$(MARFS_FUSE)
 LDFLAGS += -L$(MARFS_CONFIG)
-LDFLAGS += -L$(UTILITIES_COMMON)
-LIBS += -laws4c -lgpfs -lcurl -lm -lmarfs -lconfig -lutil_comm
+#LIBS += -laws4c -lgpfs -lcurl -lm -lmarfs -lconfig
+LIBS += -laws4c -lmarfs -lconfig
 
 DEBUG = -DUSE_STDOUT
 
-#Build regular marfs_packer or debug version
-marfs_packer: $(H) $(OBJS)  marfs_packer.c 
-	gcc $(CFLAGS) $(LDFLAGS) -o marfs_packer marfs_packer.c $(OBJS) $(LIBS)
-marfs_packer_debug: $(H) $(OBJS)  marfs_packer.c 
-	gcc $(CFLAGS) $(LDFLAGS) $(DEBUG) -o marfs_packer marfs_packer.c $(OBJS) $(LIBS)
+#Build regular marfs_repack or debug version
+utilities_common: $(H) $(OBJS) utilities_common.c 
+	gcc $(CFLAGS) $(LDFLAGS) utilities_common.c $(OBJS) $(LIBS)
+	ar -cvr libutil_comm.a *.o
 
 # From Jeff's marfs makefile.  This make sure an AWS4C path exists
 # in order to build.
@@ -42,9 +39,9 @@ else ifeq ($(wildcard $(LIBAWS4C)/libaws4c.a),)
 endif
 
 #Dependancy on AWS4C path
-marfs_pack: marfs_packer.std
-marfs_packer.std: pre_req
-	@ $(MAKE) marfs_packer
+utilities_com: utilities_common.std
+utilities_common.std: pre_req
+	@ $(MAKE) utilities_common
        
 %: %.o
 	gcc -o $@ $< $(LDFLAGS) $(LIBS)
@@ -60,6 +57,6 @@ marfs_packer.std: pre_req
 
 clean:
 
-	$(RM) *.{o,i}
+	$(RM) *.{o,i,a}
 	$(RM) *~
-	$(RM) marfs_packer   
+	$(RM) marfs_repack   
