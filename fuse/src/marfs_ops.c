@@ -920,8 +920,7 @@ int marfs_open(const char*         path,
 
       if( fh->flags & FH_PACKED ) {
          if (
-               NULL == os
-               || fh->objectSize+content_length > info->pre.repo->chunk_size
+               fh->objectSize+content_length > info->pre.repo->chunk_size // TODO: include object size
                || fh->fileCount+1 > info->pre.repo->max_pack_file_count
             ) {
             // we need to close the current object stream and open a new one if it is a packed object
@@ -945,53 +944,6 @@ int marfs_open(const char*         path,
    }
    strncpy(fh->ns_path, path, path_len +1);
 
-
-   // Configure a private AWSContext, for this request
-   AWSContext* ctx = aws_context_clone();
-   if (ACCESSMETHOD_IS_S3(info->pre.repo->access_method)) { // (includes S3_EMC)
-
-      // install the host and bucket
-      s3_set_host_r(info->pre.host, ctx);
-      LOG(LOG_INFO, "host   '%s'\n", info->pre.host);
-      // fprintf(stderr, "host   '%s'\n", info->pre.host); // for debugging pftool
-
-      s3_set_bucket_r(info->pre.bucket, ctx);
-      LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
-   }
-
-   if (info->pre.repo->access_method == ACCESSMETHOD_S3_EMC) {
-      s3_enable_EMC_extensions_r(1, ctx);
-
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if ( info->pre.repo->ssl ) {
-        s3_https_r( 1, ctx );
-        s3_https_insecure_r( 1, ctx );
-      }
-   }
-   else if (info->pre.repo->access_method == ACCESSMETHOD_SPROXYD) {
-      s3_enable_Scality_extensions_r(1, ctx);
-      s3_sproxyd_r(1, ctx);
-
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if ( info->pre.repo->ssl ) {
-        s3_https_r( 1, ctx );
-        s3_https_insecure_r( 1, ctx );
-      }
-   }
-
-   if (info->pre.repo->security_method == SECURITYMETHOD_HTTP_DIGEST) {
-      s3_http_digest_r(1, ctx);
-   }
-
-   // install custom context
-   aws_iobuf_context(b, ctx);
-
    // we need to check if we need a new stream
    if (
          !(fh->flags & FH_PACKED)
@@ -999,6 +951,54 @@ int marfs_open(const char*         path,
          || fh->objectSize+content_length > info->pre.repo->chunk_size
          || fh->fileCount+1 > info->pre.repo->max_pack_file_count
          ) {
+
+      // Configure a private AWSContext, for this request
+      AWSContext* ctx = aws_context_clone();
+      if (ACCESSMETHOD_IS_S3(info->pre.repo->access_method)) { // (includes S3_EMC)
+
+         // install the host and bucket
+         s3_set_host_r(info->pre.host, ctx);
+         LOG(LOG_INFO, "host   '%s'\n", info->pre.host);
+         // fprintf(stderr, "host   '%s'\n", info->pre.host); // for debugging pftool
+
+         s3_set_bucket_r(info->pre.bucket, ctx);
+         LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
+      }
+
+      if (info->pre.repo->access_method == ACCESSMETHOD_S3_EMC) {
+         s3_enable_EMC_extensions_r(1, ctx);
+
+         // For now if we're using HTTPS, I'm just assuming that it is without
+         // validating the SSL certificate (curl's -k or --insecure flags). If
+         // we ever get a validated certificate, we will want to put a flag
+         // into the MarFS_Repo struct that says it's validated or not.
+         if ( info->pre.repo->ssl ) {
+           s3_https_r( 1, ctx );
+           s3_https_insecure_r( 1, ctx );
+         }
+      }
+      else if (info->pre.repo->access_method == ACCESSMETHOD_SPROXYD) {
+         s3_enable_Scality_extensions_r(1, ctx);
+         s3_sproxyd_r(1, ctx);
+
+         // For now if we're using HTTPS, I'm just assuming that it is without
+         // validating the SSL certificate (curl's -k or --insecure flags). If
+         // we ever get a validated certificate, we will want to put a flag
+         // into the MarFS_Repo struct that says it's validated or not.
+         if ( info->pre.repo->ssl ) {
+           s3_https_r( 1, ctx );
+           s3_https_insecure_r( 1, ctx );
+         }
+      }
+
+      if (info->pre.repo->security_method == SECURITYMETHOD_HTTP_DIGEST) {
+         s3_http_digest_r(1, ctx);
+      }
+
+      // install custom context
+      aws_iobuf_context(b, ctx);
+
+
       TRY0( update_url(os, info) );
 
       // To support seek() [for reads], and allow reading at arbitrary
@@ -1080,6 +1080,9 @@ int  marfs_open_packed   (const char* path, MarFS_FileHandle* fh, int flags,
       memset(fh, 0, sizeof(MarFS_FileHandle));
       fh->flags |= FH_PACKED;
    }
+
+
+   // TODO: add flag to mark object stream as open
 
    // run open
    return marfs_open(path, fh, flags, content_length);
