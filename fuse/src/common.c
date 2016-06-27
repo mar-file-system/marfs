@@ -470,7 +470,7 @@ int stat_xattrs(PathInfo* info) {
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
             __TRY0( init_pre(&info->pre, OBJ_FUSE, info->ns,
                              info->ns->iwrite_repo, &info->st) );
-            info->flags |= PI_PRE_INIT;
+            info->xattr_inits |= spec->value_type; /* initialized this one */
          }
          else {
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
@@ -494,7 +494,7 @@ int stat_xattrs(PathInfo* info) {
             // (a) ENOATTR means no attr, or no access.  Treat as the former.
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
             __TRY0( init_post(&info->post, info->ns, info->ns->iwrite_repo) );
-            info->flags |= PI_POST_INIT;
+            info->xattr_inits |= spec->value_type; /* initialized this one */
          }
          else {
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
@@ -504,21 +504,26 @@ int stat_xattrs(PathInfo* info) {
       }
 
       case XVT_RESTART: {
-         info->flags &= ~(PI_RESTART); /* default = NOT in restart mode */
-         ssize_t val_size = lgetxattr(info->post.md_path, spec->key_name,
-                                      &xattr_value_str, 2);
-         if (val_size < 0) {
-            if ((errno == ENOATTR)
-                || ((errno == EPERM) && S_ISLNK(info->st.st_mode)))
-               break;           /* treat ENOATTR as restart=0 */
-
+         str_size = lgetxattr(info->post.md_path, spec->key_name,
+                              &xattr_value_str, MARFS_MAX_XATTR_SIZE);
+         if (str_size != -1) {
+            // got the xattr-value.  Parse it into info->pre
+            xattr_value_str[str_size] = 0;
+            LOG(LOG_INFO, "XVT_RESTART %s\n", xattr_value_str);
+            __TRY0( str_2_restart(&info->restart, xattr_value_str) );
+            info->xattrs |= spec->value_type; /* found this one */
+         }
+         else if ((errno == ENOATTR)
+                  || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
+            // (a) ENOATTR means no attr, or no access.  Treat as the former.
+            // (b) GPFS returns EPERM for lgetxattr on symlinks.
+            __TRY0( init_restart(&info->restart) );
+            info->xattr_inits |= spec->value_type; /* initialized this one */
+         }
+         else {
             LOG(LOG_INFO, "lgetxattr -> err (%d) %s\n", errno, strerror(errno));
             return -1;
          }
-         LOG(LOG_INFO, "XVT_RESTART\n");
-         info->xattrs |= spec->value_type; /* found this one */
-         if (val_size && (xattr_value_str[0] & ~'0')) /* value is not '0' */
-            info->flags |= PI_RESTART;
          break;
       }
 
@@ -628,17 +633,38 @@ int batch_post_process(const char* path, size_t file_size) {
    if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
 
       // truncate to final size
+#if USE_MDAL
+      TRY0( F_OP_NOCTX(truncate, info.ns, info.post.md_path, file_size) );
+#else
       TRY0( truncate(info.post.md_path, file_size) );
+#endif
+
+      // As in release(), we take note of whether RESTART was saved with
+      // a restrictive mode, which we couldn't originally install because
+      // would've prevented manipulating xattrs.  If so, then (after removing
+      // the RESTART xattr) install the more-restrictive mode.
+      int    install_new_mode = 0;
+      mode_t new_mode;
+      if (has_all_xattrs(&info, XVT_RESTART)
+          && (info.restart.flags & RESTART_MODE_VALID)) {
+
+         install_new_mode = 1;
+         new_mode = info.restart.mode;
+      }
 
       // remove "restart" xattr.  [Can't do this at close-time, in the case
       // of N:1 files, so we do it here, for them.]
-      ///      if (has_all_xattrs(&info, XVT_RESTART)) {
-      info.flags  &= ~(PI_RESTART);
       info.xattrs &= ~(XVT_RESTART);
       SAVE_XATTRS(&info, (XVT_RESTART));
-      ///      }
-      // SAVE_XATTRS(&info, (XVT_PRE | XVT_POST | XVT_RESTART));
 
+      // install more-restrictive mode, if needed.
+      if (install_new_mode) {
+#if USE_MDAL
+         TRY0( F_OP_NOCTX(chmod, info.ns, info.post.md_path, new_mode) );
+#else
+         TRY0( chmod(info.post.md_path, new_mode) );
+#endif
+      }
    }
    else
       LOG(LOG_INFO, "no xattrs\n");
@@ -731,18 +757,19 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          //      scan for files to restart (when restarting pftool) would
          //      just be "find inodes that have xattr with key 'flags'
          //      having value matching a given bit-pattern", rather than
-         //      "find inodes that have xattr with key 'restart'"
+         //      "find inodes that have the following xattrs"
          //
          //      [However, you'd want to be sure that no two processes
-         //      would ever be racing to read/modify/write such an xattr.]
+         //      would ever be racing to read/modify/write the flags
+         //      xattr.]
 
          // If the flag isn't set, then remove the xattr.
-         if (info->flags & (PI_RESTART)) {
-            LOG(LOG_INFO, "XVT_RESTART\n");
-            xattr_value_str[0] = '1';
-            xattr_value_str[1] = 0; // in case someone tries strlen
+         if (info->xattrs & XVT_RESTART) {
+            __TRY0( restart_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE,
+                                  &info->restart) );
+            LOG(LOG_INFO, "XVT_RESTART: %s\n", xattr_value_str);
             __TRY0( lsetxattr(info->post.md_path,
-                              spec->key_name, xattr_value_str, 2, 0) );
+                              spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
          }
          else {
             ssize_t val_size = lremovexattr(info->post.md_path, spec->key_name);
@@ -946,8 +973,15 @@ int  trash_truncate(PathInfo*   info,
    __TRY0( stat_xattrs(info) );
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // see "UPDATE" in trash_unlink().
+
+#if USE_MDAL
+      __TRY0( F_OP_NOCTX(truncate, info->ns, info->post.md_path, 0) );
+#else
       __TRY0( truncate(info->post.md_path, 0) );
+#endif
+
       __TRY0( trunc_xattrs(info) ); // didn't have all, but might have had some
+
       return 0;
    }
 
@@ -1088,7 +1122,11 @@ int  trash_truncate(PathInfo*   info,
       __TRY0( close(out) );
 
       // trunc trash-file to size
+#if USE_MDAL
+      __TRY0( F_OP_NOCTX(truncate, info->ns, info->trash_md_path, log_size) );
+#else
       __TRY0( truncate(info->trash_md_path, log_size) );
+#endif
    }
 
    // copy any xattrs to the trash-file.
@@ -1125,7 +1163,8 @@ int  trash_truncate(PathInfo*   info,
    __TRY0( write_trash_companion_file(info, path, &trash_time) );
 
    // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
-   info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY | PI_PRE_INIT | PI_POST_INIT);
+   info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY);
+   info->xattr_inits = 0;
    __TRY0( stat_xattrs(info) );   // has none, so initialize from scratch
 
    // NOTE: Unique-ness of Object-IDs currently comes from inode, plus
@@ -1151,10 +1190,7 @@ int trunc_xattrs(PathInfo* info) {
    XattrSpec*  spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
       lremovexattr(info->post.md_path, spec->key_name);
-
       info->xattrs &= ~(spec->value_type);
-      if (spec->value_type == XVT_RESTART)
-         info->flags &= ~(PI_RESTART);
    }
    return 0;
 }
@@ -1264,37 +1300,48 @@ int update_url(ObjectStream* os, PathInfo* info) {
 
 // Assure MD is open.
 //
-// WARNING: This is somewhat dodgy.  We *ought* to just look at fh->flags.
-//     If they include FH_WRITING, then open for writing, or if FH_READING,
-//     then open for reading.  However, this needs to be called from
-//     pftools MARFS_Path, which may not have "opened" the FileHandle
-//     itself, and so there would be no flags in fh->flags.
+// NOTE: It would be simpler to just look at fh->flags.  If they include
+//     FH_WRITING, then open for writing, or if FH_READING, then open for
+//     reading.  However, this needs to be called from pftools MARFS_Path,
+//     in some rank which may not have "opened" the FileHandle, and so
+//     there would be no flags in fh->flags.  For example,
+//     write_chunkinfo() is now called from a rank that is distinct from
+//     the rank that opens the destination file-handle for writing.
 //
-//     The problem is that we are allowing someone to screw up the
-//     direction in which the MD fd is opened.
+//     The issue is that by taking a read/write argument, open_md() is
+//     allowing someone to screw up the direction in which the MD fd is
+//     opened.  (Should be easy to notice, though.)
 
-int open_md(MarFS_FileHandle* fh) {
+int open_md(MarFS_FileHandle* fh, int writing_p) {
 
    PathInfo* info = &fh->info;
 
    int         flags;
    const char* flags_str;
 
-   if (fh->flags & FH_WRITING) {
+   if (writing_p) {
       flags     =  O_WRONLY;
       flags_str = "O_WRONLY";
    }
-   else if (fh->flags & FH_READING) {
+   else {
       flags     =  O_RDONLY;
       flags_str = "O_RDONLY";
    }
-   else {
-      LOG(LOG_ERR, "illegal flags %d for '%s' not allowed\n",
-          fh->flags, info->post.md_path);
-      errno = EIO;
-      return -1;
+
+   // if we haven't already initialized the FileHandle MD, do it now.
+#if USE_MDAL
+   if (! F_MDAL(fh)) {
+      // copy static MDAL ptr from NS to FileHandle
+      F_MDAL(fh) = info->pre.ns->file_MDAL;
+      LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
+
+      // allow MDAL implementation to do custom initializations
+      F_OP(f_init, fh, F_MDAL(fh));
    }
-      
+#else
+   LOG(LOG_INFO, "ignoring file-MDAL\n");
+#endif
+
 
    // if we haven't already opened the MD file, do it now.
 #if USE_MDAL
@@ -1323,9 +1370,14 @@ int open_md(MarFS_FileHandle* fh) {
 
 
 // non-zero = true, 0 = false
+//
+// NOTE: A case where <fh> doesn't have an MDAL is in pftool, in
+//     Pool<MARFS_Path>::get(), supporting factory creation, where the
+//     initial object is default-constructed, and is being replaced by a
+//     new object.  The destructor of the old object calls here.
 int is_open_md(MarFS_FileHandle* fh) {
 #if USE_MDAL
-   return F_OP(is_open, fh);
+   return (F_MDAL(fh) ? F_OP(is_open, fh) : 0);
 #else
    return (fh->md_fd > 0);
 #endif
@@ -1443,7 +1495,7 @@ int write_chunkinfo(MarFS_FileHandle*     fh,
       return -1;
    }
 
-   TRY0(open_md(fh));
+   TRY0( open_md(fh, 1) );
 
    // seek to offset for this chunk, in MD file
    TRY0(seek_chunkinfo(fh, info->pre.chunk_no));
@@ -1476,8 +1528,11 @@ int write_chunkinfo(MarFS_FileHandle*     fh,
 // read MultiChunkInfo for the next chunk, from file
 int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
    static const size_t chunk_info_len = sizeof(MultiChunkInfo);
+   char                str[chunk_info_len];
+   TRY_DECLS();
 
-   char    str[chunk_info_len];
+   TRY0( open_md(fh, 0) );
+
 #if USE_MDAL
    ssize_t rd_count = F_OP(read, fh, str, chunk_info_len);
 #else
@@ -1571,7 +1626,11 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
 //              logical_size += ((n_chunks -1) * (info.pre.repo->chunk_size - recovery));
 //    
 //          // truncate file to logical-size indicated in chunk-data
+//       #if USE_MDAL
+//          TRY0( F_OP_NOCTX(truncate, info.ns, info.post.md_path, logical_size) );
+//       #else
 //          TRY0( truncate(info.post.md_path, logical_size) );
+//       #endif
 //    
 //          // Some xattr fields were unknown until now
 //          info.post.obj_type         = ((n_chunks > 1) ? OBJ_MULTI : OBJ_UNI);
@@ -1579,7 +1638,7 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
 //          info.post.chunk_info_bytes = ((n_chunks > 1)
 //                                        ? (n_chunks * sizeof(MultiChunkInfo))
 //                                        : 0);
-//          info.flags &= ~(PI_RESTART);
+//          info.xattrs &= ~(XVT_RESTART);
 //    
 //          SAVE_XATTRS(&info, MARFS_ALL_XATTRS);
 //       }
@@ -2246,4 +2305,122 @@ int init_mdfs() {
    }
 
    return 0;
+}
+
+
+
+
+// see marfs_read().  This is the new scheme to allow multiple NFS read
+// threads on the same file-handle to avoid doing any close/reopens on the
+// object-stream.  Caller is holding FH.OS.read_lock, so we're thread-safe.
+// Insert caller's offset into the queue.  Each queue-element includes a
+// lock that that reader is waiting on.  Return them a pointer to their
+// lock, so they can wait on it.
+
+ReadQueueElt* enqueue_reader(off_t offset, MarFS_FileHandle* fh) {
+
+   ReadQueueElt* elt    = (ReadQueueElt*)calloc(1, sizeof(ReadQueueElt));
+   if (! elt) {
+      LOG(LOG_ERR, "couldn't allocate ReadQueueElt for offset %lu\n", offset);
+      return NULL;
+   }
+   elt->offset = offset;
+   SEM_INIT(&elt->lock, 0, 0);
+   elt->next   = NULL;
+
+   ReadQueueElt* q      = fh->read_status.read_queue;
+   ReadQueueElt* q_next = (q ? q->next : NULL);
+   while (q
+          && q_next
+          && (offset > q_next->offset)) {
+
+      q      = q->next;
+      q_next = q_next->next;
+   }
+
+   if (! q) {
+      fh->read_status.read_queue = elt;
+   }
+   else if (offset < q->offset) {
+      fh->read_status.read_queue = elt;
+      elt->next = q;
+   }
+   else {
+      q->next = elt;
+      elt->next = q_next;
+
+      if (q->rewinding)
+         elt->rewinding = 1;
+   }
+
+
+   return elt;
+}
+
+
+// When any reader finishes, it checks to see whether there is an enqueued
+// reader that is now ready to go.  If so, let him go.
+void check_read_queue(MarFS_FileHandle* fh) {
+   ReadQueueElt* q = fh->read_status.read_queue;
+
+   if (q
+       && (fh->read_status.log_offset == q->offset)) {
+
+      LOG(LOG_INFO, "releasing reader at %lu\n", q->offset);
+      POST(&q->lock);
+   }
+}
+
+// The queue is maintained in (ascending) order of offsets, so the only
+// reader that should ever be dequeued is the one at the front of the
+// queue.  That reader has now finished waiting, and just wants us to clean
+// up the queue.
+void dequeue_reader(off_t offset, MarFS_FileHandle* fh) {
+
+   ReadQueueElt* q = fh->read_status.read_queue;
+   if (! q) {
+      LOG(LOG_ERR, "No queue!\n");
+      return;
+   }
+   else if (offset != q->offset) {
+      LOG(LOG_ERR, "offset %lu doesn't match front of queue %lu\n",
+          offset, q->offset);
+      return;
+   }
+
+   fh->read_status.read_queue = q->next;
+
+   SEM_DESTROY(&q->lock);
+   free(q);
+}
+
+// Give marfs_release() a way to clean up all pending readers
+void terminate_all_readers(MarFS_FileHandle* fh) {
+
+   if (! (fh->flags & FH_MULTI_THR))
+      return;
+
+   ObjectStream*     os   = &fh->os; // shorthand
+
+   WAIT(&os->read_lock);
+   fh->flags |= FH_RELEASING;   // message to waking sleepers
+
+   ReadQueueElt* q;
+   for (q = fh->read_status.read_queue;
+        q;
+        q = q->next) {
+
+      // unlock head-of-queue
+      LOG(LOG_INFO, "releasing reader at %lu\n", q->offset);
+      POST(&q->lock);
+
+      // wait for him to dequeue himself
+      while (q == fh->read_status.read_queue) {
+         POST(&os->read_lock);
+         sched_yield();
+         WAIT(&os->read_lock);
+      }
+   }
+
+   POST(&os->read_lock);
 }

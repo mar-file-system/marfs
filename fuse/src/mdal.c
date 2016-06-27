@@ -175,9 +175,14 @@ int     posix_chmod(const char* path, mode_t mode) {
    return chmod(path, mode);
 }
 
+int     posix_truncate(const char* path, off_t length) {
+   return truncate(path, length);
+}
+
 int     posix_lstat(const char* path, struct stat* st) {
    return lstat(path, st);
 }
+
 
 ssize_t posix_lgetxattr(const char* path, const char* name,
                              void* value, size_t size) {
@@ -304,6 +309,7 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
 
       mdal->mknod        = &posix_mknod;
       mdal->chmod        = &posix_chmod;
+      mdal->truncate     = &posix_truncate;
       mdal->lstat        = &posix_lstat;
       mdal->rename       = &posix_rename;
       mdal->lgetxattr    = &posix_lgetxattr;

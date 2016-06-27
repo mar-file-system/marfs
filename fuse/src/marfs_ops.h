@@ -142,8 +142,8 @@ int  marfs_open_at_offset(const char* path, MarFS_FileHandle* fh, int flags,
 
 int  marfs_opendir(const char* path, MarFS_DirHandle* dh);
 
-int  marfs_read(const char* path, char* buf, size_t size, off_t offset,
-                      MarFS_FileHandle* fh);
+ssize_t  marfs_read(const char* path, char* buf, size_t size, off_t offset,
+                    MarFS_FileHandle* fh);
 
 int  marfs_readdir(const char* path, void* buf, marfs_fill_dir_t filler,
                          off_t offset, MarFS_DirHandle* dh);

@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# This script creates uni files in the mixed directory
+
+if [[ -z `mount | grep marfs_fuse` ]]; then
+    echo "MarFS fuse appears not to be mounted"
+    exit 1
+elif (( $# != 1 )); then
+    echo "Usage: $0 <marfs_directory>"
+    exit 1
+fi
+
+# MARFS=/marfs/atorrez
+MARFS=$1
+
+
+
+# For the multi files, we write 8 blocks of this size.  You wont actually
+# get multi files, unless 8 of these exceeds your repo.chunksize.
+CHUNKSIZE=$((1 * 1024 * 1024))
+
+DIRS="mixed"
+#DIRS="d4"
+#DIRS="mix_files"
+#DEL_DIRS="del1 del2 del3 del4"
+
+
+
+
+# make directories
+for D in $DIRS; do
+    echo "making directory $MARFS/$D"
+
+    # # NOTE: 'mkdir -p ...' not currently working
+    # mkdir $MARFS/$D
+    [[ -d $MARFS/$D ]] || mkdir $MARFS/$D
+done
+echo
+
+
+# make some UNI files
+for D in $DIRS; do
+    for i in `seq 1 400`; do
+#    for i in `seq 1 9`; do
+        UNI=`printf "$MARFS/$D/uni.%03d" $i`
+
+        echo "making file $UNI"
+        echo "contents of $UNI  " > $UNI
+        done
+done
+for D in $DIRS; do
+    for i in `seq 401 403`; do
+        UNI=`printf "$MARFS/$D/uni.%03d" $i`
+
+        echo "making file $UNI"
+        dd if=/dev/urandom bs=1048576 count=1 > $UNI
+        #echo "contents of $UNI  " > $UNI
+        done
+done
+echo

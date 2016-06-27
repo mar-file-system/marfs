@@ -80,6 +80,7 @@ OF SUCH DAMAGE.
 #include "aws4c.h"
 #include "marfs_configuration.h"
 #include "common.h"
+#include "utilities_common.h"
 
 /******************************************************************************
 * This program scans the inodes looking specifically at trash filesets.  It will
@@ -497,17 +498,15 @@ int read_inodes(const char *fnameP,
          // Do we have extended attributes?
          // This will be modified as time goes on - what xattrs do we care about
          if (iattrP->ia_xperm & GPFS_IAXPERM_XATTR && xattr_len >0 ) {
-            xattr_ptr = &mar_xattrs[0];
             // Got ahead and get xattrs then deterimine if it is an 
             // an actual xattr we are looking for.  If so,
             // check if it specifies the file is trash.
             if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
                                           marfs_xattrs, marfs_xattr_cnt, 
-                                          xattr_ptr, 
+                                          &mar_xattrs[0], 
                                           file_info_ptr->outfd)) > 0) {
                //marfs_xattrs has a list of xattrs found
-               xattr_ptr = &mar_xattrs[0];
-               if ((xattr_index=get_xattr_value(xattr_ptr, 
+               if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                     marfs_xattrs[post_index], xattr_count)) != -1 ) { 
                     xattr_ptr = &mar_xattrs[xattr_index];
                   LOG(LOG_INFO,"post xattr name = %s value = %s \
@@ -535,10 +534,9 @@ int read_inodes(const char *fnameP,
                      LOG(LOG_INFO, "Found trash\n");
                      md_path_ptr = &post.md_path[0];
 
-                     xattr_ptr = &mar_xattrs[0];
 
                      // Get objid xattr
-                     if ((xattr_index=get_xattr_value(xattr_ptr, 
+                     if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                           marfs_xattrs[objid_index], xattr_count)) != -1) { 
                           xattr_ptr = &mar_xattrs[xattr_index];
                         LOG(LOG_INFO, "objid xattr name = %s xattr_value =%s\n",
@@ -556,9 +554,8 @@ int read_inodes(const char *fnameP,
                         // Now check if we have restart xattr which may imply
                         // OBJ_FUSE or OBJ_Nto1 which requires 
                         // special handling in dump_trash
-                        xattr_ptr = &mar_xattrs[0];
                         file_info_ptr->restart_found = 0;
-                        if ((xattr_index=get_xattr_value(xattr_ptr,
+                        if ((xattr_index=get_xattr_value(&mar_xattrs[0],
                              marfs_xattrs[restart_index], xattr_count)) != -1 ) {
                                 file_info_ptr->restart_found = 1;
                         }
@@ -973,33 +970,6 @@ int process_packed(File_Info *file_info_ptr)
    else 
       return(0);
 }
-
-
-/***************************************************************************** 
- * This function determines if the return value from an s3_delete call
- * contains an error.  It returns an HTTP error code value if one is found,
- * -1 if curl returned an error or 0 if no error found
- *
-*****************************************************************************/
-int check_S3_error( CURLcode curl_return, IOBuf *s3_buf, int action )
-{
-  if ( curl_return == CURLE_OK ) {
-    if (action == S3_DELETE) {
-       if (s3_buf->code == HTTP_OK || s3_buf->code == HTTP_NO_CONTENT) {
-          return(0);
-       }
-       else {
-         fprintf(stderr, "Error, HTTP Code:  %d\n", s3_buf->code);
-         return(s3_buf->code);
-       }
-    }
-  }
-  else {
-    fprintf(stderr,"Error, Curl Return Code:  %d\n", curl_return);
-    return(-1);
-  }
-  return(0);
-}
 /******************************************************************************
  * Name read_config_gc
  * This function reads the config file in order to extract the object hostname
@@ -1023,35 +993,3 @@ int read_config_gc(Fileset_Info *fileset_info_ptr)
       return(0);
    }
 }
-void check_security_access(MarFS_XattrPre *pre)
-{
-   if (pre->repo->security_method == SECURITYMETHOD_HTTP_DIGEST)
-      s3_http_digest(1);
-
-   if (pre->repo->access_method == ACCESSMETHOD_S3_EMC) {
-      s3_enable_EMC_extensions(1);
-
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if (pre->repo->ssl ) {
-         s3_https( 1 );
-         s3_https_insecure( 1 );
-       }
-   }
-   else if (pre->repo->access_method == ACCESSMETHOD_SPROXYD) {
-      s3_enable_Scality_extensions(1);
-      s3_sproxyd(1);
-
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if (pre->repo->ssl ) {
-         s3_https( 1 );
-         s3_https_insecure( 1 );
-      }
-   }
-}
-

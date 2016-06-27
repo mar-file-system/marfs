@@ -241,6 +241,14 @@ extern "C" {
 #define MARFS_MAX_POST_SIZE_WITHOUT_PATH  256 /* max */
 #define MARFS_MAX_POST_SIZE               (MARFS_MAX_POST_SIZE_WITHOUT_PATH + MARFS_MAX_MD_PATH)
 
+// This xattr only exists while a file is opened for writing, before
+// closing We capture the desired final mode, so that a file without
+// write-accessibility can be exist as write-accessible while it is being
+// written.  This is necessary in order to allow us to install xattrs on
+// the MDFS file.
+#define MARFS_RESTART_FORMAT    "ver.%03hu_%03hu/flags.0x%02hhX/mode.oct%06o"
+#define MARFS_MAX_RESTART_SIZE  48 /* max */
+
 
 // first part of the recovery-info
 // (if you change this, you should also change MARFS_CONFIG_MAJOR/MINOR)
@@ -303,7 +311,7 @@ typedef uint64_t            EncryptInfo;
 
 
 // some things can't be done in common/configuration/src
-extern int validate_config();
+extern int validate_configuration();
 
 
 // Namespace.flags was eliminated
@@ -591,6 +599,55 @@ int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post, const M
 int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset); // from string
 
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo);
+
+
+
+
+
+
+// Restart.
+//
+// The mere presence of a restart xattr was formerly sufficient to indicate
+// that the corresponding file was not yet complete.  The xattr was
+// installed at open(), and removed at close(), so its presence signalled
+// that the file hadn't (yet) been properly closed.  This allows us to
+// forbid access to incompletely-written files (or possibly to know when
+// you are trying to open a file that is still being written).
+//
+// We just gave open() the same mode-bits that the user wanted the file to
+// have.  But, if those mode-bits were for read-only, then it breaks MarFS
+// ability to put xattrs on the file.  So, new scheme, in such cases, we
+// store the final mode-bits in the restart xattr, and do open for writing
+// with writable-access, so we can continue to manipulate xattrs while the
+// file is open.  The xattr keeps the final mode, which is installed at
+// close().
+
+typedef enum {
+   RESTART_OLD        = 0x01,
+   RESTART_MODE_VALID = 0x02,
+} RestartFlags;
+
+typedef uint8_t  RestartFlagsType;
+
+
+typedef struct MarFS_XattrRestart {
+   ConfigVersType     config_vers_maj; // redundant w/ config_vers in Pre?
+   ConfigVersType     config_vers_min; // redundant w/ config_vers in Pre?
+   mode_t             mode;
+   RestartFlagsType   flags;
+} MarFS_XattrRestart;
+
+
+
+int init_restart(MarFS_XattrRestart* restart);
+
+int restart_2_str(char*                     restart_str,
+                  size_t                    max_size,
+                  const MarFS_XattrRestart* restart);
+
+int str_2_restart(MarFS_XattrRestart* restart, const char* restart_str);
+
+
 
 
 

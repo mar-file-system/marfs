@@ -1011,6 +1011,85 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset) {
 
 
 
+// initialize -- most fields aren't known, when stat_xattr() calls us
+int init_restart(MarFS_XattrRestart* restart) {
+
+   restart->config_vers_maj = MARFS_CONFIG_MAJOR;
+   restart->config_vers_min = MARFS_CONFIG_MINOR;
+
+   restart->mode  = 0;
+   restart->flags = 0;
+
+   return 0;
+}
+
+int restart_2_str(char*                     restart_str,
+                  size_t                    max_size,
+                  const MarFS_XattrRestart* restart) {
+
+   // config-version major and minor
+   const ConfigVersType major = restart->config_vers_maj;
+   const ConfigVersType minor = restart->config_vers_min;
+
+   ssize_t bytes_printed = snprintf(restart_str, max_size,
+                                    MARFS_RESTART_FORMAT,
+                                    major, minor,
+                                    restart->flags,
+                                    restart->mode);
+   if (bytes_printed < 0)
+      return -1;                  // errno is set
+   if (bytes_printed == max_size) {   /* overflow */
+      errno = EINVAL;
+      return -1;
+   }
+
+   return 0;
+}
+
+// Allow parsing of earlier restart xattrs, which were just empty.
+int str_2_restart(MarFS_XattrRestart* restart, const char* restart_str) {
+
+   uint16_t major;
+   uint16_t minor;
+   
+   // --- before version 1.3, restart xattr just had value "1"
+   if ((restart_str[0] == '1')
+       && (! restart_str[1])) {
+
+      restart->flags |= RESTART_OLD;
+      return 0;
+   }
+
+   // --- extract mode, etc
+   int scanf_size = sscanf(restart_str, MARFS_RESTART_FORMAT,
+                           &major, &minor,
+                           &restart->flags,
+                           &restart->mode);
+   if (scanf_size == EOF)
+      return -1;                // errno is set
+   else if (scanf_size < 3) {
+      errno = EINVAL;
+      return -1;            /* ?? */
+   }
+
+   // validate version
+   // NOTE: This just assures us that we know how to parse this thing.
+   if ((   major != MARFS_CONFIG_MAJOR)
+       || (minor >  MARFS_CONFIG_MINOR)) {
+      LOG(LOG_ERR, "xattr vers '%d.%d' != config %d.%d\n",
+          major, minor,
+          MARFS_CONFIG_MAJOR, MARFS_CONFIG_MINOR);
+      errno = EINVAL;
+      return -1;
+   }
+   restart->config_vers_maj = major;
+   restart->config_vers_min = minor;
+
+   return 0;
+}
+
+
+
 
 
 
@@ -1221,7 +1300,7 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
 //
 
 
-int validate_config() {
+int validate_configuration() {
 
    int           retval = 0;
    const size_t  recovery = MARFS_REC_UNI_SIZE;
