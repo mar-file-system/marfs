@@ -340,6 +340,10 @@ fromwork: fromwork.Makefile
 	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin/   ~/projects/bin
 	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin2/  ~/projects/bin2
 
+fromwork.test: fromwork.Makefile
+	for DIR in marfs aws4c PA2X pftool; do \
+	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/git.test/$$DIR/ ~/projects/git.test/$$DIR ; \
+	done
 
 # for use on cc-gate, to rsync out to ODSU, or CCFTAs
 # This is prep for <toodsu> and <toccfta>
@@ -350,6 +354,9 @@ update_send.dir: # fromwork
 	rsync -Pvaurl --del --sparse ~/projects/tools/ ~/send.dir/tools
 	rsync -Pvaurl --del --sparse ~/projects/bin/   ~/send.dir/bin
 	rsync -Pvaurl --del --sparse ~/projects/bin2/  ~/send.dir/bin2
+
+update_send.dir.test: # fromwork
+	rsync -Pvaurl --del --sparse ~/projects/git.test/   ~/send.dir/git.test
 
 # [on cc-gate]
 # copy ~/send.dir to /root/jti/send.dir on tr-fta-master
@@ -369,6 +376,12 @@ toccfta: update_send.dir
 	@ echo "*** sending ..."
 	echo rsync -Pvaurl --del --sparse ~jti/send.dir/ root@$(CC-FTA-MASTER):~/jti/send.dir
 	rsync -Pvaurl --del --sparse ~jti/send.dir/ root@$(CC-FTA-MASTER):~/jti/send.dir
+
+
+toccfta.test: update_send.dir.test
+	echo \
+	rsync -Pvaurl --del --sparse ~jti/send.dir/git.test/ root@$(CC-FTA-MASTER):~/jti/send.dir/git.test
+	rsync -Pvaurl --del --sparse ~jti/send.dir/git.test/ root@$(CC-FTA-MASTER):~/jti/send.dir/git.test
 
 
 # ...........................................................................
