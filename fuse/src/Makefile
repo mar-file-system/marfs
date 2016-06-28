@@ -70,7 +70,6 @@
 
 
 
-#endif
 # Lots of testing/support crap in here, for now.
 #
 # 'make'           rebuild the fuse client
@@ -239,6 +238,20 @@ endif
 
 ifdef USE_STDOUT
 	DEFS += USE_STDOUT
+endif
+
+# Tells marfs_read_internal() that any out-of-order (discontiguous) reads
+# can be enqueued, because NFS will eventually requests the intervening
+# data, and the read will then be in order, and allowed to proceed.
+#
+# NOT A GOOD IDEA.  NFS does scattered reads across file-handles as well as
+# threads, so this causes reads on some file-handles with a single NFS
+# read-thread to stall unnecessarily.  They might've been better off
+# waiting until they had detected multiple readers dynamically.  Leaving it
+# in, in case there's some path forward where this becomes a good idea,
+# again.
+ifdef NFS_THREADS
+   DEFS += NFS_THREADS
 endif
 
 # needs extra quoting to survive being read by the shell, on gcc command-lines

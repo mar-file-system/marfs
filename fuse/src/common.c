@@ -2317,19 +2317,23 @@ int init_mdfs() {
 // lock that that reader is waiting on.  Return them a pointer to their
 // lock, so they can wait on it.
 
-ReadQueueElt* enqueue_reader(off_t offset, MarFS_FileHandle* fh) {
+volatile ReadQueueElt* enqueue_reader(off_t offset, MarFS_FileHandle* fh) {
 
-   ReadQueueElt* elt    = (ReadQueueElt*)calloc(1, sizeof(ReadQueueElt));
+   volatile ReadQueueElt* elt    = (ReadQueueElt*)calloc(1, sizeof(ReadQueueElt));
    if (! elt) {
       LOG(LOG_ERR, "couldn't allocate ReadQueueElt for offset %lu\n", offset);
       return NULL;
    }
    elt->offset = offset;
-   SEM_INIT(&elt->lock, 0, 0);
+   SEM_INIT((SEM_T*)&elt->lock, 0, 0); // compiler is worried about "volatile"
    elt->next   = NULL;
 
-   ReadQueueElt* q      = fh->read_status.read_queue;
-   ReadQueueElt* q_next = (q ? q->next : NULL);
+   volatile ReadQueueElt* q      = fh->read_status.read_queue;
+   volatile ReadQueueElt* q_next = (q ? q->next : NULL);
+
+   if (q && q->rewinding)
+     elt->rewinding = 1;
+
    while (q
           && q_next
           && (offset > q_next->offset)) {
@@ -2361,13 +2365,17 @@ ReadQueueElt* enqueue_reader(off_t offset, MarFS_FileHandle* fh) {
 // When any reader finishes, it checks to see whether there is an enqueued
 // reader that is now ready to go.  If so, let him go.
 void check_read_queue(MarFS_FileHandle* fh) {
-   ReadQueueElt* q = fh->read_status.read_queue;
+   volatile ReadQueueElt* q = fh->read_status.read_queue;
 
-   if (q
-       && (fh->read_status.log_offset == q->offset)) {
+   if (q && q->rewinding) {
+     volatile ReadQueueElt* q2;
+     for (q2=q; q2; q2=q2->next)
+       q2->rewinding = 0;
+   }
 
+   if (q && (fh->read_status.log_offset == q->offset)) {
       LOG(LOG_INFO, "releasing reader at %lu\n", q->offset);
-      POST(&q->lock);
+      POST((SEM_T*)&q->lock);   // volatile RQE* worries compiler
    }
 }
 
@@ -2377,21 +2385,21 @@ void check_read_queue(MarFS_FileHandle* fh) {
 // up the queue.
 void dequeue_reader(off_t offset, MarFS_FileHandle* fh) {
 
-   ReadQueueElt* q = fh->read_status.read_queue;
+   volatile ReadQueueElt* q = fh->read_status.read_queue;
    if (! q) {
       LOG(LOG_ERR, "No queue!\n");
       return;
    }
    else if (offset != q->offset) {
-      LOG(LOG_ERR, "offset %lu doesn't match front of queue %lu\n",
+      LOG(LOG_INFO, "offset %lu doesn't match front of queue %lu\n",
           offset, q->offset);
       return;
    }
 
    fh->read_status.read_queue = q->next;
 
-   SEM_DESTROY(&q->lock);
-   free(q);
+   SEM_DESTROY((SEM_T*)&q->lock); // volatile RQE* worries compiler
+   free((void*)q);
 }
 
 // Give marfs_release() a way to clean up all pending readers
@@ -2405,14 +2413,14 @@ void terminate_all_readers(MarFS_FileHandle* fh) {
    WAIT(&os->read_lock);
    fh->flags |= FH_RELEASING;   // message to waking sleepers
 
-   ReadQueueElt* q;
+   volatile ReadQueueElt* q;
    for (q = fh->read_status.read_queue;
         q;
         q = q->next) {
 
       // unlock head-of-queue
       LOG(LOG_INFO, "releasing reader at %lu\n", q->offset);
-      POST(&q->lock);
+      POST((SEM_T*)&q->lock);   // volatile RQE* worries compiler
 
       // wait for him to dequeue himself
       while (q == fh->read_status.read_queue) {

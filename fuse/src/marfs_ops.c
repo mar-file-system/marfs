@@ -996,6 +996,24 @@ int marfs_open(const char*         path,
    else {
       SEM_INIT(&os->read_lock, 0, 1);
       os->flags |= OSF_RLOCK_INIT;
+
+#ifdef NFS_THREADS
+      // This is a special build-time flag that lets us just assume that it
+      // will be NFS calling marfs_read().  Otherwise,
+      // marfs_read_internal() will attempt to detect whether it is NFS
+      // calling.  The effect of defining NFS_THREADS is that *all*
+      // discontiguous reads will be enqueued until they become contiguous.
+      // You should not do this if what you are building is fuse (or some
+      // other app) which might need to support a seek before a read.  But
+      // normal sequential reads through fuse (i.e. outside of NFS) should
+      // also work fine with this flag defined.  See marfs_read_internal().
+      //
+      // NOT A GOOD IDEA.  It turns out that NFS sometimes invokes the
+      // scattered reads across multiple file-handles.  Thus, some
+      // out-of-order threads have no other threads following along behind.
+
+      fh->flags |= FH_MULTI_THR;
+#endif
    }
 
 
@@ -1196,13 +1214,23 @@ ssize_t marfs_read (const char*        path,
    SAFE_WAIT(&os->read_lock, timeout_sec, os);
 
 
+   //   // Don't let NFS try to read something we've already read 
+   //   //#ifdef NFS_THREADS 
+   //   if ((os->flags & OSF_OPEN)                       // already did some reading 
+   //       && (offset < fh->read_status.log_offset)) {  // our read is a re-read 
+   //
+   //      POST(&os->read_lock); 
+   //      return 0; 
+   //   } 
+   //   //#endif 
+
    // If this is a discontiguous read, and it's NFS calling, then there may
    // be another thread that could consume from the stream such that our
    // discontiguous read would become contiguous.  Give it a chance.
    int discontig_retries = 5;
    while ((os->flags & OSF_OPEN)                    // already did some reading
           && !(fh->flags & FH_MULTI_THR)            // not sure if NFS threads are reading
-          && (offset != fh->read_status.log_offset) // our read is discontig
+          && (offset > fh->read_status.log_offset)  // our read is discontig
           && discontig_retries--) {
 
       LOG(LOG_INFO, "(%08lx) deferring discontig read at %lu != %lu (remaining retries: %d)\n",
@@ -1219,8 +1247,11 @@ ssize_t marfs_read (const char*        path,
       SAFE_WAIT(&os->read_lock, timeout_sec, os);
 
       // if someone else moved the ball, then there is someone else
-      if (fh->read_status.log_offset != str_offset_before)
+      if (fh->read_status.log_offset != str_offset_before) {
+         LOG(LOG_INFO, "(%08lx) detected threaded NFS at %lu != %lu (remaining retries: %d)\n",
+             (size_t)os, offset, str_offset_before, discontig_retries);
          fh->flags |= FH_MULTI_THR;
+      }
    }
 
 
@@ -1251,17 +1282,17 @@ ssize_t marfs_read (const char*        path,
    // NOTE: We always hold the read_lock while manipulating
    //     FH.read_status.read_queue
    if ((fh->flags & FH_MULTI_THR)
-       && (offset != fh->read_status.log_offset)) {
+       && (offset > fh->read_status.log_offset)) {
 
-      ReadQueueElt* elt = enqueue_reader(offset, fh);
-      SEM_T* wait_sem   = &elt->lock;
+      volatile ReadQueueElt* elt = enqueue_reader(offset, fh);
+      SEM_T* wait_sem   = (SEM_T*)&elt->lock; // volatile RQE* worries compiler
       POST(&os->read_lock);     // let other readers go
 
       LOG(LOG_INFO, "(%08lx) waiting for read at %lu\n", (size_t)os, offset);
 #if 0
       WAIT(wait_sem);           // wait our turn
 #else
-      static const size_t timeout_sec = 30;
+      static const size_t timeout_sec = 4;
       while (TIMED_WAIT(wait_sem, timeout_sec)) { // wait our turn
 
          // timed-out, waiting for new reads at offsets ahead of us to read
@@ -1269,14 +1300,16 @@ ssize_t marfs_read (const char*        path,
          // some other waiting reader ahead of us didn't already do the
          // close/reopen), then let us go ahead and do the close/reopen
          // ourselves.  We set the "rewinding" flag in the other current
-         // queue members, so they won't also decide to do this.
+         // queue members, so they won't also decide to do this, at least
+         // until after we've finished this read (and possibly read them
+         // into order).
          WAIT(&os->read_lock);
          LOG(LOG_INFO, "(%08lx) queued read at %lu timed out\n", (size_t)os, offset);
          if ((! elt->rewinding)
              && (elt == fh->read_status.read_queue)) {
 
             LOG(LOG_INFO, "(%08lx) queued read at %lu going ahead\n", (size_t)os, offset);
-            ReadQueueElt* q;
+            volatile ReadQueueElt* q;
             for (q=fh->read_status.read_queue; q; q=q->next)
                q->rewinding = 1;
 
