@@ -453,8 +453,15 @@ int stat_xattrs(PathInfo* info) {
          // NOTE: If obj doesn't exist, its md_ctime will match the
          //       ctime currently found in info->st, as a result of
          //       the call to stat_regular(), above.
-         str_size = lgetxattr(info->post.md_path, spec->key_name,
+#if USE_MDAL
+         str_size = F_OP_NOCTX(lgetxattr, info->ns, info->post.md_path,
+                               spec->key_name, xattr_value_str,
+                               MARFS_MAX_XATTR_SIZE);
+#else
+         str_size = lgetxattr(info->post.md_path, spec->key_name, 
                               xattr_value_str, MARFS_MAX_XATTR_SIZE);
+#endif
+
          if (str_size != -1) {
             // got the xattr-value.  Parse it into info->pre
             xattr_value_str[str_size] = 0;
@@ -480,8 +487,15 @@ int stat_xattrs(PathInfo* info) {
       }
 
       case XVT_POST: {
+#if USE_MDAL
+         str_size = F_OP_NOCTX(lgetxattr, info->ns, info->post.md_path,
+                               spec->key_name, xattr_value_str, 
+                               MARFS_MAX_XATTR_SIZE);
+#else
          str_size = lgetxattr(info->post.md_path, spec->key_name,
                               xattr_value_str, MARFS_MAX_XATTR_SIZE);
+#endif
+
          if (str_size != -1) {
             // got the xattr-value.  Parse it into info->pre
             xattr_value_str[str_size] = 0;
@@ -504,8 +518,15 @@ int stat_xattrs(PathInfo* info) {
       }
 
       case XVT_RESTART: {
+#if USE_MDAL
+         str_size = F_OP_NOCTX(lgetxattr, info->ns, info->post.md_path,
+                               spec->key_name, xattr_value_str,
+                               MARFS_MAX_XATTR_SIZE);
+#else
          str_size = lgetxattr(info->post.md_path, spec->key_name,
-                              &xattr_value_str, MARFS_MAX_XATTR_SIZE);
+                              xattr_value_str, MARFS_MAX_XATTR_SIZE);
+#endif
+
          if (str_size != -1) {
             // got the xattr-value.  Parse it into info->pre
             xattr_value_str[str_size] = 0;
