@@ -604,6 +604,7 @@ typedef struct {
    ReadStatus      read_status;  // buffer_management, current_offset, etc
    WriteStatus     write_status; // buffer-management, etc
    ObjectStream    os;           // handle for streaming access to objects
+   uint8_t         os_init;      // tells weather or not the object streem is inizlized
    curl_off_t      objectSize;   // The size of the object for packed files
    int             fileCount;    // The number of files that have been packed
                                  // into the file

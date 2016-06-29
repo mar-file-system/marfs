@@ -920,10 +920,16 @@ int marfs_open(const char*         path,
       }
 
       if( fh->flags & FH_PACKED ) {
+         LOG(LOG_INFO, "writing PACKED\n");
+
          if (
-               fh->objectSize+content_length > info->pre.repo->chunk_size // TODO: include object size
-               || fh->fileCount+1 > info->pre.repo->max_pack_file_count
+               fh->objectSize+content_length > info->pre.repo->chunk_size || // TODO: include object size
+               (
+                fh->fileCount+1 > info->pre.repo->max_pack_file_count &&
+                info->pre.repo->max_pack_file_count != -1 // TODO: set default rather than infinate (1024)
+               )
             ) {
+            LOG(LOG_INFO, "releasing fh: objectSize: %d, content_length: %d, chunk_size: %d, fileCount: %d, max_pack_file_count: %d\n", fh->objectSize, content_length, info->pre.repo->chunk_size, fh->fileCount, info->pre.repo->max_pack_file_count);
             // we need to close the current object stream and open a new one if it is a packed object
             marfs_release_fh(fh);
          }
@@ -947,11 +953,10 @@ int marfs_open(const char*         path,
 
    // we need to check if we need a new stream
    if (
-         !(fh->flags & FH_PACKED)
-         || NULL == os
-         || fh->objectSize+content_length > info->pre.repo->chunk_size
-         || fh->fileCount+1 > info->pre.repo->max_pack_file_count
+         !(fh->flags & FH_PACKED) ||
+         0 == fh->os_init
          ) {
+      LOG(LOG_INFO, "opening new object stream\n");
 
       // Configure a private AWSContext, for this request
       AWSContext* ctx = aws_context_clone();
@@ -1023,12 +1028,13 @@ int marfs_open(const char*         path,
 
          TRY0( stream_open(os, OS_PUT, open_size, 0, wr_timeout) );
       }
-   }
-   else {
-      SEM_INIT(&os->read_lock, 0, 1);
-      os->flags |= OSF_RLOCK_INIT;
-   }
+      else {
+         SEM_INIT(&os->read_lock, 0, 1);
+         os->flags |= OSF_RLOCK_INIT;
+      }
 
+      fh->os_init = 1;
+   }
 
 #if 0
    // COMMENTED OUT.  Turns out NFS calls truncate() on the same path,
@@ -2087,6 +2093,10 @@ int marfs_release_fh(MarFS_FileHandle* fh) {
 
    // free aws4c resources
    aws_iobuf_reset_hard(&os->iob);
+
+   memset(fh, 0, sizeof(MarFS_FileHandle));
+
+   fh->flags |= FH_PACKED;
 
    EXIT();
    return 0;
