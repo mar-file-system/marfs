@@ -921,13 +921,14 @@ int marfs_open(const char*         path,
 
       if( fh->flags & FH_PACKED ) {
          LOG(LOG_INFO, "writing PACKED\n");
+         int max_pack_file_count;
+
+         // Get the max_pack_file_count TODO: get default from somewhere else
+         max_pack_file_count = (-1 == info->pre.repo->max_pack_file_count) ? 1024 : info->pre.repo->max_pack_file_count;
 
          if (
-               fh->objectSize+content_length+MARFS_REC_UNI_SIZE > info->pre.repo->chunk_size || // TODO: include object size
-               (
-                fh->fileCount+1 > info->pre.repo->max_pack_file_count &&
-                info->pre.repo->max_pack_file_count != -1 // TODO: set default rather than infinate (1024)
-               )
+               fh->objectSize+content_length+MARFS_REC_UNI_SIZE > info->pre.repo->chunk_size ||
+                fh->fileCount+1 > max_pack_file_count
             ) {
             LOG(LOG_INFO, "releasing fh: objectSize: %d, content_length: %d, chunk_size: %d, fileCount: %d, max_pack_file_count: %d\n", fh->objectSize, content_length, info->pre.repo->chunk_size, fh->fileCount, info->pre.repo->max_pack_file_count);
             // we need to close the current object stream and open a new one if it is a packed object
@@ -939,7 +940,7 @@ int marfs_open(const char*         path,
          info->post.obj_offset = fh->objectSize;
          update_pre(&info->pre);
 
-         // update the object info TODO: should this be done once we know the data was written?
+         // update the object info
          fh->objectSize += content_length+MARFS_REC_UNI_SIZE;
          fh->fileCount += 1;
       }
@@ -1088,17 +1089,11 @@ int  marfs_open_packed   (const char* path, MarFS_FileHandle* fh, int flags,
       return -2;
    }
 
-   // TODO: check to see if it is opened
-   // fh->flags FH_OPED or fh->os.flags 
-
    // if the flag is not already set go ahead set and clear the data structure
    if( !(fh->flags & FH_PACKED)) {
       memset(fh, 0, sizeof(MarFS_FileHandle));
       fh->flags |= FH_PACKED;
    }
-
-
-   // TODO: add flag to mark object stream as open
 
    // run open
    return marfs_open(path, fh, flags, content_length);
@@ -2080,6 +2075,7 @@ int marfs_release (const char*        path,
 
    //TODO: This is a dirty fix to keep marfs_write from erroring because the os->written is wrong
    // Jeff Inman I would like some help parsing your math in marfs_write
+   // This does not actually work
    if( !(fh->flags & FH_PACKED) ) {
       os->written = 0;
    }
@@ -2751,7 +2747,7 @@ ssize_t marfs_write(const char*        path,
       return -1;
 #endif
    }
-#endif
+#endif // end todo section
 
    // If first write allocate space for current obj being written put addr
    //     in fuse open table
