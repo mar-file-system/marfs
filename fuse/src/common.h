@@ -493,14 +493,14 @@ typedef struct ReadQueueElt {
    off_t                offset;
    SEM_T                lock;      // thread waits to read at <offset>
    int                  rewinding; // other waiter doing close/reopen
-   struct ReadQueueElt* next;
+   volatile struct ReadQueueElt* next;
 } ReadQueueElt;
 
 
 typedef struct {
-   size_t        log_offset;    // effective offset (shows contiguous reads)
-   size_t        data_remain;   // the unread part of marfs_open_at_offset()
-   ReadQueueElt* read_queue;    // out-of-order reads from NFS threads
+   volatile size_t        log_offset;    // effective offset (shows contiguous reads)
+   volatile size_t        data_remain;   // the unread part of marfs_open_at_offset()
+   volatile ReadQueueElt* read_queue;    // out-of-order reads from NFS threads
 } ReadStatus;
 
 
@@ -784,7 +784,7 @@ extern int     batch_pre_process (const char* path, size_t file_size);
 extern int     batch_post_process(const char* path, size_t file_size);
 
 // support for marfs_read() when fuse is expoerted over NFS
-extern ReadQueueElt* enqueue_reader(off_t offset, MarFS_FileHandle* fh);
+extern volatile ReadQueueElt* enqueue_reader(off_t offset, MarFS_FileHandle* fh);
 extern void          dequeue_reader(off_t offset, MarFS_FileHandle* fh);
 extern void          check_read_queue     (MarFS_FileHandle* fh);
 extern void          terminate_all_readers(MarFS_FileHandle* fh);

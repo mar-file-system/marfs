@@ -70,7 +70,6 @@
 
 
 
-#endif
 # Lots of testing/support crap in here, for now.
 #
 # 'make'           rebuild the fuse client
@@ -241,6 +240,20 @@ ifdef USE_STDOUT
 	DEFS += USE_STDOUT
 endif
 
+# Tells marfs_read_internal() that any out-of-order (discontiguous) reads
+# can be enqueued, because NFS will eventually requests the intervening
+# data, and the read will then be in order, and allowed to proceed.
+#
+# NOT A GOOD IDEA.  NFS does scattered reads across file-handles as well as
+# threads, so this causes reads on some file-handles with a single NFS
+# read-thread to stall unnecessarily.  They might've been better off
+# waiting until they had detected multiple readers dynamically.  Leaving it
+# in, in case there's some path forward where this becomes a good idea,
+# again.
+ifdef NFS_THREADS
+   DEFS += NFS_THREADS
+endif
+
 # needs extra quoting to survive being read by the shell, on gcc command-lines
 ifdef LOG_PREFIX
 	DEFS += LOG_PREFIX='"$(LOG_PREFIX)"'
@@ -327,6 +340,10 @@ fromwork: fromwork.Makefile
 	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin/   ~/projects/bin
 	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/bin2/  ~/projects/bin2
 
+fromwork.test: fromwork.Makefile
+	for DIR in marfs aws4c PA2X pftool; do \
+	rsync -Pvaurl --del --sparse root@$(WORK):/root/projects/git.test/$$DIR/ ~/projects/git.test/$$DIR ; \
+	done
 
 # for use on cc-gate, to rsync out to ODSU, or CCFTAs
 # This is prep for <toodsu> and <toccfta>
@@ -337,6 +354,9 @@ update_send.dir: # fromwork
 	rsync -Pvaurl --del --sparse ~/projects/tools/ ~/send.dir/tools
 	rsync -Pvaurl --del --sparse ~/projects/bin/   ~/send.dir/bin
 	rsync -Pvaurl --del --sparse ~/projects/bin2/  ~/send.dir/bin2
+
+update_send.dir.test: # fromwork
+	rsync -Pvaurl --del --sparse ~/projects/git.test/   ~/send.dir/git.test
 
 # [on cc-gate]
 # copy ~/send.dir to /root/jti/send.dir on tr-fta-master
@@ -356,6 +376,12 @@ toccfta: update_send.dir
 	@ echo "*** sending ..."
 	echo rsync -Pvaurl --del --sparse ~jti/send.dir/ root@$(CC-FTA-MASTER):~/jti/send.dir
 	rsync -Pvaurl --del --sparse ~jti/send.dir/ root@$(CC-FTA-MASTER):~/jti/send.dir
+
+
+toccfta.test: update_send.dir.test
+	echo \
+	rsync -Pvaurl --del --sparse ~jti/send.dir/git.test/ root@$(CC-FTA-MASTER):~/jti/send.dir/git.test
+	rsync -Pvaurl --del --sparse ~jti/send.dir/git.test/ root@$(CC-FTA-MASTER):~/jti/send.dir/git.test
 
 
 # ...........................................................................
