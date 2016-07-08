@@ -163,8 +163,16 @@ off_t   posix_lseek(MDAL_Context* ctx, off_t offset, int whence) {
 
 // --- file-ops (context-free)
 
+int     posix_access(const char* path, int mask) {
+   return access(path, mask);
+}
+
 int     posix_rename(const char* from, const char* to) {
    return rename(from, to);
+}
+
+int     posix_readlink(const char* path, char* buf, size_t size) {
+   return readlink(path, buf, size);
 }
 
 int     posix_mknod(const char* path, mode_t mode, dev_t dev) {
@@ -177,6 +185,11 @@ int     posix_chmod(const char* path, mode_t mode) {
 
 int     posix_truncate(const char* path, off_t length) {
    return truncate(path, length);
+}
+
+int     posix_lchown(const char* path, uid_t owner, gid_t group)
+{
+   return lchown(path, owner, group);
 }
 
 int     posix_lstat(const char* path, struct stat* st) {
@@ -207,10 +220,13 @@ ssize_t posix_llistxattr(const char* path, char* list, size_t size) {
 
 // --- directory-ops
 
-int     posix_mkdir (MDAL_Context* ctx, const char* path, mode_t mode) {
+int     posix_mkdir (const char* path, mode_t mode) {
    return mkdir(path, mode);   
 }
 
+int     posix_rmdir(const char* path) {
+   return rmdir(path);
+}
 
 void*   posix_opendir (MDAL_Context* ctx, const char* path) {
    POSIX_DIRP(ctx) = opendir(path);
@@ -273,7 +289,9 @@ int     posix_closedir (MDAL_Context* ctx) {
 }
 
 
-
+int     posix_statvfs(const char* path, struct statvfs* statbuf) {
+   return statvfs(path, statbuf);
+}
 
 
 // ===========================================================================
@@ -307,20 +325,26 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->ftruncate    = &posix_ftruncate;
       mdal->lseek        = &posix_lseek;
 
+      mdal->access       = &posix_access;
       mdal->mknod        = &posix_mknod;
       mdal->chmod        = &posix_chmod;
       mdal->truncate     = &posix_truncate;
+      mdal->lchown       = &posix_lchown;
       mdal->lstat        = &posix_lstat;
       mdal->rename       = &posix_rename;
+      mdal->readlink     = &posix_readlink;
       mdal->lgetxattr    = &posix_lgetxattr;
       mdal->lsetxattr    = &posix_lsetxattr;
       mdal->lremovexattr = &posix_lremovexattr;
       mdal->llistxattr   = &posix_llistxattr;
 
       mdal->mkdir        = &posix_mkdir;
+      mdal->rmdir        = &posix_rmdir;
       mdal->opendir      = &posix_opendir;
       mdal->readdir      = &posix_readdir;
       mdal->closedir     = &posix_closedir;
+
+      mdal->statvfs      = &posix_statvfs;
 
       mdal->is_open      = &posix_is_open;
       break;

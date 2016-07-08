@@ -89,6 +89,7 @@ OF SUCH DAMAGE.
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <attr/xattr.h>
@@ -188,11 +189,14 @@ typedef  int     (*mdal_is_open) (MDAL_Context* ctx);
 // just operate on raw pathnames.  The argument will be the full path to
 // the MDFS file.
 
+typedef  int     (*mdal_access)  (const char* path, int mask);
 typedef  int     (*mdal_mknod)   (const char* path, mode_t mode, dev_t dev);
 typedef  int     (*mdal_chmod)   (const char* path, mode_t mode);
 typedef  int     (*mdal_truncate)(const char* path, off_t size);
+typedef  int     (*mdal_lchown)  (const char* path, uid_t owner, gid_t group);
 typedef  int     (*mdal_lstat)   (const char* path, struct stat* st);
 typedef  int     (*mdal_rename)  (const char* from, const char* to);
+typedef  int     (*mdal_readlink)(const char* path, char* buf, size_t size);
 
 typedef  ssize_t (*mdal_lgetxattr)   (const char* path, const char* name,
                                       void* value, size_t size);
@@ -210,7 +214,6 @@ typedef  ssize_t (*mdal_llistxattr)  (const char* path, char* list, size_t size)
 // The others return 0 for success, -1 (plus errno) for failure.
 // Any required state must be maintained in the context.
 
-typedef  int     (*mdal_mkdir)  (MDAL_Context* ctx, const char* path, mode_t mode);
 typedef  void*   (*mdal_opendir)(MDAL_Context* ctx, const char* path);
 typedef  int     (*mdal_readdir)(MDAL_Context*      ctx,
                                  const char*        path,
@@ -221,9 +224,11 @@ typedef  int     (*mdal_readdir)(MDAL_Context*      ctx,
 //                                           struct dirent* entry, struct dirent** result);
 typedef  int     (*mdal_closedir)(MDAL_Context* ctx);
 
+// --- directory-ops (context-free)
+typedef  int     (*mdal_mkdir)  (const char* path, mode_t mode);
+typedef  int     (*mdal_rmdir)  (const char* path);
 
-
-
+typedef  int     (*mdal_statvfs)(const char* path, struct statvfs *buf);
 
 
 // This is a collection of function-ptrs
@@ -245,20 +250,26 @@ typedef struct MDAL {
    mdal_ftruncate     ftruncate;
    mdal_lseek         lseek;
 
+   mdal_access        access;
    mdal_mknod         mknod;
    mdal_chmod         chmod;
    mdal_truncate      truncate;
+   mdal_lchown        lchown;
    mdal_lstat         lstat;
    mdal_rename        rename;
+   mdal_readlink      readlink;
    mdal_lgetxattr     lgetxattr;
    mdal_lsetxattr     lsetxattr;
    mdal_lremovexattr  lremovexattr;
    mdal_llistxattr    llistxattr;
 
    mdal_mkdir         mkdir;
+   mdal_rmdir         rmdir;
    mdal_opendir       opendir;
    mdal_readdir       readdir;
    mdal_closedir      closedir;
+
+   mdal_statvfs       statvfs;
 
    mdal_is_open       is_open;
 } MDAL;

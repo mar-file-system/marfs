@@ -1210,7 +1210,11 @@ int  trash_truncate(PathInfo*   info,
 int trunc_xattrs(PathInfo* info) {
    XattrSpec*  spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
+#if USE_MDAL
+      F_OP_NOCTX(lremovexattr, info->ns, info->post.md_path, spec->key_name);
+#else
       lremovexattr(info->post.md_path, spec->key_name);
+#endif
       info->xattrs &= ~(spec->value_type);
    }
    return 0;
@@ -1283,7 +1287,11 @@ int check_quotas(PathInfo* info) {
    // value of -1 for ns->quota_space implies unlimited
    if (space_limit >= 0) {
       struct stat st;
-      if (stat(info->ns->fsinfo_path, &st)) {
+#if USE_MDAL
+      if (F_OP_NOCTX(lstat, info->ns, info->ns->fsinfo_path, &st)) {
+#else
+      if (lstat(info->ns->fsinfo_path, &st)) {
+#endif
          LOG(LOG_ERR, "couldn't stat fsinfo at '%s': %s\n",
              info->ns->fsinfo_path, strerror(errno));
          errno = EINVAL;
