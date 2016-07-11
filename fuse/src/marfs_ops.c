@@ -2424,8 +2424,12 @@ int marfs_symlink (const char* target,
    }
 
    // No need for access check, just try the op
-   // Appropriate  symlink call filling in fuse structure 
+   // Appropriate  symlink call filling in fuse structure
+#if USE_MDAL
+   TRY0( F_OP_NOCTX(symlink, lnk_info.ns, target, lnk_info.post.md_path) );
+#else
    TRY0( symlink(target, lnk_info.post.md_path) );
+#endif
 
    EXIT();
    return 0;

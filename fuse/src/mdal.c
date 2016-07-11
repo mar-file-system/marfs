@@ -215,7 +215,9 @@ ssize_t posix_llistxattr(const char* path, char* list, size_t size) {
    return llistxattr(path, list, size);
 }
 
-
+int     posix_symlink(const char* target, const char* linkname) {
+   return symlink(target, linkname);
+}
 
 
 // --- directory-ops
@@ -337,6 +339,7 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->lsetxattr    = &posix_lsetxattr;
       mdal->lremovexattr = &posix_lremovexattr;
       mdal->llistxattr   = &posix_llistxattr;
+      mdal->symlink      = &posix_symlink;
 
       mdal->mkdir        = &posix_mkdir;
       mdal->rmdir        = &posix_rmdir;
