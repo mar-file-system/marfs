@@ -120,9 +120,13 @@ extern "C" {
 // -- 1.3 restart xattrs include an optional mode, which will be installed
 //        at close-time.  This allows read-only files to be opened RW, so
 //        that we can install xattrs.
+//
+// -- 1.4 Added mdfs_top to config, with checking in open() and opendir()
+//        to forbid access, in case something gets past unshare.
+
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  3
+#define MARFS_CONFIG_MINOR  4
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
@@ -479,6 +483,8 @@ typedef struct marfs_config {
   uint16_t              version_minor;
   char                 *mnt_top;        // NOTE: Do NOT include a final slash.
   size_t                mnt_top_len;
+  char                 *mdfs_top;        // NOTE: Do NOT include a final slash.
+  size_t                mdfs_top_len;
    //  MarFS_Namespace_List  namespace_list;
    //  size_t                namespace_count;
 } MarFS_Config, *MarFS_Config_Ptr;

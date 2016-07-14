@@ -79,7 +79,7 @@ OF SUCH DAMAGE.
 #include <string.h>
 #include <stdio.h>              /* rename() */
 #include <stdarg.h>
-
+#include <regex.h>              // canonicalize()
 
 // ---------------------------------------------------------------------------
 // COMMON
@@ -550,6 +550,347 @@ int stat_xattrs(PathInfo* info) {
    __TRY0( update_pre(&info->pre) );
 
    return 0;                    /* "success" */
+}
+
+
+// return non-zero for "true"
+int under_mdfs_top(const char* path) {
+   return (! strncmp((const char*)path, marfs_config->mdfs_top,
+                     marfs_config->mdfs_top_len)
+           && (! path[marfs_config->mdfs_top_len]
+               || (path[marfs_config->mdfs_top_len] == '/')));
+}
+
+// "canonical" paths do not have "../", "./", or "//" in them.
+// follow_some_links() is called by marfs_readlink(), perhaps from fuse.
+// It wants to canonicalize a path, but, if it indirectly invokes fuse to
+// do a readlink on a marfs-path, fuse will deadlock.  realpath() and
+// canonicalize_file_name() both risk that, because they follow links.
+// Unlike realpath() and canonicalize_file_name(), this function
+// canonicalizes the path *without* following symlinks.  After return,
+// <path> may be smaller, but will not be larger.
+
+int canonicalize(char* path) {
+   static regex_t preg;
+   static int     needs_init = 1;
+
+   // compile the regex on the first call (only)
+   if (needs_init) {
+      // all matches can be replaced with a single slash
+      const char* regex = "(//|/[.]/|/[^./]+[^/]*/[.][.]/)";
+      int         rc;
+      if( (rc = regcomp(&preg, regex, (REG_EXTENDED | REG_ICASE))) ) {
+#define       ERRBUF_SIZE 1024
+         char errbuf[ERRBUF_SIZE];
+         regerror(rc, &preg, errbuf, ERRBUF_SIZE);
+         LOG(LOG_ERR, "Compiling '%s': %s\n", regex, errbuf);
+         return -1;
+      }
+      needs_init = 0;
+   }
+
+   // need to run against entire string, because later condensations
+   // might bring ".." after a directory-component.
+#define        NMATCH 1
+   regmatch_t  pmatch[NMATCH];
+   size_t      len = strlen(path) +1;
+   while (! regexec(&preg, path, NMATCH, pmatch, 0)) {
+
+      // keep the 1st matched '/', and remove everything else in the match.
+      // this moves the terminal NULL also.
+      memmove(&path[pmatch[0].rm_so +1],
+              &path[pmatch[0].rm_eo],
+              len - pmatch[0].rm_eo);
+      len -= (pmatch[0].rm_eo - pmatch[0].rm_so -1);
+   }
+
+   return 0;
+}
+
+
+// We are chasing links to prevent "unsupervised" access to the MDFS.
+// e.g. /marfs/jti/link -> /dev/shm/redirect -> /gpfs/jti/mdfs/foo In fuse,
+// if fuse returns the first link-target, then the kernel follows the
+// remaining link without going through fuse (because that link isn't under
+// the fuse mount).
+//
+// UPDATE: This is no longer a problem, as long as we protect the fuse
+//   mount by 'unshare'ing the mdfs mount-point.  We can just let
+//   marfs_readlink() return whatever is inside the symlink.  If we return
+//   a direct path to the mdfs, it should be impossible for an external
+//   user to access that, because of the unshare.  If we return a relative
+//   path (i.e. because that's what's in the link), then the caller will
+//   canonicalize that against the *marfs* path they called us with, and,
+//   again, we're safe.
+//
+//   And pftool doesn't follow symlinks, so we're safe there.
+//
+//
+// We must canonicalize and follow chains of symlinks that lead outside of
+// marfs, until either (a) they lead back inside marfs (forbidden), or (b)
+// they reach an end (either non-link or no-such-path).  We don't have to
+// chase link-targets that are within marfs, even if they are themselves
+// symlinks, because fuse will give them back to us as it follows the chain
+// itself.  (Chasing these links would be complicated.)  pftool only copies
+// links, without following, so that seems safe.
+//
+// Canonicalization must be done on MDFS paths, in order to avoid locking
+// up fuse.  For link chains that stay within marfs, we need to convert the
+// canonicalized MDFS path back into the corresponding marfs-path.
+//
+// Even though we chase the links, we should return the first link-target,
+// after confirming that it's okay.
+//
+// NOTE: We don't have to forbid access to links that lead out of marfs,
+//    through an indirection, but we do have to follow such links
+//    ourselves.
+//
+// NOTE: You might think that it would be reasonable to allow chains to go
+//    outside a marfs mount, then come back in, provided they come back in
+//    to a marfs-path, rather than to an mdfs path ... and you'd be right.
+//    For this first cut, it's awkward to tell whether the path was a
+//    marfs-path or not, when we must convert to mdfs to do the readlink()
+//    and realpath().
+//
+// When we are called: info.post.md_path has the marfs-path.  buf and size
+// were already filled in by marfs_readlink().  If the target (in buf is
+// not another symlink, then there's nothing for us to do.
+
+int follow_some_links(PathInfo* info, char* buf, size_t size) {
+   TRY_DECLS();
+
+   char  temp[PATH_MAX];
+   char  work[3][PATH_MAX];
+
+   int   retval = 0;
+   int   relative = 0;
+   //   int   out = 0;               // links ever went outside mdfs?
+
+   const char* sub_path;
+
+   //   // generate a copy of the user's-view marfs-path (under mnt_top).
+   //   char  marfs_path[PATH_MAX];
+   //   int count = snprintf(marfs_path, PATH_MAX, "%s%s",
+   //                        marfs_config->mnt_top, path);
+   //   if ((count < 0) || (count >= PATH_MAX)) {
+   //      LOG(LOG_ERR, "couldn't generate absolute path: %s%s\n",
+   //          marfs_config->mnt_top, path, strerror(errno));
+   //      errno = EINVAL;
+   //      return -1;
+   //   }
+
+   //   char* src = marfs_path;
+   char* src    = info->post.md_path;
+   char* target = buf;
+
+   char* abs    = (char*)work[0];
+   __attribute__ ((unused)) char* spare0 = (char*)work[1];
+   __attribute__ ((unused)) char* spare1 = (char*)work[2];
+
+   __attribute__ ((unused)) int iteration=0;
+   while (1) {
+
+      TRY_GE0( readlink(src, target, size) );
+      size_t link_len = rc_ssize;
+      if (link_len >= size) {
+         LOG(LOG_ERR, "no room for '\\0'\n");
+         errno = ENAMETOOLONG;
+         retval = -1;
+         break;
+      }
+      target[link_len] = '\0';
+      LOG(LOG_INFO, "readlink '%s' -> '%s' = (%ld)\n", src, target, link_len);
+
+
+      // if the link-target is relative, then append it onto the (MDFS)
+      // directory where the link was found.
+      if (target[0] != '/') {
+
+         // find the directory-component of <src>
+         char*  last_slash = strrchr(src, '/');
+         size_t src_dir_len = (last_slash
+                               ? (last_slash - src)
+                               : strlen(src));
+
+         size_t new_path_len = src_dir_len + 1 + link_len + 1;
+         if (new_path_len >= size) {
+            LOG(LOG_ERR, "no room for new relative-path\n");
+            errno = ENAMETOOLONG;
+            retval = -1;
+            break;
+         }
+         if (link_len >= PATH_MAX) {
+            LOG(LOG_ERR, "no room for temp buffering of link\n");
+            errno = ENAMETOOLONG;
+            retval = -1;
+            break;
+         }
+
+         // append relative-link onto source-directory
+         strncpy(temp,                 src, src_dir_len);
+         strncpy(temp +src_dir_len,    "/", 1);
+         strncpy(temp +src_dir_len +1, target, link_len);
+         temp[new_path_len -1] = 0;
+
+         target = temp;
+         relative = 1;
+      }
+
+      // canonicalize the link-target without chasing links, so we can
+      // assure that it doesn't refer to an illegal spot in the MDFS.  (A
+      // path might need canonicalization, even if it was not "relative",
+      // above.)  Can't use realpath() or canonicalize_file_name(), because
+      // those follow links, and if we invoke fuse readlink recursively
+      // (i.e. on a marfs-path) fuse will deadlock.
+      //
+      ///      if (! realpath(target, abs))
+      ///         LOG(LOG_ERR, "realpath(%s) failed: %s\n", target, strerror(errno));
+      ///         retval = -1;
+      ///         break;
+      ///      }
+      strcpy(abs, target);
+      if (canonicalize(abs)) {
+         LOG(LOG_ERR, "canonicalize(%s) failed: %s\n", target, strerror(errno));
+         retval = -1;
+         break;
+      }
+
+      // Even if <target> wasn't a marfs path, <abs> may be one, now.
+      sub_path = marfs_sub_path(abs);
+      if (sub_path) {
+         if (! find_namespace_by_mnt_path(sub_path)) {
+            LOG(LOG_ERR, "symlink target '%s' is not in any known NS\n", abs);
+            errno = EPERM;
+            retval = -1;
+            break;
+         }
+
+         // legitimate MarFS path
+         break;
+      }
+
+      // detect whether absolute path is under configured mdfs_top
+      int in_mdfs = under_mdfs_top(abs);
+
+      // There is no legal way (?) to follow links, and obtain path that is
+      // under the MDFS, even after performing canonicalization.  However,
+      // we will have converted a relative path (i.e. in a marfs namespace)
+      // into an MDFS-path in order to allow canonicalization.  Therefore,
+      // a relative-path will *look* like it's in the mdfs.  Our goal with
+      // a relative path is just to confirm that it stayed in a legitimate
+      // marfs namespace.  In order to avoid having to check through all of
+      // them, we just require that it stay in the same one.
+      if (relative) {
+         if (strncmp(abs, info->ns->md_path, info->ns->md_path_len)) {
+            LOG(LOG_ERR, "canonicalized rel target '%s' not in NS '%s'\n",
+                abs, info->ns->name);
+            errno = EPERM;
+            retval = -1;
+            break;
+         }
+         // canonicalized path in the same marfs NS
+         break;
+      }
+      else if (in_mdfs) {
+         LOG(LOG_ERR, "explicit link (%s) to MDFS path\n", target);
+         errno = EPERM;
+         retval = -1;
+         break;
+      }
+
+
+#if CHASE_SYMLINKS
+      // -----------------------------------------------------------------
+      // *** SECURITY ISSUE.
+      //
+      // We run fuse in an unshare, such that mdfs_top is hidden everywhere
+      // except inside fuse.  That protects us from the following
+      // scenarios:
+      //
+      // (a)  /marfs/ns/foo.link -> /externalfs/sneaky.lnk -> /mdfs/ns/foo
+      //
+      // (b)  /marfs/ns/dir.link -> /externalfs/sneaky2.link -> /mdfs/ns
+      //
+      // In either of these secenarios, a user could modify marfs metadata
+      // on a file they have access to (e.g. changing the obj-ID).  In that
+      // environment, this code chases links to assure that neither
+      // scenario above can happen.
+      // -----------------------------------------------------------------
+
+
+      // stat the target, to see whether it's also a link.
+      struct stat  st;
+      memset(&st, 0, sizeof(struct stat));
+
+      //      if (in_mdfs) {
+      //#if USE_MDAL
+      //         TRY0( F_OP_NOCTX(lstat, info->ns, abs, &st) );
+      //#else
+      //         TRY0( lstat(abs, &st) );
+      //#endif
+      //      }
+      //      else {
+      //         // This is not a MarFS path, so do not use the MDAL
+      //         TRY0( lstat(abs, &st) );
+      //      }
+      //
+      // This is not a MarFS path, so do not use the MDAL
+      TRY0( lstat(abs, &st) );
+
+      // if target is a directory, and is outside of MarFS, we forbid
+      // access in order to prevent a potential vulnerability, in which the
+      // remote directory *contains* symlinks that point back to something
+      // under mdfs_top.  If we allow fuse to chase this link over there,
+      // then we lose control of what is done from there.
+      if (S_ISDIR(st.st_mode)) {
+         LOG(LOG_ERR, "target '%s' is a remote directory\n", abs);
+         errno = EPERM;
+         retval = -1;
+         break;
+      }
+
+      // if target is not a link then we're done chasing
+      if (! S_ISLNK(st.st_mode)) {
+         LOG(LOG_INFO, "target '%s' is NOT a symlink\n", abs);
+         break;
+      }
+
+      // prepare for next iteration, to chase the symlink.
+      // Even though we are chasing links, our actual
+      LOG(LOG_INFO, "target '%s' is also a symlink\n", abs);
+      size_t buf_path_len = strlen(abs);
+      if (buf_path_len >= PATH_MAX) {
+         LOG(LOG_ERR, "size %ld too small for temp-path (%d)\n",
+             buf_path_len, PATH_MAX);
+         errno = ENAMETOOLONG;
+         retval = -1;
+         break;
+      }
+
+      // pointer-swaps, instead of str-copies
+      if (! iteration) {
+         src    = abs;
+         target = spare0;
+         abs    = spare1;
+      }
+      else {
+         char* temp_ptr = src;
+         src    = abs;
+         abs    = target;
+         target = temp_ptr;
+      }
+
+      relative = 0;
+      ++ iteration;
+
+#else
+      break;
+#endif
+
+   }
+
+
+   return retval;
 }
 
 

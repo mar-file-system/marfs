@@ -246,11 +246,14 @@ int main( int argc, char *argv[] ) {
       if (! top_name) {
          // --- list of all top-level options
          printf("mnt_top\n");
+         printf("mdfs_top\n");
          printf("version\n");
          printf("name\n");
       }
       else if (!strncmp(top_name, "mnt_top", 7))
          printf("%s\n", marfs_config->mnt_top);
+      else if (!strncmp(top_name, "mdfs_top", 8))
+         printf("%s\n", marfs_config->mdfs_top);
       else if (!strncmp(top_name, "name", 4))
          printf("%s\n", marfs_config->name);
       else if (!strncmp(top_name, "version", 7))
