@@ -921,18 +921,18 @@ int marfs_open(const char*         path,
 
       if( fh->flags & FH_PACKED ) {
          LOG(LOG_INFO, "writing PACKED\n");
-         int max_pack_file_count;
-
-         // Get the max_pack_file_count TODO: get default from somewhere else
-         max_pack_file_count = (-1 == info->pre.repo->max_pack_file_count) ? 1024 : info->pre.repo->max_pack_file_count;
 
          if (
                fh->objectSize+content_length+MARFS_REC_UNI_SIZE > info->pre.repo->chunk_size ||
-                fh->fileCount+1 > max_pack_file_count
+                (
+                 -1 != info->pre.repo->max_pack_file_count &&
+                 fh->fileCount+1 > info->pre.repo->max_pack_file_count
+                )
             ) {
             LOG(LOG_INFO, "releasing fh: objectSize: %d, content_length: %d, chunk_size: %d, fileCount: %d, max_pack_file_count: %d\n", fh->objectSize, content_length, info->pre.repo->chunk_size, fh->fileCount, info->pre.repo->max_pack_file_count);
             // we need to close the current object stream and open a new one if it is a packed object
             marfs_release_fh(fh);
+            return marfs_open_packed(path, fh, flags, content_length);
          }
 
          // set the object type
@@ -1018,6 +1018,9 @@ int marfs_open(const char*         path,
       // open, so it can do its own GET, with byte-ranges.  Therefore, for
       // reads, we don't open the stream, here.
       if (fh->flags & FH_WRITING) {
+         size_t   open_size  = get_stream_wr_open_size(fh, 0);
+         uint16_t wr_timeout = info->pre.repo->write_timeout;
+
          TRY0( stream_open(os, OS_PUT, open_size, 0, wr_timeout) );
       }
       else {
