@@ -107,9 +107,9 @@ OF SUCH DAMAGE.
 //     any fuse-related structures.
 
 #define WRAP_internal(GROUPS_TOO, FNCALL)              \
-   __PUSH_USER(GROUPS_TOO);                              \
+   __PUSH_USER(GROUPS_TOO);                            \
    int fncall_rc = FNCALL;                             \
-   __POP_USER();                                         \
+   __POP_USER();                                       \
    if (fncall_rc < 0) {                                \
       LOG(LOG_ERR, "ERR %s, errno=%d '%s'\n",          \
           #FNCALL, errno, strerror(errno));            \
@@ -535,7 +535,7 @@ int fuse_readlink (const char* path,
                    char*       buf,
                    size_t      size) {
 
-   WRAP_PLUS( marfs_readlink(path, buf, size) );
+   WRAP_PLUS( marfs_readlink_ok(path, buf, size) );
 }
 
 

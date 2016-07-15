@@ -1462,8 +1462,28 @@ static MarFS_Config_Ptr read_configuration_internal() {
      LOG( LOG_ERR, "MarFS config '%s' has no mnt_top.\n", config->name);
      return NULL;
   }
+  size_t mnt_top_len = strlen( config->mnt_top );
+  if ( config->mnt_top[ mnt_top_len -1 ] == '/' ) {
+     LOG( LOG_ERR, "MarFS config '%s' mnt_top should not have final '/'.\n", config->name);
+     return NULL;
+  }
   marfs_config->mnt_top     = strdup( config->mnt_top );
   marfs_config->mnt_top_len = strlen( config->mnt_top );
+
+
+  // if you really don't want to protect yourself, put something in mdfs_top
+  // that will never occur at the front of your MDFS paths.
+  if ( ! config->mdfs_top ) {
+     LOG( LOG_ERR, "MarFS config '%s' has no mdfs_top.\n", config->name);
+     return NULL;
+  }
+  size_t mdfs_top_len = strlen( config->mdfs_top );
+  if ( config->mnt_top[ mnt_top_len -1 ] == '/' ) {
+     LOG( LOG_ERR, "MarFS config '%s' mdfs_top should not have final '/'.\n", config->name);
+     return NULL;
+  }
+  marfs_config->mdfs_top     = strdup( config->mdfs_top );
+  marfs_config->mdfs_top_len = strlen( config->mdfs_top );
 
   // marfs_config->namespace_list = marfs_namespace_list;
   // marfs_config->namespace_count = namespaceCount;
@@ -1474,6 +1494,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
   LOG( LOG_INFO, "\tconfig name            : %s\n", marfs_config->name );
   LOG( LOG_INFO, "\tconfig version         : %d.%d\n", marfs_config->version_major, marfs_config->version_minor );
   LOG( LOG_INFO, "\tconfig mnt_top         : %s\n", marfs_config->mnt_top );
+  LOG( LOG_INFO, "\tconfig mdfs_top        : %s\n", marfs_config->mdfs_top );
   // LOG( LOG_INFO, "\tconfig namespace count : %lu\n", marfs_config->namespace_count );
   LOG( LOG_INFO, "\tconfig repo count      : %d\n", repoCount );
   fflush( stdout );

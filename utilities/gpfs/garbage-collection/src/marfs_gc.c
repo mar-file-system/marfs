@@ -639,8 +639,10 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
       }
 
       // assure the MD is open for reading
-      fh.flags |= FH_READING;
-      if (open_md(&fh)) {
+      //fh.flags |= FH_READING;
+      // 
+      // Now call with flag (0) to open for reading
+      if (open_md(&fh, 0)) {
          fprintf(stderr, "open_md() failed for MD file: '%s'\n", md_path_ptr);
          return -1;
       }
