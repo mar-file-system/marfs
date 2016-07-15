@@ -706,7 +706,9 @@ typedef struct {
 // strip the leading <mnt_top> from an arbitrary path.
 // Return NULL if no match.
 extern const char* marfs_sub_path(const char* path);
-                              
+extern int         under_mdfs_top(const char* path);
+extern int         follow_some_links(PathInfo* info, char* buf, size_t size);
+
 extern int  init_mdfs();
 
 // These initialize different parts of the PathInfo struct.
