@@ -31,6 +31,7 @@ fi
 # convenience
 CONFIG=$MARFS/common/configuration/src
 FUSE=$MARFS/fuse/src
+UTILITIES=$MARFS/utilities/gpfs
 
 
 
@@ -71,11 +72,13 @@ case $CODE in
         AWS4C_ARGS+=" DEBUG=1"
         CONFIG_ARGS+=" DEBUG=1 CONFIG=$MARFSCONFIGRC"
         FUSE_ARGS+=" DEBUG=0"
+        UTILITY_ARGS+=" DEBUG=1"
         ;;
     3)
         CONFIG_ARGS+=" DEBUG=4 CONFIG=$MARFSCONFIGRC"
         AWS4C_ARGS+=" DEBUG=1"
         FUSE_ARGS+=" lean DEBUG=0"
+        UTILITY_ARGS+=" DEBUG=1"
         ;;
     *)
         usage $0
@@ -130,5 +133,45 @@ echo "### making libmarfs"
 echo "### ( cd $FUSE && make clean && make $FUSE_ARGS )"
 if !( cd $FUSE && make clean && make $FUSE_ARGS ); then
     echo "couldn't build $FUSE"
+    exit 1
+fi
+echo
+echo "### ................................................................."
+echo "### making utilities/common"
+echo "### ( cd $UTILITIES/common/src && make clean && make $UTILITY_ARGS )"
+if !( cd $UTILITIES/common/src && make clean && make $UTILITY_ARGS ); then
+    echo "couldn't build $UTILITIES/common/src"
+    exit 1
+fi
+echo
+echo "### ................................................................."
+echo "### making quotas"
+echo "### ( cd $UTILITIES/quotas/src && make clean && make $UTILITY_ARGS )"
+if !( cd $UTILITIES/quotas/src && make clean && make $UTILITY_ARGS ); then
+    echo "couldn't build $UTILITIES/quotas/src"
+    exit 1
+fi
+echo
+echo "### ................................................................."
+echo "### making garbage collection"
+echo "### ( cd $UTILITIES/garbage-collection/src && make clean && make $UTILITY_ARGS )"
+if !( cd $UTILITIES/garbage-collection/src && make clean && make $UTILITY_ARGS ); then
+    echo "couldn't build $UTILITIES/garbage-collection/src"
+    exit 1
+fi
+echo
+echo "### ................................................................."
+echo "### making packer"
+echo "### ( cd $UTILITIES/packer/src && make clean && make $UTILITY_ARGS )"
+if !( cd $UTILITIES/packer/src && make clean && make $UTILITY_ARGS ); then
+    echo "couldn't build $UTILITIES/packer/src"
+    exit 1
+fi
+echo
+echo "### ................................................................."
+echo "### making repacker"
+echo "### ( cd $UTILITIES/repacker/src && make clean && make $UTILITY_ARGS )"
+if !( cd $UTILITIES/repacker/src && make clean && make $UTILITY_ARGS ); then
+    echo "couldn't build $UTILITIES/repacker/src"
     exit 1
 fi
