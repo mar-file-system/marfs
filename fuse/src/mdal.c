@@ -82,6 +82,7 @@ OF SUCH DAMAGE.
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <utime.h>
+#include <unistd.h>
 
 
 // ===========================================================================
@@ -235,6 +236,10 @@ int     posix_symlink(const char* target, const char* linkname) {
    return symlink(target, linkname);
 }
 
+int     posix_unlink(const char* path) {
+   return unlink(path);
+}
+
 int     posix_utime(const char* filename, const struct utimbuf* times) {
    return utime(filename, times);
 }
@@ -359,6 +364,7 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->lremovexattr = &posix_lremovexattr;
       mdal->llistxattr   = &posix_llistxattr;
       mdal->symlink      = &posix_symlink;
+      mdal->unlink       = &posix_unlink;
 
       mdal->utime        = &posix_utime;
 

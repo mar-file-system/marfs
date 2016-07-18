@@ -863,23 +863,46 @@ int write_trash_companion_file(PathInfo*             info,
    //      Should just stat() the companion-file, before opening, to assure
    //      it doesn't already exist.
    LOG(LOG_INFO, "companion:  %s\n", companion_fname);
+#if USE_MDAL
+   MarFS_FileHandle companion_fh;
+   memset((char*)&companion_fh, 0, sizeof(MarFS_FileHandle));
+   companion_fh.info = *info;
+   F_MDAL(&companion_fh) = info->pre.ns->file_MDAL;
+   F_OP(f_init, &companion_fh, F_MDAL(&companion_fh));
+   F_OP(open, &companion_fh, companion_fname, (O_WRONLY|O_CREAT), info->st.st_mode);
+   __TRY_GE0( F_OP(is_open, &companion_fh) ); // This should cover the failure
+#else
    __TRY_GE0( open(companion_fname, (O_WRONLY|O_CREAT), info->st.st_mode) );
    int fd = rc_ssize;
+#endif
 
 #if 1
    // write MDFS path into the trash companion
+#  if USE_MDAL
+   __TRY_GE0( F_OP(write, &companion_fh,
+                   info->post.md_path, strlen(info->post.md_path)) );
+#  else
    __TRY_GE0( write(fd, info->post.md_path, strlen(info->post.md_path)) );
+#  endif // USE_MDAL
 #else
    // write MarFS path into the trash companion
    __TRY_GE0( write(fd, marfs_config->mnt_top, marfs_config->mnt_top_len) );
    __TRY_GE0( write(fd, path, strlen(path)) );
 #endif
 
+#if USE_MDAL
+   __TRY0( close_md(&companion_fh) );
+#else
    __TRY0( close(fd) );
+#endif
 
    // maybe install ctime/atime to support "undelete"
    if (utim)
+#if USE_MDAL
+      __TRY0( F_OP_NOCTX(utime, info->ns, companion_fname, utim) );
+#else
       __TRY0( utime(companion_fname, utim) );
+#endif
 
    return 0;
 }
@@ -957,7 +980,11 @@ int  trash_unlink(PathInfo*   info,
    // filesystem).  It was thought we shouldn't even *try* the rename
    // first.  Instead, we'll copy to the trash, then unlink the original.
    __TRY0( trash_truncate(info, path) );
+#if USE_MDAL
+   __TRY0( F_OP_NOCTX(unlink, info->ns, info->post.md_path) );
+#else
    __TRY0( unlink(info->post.md_path) );
+#endif
 
    return 0;
 }

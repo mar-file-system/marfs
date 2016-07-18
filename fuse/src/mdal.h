@@ -206,6 +206,7 @@ typedef  ssize_t (*mdal_lsetxattr)   (const char* path, const char* name,
 typedef  int     (*mdal_lremovexattr)(const char* path, const char* name);
 typedef  ssize_t (*mdal_llistxattr)  (const char* path, char* list, size_t size);
 typedef  int     (*mdal_symlink)     (const char* target, const char* linkname);
+typedef  int     (*mdal_unlink)      (const char* path);
 
 typedef  int     (*mdal_utime)    (const char* filename, const struct utimbuf *times);
 
@@ -266,6 +267,7 @@ typedef struct MDAL {
    mdal_lremovexattr  lremovexattr;
    mdal_llistxattr    llistxattr;
    mdal_symlink       symlink;
+   mdal_unlink        unlink;
 
    mdal_utime         utime;
 
