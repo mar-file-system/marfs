@@ -77,6 +77,11 @@ OF SUCH DAMAGE.
 
 #include <stdlib.h>             // malloc()
 #include <errno.h>
+#include <stdarg.h>             // va_args for open()
+#include <sys/types.h>          // the next three are for open & mode_t
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <utime.h>
 
 
 // ===========================================================================
@@ -127,8 +132,19 @@ int     default_mdal_dir_ctx_destroy (MDAL_Context* ctx, MDAL* mdal) {
 
 // --- file-ops
 
-void*   posix_open(MDAL_Context* ctx, const char* path, int flags) {
-   POSIX_FD(ctx) = open(path, flags);
+void*   posix_open(MDAL_Context* ctx, const char* path, int flags, ...) {
+   va_list ap;
+   va_start(ap, flags);
+   
+   if(flags & O_CREAT) {
+      mode_t mode = va_arg(ap, mode_t);
+      POSIX_FD(ctx) = open(path, flags, mode);
+   }
+   else {
+      POSIX_FD(ctx) = open(path, flags);
+   }
+   // clean up
+   va_end(ap);
    return ctx;
 }
 
@@ -219,6 +235,9 @@ int     posix_symlink(const char* target, const char* linkname) {
    return symlink(target, linkname);
 }
 
+int     posix_utime(const char* filename, const struct utimbuf* times) {
+   return utime(filename, times);
+}
 
 // --- directory-ops
 
@@ -340,6 +359,8 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->lremovexattr = &posix_lremovexattr;
       mdal->llistxattr   = &posix_llistxattr;
       mdal->symlink      = &posix_symlink;
+
+      mdal->utime        = &posix_utime;
 
       mdal->mkdir        = &posix_mkdir;
       mdal->rmdir        = &posix_rmdir;
