@@ -167,6 +167,10 @@ int     posix_access(const char* path, int mask) {
    return access(path, mask);
 }
 
+int     posix_faccessat(int fd, const char* path, int mask, int flags) {
+   return faccessat(fd, path, mask, flags);
+}
+
 int     posix_rename(const char* from, const char* to) {
    return rename(from, to);
 }
@@ -328,6 +332,7 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->lseek        = &posix_lseek;
 
       mdal->access       = &posix_access;
+      mdal->faccessat    = &posix_faccessat;
       mdal->mknod        = &posix_mknod;
       mdal->chmod        = &posix_chmod;
       mdal->truncate     = &posix_truncate;

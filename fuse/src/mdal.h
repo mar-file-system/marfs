@@ -190,6 +190,7 @@ typedef  int     (*mdal_is_open) (MDAL_Context* ctx);
 // the MDFS file.
 
 typedef  int     (*mdal_access)  (const char* path, int mask);
+typedef  int     (*mdal_faccessat)(int fd, const char* path, int mask, int flags);
 typedef  int     (*mdal_mknod)   (const char* path, mode_t mode, dev_t dev);
 typedef  int     (*mdal_chmod)   (const char* path, mode_t mode);
 typedef  int     (*mdal_truncate)(const char* path, off_t size);
@@ -252,6 +253,7 @@ typedef struct MDAL {
    mdal_lseek         lseek;
 
    mdal_access        access;
+   mdal_faccessat     faccessat;
    mdal_mknod         mknod;
    mdal_chmod         chmod;
    mdal_truncate      truncate;
