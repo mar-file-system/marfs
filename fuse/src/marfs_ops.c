@@ -937,6 +937,7 @@ int marfs_open(const char*         path,
 
          // set the object type
          info->pre.obj_type = OBJ_PACKED;
+         info->post.obj_type = OBJ_PACKED;
          info->post.obj_offset = fh->objectSize;
          update_pre(&info->pre);
 
@@ -2072,8 +2073,10 @@ int marfs_release (const char*        path,
       install_final_mode = 1;
    }
 
-   // no longer incomplete
-   info->xattrs &= ~(XVT_RESTART);
+   // no longer incomplete unless this is a packed file
+   if( !(fh->flags & FH_PACKED) ) {
+      info->xattrs &= ~(XVT_RESTART);
+   }
 
    // update xattrs (unless writing N:1), while we still can
    if ((info->pre.repo->access_method != ACCESSMETHOD_DIRECT)
@@ -2095,18 +2098,57 @@ int marfs_release (const char*        path,
       }
    }
 
-   //TODO: This is a dirty fix to keep marfs_write from erroring because the os->written is wrong
-   // Jeff Inman I would like some help parsing your math in marfs_write
-   // This does not actually work
-   if( !(fh->flags & FH_PACKED) ) {
-      os->written = 0;
-   }
-
-
    EXIT();
    return 0;
 }
 
+// Pftool needs a way to clear restart on files that it packed once the object
+// stream has been closed
+// TODO: can this me merged with batch_post_process
+int marfs_clear_restart(const char* path) {
+   TRY_DECLS();
+   LOG(LOG_INFO, "%s\n", path);
+
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+   EXPAND_PATH_INFO(&info, path);
+
+   STAT_XATTRS(&info);
+   if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
+
+      // As in release(), we take note of whether RESTART was saved with
+      // a restrictive mode, which we couldn't originally install because
+      // would've prevented manipulating xattrs.  If so, then (after removing
+      // the RESTART xattr) install the more-restrictive mode.
+      int    install_new_mode = 0;
+      mode_t new_mode;
+      if (has_all_xattrs(&info, XVT_RESTART)
+          && (info.restart.flags & RESTART_MODE_VALID)) {
+
+         install_new_mode = 1;
+         new_mode = info.restart.mode;
+      }
+
+      // remove "restart" xattr.  [Can't do this at close-time, in the case
+      // of N:1 files, so we do it here, for them.] Also for packed files
+      info.xattrs &= ~(XVT_RESTART);
+      SAVE_XATTRS(&info, (XVT_RESTART));
+
+      // install more-restrictive mode, if needed.
+      if (install_new_mode) {
+#if USE_MDAL
+         TRY0( F_OP_NOCTX(chmod, info.ns, info.post.md_path, new_mode) );
+#else
+         TRY0( chmod(info.post.md_path, new_mode) );
+#endif
+      }
+   }
+   else
+      LOG(LOG_INFO, "no xattrs\n");
+
+   return 0;
+
+}
 
 // If we are sharing a file handle to write to a packed object we need to
 // close the stream once we are completly done. Before a program exists it
@@ -2746,8 +2788,6 @@ ssize_t marfs_write(const char*        path,
    //     fh->write_status.sys_writes.
    //
    size_t log_offset = (fh->open_offset + os->written - fh->write_status.sys_writes);
-   // TODO: Fix this terriable hack and get rid of this if 0
-#if 0
    if ( offset != log_offset) {
 
       LOG(LOG_ERR, "non-contig write: offset %ld, after %ld (+ %ld)\n",
@@ -2769,7 +2809,6 @@ ssize_t marfs_write(const char*        path,
       return -1;
 #endif
    }
-#endif // end todo section
 
    // If first write allocate space for current obj being written put addr
    //     in fuse open table

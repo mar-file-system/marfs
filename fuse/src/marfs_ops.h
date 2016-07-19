@@ -152,6 +152,8 @@ int  marfs_readlink(const char* path, char* buf, size_t size);
 
 int  marfs_release(const char* path, MarFS_FileHandle* fh);
 
+int marfs_clear_restart(const char* path);
+
 int marfs_release_fh(MarFS_FileHandle* fh);
 
 int  marfs_releasedir(const char* path, MarFS_DirHandle* dh);
