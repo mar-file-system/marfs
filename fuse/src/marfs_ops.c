@@ -924,6 +924,14 @@ int marfs_open(const char*         path,
    else if (fh->flags & FH_WRITING) {
       LOG(LOG_INFO, "writing\n");
 
+      // Check/act on quotas of total-space and total-num-names
+      // 0=OK, 1=exceeded, -1=error
+      TRY_GE0( check_quotas(info) );
+      if (rc_ssize) {
+         errno = EDQUOT;
+         return -1;
+      }
+
       // Support for pftool N:1, where (potentially) multiple writers are
       // writing different parts of the file.  It's up to the caller to
       // assure that objects are only written to proper offsets.  Caller
