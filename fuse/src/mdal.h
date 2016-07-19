@@ -94,6 +94,7 @@ OF SUCH DAMAGE.
 #include <fcntl.h>
 #include <attr/xattr.h>
 #include <dirent.h>
+#include <utime.h>
 
 #include <stdio.h>
 
@@ -168,7 +169,7 @@ typedef  int     (*mdal_dir_ctx_destroy) (MDAL_Context* ctx, struct MDAL* mdal);
 
 // return NULL from mdal_open(), for failure 
 // This value is only checked for NULL/non-NULL
-typedef  void*   (*mdal_open) (MDAL_Context* ctx, const char* path, int flags);
+typedef  void*   (*mdal_open) (MDAL_Context* ctx, const char* path, int flags, ...);
 typedef  int     (*mdal_close)(MDAL_Context* ctx);
 
 typedef  ssize_t (*mdal_write)(MDAL_Context* ctx, const void* buf, size_t count);
@@ -206,7 +207,9 @@ typedef  ssize_t (*mdal_lsetxattr)   (const char* path, const char* name,
 typedef  int     (*mdal_lremovexattr)(const char* path, const char* name);
 typedef  ssize_t (*mdal_llistxattr)  (const char* path, char* list, size_t size);
 typedef  int     (*mdal_symlink)     (const char* target, const char* linkname);
+typedef  int     (*mdal_unlink)      (const char* path);
 
+typedef  int     (*mdal_utime)    (const char* filename, const struct utimbuf *times);
 
 
 
@@ -266,6 +269,9 @@ typedef struct MDAL {
    mdal_lremovexattr  lremovexattr;
    mdal_llistxattr    llistxattr;
    mdal_symlink       symlink;
+   mdal_unlink        unlink;
+
+   mdal_utime         utime;
 
    mdal_mkdir         mkdir;
    mdal_rmdir         rmdir;
