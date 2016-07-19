@@ -3,6 +3,10 @@ all: marfs_rpack
 
 CFLAGS += -Wall -g 
 
+ifdef DEBUG
+   CFLAGS += -DUSE_STDOUT
+endif
+
 # relative paths to main marfs build
 MARFS_FUSE = ../../../../fuse/src
 LOGGING = ../../../../common/log/src

@@ -123,6 +123,33 @@ int marfs_access (const char* path,
 }
 
 
+// Called from pftool.
+//
+// This is an alternative to access() that doesn't follow links.
+// faccessat() requires a directory-fd, if the path is relative, but, for
+// now, these will always be absolute paths.  Someday, maybe it will make
+// sense to consider providing or generating an fd, for relative paths.
+//
+int marfs_faccessat (const char* path,
+                     int         mask,
+                     int         flags) {
+   ENTRY();
+
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+   EXPAND_PATH_INFO(&info, path);
+
+   // Check/act on iperms from expanded_path_info_structure, this op requires RM
+   CHECK_PERMS(info.ns->iperms, (R_META));
+
+   // No need for access check, just try the op
+   TRY0( faccessat(-1, info.post.md_path, mask, flags) );
+ 
+   EXIT();
+   return 0;
+}
+
+
 // NOTE: we don't allow setuid or setgid.  We're using those bits for two
 //     purposes:
 //
@@ -557,9 +584,9 @@ int marfs_listxattr (const char* path,
    //
    // However, shuffling MarFS xattr names to cover-up system names takes
    // as much trouble as just copying the legit names into callers list, so
-   // we should just do the copy, instead.  On third thought, it may take
-   // the same amount of trouble to do the shuffling, but that also
-   // requires a malloc, so we stick with using caller's buffer.
+   // we should just do the copy, instead.  On third thought, the copy
+   // approach might save some shufling work, but it also requires a
+   // malloc, so we stick with using caller's buffer.
    //
    char* end  = list + rc_ssize;
    char* name = list;
@@ -812,6 +839,15 @@ int marfs_open(const char*         path,
    // in the case of fuse, this should've been done already as a separate
    // call.  But other callers may expect open() to support this.
    if (flags & O_CREAT) {
+
+      // Need to call readlink() on path, before this, but if path is a
+      // marfs-path, readlink will invoke marfs_readlink() and we'll be
+      // stuck?
+      if (under_mdfs_top(path)) {
+         LOG(LOG_ERR, "attempt to open path under mdfs_top '%s'\n", path);
+         errno = EPERM;
+         return -1;
+      }
       if (stat_regular(info))
          TRY0( marfs_mknod(path, flags, 0) );
    }
@@ -842,6 +878,16 @@ int marfs_open(const char*         path,
       fh->flags |= FH_WRITING;
       ACCESS(info->post.md_path, W_OK);
       CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+
+      // Need to call readlink() on path, before this, but if path is a
+      // marfs-path, readlink will invoke marfs_readlink() and we'll be
+      // stuck?
+      if (under_mdfs_top(path)) {
+         LOG(LOG_ERR, "attempt to open path under mdfs_top '%s'\n", path);
+         errno = EPERM;
+         return -1;
+      }
+
    }
    else {
       // NOTE: O_RDONLY is not actually a flag!
@@ -1178,6 +1224,12 @@ int marfs_opendir (const char*       path,
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, (R_META));
+
+   if (under_mdfs_top(path)) {
+      LOG(LOG_ERR, "attempt to open path under mdfs_top '%s'\n", path);
+      errno = EPERM;
+      return -1;
+   }
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -1880,14 +1932,27 @@ int marfs_readdir (const char*        path,
 //
 // ON SECOND THOUGHT: It's not our job to see where a link points.
 //     readlink of "/marfs/ns/mylink" which refers to "../../test" should
-//     just return "../../test" The kernel will then expand
+//     just return "../../test" The kernel will then canonicalize
 //     "/marfs/ns/../../test" and then use that to do whatever the
 //     operation was.  We are not allowing any subversion of the MDFS by
 //     responding with the contents of the symlink.
 
-int marfs_readlink (const char* path,
-                    char*       buf,
-                    size_t      size) {
+
+// for fuse
+int marfs_readlink_ok (const char* path,
+                       char*       buf,
+                       size_t      size) {
+   ENTRY();
+
+   TRY_GE0( marfs_readlink(path, buf, size) );
+
+   EXIT();
+   return 0;
+}
+
+ssize_t marfs_readlink (const char* path,
+                        char*       buf,
+                        size_t      size) {
    ENTRY();
    PathInfo info;
    memset((char*)&info, 0, sizeof(PathInfo));
@@ -1896,20 +1961,35 @@ int marfs_readlink (const char* path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns->iperms, (R_META));
 
+#if 0
+   // Now that we plan to mount fuse in a context where the mdfs is
+   // unshared, this should no longer be necessary:
+
+   // We shouldn't call readlink() if the target of the symlink is a marfs
+   // target.  That will deadlock fuse.  But, if it points outside marfs to
+   // another symlink, fuse will not come back to us with the new symlink,
+   // to let us evaluate whether the new path points back into marfs
+   // (e.g. to an mdfs file).  Therefore, in the case where the destination
+   // is a symlink that points outside marfs, we not only can, but must,
+   // follow the links ourselves, until we either find a marfs path, or
+   // come to the end of the symlink chain.
+   TRY0( follow_some_links(&info, buf, size) );
+
+#else
    // No need for access check, just try the op
    // Appropriate readlink-like call filling in fuse structure 
    TRY_GE0( readlink(info.post.md_path, buf, size) );
-   int count = rc_ssize;
-   if (count >= size) {
+   if (rc_ssize >= size) {
       LOG(LOG_ERR, "no room for '\\0'\n");
       errno = ENAMETOOLONG;
       return -1;
    }
-   buf[count] = '\0';
-   LOG(LOG_INFO, "readlink '%s' -> '%s' = (%d)\n", info.post.md_path, buf, count);
+   buf[rc_ssize] = '\0';
+   LOG(LOG_INFO, "readlink '%s' -> '%s' = (%ld)\n", info.post.md_path, buf, rc_ssize);
+#endif
 
    EXIT();
-   return 0; // return result;
+   return rc_ssize;
 }
 
 
@@ -2277,7 +2357,8 @@ int marfs_rename (const char* path,
    EXPAND_PATH_INFO(&info2, to);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns->iperms,  (R_META | W_META));
+   CHECK_PERMS(info2.ns->iperms, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2523,6 +2604,16 @@ int marfs_symlink (const char* target,
    // The "root" namespace is artificial
    if (IS_ROOT_NS(lnk_info.ns)) {
       LOG(LOG_INFO, "is_root_ns\n");
+      errno = EPERM;
+      return -1;
+   }
+
+   // don't allow creating a link that explicitly points below <mdfs_top>
+   // Maybe it should be allowed?  The fuse unshare will prevent access to
+   // it anyhow.  But what are they up to?
+   if (under_mdfs_top(target)) {
+      LOG(LOG_ERR, "symlink target is under mdfs_top '%s'\n",
+          marfs_config->mdfs_top);
       errno = EPERM;
       return -1;
    }
