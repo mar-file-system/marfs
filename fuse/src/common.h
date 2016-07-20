@@ -602,6 +602,7 @@ typedef struct {
    curl_off_t      open_offset;  // [see comments at marfs_open_with_offset()]
    ReadStatus      read_status;  // buffer_management, current_offset, etc
    WriteStatus     write_status; // buffer-management, etc
+
    ObjectStream    os;           // handle for streaming access to objects
 
    FHFlagType      flags;
