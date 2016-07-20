@@ -283,7 +283,7 @@ int marfs_ftruncate(const char*            path,
    // IOBuf*            b    = &fh->os.iob;
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | T_DATA));
 
    // POSIX ftruncate returns EBADF or EINVAL, if fd not opened for writing.
    if (! (fh->flags & FH_WRITING)) {
@@ -2510,7 +2510,7 @@ int marfs_truncate (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | T_DATA));
 
    // Call access syscall to check/act if allowed to truncate for this user 
    ACCESS(info.post.md_path, (W_OK));
@@ -2560,7 +2560,7 @@ int marfs_unlink (const char* path) {
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | U_DATA));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {

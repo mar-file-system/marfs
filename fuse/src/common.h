@@ -276,10 +276,14 @@ typedef enum {
 // in the iperms or bperms of the given NS.
 #define CHECK_PERMS(ACTUAL_PERMS, REQUIRED_PERMS)                       \
    do {                                                                 \
-      LOG(LOG_INFO, "check_perms req:%08x actual:%08x\n", (REQUIRED_PERMS), (ACTUAL_PERMS)); \
-      if (((ACTUAL_PERMS) & (REQUIRED_PERMS)) != (REQUIRED_PERMS))      \
-         return -EACCES;   /* should be EPERM? (i.e. being root wouldn't help) */ \
+      LOG(LOG_INFO, "check_perms req:%08x actual:%08x\n",               \
+          (REQUIRED_PERMS), (ACTUAL_PERMS));                            \
+      if (((ACTUAL_PERMS) & (REQUIRED_PERMS)) != (REQUIRED_PERMS)) {    \
+         errno = EACCES;   /* should be EPERM? (i.e. being root wouldn't help) */ \
+         return -1;                                                     \
+      }                                                                 \
    } while (0)
+
 
 // this follows symlinks!
 #define ACCESS(PATH, PERMS)            TRY0( access((PATH), (PERMS)) )
