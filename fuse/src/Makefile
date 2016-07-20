@@ -203,6 +203,12 @@ ifdef GRIND
 	EXEC     = valgrind --tool=callgrind
 endif
 
+ifdef HELGRIND
+	CFLAGS  += -g
+	LDFLAGS += -g
+	EXEC     = valgrind --tool=helgrind
+endif
+
 
 
 # For testing new MDAL code
@@ -484,6 +490,9 @@ fuse.gprof: pre_req
 fuse.grind: pre_req
 	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 GRIND=1
 
+fuse.helgrind: pre_req
+	@ $(MAKE) marfs_fuse LINK_LIBFUSE=1 HELGRIND=1
+
 
 
 # --- "redo" means: unmount, make clean, rebuild, clean up, mount
@@ -567,6 +576,9 @@ mnt.lean: fuse.lean umnt
 
 mnt.grind: fuse.grind umnt
 	@ $(MAKE) _mnt GRIND=1
+
+mnt.helgrind: fuse.helgrind umnt
+	@ $(MAKE) _mnt HELGRIND=1
 
 mnt.dbg: fuse.dbg umnt.dbg
 	@ $(MAKE) _mnt MNT=$(MNT)_dbg DEBUG=2 LOG="> fuse.log 2>&1"
