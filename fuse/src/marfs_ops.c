@@ -2590,7 +2590,12 @@ int marfs_utimensat(const char*           path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
+#if USE_MDAL
+   TRY_GE0( F_OP_NOCTX(utimensat, info.ns, AT_FDCWD, info.post.md_path,
+                       times, flags) );
+#else
    TRY_GE0( utimensat(AT_FDCWD, info.post.md_path, times, flags) );
+#endif
 
    EXIT();
    return 0;
@@ -2629,7 +2634,12 @@ int marfs_utimens(const char*           path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
+#if USE_MDAL
+   TRY_GE0( F_OP_NOCTX(utimensat, info.ns, 0, info.post.md_path,
+                        tv, AT_SYMLINK_NOFOLLOW) );
+#else
    TRY_GE0( utimensat(0, info.post.md_path, tv, AT_SYMLINK_NOFOLLOW) );
+#endif
 
    EXIT();
    return 0;

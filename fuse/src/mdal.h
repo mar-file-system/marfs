@@ -210,6 +210,13 @@ typedef  int     (*mdal_symlink)     (const char* target, const char* linkname);
 typedef  int     (*mdal_unlink)      (const char* path);
 
 typedef  int     (*mdal_utime)    (const char* filename, const struct utimbuf *times);
+// NOTE: utimens seems like it should take a MDAL_Context parameter to
+//       provide the equivalent of a dirfd; however, anyone calling into the
+//       MDAL should be doing so through marfs_utimensat or marfs_utimens
+//       which assume that the path is absolute and dirfd should be ignored.
+//       Therefore, this is implemented as context free operation.
+typedef  int     (*mdal_utimensat)(int dirfd, const char *pathname,
+                                   const struct timespec times[2], int flags);
 
 
 
@@ -272,6 +279,7 @@ typedef struct MDAL {
    mdal_unlink        unlink;
 
    mdal_utime         utime;
+   mdal_utimensat     utimensat;
 
    mdal_mkdir         mkdir;
    mdal_rmdir         rmdir;

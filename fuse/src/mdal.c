@@ -248,6 +248,12 @@ int     posix_utime(const char* filename, const struct utimbuf* times) {
    return utime(filename, times);
 }
 
+int     posix_utimensat(int dirfd, const char* pathname,
+                        const struct timespec times[2], int flags)
+{
+   return utimensat(dirfd, pathname, times, flags);
+}
+
 // --- directory-ops
 
 int     posix_mkdir (const char* path, mode_t mode) {
@@ -372,6 +378,7 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
       mdal->unlink       = &posix_unlink;
 
       mdal->utime        = &posix_utime;
+      mdal->utimensat    = &posix_utimensat;
 
       mdal->mkdir        = &posix_mkdir;
       mdal->rmdir        = &posix_rmdir;
