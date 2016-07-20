@@ -747,20 +747,21 @@ static MarFS_Config_Ptr read_configuration_internal() {
  * components out of it.
  */
 
-  config = (struct config *) malloc( sizeof( struct config ));
-  memset(config,      0x00, sizeof(struct config));
+  config = (struct config *) malloc( sizeof(struct config) );
   if (config == NULL) {
     free( path );
     LOG( LOG_ERR, "Error allocating memory for the config structure.\n");
     return NULL;
   }
+  memset(config,      0x00, sizeof(struct config));
 
-  marfs_config = (MarFS_Config_Ptr) malloc( sizeof( MarFS_Config ));
+  marfs_config = (MarFS_Config_Ptr) malloc( sizeof(MarFS_Config));
   if ( marfs_config == NULL) {
     free( path );
     LOG( LOG_ERR, "Error allocating memory for the MarFS config structure.\n");
     return NULL;
   }
+  memset(marfs_config, 0x00, sizeof(MarFS_Config));
 
   // Ron's parser assumes it is running in the current working directory It
   // tries to read "./parse-inc/config-structs.h", at run-time.  Now that
@@ -1600,6 +1601,36 @@ static int free_configuration_internal( MarFS_Config_Ptr *config ) {
 
 int free_configuration() {
    return free_configuration_internal(&marfs_config);
+}
+
+
+
+
+// ---------------------------------------------------------------------------
+// run-time configuration
+// ---------------------------------------------------------------------------
+
+// e.g. set_runtime(MARFS_INTERACTIVE,1);
+int  set_runtime_config(MarFS_RunTime_Flag flag, int value) {
+   if (! marfs_config) {
+      LOG(LOG_ERR, "No marfs_config\n");
+      return -1;
+   }
+   else if (value)
+      marfs_config->runtime.flags |= flag;
+   else
+      marfs_config->runtime.flags &= ~flag;
+
+   return 0;
+}
+
+int  get_runtime_config(MarFS_RunTime_Flag flag) {
+   if (! marfs_config) {
+      LOG(LOG_ERR, "No marfs_config\n");
+      return -1;
+   }
+   else
+      return ((marfs_config->runtime.flags & flag) != 0);
 }
 
 

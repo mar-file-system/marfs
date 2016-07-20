@@ -78,6 +78,7 @@ OF SUCH DAMAGE.
 #include "marfs_base.h"
 #include "mdal.h"               // abstraction for MD file/dir ops
 #include "object_stream.h"      // FileHandle needs ObjectStream
+#include "marfs_configuration.h"
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -107,11 +108,11 @@ typedef struct {
 
 
 
-// Human-readable argument to functions with an <is_interactive> parameter
-typedef enum {
-   MARFS_BATCH       = 0,
-   MARFS_INTERACTIVE = 1
-} MarFS_Interactivity;
+// // Human-readable argument to functions with an <is_interactive> parameter
+// typedef enum {
+//    MARFS_BATCH       = 0,
+//    MARFS_INTERACTIVE = 1
+// } MarFS_Interactivity;
 
 
 // // Variation on the MarFS_Interactivity
@@ -274,11 +275,16 @@ typedef enum {
 
 // return an error, if all the required permission-flags are not asserted
 // in the iperms or bperms of the given NS.
-#define CHECK_PERMS(ACTUAL_PERMS, REQUIRED_PERMS)                       \
+#define CHECK_PERMS(NS, REQUIRED_PERMS)                                 \
    do {                                                                 \
-      LOG(LOG_INFO, "check_perms req:%08x actual:%08x\n",               \
-          (REQUIRED_PERMS), (ACTUAL_PERMS));                            \
-      if (((ACTUAL_PERMS) & (REQUIRED_PERMS)) != (REQUIRED_PERMS)) {    \
+      TRY_DECLS();                                                      \
+      TRY_GE0( get_runtime_config(MARFS_INTERACTIVE) ); /* fuse calling? */ \
+      MarFS_Perms actual_perms = (rc_ssize ? (NS)->iperms : (NS)->bperms); \
+      LOG(LOG_INFO, "check_perms (%s) req:%08x actual:%08x\n",          \
+          (rc_ssize ? "interactive" : "batch"),                         \
+          (REQUIRED_PERMS), actual_perms);                              \
+      if ((actual_perms & (REQUIRED_PERMS)) != (REQUIRED_PERMS)) {      \
+         LOG(LOG_ERR, "check_perms denied\n");                          \
          errno = EACCES;   /* should be EPERM? (i.e. being root wouldn't help) */ \
          return -1;                                                     \
       }                                                                 \
