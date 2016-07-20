@@ -2561,7 +2561,11 @@ int marfs_utime(const char*     path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
+#if USE_MDAL
+   TRY_GE0( F_OP_NOCTX(utime, info.ns, info.post.md_path, buf) );
+#else
    TRY_GE0( utime(info.post.md_path, buf) );
+#endif
 
    EXIT();
    return 0;
