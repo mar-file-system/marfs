@@ -1016,7 +1016,9 @@ int batch_post_process(const char* path, size_t file_size) {
 
       // remove "restart" xattr.  [Can't do this at close-time, in the case
       // of N:1 files, so we do it here, for them.]
-      info.xattrs &= ~(XVT_RESTART);
+      if( !(OBJ_PACKED == info.post.obj_type) ) {
+         info.xattrs &= ~(XVT_RESTART);
+      }
       SAVE_XATTRS(&info, (XVT_RESTART));
 
       // install more-restrictive mode, if needed.

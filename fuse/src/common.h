@@ -424,6 +424,7 @@ typedef enum {
    FH_Nto1_WRITES     = 0x0010,  // implies pftool calling. (Can write N:1)
    FH_MULTI_THR       = 0x0020,  // multi-threaded reads of FH (i.e. NFS)
    FH_RELEASING       = 0x0040,  // added to inform multi-thr during release
+   FH_PACKED          = 0x0080,  // the object in the file handle is packed
 } FHFlags;
 
 typedef uint16_t FHFlagType;
@@ -614,6 +615,10 @@ typedef struct {
    WriteStatus     write_status; // buffer-management, etc
 
    ObjectStream    os;           // handle for streaming access to objects
+   uint8_t         os_init;      // tells weather or not the object streem is inizlized
+   curl_off_t      objectSize;   // The size of the object for packed files
+   int             fileCount;    // The number of files that have been packed
+                                 // into the file
 
    FHFlagType      flags;
 } MarFS_FileHandle;
