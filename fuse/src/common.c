@@ -1630,7 +1630,7 @@ int check_quotas(PathInfo* info) {
          errno = EINVAL;
          return -1;
       }
-      if (st.st_size > space_limit) { /* 0 = OK,  1 = no-more-space */
+      if (st.st_size >= space_limit) { /* 0 = OK,  1 = no-more-space */
          LOG(LOG_INFO, "quota (%lu) exceeded by %lu\n",
              space_limit, (st.st_size - space_limit));
          return 1;

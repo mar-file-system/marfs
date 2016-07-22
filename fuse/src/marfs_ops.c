@@ -113,7 +113,7 @@ int marfs_access (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
    TRY0( access(info.post.md_path, mask) );
@@ -140,7 +140,7 @@ int marfs_faccessat (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
    TRY0( faccessat(-1, info.post.md_path, mask, flags) );
@@ -178,7 +178,7 @@ int marfs_chmod(const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    if (mode & S_ISUID) {
       LOG(LOG_ERR, "attempt to change setuid bits, on path '%s' (mode: %x)\n",
@@ -210,7 +210,7 @@ int marfs_chown (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // No need for access check, just try the op
    TRY0( lchown(info.post.md_path, uid, gid) );
@@ -283,7 +283,7 @@ int marfs_ftruncate(const char*            path,
    // IOBuf*            b    = &fh->os.iob;
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info->ns, (R_META | W_META | R_DATA | T_DATA));
 
    // POSIX ftruncate returns EBADF or EINVAL, if fd not opened for writing.
    if (! (fh->flags & FH_WRITING)) {
@@ -381,7 +381,7 @@ int marfs_getattr (const char*  path,
    LOG(LOG_INFO, "expanded    %s -> %s\n", path, info.post.md_path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, R_META);
+   CHECK_PERMS(info.ns, R_META);
 
    // The "root" namespace is artificial.  If it is configured to refer to
    // a real MDFS path, then stat'ing the root-NS will look at that path.
@@ -473,7 +473,7 @@ int marfs_getxattr (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -545,7 +545,7 @@ int marfs_listxattr (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -636,7 +636,7 @@ int marfs_mkdir (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // Check/act on quota num files
 
@@ -681,9 +681,9 @@ int marfs_mknod (const char* path,
    // don't know what the open call might be, we may be imposing
    // more-restrictive constraints than necessary.
    //
-   //   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
-   //   CHECK_PERMS(info.ns->iperms, (R_META | W_META | W_DATA | T_DATA));
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA | T_DATA));
+   //   CHECK_PERMS(info.ns, (R_META | W_META));
+   //   CHECK_PERMS(info.ns, (R_META | W_META | W_DATA | T_DATA));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | W_DATA | T_DATA));
 
    // Check/act on quotas of total-space and total-num-names
    // 0=OK, 1=exceeded, -1=error
@@ -878,7 +878,7 @@ int marfs_open(const char*         path,
    else if (flags & (O_WRONLY)) {
       fh->flags |= FH_WRITING;
       ACCESS(info->post.md_path, W_OK);
-      CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+      CHECK_PERMS(info->ns, (R_META | W_META | R_DATA | W_DATA));
 
       // Need to call readlink() on path, before this, but if path is a
       // marfs-path, readlink will invoke marfs_readlink() and we'll be
@@ -895,11 +895,11 @@ int marfs_open(const char*         path,
       //       It's just the absence of O_WRONLY!
       fh->flags |= FH_READING;
       ACCESS(info->post.md_path, R_OK);
-      CHECK_PERMS(info->ns->iperms, (R_META | R_DATA));
+      CHECK_PERMS(info->ns, (R_META | R_DATA));
    }
 
    //   if (info->flags & (O_TRUNC)) {
-   //      CHECK_PERMS(info->ns->iperms, (T_DATA));
+   //      CHECK_PERMS(info->ns, (T_DATA));
    //   }
 
 
@@ -923,6 +923,14 @@ int marfs_open(const char*         path,
 
    else if (fh->flags & FH_WRITING) {
       LOG(LOG_INFO, "writing\n");
+
+      // Check/act on quotas of total-space and total-num-names
+      // 0=OK, 1=exceeded, -1=error
+      TRY_GE0( check_quotas(info) );
+      if (rc_ssize) {
+         errno = EDQUOT;
+         return -1;
+      }
 
       // Support for pftool N:1, where (potentially) multiple writers are
       // writing different parts of the file.  It's up to the caller to
@@ -1160,7 +1168,7 @@ int marfs_opendir (const char*       path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    if (under_mdfs_top(path)) {
       LOG(LOG_ERR, "attempt to open path under mdfs_top '%s'\n", path);
@@ -1422,7 +1430,7 @@ static ssize_t marfs_read_internal (const char*        path,
    IOBuf*            b    = &os->iob;
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM  RD
-   CHECK_PERMS(info->ns->iperms, (R_META | R_DATA));
+   CHECK_PERMS(info->ns, (R_META | R_DATA));
 
    // No need to call access as we called it in open for read
    // Case
@@ -1783,7 +1791,7 @@ int marfs_readdir (const char*        path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
    // Appropriate  readdir call filling in fuse structure  (fuse does this in chunks)
@@ -1896,7 +1904,7 @@ ssize_t marfs_readlink (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
 #if 0
    // Now that we plan to mount fuse in a context where the mdfs is
@@ -2140,7 +2148,7 @@ int marfs_releasedir (const char*       path,
       EXPAND_PATH_INFO(&info, path);
 
       // Check/act on iperms from expanded_path_info_structure, this op requires RM
-      CHECK_PERMS(info.ns->iperms, (R_META));
+      CHECK_PERMS(info.ns, (R_META));
 
       // No need for access check, just try the op
       // Appropriate  closedir call filling in fuse structure
@@ -2175,7 +2183,7 @@ int marfs_removexattr (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2217,8 +2225,8 @@ int marfs_rename (const char* path,
    EXPAND_PATH_INFO(&info2, to);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms,  (R_META | W_META));
-   CHECK_PERMS(info2.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns,  (R_META | W_META));
+   CHECK_PERMS(info2.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2258,7 +2266,7 @@ int marfs_rmdir (const char* path) {
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2288,7 +2296,7 @@ int marfs_setxattr (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2329,7 +2337,7 @@ int marfs_statvfs (const char*      path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // wipe caller's statbuf
    memset(statbuf, 0, sizeof(struct statvfs));
@@ -2459,7 +2467,7 @@ int marfs_symlink (const char* target,
    EXPAND_PATH_INFO(&lnk_info, linkname);   // (okay if this file doesn't exist)
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(lnk_info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(lnk_info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(lnk_info.ns)) {
@@ -2502,7 +2510,7 @@ int marfs_truncate (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | T_DATA));
 
    // Call access syscall to check/act if allowed to truncate for this user 
    ACCESS(info.post.md_path, (W_OK));
@@ -2552,7 +2560,7 @@ int marfs_unlink (const char* path) {
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | U_DATA));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2603,7 +2611,7 @@ int marfs_utime(const char*     path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
@@ -2628,7 +2636,7 @@ int marfs_utimensat(const char*           path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
@@ -2660,7 +2668,7 @@ int marfs_utimens(const char*           path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2700,7 +2708,7 @@ ssize_t marfs_write(const char*        path,
    
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info->ns, (R_META | W_META | R_DATA | W_DATA));
 
    // No need to call access as we called it in open for write
    // Make sure security is set up for accessing the selected repo
@@ -3005,11 +3013,11 @@ int marfs_create(const char*        path,
    //   If append we don’t support that
    if (info.flags & (O_RDONLY)) {
       ACCESS(info.post.md_path, W_OK);
-      CHECK_PERMS(info.ns->iperms, (R_META | R_DATA));
+      CHECK_PERMS(info.ns, (R_META | R_DATA));
    }
    else if (info.flags & (O_WRONLY)) {
       ACCESS(info.post.md_path, W_OK);
-      CHECK_PERMS(info.ns->iperms, (R_META | W_META | | R_DATA | W_DATA));
+      CHECK_PERMS(info.ns, (R_META | W_META | | R_DATA | W_DATA));
    }
 
    if (info.flags & (O_APPEND | O_RDWR)) {
@@ -3017,7 +3025,7 @@ int marfs_create(const char*        path,
       return -1;
    }
    if (info.flags & (O_APPEND | O_TRUNC)) { /* can this happen, with create()? */
-      CHECK_PERMS(info.ns->iperms, (T_DATA));
+      CHECK_PERMS(info.ns, (T_DATA));
    }
 
 
@@ -3029,8 +3037,8 @@ int marfs_create(const char*        path,
    //       what the open call might be, we may be imposing
    //       more-restrictive constraints than necessary.
    //
-   //   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA | T_DATA));
+   //   CHECK_PERMS(info.ns, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | W_DATA | T_DATA));
 
    // Check/act on quota num names
    // No need for access check, just try the op
@@ -3055,10 +3063,11 @@ int marfs_fallocate(const char*        path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | W_DATA));
 
    // Check space quota
-   //    If  we get here just return ok  this is just a check to see if you can write to the fs
+   //    If  we get here just return ok
+   //    this is just a check to see if you can write to the fs
    EXIT();
    return 0;
 }
