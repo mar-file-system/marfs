@@ -766,8 +766,15 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
                             &info->post, info->ns->iwrite_repo,
                             (info->post.flags & POST_TRASH)) );
          LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
+#if USE_MDAL
+         __TRY0( F_OP_NOCTX(lsetxattr, info->ns, info->post.md_path,
+                            spec->key_name, xattr_value_str,
+                            strlen(xattr_value_str)+1, 0) );
+#else
          __TRY0( lsetxattr(info->post.md_path,
-                           spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
+                           spec->key_name, xattr_value_str,
+                           strlen(xattr_value_str)+1, 0) );
+#endif
          break;
       }
 
@@ -789,11 +796,23 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
             __TRY0( restart_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE,
                                   &info->restart) );
             LOG(LOG_INFO, "XVT_RESTART: %s\n", xattr_value_str);
+#if USE_MDAL
+            __TRY0( F_OP_NOCTX(lsetxattr, info->ns, info->post.md_path,
+                               spec->key_name, xattr_value_str,
+                               strlen(xattr_value_str)+1, 0) );
+#else
             __TRY0( lsetxattr(info->post.md_path,
-                              spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
+                              spec->key_name, xattr_value_str,
+                              strlen(xattr_value_str)+1, 0) );
+#endif
          }
          else {
+#if USE_MDAL
+            ssize_t val_size = F_OP_NOCTX(lremovexattr, info->ns,
+                                          info->post.md_path, spec->key_name);
+#else
             ssize_t val_size = lremovexattr(info->post.md_path, spec->key_name);
+#endif
             if (val_size < 0) {
                if (errno == ENOATTR)
                   break;           /* not a problem */
