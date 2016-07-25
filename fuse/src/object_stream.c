@@ -794,19 +794,21 @@ int stream_open(ObjectStream* os,
       aws_iobuf_writefunc(b, &streaming_writefunc);
    }
 
-   // thread runs the GET/PUT, with the iobuf in <os>
-   LOG(LOG_INFO, "starting thread\n");
-   if (pthread_create(&os->op, NULL, &s3_op, os)) {
-      LOG(LOG_ERR, "pthread_create failed: '%s'\n", strerror(errno));
-      errno = EIO;  // "something mysterious" went wrong with your write
-      return -1;
-   }
-
    os->flags |= OSF_OPEN;
    if (put)
       os->flags |= OSF_WRITING;
    else
       os->flags |= OSF_READING;
+
+   // thread runs the GET/PUT, with the iobuf in <os>
+   LOG(LOG_INFO, "starting thread\n");
+   if (pthread_create(&os->op, NULL, &s3_op, os)) {
+      LOG(LOG_ERR, "pthread_create failed: '%s'\n", strerror(errno));
+      errno = EIO;  // "something mysterious" went wrong with your write
+
+      os->flags &= ~(OSF_OPEN);
+      return -1;
+   }
 
    return 0;
 }
