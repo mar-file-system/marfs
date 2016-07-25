@@ -975,7 +975,12 @@ int marfs_open(const char*         path,
                  fh->fileCount+1 > info->pre.repo->max_pack_file_count
                 )
             ) {
-            LOG(LOG_INFO, "releasing fh: objectSize: %d, content_length: %d, chunk_size: %d, fileCount: %d, max_pack_file_count: %d\n", fh->objectSize, content_length, info->pre.repo->chunk_size, fh->fileCount, info->pre.repo->max_pack_file_count);
+            LOG(LOG_INFO, "releasing fh: objectSize: %ld, content_length: %ld, "
+                "chunk_size: %lu, fileCount: %d, "
+                "max_pack_file_count: %ld\n",
+                fh->objectSize, content_length,
+                info->pre.repo->chunk_size, fh->fileCount,
+                info->pre.repo->max_pack_file_count);
             // we need to close the current object stream and open a new one if it is a packed object
             marfs_release_fh(fh);
             return marfs_open_packed(path, fh, flags, content_length);
