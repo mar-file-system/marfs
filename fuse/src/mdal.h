@@ -89,10 +89,12 @@ OF SUCH DAMAGE.
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <attr/xattr.h>
 #include <dirent.h>
+#include <utime.h>
 
 #include <stdio.h>
 
@@ -167,7 +169,7 @@ typedef  int     (*mdal_dir_ctx_destroy) (MDAL_Context* ctx, struct MDAL* mdal);
 
 // return NULL from mdal_open(), for failure 
 // This value is only checked for NULL/non-NULL
-typedef  void*   (*mdal_open) (MDAL_Context* ctx, const char* path, int flags);
+typedef  void*   (*mdal_open) (MDAL_Context* ctx, const char* path, int flags, ...);
 typedef  int     (*mdal_close)(MDAL_Context* ctx);
 
 typedef  ssize_t (*mdal_write)(MDAL_Context* ctx, const void* buf, size_t count);
@@ -188,11 +190,15 @@ typedef  int     (*mdal_is_open) (MDAL_Context* ctx);
 // just operate on raw pathnames.  The argument will be the full path to
 // the MDFS file.
 
+typedef  int     (*mdal_access)  (const char* path, int mask);
+typedef  int     (*mdal_faccessat)(int fd, const char* path, int mask, int flags);
 typedef  int     (*mdal_mknod)   (const char* path, mode_t mode, dev_t dev);
 typedef  int     (*mdal_chmod)   (const char* path, mode_t mode);
 typedef  int     (*mdal_truncate)(const char* path, off_t size);
+typedef  int     (*mdal_lchown)  (const char* path, uid_t owner, gid_t group);
 typedef  int     (*mdal_lstat)   (const char* path, struct stat* st);
 typedef  int     (*mdal_rename)  (const char* from, const char* to);
+typedef  int     (*mdal_readlink)(const char* path, char* buf, size_t size);
 
 typedef  ssize_t (*mdal_lgetxattr)   (const char* path, const char* name,
                                       void* value, size_t size);
@@ -200,7 +206,17 @@ typedef  ssize_t (*mdal_lsetxattr)   (const char* path, const char* name,
                                       const void* value, size_t size, int flags);
 typedef  int     (*mdal_lremovexattr)(const char* path, const char* name);
 typedef  ssize_t (*mdal_llistxattr)  (const char* path, char* list, size_t size);
+typedef  int     (*mdal_symlink)     (const char* target, const char* linkname);
+typedef  int     (*mdal_unlink)      (const char* path);
 
+typedef  int     (*mdal_utime)    (const char* filename, const struct utimbuf *times);
+// NOTE: utimens seems like it should take a MDAL_Context parameter to
+//       provide the equivalent of a dirfd; however, anyone calling into the
+//       MDAL should be doing so through marfs_utimensat or marfs_utimens
+//       which assume that the path is absolute and dirfd should be ignored.
+//       Therefore, this is implemented as context free operation.
+typedef  int     (*mdal_utimensat)(int dirfd, const char *pathname,
+                                   const struct timespec times[2], int flags);
 
 
 
@@ -210,7 +226,6 @@ typedef  ssize_t (*mdal_llistxattr)  (const char* path, char* list, size_t size)
 // The others return 0 for success, -1 (plus errno) for failure.
 // Any required state must be maintained in the context.
 
-typedef  int     (*mdal_mkdir)  (MDAL_Context* ctx, const char* path, mode_t mode);
 typedef  void*   (*mdal_opendir)(MDAL_Context* ctx, const char* path);
 typedef  int     (*mdal_readdir)(MDAL_Context*      ctx,
                                  const char*        path,
@@ -221,9 +236,11 @@ typedef  int     (*mdal_readdir)(MDAL_Context*      ctx,
 //                                           struct dirent* entry, struct dirent** result);
 typedef  int     (*mdal_closedir)(MDAL_Context* ctx);
 
+// --- directory-ops (context-free)
+typedef  int     (*mdal_mkdir)  (const char* path, mode_t mode);
+typedef  int     (*mdal_rmdir)  (const char* path);
 
-
-
+typedef  int     (*mdal_statvfs)(const char* path, struct statvfs *buf);
 
 
 // This is a collection of function-ptrs
@@ -245,20 +262,32 @@ typedef struct MDAL {
    mdal_ftruncate     ftruncate;
    mdal_lseek         lseek;
 
+   mdal_access        access;
+   mdal_faccessat     faccessat;
    mdal_mknod         mknod;
    mdal_chmod         chmod;
    mdal_truncate      truncate;
+   mdal_lchown        lchown;
    mdal_lstat         lstat;
    mdal_rename        rename;
+   mdal_readlink      readlink;
    mdal_lgetxattr     lgetxattr;
    mdal_lsetxattr     lsetxattr;
    mdal_lremovexattr  lremovexattr;
    mdal_llistxattr    llistxattr;
+   mdal_symlink       symlink;
+   mdal_unlink        unlink;
+
+   mdal_utime         utime;
+   mdal_utimensat     utimensat;
 
    mdal_mkdir         mkdir;
+   mdal_rmdir         rmdir;
    mdal_opendir       opendir;
    mdal_readdir       readdir;
    mdal_closedir      closedir;
+
+   mdal_statvfs       statvfs;
 
    mdal_is_open       is_open;
 } MDAL;
