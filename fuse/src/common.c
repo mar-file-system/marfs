@@ -1097,8 +1097,15 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          // create the new xattr-value from info->pre
          __TRY0( pre_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->pre) );
          LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
+#if USE_MDAL
+         __TRY0( F_OP_NOCTX(lsetxattr, info->ns,
+                            info->post.md_path,
+                            spec->key_name, xattr_value_str,
+                            strlen(xattr_value_str)+1, 0) );
+#else
          __TRY0( lsetxattr(info->post.md_path,
                            spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
+#endif
          break;
       }
 
@@ -1331,7 +1338,11 @@ int  trash_unlink(PathInfo*   info,
    __TRY0( stat_xattrs(info) );
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // not enough to reclaim objs
+#if USE_MDAL
+      __TRY0( F_OP_NOCTX(unlink, info->ns, info->post.md_path) );
+#else
       __TRY0( unlink(info->post.md_path) );
+#endif
       return 0;
    }
 
