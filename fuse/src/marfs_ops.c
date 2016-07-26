@@ -147,7 +147,11 @@ int marfs_faccessat (const char* path,
    CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
+#if USE_MDAL
+   TRY0( F_OP_NOCTX(faccessat, info.ns, -1, info.post.md_path, mask, flags) );
+#else
    TRY0( faccessat(-1, info.post.md_path, mask, flags) );
+#endif
  
    EXIT();
    return 0;
