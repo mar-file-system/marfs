@@ -124,8 +124,8 @@ int main(int argc, char* argv[])
       LOG(LOG_ERR, "read_configuration() failed.  Quitting\n");
       return -1;
    }
-   else if (validate_config()) {
-      LOG(LOG_ERR, "validate_config() failed.  Quitting\n");
+   else if (validate_configuration()) {
+      LOG(LOG_ERR, "validate_configuration() failed.  Quitting\n");
       return -1;
    }
 

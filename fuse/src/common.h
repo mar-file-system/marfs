@@ -292,11 +292,27 @@ typedef struct {
 
 
 // this follows symlinks!
-#define ACCESS(PATH, PERMS)            TRY0( access((PATH), (PERMS)) )
+#if USE_MDAL
+// NOTE: It might be wrong to expand path info here, as this macro is
+//       often called on the info.post->md_path.
+#define ACCESS(NAMESPACE, PATH, PERMS)                                  \
+   TRY0( F_OP_NOCTX(access, (NAMESPACE), (PATH), (PERMS)) )
+#else
+#define ACCESS(PATH, PERMS) TRY0( access((PATH), (PERMS)) )
+#endif
 
+// NOTE: faccessat, with the AT_EACCESS flag is probably a good solution to
+//       the problem of access testing against real user id, rather than
+//       effective user id.
 // With these args, this doesn't follow symlinks
+#if USE_MDAL
+#define FACCESSAT(NAMESPACE, PATH, PERMS)                               \
+   TRY0( F_OP_NOCTX(faccessat, (NAMESPACE), 0, (PATH), (PERMS),         \
+                    (AT_EACCESS | AT_SYMLINK_NOFOLLOW)) )
+#else
 #define FACCESSAT(PATH, PERMS)                                          \
    TRY0( faccessat(0, (PATH), (PERMS), (AT_EACCESS | AT_SYMLINK_NOFOLLOW) )
+#endif
 
 
 // ---------------------------------------------------------------------------
@@ -684,7 +700,8 @@ typedef struct {
 #  define D_CTX(DH)          &(DH)->internal.d_handle.ctx
 #  define D_MDAL(DH)         (DH)->internal.d_handle.mdal
 
-#  define D_OP(OP,DH, ...)   (*(DH)->internal.d_handle.mdal->OP)(D_CTX(DH), ##__VA_ARGS__)
+#  define D_OP(OP,DH, ...)        (*(DH)->internal.d_handle.mdal->OP)(D_CTX(DH), ##__VA_ARGS__)
+#  define D_OP_NOCTX(OP, NS, ...) (*(NS)->dir_MDAL->OP)(__VA_ARGS__)
 /*
 #  define D_OP(OP,DH, ...)                                            \
    do {                                                               \
