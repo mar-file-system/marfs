@@ -620,11 +620,16 @@ typedef struct {
    PathInfo        info;         // includes xattrs, MDFS path, etc
    char            ns_path[MARFS_MAX_NS_PATH];  // path in NS, not in MDFS
 
-#if USE_MDAL
+   // NOTE: These are temporarily both defined, so that file-handles will
+   //       have a constant size, regardless of whether USE_MDAL is defined
+   //       or not, to provide a short-term solution to the issue at
+   //       https://github.com/pftool/pftool/issues/31
+   //
+   //#if USE_MDAL
    MDAL_Handle     f_handle;     // file-oriented MDAL ops
-#else
+   //#else
    int             md_fd;        // opened for reading meta-data, or data
-#endif
+   //#endif
 
    curl_off_t      open_offset;  // [see comments at marfs_open_with_offset()]
    ReadStatus      read_status;  // buffer_management, current_offset, etc
@@ -684,11 +689,16 @@ typedef struct {
    uint8_t   use_it;         // if non-zero, use <it>, else use internal.dirp/d_handle
 
    union {
-#if USE_MDAL
+   // NOTE: These are temporarily both defined, so that dir-handles will
+   //       have a constant size, regardless of whether USE_MDAL is defined
+   //       or not, to provide a short-term solution to the issue at
+   //       https://github.com/pftool/pftool/issues/31
+   //
+      // #if USE_MDAL
       MDAL_Handle d_handle;  // dir-oriented MDAL ops
-#else
+      // #else
       DIR*        dirp;
-#endif
+      // #endif
       NSIterator  it;
    } internal;
 
