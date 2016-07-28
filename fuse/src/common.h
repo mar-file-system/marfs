@@ -298,7 +298,7 @@ typedef struct {
 #define ACCESS(NAMESPACE, PATH, PERMS)                                  \
    TRY0( F_OP_NOCTX(access, (NAMESPACE), (PATH), (PERMS)) )
 #else
-#define ACCESS(PATH, PERMS) TRY0( access((PATH), (PERMS)) )
+#define ACCESS(_NS, PATH, PERMS) TRY0( access((PATH), (PERMS)) )
 #endif
 
 // NOTE: faccessat, with the AT_EACCESS flag is probably a good solution to
@@ -634,6 +634,22 @@ typedef struct {
    FHFlagType      flags;
 } MarFS_FileHandle;
 
+// I'm not sure this is an improvement over all the #ifs
+#if USE_MDAL
+#  define MD_FILE_OP(...)   F_OP( __VA_ARGS__ )
+#  define MD_DIR_OP(...)    D_OP( __VA_ARFS__ )
+#  define MD_PATH_OP(...)   F_OP_NOCTX( __VA_ARGS__ )
+// unfirtunately we need this in order to use the dir_MDAL for mkdir/rmdir
+#  define MD_D_PATH_OP(...) D_OP_NOCTX( __VA_ARGS__ )
+#else
+// We don't always want the fh->md_fd (see write_trash_companion_file)
+//  ... BUT ... maybe the only place we don't is the trash functions,
+//  which can be easily (?) rewriten.
+#  define MD_FILE_OP(OP, FH, ...)       (OP)( (FH)->md_fd, __VA_ARGS__ )
+#  define MD_DIR_OP(OP, _NS, ...)      (OP)( __VA_ARGS__ )
+#  define MD_PATH_OP(OP, _NS, ...)   (OP)( __VA_ARGS__ )
+#  define MD_D_PATH_OP(OP, _NS, ...) (OP)( __VA_ARGS__ )
+#endif
 
 #if USE_MDAL
 // shorthand
@@ -772,6 +788,9 @@ extern int  update_timeouts(ObjectStream* os, PathInfo* info);
 extern int  open_md   (MarFS_FileHandle* fh, int writing_p);
 extern int  is_open_md(MarFS_FileHandle* fh);
 extern int  close_md  (MarFS_FileHandle* fh);
+
+extern int  opendir_md(MarFS_DirHandle* fh, PathInfo* info);
+extern int  closedir_md(MarFS_DirHandle *dh);
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 // From fuse, <user_data_written> is total from zero. From pftool, it's the
