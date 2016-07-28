@@ -116,11 +116,7 @@ int marfs_access (const char* path,
    CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
-#if USE_MDAL
-   TRY0( F_OP_NOCTX(access, info.ns, info.post.md_path, mask) );
-#else
-   TRY0( access(info.post.md_path, mask) );
-#endif
+   TRY0( MD_PATH_OP(access, info.ns, info.post.md_path, mask) );
  
    EXIT();
    return 0;
@@ -147,11 +143,7 @@ int marfs_faccessat (const char* path,
    CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
-#if USE_MDAL
-   TRY0( F_OP_NOCTX(faccessat, info.ns, -1, info.post.md_path, mask, flags) );
-#else
-   TRY0( faccessat(-1, info.post.md_path, mask, flags) );
-#endif
+   TRY0( MD_PATH_OP(faccessat, info.ns, -1, info.post.md_path, mask, flags) );
  
    EXIT();
    return 0;
@@ -198,11 +190,7 @@ int marfs_chmod(const char* path,
    // No need for access check, just try the op
    // WARNING: No lchmod() on rrz.
    //          chmod() always follows links.
-#if USE_MDAL
-   TRY0( F_OP_NOCTX(chmod, info.ns, info.post.md_path, mode) );
-#else
-   TRY0( chmod(info.post.md_path, mode) );
-#endif
+   TRY0( MD_PATH_OP(chmod, info.ns, info.post.md_path, mode) );
 
    EXIT();
    return 0;
@@ -221,11 +209,7 @@ int marfs_chown (const char* path,
    CHECK_PERMS(info.ns, (R_META | W_META));
 
    // No need for access check, just try the op
-#if USE_MDAL
-   TRY0( F_OP_NOCTX(lchown, info.ns, info.post.md_path, uid, gid) );
-#else
-   TRY0( lchown(info.post.md_path, uid, gid) );
-#endif
+   TRY0( MD_PATH_OP(lchown, info.ns, info.post.md_path, uid, gid) );
 
    EXIT();
    return 0;
@@ -319,11 +303,7 @@ int marfs_ftruncate(const char*            path,
 
 
    // Call access() syscall to check/act if allowed to truncate for this user
-#if USE_MDAL
    ACCESS(info->ns, info->post.md_path, (W_OK));
-#else
-   ACCESS(info->post.md_path, (W_OK));        /* for truncate? */
-#endif
 
    TRY0( open_md(fh, 1) );
 
@@ -333,11 +313,7 @@ int marfs_ftruncate(const char*            path,
    STAT_XATTRS(info);
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs.  Treating as DIRECT.\n");
-#if USE_MDAL
-      TRY0( F_OP(ftruncate, fh, length) );
-#else
-      TRY0( ftruncate(fh->md_fd, length) );
-#endif
+      TRY0( MD_FILE_OP(ftruncate, fh, length) );
       return 0;
    }
 
@@ -354,11 +330,7 @@ int marfs_ftruncate(const char*            path,
    // metadata filehandle is still open to the current MD file.
    // That's okay, but we need to ftruncate it, as well.
    TRY0( open_md(fh, 1) );
-#if USE_MDAL
-   F_OP(ftruncate, fh, length); // (length == 0)
-#else
-   ftruncate(fh->md_fd, length); // (length == 0)
-#endif
+   MD_FILE_OP(ftruncate, fh, length); // (length == 0)
 
    // open a stream to the new object.  We assume that the libaws4c context
    // initializations done in marfs_open are still valid.  trash_truncate()
@@ -455,11 +427,7 @@ int marfs_getattr (const char*  path,
       // NOTE: kernel should already have called readlink, to get past any
       //     symlinks.  lstat here is just to be safe.
       LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
-#if USE_MDAL
-      TRY0( F_OP_NOCTX(lstat, info.ns, info.post.md_path, stp) );
-#else
-      TRY0( lstat(info.post.md_path, stp) );
-#endif
+      TRY0( MD_PATH_OP(lstat, info.ns, info.post.md_path, stp) );
    }
 
    // mask out setuid bits.  Those are belong to us.  (see marfs_chmod())
@@ -512,11 +480,8 @@ int marfs_getxattr (const char* path,
    //     lgetxattr("system.posix_acl_access",path,0,0).  The kernel calls
    //     us with this, for 'ls -l /marfs/jti/blah'.
 
-#if USE_MDAL
-   TRY_GE0( F_OP_NOCTX(lgetxattr, info.ns, info.post.md_path, name, (void*)value, size) );
-#else
-   TRY_GE0( lgetxattr(info.post.md_path, name, (void*)value, size) );
-#endif
+   TRY_GE0( MD_PATH_OP(lgetxattr, info.ns,
+                       info.post.md_path, name, (void*)value, size) );
    ssize_t result = rc_ssize;
 
    EXIT();
@@ -573,11 +538,7 @@ int marfs_listxattr (const char* path,
    // No need for access check, just try the op
    // Appropriate  listxattr call
    // NOTE: If caller passes <list>=0, we'll be fine.
-#if USE_MDAL
-   TRY_GE0( F_OP_NOCTX(llistxattr, info.ns, info.post.md_path, list, size) );
-#else
-   TRY_GE0( llistxattr(info.post.md_path, list, size) );
-#endif
+   TRY_GE0( MD_PATH_OP(llistxattr, info.ns, info.post.md_path, list, size) );
 
    // In the case where list==0, we return the size of the buffer that
    // caller would need, in order to receive all our xattr data.
@@ -657,11 +618,7 @@ int marfs_mkdir (const char* path,
    // Check/act on quota num files
 
    // No need for access check, just try the op
-#if USE_MDAL
-   TRY0( D_OP_NOCTX(mkdir, info.ns, info.post.md_path, mode) );
-#else
-   TRY0( mkdir(info.post.md_path, mode) );
-#endif
+   TRY0( MD_D_PATH_OP(mkdir, info.ns, info.post.md_path, mode) );
 
    EXIT();
    return 0;
@@ -726,11 +683,7 @@ int marfs_mknod (const char* path,
 
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
-#if USE_MDAL
-   TRY0( F_OP_NOCTX(mknod, info.ns, info.post.md_path, mode, rdev) );
-#else
-   TRY0( mknod(info.post.md_path, mode, rdev) );
-#endif
+   TRY0( MD_PATH_OP(mknod, info.ns, info.post.md_path, mode, rdev) );
    LOG(LOG_INFO, "mode: (octal) 0%o\n", mode);
 
    // PROBLEM: marfs_open() assumes that a file that exists, which doesn't
@@ -897,11 +850,7 @@ int marfs_open(const char*         path,
    }
    else if (flags & (O_WRONLY)) {
       fh->flags |= FH_WRITING;
-#if USE_MDAL
       ACCESS(info->ns, info->post.md_path, W_OK);
-#else
-      ACCESS(info->post.md_path, W_OK);
-#endif
       CHECK_PERMS(info->ns, (R_META | W_META | R_DATA | W_DATA));
 
       // Need to call readlink() on path, before this, but if path is a
@@ -917,11 +866,7 @@ int marfs_open(const char*         path,
       // NOTE: O_RDONLY is not actually a flag!
       //       It's just the absence of O_WRONLY!
       fh->flags |= FH_READING;
-#if USE_MDAL
       ACCESS(info->ns, info->post.md_path, R_OK);
-#else
-      ACCESS(info->post.md_path, R_OK);
-#endif
       CHECK_PERMS(info->ns, (R_META | R_DATA));
    }
 
@@ -1230,26 +1175,14 @@ int marfs_opendir (const char*       path,
    // Appropriate  opendir call filling in fuse structure
    ///   mode_t mode = ~(fuse_get_context()->umask); /* ??? */
 
-#if USE_MDAL
-   D_MDAL(dh) = info.ns->dir_MDAL;
-   LOG(LOG_INFO, "dir-MDAL: %s\n", MDAL_type_name(D_MDAL(dh)->type));
 
-   // allow MDAL implementation to do any initializations necessary
-   D_OP(d_init, dh, D_MDAL(dh));
-
-   TRY_GT0( D_OP(opendir, dh, info.post.md_path) );
-
-#else
-   LOG(LOG_INFO, "ignoring dir-MDAL\n");
-
-   ///   TRY_GE0( opendir(info.md_path, ffi->flags, mode) );
-   ///   TRY_GE0( opendir(info.post.md_path) );
-   TRY_GT0( opendir(info.post.md_path) );
-
-   ///   ffi->fh = rc_ssize;          /* open() successfully returned a dirp */
-   dh->internal.dirp = (DIR*)rc_ssize;
-#endif
-
+   // NOTE: Can't remove conditional compilation here because of
+   // mdal initialization and dh->internal.dirp update in non-
+   // mdal version.
+   //
+   // We could make an opendir_md function in common, analgous to
+   // open_md, which would hide the conditional compilation from us.
+   TRY_GT0( opendir_md(dh, &info) );
 
    EXIT();
    return 0;
@@ -1468,11 +1401,7 @@ static ssize_t marfs_read_internal (const char*        path,
        // && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)
        ) {
       LOG(LOG_INFO, "reading DIRECT\n");
-#if USE_MDAL
-      TRY_GE0( F_OP(read, fh, buf, size) );
-#else
-      TRY_GE0( read(fh->md_fd, buf, size) );
-#endif
+      TRY_GE0( MD_FILE_OP(read, fh, buf, size) );
       return rc_ssize;
    }
 
@@ -1950,11 +1879,7 @@ ssize_t marfs_readlink (const char* path,
 #else
    // No need for access check, just try the op
    // Appropriate readlink-like call filling in fuse structure 
-#  if USE_MDAL
-   TRY_GE0( F_OP_NOCTX(readlink, info.ns, info.post.md_path, buf, size) );
-#  else
-   TRY_GE0( readlink(info.post.md_path, buf, size) );
-#  endif
+   TRY_GE0( MD_PATH_OP(readlink, info.ns, info.post.md_path, buf, size) );
    if (rc_ssize >= size) {
       LOG(LOG_ERR, "no room for '\\0'\n");
       errno = ENAMETOOLONG;
@@ -2106,11 +2031,7 @@ int marfs_release (const char*        path,
        && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
 
       off_t size = os->written - fh->write_status.sys_writes;
-#if USE_MDAL
-      TRY0( F_OP_NOCTX(truncate, info->ns, info->post.md_path, size) );
-#else
-      TRY0( truncate(info->post.md_path, size) );
-#endif
+      TRY0( MD_PATH_OP(truncate, info->ns, info->post.md_path, size) );
    }
 
 
@@ -2139,11 +2060,8 @@ int marfs_release (const char*        path,
       // manipulating xattrs while the file was open.  If so, we preserved
       // the desired final mode in RESTART.)
       if (install_final_mode) {
-#if USE_MDAL
-         TRY0( F_OP_NOCTX(chmod, info->ns, info->post.md_path, info->restart.mode) );
-#else
-         TRY0( chmod(info->post.md_path, info->restart.mode) );
-#endif
+         TRY0( MD_PATH_OP(chmod, info->ns,
+                          info->post.md_path, info->restart.mode) );
       }
    }
 
@@ -2185,14 +2103,7 @@ int marfs_releasedir (const char*       path,
       // Appropriate  closedir call filling in fuse structure
       if (! dh->use_it) {
          LOG(LOG_INFO, "not root-dir\n");
-
-#if USE_MDAL
-         TRY0( D_OP(closedir, dh) );
-         TRY0( D_OP(d_destroy, dh, D_MDAL(dh)) );
-#else
-         DIR* dirp = dh->internal.dirp;
-         TRY0( closedir(dirp) );
-#endif
+         closedir_md(dh);
       }
    }
 
@@ -2231,12 +2142,7 @@ int marfs_removexattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  removexattr call filling in fuse structure 
-
-#if USE_MDAL
-   TRY0( F_OP_NOCTX(lremovexattr, info.ns, info.post.md_path, name) );
-#else
-   TRY0( lremovexattr(info.post.md_path, name) );
-#endif
+   TRY0( MD_PATH_OP(lremovexattr, info.ns, info.post.md_path, name) );
 
    EXIT();
    return 0;
@@ -2273,11 +2179,7 @@ int marfs_rename (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  rename call filling in fuse structure 
-#if USE_MDAL
-   TRY0( CTX_FREE_OP(rename, info.ns, info.post.md_path, info2.post.md_path) );
-#else
-   TRY0( rename(info.post.md_path, info2.post.md_path) );
-#endif
+   TRY0( MD_PATH_OP(rename, info.ns, info.post.md_path, info2.post.md_path) );
 
    EXIT();
    return 0;
@@ -2308,11 +2210,7 @@ int marfs_rmdir (const char* path) {
 
    // No need for access check, just try the op
    // Appropriate rmdirlike call filling in fuse structure 
-#if USE_MDAL
-   TRY0( D_OP_NOCTX(rmdir, info.ns, info.post.md_path) );
-#else
-   TRY0( rmdir(info.post.md_path) );
-#endif
+   TRY0( MD_D_PATH_OP(rmdir, info.ns, info.post.md_path) );
 
    EXIT();
    return 0;
@@ -2349,11 +2247,8 @@ int marfs_setxattr (const char* path,
 
    // No need for access check, just try the op
    // Appropriate  setxattr call filling in fuse structure 
-#if USE_MDAL
-   TRY0( F_OP_NOCTX(lsetxattr, info.ns, info.post.md_path, name, value, size, flags) );
-#else
-   TRY0( lsetxattr(info.post.md_path, name, value, size, flags) );
-#endif
+   TRY0( MD_PATH_OP(lsetxattr, info.ns,
+                    info.post.md_path, name, value, size, flags) );
 
    EXIT();
    return 0;
@@ -2476,12 +2371,9 @@ int marfs_statvfs (const char*      path,
       statbuf->f_flag    = 0;     /* mount flags */
       statbuf->f_namemax = 255;     /* maximum filename length */
    }
-   else
-#if USE_MDAL
-      TRY0( CTX_FREE_OP(statvfs, info.ns, info.ns->md_path, statbuf) );
-#else
-      TRY0( statvfs(info.ns->md_path, statbuf) );
-#endif
+   else {
+      TRY0( MD_PATH_OP(statvfs, info.ns, info.ns->md_path, statbuf) );
+   }
 
    EXIT();
    return 0;
@@ -2527,11 +2419,7 @@ int marfs_symlink (const char* target,
 
    // No need for access check, just try the op
    // Appropriate  symlink call filling in fuse structure
-#if USE_MDAL
-   TRY0( F_OP_NOCTX(symlink, lnk_info.ns, target, lnk_info.post.md_path) );
-#else
-   TRY0( symlink(target, lnk_info.post.md_path) );
-#endif
+   TRY0( MD_PATH_OP(symlink, lnk_info.ns, target, lnk_info.post.md_path) );
 
    EXIT();
    return 0;
@@ -2556,11 +2444,7 @@ int marfs_truncate (const char* path,
    CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | T_DATA));
 
    // Call access syscall to check/act if allowed to truncate for this user 
-#if USE_MDAL
    ACCESS(info.ns, info.post.md_path, (W_OK));
-#else
-   ACCESS(info.post.md_path, (W_OK));
-#endif
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2573,11 +2457,7 @@ int marfs_truncate (const char* path,
    STAT_XATTRS(&info); // to get xattrs
    if (! has_any_xattrs(&info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs\n");
-#if USE_MDAL
-      TRY0( F_OP_NOCTX(truncate, info.ns, info.post.md_path, size) );
-#else
-      TRY0( truncate(info.post.md_path, size) );
-#endif
+      TRY0( MD_PATH_OP(truncate, info.ns, info.post.md_path, size) );
       return 0;
    }
 
@@ -2663,11 +2543,7 @@ int marfs_utime(const char*     path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
-#if USE_MDAL
-   TRY_GE0( F_OP_NOCTX(utime, info.ns, info.post.md_path, buf) );
-#else
-   TRY_GE0( utime(info.post.md_path, buf) );
-#endif
+   TRY_GE0( MD_PATH_OP(utime, info.ns, info.post.md_path, buf) );
 
    EXIT();
    return 0;
@@ -2692,12 +2568,8 @@ int marfs_utimensat(const char*           path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
-#if USE_MDAL
-   TRY_GE0( F_OP_NOCTX(utimensat, info.ns, AT_FDCWD, info.post.md_path,
-                       times, flags) );
-#else
-   TRY_GE0( utimensat(AT_FDCWD, info.post.md_path, times, flags) );
-#endif
+   TRY_GE0( MD_PATH_OP(utimensat, info.ns,
+                       AT_FDCWD, info.post.md_path, times, flags) );
 
    EXIT();
    return 0;
@@ -2736,12 +2608,8 @@ int marfs_utimens(const char*           path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
-#if USE_MDAL
-   TRY_GE0( F_OP_NOCTX(utimensat, info.ns, 0, info.post.md_path,
-                        tv, AT_SYMLINK_NOFOLLOW) );
-#else
-   TRY_GE0( utimensat(0, info.post.md_path, tv, AT_SYMLINK_NOFOLLOW) );
-#endif
+   TRY_GE0( MD_PATH_OP(utimensat, info.ns,
+                       0, info.post.md_path, tv, AT_SYMLINK_NOFOLLOW) );
 
    EXIT();
    return 0;
@@ -2779,11 +2647,8 @@ ssize_t marfs_write(const char*        path,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)
        && (info->pre.repo->access_method == ACCESSMETHOD_DIRECT)) {
       LOG(LOG_INFO, "no xattrs, and DIRECT: writing to file\n");
-#if USE_MDAL
-      TRY_GE0( F_OP(write, fh, buf, size) );
-#else
-      TRY_GE0( write(fh->md_fd, buf, size) );
-#endif
+      TRY_GE0( MD_FILE_OP(write, fh, buf, size) );
+
       return rc_ssize;
    }
 
@@ -3012,11 +2877,7 @@ ssize_t marfs_write(const char*        path,
        && !(fh->flags & FH_Nto1_WRITES)) {
 
       off_t size = os->written - fh->write_status.sys_writes;
-# if USE_MDAL
-      TRY0( F_OP_NOCTX(truncate, info->ns, info->post.md_path, size) );
-# else
-      TRY0( truncate(info->post.md_path, size) );
-# endif
+      TRY0( MD_PATH_OP(truncate, info->ns, info->post.md_path, size) );
    }
 #endif
 
@@ -3073,19 +2934,11 @@ int marfs_create(const char*        path,
    //   If wronly/rdwr/trunk  RMWMRDWD
    //   If append we don’t support that
    if (info.flags & (O_RDONLY)) {
-#if USE_MDAL
       ACCESS(info.ns, info.post.md_path, W_OK);
-#else
-      ACCESS(info.post.md_path, W_OK);
-#endif
       CHECK_PERMS(info.ns, (R_META | R_DATA));
    }
    else if (info.flags & (O_WRONLY)) {
-#if USE_MDAL
       ACCESS(info.ns, info.post.md_path, W_OK);
-#else
-      ACCESS(info.post.md_path, W_OK);
-#endif
       CHECK_PERMS(info.ns, (R_META | W_META | | R_DATA | W_DATA));
    }
 
@@ -3112,11 +2965,7 @@ int marfs_create(const char*        path,
    // Check/act on quota num names
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
-#if USE_MDAL
-   TRY0( F_OP_NOCTX(mknod, info.ns, info.post.md_path, mode, rdev) );
-#else
-   TRY0( mknod(info.post.md_path, mode, rdev) );
-#endif
+   TRY0( MD_PATH_OP(mknod, info.ns, info.post.md_path, mode, rdev) );
 
    EXIT();
    return 0;
@@ -3161,14 +3010,10 @@ int marfs_fgetattr(const char*        path,
    // appropriate fgetattr/fstat call filling in fuse structure (dont mess with xattrs)
    PathInfo*         info = &fh->info;                  /* shorthand */
 
-#if USE_MDAL
    // While this is being called on an open file, the op is still
    // context free since we are using lstat to get the file attrs and
    // that operates on raw pathnames.
-   TRY0( F_OP(lstat, fh, info->post.md_path, st) );
-#else
-   TRY0( lstat(info->post.md_path, st) );
-#endif
+   TRY0( MD_PATH_OP(lstat, info->ns, info->post.md_path, st) );
 
    EXIT();
    return 0;
