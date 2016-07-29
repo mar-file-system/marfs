@@ -1212,6 +1212,8 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
    }
 #endif
 
+   va_end(ap);
+   
    LOG(LOG_INFO, "open_md_path(%s) ok\n", path);
    return 0;
 }
