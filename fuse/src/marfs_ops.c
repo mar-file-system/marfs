@@ -2245,7 +2245,7 @@ int marfs_clear_restart(const char* path) {
       // would've prevented manipulating xattrs.  If so, then (after removing
       // the RESTART xattr) install the more-restrictive mode.
       int    install_new_mode = 0;
-      mode_t new_mode;
+      mode_t new_mode = 0;      // else gcc worries about "used uninitialized"
       if (has_all_xattrs(&info, XVT_RESTART)
           && (info.restart.flags & RESTART_MODE_VALID)) {
 
