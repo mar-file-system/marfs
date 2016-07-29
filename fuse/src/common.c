@@ -1139,6 +1139,16 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
    return 0;                    /* "success" */
 }
 
+static
+void init_filehandle(MarFS_FileHandle* fh, PathInfo* info) {
+   memset((char*)fh, 0, sizeof(MarFS_FileHandle));
+   fh->info = *info;
+#if USE_MDAL
+   F_MDAL(fh) = info->pre.ns->file_MDAL;
+   LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
+   F_OP(f_init, fh, F_MDAL(fh));
+#endif
+}
 
 // This should only be used internally.
 // Open an arbitrary path in the MDFS storing the relevant state (file
@@ -1151,6 +1161,9 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
    va_start(ap, flags);
    
    // initialize the file handle MDAL
+   // As this is used now, the file handle mdal will already be initialized
+   // whenever this is called... Could maybe clean this up, but it might
+   // make it less flexible.
 #if USE_MDAL
    if(! F_MDAL(fh)) {
       F_MDAL(fh) = info->pre.ns->file_MDAL;
@@ -1246,10 +1259,7 @@ int write_trash_companion_file(PathInfo*             info,
 
    // Set up a file handle for the trash companion file
    MarFS_FileHandle companion_fh;
-   memset((char*)&companion_fh, 0, sizeof(MarFS_FileHandle));
-
-   // initialize the File Handle MDAL
-   companion_fh.info = *info;
+   init_filehandle(&companion_fh, info);
 
    // Open the file
    open_md_path(&companion_fh, companion_fname,
@@ -1451,8 +1461,7 @@ int  trash_truncate(PathInfo*   info,
       // read from md_file
       // file handle for the metadata file
       MarFS_FileHandle md_fh;
-      memset((char*)&md_fh, 0, sizeof(MarFS_FileHandle));
-      md_fh.info = *info;
+      init_filehandle(&md_fh, info);
       // open_md will initialize the file handle for us.
       open_md(&md_fh, 0 /* open for reading */);
       if(! is_open_md(&md_fh)) {
@@ -1462,8 +1471,7 @@ int  trash_truncate(PathInfo*   info,
       }
       // write to trash file
       MarFS_FileHandle trash_fh;
-      memset((char*)&trash_fh, 0, sizeof(MarFS_FileHandle));
-      trash_fh.info = *info;
+      init_filehandle(&trash_fh, info);
       open_md_path(&trash_fh, info->trash_md_path,
                    (O_CREAT|O_WRONLY), new_mode);
       if(! is_open_md(&trash_fh)) {
