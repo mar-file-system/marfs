@@ -212,13 +212,11 @@ endif
 
 
 # For testing new MDAL code
-LIB_NAME = marfs_nomdal
+#
 ifdef USE_MDAL
 	DEFS += USE_MDAL=$(USE_MDAL)
-	LIB_NAME = marfs_mdal
 endif
 
-LIBMARFS = lib$(LIB_NAME)
 
 
 # NOTE: You should define LIBAWS4C in your environment, using one of the
@@ -231,7 +229,6 @@ LIBMARFS = lib$(LIB_NAME)
 CFLAGS    += -I$(LIBAWS4C)
 LDFLAGS   += -L$(LIBAWS4C)
 LIBS      += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread -lrt
-
 FUSE_DEPS += $(LIBAWS4C)/libaws4c.a
 
 
@@ -307,8 +304,6 @@ ifdef LINK_LIBFUSE
 	DEFS    += LINK_LIBFUSE
 endif
 
-
-LIBS += -l$(LIB_NAME)
 
 # assimilate all the DEFS we've added, into CFLAGS
 CFLAGS  += $(patsubst %, -D%, $(DEFS))
@@ -434,7 +429,7 @@ clean: # cleanx
 	$(RM) marfs_fuse
 	$(RM) marfs_pipe
 	$(RM) core.*
-	$(RM) libmarfs*.a
+	$(RM) libmarfs.a
 
 
 
@@ -460,10 +455,10 @@ endif
 
 
 # Don't make this directly; make one of the 'fuse.foo' targets below.
-marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS) $(LIBMARFS).a
+marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS) libmarfs.a
 	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose main.c $(OBJS) $(LIBS)
 	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
-	gcc $(CFLAGS) -o $@ $(LDFLAGS) -L$(PWD) main.c $(LIBS)
+	gcc $(CFLAGS) -o $@ $(LDFLAGS) -L$(PWD) main.c $(LIBS) -lmarfs
 
 fuse:  fuse.std
 fast:  fuse.fast
@@ -525,19 +520,12 @@ remount: umnt
 # library, containing everything except main()
 # ...........................................................................
 
-# We make one of the following symlinks, so apps that don't care
-# about the MDAL-ity of libmarfs can just always link with libmarfs.a
-#
-#     libmarfs.a -> libmarfs_mdal.a
-#     libmarfs.a -> libmarfs_nomdal.a
-#
-$(LIBMARFS).a: $(OBJS) | pre_req
+libmarfs.a: $(OBJS) | pre_req
 	ar -cvr $@ $^
-	ln -fs $@ libmarfs.a
 
 
 .PHONY: lib
-lib: $(LIBMARFS).a | pre_req
+lib: libmarfs.a | pre_req
 
 
 
@@ -745,9 +733,9 @@ test_%: test_%.c
 	@ echo "test: $*"
 	@ $(MAKE) _app_test_$* LINK_LIBFUSE=1
 
-_app_%: $(LIBMARFS).a
+_app_%: libmarfs.a
 	@ echo "making: _app_$*"
-	gcc $(CFLAGS) -o $* $(LDFLAGS) -L$(PWD) $*.c $(LIBS)
+	gcc $(CFLAGS) -o $* $(LDFLAGS) -L$(PWD) $*.c -lmarfs $(LIBS)
 
 
 # lines-of-code
@@ -798,4 +786,3 @@ locals:
 	@ echo "FUSE_FLAGS = $(FUSE_FLAGS)"
 	@ echo "DEBUG      = $(DEBUG)"
 	@ echo "LIBAWS4C   = $(LIBAWS4C)"
-	@ echo "LIBMARFS   = $(LIBMARFS)"
