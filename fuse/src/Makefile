@@ -430,8 +430,7 @@ clean: # cleanx
 	$(RM) marfs_pipe
 	$(RM) core.*
 	$(RM) libmarfs.a
-
-
+	$(RM) libmarfs_*mdal.a
 
 
 # ...........................................................................
