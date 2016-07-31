@@ -1471,14 +1471,18 @@ int  trash_truncate(PathInfo*   info,
       // open_md will initialize the file handle for us.
       open_md(&md_fh, 0 /* open for reading */);
       if(! F_OP(is_open, &md_fh)) {
-#else
-      int in = open(info->post.md_path, O_RDONLY);
-      if (in == -1) {
-#endif
          LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
              info->post.md_path, new_mode);
          return -1;
       }
+#else
+      int in = open(info->post.md_path, O_RDONLY);
+      if (in == -1) {
+         LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
+             info->post.md_path, new_mode);
+         return -1;
+      }
+#endif
       // write to trash file
 #if USE_MDAL
       MarFS_FileHandle trash_fh;
@@ -1490,19 +1494,21 @@ int  trash_truncate(PathInfo*   info,
 
       F_OP(open, &trash_fh, info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
       if(! F_OP(is_open, &trash_fh)) {
+         LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
+             info->trash_md_path, new_mode);
+         __TRY0( close_md(&md_fh) );
+         return -1;
+      }
+
 #else
       int out = open(info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
       if (out == -1) {
-#endif
          LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
              info->trash_md_path, new_mode);
-#if USE_MDAL
-         __TRY0( close_md(&md_fh) );
-#else
          __TRY0( close(in) );
-#endif
          return -1;
       }
+#endif
 
       // MD files are trunc'ed to their "logical" size (the size of the data
       // they represent).  They may also contain some "system" data (blobs we
@@ -1540,12 +1546,13 @@ int  trash_truncate(PathInfo*   info,
 #if USE_MDAL
          for (rd_count = F_OP(read, &md_fh, (void*)buf, read_size);
               (read_size && (rd_count > 0));
-              rd_count = F_OP(read, &md_fh, (void*)buf, read_size)) {
+              rd_count = F_OP(read, &md_fh, (void*)buf, read_size))
 #else
          for (rd_count = read(in, (void*)buf, read_size);
               (read_size && (rd_count > 0));
-              rd_count = read(in, (void*)buf, read_size)) {
+              rd_count = read(in, (void*)buf, read_size))
 #endif
+        {
             char*  buf_ptr = buf;
             size_t remain  = rd_count;
             while (remain) {
