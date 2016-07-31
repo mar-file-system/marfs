@@ -616,6 +616,12 @@ typedef struct {
 } MDAL_Handle;
 
 
+typedef struct {
+   DAL_Context  ctx;
+   struct DAL*  dal;
+} DAL_Handle;
+
+
 
 typedef struct {
    PathInfo        info;         // includes xattrs, MDFS path, etc
@@ -636,7 +642,14 @@ typedef struct {
    ReadStatus      read_status;  // buffer_management, current_offset, etc
    WriteStatus     write_status; // buffer-management, etc
 
+   // NOTE: As above, only one of these should exist, but that
+   //       causes complications for building arbitrary apps.
+   // #if USE_DAL
+   DAL_Handle      dal_handle
+   // #else
    ObjectStream    os;           // handle for streaming access to objects
+   // #endif
+
    uint8_t         os_init;      // tells weather or not the object streem is inizlized
    curl_off_t      objectSize;   // The size of the object for packed files
    int             fileCount;    // The number of files that have been packed
@@ -675,6 +688,13 @@ typedef struct {
 #  define CTX_FREE_OP(OP,NS, ...)   (*(NS)->file_MDAL->OP)(__VA_ARGS__)
 #endif
 
+
+
+
+#if USE_DAL
+#  define FH_DAL_CTX(FH)  (FH)->dal_handle.ctx
+#  define FH_DAL(FH)      (FH)->dal_handle.dal
+#endif
 
 
 // fuse/pftool-agnostic updates of data_remain, etc. (see comments, above)
