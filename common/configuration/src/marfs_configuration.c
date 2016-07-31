@@ -686,8 +686,8 @@ const char* MDAL_type_name(MDAL_Type type) {
 int lookup_DAL_type(const char* type_name, DAL_Type* type) {
    if (     ! strcasecmp(type_name, "OBJ"))
       *type = DAL_OBJ;
-   else if (! strcasecmp(type_name, "MD_DEMO"))
-      *type = DAL_MD_DEMO;
+   else if (! strcasecmp(type_name, "NO_OP"))
+      *type = DAL_NO_OP;
    else if (! strcasecmp(type_name, "MC"))
       *type = DAL_MC;
    else if (! strcasecmp(type_name, "POSIX"))
@@ -701,7 +701,7 @@ int lookup_DAL_type(const char* type_name, DAL_Type* type) {
 const char* DAL_type_name(DAL_Type type) {
    switch (type) {
    case DAL_OBJ:       return (const char*)"OBJ";
-   case DAL_MD_DEMO:   return (const char*)"MD_DEMO";
+   case DAL_NO_OP:     return (const char*)"NO_OP";
    case DAL_MC:        return (const char*)"MC";
    case DAL_POSIX:     return (const char*)"POSIX";
    default:  return NULL;

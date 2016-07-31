@@ -267,7 +267,7 @@ struct MDAL; // fwd-decl
 
 typedef enum DAL_Type {
    DAL_OBJ     = 0x01,          // original MarFS 
-   DAL_MD_DEMO = 0x02,          // no-op on open(O_CREAT)
+   DAL_NO_OP   = 0x02,          // no-op on open(O_CREAT)
    DAL_MC      = 0x04,
    DAL_POSIX   = 0x08,          // "on my laptop"
 } DAL_Type;

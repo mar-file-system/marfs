@@ -108,6 +108,9 @@ int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal) {
 
 // ================================================================
 // OBJ
+//
+// This is just a pass-through to the interfaces in object_stream.h, which
+// were the original back-end for MarFS to interact with an object-store.
 // ================================================================
 
 
@@ -159,6 +162,60 @@ int     obj_close(DAL_Context*  ctx) {
 
 
 
+// ================================================================
+// NO_OP
+//
+// Like it says, these perform no data action.  The point would be to allow
+// benchmarking the cost of meta-data operations alone.
+// ================================================================
+
+
+
+// #define OS(CTX)         (ObjectStream*)(CTX)->data.ptr
+
+
+
+
+
+void*   nop_open(DAL_Context* ctx,
+                 int          is_put,
+                 size_t       content_length,
+                 uint8_t      preserve_write_count,
+                 uint16_t     timeout) {
+
+   return 1;                    // returning NULL considered an error
+}
+
+int     nop_put(DAL_Context*  ctx,
+                const char*   buf,
+                size_t        size) {
+
+   return size;
+}
+
+ssize_t nop_get(DAL_Context*  ctx,
+                char*         buf,
+                size_t        size) {
+
+   return size;
+}
+
+int     nop_sync(DAL_Context*  ctx) {
+
+   return 0;
+}
+
+int     nop_abort(DAL_Context*  ctx) {
+
+   return 0;
+}
+
+int     nop_close(DAL_Context*  ctx) {
+
+   return 0;
+}
+
+
 // ===========================================================================
 // GENERAL
 // ===========================================================================
@@ -177,8 +234,8 @@ int dal_init(DAL* dal, DAL_Type type) {
    case DAL_OBJ:
       dal->global_state = NULL;
 
-      dal->init       = &default_dal_ctx_init;
-      dal->destroy    = &default_dal_ctx_destroy;
+      dal->init         = &default_dal_ctx_init;
+      dal->destroy      = &default_dal_ctx_destroy;
 
       dal->open         = &obj_open;
       dal->put          = &obj_put;
@@ -188,8 +245,21 @@ int dal_init(DAL* dal, DAL_Type type) {
       dal->close        = &obj_close;
       break;
 
+   case DAL_NO_OP:
+      dal->global_state = NULL;
+
+      dal->init         = &default_dal_ctx_init;
+      dal->destroy      = &default_dal_ctx_destroy;
+
+      dal->open         = &nop_open;
+      dal->put          = &nop_put;
+      dal->get          = &nop_get;
+      dal->sync         = &nop_sync;
+      dal->abort        = &nop_abort;
+      dal->close        = &nop_close;
+      break;
+
       // TBD ...
-   case DAL_MD_DEMO:
    case DAL_MC:
    case DAL_POSIX:
    default:
