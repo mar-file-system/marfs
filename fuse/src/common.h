@@ -645,7 +645,7 @@ typedef struct {
    // NOTE: As above, only one of these should exist, but that
    //       causes complications for building arbitrary apps.
    // #if USE_DAL
-   DAL_Handle      dal_handle
+   DAL_Handle      dal_handle;
    // #else
    ObjectStream    os;           // handle for streaming access to objects
    // #endif
@@ -692,8 +692,15 @@ typedef struct {
 
 
 #if USE_DAL
-#  define FH_DAL_CTX(FH)  (FH)->dal_handle.ctx
-#  define FH_DAL(FH)      (FH)->dal_handle.dal
+#  define FH_DAL_CTX(FH)    (FH)->dal_handle.ctx
+#  define FH_DAL(FH)        (FH)->dal_handle.dal
+#endif
+
+// generic
+#if USE_DAL
+#  define FH_STR_STATE(FH)  FH_DAL_CTX(FH)
+#else
+#  define FH_STR_STATE(FH)  (FH)->os
 #endif
 
 

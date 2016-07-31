@@ -1799,6 +1799,58 @@ int update_url(ObjectStream* os, PathInfo* info) {
 }
 
 
+
+int open_data(MarFS_FileHandle* fh,
+              int               writing_p,
+              size_t            content_length,
+              uint8_t           preserve_wr_count,
+              uint16_t          timeout) {
+
+   PathInfo* info = &fh->info;
+
+   int         flags;
+   const char* flags_str;
+
+   if (writing_p) {
+      flags     =  O_WRONLY;
+      flags_str = "O_WRONLY";
+   }
+   else {
+      flags     =  O_RDONLY;
+      flags_str = "O_RDONLY";
+   }
+
+   // if we haven't already initialized the FileHandle DAL, do it now.
+#if USE_DAL
+   if (! FH_DAL(fh)) {
+      // copy static MDAL ptr from NS to FileHandle
+      FH_DAL(fh) = info->pre.repo->dal;
+      LOG(LOG_INFO, "DAL: %s\n", DAL_type_name(FH_DAL(fh)->type));
+
+      // allow MDAL implementation to do custom initializations
+      DAL_OP(init, fh, FH_DAL(fh));
+   }
+#else
+   LOG(LOG_INFO, "ignoring file-MDAL\n");
+#endif
+
+
+   // if we haven't already opened the data-stream, do it now.
+   //
+   // TBD: is_open().  Should assimilate FH->os_init, which should become a flag
+   // if (! DAL_OP(is_open, fh))
+   {
+      if (! DAL_OP(open, fh, writing_p, content_length, preserve_wr_count, timeout) ) {
+         LOG(LOG_ERR, "open_data() failed: %s\n", strerror(errno));
+         return -1;
+      }
+   }
+
+   LOG(LOG_INFO, "open_data() ok\n");
+   return 0;
+}
+
+
 // Assure MD is open.
 //
 // NOTE: It would be simpler to just look at fh->flags.  If they include
