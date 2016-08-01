@@ -430,8 +430,7 @@ clean: # cleanx
 	$(RM) marfs_pipe
 	$(RM) core.*
 	$(RM) libmarfs.a
-
-
+	$(RM) libmarfs_*mdal.a
 
 
 # ...........................................................................
@@ -568,7 +567,7 @@ _mnt:
 
 mnt: mnt.std
 
-mnt.std: marfs_fuse umnt.std
+mnt.std: fuse.std umnt.std
 	@ $(MAKE) _mnt DEBUG=$(DEBUG)
 
 mnt.lean: fuse.lean umnt

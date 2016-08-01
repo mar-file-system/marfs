@@ -141,16 +141,18 @@ if [[ -z "$MNT_TOP" ]]; then
     echo "Couldn't find 'mnt_top'"
     exit
 fi
-
+echo "MNT_TOP = $MNT_TOP"
 
 # namespace, extracted from the "marfs_path" cmd-line argument
-NS=`echo $MARFS_PATH | sed -e "s,$MNT_TOP,," | tr '/' ' ' | awk '{print $1}'`
+NS=`echo $MARFS_PATH | sed -e "s,^[/]*$MNT_TOP,," | tr '/' ' ' | awk '{print $1}'`
 if [[ -z "$NS" ]]; then
     echo "Couldn't find namespace in '$MARFS_PATH'"
     exit
 fi
+echo "NS = $NS"
 
-MARFS_TAIL=`echo $MARFS_PATH | sed -e "s,$MNT_TOP,,; s,^/,,; s,^$NS,,; s,^/,,"`
+MARFS_TAIL=`echo $MARFS_PATH | sed -e "s,^[/]*$MNT_TOP,,; s,^[/]*$NS[/]*,,"`
+echo "MARFS_TAIL = $MARFS_TAIL"
 
 
 # avoid calling 'marfs_config -n $NS' for each different parameter
@@ -164,6 +166,7 @@ if [[ -z "$MDFS" ]]; then
     exit
 fi
 MDFS="$MDFS/$MARFS_TAIL"
+echo "MDFS = $MDFS"
 
 
 # The repo to be used for interactive-writing, in the given namespace

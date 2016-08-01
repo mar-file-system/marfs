@@ -1463,6 +1463,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
      LOG( LOG_ERR, "MarFS config '%s' has no mnt_top.\n", config->name);
      return NULL;
   }
+  if ( config->mnt_top[0] != '/' ) {
+     LOG( LOG_ERR, "MarFS config '%s' mnt_top should start with '/'.\n", config->name);
+     return NULL;
+  }
   size_t mnt_top_len = strlen( config->mnt_top );
   if ( config->mnt_top[ mnt_top_len -1 ] == '/' ) {
      LOG( LOG_ERR, "MarFS config '%s' mnt_top should not have final '/'.\n", config->name);
@@ -1476,6 +1480,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
   // that will never occur at the front of your MDFS paths.
   if ( ! config->mdfs_top ) {
      LOG( LOG_ERR, "MarFS config '%s' has no mdfs_top.\n", config->name);
+     return NULL;
+  }
+  if ( config->mdfs_top[0] != '/' ) {
+     LOG( LOG_ERR, "MarFS config '%s' mdfs_top should start with '/'.\n", config->name);
      return NULL;
   }
   size_t mdfs_top_len = strlen( config->mdfs_top );

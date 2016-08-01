@@ -136,6 +136,9 @@ int  marfs_mknod(const char* path, mode_t mode, dev_t rdev);
 int  marfs_open          (const char* path, MarFS_FileHandle* fh, int flags,
                           curl_off_t content_length);
 
+int  marfs_open_packed   (const char* path, MarFS_FileHandle* fh, int flags,
+                          curl_off_t content_length);
+
 int  marfs_open_at_offset(const char* path, MarFS_FileHandle* fh, int flags,
                           curl_off_t offset, curl_off_t content_length);
 
@@ -151,6 +154,10 @@ int     marfs_readlink_ok(const char* path, char* buf, size_t size);
 ssize_t marfs_readlink   (const char* path, char* buf, size_t size);
 
 int  marfs_release(const char* path, MarFS_FileHandle* fh);
+
+int marfs_clear_restart(const char* path);
+
+int marfs_release_fh(MarFS_FileHandle* fh);
 
 int  marfs_releasedir(const char* path, MarFS_DirHandle* dh);
 
