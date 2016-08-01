@@ -94,6 +94,8 @@ OF SUCH DAMAGE.
 // Use these if you don't need to do anything special to initialize the
 // context before-opening / after-closing for file-oriented or
 // directory-oriented operations.
+
+#if 0
 int     default_dal_ctx_init(DAL_Context* ctx, DAL* dal) {
    ctx->flags   = 0;
    ctx->data.sz = 0;
@@ -103,6 +105,26 @@ int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal) {
    return 0;
 }
 
+
+#else
+
+
+// open_data() gives us a ptr to the ObjectStream in the FileHandle.  We
+// need this, for now, because MarFS expects stream-ops to have
+// side-effects on that OS.
+
+#define OS(CTX)           ((ObjectStream*)((CTX)->data.ptr))
+
+int     default_dal_ctx_init(DAL_Context* ctx, DAL* dal, void* os) {
+   ctx->flags   = 0;
+   ctx->data.ptr = (ObjectStream*)os; // the FileHandle member
+   return 0;
+}
+int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal) {
+   return 0;
+}
+
+#endif
 
 
 
@@ -115,7 +137,58 @@ int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal) {
 
 
 
-#define OS(CTX)         (ObjectStream*)(CTX)->data.ptr
+#if 0
+// NOTE: We need an ObjectStream, to use the functions in object_stream.h
+//     There is already a statically-allocated one in the file-handle.  If
+//     we just re-used that one (e.g. by having open_data() just assign
+//     DAL_Context.data.ptr to point to it), it would save us a malloc/free
+//     for every stream.  For now, to avoid refactoring, I'm going to
+//     dynamically allocate our own ObjectStream.  We could also just
+//     statically define on in DAL_Context.
+
+typedef struct {
+   ObjectStream os;
+} OBJ_DALContextState;
+
+
+#define STATE_LVAL(CTX)   (CTX)->data.ptr
+#define STATE(CTX)        ((OBJ_DALContextState*)(STATE_LVAL(CTX)))
+#define OS(CTX)           &(STATE(ctx)->os)
+
+
+
+
+
+int     obj_dal_ctx_init(DAL_Context* ctx, DAL* dal) {
+   ctx->flags   = 0;
+
+   OBJ_DALContextState* state = (OBJ_DALContextState*)malloc(sizeof(OBJ_DALContextState));
+   if (! state) {
+      LOG(LOG_ERR, "malloc failed\n");
+      errno = ENOMEM;
+      return -1;
+   }
+   memset(state, 0, sizeof(OBJ_DALContextState));
+
+   STATE_LVAL(ctx) = state;
+   return 0;
+}
+
+
+int     obj_dal_ctx_destroy(DAL_Context* ctx, DAL* dal) {
+   if (STATE(ctx)) {
+      free(STATE(ctx));
+      STATE_LVAL(ctx) = 0;
+   }
+   return 0;
+}
+
+#endif
+
+
+
+
+
 
 
 
@@ -127,8 +200,11 @@ void*   obj_open(DAL_Context* ctx,
                  uint8_t      preserve_write_count,
                  uint16_t     timeout) {
 
-   return stream_open(OS(ctx), is_put, content_length,
-                      preserve_write_count, timeout);
+   if (stream_open(OS(ctx), is_put, content_length,
+                   preserve_write_count, timeout))
+      return NULL;
+   else
+      return ctx;
 }
 
 int     obj_put(DAL_Context*  ctx,
@@ -183,13 +259,14 @@ void*   nop_open(DAL_Context* ctx,
                  uint8_t      preserve_write_count,
                  uint16_t     timeout) {
 
-   return 1;                    // returning NULL considered an error
+   return ctx;                    // returning NULL considered an error
 }
 
 int     nop_put(DAL_Context*  ctx,
                 const char*   buf,
                 size_t        size) {
 
+   OS(ctx)->written += size;
    return size;
 }
 
@@ -197,6 +274,7 @@ ssize_t nop_get(DAL_Context*  ctx,
                 char*         buf,
                 size_t        size) {
 
+   OS(ctx)->written += size;
    return size;
 }
 
@@ -234,8 +312,13 @@ int dal_init(DAL* dal, DAL_Type type) {
    case DAL_OBJ:
       dal->global_state = NULL;
 
+#if 0
+      dal->init         = &obj_dal_ctx_init;
+      dal->destroy      = &obj_dal_ctx_destroy;
+#else
       dal->init         = &default_dal_ctx_init;
       dal->destroy      = &default_dal_ctx_destroy;
+#endif
 
       dal->open         = &obj_open;
       dal->put          = &obj_put;

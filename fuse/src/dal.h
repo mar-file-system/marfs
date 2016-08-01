@@ -149,9 +149,14 @@ struct DAL;
 //   -- init    is called before any other ops (per file-handle).
 //   -- destroy is called when a file-handle is being destroyed.
 //
+#if 0
 typedef  int     (*dal_ctx_init)   (DAL_Context* ctx, struct DAL* dal);
 typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 
+#else
+typedef  int     (*dal_ctx_init)   (DAL_Context* ctx, struct DAL* dal, void* os);
+typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
+#endif
 
 
 // --- storage ops
