@@ -1751,4 +1751,5 @@ int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "\tonline_cmds         %s\n",   repo->online_cmds);
    fprintf(stdout, "\tonline_cmds_len     %ld\n",  repo->online_cmds_len);
    fprintf(stdout, "\tlatency             %llu\n", repo->latency);
+   fprintf(stdout, "\tdal                 %s\n",   DAL_type_name(repo->dal_type));
 }
