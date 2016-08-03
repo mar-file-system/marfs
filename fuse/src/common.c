@@ -336,11 +336,7 @@ int stat_regular(PathInfo* info) {
       return 0;                 /* already called stat_regular() */
 
    memset(&(info->st), 0, sizeof(struct stat));
-#if USE_MDAL
-   __TRY0( F_OP_NOCTX(lstat, info->ns, info->post.md_path, &info->st) );
-#else
-   __TRY0( lstat(info->post.md_path, &info->st) );
-#endif
+   __TRY0( MD_PATH_OP(lstat, info->ns, info->post.md_path, &info->st) );
 
    info->flags |= PI_STAT_QUERY;
    return 0;
@@ -453,14 +449,9 @@ int stat_xattrs(PathInfo* info) {
          // NOTE: If obj doesn't exist, its md_ctime will match the
          //       ctime currently found in info->st, as a result of
          //       the call to stat_regular(), above.
-#if USE_MDAL
-         str_size = F_OP_NOCTX(lgetxattr, info->ns, info->post.md_path,
+         str_size = MD_PATH_OP(lgetxattr, info->ns, info->post.md_path,
                                spec->key_name, xattr_value_str,
                                MARFS_MAX_XATTR_SIZE);
-#else
-         str_size = lgetxattr(info->post.md_path, spec->key_name, 
-                              xattr_value_str, MARFS_MAX_XATTR_SIZE);
-#endif
 
          if (str_size != -1) {
             // got the xattr-value.  Parse it into info->pre
@@ -487,14 +478,9 @@ int stat_xattrs(PathInfo* info) {
       }
 
       case XVT_POST: {
-#if USE_MDAL
-         str_size = F_OP_NOCTX(lgetxattr, info->ns, info->post.md_path,
-                               spec->key_name, xattr_value_str, 
+         str_size = MD_PATH_OP(lgetxattr, info->ns, info->post.md_path,
+                               spec->key_name, xattr_value_str,
                                MARFS_MAX_XATTR_SIZE);
-#else
-         str_size = lgetxattr(info->post.md_path, spec->key_name,
-                              xattr_value_str, MARFS_MAX_XATTR_SIZE);
-#endif
 
          if (str_size != -1) {
             // got the xattr-value.  Parse it into info->pre
@@ -518,14 +504,9 @@ int stat_xattrs(PathInfo* info) {
       }
 
       case XVT_RESTART: {
-#if USE_MDAL
-         str_size = F_OP_NOCTX(lgetxattr, info->ns, info->post.md_path,
+         str_size = MD_PATH_OP(lgetxattr, info->ns, info->post.md_path,
                                spec->key_name, xattr_value_str,
                                MARFS_MAX_XATTR_SIZE);
-#else
-         str_size = lgetxattr(info->post.md_path, spec->key_name,
-                              xattr_value_str, MARFS_MAX_XATTR_SIZE);
-#endif
 
          if (str_size != -1) {
             // got the xattr-value.  Parse it into info->pre
@@ -995,11 +976,7 @@ int batch_post_process(const char* path, size_t file_size) {
    if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
 
       // truncate to final size
-#if USE_MDAL
-      TRY0( F_OP_NOCTX(truncate, info.ns, info.post.md_path, file_size) );
-#else
-      TRY0( truncate(info.post.md_path, file_size) );
-#endif
+      TRY0( MD_PATH_OP(truncate, info.ns, info.post.md_path, file_size) );
 
       // As in release(), we take note of whether RESTART was saved with
       // a restrictive mode, which we couldn't originally install because
@@ -1023,11 +1000,7 @@ int batch_post_process(const char* path, size_t file_size) {
 
       // install more-restrictive mode, if needed.
       if (install_new_mode) {
-#if USE_MDAL
-         TRY0( F_OP_NOCTX(chmod, info.ns, info.post.md_path, new_mode) );
-#else
-         TRY0( chmod(info.post.md_path, new_mode) );
-#endif
+         TRY0( MD_PATH_OP(chmod, info.ns, info.post.md_path, new_mode) );
       }
    }
    else
@@ -1099,15 +1072,10 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          // create the new xattr-value from info->pre
          __TRY0( pre_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->pre) );
          LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
-#if USE_MDAL
-         __TRY0( F_OP_NOCTX(lsetxattr, info->ns,
+         __TRY0( MD_PATH_OP(lsetxattr, info->ns,
                             info->post.md_path,
                             spec->key_name, xattr_value_str,
                             strlen(xattr_value_str)+1, 0) );
-#else
-         __TRY0( lsetxattr(info->post.md_path,
-                           spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
-#endif
          break;
       }
 
@@ -1116,15 +1084,9 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
                             &info->post, info->ns->iwrite_repo,
                             (info->post.flags & POST_TRASH)) );
          LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
-#if USE_MDAL
-         __TRY0( F_OP_NOCTX(lsetxattr, info->ns, info->post.md_path,
+         __TRY0( MD_PATH_OP(lsetxattr, info->ns, info->post.md_path,
                             spec->key_name, xattr_value_str,
                             strlen(xattr_value_str)+1, 0) );
-#else
-         __TRY0( lsetxattr(info->post.md_path,
-                           spec->key_name, xattr_value_str,
-                           strlen(xattr_value_str)+1, 0) );
-#endif
          break;
       }
 
@@ -1146,23 +1108,13 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
             __TRY0( restart_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE,
                                   &info->restart) );
             LOG(LOG_INFO, "XVT_RESTART: %s\n", xattr_value_str);
-#if USE_MDAL
-            __TRY0( F_OP_NOCTX(lsetxattr, info->ns, info->post.md_path,
+            __TRY0( MD_PATH_OP(lsetxattr, info->ns, info->post.md_path,
                                spec->key_name, xattr_value_str,
                                strlen(xattr_value_str)+1, 0) );
-#else
-            __TRY0( lsetxattr(info->post.md_path,
-                              spec->key_name, xattr_value_str,
-                              strlen(xattr_value_str)+1, 0) );
-#endif
          }
          else {
-#if USE_MDAL
-            ssize_t val_size = F_OP_NOCTX(lremovexattr, info->ns,
+            ssize_t val_size = MD_PATH_OP(lremovexattr, info->ns,
                                           info->post.md_path, spec->key_name);
-#else
-            ssize_t val_size = lremovexattr(info->post.md_path, spec->key_name);
-#endif
             if (val_size < 0) {
                if (errno == ENOATTR)
                   break;           /* not a problem */
@@ -1189,7 +1141,84 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
    return 0;                    /* "success" */
 }
 
+static
+void init_filehandle(MarFS_FileHandle* fh, PathInfo* info) {
+   memset((char*)fh, 0, sizeof(MarFS_FileHandle));
+   fh->info = *info;
+#if USE_MDAL
+   F_MDAL(fh) = info->pre.ns->file_MDAL;
+   LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
+   F_OP(f_init, fh, F_MDAL(fh));
+#endif
+}
 
+// This should only be used internally.
+// Open an arbitrary path in the MDFS storing the relevant state (file
+// descriptor, etc.) in the file handle.
+static
+int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
+   PathInfo* info = &fh->info;
+   va_list ap;
+
+   va_start(ap, flags);
+   
+   // initialize the file handle MDAL
+   // As this is used now, the file handle mdal will already be initialized
+   // whenever this is called... Could maybe clean this up, but it might
+   // make it less flexible.
+#if USE_MDAL
+   if(! F_MDAL(fh)) {
+      F_MDAL(fh) = info->pre.ns->file_MDAL;
+      LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
+
+      // allow MDAL implementation to do custom initializations
+      F_OP(f_init, fh, F_MDAL(fh));
+   }
+#else
+   LOG(LOG_INFO, "ignoring file-MDAL\n");
+#endif
+
+   // if we haven't already opened the MD file, do it now.
+#if USE_MDAL
+   if (! F_OP(is_open, fh)) {
+      if(flags & O_CREAT) {
+         mode_t mode = va_arg(ap, mode_t);
+         F_OP(open, fh, path, flags, mode);
+      }
+      else {
+         F_OP(open, fh, path, flags);
+      }
+      
+      if(! F_OP(is_open, fh) ) {
+         LOG(LOG_ERR, "open_md_path(%s) failed: %s\n",
+             path, strerror(errno));
+         return -1;
+      }
+   }
+#else
+   if (! fh->md_fd) { // not already open.
+      if(flags & O_CREAT) {
+         mode_t mode = va_arg(ap, mode_t);
+         fh->md_fd = open(path, flags, mode);
+      }
+      else {
+         fh->md_fd = open(path, flags);
+      }
+      
+      if (fh->md_fd < 0) {
+         LOG(LOG_ERR, "open_md_path(%s) failed: %s\n",
+             info->post.md_path, strerror(errno));
+         fh->md_fd = 0;
+         return -1;
+      }
+   }
+#endif
+
+   va_end(ap);
+   
+   LOG(LOG_INFO, "open_md_path(%s) ok\n", path);
+   return 0;
+}
 
 // This is only used internally.  We just assume expand_trash_info() has
 // already been called.
@@ -1211,7 +1240,6 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 // If <utim> is non-NULL, then it holds mtime/atime values for us to
 // install onto the file.  This is to allow "undelete" to also restore the
 // original atime of a file.
-
 static
 int write_trash_companion_file(PathInfo*             info,
                                const char*           path,
@@ -1232,46 +1260,32 @@ int write_trash_companion_file(PathInfo*             info,
    //      Should just stat() the companion-file, before opening, to assure
    //      it doesn't already exist.
    LOG(LOG_INFO, "companion:  %s\n", companion_fname);
-#if USE_MDAL
+
+   // Set up a file handle for the trash companion file
    MarFS_FileHandle companion_fh;
-   memset((char*)&companion_fh, 0, sizeof(MarFS_FileHandle));
-   companion_fh.info = *info;
-   F_MDAL(&companion_fh) = info->pre.ns->file_MDAL;
-   F_OP(f_init, &companion_fh, F_MDAL(&companion_fh));
-   F_OP(open, &companion_fh, companion_fname, (O_WRONLY|O_CREAT), info->st.st_mode);
-   __TRY_GE0( F_OP(is_open, &companion_fh) ); // This should cover the failure
-#else
-   __TRY_GE0( open(companion_fname, (O_WRONLY|O_CREAT), info->st.st_mode) );
-   int fd = rc_ssize;
-#endif
+   init_filehandle(&companion_fh, info);
+
+   // Open the file
+   open_md_path(&companion_fh, companion_fname,
+                 (O_WRONLY|O_CREAT), info->st.st_mode);
+   
+   __TRY_GE0( is_open_md(&companion_fh) );
 
 #if 1
    // write MDFS path into the trash companion
-#  if USE_MDAL
-   __TRY_GE0( F_OP(write, &companion_fh,
-                   info->post.md_path, strlen(info->post.md_path)) );
-#  else
-   __TRY_GE0( write(fd, info->post.md_path, strlen(info->post.md_path)) );
-#  endif // USE_MDAL
-#else
+   __TRY_GE0( MD_FILE_OP(write, &companion_fh,
+                         info->post.md_path, strlen(info->post.md_path)));
+#else // never executes
    // write MarFS path into the trash companion
    __TRY_GE0( write(fd, marfs_config->mnt_top, marfs_config->mnt_top_len) );
    __TRY_GE0( write(fd, path, strlen(path)) );
 #endif
 
-#if USE_MDAL
    __TRY0( close_md(&companion_fh) );
-#else
-   __TRY0( close(fd) );
-#endif
 
    // maybe install ctime/atime to support "undelete"
    if (utim)
-#if USE_MDAL
-      __TRY0( F_OP_NOCTX(utime, info->ns, companion_fname, utim) );
-#else
-      __TRY0( utime(companion_fname, utim) );
-#endif
+      __TRY0( MD_PATH_OP(utime, info->ns, companion_fname, utim) );
 
    return 0;
 }
@@ -1340,11 +1354,7 @@ int  trash_unlink(PathInfo*   info,
    __TRY0( stat_xattrs(info) );
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // not enough to reclaim objs
-#if USE_MDAL
-      __TRY0( F_OP_NOCTX(unlink, info->ns, info->post.md_path) );
-#else
-      __TRY0( unlink(info->post.md_path) );
-#endif
+      __TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
       return 0;
    }
 
@@ -1353,11 +1363,7 @@ int  trash_unlink(PathInfo*   info,
    // filesystem).  It was thought we shouldn't even *try* the rename
    // first.  Instead, we'll copy to the trash, then unlink the original.
    __TRY0( trash_truncate(info, path) );
-#if USE_MDAL
-   __TRY0( F_OP_NOCTX(unlink, info->ns, info->post.md_path) );
-#else
-   __TRY0( unlink(info->post.md_path) );
-#endif
+   __TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
 
    return 0;
 }
@@ -1395,11 +1401,7 @@ int  trash_truncate(PathInfo*   info,
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // see "UPDATE" in trash_unlink().
 
-#if USE_MDAL
-      __TRY0( F_OP_NOCTX(truncate, info->ns, info->post.md_path, 0) );
-#else
-      __TRY0( truncate(info->post.md_path, 0) );
-#endif
+      __TRY0( MD_PATH_OP(truncate, info->ns, info->post.md_path, 0) );
 
       __TRY0( trunc_xattrs(info) ); // didn't have all, but might have had some
 
@@ -1450,65 +1452,35 @@ int  trash_truncate(PathInfo*   info,
    // been simply unlinked above.
    if (S_ISLNK(info->st.st_mode)) {
       char target[MARFS_MAX_MD_PATH];
-#if USE_MDAL
-      __TRY_GE0( F_OP_NOCTX(readlink, info->ns, info->post.md_path,
+      __TRY_GE0( MD_PATH_OP(readlink, info->ns, info->post.md_path,
                             target, MARFS_MAX_MD_PATH) );
-      __TRY0( F_OP_NOCTX(symlink, info->ns, target, info->trash_md_path) );
-      __TRY0( F_OP_NOCTX(chmod, info->ns, info->trash_md_path, new_mode) );
-#else 
-      __TRY_GE0( readlink(info->post.md_path, target, MARFS_MAX_MD_PATH) );
-      __TRY0( symlink(target, info->trash_md_path) );
-      __TRY0( chmod(info->trash_md_path, new_mode) );
-#endif
+      __TRY0( MD_PATH_OP(symlink, info->ns, target, info->trash_md_path) );
+      __TRY0( MD_PATH_OP(chmod, info->ns, info->trash_md_path, new_mode) );
    }
 
    else {
       // read from md_file
-#if USE_MDAL
+      // file handle for the metadata file
       MarFS_FileHandle md_fh;
-      memset((char*)&md_fh, 0, sizeof(MarFS_FileHandle));
-      md_fh.info = *info;
+      init_filehandle(&md_fh, info);
       // open_md will initialize the file handle for us.
       open_md(&md_fh, 0 /* open for reading */);
-      if(! F_OP(is_open, &md_fh)) {
+      if(! is_open_md(&md_fh)) {
          LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
              info->post.md_path, new_mode);
          return -1;
       }
-#else
-      int in = open(info->post.md_path, O_RDONLY);
-      if (in == -1) {
-         LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
-             info->post.md_path, new_mode);
-         return -1;
-      }
-#endif
       // write to trash file
-#if USE_MDAL
       MarFS_FileHandle trash_fh;
-      memset((char*)&trash_fh, 0, sizeof(MarFS_FileHandle));
-      trash_fh.info = *info;
-      F_MDAL(&trash_fh) = info->pre.ns->file_MDAL;
-      LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(&trash_fh)->type));
-      F_OP(f_init, &trash_fh, F_MDAL(&trash_fh));
-
-      F_OP(open, &trash_fh, info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
-      if(! F_OP(is_open, &trash_fh)) {
+      init_filehandle(&trash_fh, info);
+      open_md_path(&trash_fh, info->trash_md_path,
+                   (O_CREAT|O_WRONLY), new_mode);
+      if(! is_open_md(&trash_fh)) {
          LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
              info->trash_md_path, new_mode);
          __TRY0( close_md(&md_fh) );
          return -1;
       }
-
-#else
-      int out = open(info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
-      if (out == -1) {
-         LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
-             info->trash_md_path, new_mode);
-         __TRY0( close(in) );
-         return -1;
-      }
-#endif
 
       // MD files are trunc'ed to their "logical" size (the size of the data
       // they represent).  They may also contain some "system" data (blobs we
@@ -1528,13 +1500,8 @@ int  trash_truncate(PathInfo*   info,
             LOG(LOG_ERR, "malloc %ld bytes failed\n", BUF_SIZE);
 
             // clean-up
-#if USE_MDAL
             __TRY0( close_md(&md_fh) );
             __TRY0( close_md(&trash_fh) );
-#else
-            __TRY0( close(in) );
-            __TRY0( close(out) );
-#endif
             return -1;
          }
 
@@ -1543,36 +1510,20 @@ int  trash_truncate(PathInfo*   info,
 
          // copy phy-data from md_file to trash_file, one buf at a time
          ssize_t rd_count;
-#if USE_MDAL
-         for (rd_count = F_OP(read, &md_fh, (void*)buf, read_size);
+         for (rd_count = MD_FILE_OP(read, &md_fh, (void*)buf, read_size);
               (read_size && (rd_count > 0));
-              rd_count = F_OP(read, &md_fh, (void*)buf, read_size))
-#else
-         for (rd_count = read(in, (void*)buf, read_size);
-              (read_size && (rd_count > 0));
-              rd_count = read(in, (void*)buf, read_size))
-#endif
-        {
+              rd_count = MD_FILE_OP(read, &md_fh, (void*)buf, read_size)) {
             char*  buf_ptr = buf;
             size_t remain  = rd_count;
             while (remain) {
-#if USE_MDAL
-               size_t wr_count = F_OP(write, &trash_fh, buf_ptr, remain);
-#else
-               size_t wr_count = write(out, buf_ptr, remain);
-#endif
+               size_t wr_count = MD_FILE_OP(write, &trash_fh, buf_ptr, remain);
                if (wr_count < 0) {
                   LOG(LOG_ERR, "err writing %s (byte %ld)\n",
                       info->trash_md_path, wr_total);
 
                   // clean-up
-#if USE_MDAL
                   __TRY0( close_md(&md_fh) );
                   __TRY0( close_md(&trash_fh) );
-#else
-                  __TRY0( close(in) );
-                  __TRY0( close(out) );
-#endif
                   free(buf);
                   return -1;
                }
@@ -1590,32 +1541,18 @@ int  trash_truncate(PathInfo*   info,
                 info->trash_md_path, wr_total);
 
             // clean-up
-#if USE_MDAL
             __TRY0( close_md(&md_fh) );
             __TRY0( close_md(&trash_fh) );
-#else
-            __TRY0( close(in) );
-            __TRY0( close(out) );
-#endif
             return -1;
          }
       }
 
       // clean-up
-#if USE_MDAL
       __TRY0( close_md(&md_fh) );
       __TRY0( close_md(&trash_fh) );
-#else
-      __TRY0( close(in) );
-      __TRY0( close(out) );
-#endif
 
       // trunc trash-file to size
-#if USE_MDAL
-      __TRY0( F_OP_NOCTX(truncate, info->ns, info->trash_md_path, log_size) );
-#else
-      __TRY0( truncate(info->trash_md_path, log_size) );
-#endif
+      __TRY0( MD_PATH_OP(truncate, info->ns, info->trash_md_path, log_size) );
    }
 
    // copy any xattrs to the trash-file.
@@ -1643,11 +1580,7 @@ int  trash_truncate(PathInfo*   info,
    __TRY0( save_xattrs(&trash_info, (info->xattrs | XVT_POST)) ); // GC needs POST
 
    // update trash-file atime/mtime to support "undelete"
-#if USE_MDAL
-   __TRY0( F_OP_NOCTX(utime, info->ns, info->trash_md_path, &trash_time) );
-#else
-   __TRY0( utime(info->trash_md_path, &trash_time) );
-#endif   
+   __TRY0( MD_PATH_OP(utime, info->ns, info->trash_md_path, &trash_time) );
 
    // clean out marfs xattrs on the original
    __TRY0( trunc_xattrs(info) );
@@ -1682,11 +1615,7 @@ int  trash_truncate(PathInfo*   info,
 int trunc_xattrs(PathInfo* info) {
    XattrSpec*  spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
-#if USE_MDAL
-      F_OP_NOCTX(lremovexattr, info->ns, info->post.md_path, spec->key_name);
-#else
-      lremovexattr(info->post.md_path, spec->key_name);
-#endif
+      MD_PATH_OP(lremovexattr, info->ns, info->post.md_path, spec->key_name);
       info->xattrs &= ~(spec->value_type);
    }
    return 0;
@@ -1759,12 +1688,7 @@ int check_quotas(PathInfo* info) {
    // value of -1 for ns->quota_space implies unlimited
    if (space_limit >= 0) {
       struct stat st;
-#if USE_MDAL
-      if (F_OP_NOCTX(lstat, info->ns, info->ns->fsinfo_path, &st))
-#else
-      if (lstat(info->ns->fsinfo_path, &st))
-#endif
-      {
+      if (MD_PATH_OP(lstat, info->ns, info->ns->fsinfo_path, &st)) {
          LOG(LOG_ERR, "couldn't stat fsinfo at '%s': %s\n",
              info->ns->fsinfo_path, strerror(errno));
          errno = EINVAL;
@@ -1798,8 +1722,6 @@ int update_url(ObjectStream* os, PathInfo* info) {
 
    return 0;
 }
-
-
 
 int open_data(MarFS_FileHandle* fh,
               int               writing_p,
@@ -1864,8 +1786,6 @@ int close_data(MarFS_FileHandle* fh) {
 #else
 #endif
 }
-
-
 
 // Assure MD is open.
 //
@@ -1964,7 +1884,40 @@ int close_md(MarFS_FileHandle* fh) {
 #endif
    return 0;
 }
-      
+
+// Open a metadata directory
+int opendir_md(MarFS_DirHandle *dh, PathInfo* info) {
+   TRY_DECLS();
+#if USE_MDAL
+   D_MDAL(dh) = info->ns->dir_MDAL;
+   LOG(LOG_INFO, "dir-MDAL: %s\n", MDAL_type_name(D_MDAL(dh)->type));
+
+   // allow MDAL implementation to do any initializations necessary
+   D_OP(d_init, dh, D_MDAL(dh));
+
+   TRY_GT0( D_OP(opendir, dh, info->post.md_path) );
+   // XXX: there is potential for a memory leak here if opendir fails
+   //      for a mdal that allocates memory in d_init. In that case, it
+   //      is not clear to me whether d_destroy will ever be called...
+#else
+   TRY_GT0( opendir(info->post.md_path) );
+   dh->internal.dirp = (DIR*)rc_ssize;
+#endif
+   return rc_ssize; // non-zero for success.
+}
+
+// Close a metadata directory
+int closedir_md(MarFS_DirHandle* dh) {
+   TRY_DECLS();
+#if USE_MDAL
+   TRY0( D_OP(closedir, dh) );
+   TRY0( D_OP(d_destroy, dh, D_MDAL(dh)) );
+#else
+   DIR* dirp = dh->internal.dirp;
+   TRY0( closedir(dirp) );
+#endif
+   return 0;
+}
 
 
 // Seek to the location of a given chunk.
@@ -1976,11 +1929,7 @@ int seek_chunkinfo(MarFS_FileHandle* fh, size_t chunk_no) {
    const size_t chunk_info_len    = sizeof(MultiChunkInfo);
    off_t        chunk_info_offset = chunk_no * chunk_info_len;
 
-#if USE_MDAL
-   TRY_GE0( F_OP(lseek, fh, chunk_info_offset, SEEK_SET) );
-#else
-   TRY_GE0( lseek(fh->md_fd, chunk_info_offset, SEEK_SET) );
-#endif
+   TRY_GE0( MD_FILE_OP(lseek, fh, chunk_info_offset, SEEK_SET) );
 
    LOG(LOG_INFO, "chunk=%ld, sizeof chunkinfo=%ld, chunkinfo_offset=%ld\n",
        chunk_no, chunk_info_len, chunk_info_offset);
@@ -2073,11 +2022,8 @@ int write_chunkinfo(MarFS_FileHandle*     fh,
    LOG(LOG_INFO, "chunk=%ld, open_offset=%ld, data_length=%ld\n",
        info->pre.chunk_no, fh->open_offset, user_data_this_chunk);
 
-#if USE_MDAL
-   ssize_t wr_count = F_OP(write, fh, str, chunk_info_len);
-#else
-   ssize_t wr_count = write(fh->md_fd, str, chunk_info_len);
-#endif
+   ssize_t wr_count = MD_FILE_OP(write, fh, str, chunk_info_len);
+
    if (wr_count < 0) {
       LOG(LOG_ERR, "error writing chunk-info (%s)\n",
           strerror(errno));
@@ -2102,11 +2048,8 @@ int read_chunkinfo(MarFS_FileHandle* fh, MultiChunkInfo* chnk) {
 
    TRY0( open_md(fh, 0) );
 
-#if USE_MDAL
-   ssize_t rd_count = F_OP(read, fh, str, chunk_info_len);
-#else
-   ssize_t rd_count = read(fh->md_fd, str, chunk_info_len);
-#endif
+   ssize_t rd_count = MD_FILE_OP(read, fh, str, chunk_info_len);
+
    if (rd_count < 0) {
       LOG(LOG_ERR, "error reading chunk-info (%s)\n",
           strerror(errno));
@@ -2218,11 +2161,8 @@ ssize_t count_chunkinfo(MarFS_FileHandle* fh) {
    ssize_t       result = 0;
 
    while (1) {
-#if USE_MDAL
-      ssize_t rd_count = F_OP(read, fh, str, chunk_info_len);
-#else
-      ssize_t rd_count = read(fh->md_fd, str, chunk_info_len);
-#endif
+      ssize_t rd_count = MD_FILE_OP(read, fh, str, chunk_info_len);
+
       if (rd_count < 0) {
          LOG(LOG_ERR, "error reading chunk-info (%s)\n",
              strerror(errno));
@@ -2580,11 +2520,7 @@ int init_scatter_tree_internal(const char*    root_dir,
 
 
    // --- assure that top-level trash-dir (from the config) exists
-#if USE_MDAL
-   rc = F_OP_NOCTX(lstat, ns, root_dir, &st);
-#else
-   rc = lstat(root_dir, &st);
-#endif
+   rc = MD_PATH_OP(lstat, ns, root_dir, &st);
    if (! rc) {
       if (! S_ISDIR(st.st_mode)) {
          LOG(LOG_ERR, "not a directory %s\n", root_dir);
@@ -2638,11 +2574,7 @@ int init_scatter_tree_internal(const char*    root_dir,
 
    // create the 'namespace.shard' dir
    LOG(LOG_INFO, " maybe create %s\n", dir_path);
-#if USE_MDAL
-   rc = D_OP_NOCTX(mkdir, ns, dir_path, branch_mode);
-#else
-   rc = mkdir(dir_path, branch_mode);
-#endif
+   rc = MD_D_PATH_OP(mkdir, ns, dir_path, branch_mode);
    if ((rc < 0) && (errno != EEXIST)) {
       LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
       return -1;
@@ -2665,11 +2597,7 @@ int init_scatter_tree_internal(const char*    root_dir,
    memcpy(sub_dir, "/9/9/9", 7); // incl final '/0'
 
    LOG(LOG_INFO, " checking %s\n", dir_path);
-#if USE_MDAL
-   if (! F_OP_NOCTX(lstat, ns, dir_path, &st))
-#else
-   if (! lstat(dir_path, &st))
-#endif
+   if (! MD_PATH_OP(lstat, ns, dir_path, &st))
       return 0;           // skip the subdir-create loop
    else if (errno != ENOENT) {
       LOG(LOG_ERR, "lstat(%s) failed\n", dir_path);
@@ -2685,11 +2613,7 @@ int init_scatter_tree_internal(const char*    root_dir,
       sub_dir[0] = '/';
       sub_dir[1] = '0' + i;
       sub_dir[2] = 0;
-#if USE_MDAL
-      rc = D_OP_NOCTX(mkdir, ns, dir_path, branch_mode);
-#else
-      rc = mkdir(dir_path, branch_mode);
-#endif
+      rc = MD_D_PATH_OP(mkdir, ns, dir_path, branch_mode);
       if ((rc < 0) && (errno != EEXIST)) {
          LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
          return -1;
@@ -2703,11 +2627,7 @@ int init_scatter_tree_internal(const char*    root_dir,
          sub_dir[3] = '0' + j;
          sub_dir[4] = 0;
 
-#if USE_MDAL
-         rc = D_OP_NOCTX(mkdir, ns, dir_path, branch_mode);
-#else
-         rc = mkdir(dir_path, branch_mode);
-#endif
+         rc = MD_D_PATH_OP(mkdir, ns, dir_path, branch_mode);
          if ((rc < 0) && (errno != EEXIST)) {
             LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
             return -1;
@@ -2721,11 +2641,7 @@ int init_scatter_tree_internal(const char*    root_dir,
             sub_dir[6] = 0;
 
             // make the '.../trash/namespace.shard//a/b/c' subdir
-#if USE_MDAL
-            rc = D_OP_NOCTX(mkdir, ns, dir_path, leaf_mode);
-#else
-            rc = mkdir(dir_path, leaf_mode);
-#endif
+            rc = MD_D_PATH_OP(mkdir, ns, dir_path, leaf_mode);
             if ((rc < 0) && (errno != EEXIST)) {
                LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
                return -1;
@@ -2794,13 +2710,8 @@ int init_mdfs() {
 
       // check whether "trash" dir exists (and create sub-dirs, if needed)
       LOG(LOG_INFO, "top-level trash dir   %s\n", ns->trash_md_path);
-#if USE_MDAL
-      // XXX: Is this the correct namespace?
-      //      should there be a separate trash ns?
-      rc = F_OP_NOCTX(lstat, ns, ns->trash_md_path, &st);
-#else
-      rc = lstat(ns->trash_md_path, &st);
-#endif
+
+      rc = MD_PATH_OP(lstat, ns, ns->trash_md_path, &st);
       if (! rc) {
          if (! S_ISDIR(st.st_mode)) {
             LOG(LOG_ERR, "not a directory %s\n", ns->fsinfo_path);
@@ -2833,12 +2744,8 @@ int init_mdfs() {
 
       // check whether mdfs top-level dir exists
       LOG(LOG_INFO, "top-level MDFS dir    %s\n", ns->md_path);
-#if USE_MDAL
-      // XXX: Is this right?? Or should this use a different MDAL/Namespace?
-      rc = F_OP_NOCTX(lstat, ns, ns->md_path, &st);
-#else
-      rc = lstat(ns->md_path, &st);
-#endif
+
+      rc = MD_PATH_OP(lstat, ns, ns->md_path, &st);
       if (! rc) {
          if (! S_ISDIR(st.st_mode)) {
             LOG(LOG_ERR, "not a directory %s\n", ns->md_path);
@@ -2873,11 +2780,8 @@ int init_mdfs() {
       //     quota info into NS structs (on the next call to
       //     check_quotas()).
       LOG(LOG_INFO, "top-level fsinfo file %s\n", ns->fsinfo_path);
-#if USE_MDAL
-      rc = F_OP_NOCTX(lstat, ns, ns->fsinfo_path, &st); // XXX: Again, is this right?
-#else
-      rc = lstat(ns->fsinfo_path, &st);
-#endif
+
+      rc = MD_PATH_OP(lstat, ns, ns->fsinfo_path, &st);
       if (! rc) {
          if (! S_ISREG(st.st_mode)) {
             LOG(LOG_ERR, "not a regular file %s\n", ns->fsinfo_path);
