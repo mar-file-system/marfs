@@ -263,7 +263,6 @@ typedef enum {
    OSF_CLOSED     = 0x0400,
 
    OSF_THREAD_ERR = 0x1000,     // thread returned non-zero (curl err)
-
 } OSFlags;
 typedef uint16_t OSFlags_t;
 

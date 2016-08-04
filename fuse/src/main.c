@@ -913,6 +913,11 @@ int main(int argc, char* argv[])
       return -1;
    }
 
+   // currently, the only effect of this is that CHECK_PERMS() will use
+   // ns->iperms, instead of ns->bperms, in all libmarfs functions.
+   __TRY_GE0( set_runtime_config(MARFS_INTERACTIVE, 1) );
+
+   // initializations to support stat_xattrs() and save_xattrs()
    init_xattr_specs();
 
 

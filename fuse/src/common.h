@@ -78,6 +78,7 @@ OF SUCH DAMAGE.
 #include "marfs_base.h"
 #include "mdal.h"               // abstraction for MD file/dir ops
 #include "object_stream.h"      // FileHandle needs ObjectStream
+#include "marfs_configuration.h"
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -107,11 +108,11 @@ typedef struct {
 
 
 
-// Human-readable argument to functions with an <is_interactive> parameter
-typedef enum {
-   MARFS_BATCH       = 0,
-   MARFS_INTERACTIVE = 1
-} MarFS_Interactivity;
+// // Human-readable argument to functions with an <is_interactive> parameter
+// typedef enum {
+//    MARFS_BATCH       = 0,
+//    MARFS_INTERACTIVE = 1
+// } MarFS_Interactivity;
 
 
 // // Variation on the MarFS_Interactivity
@@ -274,19 +275,44 @@ typedef enum {
 
 // return an error, if all the required permission-flags are not asserted
 // in the iperms or bperms of the given NS.
-#define CHECK_PERMS(ACTUAL_PERMS, REQUIRED_PERMS)                       \
+#define CHECK_PERMS(NS, REQUIRED_PERMS)                                 \
    do {                                                                 \
-      LOG(LOG_INFO, "check_perms req:%08x actual:%08x\n", (REQUIRED_PERMS), (ACTUAL_PERMS)); \
-      if (((ACTUAL_PERMS) & (REQUIRED_PERMS)) != (REQUIRED_PERMS))      \
-         return -EACCES;   /* should be EPERM? (i.e. being root wouldn't help) */ \
+      TRY_DECLS();                                                      \
+      TRY_GE0( get_runtime_config(MARFS_INTERACTIVE) ); /* fuse calling? */ \
+      MarFS_Perms actual_perms = (rc_ssize ? (NS)->iperms : (NS)->bperms); \
+      LOG(LOG_INFO, "check_perms (%s) req:%08x actual:%08x\n",          \
+          (rc_ssize ? "interactive" : "batch"),                         \
+          (REQUIRED_PERMS), actual_perms);                              \
+      if ((actual_perms & (REQUIRED_PERMS)) != (REQUIRED_PERMS)) {      \
+         LOG(LOG_ERR, "check_perms denied\n");                          \
+         errno = EACCES;   /* should be EPERM? (i.e. being root wouldn't help) */ \
+         return -1;                                                     \
+      }                                                                 \
    } while (0)
 
-// this follows symlinks!
-#define ACCESS(PATH, PERMS)            TRY0( access((PATH), (PERMS)) )
 
+// this follows symlinks!
+#if USE_MDAL
+// NOTE: It might be wrong to expand path info here, as this macro is
+//       often called on the info.post->md_path.
+#define ACCESS(NAMESPACE, PATH, PERMS)                                  \
+   TRY0( F_OP_NOCTX(access, (NAMESPACE), (PATH), (PERMS)) )
+#else
+#define ACCESS(PATH, PERMS) TRY0( access((PATH), (PERMS)) )
+#endif
+
+// NOTE: faccessat, with the AT_EACCESS flag is probably a good solution to
+//       the problem of access testing against real user id, rather than
+//       effective user id.
 // With these args, this doesn't follow symlinks
+#if USE_MDAL
+#define FACCESSAT(NAMESPACE, PATH, PERMS)                               \
+   TRY0( F_OP_NOCTX(faccessat, (NAMESPACE), 0, (PATH), (PERMS),         \
+                    (AT_EACCESS | AT_SYMLINK_NOFOLLOW)) )
+#else
 #define FACCESSAT(PATH, PERMS)                                          \
    TRY0( faccessat(0, (PATH), (PERMS), (AT_EACCESS | AT_SYMLINK_NOFOLLOW) )
+#endif
 
 
 // ---------------------------------------------------------------------------
@@ -414,6 +440,7 @@ typedef enum {
    FH_Nto1_WRITES     = 0x0010,  // implies pftool calling. (Can write N:1)
    FH_MULTI_THR       = 0x0020,  // multi-threaded reads of FH (i.e. NFS)
    FH_RELEASING       = 0x0040,  // added to inform multi-thr during release
+   FH_PACKED          = 0x0080,  // the object in the file handle is packed
 } FHFlags;
 
 typedef uint16_t FHFlagType;
@@ -593,16 +620,26 @@ typedef struct {
    PathInfo        info;         // includes xattrs, MDFS path, etc
    char            ns_path[MARFS_MAX_NS_PATH];  // path in NS, not in MDFS
 
-#if USE_MDAL
+   // NOTE: These are temporarily both defined, so that file-handles will
+   //       have a constant size, regardless of whether USE_MDAL is defined
+   //       or not, to provide a short-term solution to the issue at
+   //       https://github.com/pftool/pftool/issues/31
+   //
+   //#if USE_MDAL
    MDAL_Handle     f_handle;     // file-oriented MDAL ops
-#else
+   //#else
    int             md_fd;        // opened for reading meta-data, or data
-#endif
+   //#endif
 
    curl_off_t      open_offset;  // [see comments at marfs_open_with_offset()]
    ReadStatus      read_status;  // buffer_management, current_offset, etc
    WriteStatus     write_status; // buffer-management, etc
+
    ObjectStream    os;           // handle for streaming access to objects
+   uint8_t         os_init;      // tells weather or not the object streem is inizlized
+   curl_off_t      objectSize;   // The size of the object for packed files
+   int             fileCount;    // The number of files that have been packed
+                                 // into the file
 
    FHFlagType      flags;
 } MarFS_FileHandle;
@@ -652,11 +689,16 @@ typedef struct {
    uint8_t   use_it;         // if non-zero, use <it>, else use internal.dirp/d_handle
 
    union {
-#if USE_MDAL
+   // NOTE: These are temporarily both defined, so that dir-handles will
+   //       have a constant size, regardless of whether USE_MDAL is defined
+   //       or not, to provide a short-term solution to the issue at
+   //       https://github.com/pftool/pftool/issues/31
+   //
+      // #if USE_MDAL
       MDAL_Handle d_handle;  // dir-oriented MDAL ops
-#else
+      // #else
       DIR*        dirp;
-#endif
+      // #endif
       NSIterator  it;
    } internal;
 
@@ -668,7 +710,8 @@ typedef struct {
 #  define D_CTX(DH)          &(DH)->internal.d_handle.ctx
 #  define D_MDAL(DH)         (DH)->internal.d_handle.mdal
 
-#  define D_OP(OP,DH, ...)   (*(DH)->internal.d_handle.mdal->OP)(D_CTX(DH), ##__VA_ARGS__)
+#  define D_OP(OP,DH, ...)        (*(DH)->internal.d_handle.mdal->OP)(D_CTX(DH), ##__VA_ARGS__)
+#  define D_OP_NOCTX(OP, NS, ...) (*(NS)->dir_MDAL->OP)(__VA_ARGS__)
 /*
 #  define D_OP(OP,DH, ...)                                            \
    do {                                                               \

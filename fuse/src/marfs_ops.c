@@ -113,10 +113,14 @@ int marfs_access (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
+#if USE_MDAL
+   TRY0( F_OP_NOCTX(access, info.ns, info.post.md_path, mask) );
+#else
    TRY0( access(info.post.md_path, mask) );
+#endif
  
    EXIT();
    return 0;
@@ -140,10 +144,14 @@ int marfs_faccessat (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
+#if USE_MDAL
+   TRY0( F_OP_NOCTX(faccessat, info.ns, -1, info.post.md_path, mask, flags) );
+#else
    TRY0( faccessat(-1, info.post.md_path, mask, flags) );
+#endif
  
    EXIT();
    return 0;
@@ -178,7 +186,7 @@ int marfs_chmod(const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    if (mode & S_ISUID) {
       LOG(LOG_ERR, "attempt to change setuid bits, on path '%s' (mode: %x)\n",
@@ -210,10 +218,14 @@ int marfs_chown (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // No need for access check, just try the op
+#if USE_MDAL
+   TRY0( F_OP_NOCTX(lchown, info.ns, info.post.md_path, uid, gid) );
+#else
    TRY0( lchown(info.post.md_path, uid, gid) );
+#endif
 
    EXIT();
    return 0;
@@ -283,7 +295,7 @@ int marfs_ftruncate(const char*            path,
    // IOBuf*            b    = &fh->os.iob;
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info->ns, (R_META | W_META | R_DATA | T_DATA));
 
    // POSIX ftruncate returns EBADF or EINVAL, if fd not opened for writing.
    if (! (fh->flags & FH_WRITING)) {
@@ -307,7 +319,11 @@ int marfs_ftruncate(const char*            path,
 
 
    // Call access() syscall to check/act if allowed to truncate for this user
+#if USE_MDAL
+   ACCESS(info->ns, info->post.md_path, (W_OK));
+#else
    ACCESS(info->post.md_path, (W_OK));        /* for truncate? */
+#endif
 
    TRY0( open_md(fh, 1) );
 
@@ -381,7 +397,7 @@ int marfs_getattr (const char*  path,
    LOG(LOG_INFO, "expanded    %s -> %s\n", path, info.post.md_path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, R_META);
+   CHECK_PERMS(info.ns, R_META);
 
    // The "root" namespace is artificial.  If it is configured to refer to
    // a real MDFS path, then stat'ing the root-NS will look at that path.
@@ -473,7 +489,7 @@ int marfs_getxattr (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -545,7 +561,7 @@ int marfs_listxattr (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -636,12 +652,16 @@ int marfs_mkdir (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // Check/act on quota num files
 
    // No need for access check, just try the op
+#if USE_MDAL
+   TRY0( D_OP_NOCTX(mkdir, info.ns, info.post.md_path, mode) );
+#else
    TRY0( mkdir(info.post.md_path, mode) );
+#endif
 
    EXIT();
    return 0;
@@ -681,9 +701,9 @@ int marfs_mknod (const char* path,
    // don't know what the open call might be, we may be imposing
    // more-restrictive constraints than necessary.
    //
-   //   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
-   //   CHECK_PERMS(info.ns->iperms, (R_META | W_META | W_DATA | T_DATA));
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA | T_DATA));
+   //   CHECK_PERMS(info.ns, (R_META | W_META));
+   //   CHECK_PERMS(info.ns, (R_META | W_META | W_DATA | T_DATA));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | W_DATA | T_DATA));
 
    // Check/act on quotas of total-space and total-num-names
    // 0=OK, 1=exceeded, -1=error
@@ -831,7 +851,6 @@ int marfs_open(const char*         path,
 
    EXPAND_PATH_INFO(info, path);
 
-
    // Check/act on iperms from expanded_path_info_structure
    //   If readonly RM/RD 
    //   If wronly/rdwr/trunk  RM/WM/RD/WD/TD
@@ -877,8 +896,12 @@ int marfs_open(const char*         path,
    }
    else if (flags & (O_WRONLY)) {
       fh->flags |= FH_WRITING;
+#if USE_MDAL
+      ACCESS(info->ns, info->post.md_path, W_OK);
+#else
       ACCESS(info->post.md_path, W_OK);
-      CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+#endif
+      CHECK_PERMS(info->ns, (R_META | W_META | R_DATA | W_DATA));
 
       // Need to call readlink() on path, before this, but if path is a
       // marfs-path, readlink will invoke marfs_readlink() and we'll be
@@ -888,22 +911,34 @@ int marfs_open(const char*         path,
          errno = EPERM;
          return -1;
       }
-
    }
    else {
       // NOTE: O_RDONLY is not actually a flag!
       //       It's just the absence of O_WRONLY!
       fh->flags |= FH_READING;
+#if USE_MDAL
+      ACCESS(info->ns, info->post.md_path, R_OK);
+#else
       ACCESS(info->post.md_path, R_OK);
-      CHECK_PERMS(info->ns->iperms, (R_META | R_DATA));
+#endif
+      CHECK_PERMS(info->ns, (R_META | R_DATA));
    }
 
    //   if (info->flags & (O_TRUNC)) {
-   //      CHECK_PERMS(info->ns->iperms, (T_DATA));
+   //      CHECK_PERMS(info->ns, (T_DATA));
    //   }
 
 
    STAT_XATTRS(info);
+   // we need to check if it is a packed file and should not be
+   if(
+         fh->flags & FH_PACKED &&
+         content_length > info->pre.repo->max_pack_file_size
+         ) {
+      return -2;
+   }
+
+
 
    // If no xattrs, we let user read/write directly on the file.
    // This implies a file that created in DIRECT repo-mode,
@@ -923,6 +958,14 @@ int marfs_open(const char*         path,
 
    else if (fh->flags & FH_WRITING) {
       LOG(LOG_INFO, "writing\n");
+
+      // Check/act on quotas of total-space and total-num-names
+      // 0=OK, 1=exceeded, -1=error
+      TRY_GE0( check_quotas(info) );
+      if (rc_ssize) {
+         errno = EDQUOT;
+         return -1;
+      }
 
       // Support for pftool N:1, where (potentially) multiple writers are
       // writing different parts of the file.  It's up to the caller to
@@ -956,6 +999,39 @@ int marfs_open(const char*         path,
          update_pre(&info->pre);
          // update_url(os, info); // can't do this here ...
       }
+
+      if( fh->flags & FH_PACKED ) {
+         LOG(LOG_INFO, "writing PACKED\n");
+
+         if (
+               fh->objectSize+content_length+MARFS_REC_UNI_SIZE > info->pre.repo->chunk_size ||
+                (
+                 -1 != info->pre.repo->max_pack_file_count &&
+                 fh->fileCount+1 > info->pre.repo->max_pack_file_count
+                )
+            ) {
+            LOG(LOG_INFO, "releasing fh: objectSize: %ld, content_length: %ld, "
+                "chunk_size: %lu, fileCount: %d, "
+                "max_pack_file_count: %ld\n",
+                fh->objectSize, content_length,
+                info->pre.repo->chunk_size, fh->fileCount,
+                info->pre.repo->max_pack_file_count);
+            // we need to close the current object stream and open a new one if it is a packed object
+            marfs_release_fh(fh);
+            return marfs_open_packed(path, fh, flags, content_length);
+         }
+
+         // set the object type
+         info->pre.obj_type = OBJ_PACKED;
+         info->post.obj_type = OBJ_PACKED;
+         info->post.obj_offset = fh->objectSize;
+         update_pre(&info->pre);
+
+         // update the object info
+         fh->objectSize += content_length+MARFS_REC_UNI_SIZE;
+         fh->fileCount += 1;
+      }
+
    }
 
 
@@ -968,100 +1044,97 @@ int marfs_open(const char*         path,
    }
    strncpy(fh->ns_path, path, path_len +1);
 
+   // we need to check if we need a new stream
+   if (
+         !(fh->flags & FH_PACKED) ||
+         0 == fh->os_init
+         ) {
+      LOG(LOG_INFO, "opening new object stream\n");
 
-   // Configure a private AWSContext, for this request
-   AWSContext* ctx = aws_context_clone();
-   if (ACCESSMETHOD_IS_S3(info->pre.repo->access_method)) { // (includes S3_EMC)
+      // Configure a private AWSContext, for this request
+      AWSContext* ctx = aws_context_clone();
+      if (ACCESSMETHOD_IS_S3(info->pre.repo->access_method)) { // (includes S3_EMC)
 
-      // install the host and bucket
-      s3_set_host_r(info->pre.host, ctx);
-      LOG(LOG_INFO, "host   '%s'\n", info->pre.host);
-      // fprintf(stderr, "host   '%s'\n", info->pre.host); // for debugging pftool
+         // install the host and bucket
+         s3_set_host_r(info->pre.host, ctx);
+         LOG(LOG_INFO, "host   '%s'\n", info->pre.host);
+         // fprintf(stderr, "host   '%s'\n", info->pre.host); // for debugging pftool
 
-      s3_set_bucket_r(info->pre.bucket, ctx);
-      LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
-   }
-
-   if (info->pre.repo->access_method == ACCESSMETHOD_S3_EMC) {
-      s3_enable_EMC_extensions_r(1, ctx);
-
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if ( info->pre.repo->ssl ) {
-        s3_https_r( 1, ctx );
-        s3_https_insecure_r( 1, ctx );
+         s3_set_bucket_r(info->pre.bucket, ctx);
+         LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
       }
-   }
-   else if (info->pre.repo->access_method == ACCESSMETHOD_SPROXYD) {
-      s3_enable_Scality_extensions_r(1, ctx);
-      s3_sproxyd_r(1, ctx);
 
-      // For now if we're using HTTPS, I'm just assuming that it is without
-      // validating the SSL certificate (curl's -k or --insecure flags). If
-      // we ever get a validated certificate, we will want to put a flag
-      // into the MarFS_Repo struct that says it's validated or not.
-      if ( info->pre.repo->ssl ) {
-        s3_https_r( 1, ctx );
-        s3_https_insecure_r( 1, ctx );
+      if (info->pre.repo->access_method == ACCESSMETHOD_S3_EMC) {
+         s3_enable_EMC_extensions_r(1, ctx);
+
+         // For now if we're using HTTPS, I'm just assuming that it is without
+         // validating the SSL certificate (curl's -k or --insecure flags). If
+         // we ever get a validated certificate, we will want to put a flag
+         // into the MarFS_Repo struct that says it's validated or not.
+         if ( info->pre.repo->ssl ) {
+           s3_https_r( 1, ctx );
+           s3_https_insecure_r( 1, ctx );
+         }
       }
-   }
+      else if (info->pre.repo->access_method == ACCESSMETHOD_SPROXYD) {
+         s3_enable_Scality_extensions_r(1, ctx);
+         s3_sproxyd_r(1, ctx);
 
-   if (info->pre.repo->security_method == SECURITYMETHOD_HTTP_DIGEST) {
-      s3_http_digest_r(1, ctx);
-   }
+         // For now if we're using HTTPS, I'm just assuming that it is without
+         // validating the SSL certificate (curl's -k or --insecure flags). If
+         // we ever get a validated certificate, we will want to put a flag
+         // into the MarFS_Repo struct that says it's validated or not.
+         if ( info->pre.repo->ssl ) {
+           s3_https_r( 1, ctx );
+           s3_https_insecure_r( 1, ctx );
+         }
+      }
 
-   // install custom context
-   aws_iobuf_context(b, ctx);
+      if (info->pre.repo->security_method == SECURITYMETHOD_HTTP_DIGEST) {
+         s3_http_digest_r(1, ctx);
+      }
 
-   // initialize the URL in the ObjectStream, in our FileHandle
-   TRY0( update_url(os, info) );
+      // install custom context
+      aws_iobuf_context(b, ctx);
 
-   // To support seek() [for reads], and allow reading at arbitrary
-   // offsets, we let marfs_read() determine the offset where it should
-   // open, so it can do its own GET, with byte-ranges.  Therefore, for
-   // reads, we don't open the stream, here.
-   if (fh->flags & FH_WRITING) {
 
-      // explicit content-length is faster, in requests through a Scality
-      // sproxyd connector.  Save info so we only write MarFS chunk-size
-      // values per stream_open() [including recovery-info, if called through
-      // marfs_open_at_offset()]
-      //
-      // NOTE: When overwriting an existing file, fuse gets called with open,
-      //     then ftruncate, but marfs_ftruncate() does
-      //     abort-stream/move-to-trash/open-new-name.  So, we need to track
-      //     the remaining data-size as it is right now.  (Also, we may
-      //     someday want marfs_write() to retry failed writes a few times.)
-      size_t   open_size  = get_stream_wr_open_size(fh, 0);
-      uint16_t wr_timeout = info->pre.repo->write_timeout;
+      TRY0( update_url(os, info) );
 
-      TRY0( stream_open(os, OS_PUT, open_size, 0, wr_timeout) );
-   }
-   else {
-      SEM_INIT(&os->read_lock, 0, 1);
-      os->flags |= OSF_RLOCK_INIT;
+      // To support seek() [for reads], and allow reading at arbitrary
+      // offsets, we let marfs_read() determine the offset where it should
+      // open, so it can do its own GET, with byte-ranges.  Therefore, for
+      // reads, we don't open the stream, here.
+      if (fh->flags & FH_WRITING) {
+         size_t   open_size  = get_stream_wr_open_size(fh, 0);
+         uint16_t wr_timeout = info->pre.repo->write_timeout;
+
+         TRY0( stream_open(os, OS_PUT, open_size, 0, wr_timeout) );
+      }
+      else {
+         SEM_INIT(&os->read_lock, 0, 1);
+         os->flags |= OSF_RLOCK_INIT;
 
 #ifdef NFS_THREADS
-      // This is a special build-time flag that lets us just assume that it
-      // will be NFS calling marfs_read().  Otherwise,
-      // marfs_read_internal() will attempt to detect whether it is NFS
-      // calling.  The effect of defining NFS_THREADS is that *all*
-      // discontiguous reads will be enqueued until they become contiguous.
-      // You should not do this if what you are building is fuse (or some
-      // other app) which might need to support a seek before a read.  But
-      // normal sequential reads through fuse (i.e. outside of NFS) should
-      // also work fine with this flag defined.  See marfs_read_internal().
-      //
-      // NOT A GOOD IDEA.  It turns out that NFS sometimes invokes the
-      // scattered reads across multiple file-handles.  Thus, some
-      // out-of-order threads have no other threads following along behind.
+         // This is a special build-time flag that lets us just assume that it
+         // will be NFS calling marfs_read().  Otherwise,
+         // marfs_read_internal() will attempt to detect whether it is NFS
+         // calling.  The effect of defining NFS_THREADS is that *all*
+         // discontiguous reads will be enqueued until they become contiguous.
+         // You should not do this if what you are building is fuse (or some
+         // other app) which might need to support a seek before a read.  But
+         // normal sequential reads through fuse (i.e. outside of NFS) should
+         // also work fine with this flag defined.  See marfs_read_internal().
+         //
+         // NOT A GOOD IDEA.  It turns out that NFS sometimes invokes the
+         // scattered reads across multiple file-handles.  Thus, some
+         // out-of-order threads have no other threads following along behind.
 
-      fh->flags |= FH_MULTI_THR;
+         fh->flags |= FH_MULTI_THR;
 #endif
-   }
+      }
 
+      fh->os_init = 1;
+   }
 
 #if 0
    // COMMENTED OUT.  Turns out NFS calls truncate() on the same path,
@@ -1088,6 +1161,36 @@ int marfs_open(const char*         path,
 
    EXIT();
    return 0;
+}
+
+// This open command allows you to provide an alreay populated fh for
+// marfs to work with. This allows marfs to create a packed file
+// by resuing a curl stream if there is still room in the current object.
+//
+// If there is not room the stream is closed and a new one is created.
+//
+// It only makes sense to use this on a create call.
+//
+// -2 will be returned if the content_length exceeds the max packed size
+int  marfs_open_packed   (const char* path, MarFS_FileHandle* fh, int flags,
+                          curl_off_t content_length) {
+   // if you are trying to read the file just use regular open
+   if(!(flags & O_WRONLY)) {
+      return -2;
+   }
+
+   if( 0 >= content_length) {
+      return -2;
+   }
+
+   // if the flag is not already set go ahead set and clear the data structure
+   if( !(fh->flags & FH_PACKED)) {
+      memset(fh, 0, sizeof(MarFS_FileHandle));
+      fh->flags |= FH_PACKED;
+   }
+
+   // run open
+   return marfs_open(path, fh, flags, content_length);
 }
 
 
@@ -1160,7 +1263,7 @@ int marfs_opendir (const char*       path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    if (under_mdfs_top(path)) {
       LOG(LOG_ERR, "attempt to open path under mdfs_top '%s'\n", path);
@@ -1422,7 +1525,7 @@ static ssize_t marfs_read_internal (const char*        path,
    IOBuf*            b    = &os->iob;
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM  RD
-   CHECK_PERMS(info->ns->iperms, (R_META | R_DATA));
+   CHECK_PERMS(info->ns, (R_META | R_DATA));
 
    // No need to call access as we called it in open for read
    // Case
@@ -1783,7 +1886,7 @@ int marfs_readdir (const char*        path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
    // Appropriate  readdir call filling in fuse structure  (fuse does this in chunks)
@@ -1896,7 +1999,7 @@ ssize_t marfs_readlink (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
 #if 0
    // Now that we plan to mount fuse in a context where the mdfs is
@@ -1915,7 +2018,11 @@ ssize_t marfs_readlink (const char* path,
 #else
    // No need for access check, just try the op
    // Appropriate readlink-like call filling in fuse structure 
+#  if USE_MDAL
+   TRY_GE0( F_OP_NOCTX(readlink, info.ns, info.post.md_path, buf, size) );
+#  else
    TRY_GE0( readlink(info.post.md_path, buf, size) );
+#  endif
    if (rc_ssize >= size) {
       LOG(LOG_ERR, "no room for '\\0'\n");
       errno = ENAMETOOLONG;
@@ -2002,13 +2109,18 @@ int marfs_release (const char*        path,
          terminate_all_readers(fh);
       }
 
-      stream_sync(os);   // TRY0( stream_sync(os) );
-      stream_close(os);  // TRY0( stream_close(os) );
+      // we will not close the stream for packed files
+      if( !(fh->flags & FH_PACKED) ) {
+         stream_sync(os);   // TRY0( stream_sync(os) );
+         stream_close(os);  // TRY0( stream_close(os) );
+      }
    }
 #endif
 
-   // free aws4c resources
-   aws_iobuf_reset_hard(&os->iob);
+   // free aws4c resources if the file is not packed
+   if( !(fh->flags & FH_PACKED) ) {
+      aws_iobuf_reset_hard(&os->iob);
+   }
 
    if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
 
@@ -2085,8 +2197,10 @@ int marfs_release (const char*        path,
       install_final_mode = 1;
    }
 
-   // no longer incomplete
-   info->xattrs &= ~(XVT_RESTART);
+   // no longer incomplete unless this is a packed file
+   if( !(fh->flags & FH_PACKED) ) {
+      info->xattrs &= ~(XVT_RESTART);
+   }
 
    // update xattrs (unless writing N:1), while we still can
    if ((info->pre.repo->access_method != ACCESSMETHOD_DIRECT)
@@ -2108,6 +2222,76 @@ int marfs_release (const char*        path,
       }
    }
 
+   EXIT();
+   return 0;
+}
+
+// Pftool needs a way to clear restart on files that it packed once the object
+// stream has been closed
+// TODO: can this me merged with batch_post_process
+int marfs_clear_restart(const char* path) {
+   TRY_DECLS();
+   LOG(LOG_INFO, "%s\n", path);
+
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+   EXPAND_PATH_INFO(&info, path);
+
+   STAT_XATTRS(&info);
+   if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
+
+      // As in release(), we take note of whether RESTART was saved with
+      // a restrictive mode, which we couldn't originally install because
+      // would've prevented manipulating xattrs.  If so, then (after removing
+      // the RESTART xattr) install the more-restrictive mode.
+      int    install_new_mode = 0;
+      mode_t new_mode = 0;      // else gcc worries about "used uninitialized"
+      if (has_all_xattrs(&info, XVT_RESTART)
+          && (info.restart.flags & RESTART_MODE_VALID)) {
+
+         install_new_mode = 1;
+         new_mode = info.restart.mode;
+      }
+
+      // remove "restart" xattr.  [Can't do this at close-time, in the case
+      // of N:1 files, so we do it here, for them.] Also for packed files
+      info.xattrs &= ~(XVT_RESTART);
+      SAVE_XATTRS(&info, (XVT_RESTART));
+
+      // install more-restrictive mode, if needed.
+      if (install_new_mode) {
+#if USE_MDAL
+         TRY0( F_OP_NOCTX(chmod, info.ns, info.post.md_path, new_mode) );
+#else
+         TRY0( chmod(info.post.md_path, new_mode) );
+#endif
+      }
+   }
+   else
+      LOG(LOG_INFO, "no xattrs\n");
+
+   return 0;
+
+}
+
+// If we are sharing a file handle to write to a packed object we need to
+// close the stream once we are completly done. Before a program exists it
+// needs to call this on all file handles that it used as packed
+int marfs_release_fh(MarFS_FileHandle* fh) {
+   ENTRY();
+   LOG(LOG_INFO, "release_fh\n");
+
+   ObjectStream*     os   = &fh->os;
+
+   stream_sync(os);
+   stream_close(os);
+
+   // free aws4c resources
+   aws_iobuf_reset_hard(&os->iob);
+
+   memset(fh, 0, sizeof(MarFS_FileHandle));
+
+   fh->flags |= FH_PACKED;
 
    EXIT();
    return 0;
@@ -2140,7 +2324,7 @@ int marfs_releasedir (const char*       path,
       EXPAND_PATH_INFO(&info, path);
 
       // Check/act on iperms from expanded_path_info_structure, this op requires RM
-      CHECK_PERMS(info.ns->iperms, (R_META));
+      CHECK_PERMS(info.ns, (R_META));
 
       // No need for access check, just try the op
       // Appropriate  closedir call filling in fuse structure
@@ -2175,7 +2359,7 @@ int marfs_removexattr (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2217,8 +2401,8 @@ int marfs_rename (const char* path,
    EXPAND_PATH_INFO(&info2, to);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms,  (R_META | W_META));
-   CHECK_PERMS(info2.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns,  (R_META | W_META));
+   CHECK_PERMS(info2.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2258,7 +2442,7 @@ int marfs_rmdir (const char* path) {
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2269,7 +2453,11 @@ int marfs_rmdir (const char* path) {
 
    // No need for access check, just try the op
    // Appropriate rmdirlike call filling in fuse structure 
+#if USE_MDAL
+   TRY0( D_OP_NOCTX(rmdir, info.ns, info.post.md_path) );
+#else
    TRY0( rmdir(info.post.md_path) );
+#endif
 
    EXIT();
    return 0;
@@ -2288,7 +2476,7 @@ int marfs_setxattr (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2329,7 +2517,7 @@ int marfs_statvfs (const char*      path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
-   CHECK_PERMS(info.ns->iperms, (R_META));
+   CHECK_PERMS(info.ns, (R_META));
 
    // wipe caller's statbuf
    memset(statbuf, 0, sizeof(struct statvfs));
@@ -2434,7 +2622,11 @@ int marfs_statvfs (const char*      path,
       statbuf->f_namemax = 255;     /* maximum filename length */
    }
    else
+#if USE_MDAL
+      TRY0( CTX_FREE_OP(statvfs, info.ns, info.ns->md_path, statbuf) );
+#else
       TRY0( statvfs(info.ns->md_path, statbuf) );
+#endif
 
    EXIT();
    return 0;
@@ -2459,7 +2651,7 @@ int marfs_symlink (const char* target,
    EXPAND_PATH_INFO(&lnk_info, linkname);   // (okay if this file doesn't exist)
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(lnk_info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(lnk_info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(lnk_info.ns)) {
@@ -2479,8 +2671,12 @@ int marfs_symlink (const char* target,
    }
 
    // No need for access check, just try the op
-   // Appropriate  symlink call filling in fuse structure 
+   // Appropriate  symlink call filling in fuse structure
+#if USE_MDAL
+   TRY0( F_OP_NOCTX(symlink, lnk_info.ns, target, lnk_info.post.md_path) );
+#else
    TRY0( symlink(target, lnk_info.post.md_path) );
+#endif
 
    EXIT();
    return 0;
@@ -2502,10 +2698,14 @@ int marfs_truncate (const char* path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | T_DATA));
 
    // Call access syscall to check/act if allowed to truncate for this user 
+#if USE_MDAL
+   ACCESS(info.ns, info.post.md_path, (W_OK));
+#else
    ACCESS(info.post.md_path, (W_OK));
+#endif
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2552,7 +2752,7 @@ int marfs_unlink (const char* path) {
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | U_DATA));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2603,12 +2803,16 @@ int marfs_utime(const char*     path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
+#if USE_MDAL
+   TRY_GE0( F_OP_NOCTX(utime, info.ns, info.post.md_path, buf) );
+#else
    TRY_GE0( utime(info.post.md_path, buf) );
+#endif
 
    EXIT();
    return 0;
@@ -2628,12 +2832,17 @@ int marfs_utimensat(const char*           path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
+#if USE_MDAL
+   TRY_GE0( F_OP_NOCTX(utimensat, info.ns, AT_FDCWD, info.post.md_path,
+                       times, flags) );
+#else
    TRY_GE0( utimensat(AT_FDCWD, info.post.md_path, times, flags) );
+#endif
 
    EXIT();
    return 0;
@@ -2660,7 +2869,7 @@ int marfs_utimens(const char*           path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META));
 
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
@@ -2672,7 +2881,12 @@ int marfs_utimens(const char*           path,
    // No need for access check, just try the op
    // Appropriate  utimens call filling in fuse structure
    // NOTE: we're assuming expanded path is absolute, so dirfd is ignored
+#if USE_MDAL
+   TRY_GE0( F_OP_NOCTX(utimensat, info.ns, 0, info.post.md_path,
+                        tv, AT_SYMLINK_NOFOLLOW) );
+#else
    TRY_GE0( utimensat(0, info.post.md_path, tv, AT_SYMLINK_NOFOLLOW) );
+#endif
 
    EXIT();
    return 0;
@@ -2700,7 +2914,7 @@ ssize_t marfs_write(const char*        path,
    
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info->ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info->ns, (R_META | W_META | R_DATA | W_DATA));
 
    // No need to call access as we called it in open for write
    // Make sure security is set up for accessing the selected repo
@@ -3004,12 +3218,20 @@ int marfs_create(const char*        path,
    //   If wronly/rdwr/trunk  RMWMRDWD
    //   If append we don’t support that
    if (info.flags & (O_RDONLY)) {
+#if USE_MDAL
+      ACCESS(info.ns, info.post.md_path, W_OK);
+#else
       ACCESS(info.post.md_path, W_OK);
-      CHECK_PERMS(info.ns->iperms, (R_META | R_DATA));
+#endif
+      CHECK_PERMS(info.ns, (R_META | R_DATA));
    }
    else if (info.flags & (O_WRONLY)) {
+#if USE_MDAL
+      ACCESS(info.ns, info.post.md_path, W_OK);
+#else
       ACCESS(info.post.md_path, W_OK);
-      CHECK_PERMS(info.ns->iperms, (R_META | W_META | | R_DATA | W_DATA));
+#endif
+      CHECK_PERMS(info.ns, (R_META | W_META | | R_DATA | W_DATA));
    }
 
    if (info.flags & (O_APPEND | O_RDWR)) {
@@ -3017,7 +3239,7 @@ int marfs_create(const char*        path,
       return -1;
    }
    if (info.flags & (O_APPEND | O_TRUNC)) { /* can this happen, with create()? */
-      CHECK_PERMS(info.ns->iperms, (T_DATA));
+      CHECK_PERMS(info.ns, (T_DATA));
    }
 
 
@@ -3029,13 +3251,17 @@ int marfs_create(const char*        path,
    //       what the open call might be, we may be imposing
    //       more-restrictive constraints than necessary.
    //
-   //   CHECK_PERMS(info.ns->iperms, (R_META | W_META));
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA | T_DATA));
+   //   CHECK_PERMS(info.ns, (R_META | W_META));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | W_DATA | T_DATA));
 
    // Check/act on quota num names
    // No need for access check, just try the op
    // Appropriate mknod-like/open-create-like call filling in fuse structure
+#if USE_MDAL
+   TRY0( F_OP_NOCTX(mknod, info.ns, info.post.md_path, mode, rdev) );
+#else
    TRY0( mknod(info.post.md_path, mode, rdev) );
+#endif
 
    EXIT();
    return 0;
@@ -3055,10 +3281,11 @@ int marfs_fallocate(const char*        path,
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
-   CHECK_PERMS(info.ns->iperms, (R_META | W_META | R_DATA | W_DATA));
+   CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | W_DATA));
 
    // Check space quota
-   //    If  we get here just return ok  this is just a check to see if you can write to the fs
+   //    If  we get here just return ok
+   //    this is just a check to see if you can write to the fs
    EXIT();
    return 0;
 }
@@ -3079,7 +3306,14 @@ int marfs_fgetattr(const char*        path,
    // appropriate fgetattr/fstat call filling in fuse structure (dont mess with xattrs)
    PathInfo*         info = &fh->info;                  /* shorthand */
 
+#if USE_MDAL
+   // While this is being called on an open file, the op is still
+   // context free since we are using lstat to get the file attrs and
+   // that operates on raw pathnames.
+   TRY0( F_OP(lstat, fh, info->post.md_path, st) );
+#else
    TRY0( lstat(info->post.md_path, st) );
+#endif
 
    EXIT();
    return 0;

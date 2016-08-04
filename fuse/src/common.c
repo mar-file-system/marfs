@@ -1016,7 +1016,9 @@ int batch_post_process(const char* path, size_t file_size) {
 
       // remove "restart" xattr.  [Can't do this at close-time, in the case
       // of N:1 files, so we do it here, for them.]
-      info.xattrs &= ~(XVT_RESTART);
+      if( !(OBJ_PACKED == info.post.obj_type) ) {
+         info.xattrs &= ~(XVT_RESTART);
+      }
       SAVE_XATTRS(&info, (XVT_RESTART));
 
       // install more-restrictive mode, if needed.
@@ -1097,8 +1099,15 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
          // create the new xattr-value from info->pre
          __TRY0( pre_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE, &info->pre) );
          LOG(LOG_INFO, "XVT_PRE %s\n", xattr_value_str);
+#if USE_MDAL
+         __TRY0( F_OP_NOCTX(lsetxattr, info->ns,
+                            info->post.md_path,
+                            spec->key_name, xattr_value_str,
+                            strlen(xattr_value_str)+1, 0) );
+#else
          __TRY0( lsetxattr(info->post.md_path,
                            spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
+#endif
          break;
       }
 
@@ -1107,8 +1116,15 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
                             &info->post, info->ns->iwrite_repo,
                             (info->post.flags & POST_TRASH)) );
          LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
+#if USE_MDAL
+         __TRY0( F_OP_NOCTX(lsetxattr, info->ns, info->post.md_path,
+                            spec->key_name, xattr_value_str,
+                            strlen(xattr_value_str)+1, 0) );
+#else
          __TRY0( lsetxattr(info->post.md_path,
-                           spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
+                           spec->key_name, xattr_value_str,
+                           strlen(xattr_value_str)+1, 0) );
+#endif
          break;
       }
 
@@ -1130,11 +1146,23 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
             __TRY0( restart_2_str(xattr_value_str, MARFS_MAX_XATTR_SIZE,
                                   &info->restart) );
             LOG(LOG_INFO, "XVT_RESTART: %s\n", xattr_value_str);
+#if USE_MDAL
+            __TRY0( F_OP_NOCTX(lsetxattr, info->ns, info->post.md_path,
+                               spec->key_name, xattr_value_str,
+                               strlen(xattr_value_str)+1, 0) );
+#else
             __TRY0( lsetxattr(info->post.md_path,
-                              spec->key_name, xattr_value_str, strlen(xattr_value_str)+1, 0) );
+                              spec->key_name, xattr_value_str,
+                              strlen(xattr_value_str)+1, 0) );
+#endif
          }
          else {
+#if USE_MDAL
+            ssize_t val_size = F_OP_NOCTX(lremovexattr, info->ns,
+                                          info->post.md_path, spec->key_name);
+#else
             ssize_t val_size = lremovexattr(info->post.md_path, spec->key_name);
+#endif
             if (val_size < 0) {
                if (errno == ENOATTR)
                   break;           /* not a problem */
@@ -1204,23 +1232,46 @@ int write_trash_companion_file(PathInfo*             info,
    //      Should just stat() the companion-file, before opening, to assure
    //      it doesn't already exist.
    LOG(LOG_INFO, "companion:  %s\n", companion_fname);
+#if USE_MDAL
+   MarFS_FileHandle companion_fh;
+   memset((char*)&companion_fh, 0, sizeof(MarFS_FileHandle));
+   companion_fh.info = *info;
+   F_MDAL(&companion_fh) = info->pre.ns->file_MDAL;
+   F_OP(f_init, &companion_fh, F_MDAL(&companion_fh));
+   F_OP(open, &companion_fh, companion_fname, (O_WRONLY|O_CREAT), info->st.st_mode);
+   __TRY_GE0( F_OP(is_open, &companion_fh) ); // This should cover the failure
+#else
    __TRY_GE0( open(companion_fname, (O_WRONLY|O_CREAT), info->st.st_mode) );
    int fd = rc_ssize;
+#endif
 
 #if 1
    // write MDFS path into the trash companion
+#  if USE_MDAL
+   __TRY_GE0( F_OP(write, &companion_fh,
+                   info->post.md_path, strlen(info->post.md_path)) );
+#  else
    __TRY_GE0( write(fd, info->post.md_path, strlen(info->post.md_path)) );
+#  endif // USE_MDAL
 #else
    // write MarFS path into the trash companion
    __TRY_GE0( write(fd, marfs_config->mnt_top, marfs_config->mnt_top_len) );
    __TRY_GE0( write(fd, path, strlen(path)) );
 #endif
 
+#if USE_MDAL
+   __TRY0( close_md(&companion_fh) );
+#else
    __TRY0( close(fd) );
+#endif
 
    // maybe install ctime/atime to support "undelete"
    if (utim)
+#if USE_MDAL
+      __TRY0( F_OP_NOCTX(utime, info->ns, companion_fname, utim) );
+#else
       __TRY0( utime(companion_fname, utim) );
+#endif
 
    return 0;
 }
@@ -1289,7 +1340,11 @@ int  trash_unlink(PathInfo*   info,
    __TRY0( stat_xattrs(info) );
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // not enough to reclaim objs
+#if USE_MDAL
+      __TRY0( F_OP_NOCTX(unlink, info->ns, info->post.md_path) );
+#else
       __TRY0( unlink(info->post.md_path) );
+#endif
       return 0;
    }
 
@@ -1298,7 +1353,11 @@ int  trash_unlink(PathInfo*   info,
    // filesystem).  It was thought we shouldn't even *try* the rename
    // first.  Instead, we'll copy to the trash, then unlink the original.
    __TRY0( trash_truncate(info, path) );
+#if USE_MDAL
+   __TRY0( F_OP_NOCTX(unlink, info->ns, info->post.md_path) );
+#else
    __TRY0( unlink(info->post.md_path) );
+#endif
 
    return 0;
 }
@@ -1391,25 +1450,57 @@ int  trash_truncate(PathInfo*   info,
    // been simply unlinked above.
    if (S_ISLNK(info->st.st_mode)) {
       char target[MARFS_MAX_MD_PATH];
+#if USE_MDAL
+      __TRY_GE0( F_OP_NOCTX(readlink, info->ns, info->post.md_path,
+                            target, MARFS_MAX_MD_PATH) );
+      __TRY0( F_OP_NOCTX(symlink, info->ns, target, info->trash_md_path) );
+      __TRY0( F_OP_NOCTX(chmod, info->ns, info->trash_md_path, new_mode) );
+#else 
       __TRY_GE0( readlink(info->post.md_path, target, MARFS_MAX_MD_PATH) );
       __TRY0( symlink(target, info->trash_md_path) );
       __TRY0( chmod(info->trash_md_path, new_mode) );
+#endif
    }
 
    else {
       // read from md_file
+#if USE_MDAL
+      MarFS_FileHandle md_fh;
+      memset((char*)&md_fh, 0, sizeof(MarFS_FileHandle));
+      md_fh.info = *info;
+      // open_md will initialize the file handle for us.
+      open_md(&md_fh, 0 /* open for reading */);
+      if(! F_OP(is_open, &md_fh)) {
+#else
       int in = open(info->post.md_path, O_RDONLY);
       if (in == -1) {
+#endif
          LOG(LOG_ERR, "open(%s, O_RDONLY) [oct]%o failed\n",
              info->post.md_path, new_mode);
          return -1;
       }
       // write to trash file
+#if USE_MDAL
+      MarFS_FileHandle trash_fh;
+      memset((char*)&trash_fh, 0, sizeof(MarFS_FileHandle));
+      trash_fh.info = *info;
+      F_MDAL(&trash_fh) = info->pre.ns->file_MDAL;
+      LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(&trash_fh)->type));
+      F_OP(f_init, &trash_fh, F_MDAL(&trash_fh));
+
+      F_OP(open, &trash_fh, info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
+      if(! F_OP(is_open, &trash_fh)) {
+#else
       int out = open(info->trash_md_path, (O_CREAT | O_WRONLY), new_mode);
       if (out == -1) {
+#endif
          LOG(LOG_ERR, "open(%s, (O_CREAT|O_WRONLY), [oct]%o) failed\n",
              info->trash_md_path, new_mode);
+#if USE_MDAL
+         __TRY0( close_md(&md_fh) );
+#else
          __TRY0( close(in) );
+#endif
          return -1;
       }
 
@@ -1431,8 +1522,13 @@ int  trash_truncate(PathInfo*   info,
             LOG(LOG_ERR, "malloc %ld bytes failed\n", BUF_SIZE);
 
             // clean-up
+#if USE_MDAL
+            __TRY0( close_md(&md_fh) );
+            __TRY0( close_md(&trash_fh) );
+#else
             __TRY0( close(in) );
             __TRY0( close(out) );
+#endif
             return -1;
          }
 
@@ -1441,21 +1537,35 @@ int  trash_truncate(PathInfo*   info,
 
          // copy phy-data from md_file to trash_file, one buf at a time
          ssize_t rd_count;
+#if USE_MDAL
+         for (rd_count = F_OP(read, &md_fh, (void*)buf, read_size);
+              (read_size && (rd_count > 0));
+              rd_count = F_OP(read, &md_fh, (void*)buf, read_size)) {
+#else
          for (rd_count = read(in, (void*)buf, read_size);
               (read_size && (rd_count > 0));
               rd_count = read(in, (void*)buf, read_size)) {
-
+#endif
             char*  buf_ptr = buf;
             size_t remain  = rd_count;
             while (remain) {
+#if USE_MDAL
+               size_t wr_count = F_OP(write, &trash_fh, buf_ptr, remain);
+#else
                size_t wr_count = write(out, buf_ptr, remain);
+#endif
                if (wr_count < 0) {
                   LOG(LOG_ERR, "err writing %s (byte %ld)\n",
                       info->trash_md_path, wr_total);
 
                   // clean-up
+#if USE_MDAL
+                  __TRY0( close_md(&md_fh) );
+                  __TRY0( close_md(&trash_fh) );
+#else
                   __TRY0( close(in) );
                   __TRY0( close(out) );
+#endif
                   free(buf);
                   return -1;
                }
@@ -1473,15 +1583,25 @@ int  trash_truncate(PathInfo*   info,
                 info->trash_md_path, wr_total);
 
             // clean-up
+#if USE_MDAL
+            __TRY0( close_md(&md_fh) );
+            __TRY0( close_md(&trash_fh) );
+#else
             __TRY0( close(in) );
             __TRY0( close(out) );
+#endif
             return -1;
          }
       }
 
       // clean-up
+#if USE_MDAL
+      __TRY0( close_md(&md_fh) );
+      __TRY0( close_md(&trash_fh) );
+#else
       __TRY0( close(in) );
       __TRY0( close(out) );
+#endif
 
       // trunc trash-file to size
 #if USE_MDAL
@@ -1516,7 +1636,11 @@ int  trash_truncate(PathInfo*   info,
    __TRY0( save_xattrs(&trash_info, (info->xattrs | XVT_POST)) ); // GC needs POST
 
    // update trash-file atime/mtime to support "undelete"
+#if USE_MDAL
+   __TRY0( F_OP_NOCTX(utime, info->ns, info->trash_md_path, &trash_time) );
+#else
    __TRY0( utime(info->trash_md_path, &trash_time) );
+#endif   
 
    // clean out marfs xattrs on the original
    __TRY0( trunc_xattrs(info) );
@@ -1551,7 +1675,11 @@ int  trash_truncate(PathInfo*   info,
 int trunc_xattrs(PathInfo* info) {
    XattrSpec*  spec;
    for (spec=MarFS_xattr_specs; spec->value_type!=XVT_NONE; ++spec) {
+#if USE_MDAL
+      F_OP_NOCTX(lremovexattr, info->ns, info->post.md_path, spec->key_name);
+#else
       lremovexattr(info->post.md_path, spec->key_name);
+#endif
       info->xattrs &= ~(spec->value_type);
    }
    return 0;
@@ -1624,13 +1752,17 @@ int check_quotas(PathInfo* info) {
    // value of -1 for ns->quota_space implies unlimited
    if (space_limit >= 0) {
       struct stat st;
-      if (stat(info->ns->fsinfo_path, &st)) {
+#if USE_MDAL
+      if (F_OP_NOCTX(lstat, info->ns, info->ns->fsinfo_path, &st)) {
+#else
+      if (lstat(info->ns->fsinfo_path, &st)) {
+#endif
          LOG(LOG_ERR, "couldn't stat fsinfo at '%s': %s\n",
              info->ns->fsinfo_path, strerror(errno));
          errno = EINVAL;
          return -1;
       }
-      if (st.st_size > space_limit) { /* 0 = OK,  1 = no-more-space */
+      if (st.st_size >= space_limit) { /* 0 = OK,  1 = no-more-space */
          LOG(LOG_INFO, "quota (%lu) exceeded by %lu\n",
              space_limit, (st.st_size - space_limit));
          return 1;
@@ -2361,18 +2493,23 @@ size_t get_stream_wr_open_size(MarFS_FileHandle* fh, uint8_t decrement) {
 
 // call init_scatter_tree(), not this.
 int init_scatter_tree_internal(const char*    root_dir,
-                               const char*    ns_name,
+                               const MarFS_Namespace* ns,
                                const uint32_t shard,
                                const mode_t   branch_mode,
                                const mode_t   leaf_mode) {
    TRY_DECLS();
    struct stat st;
+   const char* ns_name = ns->name;
 
    LOG(LOG_INFO, "scatter_tree %s/%s.%d\n", root_dir, ns_name, shard);
 
 
    // --- assure that top-level trash-dir (from the config) exists
+#if USE_MDAL
+   rc = F_OP_NOCTX(lstat, ns, root_dir, &st);
+#else
    rc = lstat(root_dir, &st);
+#endif
    if (! rc) {
       if (! S_ISDIR(st.st_mode)) {
          LOG(LOG_ERR, "not a directory %s\n", root_dir);
@@ -2426,7 +2563,11 @@ int init_scatter_tree_internal(const char*    root_dir,
 
    // create the 'namespace.shard' dir
    LOG(LOG_INFO, " maybe create %s\n", dir_path);
+#if USE_MDAL
+   rc = D_OP_NOCTX(mkdir, ns, dir_path, branch_mode);
+#else
    rc = mkdir(dir_path, branch_mode);
+#endif
    if ((rc < 0) && (errno != EEXIST)) {
       LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
       return -1;
@@ -2449,7 +2590,11 @@ int init_scatter_tree_internal(const char*    root_dir,
    memcpy(sub_dir, "/9/9/9", 7); // incl final '/0'
 
    LOG(LOG_INFO, " checking %s\n", dir_path);
+#if USE_MDAL
+   if (! F_OP_NOCTX(lstat, ns, dir_path, &st))
+#else
    if (! lstat(dir_path, &st))
+#endif
       return 0;           // skip the subdir-create loop
    else if (errno != ENOENT) {
       LOG(LOG_ERR, "lstat(%s) failed\n", dir_path);
@@ -2465,8 +2610,11 @@ int init_scatter_tree_internal(const char*    root_dir,
       sub_dir[0] = '/';
       sub_dir[1] = '0' + i;
       sub_dir[2] = 0;
-
+#if USE_MDAL
+      rc = D_OP_NOCTX(mkdir, ns, dir_path, branch_mode);
+#else
       rc = mkdir(dir_path, branch_mode);
+#endif
       if ((rc < 0) && (errno != EEXIST)) {
          LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
          return -1;
@@ -2480,7 +2628,11 @@ int init_scatter_tree_internal(const char*    root_dir,
          sub_dir[3] = '0' + j;
          sub_dir[4] = 0;
 
+#if USE_MDAL
+         rc = D_OP_NOCTX(mkdir, ns, dir_path, branch_mode);
+#else
          rc = mkdir(dir_path, branch_mode);
+#endif
          if ((rc < 0) && (errno != EEXIST)) {
             LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
             return -1;
@@ -2494,7 +2646,11 @@ int init_scatter_tree_internal(const char*    root_dir,
             sub_dir[6] = 0;
 
             // make the '.../trash/namespace.shard//a/b/c' subdir
+#if USE_MDAL
+            rc = D_OP_NOCTX(mkdir, ns, dir_path, leaf_mode);
+#else
             rc = mkdir(dir_path, leaf_mode);
+#endif
             if ((rc < 0) && (errno != EEXIST)) {
                LOG(LOG_ERR, "mkdir(%s) failed\n", dir_path);
                return -1;
@@ -2507,7 +2663,7 @@ int init_scatter_tree_internal(const char*    root_dir,
 }
 
 int init_scatter_tree(const char*    root_dir,
-                      const char*    ns_name,
+                      const MarFS_Namespace* ns,
                       const uint32_t shard,
                       const mode_t   branch_mode,
                       const mode_t   leaf_mode) {
@@ -2515,7 +2671,7 @@ int init_scatter_tree(const char*    root_dir,
    // temporarily suppress original umask, so we can avoid interfering with
    // desired mode-args given in the arguments.
    mode_t umask_orig = umask(0);
-   int rc = init_scatter_tree_internal(root_dir, ns_name, shard, branch_mode, leaf_mode);
+   int rc = init_scatter_tree_internal(root_dir, ns, shard, branch_mode, leaf_mode);
    umask(umask_orig);
 
    return rc;
@@ -2563,7 +2719,13 @@ int init_mdfs() {
 
       // check whether "trash" dir exists (and create sub-dirs, if needed)
       LOG(LOG_INFO, "top-level trash dir   %s\n", ns->trash_md_path);
+#if USE_MDAL
+      // XXX: Is this the correct namespace?
+      //      should there be a separate trash ns?
+      rc = F_OP_NOCTX(lstat, ns, ns->trash_md_path, &st);
+#else
       rc = lstat(ns->trash_md_path, &st);
+#endif
       if (! rc) {
          if (! S_ISDIR(st.st_mode)) {
             LOG(LOG_ERR, "not a directory %s\n", ns->fsinfo_path);
@@ -2587,7 +2749,7 @@ int init_mdfs() {
 
 
       // create the scatter-tree for trash, if needed
-      __TRY0( init_scatter_tree(ns->trash_md_path, ns->name, shard, branch_mode, leaf_mode) );
+      __TRY0( init_scatter_tree(ns->trash_md_path, ns, shard, branch_mode, leaf_mode) );
 
 
 
@@ -2596,7 +2758,12 @@ int init_mdfs() {
 
       // check whether mdfs top-level dir exists
       LOG(LOG_INFO, "top-level MDFS dir    %s\n", ns->md_path);
+#if USE_MDAL
+      // XXX: Is this right?? Or should this use a different MDAL/Namespace?
+      rc = F_OP_NOCTX(lstat, ns, ns->md_path, &st);
+#else
       rc = lstat(ns->md_path, &st);
+#endif
       if (! rc) {
          if (! S_ISDIR(st.st_mode)) {
             LOG(LOG_ERR, "not a directory %s\n", ns->md_path);
@@ -2631,7 +2798,11 @@ int init_mdfs() {
       //     quota info into NS structs (on the next call to
       //     check_quotas()).
       LOG(LOG_INFO, "top-level fsinfo file %s\n", ns->fsinfo_path);
+#if USE_MDAL
+      rc = F_OP_NOCTX(lstat, ns, ns->fsinfo_path, &st); // XXX: Again, is this right?
+#else
       rc = lstat(ns->fsinfo_path, &st);
+#endif
       if (! rc) {
          if (! S_ISREG(st.st_mode)) {
             LOG(LOG_ERR, "not a regular file %s\n", ns->fsinfo_path);

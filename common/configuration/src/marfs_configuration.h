@@ -452,6 +452,33 @@ typedef struct marfs_namespace {
    unsigned long long    ns_shardp_num;
 } MarFS_Namespace, *MarFS_Namespace_Ptr, **MarFS_Namespace_List;
 
+
+
+/* This is currently used for the sole purpose of allowing us to avoid
+ * threading a new flag through all the marfs_ops functions, stating
+ * whether the caller is fuse (interactive), or not, and then having to
+ * modify every caller, everywhere.
+ * 
+ * Instead, fuse can set a runtime flag in the configuration, and the
+ * functions can all check that.  All existing apps (pftool, quota, GC,
+ * tests, etc) can remain unchanged
+ *
+ */
+
+typedef enum {
+   MARFS_INTERACTIVE = 0x01,
+} MarFS_RunTime_Flag;
+
+
+typedef struct {
+   int       flags;
+} MarFS_RunTime_Config;
+
+
+// e.g. set_runtime(MARFS_INTERACTIVE,1);
+extern int set_runtime_config(MarFS_RunTime_Flag flag, int value);
+extern int get_runtime_config(MarFS_RunTime_Flag flag);
+
 /*
  * This is the MarFS configuration type for use in the MarFS software
  * components. Users of this code are not expected to rely on or
@@ -476,6 +503,7 @@ typedef struct marfs_namespace {
 //           nasty ratholes (e.g. if the entire processing approach
 //           changes).
 
+
 typedef struct marfs_config {
   char                 *name;
   size_t                name_len;
@@ -485,8 +513,9 @@ typedef struct marfs_config {
   size_t                mnt_top_len;
   char                 *mdfs_top;        // NOTE: Do NOT include a final slash.
   size_t                mdfs_top_len;
-   //  MarFS_Namespace_List  namespace_list;
-   //  size_t                namespace_count;
+
+  MarFS_RunTime_Config  runtime;
+
 } MarFS_Config, *MarFS_Config_Ptr;
 
 extern  MarFS_Config_Ptr  marfs_config;

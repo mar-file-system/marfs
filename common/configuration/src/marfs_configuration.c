@@ -747,20 +747,21 @@ static MarFS_Config_Ptr read_configuration_internal() {
  * components out of it.
  */
 
-  config = (struct config *) malloc( sizeof( struct config ));
-  memset(config,      0x00, sizeof(struct config));
+  config = (struct config *) malloc( sizeof(struct config) );
   if (config == NULL) {
     free( path );
     LOG( LOG_ERR, "Error allocating memory for the config structure.\n");
     return NULL;
   }
+  memset(config,      0x00, sizeof(struct config));
 
-  marfs_config = (MarFS_Config_Ptr) malloc( sizeof( MarFS_Config ));
+  marfs_config = (MarFS_Config_Ptr) malloc( sizeof(MarFS_Config));
   if ( marfs_config == NULL) {
     free( path );
     LOG( LOG_ERR, "Error allocating memory for the MarFS config structure.\n");
     return NULL;
   }
+  memset(marfs_config, 0x00, sizeof(MarFS_Config));
 
   // Ron's parser assumes it is running in the current working directory It
   // tries to read "./parse-inc/config-structs.h", at run-time.  Now that
@@ -1462,6 +1463,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
      LOG( LOG_ERR, "MarFS config '%s' has no mnt_top.\n", config->name);
      return NULL;
   }
+  if ( config->mnt_top[0] != '/' ) {
+     LOG( LOG_ERR, "MarFS config '%s' mnt_top should start with '/'.\n", config->name);
+     return NULL;
+  }
   size_t mnt_top_len = strlen( config->mnt_top );
   if ( config->mnt_top[ mnt_top_len -1 ] == '/' ) {
      LOG( LOG_ERR, "MarFS config '%s' mnt_top should not have final '/'.\n", config->name);
@@ -1475,6 +1480,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
   // that will never occur at the front of your MDFS paths.
   if ( ! config->mdfs_top ) {
      LOG( LOG_ERR, "MarFS config '%s' has no mdfs_top.\n", config->name);
+     return NULL;
+  }
+  if ( config->mdfs_top[0] != '/' ) {
+     LOG( LOG_ERR, "MarFS config '%s' mdfs_top should start with '/'.\n", config->name);
      return NULL;
   }
   size_t mdfs_top_len = strlen( config->mdfs_top );
@@ -1600,6 +1609,36 @@ static int free_configuration_internal( MarFS_Config_Ptr *config ) {
 
 int free_configuration() {
    return free_configuration_internal(&marfs_config);
+}
+
+
+
+
+// ---------------------------------------------------------------------------
+// run-time configuration
+// ---------------------------------------------------------------------------
+
+// e.g. set_runtime(MARFS_INTERACTIVE,1);
+int  set_runtime_config(MarFS_RunTime_Flag flag, int value) {
+   if (! marfs_config) {
+      LOG(LOG_ERR, "No marfs_config\n");
+      return -1;
+   }
+   else if (value)
+      marfs_config->runtime.flags |= flag;
+   else
+      marfs_config->runtime.flags &= ~flag;
+
+   return 0;
+}
+
+int  get_runtime_config(MarFS_RunTime_Flag flag) {
+   if (! marfs_config) {
+      LOG(LOG_ERR, "No marfs_config\n");
+      return -1;
+   }
+   else
+      return ((marfs_config->runtime.flags & flag) != 0);
 }
 
 
