@@ -564,6 +564,9 @@ int set_md(obj_lnklist *objects, pack_vars *pack_params)
             // Remove the files via fuse mount
             if ((marfs_unlink(marfs_sub_path(marfs_path)))==-1)
                fprintf(stderr, "Error removing %s\n", marfs_path);
+            else 
+               fprintf(pack_params->outfd, "removed file %s\n", marfs_path);
+
             LOG(LOG_INFO, "remove marfs_path:=%s\n", marfs_path);			
                                
             // Open new gpfs file and truncate to the corret size
