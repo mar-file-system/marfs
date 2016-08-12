@@ -167,7 +167,7 @@ typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 // TBD: This should probably use va_args, to improve generality For now
 //      we're just copying the object_stream inteface verbatim.
 //
-typedef  void*   (*dal_open) (DAL_Context* ctx,
+typedef int      (*dal_open) (DAL_Context* ctx,
                               int          is_put,
                               size_t       content_length,
                               uint8_t      preserve_write_count,
@@ -229,7 +229,7 @@ DAL* get_DAL(DAL_Type type);
 #else
 
 #  define DAL_OP(OP, FH, ...)                   \
-   stream_##OP((FH)->os, ##__VA_ARGS__)
+   stream_##OP(&(FH)->os, ##__VA_ARGS__)
 
 
 #endif

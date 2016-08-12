@@ -194,17 +194,14 @@ int     obj_dal_ctx_destroy(DAL_Context* ctx, DAL* dal) {
 
 
 
-void*   obj_open(DAL_Context* ctx,
+int     obj_open(DAL_Context* ctx,
                  int          is_put,
                  size_t       content_length,
                  uint8_t      preserve_write_count,
                  uint16_t     timeout) {
 
-   if (stream_open(OS(ctx), is_put, content_length,
-                   preserve_write_count, timeout))
-      return NULL;
-   else
-      return ctx;
+   return stream_open(OS(ctx), is_put, content_length,
+                      preserve_write_count, timeout);
 }
 
 int     obj_put(DAL_Context*  ctx,
@@ -253,13 +250,13 @@ int     obj_close(DAL_Context*  ctx) {
 
 
 
-void*   nop_open(DAL_Context* ctx,
+int     nop_open(DAL_Context* ctx,
                  int          is_put,
                  size_t       content_length,
                  uint8_t      preserve_write_count,
                  uint16_t     timeout) {
 
-   return ctx;                    // returning NULL considered an error
+   return 0;
 }
 
 int     nop_put(DAL_Context*  ctx,

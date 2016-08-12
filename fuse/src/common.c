@@ -1771,7 +1771,7 @@ int open_data(MarFS_FileHandle* fh,
    //
    // if (! DAL_OP(is_open, fh))
    {
-      if (! DAL_OP(open, fh, writing_p, content_length, preserve_wr_count, timeout) ) {
+      if (DAL_OP(open, fh, writing_p, content_length, preserve_wr_count, timeout) ) {
          LOG(LOG_ERR, "open_data() failed: %s\n", strerror(errno));
          return -1;
       }
