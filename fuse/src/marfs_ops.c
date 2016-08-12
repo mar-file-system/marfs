@@ -1243,13 +1243,6 @@ int marfs_opendir (const char*       path,
    // Appropriate  opendir call filling in fuse structure
    ///   mode_t mode = ~(fuse_get_context()->umask); /* ??? */
 
-
-   // NOTE: Can't remove conditional compilation here because of
-   // mdal initialization and dh->internal.dirp update in non-
-   // mdal version.
-   //
-   // We could make an opendir_md function in common, analgous to
-   // open_md, which would hide the conditional compilation from us.
    TRY_GT0( opendir_md(dh, &info) );
 
    EXIT();
