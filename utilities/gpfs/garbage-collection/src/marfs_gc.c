@@ -154,6 +154,13 @@ int main(int argc, char **argv) {
       return(-1);
    }
 
+   // must call validate_configuration. this is where the mdal is
+   // actually actually_initialized.
+   if(validate_configuration()) {
+      fprintf(stderr, "MarFS configuration not valid\n");
+      return(-1);
+   }
+
    // Create structure containing fileset information
    fileset_info_ptr = (Fileset_Info *) malloc(sizeof(*fileset_info_ptr));
    if (fileset_info_ptr == NULL ) {
@@ -631,8 +638,12 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
       memset(&fh, 0, sizeof(MarFS_FileHandle));
 
       PathInfo* info = &fh.info;
+
+      info->ns = pre_ptr->ns;
       strncpy(info->post.md_path, md_path_ptr, MARFS_MAX_MD_PATH); // use argv[1]
       info->post.md_path[MARFS_MAX_MD_PATH -1] = 0;
+      info->flags |= PI_EXPANDED; // We are faking expand_path_info, so this
+                                  // flag should be set.
       if (stat_xattrs(info)) {    // parse all xattrs for the MD file
          fprintf(stderr, "stat_xattrs() failed for MD file: '%s'\n", md_path_ptr);
          return -1;
