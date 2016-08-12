@@ -1906,7 +1906,7 @@ int opendir_md(MarFS_DirHandle *dh, PathInfo* info) {
    TRY_GT0( opendir(info->post.md_path) );
    dh->internal.dirp = (DIR*)rc_ssize;
 #endif
-   return rc_ssize; // non-zero for success.
+   return 1; // must be > 0
 }
 
 // Close a metadata directory
