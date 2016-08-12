@@ -1723,6 +1723,73 @@ int update_url(ObjectStream* os, PathInfo* info) {
    return 0;
 }
 
+
+int open_data(MarFS_FileHandle* fh,
+              int               writing_p,
+              size_t            content_length,
+              uint8_t           preserve_wr_count,
+              uint16_t          timeout) {
+
+   PathInfo* info = &fh->info;
+
+   int         flags;
+   const char* flags_str;
+
+   if (writing_p) {
+      flags     =  O_WRONLY;
+      flags_str = "O_WRONLY";
+   }
+   else {
+      flags     =  O_RDONLY;
+      flags_str = "O_RDONLY";
+   }
+
+   // if we haven't already initialized the FileHandle DAL, do it now.
+#if USE_DAL
+   if (! FH_DAL(fh)) {
+      // copy static DAL ptr from NS to FileHandle
+      FH_DAL(fh) = info->pre.repo->dal;
+      LOG(LOG_INFO, "DAL: %s\n", DAL_type_name(FH_DAL(fh)->type));
+
+      //      // allow DAL implementation to do custom initializations
+      //      DAL_OP(init, fh, FH_DAL(fh));
+      //
+      // CHEATING!  Let the DAL impl have access to the ObjectStream in the
+      // FileHandle.  MarFS expects e.g. fh->os.written to be side-effected
+      // by streaming operations.  For now, this is an ugly way (in that it
+      // violates the DAL encapsulation) to get things working.
+      DAL_OP(init, fh, FH_DAL(fh), &fh->os);
+   }
+#else
+   LOG(LOG_INFO, "ignoring file-DAL\n");
+#endif
+
+
+   // if we haven't already opened the data-stream, do it now.
+   //
+   // TBD: is_open().  Should assimilate FH->os_init, which should become a flag
+   //
+   // if (! DAL_OP(is_open, fh))
+   {
+      if (! DAL_OP(open, fh, writing_p, content_length, preserve_wr_count, timeout) ) {
+         LOG(LOG_ERR, "open_data() failed: %s\n", strerror(errno));
+         return -1;
+      }
+   }
+
+   LOG(LOG_INFO, "open_data() ok\n");
+   return 0;
+}
+
+int close_data(MarFS_FileHandle* fh) {
+#if USE_DAL
+   return DAL_OP(destroy, fh, FH_DAL(fh));
+#else
+#endif
+}
+
+
+
 // Assure MD is open.
 //
 // NOTE: It would be simpler to just look at fh->flags.  If they include
@@ -2177,7 +2244,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
 
    LOG(LOG_WARNING, "first part of fake rec-info: 0x%02x,%02x,%02x,%02x\n",
        rec[0], rec[1], rec[2], rec[3]);
-   __TRY_GE0( stream_put(os, rec, recovery) );
+   __TRY_GE0( DAL_OP(put, fh, rec, recovery) );
    ssize_t wrote = rc_ssize;
 
 #else

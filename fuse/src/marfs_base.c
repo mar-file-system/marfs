@@ -71,6 +71,7 @@ OF SUCH DAMAGE.
 
 #include "marfs_base.h"
 #include "mdal.h"
+#include "dal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1322,6 +1323,17 @@ int validate_configuration() {
              repo->name, repo->chunk_size, recovery);
          retval = -1;
       }
+
+
+      // configuration parsed the DAL type.
+      // Go find the corresponding DAL and install
+      DAL* dal = get_DAL(repo->dal_type);
+      if ( ! dal ) {
+         LOG( LOG_ERR, "Couldn't find DAL named '%s' for repo %s.\n",
+              DAL_type_name(repo->dal_type), repo->name );
+         retval = -1;
+      }
+      repo->dal = dal;
    }
 
 
@@ -1338,7 +1350,7 @@ int validate_configuration() {
          retval = -1;
       }
 
-      // configuration just parsed the MDAL type.
+      // configuration parsed the MDAL type.
       // Go find the corresponding MDAL and install
       MDAL* dir_MDAL = get_MDAL(ns->dir_MDAL_type);
       if ( ! dir_MDAL ) {
@@ -1355,7 +1367,6 @@ int validate_configuration() {
          retval = -1;
       }
       ns->file_MDAL = file_MDAL;
-
    }
 
 

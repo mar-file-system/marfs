@@ -93,7 +93,7 @@ FUSE_DEPS =
 
 
 # These are files where .c, .o, .h all make sense
-FNAME_ROOTS = marfs_base common object_stream marfs_ops push_user mdal
+FNAME_ROOTS = marfs_base common object_stream marfs_ops push_user mdal dal
 
 OBJS =            logging.o $(patsubst %, %.o, $(FNAME_ROOTS))
 SRCS = $(LOGGING)/logging.c $(patsubst %, %.c, $(FNAME_ROOTS))
@@ -215,6 +215,11 @@ endif
 #
 ifdef USE_MDAL
 	DEFS += USE_MDAL=$(USE_MDAL)
+endif
+
+
+ifdef USE_DAL
+	DEFS += USE_DAL=$(USE_DAL)
 endif
 
 

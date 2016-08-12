@@ -252,6 +252,7 @@ extern int encode_enctype( MarFS_EncryptType enumeration, char *code );
 extern int decode_enctype( char code, MarFS_EncryptType *enumeration );
 
 
+
 typedef enum MDAL_Type {
    MDAL_POSIX  = 0x01,
    MDAL_PVFS2  = 0x02,
@@ -261,6 +262,20 @@ typedef enum MDAL_Type {
 const char* MDAL_type_name(MDAL_Type type);
 
 struct MDAL; // fwd-decl
+
+
+
+typedef enum DAL_Type {
+   DAL_OBJ     = 0x01,          // original MarFS 
+   DAL_NO_OP   = 0x02,          // no-op on open(O_CREAT)
+   DAL_MC      = 0x04,
+   DAL_POSIX   = 0x08,          // "on my laptop"
+} DAL_Type;
+
+const char* DAL_type_name(DAL_Type type);
+
+struct DAL; // fwd-decl
+
 
 
 /*
@@ -356,6 +371,9 @@ typedef struct marfs_repo {
    ssize_t               min_pack_file_count;
    ssize_t               max_pack_file_count;
 
+   DAL_Type              dal_type;
+   struct DAL*           dal;
+
    char                 *online_cmds;
    size_t                online_cmds_len;
    unsigned long long    latency;
@@ -443,10 +461,12 @@ typedef struct marfs_namespace {
    size_t                fsinfo_path_len;
    long long             quota_space;
    long long             quota_names;
+
    MDAL_Type             dir_MDAL_type;
    struct MDAL          *dir_MDAL;
    MDAL_Type             file_MDAL_type;
    struct MDAL          *file_MDAL;
+
    char                 *ns_shardp;
    size_t                ns_shardp_len;
    unsigned long long    ns_shardp_num;

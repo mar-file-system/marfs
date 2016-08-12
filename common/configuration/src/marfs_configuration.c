@@ -658,7 +658,6 @@ int decode_correcttype( char code, MarFS_CorrectType *enumeration ) {
 
 /***************************************************************************/
 
-
 int lookup_MDAL_type(const char* type_name, MDAL_Type* type) {
    if (     ! strcasecmp(type_name, "POSIX"))
       *type = MDAL_POSIX;
@@ -677,6 +676,34 @@ const char* MDAL_type_name(MDAL_Type type) {
    case MDAL_POSIX:   return (const char*)"POSIX";
    case MDAL_PVFS2:   return (const char*)"PVFS2";
    case MDAL_IOFSL:   return (const char*)"IOFSL";
+   default:  return NULL;
+   }
+}
+
+
+/***************************************************************************/
+
+int lookup_DAL_type(const char* type_name, DAL_Type* type) {
+   if (     ! strcasecmp(type_name, "OBJ"))
+      *type = DAL_OBJ;
+   else if (! strcasecmp(type_name, "NO_OP"))
+      *type = DAL_NO_OP;
+   else if (! strcasecmp(type_name, "MC"))
+      *type = DAL_MC;
+   else if (! strcasecmp(type_name, "POSIX"))
+      *type = DAL_POSIX;
+   else
+      return -1;
+
+   return 0;
+}
+
+const char* DAL_type_name(DAL_Type type) {
+   switch (type) {
+   case DAL_OBJ:       return (const char*)"OBJ";
+   case DAL_NO_OP:     return (const char*)"NO_OP";
+   case DAL_MC:        return (const char*)"MC";
+   case DAL_POSIX:     return (const char*)"POSIX";
    default:  return NULL;
    }
 }
@@ -968,6 +995,20 @@ static MarFS_Config_Ptr read_configuration_internal() {
            repoList[j]->max_pack_file_count );
       return NULL;
     }
+
+    // default to OBJ, for backward-compatibility
+    DAL_Type dal_type = DAL_OBJ;
+    if ( ! repoList[j]->DAL ) {
+       LOG( LOG_INFO, "MarFS repo '%s' has no DAL. Defaulting to OBJ\n",
+            repoList[j]->name );
+    }
+    else if ( lookup_DAL_type(repoList[j]->DAL, &dal_type) ) {
+       LOG( LOG_ERR, "Unknown DAL name \"%s\".\n", repoList[j]->DAL );
+       return NULL;
+    }
+    marfs_repo_list[j]->dal_type = dal_type;
+    marfs_repo_list[j]->dal      = NULL; // see validate_config() in libmarfs
+
 
 
     // if max_pack_file_count = 0, packing is disabled, and we ignore all
@@ -1392,8 +1433,6 @@ static MarFS_Config_Ptr read_configuration_internal() {
     }
     marfs_namespace_list[j]->file_MDAL_type = file_MDAL_type;
     marfs_namespace_list[j]->file_MDAL      = NULL; // see validate_config() in libmarfs
-
-
 
 
 

@@ -20,7 +20,8 @@ LDFLAGS += -L$(LIBAWS4C)
 LDFLAGS += -L$(MARFS_FUSE)
 LDFLAGS += -L$(MARFS_CONFIG)
 #LIBS += -laws4c -lgpfs -lcurl -lm -lmarfs -lconfig
-LIBS += -laws4c -lmarfs -lconfig
+LIBMARFS = -lmarfs -lxml2 -laws4c -lcurl -lcrypto
+LIBS += -laws4c $(LIBMARFS) -lconfig
 
 DEBUG = -DUSE_STDOUT
 

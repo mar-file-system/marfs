@@ -77,6 +77,7 @@ OF SUCH DAMAGE.
 // Must come before anything else that might include <time.h>
 #include "marfs_base.h"
 #include "mdal.h"               // abstraction for MD file/dir ops
+#include "dal.h"                // abstraction for storage ops
 #include "object_stream.h"      // FileHandle needs ObjectStream
 #include "marfs_configuration.h"
 
@@ -615,6 +616,12 @@ typedef struct {
 } MDAL_Handle;
 
 
+typedef struct {
+   DAL_Context  ctx;
+   struct DAL*  dal;
+} DAL_Handle;
+
+
 
 typedef struct {
    PathInfo        info;         // includes xattrs, MDFS path, etc
@@ -635,7 +642,14 @@ typedef struct {
    ReadStatus      read_status;  // buffer_management, current_offset, etc
    WriteStatus     write_status; // buffer-management, etc
 
+   // NOTE: As above, only one of these should exist, but that
+   //       causes complications for building arbitrary apps.
+   // #if USE_DAL
+   DAL_Handle      dal_handle;
+   // #else
    ObjectStream    os;           // handle for streaming access to objects
+   // #endif
+
    uint8_t         os_init;      // tells weather or not the object streem is inizlized
    curl_off_t      objectSize;   // The size of the object for packed files
    int             fileCount;    // The number of files that have been packed
@@ -690,6 +704,20 @@ typedef struct {
 #  define CTX_FREE_OP(OP,NS, ...)   (*(NS)->file_MDAL->OP)(__VA_ARGS__)
 #endif
 
+
+
+
+#if USE_DAL
+#  define FH_DAL_CTX(FH)    (FH)->dal_handle.ctx
+#  define FH_DAL(FH)        (FH)->dal_handle.dal
+#endif
+
+// generic
+#if USE_DAL
+#  define FH_STR_STATE(FH)  FH_DAL_CTX(FH)
+#else
+#  define FH_STR_STATE(FH)  (FH)->os
+#endif
 
 
 // fuse/pftool-agnostic updates of data_remain, etc. (see comments, above)
@@ -799,13 +827,22 @@ extern int  check_quotas  (PathInfo* info);
 extern int  update_url     (ObjectStream* os, PathInfo* info);
 extern int  update_timeouts(ObjectStream* os, PathInfo* info);
 
-// currently just opens for writing.
+// encapsulate some generic operations on MDALs
 extern int  open_md   (MarFS_FileHandle* fh, int writing_p);
 extern int  is_open_md(MarFS_FileHandle* fh);
 extern int  close_md  (MarFS_FileHandle* fh);
 
 extern int  opendir_md(MarFS_DirHandle* fh, PathInfo* info);
 extern int  closedir_md(MarFS_DirHandle *dh);
+
+// encapsulate some generic operations on DALs
+extern int  open_data(MarFS_FileHandle* fh,
+                      int               writing_p,
+                      size_t            content_length,
+                      uint8_t           preserve_wr_count,
+                      uint16_t          timeout);
+extern int  close_data(MarFS_FileHandle* fh);
+
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 // From fuse, <user_data_written> is total from zero. From pftool, it's the
