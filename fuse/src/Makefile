@@ -504,7 +504,7 @@ mnt.helgrind: fuse.helgrind umnt
 	@ $(MAKE) _mnt HELGRIND=1
 
 mnt.dbg: fuse.dbg umnt.dbg
-	@ $(MAKE) _mnt MNT=$(MNT)_dbg DEBUG=2 LOG="> fuse.log 2>&1"
+	@ $(MAKE) _mnt MNT=$(MNT)_dbg DEBUG=2 LOG="> fuse.log_dbg 2>&1"
 
 
 
