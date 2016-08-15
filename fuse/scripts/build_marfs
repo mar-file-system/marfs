@@ -46,6 +46,7 @@ function usage() {
     echo "  <code> 1  = compile -O3, with logging to syslog"
     echo "  <code> 2  = compile -g,  with logging to syslog"
     echo "  <code> 3  = compile -g,  without logging"
+    echo "  <code> 4  = compile -g,  with logging to stdout (or file)"
     echo
     echo "  <mdal> 0  = don't use MDAL"
     echo "  <mdal> 1  = use MDAL"
@@ -84,6 +85,11 @@ case $CODE in
         FUSE_ARGS+=" lean DEBUG=0"
         UTILITY_ARGS+=" DEBUG=1"
         ;;
+    4)
+        CONFIG_ARGS+=" CONFIG=$MARFSCONFIGRC"
+        FUSE_ARGS+=" dbg"
+        ;;
+
     *)
         usage $0
         exit 1;
