@@ -191,7 +191,10 @@ typedef int      (*dal_close)(DAL_Context*  ctx);
 // This is a collection of function-ptrs
 // They capture a given implementation of interaction with an MDFS.
 typedef struct DAL {
-   DAL_Type             type;
+   // DAL_Type             type;
+   const char*          name;
+   size_t               name_len;
+
    void*                global_state;
 
    dal_ctx_init         init;
@@ -208,8 +211,11 @@ typedef struct DAL {
 } DAL;
 
 
-// find or create an DAL of the given type
-DAL* get_DAL(DAL_Type type);
+// insert a new DAL, if there are no name-conflicts
+int  install_DAL(DAL* dal);
+
+// find a DAL with the given name
+DAL* get_DAL(const char* name);
 
 
 

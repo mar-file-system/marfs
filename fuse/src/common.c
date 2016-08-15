@@ -1147,7 +1147,7 @@ void init_filehandle(MarFS_FileHandle* fh, PathInfo* info) {
    fh->info = *info;
 #if USE_MDAL
    F_MDAL(fh) = info->pre.ns->file_MDAL;
-   LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
+   LOG(LOG_INFO, "file-MDAL: %s\n", F_MDAL(fh)->name);
    F_OP(f_init, fh, F_MDAL(fh));
 #endif
 }
@@ -1169,7 +1169,7 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
 #if USE_MDAL
    if(! F_MDAL(fh)) {
       F_MDAL(fh) = info->pre.ns->file_MDAL;
-      LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
+      LOG(LOG_INFO, "file-MDAL: %s\n", F_MDAL(fh)->name);
 
       // allow MDAL implementation to do custom initializations
       F_OP(f_init, fh, F_MDAL(fh));
@@ -1730,7 +1730,7 @@ int open_data(MarFS_FileHandle* fh,
               uint8_t           preserve_wr_count,
               uint16_t          timeout) {
 
-   PathInfo* info = &fh->info;
+   PathInfo* info __attribute__((unused)) = &fh->info;
 
    int         flags;
    const char* flags_str;
@@ -1749,7 +1749,7 @@ int open_data(MarFS_FileHandle* fh,
    if (! FH_DAL(fh)) {
       // copy static DAL ptr from NS to FileHandle
       FH_DAL(fh) = info->pre.repo->dal;
-      LOG(LOG_INFO, "DAL: %s\n", DAL_type_name(FH_DAL(fh)->type));
+      LOG(LOG_INFO, "DAL: %s\n", FH_DAL(fh)->name);
 
       //      // allow DAL implementation to do custom initializations
       //      DAL_OP(init, fh, FH_DAL(fh));
@@ -1806,7 +1806,7 @@ int close_data(MarFS_FileHandle* fh) {
 
 int open_md(MarFS_FileHandle* fh, int writing_p) {
 
-   PathInfo* info = &fh->info;
+   PathInfo* info __attribute__((unused)) = &fh->info;
 
    int         flags;
    const char* flags_str;
@@ -1825,7 +1825,7 @@ int open_md(MarFS_FileHandle* fh, int writing_p) {
    if (! F_MDAL(fh)) {
       // copy static MDAL ptr from NS to FileHandle
       F_MDAL(fh) = info->pre.ns->file_MDAL;
-      LOG(LOG_INFO, "file-MDAL: %s\n", MDAL_type_name(F_MDAL(fh)->type));
+      LOG(LOG_INFO, "file-MDAL: %s\n", F_MDAL(fh)->name);
 
       // allow MDAL implementation to do custom initializations
       F_OP(f_init, fh, F_MDAL(fh));
@@ -1893,7 +1893,7 @@ int opendir_md(MarFS_DirHandle *dh, PathInfo* info) {
    TRY_DECLS();
 #if USE_MDAL
    D_MDAL(dh) = info->ns->dir_MDAL;
-   LOG(LOG_INFO, "dir-MDAL: %s\n", MDAL_type_name(D_MDAL(dh)->type));
+   LOG(LOG_INFO, "dir-MDAL: %s\n", D_MDAL(dh)->name);
 
    // allow MDAL implementation to do any initializations necessary
    D_OP(d_init, dh, D_MDAL(dh));

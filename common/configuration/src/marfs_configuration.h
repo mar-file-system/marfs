@@ -253,28 +253,8 @@ extern int decode_enctype( char code, MarFS_EncryptType *enumeration );
 
 
 
-typedef enum MDAL_Type {
-   MDAL_POSIX  = 0x01,
-   MDAL_PVFS2  = 0x02,
-   MDAL_IOFSL  = 0x04,
-} MDAL_Type;
-
-const char* MDAL_type_name(MDAL_Type type);
-
 struct MDAL; // fwd-decl
-
-
-
-typedef enum DAL_Type {
-   DAL_OBJ     = 0x01,          // original MarFS 
-   DAL_NO_OP   = 0x02,          // no-op on open(O_CREAT)
-   DAL_MC      = 0x04,
-   DAL_POSIX   = 0x08,          // "on my laptop"
-} DAL_Type;
-
-const char* DAL_type_name(DAL_Type type);
-
-struct DAL; // fwd-decl
+struct DAL;  // fwd-decl
 
 
 
@@ -371,15 +351,18 @@ typedef struct marfs_repo {
    ssize_t               min_pack_file_count;
    ssize_t               max_pack_file_count;
 
-   DAL_Type              dal_type;
-   struct DAL*           dal;
+   const char           *dal_name;
+   struct DAL           *dal;
 
    char                 *online_cmds;
    size_t                online_cmds_len;
    unsigned long long    latency;
    uint32_t              write_timeout;
    uint32_t              read_timeout;
-} MarFS_Repo, *MarFS_Repo_Ptr, **MarFS_Repo_List;
+}
+   MarFS_Repo,
+   *MarFS_Repo_Ptr,
+   **MarFS_Repo_List;
 
 /*
  * This is the MarFS repository range type for use in the MarFS software
@@ -462,9 +445,9 @@ typedef struct marfs_namespace {
    long long             quota_space;
    long long             quota_names;
 
-   MDAL_Type             dir_MDAL_type;
+   const char*          *dir_MDAL_name;
    struct MDAL          *dir_MDAL;
-   MDAL_Type             file_MDAL_type;
+   const char           *file_MDAL_name;
    struct MDAL          *file_MDAL;
 
    char                 *ns_shardp;
