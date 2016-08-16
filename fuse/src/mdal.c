@@ -83,6 +83,8 @@ OF SUCH DAMAGE.
 #include <fcntl.h>
 #include <utime.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <assert.h>
 
 
 // ===========================================================================
@@ -330,76 +332,63 @@ int     posix_statvfs(const char* path, struct statvfs* statbuf) {
 }
 
 
+
+MDAL posix_mdal = {
+   .name         = "POSIX",
+   .name_len     = 5, // strlen("POSIX"),
+
+   .global_state = NULL,
+
+   .f_init       = &default_mdal_file_ctx_init,
+   .f_destroy    = &default_mdal_file_ctx_destroy,
+
+   .d_init       = &default_mdal_dir_ctx_init,
+   .d_destroy    = &default_mdal_dir_ctx_destroy,
+
+   .open         = &posix_open,
+   .close        = &posix_close,
+   .write        = &posix_write,
+   .read         = &posix_read,
+   .ftruncate    = &posix_ftruncate,
+   .lseek        = &posix_lseek,
+
+   .access       = &posix_access,
+   .faccessat    = &posix_faccessat,
+   .mknod        = &posix_mknod,
+   .chmod        = &posix_chmod,
+   .truncate     = &posix_truncate,
+   .lchown       = &posix_lchown,
+   .lstat        = &posix_lstat,
+   .rename       = &posix_rename,
+   .readlink     = &posix_readlink,
+   .lgetxattr    = &posix_lgetxattr,
+   .lsetxattr    = &posix_lsetxattr,
+   .lremovexattr = &posix_lremovexattr,
+   .llistxattr   = &posix_llistxattr,
+   .symlink      = &posix_symlink,
+   .unlink       = &posix_unlink,
+
+   .utime        = &posix_utime,
+   .utimensat    = &posix_utimensat,
+
+   .mkdir        = &posix_mkdir,
+   .rmdir        = &posix_rmdir,
+   .opendir      = &posix_opendir,
+   .readdir      = &posix_readdir,
+   .closedir     = &posix_closedir,
+
+   .statvfs      = &posix_statvfs,
+
+   .is_open      = &posix_is_open
+};
+
+
+
+
+
 // ===========================================================================
 // GENERAL
 // ===========================================================================
-
-
-
-static
-int mdal_init(MDAL* mdal, MDAL_Type type) {
-
-   // zero everything, so if we forget to update something it will be obvious
-   memset(mdal, 0, sizeof(MDAL));
-
-   mdal->type = type;
-   switch (type) {
-
-   case MDAL_POSIX:
-      mdal->global_state = NULL;
-
-      mdal->f_init       = &default_mdal_file_ctx_init;
-      mdal->f_destroy    = &default_mdal_file_ctx_destroy;
-
-      mdal->d_init       = &default_mdal_dir_ctx_init;
-      mdal->d_destroy    = &default_mdal_dir_ctx_destroy;
-
-      mdal->open         = &posix_open;
-      mdal->close        = &posix_close;
-      mdal->write        = &posix_write;
-      mdal->read         = &posix_read;
-      mdal->ftruncate    = &posix_ftruncate;
-      mdal->lseek        = &posix_lseek;
-
-      mdal->access       = &posix_access;
-      mdal->faccessat    = &posix_faccessat;
-      mdal->mknod        = &posix_mknod;
-      mdal->chmod        = &posix_chmod;
-      mdal->truncate     = &posix_truncate;
-      mdal->lchown       = &posix_lchown;
-      mdal->lstat        = &posix_lstat;
-      mdal->rename       = &posix_rename;
-      mdal->readlink     = &posix_readlink;
-      mdal->lgetxattr    = &posix_lgetxattr;
-      mdal->lsetxattr    = &posix_lsetxattr;
-      mdal->lremovexattr = &posix_lremovexattr;
-      mdal->llistxattr   = &posix_llistxattr;
-      mdal->symlink      = &posix_symlink;
-      mdal->unlink       = &posix_unlink;
-
-      mdal->utime        = &posix_utime;
-      mdal->utimensat    = &posix_utimensat;
-
-      mdal->mkdir        = &posix_mkdir;
-      mdal->rmdir        = &posix_rmdir;
-      mdal->opendir      = &posix_opendir;
-      mdal->readdir      = &posix_readdir;
-      mdal->closedir     = &posix_closedir;
-
-      mdal->statvfs      = &posix_statvfs;
-
-      mdal->is_open      = &posix_is_open;
-      break;
-
-      // TBD ...
-   case MDAL_PVFS2:
-   case MDAL_IOFSL:
-   default:
-      return -1;
-   };
-
-   return 0;
-}
 
 
 
@@ -407,35 +396,223 @@ int mdal_init(MDAL* mdal, MDAL_Type type) {
 // static const size_t MAX_MDAL = 32; // stupid compiler
 #define MAX_MDAL 32
 
-static MDAL*  mdal_vec[MAX_MDAL];
+static MDAL*  mdal_list[MAX_MDAL];
 static size_t mdal_count = 0;
 
 
-MDAL* get_MDAL(MDAL_Type type) {
 
+# define DL_CHECK(SYM)                                                  \
+   if (! mdal->SYM) {                                                    \
+      LOG(LOG_ERR, "MDAL '%s' has no symbol '%s'\n", mdal->name, #SYM);   \
+      return -1;                                                         \
+   }
+
+// add a new MDAL to mdal_list
+int install_MDAL(MDAL* mdal) {
+
+   if (! mdal) {
+      LOG(LOG_ERR, "NULL arg\n");
+      return -1;
+   }
+
+   // insure that no MDAL with the given name already exists
    int i;
    for (i=0; i<mdal_count; ++i) {
-      if (mdal_vec[i] && (mdal_vec[i]->type == type))
-         return mdal_vec[i];
+      if ((mdal->name_len == mdal_list[i]->name_len)
+          && (! strcmp(mdal->name, mdal_list[i]->name))) {
+
+         LOG(LOG_ERR, "MDAL named '%s' already exists\n", mdal->name);
+         return -1;
+      }
    }
 
-   if (i >= MAX_MDAL -1) {
-      LOG(LOG_ERR, "out of room for new MDAL structs.  Increase MAX_MDAL and rebuild\n");
-      return NULL;
+   // validate that MDAL has all required members
+   DL_CHECK(name);
+   DL_CHECK(name_len);
+
+   DL_CHECK(f_init);
+   DL_CHECK(f_destroy);
+
+   DL_CHECK(d_init);
+   DL_CHECK(d_destroy);
+
+   DL_CHECK(open);
+   DL_CHECK(close);
+   DL_CHECK(read);
+   DL_CHECK(write);
+   DL_CHECK(ftruncate);
+   DL_CHECK(lseek);
+
+   DL_CHECK(access);
+   DL_CHECK(faccessat);
+   DL_CHECK(mknod);
+   DL_CHECK(chmod);
+   DL_CHECK(truncate);
+   DL_CHECK(lchown);
+   DL_CHECK(lstat);
+   DL_CHECK(rename);
+   DL_CHECK(readlink);
+   DL_CHECK(lgetxattr);
+   DL_CHECK(lsetxattr);
+   DL_CHECK(lremovexattr);
+   DL_CHECK(llistxattr);
+   DL_CHECK(symlink);
+   DL_CHECK(unlink);
+
+   DL_CHECK(utime);
+   DL_CHECK(utimensat);
+
+   DL_CHECK(mkdir);
+   DL_CHECK(rmdir);
+   DL_CHECK(opendir);
+   DL_CHECK(readdir);
+   DL_CHECK(closedir);
+
+   DL_CHECK(statvfs);
+   DL_CHECK(is_open);
+
+   if (mdal_count >= MAX_MDAL) {
+         LOG(LOG_ERR,
+             "No room for MDAL '%s'.  Increase MAX_MDAL_COUNT and rebuild.\n",
+             mdal->name);
+         return -1;
    }
 
-   MDAL* new_mdal = (MDAL*)calloc(1, sizeof(MDAL));
-   if (! new_mdal) {
-      LOG(LOG_ERR, "out of memory for new MDAL (0x%02x)\n", (unsigned)type);
+   // install
+   LOG(LOG_INFO, "Installing MDAL '%s'\n", mdal->name);
+   mdal_list[mdal_count] = mdal;
+   ++ mdal_count;
+
+   return 0;
+}
+
+# undef DL_CHECK
+
+
+
+// Untested support for dynamically-loaded MDAL. This is not a link-time
+// thing, but a run-time thing.  The name in the configuration is something
+// like: "DYNAMIC /path/to/my/lib", and we go look for all the MDAL symbols
+// (e.g. mdal_open()) in that module, and install a corresponding MDAL.
+// *All* MDAL symbols must be defined in the library.
+
+static
+MDAL* dynamic_MDAL(const char* name) {
+
+   MDAL* mdal = (MDAL*)calloc(1, sizeof(MDAL));
+   if (! mdal) {
+      LOG(LOG_ERR, "no memory for new MDAL '%s'\n", name);
       return NULL;
    }
    
-   if (mdal_init(new_mdal, type)) {
-      LOG(LOG_ERR, "Couldn't initialize MDAL (0x%02x)\n", (unsigned)type);
+   // zero everything, so if we forget to update something it will be obvious
+   memset(mdal, 0, sizeof(MDAL));
+
+   mdal->name     = name;
+   mdal->name_len = strlen(name);
+
+   if (! strcmp(name, "DYNAMIC")) {
+
+      // second token is library-path
+      const char* delims = " \t";
+      char* delim = strpbrk(name, delims);
+      if (! delim)
+         return NULL;
+      char* lib_name = delim + strspn(delim, delims);
+      if (! *lib_name)
+         return NULL;
+
+      // dig out symbols
+      void* lib = dlopen(lib_name, RTLD_LAZY);
+      if (! lib) {
+         LOG(LOG_ERR, "Couldn't open dynamic lib '%s'\n", lib_name);
+         return NULL;
+      }
+
+      mdal->global_state = NULL;
+
+      mdal->f_init       = (mdal_file_ctx_init)    dlsym(lib, "f_init");
+      mdal->f_destroy    = (mdal_file_ctx_destroy) dlsym(lib, "f_destroy");
+
+      mdal->d_init       = (mdal_dir_ctx_init)     dlsym(lib, "d_init");
+      mdal->d_destroy    = (mdal_dir_ctx_destroy)  dlsym(lib, "d_destroy");
+
+      mdal->open         = (mdal_open)       dlsym(lib, "mdal_open");
+      mdal->close        = (mdal_close)      dlsym(lib, "mdal_close");
+      mdal->write        = (mdal_write)      dlsym(lib, "mdal_write");
+      mdal->read         = (mdal_read)       dlsym(lib, "mdal_read");
+      mdal->ftruncate    = (mdal_ftruncate)  dlsym(lib, "mdal_ftruncate");
+      mdal->lseek        = (mdal_lseek)      dlsym(lib, "mdal_lseek");
+
+      mdal->access       = (mdal_access)     dlsym(lib, "mdal_access");
+      mdal->faccessat    = (mdal_faccessat)  dlsym(lib, "mdal_faccessat");
+      mdal->mknod        = (mdal_mknod)      dlsym(lib, "mdal_mknod");
+      mdal->chmod        = (mdal_chmod)      dlsym(lib, "mdal_chmod");
+      mdal->truncate     = (mdal_truncate)   dlsym(lib, "mdal_truncate");
+      mdal->lchown       = (mdal_lchown)     dlsym(lib, "mdal_lchown");
+      mdal->lstat        = (mdal_lstat)      dlsym(lib, "mdal_lstat");
+      mdal->rename       = (mdal_rename)     dlsym(lib, "mdal_rename");
+      mdal->readlink     = (mdal_readlink)   dlsym(lib, "mdal_readlink");
+      mdal->lgetxattr    = (mdal_lgetxattr)  dlsym(lib, "mdal_lgetxattr");
+      mdal->lsetxattr    = (mdal_lsetxattr)  dlsym(lib, "mdal_lsetxattr");
+      mdal->lremovexattr = (mdal_lremovexattr)  dlsym(lib, "mdal_lremovexattr");
+      mdal->llistxattr   = (mdal_llistxattr) dlsym(lib, "mdal_llistxattr");
+      mdal->symlink      = (mdal_symlink)    dlsym(lib, "mdal_symlink");
+      mdal->unlink       = (mdal_unlink)     dlsym(lib, "mdal_unlink");
+
+      mdal->utime        = (mdal_utime)      dlsym(lib, "mdal_utime");
+      mdal->utimensat    = (mdal_utimensat)  dlsym(lib, "mdal_utimensat");
+
+      mdal->mkdir        = (mdal_mkdir)      dlsym(lib, "mdal_mkdir");
+      mdal->rmdir        = (mdal_rmdir)      dlsym(lib, "mdal_rmdir");
+      mdal->opendir      = (mdal_opendir)    dlsym(lib, "mdal_opendir");
+      mdal->readdir      = (mdal_readdir)    dlsym(lib, "mdal_readdir");
+      mdal->closedir     = (mdal_closedir)   dlsym(lib, "mdal_closedir");
+
+      mdal->statvfs      = (mdal_statvfs)    dlsym(lib, "mdal_statvfs");
+
+      mdal->is_open      = (mdal_is_open)    dlsym(lib, "mdal_is_open");
+
+      // done
+      dlclose(lib);
+
+   }
+   else {
+
+      // unknown name
       return NULL;
    }
 
-   mdal_vec[mdal_count] = new_mdal;
-   ++ mdal_count;
-   return new_mdal;
+   return mdal;
 }
+
+
+
+
+MDAL* get_MDAL(const char* name) {
+   static int needs_init = 1;
+   if (needs_init) {
+
+      // one-time initialization of mdal_list
+      assert(! install_MDAL(&posix_mdal) );
+      needs_init = 0;
+   }
+
+   // look up <name> in known MDALs
+   size_t name_len = strlen(name);
+   int i;
+   for (i=0; i<mdal_count; ++i) {
+      if ((name_len == mdal_list[i]->name_len)
+          && (! strcmp(name, mdal_list[i]->name))) {
+
+         return mdal_list[i];
+      }
+   }
+
+   // not found.  Maybe it was dynamic?
+   if (! strcmp(name, "DYNAMIC"))
+      assert(! install_MDAL(dynamic_MDAL(name)) );
+
+   return NULL;
+}
+

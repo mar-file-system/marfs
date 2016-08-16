@@ -246,7 +246,9 @@ typedef  int     (*mdal_statvfs)(const char* path, struct statvfs *buf);
 // This is a collection of function-ptrs
 // They capture a given implementation of interaction with an MDFS.
 typedef struct MDAL {
-   MDAL_Type          type;
+   const char*        name;
+   size_t             name_len;
+
    void*              global_state;
 
    mdal_file_ctx_init    f_init;
@@ -293,10 +295,20 @@ typedef struct MDAL {
 } MDAL;
 
 
-// find or create an MDAL of the given type
-MDAL* get_MDAL(MDAL_Type type);
+
+// insert a new DAL, if there are no name-conflicts
+int  install_MDAL(MDAL* mdal);
+
+// find an MDAL with the given name
+MDAL* get_MDAL(const char* name);
 
 
+
+// exported for building custom MDAL
+int     default_mdal_file_ctx_init(MDAL_Context* ctx, MDAL* mdal);
+int     default_mdal_file_ctx_destroy(MDAL_Context* ctx, MDAL* mdal);
+int     default_mdal_dir_ctx_init (MDAL_Context* ctx, MDAL* mdal);
+int     default_mdal_dir_ctx_destroy (MDAL_Context* ctx, MDAL* mdal);
 
 
 

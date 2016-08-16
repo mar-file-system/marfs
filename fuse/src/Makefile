@@ -315,87 +315,6 @@ CFLAGS  += $(patsubst %, -D%, $(DEFS))
 
 
 # ...........................................................................
-# back and forth to test clusters
-#
-# Develop on Hb's cluster (WORK)
-# backup to cc-gate
-#
-# copy from cc-gate to tr-fta-master (ODSU)
-# copy from cc-gate to cc-fta-master (CCFTA)
-# ...........................................................................
-
-# WORK = 10.146.0.3
-WORK = 10.146.0.2
-
-# only works on ccstargate, or cc-gate
-2work:
-	rsync -Pvaurl ~/projects/marfs/git/ root@$(WORK):/root/projects/marfs/git
-	# rsync -Pvaurl ~/projects/ecs_hobo/tools/aws4c/ root@$(WORK):/root/projects/ecs_hobo/tools/aws4c
-	# rsync -Pvaurl ~/projects/ecs_hobo/tools/curl_tools/ root@$(WORK):/root/projects/ecs_hobo/tools/curl_tools
-
-
-# only works on cc-gate
-fromwork.Makefile:
-	rsync -Pva    root@$(WORK):/root/projects/git/marfs/fuse/src/Makefile .
-
-# only works on cc-gate
-# update ~/projects
-fromwork: fromwork.Makefile
-	for DIR in marfs aws4c PA2X pftool; do \
-	rsync -Pva    --exclude=foo\* --exclude=jti\*/f\* --exclude=core\* \
-	              --exclude=messages\* \
-		           --del --sparse root@$(WORK):/root/projects/git/$$DIR/   ~/projects/git/$$DIR ; \
-	done
-
-	rsync -Pva    --del --sparse root@$(WORK):/root/projects/tools/ ~/projects/tools
-	rsync -Pva    --del --sparse root@$(WORK):/root/projects/bin/   ~/projects/bin
-	rsync -Pva    --del --sparse root@$(WORK):/root/projects/bin2/  ~/projects/bin2
-
-fromwork.test: fromwork.Makefile
-	for DIR in marfs aws4c PA2X pftool; do \
-	rsync -Pva    --del --sparse root@$(WORK):/root/projects/git.test/$$DIR/ ~/projects/git.test/$$DIR ; \
-	done
-
-# for use on cc-gate, to rsync out to ODSU, or CCFTAs
-# This is prep for <toodsu> and <toccfta>
-# copy ~/projects to ~/send.dir
-update_send.dir: # fromwork
-	rsync -Pva    --exclude=foo.\* --exclude=jti\*/f\* --exclude=core.\* \
-	              --del --sparse ~/projects/git/   ~/send.dir/git
-	rsync -Pva    --del --sparse ~/projects/tools/ ~/send.dir/tools
-	rsync -Pva    --del --sparse ~/projects/bin/   ~/send.dir/bin
-	rsync -Pva    --del --sparse ~/projects/bin2/  ~/send.dir/bin2
-
-update_send.dir.test: # fromwork
-	rsync -Pva    --del --sparse ~/projects/git.test/   ~/send.dir/git.test
-
-# [on cc-gate]
-# copy ~/send.dir to /root/jti/send.dir on tr-fta-master
-toodsu: update_send.dir
-	@ echo
-	@ echo "*** sending ..."
-	~/send
-
-
-# until we fix up DNS on cc-fta*
-CC-FTA-MASTER=10.150.0.250
-
-# [on cc-gate]
-# copy ~/send.dir to /root/jti/send.dir on cc-fta-master
-toccfta: update_send.dir
-	@ echo
-	@ echo "*** sending ..."
-	echo rsync -Pva    --del --sparse ~jti/send.dir/ root@$(CC-FTA-MASTER):~/jti/send.dir
-	rsync -Pva    --del --sparse ~jti/send.dir/ root@$(CC-FTA-MASTER):~/jti/send.dir
-
-
-toccfta.test: update_send.dir.test
-	echo \
-	rsync -Pva   --del --sparse ~jti/send.dir/git.test/ root@$(CC-FTA-MASTER):~/jti/send.dir/git.test
-	rsync -Pva   --del --sparse ~jti/send.dir/git.test/ root@$(CC-FTA-MASTER):~/jti/send.dir/git.test
-
-
-# ...........................................................................
 # basics
 # ...........................................................................
 
@@ -585,7 +504,7 @@ mnt.helgrind: fuse.helgrind umnt
 	@ $(MAKE) _mnt HELGRIND=1
 
 mnt.dbg: fuse.dbg umnt.dbg
-	@ $(MAKE) _mnt MNT=$(MNT)_dbg DEBUG=2 LOG="> fuse.log 2>&1"
+	@ $(MAKE) _mnt MNT=$(MNT)_dbg DEBUG=2 LOG="> fuse.log_dbg 2>&1"
 
 
 

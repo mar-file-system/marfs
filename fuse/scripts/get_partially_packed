@@ -43,6 +43,8 @@ for i in `ls $1/*`; do
 
    echo $dir/$file
    # get the object and write to file
-   curl -u `egrep '^root' ~/.awsAuth | cut -d ':' -f 2-3` --digest -v -H "Range: bytes=$offset-$end" http://10.135.0.30:81/$objid > ./testing/$dir/$file.packed   
+   # MODIFY AS NECESSARY
+   curl --digest -v -H "Range: bytes=$offset-$end" http://xxx.xxx.xxx.xxx:xx/$objid > ./testing/$dir/$file.packed   
+   # MODIFY AS NECESSARY
 done
 

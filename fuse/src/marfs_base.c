@@ -1300,7 +1300,6 @@ ssize_t str_2_chunkinfo(MultiChunkInfo* chnk, const char* str, const size_t str_
 // Return 0 for success, non-zero for failure.
 //
 
-
 int validate_configuration() {
 
    int           retval = 0;
@@ -1325,12 +1324,12 @@ int validate_configuration() {
       }
 
 
-      // configuration parsed the DAL type.
+      // configuration parsed the DAL name.
       // Go find the corresponding DAL and install
-      DAL* dal = get_DAL(repo->dal_type);
-      if ( ! dal ) {
-         LOG( LOG_ERR, "Couldn't find DAL named '%s' for repo %s.\n",
-              DAL_type_name(repo->dal_type), repo->name );
+      DAL* dal = get_DAL(repo->dal_name);
+      if (! dal) {
+         LOG( LOG_ERR, "Couldn't find DAL named '%s' for repo '%s'.\n",
+              repo->dal_name, repo->name);
          retval = -1;
       }
       repo->dal = dal;
@@ -1350,20 +1349,20 @@ int validate_configuration() {
          retval = -1;
       }
 
-      // configuration parsed the MDAL type.
+      // configuration parsed the MDAL type-name
       // Go find the corresponding MDAL and install
-      MDAL* dir_MDAL = get_MDAL(ns->dir_MDAL_type);
-      if ( ! dir_MDAL ) {
-         LOG( LOG_ERR, "Couldn't find MDAL named \"%s\".\n",
-              MDAL_type_name(ns->dir_MDAL_type) );
+      MDAL* dir_MDAL = get_MDAL(ns->dir_MDAL_name);
+      if (! dir_MDAL) {
+         LOG( LOG_ERR, "Couldn't find MDAL named '%s' for NS '%s'.\n",
+              ns->dir_MDAL_name, ns->name);
          retval = -1;
       }
       ns->dir_MDAL = dir_MDAL;
 
-      MDAL* file_MDAL = get_MDAL(ns->file_MDAL_type);
+      MDAL* file_MDAL = get_MDAL(ns->file_MDAL_name);
       if ( ! file_MDAL ) {
-         LOG( LOG_ERR, "Couldn't find MDAL named \"%s\".\n",
-              MDAL_type_name(ns->file_MDAL_type) );
+         LOG( LOG_ERR, "Couldn't find MDAL named '%s'.\n",
+              ns->file_MDAL_name);
          retval = -1;
       }
       ns->file_MDAL = file_MDAL;

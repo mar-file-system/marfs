@@ -55,7 +55,9 @@ for i in `cat $2 | awk '{print $2}'`; do
    echo $filename
 
    # get the object and write to file
-   curl -u `egrep '^root' ~/.awsAuth | cut -d ':' -f 2-3` --digest -v -H "Range: bytes=$offset-$end" http://10.135.0.30:81/$objid > ./testing/$dir/$filename.repacked   
+   # MODIFY AS NECESSARY
+   curl --digest -v -H "Range: bytes=$offset-$end" http://10.135.0.30:81/$objid > ./testing/$dir/$filename.repacked   
+   # MODIFY AS NECESSARY
    diff ./testing/$dir/$filename.packed ./testing/$dir/$filename.repacked
  
    # compare this object to unpacked objec

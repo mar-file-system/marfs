@@ -84,6 +84,8 @@ OF SUCH DAMAGE.
 #include <fcntl.h>
 #include <utime.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <assert.h>
 
 
 // ===========================================================================
@@ -194,17 +196,14 @@ int     obj_dal_ctx_destroy(DAL_Context* ctx, DAL* dal) {
 
 
 
-void*   obj_open(DAL_Context* ctx,
+int     obj_open(DAL_Context* ctx,
                  int          is_put,
                  size_t       content_length,
                  uint8_t      preserve_write_count,
                  uint16_t     timeout) {
 
-   if (stream_open(OS(ctx), is_put, content_length,
-                   preserve_write_count, timeout))
-      return NULL;
-   else
-      return ctx;
+   return stream_open(OS(ctx), is_put, content_length,
+                      preserve_write_count, timeout);
 }
 
 int     obj_put(DAL_Context*  ctx,
@@ -238,6 +237,29 @@ int     obj_close(DAL_Context*  ctx) {
 
 
 
+static DAL obj_dal = {
+   .name         = "OBJECT",
+   .name_len     = 6, // strlen("OBJECT"),
+
+   .global_state = NULL,
+
+#if 0
+   .init         = &obj_dal_ctx_init,
+   .destroy      = &obj_dal_ctx_destroy,
+#else
+   .init         = &default_dal_ctx_init,
+   .destroy      = &default_dal_ctx_destroy,
+#endif
+
+   .open         = &obj_open,
+   .put          = &obj_put,
+   .get          = &obj_get,
+   .sync         = &obj_sync,
+   .abort        = &obj_abort,
+   .close        = &obj_close
+};
+
+
 // ================================================================
 // NO_OP
 //
@@ -253,13 +275,13 @@ int     obj_close(DAL_Context*  ctx) {
 
 
 
-void*   nop_open(DAL_Context* ctx,
+int     nop_open(DAL_Context* ctx,
                  int          is_put,
                  size_t       content_length,
                  uint8_t      preserve_write_count,
                  uint16_t     timeout) {
 
-   return ctx;                    // returning NULL considered an error
+   return 0;
 }
 
 int     nop_put(DAL_Context*  ctx,
@@ -294,99 +316,193 @@ int     nop_close(DAL_Context*  ctx) {
 }
 
 
+DAL nop_dal = {
+   .name         = "NO_OP",
+   .name_len     = 5, // strlen("NO_OP"),
+
+   .global_state = NULL,
+
+   .init         = &default_dal_ctx_init,
+   .destroy      = &default_dal_ctx_destroy,
+
+   .open         = &nop_open,
+   .put          = &nop_put,
+   .get          = &nop_get,
+   .sync         = &nop_sync,
+   .abort        = &nop_abort,
+   .close        = &nop_close
+};
+
+
 // ===========================================================================
 // GENERAL
 // ===========================================================================
-
-
-
-static
-int dal_init(DAL* dal, DAL_Type type) {
-
-   // zero everything, so if we forget to update something it will be obvious
-   memset(dal, 0, sizeof(DAL));
-
-   dal->type = type;
-   switch (type) {
-
-   case DAL_OBJ:
-      dal->global_state = NULL;
-
-#if 0
-      dal->init         = &obj_dal_ctx_init;
-      dal->destroy      = &obj_dal_ctx_destroy;
-#else
-      dal->init         = &default_dal_ctx_init;
-      dal->destroy      = &default_dal_ctx_destroy;
-#endif
-
-      dal->open         = &obj_open;
-      dal->put          = &obj_put;
-      dal->get          = &obj_get;
-      dal->sync         = &obj_sync;
-      dal->abort        = &obj_abort;
-      dal->close        = &obj_close;
-      break;
-
-   case DAL_NO_OP:
-      dal->global_state = NULL;
-
-      dal->init         = &default_dal_ctx_init;
-      dal->destroy      = &default_dal_ctx_destroy;
-
-      dal->open         = &nop_open;
-      dal->put          = &nop_put;
-      dal->get          = &nop_get;
-      dal->sync         = &nop_sync;
-      dal->abort        = &nop_abort;
-      dal->close        = &nop_close;
-      break;
-
-      // TBD ...
-   case DAL_MC:
-   case DAL_POSIX:
-   default:
-      return -1;
-   };
-
-   return 0;
-}
-
-
 
 // should be plenty
 // static const size_t MAX_DAL = 32; // stupid compiler
 #define MAX_DAL 32
 
-static DAL*  dal_vec[MAX_DAL];
+static DAL*   dal_list[MAX_DAL];
 static size_t dal_count = 0;
 
 
-DAL* get_DAL(DAL_Type type) {
+# define DL_CHECK(SYM)                                                  \
+   if (! dal->SYM) {                                                    \
+      LOG(LOG_ERR, "DAL '%s' has no symbol '%s'\n", dal->name, #SYM);   \
+      return -1;                                                         \
+   }
 
+
+// add a new DAL to dal_list
+int install_DAL(DAL* dal) {
+
+   if (! dal) {
+      LOG(LOG_ERR, "NULL arg\n");
+      return -1;
+   }
+
+   // insure that no DAL with the given name already exists
    int i;
    for (i=0; i<dal_count; ++i) {
-      if (dal_vec[i] && (dal_vec[i]->type == type))
-         return dal_vec[i];
+      if ((dal->name_len == dal_list[i]->name_len)
+          && (! strcmp(dal->name, dal_list[i]->name))) {
+
+         LOG(LOG_ERR, "DAL named '%s' already exists\n", dal->name);
+         return -1;
+      }
    }
 
-   if (i >= MAX_DAL -1) {
-      LOG(LOG_ERR, "out of room for new DAL structs.  Increase MAX_DAL and rebuild\n");
-      return NULL;
+   // validate that DAL has all required members
+   DL_CHECK(name);
+   DL_CHECK(name_len);
+   DL_CHECK(init);
+   DL_CHECK(destroy);
+   DL_CHECK(open);
+   DL_CHECK(put);
+   DL_CHECK(get);
+   DL_CHECK(sync);
+   DL_CHECK(abort);
+   DL_CHECK(close);
+
+   if (dal_count >= MAX_DAL) {
+         LOG(LOG_ERR,
+             "No room for DAL '%s'.  Increase MAX_DAL_COUNT and rebuild.\n",
+             dal->name);
+         return -1;
    }
 
-   DAL* new_dal = (DAL*)calloc(1, sizeof(DAL));
-   if (! new_dal) {
-      LOG(LOG_ERR, "out of memory for new DAL (0x%02x)\n", (unsigned)type);
+   // install
+   LOG(LOG_INFO, "Installing DAL '%s'\n", dal->name);
+   dal_list[dal_count] = dal;
+   ++ dal_count;
+
+   return 0;
+}
+
+# undef DL_CHECK
+
+
+
+// Untested support for dynamically-loaded DAL. This is not a link-time
+// thing, but a run-time thing.  The name in the configuration is something
+// like: "DYNAMIC /path/to/my/lib", and we go look for all the DAL symbols
+// (e.g. dal_open()) in that module, and install a corresponding DAL.
+// *All* DAL symbols must be defined in the library.
+
+static
+DAL* dynamic_DAL(const char* name) {
+
+   DAL* dal = (DAL*)calloc(1, sizeof(DAL));
+   if (! dal) {
+      LOG(LOG_ERR, "no memory for new DAL '%s'\n", name);
       return NULL;
    }
    
-   if (dal_init(new_dal, type)) {
-      LOG(LOG_ERR, "Couldn't initialize DAL (0x%02x)\n", (unsigned)type);
+   // zero everything, so if we forget to update something it will be obvious
+   memset(dal, 0, sizeof(DAL));
+
+   dal->name     = name;
+   dal->name_len = strlen(name);
+
+   if (! strcmp(name, "DYNAMIC")) {
+      return NULL;
+
+      // second token is library-name
+      const char* delims = " \t";
+      char* delim = strpbrk(name, delims);
+      if (! delim)
+         return NULL;
+      char* lib_name = delim + strspn(delim, delims);
+      if (! *lib_name)
+         return NULL;
+
+      // dig out symbols
+      void* lib = dlopen(lib_name, RTLD_LAZY);
+      if (! lib) {
+         LOG(LOG_ERR, "Couldn't open dynamic lib '%s'\n", lib_name);
+         return NULL;
+      }
+
+      dal->global_state = NULL;
+
+      dal->init         = (dal_ctx_init)    dlsym(lib, "dal_init");
+      dal->destroy      = (dal_ctx_destroy) dlsym(lib, "dal_destroy");
+
+      dal->open         = (dal_open)    dlsym(lib, "dal_open");
+      dal->put          = (dal_put)     dlsym(lib, "dal_put");
+      dal->get          = (dal_get)     dlsym(lib, "dal_get");
+      dal->sync         = (dal_sync)    dlsym(lib, "dal_sync");
+      dal->abort        = (dal_abort)   dlsym(lib, "dal_abort");
+      dal->close        = (dal_close)   dlsym(lib, "dal_close");
+
+      dlclose(lib);
+
+   }
+   else {
+
+      // unknown name
       return NULL;
    }
 
-   dal_vec[dal_count] = new_dal;
-   ++ dal_count;
-   return new_dal;
+
+   return dal;
 }
+
+
+
+// Applications can push private custom DALs before calling
+// read_configuration() [or, at least, before calling
+// validate_configuration()].  They should just build a struct like the
+// ones used below, and call install_DAL() with their struct.  Then those
+// DALs will be found, when referenced in the configuration.
+
+DAL* get_DAL(const char* name) {
+   static int needs_init = 1;
+   if (needs_init) {
+
+      // one-time initialization of dal_list
+      assert(! install_DAL(&obj_dal) );
+      assert(! install_DAL(&nop_dal) );
+
+      needs_init = 0;
+   }
+
+   // look up <name> in known DALs
+   size_t name_len = strlen(name);
+   int i;
+   for (i=0; i<dal_count; ++i) {
+      if ((name_len == dal_list[i]->name_len)
+          && (! strcmp(name, dal_list[i]->name))) {
+
+         return dal_list[i];
+      }
+   }
+
+   // not found.  Maybe it was dynamic?
+   if (! strcmp(name, "DYNAMIC"))
+      assert(! install_DAL(dynamic_DAL(name)) );
+
+   return NULL;
+}
+
+

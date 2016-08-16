@@ -167,7 +167,7 @@ typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 // TBD: This should probably use va_args, to improve generality For now
 //      we're just copying the object_stream inteface verbatim.
 //
-typedef  void*   (*dal_open) (DAL_Context* ctx,
+typedef int      (*dal_open) (DAL_Context* ctx,
                               int          is_put,
                               size_t       content_length,
                               uint8_t      preserve_write_count,
@@ -191,7 +191,10 @@ typedef int      (*dal_close)(DAL_Context*  ctx);
 // This is a collection of function-ptrs
 // They capture a given implementation of interaction with an MDFS.
 typedef struct DAL {
-   DAL_Type             type;
+   // DAL_Type             type;
+   const char*          name;
+   size_t               name_len;
+
    void*                global_state;
 
    dal_ctx_init         init;
@@ -208,34 +211,18 @@ typedef struct DAL {
 } DAL;
 
 
-// find or create an DAL of the given type
-DAL* get_DAL(DAL_Type type);
+// insert a new DAL, if there are no name-conflicts
+int  install_DAL(DAL* dal);
+
+// find a DAL with the given name
+DAL* get_DAL(const char* name);
 
 
 
 
-// e.g. "DAL_OP(sync, &fh)"
-//
-//  DAL:      (*(&fh)->dal_handle.dal->sync) (*(&fh)->dal_handle.dal->ctx)
-//  non-DAL:  stream_sync((&fh)->os)
-//
-#if USE_DAL
-
-#  define DAL_OP(OP, FH, ... )                                       \
-   (*(FH)->dal_handle.dal->OP)(&(FH)->dal_handle.ctx, ##__VA_ARGS__)
-
-
-
-#else
-
-#  define DAL_OP(OP, FH, ...)                   \
-   stream_##OP((FH)->os, ##__VA_ARGS__)
-
-
-#endif
-
-
-
+// exported for building custom DAL
+int     default_dal_ctx_init(DAL_Context* ctx, DAL* dal, void* os);
+int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal);
 
 
 
