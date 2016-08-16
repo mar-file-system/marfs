@@ -490,6 +490,12 @@ int install_MDAL(MDAL* mdal) {
 
 
 
+// Untested support for dynamically-loaded MDAL. This is not a link-time
+// thing, but a run-time thing.  The name in the configuration is something
+// like: "DYNAMIC /path/to/my/lib", and we go look for all the MDAL symbols
+// (e.g. mdal_open()) in that module, and install a corresponding MDAL.
+// *All* MDAL symbols must be defined in the library.
+
 static
 MDAL* dynamic_MDAL(const char* name) {
 
@@ -505,62 +511,9 @@ MDAL* dynamic_MDAL(const char* name) {
    mdal->name     = name;
    mdal->name_len = strlen(name);
 
-   if (! strcmp(name, "POSIX")) {
-      mdal->global_state = NULL;
+   if (! strcmp(name, "DYNAMIC")) {
 
-      mdal->f_init       = &default_mdal_file_ctx_init;
-      mdal->f_destroy    = &default_mdal_file_ctx_destroy;
-
-      mdal->d_init       = &default_mdal_dir_ctx_init;
-      mdal->d_destroy    = &default_mdal_dir_ctx_destroy;
-
-      mdal->open         = &posix_open;
-      mdal->close        = &posix_close;
-      mdal->write        = &posix_write;
-      mdal->read         = &posix_read;
-      mdal->ftruncate    = &posix_ftruncate;
-      mdal->lseek        = &posix_lseek;
-
-      mdal->access       = &posix_access;
-      mdal->faccessat    = &posix_faccessat;
-      mdal->mknod        = &posix_mknod;
-      mdal->chmod        = &posix_chmod;
-      mdal->truncate     = &posix_truncate;
-      mdal->lchown       = &posix_lchown;
-      mdal->lstat        = &posix_lstat;
-      mdal->rename       = &posix_rename;
-      mdal->readlink     = &posix_readlink;
-      mdal->lgetxattr    = &posix_lgetxattr;
-      mdal->lsetxattr    = &posix_lsetxattr;
-      mdal->lremovexattr = &posix_lremovexattr;
-      mdal->llistxattr   = &posix_llistxattr;
-      mdal->symlink      = &posix_symlink;
-      mdal->unlink       = &posix_unlink;
-
-      mdal->utime        = &posix_utime;
-      mdal->utimensat    = &posix_utimensat;
-
-      mdal->mkdir        = &posix_mkdir;
-      mdal->rmdir        = &posix_rmdir;
-      mdal->opendir      = &posix_opendir;
-      mdal->readdir      = &posix_readdir;
-      mdal->closedir     = &posix_closedir;
-
-      mdal->statvfs      = &posix_statvfs;
-
-      mdal->is_open      = &posix_is_open;
-   }
-   // --- TBD: support for dynamically-loaded symbols. This is not a
-   //     link-time thing, but a run-time thing.  The name in the
-   //     configuration is something like: "DYNAMIC /path/to/my/lib", and
-   //     all we do is go look for all the MDAL symbols (e.g. mdal_open())
-   //     in that module, and install a corresponding MDAL.  *All* MDAL
-   //     symbols must be defined in the library.
-   else if (! strcmp(name, "DYNAMIC")) {
-      return NULL;
-
-      // TBD ...
-      // second part of token is name
+      // second token is library-path
       const char* delims = " \t";
       char* delim = strpbrk(name, delims);
       if (! delim)

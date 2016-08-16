@@ -403,6 +403,11 @@ int install_DAL(DAL* dal) {
 
 
 
+// Untested support for dynamically-loaded DAL. This is not a link-time
+// thing, but a run-time thing.  The name in the configuration is something
+// like: "DYNAMIC /path/to/my/lib", and we go look for all the DAL symbols
+// (e.g. dal_open()) in that module, and install a corresponding DAL.
+// *All* DAL symbols must be defined in the library.
 
 static
 DAL* dynamic_DAL(const char* name) {
@@ -419,57 +424,10 @@ DAL* dynamic_DAL(const char* name) {
    dal->name     = name;
    dal->name_len = strlen(name);
 
-   if (! strcmp(name, "OBJECT")) {
-
-      dal->global_state = NULL;
-#if 0
-      dal->init         = &obj_dal_ctx_init;
-      dal->destroy      = &obj_dal_ctx_destroy;
-#else
-      dal->init         = &default_dal_ctx_init;
-      dal->destroy      = &default_dal_ctx_destroy;
-#endif
-
-      dal->open         = &obj_open;
-      dal->put          = &obj_put;
-      dal->get          = &obj_get;
-      dal->sync         = &obj_sync;
-      dal->abort        = &obj_abort;
-      dal->close        = &obj_close;
-   }
-   else if (! strcmp(name, "NO_OP")) {
-      dal->global_state = NULL;
-
-      dal->init         = &default_dal_ctx_init;
-      dal->destroy      = &default_dal_ctx_destroy;
-
-      dal->open         = &nop_open;
-      dal->put          = &nop_put;
-      dal->get          = &nop_get;
-      dal->sync         = &nop_sync;
-      dal->abort        = &nop_abort;
-      dal->close        = &nop_close;
-   }
-   else if (! strcmp(name, "MC")) {
-      // TBD ...
-      return NULL;
-   }
-   else if (! strcmp(name, "POSIX")) {
-      // TBD ...
-      return NULL;
-   }
-
-   // --- TBD: support for dynamically-loaded symbols. This is not a
-   //     link-time thing, but a run-time thing.  The name in the
-   //     configuration is something like: "DYNAMIC /path/to/my/lib", and
-   //     all we do is go look for all the DAL symbols (e.g. dal_open()) in
-   //     that module, and install a corresponding DAL.  *All* MDAL
-   //     symbols must be defined in the library.
-   else if (! strcmp(name, "DYNAMIC")) {
+   if (! strcmp(name, "DYNAMIC")) {
       return NULL;
 
-      // TBD ...
-      // second part of token is name
+      // second token is library-name
       const char* delims = " \t";
       char* delim = strpbrk(name, delims);
       if (! delim)
