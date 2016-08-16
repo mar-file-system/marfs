@@ -220,28 +220,9 @@ DAL* get_DAL(const char* name);
 
 
 
-// e.g. "DAL_OP(sync, &fh)"
-//
-//  DAL:      (*(&fh)->dal_handle.dal->sync) (*(&fh)->dal_handle.dal->ctx)
-//  non-DAL:  stream_sync((&fh)->os)
-//
-#if USE_DAL
-
-#  define DAL_OP(OP, FH, ... )                                       \
-   (*(FH)->dal_handle.dal->OP)(&(FH)->dal_handle.ctx, ##__VA_ARGS__)
-
-
-
-#else
-
-#  define DAL_OP(OP, FH, ...)                   \
-   stream_##OP(&(FH)->os, ##__VA_ARGS__)
-
-
-#endif
-
-
-
+// exported for building custom DAL
+int     default_dal_ctx_init(DAL_Context* ctx, DAL* dal, void* os);
+int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal);
 
 
 

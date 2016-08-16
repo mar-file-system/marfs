@@ -418,8 +418,8 @@ int install_MDAL(MDAL* mdal) {
    // insure that no MDAL with the given name already exists
    int i;
    for (i=0; i<mdal_count; ++i) {
-      if ((! strcmp(mdal->name, mdal_list[i]->name))
-          && (! strcmp(mdal_list[i]->name, mdal->name))) {
+      if ((mdal->name_len == mdal_list[i]->name_len)
+          && (! strcmp(mdal->name, mdal_list[i]->name))) {
 
          LOG(LOG_ERR, "MDAL named '%s' already exists\n", mdal->name);
          return -1;
@@ -479,6 +479,7 @@ int install_MDAL(MDAL* mdal) {
    }
 
    // install
+   LOG(LOG_INFO, "Installing MDAL '%s'\n", mdal->name);
    mdal_list[mdal_count] = mdal;
    ++ mdal_count;
 
@@ -645,10 +646,11 @@ MDAL* get_MDAL(const char* name) {
    }
 
    // look up <name> in known MDALs
+   size_t name_len = strlen(name);
    int i;
    for (i=0; i<mdal_count; ++i) {
-      if ((! strcmp(name, mdal_list[i]->name))
-          && (! strcmp(mdal_list[i]->name, name))) {
+      if ((name_len == mdal_list[i]->name_len)
+          && (! strcmp(name, mdal_list[i]->name))) {
 
          return mdal_list[i];
       }

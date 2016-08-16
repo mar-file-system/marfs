@@ -364,8 +364,8 @@ int install_DAL(DAL* dal) {
    // insure that no DAL with the given name already exists
    int i;
    for (i=0; i<dal_count; ++i) {
-      if ((! strcmp(dal->name, dal_list[i]->name))
-          && (! strcmp(dal_list[i]->name, dal->name))) {
+      if ((dal->name_len == dal_list[i]->name_len)
+          && (! strcmp(dal->name, dal_list[i]->name))) {
 
          LOG(LOG_ERR, "DAL named '%s' already exists\n", dal->name);
          return -1;
@@ -392,6 +392,7 @@ int install_DAL(DAL* dal) {
    }
 
    // install
+   LOG(LOG_INFO, "Installing DAL '%s'\n", dal->name);
    dal_list[dal_count] = dal;
    ++ dal_count;
 
@@ -529,10 +530,11 @@ DAL* get_DAL(const char* name) {
    }
 
    // look up <name> in known DALs
+   size_t name_len = strlen(name);
    int i;
    for (i=0; i<dal_count; ++i) {
-      if ((! strcmp(name, dal_list[i]->name))
-          && (! strcmp(dal_list[i]->name, name))) {
+      if ((name_len == dal_list[i]->name_len)
+          && (! strcmp(name, dal_list[i]->name))) {
 
          return dal_list[i];
       }

@@ -304,6 +304,12 @@ MDAL* get_MDAL(const char* name);
 
 
 
+// exported for building custom MDAL
+int     default_mdal_file_ctx_init(MDAL_Context* ctx, MDAL* mdal);
+int     default_mdal_file_ctx_destroy(MDAL_Context* ctx, MDAL* mdal);
+int     default_mdal_dir_ctx_init (MDAL_Context* ctx, MDAL* mdal);
+int     default_mdal_dir_ctx_destroy (MDAL_Context* ctx, MDAL* mdal);
+
 
 
 

@@ -943,13 +943,13 @@ static MarFS_Config_Ptr read_configuration_internal() {
     }
 
     // default to OBJ, for backward-compatibility
-    const char* dal_name = "OBJECT";
+    const char* dal_name = strdup("OBJECT");
     if ( ! repoList[j]->DAL ) {
        LOG( LOG_INFO, "MarFS repo '%s' has no DAL. Defaulting to OBJ\n",
             repoList[j]->name );
     }
     else
-       dal_name = repoList[j]->DAL;
+       dal_name = strdup(repoList[j]->DAL);
 
     marfs_repo_list[j]->dal_name = dal_name;
     marfs_repo_list[j]->dal      = NULL; // see validate_config() in libmarfs
@@ -1351,13 +1351,13 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
     // default to POSIX, for backward-compatibility
     // [co-maintain with file_MDAL tests, below]
-    const char* dir_MDAL_name = "POSIX";
+    const char* dir_MDAL_name = strdup("POSIX");
     if ( ! namespaceList[j]->dir_MDAL ) {
        LOG( LOG_INFO, "MarFS namespace '%s' has no dir_MDAL. Defaulting to POSIX\n",
             namespaceList[j]->name );
     }
     else
-       dir_MDAL_name = namespaceList[j]->dir_MDAL;
+       dir_MDAL_name = strdup(namespaceList[j]->dir_MDAL);
 
     marfs_namespace_list[j]->dir_MDAL_name = dir_MDAL_name;
     marfs_namespace_list[j]->dir_MDAL      = NULL; // see validate_config() in libmarfs
@@ -1366,13 +1366,13 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
     // default to POSIX, for backward-compatibility
     // [co-maintain with dir_MDAL tests, above]
-    const char* file_MDAL_name = "POSIX";
+    const char* file_MDAL_name = strdup("POSIX");
     if ( ! namespaceList[j]->file_MDAL ) {
        LOG( LOG_INFO, "MarFS namespace '%s' has no file_MDAL. Defaulting to POSIX\n",
             namespaceList[j]->name );
     }
     else
-       namespaceList[j]->file_MDAL;
+       file_MDAL_name = strdup(namespaceList[j]->file_MDAL);
 
     marfs_namespace_list[j]->file_MDAL_name = file_MDAL_name;
     marfs_namespace_list[j]->file_MDAL      = NULL; // see validate_config() in libmarfs
@@ -1662,7 +1662,8 @@ int debug_namespace( MarFS_Namespace* ns ) {
    fprintf(stdout, "\tfsinfo_path        %s\n",   ns->fsinfo_path);
    fprintf(stdout, "\tfsinfo_path_len    %ld\n",  ns->fsinfo_path_len);
    fprintf(stdout, "\tquota_space        %lld\n", ns->quota_space);
-   fprintf(stdout, "\tquota_names        %lld\n", ns->quota_names);
+   fprintf(stdout, "\tdir_MDAL_name      %s\n",   ns->dir_MDAL_name);
+   fprintf(stdout, "\tfile_MDAL_name     %s\n",   ns->file_MDAL_name);
    fprintf(stdout, "\tns_shardp          %d\n",   ns->ns_shardp);
    fprintf(stdout, "\tns_shardp_len      %ld\n",  ns->ns_shardp_len);
    fprintf(stdout, "\tns_shardp_num      %llu\n", ns->ns_shardp_num);
@@ -1691,6 +1692,7 @@ int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "\tmin_pack_file_count %ld\n",  repo->min_pack_file_count);
    fprintf(stdout, "\tmax_pack_file_size  %ld\n",  repo->max_pack_file_size);
    fprintf(stdout, "\tmin_pack_file_size  %ld\n",  repo->min_pack_file_size);
+   fprintf(stdout, "\tDAL_name            %s\n",   repo->dal_name);
    fprintf(stdout, "\tonline_cmds         %s\n",   repo->online_cmds);
    fprintf(stdout, "\tonline_cmds_len     %ld\n",  repo->online_cmds_len);
    fprintf(stdout, "\tlatency             %llu\n", repo->latency);

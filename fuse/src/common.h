@@ -658,66 +658,6 @@ typedef struct {
    FHFlagType      flags;
 } MarFS_FileHandle;
 
-// I'm not sure this is an improvement over all the #ifs
-#if USE_MDAL
-#  define MD_FILE_OP(...)   F_OP( __VA_ARGS__ )
-#  define MD_DIR_OP(...)    D_OP( __VA_ARFS__ )
-#  define MD_PATH_OP(...)   F_OP_NOCTX( __VA_ARGS__ )
-// unfirtunately we need this in order to use the dir_MDAL for mkdir/rmdir
-#  define MD_D_PATH_OP(...) D_OP_NOCTX( __VA_ARGS__ )
-#else
-// We don't always want the fh->md_fd (see write_trash_companion_file)
-//  ... BUT ... maybe the only place we don't is the trash functions,
-//  which can be easily (?) rewriten.
-#  define MD_FILE_OP(OP, FH, ...)       (OP)( (FH)->md_fd, __VA_ARGS__ )
-#  define MD_DIR_OP(OP, _NS, ...)      (OP)( __VA_ARGS__ )
-#  define MD_PATH_OP(OP, _NS, ...)   (OP)( __VA_ARGS__ )
-#  define MD_D_PATH_OP(OP, _NS, ...) (OP)( __VA_ARGS__ )
-#endif
-
-#if USE_MDAL
-// shorthand
-#  define F_CTX(FH)              &(FH)->f_handle.ctx
-#  define F_MDAL(FH)             (FH)->f_handle.mdal
-
-#  define F_OP(OP,FH, ...)       (*(FH)->f_handle.mdal->OP)(F_CTX(FH), ##__VA_ARGS__)
-#  define F_OP_NOCTX(OP,NS, ...) (*(NS)->file_MDAL->OP)(__VA_ARGS__)
-/*
- #  define F_OP(OP,FH, ...)                                            \
-   do {                                                               \
-   if (! (*(FH)->f_handle.mdal->OP)) {                                \
-      LOG(LOG_ERR, "Function " #OP " not implemented for MDAL!\n");   \
-      exit(EXIT_FAILURE);                                             \
-   }                                                                  \
-   else {                                                             \
-      (*(FH)->f_handle.mdal->OP)(F_CTX(FH), ##__VA_ARGS__);           \
-   } while (0)
-*/
-#endif
-
-
-// some ops (e.g. rename()) have no file-descriptor/context.  For these,
-// we'll just use the MDAL from the NS to select the implementation, and
-// call the function without passing a context.  [Or, should we initialize
-// a MDAL_Context, call with that, then destroy?]
-#if USE_MDAL
-#  define CTX_FREE_OP(OP,NS, ...)   (*(NS)->file_MDAL->OP)(__VA_ARGS__)
-#endif
-
-
-
-
-#if USE_DAL
-#  define FH_DAL_CTX(FH)    (FH)->dal_handle.ctx
-#  define FH_DAL(FH)        (FH)->dal_handle.dal
-#endif
-
-// generic
-#if USE_DAL
-#  define FH_STR_STATE(FH)  FH_DAL_CTX(FH)
-#else
-#  define FH_STR_STATE(FH)  (FH)->os
-#endif
 
 
 // fuse/pftool-agnostic updates of data_remain, etc. (see comments, above)
@@ -749,10 +689,51 @@ typedef struct {
 } MarFS_DirHandle;
 
 
+
+
+// ...........................................................................
+// MDAL indirection macros.
+//
+// Wrapping metadata interactions in the MD_foo() macros allows us to
+// either go through the MDAL in the file-handle to perform those
+// operations, or to perform the POSIX-operation directly, depending on
+// whether USE_MDAL is non-zero at build-time (or not).
+//
+// These are further abstraced by the functions open_md() / close_md().
+//
+// Some ops (e.g. rename()) have no file-descriptor/context.  The use the
+// "PATH" macros variants.  For these, we'll just use the MDAL from the NS
+// to select the implementation, and call the function without passing a
+// context.  [Or, should we initialize a MDAL_Context, call with that, then
+// destroy?]
+// ...........................................................................
+
 #if USE_MDAL
-// shorthand
-#  define D_CTX(DH)          &(DH)->internal.d_handle.ctx
-#  define D_MDAL(DH)         (DH)->internal.d_handle.mdal
+
+/// obsolete?
+/// #  define CTX_FREE_OP(OP,NS, ...)   (*(NS)->file_MDAL->OP)(__VA_ARGS__)
+
+// --- shorthand  (for use inside MD_foo() macros)
+#  define F_CTX(FH)              &(FH)->f_handle.ctx
+#  define F_MDAL(FH)             (FH)->f_handle.mdal
+
+#  define F_OP(OP,FH, ...)       (*(FH)->f_handle.mdal->OP)(F_CTX(FH), ##__VA_ARGS__)
+#  define F_OP_NOCTX(OP,NS, ...) (*(NS)->file_MDAL->OP)(__VA_ARGS__)
+/*
+ #  define F_OP(OP,FH, ...)                                            \
+   do {                                                               \
+   if (! (*(FH)->f_handle.mdal->OP)) {                                \
+      LOG(LOG_ERR, "Function " #OP " not implemented for MDAL!\n");   \
+      exit(EXIT_FAILURE);                                             \
+   }                                                                  \
+   else {                                                             \
+      (*(FH)->f_handle.mdal->OP)(F_CTX(FH), ##__VA_ARGS__);           \
+   } while (0)
+*/
+
+// --- shorthand  (for use inside MD_foo() macros)
+#  define D_CTX(DH)               &(DH)->internal.d_handle.ctx
+#  define D_MDAL(DH)              (DH)->internal.d_handle.mdal
 
 #  define D_OP(OP,DH, ...)        (*(DH)->internal.d_handle.mdal->OP)(D_CTX(DH), ##__VA_ARGS__)
 #  define D_OP_NOCTX(OP, NS, ...) (*(NS)->dir_MDAL->OP)(__VA_ARGS__)
@@ -767,7 +748,96 @@ typedef struct {
       (*(DH)->internal.d_handle.mdal->OP)(D_CTX(DH), ##__VA_ARGS__);  \
    } while (0)
 */
+
+
+// --- go through the MDAL in the file-handle to perform the
+//     given file/directory operation.
+#  define MD_FILE_OP(...)   F_OP( __VA_ARGS__ )
+#  define MD_DIR_OP(...)    D_OP( __VA_ARFS__ )
+#  define MD_PATH_OP(...)   F_OP_NOCTX( __VA_ARGS__ )
+// unfirtunately we need this in order to use the dir_MDAL for mkdir/rmdir
+#  define MD_D_PATH_OP(...) D_OP_NOCTX( __VA_ARGS__ )
+
+
+#else
+// --- skip the MDAL in the file-handle.  Perform the
+//     given file/directory operation directly.
+
+// We don't always want the fh->md_fd (see write_trash_companion_file)
+//  ... BUT ... maybe the only place we don't is the trash functions,
+//  which can be easily (?) rewriten.
+#  define MD_FILE_OP(OP, FH, ...)    (OP)( (FH)->md_fd, __VA_ARGS__ )
+#  define MD_DIR_OP(OP, _NS, ...)    (OP)( __VA_ARGS__ )
+#  define MD_PATH_OP(OP, _NS, ...)   (OP)( __VA_ARGS__ )
+#  define MD_D_PATH_OP(OP, _NS, ...) (OP)( __VA_ARGS__ )
 #endif
+
+
+
+// encapsulate some generic operations on MDALs
+extern int  open_md   (MarFS_FileHandle* fh, int writing_p);
+extern int  is_open_md(MarFS_FileHandle* fh);
+extern int  close_md  (MarFS_FileHandle* fh);
+
+extern int  opendir_md(MarFS_DirHandle* fh, PathInfo* info);
+extern int  closedir_md(MarFS_DirHandle *dh);
+
+
+// ...........................................................................
+// DAL indirection macros.
+//
+// e.g. "DAL_OP(sync, &fh)"
+//
+//  DAL:      (*(&fh)->dal_handle.dal->sync) (*(&fh)->dal_handle.dal->ctx)
+//  non-DAL:  stream_sync((&fh)->os)
+//
+// Wrapping data interactions in DAL_OP() macros, allows us to
+// either go through the MDAL in the file-handle to perform those
+// operations, or to perform the POSIX-operation directly, depending on
+// whether USE_MDAL is non-zero at build-time (or not).
+//
+// These are further abstraced by the functions open_data() / close_data().
+//
+// ...........................................................................
+
+
+#if USE_DAL
+
+// obsolete?
+// #  define FH_STR_STATE(FH)  FH_DAL_CTX(FH)
+
+#  define FH_DAL_CTX(FH)    (FH)->dal_handle.ctx
+#  define FH_DAL(FH)        (FH)->dal_handle.dal
+
+
+#  define DAL_OP(OP, FH, ... )                                       \
+   (*(FH)->dal_handle.dal->OP)(&(FH)->dal_handle.ctx, ##__VA_ARGS__)
+
+
+#else
+
+// obsolete?
+// #  define FH_STR_STATE(FH)  (FH)->os
+
+#  define DAL_OP(OP, FH, ...)                   \
+   stream_##OP(&(FH)->os, ##__VA_ARGS__)
+
+
+#endif
+
+
+
+// encapsulate some generic operations on DALs
+extern int  open_data(MarFS_FileHandle* fh,
+                      int               writing_p,
+                      size_t            content_length,
+                      uint8_t           preserve_wr_count,
+                      uint16_t          timeout);
+extern int  close_data(MarFS_FileHandle* fh);
+
+
+
+
 
 
 
@@ -826,22 +896,6 @@ extern int  check_quotas  (PathInfo* info);
 
 extern int  update_url     (ObjectStream* os, PathInfo* info);
 extern int  update_timeouts(ObjectStream* os, PathInfo* info);
-
-// encapsulate some generic operations on MDALs
-extern int  open_md   (MarFS_FileHandle* fh, int writing_p);
-extern int  is_open_md(MarFS_FileHandle* fh);
-extern int  close_md  (MarFS_FileHandle* fh);
-
-extern int  opendir_md(MarFS_DirHandle* fh, PathInfo* info);
-extern int  closedir_md(MarFS_DirHandle *dh);
-
-// encapsulate some generic operations on DALs
-extern int  open_data(MarFS_FileHandle* fh,
-                      int               writing_p,
-                      size_t            content_length,
-                      uint8_t           preserve_wr_count,
-                      uint16_t          timeout);
-extern int  close_data(MarFS_FileHandle* fh);
 
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
