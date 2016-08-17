@@ -1782,7 +1782,10 @@ int open_data(MarFS_FileHandle* fh,
 
 int close_data(MarFS_FileHandle* fh) {
 #if USE_DAL
-   return DAL_OP(destroy, fh, FH_DAL(fh));
+   int rc = DAL_OP(destroy, fh, FH_DAL(fh));
+   FH_DAL(fh) = NULL; // need to make sure that if we call open_data
+                      // again, it will actually reinitialize the dal
+   return rc;
 #else
 #endif
 }
