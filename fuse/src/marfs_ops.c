@@ -880,7 +880,10 @@ int marfs_open(const char*         path,
    // we need to check if it is a packed file and should not be
    if(
          fh->flags & FH_PACKED &&
-         content_length > info->pre.repo->max_pack_file_size
+         (
+          content_length > info->pre.repo->max_pack_file_size ||
+          content_length > info->pre.repo->chunk_size - MARFS_REC_UNI_SIZE
+         )
          ) {
       return -2;
    }
