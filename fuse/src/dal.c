@@ -357,9 +357,7 @@ int posix_dal_ctx_destroy(DAL_Context* ctx, struct DAL* dal) {
    return 0;
 }
 
-// TODO: POSIX_PREFIX will eventually need to come from the config
-#define POSIX_PREFIX "/gpfs/ccfs1/marfs-repo"
-#define MAX_POSIX_PREFIX_LEN 32
+#define MAX_POSIX_PREFIX_LEN MARFS_MAX_REPO_NAME
 
 #define MAX_OBJECT_PATH_LEN (MAX_POSIX_PREFIX_LEN               \
                              + MARFS_MAX_REPO_NAME + 1          \
@@ -410,10 +408,6 @@ int posix_dal_open(DAL_Context* ctx,
    char object_path[MAX_OBJECT_PATH_LEN];
    memset(object_path, '\0', MAX_OBJECT_PATH_LEN);
 
-   // add the prefix
-   strncpy(object_path, POSIX_PREFIX, MAX_POSIX_PREFIX_LEN);
-   object_path[strlen(object_path)] = '/';
-
    char repo_name[MARFS_MAX_REPO_NAME];
    char namespace_name[MARFS_MAX_NAMESPACE_NAME];
    // the following are fields in the url, but are unused here.
@@ -445,6 +439,25 @@ int posix_dal_open(DAL_Context* ctx,
       return -1;
    }
 
+   // get the repo in order to find the path prefix
+   MarFS_Repo* repo = find_repo_by_name(repo_name);
+   if(! repo ) {
+      LOG(LOG_ERR, "Could not find repo %s\n", repo_name);
+      errno = ENOENT; // ? seems reasonable (ish)
+      return -1;
+   }
+
+   // This is a kind of hacky solution to needing a user supplied path
+   // prefix for posix repos. Since the `host' field is not used for
+   // an actual host in this kind of repo, we can use it for the path
+   // prefix without needing to change the configuration by adding
+   // nodes.
+   strncpy(object_path, repo->host, repo->host_len);
+   if(object_path[repo->host_len-1] != '/') {
+      object_path[repo->host_len] = '/';
+   }
+
+   // add the repo directory
    strncpy(object_path+strlen(object_path), repo_name, MARFS_MAX_REPO_NAME);
    // Ensure that the top level directories in the repo exist.
    // (POSIX_PREFIX/<repo_name>/<namespace_name>/)
@@ -463,13 +476,11 @@ int posix_dal_open(DAL_Context* ctx,
          return -1;
       }
    }
-   // next level
-   object_path[strlen(object_path)] = '/'; // buffer filled with
-                                           // 0. don't need to null
-                                           // terminate.
+
+   // add the namespace directory
+   object_path[strlen(object_path)] = '/';
    strncpy(object_path+strlen(object_path), namespace_name,
            MARFS_MAX_NAMESPACE_NAME);
-
    stat_result = stat(object_path, &st);
    if(stat_result == -1) {
       if(is_put && errno == ENOENT) {
