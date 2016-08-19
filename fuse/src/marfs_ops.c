@@ -2252,13 +2252,26 @@ int marfs_releasedir (const char*       path,
 
       // Check/act on iperms from expanded_path_info_structure, this op requires RM
       CHECK_PERMS(info.ns, (R_META));
+   }
 
-      // No need for access check, just try the op
-      // Appropriate  closedir call filling in fuse structure
-      if (! dh->use_it) {
-         LOG(LOG_INFO, "not root-dir\n");
-         closedir_md(dh);
-      }
+   // Even if the directory has been deleted we still need to close
+   // the DIR*; however, we can't expand the path info since we don't
+   // have a path anymore. We just skip that step in this case and
+   // close the directory.
+   //
+   // XXX: This might compromise the security of the namespace, since
+   //      we could close a directory handle in a namespace for which
+   //      the user does not have RM permissions. I am relying on the
+   //      fact that the directory handle was opened at some point,
+   //      and there were access checks performed there. In addition,
+   //      we would only ever do this if the directory has been
+   //      deleted.
+   
+   // No need for access check, just try the op
+   // Appropriate  closedir call filling in fuse structure
+   if (! dh->use_it) {
+      LOG(LOG_INFO, "not root-dir\n");
+      closedir_md(dh); // ?? TRY0
    }
 
    EXIT();
