@@ -2259,19 +2259,17 @@ int marfs_releasedir (const char*       path,
    // have a path anymore. We just skip that step in this case and
    // close the directory.
    //
-   // XXX: This might compromise the security of the namespace, since
-   //      we could close a directory handle in a namespace for which
-   //      the user does not have RM permissions. I am relying on the
-   //      fact that the directory handle was opened at some point,
-   //      and there were access checks performed there. In addition,
-   //      we would only ever do this if the directory has been
-   //      deleted.
+   // The only time the CHECK_PERMS call above is skipped is if
+   // path="-" In this case the directory has been deleted and we can
+   // safely skip the permission checks since they were done by opendir
+   // for RM and rmdir for RM|WM. The following closedir will not read
+   // or write the metadata.
    
    // No need for access check, just try the op
    // Appropriate  closedir call filling in fuse structure
    if (! dh->use_it) {
       LOG(LOG_INFO, "not root-dir\n");
-      closedir_md(dh); // ?? TRY0
+      TRY0( closedir_md(dh) );
    }
 
    EXIT();
