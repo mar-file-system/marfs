@@ -610,8 +610,11 @@ MDAL* get_MDAL(const char* name) {
    }
 
    // not found.  Maybe it was dynamic?
-   if (! strcmp(name, "DYNAMIC"))
-      assert(! install_MDAL(dynamic_MDAL(name)) );
+   if (! strcmp(name, "DYNAMIC")) {
+      MDAL* dynamic = dynamic_MDAL(name);
+      assert(! install_MDAL(dynamic) );
+      return dynamic;
+   }
 
    return NULL;
 }
