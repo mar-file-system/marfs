@@ -152,7 +152,7 @@ void*   posix_open(MDAL_Context* ctx, const char* path, int flags, ...) {
 }
 
 int     posix_is_open(MDAL_Context* ctx) {
-   return POSIX_FD(ctx);
+   return (POSIX_FD(ctx) > 0);
 }
 
 int     posix_close(MDAL_Context* ctx) {
