@@ -2186,11 +2186,7 @@ int marfs_clear_restart(const char* path) {
 
       // install more-restrictive mode, if needed.
       if (install_new_mode) {
-#if USE_MDAL
-         TRY0( F_OP_NOCTX(chmod, info.ns, info.post.md_path, new_mode) );
-#else
-         TRY0( chmod(info.post.md_path, new_mode) );
-#endif
+         TRY0( MD_PATH_OP(chmod, info.ns, info.post.md_path, new_mode) );
       }
    }
    else
