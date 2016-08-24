@@ -877,11 +877,17 @@ int marfs_open(const char*         path,
 
 
    STAT_XATTRS(info);
-   // we need to check if it is a packed file and should not be
-   if(
-         fh->flags & FH_PACKED &&
-         content_length > info->pre.repo->max_pack_file_size
-         ) {
+
+   // we need to check if it is a packed file, and should not be one.
+   // Maybe pftool is opening what will be the first chunk in an Nto1 file.
+   // We should not let it write that object-ID with a "Packed" type,
+   // because object-IDs for all the subsequent chunks will have "N" type.
+   // Q: How do we tell if that is the situation?  A: if pftool is opening
+   // a full chunk-sized object, we decree that it sahll not be packed.
+   if ((fh->flags & FH_PACKED) &&
+       ((content_length > info->pre.repo->max_pack_file_size) ||
+        (content_length >= (info->pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))
+       ) {
       return -2;
    }
 
