@@ -190,7 +190,7 @@ typedef struct {
 
 #define TRY0(FNCALL)                                                    \
    do {                                                                 \
-      /* LOG(LOG_INFO, "TRY0(%s)\n", #FNCALL); */                       \
+      LOG(LOG_INFO, "TRY0(%s)\n", #FNCALL);                             \
       rc = (size_t)FNCALL;                                              \
       if (rc) {                                                         \
          PRE_RETURN();                                                  \
@@ -203,7 +203,7 @@ typedef struct {
 // e.g. open() returns -1 or an fd.
 #define TRY_GE0(FNCALL)                                                 \
    do {                                                                 \
-      /* LOG(LOG_INFO, "TRY_GE0(%s)\n", #FNCALL); */                    \
+      LOG(LOG_INFO, "TRY_GE0(%s)\n", #FNCALL);                          \
       rc_ssize = (ssize_t)FNCALL;                                       \
       if (rc_ssize < 0) {                                               \
          PRE_RETURN();                                                  \
@@ -216,7 +216,7 @@ typedef struct {
 // e.g. opendir() returns a pointer or NULL
 #define TRY_GT0(FNCALL)                                                 \
    do {                                                                 \
-      /* LOG(LOG_INFO, "TRY_GT0(%s)\n", #FNCALL); */                    \
+      LOG(LOG_INFO, "TRY_GT0(%s)\n", #FNCALL);                          \
       rc_ssize = (ssize_t)FNCALL;                                       \
       if (rc_ssize <= 0) {                                              \
          PRE_RETURN();                                                  \
