@@ -152,7 +152,7 @@ void*   posix_open(MDAL_Context* ctx, const char* path, int flags, ...) {
 }
 
 int     posix_is_open(MDAL_Context* ctx) {
-   return POSIX_FD(ctx);
+   return (POSIX_FD(ctx) > 0);
 }
 
 int     posix_close(MDAL_Context* ctx) {
@@ -610,8 +610,11 @@ MDAL* get_MDAL(const char* name) {
    }
 
    // not found.  Maybe it was dynamic?
-   if (! strcmp(name, "DYNAMIC"))
-      assert(! install_MDAL(dynamic_MDAL(name)) );
+   if (! strcmp(name, "DYNAMIC")) {
+      MDAL* dynamic = dynamic_MDAL(name);
+      assert(! install_MDAL(dynamic) );
+      return dynamic;
+   }
 
    return NULL;
 }
