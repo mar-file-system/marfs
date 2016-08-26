@@ -877,11 +877,17 @@ int marfs_open(const char*         path,
 
 
    STAT_XATTRS(info);
-   // we need to check if it is a packed file and should not be
-   if(
-         fh->flags & FH_PACKED &&
-         content_length > info->pre.repo->max_pack_file_size
-         ) {
+
+   // we need to check if it is a packed file, and should not be one.
+   // Maybe pftool is opening what will be the first chunk in an Nto1 file.
+   // We should not let it write that object-ID with a "Packed" type,
+   // because object-IDs for all the subsequent chunks will have "N" type.
+   // Q: How do we tell if that is the situation?  A: if pftool is opening
+   // a full chunk-sized object, we decree that it sahll not be packed.
+   if ((fh->flags & FH_PACKED) &&
+       ((content_length > info->pre.repo->max_pack_file_size) ||
+        (content_length >= (info->pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))
+       ) {
       return -2;
    }
 
@@ -2186,11 +2192,7 @@ int marfs_clear_restart(const char* path) {
 
       // install more-restrictive mode, if needed.
       if (install_new_mode) {
-#if USE_MDAL
-         TRY0( F_OP_NOCTX(chmod, info.ns, info.post.md_path, new_mode) );
-#else
-         TRY0( chmod(info.post.md_path, new_mode) );
-#endif
+         TRY0( MD_PATH_OP(chmod, info.ns, info.post.md_path, new_mode) );
       }
    }
    else
@@ -2252,13 +2254,24 @@ int marfs_releasedir (const char*       path,
 
       // Check/act on iperms from expanded_path_info_structure, this op requires RM
       CHECK_PERMS(info.ns, (R_META));
+   }
 
-      // No need for access check, just try the op
-      // Appropriate  closedir call filling in fuse structure
-      if (! dh->use_it) {
-         LOG(LOG_INFO, "not root-dir\n");
-         closedir_md(dh);
-      }
+   // Even if the directory has been deleted we still need to close
+   // the DIR*; however, we can't expand the path info since we don't
+   // have a path anymore. We just skip that step in this case and
+   // close the directory.
+   //
+   // The only time the CHECK_PERMS call above is skipped is if
+   // path="-" In this case the directory has been deleted and we can
+   // safely skip the permission checks since they were done by opendir
+   // for RM and rmdir for RM|WM. The following closedir will not read
+   // or write the metadata.
+   
+   // No need for access check, just try the op
+   // Appropriate  closedir call filling in fuse structure
+   if (! dh->use_it) {
+      LOG(LOG_INFO, "not root-dir\n");
+      TRY0( closedir_md(dh) );
    }
 
    EXIT();

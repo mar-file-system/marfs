@@ -806,8 +806,11 @@ DAL* get_DAL(const char* name) {
    }
 
    // not found.  Maybe it was dynamic?
-   if (! strcmp(name, "DYNAMIC"))
-      assert(! install_DAL(dynamic_DAL(name)) );
+   if (! strcmp(name, "DYNAMIC")) {
+      DAL* dynamic = dynamic_DAL(name);
+      assert(! install_DAL(dynamic) );
+      return dynamic;
+   }
 
    return NULL;
 }
