@@ -1723,7 +1723,6 @@ int update_url(ObjectStream* os, PathInfo* info) {
    return 0;
 }
 
-
 int open_data(MarFS_FileHandle* fh,
               int               writing_p,
               size_t            content_length,
@@ -1783,12 +1782,14 @@ int open_data(MarFS_FileHandle* fh,
 
 int close_data(MarFS_FileHandle* fh) {
 #if USE_DAL
-   return DAL_OP(destroy, fh, FH_DAL(fh));
+
+   int rc = DAL_OP(destroy, fh, FH_DAL(fh));
+   FH_DAL(fh) = NULL; // need to make sure that if we call open_data
+                      // again, it will actually reinitialize the dal
+   return rc;
 #else
 #endif
 }
-
-
 
 // Assure MD is open.
 //
@@ -2378,7 +2379,7 @@ ssize_t write_recoveryinfo(ObjectStream* os, PathInfo* info, MarFS_FileHandle* f
    }
 
    // write the buffer we have generated into the tail of the object
-   TRY_GE0( stream_put(os, rec, MARFS_REC_UNI_SIZE) );
+   TRY_GE0( DAL_OP(put, fh, rec, MARFS_REC_UNI_SIZE) );
    ssize_t wrote = rc_ssize;
 
    if (wrote != MARFS_REC_UNI_SIZE) {
