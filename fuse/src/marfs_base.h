@@ -225,7 +225,7 @@ extern "C" {
 #define MARFS_BUCKET_RD_FORMAT  NON_SLASH
 #define MARFS_BUCKET_WR_FORMAT  "%s"
 
-
+// COMAINTAIN: update_pre & posix_dal_open
 #define MARFS_OBJID_RD_FORMAT   "%[^/]/ver.%03hu_%03hu/ns.%[^/]/%c%c%c%c/inode.%010ld/md_ctime.%[^/]/obj_ctime.%[^/]/unq.%hhd/chnksz.%lx/chnkno.%lu"
 #define MARFS_OBJID_WR_FORMAT   "%s/ver.%03hu_%03hu/ns.%s/%c%c%c%c/inode.%010ld/md_ctime.%s/obj_ctime.%s/unq.%hhd/chnksz.%lx/chnkno.%lu"
 

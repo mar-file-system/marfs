@@ -897,6 +897,21 @@ extern int  check_quotas  (PathInfo* info);
 extern int  update_url     (ObjectStream* os, PathInfo* info);
 extern int  update_timeouts(ObjectStream* os, PathInfo* info);
 
+// encapsulate some generic operations on MDALs
+extern int  open_md   (MarFS_FileHandle* fh, int writing_p);
+extern int  is_open_md(MarFS_FileHandle* fh);
+extern int  close_md  (MarFS_FileHandle* fh);
+
+// encapsulate some generic operations on DALs
+extern int  open_data(MarFS_FileHandle* fh,
+                      int               writing_p,
+                      size_t            content_length,
+                      uint8_t           preserve_wr_count,
+                      uint16_t          timeout);
+extern int  close_data(MarFS_FileHandle* fh);
+
+extern int  opendir_md(MarFS_DirHandle* fh, PathInfo* info);
+extern int  closedir_md(MarFS_DirHandle *dh);
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 // From fuse, <user_data_written> is total from zero. From pftool, it's the
