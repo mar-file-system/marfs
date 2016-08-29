@@ -129,33 +129,32 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
 // After cancelling the thread, we can be pretty confident that the thread
 // is not still inside some aws4c function.  However, the context may still
 // think it is "inside".  Some of the aws4c functions protect themselves
-// against changing context-settings while they are :inside" operations.
-// And those may run as part of cleanup, after a thread is cancelled.  Turn
-// "inside" off, so the clean-up functions (e.g. aws_reset_iobuf_hard() in
-// marfs_release()) won't fail an assertion in libaws4c.
+// against changing context-settings while they are "inside" operations.
+// And those functions may be run as part of cleanup, after a thread is
+// cancelled.  Turn "inside" off, so the clean-up functions
+// (e.g. aws_reset_iobuf_hard() in marfs_release()) won't fail an assertion
+// in libaws4c.
 
-#define PTHREAD_CANCEL(OS)                                           \
-   do {                                                              \
-      LOG(LOG_INFO, "cancelling thread\n");                          \
-      int rc = pthread_cancel((OS)->op);                             \
-      if (rc) {                                                      \
-         LOG(LOG_ERR, "cancellation failed (%s), killing thread\n",  \
-             strerror(errno));                                       \
-         pthread_kill((OS)->op, SIGKILL);                            \
-         LOG(LOG_INFO, "killed thread\n");                           \
-      }                                                              \
-      else {                                                         \
-         LOG(LOG_INFO, "cancelled\n");                               \
-      }                                                              \
-                                                                     \
-      (OS)->flags |= OSF_CANCELED;                                   \
-                                                                     \
-      /* see NOTE, above */                                          \
-      if ((OS)->iob.context) {                                       \
-         LOG(LOG_INFO, "resetting 'inside' flag in AWSContext\n");   \
-         (OS)->iob.context->inside = 0;                              \
-      }                                                              \
-   } while(0)
+void cancel_thread(ObjectStream* os) {
+   int rc = pthread_cancel(os->op);
+   if (rc) {
+      LOG(LOG_ERR, "cancellation failed (%s), killing thread\n",
+          strerror(errno));
+      pthread_kill(os->op, SIGKILL);
+      LOG(LOG_INFO, "killed thread\n");
+   }
+   else {
+      LOG(LOG_INFO, "cancelled\n");
+   }
+
+   os->flags |= OSF_CANCELED;
+
+   /* see NOTE, above */
+   if (os->iob.context) {
+      LOG(LOG_INFO, "resetting 'inside' flag in AWSContext\n");
+      os->iob.context->inside = 0;
+   }
+}
 
 
 
@@ -250,7 +249,7 @@ int stream_wait(ObjectStream* os) {
    // if we failed to join, then cancel the thread
    if (! (os->flags & OSF_JOINED)) {
       LOG(LOG_INFO, "join failed: %s\n", strerror(errno));
-      PTHREAD_CANCEL(os);
+      cancel_thread(os);
       pthread_tryjoin_np(os->op, &thread_retval);
    }
 
@@ -1036,7 +1035,8 @@ int stream_sync(ObjectStream* os) {
 
       // some cases above want to cancel the thread
       if (cancel) {
-         PTHREAD_CANCEL(os);
+         LOG(LOG_INFO, "cancelling thread\n");
+         cancel_thread(os);
       }
 
       // check whether thread has returned.  Could mean a curl
@@ -1139,7 +1139,7 @@ int stream_abort(ObjectStream* os) {
          os->flags |= OSF_ABORT;
          if (stream_put(os, (const char*)1, 1) != 1) {
             LOG(LOG_ERR, "stream_put((char*)1) failed\n");
-            PTHREAD_CANCEL(os);
+            cancel_thread(os);
          }
       }
 
