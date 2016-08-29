@@ -983,7 +983,7 @@ int batch_post_process(const char* path, size_t file_size) {
       // would've prevented manipulating xattrs.  If so, then (after removing
       // the RESTART xattr) install the more-restrictive mode.
       int    install_new_mode = 0;
-      mode_t new_mode;
+      mode_t new_mode = 0; // suppress wrong gcc warning: maybe used w/out init
       if (has_all_xattrs(&info, XVT_RESTART)
           && (info.restart.flags & RESTART_MODE_VALID)) {
 
@@ -1157,7 +1157,7 @@ void init_filehandle(MarFS_FileHandle* fh, PathInfo* info) {
 // descriptor, etc.) in the file handle.
 static
 int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
-   PathInfo* info = &fh->info;
+   __attribute__ ((unused)) PathInfo* info = &fh->info;
    va_list ap;
 
    va_start(ap, flags);
@@ -1788,6 +1788,7 @@ int close_data(MarFS_FileHandle* fh) {
                       // again, it will actually reinitialize the dal
    return rc;
 #else
+   return 0;
 #endif
 }
 
