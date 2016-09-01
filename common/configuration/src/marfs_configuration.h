@@ -445,7 +445,7 @@ typedef struct marfs_namespace {
    long long             quota_space;
    long long             quota_names;
 
-   const char*          *dir_MDAL_name;
+   const char           *dir_MDAL_name;
    struct MDAL          *dir_MDAL;
    const char           *file_MDAL_name;
    struct MDAL          *file_MDAL;
