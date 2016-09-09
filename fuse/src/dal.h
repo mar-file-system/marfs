@@ -146,15 +146,15 @@ struct DAL;
 
 // initialize/destroy context, if desired.
 //
-//   -- init    is called before any other ops (per file-handle).
-//   -- destroy is called when a file-handle is being destroyed.
+//   -- init      called before any other ops (per file-handle).
+//   -- destroy   called after all other ops  (per file-hanfle).
 //
 #if 0
 typedef  int     (*dal_ctx_init)   (DAL_Context* ctx, struct DAL* dal);
 typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 
 #else
-typedef  int     (*dal_ctx_init)   (DAL_Context* ctx, struct DAL* dal, void* os);
+typedef  int     (*dal_ctx_init)   (DAL_Context* ctx, struct DAL* dal, void* fh);
 typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 #endif
 
@@ -169,6 +169,7 @@ typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 //
 typedef int      (*dal_open) (DAL_Context* ctx,
                               int          is_put,
+                              size_t       chunk_offset,
                               size_t       content_length,
                               uint8_t      preserve_write_count,
                               uint16_t     timeout);
@@ -185,6 +186,10 @@ typedef int      (*dal_sync) (DAL_Context*  ctx);
 typedef int      (*dal_abort)(DAL_Context*  ctx);
 
 typedef int      (*dal_close)(DAL_Context*  ctx);
+
+
+// init() is called first, and destroy() after.
+typedef int      (*dal_delete)(DAL_Context*  ctx);
 
 
 
@@ -207,6 +212,7 @@ typedef struct DAL {
 
    dal_put              put;
    dal_get              get;
+   dal_delete           del;
 
 } DAL;
 
@@ -221,7 +227,7 @@ DAL* get_DAL(const char* name);
 
 
 // exported for building custom DAL
-int     default_dal_ctx_init(DAL_Context* ctx, DAL* dal, void* os);
+int     default_dal_ctx_init   (DAL_Context* ctx, DAL* dal, void* fh);
 int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal);
 
 

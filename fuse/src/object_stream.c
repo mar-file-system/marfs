@@ -125,6 +125,80 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
 #endif
 
 
+
+// With the advent of the DAL and stream_del(), it's starting to make sense
+// to move this aws4c-specific initialization out of marfs_open(), so that
+// (a) we can limit it to OBJECT-DAL-related I/O only, and (b) we can also
+// use it to set up stream_del().  In all these cases, we'll now want the
+// DAL init function to receive a file-handle, instead of just a pointer to
+// the OS inside the file-handle.  That way, when the GC utility is
+// deleting objects through the DAL, it can just create a file-handle, fill
+// out the path-info, and do everything else through the DAL.
+//
+// The unused argument is so we can match the format the DAL_OP will expand
+// into, in init_data(), in the case of a non-DAL build.
+
+int stream_init(void* os_void, void* null_void, void* fh_void) {
+   TRY_DECLS();
+
+   MarFS_FileHandle* fh   = (MarFS_FileHandle*)fh_void;
+   PathInfo*         info = &fh->info;
+   ObjectStream*     os   = &fh->os;
+   IOBuf*            b    = &os->iob;
+
+   // Configure a private AWSContext, for this request
+   AWSContext* ctx = aws_context_clone();
+   if (ACCESSMETHOD_IS_S3(info->pre.repo->access_method)) { // (includes S3_EMC)
+
+      // install the host and bucket
+      s3_set_host_r(info->pre.host, ctx);
+      LOG(LOG_INFO, "host   '%s'\n", info->pre.host);
+      // fprintf(stderr, "host   '%s'\n", info->pre.host); // for debugging pftool
+
+      s3_set_bucket_r(info->pre.bucket, ctx);
+      LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
+   }
+
+   if (info->pre.repo->access_method == ACCESSMETHOD_S3_EMC) {
+      s3_enable_EMC_extensions_r(1, ctx);
+
+      // For now if we're using HTTPS, I'm just assuming that it is without
+      // validating the SSL certificate (curl's -k or --insecure flags). If
+      // we ever get a validated certificate, we will want to put a flag
+      // into the MarFS_Repo struct that says it's validated or not.
+      if ( info->pre.repo->ssl ) {
+         s3_https_r( 1, ctx );
+         s3_https_insecure_r( 1, ctx );
+      }
+   }
+   else if (info->pre.repo->access_method == ACCESSMETHOD_SPROXYD) {
+      s3_enable_Scality_extensions_r(1, ctx);
+      s3_sproxyd_r(1, ctx);
+
+      // For now if we're using HTTPS, I'm just assuming that it is without
+      // validating the SSL certificate (curl's -k or --insecure flags). If
+      // we ever get a validated certificate, we will want to put a flag
+      // into the MarFS_Repo struct that says it's validated or not.
+      if ( info->pre.repo->ssl ) {
+         s3_https_r( 1, ctx );
+         s3_https_insecure_r( 1, ctx );
+      }
+   }
+
+   if (info->pre.repo->security_method == SECURITYMETHOD_HTTP_DIGEST) {
+      s3_http_digest_r(1, ctx);
+   }
+
+   // install custom context
+   aws_iobuf_context(b, ctx);
+
+   TRY0( update_url(os, info) );
+
+   return 0;
+}
+
+
+
 // ---------------------------------------------------------------------------
 // stream_wait()
 //
@@ -714,6 +788,7 @@ ssize_t stream_get(ObjectStream* os,
 
 int stream_open(ObjectStream* os,
                 IsPut         put,
+                size_t        chunk_offset,
                 curl_off_t    content_length,
                 uint8_t       preserve_os_written,
                 uint16_t      timeout) {
@@ -728,7 +803,8 @@ int stream_open(ObjectStream* os,
           curl_major, curl_minor, curl_patch);
 
    if (os->flags & OSF_OPEN) {
-      LOG(LOG_ERR, "%s is already open (for writing)\n", os->url);
+      LOG(LOG_ERR, "%s is already open (for %s)\n",
+          os->url, ((os->flags & OSF_WRITING) ? "writing" : "reading"));
       errno = EEXIST;           // as though (O_CREAT|O_EXCL) ? Will NFS leave us alone?
       return -1;                // already open
    }
@@ -778,6 +854,10 @@ int stream_open(ObjectStream* os,
       else
          s3_chunked_transfer_encoding_r(1, ctx);       // only used for PUT/POST
    }
+   else {
+      s3_set_byte_range_r(chunk_offset, content_length, ctx);
+   }
+
 
    // aws_iobuf_reset_lite(b);          // doesn't affect <user_data> or <context>
    aws_iobuf_reset(b);          // doesn't affect <user_data> or <context>
@@ -1186,6 +1266,22 @@ int stream_close(ObjectStream* os) {
 }
 
 
+// (Unused.)
+//
+// This is the DAL-support complement of stream_init().  It's a place where
+// the DAL can clean-up any per-file-handle state.  It is called after
+// sync/abort and close, and has no stream-related purpose.  It's just here
+// so that the expansion of "DAL_OP(destroy, ...)", in the non-DAL build,
+// has something to do.
+
+// TBD: It might make sense to move the aws_reset_connection_r() call from
+//     stream_close() to here.
+
+int stream_destroy(ObjectStream* os) {
+   if (os)
+      aws_iobuf_reset_hard(&os->iob);
+   return 0;
+}
 
 
 
@@ -1222,4 +1318,148 @@ void stream_reset(ObjectStream* os,
    if (! preserve_os_written)
       os->written = 0;
 #endif
+}
+
+
+
+
+
+// ---------------------------------------------------------------------------
+// DELETE
+//
+// Unlike all the functions above, this one is not really a "stream"
+// function.  We're just deleting the object with the given ID.
+//
+// NOTE: s3_delete() expects host and bucket to be installed in the
+//    AWSContext, and the "object-id" argument to be just the part after
+//    the bucket.  That's the information we keep in the Pre component of a
+//    MarFS file-handle.
+// ---------------------------------------------------------------------------
+
+#if 0
+
+// If caller gave us the file-handle, we'd already have host, bucket, and
+// objid (not including bucket) parsed out separately, in the info.pre
+// struct.  However, it seems like the stream support should stick with
+// ObjectStreams.  So, we re-parse those fields out separately, here.  This
+// implies that caller already did update_pre(&fh.info.pre), and
+// update_url(&fh.os, &fh.info), before calling this.
+
+int stream_del(ObjectStream* os) {
+   LOG(LOG_INFO, "URL: %s\n", os->url);
+
+   if (os->flags & OSF_OPEN) {
+      LOG(LOG_INFO, "%s is open (for %s)\n",
+          os->url, ((os->flags & OSF_WRITING) ? "writing" : "reading"));
+      TRY0( stream_sync(os) );
+      TRY0( stream_close(os) );
+   }
+
+   IOBuf*      b   = os->iob;   // shorthand
+   AWSContext* ctx = b->ctx;    // shorthand
+
+   // parse "host", "bucket", and "objid" (the part after bucket), from the
+   // URL in the OS.  We ultimately need them to be distinct tokens.  Seems
+   // simplest to just copy the whole URL, and parse the tokens
+   // destructively, in place.  Ugh.
+   char URL2[MARFS_MAX_URL_SIZE];
+   strcpy(URL2, os->url);
+   char* url = URL2;
+   char* state = NULL;
+
+   const char* delims = "/";
+   char* http   = strtok_r(url,  delims, &state);
+   char* host   = strtok_r(NULL, delims, &state);
+   char* bucket = strtok_r(NULL, delims, &state);
+   char* obj    = strtok_r(NULL, delims, &state);
+
+   LOG(LOG_INFO, "DEL  '%s/%s/%s'\n", host, bucket, obj);
+   if (! (host && bucket && obj)) {
+      LOG(LOG_ERR, "parse failed\n");
+      errno = ENOENT;           // "no such file"
+      return -1;
+   }
+
+   // delete the object
+   s3_set_host_r(host, ctx);
+   s3_set_bucket_r(bucket, ctx);
+   AWS4C_CHECK1( s3_delete(b, obj) );
+
+   return 0;
+}
+#endif
+
+
+
+// The non-DAL build calls this.  We can't get host, bucket, etc, from the
+// os (they are in info.pre component of the file-handle), but they will
+// already have been installed into the AWS context in stream_init(), so
+// they are redundant.
+int     stream_del(ObjectStream* os) {
+
+   LOG(LOG_INFO, "URL: %s\n", os->url);
+
+#if 0
+   // parse "host", "bucket", and "objid" (the part after bucket), from the
+   // URL in the OS.  We ultimately need them to be distinct tokens.  Seems
+   // simplest to just copy the whole URL, and parse the tokens
+   // destructively, in place.  Ugh.
+   char URL2[MARFS_MAX_URL_SIZE];
+   strcpy(URL2, os->url);
+   char* url = URL2;
+   char* state = NULL;
+
+   const char* delims = "/";
+   __attribute__ ((unused)) char* http   = strtok_r(url,  delims, &state);
+   char* host   = strtok_r(NULL, delims, &state);
+   char* bucket = strtok_r(NULL, delims, &state);
+   char* obj    = strtok_r(NULL, delims, &state);
+
+   if (! (host && bucket && obj_name)) {
+      LOG(LOG_ERR, "parse failed\n");
+      errno = ENOENT;           // "no such file"
+      return -1;
+   }
+
+   return stream_del_components(os, host, bucket, obj);
+
+#else
+   return stream_del_components(os, NULL, NULL, os->url);
+
+#endif
+}
+
+
+
+// The "OBJECT" DAL calls this, providing host, bucket and obj_name.
+//
+// This approach allows callers at the MarFS_FileHandle level to just give
+// us the arguments we want, rather than making us reparse them.
+
+int     stream_del_components(ObjectStream* os,
+                              const char*   host,
+                              const char*   bucket,
+                              const char*   obj_name) {
+   TRY_DECLS();
+   LOG(LOG_INFO, "DEL  '%s/%s/%s'\n", host, bucket, obj_name);
+
+   if (os->flags & OSF_OPEN) {
+      LOG(LOG_INFO, "%s is open (for %s)\n",
+          os->url, ((os->flags & OSF_WRITING) ? "writing" : "reading"));
+      TRY0( stream_sync(os) );
+      TRY0( stream_close(os) );
+   }
+
+   IOBuf*      b   = &os->iob;   // shorthand
+   AWSContext* ctx = b->context; // shorthand
+
+   // delete the object
+   if (host)
+      s3_set_host_r(host, ctx);     // stream_init() already did this
+   if (bucket)
+      s3_set_bucket_r(bucket, ctx); // stream_init() already did this
+
+   AWS4C_CHECK1( s3_delete(b, (char* const)obj_name) );
+
+   return 0;
 }
