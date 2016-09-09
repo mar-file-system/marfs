@@ -236,7 +236,8 @@ extern "C" {
 
 
 
-#define MARFS_POST_FORMAT       "ver.%03hu_%03hu/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/flags.%02hhX/mdfs.%s"
+#define MARFS_POST_RD_FORMAT       "ver.%03hu_%03hu/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/flags.%02hhX/mdfs.%[^\t\n]"
+#define MARFS_POST_WR_FORMAT       "ver.%03hu_%03hu/%c/off.%ld/objs.%ld/bytes.%ld/corr.%016lx/crypt.%016lx/flags.%02hhX/mdfs.%s"
 
 #define MARFS_MAX_POST_SIZE_WITHOUT_PATH  256 /* max */
 #define MARFS_MAX_POST_SIZE               (MARFS_MAX_POST_SIZE_WITHOUT_PATH + MARFS_MAX_MD_PATH)
