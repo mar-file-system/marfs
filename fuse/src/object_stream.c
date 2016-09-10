@@ -125,6 +125,39 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
 #endif
 
 
+
+// After cancelling the thread, we can be pretty confident that the thread
+// is not still inside some aws4c function.  However, the context may still
+// think it is "inside".  Some of the aws4c functions protect themselves
+// against changing context-settings while they are "inside" operations.
+// And those functions may be run as part of cleanup, after a thread is
+// cancelled.  Turn "inside" off, so the clean-up functions
+// (e.g. aws_reset_iobuf_hard() in marfs_release()) won't fail an assertion
+// in libaws4c.
+
+void cancel_thread(ObjectStream* os) {
+   int rc = pthread_cancel(os->op);
+   if (rc) {
+      LOG(LOG_ERR, "cancellation failed (%s), killing thread\n",
+          strerror(errno));
+      pthread_kill(os->op, SIGKILL);
+      LOG(LOG_INFO, "killed thread\n");
+   }
+   else {
+      LOG(LOG_INFO, "cancelled\n");
+   }
+
+   os->flags |= OSF_CANCELED;
+
+   /* see NOTE, above */
+   if (os->iob.context) {
+      LOG(LOG_INFO, "resetting 'inside' flag in AWSContext\n");
+      os->iob.context->inside = 0;
+   }
+}
+
+
+
 // ---------------------------------------------------------------------------
 // stream_wait()
 //
@@ -132,6 +165,10 @@ int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
 // Loop is necessary to handle the case where another thread is also trying
 // to join (in which case, our join gets EINVAL).  This would happen, I
 // think, in the case of dup'ed marfs file-handles.
+//
+// In the event of a failed join, we now forcibly cancel the thread.  This
+// simplifies stream_sync(), which can now assume that stream_wait() always
+// succeeds.
 //
 // NOTE: The return from pthread_timedjoin_np() is not the same as the
 //     retval from the thread!  We return 0 if the thread was joined
@@ -170,7 +207,7 @@ int stream_wait(ObjectStream* os) {
 
 
    int   rc;
-   void* thread_retval;
+   void* thread_retval = 0;
    while (1) {
 
       // check whether thread has returned.  Could mean a curl error, an S3
@@ -182,14 +219,13 @@ int stream_wait(ObjectStream* os) {
 
       if (! rc) {
          os->flags |= OSF_JOINED;
-         return 0;              // joined
+         break;                 // joined
       }
-
-      else if (rc == ETIMEDOUT) {
-         errno = rc;
-         return -1;             // timed-out
+      else if (rc == ESRCH) {
+         os->flags |= OSF_JOINED;
+         break;                 // no-such thread  (treat as success)
       }
-      else if (rc == EINVAL)
+      else if (rc == EINVAL) {
          // EINVAL == another thread is also trying to join (?)  timed-wait
          // will just return immediately again, and we'll turn into a
          // busy-wait.  Add an explicit sleep here.  [Alternatively, here's
@@ -199,12 +235,25 @@ int stream_wait(ObjectStream* os) {
          // flushed?  I don't trust my knowledge of fuse enough to depend on
          // that.]
          sleep(1);
-
+      }
+      else if (rc == ETIMEDOUT) {
+         errno = rc;
+         break;             // timed-out
+      }
       else {
          errno = rc;
-         return -1;             // error
+         break;             // error
       }
    }
+
+   // if we failed to join, then cancel the thread
+   if (! (os->flags & OSF_JOINED)) {
+      LOG(LOG_INFO, "join failed: %s\n", strerror(errno));
+      cancel_thread(os);
+      pthread_tryjoin_np(os->op, &thread_retval);
+   }
+
+   return 0;
 }
 
 
@@ -902,6 +951,7 @@ int stream_sync(ObjectStream* os) {
       // if the writefunc/readfunc gets another callback, it will access
       // parts of the ObjectStream that are about to be deallocated.
       if (os->flags & OSF_TIMEOUT) {
+         LOG(LOG_INFO, "flags indicate time-out\n");
          cancel = 1;
       }
 
@@ -985,14 +1035,8 @@ int stream_sync(ObjectStream* os) {
 
       // some cases above want to cancel the thread
       if (cancel) {
-         LOG(LOG_INFO, "cancelling timed-out thread\n");
-         int rc = pthread_cancel(os->op);
-         if (rc) {
-            LOG(LOG_ERR, "cancellation failed (%s), killing thread\n",
-                strerror(errno));
-            pthread_kill(os->op, SIGKILL);
-            LOG(LOG_INFO, "killed thread\n");
-         }
+         LOG(LOG_INFO, "cancelling thread\n");
+         cancel_thread(os);
       }
 
       // check whether thread has returned.  Could mean a curl
@@ -1000,6 +1044,7 @@ int stream_sync(ObjectStream* os) {
       if (wait) {
          LOG(LOG_INFO, "waiting for op-thread\n");
          if (stream_wait(os)) {
+            // stream_wait() now always succeeds, so this is impossible ... (?)
             LOG(LOG_ERR, "err joining op-thread ('%s')\n", strerror(errno));
             return -1;
          }
@@ -1094,8 +1139,7 @@ int stream_abort(ObjectStream* os) {
          os->flags |= OSF_ABORT;
          if (stream_put(os, (const char*)1, 1) != 1) {
             LOG(LOG_ERR, "stream_put((char*)1) failed\n");
-            pthread_kill(os->op, SIGKILL);
-            LOG(LOG_INFO, "killed thread\n");
+            cancel_thread(os);
          }
       }
 
@@ -1103,6 +1147,7 @@ int stream_abort(ObjectStream* os) {
       // error, an S3 protocol error, or server flaking out.
       LOG(LOG_INFO, "waiting for op-thread\n");
       if (stream_wait(os)) {
+         // stream_wait() now always succeeds, so this is impossible ... (?)
          LOG(LOG_ERR, "err joining op-thread\n");
          return -1;
       }
