@@ -1697,7 +1697,7 @@ int check_quotas(PathInfo* info) {
    uint64_t space_limit = (uint64_t)info->ns->quota_space;
 
    // value of -1 for ns->quota_space implies unlimited
-   if (space_limit >= 0) {
+   if (info->ns->quota_space >= 0) {
       struct stat st;
       if (MD_PATH_OP(lstat, info->ns, info->ns->fsinfo_path, &st)) {
          LOG(LOG_ERR, "couldn't stat fsinfo at '%s': %s\n",

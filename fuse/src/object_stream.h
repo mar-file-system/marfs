@@ -259,8 +259,9 @@ typedef enum {
    OSF_TIMEOUT_K  = 0x0080,     // SAFE_WAIT_KILL() in stream_put/get
 
    OSF_ABORT      = 0x0100,     // stream_abort(), or stream_sync()
-   OSF_JOINED     = 0x0200,
-   OSF_CLOSED     = 0x0400,
+   OSF_CANCELED   = 0x0200,
+   OSF_JOINED     = 0x0400,
+   OSF_CLOSED     = 0x0800,
 
    OSF_THREAD_ERR = 0x1000,     // thread returned non-zero (curl err)
 } OSFlags;
