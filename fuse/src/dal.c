@@ -435,7 +435,8 @@ int posix_dal_open(DAL_Context* ctx,
                            md_ctime_str, obj_ctime_str, &unique,
                            &chunk_size, &chunk_no);
    if(read_count != 14) {
-      LOG(LOG_ERR, "POSIX_DAL: failed to pars objid: %s\n");
+      LOG(LOG_ERR, "POSIX_DAL: failed to parse objid: %s\n",
+          POSIX_DAL_OS(ctx)->url);
       return -1;
    }
 
