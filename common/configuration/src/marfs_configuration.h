@@ -530,6 +530,7 @@ extern  MarFS_Config_Ptr  marfs_config;
 
 extern MarFS_Namespace_Ptr find_namespace_by_name( const char *name );
 extern MarFS_Namespace_Ptr find_namespace_by_mnt_path( const char *mnt_path );
+extern MarFS_Namespace_Ptr find_namespace_by_mdfs_path( const char *mdfs_path );
 
 /*
  * A couple functions to find a specific repo record. We'll return

@@ -76,6 +76,7 @@ OF SUCH DAMAGE.
 #include <gpfs.h>
 #include <ctype.h>
 #include <unistd.h>
+
 #include "marfs_gc.h"
 #include "aws4c.h"
 #include "marfs_configuration.h"
@@ -188,11 +189,12 @@ int main(int argc, char **argv) {
    file_status->is_packed=0;
    file_status->no_delete = delete_flag;
 
-   // Configure aws for user specified on command line
+   // Configure aws for the user specified on command line
    aws_read_config(aws_user_name);
 
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec);
+
    if (file_status->is_packed) {
       fclose(file_status->packedfd);
       process_packed(file_status);
@@ -394,9 +396,23 @@ int read_inodes(const char *fnameP,
    struct marfs_xattr mar_xattrs[MAX_MARFS_XATTR];
    struct marfs_xattr *xattr_ptr = mar_xattrs;
    int xattr_count;
-   MarFS_XattrPre pre_struct;
+
+#if 0
+   MarFS_XattrPre  pre_struct;
    MarFS_XattrPre* pre = &pre_struct;
 
+   MarFS_XattrPost post_struct;
+   MarFS_XattrPre* post = &post_struct;
+#else
+   MarFS_FileHandle fh;
+   memset(&fh, 0, sizeof(MarFS_FileHandle));
+
+   MarFS_XattrPre*  pre  = &fh.info.pre;
+   MarFS_XattrPost* post = &fh.info.post;
+#endif
+
+   // initialize a list of known MarFS xattrs, used by stat_xattrs(), etc.
+   init_xattr_specs();
 
    // Defined xattrs as an array of const char strings with defined indexs
    // Change MARFS_QUOTA_XATTR_CNT in marfs_gc.h if the number of xattrs
@@ -415,8 +431,6 @@ int read_inodes(const char *fnameP,
 
    int trash_status;
 
-   MarFS_XattrPost post;
-  
    int early_exit =0;
    int xattr_index;
    char *md_path_ptr;
@@ -512,14 +526,17 @@ int read_inodes(const char *fnameP,
                                           marfs_xattrs, marfs_xattr_cnt, 
                                           &mar_xattrs[0], 
                                           file_info_ptr->outfd)) > 0) {
-               //marfs_xattrs has a list of xattrs found
+
+               // marfs_xattrs has a list of xattrs found.  Look for POST
+               // first, because that tells us if file is in the trash.
+               // POST xattr for files in the trash includes the md_path.
                if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                     marfs_xattrs[post_index], xattr_count)) != -1 ) { 
                     xattr_ptr = &mar_xattrs[xattr_index];
                   LOG(LOG_INFO,"post xattr name = %s value = %s \
                       count = %d index=%d\n", xattr_ptr->xattr_name, \
                       xattr_ptr->xattr_value, xattr_count,xattr_index);
-                  if ((str_2_post(&post, xattr_ptr->xattr_value,1))) {
+                  if ((str_2_post(post, xattr_ptr->xattr_value, 1))) {
                       fprintf(stderr,"Error parsing  post xattr for inode %d\n",
                       iattrP->ia_inode);
                       continue;
@@ -530,19 +547,18 @@ int read_inodes(const char *fnameP,
                           iattrP->ia_inode);
                }
                LOG(LOG_INFO, "found post chunk info bytes %zu\n", 
-                   post.chunk_info_bytes);
+                   post->chunk_info_bytes);
 
                // Is this trash?
-               if (post.flags & POST_TRASH){
+               if (post->flags & POST_TRASH){
                   time_t now = time(0);
                    
                   // Check if older than X days (specified by user arg)
                   if (now-day_seconds > iattrP->ia_atime.tv_sec) {
                      LOG(LOG_INFO, "Found trash\n");
-                     md_path_ptr = &post.md_path[0];
+                     md_path_ptr = &post->md_path[0];
 
-
-                     // Get objid xattr
+                     // Get OBJID xattr (aka "pre")
                      if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                           marfs_xattrs[objid_index], xattr_count)) != -1) { 
                           xattr_ptr = &mar_xattrs[xattr_index];
@@ -555,10 +571,12 @@ int read_inodes(const char *fnameP,
                         // To do this, must call marfs str_2_pre to parse out
                         // the bucket name which include repo name
                         //fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
-                        if (str_2_pre(pre, xattr_ptr->xattr_value, st) != 0)
+                        if (str_2_pre(pre, xattr_ptr->xattr_value, st) != 0) {
+                           LOG(LOG_ERR, "str_2_pre failed\n");
                            continue;
+                        }
 
-                        // Now check if we have restart xattr which may imply
+                        // Now check if we have RESTART xattr which may imply
                         // OBJ_FUSE or OBJ_Nto1 which requires 
                         // special handling in dump_trash
                         file_info_ptr->restart_found = 0;
@@ -568,30 +586,32 @@ int read_inodes(const char *fnameP,
                         }
 
                         check_security_access(pre);
-                        update_pre(pre);
+
+                        // Deterimine if object type is packed.  If so we 
+                        // must complete scan to determine if all files 
+                        // exist for the object.  So, just add the particulars to a file,
+                        // which we will later review.
+                        //
+                        // TBD: update_pre() is only needed to compute the
+                        //      randomized host, which is unused until we
+                        //      actually delete.  Might be better to skip
+                        //      writing this field into the file, and let
+                        //      process_packed() compute it as needed.
+                        if (post->obj_type == OBJ_PACKED) {
+                           update_pre(pre);
+                           fprintf(file_info_ptr->packedfd,"%s %zu %s\n", 
+                                   xattr_ptr->xattr_value, post->chunks, md_path_ptr );
+                           file_info_ptr->is_packed = 1;
+                        }
 
 
-                         s3_set_host(pre->host);
-
-                         // Deterimine if object type is packed.  If so we 
-                         // must complete scan to determine if all files 
-                         // exist for the object
-                         if (post.obj_type == OBJ_PACKED) {
-                            fprintf(file_info_ptr->packedfd,"%s %s %zu %s %s %s\n", 
-                                    xattr_ptr->xattr_value, md_path_ptr, post.chunks,
-                                    pre->host, pre->bucket, pre->objid);
-                                    file_info_ptr->is_packed = 1;
-                         }
-
-
-                         // Not checking return because log has error message
-                         // and want to keep running even if errors exists on 
-                         // certain objects or files
-                         else {
-                            trash_status = dump_trash(xattr_ptr, md_path_ptr, 
-                                                        file_info_ptr, 
-                                                        &post, pre);
-                         } // endif dump trash
+                        // Not checking return because log has error message
+                        // and want to keep running even if errors exists on 
+                        // certain objects or files
+                        else {
+                           fake_filehandle_for_delete_inits(&fh);
+                           trash_status = dump_trash(&fh, xattr_ptr, file_info_ptr);
+                        } // endif dump trash
                      } // endif objid xattr 
                   } // endif days old check
                } // endif post xattr specifies trash
@@ -611,111 +631,118 @@ int read_inodes(const char *fnameP,
 Name: dump_trash 
 
  This function deletes the object file as well as gpfs metadata files
+ This is only called for non-packed MarFS files.
 *****************************************************************************/
-int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr, 
-               File_Info *file_info_ptr, MarFS_XattrPost *post_xattr,
-               MarFS_XattrPre *pre_ptr)
+int dump_trash(MarFS_FileHandle   *fh,
+               struct marfs_xattr *xattr_ptr, // object-ID
+               File_Info          *file_info_ptr)
 {
    int return_value =0;
-
-   char object_name[MARFS_MAX_OBJID_SIZE];
-   char *obj_name_ptr, *id_ptr;
    int i;
    int delete_obj_status;
    int multi_flag = 0;
 
-   // This is the case where a file in trash has a RESTART xattr
-   // and the obj_type = N to 1.  It exists because pftool did not
-   // complete the N to 1 creation.
-   // We need to determine what chunks exists and delete their 
-   // associated objects
-   if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_Nto1) {
+   // PathInfo        *info        = &fh->info;
+   MarFS_XattrPre  *pre_ptr     = &fh->info.pre;
+   MarFS_XattrPost *post_ptr    = &fh->info.post;
+   char            *md_path_ptr =  fh->info.post.md_path;
 
-      // initialize a list of known MarFS xattrs, used by stat_xattrs(), etc.
-      init_xattr_specs();
-      // Used demo_read_chunkinfo form marfs/fuse to incorporate this section
-      MarFS_FileHandle fh;
-      memset(&fh, 0, sizeof(MarFS_FileHandle));
 
-      PathInfo* info = &fh.info;
+   // This is the case where a file in trash has a RESTART xattr and the
+   // PRE obj_type = N to 1.  It exists because pftool did not complete the N
+   // to 1 creation.  It's possible that only a few chunks out of a huge
+   // potential number were successfully written.  We determine which
+   // chunks were written and delete only those associated objects.
+   //
+   // NOTE: The obj-type in the POST xattr is the final correct
+   //     object-type, but it will be MULTI both for the pftool-failure
+   //     case, and the fuse-failure case.  fuse would only write chunks
+   //     sequentially.  The pre xattr lets us distinguish the two cases.
+   if (file_info_ptr->restart_found
+       && (pre_ptr->obj_type == OBJ_Nto1)) {
 
-      info->ns = pre_ptr->ns;
-      strncpy(info->post.md_path, md_path_ptr, MARFS_MAX_MD_PATH); // use argv[1]
-      info->post.md_path[MARFS_MAX_MD_PATH -1] = 0;
-      info->flags |= PI_EXPANDED; // We are faking expand_path_info, so this
-                                  // flag should be set.
+#if 0
+      // COMMENTED OUT.  This will slow everything down.  We already parsed
+      // the xattrs we got from the inode scan.  They are in fh->info.pre,
+      // and fh->info.post.  If we call this, it will do a stat() of the MD
+      // file, which will hurt performance.
+
       if (stat_xattrs(info)) {    // parse all xattrs for the MD file
          fprintf(stderr, "stat_xattrs() failed for MD file: '%s'\n", md_path_ptr);
          return -1;
       }
+#endif
+
 
       // assure the MD is open for reading
-      //fh.flags |= FH_READING;
+      //fh->flags |= FH_READING;
       // 
       // Now call with flag (0) to open for reading
-      if (open_md(&fh, 0)) {
+      if (open_md(fh, 0)) {
          fprintf(stderr, "open_md() failed for MD file: '%s'\n", md_path_ptr);
          return -1;
       }
-      id_ptr = strrchr(pre_ptr->objid, '.');
       
       // read chunkinfo and create object name so that it can be deleted
       MultiChunkInfo chunk_info;
-      while (! read_chunkinfo(&fh, &chunk_info)) {
+      while (! read_chunkinfo(fh, &chunk_info)) {
          if (chunk_info.chunk_data_bytes != 0 ) {
-            obj_name_ptr = id_ptr;
-            obj_name_ptr++;
-            *obj_name_ptr='\0'; 
-            sprintf(object_name, "%s%ld",pre_ptr->objid,chunk_info.chunk_no);
-            if ((delete_obj_status=delete_object(object_name,file_info_ptr, pre_ptr, multi_flag)) != 0) {
-               fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
-                       %d) on object %s\n", delete_obj_status, \
-                       xattr_ptr->xattr_value);
+
+            pre_ptr->chunk_no = chunk_info.chunk_no;
+            update_pre(pre_ptr);
+            update_url(&fh->os, &fh->info);
+            if ((delete_obj_status = delete_object(fh, file_info_ptr, multi_flag))) {
+               fprintf(file_info_ptr->outfd,
+                       "s3_delete error (HTTP Code: %d) on object %s\n",
+                       delete_obj_status, fh->os.url); // xattr_ptr->xattr_value
                return_value = -1;
             }
-            else {
-               if (!file_info_ptr->no_delete)
-                  fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
-           }
+            else if (!file_info_ptr->no_delete) {
+               fprintf(file_info_ptr->outfd, "deleted object %s\n",
+                       fh->os.url); // object_name
+            }
          }
       }
-      close_md(&fh);
+      close_md(fh);
    }
-   //If multi type file then delete all objects associated with file
-   else if (post_xattr->obj_type == OBJ_MULTI) {
-      for (i=0; i < post_xattr->chunks; i++ ) {
+   // If multi type file then delete all objects associated with file
+   else if (post_ptr->obj_type == OBJ_MULTI) {
+      for (i=0; i < post_ptr->chunks; i++ ) {
          multi_flag = 1;
-         obj_name_ptr = strrchr(pre_ptr->objid, '.');
-         obj_name_ptr++;
-         *obj_name_ptr='\0'; 
-         sprintf(object_name, "%s%d",pre_ptr->objid,i);
-         if ((delete_obj_status=delete_object(object_name,file_info_ptr, pre_ptr, multi_flag)) != 0) {
-            fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
-                    %d) on object %s\n", delete_obj_status, \
-                    xattr_ptr->xattr_value);
+         pre_ptr->chunk_no = i;
+         update_pre(pre_ptr);
+         update_url(&fh->os, &fh->info);
+         if ((delete_obj_status = delete_object(fh, file_info_ptr, multi_flag))) {
+            fprintf(file_info_ptr->outfd,
+                    "s3_delete error (HTTP Code: %d) on object %s\n",
+                    delete_obj_status, fh->os.url); // xattr_ptr->xattr_value
             return_value = -1;
          }
          else {
             if (!file_info_ptr->no_delete)
-               fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
+               fprintf(file_info_ptr->outfd, "deleted object %s\n",
+                       fh->os.url);
          }
-      } 
+      }
    }
 
    // else UNI BUT NEED to implemented other formats as developed 
-   else if (post_xattr->obj_type == OBJ_UNI) {
-      strncpy(object_name, xattr_ptr->xattr_value, 
-              (strlen(xattr_ptr->xattr_value)+1));
-      if ((delete_obj_status=delete_object(object_name, file_info_ptr, pre_ptr, multi_flag)) != 0 ) {
-         fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code:  %d) \
-                 on object %s\n", delete_obj_status,xattr_ptr->xattr_value);
+   else if (post_ptr->obj_type == OBJ_UNI) {
+      update_pre(pre_ptr);
+      update_url(&fh->os, &fh->info);
+      if ((delete_obj_status = delete_object(fh, file_info_ptr, multi_flag))) {
+         fprintf(file_info_ptr->outfd,
+                 "s3_delete error (HTTP Code:  %d) on object %s\n",
+                 delete_obj_status, fh->os.url); // xattr_ptr->xattr_value
          return_value = -1;
       }
-      else {
-         if (!file_info_ptr->no_delete)
-            fprintf(file_info_ptr->outfd, "deleted object %s\n", object_name);
+      else if (!file_info_ptr->no_delete) {
+            // update_url(&fh->os, &fh->info); // redundant
+            fprintf(file_info_ptr->outfd, "deleted object %s\n",
+                    fh->os.url); // object_name
       }
    }
+
    // Need to implement semi-direct here.  In this case the obj_type will not
    // have that information.  I will have to rely on the config parser to 
    // determine the protocol from the RepoAccessProto structure.  I would 
@@ -736,34 +763,39 @@ int dump_trash(struct marfs_xattr *xattr_ptr, char *md_path_ptr,
 /***************************************************************************** 
 Name: delete_object 
 
- This function deletes the object and returns -1 if error, 0 if successful
+ This function deletes the object whose ID is in fh->pre and returns -1 if
+ error, 0 if successful
 *****************************************************************************/
-int delete_object(char *object,
-                  File_Info *file_info_ptr,
-                  MarFS_XattrPre *pre_ptr,
-                  int is_multi)
+int delete_object(MarFS_FileHandle *fh,
+                  File_Info        *file_info_ptr,
+                  int               is_multi)
 {
    //
-   int return_val;
-   CURLcode s3_return;
-   IOBuf * obj_buffer = aws_iobuf_new();
+   int             return_val = 0;
+   MarFS_XattrPre* pre_ptr = &fh->info.pre;
+   const char*     object = fh->os.url;
+   int             rc;
 
    print_current_time(file_info_ptr);
 
-   s3_set_bucket(pre_ptr->bucket);
+   // update_pre(&fh->info.pre);
+   // update_url(&fh->os, &fh->info);
+
    if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_Nto1) {
       if ( file_info_ptr->no_delete )
          fprintf(file_info_ptr->outfd,"ID'd incomplete Nto1 multi object %s\n", object);
       // else delete object
       else 
-         s3_return = s3_delete( obj_buffer, object );
+         // s3_return = s3_delete( obj_buffer, object );
+         rc = delete_data(fh);
    }
    else if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_FUSE) {
       if ( file_info_ptr->no_delete )
          fprintf(file_info_ptr->outfd,"ID'd incomplete FUSE multi object %s\n", object);
       // else delete object
       else 
-         s3_return = s3_delete( obj_buffer, object );
+         // s3_return = s3_delete( obj_buffer, object );
+         rc = delete_data(fh);
    }
    else if ( is_multi )
       // Check if no delete just print to log
@@ -771,19 +803,23 @@ int delete_object(char *object,
          fprintf(file_info_ptr->outfd,"ID'd multi object %s\n", object);
       // else delete object
       else 
-         s3_return = s3_delete( obj_buffer, object );
+         // s3_return = s3_delete( obj_buffer, object );
+         rc = delete_data(fh);
    else 
       // Check if no delete just print to log
       if ( file_info_ptr->no_delete )
          fprintf(file_info_ptr->outfd,"ID' uni object %s\n", pre_ptr->objid);
       // else delete object
       else 
-         s3_return = s3_delete( obj_buffer, pre_ptr->objid );
+         // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
+         rc = delete_data(fh);
       
    if ( file_info_ptr->no_delete )
       return_val = 0;
-   else 
-      return_val=check_S3_error(s3_return, obj_buffer, S3_DELETE);
+   else if (rc)
+      // return_val=check_S3_error(s3_return, obj_buffer, S3_DELETE);
+      return_val=check_S3_error(fh->os.op_rc, &fh->os.iob, S3_DELETE);
+
    return(return_val);
 }
 
@@ -851,9 +887,9 @@ the object type is PACKED.  Packed implies multiple files packed into an
 object so objects and files cannot be deleted if all the files do not
 exist for a particular object.  The function is passed in a filename that
 contains a list of all PACKED entries found in the scan.
-The format of the files is:
+The format of the files is space delimited as follows:
 
-object_name file_name total_file_count host bucket objid
+OBJECT_NAME TOTAL_FILE_COUNT FILENAME  
 
 This function sorts by object name then proceeds to count how many files
 exists for that object_name.  If the files counted equal the total file_count,
@@ -881,8 +917,6 @@ int process_packed(File_Info *file_info_ptr)
    int chunk_count;
    char filename[MARFS_MAX_MD_PATH];
    int count = 0;
-   MarFS_XattrPre pre_struct;
-   MarFS_XattrPre* pre_ptr = &pre_struct;
    int multi_flag = 0;
    int wc_count;
    
@@ -894,9 +928,10 @@ int process_packed(File_Info *file_info_ptr)
       fprintf(stderr, "Error with popen\n");
       return(-1); 
    }
-   // Get the first line and sscanf into object_name, filenames, and chunk cnt
+   // Get the first line and sscanf into object_name, chunk_cnt, and filename
    fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat);
-   sscanf(obj_buf,"%s %s %d", objid, filename, &chunk_count);
+
+   sscanf(obj_buf,"%s,%d,%s", objid, &chunk_count, filename);
 
    // Keep track of of when objid name changes 
    // count is used to see how many files have been counted
@@ -905,45 +940,63 @@ int process_packed(File_Info *file_info_ptr)
    strcpy(last_objid, objid);
    count++;
 
-   //In a loop get all lines from the file
+   // In a loop get all lines from the file
+   // Example line (with 'xx' instead of IP-addr octets, and altered MD paths):
+   //
+   // proxy1/bparc/ver.001_001/ns.development/P___/inode.0000016572/md_ctime.20160526_124320-0600_1/obj_ctime.20160526_124320-0600_1/unq.0/chnksz.40000000/chnkno.0 403
+   // /gpfs/fileset/trash/development.0/8/7/3/uni.255.trash_0000016873_20160526_125809-0600_1
+   //
    while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
-      sscanf(obj_buf,"%s %s %d %s %s %s", objid, filename, &chunk_count, 
-             pre_ptr->host, pre_ptr->bucket, pre_ptr->objid);
       // if objid the same - keep counting files
+      sscanf(obj_buf,"%s %d %s", objid, &chunk_count, filename);
       if (!strcmp(last_objid,objid) || chunk_count==1) {
          count++;
-         //printf("count: %d chunk_count: %d\n", count, chunk_count);
+         // printf("count: %d chunk_count: %d\n", count, chunk_count);
          // If file count == chuck count - all files accounted for
          // delete objec
          if (chunk_count == count || chunk_count==1) {
-             // So make sure that the chunk_count (from xattr) matches the number
-             // of files found 
-             sprintf(wc_command, "grep %s %s | wc -l", objid, file_info_ptr->packed_filename);
-             if (( pipe_wc = popen(wc_command, "r")) == NULL) {
-                fprintf(stderr, "Error with popen\n");
-                return(-1); 
-             }
-             while(fgets(wc_buf,1024, pipe_wc)) {
-                sscanf(wc_buf, "%d", &wc_count);
-             }
-             if (wc_count != chunk_count) {
-                fprintf(stderr, "object %s has %d files while chunk count is %d\n", objid, wc_count, chunk_count);
-                continue;
-             }
-             pclose(pipe_wc);
-             //If we get here coounts are matching up
+            // So make sure that the chunk_count (from xattr) matches the number
+            // of files found 
+            sprintf(wc_command, "grep %s %s | wc -l", objid, file_info_ptr->packed_filename);
+            if (( pipe_wc = popen(wc_command, "r")) == NULL) {
+               fprintf(stderr, "Error with popen\n");
+               return(-1); 
+            }
+            while(fgets(wc_buf,1024, pipe_wc)) {
+               sscanf(wc_buf, "%d", &wc_count);
+            }
+            if (wc_count != chunk_count) {
+               fprintf(stderr, "object %s has %d files while chunk count is %d\n",
+                       objid, wc_count, chunk_count);
+               continue;
+            }
+            pclose(pipe_wc);
+
+            // If we get here, counts are matching up
             // Go ahead and start deleting
-            if ((obj_return=delete_object(objid, file_info_ptr, pre_ptr, multi_flag)) != 0) 
+            MarFS_FileHandle fh;
+            if (fake_filehandle_for_delete(&fh, objid, filename)) {
+               fprintf(file_info_ptr->outfd,
+                       "failed to create filehandle for %s %s\n",
+                       objid, filename);
+               continue;
+            }
+
+            update_pre(&fh.info.pre);
+            update_url(&fh.os, &fh.info);
+            // Delete object first
+            if ((obj_return = delete_object(&fh, file_info_ptr, multi_flag)) != 0) 
                fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
                        %d) on object %s\n", obj_return, objid);
 
             else if ( file_info_ptr->no_delete) 
-              fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", objid);
+               fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", objid);
 
+            // Get metafile name from tmp_packed_log and delelte 
             else 
-              fprintf(file_info_ptr->outfd, "deleted object %s\n", objid);
+               fprintf(file_info_ptr->outfd, "deleted object %s\n", objid);
 
-            sprintf(grep_command,"grep %s %s | awk '{print $2}' ", 
+            sprintf(grep_command,"grep %s %s | awk '{print $3}' ", 
                     objid, file_info_ptr->packed_filename);
             //Now open pipe to find all files associated with object 
             if (( pipe_grep = popen(grep_command, "r")) == NULL) {
