@@ -194,6 +194,7 @@ int main(int argc, char **argv) {
 
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec);
+
    if (file_status->is_packed) {
       fclose(file_status->packedfd);
       process_packed(file_status);
@@ -598,9 +599,8 @@ int read_inodes(const char *fnameP,
                         //      process_packed() compute it as needed.
                         if (post->obj_type == OBJ_PACKED) {
                            update_pre(pre);
-                           fprintf(file_info_ptr->packedfd,"%s %s %zu %s %s %s\n", 
-                                   xattr_ptr->xattr_value, md_path_ptr, post->chunks,
-                                   pre->host, pre->bucket, pre->objid);
+                           fprintf(file_info_ptr->packedfd,"%s %zu %s\n", 
+                                   xattr_ptr->xattr_value, post->chunks, md_path_ptr );
                            file_info_ptr->is_packed = 1;
                         }
 
@@ -887,9 +887,9 @@ the object type is PACKED.  Packed implies multiple files packed into an
 object so objects and files cannot be deleted if all the files do not
 exist for a particular object.  The function is passed in a filename that
 contains a list of all PACKED entries found in the scan.
-The format of the files is:
+The format of the files is space delimited as follows:
 
-object_name file_name total_file_count host bucket objid
+OBJECT_NAME TOTAL_FILE_COUNT FILENAME  
 
 This function sorts by object name then proceeds to count how many files
 exists for that object_name.  If the files counted equal the total file_count,
@@ -917,8 +917,6 @@ int process_packed(File_Info *file_info_ptr)
    int chunk_count;
    char filename[MARFS_MAX_MD_PATH];
    int count = 0;
-   MarFS_XattrPre  pre_struct;
-   MarFS_XattrPre* pre_ptr = &pre_struct;
    int multi_flag = 0;
    int wc_count;
    
@@ -930,9 +928,10 @@ int process_packed(File_Info *file_info_ptr)
       fprintf(stderr, "Error with popen\n");
       return(-1); 
    }
-   // Get the first line and sscanf into object_name, filenames, and chunk cnt
+   // Get the first line and sscanf into object_name, chunk_cnt, and filename
    fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat);
-   sscanf(obj_buf,"%s %s %d", objid, filename, &chunk_count);
+
+   sscanf(obj_buf,"%s,%d,%s", objid, &chunk_count, filename);
 
    // Keep track of of when objid name changes 
    // count is used to see how many files have been counted
@@ -944,17 +943,15 @@ int process_packed(File_Info *file_info_ptr)
    // In a loop get all lines from the file
    // Example line (with 'xx' instead of IP-addr octets, and altered MD paths):
    //
-   // proxy1/bparc/ver.001_001/ns.development/P___/inode.0000016572/md_ctime.20160526_124320-0600_1/obj_ctime.20160526_124320-0600_1/unq.0/chnksz.40000000/chnkno.0
+   // proxy1/bparc/ver.001_001/ns.development/P___/inode.0000016572/md_ctime.20160526_124320-0600_1/obj_ctime.20160526_124320-0600_1/unq.0/chnksz.40000000/chnkno.0 403
    // /gpfs/fileset/trash/development.0/8/7/3/uni.255.trash_0000016873_20160526_125809-0600_1
-   // 403 xx.xx.xx.xx:81 proxy1 bparc/ver.001_001/ns.development/P___/inode.0000016572/md_ctime.20160526_124320-0600_1/obj_ctime.20160526_124320-0600_1/unq.0/chnksz.40000000/chnkno.0
    //
    while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
-      sscanf(obj_buf,"%s %s %d %s %s %s", objid, filename, &chunk_count, 
-             pre_ptr->host, pre_ptr->bucket, pre_ptr->objid);
       // if objid the same - keep counting files
+      sscanf(obj_buf,"%s %d %s", objid, &chunk_count, filename);
       if (!strcmp(last_objid,objid) || chunk_count==1) {
          count++;
-         //printf("count: %d chunk_count: %d\n", count, chunk_count);
+         // printf("count: %d chunk_count: %d\n", count, chunk_count);
          // If file count == chuck count - all files accounted for
          // delete objec
          if (chunk_count == count || chunk_count==1) {
@@ -987,6 +984,7 @@ int process_packed(File_Info *file_info_ptr)
 
             update_pre(&fh.info.pre);
             update_url(&fh.os, &fh.info);
+            // Delete object first
             if ((obj_return = delete_object(&fh, file_info_ptr, multi_flag)) != 0) 
                fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
                        %d) on object %s\n", obj_return, objid);
@@ -994,10 +992,11 @@ int process_packed(File_Info *file_info_ptr)
             else if ( file_info_ptr->no_delete) 
                fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", objid);
 
+            // Get metafile name from tmp_packed_log and delelte 
             else 
                fprintf(file_info_ptr->outfd, "deleted object %s\n", objid);
 
-            sprintf(grep_command,"grep %s %s | awk '{print $2}' ", 
+            sprintf(grep_command,"grep %s %s | awk '{print $3}' ", 
                     objid, file_info_ptr->packed_filename);
             //Now open pipe to find all files associated with object 
             if (( pipe_grep = popen(grep_command, "r")) == NULL) {
