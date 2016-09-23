@@ -247,10 +247,10 @@ int iterate_marfs_list( void **marfs_list, int ( *marfsPtrCallback )( void *marf
  * open source suffix-array impl).  The leaves would be pointers to
  * Namespaces.
  * 
- * NOTE: If the fuse mount-point is "/A/B", and you provide a path like
- * "/A/B/C", then the "path" seen by fuse callbacks is "/C".  In
- * otherwords, we should never see MarFS_mnt_top, as part of the
- * incoming path.
+ * NOTE: If the fuse mount-point (i.e. the configured "mnt_top") is "/A/B",
+ * and you provide a path like "/A/B/C", then the "path" seen in fuse
+ * callbacks is "/C".  In other words, we should never see MarFS_mnt_top,
+ * as part of the incoming path.
  * 
  * For a quick first-cut, there's only one namespace.  Your path is either
  * in it or fails.
@@ -312,6 +312,33 @@ MarFS_Namespace_Ptr find_namespace_by_mnt_path( const char *mnt_path ) {
 
   free( path_dup );
   return NULL;
+}
+
+/*****************************************************************************
+ * Given the full MDFS path to a MD file, return the corresponding NS.
+ * This is useful for utilities that are scanning inodes, seeing MDFS
+ * paths.
+ *
+ * We assume that no NS has NS.md_path that is a prefix of another
+ * NS.md_path.  This could be ensured by calling this function with each
+ * NS.md_path, for each NS, in validate_configuration().  If any such call
+ * returns non-NULL, then the given NS is misconfigured.
+ ****************************************************************************/
+
+MarFS_Namespace_Ptr find_namespace_by_mdfs_path( const char *mdfs_path ) {
+
+   const size_t mdfs_path_len = strlen(mdfs_path);
+
+   MarFS_Namespace* ns = NULL;
+   NSIterator       it = namespace_iterator();
+   while (ns = namespace_next(&it)) {
+      if (( ns->md_path_len == mdfs_path_len )	&&
+          (! strcmp( ns->md_path, mdfs_path ))) {
+         return ns;
+      }
+   }
+
+   return NULL;
 }
 
 /*****************************************************************************

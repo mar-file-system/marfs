@@ -80,6 +80,7 @@ OF SUCH DAMAGE.
 #include <stdio.h>              /* rename() */
 #include <stdarg.h>
 #include <regex.h>              // canonicalize()
+#include <assert.h>
 
 // ---------------------------------------------------------------------------
 // COMMON
@@ -116,7 +117,13 @@ const char* marfs_sub_path(const char* path) {
 }
 
 
-
+// Given:
+//  <path> is a user-perspective "marfs path", minus the mnt_top portion
+// 
+// Result:
+//  info->ns               has NS corresponding to <path>
+//  info->post.md_path     has corresponding MD path
+//
 // NOTE: The Attractive Chaos tools actually include a suffix-tree data-structure.
 //       (Actually a suffix array.)
 //
@@ -363,16 +370,20 @@ XattrSpec*  MarFS_xattr_specs = NULL;
 
 int init_xattr_specs() {
 
-   // these are used by a parser (e.g. stat_xattrs())
-   // The string in MarFS_XattrPrefix is appended to all of them
-   // TBD: free this in clean-up
-   MarFS_xattr_specs = (XattrSpec*) calloc(4, sizeof(XattrSpec));
+   if (! MarFS_xattr_specs) {
 
-   MarFS_xattr_specs[0] = (XattrSpec) { XVT_PRE,     MarFS_XattrPrefix "objid" };
-   MarFS_xattr_specs[1] = (XattrSpec) { XVT_POST,    MarFS_XattrPrefix "post" };
-   MarFS_xattr_specs[2] = (XattrSpec) { XVT_RESTART, MarFS_XattrPrefix "restart" };
+      // these are used by a parser (e.g. stat_xattrs())
+      // The string in MarFS_XattrPrefix is appended to all of them
+      // TBD: free this in clean-up
+      MarFS_xattr_specs = (XattrSpec*) calloc(4, sizeof(XattrSpec));
+      assert(MarFS_xattr_specs);
 
-   MarFS_xattr_specs[3] = (XattrSpec) { XVT_NONE,    NULL };
+      MarFS_xattr_specs[0] = (XattrSpec) { XVT_PRE,     MarFS_XattrPrefix "objid" };
+      MarFS_xattr_specs[1] = (XattrSpec) { XVT_POST,    MarFS_XattrPrefix "post" };
+      MarFS_xattr_specs[2] = (XattrSpec) { XVT_RESTART, MarFS_XattrPrefix "restart" };
+
+      MarFS_xattr_specs[3] = (XattrSpec) { XVT_NONE,    NULL };
+   }
 
    return 0;
 }
@@ -1714,7 +1725,9 @@ int update_url(ObjectStream* os, PathInfo* info) {
 
    // log the full URL, if possible:
    IOBuf*        b  = &os->iob;
-   __attribute__ ((unused)) AWSContext*   ctx = ((b) ? b->context : aws_context_clone());
+   __attribute__ ((unused)) AWSContext* ctx = ((b)
+                                               ? b->context
+                                               : aws_context_clone());
 
    LOG(LOG_INFO, "generated URL %s %s/%s/%s\n",
        ((b) ? "" : "(defaults)"),
@@ -1723,13 +1736,76 @@ int update_url(ObjectStream* os, PathInfo* info) {
    return 0;
 }
 
+
+// Intended for internal consumption only (e.g. open_data() and
+// delete_data().)  You probably don't need to call this directly.
+//
+// Assure that there is an initialized DAL, if needed.  We assume the
+// filehandle is setup as it would be after expand_path_info(), with the MD
+// path in fh->post.md_path, and info->flags |= PI_EXPANDED.
+
+static
+int init_data(MarFS_FileHandle* fh) {
+
+   __attribute__((unused)) PathInfo* info = &fh->info;
+
+   // if we haven't already initialized the FileHandle DAL, do it now.
+#if USE_DAL
+   if (! FH_DAL(fh)) {
+
+      // copy static DAL ptr from NS to FileHandle
+      FH_DAL(fh) = info->pre.repo->dal;
+      LOG(LOG_INFO, "DAL: %s\n", FH_DAL(fh)->name);
+   }
+#else
+   LOG(LOG_INFO, "ignoring file-DAL\n");
+#endif
+
+   // allow DAL implementation to do custom initializations
+   //
+   // MarFS expects fh->os.written to be side-effected by streaming
+   // operations (i.e. any DAL I/O).  We give the DAL init-function
+   // access to the ObjectStream member of the file-handle, so the
+   // implementation can have this effect.
+   //
+   // In fact, we now pass the entire file-handle to the DAL init
+   // function.  Why not?  DAL implementations should have the power to
+   // royally eff everything up, just like we do.  The fh.dal_handle.ctx
+   // is just extra generic state that is reserved for them.  This new
+   // approach lets us clean some of the aws4c-specific inits out of
+   // marfs_open() and into stream_init(), which in turn allows them to
+   // be used in a DAL that supports a delete function, which will not
+   // go through marfs_open(), but can go through DAL init.
+   DAL_OP(init, fh, FH_DAL(fh), fh);
+
+   return 0;
+}
+
+
+// DAL clean-up, after file-handle is completely closed/done/finis.  It
+// doesn't mean "destroy the data", but, rather, invoke the "destroy"
+// function for the "data" aspect of a file-handle, as opposed to the "md"
+// aspect.
+int destroy_data(MarFS_FileHandle* fh) {
+   int rc = 0;
+
+#if USE_DAL
+   // clean-up DAL state
+   rc = DAL_OP(destroy, fh, FH_DAL(fh));
+   FH_DAL(fh) = NULL; // need to make sure that if we call open_data
+                      // again, it will actually reinitialize the dal
+#endif
+
+   return rc;
+}
+
+
 int open_data(MarFS_FileHandle* fh,
               int               writing_p,
+              size_t            chunk_offset,
               size_t            content_length,
               uint8_t           preserve_wr_count,
               uint16_t          timeout) {
-
-   PathInfo* info __attribute__((unused)) = &fh->info;
 
    int         flags;
    const char* flags_str;
@@ -1744,24 +1820,7 @@ int open_data(MarFS_FileHandle* fh,
    }
 
    // if we haven't already initialized the FileHandle DAL, do it now.
-#if USE_DAL
-   if (! FH_DAL(fh)) {
-      // copy static DAL ptr from NS to FileHandle
-      FH_DAL(fh) = info->pre.repo->dal;
-      LOG(LOG_INFO, "DAL: %s\n", FH_DAL(fh)->name);
-
-      //      // allow DAL implementation to do custom initializations
-      //      DAL_OP(init, fh, FH_DAL(fh));
-      //
-      // CHEATING!  Let the DAL impl have access to the ObjectStream in the
-      // FileHandle.  MarFS expects e.g. fh->os.written to be side-effected
-      // by streaming operations.  For now, this is an ugly way (in that it
-      // violates the DAL encapsulation) to get things working.
-      DAL_OP(init, fh, FH_DAL(fh), &fh->os);
-   }
-#else
-   LOG(LOG_INFO, "ignoring file-DAL\n");
-#endif
+   init_data(fh);
 
 
    // if we haven't already opened the data-stream, do it now.
@@ -1770,7 +1829,8 @@ int open_data(MarFS_FileHandle* fh,
    //
    // if (! DAL_OP(is_open, fh))
    {
-      if (DAL_OP(open, fh, writing_p, content_length, preserve_wr_count, timeout) ) {
+      if (DAL_OP(open, fh, writing_p,
+                 chunk_offset, content_length, preserve_wr_count, timeout) ) {
          LOG(LOG_ERR, "open_data() failed: %s\n", strerror(errno));
          return -1;
       }
@@ -1780,17 +1840,127 @@ int open_data(MarFS_FileHandle* fh,
    return 0;
 }
 
-int close_data(MarFS_FileHandle* fh) {
-#if USE_DAL
 
-   int rc = DAL_OP(destroy, fh, FH_DAL(fh));
-   FH_DAL(fh) = NULL; // need to make sure that if we call open_data
-                      // again, it will actually reinitialize the dal
+// Standard idiom for closing data-streams is something like
+//    DAL_OP(sync, fh);
+//    DAL_OP(close, fh);
+//    DAL_OP(destroy, fh);
+//
+// <abort> means use DAL_OP(abort, fh), instead of sync.
+// <force> acts as though they were all wrapped in TRY0()
+
+int close_data(MarFS_FileHandle* fh,
+               int               abort,
+               int               force) {
+   int rc;
+
+   // try the abort/sync
+   if (abort)
+      rc = DAL_OP(abort, fh);
+   else
+      rc = DAL_OP(sync, fh);
+
+   if (rc && !force) {
+      LOG(LOG_ERR, "%s failed\n", (abort ? "abort" : "sync"));
+      return rc;
+   }
+
+   // try the close
+   rc = DAL_OP(close, fh);
+   if (rc && !force) {
+      LOG(LOG_ERR, "close failed\n");
+      return rc;
+   }
+
+   rc = destroy_data(fh);
+   if (rc)
+      LOG(LOG_ERR, "destroy failed\n");
    return rc;
-#else
-   return 0;
-#endif
 }
+
+
+
+// DELETE_DATA
+//
+// delete the named object.  The only client that currently does true
+// deletes of objects is Garbage Collection.  For everyone else, "delete"
+// means "move marfs file to the trash".
+//
+// TBD: We could consider moving the logic that covers all of deletion
+//     including deleting the MD file, from GC to here.
+
+
+
+// There's a complication.  We want GC deletes of objects to be abstracted
+// by going through the DAL, so that the deletes will "just work" with any
+// kind of backing store.  However, the DAL is oriented toward
+// file-handles.  MarFS file-handles are initialized from marfs files, and
+// have a relationship with the marfs xattrs on an MD file, which are
+// parsed into the Pre and Post structs in the FH.  To go through the DAL,
+// we'll want to create a dummy file-handle that looks like a real
+// file-handle in any ways the DAL will care about, which, luckily enough,
+// are probably few.
+//
+// One issue with using file-handles is that, in this "context free" usage,
+// there is no "open" or "close" to be done.
+//
+//    <objid> -- an object-ID, including bucket, but not host.
+//
+//    <md_path> -- is this the original MD path before the file was
+//       deleted, or is it the new MD path of the file, where it currently
+//       sits in the trash?  We probably don't care, because we are *only*
+//       deleting the object, not the MD file.
+//
+
+int fake_filehandle_for_delete(MarFS_FileHandle* fh,
+                               const char*       objid,
+                               const char*       md_path) {
+   TRY_DECLS();
+   MarFS_XattrPre*  pre  = &fh->info.pre;
+   PathInfo*        info = &fh->info;
+   struct stat*     unused = NULL;
+
+   memset(fh, 0, sizeof(MarFS_FileHandle));
+   TRY0( str_2_pre(pre, objid, unused) );
+
+   strncpy(info->post.md_path, md_path, MARFS_MAX_MD_PATH);
+   info->post.md_path[MARFS_MAX_MD_PATH -1] = 0;
+
+   return fake_filehandle_for_delete_inits(fh);
+}
+
+
+int fake_filehandle_for_delete_inits(MarFS_FileHandle* fh) {
+
+   MarFS_XattrPre*  pre  = &fh->info.pre;
+   PathInfo*        info = &fh->info;
+
+   // fake expand_path_info()
+   info->ns      = (MarFS_Namespace*)pre->ns;
+   info->flags  |= PI_EXPANDED;
+
+   // fake stat_xattrs()
+   info->xattrs |= (XVT_PRE | XVT_POST);
+   info->flags  |= PI_XATTR_QUERY;
+
+   // don't let anyone call stat_regular().
+   info->flags |= PI_STAT_QUERY;
+
+   return 0;
+}
+
+
+// The GC utility uses this to do DAL-agnostic deletion of objects.
+// 
+int delete_data(MarFS_FileHandle* fh) {
+   TRY_DECLS();
+
+   TRY0( init_data(fh) );
+   TRY0( DAL_OP(del, fh) );
+   TRY0( destroy_data(fh) );
+   return 0;
+}
+
 
 // Assure MD is open.
 //
@@ -1808,7 +1978,7 @@ int close_data(MarFS_FileHandle* fh) {
 
 int open_md(MarFS_FileHandle* fh, int writing_p) {
 
-   PathInfo* info __attribute__((unused)) = &fh->info;
+   __attribute__((unused)) PathInfo* info = &fh->info;
 
    int         flags;
    const char* flags_str;

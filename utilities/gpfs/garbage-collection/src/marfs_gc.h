@@ -1,5 +1,5 @@
-#ifndef MARFS_QUOTA_H
-#define MARFS_QUOTA_H
+#ifndef MARFS_GC_H
+#define MARFS_GC_H
 /*
 This file is part of MarFS, which is released under the BSD license.
 
@@ -78,7 +78,9 @@ OF SUCH DAMAGE.
 #include <sys/stat.h>
 #include <math.h>               // floorf
 #include <gpfs_fcntl.h>
+
 #include "marfs_base.h"
+#include "common.h"             // marfs/fuse/src/common.h
 #include "aws4c.h"
 
 
@@ -141,15 +143,16 @@ int get_xattrs(gpfs_iscan_t *iscanP,
                FILE         *outfd);
 void print_usage();
 void init_records(Fileset_Info *fileset_info_buf, unsigned int record_count);
-int dump_trash(struct marfs_xattr *xattr_ptr, 
-               char               *md_path_ptr,  
-               File_Info          *file_info_ptr, 
-               MarFS_XattrPost    *post_xattr,
-               MarFS_XattrPre     *pre_ptr);
-int delete_object(char * object, File_Info *file_info_ptr,MarFS_XattrPre *pre_ptr, int is_mult);
-int delete_file(char *filename, File_Info *file_info_ptr);
-int process_packed(File_Info *file_info_ptr);
+int  dump_trash(MarFS_FileHandle   *fh,
+                struct marfs_xattr *xattr_ptr, 
+                File_Info          *file_info_ptr);
+int  delete_object(MarFS_FileHandle *fh,
+                   File_Info        *file_info_ptr,
+                   int               is_mult);
+int  delete_file(char *filename, File_Info *file_info_ptr);
+int  process_packed(File_Info *file_info_ptr);
 void print_current_time(File_Info *file_info_ptr);
-int read_config_gc(Fileset_Info *fileset_info_ptr);
+int  read_config_gc(Fileset_Info *fileset_info_ptr);
+
 #endif
 
