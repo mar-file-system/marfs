@@ -545,6 +545,22 @@ int posix_dal_put(DAL_Context* ctx, const char* buf, size_t size) {
 ssize_t posix_dal_get(DAL_Context* ctx, char* buf, size_t size) {
    ssize_t size_read = 0;
 
+   // Get offset from os->iob
+   //
+   // XXX: This severely violates the encapsulation of the IOBuf. It
+   //      is a hacky solution that should be redesigned; however,
+   //      there is no "get" counterpart to s3_set_byte_range(). We
+   //      could add one, but I think we should try to find a better
+   //      solution that does not depend on iobufs for DALs that do
+   //      not use aws4c.
+   off_t offset = POSIX_DAL_OS(ctx)->iob.context->byte_range.offset;
+   // seek to offset
+   if(lseek(OBJECT_FD(ctx), offset, SEEK_SET) == -1) {
+      LOG(LOG_ERR, "POSIX_DAL: Could not seek to %d (%s)\n",
+          offset, strerror(errno));
+      return -1;
+   }
+   
    size_read = read(OBJECT_FD(ctx), buf, size);
    if(size_read == 0) {
       POSIX_DAL_OS(ctx)->flags |= OSF_EOF;
