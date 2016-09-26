@@ -364,10 +364,29 @@ typedef struct posix_dal_ctx {
 
 
 int posix_dal_ctx_init(DAL_Context* ctx, struct DAL* dal, void* fh /* ? */) {
+   ENTRY();
    ctx->data.ptr = malloc(sizeof(PosixDal_Context));
    POSIX_DAL_CONTEXT(ctx)->fd = -1;
    POSIX_DAL_CONTEXT(ctx)->fh = (MarFS_FileHandle*)fh;
    ctx->flags = 0;
+
+   // create repo/namespace directory under the posix-repo from config.
+   const MarFS_Repo *repo = POSIX_DAL_FH(ctx)->info.pre.repo;
+   const MarFS_Namespace *ns = POSIX_DAL_FH(ctx)->info.pre.ns;
+   struct stat st;
+
+   char repo_path[MARFS_MAX_REPO_NAME + MARFS_MAX_HOST_SIZE
+                  + MARFS_MAX_NAMESPACE_NAME];
+   sprintf(repo_path, "%s/%s", repo->host, repo->name);
+   if(stat(repo_path, &st) == -1) {
+      TRY0( mkdir(repo_path, 0755) ); // XXX: an arbitrary mode.
+   }
+   sprintf(repo_path, "%s/%s/%s", repo->host, repo->name, ns->name);
+   if(stat(repo_path, &st) == -1) {
+      TRY0( mkdir(repo_path, 0755) );
+   }
+
+   EXIT();
    return 0;
 }
 
@@ -391,6 +410,27 @@ void flatten_objectid(char* objid) {
       if(objid[i] == '/')
          objid[i] = '#';
    }
+}
+
+// Generate the full path the the object in the POSIX repository.
+static int generate_path(DAL_Context* ctx, char *object_path) {
+   ENTRY();
+   const MarFS_Repo* repo = POSIX_DAL_FH(ctx)->info.pre.repo;
+   const MarFS_Namespace* ns = POSIX_DAL_FH(ctx)->info.pre.ns;
+
+   sprintf(object_path, "%s/%s/%s/", repo->host, repo->name, ns->name);
+   LOG(LOG_INFO, "POSIX_DAL Repo top level dir: %s\n", object_path);
+
+   char* object_id_start = object_path + strlen(object_path);
+   strncpy(object_id_start, POSIX_DAL_OS(ctx)->url,
+           MARFS_MAX_URL_SIZE);
+
+   flatten_objectid(object_id_start);
+
+   LOG(LOG_INFO, "generated path: %s\n", object_path);
+
+   EXIT();
+   return 0;
 }
 
 int posix_dal_open(DAL_Context* ctx,
@@ -428,106 +468,7 @@ int posix_dal_open(DAL_Context* ctx,
    char object_path[MAX_OBJECT_PATH_LEN];
    memset(object_path, '\0', MAX_OBJECT_PATH_LEN);
 
-   char repo_name[MARFS_MAX_REPO_NAME];
-   char namespace_name[MARFS_MAX_NAMESPACE_NAME];
-   // the following are fields in the url, but are unused here.
-   // we just need them as parameters to sscanf
-   ConfigVersType major;
-   ConfigVersType minor;
-   char           type;
-   char           compress;
-   char           correct;
-   char           encrypt;
-   uint64_t       md_inode;
-   char           md_ctime_str[MARFS_DATE_STRING_MAX];
-   char           obj_ctime_str[MARFS_DATE_STRING_MAX];
-   uint8_t        unique;
-   size_t         chunk_size;
-   size_t         chunk_no;
-
-   int read_count = sscanf(POSIX_DAL_OS(ctx)->url,
-                           MARFS_OBJID_RD_FORMAT,
-                           repo_name,
-                           &major, &minor,
-                           namespace_name,
-                           &type, &compress, &correct, &encrypt,
-                           &md_inode,
-                           md_ctime_str, obj_ctime_str, &unique,
-                           &chunk_size, &chunk_no);
-   if(read_count != 14) {
-      LOG(LOG_ERR, "POSIX_DAL: failed to parse objid: %s\n",
-          POSIX_DAL_OS(ctx)->url);
-      return -1;
-   }
-
-   // get the repo in order to find the path prefix
-   MarFS_Repo* repo = find_repo_by_name(repo_name);
-   if(! repo ) {
-      LOG(LOG_ERR, "Could not find repo %s\n", repo_name);
-      errno = ENOENT; // ? seems reasonable (ish)
-      return -1;
-   }
-
-   // This is a kind of hacky solution to needing a user supplied path
-   // prefix for posix repos. Since the `host' field is not used for
-   // an actual host in this kind of repo, we can use it for the path
-   // prefix without needing to change the configuration by adding
-   // nodes.
-   strncpy(object_path, repo->host, repo->host_len);
-   if(object_path[repo->host_len-1] != '/') {
-      object_path[repo->host_len] = '/';
-   }
-
-   // add the repo directory
-   strncpy(object_path+strlen(object_path), repo_name, MARFS_MAX_REPO_NAME);
-   // Ensure that the top level directories in the repo exist.
-   // (POSIX_PREFIX/<repo_name>/<namespace_name>/)
-   struct stat st;
-   int stat_result = stat(object_path, &st);
-   if(stat_result == -1) {
-      if(is_put && errno == ENOENT) {
-         LOG(LOG_INFO, "POSIX_DAL: repo dir does not exist. Creating dir %s\n",
-             object_path);
-         TRY0( mkdir(object_path, 0755) ); // XXX: an arbitrary mode
-      }
-      else {
-         LOG(LOG_ERR, "POSIX_DAL: non-put request for repo path that "
-             "does not exist: %s\n",
-             object_path);
-         return -1;
-      }
-   }
-
-   // add the namespace directory
-   object_path[strlen(object_path)] = '/';
-   strncpy(object_path+strlen(object_path), namespace_name,
-           MARFS_MAX_NAMESPACE_NAME);
-   stat_result = stat(object_path, &st);
-   if(stat_result == -1) {
-      if(is_put && errno == ENOENT) {
-         LOG(LOG_INFO,
-             "POSIX_DAL: namespace dir does not exist. Crearing dir %s\n",
-             object_path);
-         TRY0( mkdir(object_path, 0755) ); // XXX: an arbitrary mode
-      }
-      else {
-         LOG(LOG_ERR, "POSIX_DAL: non-put request for namespace path that "
-             "does not exist: %s\n", object_path);
-         return -1;
-      }
-   }
-
-   LOG(LOG_INFO, "POSIX_DAL Repo top level dir: %s\n", object_path);
-
-   // Create the file that will hold the data.
-   object_path[strlen(object_path)] = '/';
-   char* object_id_start = object_path + strlen(object_path);
-   strncpy(object_id_start, POSIX_DAL_OS(ctx)->url,
-           MARFS_MAX_URL_SIZE);
-
-   flatten_objectid(object_id_start);
-
-   LOG(LOG_INFO, "POSIX_DAL: opening object path: %s\n", object_path);
+   generate_path(ctx, object_path);
 
    int object_flags;
    const mode_t mode = S_IRUSR|S_IWUSR;
@@ -657,10 +598,10 @@ int posix_dal_close(DAL_Context* ctx) {
 int posix_dal_delete(DAL_Context* ctx) {
    TRY_DECLS();
 
-   const char* fname = POSIX_DAL_FH(ctx)->info.post.md_path;
-   TRY0( unlink(fname) );
+   char object_path[4096];
+   generate_path(ctx, object_path);
 
-   return 0;
+   return unlink(object_path);
 }
 
 
