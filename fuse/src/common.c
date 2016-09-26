@@ -1723,15 +1723,18 @@ int update_url(ObjectStream* os, PathInfo* info) {
    //   __TRY0( update_pre(&info->pre) );
    strncpy(os->url, info->pre.objid, MARFS_MAX_URL_SIZE);
 
-   // log the full URL, if possible:
-   IOBuf*        b  = &os->iob;
-   __attribute__ ((unused)) AWSContext* ctx = ((b)
-                                               ? b->context
-                                               : aws_context_clone());
+   // This can't go here anymore since we have DALS that do not use
+   // the iobuf.
 
-   LOG(LOG_INFO, "generated URL %s %s/%s/%s\n",
-       ((b) ? "" : "(defaults)"),
-       ctx->S3Host, ctx->Bucket, os->url);
+   // log the full URL, if possible:
+   /* IOBuf*        b  = &os->iob; */
+   /* __attribute__ ((unused)) AWSContext* ctx = ((b) */
+   /*                                             ? b->context */
+   /*                                             : aws_context_clone()); */
+
+   /* LOG(LOG_INFO, "generated URL %s %s/%s/%s\n", */
+   /*     ((b) ? "" : "(defaults)"), */
+   /*     ctx->S3Host, ctx->Bucket, os->url); */
 
    return 0;
 }

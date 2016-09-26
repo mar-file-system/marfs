@@ -192,8 +192,6 @@ int stream_init(void* os_void, void* null_void, void* fh_void) {
    // install custom context
    aws_iobuf_context(b, ctx);
 
-   TRY0( update_url(os, info) );
-
    return 0;
 }
 

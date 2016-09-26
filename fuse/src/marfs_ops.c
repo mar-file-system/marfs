@@ -1048,8 +1048,8 @@ int marfs_open(const char*         path,
       // install custom context
       aws_iobuf_context(b, ctx);
 
-      TRY0( update_url(os, info) );
 #endif
+      TRY0( update_url(os, info) );
 
       // To support seek() [for reads], and allow reading at arbitrary
       // offsets, we let marfs_read() determine the offset where it should
