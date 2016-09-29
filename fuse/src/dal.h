@@ -187,7 +187,12 @@ typedef int      (*dal_abort)(DAL_Context*  ctx);
 
 typedef int      (*dal_close)(DAL_Context*  ctx);
 
-
+// Updates the location of the object on the underlying storage for
+// future calls to ->open, ->write, or ->read. Does not mean move the
+// object. This should generally be called before any call to ->open
+// and after a call to update_pre().
+typedef int      (*dal_update_object_location)(DAL_Context* ctx);
+   
 // init() is called first, and destroy() after.
 typedef int      (*dal_delete)(DAL_Context*  ctx);
 
@@ -197,22 +202,23 @@ typedef int      (*dal_delete)(DAL_Context*  ctx);
 // They capture a given implementation of interaction with an MDFS.
 typedef struct DAL {
    // DAL_Type             type;
-   const char*          name;
-   size_t               name_len;
+   const char*                name;
+   size_t                     name_len;
 
-   void*                global_state;
+   void*                      global_state;
 
-   dal_ctx_init         init;
-   dal_ctx_destroy      destroy;
+   dal_ctx_init               init;
+   dal_ctx_destroy            destroy;
 
-   dal_open             open;
-   dal_sync             sync;
-   dal_abort            abort;
-   dal_close            close;
+   dal_open                   open;
+   dal_sync                   sync;
+   dal_abort                  abort;
+   dal_close                  close;
+   dal_put                    put;
+   dal_get                    get;
+   dal_delete                 del;
 
-   dal_put              put;
-   dal_get              get;
-   dal_delete           del;
+   dal_update_object_location update_object_location;
 
 } DAL;
 

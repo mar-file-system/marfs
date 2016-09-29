@@ -238,32 +238,37 @@ int     obj_delete(DAL_Context*  ctx) {
                                 FH(ctx)->info.pre.objid);
 }
 
+int     obj_update_object_location(DAL_Context* ctx) {
+
+   return update_url(OS(ctx), &FH(ctx)->info);
+}
 
 
 static DAL obj_dal = {
-   .name         = "OBJECT",
-   .name_len     = 6, // strlen("OBJECT"),
+   .name                   = "OBJECT",
+   .name_len               = 6, // strlen("OBJECT"),
 
-   .global_state = NULL,
+   .global_state           = NULL,
 
 #if 0
-   .init         = &obj_dal_ctx_init,
-   .destroy      = &obj_dal_ctx_destroy,
+   .init                   = &obj_dal_ctx_init,
+   .destroy                = &obj_dal_ctx_destroy,
 #elif 0
-   .init         = &default_dal_ctx_init,
-   .destroy      = &default_dal_ctx_destroy,
+   .init                   = &default_dal_ctx_init,
+   .destroy                = &default_dal_ctx_destroy,
 #else
-   .init         = &obj_init,
-   .destroy      = &default_dal_ctx_destroy,
+   .init                   = &obj_init,
+   .destroy                = &default_dal_ctx_destroy,
 #endif
 
-   .open         = &obj_open,
-   .put          = &obj_put,
-   .get          = &obj_get,
-   .sync         = &obj_sync,
-   .abort        = &obj_abort,
-   .close        = &obj_close,
-   .del          = &obj_delete
+   .open                   = &obj_open,
+   .put                    = &obj_put,
+   .get                    = &obj_get,
+   .sync                   = &obj_sync,
+   .abort                  = &obj_abort,
+   .close                  = &obj_close,
+   .del                    = &obj_delete,
+   .update_object_location = &obj_update_object_location
 };
 
 
@@ -328,39 +333,55 @@ int     nop_delete(DAL_Context*  ctx) {
    return 0;
 }
 
+int     nop_update_object_location(DAL_Context* ctx) {
+   return 0;
+}
 
 
 DAL nop_dal = {
-   .name         = "NO_OP",
-   .name_len     = 5, // strlen("NO_OP"),
+   .name                   = "NO_OP",
+   .name_len               = 5, // strlen("NO_OP"),
 
-   .global_state = NULL,
+   .global_state           = NULL,
 
-   .init         = &default_dal_ctx_init,
-   .destroy      = &default_dal_ctx_destroy,
-
-   .open         = &nop_open,
-   .put          = &nop_put,
-   .get          = &nop_get,
-   .sync         = &nop_sync,
-   .abort        = &nop_abort,
-   .close        = &nop_close,
-   .del          = &nop_delete
+   .init                   = &default_dal_ctx_init,
+   .destroy                = &default_dal_ctx_destroy,
+   .open                   = &nop_open,
+   .put                    = &nop_put,
+   .get                    = &nop_get,
+   .sync                   = &nop_sync,
+   .abort                  = &nop_abort,
+   .close                  = &nop_close,
+   .del                    = &nop_delete,
+   .update_object_location = &nop_update_object_location
 };
 
 // ===========================================================================
 // POSIX
 // ===========================================================================
 
+#define MAX_POSIX_PREFIX_LEN MARFS_MAX_REPO_NAME
+
+#define MAX_OBJECT_PATH_LEN (MAX_POSIX_PREFIX_LEN               \
+                             + MARFS_MAX_REPO_NAME + 1          \
+                             + MARFS_MAX_NAMESPACE_NAME + 1     \
+                             + MARFS_MAX_OBJID_SIZE + 1)
+
 typedef struct posix_dal_ctx {
    MarFS_FileHandle* fh;
    int fd;
+   char file_path[MAX_OBJECT_PATH_LEN];
 } PosixDal_Context;
 
+enum posix_dal_flags {
+   POSIX_DAL_PATH_GENERATED = (1 << 0)
+};
+
 #define POSIX_DAL_CONTEXT(CTX) ((PosixDal_Context*)((CTX)->data.ptr))
-#define POSIX_DAL_FH(CTX)         POSIX_DAL_CONTEXT(CTX)->fh
-#define POSIX_DAL_FD(CTX)         POSIX_DAL_CONTEXT(CTX)->fd
+#define POSIX_DAL_FH(CTX)      POSIX_DAL_CONTEXT(CTX)->fh
+#define POSIX_DAL_FD(CTX)      POSIX_DAL_CONTEXT(CTX)->fd
 #define POSIX_DAL_OS(CTX)      (&(POSIX_DAL_CONTEXT(CTX)->fh->os))
+#define POSIX_DAL_PATH(CTX)    POSIX_DAL_CONTEXT(CTX)->file_path
 
 
 int posix_dal_ctx_init(DAL_Context* ctx, struct DAL* dal, void* fh /* ? */) {
@@ -378,6 +399,9 @@ int posix_dal_ctx_init(DAL_Context* ctx, struct DAL* dal, void* fh /* ? */) {
    char repo_path[MARFS_MAX_REPO_NAME + MARFS_MAX_HOST_SIZE
                   + MARFS_MAX_NAMESPACE_NAME];
    sprintf(repo_path, "%s/%s", repo->host, repo->name);
+
+   // Check that the directory
+   // <repo-host>/<repo-name>/<namespace-name> exists
    if(stat(repo_path, &st) == -1) {
       TRY0( mkdir(repo_path, 0755) ); // XXX: an arbitrary mode.
    }
@@ -386,21 +410,17 @@ int posix_dal_ctx_init(DAL_Context* ctx, struct DAL* dal, void* fh /* ? */) {
       TRY0( mkdir(repo_path, 0755) );
    }
 
+   memset(POSIX_DAL_PATH(ctx), '\0', MAX_OBJECT_PATH_LEN);
+   
    EXIT();
    return 0;
 }
 
 int posix_dal_ctx_destroy(DAL_Context* ctx, struct DAL* dal) {
    free(POSIX_DAL_CONTEXT(ctx));
+   ctx->flags = 0;
    return 0;
 }
-
-#define MAX_POSIX_PREFIX_LEN MARFS_MAX_REPO_NAME
-
-#define MAX_OBJECT_PATH_LEN (MAX_POSIX_PREFIX_LEN               \
-                             + MARFS_MAX_REPO_NAME + 1          \
-                             + MARFS_MAX_NAMESPACE_NAME + 1     \
-                             + MARFS_MAX_OBJID_SIZE + 1)
 
 // File-ify an objectid by replacing the '/'s with '#'s
 static
@@ -413,21 +433,25 @@ void flatten_objectid(char* objid) {
 }
 
 // Generate the full path the the object in the POSIX repository.
-static int generate_path(DAL_Context* ctx, char *object_path) {
+// This will be used as the ->update_object_location interface
+// function.
+int generate_path(DAL_Context* ctx) {
    ENTRY();
-   const MarFS_Repo* repo = POSIX_DAL_FH(ctx)->info.pre.repo;
-   const MarFS_Namespace* ns = POSIX_DAL_FH(ctx)->info.pre.ns;
+   const MarFS_Repo*      repo        = POSIX_DAL_FH(ctx)->info.pre.repo;
+   const MarFS_Namespace* ns          = POSIX_DAL_FH(ctx)->info.pre.ns;
+   char*                  object_path = POSIX_DAL_PATH(ctx);
 
    sprintf(object_path, "%s/%s/%s/", repo->host, repo->name, ns->name);
    LOG(LOG_INFO, "POSIX_DAL Repo top level dir: %s\n", object_path);
 
    char* object_id_start = object_path + strlen(object_path);
-   strncpy(object_id_start, POSIX_DAL_OS(ctx)->url,
-           MARFS_MAX_URL_SIZE);
+   strncat(object_path, POSIX_DAL_FH(ctx)->info.pre.objid,
+           MARFS_MAX_OBJID_SIZE);
 
    flatten_objectid(object_id_start);
 
    LOG(LOG_INFO, "generated path: %s\n", object_path);
+   ctx->flags |= POSIX_DAL_PATH_GENERATED;
 
    EXIT();
    return 0;
@@ -439,8 +463,18 @@ int posix_dal_open(DAL_Context* ctx,
                    size_t       content_length,
                    uint8_t      preserve_write_count,
                    uint16_t     timeout) {
-   TRY_DECLS();
+   ENTRY();
 
+   // fail if the path has not been generated. This should never
+   // happen and would be a logical error.
+   if(! (ctx->flags & POSIX_DAL_PATH_GENERATED)) {
+      LOG(LOG_ERR, "POSIX_DAL: no previous call to "
+          "DAL->update_object_location");
+      return -1;
+   }
+
+   char *object_path = POSIX_DAL_PATH(ctx);
+   
    // We might be re-opening an object stream that was previously
    // used. This happens when we overwrite a file.
    if(POSIX_DAL_OS(ctx)->flags) {
@@ -464,11 +498,6 @@ int posix_dal_open(DAL_Context* ctx,
          return -1;
       }
    }
-
-   char object_path[MAX_OBJECT_PATH_LEN];
-   memset(object_path, '\0', MAX_OBJECT_PATH_LEN);
-
-   generate_path(ctx, object_path);
 
    int object_flags;
    const mode_t mode = S_IRUSR|S_IWUSR;
@@ -500,6 +529,7 @@ int posix_dal_open(DAL_Context* ctx,
    POSIX_DAL_FD(ctx) = fd;
    POSIX_DAL_OS(ctx)->flags |= OSF_OPEN;
 
+   EXIT();
    return 0;
 }
 
@@ -598,8 +628,7 @@ int posix_dal_close(DAL_Context* ctx) {
 int posix_dal_delete(DAL_Context* ctx) {
    TRY_DECLS();
 
-   char object_path[4096];
-   generate_path(ctx, object_path);
+   char object_path = POSIX_DAL_PATH(ctx);
 
    return unlink(object_path);
 }
@@ -621,7 +650,9 @@ DAL posix_dal = {
    .sync         = &posix_dal_sync,
    .abort        = &posix_dal_abort,
    .close        = &posix_dal_close,
-   .del          = &posix_dal_delete
+   .del          = &posix_dal_delete,
+
+   .update_object_location = &generate_path
 };
 
 // ===========================================================================

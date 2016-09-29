@@ -1809,7 +1809,7 @@ int open_data(MarFS_FileHandle* fh,
               size_t            content_length,
               uint8_t           preserve_wr_count,
               uint16_t          timeout) {
-
+   ENTRY();
    int         flags;
    const char* flags_str;
 
@@ -1825,7 +1825,11 @@ int open_data(MarFS_FileHandle* fh,
    // if we haven't already initialized the FileHandle DAL, do it now.
    init_data(fh);
 
-
+#if USE_DAL
+   TRY0( DAL_OP(update_object_location, fh) );
+#else
+   TRY0( update_url(&fh->os, &fh->info) );
+#endif
    // if we haven't already opened the data-stream, do it now.
    //
    // TBD: is_open().  Should assimilate FH->os_init, which should become a flag
@@ -1840,6 +1844,7 @@ int open_data(MarFS_FileHandle* fh,
    }
 
    LOG(LOG_INFO, "open_data() ok\n");
+   EXIT();
    return 0;
 }
 
