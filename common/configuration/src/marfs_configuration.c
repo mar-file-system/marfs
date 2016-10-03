@@ -1673,6 +1673,8 @@ int debug_namespace( MarFS_Namespace* ns ) {
    fprintf(stdout, "Namespace\n");
    fprintf(stdout, "\tname               %s\n",   ns->name );
    fprintf(stdout, "\tname_len           %ld\n",  ns->name_len);
+   fprintf(stdout, "\talias              %s\n",   ns->alias );
+   fprintf(stdout, "\talias_len          %ld\n",  ns->alias_len);
    fprintf(stdout, "\tmnt_path           %s\n",   ns->mnt_path);
    fprintf(stdout, "\tmnt_path_len       %ld\n",  ns->mnt_path_len);
    fprintf(stdout, "\tbperms             0x%x\n", ns->bperms);

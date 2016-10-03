@@ -1,0 +1,52 @@
+# (see curl_op2, which calls this)
+
+# --- read the password from ~/.awsAuth
+set fd     [open "~/.awsAuth"]
+set tokens [split [read $fd] ":\n"]
+set pass   [lindex $tokens 2]
+# send_user "password: $pass"
+close $fd
+
+# --- execute the command, providing password interactively
+#     NOTE: curl_op tells us whether it's running in the forground
+#           (or not) so that we can act accordingly
+
+set foreground  [lindex $argv 0]
+set cmd         [lindex $argv 1]
+set args        [lrange $argv 2 end]
+
+spawn $cmd {*}$args
+
+expect password
+send "$pass\n"
+
+
+# warning: because Tcl is crap, the "open-curly else close-curly" must all
+# apear on one line.  It's worse than that!  If I put a literal open-curly in
+# a comment it causes a problem.
+
+if { $foreground } {
+
+   # --- if curl_op2 were running in the foreground, this works:
+   interact
+   # wait
+
+   lassign [wait] pid spwanid os_rc errno
+} else {
+
+   # --- for "curl_op2 ... &" use this:
+   expect eof
+   # exit
+   # wait
+
+   lassign [wait] pid spwanid os_rc errno
+}
+
+
+
+if {$os_rc == 0} {
+   puts "returned 0"
+} else {
+   puts "error: returned $os_rc  (errno: $errno)"
+}
+

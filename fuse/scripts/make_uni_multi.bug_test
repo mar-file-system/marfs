@@ -1,0 +1,143 @@
+#!/bin/bash
+
+# Simulating a bunch of parallel closes, like what make_uni_multi through
+# fuse would be doing.  curl considers the write complete when the object
+# has been closed, but curl does the release asynchronously, at some later
+# time.  Therefore, there might be a bunch of not-quite-finished
+# transactions at the server, when the write to the multi arrives.
+
+# So, if that's what is causing a '500 Internal Server Error' in
+# make-uni_multi, then this might reproduce it.
+
+# make_uni_multi.bug_test runs this via expect, so that all our possword
+# prompts get supported
+
+
+
+if (( ! ${#} )); then
+    echo "Usage: $0 <marfs_ns>"
+    exit 1
+fi
+
+NS="$1"
+URL=`./curl_make_url "$NS"`
+
+# UNI_COUNT=4
+UNI_COUNT=2048
+MUL_COUNT=1
+
+
+SRC_UNI=/tmp/foo.uni.source
+SRC_MUL=/tmp/foo.mul.source
+
+LOG_UNI=/tmp/foo.uni
+LOG_MUL=/tmp/foo.mul
+
+
+# --- clean-up previous runs
+[ -n "$SRC_UNI" ] && rm -f ${SRC_UNI}.*
+[ -n "$SRC_MUL" ] && rm -f ${SRC_MUL}.*
+
+[ -n "$LOG_UNI" ] && rm -f ${LOG_UNI}.*
+[ -n "$LOG_MUL" ] && rm -f ${LOG_MUL}.*
+
+
+# --- make source files
+echo "small file" > $SRC_UNI
+truncate -s 1G $SRC_MUL
+
+
+
+
+# --- PUT uni files (in parallel) 
+for i in `seq 1 $UNI_COUNT`; do
+    URL2=${URL}.uni.$i
+    echo "creating $URL2"
+    # curl_op2 PUT $URL2 $SRC_UNI > ${LOG_UNI}.$i &
+    if (( i % 2 )); then
+       curl_op2 PUT       $URL2 $SRC_UNI > ${LOG_UNI}.$i &
+    else
+       curl_op2 PUT_SLEEP $URL2 $SRC_UNI > ${LOG_UNI}.$i &
+    fi
+done
+
+
+# # adding a wait here.
+# # does this allow the multi to succeed?
+# wait
+
+# --- PUT a big object
+for i in `seq 1 $MUL_COUNT`; do
+    URL2=${URL}.mul.$i
+    echo "creating $URL2"
+    ./curl_op2 PUT $URL2 $SRC_MUL > ${LOG_MUL}.$i &
+done
+
+
+
+echo "waiting ..."
+wait
+echo "waited."
+
+
+
+
+# --- STAT uni files
+for i in `seq 1 $UNI_COUNT`; do
+    URL2=${URL}.uni.$i
+    echo "statting $URL2"
+    echo >> ${LOG_UNI}.$i
+    ./curl_op2 STAT $URL2 >> ${LOG_UNI}.$i &
+done
+
+# --- STAT the big object
+for i in `seq 1 $MUL_COUNT`; do
+    URL2=${URL}.mul.$i
+    echo "statting $URL2"
+    echo >> ${LOG_MUL}.$i
+    ./curl_op2 STAT $URL2 >> ${LOG_MUL}.$i &
+done
+
+wait
+
+
+
+
+
+# --- DELETE uni files
+for i in `seq 1 $UNI_COUNT`; do
+    URL2=${URL}.uni.$i
+    echo "deleting $URL2"
+    echo >> ${LOG_UNI}.$i
+    ./curl_op2 DELETE $URL2 >> ${LOG_UNI}.$i &
+done
+
+# --- DELETE the big object
+for i in `seq 1 $MUL_COUNT`; do
+    URL2=${URL}.mul.$i
+    echo "deleting $URL2"
+    echo >> ${LOG_MUL}.$i
+    ./curl_op2 DELETE $URL2 >> ${LOG_MUL}.$i &
+done
+
+wait
+
+
+
+# # --- STAT uni files
+# for i in `seq 1 $UNI_COUNT`; do
+#     URL2=${URL}.uni.$i
+#     echo "statting $URL2"
+#     echo >> ${LOG_UNI}.$i
+#     ./curl_op2 STAT $URL2 >> ${LOG_UNI}.$i &
+# done
+# 
+# # --- STAT the big object
+# for i in `seq 1 $MUL_COUNT`; do
+#     URL2=${URL}.mul.$i
+#     echo "statting $URL2"
+#     echo >> ${LOG_MUL}.$i
+#     ./curl_op2 STAT $URL2 >> ${LOG_MUL}.$i &
+# done
+# 
+# wait

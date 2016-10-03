@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# Write file-contents to an object.
+#
+# Usage:
+#
+#   curl_op <op> <URL> [ <data_fname> ]
+#
+#
+# where:
+#
+#   <op> is one of GET, PUT, DELETE, STAT
+#
+#   <data_fname> only needed for GET/PUT.  Defaults to stdin/stdout.
+
+
+function fail() {
+    echo "caught an error"
+}
+trap fail ERR
+
+
+CURL_ARGS=
+DST=
+
+declare -i OP=0
+case "$1" in
+
+    (DELETE) OP=1
+    CURL_ARGS="-X DELETE"
+    ;;
+
+
+    (STAT)   OP=2
+    CURL_ARGS="-I"
+    ;;
+
+
+    (GET)    OP=3
+    if [ ! -z "$3" ]; then
+        DST="> $3"
+    fi
+    ;;
+
+
+    (PUT_SLEEP)
+    sleep 1
+    ;& # fall through ...
+
+    (PUT)    OP=4
+    if [ -z "$3" ]; then
+        # CURL_ARGS="-T ."
+        CURL_ARGS="-T -"
+    else
+        CURL_ARGS="-T $3"
+    fi
+    ;;
+
+esac
+if (( ! OP )); then
+    echo "unrecognized op: $1"
+    exit 1
+fi
+
+
+if [ -z "$2" ]; then
+    URL=`./curl_make_url admins`
+else
+    URL="$2"
+fi
+
+
+
+echo "* $1: $URL"
+
+#--- define the op
+CMD="curl -sS -u root --digest $PARMS $CURL_ARGS $URL $DST"
+echo "cmd: $CMD"
+
+# --- do the op
+OUTPUT=`eval "$CMD"`
+
+# --- capture results
+RC=$(( $? ))
+
+CODE=`echo "$OUTPUT" | tr '<>' '\n ' | egrep '(^title|^HTTP)' | tail -n 1 | awk '{ $1=""; print}'`
+
+echo "return code: $RC"
+echo "curl code:   $CODE"
+
+if (( OP >= 3 )); then
+  echo "OUTPUT: $OUTPUT"
+elif (( RC )); then
+  echo "full output: $OUTPUT"
+elif [ -z "$CODE" ]; then
+  echo "couldn't parse curl code from this: $OUTPUT"
+fi

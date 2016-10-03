@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Run the "curl_op" script with the same command-line, but do it from an
+# expect script which reads the HTTP digest password and provides it
+# interactively.
+
+# First arg to the expect script tells it whether we are running in the
+# foreground (1) or background (0).
+
+
+# UPDATE: "expect" always runs us as a distinct foreground process (?)
+#
+# # STATE=`ps -o stat= -p $$`
+# STATE=`ps -o stat= -p $BASHPID`
+# 
+# PLUS=`echo $STATE | grep '+'`
+# FORE=$(( ${#PLUS} > 0))
+FORE=0
+
+echo "--- curl_op2: expect ./curl_op2.expect $FORE ./curl_op $@"
+expect ./curl_op2.expect $FORE ./curl_op "$@"
