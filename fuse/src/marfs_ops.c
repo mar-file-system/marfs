@@ -340,7 +340,6 @@ int marfs_ftruncate(const char*            path,
    size_t   open_size  = get_stream_wr_open_size(fh, 0);
    uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-   TRY0( update_url(os, info) );
    TRY0( open_data(fh, OS_PUT, 0, open_size, 0, wr_timeout) );
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
@@ -947,7 +946,6 @@ int marfs_open(const char*         path,
          // update URL for this chunk
          info->pre.chunk_no = chunk_no;
          update_pre(&info->pre);
-         // update_url(os, info); // can't do this here ...
       }
 
       if( fh->flags & FH_PACKED ) {
@@ -1049,7 +1047,6 @@ int marfs_open(const char*         path,
       aws_iobuf_context(b, ctx);
 
 #endif
-      TRY0( update_url(os, info) );
 
       // To support seek() [for reads], and allow reading at arbitrary
       // offsets, we let marfs_read() determine the offset where it should
@@ -1669,7 +1666,6 @@ static ssize_t marfs_read_internal (const char*        path,
          // update the URL in the ObjectStream, in our FileHandle
          info->pre.chunk_no = chunk_no;
          update_pre(&info->pre);
-         update_url(os, info);
 
          // request data from the offset in this chunk, to the end of
          // logical data in this chunk, or to offset+size, whichever comes
@@ -2888,7 +2884,6 @@ ssize_t marfs_write(const char*        path,
 
       // update the URL in the ObjectStream, in our FileHandle
       TRY0( update_pre(&info->pre) );
-      TRY0( update_url(os, info) );
 
       // NOTE: stream_open() potentially wipes ObjectStream.written.  We
       //     want this field to track the total amount written, across all
@@ -2982,7 +2977,6 @@ ssize_t marfs_write(const char*        path,
 
          // update the URL in the ObjectStream, in our FileHandle
          TRY0( update_pre(&info->pre) );
-         TRY0( update_url(os, info) );
 
          // pos in user-data corresponding to the logical end of a chunk
          log_end += (info->pre.repo->chunk_size - recovery);

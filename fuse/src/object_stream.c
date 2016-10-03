@@ -1385,6 +1385,10 @@ void stream_reset(ObjectStream* os,
 // ObjectStreams.  So, we re-parse those fields out separately, here.  This
 // implies that caller already did update_pre(&fh.info.pre), and
 // update_url(&fh.os, &fh.info), before calling this.
+//
+// UPDATE: we have made update_url() a DAL interface function (and
+// renamed it "update_object_location"). Any caller should be sure to
+// call that first as described above.
 
 int stream_del(ObjectStream* os) {
    LOG(LOG_INFO, "URL: %s\n", os->url);
