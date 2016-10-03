@@ -705,6 +705,7 @@ int install_DAL(DAL* dal) {
    DL_CHECK(abort);
    DL_CHECK(close);
    DL_CHECK(del);
+   DL_CHECK(update_object_location);
 
    if (dal_count >= MAX_DAL) {
          LOG(LOG_ERR,
@@ -776,6 +777,9 @@ DAL* dynamic_DAL(const char* name) {
       dal->sync         = (dal_sync)    dlsym(lib, "dal_sync");
       dal->abort        = (dal_abort)   dlsym(lib, "dal_abort");
       dal->close        = (dal_close)   dlsym(lib, "dal_close");
+
+      dal->update_object_location =
+         (dal_update_object_location) dlsym(lib, "dal_update_object_location");
 
       dlclose(lib);
 
