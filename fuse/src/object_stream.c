@@ -1362,9 +1362,6 @@ void stream_reset(ObjectStream* os,
 }
 
 
-
-
-
 // ---------------------------------------------------------------------------
 // DELETE
 //
@@ -1506,5 +1503,43 @@ int     stream_del_components(ObjectStream* os,
 
    AWS4C_CHECK1( s3_delete(b, (char* const)obj_name) );
 
+   return 0;
+}
+
+
+// We might be reopening an object stream that was previously used.
+// This happens, for example, when we overwrite a file.
+//
+// This is a piece of code that needs to be executed at the begining
+// of every call to DAL->open() in order to guard against reopening a
+// previously used object stream and clean up the flags if that is the
+// case.
+//
+// Returns 0 on success or -1 on error and sets errno = EBADF.
+int stream_cleanup_for_reopen(ObjectStream* os, int preserve_write_count) {
+   ENTRY();
+
+   if(os->flags) {
+      if(os->flags & OSF_CLOSED) {
+         LOG(LOG_INFO, "previously used OS: %s. resetting flags.\n",
+             os->url);
+         os->flags = 0;
+         if(! preserve_write_count)
+            os->written = 0;
+      }
+      // Guard against the O_RDONLY case. RLOCK_INIT will be asserted
+      // but that doesn't mean the OS is invalid, just that we ore
+      // opening for reading.
+      else if(! (os->flags & ~OSF_RLOCK_INIT)) {
+         LOG(LOG_INFO, "only flag was RLOCK_INIT\n");
+      }
+      else {
+         LOG(LOG_ERR, "%s has flags asserted, but is not CLOSED.\n", os->url);
+         errno = EBADF;
+         return -1;
+      }
+   }
+
+   EXIT();
    return 0;
 }
