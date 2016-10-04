@@ -628,9 +628,7 @@ int posix_dal_close(DAL_Context* ctx) {
 int posix_dal_delete(DAL_Context* ctx) {
    TRY_DECLS();
 
-   char object_path = POSIX_DAL_PATH(ctx);
-
-   return unlink(object_path);
+   return unlink(POSIX_DAL_PATH(ctx));
 }
 
 
