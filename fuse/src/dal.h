@@ -167,6 +167,23 @@ typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 // TBD: This should probably use va_args, to improve generality For now
 //      we're just copying the object_stream inteface verbatim.
 //
+// chunk_offset is the offset within the object to begin a subsequent
+// read (or write, if supported?) operation. Will probably not be
+// called with non-zero if opening for writing since marfs does not
+// currently support writes to arbitratry offests, or appends.
+//
+// Should set the OSF_OPEN and one of OSF_READING or OSF_WRITING flags
+// in ObjectStream->flags for the object stream associated with the
+// context.
+//
+// Additionally the implementation must guard itself against OS
+// structures that were previously used and have the OSF_CLOSED flag
+// Asserted. In the abscence of OSF_CLOSED, any other flags that are
+// asserted (with the exception of OSF_RLOCK_INIT) should be
+// considered an error and open should fail with errno=EBADF. If given
+// an object stream with the OSF_CLOSED flag then it is also the
+// responsibility of the implementation to set ObjectStream->written
+// to 0 if preserve_write_count == 0.
 typedef int      (*dal_open) (DAL_Context* ctx,
                               int          is_put,
                               size_t       chunk_offset,
@@ -174,17 +191,59 @@ typedef int      (*dal_open) (DAL_Context* ctx,
                               uint8_t      preserve_write_count,
                               uint16_t     timeout);
 
+// Writes the data in the buffer to the object.
+//
+// Return the number of bytes written, or -1 on error and set errno to
+// something appropriate.
+//
+// MarFS expects the ->written field in the ObjectStream associated
+// with the context to be incremented by the number of bytes written.
+//
+// TODO: check whether stream_put sets any relevant flags in the case
+//       of a put failure.
 typedef int      (*dal_put)  (DAL_Context*  ctx,
                               const char*   buf,
                               size_t        size);
 
+// Read from an object stream begining at the offset supplied to
+// ->open().
+//
+// Returns the number of bytes read, or zero to indicate the end of
+// the object has been reached. Returns -1 on failure and sets errno.
+//
+// MarFS expects the ->written field in the ObjectStream associated
+// with the context to be incremented by the number of bytes read.  If
+// EOF is encountered then this must set OSF_EOF in ->flags for the
+// OS.
+//
+// NOTE: It is possible that other flags are set by the streaming
+// functions. for example: OSF_EOF may be used to indicate a read or
+// write error (object_stream.c:633)?
 typedef ssize_t  (*dal_get)  (DAL_Context*  ctx,
                               char*         buf,
                               size_t        size);
 
+// This is the last chance to return an error. After this is called
+// all I/O on the object stream should be done (including any flushes
+// that might be needed before close).
 typedef int      (*dal_sync) (DAL_Context*  ctx);
+
+// Abort an open object stream. This means we are canceling any
+// read/write operations. This is only every called when there is
+// nothing yet written to the stream, but theoretically it should be
+// able to roll back any data that has been written and close the
+// stream without creating a persisten object.
+//
+// Must set the OSF_ABORT flag in ObjectStream->flags
 typedef int      (*dal_abort)(DAL_Context*  ctx);
 
+// Should do whatever is necessary to insure that the object stream is
+// closed. If given an OS that is open should fail with errno=EBADF.
+//
+// Returns 0 on success or -1 for failure.
+//
+// Must set the OSF_CLOSED flag in ObjectStream->flags for the
+// associated OS.
 typedef int      (*dal_close)(DAL_Context*  ctx);
 
 // Updates the location of the object on the underlying storage for
