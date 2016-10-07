@@ -1,0 +1,36 @@
+#!/bin/bash
+
+function usage {
+    echo "Usage:"
+    printf "\t%s <repo-name>\n\t\t<containing-directory>\n\t\t<num-pods>\n\t\t <num-blocks>\n\t\t<num-capacity-units>\n\t\t<scatter-width>" $0
+    echo
+    echo "builds the tree: <containing-directory>/<repo-name>/pod[0..<num-pods>-1]/block[0..<num-blocks>-1]/cap[0..<num-capacity-units>-1]/scatter[0..<scatter-width>-1]"
+}
+
+if ! [ -d $2/$1 ] ; then
+    echo "repo-dir exists"
+fi
+
+let npods=$3-1
+let nblocks=$4-1
+let ncaps=$5-1
+let nscatter=$6-1
+
+for p in `seq 0 $npods`
+do
+    for b in `seq 0 $nblocks`
+    do
+        for c in `seq 0 $ncaps`
+        do
+            for s in `seq 0 $nscatter`
+            do
+                path=$2/$1/pod$p/block$b/cap$c/scatter$s
+                echo "making $path"
+                mkdir -p $path
+                # the repo must be world writable
+                chmod 777 $path
+            done
+        done
+    done
+done
+

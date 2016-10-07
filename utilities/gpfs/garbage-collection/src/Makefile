@@ -26,8 +26,10 @@ LDFLAGS += -L$(LIBAWS4C)
 LDFLAGS += -L$(MARFS_FUSE)
 LDFLAGS += -L$(MARFS_CONFIG)
 LDFLAGS += -L$(UTILITIES_COMMON)
+CFLAGS += -I$(LIBNE)
+LDFLAGS += -L$(LIBNE)
 LIBMARFS = -lmarfs -lxml2 -laws4c -lcurl -lcrypto
-LIBS += -laws4c -lgpfs -lcurl -lm $(LIBMARFS) -lconfig -lutil_comm
+LIBS += -laws4c -lgpfs -lcurl -lm $(LIBMARFS) -lconfig -lutil_comm -lisal -lne
 
 #Build regular marfs_gc or debug version
 marfs_gc: $(H) $(OBJS)  marfs_gc.c 

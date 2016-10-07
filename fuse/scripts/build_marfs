@@ -154,6 +154,15 @@ fi
 
 echo
 echo "### ................................................................."
+echo "### making libne"
+echo "### ( cd $LIBNE && make clean && make libne.a CC=$COMPILER )"
+if !( cd $LIBNE && make clean && make libne.a CC=$COMPILER ); then
+    echo "couldn't build libne"
+    exit 1
+fi
+
+echo
+echo "### ................................................................."
 echo "### making libmarfs"
 echo "### ( cd $FUSE && make clean && make $FUSE_ARGS )"
 if !( cd $FUSE && make clean && make $FUSE_ARGS CC=$COMPILER ); then

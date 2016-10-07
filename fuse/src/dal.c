@@ -634,6 +634,7 @@ DAL posix_dal = {
 // ===========================================================================
 // MC (Multi-component)
 // ===========================================================================
+#include "erasure.h"
 
 // The mc path will be the host field of the repo plus an object id.
 // We need a little extra room to account for numbers that will get
@@ -647,18 +648,6 @@ DAL posix_dal = {
 #define MC_HANDLE(CTX)  MC_CONTEXT(CTX)->mc_handle
 #define MC_CONTEXT(CTX) ((MC_Context*)((CTX)->data.ptr))
 
-// XXX: remove all of this.
-//      This is scaffolding while we get the ne library up and runnung.
-#define NE_WRONLY (1 << 0)
-#define NE_RDONLY (1 << 1)
-typedef void ne_handle;
-#if 0
-ne_handle* ne_open(const char* path_template, int mode, int start_block,
-                   int n, int e);
-int ne_read(ne_handle* handle, void* buf, size_t offset, size_t size);
-int ne_write(ne_handle* handle, void buf, size_t size);
-int ne_close(ne_handle* handle);
-#endif
 enum mc_flags {
    MCF_DEFERED_OPEN = 0x1, // we called open, and said we opened the
                            // object, but really we are waiting until
@@ -667,7 +656,7 @@ enum mc_flags {
 
 typedef struct mc_context {
    ObjectStream*     os;
-   ne_handle*        mc_handle;
+   ne_handle         mc_handle;
    MarFS_FileHandle* fh;
    off_t             chunk_offset;
 
@@ -758,6 +747,7 @@ int mc_update_path(DAL_Context* ctx) {
 
    // XXX: This all needs to come from the configuration for the
    // DAL/repo.
+#warning "constants n, e, num_blocks, etc. should be read from config!"
    int n = 10;
    int e = 2;
    unsigned int num_blocks    = n+e;
@@ -787,6 +777,8 @@ int mc_update_path(DAL_Context* ctx) {
    // append the fileified object id
    strncat(path_template, obj_filename, MC_MAX_PATH_LEN);
 
+   LOG(LOG_INFO, "MC path template: %s\n", path_template);
+   
    return 0;
 }
 
@@ -797,6 +789,7 @@ int mc_do_open(DAL_Context* ctx) {
    ObjectStream* os            = MC_OS(ctx);
    char*         path_template = MC_CONTEXT(ctx)->path_template;
    // XXX: This needs to come from the configuration for the DAL/repo.
+#warning "n and e should be read from config!"
    unsigned int n = 10;
    unsigned int e = 2;
 
@@ -871,7 +864,6 @@ int mc_put(DAL_Context* ctx,
            size_t size) {
    ENTRY();
 
-   ne_handle*    handle = MC_HANDLE(ctx);
    ObjectStream* os     = MC_OS(ctx);
 
    if(! (os->flags & OSF_OPEN)) {
@@ -885,7 +877,8 @@ int mc_put(DAL_Context* ctx,
          return -1; // errno should be set in do_open()
       }
    }
-   
+
+   ne_handle handle = MC_HANDLE(ctx);
    int written = ne_write(handle, buf, size);
 
    if(written < 0) {
@@ -903,7 +896,6 @@ ssize_t mc_get(DAL_Context* ctx, char* buf, size_t size) {
    ENTRY();
 
    ssize_t       size_read;
-   ne_handle*    handle = MC_HANDLE(ctx);
    ObjectStream* os     = MC_OS(ctx);
 
    if(! (os->flags & OSF_OPEN)) {
@@ -917,11 +909,13 @@ ssize_t mc_get(DAL_Context* ctx, char* buf, size_t size) {
       }
    }
 
+   ne_handle handle = MC_HANDLE(ctx);
+
    // Need to figure out how to get the offset from the os.  May be as
    // simple as reading from os->written.  Note that stream_get()
    // truncates requests to fit within os->content_len, thus avoiding
    // reads that return fewer than the number of bytes requested.
-   size_read = ne_read(handle, buf, MC_CONTEXT(ctx)->chunk_offset, size);
+   size_read = ne_read(handle, buf, size, MC_CONTEXT(ctx)->chunk_offset);
 
    if(size_read < 0) {
       LOG(LOG_ERR, "netof_read() failed.\n");
@@ -946,7 +940,7 @@ int mc_sync(DAL_Context* ctx) {
    ENTRY();
    
    ObjectStream* os     = MC_OS(ctx);
-   ne_handle*    handle = MC_HANDLE(ctx);
+   ne_handle     handle = MC_HANDLE(ctx);
 
    if(! (os->flags & OSF_OPEN)) {
       LOG(LOG_ERR, "%s isn't open\n", os->url);
@@ -1006,9 +1000,24 @@ int mc_close(DAL_Context* ctx) {
    return 0;
 }
 
+int mc_del(DAL_Context* ctx) {
+   char* path_template = MC_CONTEXT(ctx)->path_template;
+#warning "nblocks should be read from config!"
+   int nblocks = 12; // XXX CHANGE THIS
+
+   int block;
+   for(block = 0; block < nblocks; block++) {
+      char block_path[MC_MAX_PATH_LEN];
+      sprintf(block_path, path_template, block);
+      unlink(block_path);
+   }
+
+   return 0;
+}
+
 DAL mc_dal = {
-   .name         = "MC_DAL",
-   .name_len     = 6,
+   .name         = "MC",
+   .name_len     = 2,
 
    .global_state = NULL,
 
@@ -1018,6 +1027,7 @@ DAL mc_dal = {
    .open         = &mc_open,
    .put          = &mc_put,
    .get          = &mc_get,
+   .del          = &mc_del,
    .sync         = &mc_sync,
    .abort        = &mc_abort,
    .close        = &mc_close,
@@ -1180,6 +1190,7 @@ DAL* get_DAL(const char* name) {
       assert(! install_DAL(&obj_dal)   );
       assert(! install_DAL(&nop_dal)   );
       assert(! install_DAL(&posix_dal) );
+      assert(! install_DAL(&mc_dal)    );
 
       needs_init = 0;
    }

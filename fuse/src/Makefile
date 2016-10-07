@@ -236,7 +236,7 @@ endif
 CFLAGS    += -I$(LIBAWS4C)
 LDFLAGS   += -L$(LIBAWS4C)
 LIBS      += -laws4c -laws4c_extra -lcurl -lxml2 -lcrypto -lpthread -lrt
-FUSE_DEPS += $(LIBAWS4C)/libaws4c.a
+FUSE_DEPS += $(LIBAWS4C)/libaws4c.a $(LIBNE)/libne.a
 
 
 
@@ -311,6 +311,9 @@ ifdef LINK_LIBFUSE
 	DEFS    += LINK_LIBFUSE
 endif
 
+CFLAGS += -I$(LIBNE)
+LDFLAGS += -L$(LIBNE)
+LIBS += -lisal -lne
 
 # assimilate all the DEFS we've added, into CFLAGS
 CFLAGS  += $(patsubst %, -D%, $(DEFS))
@@ -383,7 +386,7 @@ endif
 marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS) libmarfs.a
 	@# $(CC) $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose main.c $(OBJS) $(LIBS)
 	@# $(CC) $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
-	$(CC) $(CFLAGS) -o $@ $(LDFLAGS) -L$(PWD) main.c $(LIBS) -lmarfs
+	$(CC) $(CFLAGS) -o $@ $(LDFLAGS) -L$(PWD) main.c -lmarfs $(LIBS)
 
 fuse:  fuse.std
 fast:  fuse.fast
