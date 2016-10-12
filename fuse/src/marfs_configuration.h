@@ -123,10 +123,12 @@ extern "C" {
 //
 // -- 1.4 Added mdfs_top to config, with checking in open() and opendir()
 //        to forbid access, in case something gets past unshare.
-
+//
+// -- 1.5 Not strictly a change in config.  Moved parsing to libmarfs,
+//        leaving libconfig with only the PA2X interface.
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  4
+#define MARFS_CONFIG_MINOR  5
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 

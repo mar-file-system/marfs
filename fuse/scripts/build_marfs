@@ -101,6 +101,10 @@ case $CODE in
         exit 1;
 esac
 
+# marfs_config is now found in the libmarfs source tree, instead of libconfig
+# TBD: move to utilities.
+FUSE_ARGS+=" marfs_config"
+
 
 if (( MDAL )); then
     FUSE_ARGS+=" USE_MDAL=1"
@@ -118,11 +122,15 @@ fi
 CONFIG_ARGS+=" PARSE_DIR=$PA2X"
 FUSE_ARGS+=" LIBAWS4C=$AWS4C"
 
+
+
 echo "AWS4C_ARGS='$AWS4C_ARGS'"
 echo "CONFIG_ARGS='$CONFIG_ARGS'"
 echo "FUSE_ARGS='$FUSE_ARGS'"
 echo "UTILITY_ARGS=$UTILITY_ARGS"
 echo
+
+
 
 
 

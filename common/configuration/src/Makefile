@@ -10,7 +10,8 @@ CC = gcc
 # all:   test_marfs_configuration
 # debug: test_marfs_configuration-d
 
-all:   libconfig.a tester marfs_config
+# all:   libconfig.a tester marfs_config
+all:   libconfig.a
 debug: test_marfs_configuration-d
 
 
@@ -82,6 +83,9 @@ endif
 PARSE_OBJ_files = confpars.o path-switch.o parsedata.o
 PARSE_OBJ       = $(patsubst %, $(PARSE_DIR)/%, $(PARSE_OBJ_files))
 
+PARSE_H_file    = config-structs.h
+PARSE_H         = $(PARSE_DIR)/parse-inc/$(PARSE_H_file)
+
 
 # This generates a 'datapars' in PARSE_DIR, using the BLUEPRINT config.
 # This parser should then be able to parse MarFS configs that are
@@ -113,6 +117,9 @@ parser: parse_dir
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
 	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 
+	@ echo; echo "#-- making a symlink to $(PARSE_DIR)/$(PARSE_h_file)"
+	ln -fs $(PARSE_H) $(PARSE_H_file)
+
 
 CFLAGS += -I$(PARSE_DIR) -DPARSE_DIR=$(PARSE_DIR)
 
@@ -138,7 +145,8 @@ CFLAGS += -I$(LOG_DIR) $(LOG_OPT)
 # build a library with Ron's parser, plus the marfs config-parser, plus logging
 # ---------------------------------------------------------------------------
 
-FNAME_ROOTS = marfs_configuration
+# FNAME_ROOTS = marfs_configuration
+FNAME_ROOTS = PA2X_interface
 
 OBJ = $(patsubst %, %.o, $(FNAME_ROOTS))
 SRC = $(patsubst %, %.c, $(FNAME_ROOTS))
