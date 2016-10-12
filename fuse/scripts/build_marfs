@@ -111,7 +111,7 @@ if (( DAL )); then
 fi
 
 
-if [ -n "$MARFSCONFIG" ]; then
+if [ -n "$MARFSCONFIGRC" ]; then
     CONFIG_ARGS+=" CONFIG=$MARFSCONFIGRC"
 fi
 
