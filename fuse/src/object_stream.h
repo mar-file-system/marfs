@@ -259,8 +259,9 @@ typedef enum {
    OSF_TIMEOUT_K  = 0x0080,     // SAFE_WAIT_KILL() in stream_put/get
 
    OSF_ABORT      = 0x0100,     // stream_abort(), or stream_sync()
-   OSF_JOINED     = 0x0200,
-   OSF_CLOSED     = 0x0400,
+   OSF_CANCELED   = 0x0200,
+   OSF_JOINED     = 0x0400,
+   OSF_CLOSED     = 0x0800,
 
    OSF_THREAD_ERR = 0x1000,     // thread returned non-zero (curl err)
 } OSFlags;
@@ -310,10 +311,19 @@ typedef enum {
 } IsPut;
 
 
+int     stream_init(void* os, void* unused, void* fh);
+// int     stream_destroy(void* fh);
+
+
 // Initialize os.url, before calling.  Use <preserve_os_written> to prevent
-// resetting the count of data written, in os->written
+// resetting the count of data written, in os->written.
+
+// NOTE: the offset here is not the logical offset in a file, but the
+//       offset within this given chunk.  This is not the same as what
+//       marfs_open_at_offset() means.
 int     stream_open(ObjectStream* os,
                     IsPut         put,
+                    size_t        chunk_offset,
                     curl_off_t    content_length,
                     uint8_t       preserve_os_written,
                     uint16_t      timeout);
@@ -326,6 +336,19 @@ int     stream_abort(ObjectStream* os);
 
 int     stream_close(ObjectStream* os);
 
+
+
+
+// "delete" works on a simple URL, not a stream.  However,
+// we still need the per-file-handle ObjectStream, because it will have
+// the AWSContext, which has stuff that is needed by the internals.
+
+int     stream_del(ObjectStream* os);
+
+int     stream_del_components(ObjectStream* os,
+                              const char* host,
+                              const char* bucket,
+                              const char* name);
 
 
 

@@ -774,15 +774,6 @@ typedef struct {
 
 
 
-// encapsulate some generic operations on MDALs
-extern int  open_md   (MarFS_FileHandle* fh, int writing_p);
-extern int  is_open_md(MarFS_FileHandle* fh);
-extern int  close_md  (MarFS_FileHandle* fh);
-
-extern int  opendir_md(MarFS_DirHandle* fh, PathInfo* info);
-extern int  closedir_md(MarFS_DirHandle *dh);
-
-
 // ...........................................................................
 // DAL indirection macros.
 //
@@ -803,9 +794,6 @@ extern int  closedir_md(MarFS_DirHandle *dh);
 
 #if USE_DAL
 
-// obsolete?
-// #  define FH_STR_STATE(FH)  FH_DAL_CTX(FH)
-
 #  define FH_DAL_CTX(FH)    (FH)->dal_handle.ctx
 #  define FH_DAL(FH)        (FH)->dal_handle.dal
 
@@ -814,10 +802,10 @@ extern int  closedir_md(MarFS_DirHandle *dh);
    (*(FH)->dal_handle.dal->OP)(&(FH)->dal_handle.ctx, ##__VA_ARGS__)
 
 
+
 #else
 
-// obsolete?
-// #  define FH_STR_STATE(FH)  (FH)->os
+#  define FH_DAL(FH)         NULL
 
 #  define DAL_OP(OP, FH, ...)                   \
    stream_##OP(&(FH)->os, ##__VA_ARGS__)
@@ -827,13 +815,6 @@ extern int  closedir_md(MarFS_DirHandle *dh);
 
 
 
-// encapsulate some generic operations on DALs
-extern int  open_data(MarFS_FileHandle* fh,
-                      int               writing_p,
-                      size_t            content_length,
-                      uint8_t           preserve_wr_count,
-                      uint16_t          timeout);
-extern int  close_data(MarFS_FileHandle* fh);
 
 
 
@@ -897,21 +878,34 @@ extern int  check_quotas  (PathInfo* info);
 extern int  update_url     (ObjectStream* os, PathInfo* info);
 extern int  update_timeouts(ObjectStream* os, PathInfo* info);
 
+
 // encapsulate some generic operations on MDALs
 extern int  open_md   (MarFS_FileHandle* fh, int writing_p);
 extern int  is_open_md(MarFS_FileHandle* fh);
 extern int  close_md  (MarFS_FileHandle* fh);
 
+extern int  opendir_md(MarFS_DirHandle* fh, PathInfo* info);
+extern int  closedir_md(MarFS_DirHandle *dh);
+
+
 // encapsulate some generic operations on DALs
 extern int  open_data(MarFS_FileHandle* fh,
                       int               writing_p,
+                      size_t            chunk_offset,
                       size_t            content_length,
                       uint8_t           preserve_wr_count,
                       uint16_t          timeout);
-extern int  close_data(MarFS_FileHandle* fh);
+extern int  close_data(MarFS_FileHandle* fh,
+                       int               abort_p,
+                       int               force_p);
+extern int  delete_data(MarFS_FileHandle* fh);
+// extern int  init_data(MarFS_FileHandle* fh);
 
-extern int  opendir_md(MarFS_DirHandle* fh, PathInfo* info);
-extern int  closedir_md(MarFS_DirHandle *dh);
+extern int  fake_filehandle_for_delete(MarFS_FileHandle* fh,
+                                       const char*       objid,
+                                       const char*       md_path);
+extern int  fake_filehandle_for_delete_inits(MarFS_FileHandle* fh);
+
 
 // write MultiChunkInfo (as binary data in network-byte-order), into file
 // From fuse, <user_data_written> is total from zero. From pftool, it's the

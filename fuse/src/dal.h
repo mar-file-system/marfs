@@ -146,15 +146,15 @@ struct DAL;
 
 // initialize/destroy context, if desired.
 //
-//   -- init    is called before any other ops (per file-handle).
-//   -- destroy is called when a file-handle is being destroyed.
+//   -- init      called before any other ops (per file-handle).
+//   -- destroy   called after all other ops  (per file-hanfle).
 //
 #if 0
 typedef  int     (*dal_ctx_init)   (DAL_Context* ctx, struct DAL* dal);
 typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 
 #else
-typedef  int     (*dal_ctx_init)   (DAL_Context* ctx, struct DAL* dal, void* os);
+typedef  int     (*dal_ctx_init)   (DAL_Context* ctx, struct DAL* dal, void* fh);
 typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 #endif
 
@@ -167,24 +167,93 @@ typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 // TBD: This should probably use va_args, to improve generality For now
 //      we're just copying the object_stream inteface verbatim.
 //
+// chunk_offset is the offset within the object to begin a subsequent
+// read (or write, if supported?) operation. Will probably not be
+// called with non-zero if opening for writing since marfs does not
+// currently support writes to arbitratry offests, or appends.
+//
+// Should set the OSF_OPEN and one of OSF_READING or OSF_WRITING flags
+// in ObjectStream->flags for the object stream associated with the
+// context.
+//
+// Additionally the implementation must guard itself against OS
+// structures that were previously used and have the OSF_CLOSED flag
+// Asserted. In the abscence of OSF_CLOSED, any other flags that are
+// asserted (with the exception of OSF_RLOCK_INIT) should be
+// considered an error and open should fail with errno=EBADF. If given
+// an object stream with the OSF_CLOSED flag then it is also the
+// responsibility of the implementation to set ObjectStream->written
+// to 0 if preserve_write_count == 0.
 typedef int      (*dal_open) (DAL_Context* ctx,
                               int          is_put,
+                              size_t       chunk_offset,
                               size_t       content_length,
                               uint8_t      preserve_write_count,
                               uint16_t     timeout);
 
+// Writes the data in the buffer to the object.
+//
+// Return the number of bytes written, or -1 on error and set errno to
+// something appropriate.
+//
+// MarFS expects the ->written field in the ObjectStream associated
+// with the context to be incremented by the number of bytes written.
+//
+// TODO: check whether stream_put sets any relevant flags in the case
+//       of a put failure.
 typedef int      (*dal_put)  (DAL_Context*  ctx,
                               const char*   buf,
                               size_t        size);
 
+// Read from an object stream begining at the offset supplied to
+// ->open().
+//
+// Returns the number of bytes read, or zero to indicate the end of
+// the object has been reached. Returns -1 on failure and sets errno.
+//
+// MarFS expects the ->written field in the ObjectStream associated
+// with the context to be incremented by the number of bytes read.  If
+// EOF is encountered then this must set OSF_EOF in ->flags for the
+// OS.
+//
+// NOTE: It is possible that other flags are set by the streaming
+// functions. for example: OSF_EOF may be used to indicate a read or
+// write error (object_stream.c:633)?
 typedef ssize_t  (*dal_get)  (DAL_Context*  ctx,
                               char*         buf,
                               size_t        size);
 
+// This is the last chance to return an error. After this is called
+// all I/O on the object stream should be done (including any flushes
+// that might be needed before close).
 typedef int      (*dal_sync) (DAL_Context*  ctx);
+
+// Abort an open object stream. This means we are canceling any
+// read/write operations. This is only every called when there is
+// nothing yet written to the stream, but theoretically it should be
+// able to roll back any data that has been written and close the
+// stream without creating a persisten object.
+//
+// Must set the OSF_ABORT flag in ObjectStream->flags
 typedef int      (*dal_abort)(DAL_Context*  ctx);
 
+// Should do whatever is necessary to insure that the object stream is
+// closed. If given an OS that is open should fail with errno=EBADF.
+//
+// Returns 0 on success or -1 for failure.
+//
+// Must set the OSF_CLOSED flag in ObjectStream->flags for the
+// associated OS.
 typedef int      (*dal_close)(DAL_Context*  ctx);
+
+// Updates the location of the object on the underlying storage for
+// future calls to ->open, ->write, or ->read. Does not mean move the
+// object. This should generally be called before any call to ->open
+// and after a call to update_pre().
+typedef int      (*dal_update_object_location)(DAL_Context* ctx);
+   
+// init() is called first, and destroy() after.
+typedef int      (*dal_delete)(DAL_Context*  ctx);
 
 
 
@@ -192,21 +261,23 @@ typedef int      (*dal_close)(DAL_Context*  ctx);
 // They capture a given implementation of interaction with an MDFS.
 typedef struct DAL {
    // DAL_Type             type;
-   const char*          name;
-   size_t               name_len;
+   const char*                name;
+   size_t                     name_len;
 
-   void*                global_state;
+   void*                      global_state;
 
-   dal_ctx_init         init;
-   dal_ctx_destroy      destroy;
+   dal_ctx_init               init;
+   dal_ctx_destroy            destroy;
 
-   dal_open             open;
-   dal_sync             sync;
-   dal_abort            abort;
-   dal_close            close;
+   dal_open                   open;
+   dal_sync                   sync;
+   dal_abort                  abort;
+   dal_close                  close;
+   dal_put                    put;
+   dal_get                    get;
+   dal_delete                 del;
 
-   dal_put              put;
-   dal_get              get;
+   dal_update_object_location update_object_location;
 
 } DAL;
 
@@ -221,7 +292,7 @@ DAL* get_DAL(const char* name);
 
 
 // exported for building custom DAL
-int     default_dal_ctx_init(DAL_Context* ctx, DAL* dal, void* os);
+int     default_dal_ctx_init   (DAL_Context* ctx, DAL* dal, void* fh);
 int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal);
 
 

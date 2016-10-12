@@ -127,6 +127,8 @@ CFLAGS  += -Wall -std=c99 -I.
 # This adds runtime checking against smashing the stack
 CFLAGS += -fstack-protector-all
 
+# Default to gcc
+CC=gcc
 
 # 700 = Single UNIX Spec v4.
 #
@@ -319,20 +321,20 @@ CFLAGS  += $(patsubst %, -D%, $(DEFS))
 # ...........................................................................
 
 logging.o: $(LOGGING)/logging.c $(LOGGING)/logging.h
-	gcc -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 marfs_configuration.o: $(CONFIG)/marfs_configuration.c $(CONFIG)/marfs_configuration.h
-	gcc -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 
 %: %.o
-	gcc -o $@ $< $(LDFLAGS) $(LIBS)
+	$(CC) -o $@ $< $(LDFLAGS) $(LIBS)
 
 %.o: %.c %.h
-	gcc -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 %.o: %.s
-	gcc -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 
 # Seriously?  Make can't figure this out?
@@ -379,9 +381,9 @@ endif
 
 # Don't make this directly; make one of the 'fuse.foo' targets below.
 marfs_fuse: $(H) $(OBJS) main.c $(FUSE_DEPS) libmarfs.a
-	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose main.c $(OBJS) $(LIBS)
-	@# gcc $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
-	gcc $(CFLAGS) -o $@ $(LDFLAGS) -L$(PWD) main.c $(LIBS) -lmarfs
+	@# $(CC) $(CFLAGS) -o $@ $(LDFLAGS) -Wl,--verbose main.c $(OBJS) $(LIBS)
+	@# $(CC) $(CFLAGS) -o $@ $(LDFLAGS) main.c $(OBJS) $(LIBS)
+	$(CC) $(CFLAGS) -o $@ $(LDFLAGS) -L$(PWD) main.c $(LIBS) -lmarfs
 
 fuse:  fuse.std
 fast:  fuse.fast
@@ -637,18 +639,18 @@ marfs_pipe: marfs_pipe_main.c
 
 # test app that links with assembly-code
 test_lock: test_lock.c spinlock_asm.s
-	gcc -g -o $@ $^ -lpthread -lrt
+	$(CC) -g -o $@ $^ -lpthread -lrt
 
 test_lock2: test_lock2.c spinlock_asm.o spinlock.h spinlock.o
-	gcc -g -o $@ $^ -lpthread -lrt
+	$(CC) -g -o $@ $^ -lpthread -lrt
 
 test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
-	gcc -g -o $@ $^ -lpthread -lrt
+	$(CC) -g -o $@ $^ -lpthread -lrt
 
 
 # test-apps that may potentially use any of the various marfs support libs
 demo_%: demo_%.o $(OBJS)
-	@ # gcc -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
+	@ # $(CC) -o $@ $< $(LDFLAGS) $(LIBS) $(OBJS)
 	@ echo "demo: $*"
 	@ $(MAKE) _app_demo_$* LINK_LIBFUSE=1
 
@@ -658,7 +660,7 @@ test_%: test_%.c
 
 _app_%: libmarfs.a
 	@ echo "making: _app_$*"
-	gcc $(CFLAGS) -o $* $(LDFLAGS) -L$(PWD) $*.c -lmarfs $(LIBS)
+	$(CC) $(CFLAGS) -o $* $(LDFLAGS) -L$(PWD) $*.c -lmarfs $(LIBS)
 
 
 # lines-of-code
@@ -695,7 +697,7 @@ printenv:
 	printenv
 
 inc_path:
-	gcc -Wp,-v $(CFLAGS) -c -o marfs_base.o marfs_base.c
+	$(CC) -Wp,-v $(CFLAGS) -c -o marfs_base.o marfs_base.c
 
 subshell_uid:
 	( id )

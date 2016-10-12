@@ -41,7 +41,7 @@ function usage() {
 
     echo "build everything for marfs:  libaws4c, libconfig, libmarfs, marfs_fuse"
     echo ""
-    echo "usage:  $PROG [ <code> [ <mdal> ] ]"
+    echo "usage:  $PROG [ <code> [ <mdal> ] [ <dal> ] [ <CC> ]]"
     echo "  <code> 0  = compile -O3, without logging"
     echo "  <code> 1  = compile -O3, with logging to syslog"
     echo "  <code> 2  = compile -g,  with logging to syslog"
@@ -54,6 +54,8 @@ function usage() {
     echo "  <dal>  0  = don't use DAL"
     echo "  <dal>  1  = use DAL"
     echo
+    echo " <CC>       = compiler to use"
+    echo
 }
 
 
@@ -63,30 +65,34 @@ CODE=$1
 MDAL=$2
 DAL=$3
 
+if [ $4 ] ; then
+    COMPILER=$4
+else
+    COMPILER=gcc
+fi
+
 
 case $CODE in
     0)
-        CONFIG_ARGS+=" DEBUG=0 CONFIG=$MARFSCONFIGRC"
+        CONFIG_ARGS+=" DEBUG=0"
         FUSE_ARGS+=" lean"
         ;;
     1)
-        CONFIG_ARGS+=" CONFIG=$MARFSCONFIGRC"
         FUSE_ARGS+=" fast"
         ;;
     2)
         AWS4C_ARGS+=" DEBUG=1"
-        CONFIG_ARGS+=" DEBUG=1 CONFIG=$MARFSCONFIGRC"
+        CONFIG_ARGS+=" DEBUG=1"
         FUSE_ARGS+=" DEBUG=0"
         UTILITY_ARGS+=" DEBUG=1"
         ;;
     3)
-        CONFIG_ARGS+=" DEBUG=4 CONFIG=$MARFSCONFIGRC"
+        CONFIG_ARGS+=" DEBUG=4"
         AWS4C_ARGS+=" DEBUG=1"
         FUSE_ARGS+=" lean DEBUG=0"
         UTILITY_ARGS+=" DEBUG=1"
         ;;
     4)
-        CONFIG_ARGS+=" CONFIG=$MARFSCONFIGRC"
         FUSE_ARGS+=" dbg"
         ;;
 
@@ -105,6 +111,9 @@ if (( DAL )); then
 fi
 
 
+if [ -n "$MARFSCONFIG" ]; then
+    CONFIG_ARGS+=" CONFIG=$MARFSCONFIGRC"
+fi
 
 CONFIG_ARGS+=" PARSE_DIR=$PA2X"
 FUSE_ARGS+=" LIBAWS4C=$AWS4C"
@@ -122,7 +131,7 @@ echo
 echo "### ................................................................."
 echo "### making libaws4c"
 echo "### ( cd $AWS4C && make clean && make $AWS4C_ARGS )"
-if ! ( cd $AWS4C && make clean && make $AWS4C_ARGS ); then
+if ! ( cd $AWS4C && make clean && make $AWS4C_ARGS CC=$COMPILER ); then
     echo "couldn't build $AWS4C"
     exit 1
 fi
@@ -140,7 +149,7 @@ echo
 echo "### ................................................................."
 echo "### making libconfig"
 echo "### ( cd $CONFIG && make clean && make $CONFIG_ARGS )"
-if !( cd $CONFIG && make clean && make $CONFIG_ARGS ); then
+if !( cd $CONFIG && make clean && make $CONFIG_ARGS CC=$COMPILER ); then
     echo "couldn't build $CONFIG"
     exit 1
 fi
@@ -149,7 +158,7 @@ echo
 echo "### ................................................................."
 echo "### making libmarfs"
 echo "### ( cd $FUSE && make clean && make $FUSE_ARGS )"
-if !( cd $FUSE && make clean && make $FUSE_ARGS ); then
+if !( cd $FUSE && make clean && make $FUSE_ARGS CC=$COMPILER ); then
     echo "couldn't build $FUSE"
     exit 1
 fi
@@ -157,7 +166,7 @@ echo
 echo "### ................................................................."
 echo "### making utilities/common"
 echo "### ( cd $UTILITIES/common/src && make clean && make $UTILITY_ARGS )"
-if !( cd $UTILITIES/common/src && make clean && make $UTILITY_ARGS ); then
+if !( cd $UTILITIES/common/src && make clean && make $UTILITY_ARGS CC=$COMPILER ); then
     echo "couldn't build $UTILITIES/common/src"
     exit 1
 fi
@@ -165,7 +174,7 @@ echo
 echo "### ................................................................."
 echo "### making quotas"
 echo "### ( cd $UTILITIES/quotas/src && make clean && make $UTILITY_ARGS )"
-if !( cd $UTILITIES/quotas/src && make clean && make $UTILITY_ARGS ); then
+if !( cd $UTILITIES/quotas/src && make clean && make $UTILITY_ARGS CC=$COMPILER ); then
     echo "couldn't build $UTILITIES/quotas/src"
     exit 1
 fi
@@ -173,7 +182,7 @@ echo
 echo "### ................................................................."
 echo "### making garbage collection"
 echo "### ( cd $UTILITIES/garbage-collection/src && make clean && make $UTILITY_ARGS )"
-if !( cd $UTILITIES/garbage-collection/src && make clean && make $UTILITY_ARGS ); then
+if !( cd $UTILITIES/garbage-collection/src && make clean && make $UTILITY_ARGS CC=$COMPILER ); then
     echo "couldn't build $UTILITIES/garbage-collection/src"
     exit 1
 fi
@@ -181,7 +190,7 @@ echo
 echo "### ................................................................."
 echo "### making packer"
 echo "### ( cd $UTILITIES/packer/src && make clean && make $UTILITY_ARGS )"
-if !( cd $UTILITIES/packer/src && make clean && make $UTILITY_ARGS ); then
+if !( cd $UTILITIES/packer/src && make clean && make $UTILITY_ARGS CC=$COMPILER ); then
     echo "couldn't build $UTILITIES/packer/src"
     exit 1
 fi
@@ -189,7 +198,7 @@ echo
 echo "### ................................................................."
 echo "### making repacker"
 echo "### ( cd $UTILITIES/repacker/src && make clean && make $UTILITY_ARGS )"
-if !( cd $UTILITIES/repacker/src && make clean && make $UTILITY_ARGS ); then
+if !( cd $UTILITIES/repacker/src && make clean && make $UTILITY_ARGS CC=$COMPILER ); then
     echo "couldn't build $UTILITIES/repacker/src"
     exit 1
 fi

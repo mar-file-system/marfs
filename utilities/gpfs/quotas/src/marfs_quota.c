@@ -178,14 +178,14 @@ int main(int argc, char **argv) {
     *
    */
 
+   fileset_stat_ptr = read_config(&fileset_count); 
+
+   if (fileset_stat_ptr == NULL ) {
+      fprintf(stderr,"Problem with reading of configuration file\n");
+      exit(1);
+   }
+
    if ( fileset_scan_count <= 0 ) {
-      fileset_stat_ptr = read_config(&fileset_count); 
-
-      if (fileset_stat_ptr == NULL ) {
-         fprintf(stderr,"Problem with reading of configuration file\n");
-         exit(1);
-      }
-
       // User wants to know how many filesets exists
       // print and exit
       if ( fileset_scan_count == 0 ) {

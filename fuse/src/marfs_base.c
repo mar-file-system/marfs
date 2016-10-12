@@ -903,7 +903,7 @@ int post_2_str(char*                  post_str,
                            : "");
 
    ssize_t bytes_printed = snprintf(post_str, max_size,
-                                    MARFS_POST_FORMAT,
+                                    MARFS_POST_WR_FORMAT,
                                     major, minor,
                                     encode_obj_type(post->obj_type),
                                     post->obj_offset,
@@ -955,7 +955,7 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset) {
       post->md_path[0] = 0;
 
    // --- extract bucket, and some top-level fields
-   int scanf_size = sscanf(post_str, MARFS_POST_FORMAT,
+   int scanf_size = sscanf(post_str, MARFS_POST_RD_FORMAT,
                            &major, &minor,
                            &obj_type_code,
                            &post->obj_offset,

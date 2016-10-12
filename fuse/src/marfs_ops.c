@@ -298,9 +298,7 @@ int marfs_ftruncate(const char*            path,
    // writing).  Close that in such a way that the server will not persist
    // the PUT.  Do this before any MD access checks, so that we will abort
    // the stream even if something goes wrong doing the MD access.
-   TRY0( DAL_OP(abort, fh) );
-   TRY0( DAL_OP(close, fh) );
-   TRY0( close_data(fh) );
+   TRY0( close_data(fh, 1, 0) );
 
 
    // Call access() syscall to check/act if allowed to truncate for this user
@@ -342,9 +340,7 @@ int marfs_ftruncate(const char*            path,
    size_t   open_size  = get_stream_wr_open_size(fh, 0);
    uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-   TRY0( update_url(os, info) );
-   // TRY0( DAL_OP(open, fh, OS_PUT, open_size, 0, wr_timeout) );
-   TRY0( open_data(fh, OS_PUT, open_size, 0, wr_timeout) );
+   TRY0( open_data(fh, OS_PUT, 0, open_size, 0, wr_timeout) );
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
@@ -802,7 +798,7 @@ int marfs_open(const char*         path,
    //
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
-   IOBuf*            b    = &fh->os.iob;
+   //   IOBuf*            b    = &fh->os.iob;
 
    EXPAND_PATH_INFO(info, path);
 
@@ -883,11 +879,11 @@ int marfs_open(const char*         path,
    // We should not let it write that object-ID with a "Packed" type,
    // because object-IDs for all the subsequent chunks will have "N" type.
    // Q: How do we tell if that is the situation?  A: if pftool is opening
-   // a full chunk-sized object, we decree that it sahll not be packed.
+   // a full chunk-sized object, we decree that it can't be packed.
    if ((fh->flags & FH_PACKED) &&
        ((content_length > info->pre.repo->max_pack_file_size) ||
-        (content_length >= (info->pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))
-       ) {
+        (content_length >= (info->pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))) {
+
       return -2;
    }
 
@@ -950,26 +946,24 @@ int marfs_open(const char*         path,
          // update URL for this chunk
          info->pre.chunk_no = chunk_no;
          update_pre(&info->pre);
-         // update_url(os, info); // can't do this here ...
       }
 
       if( fh->flags & FH_PACKED ) {
          LOG(LOG_INFO, "writing PACKED\n");
 
-         if (
-               fh->objectSize+content_length+MARFS_REC_UNI_SIZE > info->pre.repo->chunk_size ||
-                (
-                 -1 != info->pre.repo->max_pack_file_count &&
-                 fh->fileCount+1 > info->pre.repo->max_pack_file_count
-                )
-            ) {
+         if ((  (fh->objectSize + content_length + MARFS_REC_UNI_SIZE)
+                 > info->pre.repo->chunk_size)
+             || ((-1 != info->pre.repo->max_pack_file_count)
+                 && (fh->fileCount +1 > info->pre.repo->max_pack_file_count))) {
+
             LOG(LOG_INFO, "releasing fh: objectSize: %ld, content_length: %ld, "
                 "chunk_size: %lu, fileCount: %d, "
                 "max_pack_file_count: %ld\n",
                 fh->objectSize, content_length,
                 info->pre.repo->chunk_size, fh->fileCount,
                 info->pre.repo->max_pack_file_count);
-            // we need to close the current object stream and open a new one if it is a packed object
+            // we need to close the current object stream and open a new
+            // one if it is a packed object
             marfs_release_fh(fh);
             return marfs_open_packed(path, fh, flags, content_length);
          }
@@ -998,11 +992,13 @@ int marfs_open(const char*         path,
    strncpy(fh->ns_path, path, path_len +1);
 
    // we need to check if we need a new stream
-   if (
-         !(fh->flags & FH_PACKED) ||
-         0 == fh->os_init
-         ) {
+   if ( !(fh->flags & FH_PACKED)
+        || (0 == fh->os_init)) {
       LOG(LOG_INFO, "opening new object stream\n");
+
+#if 0
+      // DELETE THIS after we're sure that it is working correctly
+      // in its new home as stream_init().
 
       // Configure a private AWSContext, for this request
       AWSContext* ctx = aws_context_clone();
@@ -1050,12 +1046,6 @@ int marfs_open(const char*         path,
       // install custom context
       aws_iobuf_context(b, ctx);
 
-
-      TRY0( update_url(os, info) );
-
-      // Install appropriate DAL into file-handle, if needed
-#if USE_DAL
-      
 #endif
 
       // To support seek() [for reads], and allow reading at arbitrary
@@ -1066,8 +1056,7 @@ int marfs_open(const char*         path,
          size_t   open_size  = get_stream_wr_open_size(fh, 0);
          uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-         // TRY0( DAL_OP(open, fh, OS_PUT, open_size, 0, wr_timeout) );
-         TRY0( open_data(fh, OS_PUT, open_size, 0, wr_timeout) );
+         TRY0( open_data(fh, OS_PUT, 0, open_size, 0, wr_timeout) );
       }
       else {
          SEM_INIT(&os->read_lock, 0, 1);
@@ -1462,7 +1451,7 @@ static ssize_t marfs_read_internal (const char*        path,
    ///   EXPAND_PATH_INFO(&info, path);
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
-   IOBuf*            b    = &os->iob;
+   //   IOBuf*            b    = &os->iob;
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM  RD
    CHECK_PERMS(info->ns, (R_META | R_DATA));
@@ -1508,10 +1497,7 @@ static ssize_t marfs_read_internal (const char*        path,
 
          LOG(LOG_INFO, "discontiguous read detected: gap %lu-%lu\n",
              fh->read_status.log_offset, offset);
-
-         TRY0( DAL_OP(sync, fh) );
-         TRY0( DAL_OP(close, fh) );
-         TRY0( close_data(fh) );
+         TRY0( close_data(fh, 0, 0) );
       }
 
       fh->read_status.log_offset = offset;
@@ -1671,9 +1657,7 @@ static ssize_t marfs_read_internal (const char*        path,
       if ((os->flags & OSF_OPEN)
           && (os->flags & OSF_EOF)) {
          LOG(LOG_INFO, "closing stream at EOF\n");
-         TRY0( DAL_OP(sync, fh) );
-         TRY0( DAL_OP(close, fh) );
-         TRY0( close_data(fh) );
+         TRY0( close_data(fh, 0, 0) );
       }
 
 
@@ -1682,14 +1666,18 @@ static ssize_t marfs_read_internal (const char*        path,
          // update the URL in the ObjectStream, in our FileHandle
          info->pre.chunk_no = chunk_no;
          update_pre(&info->pre);
-         update_url(os, info);
 
          // request data from the offset in this chunk, to the end of
          // logical data in this chunk, or to offset+size, whichever comes
          // first.
          LOG(LOG_INFO, "byte_range: %lu, %lu\n",
              chunk_offset, chunk_offset + open_size -1);
+#if 0
+         // DELETE THIS after the corresponding new functionality in
+         // open_data() and corresponding DALs is working.
+
          s3_set_byte_range_r(chunk_offset, open_size, b->context); // offset, length
+#endif
 
          // NOTE: stream_open() potentially wipes ObjectStream.written.
          //     Fuse writes want this field to track the total amount
@@ -1698,8 +1686,7 @@ static ssize_t marfs_read_internal (const char*        path,
          //     content_length provided in stream_open().  Therefore, we
          //     let written be wiped.
          //
-         // TRY0( DAL_OP(open, fh, OS_GET, open_size, 0, rd_timeout) );
-         TRY0( open_data(fh, OS_GET, open_size, 0, rd_timeout) );
+         TRY0( open_data(fh, OS_GET, chunk_offset, open_size, 0, rd_timeout) );
       }
 
       // Because we are reading byte-ranges, we may see '206 Partial Content'.
@@ -1779,9 +1766,7 @@ static ssize_t marfs_read_internal (const char*        path,
       // reading more?
       if (read_count < size) {
 
-         TRY0( DAL_OP(sync, fh) );
-         TRY0( DAL_OP(close, fh) );
-         TRY0( close_data(fh) );
+         TRY0( close_data(fh, 0, 0) );
 
          // ready to move on to the next chunk?
          if (! chunk_remain) {
@@ -2015,15 +2000,11 @@ int marfs_release (const char*        path,
    // data, so it should return 0 to curl.  For reads, the writefunc may be
    // waiting for another buffer to fill, so it can be told to terminate.
 #if 0
-   TRY0( DAL_OP(sync, fh) );
-   TRY0( DAL_OP(close, fh) );
-   TRY0( close_data(fh) );
+   TRY0( close_data(fh, 0, 0) );
 #elif 0
    // New approach.  read() handles its own open/read/close
    if (fh->flags & FH_WRITING) {
-      TRY0( DAL_OP(sync, fh) );
-      TRY0( DAL_OP(close, fh) );
-      TRY0( close_data(fh) );
+      TRY0( close_data(fh, 0, 0) );
    }
 #else
    // Newer approach.  read() handles its own open/read/close write(). In
@@ -2049,9 +2030,7 @@ int marfs_release (const char*        path,
 
       // we will not close the stream for packed files
       if( !(fh->flags & FH_PACKED) ) {
-         DAL_OP(sync, fh);   // TRY0( stream_sync(os) );
-         DAL_OP(close, fh);  // TRY0( stream_close(os) );
-         close_data(fh);     // TRY0?
+         close_data(fh, 0, 1);
       }
    }
 #endif
@@ -2160,7 +2139,7 @@ int marfs_release (const char*        path,
 
 // Pftool needs a way to clear restart on files that it packed once the object
 // stream has been closed
-// TODO: can this me merged with batch_post_process
+// TODO: can this be merged with batch_post_process
 int marfs_clear_restart(const char* path) {
    TRY_DECLS();
    LOG(LOG_INFO, "%s\n", path);
@@ -2211,9 +2190,7 @@ int marfs_release_fh(MarFS_FileHandle* fh) {
 
    ObjectStream*     os   = &fh->os;
 
-   DAL_OP(sync, fh);
-   DAL_OP(close, fh);
-   close_data(fh);
+   close_data(fh, 0, 1);
 
    // free aws4c resources
    aws_iobuf_reset_hard(&os->iob);
@@ -2907,7 +2884,6 @@ ssize_t marfs_write(const char*        path,
 
       // update the URL in the ObjectStream, in our FileHandle
       TRY0( update_pre(&info->pre) );
-      TRY0( update_url(os, info) );
 
       // NOTE: stream_open() potentially wipes ObjectStream.written.  We
       //     want this field to track the total amount written, across all
@@ -2915,8 +2891,7 @@ ssize_t marfs_write(const char*        path,
       size_t   open_size  = get_stream_wr_open_size(fh, 1);
       uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-      // TRY0( DAL_OP(open, fh, OS_PUT, open_size, 1, wr_timeout) );
-      TRY0( open_data(fh, OS_PUT, open_size, 1, wr_timeout) );
+      TRY0( open_data(fh, OS_PUT, 0, open_size, 1, wr_timeout) );
    }
 
    // Span across objects, for "Multi" format.  Repo.chunk_size is the
@@ -2970,9 +2945,7 @@ ssize_t marfs_write(const char*        path,
 
       // close the object
       LOG(LOG_INFO, "closing chunk: %ld\n", info->pre.chunk_no);
-      TRY0( DAL_OP(sync, fh) );
-      TRY0( DAL_OP(close, fh) );
-      TRY0( close_data(fh) );
+      TRY0( close_data(fh, 0, 0) );
 
       // MD file gets per-chunk information
       // pftool (OBJ_Nto1) will install chunkinfo directly.
@@ -3004,7 +2977,6 @@ ssize_t marfs_write(const char*        path,
 
          // update the URL in the ObjectStream, in our FileHandle
          TRY0( update_pre(&info->pre) );
-         TRY0( update_url(os, info) );
 
          // pos in user-data corresponding to the logical end of a chunk
          log_end += (info->pre.repo->chunk_size - recovery);
@@ -3017,8 +2989,7 @@ ssize_t marfs_write(const char*        path,
          size_t   open_size  = get_stream_wr_open_size(fh, 1);
          uint16_t wr_timeout = info->pre.repo->write_timeout;
 
-         // TRY0( DAL_OP(open, fh, OS_PUT, open_size, 1, wr_timeout) );
-         TRY0( open_data(fh, OS_PUT, open_size, 1, wr_timeout) );
+         TRY0( open_data(fh, OS_PUT, 0, open_size, 1, wr_timeout) );
       }
 
       // compute limits of new chunk

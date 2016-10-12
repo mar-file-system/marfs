@@ -148,7 +148,7 @@ H   = $(patsubst %, %.h, $(FNAME_ROOTS))
 
 %.o: %.c %.h parse_dir
 	@ echo; echo "#-- building $@"
-	gcc -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) $(DBG_OPT) -o $@ $<
+	$(CC) -c $(CFLAGS) $(PARSE_OPT) -DPARSE_DIR=$(PARSE_DIR) $(OPTIONS) $(DBG_OPT) -o $@ $<
 
 
 libconfig.a: parser $(LOG_OBJ) $(OBJ)
