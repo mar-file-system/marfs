@@ -777,7 +777,8 @@ int mc_update_path(DAL_Context* ctx) {
    // append the fileified object id
    strncat(path_template, obj_filename, MC_MAX_PATH_LEN);
 
-   LOG(LOG_INFO, "MC path template: %s\n", path_template);
+   LOG(LOG_INFO, "MC path template: (starting block: %d) %s\n",
+       MC_CONTEXT(ctx)->start_block, path_template);
    
    return 0;
 }
@@ -873,7 +874,8 @@ int mc_put(DAL_Context* ctx,
    }
    else if(ctx->flags & MCF_DEFERED_OPEN) {
       if(mc_do_open(ctx)) {
-         LOG(LOG_ERR, "%s could not be opened for writing\n", os->url);
+         LOG(LOG_ERR, "%s (start-block: %d) could not be opened for writing\n",
+             MC_CONTEXT(ctx)->path_template, MC_CONTEXT(ctx)->start_block);
          return -1; // errno should be set in do_open()
       }
    }
