@@ -631,6 +631,7 @@ DAL posix_dal = {
    .update_object_location = &generate_path
 };
 
+#if USE_MC
 // ===========================================================================
 // MC (Multi-component)
 // ===========================================================================
@@ -1036,7 +1037,7 @@ DAL mc_dal = {
 
    .update_object_location = &mc_update_path
 };
-
+#endif // USE_MC
 
 // ===========================================================================
 // GENERAL
@@ -1192,7 +1193,9 @@ DAL* get_DAL(const char* name) {
       assert(! install_DAL(&obj_dal)   );
       assert(! install_DAL(&nop_dal)   );
       assert(! install_DAL(&posix_dal) );
+#if USE_MC
       assert(! install_DAL(&mc_dal)    );
+#endif
 
       needs_init = 0;
    }

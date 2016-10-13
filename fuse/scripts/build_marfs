@@ -22,6 +22,9 @@ if [ -z "$AWS4C" ]; then
 elif [ -z "$PA2X" ]; then
     echo "PA2X undefined.  Set it to the location of your PA2X install"
     exit 1
+elif [ -z "$LIBNE" ]; then
+    echo "LIBNE undefined. Set it to the location of your libne install"
+    exit 1
 elif [ -z "$MARFS" ]; then
     echo "MARFS undefined.  Set it to the location of your marfs install"
     exit 1
@@ -41,7 +44,7 @@ function usage() {
 
     echo "build everything for marfs:  libaws4c, libconfig, libmarfs, marfs_fuse"
     echo ""
-    echo "usage:  $PROG [ <code> [ <mdal> ] [ <dal> ] [ <CC> ]]"
+    echo "usage:  $PROG [ <code> [ <mdal> ] [ <dal> ] [<mc>] [ <CC> ]]"
     echo "  <code> 0  = compile -O3, without logging"
     echo "  <code> 1  = compile -O3, with logging to syslog"
     echo "  <code> 2  = compile -g,  with logging to syslog"
@@ -54,7 +57,10 @@ function usage() {
     echo "  <dal>  0  = don't use DAL"
     echo "  <dal>  1  = use DAL"
     echo
-    echo " <CC>       = compiler to use"
+    echo "  <mc>   0  = don't build multi-component storage"
+    echo "  <mc>   1  = build multi-component storags (requires <dal>=1)"
+    echo
+    echo "  <CC>      = compiler to use"
     echo
 }
 
@@ -64,9 +70,10 @@ function usage() {
 CODE=$1
 MDAL=$2
 DAL=$3
+MC=$4
 
-if [ $4 ] ; then
-    COMPILER=$4
+if [ $5 ] ; then
+    COMPILER=$5
 else
     COMPILER=gcc
 fi
@@ -102,6 +109,10 @@ case $CODE in
         exit 1;
 esac
 
+if (( MC )); then
+    DAL=1 # dal is required.
+    FUSE_ARGS+=" USE_MC=1"
+fi
 
 if (( MDAL )); then
     FUSE_ARGS+=" USE_MDAL=1"

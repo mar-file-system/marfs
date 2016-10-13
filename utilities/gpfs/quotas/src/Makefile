@@ -16,11 +16,9 @@ CFLAGS += -I$(MARFS_CONFIG)
 LDFLAGS += -L$(MARFS_FUSE)
 LDFLAGS += -L$(MARFS_CONFIG)
 LDFLAGS += -L$(AWS4C)
-CFLAGS += -I$(LIBNE)
-LDFLAGS += -L$(LIBNE)
 
 LIBMARFS = -lmarfs -lxml2 -laws4c -lcurl -lcrypto
-LIBS += -lgpfs -lcurl -lm $(LIBMARFS) -lconfig -lisal -lne
+LIBS += -lgpfs -lcurl -lm $(LIBMARFS) -lconfig
 
 #For debug 
 ifdef DEBUG
