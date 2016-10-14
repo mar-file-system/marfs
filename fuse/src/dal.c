@@ -93,6 +93,15 @@ OF SUCH DAMAGE.
 // ===========================================================================
 //
 
+int   default_dal_config(struct DAL*     dal,
+                         xDALConfigOpt** opts,
+                         size_t          opt_count) {
+  dal->global_state = opts;
+  return 0;
+}
+
+
+
 // Use these if you don't need to do anything special to initialize the
 // context before-opening / after-closing for file-oriented or
 // directory-oriented operations.
@@ -249,7 +258,8 @@ static DAL obj_dal = {
    .name_len               = 6, // strlen("OBJECT"),
 
    .global_state           = NULL,
-
+   .config                 = &default_dal_config,
+   
 #if 0
    .init                   = &obj_dal_ctx_init,
    .destroy                = &obj_dal_ctx_destroy,
@@ -344,6 +354,7 @@ DAL nop_dal = {
 
    .global_state           = NULL,
 
+   .config                 = &default_dal_config,
    .init                   = &default_dal_ctx_init,
    .destroy                = &default_dal_ctx_destroy,
    .open                   = &nop_open,
@@ -639,6 +650,7 @@ DAL posix_dal = {
 
    .global_state = NULL,
 
+   .config       = &default_dal_config,
    .init         = &posix_dal_ctx_init,
    .destroy      = &posix_dal_ctx_destroy,
 
@@ -766,18 +778,19 @@ DAL* dynamic_DAL(const char* name) {
 
       dal->global_state = NULL;
 
-      dal->init         = (dal_ctx_init)    dlsym(lib, "dal_init");
-      dal->destroy      = (dal_ctx_destroy) dlsym(lib, "dal_destroy");
+      dal->config  = (dal_config)      dlsym(lib, "dal_config");
+      dal->init    = (dal_ctx_init)    dlsym(lib, "dal_init");
+      dal->destroy = (dal_ctx_destroy) dlsym(lib, "dal_destroy");
 
-      dal->open         = (dal_open)    dlsym(lib, "dal_open");
-      dal->put          = (dal_put)     dlsym(lib, "dal_put");
-      dal->get          = (dal_get)     dlsym(lib, "dal_get");
-      dal->sync         = (dal_sync)    dlsym(lib, "dal_sync");
-      dal->abort        = (dal_abort)   dlsym(lib, "dal_abort");
-      dal->close        = (dal_close)   dlsym(lib, "dal_close");
+      dal->open    = (dal_open)        dlsym(lib, "dal_open");
+      dal->put     = (dal_put)         dlsym(lib, "dal_put");
+      dal->get     = (dal_get)         dlsym(lib, "dal_get");
+      dal->sync    = (dal_sync)        dlsym(lib, "dal_sync");
+      dal->abort   = (dal_abort)       dlsym(lib, "dal_abort");
+      dal->close   = (dal_close)       dlsym(lib, "dal_close");
 
       dal->update_object_location =
-         (dal_update_object_location) dlsym(lib, "dal_update_object_location");
+         (dal_update_object_location)  dlsym(lib, "dal_update_object_location");
 
       dlclose(lib);
 

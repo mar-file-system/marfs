@@ -168,53 +168,6 @@ libconfig.a: parser $(LOG_OBJ) $(OBJ)
 LDFLAGS += -L.
 
 
-# ---------------------------------------------------------------------------
-# Alternate build of Brett's test_marfs_configuration.c, using libconfig
-# ---------------------------------------------------------------------------
-
-# CFLAGS  += -I$(PARSE_DIR) -I$(LOG_DIR) $(OPTIONS)
-# LDFLAGS += -L.
-tester: libconfig.a test_marfs_configuration.c
-	@ echo; echo "#-- building $@"
-	$(CC) -o $@ $(CFLAGS) $(OPTIONS) $(LDFLAGS) $(DBG_OPT) test_marfs_configuration.c -lconfig
-
-
-
-# ---------------------------------------------------------------------------
-# tool to allow scripts to get access to configuration details
-#
-# for example:
-#   $ marfs_config -n           [print namespace names]
-#   $ marfs_config -n jti       [print contents of namespace with name 'jti']
-#   $ marfs_config -r           [print repo names]
-#   $ marfs_config -r s3        [print contents of repo with name 's3']
-#   $ marfs_config t            [print top-level config details]
-#   $ marfs_config t mnt_top    [print value of top-level "mnt_top" setting]
-#
-# ---------------------------------------------------------------------------
-
-marfs_config: libconfig.a marfs_config.c
-	@ echo; echo "#-- building $@"
-	$(CC) -o $@ $(CFLAGS) $(OPTIONS) $(LDFLAGS) marfs_config.c -lconfig
-
-
-
-# ---------------------------------------------------------------------------
-# build Brett's configuration tester test_marfs_configuration
-# ---------------------------------------------------------------------------
-
-test_marfs_configuration: parse_dir
-	$(CC) -c $(PARSE_DIR)/confpars.c -o $(PARSE_DIR)/confpars.o $(OPTIONS) $(PARSE_OPT)
-	$(CC) -c $(PARSE_DIR)/path-switch.c -o $(PARSE_DIR)/path-switch.o $(OPTIONS) $(PARSE_OPT)
-	$(CC) -c $(PARSE_DIR)/parsedata.c -o $(PARSE_DIR)/parsedata.o $(OPTIONS) $(PARSE_OPT)
-	$(CC) -c $(LOG_DIR)/logging.c -o $(LOG_DIR)/logging.o $(OPTIONS) $(LOG_OPT)
-	$(CC) -I$(PARSE_DIR) -I$(LOG_DIR) -c marfs_configuration.c -o marfs_configuration.o $(OPTIONS) $(PARSE_OPT) $(LOG_OPT)
-	$(CC) -I$(PARSE_DIR) -I$(LOG_DIR) -c test_marfs_configuration.c -o test_marfs_configuration.o $(OPTIONS) $(PARSE_OPT) $(LOG_OPT)
-	$(CC) $(LIBS) $(PARSE_DIR)/confpars.o $(PARSE_DIR)/parsedata.o $(PARSE_DIR)/path-switch.o $(LOG_DIR)/logging.o marfs_configuration.o test_marfs_configuration.o -o test_marfs_configuration
-
-
-test_marfs_configuration-d: parse_dir
-	$(MAKE) test_marfs_configuration DEBUG=1
 
 
 

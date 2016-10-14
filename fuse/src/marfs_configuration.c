@@ -70,7 +70,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "logging.h"
 #include "PA2X_interface.h"
 #include "marfs_configuration.h"
-
+#include "dal.h"
 
 /*****************************************************************************
  *
@@ -693,12 +693,133 @@ int decode_correcttype( char code, MarFS_CorrectType *enumeration ) {
  ****************************************************************************/
 
 
+// Translate the DAL/MDAL options parsed by PA2X into a vector of
+// xDALConfigOpts.  For no DAL entry, or a DAL with no options, the parser
+// gives us opts == 0.  Non-empty options will appear as a vector of
+// pointers to "struct opt" (defined in the PA2X blueprint), with the last
+// slot NULL.
+//
+// caller gives us a ptr to their variable which is to hold a vector of ptrs
+// (which we will allocate).  Hence, triple indirection.
+    
+ssize_t parse_xdal_config_options(xDALConfigOpt*** result_ptr,
+                                  struct opt**     opts) {
+  *result_ptr = NULL;
+
+  // count the number of options
+  ssize_t opt_count = 0;
+  if (opts) {
+    while (opts[opt_count])
+      ++ opt_count;
+  }
+    
+  // generate vector of corresponding xDALConfigOpts
+  if (opt_count) {
+
+    *result_ptr = (xDALConfigOpt**)malloc(opt_count * sizeof(xDALConfigOpt*));
+    if (! *result_ptr) {
+      LOG( LOG_ERR, "Couldn't allocate %d DAL-option-ptrs.\n", opt_count);
+      return -1;
+    }
+    xDALConfigOpt** result = *result_ptr; /* shorthand */
+
+    int   i;
+    char* ptr;
+    for (i=0; i<opt_count; ++i) {
+      char* key = NULL;
+      char* val = NULL;
+
+      // configuration-file had a "key_val" option, here?
+      if (opts[i]->key_val) {
+
+        // parse "key"
+        ptr = opts[i]->key_val;
+        while (*ptr && *ptr == ' ')
+          ++ ptr;
+        if (! *ptr) {
+          LOG( LOG_ERR, "Error parsing key in DAL-option %d.\n", i);
+          return -1;
+        }
+
+        key = ptr;
+        size_t key_len = strcspn(key, " :");
+        ptr = key + key_len;
+        if (! *ptr) {
+          LOG( LOG_ERR, "Error parsing value in DAL-option %d.\n", i);
+          return -1;
+        }
+
+        *ptr = '\0';
+        ++ ptr;
+        if (! *ptr) {
+          LOG( LOG_ERR, "Error parsing value in DAL-option %d\n", i);
+          return -1;
+        }
+
+        // parse "val" (might have multiple tokens)
+        size_t gap_len = strspn(ptr, " :");
+        ptr += gap_len;
+        val = ptr;
+      }
+
+      // configuration-file had a "value" option here.
+      // We'll just create an xDALConfigOpt with no key.
+      else {
+
+        // parse "value"
+        char* ptr = opts[i]->value;
+        while (*ptr && *ptr == ' ')
+          ++ ptr;
+        val = ptr;
+      }
+
+      // trim trailing whitespace from <val>
+      size_t val_len = strlen(val);
+      ptr = val + val_len -1;
+      while ((ptr >= val) && (*ptr == ' '))
+        *ptr-- = '\0';
+
+      // create xDALConfigOpt
+      result[i] = (xDALConfigOpt*)malloc(sizeof(xDALConfigOpt));
+      if (! opts[i]) {
+        LOG( LOG_ERR, "Couldn't allocate xDALConfigOpt %d\n", i);
+        return -1;
+      }
+
+      result[i]->key            = (key ? strdup(key) : NULL);
+      result[i]->val.value.str  = (val ? strdup(val) : NULL);
+      result[i]->val.type       = GVTS_STRING;
+    }
+  }
+
+  return opt_count;
+}
+
+
+// The "TYPE" arg to EXTRACT() must match the "foo" in some foo_MAX defn in limits.h
+// e.g. UCHAR, SHRT, UINT, etc
+#include <limits.h>
+
+#define EXTRACT(TYPE, DEST, SRC)                                    \
+{ errno = 0;                                                        \
+  unsigned long temp = strtoul( SRC, NULL, 10 );                    \
+  if ( errno ) {                                                    \
+    LOG( LOG_ERR, "Invalid host_offset value of \"%s\".\n", #SRC ); \
+    return NULL;                                                    \
+  }                                                                 \
+  else if (temp > TYPE##_MAX) {                                     \
+    LOG( LOG_ERR, "Invalid host_offset value of \"%s\".\n", #SRC ); \
+    return NULL;                                                    \
+  }                                                                 \
+  DEST = (uint8_t)temp;                                             \
+}
+
+
 static MarFS_Config_Ptr read_configuration_internal() {
 
    struct namespace**     namespaceList;
    struct repo**          repoList;
-   int                    j;
-   int                    k;
+   int                    i, j, k;
    int                    slen;
    int                    repoRangeCount;
    char*                  perms_dup;
@@ -716,19 +837,23 @@ static MarFS_Config_Ptr read_configuration_internal() {
    memset(marfs_config, 0x00, sizeof(MarFS_Config));
 
 
-  /* REPOS */
+  /* REPOS ----------------------------------------------------------------- */
   repoList = (struct repo **) config->repo;
 
+
+  // count repos
   j = 0;
   while ( repoList[j] != (struct repo *) NULL ) {
-//#ifdef _DEBUG_MARFS_CONFIGURATION
-//    LOG( LOG_INFO, "repoList[%d]->name is \"%s\".\n", j, repoList[j]->name );
-//#endif
+#ifdef _DEBUG_MARFS_CONFIGURATION
+    // LOG( LOG_INFO, "repoList[%d]->name is \"%s\".\n", j, repoList[j]->name );
+#endif
     j++;
   }
   repoCount = j;
   LOG( LOG_INFO, "parser gave us a list of %d repos.\n", repoCount );
 
+  
+  // allocate space for marfs_repos
   marfs_repo_list = (MarFS_Repo_List) malloc( sizeof( MarFS_Repo_Ptr ) * ( repoCount + 1 ));
   if ( marfs_repo_list == NULL) {
     LOG( LOG_ERR, "Error allocating memory for the MarFS repo list structure.\n");
@@ -736,6 +861,9 @@ static MarFS_Config_Ptr read_configuration_internal() {
   }
   marfs_repo_list[repoCount] = NULL;
 
+
+  
+  // initialize marfs_repos corresponding to PA2X parsed repos
   for ( j = 0; j < repoCount; j++ ) {
     marfs_repo_list[j] = (MarFS_Repo_Ptr) malloc( sizeof( MarFS_Repo ));
     if ( marfs_repo_list[j] == NULL) {
@@ -746,58 +874,67 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
     LOG( LOG_INFO, "processing parsed-repo \"%s\".\n", repoList[j]->name );
 
+    // shorthand
+    struct repo*    p_repo = repoList[j];       /* parsed version. All strings */
+    MarFS_Repo_Ptr  m_repo = marfs_repo_list[j]; /* marfs version.  To be initialized */
 
-/*
- * Anything that isn't staying a string and can't be converted
- * to its new type directly needs to be upper case for easy comparison.
- */
+    /*
+     * Anything that isn't staying a string and can't be converted
+     * to its new type directly needs to be upper-case for easy comparison.
+     */
 
-    if (! repoList[j]->name) {
+    if (! p_repo->name) {
       LOG( LOG_ERR, "Found an empty Repo.name.\n" );
       return NULL;
     }
-    marfs_repo_list[j]->name = strdup( repoList[j]->name );
-    marfs_repo_list[j]->name_len = strlen( repoList[j]->name );
+    m_repo->name     = strdup( p_repo->name );
+    m_repo->name_len = strlen( p_repo->name );
 
-    if (! repoList[j]->host) {
-      LOG( LOG_ERR, "Repo '%s' has an empty <host>.\n", repoList[j]->name );
+
+    if (! p_repo->host) {
+      LOG( LOG_ERR, "Repo '%s' has an empty <host>.\n", p_repo->name );
       return NULL;
     }
-    marfs_repo_list[j]->host = strdup( repoList[j]->host );
-    marfs_repo_list[j]->host_len = strlen( repoList[j]->host );
+    m_repo->host     = strdup( p_repo->host );
+    m_repo->host_len = strlen( p_repo->host );
 
-    if (repoList[j]->host_offset) {
+
+    if (p_repo->host_offset) {
+#if 0
        errno = 0;
-       unsigned long temp = strtoul( repoList[j]->host_offset, NULL, 10 );
+       unsigned long temp = strtoul( p_repo->host_offset, NULL, 10 );
        if ( errno ) {
-          LOG( LOG_ERR, "Invalid host_offset value of \"%s\".\n", repoList[j]->host_offset );
+          LOG( LOG_ERR, "Invalid host_offset value of \"%s\".\n", p_repo->host_offset );
           return NULL;
        }
-       else if (temp > 255) { // marfs_repo_list[j]->host_offset is uint8_t
-          LOG( LOG_ERR, "Invalid host_offset value of \"%s\".\n", repoList[j]->host_offset );
+       else if (temp > 255) { // m_repo->host_offset is uint8_t
+          LOG( LOG_ERR, "Invalid host_offset value of \"%s\".\n", p_repo->host_offset );
           return NULL;
        }
-       marfs_repo_list[j]->host_offset = (uint8_t)temp;
+       m_repo->host_offset = (uint8_t)temp;
+#else
+       EXTRACT(UCHAR, m_repo->host_offset, p_repo->host_offset);
+#endif
     }
     else
-       marfs_repo_list[j]->host_offset = 0;
+       m_repo->host_offset = 0;
 
-    if (repoList[j]->host_count) {
+    if (p_repo->host_count) {
        errno = 0;
-       unsigned long temp = strtoul( repoList[j]->host_count, NULL, 10 );
+       unsigned long temp = strtoul( p_repo->host_count, NULL, 10 );
        if ( errno ) {
-          LOG( LOG_ERR, "Invalid host_count value of \"%s\".\n", repoList[j]->host_count );
+          LOG( LOG_ERR, "Invalid host_count value of \"%s\".\n", p_repo->host_count );
           return NULL;
        }
-       else if (temp > 255) { // marfs_repo_list[j]->host_count is uint8_t
-          LOG( LOG_ERR, "Invalid host_count value of \"%s\".\n", repoList[j]->host_count );
+       else if (temp > 255) { // m_repo->host_count is uint8_t
+          LOG( LOG_ERR, "Invalid host_count value of \"%s\".\n", p_repo->host_count );
           return NULL;
        }
-       marfs_repo_list[j]->host_count = (uint8_t)temp;
+       m_repo->host_count = (uint8_t)temp;
 
        // if user specifies a host_count > 1, then host must be a format-string
        if (temp > 1) {
-          if (! strstr(marfs_repo_list[j]->host, "%d")) {
+          if (! strstr(m_repo->host, "%d")) {
              LOG( LOG_ERR,
                   "If host_count>1, then host must include '%d'.  " 
                   "This will be used to print a randomized per-thread host-name, something like "
@@ -808,147 +945,191 @@ static MarFS_Config_Ptr read_configuration_internal() {
        }
     }
     else
-       marfs_repo_list[j]->host_count = 1;
+       m_repo->host_count = 1;
 
 
-    if ( lookup_boolean( repoList[j]->update_in_place, &( marfs_repo_list[j]->update_in_place ))) {
-      LOG( LOG_ERR, "Invalid update_in_place value of \"%s\".\n", repoList[j]->update_in_place );
+    // --- DAL
+    // PA2X parsed the DAL type, as well as any options.
+
+    // If repo-spec has no DAL entry, we'll see p_repo->dal.type == 0, from
+    // the parser.  In that case we default to OBJECT (which can also be
+    // safely called with no configuration options).
+
+    xDALConfigOpt** opts = NULL; /* array of ptrs */
+    ssize_t         opt_count = parse_xdal_config_options(&opts, p_repo->dal.opt);
+    if (opt_count < 0) {
+      LOG(LOG_ERR, "Couldn't parse DAL-options for repo '%s'\n", p_repo->name);
       return NULL;
     }
 
-    if ( lookup_boolean( repoList[j]->ssl, &( marfs_repo_list[j]->ssl ))) {
-      LOG( LOG_ERR, "Invalid ssl value of \"%s\".\n", repoList[j]->ssl );
+
+    // Go find the built-in DAL matching the type
+    // Then make a copy to be private to this repo.
+    DAL* dal = get_DAL(p_repo->dal.type);
+    if (! dal) {
+      LOG( LOG_ERR, "Couldn't find DAL named '%s' for repo '%s'.\n",
+           p_repo->dal_name, p_repo->name);
       return NULL;
     }
 
-    if ( lookup_accessmethod( repoList[j]->access_method, &( marfs_repo_list[j]->access_method ))) {
-      LOG( LOG_ERR, "Invalid access_method value of \"%s\".\n", repoList[j]->access_method );
+    DAL* dal_copy = (DAL*)malloc(sizeof(DAL));
+    *dal_copy = *dal;
+
+
+    // install the options, parsed out above.
+    if ((*dal_copy->config)(dal_copy, opts, opt_count)) {
+      LOG( LOG_ERR, "DAL_config failed for repo '%s'.\n",
+           p_repo->name);
+      return NULL;
+    }
+    m_repo->dal = dal_copy;
+
+
+
+
+    if ( lookup_boolean( p_repo->update_in_place, &( m_repo->update_in_place ))) {
+      LOG( LOG_ERR, "Invalid update_in_place value of \"%s\".\n", p_repo->update_in_place );
+      return NULL;
+    }
+
+    if ( lookup_boolean( p_repo->ssl, &( m_repo->ssl ))) {
+      LOG( LOG_ERR, "Invalid ssl value of \"%s\".\n", p_repo->ssl );
+      return NULL;
+    }
+
+    if ( lookup_accessmethod( p_repo->access_method, &( m_repo->access_method ))) {
+      LOG( LOG_ERR, "Invalid access_method value of \"%s\".\n", p_repo->access_method );
       return NULL;
     }
 
 
-    if (! repoList[j]->chunk_size) {
-       LOG( LOG_ERR, "Repo '%s' has no chunk_size.\n", repoList[j]->name );
+    if (! p_repo->chunk_size) {
+       LOG( LOG_ERR, "Repo '%s' has no chunk_size.\n", p_repo->name );
       return NULL;
     }
     errno = 0;
-    marfs_repo_list[j]->chunk_size = strtoull( repoList[j]->chunk_size, (char **) NULL, 10 );
+    m_repo->chunk_size = strtoull( p_repo->chunk_size, (char **) NULL, 10 );
     if ( errno ) {
-      LOG( LOG_ERR, "Invalid chunk_size value of \"%s\".\n", repoList[j]->chunk_size );
+      LOG( LOG_ERR, "Invalid chunk_size value of \"%s\".\n", p_repo->chunk_size );
       return NULL;
     }
 
     // repo.max_get_size was added in version 0.2.
     // Allow old configurations to be parsed by assigning a default (of 0)
-    marfs_repo_list[j]->max_get_size = 0;
-    if (repoList[j]->max_get_size) {
+    m_repo->max_get_size = 0;
+    if (p_repo->max_get_size) {
        errno = 0;
-       marfs_repo_list[j]->max_get_size = strtoull( repoList[j]->max_get_size, (char **) NULL, 10 );
+       m_repo->max_get_size = strtoull( p_repo->max_get_size, (char **) NULL, 10 );
        if ( errno ) {
-          LOG( LOG_ERR, "Invalid max_get_size value of \"%s\".\n", repoList[j]->max_get_size );
+          LOG( LOG_ERR, "Invalid max_get_size value of \"%s\".\n", p_repo->max_get_size );
           return NULL;
        }
     }
 
 #if 0
-    if (! repoList[j]->pack_size) {
-       LOG( LOG_ERR, "Repo '%s' has no pack_size.\n", repoList[j]->name );
+    if (! p_repo->pack_size) {
+       LOG( LOG_ERR, "Repo '%s' has no pack_size.\n", p_repo->name );
       return NULL;
     }
     errno = 0;
-    marfs_repo_list[j]->pack_size = strtoull( repoList[j]->pack_size, (char **) NULL, 10 );
+    m_repo->pack_size = strtoull( p_repo->pack_size, (char **) NULL, 10 );
     if ( errno ) {
-      LOG( LOG_ERR, "Invalid pack_size value of \"%s\".\n", repoList[j]->pack_size );
+      LOG( LOG_ERR, "Invalid pack_size value of \"%s\".\n", p_repo->pack_size );
       return NULL;
     }
 #else
 
     // max number of files to be allowed in a packed file.
     // -1 means no maximum.  0 means no packing.
-    if (! repoList[j]->max_pack_file_count) {
+    if (! p_repo->max_pack_file_count) {
        LOG( LOG_ERR, "Repo '%s' has no max_pack_file_count.\n",
-            repoList[j]->name );
+            p_repo->name );
       return NULL;
     }
     errno = 0;
-    marfs_repo_list[j]->max_pack_file_count
-       = strtoll( repoList[j]->max_pack_file_count, (char **) NULL, 10 );
+    m_repo->max_pack_file_count
+       = strtoll( p_repo->max_pack_file_count, (char **) NULL, 10 );
     if ( errno ) {
       LOG( LOG_ERR, "Invalid max_pack_file_count value of \"%s\".\n",
-           repoList[j]->max_pack_file_count );
+           p_repo->max_pack_file_count );
       return NULL;
     }
 
+
+#if 1
+      LOG(LOG_WARN, "DAL parsing suppressed for testing\n");
+#else
     // default to OBJ, for backward-compatibility
     const char* dal_name = strdup("OBJECT");
-    if ( ! repoList[j]->DAL ) {
+    if ( ! p_repo->DAL ) {
+    // if ( ! p_repo->DAL.type[0] ) {
        LOG( LOG_INFO, "MarFS repo '%s' has no DAL. Defaulting to OBJ\n",
-            repoList[j]->name );
+            p_repo->name );
     }
     else
-       dal_name = strdup(repoList[j]->DAL);
+       dal_name = strdup(p_repo->DAL);
 
-    marfs_repo_list[j]->dal_name = dal_name;
-    marfs_repo_list[j]->dal      = NULL; // see validate_config() in libmarfs
-
+    m_repo->dal_name = dal_name;
+    m_repo->dal      = NULL; // see validate_config() in libmarfs
+#endif
 
 
     // if max_pack_file_count = 0, packing is disabled, and we ignore all
     // other packing-related parameters.  This means you don't have to make
     // up meaningless values for fields that are going to be ignored.
-    if (! marfs_repo_list[j]->max_pack_file_count) {
+    if (! m_repo->max_pack_file_count) {
 
        // packing is disabled.  Allow config to ignore other
        // packing-related parameters.
-       marfs_repo_list[j]->min_pack_file_count = -1;
-       marfs_repo_list[j]->min_pack_file_size = -1;
-       marfs_repo_list[j]->max_pack_file_size = -1;
+       m_repo->min_pack_file_count = -1;
+       m_repo->min_pack_file_size = -1;
+       m_repo->max_pack_file_size = -1;
     }
     else {
 
        // packing is enabled.  The other packing-related parameters will be
        // parssed and validated.
 
-       if (! repoList[j]->min_pack_file_count) {
+       if (! p_repo->min_pack_file_count) {
           LOG( LOG_ERR, "Repo '%s' has no min_pack_file_count.\n",
-               repoList[j]->name );
+               p_repo->name );
           return NULL;
        }
        errno = 0;
-       marfs_repo_list[j]->min_pack_file_count
-          = strtoll( repoList[j]->min_pack_file_count, (char **) NULL, 10 );
+       m_repo->min_pack_file_count
+          = strtoll( p_repo->min_pack_file_count, (char **) NULL, 10 );
        if ( errno ) {
           LOG( LOG_ERR, "Invalid min_pack_file_count value of \"%s\".\n",
-               repoList[j]->min_pack_file_count );
+               p_repo->min_pack_file_count );
           return NULL;
        }
 
 
-       if (! repoList[j]->max_pack_file_size) {
+       if (! p_repo->max_pack_file_size) {
           LOG( LOG_ERR, "Repo '%s' has no max_pack_file_size.\n",
-               repoList[j]->name );
+               p_repo->name );
           return NULL;
        }
        errno = 0;
-       marfs_repo_list[j]->max_pack_file_size
-          = strtoll( repoList[j]->max_pack_file_size, (char **) NULL, 10 );
+       m_repo->max_pack_file_size
+          = strtoll( p_repo->max_pack_file_size, (char **) NULL, 10 );
        if ( errno ) {
           LOG( LOG_ERR, "Invalid max_pack_file_size value of \"%s\".\n",
-               repoList[j]->max_pack_file_size );
+               p_repo->max_pack_file_size );
           return NULL;
        }
 
 
-       if (! repoList[j]->min_pack_file_size) {
-          LOG( LOG_ERR, "Repo '%s' has no min_pack_file_size.\n", repoList[j]->name );
+       if (! p_repo->min_pack_file_size) {
+          LOG( LOG_ERR, "Repo '%s' has no min_pack_file_size.\n", p_repo->name );
           return NULL;
        }
        errno = 0;
-       marfs_repo_list[j]->min_pack_file_size
-          = strtoll( repoList[j]->min_pack_file_size, (char **) NULL, 10 );
+       m_repo->min_pack_file_size
+          = strtoll( p_repo->min_pack_file_size, (char **) NULL, 10 );
        if ( errno ) {
           LOG( LOG_ERR, "Invalid min_pack_file_size value of \"%s\".\n",
-               repoList[j]->min_pack_file_size );
+               p_repo->min_pack_file_size );
           return NULL;
        }
 
@@ -956,37 +1137,37 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
 #endif
 
-    if ( lookup_securitymethod( repoList[j]->security_method, &( marfs_repo_list[j]->security_method ))) {
-      LOG( LOG_ERR, "Invalid security_method value of \"%s\".\n", repoList[j]->security_method );
+    if ( lookup_securitymethod( p_repo->security_method, &( m_repo->security_method ))) {
+      LOG( LOG_ERR, "Invalid security_method value of \"%s\".\n", p_repo->security_method );
       return NULL;
     }
 
-    if ( lookup_enctype( repoList[j]->enc_type, &( marfs_repo_list[j]->enc_type ))) {
-      LOG( LOG_ERR, "Invalid enc_type value of \"%s\".\n", repoList[j]->enc_type );
+    if ( lookup_enctype( p_repo->enc_type, &( m_repo->enc_type ))) {
+      LOG( LOG_ERR, "Invalid enc_type value of \"%s\".\n", p_repo->enc_type );
       return NULL;
     }
 
-    if ( lookup_comptype( repoList[j]->comp_type, &( marfs_repo_list[j]->comp_type ))) {
-      LOG( LOG_ERR, "Invalid comp_type value of \"%s\".\n", repoList[j]->comp_type );
+    if ( lookup_comptype( p_repo->comp_type, &( m_repo->comp_type ))) {
+      LOG( LOG_ERR, "Invalid comp_type value of \"%s\".\n", p_repo->comp_type );
       return NULL;
     }
 
-    if ( lookup_correcttype( repoList[j]->correct_type, &( marfs_repo_list[j]->correct_type ))) {
-      LOG( LOG_ERR, "Invalid correct_type value of \"%s\".\n", repoList[j]->correct_type );
+    if ( lookup_correcttype( p_repo->correct_type, &( m_repo->correct_type ))) {
+      LOG( LOG_ERR, "Invalid correct_type value of \"%s\".\n", p_repo->correct_type );
       return NULL;
     }
 
-    marfs_repo_list[j]->online_cmds = NULL;
-    marfs_repo_list[j]->online_cmds_len = 0;
+    m_repo->online_cmds = NULL;
+    m_repo->online_cmds_len = 0;
 
-    if (! repoList[j]->latency) {
-       LOG( LOG_ERR, "Repo '%s' has no latency.\n", repoList[j]->name );
+    if (! p_repo->latency) {
+       LOG( LOG_ERR, "Repo '%s' has no latency.\n", p_repo->name );
       return NULL;
     }
     errno = 0;
-    marfs_repo_list[j]->latency = strtoull( repoList[j]->latency, (char **) NULL, 10 );
+    m_repo->latency = strtoull( p_repo->latency, (char **) NULL, 10 );
     if ( errno ) {
-      LOG( LOG_ERR, "Invalid latency value of \"%s\".\n", repoList[j]->latency );
+      LOG( LOG_ERR, "Invalid latency value of \"%s\".\n", p_repo->latency );
       return NULL;
     }
 
@@ -994,33 +1175,37 @@ static MarFS_Config_Ptr read_configuration_internal() {
     // hardcoded in object_stream.c
     // TBD: Use a constant defined in a header file, and put that in here.
     errno = 0;
-    unsigned long wr_timeout = (repoList[j]->write_timeout
-                                ? strtoul( repoList[j]->write_timeout, (char **) NULL, 10 )
+    unsigned long wr_timeout = (p_repo->write_timeout
+                                ? strtoul( p_repo->write_timeout, (char **) NULL, 10 )
                                 : 0);
     if ( errno || (wr_timeout > (uint16_t)-1)) {
-      LOG( LOG_ERR, "Invalid write_timeout value \"%s\".\n", repoList[j]->write_timeout );
+      LOG( LOG_ERR, "Invalid write_timeout value \"%s\".\n", p_repo->write_timeout );
       return NULL;
     }
-    marfs_repo_list[j]->write_timeout = wr_timeout;
+    m_repo->write_timeout = wr_timeout;
 
 
     // default Repo.read_timeout = 0 means we will fall back to constants
     // hardcoded in object_stream.c
     // TBD: Use a constant defined in a header file, and put that in here.
     errno = 0;
-    unsigned long rd_timeout = (repoList[j]->read_timeout
-                                ? strtoul( repoList[j]->read_timeout, (char **) NULL, 10 )
+    unsigned long rd_timeout = (p_repo->read_timeout
+                                ? strtoul( p_repo->read_timeout, (char **) NULL, 10 )
                                 : 0);
     if ( errno || (rd_timeout > (uint16_t)-1)) {
-      LOG( LOG_ERR, "Invalid read_timeout value \"%s\".\n", repoList[j]->read_timeout );
+      LOG( LOG_ERR, "Invalid read_timeout value \"%s\".\n", p_repo->read_timeout );
       return NULL;
     }
-    marfs_repo_list[j]->read_timeout = rd_timeout;
+    m_repo->read_timeout = rd_timeout;
   }
   free( repoList );
 
 
-  /* NAMESPACE */
+
+
+
+
+  /* NAMESPACE ----------------------------------------------------------------- */
 
   namespaceList = (struct namespace **) config->namespace;
 
@@ -1286,6 +1471,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
 
 
+#if 0
     // default to POSIX, for backward-compatibility
     // [co-maintain with file_MDAL tests, below]
     const char* dir_MDAL_name = strdup("POSIX");
@@ -1298,9 +1484,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
     marfs_namespace_list[j]->dir_MDAL_name = dir_MDAL_name;
     marfs_namespace_list[j]->dir_MDAL      = NULL; // see validate_config() in libmarfs
+#endif
 
 
-
+#if 0
     // default to POSIX, for backward-compatibility
     // [co-maintain with dir_MDAL tests, above]
     const char* file_MDAL_name = strdup("POSIX");
@@ -1313,11 +1500,17 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
     marfs_namespace_list[j]->file_MDAL_name = file_MDAL_name;
     marfs_namespace_list[j]->file_MDAL      = NULL; // see validate_config() in libmarfs
+#endif
+
   }
   free( namespaceList );
 
 
-  /* CONFIG */
+
+
+
+
+  /* CONFIG ----------------------------------------------------------------- */
 
   if ( ! config->name ) {
      LOG( LOG_ERR, "MarFS config has no name.\n" );
@@ -1597,7 +1790,7 @@ int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "\tmin_pack_file_count %ld\n",  repo->min_pack_file_count);
    fprintf(stdout, "\tmax_pack_file_size  %ld\n",  repo->max_pack_file_size);
    fprintf(stdout, "\tmin_pack_file_size  %ld\n",  repo->min_pack_file_size);
-   fprintf(stdout, "\tDAL_name            %s\n",   repo->dal_name);
+   fprintf(stdout, "\tDAL_name            %s\n",   (repo->dal ? repo->dal->name : "N/A"));
    fprintf(stdout, "\tonline_cmds         %s\n",   repo->online_cmds);
    fprintf(stdout, "\tonline_cmds_len     %ld\n",  repo->online_cmds_len);
    fprintf(stdout, "\tlatency             %llu\n", repo->latency);

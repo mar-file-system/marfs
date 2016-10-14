@@ -115,7 +115,7 @@ if (( DAL )); then
 fi
 
 
-if [ -n "$MARFSCONFIG" ]; then
+if [ -n "$MARFSCONFIGRC" ]; then
     CONFIG_ARGS+=" CONFIG=$MARFSCONFIGRC"
 fi
 
@@ -129,7 +129,6 @@ echo "CONFIG_ARGS='$CONFIG_ARGS'"
 echo "FUSE_ARGS='$FUSE_ARGS'"
 echo "UTILITY_ARGS=$UTILITY_ARGS"
 echo
-
 
 
 

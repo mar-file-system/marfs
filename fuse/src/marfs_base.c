@@ -1324,6 +1324,10 @@ int validate_configuration() {
       }
 
 
+      // THIS HAS MOVED TO read_configuration()
+#if 1
+      LOG(LOG_WARN, "DAL parsing suppressed for testing\n");
+#else
       // configuration parsed the DAL name.
       // Go find the corresponding DAL and install
       DAL* dal = get_DAL(repo->dal_name);
@@ -1333,6 +1337,7 @@ int validate_configuration() {
          retval = -1;
       }
       repo->dal = dal;
+#endif
    }
 
 
@@ -1349,6 +1354,9 @@ int validate_configuration() {
          retval = -1;
       }
 
+#if 1
+      LOG(LOG_WARN, "MDAL parsing suppressed for testing\n");
+#else
       // configuration parsed the MDAL type-name
       // Go find the corresponding MDAL and install
       MDAL* dir_MDAL = get_MDAL(ns->dir_MDAL_name);
@@ -1366,6 +1374,7 @@ int validate_configuration() {
          retval = -1;
       }
       ns->file_MDAL = file_MDAL;
+#endif
    }
 
 

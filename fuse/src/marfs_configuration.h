@@ -353,7 +353,6 @@ typedef struct marfs_repo {
    ssize_t               min_pack_file_count;
    ssize_t               max_pack_file_count;
 
-   const char           *dal_name;
    struct DAL           *dal;
 
    char                 *online_cmds;
