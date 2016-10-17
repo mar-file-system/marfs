@@ -78,29 +78,28 @@ else
     COMPILER=gcc
 fi
 
+
 case $CODE in
     0)
-        CONFIG_ARGS+=" DEBUG=0 CONFIG=$MARFSCONFIGRC"
+        CONFIG_ARGS+=" DEBUG=0"
         FUSE_ARGS+=" lean"
         ;;
     1)
-        CONFIG_ARGS+=" CONFIG=$MARFSCONFIGRC"
         FUSE_ARGS+=" fast"
         ;;
     2)
         AWS4C_ARGS+=" DEBUG=1"
-        CONFIG_ARGS+=" DEBUG=1 CONFIG=$MARFSCONFIGRC"
+        CONFIG_ARGS+=" DEBUG=1"
         FUSE_ARGS+=" DEBUG=0"
         UTILITY_ARGS+=" DEBUG=1"
         ;;
     3)
-        CONFIG_ARGS+=" DEBUG=4 CONFIG=$MARFSCONFIGRC"
+        CONFIG_ARGS+=" DEBUG=4"
         AWS4C_ARGS+=" DEBUG=1"
         FUSE_ARGS+=" lean DEBUG=0"
         UTILITY_ARGS+=" DEBUG=1"
         ;;
     4)
-        CONFIG_ARGS+=" CONFIG=$MARFSCONFIGRC"
         FUSE_ARGS+=" dbg"
         ;;
 
@@ -124,6 +123,9 @@ if (( DAL )); then
 fi
 
 
+if [ -n "$MARFSCONFIGRC" ]; then
+    CONFIG_ARGS+=" CONFIG=$MARFSCONFIGRC"
+fi
 
 CONFIG_ARGS+=" PARSE_DIR=$PA2X"
 FUSE_ARGS+=" LIBAWS4C=$AWS4C"
