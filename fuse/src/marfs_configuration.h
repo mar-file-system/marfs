@@ -446,15 +446,12 @@ typedef struct marfs_namespace {
    long long             quota_space;
    long long             quota_names;
 
-   const char           *dir_MDAL_name;
    struct MDAL          *dir_MDAL;
-   const char           *file_MDAL_name;
    struct MDAL          *file_MDAL;
-
-   char                 *ns_shardp;
-   size_t                ns_shardp_len;
-   unsigned long long    ns_shardp_num;
-} MarFS_Namespace, *MarFS_Namespace_Ptr, **MarFS_Namespace_List;
+}
+   MarFS_Namespace,
+   *MarFS_Namespace_Ptr,
+   **MarFS_Namespace_List;
 
 
 

@@ -1324,9 +1324,8 @@ int validate_configuration() {
       }
 
 
-      // THIS HAS MOVED TO read_configuration()
 #if 1
-      LOG(LOG_WARN, "DAL parsing suppressed for testing\n");
+      LOG(LOG_WARNING, "DAL installation is now done in read_configuration\n");
 #else
       // configuration parsed the DAL name.
       // Go find the corresponding DAL and install
@@ -1354,8 +1353,9 @@ int validate_configuration() {
          retval = -1;
       }
 
+
 #if 1
-      LOG(LOG_WARN, "MDAL parsing suppressed for testing\n");
+      LOG(LOG_WARNING, "MDAL installation is now done in read_configuration\n");
 #else
       // configuration parsed the MDAL type-name
       // Go find the corresponding MDAL and install

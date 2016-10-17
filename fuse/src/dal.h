@@ -179,6 +179,14 @@ typedef  int     (*dal_config) (struct DAL*     dal,
                                 size_t          opt_count);
 
 
+// used to check whether an MDAL uses the default-config, so that we can
+// reliably print out the options with which it was configured, for
+// diagnostics.
+extern int   default_dal_config(struct DAL*     dal,
+                                xDALConfigOpt** opts,
+                                size_t          opt_count);
+
+
 
 // initialize/destroy context, if desired.
 //
