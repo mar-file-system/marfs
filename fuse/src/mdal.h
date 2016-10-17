@@ -160,15 +160,15 @@ struct MDAL;
 // repo has its own copy of the "master" DAL defined in dal.c, so
 // configuration is only done to the local copy owned by a repo.
 // 
-// <repo>
+// <namespace>
 //   ...
-//   <dal>
+//   <file_MDAL>
 //     <type>SOME_TYPE</type>
 //     <opt> <key_val> key1 : value1 </key_val> </opt>
 //     <opt> <key_val> key2 : value2 </key_val> </opt>
 //     <opt> <value>   value3  </value> </opt>
-//   </dal>
-// </repo>
+//   </file_MDAL>
+// </namespace>
 // 
 // The DAL config function is called once in the lifetime of the per-repo
 // DAL copy, when it is being installed in a repo, during reading of the
