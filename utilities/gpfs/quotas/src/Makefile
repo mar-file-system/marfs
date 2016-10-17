@@ -25,6 +25,11 @@ ifdef DEBUG
   CFLAGS += -DUSE_STDOUT
 endif 
 
+ifdef USE_MC
+	LIBS += -lisal -lne
+	LDFLAGS += -L$(LIBNE)
+endif
+
 # Use this for specific make (make marfs_quota_debug)
 DEBUG = -DUSE_STDOUT
 #

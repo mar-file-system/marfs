@@ -112,6 +112,7 @@ esac
 if (( MC )); then
     DAL=1 # dal is required.
     FUSE_ARGS+=" USE_MC=1"
+    UTILITY_ARGS+=" USE_MC=1"
 fi
 
 if (( MDAL )); then

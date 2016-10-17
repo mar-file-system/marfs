@@ -31,6 +31,11 @@ LIBS += -laws4c -lgpfs -lcurl -lm $(LIBMARFS) -lconfig -lutil_comm
 
 DEBUG = -DUSE_STDOUT
 
+ifdef USE_MC
+	LIBS += -lisal -lne
+	LDFLAGS += -L$(LIBNE)
+endif
+
 #Build regular marfs_packer or debug version
 marfs_packer: $(H) $(OBJS)  marfs_packer.c 
 	gcc $(CFLAGS) $(LDFLAGS) -o marfs_packer marfs_packer.c $(OBJS) $(LIBS)

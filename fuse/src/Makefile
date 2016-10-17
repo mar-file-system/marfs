@@ -312,10 +312,10 @@ ifdef LINK_LIBFUSE
 endif
 
 ifdef USE_MC
-	OBJS += $(LIBNE)/erasure.o
 	CFLAGS += -I$(LIBNE)
-#	LDFLAGS += -L$(LIBNE)
-#	LIBS += -lisal -lne
+	LDFLAGS += -L$(LIBNE)
+	LIBS += -lisal -lne
+	DEFS += USE_MC=$(USE_MC)
 endif
 
 # assimilate all the DEFS we've added, into CFLAGS
