@@ -93,7 +93,7 @@ FUSE_DEPS =
 
 
 # These are files where .c, .o, .h all make sense
-FNAME_ROOTS = marfs_base common object_stream marfs_ops push_user mdal dal
+FNAME_ROOTS = marfs_base common object_stream marfs_ops push_user mdal dal marfs_configuration
 
 OBJS =            logging.o $(patsubst %, %.o, $(FNAME_ROOTS))
 SRCS = $(LOGGING)/logging.c $(patsubst %, %.c, $(FNAME_ROOTS))
@@ -293,12 +293,6 @@ ifdef SPINLOCKS
 endif
 
 
-# link with the config-reader library.
-CFLAGS    += -I$(CONFIG)
-LDFLAGS   += -L$(CONFIG)
-LIBS      += -lconfig
-FUSE_DEPS += $(CONFIG)/libconfig.a
-
 
 # If we are building the 'lib' targets for others (e.g. pftool, GC, quota,
 # etc), then we don't want to have to link with fuse proper.  For those
@@ -318,6 +312,13 @@ ifdef USE_MC
 	DEFS += USE_MC=$(USE_MC)
 endif
 
+# link with the config-reader library.
+CFLAGS    += -I$(CONFIG)
+LDFLAGS   += -L$(CONFIG)
+LIBS      += -lconfig
+FUSE_DEPS += $(CONFIG)/libconfig.a
+
+
 # assimilate all the DEFS we've added, into CFLAGS
 CFLAGS  += $(patsubst %, -D%, $(DEFS))
 
@@ -329,8 +330,8 @@ CFLAGS  += $(patsubst %, -D%, $(DEFS))
 logging.o: $(LOGGING)/logging.c $(LOGGING)/logging.h
 	$(CC) -c $(CFLAGS) -o $@ $<
 
-marfs_configuration.o: $(CONFIG)/marfs_configuration.c $(CONFIG)/marfs_configuration.h
-	$(CC) -c $(CFLAGS) -o $@ $<
+#marfs_configuration.o: $(CONFIG)/marfs_configuration.c $(CONFIG)/marfs_configuration.h
+#	$(CC) -c $(CFLAGS) -o $@ $<
 
 
 %: %.o
@@ -359,6 +360,7 @@ clean: # cleanx
 	$(RM) *.{o,i,E}
 	$(RM) *~
 	$(RM) marfs_fuse
+	$(RM) marfs_config
 	$(RM) marfs_pipe
 	$(RM) core.*
 	$(RM) libmarfs.a
@@ -639,6 +641,36 @@ marfs_pipe: marfs_pipe_main.c
 	mv marfs_pipe_main marfs_pipe
 	chmod u+s marfs_pipe
 
+
+# ---------------------------------------------------------------------------
+# tool to allow scripts to get access to configuration details
+#
+# for example:
+#
+#   $ marfs_config -n           [print namespace names]
+#   $ marfs_config -n jti       [print contents of namespace with name 'jti']
+#   $ marfs_config -r           [print repo names]
+#   $ marfs_config -r s3        [print contents of repo with name 's3']
+#   $ marfs_config t            [print top-level config details]
+#   $ marfs_config t mnt_top    [print value of top-level "mnt_top" setting]
+#
+# NOTE: This was formerly built in libconfig, but had to come here during
+#       the refactoring of libmarfs vs libconfig.
+# ---------------------------------------------------------------------------
+
+
+marfs_config: marfs_config.c
+	@ $(MAKE) _app_$@
+
+
+# Brett's configuration tester
+test_marfs_configuration: test_marfs_configuration.c
+	@ $(MAKE) _app_$@
+
+
+
+
+
 # ...........................................................................
 # various testing
 # ...........................................................................
@@ -671,7 +703,7 @@ _app_%: libmarfs.a
 
 # lines-of-code
 CODE = $(H) $(SRCS) main.c \
-	$(CONFIG)/marfs_configuration.{c,h} $(CONFIG)/marfs_config.c
+	$(CONFIG)/PA2X_interface.{c,h} $(CONFIG)/PA2X_interface.c
 
 # lines-of-code (including libaws4c)
 CODE2 = $(CODE) \

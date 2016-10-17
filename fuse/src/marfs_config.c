@@ -55,6 +55,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <unistd.h>             // getopt
 #include <stdlib.h>             // exit
 #include <stdio.h>
+#include <string.h>
 
 // #include "logging.h"
 #include "marfs_configuration.h"
@@ -73,12 +74,15 @@ show_usage(char* prog_name) {
    fprintf(stderr, "\n");
    fprintf(stderr, "\tCan't use more than one of -r, -n, -t\n");
    fprintf(stderr, "\tUse an empty-string to \n");
+   return 0;
 }
 
 
 int main( int argc, char *argv[] ) {
+
+   __attribute__ ((unused)) int    digit_optind = 0; // commented-out dbg stmts
+
    int    c;
-   int    digit_optind = 0;
 
    int    usage = 0;
    int    err = 0;
