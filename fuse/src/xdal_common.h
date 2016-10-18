@@ -60,6 +60,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 // This file is used by both dal.h and mdal.h
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
    GVTS_NONE   = 0,
    GVTS_BOOL   = 1,
@@ -87,6 +91,8 @@ typedef struct {
    GenericValue  val;        // read_configuration() inits w/ string-values
 } xDALConfigOpt;
 
-
-
+#ifdef __cplusplus
+}
 #endif
+
+#endif // __MARFS_xDAL_COMMON_H__
