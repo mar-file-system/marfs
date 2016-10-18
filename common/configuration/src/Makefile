@@ -117,8 +117,9 @@ parser: parse_dir
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
 	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 
-	@ echo; echo "#-- making a symlink to $(PARSE_DIR)/$(PARSE_h_file)"
-	ln -fs $(PARSE_H) $(PARSE_H_file)
+	@ echo; echo "#-- making a symlink to $(PARSE_H)"
+	rm -f $(PARSE_H_file)
+	ln -s $(PARSE_H) $(PARSE_H_file)
 
 
 CFLAGS += -I$(PARSE_DIR) -DPARSE_DIR=$(PARSE_DIR)
