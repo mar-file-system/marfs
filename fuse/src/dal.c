@@ -657,6 +657,7 @@ DAL posix_dal = {
 #define MC_OS(CTX)      (&MC_FH(CTX)->os)
 #define MC_REPO(CTX)    MC_CONTEXT(CTX)->fh->repo
 #define MC_HANDLE(CTX)  MC_CONTEXT(CTX)->mc_handle
+#define MC_CONFIG(CTX)  MC_CONTEXT(CTX)->config
 #define MC_CONTEXT(CTX) ((MC_Context*)((CTX)->data.ptr))
 
 enum mc_flags {
@@ -664,6 +665,14 @@ enum mc_flags {
                            // object, but really we are waiting until
                            // you call put() or get() to do the open.
 };
+
+typedef struct mc_config {
+   unsigned int n;
+   unsigned int e;
+   unsigned int num_pods;
+   unsigned int num_cap;
+   unsigned int scatter_width;
+} MC_Config;
 
 typedef struct mc_context {
    ObjectStream*     os;
@@ -675,7 +684,43 @@ typedef struct mc_context {
    // updated/set by ->update_object_location()
    char              path_template[MC_MAX_PATH_LEN];
    unsigned int      start_block;
+   MC_Config         *config;
 } MC_Context;
+
+int   mc_config(struct DAL*     dal,
+                xDALConfigOpt** opts,
+                size_t          opt_count) {
+   ENTRY();
+   
+   MC_Config* config = malloc(sizeof(MC_Config));
+   int i;
+   for(i = 0; i < opt_count; i++) {
+      if(!strcmp(opts[i]->key, "n")) { // ? Should be strncmp?
+         config->n = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"n\" = %d\n", config->n);
+      }
+      else if(!strcmp(opts[i]->key, "e")) {
+         config->e = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"e\" = %d\n", config->e);
+      }
+      else if(!strcmp(opts[i]->key, "num_pods")) {
+         config->num_pods = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"num_pods\" = %d\n", config->num_pods);
+      }
+      else if(!strcmp(opts[i]->key, "num_cap")) {
+         config->num_cap = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"num_cap\" = %d\n", config->num_cap);
+      }
+      else if(!strcmp(opts[i]->key, "scatter_width")) {
+         config->scatter_width = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"scatter_width\" = %d\n", config->scatter_width);
+      }
+   }
+
+   dal->global_state = config;
+   EXIT();
+   return 0;
+}
 
 // Computes a good, uniform, hash of the string.
 //
@@ -716,6 +761,7 @@ int mc_init(DAL_Context* ctx, struct DAL* dal, void* fh) {
    MC_HANDLE(ctx) = NULL;
    MC_CONTEXT(ctx)->chunk_offset = 0;
    ctx->flags = 0;
+   MC_CONFIG(ctx) = (MC_Config*)dal->global_state;
 
    EXIT();
    return 0;
@@ -734,11 +780,10 @@ int mc_update_path(DAL_Context* ctx) {
    //           things easy.
 
    // shorthand
-   PathInfo*              info          = &(MC_FH(ctx)->info);
-   MarFS_Repo*            repo          = info->pre.repo;
-   char*                  objid         = info->pre.objid;
-   char*                  path_template = MC_CONTEXT(ctx)->path_template;
-   
+   PathInfo*         info          = &(MC_FH(ctx)->info);
+   const MarFS_Repo* repo          = info->pre.repo;
+   char*             objid         = info->pre.objid;
+   char*             path_template = MC_CONTEXT(ctx)->path_template;
 
    char obj_filename[MARFS_MAX_OBJID_SIZE];
    strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);
@@ -756,15 +801,10 @@ int mc_update_path(DAL_Context* ctx) {
    // based on those parameters.
    char *mc_path_format = repo->host;
 
-   // XXX: This all needs to come from the configuration for the
-   // DAL/repo.
-#warning "constants n, e, num_blocks, etc. should be read from config!"
-   int n = 10;
-   int e = 2;
-   unsigned int num_blocks    = n+e;
-   unsigned int num_pods      = 4;
-   unsigned int num_cap       = 1;
-   unsigned int scatter_width = 128;
+   unsigned int num_blocks    = MC_CONFIG(ctx)->n+MC_CONFIG(ctx)->e;
+   unsigned int num_pods      = MC_CONFIG(ctx)->num_pods;
+   unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
+   unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
    
    unsigned int pod           = objid_hash % num_pods;
    unsigned int capacity_unit = objid_hash % num_cap;
@@ -800,10 +840,9 @@ int mc_do_open(DAL_Context* ctx) {
 
    ObjectStream* os            = MC_OS(ctx);
    char*         path_template = MC_CONTEXT(ctx)->path_template;
-   // XXX: This needs to come from the configuration for the DAL/repo.
-#warning "n and e should be read from config!"
-   unsigned int n = 10;
-   unsigned int e = 2;
+
+   unsigned int n = MC_CONFIG(ctx)->n;
+   unsigned int e = MC_CONFIG(ctx)->e;
 
    // QUESTION: Should we test os->flags & OSF_OPEN here? It would be
    // an error to call this except after mc_open(), but... this should
@@ -1015,8 +1054,7 @@ int mc_close(DAL_Context* ctx) {
 
 int mc_del(DAL_Context* ctx) {
    char* path_template = MC_CONTEXT(ctx)->path_template;
-#warning "nblocks should be read from config!"
-   int nblocks = 12; // XXX CHANGE THIS
+   int nblocks = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
 
    int block;
    for(block = 0; block < nblocks; block++) {
@@ -1034,6 +1072,7 @@ DAL mc_dal = {
 
    .global_state = NULL,
 
+   .config       = &mc_config,
    .init         = &mc_init,
    .destroy      = &mc_destroy,
 
