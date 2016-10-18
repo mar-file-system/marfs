@@ -77,7 +77,7 @@ typedef enum {
 typedef struct {
    GenericValueTypeSpec  type;
    union {
-      uint8_t      bool;
+      uint8_t      boolean;
       const char*  str;
       uint64_t     u64;
       int64_t      i64;
