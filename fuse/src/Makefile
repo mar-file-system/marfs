@@ -76,7 +76,7 @@
 # 'make remount'   unmount [if needed],  mount
 # 'make redo'      unmount [if needed], clean, build, WIPE-SYSLOG!, mount
 
-all: fuse
+all: fuse marfs_config
 
 
 # non-useless shell

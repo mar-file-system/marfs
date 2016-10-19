@@ -90,7 +90,7 @@ case $CODE in
     2)
         AWS4C_ARGS+=" DEBUG=1"
         CONFIG_ARGS+=" DEBUG=1"
-        FUSE_ARGS+=" DEBUG=0"
+        FUSE_ARGS+=" fuse DEBUG=0"
         UTILITY_ARGS+=" DEBUG=1"
         ;;
     3)
@@ -108,9 +108,11 @@ case $CODE in
         exit 1;
 esac
 
+
 # marfs_config is now found in the libmarfs source tree, instead of libconfig
 # TBD: move to utilities.
 FUSE_ARGS+=" marfs_config"
+
 
 if (( MC )); then
     DAL=1 # dal is required.
