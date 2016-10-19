@@ -106,7 +106,7 @@ LOG  = > fuse.log 2>&1
 
 
 
-MNT := /campaign.jti
+MNT := /marfs
 
 
 # file
