@@ -78,7 +78,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.63])
-AC_INIT([MarFS], [0.92.1], [http://github.com/mar-file-system/marfs])
+AC_INIT([MarFS], [0.92], [http://github.com/mar-file-system/marfs])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror])
 AC_CONFIG_SRCDIR([COPYRIGHT.h])
 AC_CONFIG_HEADERS([config.h])
@@ -202,6 +202,11 @@ AC_ARG_VAR(conf, [The path to the marfs configuration blueprint])
 AC_ARG_VAR(MARFS_MNT, [The MarFS mount point (optional)])
 AC_ARG_VAR(MARFSCONFIGRC, [The path to the marfs config (or any valid config)])
 
+AS_IF([test -z "$PARSE_DIR"], AC_ERROR([PARSE_DIR is not set]))
+AS_IF([test -z "$AWS4C"], AC_ERROR([AWS4C in not set]))
+AS_IF([test x"$enable_mc" = xyes && test -z "$LIBNE"], AC_ERROR([LIBNE is not set]))
+
+
 # Checks for header files.
 AC_CHECK_HEADERS([arpa/inet.h fcntl.h inttypes.h limits.h stddef.h stdint.h stdlib.h string.h sys/statvfs.h syslog.h unistd.h utime.h])
 
@@ -229,12 +234,7 @@ AC_FUNC_REALLOC
 AC_CHECK_FUNCS([clock_gettime floor ftruncate getcwd gethostname gettimeofday lchown localtime_r memmove memset mkdir pow realpath regcomp rmdir strcasecmp strchr strdup strerror strpbrk strrchr strspn strstr strtol strtoul strtoull utime])
 
 AC_CONFIG_FILES([Makefile
-                 common/Makefile
+                 common/configuration/src/Makefile
                  fuse/src/Makefile
                  utilities/Makefile])
-#                 utilities/gpfs/common/src/Makefile
-#                 utilities/gpfs/garbage-collection/src/Makefile
-#                 utilities/gpfs/packer/src/Makefile
-#                 utilities/gpfs/quotas/src/Makefile
-#                utilities/gpfs/repacker/src/Makefile])
 AC_OUTPUT

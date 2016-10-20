@@ -123,10 +123,12 @@ extern "C" {
 //
 // -- 1.4 Added mdfs_top to config, with checking in open() and opendir()
 //        to forbid access, in case something gets past unshare.
-
+//
+// -- 1.5 Not strictly a change in config.  Moved parsing to libmarfs,
+//        leaving libconfig with only the PA2X interface.
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  4
+#define MARFS_CONFIG_MINOR  5
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
@@ -351,7 +353,6 @@ typedef struct marfs_repo {
    ssize_t               min_pack_file_count;
    ssize_t               max_pack_file_count;
 
-   const char           *dal_name;
    struct DAL           *dal;
 
    char                 *online_cmds;
@@ -445,15 +446,12 @@ typedef struct marfs_namespace {
    long long             quota_space;
    long long             quota_names;
 
-   const char           *dir_MDAL_name;
    struct MDAL          *dir_MDAL;
-   const char           *file_MDAL_name;
    struct MDAL          *file_MDAL;
-
-   char                 *ns_shardp;
-   size_t                ns_shardp_len;
-   unsigned long long    ns_shardp_num;
-} MarFS_Namespace, *MarFS_Namespace_Ptr, **MarFS_Namespace_List;
+}
+   MarFS_Namespace,
+   *MarFS_Namespace_Ptr,
+   **MarFS_Namespace_List;
 
 
 

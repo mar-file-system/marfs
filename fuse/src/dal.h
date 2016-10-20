@@ -85,6 +85,7 @@ OF SUCH DAMAGE.
 
 
 #include "marfs_configuration.h" // DAL_Type
+#include "xdal_common.h"
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -142,6 +143,49 @@ typedef struct {
 
 // fwd-decl
 struct DAL;
+
+
+
+// All DALs must now have a "config" method, which is called at
+// read-config-time, passing a vector of xDALConfigOpts, parsed from the
+// XML of the config file.
+//
+// Within the configuration for a repo, you can optionally add a DAL spec,
+// which can optionally contain one or more key-value, or value fields.
+// What used to be the named DAL-type is now put into a <type> field.  Each
+// repo has its own copy of the "master" DAL defined in dal.c, so
+// configuration is only done to the local copy owned by a repo.
+// 
+// <repo>
+//   ...
+//   <dal>
+//     <type>SOME_TYPE</type>
+//     <opt> <key_val> key1 : value1 </key_val> </opt>
+//     <opt> <key_val> key2 : value2 </key_val> </opt>
+//     <opt> <value>   value3  </value> </opt>
+//   </dal>
+// </repo>
+// 
+// The DAL config function is called once in the lifetime of the per-repo
+// DAL copy, when it is being installed in a repo, during reading of the
+// MarFS configuration.  The options in the config file are generic, to
+// allow options to be provided to arbitrary DAL implementations without a
+// need for code-changes.  The vector of options are dynamically allocated.
+// You can store the ptr (e.g. in DAL.global_state) if you want to keep
+// them.  Otherwise, you should free() them.  (See default_dal_config().)
+
+typedef  int     (*dal_config) (struct DAL*     dal,
+                                xDALConfigOpt** opts,
+                                size_t          opt_count);
+
+
+// used to check whether an MDAL uses the default-config, so that we can
+// reliably print out the options with which it was configured, for
+// diagnostics.
+extern int   default_dal_config(struct DAL*     dal,
+                                xDALConfigOpt** opts,
+                                size_t          opt_count);
+
 
 
 // initialize/destroy context, if desired.
@@ -266,6 +310,7 @@ typedef struct DAL {
 
    void*                      global_state;
 
+   dal_config                 config;
    dal_ctx_init               init;
    dal_ctx_destroy            destroy;
 

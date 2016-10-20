@@ -20,7 +20,7 @@ marfs_repack_LDFLAGS = -lgpfs
 
 endif
 
-AM_CPPFLAGS = -I../fuse/src -I../common/log/src -I../common/configuration/src -I$(AWS4C) -D_XOPEN_SOURCE=700
+AM_CPPFLAGS = -I$(top_srcdir)/fuse/src -I../common/log/src -I$(top_srcdir)/common/configuration/src -I$(AWS4C) -D_XOPEN_SOURCE=700
 
 # TODO: Add debugging as an AM_CONDITIONAL set by configure.
 if USE_SYSLOG
@@ -46,4 +46,4 @@ AM_CPPFLAGS += -DUSE_MC=1
 #libmarfs_a_LIBADD += $(LIBNE)/libne.a
 endif
 
-LDADD = ../fuse/src/libmarfs.a ../common/configuration/src/libconfig.a $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
+LDADD = $(top_srcdir)/fuse/src/libmarfs.a $(top_srcdir)/common/configuration/src/libconfig.a $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
