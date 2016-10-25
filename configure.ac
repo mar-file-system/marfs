@@ -160,10 +160,10 @@ AS_IF([test x"$enable_fuse" != xno],
     AC_CHECK_LIB([fuse], [fuse_main_real]))
 
 AS_IF([test x"$enable_mc" = xyes],
-    AC_CHECK_LIB([isal], [ec_encode_data]))
+    [AC_CHECK_LIB([isal], [crc32_ieee])])
 # look for libne    
 AS_IF([test x"$enable_mc" = xyes],
-    AC_CHECK_LIB([ne], [ne_open]))
+    [AC_CHECK_LIB([ne], [ne_open])])
 
 # automake conditionals 
 AM_CONDITIONAL([USE_DAL], [test x"$enable_dal" != xno])
@@ -196,9 +196,7 @@ AC_ARG_VAR(AWS4C, [The location of the aws4c installation])
 AC_ARG_VAR(LIBAWS4C,
   [The location of the aws4c library installation (probably the same as AWS4C)])
 AC_ARG_VAR(PA2X,  [The location of the PA2X installation])
-# only need this of we are building multi-component
-AS_IF([test x"$enable_mc" = "xyes"],
-    AC_ARG_VAR(LIBNE, [The location of the erasureUtils libne installation]))
+AC_ARG_VAR(LIBNE, [The location of the erasureUtils libne installation])
 AC_ARG_VAR(PARSE_DIR, [The location of PA2X (need this and PA2X)])
 # XXX: We should simply define this as: 
 # $(srcdir)/common/configuration/src/marfs_configuration_blueprint.cfg
@@ -207,9 +205,9 @@ AC_ARG_VAR(conf, [The path to the marfs configuration blueprint])
 AC_ARG_VAR(MARFS_MNT, [The MarFS mount point (optional)])
 AC_ARG_VAR(MARFSCONFIGRC, [The path to the marfs config (or any valid config)])
 
-AS_IF([test -z "$PARSE_DIR"], AC_ERROR([PARSE_DIR is not set]))
-AS_IF([test -z "$AWS4C"], AC_ERROR([AWS4C in not set]))
-AS_IF([test x"$enable_mc" = xyes && test -z "$LIBNE"], AC_ERROR([LIBNE is not set]))
+AS_IF([test -z "$PARSE_DIR"], [AC_ERROR([PARSE_DIR is not set])])
+AS_IF([test -z "$AWS4C"], [AC_ERROR([AWS4C in not set])])
+AS_IF([test x"$enable_mc" = xyes && test -z "$LIBNE"], [AC_ERROR([LIBNE is not set])])
 
 
 # Checks for header files.
