@@ -56,7 +56,7 @@ AM_CPPFLAGS += -DSPINLOCKS
 endif
 
 if USE_MC
-AM_CPPFLAGS += -DUSE_MC=1
+AM_CPPFLAGS += -I$(LIBNE) -DUSE_MC=1
 libmarfs_a_LIBADD += $(LIBNE)/libne.a
 endif
 
@@ -192,7 +192,7 @@ test_lock2: test_lock2.c spinlock_asm.o spinlock.h spinlock.o
 test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
 	$(CC) -g -o $@ $^ -lpthread -lrt
 
-test_marfs_configuration_SOURCES = test_marfs_configuration.c
+test_marfs_configuration_SOURCES = fuse/src/test_marfs_configuration.c
 
 # ............................................................................
 # Useful development targets
@@ -230,6 +230,7 @@ abort: fusectl
 # TODO: FUSE_FLAGS, EXEC, PID
 FUSE_FLAGS = -o allow_other,direct_io,use_ino,intr
 PID = marfs_fuse.pid
+LOG = 2>&1 >fuse.log
 # ifeq ($(DEBUG),2)
 #	FUSE_FLAGS += -d -f
 # endif
