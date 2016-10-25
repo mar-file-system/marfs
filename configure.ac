@@ -79,7 +79,7 @@
 
 AC_PREREQ([2.63])
 AC_INIT([MarFS], [0.92], [http://github.com/mar-file-system/marfs])
-AM_INIT_AUTOMAKE([foreign -Wall -Werror])
+AM_INIT_AUTOMAKE([foreign -Wall subdir-objects])
 AC_CONFIG_SRCDIR([COPYRIGHT.h])
 AC_CONFIG_HEADERS([config.h])
 
@@ -121,9 +121,11 @@ AC_PROG_AWK
 AC_PROG_CC
 AC_PROG_MAKE_SET
 AC_PROG_RANLIB
+AC_PROG_LN_S
 
 # autoreconf says we need this since spinlocks uses asembly
 AM_PROG_AS
+AM_PROG_AR
 
 # Exit with an error if we got conflicting options
 AS_IF([test x"$enable_mc" = xyes && test x"$enable_dal" = xno],
@@ -148,11 +150,14 @@ AS_IF([test x"$enable_spinlocks" = xyes],
 # Don't know what a reasonable function to look for would be...
 AC_CHECK_LIB([xml2], [xmlSAX2GetEntity])
 
+# needed for the DAL
+AC_CHECK_LIB([dl], [dlsym])
+
 # link lib fuse if building the fuse daemon.
 # we don't want to link libfuse for everything. Just for the marfs_fuse
 # program. This is now handled in fuse/src/Makefile.am
-#AS_IF([test x"$enable_fuse" != xno],
-#    AC_CHECK_LIB([fuse], [fuse_main_real]))
+AS_IF([test x"$enable_fuse" != xno],
+    AC_CHECK_LIB([fuse], [fuse_main_real]))
 
 AS_IF([test x"$enable_mc" = xyes],
     AC_CHECK_LIB([isal], [ec_encode_data]))
@@ -223,6 +228,7 @@ AC_TYPE_UINT16_T
 AC_TYPE_UINT32_T
 AC_TYPE_UINT64_T
 AC_TYPE_UINT8_T
+AC_TYPE_INT64_T
 
 # Checks for library functions.
 AC_FUNC_ERROR_AT_LINE
@@ -231,10 +237,7 @@ AC_FUNC_LSTAT_FOLLOWS_SLASHED_SYMLINK
 AC_FUNC_MALLOC
 AC_FUNC_MKTIME
 AC_FUNC_REALLOC
-AC_CHECK_FUNCS([clock_gettime floor ftruncate getcwd gethostname gettimeofday lchown localtime_r memmove memset mkdir pow realpath regcomp rmdir strcasecmp strchr strdup strerror strpbrk strrchr strspn strstr strtol strtoul strtoull utime])
+AC_CHECK_FUNCS([clock_gettime floor ftruncate getcwd gethostname gettimeofday lchown localtime_r memmove memset mkdir pow realpath regcomp rmdir strcasecmp strchr strdup strerror strpbrk strrchr strspn strcspn strstr strtol strtoul strtoull utime])
 
-AC_CONFIG_FILES([Makefile
-                 common/configuration/src/Makefile
-                 fuse/src/Makefile
-                 utilities/Makefile])
+AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
