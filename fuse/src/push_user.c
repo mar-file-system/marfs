@@ -145,7 +145,7 @@ int push_groups4(PerThreadContext* ctx, uid_t uid, gid_t gid) {
    }
 
    // save the group-list for the current process
-   ctx->group_ct = getgroups(sizeof(ctx->groups), ctx->groups);
+   ctx->group_ct = getgroups(sizeof ctx->groups / sizeof (gid_t), ctx->groups);
    if (ctx->group_ct < 0) {
       // ctx->group_ct = 0; // ?
       LOG(LOG_ERR, "getgroups() failed\n");
