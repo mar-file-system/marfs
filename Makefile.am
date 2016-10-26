@@ -2,7 +2,16 @@ AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
 			  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATAPARSE          \
 			  -DPARSE_DIR=$(PARSE_DIR) -I$(PARSE_DIR)
 
-# TODO: Add debugging as an AM_CONDITIONAL set by configure.
+if GPROF
+AM_CFLAGS = -pg
+AM_LDFLAGS = -pg
+endif
+
+if DEBUG
+# Configure has -g enabled by default
+AM_CPPFLAGS += -DDEBUG=2
+endif
+
 if USE_SYSLOG
 AM_CPPFLAGS += -DUSE_SYSLOG
 endif
@@ -17,6 +26,10 @@ endif
 
 if USE_MDAL
 AM_CPPFLAGS += -DUSE_MDAL=1
+endif
+
+if NO_AWSAUTH
+AM_CPPFLAGS += -DUSE_SPROXYD=1
 endif
 
 #if PIPETOOL
@@ -230,7 +243,7 @@ abort: fusectl
 # TODO: FUSE_FLAGS, EXEC, PID
 FUSE_FLAGS = -o allow_other,direct_io,use_ino,intr
 PID = marfs_fuse.pid
-LOG = 2>&1 >fuse.log
+LOG =  >fuse.log 2>&1
 # ifeq ($(DEBUG),2)
 #	FUSE_FLAGS += -d -f
 # endif

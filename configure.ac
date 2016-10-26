@@ -116,6 +116,12 @@ AC_ARG_ENABLE([nfs-threads],
         AS_HELP_STRING([  --enable-nfs-threads],
                        [tell marfs to queue out-of-order read requests and reorder them so the file can be read sequentially from start to finish. NOT A GOOD IDEA, you probably don't want to enable this.]))
 
+AC_ARG_WITH([aws-auth],
+        AS_HELP_STRING([  --without-aws-auth], [tell FUSE it is okay if ~/.awsAuth doesn't exist]))
+
+AC_ARG_ENABLE([debug],
+        AS_HELP_STRING([  --enable-debug], [one of {yes|no|gprof} yes enables the -g compiler flag and extra logging, gprof enables the "-pg" compiler flag]))
+
 # Checks for programs.
 AC_PROG_AWK
 AC_PROG_CC
@@ -180,6 +186,11 @@ AM_CONDITIONAL([USE_STDOUT],  [test x"$enable_logging" = xstdout])
 AM_CONDITIONAL([SPINLOCKS],   [test x"$enable_spinlocks" = xyes])
 
 AM_CONDITIONAL([NFS_THREADS], [test x"$enable_nfs_threads" = xyes])
+
+AM_CONDITIONAL([NO_AWSAUTH], [test x"$with_aws_auth" = xno])
+
+AM_CONDITIONAL([GPROF], [test x"$enable_debug" = xgprof])
+AM_CONDITIONAL([DEBUG], [test x"$enable_debug" = xyes])
 
 # if the gpfs header is present then build the gpfs utilities.
 build_gpfs_utilities=no
