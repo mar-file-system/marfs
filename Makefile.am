@@ -1,6 +1,6 @@
 AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
-			  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATAPARSE          \
-			  -DPARSE_DIR=$(PARSE_DIR) -I$(PARSE_DIR)
+	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
+	      -DDATAPARSE -DPARSE_DIR=$(PARSE_DIR) -I$(PARSE_DIR)
 
 if GPROF
 AM_CFLAGS = -pg
@@ -119,7 +119,7 @@ marfs_gc_SOURCES = utilities/gpfs/marfs_gc.c utilities/gpfs/marfs_gc.h \
 				   utilities/gpfs/utilities_common.c                   \
 				   utilities/gpfs/utilities_common.h
 
-marfs_quota_SOURCES = utilities/gpfs/marfs_quata.c utilities/gpfs/marfs_quota.h \
+marfs_quota_SOURCES = utilities/gpfs/marfs_quota.c utilities/gpfs/marfs_quota.h \
 					  utilities/gpfs/utilities_common.c                         \
 					  utilities/gpfs/utilities_common.h
 

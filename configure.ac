@@ -131,7 +131,13 @@ AC_PROG_LN_S
 
 # autoreconf says we need this since spinlocks uses asembly
 AM_PROG_AS
-AM_PROG_AR
+# because we are in the situation of needing to support two versions
+# of autotools right now, we need to chech whether this symbol exists
+# before using it. With newer versions of automake we get a warning
+# when AM_PROG_AR isn't included, but for older versions we get an
+# error when it is.
+m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
+AM_PROG_CC_C_O
 
 # Exit with an error if we got conflicting options
 AS_IF([test x"$enable_mc" = xyes && test x"$enable_dal" = xno],
