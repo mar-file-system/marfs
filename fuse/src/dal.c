@@ -1011,11 +1011,27 @@ int mc_sync(DAL_Context* ctx) {
       return -1;
    }
    else if(! (ctx->flags & MCF_DEFERED_OPEN)) {
-      // then we actually have work to do.
-      TRY0( ne_close(handle) );
+     // the result of close for a handle opened for reading is an
+     // indicator of whether the data is degraded and, if so, which
+     // block is corrupt or missing.
+     int close_result = ne_close(handle);
+     if(close_result > 0) {
+       // This is a place where we will want to use the proposed
+       // "CRITICAL" log level so sysadmins can see that the object
+       // needs to be rebuilt.
+       LOG(LOG_INFO, "WARNING: Object %s degraded. Error pattern: 0x%x."
+            " (N: %d, E: %d, Start: %d).\n",
+           MC_CONTEXT(ctx)->path_template, close_result,
+           MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e, MC_CONTEXT(ctx)->start_block);
+     }
+     else if(close_result < 0) {
+       LOG(LOG_ERR, "ne_close failed on %s", MC_CONTEXT(ctx)->path_template);
+       return -1;
+     }
    }
    else {
-      LOG(LOG_INFO, "%s DEFERED_OPEN asserted. sync is a noop\n", os->url);
+      LOG(LOG_INFO, "%s DEFERED_OPEN asserted. sync is a noop\n",
+          MC_CONTEXT(ctx)->path_template);
       ctx->flags &= ~MCF_DEFERED_OPEN;
    }
 
