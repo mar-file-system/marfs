@@ -117,8 +117,6 @@ MarFS_Config_Ptr            marfs_config = NULL;
 static MarFS_Repo_List      marfs_repo_list = NULL;
 static int                  repoCount      = 0;
 
-static int                  repoRangeCount = 0;
-
 static MarFS_Namespace_List marfs_namespace_list = NULL;
 static int                  namespaceCount = 0;
 
@@ -725,7 +723,7 @@ ssize_t parse_xdal_config_options(xDALConfigOpt*** result_ptr,
 
      *result_ptr = (xDALConfigOpt**)malloc((opt_count +1) * sizeof(xDALConfigOpt*));
     if (! *result_ptr) {
-      LOG( LOG_ERR, "Couldn't allocate %d DAL-option-ptrs.\n", opt_count);
+      LOG( LOG_ERR, "Couldn't allocate %ld DAL-option-ptrs.\n", opt_count);
       return -1;
     }
     xDALConfigOpt** result = *result_ptr; /* shorthand */
@@ -948,10 +946,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
        if (temp > 1) {
           if (! strstr(m_repo->host, "%d")) {
              LOG( LOG_ERR,
-                  "If host_count>1, then host must include '%d'.  " 
+                  "If host_count>1, then host must include '%%d'.  " 
                   "This will be used to print a randomized per-thread host-name, something like "
                   "'sprintf(host_name, config.host, "
-                  "config.host_offset + (rand() % config.host_count))'\n" );
+                  "config.host_offset + (rand() %% config.host_count))'\n");
              return NULL;
           }
        }
@@ -998,7 +996,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
       LOG(LOG_ERR, "Couldn't parse DAL-options for repo '%s'\n", p_repo->name);
       return NULL;
     }
-    LOG( LOG_INFO, "parser gave us a list of %d DAL options, for repo '%s'.\n",
+    LOG( LOG_INFO, "parser gave us a list of %ld DAL options, for repo '%s'.\n",
          opt_count, p_repo->name );
 
     // install the options, parsed out above.
@@ -1585,7 +1583,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
               iteration_name, p_ns->name);
           return NULL;
        }
-       LOG( LOG_INFO, "parser gave us a list of %d %s-MDAL options, for namespace '%s'.\n",
+       LOG( LOG_INFO, "parser gave us a list of %ld %s-MDAL options, for namespace '%s'.\n",
             opt_count, iteration_name, p_ns->name );
 
        // install the options, parsed out above.
@@ -1838,15 +1836,23 @@ int debug_range_list( MarFS_Repo_Range** range_list,
 }
 
 
-debug_xdal_config_options(xDALConfigOpt** opt) {
+int debug_xdal_config_options(xDALConfigOpt** opt) {
    while (opt && *opt) {
-      xDALConfigOpt* o = *opt;
-      char*          key = (o->key ? o->key : "");
+      xDALConfigOpt* o   = *opt;
+      const char*    key = (o->key ? o->key : "");
+
+      // want quotes around the string itself, with padding afterwards, but not truncation
+      const int      target_field_width = 14; // pad key field with blanks, out to this size
+      size_t         key_str_len = strlen(key);
+      int            pad_size = ((key_str_len > target_field_width)
+				? 0 : (target_field_width - key_str_len));
+
       fprintf(stdout, "\t\tkey: '%s'%*s val: '%s'\n",
-              key, 14-strlen(key), "",
+              key, pad_size, "",
               ((o->val.type == GVTS_STRING) ? o->val.value.str : "UNK"));
       ++ opt;
    }
+   return 0;
 }
 
 int debug_namespace( MarFS_Namespace* ns ) {

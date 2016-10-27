@@ -336,7 +336,9 @@ int     stream_abort(ObjectStream* os);
 
 int     stream_close(ObjectStream* os);
 
-
+// Reset flags in os to facilitate reopening/reusing an object stream.
+// Must be called in every DAL->open() implementation.
+int stream_cleanup_for_reopen(ObjectStream* os, int preserve_os_written);
 
 
 // "delete" works on a simple URL, not a stream.  However,

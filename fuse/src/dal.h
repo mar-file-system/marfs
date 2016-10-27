@@ -245,6 +245,8 @@ typedef int      (*dal_open) (DAL_Context* ctx,
 //
 // TODO: check whether stream_put sets any relevant flags in the case
 //       of a put failure.
+//
+// TBD:  return ssize_t, to more-closely support size_t <size> arg.
 typedef int      (*dal_put)  (DAL_Context*  ctx,
                               const char*   buf,
                               size_t        size);

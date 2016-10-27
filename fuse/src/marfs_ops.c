@@ -275,7 +275,7 @@ int marfs_ftruncate(const char*            path,
    ENTRY();
 
    PathInfo*         info = &fh->info;                  /* shorthand */
-   ObjectStream*     os   = &fh->os;
+   // ObjectStream*     os   = &fh->os;
    // IOBuf*            b    = &fh->os.iob;
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD

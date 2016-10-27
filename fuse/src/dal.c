@@ -86,6 +86,7 @@ OF SUCH DAMAGE.
 #include <unistd.h>
 #include <dlfcn.h>
 #include <assert.h>
+#include <limits.h>		// INT_MAX
 
 
 // ===========================================================================
@@ -393,7 +394,7 @@ enum posix_dal_flags {
 #define POSIX_DAL_FD(CTX)      POSIX_DAL_CONTEXT(CTX)->fd
 #define POSIX_DAL_OS(CTX)      (&(POSIX_DAL_CONTEXT(CTX)->fh->os))
 #define POSIX_DAL_PATH(CTX)    POSIX_DAL_CONTEXT(CTX)->file_path
-
+#define FLAT_OBJID_SEPARATOR '#'
 
 int posix_dal_ctx_init(DAL_Context* ctx, struct DAL* dal, void* fh /* ? */) {
    ENTRY();
@@ -433,13 +434,12 @@ int posix_dal_ctx_destroy(DAL_Context* ctx, struct DAL* dal) {
    return 0;
 }
 
-// File-ify an objectid by replacing the '/'s with '#'s
-static
-void flatten_objectid(char* objid) {
+// file-ify an object-id.
+static void flatten_objid(char* objid) {
    int i;
-   for(i = 0; objid[i] && i < MARFS_MAX_URL_SIZE; ++i) {
+   for(i = 0; objid[i]; i++) {
       if(objid[i] == '/')
-         objid[i] = '#';
+         objid[i] = FLAT_OBJID_SEPARATOR;
    }
 }
 
@@ -459,7 +459,7 @@ int generate_path(DAL_Context* ctx) {
    strncat(object_path, POSIX_DAL_FH(ctx)->info.pre.objid,
            MARFS_MAX_OBJID_SIZE);
 
-   flatten_objectid(object_id_start);
+   flatten_objid(object_id_start);
 
    LOG(LOG_INFO, "generated path: %s\n", object_path);
    ctx->flags |= POSIX_DAL_PATH_GENERATED;
@@ -484,34 +484,11 @@ int posix_dal_open(DAL_Context* ctx,
       return -1;
    }
 
-   char *object_path = POSIX_DAL_PATH(ctx);
-   
-   // We might be re-opening an object stream that was previously
-   // used. This happens when we overwrite a file.
-   if(POSIX_DAL_OS(ctx)->flags) {
-      if(POSIX_DAL_OS(ctx)->flags & OSF_CLOSED) { // previously used os
-         LOG(LOG_INFO, "POSIX_DAL: previously used OS: %s. resetting flags.\n",
-             POSIX_DAL_OS(ctx)->url);
-         POSIX_DAL_OS(ctx)->flags = 0;
-         if(! preserve_write_count)
-            POSIX_DAL_OS(ctx)->written = 0;
-      }
-      // We don't actually do an open if called with O_RDONLY.
-      // The open happens when we call read(). We need to guard
-      // against this here, since RLOCK_INIT will be set in open.
-      else if(! (POSIX_DAL_OS(ctx)->flags & ~OSF_RLOCK_INIT)) {
-         LOG(LOG_INFO, "only flag was RLOCK_INIT\n");
-      }
-      else {
-         LOG(LOG_ERR, "POSIX_DAL: %s has flags asserted, but is not CLOSED\n",
-             POSIX_DAL_OS(ctx)->url);
-         errno = EBADF; // Same as stream_open()
-         return -1;
-      }
-   }
+   TRY0( stream_cleanup_for_reopen(POSIX_DAL_OS(ctx), preserve_write_count) );
 
-   int object_flags;
-   const mode_t mode = S_IRUSR|S_IWUSR;
+   char*        object_path = POSIX_DAL_PATH(ctx);
+   int          object_flags;
+   const mode_t mode        = S_IRUSR|S_IWUSR;
 
    if(is_put) {
       POSIX_DAL_OS(ctx)->flags |= OSF_WRITING;
@@ -664,6 +641,479 @@ DAL posix_dal = {
 
    .update_object_location = &generate_path
 };
+
+#if USE_MC
+// ===========================================================================
+// MC (Multi-component)
+// ===========================================================================
+#include "erasure.h"
+
+// The mc path will be the host field of the repo plus an object id.
+// We need a little extra room to account for numbers that will get
+// filled in to create the path template, 128 characters should be
+// more than enough.
+#define MC_MAX_PATH_LEN (MARFS_MAX_OBJID_SIZE + MARFS_MAX_HOST_SIZE + 128)
+
+#define MC_FH(CTX)      MC_CONTEXT(CTX)->fh
+#define MC_OS(CTX)      (&MC_FH(CTX)->os)
+#define MC_REPO(CTX)    MC_CONTEXT(CTX)->fh->repo
+#define MC_HANDLE(CTX)  MC_CONTEXT(CTX)->mc_handle
+#define MC_CONFIG(CTX)  MC_CONTEXT(CTX)->config
+#define MC_CONTEXT(CTX) ((MC_Context*)((CTX)->data.ptr))
+
+enum mc_flags {
+   MCF_DEFERED_OPEN = 0x1, // we called open, and said we opened the
+                           // object, but really we are waiting until
+                           // you call put() or get() to do the open.
+};
+
+typedef struct mc_config {
+   unsigned int n;
+   unsigned int e;
+   unsigned int num_pods;
+   unsigned int num_cap;
+   unsigned int scatter_width;
+} MC_Config;
+
+typedef struct mc_context {
+   ObjectStream*     os;
+   ne_handle         mc_handle;
+   MarFS_FileHandle* fh;
+   off_t             chunk_offset;
+
+   // These define the path we will use for the open and are
+   // updated/set by ->update_object_location()
+   char              path_template[MC_MAX_PATH_LEN];
+   unsigned int      start_block;
+   MC_Config         *config;
+} MC_Context;
+
+int   mc_config(struct DAL*     dal,
+                xDALConfigOpt** opts,
+                size_t          opt_count) {
+   ENTRY();
+   
+   MC_Config* config = malloc(sizeof(MC_Config));
+   int i;
+   for(i = 0; i < opt_count; i++) {
+      if(!strcmp(opts[i]->key, "n")) { // ? Should be strncmp?
+         config->n = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"n\" = %d\n", config->n);
+      }
+      else if(!strcmp(opts[i]->key, "e")) {
+         config->e = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"e\" = %d\n", config->e);
+      }
+      else if(!strcmp(opts[i]->key, "num_pods")) {
+         config->num_pods = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"num_pods\" = %d\n", config->num_pods);
+      }
+      else if(!strcmp(opts[i]->key, "num_cap")) {
+         config->num_cap = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"num_cap\" = %d\n", config->num_cap);
+      }
+      else if(!strcmp(opts[i]->key, "scatter_width")) {
+         config->scatter_width = strtol(opts[i]->val.value.str, NULL, 10);
+         LOG(LOG_INFO, "parsing mc option \"scatter_width\" = %d\n", config->scatter_width);
+      }
+   }
+
+   dal->global_state = config;
+   EXIT();
+   return 0;
+}
+
+// Computes a good, uniform, hash of the string.
+//
+// Treats each character in the length n string as a coefficient of a
+// degree n polynomial.
+//
+// f(x) = string[0] + string[1] * x + ... + string[n-1] * x^(n-1)
+//
+// The hash is computed by evaluating the polynomial for x=31 using
+// Horner's rule.
+//
+// Reference: http://cseweb.ucsd.edu/~kube/cls/100/Lectures/lec16/lec16-14.html
+static int polyhash(const char* string) {
+   // 31 is apparently what is used by java's String.hashCode()
+   // method.  should be good enough for our prototype.
+   const int salt = 31;
+   char c;
+   int h = *string++;
+   while((c = *string++))
+      h = salt * h + c;
+   return h;
+}
+
+// Initialize the context for a multi-component backed object.
+// Returns 0 on success or -1 on failure (if memory cannot be
+// allocated).
+int mc_init(DAL_Context* ctx, struct DAL* dal, void* fh) {
+   ENTRY();
+   
+   ctx->data.ptr = malloc(sizeof(MC_Context));
+   if(! MC_CONTEXT(ctx)) {
+      LOG(LOG_ERR, "failed to allocate memory for MC_Context\n");
+      return -1;
+   }
+
+   memset(MC_CONTEXT(ctx)->path_template, '\0', MC_MAX_PATH_LEN);   
+   MC_FH(ctx) = (MarFS_FileHandle*)fh;
+   MC_HANDLE(ctx) = NULL;
+   MC_CONTEXT(ctx)->chunk_offset = 0;
+   ctx->flags = 0;
+   MC_CONFIG(ctx) = (MC_Config*)dal->global_state;
+
+   EXIT();
+   return 0;
+}
+
+// Free the multi-component context stored in the dal context.
+// `ctx' should not be used any more after this is called.
+int mc_destroy(DAL_Context *ctx, struct DAL* dal) {
+   free(MC_CONTEXT(ctx));
+   return 0;
+}
+
+int mc_update_path(DAL_Context* ctx) {
+   // QUESTION: Do we need to prepend the bucket and ns->alias to the
+   //           objid? For now We can just flatten the url to make
+   //           things easy.
+
+   // shorthand
+   PathInfo*         info          = &(MC_FH(ctx)->info);
+   const MarFS_Repo* repo          = info->pre.repo;
+   char*             objid         = info->pre.objid;
+   char*             path_template = MC_CONTEXT(ctx)->path_template;
+
+   char obj_filename[MARFS_MAX_OBJID_SIZE];
+   strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);
+   flatten_objid(obj_filename);
+
+   // We will use the hash in multiple places, save it to avoid
+   // recomputing.
+   //
+   // Hash the actual object ID so the hash will remain the same,
+   // regadless of changes to the "file-ification" format.
+   unsigned int objid_hash = (unsigned int)polyhash(objid);
+   
+   // TODO: Waiting on code from Jeff, implementing the configurable
+   // parameters for MC repos. The variables below will be initialized
+   // based on those parameters.
+   char *mc_path_format = repo->host;
+
+   unsigned int num_blocks    = MC_CONFIG(ctx)->n+MC_CONFIG(ctx)->e;
+   unsigned int num_pods      = MC_CONFIG(ctx)->num_pods;
+   unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
+   unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
+   
+   unsigned int pod           = objid_hash % num_pods;
+   unsigned int capacity_unit = objid_hash % num_cap;
+   unsigned int scatter       = objid_hash % scatter_width;
+
+   MC_CONTEXT(ctx)->start_block = objid_hash % num_blocks;
+   // fill in path template
+   // the mc_path_format is sometheing like:
+   //   "<protected-root>/repo10+2/pod%d/block%s/cap%d/scatter%d/"
+   snprintf(path_template, MC_MAX_PATH_LEN, mc_path_format,
+            pod,
+            "%d", // this will be filled in by the ec library
+            capacity_unit,
+            scatter);
+
+   // be robust to vairation in the config... We could always just add
+   // a slash, but that will get ugly in the logs.
+   if(path_template[strlen(path_template) - 1] != '/')
+      strcat(path_template, "/");
+   
+   // append the fileified object id
+   strncat(path_template, obj_filename, MC_MAX_PATH_LEN);
+
+   LOG(LOG_INFO, "MC path template: (starting block: %d) %s\n",
+       MC_CONTEXT(ctx)->start_block, path_template);
+   
+   return 0;
+}
+
+// Actually open an object, don't just defer it and say we did it.
+int mc_do_open(DAL_Context* ctx) {
+   ENTRY();
+
+   ObjectStream* os            = MC_OS(ctx);
+   char*         path_template = MC_CONTEXT(ctx)->path_template;
+
+   unsigned int n = MC_CONFIG(ctx)->n;
+   unsigned int e = MC_CONFIG(ctx)->e;
+
+   // QUESTION: Should we test os->flags & OSF_OPEN here? It would be
+   // an error to call this except after mc_open(), but... this should
+   // only be used internally anyway, so we can pretty much guarantee
+   // that won't happen.
+   
+   int mode = (os->flags & OSF_WRITING) ? NE_WRONLY : NE_RDONLY;
+   MC_HANDLE(ctx) = ne_open(path_template, mode,
+                            MC_CONTEXT(ctx)->start_block, n, e);
+   if(! MC_HANDLE(ctx)) {
+      LOG(LOG_ERR, "Failed to open MC Handle %s\n", path_template);
+      return -1;
+   }
+
+   // open is no longer defered.
+   ctx->flags &= ~MCF_DEFERED_OPEN;
+   
+   EXIT();
+   return 0;
+}
+
+// We want to use the mc DAL to defer opens until put() or get() are
+// called. marfs_open() already implements this for reads, but not
+// writes, by not calling DAL->open() until marfs_read() is called. In
+// the interest consistency, however, we will defer all opens until a
+// MC_DAL operation is invoked that actually requires an open data
+// stream (put() or get()). All flags will be set in the object stream
+// that is passed to init() to make it look like the stream is opened,
+// but an additional flag in the dal context will also be set
+// indicating to ->put() or ->get() that the open has been defered.
+//
+// Could fail if the object stream is being reused and is not in a
+// good state.
+int mc_open(DAL_Context* ctx,
+            int is_put,
+            size_t chunk_offset,
+            size_t content_length,
+            uint8_t preserve_write_count,
+            uint16_t timeout) {
+   ENTRY();
+
+   ObjectStream* os = MC_OS(ctx);
+
+   // do the generic cleanup stuff like resetting flags.
+   TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
+
+   if(is_put) {
+      os->flags |= OSF_WRITING;
+   }
+   else {
+      os->flags |= OSF_READING;
+   }
+
+   ctx->flags |= MCF_DEFERED_OPEN;
+   os->flags  |= OSF_OPEN;
+   MC_CONTEXT(ctx)->chunk_offset = chunk_offset;
+   
+   EXIT();
+   return 0;
+}
+
+// Put data into a MC Object. For performance reasons we will need to
+// try to align the size of `buf' with the underlying buffers in the
+// n+e lib.  This could be hard to achieve, since the buffer size may
+// be determined by fuse, or PFTool. Is there some efficient way to
+// simply give the buffer to the n+e library and relinquish ownership,
+// using a fresh buffer for the next write?
+int mc_put(DAL_Context* ctx,
+           const char* buf,
+           size_t size) {
+   ENTRY();
+
+   ObjectStream* os     = MC_OS(ctx);
+
+   if(! (os->flags & OSF_OPEN)) {
+      LOG(LOG_ERR, "Attempted put on OS that is not open.\n");
+      errno = EBADF;
+      return -1;
+   }
+   else if(ctx->flags & MCF_DEFERED_OPEN) {
+      if(mc_do_open(ctx)) {
+         LOG(LOG_ERR, "%s (start-block: %d) could not be opened for writing\n",
+             MC_CONTEXT(ctx)->path_template, MC_CONTEXT(ctx)->start_block);
+         return -1; // errno should be set in do_open()
+      }
+   }
+
+   // ne_write() takes a signed int to specify size.
+   // Make sure the DAL-caller's size_t doesn't exceed that size
+   if (size > INT_MAX) {
+     LOG(LOG_ERR, "DAL size_t arg %lu exceeds max signed-int size accepted by ne_write()\n",
+	 size);
+     errno = EIO;
+     return -1;
+   }
+   int int_size = (int)size;
+
+   ne_handle handle = MC_HANDLE(ctx);
+   int written = ne_write(handle, buf, int_size);
+
+   if(written < 0) {
+      LOG(LOG_ERR, "ftone_write() failed.\n");
+      return -1;
+   }
+
+   os->written += written;
+   
+   EXIT();
+   return written;
+}
+
+ssize_t mc_get(DAL_Context* ctx, char* buf, size_t size) {
+   ENTRY();
+
+   ssize_t       size_read;
+   ObjectStream* os     = MC_OS(ctx);
+
+   if(! (os->flags & OSF_OPEN)) {
+      errno = EBADF;
+      LOG(LOG_ERR, "Attempted get on OS that is not open.\n");
+   }
+   else if(ctx->flags & MCF_DEFERED_OPEN) {
+      if(mc_do_open(ctx)) {
+         LOG(LOG_ERR, "%s could not be opened for reading\n", os->url);
+         return -1;
+      }
+   }
+
+   ne_handle handle = MC_HANDLE(ctx);
+
+   // Need to figure out how to get the offset from the os.  May be as
+   // simple as reading from os->written.  Note that stream_get()
+   // truncates requests to fit within os->content_len, thus avoiding
+   // reads that return fewer than the number of bytes requested.
+   size_read = ne_read(handle, buf, size, MC_CONTEXT(ctx)->chunk_offset);
+
+   if(size_read < 0) {
+      LOG(LOG_ERR, "netof_read() failed.\n");
+      return -1;
+   }
+   else if(size_read == 0) { // EOF
+      os->flags |= OSF_EOF;
+   }
+
+   // update the offset for the next call to read.
+   MC_CONTEXT(ctx)->chunk_offset += size_read;
+   os->written += size_read;
+
+   EXIT();
+   return size_read;
+}
+
+// Upon return no more I/O is possible. The stream is closed.  If
+// DEFERED_OPEN is asserted, then this is almost no-op only flags are
+// changed.
+int mc_sync(DAL_Context* ctx) {
+   ENTRY();
+   
+   ObjectStream* os     = MC_OS(ctx);
+   ne_handle     handle = MC_HANDLE(ctx);
+
+   if(! (os->flags & OSF_OPEN)) {
+      LOG(LOG_ERR, "%s isn't open\n", os->url);
+      errno = EINVAL;
+      return -1;
+   }
+   else if(! (ctx->flags & MCF_DEFERED_OPEN)) {
+     // the result of close for a handle opened for reading is an
+     // indicator of whether the data is degraded and, if so, which
+     // block is corrupt or missing.
+     int close_result = ne_close(handle);
+     if(close_result > 0) {
+       // This is a place where we will want to use the proposed
+       // "CRITICAL" log level so sysadmins can see that the object
+       // needs to be rebuilt.
+       LOG(LOG_INFO, "WARNING: Object %s degraded. Error pattern: 0x%x."
+            " (N: %d, E: %d, Start: %d).\n",
+           MC_CONTEXT(ctx)->path_template, close_result,
+           MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e, MC_CONTEXT(ctx)->start_block);
+     }
+     else if(close_result < 0) {
+       LOG(LOG_ERR, "ne_close failed on %s", MC_CONTEXT(ctx)->path_template);
+       return -1;
+     }
+   }
+   else {
+      LOG(LOG_INFO, "%s DEFERED_OPEN asserted. sync is a noop\n",
+          MC_CONTEXT(ctx)->path_template);
+      ctx->flags &= ~MCF_DEFERED_OPEN;
+   }
+
+   EXIT();
+   return 0;
+}
+
+// see notes posix_dal_abort().
+int mc_abort(DAL_Context* ctx) {
+   ENTRY();
+
+   if(! (MC_OS(ctx)->flags & OSF_OPEN)) {
+      LOG(LOG_ERR, "abort on not open object stream %s\n", MC_OS(ctx)->url);
+      errno = EINVAL;
+      return -1;
+   }
+
+   // defered open is no longer possible.
+   ctx->flags &= ~MCF_DEFERED_OPEN;
+   MC_OS(ctx)->flags |= OSF_ABORT;
+   
+   EXIT();
+   return 0;
+}
+
+// Marks an OS as closed. All "actual" close work should have been
+// done in a previous call to mc_sync(). See notes on stream_sync()
+// and stream_close() for more information.
+int mc_close(DAL_Context* ctx) {
+   ENTRY();
+
+   ObjectStream* os     = MC_OS(ctx);
+
+   if(! (os->flags & OSF_OPEN)) {
+      LOG(LOG_INFO, "Close on not-open stream %s\n", os->url);
+      return 0;
+   }
+   // Don't need to worry about defered opens here since that should
+   // have been taken care of in mc_sync.
+
+   os->flags &= ~OSF_OPEN;
+   os->flags |= OSF_CLOSED;
+
+   EXIT();
+   return 0;
+}
+
+int mc_del(DAL_Context* ctx) {
+   char* path_template = MC_CONTEXT(ctx)->path_template;
+   int nblocks = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
+
+   int block;
+   for(block = 0; block < nblocks; block++) {
+      char block_path[MC_MAX_PATH_LEN];
+      sprintf(block_path, path_template, block);
+      unlink(block_path);
+   }
+
+   return 0;
+}
+
+DAL mc_dal = {
+   .name         = "MC",
+   .name_len     = 2,
+
+   .global_state = NULL,
+
+   .config       = &mc_config,
+   .init         = &mc_init,
+   .destroy      = &mc_destroy,
+
+   .open         = &mc_open,
+   .put          = &mc_put,
+   .get          = &mc_get,
+   .del          = &mc_del,
+   .sync         = &mc_sync,
+   .abort        = &mc_abort,
+   .close        = &mc_close,
+
+   .update_object_location = &mc_update_path
+};
+#endif // USE_MC
 
 // ===========================================================================
 // GENERAL
@@ -820,6 +1270,9 @@ DAL* get_DAL(const char* name) {
       assert(! install_DAL(&obj_dal)   );
       assert(! install_DAL(&nop_dal)   );
       assert(! install_DAL(&posix_dal) );
+#if USE_MC
+      assert(! install_DAL(&mc_dal)    );
+#endif
 
       needs_init = 0;
    }
