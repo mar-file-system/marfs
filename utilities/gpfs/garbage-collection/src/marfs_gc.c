@@ -920,7 +920,6 @@ int process_packed(File_Info *file_info_ptr)
    int multi_flag = 0;
    int wc_count;
    
-   // create command to cat and sort the list of objects that are packed
    sprintf(cat_command, "cat %s | sort", file_info_ptr->packed_filename);
    
    // open STREAM for cat
@@ -957,7 +956,8 @@ int process_packed(File_Info *file_info_ptr)
          if (chunk_count == count || chunk_count==1) {
             // So make sure that the chunk_count (from xattr) matches the number
             // of files found 
-            sprintf(wc_command, "grep %s %s | wc -l", objid, file_info_ptr->packed_filename);
+            sprintf(wc_command, "grep -c %s %s", objid, file_info_ptr->packed_filename);
+
             if (( pipe_wc = popen(wc_command, "r")) == NULL) {
                fprintf(stderr, "Error with popen\n");
                return(-1); 
@@ -968,9 +968,21 @@ int process_packed(File_Info *file_info_ptr)
             if (wc_count != chunk_count) {
                fprintf(stderr, "object %s has %d files while chunk count is %d\n",
                        objid, wc_count, chunk_count);
+
+               // Need to close pipe before continuing
+               if (pclose(pipe_wc) == -1) {
+                  fprintf(stderr, "Error closing wc pipe in process_packed\n");
+                  return(-1);
+               }
                continue;
             }
-            pclose(pipe_wc);
+            // just close pipe
+            else {
+               if (pclose(pipe_wc) == -1) {
+                  fprintf(stderr, "Error closing wc pipe in process_packed\n");
+                  return(-1);
+               }
+            }
 
             // If we get here, counts are matching up
             // Go ahead and start deleting
@@ -1008,6 +1020,10 @@ int process_packed(File_Info *file_info_ptr)
                sscanf(file_buf,"%s",filename);
                df_return = delete_file(filename, file_info_ptr);
             }
+            if (pclose(pipe_grep) == -1) {
+               fprintf(stderr, "Error closing grep pipe in process_packed\n");
+               return(-1);
+            }
          }
       }
 
@@ -1024,14 +1040,6 @@ int process_packed(File_Info *file_info_ptr)
    if (pclose(pipe_cat) == -1) {
       fprintf(stderr, "Error closing cat pipe in process_packed\n");
       return(-1);
-   }
-   else if (pipe_grep != NULL) {
-      if (pclose(pipe_grep) == -1) {
-         fprintf(stderr, "Error closing grep pipe in process_packed\n");
-         return(-1);
-      }
-      else
-         return(0);
    }
    else 
       return(0);
