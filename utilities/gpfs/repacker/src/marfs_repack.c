@@ -99,12 +99,12 @@
 *
 * The method for determining whether objects need to repacked is to read the 
 * the file specied by the -d option.  This is typically the 
-* tmp_packed_log file from garbage collection.  This file lists the packed 
+* "tmp_packed_log" file from garbage collection.  This file lists the packed 
 * object name and associated files for the packed object.  It only lists those
 * objects that could NOT reconcile with the file counts.  The format of this 
 * file is:
 *
-* OBJECT_NAME  FILE_NAME  EXPECTED_FILE_COUNT  HOST BUCKED  OBJID   
+* OBJECT_NAME  EXPECTED_FILE_COUNT  FILE_NAME
 *
 * This utility reads the file and finds all files for the associated object
 * The number of files found will be less than EXPECTED_FILE_COUNT (post xattr
@@ -170,9 +170,18 @@ int main(int argc, char **argv){
 * Name find_repack_objects 
 * 
 * This function takes the output of the tmp_packed_log created by garbage
-* collection and determines which objects are candidates for repacking.  The
-* object information is retrieved and placed into an objects link list and a 
-* files link list. 
+* collection and determines which objects are candidates for repacking. 
+*
+* The criteria for repacking is:
+*    object file count < post xattr chunk_count
+* This implies that some of the files belonging to a packed object have
+* been deleted, therefore the object no longer contains the full set
+* of files it originally contained
+*
+* The process of repacking starts by finding all objects and files that
+* are candidates and placing them into objects and file link lists
+* respectively.  Each object * link list entry (node) contains a 
+* link list of files that belong to the * new object. 
 * 
 ******************************************************************************/
 int find_repack_objects(File_Handles *file_info, repack_objects **objects_ptr) {
@@ -188,8 +197,6 @@ int find_repack_objects(File_Handles *file_info, repack_objects **objects_ptr) {
 
    int chunk_count;
    char filename[MARFS_MAX_MD_PATH];
-   MarFS_XattrPre pre_struct;
-   MarFS_XattrPre* pre_ptr = &pre_struct;
    int rc;
    MarFS_XattrPost post;
    char post_xattr[MARFS_MAX_XATTR_SIZE];
@@ -211,6 +218,8 @@ int find_repack_objects(File_Handles *file_info, repack_objects **objects_ptr) {
       fprintf(stderr, "Error with popen\n");
       return(-1);
    }
+   // Now loop through all objects sorted by name in order to count number 
+   // of files associated with that object
    while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
       sscanf(obj_buf,"%s", objid);
       sprintf(grep_command, "cat %s | grep %s ", file_info->packed_log, objid);
@@ -220,16 +229,19 @@ int find_repack_objects(File_Handles *file_info, repack_objects **objects_ptr) {
       }
       file_count = 0;
       while(fgets(obj_buf1, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_grep)) {
-         sscanf(obj_buf1,"%s %s %d %s %s %s", objid, filename, &chunk_count,
-                pre_ptr->host, pre_ptr->bucket, pre_ptr->objid);
+         sscanf(obj_buf1,"%s %d %s", objid, &chunk_count, filename);
          // Need to look into this - do we need a minimum value to repack?
          // same question as packer script
          file_count++;
          if (chunk_count <= 1) { 
             continue;
          }
-         // if file_count == chunk_count, the files can be packed
-         if (file_count <= chunk_count) {
+ 
+         // file count is the number of files associated with an object (from tmp_packed_log)
+         // chunck count is the post xattr value that states how many files in packed
+         // objecd
+         // if file_count < chunk_count, the files can be packed
+         if (file_count < chunk_count) {
             // Create object link list here
             //fprintf(stdout, "object = %s\n", objid);
             //fprintf(stdout, "file_count = %d chunk_count=%d\n", file_count, chunk_count);
@@ -242,15 +254,16 @@ int find_repack_objects(File_Handles *file_info, repack_objects **objects_ptr) {
             strcpy(files->filename, filename);
 
 
+            // Get the post xattr to determine offset in the objec
             if ((getxattr(files->filename, "user.marfs_post", &post_xattr, MARFS_MAX_XATTR_SIZE) != -1)) {
                //fprintf(stdout, "xattr = %s\n", post_xattr);
                rc = str_2_post(&post, post_xattr, 1);
                files->original_offset = post.obj_offset;
                LOG(LOG_INFO, "filename %s xattr = %s offset=%ld\n", files->filename, post_xattr,post.obj_offset);
             }
+            // adjust files link list pointers
             files->next =  files_head;
             files_head = files;
-
          }
 
       }      
@@ -262,6 +275,7 @@ int find_repack_objects(File_Handles *file_info, repack_objects **objects_ptr) {
          fprintf(stderr, "Error allocating memory\n");
          return -1;
       }
+      // Update objects structure entries based on file info
       strcpy(objects->objid, objid);
       objects->pack_count = file_count;
       objects->chunk_count = chunk_count;
@@ -281,8 +295,11 @@ int find_repack_objects(File_Handles *file_info, repack_objects **objects_ptr) {
 /******************************************************************************
 * Name  pack_objects 
 * 
-* This function traverses the object and file link lists and reads object 
-* data for repacking into a new object.   
+* This function traverses the object link list created in find_repack_objects
+* and reads the corresponding file data.  That data is then written to a new
+* object.  Because the old object had holes due to missing files, a new
+* write offset is calculated.
+*
 ******************************************************************************/
 int pack_objects(File_Handles *file_info, repack_objects *objects)
 {
@@ -311,6 +328,7 @@ int pack_objects(File_Handles *file_info, repack_objects *objects)
    // Also, if file_count =1 do i make uni or?
    //
    //
+   // Traverse object link list and find those that should be packed
    while (objects) { 
       // need inner loop to get files for each object
       // If chunk_count == file count no need to pack
@@ -344,12 +362,12 @@ int pack_objects(File_Handles *file_info, repack_objects *objects)
       pre.unique++;    
 
 
-      LOG(LOG_INFO,"stdout,new object name =%s\n", test_obj);
+      LOG(LOG_INFO,"stdout,new object name =%s\n", test_obj); 
   
-      //aws_iobuf_reset(nb);
-
+      // Each object has a files linked list.  Read each file 
+      // at the offset calculated and write back to new object with
+      // new offset.
       while (files) {
-         //fprintf(stdout, "file = %s offset=%ld\n", files->filename, files->offset);
 
          stat(files->filename, &statbuf);
 
@@ -358,21 +376,17 @@ int pack_objects(File_Handles *file_info, repack_objects *objects)
          obj_size = obj_raw_size + MARFS_REC_UNI_SIZE;
          files->size = obj_size;
 
-         //fprintf(stdout, "obj_size = %ld REC SIZE = %d\n", obj_size,MARFS_REC_UNI_SIZE);
-         //write_offset+=obj_size;
          if ((obj_ptr = (char *)malloc(obj_size))==NULL) {
             fprintf(stderr, "Error allocating memory\n");
             return -1;
          }
 
+         // Set up S3 host
          check_security_access(&pre);
          update_pre(&pre);
          s3_set_host(pre.host);
-         //offset = objects->files_ptr->offset;
 
          offset = files->original_offset;
-         //fprintf(stdout, "file %s will get re-written at offset %ld\n",
-         //        files->filename, write_offset);
 
          // get object_data
          // Using byte range to get data for particular offsets
@@ -381,6 +395,8 @@ int pack_objects(File_Handles *file_info, repack_objects *objects)
          aws_iobuf_extend_dynamic(nb, obj_ptr, obj_size);
          LOG(LOG_INFO, "going to get file %s from object %s at offset %ld and size %ld\n", files->filename, objects->objid, offset, obj_size);
          fprintf(file_info->outfd, "Getting file %s from object %s at offset %ld and size %ld\n", files->filename, objects->objid, offset, obj_size);
+         
+         // Read the file via s3_get
          s3_return = s3_get(nb,objects->objid);
          check_S3_error(s3_return, nb, S3_GET);
 
@@ -393,6 +409,7 @@ int pack_objects(File_Handles *file_info, repack_objects *objects)
          write_offset += obj_size; 
 	 files = files->next;
       }
+
       // create object string for put
       pre_2_str(pre_str, MARFS_MAX_XATTR_SIZE,&pre);
 
@@ -430,10 +447,11 @@ int update_meta(File_Handles *file_info, repack_objects *objects)
   int rc;
 
 
-
+  // Travers all repacked objects
   while(objects) {
      files = objects->files_ptr;
      rc=str_2_pre(&pre, objects->objid, NULL);
+     //Traverse the object files
      while (files) {
         // Get the file post xattr
         // and update its elements based on the repack
@@ -491,4 +509,3 @@ void print_usage()
   fprintf(stderr,"Usage: ./marfs_repack -d packed_log_filename -o log_file [-h]\n\n");
   fprintf(stderr, "where -h = help\n\n");
 }
-
