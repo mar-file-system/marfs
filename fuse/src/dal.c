@@ -673,6 +673,7 @@ typedef struct mc_config {
    unsigned int num_pods;
    unsigned int num_cap;
    unsigned int scatter_width;
+   int          degraded_log_fd;
 } MC_Config;
 
 typedef struct mc_context {
@@ -715,6 +716,18 @@ int   mc_config(struct DAL*     dal,
       else if(!strcmp(opts[i]->key, "scatter_width")) {
          config->scatter_width = strtol(opts[i]->val.value.str, NULL, 10);
          LOG(LOG_INFO, "parsing mc option \"scatter_width\" = %d\n", config->scatter_width);
+      }
+      else if(!strcmp(opts[i]->key, "degraded_object_log")) {
+         config->degraded_log_fd = open(opts[i]->val.value.str,
+                                        O_CREAT|O_APPEND|O_WRONLY,
+                                        S_IRUSR|S_IWUSR|
+                                        S_IRGRP|S_IWGRP|
+                                        S_IROTH|S_IWOTH);
+         if(config->degraded_log_fd == -1) {
+            LOG(LOG_ERR, "Failed to open degraded object log: %s (%s)\n",
+                opts[i]->val.value.str, strerror(errno));
+            return -1;
+         }
       }
    }
 
@@ -1016,13 +1029,25 @@ int mc_sync(DAL_Context* ctx) {
      // block is corrupt or missing.
      int close_result = ne_close(handle);
      if(close_result > 0) {
-       // This is a place where we will want to use the proposed
-       // "CRITICAL" log level so sysadmins can see that the object
-       // needs to be rebuilt.
+       // Keeping the log message as well as writing to the degraded
+       // object file for debugging purposes.
        LOG(LOG_INFO, "WARNING: Object %s degraded. Error pattern: 0x%x."
             " (N: %d, E: %d, Start: %d).\n",
            MC_CONTEXT(ctx)->path_template, close_result,
            MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e, MC_CONTEXT(ctx)->start_block);
+       // we shouldn't need more then 512 bytes to hold the extra data
+       // needed for rebuild
+       char buf[MC_MAX_PATH_LEN + 512];
+       snprintf(buf, MC_MAX_PATH_LEN + 512,
+                "%s %d %d %d\n", MC_CONTEXT(ctx)->path_template,
+                MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e,
+                MC_CONTEXT(ctx)->start_block);
+       if(write(MC_CONFIG(ctx)->degraded_log_fd, buf, strlen(buf))
+          != strlen(buf)) {
+         LOG(LOG_ERR, "Failed to write to degraded object log\n");
+         // theoretically the data is still safe, so we can just log
+         // and ignore the failure.
+       }
      }
      else if(close_result < 0) {
        LOG(LOG_ERR, "ne_close failed on %s", MC_CONTEXT(ctx)->path_template);
