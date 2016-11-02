@@ -226,6 +226,9 @@ AS_IF([test -z "$PARSE_DIR"], [AC_ERROR([PARSE_DIR is not set])])
 AS_IF([test -z "$AWS4C"], [AC_ERROR([AWS4C in not set])])
 AS_IF([test x"$enable_mc" = xyes && test -z "$LIBNE"], [AC_ERROR([LIBNE is not set])])
 
+AS_IF([test -z "$MARFSCONFIGRC"],
+      [AC_SUBST(CONFIG, ${srcdir}/common/configuration/src/marfs_cctest.cfg)],
+      [AC_SUBST(CONFIG, $MARFSCONFIGRC)])
 
 # Checks for header files.
 AC_CHECK_HEADERS([arpa/inet.h fcntl.h inttypes.h limits.h stddef.h stdint.h stdlib.h string.h sys/statvfs.h syslog.h unistd.h utime.h])

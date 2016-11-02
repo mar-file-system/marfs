@@ -145,7 +145,6 @@ endif
 # ............................................................................
 PARSE_OPT = -DDATAPARSE
 BLUEPRINT = $(abs_top_srcdir)/common/configuration/src/marfs_configuration_blueprint.cfg
-CONFIG    = $(abs_top_srcdir)/common/configuration/src/marfs_cctest.cfg
 
 PARSE_H_file = config-structs.h
 PARSE_H      = $(PARSE_DIR)/parse-inc/$(PARSE_H_file)
