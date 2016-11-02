@@ -126,9 +126,11 @@ extern "C" {
 //
 // -- 1.5 Not strictly a change in config.  Moved parsing to libmarfs,
 //        leaving libconfig with only the PA2X interface.
+//
+// -- 1.6 MarFS now includes the multi-component DAL
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  5
+#define MARFS_CONFIG_MINOR  6
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
