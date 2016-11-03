@@ -99,6 +99,14 @@ OF SUCH DAMAGE.
 
 #include <stdio.h>
 
+#if USE_MC
+// The mc path will be the host field of the repo plus an object id.
+// We need a little extra room to account for numbers that will get
+// filled in to create the path template, 128 characters should be
+// more than enough.
+#define MC_MAX_PATH_LEN        (MARFS_MAX_OBJID_SIZE+MARFS_MAX_HOST_SIZE+128)
+#define MC_DEGRADED_LOG_FORMAT "%s,%d,%d,%d,%d\n"
+#endif // USE_MC
 
 #  ifdef __cplusplus
 extern "C" {

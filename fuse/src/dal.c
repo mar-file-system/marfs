@@ -648,12 +648,6 @@ DAL posix_dal = {
 // ===========================================================================
 #include "erasure.h"
 
-// The mc path will be the host field of the repo plus an object id.
-// We need a little extra room to account for numbers that will get
-// filled in to create the path template, 128 characters should be
-// more than enough.
-#define MC_MAX_PATH_LEN (MARFS_MAX_OBJID_SIZE + MARFS_MAX_HOST_SIZE + 128)
-
 #define MC_FH(CTX)      MC_CONTEXT(CTX)->fh
 #define MC_OS(CTX)      (&MC_FH(CTX)->os)
 #define MC_REPO(CTX)    MC_CONTEXT(CTX)->fh->repo
@@ -674,6 +668,7 @@ typedef struct mc_config {
    unsigned int num_cap;
    unsigned int scatter_width;
    int          degraded_log_fd;
+   SEM_T        lock;
 } MC_Config;
 
 typedef struct mc_context {
@@ -689,12 +684,31 @@ typedef struct mc_context {
    MC_Config         *config;
 } MC_Context;
 
+static int open_degraded_object_log(const char *log_dir_path) {
+   char log_path[PATH_MAX];
+   char host_name[HOST_NAME_MAX];
+   if(gethostname(host_name, HOST_NAME_MAX)) {
+      LOG(LOG_ERR, "gethostname() failed.\n");
+      return -1;
+   }
+   sprintf(log_path, "%s/%s.%u", log_dir_path, host_name, getpid());
+   int fd = open(log_path, O_CREAT|O_APPEND|O_WRONLY,
+                 S_IWUSR|S_IWGRP|S_IWOTH);
+   // TBD: fchown the file so it is owned by root? Then we can have
+   //      read permissions on for the owner. For now we can get awy
+   //      with no read permission since root can read anything and
+   //      the rebuild utility will be run by an admin.
+   return fd;
+}
+
 int   mc_config(struct DAL*     dal,
                 xDALConfigOpt** opts,
                 size_t          opt_count) {
    ENTRY();
-   
+
    MC_Config* config = malloc(sizeof(MC_Config));
+   config->degraded_log_fd = -1;
+
    int i;
    for(i = 0; i < opt_count; i++) {
       if(!strcmp(opts[i]->key, "n")) { // ? Should be strncmp?
@@ -707,34 +721,56 @@ int   mc_config(struct DAL*     dal,
       }
       else if(!strcmp(opts[i]->key, "num_pods")) {
          config->num_pods = strtol(opts[i]->val.value.str, NULL, 10);
-         LOG(LOG_INFO, "parsing mc option \"num_pods\" = %d\n", config->num_pods);
+         LOG(LOG_INFO, "parsing mc option \"num_pods\" = %d\n",
+             config->num_pods);
       }
       else if(!strcmp(opts[i]->key, "num_cap")) {
          config->num_cap = strtol(opts[i]->val.value.str, NULL, 10);
-         LOG(LOG_INFO, "parsing mc option \"num_cap\" = %d\n", config->num_cap);
+         LOG(LOG_INFO, "parsing mc option \"num_cap\" = %d\n",
+             config->num_cap);
       }
       else if(!strcmp(opts[i]->key, "scatter_width")) {
          config->scatter_width = strtol(opts[i]->val.value.str, NULL, 10);
-         LOG(LOG_INFO, "parsing mc option \"scatter_width\" = %d\n", config->scatter_width);
+         LOG(LOG_INFO, "parsing mc option \"scatter_width\" = %d\n",
+             config->scatter_width);
       }
-      else if(!strcmp(opts[i]->key, "degraded_object_log")) {
-         config->degraded_log_fd = open(opts[i]->val.value.str,
-                                        O_CREAT|O_APPEND|O_WRONLY,
-                                        S_IRUSR|S_IWUSR|
-                                        S_IRGRP|S_IWGRP|
-                                        S_IROTH|S_IWOTH);
-         if(config->degraded_log_fd == -1) {
-            LOG(LOG_ERR, "Failed to open degraded object log: %s (%s)\n",
-                opts[i]->val.value.str, strerror(errno));
-            return -1;
-         }
+      else if(!strcmp(opts[i]->key, "degraded_log_dir")) {
+         config->degraded_log_fd = open_degraded_object_log(
+            opts[i]->val.value.str);
       }
+      else {
+         LOG(LOG_ERR, "Unrecognized MC DAL config option: %s\n",
+             opts[i]->key);
+         free(config);
+         return -1;
+      }
+   }
+
+   if(config->degraded_log_fd == -1) {
+      LOG(LOG_ERR, "failed to open degraded log file.\n");
+      return -1;
+   }
+   else {
+      // initialize the lock to prevent concurrent writes to the log.
+      SEM_INIT(&config->lock, 0, 1);
    }
 
    dal->global_state = config;
    EXIT();
    return 0;
 }
+
+#if 0
+// Commented out until we add ->deconfig() to the DAL
+void mc_deconfig(struct DAL *dal) {
+   MC_Config *config = (MC_Config*)dal->global_state;
+   WAIT(&config->lock);
+
+   close(config->degraded_log_fd);
+   SEM_DESTROY(&config->lock);
+   free(config);
+}
+#endif
 
 // Computes a good, uniform, hash of the string.
 //
@@ -840,7 +876,7 @@ int mc_update_path(DAL_Context* ctx) {
       strcat(path_template, "/");
    
    // append the fileified object id
-   strncat(path_template, obj_filename, MC_MAX_PATH_LEN);
+   strncat(path_template, obj_filename, MARFS_MAX_OBJID_SIZE);
 
    LOG(LOG_INFO, "MC path template: (starting block: %d) %s\n",
        MC_CONTEXT(ctx)->start_block, path_template);
@@ -1027,29 +1063,32 @@ int mc_sync(DAL_Context* ctx) {
      // the result of close for a handle opened for reading is an
      // indicator of whether the data is degraded and, if so, which
      // block is corrupt or missing.
-     int close_result = ne_close(handle);
-     if(close_result > 0) {
+     int error_pattern = ne_close(handle);
+     if(error_pattern > 0) {
        // Keeping the log message as well as writing to the degraded
        // object file for debugging purposes.
        LOG(LOG_INFO, "WARNING: Object %s degraded. Error pattern: 0x%x."
             " (N: %d, E: %d, Start: %d).\n",
-           MC_CONTEXT(ctx)->path_template, close_result,
+           MC_CONTEXT(ctx)->path_template, error_pattern,
            MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e, MC_CONTEXT(ctx)->start_block);
        // we shouldn't need more then 512 bytes to hold the extra data
        // needed for rebuild
        char buf[MC_MAX_PATH_LEN + 512];
        snprintf(buf, MC_MAX_PATH_LEN + 512,
-                "%s %d %d %d\n", MC_CONTEXT(ctx)->path_template,
+                MC_DEGRADED_LOG_FORMAT, MC_CONTEXT(ctx)->path_template,
                 MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e,
-                MC_CONTEXT(ctx)->start_block);
+                MC_CONTEXT(ctx)->start_block,
+                error_pattern);
+       WAIT(&MC_CONFIG(ctx)->lock);
        if(write(MC_CONFIG(ctx)->degraded_log_fd, buf, strlen(buf))
           != strlen(buf)) {
          LOG(LOG_ERR, "Failed to write to degraded object log\n");
          // theoretically the data is still safe, so we can just log
          // and ignore the failure.
        }
+       POST(&MC_CONFIG(ctx)->lock);
      }
-     else if(close_result < 0) {
+     else if(error_pattern < 0) {
        LOG(LOG_ERR, "ne_close failed on %s", MC_CONTEXT(ctx)->path_template);
        return -1;
      }
