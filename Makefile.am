@@ -71,6 +71,10 @@ endif
 if USE_MC
 AM_CPPFLAGS += -I$(LIBNE) -DUSE_MC=1
 libmarfs_a_LIBADD += $(LIBNE)/libne.a
+
+bin_PROGRAMS += rebuilder
+rebuilder_SOURCES = utilities/multi-component/rebuilder.c
+
 endif
 
 # ? How do I include the headers when we install marfs. Which headers

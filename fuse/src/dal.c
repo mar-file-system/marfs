@@ -1077,8 +1077,7 @@ int mc_sync(DAL_Context* ctx) {
        snprintf(buf, MC_MAX_PATH_LEN + 512,
                 MC_DEGRADED_LOG_FORMAT, MC_CONTEXT(ctx)->path_template,
                 MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e,
-                MC_CONTEXT(ctx)->start_block,
-                error_pattern);
+                MC_CONTEXT(ctx)->start_block);
        WAIT(&MC_CONFIG(ctx)->lock);
        if(write(MC_CONFIG(ctx)->degraded_log_fd, buf, strlen(buf))
           != strlen(buf)) {
