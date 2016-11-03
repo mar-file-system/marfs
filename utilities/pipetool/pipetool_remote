@@ -1,0 +1,98 @@
+#!/usr/bin/python
+
+import os
+import re
+import errno
+import sys
+
+# The number of bytes to be read/written per iteration
+BYTES = 8192
+regstr = ""
+store = False
+data = ""
+
+for line in open(os.environ['MARFSCONFIGRC']):
+   if "mdfs_top" in line or "md_path" in line:
+      tmp = re.sub( r"</.*>\n",r"",line )
+      tmp = re.sub( r"(\w)*<.*?>",r"",tmp ).strip()
+      if ( regstr != "" ):
+         tmp = re.sub( regstr+".*",r"",tmp )
+      if ( tmp != "" ):
+         regstr = re.sub( "\("+tmp+".*?\)\|?", "", regstr )
+         if ( regstr != "" ):
+            regstr += "|"
+         regstr += "("+tmp+")"
+
+regstr += ".*"
+
+regex = re.compile( regstr  )
+
+# Verify number of arguments
+if ( len(sys.argv) != 3 ):
+   print >> sys.stderr, "Usage: pipetool_remote {store, retrieve} PATHNAME"
+   exit( errno.EINVAL )
+
+path = os.path.realpath( sys.argv[2] )
+
+# Verify that this will not access metadata
+if ( regex.match(path) ):
+   print >> sys.stderr, "pipetool_remote: ERROR: Accessing this directory is forbidden by MarFS!"
+   exit( errno.EPERM )
+
+homepath = os.path.realpath( "" )
+forbid = "("+homepath+"/\.bash.*)|("+homepath+"/\.profile.*)|("+homepath+"/\.login.*)"
+
+regex = re.compile( forbid )
+
+# Verify that this will not access files where env vars may be altered
+if ( regex.match(path) ):
+   print >> sys.stderr, "pipetool_remote: ERROR: Accessing this file is forbidden!"
+   exit( errno.EPERM )
+
+# Parse args
+if ( sys.argv[1] == "store" ):
+   store = True
+elif ( sys.argv[1] == "detect" ):
+   data = sys.stdin.read( BYTES )
+   if ( data != "" ):
+      if ( os.path.isfile( path ) ):
+         print >> sys.stderr, "pipetool_remote: WARNING: The specified file exists.  Defaulted to 'retrieve'.  Use 'store' option to overwrite the file instead."
+      else:
+         store = True
+elif ( sys.argv[1] != "retrieve" ):
+   print >> sys.stderr, "Usage: pipetool_remote {store, retrieve} PATHNAME"
+   exit( errno.EINVAL )
+
+if ( store ):
+   # Open the target location for writing
+   try:
+      target = open( path, 'w' )
+   except IOError as err:
+      print >> sys.stderr, "pipetool_remote: ERROR: {0}".format( err )
+      exit( err.errno )
+   
+   # Read form stdin and write to the target file location
+   if ( data == "" ):
+      data = sys.stdin.read( BYTES )
+
+   while ( data != "" ):
+      target.write( data )
+      data = sys.stdin.read( BYTES )
+else:
+   # Open the target location for reading
+   try:
+      target = open( path, 'r' )
+   except IOError as err:
+      print >> sys.stderr, "pipetool_remote: ERROR: {0}".format( err )
+      exit( err.errno )
+   
+   # Read form stdin and write to the target file location
+   data = target.read( BYTES )
+   
+   while ( data != "" ):
+      sys.stdout.write( data )
+      data = target.read( BYTES )
+
+# Cleanup
+target.close()
+
