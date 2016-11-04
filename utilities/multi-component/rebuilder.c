@@ -80,6 +80,7 @@ struct object_file {
   unsigned int n;
   unsigned int e;
   unsigned int start_block;
+  int error_pattern;
 };
 
 void usage(const char *program) {
@@ -98,9 +99,10 @@ int nextobject(FILE *log, struct object_file *object) {
   }
 
   int matches = sscanf(line, MC_DEGRADED_LOG_FORMAT,
-         object->path, &object->n, &object->e, &object->start_block);
+                       object->path, &object->n, &object->e,
+                       &object->start_block, &object->error_pattern);
 
-  if(matches != 4) {
+  if(matches != 5) {
     fprintf(stderr, "failed to parse log entry\n");
     return -1;
   }
