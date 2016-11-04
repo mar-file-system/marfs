@@ -846,9 +846,6 @@ int mc_update_path(DAL_Context* ctx) {
    // regadless of changes to the "file-ification" format.
    unsigned int objid_hash = (unsigned int)polyhash(objid);
    
-   // TODO: Waiting on code from Jeff, implementing the configurable
-   // parameters for MC repos. The variables below will be initialized
-   // based on those parameters.
    char *mc_path_format = repo->host;
 
    unsigned int num_blocks    = MC_CONFIG(ctx)->n+MC_CONFIG(ctx)->e;
