@@ -96,9 +96,9 @@ int nextobject(FILE *log, struct object_file *object) {
   if(line_len == -1) {
     return -1;
   }
-  
+
   int matches = sscanf(line, MC_DEGRADED_LOG_FORMAT,
-         &object->path, &object->n, &object->e, &object->start_block);
+         object->path, &object->n, &object->e, &object->start_block);
 
   if(matches != 4) {
     fprintf(stderr, "failed to parse log entry\n");
