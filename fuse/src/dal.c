@@ -777,18 +777,18 @@ void mc_deconfig(struct DAL *dal) {
 // Treats each character in the length n string as a coefficient of a
 // degree n polynomial.
 //
-// f(x) = string[0] + string[1] * x + ... + string[n-1] * x^(n-1)
+// f(x) = string[n -1] + string[n - 2] * x + ... + string[0] * x^(n-1)
 //
-// The hash is computed by evaluating the polynomial for x=31 using
+// The hash is computed by evaluating the polynomial for x=33 using
 // Horner's rule.
 //
 // Reference: http://cseweb.ucsd.edu/~kube/cls/100/Lectures/lec16/lec16-14.html
-static int polyhash(const char* string) {
-   // 31 is apparently what is used by java's String.hashCode()
-   // method.  should be good enough for our prototype.
-   const int salt = 31;
+static unsigned long polyhash(const char* string) {
+   // According to http://www.cse.yorku.ca/~oz/hash.html
+   // 33 is a magical number that inexplicably works the best.
+   const int salt = 33;
    char c;
-   int h = *string++;
+   unsigned long h = *string++;
    while((c = *string++))
       h = salt * h + c;
    return h;
@@ -844,7 +844,7 @@ int mc_update_path(DAL_Context* ctx) {
    //
    // Hash the actual object ID so the hash will remain the same,
    // regadless of changes to the "file-ification" format.
-   unsigned int objid_hash = (unsigned int)polyhash(objid);
+   unsigned long objid_hash = polyhash(objid);
    
    char *mc_path_format = repo->host;
 
@@ -853,9 +853,9 @@ int mc_update_path(DAL_Context* ctx) {
    unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
    unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
    
-   unsigned int pod           = objid_hash % num_pods;
-   unsigned int capacity_unit = objid_hash % num_cap;
-   unsigned int scatter       = objid_hash % scatter_width;
+   unsigned long pod           = objid_hash % num_pods;
+   unsigned long capacity_unit = objid_hash % num_cap;
+   unsigned long scatter       = objid_hash % scatter_width;
 
    MC_CONTEXT(ctx)->start_block = objid_hash % num_blocks;
    // fill in path template
