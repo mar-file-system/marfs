@@ -89,6 +89,101 @@ struct rebuild_stats {
   int total_objects;
 } stats;
 
+typedef struct ht_entry {
+  struct ht_entry *next;
+  char *key;
+} ht_entry_t;
+
+typedef struct hash_table {
+  unsigned int size;
+  ht_entry_t **table;
+} hash_table_t;
+
+hash_table_t rebuilt_objects;
+
+/**
+ * Compute the hash of key.
+ */
+unsigned long polyhash(const char *string) {
+  const int salt = 33;
+  char c;
+  unsigned long hash = *string++;
+  while((c = *string++))
+    hash = salt * hash + c;
+  return hash;
+}
+
+/**
+ * Initialize the hash table.
+ *
+ * @param ht    a pointer to the hash_table_t to initialize
+ * @param size  the size of the hash table
+ *
+ * @return NULL if initialization failed. Otherwise non-NULL.
+ */
+void *ht_init(hash_table_t *ht, unsigned int size) {
+  ht->table = calloc(size, sizeof (ht_entry_t));
+  ht->size = size;
+  return ht->table;
+}
+
+/**
+ * Lookup a key in the hash table.
+ *
+ * @param ht  the table to search
+ * @param key the key to search for.
+ *
+ * @return 1 if the key was found. 0 if not.
+ */
+int ht_lookup(hash_table_t *ht, const char* key) {
+  unsigned long hash = polyhash(key);
+  ht_entry_t *entry = ht->table[hash % ht->size];
+  while(entry) {
+    if(!strcmp(entry->key, key)) {
+      return 1;
+    }
+    entry = entry->next;
+  }
+  return 0;
+}
+
+/**
+ * Insert an entry into the hash table.
+ *
+ * @param ht  the hash table to insert in
+ * @param key the key to insert
+ */
+void ht_insert(hash_table_t *ht, const char* key) {
+  ht_entry_t *entry = calloc(1, sizeof (ht_entry_t));
+  unsigned long hash = polyhash(key);
+  if(entry == NULL) {
+    perror("calloc()");
+    exit(-1);
+  }
+  entry->key = strdup(key);
+  if(entry->key == NULL) {
+    perror("strdup()");
+    exit(-1);
+  }
+
+  if(!ht->table[hash % ht->size]) {
+    ht->table[hash % ht->size] = entry;
+  }
+  else if(!strcmp(ht->table[hash % ht->size]->key, key)) {
+    return;
+  }
+  else {
+    ht_entry_t *e = ht->table[hash % ht->size];
+    while(e->next) {
+      if(!strcmp(e->key, key)) {
+        return;
+      }
+      e = e->next;
+    }
+    e->next = entry;
+  }
+}
+
 void usage(const char *program) {
   printf("Usage:\n");
   printf("%s <path/to/log/file>\n", program);
@@ -168,6 +263,9 @@ void process_log_subdir(const char *subdir_path) {
 
       struct object_file object;
       while(nextobject(degraded_object_file, &object) != -1) {
+        if(ht_lookup(&rebuilt_objects, object.path))
+          continue;
+
         stats.total_objects++;
         ne_handle object_handle = ne_open(object.path, NE_REBUILD,
                                           object.start_block,
@@ -184,6 +282,7 @@ void process_log_subdir(const char *subdir_path) {
 
         int rebuild_result = ne_rebuild(object_handle);
         if(rebuild_result == 0) {
+          ht_insert(&rebuilt_objects, object.path);
           stats.rebuild_successes++;
         }
         else {
@@ -218,6 +317,8 @@ int main(int argc, char **argv) {
   stats.rebuild_failures  = 0;
   stats.rebuild_successes = 0;
   stats.total_objects     = 0;
+
+  ht_init(&rebuilt_objects, 1024); // TODO: Make this a cl parameter.
   
   DIR *log_dir = opendir(argv[1]);
   if(!log_dir) {
