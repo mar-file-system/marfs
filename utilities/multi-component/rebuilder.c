@@ -267,27 +267,33 @@ void process_log_subdir(const char *subdir_path) {
           continue;
 
         stats.total_objects++;
+
+        // always add the object to the list of rebuilt objects.
+        // Even if we fail to rebuild, we don't want to repeatedly
+        // attempt to rebuild.
+        ht_insert(&rebuilt_objects, object.path);
+
         ne_handle object_handle = ne_open(object.path, NE_REBUILD,
                                           object.start_block,
                                           object.n, object.e);
         if(object_handle == NULL) {
-          perror("ne_open()");
-          // XXX: Do we want to give up here, or just ignore the error and
-          //      continue rebuilding other objects?
-          fprintf(stderr, "object %s could not be opened "
-                  "(start: %d, n: %d, e: %d)\n", object.path,
-                  object.start_block, object.n, object.e);
-          exit(-1);
+          fprintf(stderr, "ERROR: cannot rebuild %s "
+                  "(start: %d, n: %d, e: %d). ne_open() failed: %s.\n",
+                  object.path, object.start_block, object.n, object.e,
+                  strerror(errno));
+          stats.rebuild_failures++;
+          continue;
         }
 
         int rebuild_result = ne_rebuild(object_handle);
         if(rebuild_result == 0) {
-          ht_insert(&rebuilt_objects, object.path);
           stats.rebuild_successes++;
         }
         else {
           stats.rebuild_failures++;
-          fprintf(stderr, "Failed to rebuild %s\n", object.path);
+          fprintf(stderr, "ERROR: cannot rebuild %s (start: %d, n: %d, e: %d)."
+                  " ne_rebuild() failed: %s.\n", object.path,
+                  object.start_block, object.n, object.e, strerror(errno));
         }
 
         int error = ne_close(object_handle);
@@ -296,7 +302,7 @@ void process_log_subdir(const char *subdir_path) {
           fprintf(stderr, "object %s could not be closed "
                   "(start: %d, n: %d, e: %d)\n", object.path,
                   object.start_block, object.n, object.e);
-          exit(-1); // XXX: see note above.
+          exit(-1);
         }
       }
 
