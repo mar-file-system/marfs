@@ -107,6 +107,7 @@ OF SUCH DAMAGE.
 // more than enough.
 #define MC_MAX_PATH_LEN        (MARFS_MAX_OBJID_SIZE+MARFS_MAX_HOST_SIZE+128)
 #define MC_DEGRADED_LOG_FORMAT "%s\t%d\t%d\t%d\t%d\t\n"
+#define MC_LOG_SCATTER_WIDTH   400
 #endif // USE_MC
 
 #  ifdef __cplusplus

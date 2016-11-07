@@ -691,7 +691,22 @@ static int open_degraded_object_log(const char *log_dir_path) {
       LOG(LOG_ERR, "gethostname() failed.\n");
       return -1;
    }
-   sprintf(log_path, "%s/%s.%u", log_dir_path, host_name, getpid());
+   pid_t pid = getpid();
+   unsigned int pid_scatter = pid % MC_LOG_SCATTER_WIDTH;
+
+   sprintf(log_path, "%s/%s", log_dir_path, host_name);
+   mkdir(log_path, 0777);
+   sprintf(log_path, "%s/%s/%u", log_dir_path, host_name, pid_scatter);
+   mkdir(log_path, 0777);
+
+   // I'm ignoring the results of mkdir() since the directory might
+   // already exist, in which case it would return an error. If
+   // something went wrong and the directory doesn't exist and
+   // couldn't be created then we will catch it when we try to open
+   // the file below.
+
+   sprintf(log_path, "%s/%s/%u/degraded_objects.%u", log_dir_path, host_name,
+           pid_scatter, pid);
    int fd = open(log_path, O_CREAT|O_APPEND|O_WRONLY,
                  S_IWUSR|S_IWGRP|S_IWOTH);
    // TBD: fchown the file so it is owned by root? Then we can have

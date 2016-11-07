@@ -83,6 +83,12 @@ struct object_file {
   int error_pattern;
 };
 
+struct rebuild_stats {
+  int rebuild_failures;
+  int rebuild_successes;
+  int total_objects;
+} stats;
+
 void usage(const char *program) {
   printf("Usage:\n");
   printf("%s <path/to/log/file>\n", program);
@@ -111,18 +117,101 @@ int nextobject(FILE *log, struct object_file *object) {
   return 0;
 }
 
+void process_log_subdir(const char *subdir_path) {
+  DIR *dir = opendir(subdir_path);
+  if(!dir) {
+    fprintf(stderr, "Could not open subdirectory %s: %s\n",
+            subdir_path, strerror(errno));
+    return;
+  }
+
+  struct dirent *scatter_dir;
+  while((scatter_dir = readdir(dir))) {
+    if(scatter_dir == NULL) {
+      if(errno == EBADF) {
+        perror("failed to read host dir");
+        exit(-1);
+      }
+      break; // end of dir
+    }
+    else if(scatter_dir->d_name[0] == '.') {
+      continue; // skip '.' and '..'
+    }
+
+    char scatter_path[PATH_MAX];
+    snprintf(scatter_path, PATH_MAX, "%s/%s", subdir_path, scatter_dir->d_name);
+    DIR *scatter = opendir(scatter_path);
+
+    struct dirent *log_file_dent;
+    while((log_file_dent = readdir(scatter))) {
+      if(log_file_dent == NULL) {
+        if(errno = EBADF) {
+          perror("failed to read scatter dir");
+          exit(-1);
+        }
+        break;
+      }
+      else if(log_file_dent->d_name[0] == '.') {
+        continue;
+      }
+
+      int fd = openat(dirfd(scatter), log_file_dent->d_name, O_RDONLY);
+      if(fd == -1) {
+        perror("openat()");
+        exit(-1);
+      }
+      FILE *degraded_object_file = fdopen(fd, "r");
+      if(degraded_object_file == NULL) {
+        perror("fdopen()");
+        exit(-1);
+      }
+
+      struct object_file object;
+      while(nextobject(degraded_object_file, &object) != -1) {
+        stats.total_objects++;
+        ne_handle object_handle = ne_open(object.path, NE_REBUILD,
+                                          object.start_block,
+                                          object.n, object.e);
+        if(object_handle == NULL) {
+          perror("ne_open()");
+          // XXX: Do we want to give up here, or just ignore the error and
+          //      continue rebuilding other objects?
+          fprintf(stderr, "object %s could not be opened "
+                  "(start: %d, n: %d, e: %d)\n", object.path,
+                  object.start_block, object.n, object.e);
+          exit(-1);
+        }
+
+        int rebuild_result = ne_rebuild(object_handle);
+        if(rebuild_result == 0) {
+          stats.rebuild_successes++;
+        }
+        else {
+          stats.rebuild_failures++;
+          fprintf(stderr, "Failed to rebuild %s\n", object.path);
+        }
+
+        int error = ne_close(object_handle);
+        if(error < 0) {
+          perror("ne_close()");
+          fprintf(stderr, "object %s could not be closed "
+                  "(start: %d, n: %d, e: %d)\n", object.path,
+                  object.start_block, object.n, object.e);
+          exit(-1); // XXX: see note above.
+        }
+      }
+
+      fclose(degraded_object_file);
+    }
+  }
+}
+
 int main(int argc, char **argv) {
 
   if(argc != 2) {
     usage(argv[0]);
     exit(1);
   }
-
-  struct rebuild_stats {
-    int rebuild_failures;
-    int rebuild_successes;
-    int total_objects;
-  } stats;
 
   stats.rebuild_failures  = 0;
   stats.rebuild_successes = 0;
@@ -147,58 +236,14 @@ int main(int argc, char **argv) {
       continue; // easy way to avoid reading '.' and '..'
     }
 
-    char log_file_path[PATH_MAX];
-    snprintf(log_file_path, PATH_MAX, "%s/%s", argv[1], log_dirent->d_name);
+    char log_subdir[PATH_MAX];
+    snprintf(log_subdir, PATH_MAX, "%s/%s", argv[1], log_dirent->d_name);
 
-    // To preserve concurrent operation with marfs processes that may be
-    // logging to the file, and may be holding a file descriptor open in
-    // DAL, we immediately apped a marker to the file indicating where
-    // the rebuild will stop. We then seed back from that marker until we
-    // reach either the begining of the file, or another marker.
 #if DEBUG
-      printf("opening log file %s\n", log_file_path);
+    printf("opening log subdirectory %s\n", log_subdir);
 #endif
     
-    FILE *degraded_object_file = fopen(log_file_path, "r");
-    if(degraded_object_file == NULL) {
-      perror("fopen()");
-      exit(-1);
-    }
-    struct object_file object;
-    while(nextobject(degraded_object_file, &object) != -1) {
-      stats.total_objects++;
-      ne_handle object_handle = ne_open(object.path, NE_REBUILD,
-                                        object.start_block, object.n, object.e);
-      if(object_handle == NULL) {
-        perror("ne_open()");
-        // XXX: Do we want to give up here, or just ignore the error and
-        //      continue rebuilding other objects?
-        fprintf(stderr, "object %s could not be opened "
-                "(start: %d, n: %d, e: %d)\n", object.path,
-                object.start_block, object.n, object.e);
-        exit(-1);
-      }
-      
-      int rebuild_result = ne_rebuild(object_handle);
-      if(rebuild_result == 0) {
-        stats.rebuild_successes++;
-      }
-      else {
-        stats.rebuild_failures++;
-        fprintf(stderr, "Failed to rebuild %s\n", object.path);
-      }
-      
-      int error = ne_close(object_handle);
-      if(error < 0) {
-        perror("ne_close()");
-        fprintf(stderr, "object %s could not be closed "
-                "(start: %d, n: %d, e: %d)\n", object.path,
-                object.start_block, object.n, object.e);
-        exit(-1); // XXX: see note above.
-      }
-    }
-
-    fclose(degraded_object_file);
+    process_log_subdir(log_subdir);
   }
   
   closedir(log_dir);
