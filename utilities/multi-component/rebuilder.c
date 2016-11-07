@@ -203,7 +203,9 @@ void process_log_subdir(const char *subdir_path) {
 
       fclose(degraded_object_file);
     }
+    closedir(scatter);
   }
+  closedir(dir);
 }
 
 int main(int argc, char **argv) {
