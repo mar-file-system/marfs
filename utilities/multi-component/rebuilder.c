@@ -12,7 +12,7 @@ LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
 FOR THE USE OF THIS SOFTWARE.  If software is modified to produce
 derivative works, such modified software should be clearly marked, so
 as not to confuse it with the version available from LANL.
- 
+
 Additionally, redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the following
 conditions are met: 1. Redistributions of source code must retain the
@@ -66,6 +66,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  * repo/DAL config.
  */
 
+#include <unistd.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 // we absolutely must have multi-component enabled to build this
@@ -186,9 +188,15 @@ void ht_insert(hash_table_t *ht, const char* key) {
 
 void usage(const char *program) {
   printf("Usage:\n");
-  printf("%s <path/to/log/file>\n", program);
-  printf("\t<path/to/log/file> should be the path to the file where the MC DAL\n"
-         "\t                   has logged objects it thinks are degraded.\n");
+  printf("%s [-H <hash table size>] <degraded log dir> ...\n\n", program);
+  printf("  <degraded log dir> should be the path to the directory where the\n"
+         "                     MC DAL has logged objects it thinks are degraded.\n"
+         "                     You may specify one or more log dirs.\n\n"
+         "  <hash table size>  Size of the hash table used to track which\n"
+         "                     objects have been rebuilt. A larger hash table\n"
+         "                     may provide increased performance when\n"
+         "                     rebuilding a large number of objects.\n"
+         "                     Defaults to 1024.\n");
 }
 
 int nextobject(FILE *log, struct object_file *object) {
@@ -222,14 +230,7 @@ void process_log_subdir(const char *subdir_path) {
 
   struct dirent *scatter_dir;
   while((scatter_dir = readdir(dir))) {
-    if(scatter_dir == NULL) {
-      if(errno == EBADF) {
-        perror("failed to read host dir");
-        exit(-1);
-      }
-      break; // end of dir
-    }
-    else if(scatter_dir->d_name[0] == '.') {
+    if(scatter_dir->d_name[0] == '.') {
       continue; // skip '.' and '..'
     }
 
@@ -239,14 +240,7 @@ void process_log_subdir(const char *subdir_path) {
 
     struct dirent *log_file_dent;
     while((log_file_dent = readdir(scatter))) {
-      if(log_file_dent == NULL) {
-        if(errno = EBADF) {
-          perror("failed to read scatter dir");
-          exit(-1);
-        }
-        break;
-      }
-      else if(log_file_dent->d_name[0] == '.') {
+      if(log_file_dent->d_name[0] == '.') {
         continue;
       }
 
@@ -315,54 +309,61 @@ void process_log_subdir(const char *subdir_path) {
 
 int main(int argc, char **argv) {
 
-  if(argc != 2) {
+  unsigned int ht_size = 1024;
+  int opt;
+  while((opt = getopt(argc, argv, "H:")) != -1) {
+    switch (opt) {
+    case 'H' :
+      ht_size = strtol(optarg, NULL, 10);
+      break;
+    default:
+      usage(argv[0]);
+      exit(-1);
+    }
+  }
+
+  if(optind >= argc) {
+    fprintf(stderr, "Expected at least one path argument.\n");
     usage(argv[0]);
-    exit(1);
+    exit(-1);
   }
 
   stats.rebuild_failures  = 0;
   stats.rebuild_successes = 0;
   stats.total_objects     = 0;
 
-  ht_init(&rebuilt_objects, 1024); // TODO: Make this a cl parameter.
-  
-  DIR *log_dir = opendir(argv[1]);
-  if(!log_dir) {
-    perror("Could not open log dir");
-    exit(-1);
-  }
+  ht_init(&rebuilt_objects, ht_size);
 
-  struct dirent *log_dirent;
-  while((log_dirent = readdir(log_dir))) {
-    if (log_dirent == NULL) {
-      if (errno == EBADF) {
-        perror("could not read from log dir");
-        exit(-1);
+  int index;
+  for(index = optind; index < argc; index++) {
+
+    DIR *log_dir = opendir(argv[index]);
+    if(!log_dir) {
+      fprintf(stderr, "Could not open log dir %s: %s\n",
+              argv[index], strerror(errno));
+      exit(-1);
+    }
+
+    struct dirent *log_dirent;
+    while((log_dirent = readdir(log_dir))) {
+      if(log_dirent->d_name[0] == '.') {
+        continue; // easy way to avoid reading '.' and '..'
       }
-      break; // we're done.
-    }
-    else if(log_dirent->d_name[0] == '.') {
-      continue; // easy way to avoid reading '.' and '..'
+
+      char log_subdir[PATH_MAX];
+      snprintf(log_subdir, PATH_MAX, "%s/%s", argv[index], log_dirent->d_name);
+
+      process_log_subdir(log_subdir);
     }
 
-    char log_subdir[PATH_MAX];
-    snprintf(log_subdir, PATH_MAX, "%s/%s", argv[1], log_dirent->d_name);
-
-#if DEBUG
-    printf("opening log subdirectory %s\n", log_subdir);
-#endif
-    
-    process_log_subdir(log_subdir);
+    closedir(log_dir);
   }
-  
-  closedir(log_dir);
-
   // For now we print this every time. Should maybe add a cl option to
   // make the program print a report or not.
   printf("==== Rebuild Summary ====\n");
   printf("Number of objects:   %*d\n", 10, stats.total_objects);
   printf("Successful rebuilds: %*d\n", 10, stats.rebuild_successes);
   printf("Failed rebuilds:     %*d\n", 10, stats.rebuild_failures);
-  
+
   return 0;
 }
