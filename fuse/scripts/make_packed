@@ -83,7 +83,7 @@ VERBOSE=0
 DEBUG=0
 
 # built in marfs/common/configuration/src
-CONFIG=marfs_config
+CONFIG=$MARFS/common/configuration/src/marfs_config
 
 
 # --- parse command-line options

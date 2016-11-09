@@ -169,7 +169,6 @@ extern "C" {
 
 
 
-
 // max buffer for calls to write().  This should "match" (i.e. be a
 // multiple or divide evenly into) the size of buffer we're using
 // internally in the object-store.  For Scality, I'm assuming this will

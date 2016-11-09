@@ -92,6 +92,15 @@ OF SUCH DAMAGE.
 // ===========================================================================
 // 
 
+
+int   default_mdal_config(struct MDAL*     mdal,
+                          xDALConfigOpt**  opts,
+                          size_t           opt_count) {
+   mdal->global_state = opts;
+   return 0;
+}
+
+
 // Use these if you don't need to do anything special to initialize the
 // context before-opening / after-closing for file-oriented or
 // directory-oriented operations.
@@ -338,6 +347,7 @@ MDAL posix_mdal = {
    .name_len     = 5, // strlen("POSIX"),
 
    .global_state = NULL,
+   .config       = &default_mdal_config,
 
    .f_init       = &default_mdal_file_ctx_init,
    .f_destroy    = &default_mdal_file_ctx_destroy,
@@ -430,6 +440,8 @@ int install_MDAL(MDAL* mdal) {
    DL_CHECK(name);
    DL_CHECK(name_len);
 
+   DL_CHECK(config);
+   
    DL_CHECK(f_init);
    DL_CHECK(f_destroy);
 
@@ -530,6 +542,7 @@ MDAL* dynamic_MDAL(const char* name) {
       }
 
       mdal->global_state = NULL;
+      mdal->config       = (mdal_config)     dlsym(lib, "config");
 
       mdal->f_init       = (mdal_file_ctx_init)    dlsym(lib, "f_init");
       mdal->f_destroy    = (mdal_file_ctx_destroy) dlsym(lib, "f_destroy");

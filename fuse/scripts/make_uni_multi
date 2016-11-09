@@ -15,7 +15,7 @@ MARFS=$1
 
 # For the multi files, we write 8 blocks of this size.  You wont actually
 # get multi files, unless 8 of these exceeds your repo.chunksize.
-CHUNKSIZE=$((1 * 1024 * 1024))
+CHUNKSIZE=$((1 * 1024 * 1024 * 1024))
 
 DIRS="d1"
 #DEL_DIRS="del1 del2 del3 del4"
@@ -36,8 +36,8 @@ echo
 
 # make some UNI files
 for D in $DIRS; do
-#    for i in `seq 1 200`; do
-    for i in `seq 1 2`; do
+    for i in `seq 1 200`; do
+#    for i in `seq 1 2`; do
         UNI=`printf "$MARFS/$D/uni.%03d" $i`
 
         echo "making file $UNI"

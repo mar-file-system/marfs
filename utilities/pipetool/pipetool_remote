@@ -1,0 +1,152 @@
+#!/usr/bin/python
+#
+# Copyright (c) 2015, Los Alamos National Security, LLC
+# All rights reserved.
+# 
+# Copyright 2015.  Los Alamos National Security, LLC. This software was produced
+# under U.S. Government contract DE-AC52-06NA25396 for Los Alamos National
+# Laboratory (LANL), which is operated by Los Alamos National Security, LLC for
+# the U.S. Department of Energy. The U.S. Government has rights to use, reproduce,
+# and distribute this software.  NEITHER THE GOVERNMENT NOR LOS ALAMOS NATIONAL
+# SECURITY, LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
+# FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
+# works, such modified software should be clearly marked, so as not to confuse it
+# with the version available from LANL.
+#  
+# Additionally, redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+# 1. Redistributions of source code must retain the above copyright notice, this
+# list of conditions and the following disclaimer.
+# 
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+# 
+# 3. Neither the name of Los Alamos National Security, LLC, Los Alamos National
+# Laboratory, LANL, the U.S. Government, nor the names of its contributors may be
+# used to endorse or promote products derived from this software without specific
+# prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL LOS ALAMOS NATIONAL SECURITY, LLC OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
+# OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+# STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# 
+# -----
+# NOTE:
+# -----
+# MarFS is released under the BSD license.
+# 
+# MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier:
+# LA-CC-15-039.
+# 
+# MarFS uses libaws4c for Amazon S3 object communication. The original version
+# is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
+# LANL added functionality to the original work. The original work plus
+# LANL contributions is found at https://github.com/jti-lanl/aws4c.
+# 
+# GNU licenses can be found at http://www.gnu.org/licenses/.
+
+import os
+import re
+import errno
+import sys
+
+# The number of bytes to be read/written per iteration
+BYTES = 8192
+regstr = ""
+store = False
+data = ""
+
+for line in open(os.environ['MARFSCONFIGRC']):
+   if "mdfs_top" in line or "md_path" in line:
+      tmp = re.sub( r"</.*>\n",r"",line )
+      tmp = re.sub( r"(\w)*<.*?>",r"",tmp ).strip()
+      if ( regstr != "" ):
+         tmp = re.sub( regstr+".*",r"",tmp )
+      if ( tmp != "" ):
+         regstr = re.sub( "\("+tmp+".*?\)\|?", "", regstr )
+         if ( regstr != "" ):
+            regstr += "|"
+         regstr += "("+tmp+")"
+
+regstr += ".*"
+
+regex = re.compile( regstr  )
+
+# Verify number of arguments
+if ( len(sys.argv) != 3 ):
+   print >> sys.stderr, "Usage: pipetool_remote {store, retrieve} PATHNAME"
+   exit( errno.EINVAL )
+
+path = os.path.realpath( sys.argv[2] )
+
+# Verify that this will not access metadata
+if ( regex.match(path) ):
+   print >> sys.stderr, "pipetool_remote: ERROR: Accessing this directory is forbidden by MarFS!"
+   exit( errno.EPERM )
+
+homepath = os.path.realpath( "" )
+forbid = "("+homepath+"/\.bash.*)|("+homepath+"/\.profile.*)|("+homepath+"/\.login.*)"
+
+regex = re.compile( forbid )
+
+# Verify that this will not access files where env vars may be altered
+if ( regex.match(path) ):
+   print >> sys.stderr, "pipetool_remote: ERROR: Accessing this file is forbidden!"
+   exit( errno.EPERM )
+
+# Parse args
+if ( sys.argv[1] == "store" ):
+   store = True
+elif ( sys.argv[1] == "detect" ):
+   data = sys.stdin.read( BYTES )
+   if ( data != "" ):
+      if ( os.path.isfile( path ) ):
+         print >> sys.stderr, "pipetool_remote: WARNING: The specified file exists.  Defaulted to 'retrieve'.  Use 'store' option to overwrite the file instead."
+      else:
+         store = True
+elif ( sys.argv[1] != "retrieve" ):
+   print >> sys.stderr, "Usage: pipetool_remote {store, retrieve} PATHNAME"
+   exit( errno.EINVAL )
+
+if ( store ):
+   # Open the target location for writing
+   try:
+      target = open( path, 'w' )
+   except IOError as err:
+      print >> sys.stderr, "pipetool_remote: ERROR: {0}".format( err )
+      exit( err.errno )
+   
+   # Read form stdin and write to the target file location
+   if ( data == "" ):
+      data = sys.stdin.read( BYTES )
+
+   while ( data != "" ):
+      target.write( data )
+      data = sys.stdin.read( BYTES )
+else:
+   # Open the target location for reading
+   try:
+      target = open( path, 'r' )
+   except IOError as err:
+      print >> sys.stderr, "pipetool_remote: ERROR: {0}".format( err )
+      exit( err.errno )
+   
+   # Read form stdin and write to the target file location
+   data = target.read( BYTES )
+   
+   while ( data != "" ):
+      sys.stdout.write( data )
+      data = target.read( BYTES )
+
+# Cleanup
+target.close()
+
