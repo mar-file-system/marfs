@@ -79,9 +79,15 @@ endif
 
 # ? How do I include the headers when we install marfs. Which headers
 # do we need to include?
-include_HEADERS = fuse/src/marfs_base.h fuse/src/marfs_ops.h fuse/src/mdal.h \
-				  fuse/src/dal.h fuse/src/marfs_configuration.h              \
-				  common/log/src/logging.h
+include_HEADERS = fuse/src/marfs_base.h \
+                  fuse/src/object_stream.h \
+                  fuse/src/common.h \
+                  fuse/src/marfs_ops.h \
+                  fuse/src/xdal_common.h \
+                  fuse/src/mdal.h \
+                  fuse/src/dal.h \
+                  fuse/src/marfs_configuration.h \
+                  common/log/src/logging.h
 
 marfs_config_SOURCES = fuse/src/marfs_config.c                   \
 					   fuse/src/marfs_configuration.c            \
