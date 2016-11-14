@@ -275,7 +275,7 @@ int marfs_ftruncate(const char*            path,
    ENTRY();
 
    PathInfo*         info = &fh->info;                  /* shorthand */
-   // ObjectStream*     os   = &fh->os;
+   ObjectStream*     os   = &fh->os;
    // IOBuf*            b    = &fh->os.iob;
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
@@ -298,8 +298,9 @@ int marfs_ftruncate(const char*            path,
    // writing).  Close that in such a way that the server will not persist
    // the PUT.  Do this before any MD access checks, so that we will abort
    // the stream even if something goes wrong doing the MD access.
-   TRY0( close_data(fh, 1, 0) );
-
+   if(os->flags & OSF_OPEN) {
+      TRY0( close_data(fh, 1, 0) );
+   }
 
    // Call access() syscall to check/act if allowed to truncate for this user
    ACCESS(info->ns, info->post.md_path, (W_OK));
@@ -1052,13 +1053,13 @@ int marfs_open(const char*         path,
       // offsets, we let marfs_read() determine the offset where it should
       // open, so it can do its own GET, with byte-ranges.  Therefore, for
       // reads, we don't open the stream, here.
-      if (fh->flags & FH_WRITING) {
-         size_t   open_size  = get_stream_wr_open_size(fh, 0);
-         uint16_t wr_timeout = info->pre.repo->write_timeout;
-
-         TRY0( open_data(fh, OS_PUT, 0, open_size, 0, wr_timeout) );
-      }
-      else {
+      //
+      // We don't open streams for writing here either, since they may
+      // not be used (ie. when overwriting a file we open the old
+      // object first, then close it without performing any
+      // operations). Not opening streams here saves us from doing
+      // unneeded work.
+      if (! (fh->flags & FH_WRITING)) {
          SEM_INIT(&os->read_lock, 0, 1);
          os->flags |= OSF_RLOCK_INIT;
 
@@ -2892,6 +2893,15 @@ ssize_t marfs_write(const char*        path,
       uint16_t wr_timeout = info->pre.repo->write_timeout;
 
       TRY0( open_data(fh, OS_PUT, 0, open_size, 1, wr_timeout) );
+   }
+   else if(! (os->flags & OSF_OPEN)) {
+
+      // Then this is the first write on a new file (or the first
+      // write that is "overwriting" an existing file). We don't
+      size_t   open_size  = get_stream_wr_open_size(fh, 0);
+      uint16_t wr_timeout = info->pre.repo->write_timeout;
+
+      TRY0( open_data(fh, OS_PUT, 0, open_size, 0, wr_timeout) );
    }
 
    // Span across objects, for "Multi" format.  Repo.chunk_size is the
