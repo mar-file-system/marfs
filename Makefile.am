@@ -53,6 +53,7 @@ libmarfs_a_SOURCES = parser fuse/src/common.c fuse/src/common.h        \
 					 fuse/src/object_stream.c fuse/src/object_stream.h \
 					 fuse/src/dal.c fuse/src/dal.h                     \
 					 fuse/src/mdal.c fuse/src/mdal.h                   \
+					 fuse/src/marfs_locks.h fuse/src/marfs_locks.c     \
 					 common/log/src/logging.c common/log/src/logging.h \
 					 common/configuration/src/PA2X_interface.c         \
 					 common/configuration/src/PA2X_interface.h         \
@@ -81,7 +82,7 @@ endif
 # do we need to include?
 include_HEADERS = fuse/src/marfs_base.h fuse/src/marfs_ops.h fuse/src/mdal.h \
 				  fuse/src/dal.h fuse/src/marfs_configuration.h              \
-				  common/log/src/logging.h
+				  fuse/src/marfs_locks.h common/log/src/logging.h
 
 marfs_config_SOURCES = fuse/src/marfs_config.c                   \
 					   fuse/src/marfs_configuration.c            \
