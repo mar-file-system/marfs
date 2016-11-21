@@ -87,7 +87,7 @@ include_HEADERS = fuse/src/marfs_base.h \
                   fuse/src/dal.h \
 				  fuse/src/marfs_locks.h \
                   fuse/src/marfs_configuration.h \
-                  common/log/src/logging.
+                  common/log/src/logging.h
 
 marfs_config_SOURCES = fuse/src/marfs_config.c                   \
 					   fuse/src/marfs_configuration.c            \
