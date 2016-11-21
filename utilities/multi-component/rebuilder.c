@@ -57,13 +57,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 /**
- * This is a simple first cut at an offline rebuild utility for
- * multi-component storage that reads all the files int the directory
- * specified by the user on the command line as degraded object log
- * files. For each object in the files it attempts to rebuild them.
- *
- * Later versions may benefit from linking libmarfs and reading the
- * repo/DAL config.
+ * This is the utility used by admins to rebuild degraded objects in
+ * multi-component storage.
  */
 
 #include <unistd.h>
@@ -343,6 +338,8 @@ void usage(const char *program) {
          "  <repo name>        The name of the repo in the marfs config.\n"
          "  Note: All four flags are required to do a component rebuild.\n",
          program);
+  printf("\nThe -t option applies to both modes and is used to specify a "
+         "number of threads to use for the rebuild. Defaults to one.\n");
 
 }
 
@@ -476,9 +473,6 @@ void *rebuilder(void *arg) {
     else if(rebuild_queue.num_items > 0) {
       // pick up an object.
       struct object_file object = rebuild_queue.items[rebuild_queue.queue_head];
-      printf("[thread %d] rebuilding %s from %d\n",
-             pthread_self(),
-             object.path, rebuild_queue.queue_head);
       rebuild_queue.queue_head = (rebuild_queue.queue_head + 1) % QUEUE_MAX;
 
       rebuild_queue.num_items--;
@@ -511,10 +505,11 @@ void start_threads(int num_threads) {
   pthread_cond_init(&rebuild_queue.queue_empty, NULL);
   pthread_cond_init(&rebuild_queue.queue_full, NULL);
 
-  rebuild_queue.num_items   = 0;
-  rebuild_queue.work_done   = 0;
-  rebuild_queue.queue_head  = 0;
-  rebuild_queue.queue_tail  = 0;
+  rebuild_queue.num_items     = 0;
+  rebuild_queue.work_done     = 0;
+  rebuild_queue.queue_head    = 0;
+  rebuild_queue.queue_tail    = 0;
+  rebuild_queue.num_consumers = num_threads;
 
   int i;
   for(i = 0; i < num_threads; i++) {
@@ -591,7 +586,7 @@ void process_log_subdir(const char *subdir_path) {
         // only recording failure stats for log rebuilds.
         record_failure_stats(&object);
 
-        rebuild_object(object);
+        queue_rebuild(object);
       }
 
       fclose(degraded_object_file);
@@ -634,7 +629,7 @@ void rebuild_component(const char *repo_name,
                ne_path, obj_dent->d_name);
       object.start_block = object.n = object.e = -1;
 
-      rebuild_object(object);
+      queue_rebuild(object);
     }
     closedir(scatter_dir);
   }
@@ -701,7 +696,7 @@ int main(int argc, char **argv) {
   stats.repo_list         = NULL;
 
   ht_init(&rebuilt_objects, ht_size);
-//  start_threads(threads);
+  start_threads(threads);
 
   if(component_rebuild) {
     if(pod == -1 || block == -1 || cap == -1) {
@@ -742,6 +737,8 @@ int main(int argc, char **argv) {
       closedir(log_dir);
     }
   }
+
+  stop_workers();
 
   print_stats();
 
