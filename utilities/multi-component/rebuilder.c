@@ -80,9 +80,9 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 struct object_file {
   char path[MC_MAX_PATH_LEN];
-  unsigned int n;
-  unsigned int e;
-  unsigned int start_block;
+  int n;
+  int e;
+  int start_block;
   char repo_name[MARFS_MAX_HOST_SIZE];
   int pod;
   int cap;
@@ -356,10 +356,7 @@ void rebuild_object(struct object_file object) {
   stats.total_objects++;
 
   if(object.start_block < 0) {
-    // TODO: Waiting on new code in libne that will have this (or some other
-    //       flag available).
-#warning rebuild_object() is incomplete.
-//    object_handle = ne_open(object.path, NE_REBUILD|NE_INFER_PARAMETERS);
+    object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
   }
   else {
     object_handle = ne_open(object.path, NE_REBUILD, object.start_block,
@@ -598,7 +595,13 @@ void process_log_subdir(const char *subdir_path) {
 
 void rebuild_component(const char *repo_name,
                        int pod, int good_block, int cap) {
-  const char *path_template = find_repo_by_name(repo_name)->host;
+  MarFS_Repo *repo          = find_repo_by_name(repo_name);
+  if(! repo ) {
+    fprintf(stderr, "could not find repo %s. Please check your config.\n",
+            repo_name);
+    exit(-1);
+  }
+  const char *path_template = repo->host;
   int         scatter;
 
   for(scatter = 0; ; scatter++) {
