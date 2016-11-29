@@ -76,6 +76,7 @@ OF SUCH DAMAGE.
 
 // Must come before anything else that might include <time.h>
 #include "marfs_base.h"
+#include "marfs_locks.h"
 #include "mdal.h"               // abstraction for MD file/dir ops
 #include "dal.h"                // abstraction for storage ops
 #include "object_stream.h"      // FileHandle needs ObjectStream

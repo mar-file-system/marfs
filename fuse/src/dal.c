@@ -661,16 +661,6 @@ enum mc_flags {
                            // you call put() or get() to do the open.
 };
 
-typedef struct mc_config {
-   unsigned int n;
-   unsigned int e;
-   unsigned int num_pods;
-   unsigned int num_cap;
-   unsigned int scatter_width;
-   int          degraded_log_fd;
-   SEM_T        lock;
-} MC_Config;
-
 typedef struct mc_context {
    ObjectStream*     os;
    ne_handle         mc_handle;
@@ -681,6 +671,8 @@ typedef struct mc_context {
    // updated/set by ->update_object_location()
    char              path_template[MC_MAX_PATH_LEN];
    unsigned int      start_block;
+   unsigned int      pod;
+   unsigned int      cap;
    MC_Config         *config;
 } MC_Context;
 
@@ -868,8 +860,8 @@ int mc_update_path(DAL_Context* ctx) {
    unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
    unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
    
-   unsigned long pod           = objid_hash % num_pods;
-   unsigned long capacity_unit = objid_hash % num_cap;
+   MC_CONTEXT(ctx)->pod           = objid_hash % num_pods;
+   MC_CONTEXT(ctx)->cap = objid_hash % num_cap;
    unsigned long scatter       = objid_hash % scatter_width;
 
    MC_CONTEXT(ctx)->start_block = objid_hash % num_blocks;
@@ -877,9 +869,9 @@ int mc_update_path(DAL_Context* ctx) {
    // the mc_path_format is sometheing like:
    //   "<protected-root>/repo10+2/pod%d/block%s/cap%d/scatter%d/"
    snprintf(path_template, MC_MAX_PATH_LEN, mc_path_format,
-            pod,
+            MC_CONTEXT(ctx)->pod,
             "%d", // this will be filled in by the ec library
-            capacity_unit,
+            MC_CONTEXT(ctx)->cap,
             scatter);
 
    // be robust to vairation in the config... We could always just add
@@ -1089,7 +1081,9 @@ int mc_sync(DAL_Context* ctx) {
        snprintf(buf, MC_MAX_PATH_LEN + 512,
                 MC_DEGRADED_LOG_FORMAT, MC_CONTEXT(ctx)->path_template,
                 MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e,
-                MC_CONTEXT(ctx)->start_block, error_pattern);
+                MC_CONTEXT(ctx)->start_block, error_pattern,
+                MC_FH(ctx)->info.pre.repo->name,
+                MC_CONTEXT(ctx)->pod, MC_CONTEXT(ctx)->cap);
        WAIT(&MC_CONFIG(ctx)->lock);
        if(write(MC_CONFIG(ctx)->degraded_log_fd, buf, strlen(buf))
           != strlen(buf)) {

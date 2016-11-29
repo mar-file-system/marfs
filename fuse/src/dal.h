@@ -83,7 +83,6 @@ OF SUCH DAMAGE.
 // what their interface suggests.
 // ---------------------------------------------------------------------------
 
-
 #include "marfs_configuration.h" // DAL_Type
 #include "xdal_common.h"
 
@@ -100,19 +99,41 @@ OF SUCH DAMAGE.
 #include <stdio.h>
 
 #if USE_MC
-#include "marfs_base.h" // MARFS_ constants
+#include "marfs_base.h"  // MARFS_ constants
+#include "marfs_locks.h" // SEM_T
+
 // The mc path will be the host field of the repo plus an object id.
 // We need a little extra room to account for numbers that will get
 // filled in to create the path template, 128 characters should be
 // more than enough.
 #define MC_MAX_PATH_LEN        (MARFS_MAX_OBJID_SIZE+MARFS_MAX_HOST_SIZE+128)
-#define MC_DEGRADED_LOG_FORMAT "%s\t%d\t%d\t%d\t%d\t\n"
+
+// The log format is:
+// <object-path-template>\t<n>\t<e>\t<start-block>\t<error-pattern>\t<repo-name>\t<pod>\t<capacity-unit>\t\n
+#define MC_DEGRADED_LOG_FORMAT "%s\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t\n"
 #define MC_LOG_SCATTER_WIDTH   400
+
 #endif // USE_MC
 
 #  ifdef __cplusplus
 extern "C" {
 #  endif
+
+#if USE_MC
+// Need to export the mc_config struct here for the rebuild utility to
+// know how many pods and capacity units are in each repo when
+// generating statistics about failures.
+typedef struct mc_config {
+   unsigned int n;
+   unsigned int e;
+   unsigned int num_pods;
+   unsigned int num_cap;
+   unsigned int scatter_width;
+   int          degraded_log_fd;
+   SEM_T        lock;
+} MC_Config;
+
+#endif // USE_MC
 
 
 // DAL_Context
@@ -133,7 +154,7 @@ extern "C" {
 // contents of the Context, except that we call init_dal_context() when
 // MarFS file-handles are created, and delete_dal_context() when MarFS
 // file-handles are destroyed.
-// 
+//
 
 typedef struct {
    uint32_t  flags;
@@ -165,7 +186,7 @@ struct DAL;
 // What used to be the named DAL-type is now put into a <type> field.  Each
 // repo has its own copy of the "master" DAL defined in dal.c, so
 // configuration is only done to the local copy owned by a repo.
-// 
+//
 // <repo>
 //   ...
 //   <dal>
@@ -175,7 +196,7 @@ struct DAL;
 //     <opt> <value>   value3  </value> </opt>
 //   </dal>
 // </repo>
-// 
+//
 // The DAL config function is called once in the lifetime of the per-repo
 // DAL copy, when it is being installed in a repo, during reading of the
 // MarFS configuration.  The options in the config file are generic, to
@@ -215,7 +236,7 @@ typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 
 // --- storage ops
 
-// return NULL from dal_open(), for failure 
+// return NULL from dal_open(), for failure
 // This value is only checked for NULL/non-NULL
 //
 // TBD: This should probably use va_args, to improve generality For now
@@ -307,7 +328,7 @@ typedef int      (*dal_close)(DAL_Context*  ctx);
 // object. This should generally be called before any call to ->open
 // and after a call to update_pre().
 typedef int      (*dal_update_object_location)(DAL_Context* ctx);
-   
+
 // init() is called first, and destroy() after.
 typedef int      (*dal_delete)(DAL_Context*  ctx);
 
