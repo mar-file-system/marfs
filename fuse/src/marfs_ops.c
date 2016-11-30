@@ -1996,6 +1996,16 @@ int marfs_release (const char*        path,
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
 
+   // It is now possible that we had never opened the stream, this
+   // happens in the case of attempting to overwrite a file for which
+   // the user does not have write permission. In this case we simply
+   // skip all the operations below and return.
+   if( fh->flags & FH_WRITING && !(os->flags & OSF_OPEN) ) {
+      LOG(LOG_INFO, "releasing unopened stream.\n");
+      EXIT();
+      return 0;
+   }
+
    // close object stream (before closing MDFS file).  For writes, this
    // means telling our readfunc in libaws4c that there won't be any more
    // data, so it should return 0 to curl.  For reads, the writefunc may be
@@ -2076,10 +2086,6 @@ int marfs_release (const char*        path,
       LOG(LOG_INFO, "closing MD\n");
       close_md(fh);
    }
-
-   // new lock controls access to read() for multi-threaded nfsd
-   if (os->flags & OSF_RLOCK_INIT)
-      SEM_DESTROY(&os->read_lock);
 
    if (fh->os.flags & OSF_ERRORS) {
       EXIT();
