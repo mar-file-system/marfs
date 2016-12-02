@@ -65,6 +65,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <fnmatch.h>
 
 // we absolutely must have multi-component enabled to build this
 // program.  This ensures that the necessary symbols are exposed from
@@ -631,6 +632,14 @@ void rebuild_component(const char *repo_name,
       snprintf(object.path, MC_MAX_PATH_LEN, "%s/%s",
                ne_path, obj_dent->d_name);
       object.start_block = object.n = object.e = -1;
+
+      // check that the path does not have a suffix matching
+      // REBUILD_SFX or META_SFX
+      if(!fnmatch("*" REBUILD_SFX, object.path, 0) ||
+         !fnmatch("*" META_SFX, object.path, 0)) {
+         printf("excluding file %s\n", object.path);
+         continue;
+      }
 
       queue_rebuild(object);
     }
