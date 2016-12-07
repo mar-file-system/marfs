@@ -1152,14 +1152,7 @@ int mc_del(DAL_Context* ctx) {
    char* path_template = MC_CONTEXT(ctx)->path_template;
    int nblocks = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
 
-   int block;
-   for(block = 0; block < nblocks; block++) {
-      char block_path[MC_MAX_PATH_LEN];
-      sprintf(block_path, path_template, block);
-      unlink(block_path);
-   }
-
-   return 0;
+   return ne_delete(path_template, nblocks);
 }
 
 DAL mc_dal = {
