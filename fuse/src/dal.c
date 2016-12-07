@@ -687,9 +687,16 @@ static int open_degraded_object_log(const char *log_dir_path) {
    unsigned int pid_scatter = pid % MC_LOG_SCATTER_WIDTH;
 
    sprintf(log_path, "%s/%s", log_dir_path, host_name);
-   mkdir(log_path, 0777);
+   int res = mkdir(log_path, 0777);
+   // avoid problems with umask
+   if(res == 0) {
+      chmod(log_path, 0777);
+   }
    sprintf(log_path, "%s/%s/%u", log_dir_path, host_name, pid_scatter);
-   mkdir(log_path, 0777);
+   res = mkdir(log_path, 0777);
+   if(res == 0) {
+      chmod(log_path, 0777);
+   }
 
    // I'm ignoring the results of mkdir() since the directory might
    // already exist, in which case it would return an error. If
@@ -705,6 +712,16 @@ static int open_degraded_object_log(const char *log_dir_path) {
    //      read permissions on for the owner. For now we can get awy
    //      with no read permission since root can read anything and
    //      the rebuild utility will be run by an admin.
+   if(fd < 0) {
+      LOG(LOG_ERR, "Failed to open degraded object log (%s): %s\n", log_path, strerror(errno));
+   }
+   else {
+      // If we successfully opened the file, the try to chmod it, since we might have
+      // created it. If the file exists this is wasted effort, but there isn't an easy way
+      // to tell whether open created it without also doing a stat().
+      chmod(log_path, S_IWUSR|S_IWGRP|S_IWOTH);
+   }
+      
    return fd;
 }
 
