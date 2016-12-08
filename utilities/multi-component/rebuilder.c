@@ -637,7 +637,6 @@ void rebuild_component(const char *repo_name,
       // REBUILD_SFX or META_SFX
       if(!fnmatch("*" REBUILD_SFX, object.path, 0) ||
          !fnmatch("*" META_SFX, object.path, 0)) {
-         printf("excluding file %s\n", object.path);
          continue;
       }
 
