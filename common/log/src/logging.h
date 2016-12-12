@@ -34,6 +34,8 @@ extern "C" {
 /// #define xFMT  " [%s:%4d]%*s %-21s | %s"
 #define xFMT  " %08x %s:%-4d%*s %-21.21s | %s"
 
+// size of longest file-name string, plus some
+#define LOG_FNAME_SIZE 26
 
 #ifdef USE_SYSLOG
 // calling syslog() as a regular user on rrz seems to be an expensive no-op
@@ -44,7 +46,7 @@ extern "C" {
    syslog((PRIO), xFMT FMT,                                             \
           (unsigned int)pthread_self(),                                 \
           __FILE__, __LINE__,                                           \
-          17-(int)strlen(__FILE__), "",                                 \
+          LOG_FNAME_SIZE-(int)strlen(__FILE__), "",                     \
           __FUNCTION__,                                                 \
           (((PRIO)<=LOG_ERR) ? "#ERR " : ""), ## __VA_ARGS__)
 
@@ -57,7 +59,7 @@ extern "C" {
    printf_log((PRIO), LOG_PREFIX xFMT FMT,                              \
               (unsigned int)pthread_self(),                             \
               __FILE__, __LINE__,                                       \
-              17-(int)strlen(__FILE__), "",                             \
+              LOG_FNAME_SIZE-(int)strlen(__FILE__), "",                 \
               __FUNCTION__,                                             \
               (((PRIO)<=LOG_ERR) ? "#ERR " : ""), ## __VA_ARGS__)
 

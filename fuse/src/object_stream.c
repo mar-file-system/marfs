@@ -84,6 +84,7 @@ OF SUCH DAMAGE.
 
 #include "common.h"
 #include "object_stream.h"
+#include "marfs_locks.h"
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -93,37 +94,6 @@ OF SUCH DAMAGE.
 
 
 void stream_reset(ObjectStream* os, uint8_t preserve_os_written);
-
-
-#ifndef SPINLOCKS
-// support for semaphore-based locking.  (See object_stream.h)
-int timed_sem_wait(sem_t* sem, size_t timeout_sec) {
-
-   struct timespec timeout;
-   if (clock_gettime(CLOCK_REALTIME, &timeout))
-      return -1;
-
-   // timeout.tv_sec += os->timeout_sec; // TBD
-   timeout.tv_sec += timeout_sec;
-
-   // wait for a little while on the semaphore
-   while (1) {
-      if (! sem_timedwait(sem, &timeout))
-         return 0;              // got it
-
-      if (errno == EINTR) {
-         LOG(LOG_INFO, "interrupted.  resuming wait ...\n");
-         continue;              // interrupted (try again?)
-      }
-
-      if (errno == ETIMEDOUT)
-         return -1;             // timed-out
-
-      return -1;                // something else went wrong
-   }
-}
-#endif
-
 
 
 // With the advent of the DAL and stream_del(), it's starting to make sense

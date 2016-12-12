@@ -661,16 +661,6 @@ enum mc_flags {
                            // you call put() or get() to do the open.
 };
 
-typedef struct mc_config {
-   unsigned int n;
-   unsigned int e;
-   unsigned int num_pods;
-   unsigned int num_cap;
-   unsigned int scatter_width;
-   int          degraded_log_fd;
-   SEM_T        lock;
-} MC_Config;
-
 typedef struct mc_context {
    ObjectStream*     os;
    ne_handle         mc_handle;
@@ -681,6 +671,8 @@ typedef struct mc_context {
    // updated/set by ->update_object_location()
    char              path_template[MC_MAX_PATH_LEN];
    unsigned int      start_block;
+   unsigned int      pod;
+   unsigned int      cap;
    MC_Config         *config;
 } MC_Context;
 
@@ -695,9 +687,16 @@ static int open_degraded_object_log(const char *log_dir_path) {
    unsigned int pid_scatter = pid % MC_LOG_SCATTER_WIDTH;
 
    sprintf(log_path, "%s/%s", log_dir_path, host_name);
-   mkdir(log_path, 0777);
+   int res = mkdir(log_path, 0777);
+   // avoid problems with umask
+   if(res == 0) {
+      chmod(log_path, 0777);
+   }
    sprintf(log_path, "%s/%s/%u", log_dir_path, host_name, pid_scatter);
-   mkdir(log_path, 0777);
+   res = mkdir(log_path, 0777);
+   if(res == 0) {
+      chmod(log_path, 0777);
+   }
 
    // I'm ignoring the results of mkdir() since the directory might
    // already exist, in which case it would return an error. If
@@ -713,6 +712,16 @@ static int open_degraded_object_log(const char *log_dir_path) {
    //      read permissions on for the owner. For now we can get awy
    //      with no read permission since root can read anything and
    //      the rebuild utility will be run by an admin.
+   if(fd < 0) {
+      LOG(LOG_ERR, "Failed to open degraded object log (%s): %s\n", log_path, strerror(errno));
+   }
+   else {
+      // If we successfully opened the file, the try to chmod it, since we might have
+      // created it. If the file exists this is wasted effort, but there isn't an easy way
+      // to tell whether open created it without also doing a stat().
+      chmod(log_path, S_IWUSR|S_IWGRP|S_IWOTH);
+   }
+      
    return fd;
 }
 
@@ -721,8 +730,9 @@ int   mc_config(struct DAL*     dal,
                 size_t          opt_count) {
    ENTRY();
 
-   MC_Config* config = malloc(sizeof(MC_Config));
-   config->degraded_log_fd = -1;
+   MC_Config* config         = malloc(sizeof(MC_Config));
+   config->degraded_log_fd   = -1;
+   config->degraded_log_path = NULL;
 
    int i;
    for(i = 0; i < opt_count; i++) {
@@ -750,8 +760,7 @@ int   mc_config(struct DAL*     dal,
              config->scatter_width);
       }
       else if(!strcmp(opts[i]->key, "degraded_log_dir")) {
-         config->degraded_log_fd = open_degraded_object_log(
-            opts[i]->val.value.str);
+         config->degraded_log_path = strdup(opts[i]->val.value.str);
       }
       else {
          LOG(LOG_ERR, "Unrecognized MC DAL config option: %s\n",
@@ -761,8 +770,8 @@ int   mc_config(struct DAL*     dal,
       }
    }
 
-   if(config->degraded_log_fd == -1) {
-      LOG(LOG_ERR, "failed to open degraded log file.\n");
+   if(config->degraded_log_path == NULL) {
+      LOG(LOG_ERR, "no degraded_log_dir specified in DAL.\n");
       return -1;
    }
    else {
@@ -868,8 +877,8 @@ int mc_update_path(DAL_Context* ctx) {
    unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
    unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
    
-   unsigned long pod           = objid_hash % num_pods;
-   unsigned long capacity_unit = objid_hash % num_cap;
+   MC_CONTEXT(ctx)->pod           = objid_hash % num_pods;
+   MC_CONTEXT(ctx)->cap = objid_hash % num_cap;
    unsigned long scatter       = objid_hash % scatter_width;
 
    MC_CONTEXT(ctx)->start_block = objid_hash % num_blocks;
@@ -877,9 +886,9 @@ int mc_update_path(DAL_Context* ctx) {
    // the mc_path_format is sometheing like:
    //   "<protected-root>/repo10+2/pod%d/block%s/cap%d/scatter%d/"
    snprintf(path_template, MC_MAX_PATH_LEN, mc_path_format,
-            pod,
+            MC_CONTEXT(ctx)->pod,
             "%d", // this will be filled in by the ec library
-            capacity_unit,
+            MC_CONTEXT(ctx)->cap,
             scatter);
 
    // be robust to vairation in the config... We could always just add
@@ -1063,8 +1072,10 @@ ssize_t mc_get(DAL_Context* ctx, char* buf, size_t size) {
 int mc_sync(DAL_Context* ctx) {
    ENTRY();
    
-   ObjectStream* os     = MC_OS(ctx);
-   ne_handle     handle = MC_HANDLE(ctx);
+   ObjectStream* os         = MC_OS(ctx);
+   ne_handle     handle     = MC_HANDLE(ctx);
+   MC_Config*    config     = MC_CONFIG(ctx);
+   MC_Context*   mc_context = MC_CONTEXT(ctx);
 
    if(! (os->flags & OSF_OPEN)) {
       LOG(LOG_ERR, "%s isn't open\n", os->url);
@@ -1081,32 +1092,41 @@ int mc_sync(DAL_Context* ctx) {
        // object file for debugging purposes.
        LOG(LOG_INFO, "WARNING: Object %s degraded. Error pattern: 0x%x."
             " (N: %d, E: %d, Start: %d).\n",
-           MC_CONTEXT(ctx)->path_template, error_pattern,
-           MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e, MC_CONTEXT(ctx)->start_block);
+           mc_context->path_template, error_pattern,
+           config->n, config->e, config->start_block);
        // we shouldn't need more then 512 bytes to hold the extra data
        // needed for rebuild
        char buf[MC_MAX_PATH_LEN + 512];
        snprintf(buf, MC_MAX_PATH_LEN + 512,
-                MC_DEGRADED_LOG_FORMAT, MC_CONTEXT(ctx)->path_template,
-                MC_CONFIG(ctx)->n, MC_CONFIG(ctx)->e,
-                MC_CONTEXT(ctx)->start_block, error_pattern);
-       WAIT(&MC_CONFIG(ctx)->lock);
-       if(write(MC_CONFIG(ctx)->degraded_log_fd, buf, strlen(buf))
+                MC_DEGRADED_LOG_FORMAT, mc_context->path_template,
+                config->n, config->e,
+                mc_context->start_block, error_pattern,
+                MC_FH(ctx)->info.pre.repo->name,
+                mc_context->pod, mc_context->cap);
+       WAIT(&config->lock);
+       // If the degraded log file has not already been opened, open it now.
+       if(config->degraded_log_fd == -1) {
+          config->degraded_log_fd = open_degraded_object_log(config->degraded_log_path);
+          free(config->degraded_log_path);
+          config->degraded_log_path = NULL;
+       }
+
+       if(write(config->degraded_log_fd, buf, strlen(buf))
           != strlen(buf)) {
          LOG(LOG_ERR, "Failed to write to degraded object log\n");
          // theoretically the data is still safe, so we can just log
          // and ignore the failure.
        }
-       POST(&MC_CONFIG(ctx)->lock);
+       POST(&config->lock);
      }
      else if(error_pattern < 0) {
-       LOG(LOG_ERR, "ne_close failed on %s", MC_CONTEXT(ctx)->path_template);
+       LOG(LOG_ERR, "ne_close failed on %s", mc_context->path_template);
        return -1;
      }
    }
    else {
       LOG(LOG_INFO, "%s DEFERED_OPEN asserted. sync is a noop\n",
-          MC_CONTEXT(ctx)->path_template);
+          mc_context->path_template);
       ctx->flags &= ~MCF_DEFERED_OPEN;
    }
 
@@ -1158,14 +1178,7 @@ int mc_del(DAL_Context* ctx) {
    char* path_template = MC_CONTEXT(ctx)->path_template;
    int nblocks = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
 
-   int block;
-   for(block = 0; block < nblocks; block++) {
-      char block_path[MC_MAX_PATH_LEN];
-      sprintf(block_path, path_template, block);
-      unlink(block_path);
-   }
-
-   return 0;
+   return ne_delete(path_template, nblocks);
 }
 
 DAL mc_dal = {
