@@ -129,6 +129,7 @@ typedef struct mc_config {
    unsigned int num_pods;
    unsigned int num_cap;
    unsigned int scatter_width;
+   char        *degraded_log_path;
    int          degraded_log_fd;
    SEM_T        lock;
 } MC_Config;
