@@ -62,10 +62,12 @@ import argparse
 import sys
 import random
 
+hstr = os.environ['BATCH_FTAS']
+
 # Hostnames (or IPs) of batch-ftas where the backend pipetool can be found
-HOSTS = [ "cc-fta02" , "cc-fta03" ]
+HOSTS = hstr.split(':')
 # Complete path to the backend pipetool on the batch-fta
-LOC = "/root/pipetool_remote"
+LOC = os.environ['PIPETOOL_REMOTE']
 # Number of bytes to be read/written per iteration
 BYTES = 8192
 fail=False
