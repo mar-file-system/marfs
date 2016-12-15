@@ -1093,7 +1093,7 @@ int mc_sync(DAL_Context* ctx) {
        LOG(LOG_INFO, "WARNING: Object %s degraded. Error pattern: 0x%x."
             " (N: %d, E: %d, Start: %d).\n",
            mc_context->path_template, error_pattern,
-           config->n, config->e, config->start_block);
+           config->n, config->e, mc_context->start_block);
        // we shouldn't need more then 512 bytes to hold the extra data
        // needed for rebuild
        char buf[MC_MAX_PATH_LEN + 512];
