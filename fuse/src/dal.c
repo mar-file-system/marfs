@@ -707,12 +707,14 @@ static int open_degraded_object_log(const char *log_dir_path) {
    //      with no read permission since root can read anything and
    //      the rebuild utility will be run by an admin.
    if(fd < 0) {
-      LOG(LOG_ERR, "Failed to open degraded object log (%s): %s\n", log_path, strerror(errno));
+      LOG(LOG_ERR, "Failed to open degraded object log (%s): %s\n",
+          log_path, strerror(errno));
    }
    else {
-      // If we successfully opened the file, the try to chmod it, since we might have
-      // created it. If the file exists this is wasted effort, but there isn't an easy way
-      // to tell whether open created it without also doing a stat().
+      // If we successfully opened the file, the try to chmod it,
+      // since we might have created it. If the file exists this is
+      // wasted effort, but there isn't an easy way to tell whether
+      // open created it without also doing a stat().
       chmod(log_path, S_IWUSR|S_IWGRP|S_IWOTH);
    }
       
@@ -1059,9 +1061,17 @@ int mc_sync(DAL_Context* ctx) {
       WAIT(&config->lock);
       // If the degraded log file has not already been opened, open it now.
       if(config->degraded_log_fd == -1) {
-         config->degraded_log_fd = open_degraded_object_log(config->degraded_log_path);
-         free(config->degraded_log_path);
-         config->degraded_log_path = NULL;
+         config->degraded_log_fd =
+           open_degraded_object_log(config->degraded_log_path);
+         if(config->degraded_log_fd < 0) {
+           LOG(LOG_ERR, "failed to open degraded log file\n");
+         }
+         else {
+           // If we successfully opened it, then free the resources
+           // used to store the path.
+           free(config->degraded_log_path);
+           config->degraded_log_path = NULL;
+         }
       }
 
       if(write(config->degraded_log_fd, buf, strlen(buf))
