@@ -215,7 +215,200 @@ int marfs_chown (const char* path,
    return 0;
 }
 
-// --- Looking for "marfs_close()"?  It's called "marfs_release()".
+// --- Looking for "marfs_close()"?  It's a combination of "marfs_flush()".
+//     and "marfs_release()"
+
+// Fuse "flush" is not the same as "fflush()".  Fuse flush is called as
+// part of fuse close, and shouldn't return until all I/O is complete on
+// the file-handle, such that no further I/O errors are possible.  In other
+// words, this is our last chance to return errors to the user.
+//
+// Maybe flush() is also the best place to assure that final recovery-blobs
+// are written into objects, and pending object-reads are cut short, etc,
+// ... instead of doing that in close.
+//
+// TBD: Don't do object-interaction if file is DIRECT.  See marfs_open().
+//
+// NOTE: It also appears that fuse calls stat immediately after flush.
+//       (Hard to be sure, because fuse calls stat all the time.)  I'd
+//       guess we shouldn't return until we are sure that stat will see the
+//       final state of the file.  Probably also applies to xattrs (?)
+//       But hanging here seems to cause fuse to hang.
+//
+//       BECAUSE OF THIS, we took a simpler route: move all the
+//       synchronization into marfs_release(), and don't implement fuse
+//       flush.  This seems to have the desired effect of getting fuse to
+//       do all the sync at close-time.
+//
+// UPDATE: FUSE calls release() asynchronously, and ignores the return values
+//         from the call. This leaves us vulnerable to silent data loss if the
+//         call to release() fails. We need to take all the steps which may
+//         fail here, in marfs_flush(), so we can return an error to the user.
+//         These steps are:
+//         - writing recovery info
+//         - the final close of the object stream
+//         - writing the final chunkinfo (for MULTI files)
+//         - writing the POST xattr
+//         - truncating the metadata file
+//         - removing the restart xattr
+//         However, this isn't as simple as moving the code from release() to
+//         flush(). FUSE may call flush() multiple times for a given file,
+//         once each time a reference to that file is closed (this happens
+//         in the case of dup'd fds, ie. when redirecting output from the shell.
+//
+int marfs_flush (const char*        path,
+                 MarFS_FileHandle*  fh) {
+   ENTRY();
+
+   //   // I don’t think we will have dirty data that we can control
+   //   // I guess we could call flush on the filehandle  that is being written
+   //   // But the only data we will write is multi-part objects,
+   //   // All other data would be to some object interface
+   //
+   //   LOG(LOG_INFO, "NOP for %s", path);
+
+   PathInfo*         info = &fh->info;                  /* shorthand */
+   ObjectStream*     os   = &fh->os;
+
+   // It is now possible that we had never opened the stream, this
+   // happens in the case of attempting to overwrite a file for which
+   // the user does not have write permission. In this case we simply
+   // skip all the operations below and return.
+   if( fh->flags & FH_WRITING && !(os->flags & OSF_OPEN) ) {
+      LOG(LOG_INFO, "releasing unopened stream.\n");
+      EXIT();
+      return 0;
+   }
+
+   // close object stream (before closing MDFS file).  For writes, this
+   // means telling our readfunc in libaws4c that there won't be any more
+   // data, so it should return 0 to curl.  For reads, the writefunc may be
+   // waiting for another buffer to fill, so it can be told to terminate.
+
+   // Newer approach.  read() handles its own open/read/close write(). In
+   // the case of Multi, after the first object, write() doesn't open the
+   // next object until there's data to be written to it.
+   //
+   // NOTE: Even-newer approach: we now allow that maybe read left a stream
+   //     open, in an attempt to avoid extra calls to stream_close/reopen.
+   if (fh->os.flags & OSF_OPEN) {
+
+      if (fh->flags & FH_WRITING) {
+         if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
+
+            // add final recovery-info, at the tail of the object
+            TRY_GE0( write_recoveryinfo(os, info, fh) );
+         }
+      }
+      else {
+
+         // release any pending read threads
+         terminate_all_readers(fh);
+      }
+
+      // we will not close the stream for packed files
+      if( !(fh->flags & FH_PACKED) ) {
+         close_data(fh, 0, 1);
+      }
+   }
+
+   // free aws4c resources if the file is not packed
+   if( !(fh->flags & FH_PACKED) ) {
+      aws_iobuf_reset_hard(&os->iob);
+   }
+
+   if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
+
+      // If obj-type is Multi, write the final MultiChunkInfo into the
+      // MD file.  (unless pftool is writting N:1, in which case it will
+      // do that in post_process)
+      if ((fh->flags & FH_WRITING)
+          && (info->post.obj_type == OBJ_MULTI)) {
+
+         if (info->pre.obj_type != OBJ_Nto1) {
+            TRY0( write_chunkinfo(fh,
+                                  // fh->open_offset,
+                                  (os->written - fh->write_status.sys_writes),
+                                  0) );
+         }
+
+         // keep count of amount of real chunk-info written into MD file
+         info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
+
+         // update count of objects, in POST
+         info->post.chunks = info->pre.chunk_no +1;
+
+         // reset current chunk-number, so xattrs will represent obj 0
+         info->pre.chunk_no = 0;
+      }
+   }
+
+   // new lock controls access to read() for multi-threaded nfsd
+   if (os->flags & OSF_RLOCK_INIT)
+      SEM_DESTROY(&os->read_lock);
+
+   // close MD file, if it's open
+   if (is_open_md(fh)) {
+      LOG(LOG_INFO, "closing MD\n");
+      close_md(fh);
+   }
+
+   if (fh->os.flags & OSF_ERRORS) {
+      EXIT();
+      // return 0;       /* the "close" was successful */
+      // return -1;      /* "close" was successful, but need to report errs */
+      return 0; // errs should be reported at EOF by marfs_write(), etc ?
+   }
+   else if (fh->os.flags & OSF_ABORT) {
+      EXIT();
+      return 0;       /* the "close" was successful */
+   }
+
+   // truncate length to reflect length of data
+   if ((fh->flags & FH_WRITING)
+       && !(fh->flags & FH_Nto1_WRITES)
+       && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
+
+      off_t size = os->written - fh->write_status.sys_writes;
+      TRY0( MD_PATH_OP(truncate, info->ns, info->post.md_path, size) );
+   }
+
+
+   // Note whether RESTART is preserving a more-restrictive mode
+   mode_t  final_mode; // intended final mode?
+   int     install_final_mode = 0;
+   if (has_any_xattrs(info, XVT_RESTART)
+       && (info->restart.flags & RESTART_MODE_VALID)) {
+
+      final_mode = info->restart.mode;
+      install_final_mode = 1;
+   }
+
+   // no longer incomplete unless this is a packed file
+   if( !(fh->flags & FH_PACKED) ) {
+      info->xattrs &= ~(XVT_RESTART);
+   }
+
+   // update xattrs (unless writing N:1), while we still can
+   if ((info->pre.repo->access_method != ACCESSMETHOD_DIRECT)
+       && (fh->flags & FH_WRITING)
+       && !(fh->flags & FH_Nto1_WRITES)) {
+
+      SAVE_XATTRS(info, MARFS_ALL_XATTRS);
+
+      // install final access-mode, if needed. (We might have added our own
+      // more-permissive access-mode-bits in open(), in order to allow
+      // manipulating xattrs while the file was open.  If so, we preserved
+      // the desired final mode in RESTART.)
+      if (install_final_mode) {
+         TRY0( MD_PATH_OP(chmod, info->ns,
+                          info->post.md_path, info->restart.mode) );
+      }
+   }
+
+   EXIT();
+   return 0;
+}
 
 
 int marfs_fsync (const char*            path,
@@ -338,10 +531,10 @@ int marfs_ftruncate(const char*            path,
    // (i.e. there was no prior request that completed).  If we exceed the
    // logical chunk boundary, our request should also include the size of
    // the recovery-info, to be written at the tail.
-   size_t   open_size  = get_stream_wr_open_size(fh, 0);
-   uint16_t wr_timeout = info->pre.repo->write_timeout;
-
-   TRY0( open_data(fh, OS_PUT, 0, open_size, 0, wr_timeout) );
+   //
+   // UPDATE: With lazy-opens, it is no longer necessary to open a new stream
+   //         here. If one needs to be opened, it will be opened on the next
+   //         call to marfs_write().
 
    // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
    // so marfs_open() won't assume it is a DIRECT file.)
@@ -1985,6 +2178,15 @@ int marfs_release (const char*        path,
                    MarFS_FileHandle*  fh) {
    ENTRY();
 
+   // For backwards compatability, call flush if it has not already
+   // been called on this object.
+   if( !(fh->flags & FH_FLUSHED) ) {
+      LOG(LOG_INFO, "flushing unflushed stream\n");
+      marfs_flush(path, fh);
+      EXIT();
+      return 0;
+   }
+
    // if writing there will be an objid stuffed into a address  in fuse open table
    //       seal that object if needed
    //       free the area holding that objid
@@ -1995,150 +2197,6 @@ int marfs_release (const char*        path,
 
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
-
-   // It is now possible that we had never opened the stream, this
-   // happens in the case of attempting to overwrite a file for which
-   // the user does not have write permission. In this case we simply
-   // skip all the operations below and return.
-   if( fh->flags & FH_WRITING && !(os->flags & OSF_OPEN) ) {
-      LOG(LOG_INFO, "releasing unopened stream.\n");
-      EXIT();
-      return 0;
-   }
-
-   // close object stream (before closing MDFS file).  For writes, this
-   // means telling our readfunc in libaws4c that there won't be any more
-   // data, so it should return 0 to curl.  For reads, the writefunc may be
-   // waiting for another buffer to fill, so it can be told to terminate.
-#if 0
-   TRY0( close_data(fh, 0, 0) );
-#elif 0
-   // New approach.  read() handles its own open/read/close
-   if (fh->flags & FH_WRITING) {
-      TRY0( close_data(fh, 0, 0) );
-   }
-#else
-   // Newer approach.  read() handles its own open/read/close write(). In
-   // the case of Multi, after the first object, write() doesn't open the
-   // next object until there's data to be written to it.
-   //
-   // NOTE: Even-newer approach: we now allow that maybe read left a stream
-   //     open, in an attempt to avoid extra calls to stream_close/reopen.
-   if (fh->os.flags & OSF_OPEN) {
-
-      if (fh->flags & FH_WRITING) {
-         if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
-
-            // add final recovery-info, at the tail of the object
-            TRY_GE0( write_recoveryinfo(os, info, fh) );
-         }
-      }
-      else {
-
-         // release any pending read threads
-         terminate_all_readers(fh);
-      }
-
-      // we will not close the stream for packed files
-      if( !(fh->flags & FH_PACKED) ) {
-         close_data(fh, 0, 1);
-      }
-   }
-#endif
-
-   // free aws4c resources if the file is not packed
-   if( !(fh->flags & FH_PACKED) ) {
-      aws_iobuf_reset_hard(&os->iob);
-   }
-
-   if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
-
-      // If obj-type is Multi, write the final MultiChunkInfo into the
-      // MD file.  (unless pftool is writting N:1, in which case it will
-      // do that in post_process)
-      if ((fh->flags & FH_WRITING)
-          && (info->post.obj_type == OBJ_MULTI)) {
-
-         if (info->pre.obj_type != OBJ_Nto1) {
-            TRY0( write_chunkinfo(fh,
-                                  // fh->open_offset,
-                                  (os->written - fh->write_status.sys_writes),
-                                  0) );
-         }
-
-         // keep count of amount of real chunk-info written into MD file
-         info->post.chunk_info_bytes += sizeof(MultiChunkInfo);
-
-         // update count of objects, in POST
-         info->post.chunks = info->pre.chunk_no +1;
-
-         // reset current chunk-number, so xattrs will represent obj 0
-         info->pre.chunk_no = 0;
-      }
-   }
-
-   // new lock controls access to read() for multi-threaded nfsd
-   if (os->flags & OSF_RLOCK_INIT)
-      SEM_DESTROY(&os->read_lock);
-
-   // close MD file, if it's open
-   if (is_open_md(fh)) {
-      LOG(LOG_INFO, "closing MD\n");
-      close_md(fh);
-   }
-
-   if (fh->os.flags & OSF_ERRORS) {
-      EXIT();
-      // return 0;       /* the "close" was successful */
-      // return -1;      /* "close" was successful, but need to report errs */
-      return 0; // errs should be reported at EOF by marfs_write(), etc ?
-   }
-   else if (fh->os.flags & OSF_ABORT) {
-      EXIT();
-      return 0;       /* the "close" was successful */
-   }
-
-   // truncate length to reflect length of data
-   if ((fh->flags & FH_WRITING)
-       && !(fh->flags & FH_Nto1_WRITES)
-       && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
-
-      off_t size = os->written - fh->write_status.sys_writes;
-      TRY0( MD_PATH_OP(truncate, info->ns, info->post.md_path, size) );
-   }
-
-
-   // Note whether RESTART is preserving a more-restrictive mode
-   mode_t  final_mode; // intended final mode?
-   int     install_final_mode = 0;
-   if (has_any_xattrs(info, XVT_RESTART)
-       && (info->restart.flags & RESTART_MODE_VALID)) {
-
-      final_mode = info->restart.mode;
-      install_final_mode = 1;
-   }
-
-   // no longer incomplete unless this is a packed file
-   if( !(fh->flags & FH_PACKED) ) {
-      info->xattrs &= ~(XVT_RESTART);
-   }
-
-   // update xattrs (unless writing N:1), while we still can
-   if ((info->pre.repo->access_method != ACCESSMETHOD_DIRECT)
-       && (fh->flags & FH_WRITING)
-       && !(fh->flags & FH_Nto1_WRITES)) {
-
-      SAVE_XATTRS(info, MARFS_ALL_XATTRS);
-
-      // install final access-mode, if needed. (We might have added our own
-      // more-permissive access-mode-bits in open(), in order to allow
-      // manipulating xattrs while the file was open.  If so, we preserved
-      // the desired final mode in RESTART.)
-      if (install_final_mode) {
-         TRY0( MD_PATH_OP(chmod, info->ns,
-                          info->post.md_path, info->restart.mode) );
-      }
-   }
 
    EXIT();
    return 0;
@@ -3175,52 +3233,6 @@ int marfs_fgetattr(const char*        path,
    EXIT();
    return 0;
 }
-
-
-// Fuse "flush" is not the same as "fflush()".  Fuse flush is called as
-// part of fuse close, and shouldn't return until all I/O is complete on
-// the file-handle, such that no further I/O errors are possible.  In other
-// words, this is our last chance to return errors to the user.
-//
-// Maybe flush() is also the best place to assure that final recovery-blobs
-// are written into objects, and pending object-reads are cut short, etc,
-// ... instead of doing that in close.
-//
-// TBD: Don't do object-interaction if file is DIRECT.  See marfs_open().
-//
-// NOTE: It also appears that fuse calls stat immediately after flush.
-//       (Hard to be sure, because fuse calls stat all the time.)  I'd
-//       guess we shouldn't return until we are sure that stat will see the
-//       final state of the file.  Probably also applies to xattrs (?)
-//       But hanging here seems to cause fuse to hang.
-//
-//       BECAUSE OF THIS, we took a simpler route: move all the
-//       synchronization into marfs_release(), and don't implement fuse
-//       flush.  This seems to have the desired effect of getting fuse to
-//       do all the sync at close-time.
-
-int marfs_flush (const char*        path,
-                 MarFS_FileHandle*  fh) {
-   ENTRY();
-
-   //   // I don’t think we will have dirty data that we can control
-   //   // I guess we could call flush on the filehandle  that is being written
-   //   // But the only data we will write is multi-part objects, 
-   //   // All other data would be to some object interface
-   //
-   //   LOG(LOG_INFO, "NOP for %s", path);
-
-   // PathInfo*         info = &fh->info;                  /* shorthand */
-   ObjectStream*     os   = &fh->os;
-
-   //   // shouldn't do this for DIRECT files!  See marfs_open().
-   //   LOG(LOG_INFO, "synchronizing object stream %s\n", path);
-   //   TRY0( stream_sync(os) );
-
-   EXIT();
-   return 0;
-}
-
 
 int marfs_flock(const char*        path,
                 MarFS_FileHandle*  fh,
