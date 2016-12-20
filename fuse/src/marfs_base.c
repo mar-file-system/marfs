@@ -847,9 +847,10 @@ int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo) {
    post->config_vers_maj = MARFS_CONFIG_MAJOR;
    post->config_vers_min = MARFS_CONFIG_MINOR;
 
-   post->obj_type    = OBJ_UNI;    /* will be changed to Multi, if needed */
-   post->chunks      = 1;          // will be updated for multi
+   post->obj_type         = OBJ_UNI; /* will be changed to Multi, if needed */
+   post->chunks           = 1;       // will be updated for multi
    post->chunk_info_bytes = 0;
+   post->obj_offset       = 0;       // will be updated for packed files
 
    //   post->flags       = 0;
 
