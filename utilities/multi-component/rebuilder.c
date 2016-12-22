@@ -98,6 +98,10 @@ typedef struct stat_list {
   repo_stats_t repo_stats;
 } stat_list_t;
 
+// global flag indicating a dry run.
+int dry_run;
+
+// global rebuild statistics table.
 struct rebuild_stats {
   pthread_mutex_t  global_stats_lock;
   int              rebuild_failures;
@@ -321,7 +325,7 @@ void ht_insert(hash_table_t *ht, const char* key) {
 void usage(const char *program) {
   printf("Usage:\n");
   printf("To rebuild objects logged as degraded when read use the following\n");
-  printf("%s [-H <hash table size>] <degraded log dir> ...\n\n", program);
+  printf("%s [-t <num threads>] [-H <hash table size>] <degraded log dir> ...\n\n", program);
   printf("  <degraded log dir> should be the path to the directory where the\n"
          "                     MC DAL has logged objects it thinks are degraded.\n"
          "                     You may specify one or more log dirs.\n\n"
@@ -331,7 +335,7 @@ void usage(const char *program) {
          "                     rebuilding a large number of objects.\n"
          "                     Defaults to 1024.\n");
   printf("\nTo run a rebuild of an entire component use the following flags\n"
-         "%s -c <capacity unit> -b <good block> -p <pod> -r <repo name>\n"
+         "%s [-t <num threads>] -c <capacity unit> -b <good block> -p <pod> -r <repo name>\n"
          "  <good block>       The number of a block to be used as a reference\n"
          "                     point for the rebuild\n"
          "  <capacity unit>    The capacity unit to rebuild.\n"
@@ -341,7 +345,10 @@ void usage(const char *program) {
          program);
   printf("\nThe -t option applies to both modes and is used to specify a "
          "number of threads to use for the rebuild. Defaults to one.\n");
-
+  printf("\nThe -d flag may also be used in both modes to indicate a \"dry run\""
+         "\nwhere no rebuilds are performed, but the number of objects that\n"
+         "would be examined/rebuilt is counted. This is useful for displaying\n"
+         "failure statistics from the logs.\n");
 }
 
 /**
@@ -355,6 +362,8 @@ void rebuild_object(struct object_file object) {
   ne_handle object_handle;
 
   stats.total_objects++;
+
+  if(dry_run) return;
 
   if(object.start_block < 0) {
     object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
@@ -655,7 +664,8 @@ int main(int argc, char **argv) {
   int           pod, block, cap;
   int           opt;
   pod = block = cap = -1;
-  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:")) != -1) {
+  dry_run = 0;
+  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:d")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -684,6 +694,9 @@ int main(int argc, char **argv) {
         threads = 1;
       }
       break;
+    case 'd':
+      dry_run = 1;
+      break;
     default:
       usage(argv[0]);
       exit(-1);
@@ -707,6 +720,7 @@ int main(int argc, char **argv) {
   stats.repo_list         = NULL;
 
   ht_init(&rebuilt_objects, ht_size);
+
   start_threads(threads);
 
   if(component_rebuild) {
@@ -740,7 +754,8 @@ int main(int argc, char **argv) {
         }
 
         char log_subdir[PATH_MAX];
-        snprintf(log_subdir, PATH_MAX, "%s/%s", argv[index], log_dirent->d_name);
+        snprintf(log_subdir, PATH_MAX, "%s/%s", argv[index],
+                 log_dirent->d_name);
 
         process_log_subdir(log_subdir);
       }
