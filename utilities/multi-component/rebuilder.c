@@ -100,6 +100,7 @@ typedef struct stat_list {
 
 // global flag indicating a dry run.
 int dry_run;
+int verbose;
 
 // global rebuild statistics table.
 struct rebuild_stats {
@@ -356,12 +357,12 @@ void usage(const char *program) {
  * is greater than or equal to zero, attempt to rebuild using the
  * information projeded in the struct (n, e, and start_block).
  * Otherwise allow libne to infer the correct values for these fields.
+ *
+ * @return -1 on failure, 0 on success.
  */
-void rebuild_object(struct object_file object) {
+int rebuild_object(struct object_file object) {
 
   ne_handle object_handle;
-
-  stats.total_objects++;
 
   if(dry_run) return;
 
@@ -376,19 +377,14 @@ void rebuild_object(struct object_file object) {
   if(object_handle == NULL) {
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
             object.path, strerror(errno));
-    stats.rebuild_failures++;
-    return;
+    return -1;
   }
 
   int rebuild_result = ne_rebuild(object_handle);
-  if(rebuild_result == 0) {
-    stats.rebuild_successes++;
-  }
-  else {
+  if(rebuild_result != 0) {
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
             object.path, strerror(errno));
-    stats.rebuild_failures++;
-    return;
+    return -1;
   }
 
   int error = ne_close(object_handle);
@@ -400,6 +396,8 @@ void rebuild_object(struct object_file object) {
     // something is terribly wrong.
     exit(-1);
   }
+
+  return 0;
 }
 
 /**
@@ -464,11 +462,13 @@ void stop_workers() {
  */
 void *rebuilder(void *arg) {
 
+  if(pthread_mutex_lock(&rebuild_queue.queue_lock)) {
+    fprintf(stderr, "consumer failed to acquire queue lock.\n");
+    return NULL;
+  }
+
   while(1) {
-    if(pthread_mutex_lock(&rebuild_queue.queue_lock)) {
-      fprintf(stderr, "consumer failed to acquire queue lock.\n");
-      return NULL;
-    }
+
     // wait until the condition is met.
     while(!rebuild_queue.num_items && !rebuild_queue.work_done)
       pthread_cond_wait(&rebuild_queue.queue_empty, &rebuild_queue.queue_lock);
@@ -484,6 +484,13 @@ void *rebuilder(void *arg) {
 
       rebuild_queue.num_items--;
 
+      // update statistics here so they are protected by queue locking.
+      stats.total_objects++;
+
+      if(verbose && !(stats.total_objects % 100)) {
+        printf("total rebuilds completed: %d\n", stats.total_objects);
+      }
+
       // signal the producer to wake up, in case it was sleeping, and
       // put more work in the queue.
       pthread_cond_signal(&rebuild_queue.queue_full);
@@ -492,7 +499,22 @@ void *rebuilder(void *arg) {
       // object.
       pthread_mutex_unlock(&rebuild_queue.queue_lock);
 
-      rebuild_object(object);
+      int rebuild_result = rebuild_object(object);
+
+      // reacquire the lock.
+      if(pthread_mutex_lock(&rebuild_queue.queue_lock)) {
+        fprintf(stderr, "consumer failed to acquire queue lock.\n");
+        return NULL;
+      }
+
+      if(dry_run) continue;
+
+      if(rebuild_result != 0) {
+        stats.rebuild_failures++;
+      }
+      else {
+        stats.rebuild_successes++;
+      }
     }
   }
 }
@@ -632,6 +654,11 @@ void rebuild_component(const char *repo_name,
               scatter_path, strerror(errno));
       exit(-1);
     }
+    
+    if(verbose) {
+      printf("INFO: rebuilding scatter%d\n", scatter);
+    }
+    
     struct dirent *obj_dent;
     while((obj_dent = readdir(scatter_dir)) != NULL) {
       if(obj_dent->d_name[0] == '.')
@@ -664,8 +691,8 @@ int main(int argc, char **argv) {
   int           pod, block, cap;
   int           opt;
   pod = block = cap = -1;
-  dry_run = 0;
-  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:d")) != -1) {
+  verbose = dry_run = 0;
+  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dv")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -696,6 +723,9 @@ int main(int argc, char **argv) {
       break;
     case 'd':
       dry_run = 1;
+      break;
+    case 'v':
+      verbose = 1;
       break;
     default:
       usage(argv[0]);
