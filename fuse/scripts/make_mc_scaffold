@@ -2,47 +2,81 @@
 
 function usage {
     echo "Usage:"
-    printf "%s <repo-name>\n\t\t<containing-directory>\n\t\t<num-pods>\n\t\t<num-blocks>\n\t\t<num-capacity-units>\n\t\t<scatter-width>" $0
+    printf "%s {mount|scatter} <repo-name>\n\t\t<containing-directory>\n\t\t<num-pods>\n\t\t<num-blocks>\n\t\t<num-capacity-units>\n\t\t<scatter-width>" $0
+    echo
+    echo "The \"mount\" option creates the mount points only."
+    echo "Once the file systems have been mounted, use the scatter option"
+    echo "to create the scatter trees under each capacity unit."
     echo
     echo "builds the tree: <containing-directory>/<repo-name>/pod[0..<num-pods>-1]/block[0..<num-blocks>-1]/cap[0..<num-capacity-units>-1]/scatter[0..<scatter-width>-1]"
     echo
 }
 
-if [ $# -ne 6 ] ; then
+if [ $# -ne 7 ] ; then
     usage
     exit 0
 fi
 
-if ! [ -d $2 ] ; then
+if ! [ -d $3 ] ; then
     echo "containing dir does not exist or is not a directory"
     exit 1
 fi
 
-if [ -e $2/$1 ] && ! [ -d $2/$1 ]; then
+if [ -e $3/$2 ] && ! [ -d $3/$2 ]; then
     echo "repo-dir exists but is not a directory"
     exit 1
 fi
 
-let npods=$3-1
-let nblocks=$4-1
-let ncaps=$5-1
-let nscatter=$6-1
+containing_dir=$3
+repo_name=$2
 
-for p in `seq 0 $npods`
-do
-    for b in `seq 0 $nblocks`
+let npods=$4-1
+let nblocks=$5-1
+let ncaps=$6-1
+let nscatter=$7-1
+
+function make-mount-points {
+    for p in `seq 0 $npods`
     do
-        for c in `seq 0 $ncaps`
+        for b in `seq 0 $nblocks`
         do
-            for s in `seq 0 $nscatter`
+            for c in `seq 0 $ncaps`
             do
-                path=$2/$1/pod$p/block$b/cap$c/scatter$s
-                echo "making $path"
+                path=$containing_dir/$repo_name/pod$p/block$b/cap$c
                 mkdir -p $path
-                # the repo must be world writable
-                chmod 777 $path
+            done
+        done
+        chmod --recursive 701 $containing_dir/$repo_name/pod$p
+    done
+}
+
+function make-scatter {
+    for p in `seq 0 $npods`
+    do
+        for b in `seq 0 $nblocks`
+        do
+            for c in `seq 0 $ncaps`
+            do
+                for s in `seq 0 $nscatter`
+                do
+                    path=$containing_dir/$repo_name/pod$p/block$b/cap$c/scatter$s
+                    mkdir $path
+                    chmod 703 $path
+                done
             done
         done
     done
-done
+}
+
+case $1 in
+    mount)
+        make-mount-points
+        ;;
+    scatter)
+        make-scatter
+        ;;
+    *)
+        usage
+        ;;
+esac
 
