@@ -1964,6 +1964,7 @@ int delete_data(MarFS_FileHandle* fh) {
    TRY_DECLS();
 
    TRY0( init_data(fh) );
+   TRY0( DAL_OP(update_object_location, fh) );
    TRY0( DAL_OP(del, fh) );
    TRY0( destroy_data(fh) );
    return 0;
