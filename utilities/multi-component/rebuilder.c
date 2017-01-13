@@ -104,10 +104,10 @@ int verbose;
 
 // global rebuild statistics table.
 struct rebuild_stats {
-  pthread_mutex_t  global_stats_lock;
   int              rebuild_failures;
   int              rebuild_successes;
   int              total_objects;
+  int              intact_objects;
   // the repo list should only be touched by the main thread. so
   // don't do any locking in record_failure_stats().
   stat_list_t     *repo_list;
@@ -223,9 +223,10 @@ void print_stats() {
     stat_list = stat_list->next;
   }
   printf("==== Rebuild Summary ====\n");
-  printf("total rebuilds:  %*d\n", 10, stats.total_objects);
-  printf("rebuilt objects: %*d\n", 10, stats.rebuild_successes);
-  printf("failed rebuilds: %*d\n", 10, stats.rebuild_failures);
+  printf("objects examined:  %*d\n", 10, stats.total_objects);
+  printf("intact objects:    %*d\n", 10, stats.intact_objects);
+  printf("rebuilt objects:   %*d\n", 10, stats.rebuild_successes);
+  printf("failed rebuilds:   %*d\n", 10, stats.rebuild_failures);
 }
 
 typedef struct ht_entry {
@@ -366,12 +367,14 @@ int rebuild_object(struct object_file object) {
 
   if(dry_run) return;
 
-  if(object.start_block < 0) {
+  if(object.start_block < 0) { // component-based rebuild
     object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
   }
-  else {
+  else { // log-based rebuild
     object_handle = ne_open(object.path, NE_REBUILD, object.start_block,
                             object.n, object.e);
+    if(object_handle == NULL)
+          object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
   }
 
   if(object_handle == NULL) {
@@ -381,7 +384,7 @@ int rebuild_object(struct object_file object) {
   }
 
   int rebuild_result = ne_rebuild(object_handle);
-  if(rebuild_result != 0) {
+  if(rebuild_result < 0) {
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
             object.path, strerror(errno));
     return -1;
@@ -397,7 +400,7 @@ int rebuild_object(struct object_file object) {
     exit(-1);
   }
 
-  return 0;
+  return rebuild_result;
 }
 
 /**
@@ -468,7 +471,6 @@ void *rebuilder(void *arg) {
   }
 
   while(1) {
-
     // wait until the condition is met.
     while(!rebuild_queue.num_items && !rebuild_queue.work_done)
       pthread_cond_wait(&rebuild_queue.queue_empty, &rebuild_queue.queue_lock);
@@ -509,11 +511,14 @@ void *rebuilder(void *arg) {
 
       if(dry_run) continue;
 
-      if(rebuild_result != 0) {
+      if(rebuild_result < 0) {
         stats.rebuild_failures++;
       }
-      else {
+      else if(rebuild_result > 0) {
         stats.rebuild_successes++;
+      }
+      else {
+        stats.intact_objects++;
       }
     }
   }
@@ -626,7 +631,8 @@ void process_log_subdir(const char *subdir_path) {
 }
 
 void rebuild_component(const char *repo_name,
-                       int pod, int good_block, int cap) {
+                       int pod, int good_block, int cap,
+                       int *scatter_range) {
   MarFS_Repo *repo          = find_repo_by_name(repo_name);
   if(! repo ) {
     fprintf(stderr, "could not find repo %s. Please check your config.\n",
@@ -636,7 +642,9 @@ void rebuild_component(const char *repo_name,
   const char *path_template = repo->host;
   int         scatter;
 
-  for(scatter = 0; ; scatter++) {
+  for(scatter = (scatter_range == NULL ? 0 : scatter_range[0]);
+      (scatter_range == NULL ? 1 : scatter <= scatter_range[1]);
+      scatter++) {
     char ne_path[MC_MAX_PATH_LEN];
     char scatter_path[MC_MAX_PATH_LEN];
 
@@ -669,10 +677,10 @@ void rebuild_component(const char *repo_name,
                ne_path, obj_dent->d_name);
       object.start_block = object.n = object.e = -1;
 
-      // check that the path does not have a suffix matching
-      // REBUILD_SFX or META_SFX
+      // skip files that are not complete objects
       if(!fnmatch("*" REBUILD_SFX, object.path, 0) ||
-         !fnmatch("*" META_SFX, object.path, 0)) {
+         !fnmatch("*" META_SFX, object.path, 0)    ||
+         !fnmatch("*" WRITE_SFX, object.path, 0)) {
          continue;
       }
 
@@ -690,9 +698,11 @@ int main(int argc, char **argv) {
   int           threads           = 1;
   int           pod, block, cap;
   int           opt;
+  int           scatter_range[2];
+  int           range_given = 0;
   pod = block = cap = -1;
   verbose = dry_run = 0;
-  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dv")) != -1) {
+  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dvs:")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -727,6 +737,28 @@ int main(int argc, char **argv) {
     case 'v':
       verbose = 1;
       break;
+    case 's':
+    {
+      char *start, *end;
+      end = strdup(optarg);
+      if(end == NULL) {
+        perror("strdup()");
+        exit(-1);
+      }
+
+      start = strsep(&end, ":");
+      if(end == NULL || start == NULL ) {
+        printf("Bad scatter range format."
+               "The correct format is \"<start>:<end>\n");
+        usage(argv[0]);
+        exit(-1);
+      }
+      scatter_range[0] = strtol(start, NULL, 10);
+      scatter_range[1] = strtol(end, NULL, 10);
+      range_given = 1;
+      free(start);
+      break;
+    }
     default:
       usage(argv[0]);
       exit(-1);
@@ -746,6 +778,7 @@ int main(int argc, char **argv) {
 
   stats.rebuild_failures  = 0;
   stats.rebuild_successes = 0;
+  stats.intact_objects    = 0;
   stats.total_objects     = 0;
   stats.repo_list         = NULL;
 
@@ -759,7 +792,8 @@ int main(int argc, char **argv) {
       usage(argv[0]);
       exit(-1);
     }
-    rebuild_component(repo_name, pod, block, cap);
+    rebuild_component(repo_name, pod, block, cap,
+                      (range_given ? scatter_range : NULL));
   }
   else {
     if(optind >= argc) {
