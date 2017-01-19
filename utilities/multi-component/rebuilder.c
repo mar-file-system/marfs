@@ -98,11 +98,16 @@ typedef struct stat_list {
   repo_stats_t repo_stats;
 } stat_list_t;
 
+// global flag indicating a dry run.
+int dry_run;
+int verbose;
+
+// global rebuild statistics table.
 struct rebuild_stats {
-  pthread_mutex_t  global_stats_lock;
   int              rebuild_failures;
   int              rebuild_successes;
   int              total_objects;
+  int              intact_objects;
   // the repo list should only be touched by the main thread. so
   // don't do any locking in record_failure_stats().
   stat_list_t     *repo_list;
@@ -218,9 +223,10 @@ void print_stats() {
     stat_list = stat_list->next;
   }
   printf("==== Rebuild Summary ====\n");
-  printf("total rebuilds:  %*d\n", 10, stats.total_objects);
-  printf("rebuilt objects: %*d\n", 10, stats.rebuild_successes);
-  printf("failed rebuilds: %*d\n", 10, stats.rebuild_failures);
+  printf("objects examined:  %*d\n", 10, stats.total_objects);
+  printf("intact objects:    %*d\n", 10, stats.intact_objects);
+  printf("rebuilt objects:   %*d\n", 10, stats.rebuild_successes);
+  printf("failed rebuilds:   %*d\n", 10, stats.rebuild_failures);
 }
 
 typedef struct ht_entry {
@@ -321,7 +327,7 @@ void ht_insert(hash_table_t *ht, const char* key) {
 void usage(const char *program) {
   printf("Usage:\n");
   printf("To rebuild objects logged as degraded when read use the following\n");
-  printf("%s [-H <hash table size>] <degraded log dir> ...\n\n", program);
+  printf("%s [-t <num threads>] [-H <hash table size>] <degraded log dir> ...\n\n", program);
   printf("  <degraded log dir> should be the path to the directory where the\n"
          "                     MC DAL has logged objects it thinks are degraded.\n"
          "                     You may specify one or more log dirs.\n\n"
@@ -331,7 +337,7 @@ void usage(const char *program) {
          "                     rebuilding a large number of objects.\n"
          "                     Defaults to 1024.\n");
   printf("\nTo run a rebuild of an entire component use the following flags\n"
-         "%s -c <capacity unit> -b <good block> -p <pod> -r <repo name>\n"
+         "%s [-t <num threads>] -c <capacity unit> -b <good block> -p <pod> -r <repo name>\n"
          "  <good block>       The number of a block to be used as a reference\n"
          "                     point for the rebuild\n"
          "  <capacity unit>    The capacity unit to rebuild.\n"
@@ -341,7 +347,10 @@ void usage(const char *program) {
          program);
   printf("\nThe -t option applies to both modes and is used to specify a "
          "number of threads to use for the rebuild. Defaults to one.\n");
-
+  printf("\nThe -d flag may also be used in both modes to indicate a \"dry run\""
+         "\nwhere no rebuilds are performed, but the number of objects that\n"
+         "would be examined/rebuilt is counted. This is useful for displaying\n"
+         "failure statistics from the logs.\n");
 }
 
 /**
@@ -349,37 +358,36 @@ void usage(const char *program) {
  * is greater than or equal to zero, attempt to rebuild using the
  * information projeded in the struct (n, e, and start_block).
  * Otherwise allow libne to infer the correct values for these fields.
+ *
+ * @return -1 on failure, 0 on success.
  */
-void rebuild_object(struct object_file object) {
+int rebuild_object(struct object_file object) {
 
   ne_handle object_handle;
 
-  stats.total_objects++;
+  if(dry_run) return;
 
-  if(object.start_block < 0) {
+  if(object.start_block < 0) { // component-based rebuild
     object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
   }
-  else {
+  else { // log-based rebuild
     object_handle = ne_open(object.path, NE_REBUILD, object.start_block,
                             object.n, object.e);
+    if(object_handle == NULL)
+          object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
   }
 
   if(object_handle == NULL) {
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
             object.path, strerror(errno));
-    stats.rebuild_failures++;
-    return;
+    return -1;
   }
 
   int rebuild_result = ne_rebuild(object_handle);
-  if(rebuild_result == 0) {
-    stats.rebuild_successes++;
-  }
-  else {
+  if(rebuild_result < 0) {
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
             object.path, strerror(errno));
-    stats.rebuild_failures++;
-    return;
+    return -1;
   }
 
   int error = ne_close(object_handle);
@@ -391,6 +399,8 @@ void rebuild_object(struct object_file object) {
     // something is terribly wrong.
     exit(-1);
   }
+
+  return rebuild_result;
 }
 
 /**
@@ -455,11 +465,12 @@ void stop_workers() {
  */
 void *rebuilder(void *arg) {
 
+  if(pthread_mutex_lock(&rebuild_queue.queue_lock)) {
+    fprintf(stderr, "consumer failed to acquire queue lock.\n");
+    return NULL;
+  }
+
   while(1) {
-    if(pthread_mutex_lock(&rebuild_queue.queue_lock)) {
-      fprintf(stderr, "consumer failed to acquire queue lock.\n");
-      return NULL;
-    }
     // wait until the condition is met.
     while(!rebuild_queue.num_items && !rebuild_queue.work_done)
       pthread_cond_wait(&rebuild_queue.queue_empty, &rebuild_queue.queue_lock);
@@ -475,6 +486,13 @@ void *rebuilder(void *arg) {
 
       rebuild_queue.num_items--;
 
+      // update statistics here so they are protected by queue locking.
+      stats.total_objects++;
+
+      if(verbose && !(stats.total_objects % 100)) {
+        printf("total rebuilds completed: %d\n", stats.total_objects);
+      }
+
       // signal the producer to wake up, in case it was sleeping, and
       // put more work in the queue.
       pthread_cond_signal(&rebuild_queue.queue_full);
@@ -483,7 +501,25 @@ void *rebuilder(void *arg) {
       // object.
       pthread_mutex_unlock(&rebuild_queue.queue_lock);
 
-      rebuild_object(object);
+      int rebuild_result = rebuild_object(object);
+
+      // reacquire the lock.
+      if(pthread_mutex_lock(&rebuild_queue.queue_lock)) {
+        fprintf(stderr, "consumer failed to acquire queue lock.\n");
+        return NULL;
+      }
+
+      if(dry_run) continue;
+
+      if(rebuild_result < 0) {
+        stats.rebuild_failures++;
+      }
+      else if(rebuild_result > 0) {
+        stats.rebuild_successes++;
+      }
+      else {
+        stats.intact_objects++;
+      }
     }
   }
 }
@@ -595,7 +631,8 @@ void process_log_subdir(const char *subdir_path) {
 }
 
 void rebuild_component(const char *repo_name,
-                       int pod, int good_block, int cap) {
+                       int pod, int good_block, int cap,
+                       int *scatter_range) {
   MarFS_Repo *repo          = find_repo_by_name(repo_name);
   if(! repo ) {
     fprintf(stderr, "could not find repo %s. Please check your config.\n",
@@ -605,7 +642,9 @@ void rebuild_component(const char *repo_name,
   const char *path_template = repo->host;
   int         scatter;
 
-  for(scatter = 0; ; scatter++) {
+  for(scatter = (scatter_range == NULL ? 0 : scatter_range[0]);
+      (scatter_range == NULL ? 1 : scatter <= scatter_range[1]);
+      scatter++) {
     char ne_path[MC_MAX_PATH_LEN];
     char scatter_path[MC_MAX_PATH_LEN];
 
@@ -623,6 +662,11 @@ void rebuild_component(const char *repo_name,
               scatter_path, strerror(errno));
       exit(-1);
     }
+    
+    if(verbose) {
+      printf("INFO: rebuilding scatter%d\n", scatter);
+    }
+    
     struct dirent *obj_dent;
     while((obj_dent = readdir(scatter_dir)) != NULL) {
       if(obj_dent->d_name[0] == '.')
@@ -633,10 +677,10 @@ void rebuild_component(const char *repo_name,
                ne_path, obj_dent->d_name);
       object.start_block = object.n = object.e = -1;
 
-      // check that the path does not have a suffix matching
-      // REBUILD_SFX or META_SFX
+      // skip files that are not complete objects
       if(!fnmatch("*" REBUILD_SFX, object.path, 0) ||
-         !fnmatch("*" META_SFX, object.path, 0)) {
+         !fnmatch("*" META_SFX, object.path, 0)    ||
+         !fnmatch("*" WRITE_SFX, object.path, 0)) {
          continue;
       }
 
@@ -654,8 +698,11 @@ int main(int argc, char **argv) {
   int           threads           = 1;
   int           pod, block, cap;
   int           opt;
+  int           scatter_range[2];
+  int           range_given = 0;
   pod = block = cap = -1;
-  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:")) != -1) {
+  verbose = dry_run = 0;
+  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dvs:")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -684,6 +731,34 @@ int main(int argc, char **argv) {
         threads = 1;
       }
       break;
+    case 'd':
+      dry_run = 1;
+      break;
+    case 'v':
+      verbose = 1;
+      break;
+    case 's':
+    {
+      char *start, *end;
+      end = strdup(optarg);
+      if(end == NULL) {
+        perror("strdup()");
+        exit(-1);
+      }
+
+      start = strsep(&end, ":");
+      if(end == NULL || start == NULL ) {
+        printf("Bad scatter range format."
+               "The correct format is \"<start>:<end>\n");
+        usage(argv[0]);
+        exit(-1);
+      }
+      scatter_range[0] = strtol(start, NULL, 10);
+      scatter_range[1] = strtol(end, NULL, 10);
+      range_given = 1;
+      free(start);
+      break;
+    }
     default:
       usage(argv[0]);
       exit(-1);
@@ -703,10 +778,12 @@ int main(int argc, char **argv) {
 
   stats.rebuild_failures  = 0;
   stats.rebuild_successes = 0;
+  stats.intact_objects    = 0;
   stats.total_objects     = 0;
   stats.repo_list         = NULL;
 
   ht_init(&rebuilt_objects, ht_size);
+
   start_threads(threads);
 
   if(component_rebuild) {
@@ -715,7 +792,8 @@ int main(int argc, char **argv) {
       usage(argv[0]);
       exit(-1);
     }
-    rebuild_component(repo_name, pod, block, cap);
+    rebuild_component(repo_name, pod, block, cap,
+                      (range_given ? scatter_range : NULL));
   }
   else {
     if(optind >= argc) {
@@ -740,7 +818,8 @@ int main(int argc, char **argv) {
         }
 
         char log_subdir[PATH_MAX];
-        snprintf(log_subdir, PATH_MAX, "%s/%s", argv[index], log_dirent->d_name);
+        snprintf(log_subdir, PATH_MAX, "%s/%s", argv[index],
+                 log_dirent->d_name);
 
         process_log_subdir(log_subdir);
       }
