@@ -90,7 +90,6 @@ typedef struct obj_files {
   size_t new_offset;
   struct obj_files *next;
   char pre_xattr[MARFS_MAX_XATTR_SIZE];
-  MarFS_FileHandle *fh;
 } obj_files;
 
 typedef struct repack_objects {
