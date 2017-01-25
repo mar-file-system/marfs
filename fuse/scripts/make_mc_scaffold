@@ -2,17 +2,22 @@
 
 function usage {
     echo "Usage:"
-    printf "%s {mount|scatter} <repo-name>\n\t\t<containing-directory>\n\t\t<num-pods>\n\t\t<num-blocks>\n\t\t<num-capacity-units>\n\t\t<scatter-width>" $0
+    printf "%s {mount|scatter|sockets} <repo-name>\n\t\t<containing-directory>\n\t\t<num-pods>\n\t\t<num-blocks>\n\t\t<num-capacity-units>\n\t\t<scatter-width>\n\t[ <remote_containing_dir> ]\n" $0
     echo
-    echo "The \"mount\" option creates the mount points only."
-    echo "Once the file systems have been mounted, use the scatter option"
-    echo "to create the scatter trees under each capacity unit."
+    echo "-- The \"mount\" option creates the mount points only."
     echo
-    echo "builds the tree: <containing-directory>/<repo-name>/pod[0..<num-pods>-1]/block[0..<num-blocks>-1]/cap[0..<num-capacity-units>-1]/scatter[0..<scatter-width>-1]"
+    echo "-- Once the file systems have been mounted, use the \"scatter\" option"
+    echo "   to create the scatter trees under each capacity unit."
     echo
+    echo "   builds the tree: <containing-directory>/<repo-name>/pod[0..<num-pods>-1]/block[0..<num-blocks>-1]/cap[0..<num-capacity-units>-1]/scatter[0..<scatter-width>-1]"
+    echo
+    echo "-- The \"sockets\" option is similar to the scatter option,"
+    echo "   but builds directories named 'socket[0..<scatter-width>-1]',"
+    echo "   rather than 'scatter[...]'"
 }
 
-if [ $# -ne 7 ] ; then
+if [ $# -lt 7 ] || [ $# -gt 8 ] ; then
+    echo "wrong number of arguments"
     usage
     exit 0
 fi
@@ -35,6 +40,11 @@ let nblocks=$5-1
 let ncaps=$6-1
 let nscatter=$7-1
 
+# optional arg
+r_containing_dir=$8
+
+
+
 function make-mount-points {
     for p in `seq 0 $npods`
     do
@@ -51,6 +61,7 @@ function make-mount-points {
 }
 
 function make-scatter {
+    SUBDIR=$1
     for p in `seq 0 $npods`
     do
         for b in `seq 0 $nblocks`
@@ -59,21 +70,65 @@ function make-scatter {
             do
                 for s in `seq 0 $nscatter`
                 do
-                    path=$containing_dir/$repo_name/pod$p/block$b/cap$c/scatter$s
-                    mkdir $path
-                    chmod 703 $path
+                    path=$containing_dir/$repo_name/pod$p/block$b/cap$c/$SUBDIR$s
+                    echo "making: $path"
+                    mkdir $path || exit 1
+                    chmod 703 $path || exit 1
                 done
             done
         done
     done
 }
 
+
+function make-scatter2 {
+    SUBDIR=$1
+    for p in `seq 0 $npods`
+    do
+        for b in `seq 0 $nblocks`
+        do
+            for c in `seq 0 $ncaps`
+            do
+                subpath=$containing_dir/$repo_name/pod$p/block$b/cap$c
+                MOUNT=`mount | grep $subpath | awk '{print $1}'`
+                MOUNT_HOST=`echo "$MOUNT" | cut -d : -f 1`
+                MOUNT_PATH=`echo "$MOUNT" | cut -d : -f 2`
+                echo "mount: $MOUNT"
+                [ -n "$MOUNT" ] || exit 1
+
+                # collect list of dirs, so we can do it with one call to 'ssh'
+                DIRS=""
+                for s in `seq 0 $nscatter`
+                do
+                    path=$r_containing_dir$MOUNT_PATH/$SUBDIR$s
+                    DIRS="$DIRS $path"
+                    echo "adding: $path"
+                done
+
+                # one ssh call to make <nscatter> subdirs on remote-host
+                echo $DIRS | xargs ssh $MOUNT_HOST echo mkdir
+                echo $DIRS | xargs ssh $MOUNT_HOST      mkdir
+                echo
+
+                # one ssh call to chmod <nscatter> subdirs on remote-host
+                echo $DIRS | xargs ssh $MOUNT_HOST echo chmod 703
+                echo $DIRS | xargs ssh $MOUNT_HOST      chmod 703
+                echo
+            done
+        done
+    done
+}
+
+
 case $1 in
     mount)
         make-mount-points
         ;;
     scatter)
-        make-scatter
+        make-scatter scatter
+        ;;
+    sockets)
+        make-scatter2 sockets
         ;;
     *)
         usage

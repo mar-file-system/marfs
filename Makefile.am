@@ -85,7 +85,15 @@ LDADD       += -L$(LIBNE)/lib -lne
 # rebuilder is used to rebuild MC repositories
 bin_PROGRAMS += rebuilder
 rebuilder_SOURCES = utilities/multi-component/rebuilder.c
+endif
 
+
+if USE_MC_SOCKETS
+## these need to be appended at the end, so adding to AM_LDFLAGS wont work
+# AM_LDFLAGS  += -lrdma_sockets -lrdmacm
+# MC_SOCKET_LD_FLAGS = -lrdma_sockets -lrdmacm
+# MC_SOCKET_LD_FLAGS = -lrdmacm
+LIBS += -lrdma_sockets -lrdmacm
 endif
 
 
@@ -97,15 +105,19 @@ include_HEADERS = fuse/src/marfs_base.h \
                   fuse/src/xdal_common.h \
                   fuse/src/mdal.h \
                   fuse/src/dal.h \
-				  fuse/src/marfs_locks.h \
+                  fuse/src/marfs_locks.h \
                   fuse/src/marfs_configuration.h \
                   common/log/src/logging.h
 
 marfs_config_SOURCES = fuse/src/marfs_config.c                   \
-					   fuse/src/marfs_configuration.c            \
-					   fuse/src/marfs_configuration.h            \
+                       fuse/src/marfs_configuration.c            \
+                       fuse/src/marfs_configuration.h            \
                        common/configuration/src/PA2X_interface.c \
-					   common/configuration/src/PA2X_interface.h
+                       common/configuration/src/PA2X_interface.h
+
+marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
+
+
 
 # The PA2X_interface needs to look in additionSal places for its #include files.
 #common/configuration/src/PA2X_interface.o: common/configuration/src/PA2X_interface.c common/configuration/src/PA2X_interface.h

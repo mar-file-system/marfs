@@ -98,7 +98,7 @@ AC_ARG_ENABLE([dal],
 # Enable Muti-Component Storage
 AC_ARG_ENABLE([mc],
         AS_HELP_STRING([  --enable-mc],
-                       [build the multi-component storage framework. NOTE: mulit-component storage requires the DAL to be enabled.]))
+                       [one of {yes|sockets|no}.  Build the multi-component storage framework. NOTE: multi-component storage requires the DAL to be enabled.]))
 # Don't build GPFS utilities.
 AC_ARG_WITH([gpfs],
         AS_HELP_STRING([  --without-gpfs],
@@ -140,7 +140,7 @@ m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 AM_PROG_CC_C_O
 
 # Exit with an error if we got conflicting options
-AS_IF([test x"$enable_mc" = xyes && test x"$enable_dal" = xno],
+AS_IF([test x"$enable_mc" != xno && test x"$enable_dal" = xno],
       AC_ERROR([cannot specify --disable-dal if building multi-component]))
 
 # Checks for libraries.
@@ -171,17 +171,23 @@ AC_CHECK_LIB([dl], [dlsym])
 AS_IF([test x"$enable_fuse" != xno],
     AC_CHECK_LIB([fuse], [fuse_main_real]))
 
-AS_IF([test x"$enable_mc" = xyes],
+AS_IF([test x"$enable_mc" != xno],
     [AC_CHECK_LIB([isal], [crc32_ieee])])
 # look for libne    
-AS_IF([test x"$enable_mc" = xyes],
-    [AC_CHECK_LIB([ne], [ne_open])])
+AS_IF([test x"$enable_mc" != xno],
+      [AC_CHECK_LIB([ne], [ne_open])])
+# AS_IF([test x"$enable_mc" = xsockets],
+#       [AC_CHECK_LIB([rdma_sockets], [skt_open])
+#        AC_CHECK_LIB([rdmacm], [rsocket])])
+
+
 
 # automake conditionals 
 AM_CONDITIONAL([USE_DAL], [test x"$enable_dal" != xno])
 AM_CONDITIONAL([USE_MDAL], [test x"$enable_mdal" != xno])
 
-AM_CONDITIONAL([USE_MC], [test x"$enable_mc" = xyes])
+AM_CONDITIONAL([USE_MC], [test x"$enable_mc" != xno])
+AM_CONDITIONAL([USE_MC_SOCKETS], [test x"$enable_mc" = xsockets])
 
 AM_CONDITIONAL([WANT_FUSE], [test x"$enable_fuse" != xno])
 
@@ -224,7 +230,7 @@ AC_ARG_VAR(MARFSCONFIGRC, [The path to the marfs config (or any valid config)])
 
 AS_IF([test -z "$PARSE_DIR"], [AC_ERROR([PARSE_DIR is not set])])
 AS_IF([test -z "$AWS4C"], [AC_ERROR([AWS4C in not set])])
-AS_IF([test x"$enable_mc" = xyes && test -z "$LIBNE"], [AC_ERROR([LIBNE is not set])])
+AS_IF([test x"$enable_mc" != xno && test -z "$LIBNE"], [AC_ERROR([LIBNE is not set])])
 
 AS_IF([test -z "$MARFSCONFIGRC"],
       [AC_SUBST(CONFIG, ${srcdir}/common/configuration/src/marfs_cctest.cfg)],

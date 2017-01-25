@@ -101,6 +101,7 @@ OF SUCH DAMAGE.
 #if USE_MC
 #include "marfs_base.h"  // MARFS_ constants
 #include "marfs_locks.h" // SEM_T
+#include "erasure.h"     // NEPathManip
 
 // The mc path will be the host field of the repo plus an object id.
 // We need a little extra room to account for numbers that will get
@@ -115,15 +116,21 @@ OF SUCH DAMAGE.
 
 #endif // USE_MC
 
+
 #  ifdef __cplusplus
 extern "C" {
 #  endif
+
 
 #if USE_MC
 // Need to export the mc_config struct here for the rebuild utility to
 // know how many pods and capacity units are in each repo when
 // generating statistics about failures.
 typedef struct mc_config {
+   // distinguish use for two different DAL impls.
+   int          is_sockets;
+   SnprintfFunc snprintf;    // for libne functions
+ 
    unsigned int n;
    unsigned int e;
    unsigned int num_pods;
@@ -132,6 +139,15 @@ typedef struct mc_config {
    char        *degraded_log_path;
    int          degraded_log_fd;
    SEM_T        lock;
+
+   // fields only used for the MC "sockets" DAL variant
+   unsigned int host_offset;    // host%d  for host 0
+   unsigned int host_count;
+   unsigned int blocks_per_host;
+   unsigned int block_offset;   // .../block%d/  for block 0
+   unsigned int global_block_numbering; // increment across hosts? (in pod)
+   unsigned int pod_offset;     // .../pod%d/  for pod 0
+   
 } MC_Config;
 
 #endif // USE_MC
