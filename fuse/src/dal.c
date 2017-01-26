@@ -1144,15 +1144,14 @@ int mc_put(DAL_Context* ctx,
    // ne_write() takes a signed int to specify size.
    // Make sure the DAL-caller's size_t doesn't exceed that size
    if (size > INT_MAX) {
-     LOG(LOG_ERR, "DAL size_t arg %lu exceeds max signed-int size accepted by ne_write()\n",
+     LOG(LOG_ERR, "DAL size_t arg %llu exceeds max signed-int size accepted by ne_write()\n",
          size);
      errno = EIO;
      return -1;
    }
-   int int_size = (int)size;
 
    ne_handle handle = MC_HANDLE(ctx);
-   int written = ne_write(handle, buf, int_size);
+   int written = ne_write(handle, buf, size);
 
    if(written < 0) {
       LOG(LOG_ERR, "ftone_write() failed.\n");

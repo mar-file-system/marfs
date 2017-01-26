@@ -99,8 +99,9 @@ typedef struct stat_list {
 } stat_list_t;
 
 // global flag indicating a dry run.
-int dry_run;
-int verbose;
+int   dry_run;
+int   verbose;
+FILE *error_log;
 
 // global rebuild statistics table.
 struct rebuild_stats {
@@ -337,7 +338,7 @@ void usage(const char *program) {
          "                     rebuilding a large number of objects.\n"
          "                     Defaults to 1024.\n");
   printf("\nTo run a rebuild of an entire component use the following flags\n"
-         "%s [-t <num threads>] -c <capacity unit> -b <good block> -p <pod> -r <repo name>\n"
+         "%s [-t <num threads>] -c <capacity unit> -b <good block> -p <pod> -r <repo name> -s <start>:<end>\n"
          "  <good block>       The number of a block to be used as a reference\n"
          "                     point for the rebuild\n"
          "  <capacity unit>    The capacity unit to rebuild.\n"
@@ -351,6 +352,8 @@ void usage(const char *program) {
          "\nwhere no rebuilds are performed, but the number of objects that\n"
          "would be examined/rebuilt is counted. This is useful for displaying\n"
          "failure statistics from the logs.\n");
+  printf("\nThe -o <filename> flag may be used to specify a file to which \n"
+         "rebuild failures should be logged rather than standard output\n");
 }
 
 /**
@@ -378,16 +381,15 @@ int rebuild_object(struct object_file object) {
   }
 
   if(object_handle == NULL) {
-    fprintf(stderr, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
+    fprintf(error_log, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
             object.path, strerror(errno));
     return -1;
   }
 
   int rebuild_result = ne_rebuild(object_handle);
   if(rebuild_result < 0) {
-    fprintf(stderr, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
+    fprintf(error_log, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
             object.path, strerror(errno));
-    return -1;
   }
 
   int error = ne_close(object_handle);
@@ -490,7 +492,7 @@ void *rebuilder(void *arg) {
       stats.total_objects++;
 
       if(verbose && !(stats.total_objects % 100)) {
-        printf("total rebuilds completed: %d\n", stats.total_objects);
+        printf("INFO: total rebuilds completed: %d\n", stats.total_objects);
       }
 
       // signal the producer to wake up, in case it was sleeping, and
@@ -702,7 +704,8 @@ int main(int argc, char **argv) {
   int           range_given = 0;
   pod = block = cap = -1;
   verbose = dry_run = 0;
-  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dvs:")) != -1) {
+  error_log = stderr;
+  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dvs:o:")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -736,6 +739,13 @@ int main(int argc, char **argv) {
       break;
     case 'v':
       verbose = 1;
+      break;
+    case 'o':
+      error_log = fopen(optarg, "a");
+      if(error_log == NULL) {
+        fprintf(stderr, "failed to open log file");
+        exit(-1);
+      }
       break;
     case 's':
     {
