@@ -192,8 +192,19 @@ int main(int argc, char **argv) {
    // Configure aws for the user specified on command line
    aws_read_config(aws_user_name);
 
+   // Create a hash table for packed files
+   hash_table_t* ht;
+   if ( (ht = malloc( sizeof( struct hash_table ) )) == NULL ) {
+      fprintf( stderr, "Failed to allocate hash table\n" );
+      exit(1);
+   }
+   if ( ht_init( ht, 100 ) == NULL ) {
+      fprintf( stderr, "Failed to initialize hash table\n" );
+      exit(1);
+   }
+
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,
-               fileset_count,time_threshold_sec);
+               fileset_count,time_threshold_sec,ht);
 
    if (file_status->is_packed) {
       fclose(file_status->packedfd);
@@ -384,7 +395,8 @@ int read_inodes(const char *fnameP,
                 int fileset_id,
                 Fileset_Info *fileset_info_ptr, 
                 size_t rec_count, 
-                unsigned int day_seconds) {
+                unsigned int day_seconds,
+                hash_table_t* ht) {
 
 
    int rc = 0;
@@ -599,8 +611,10 @@ int read_inodes(const char *fnameP,
                         //      process_packed() compute it as needed.
                         if (post->obj_type == OBJ_PACKED) {
                            update_pre(pre);
-                           fprintf(file_info_ptr->packedfd,"%s %zu %s\n", 
-                                   xattr_ptr->xattr_value, post->chunks, md_path_ptr );
+                        // GRAN
+                        //   fprintf(file_info_ptr->packedfd,"%s %zu %s\n", 
+                        //           xattr_ptr->xattr_value, post->chunks, md_path_ptr );
+                           ht_insert_payload( ht, xattr_ptr->xattr_value );
                            file_info_ptr->is_packed = 1;
                         }
 

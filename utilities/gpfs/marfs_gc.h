@@ -82,6 +82,7 @@ OF SUCH DAMAGE.
 #include "marfs_base.h"
 #include "common.h"             // marfs/fuse/src/common.h
 #include "aws4c.h"
+#include "hash_table.h"
 
 
 // CHECK this and compare to Jeff's
@@ -126,7 +127,8 @@ int read_inodes(const char   *fnameP,
                 int          fileset_id, 
                 Fileset_Info *fileset_info_ptr, 
                 size_t       rec_count, 
-                unsigned int day_seconds);
+                unsigned int day_seconds,
+                hash_table_t* ht);
 int clean_exit(FILE                 *fd, 
                gpfs_iscan_t         *iscanP, 
                gpfs_fssnap_handle_t *fsP, 

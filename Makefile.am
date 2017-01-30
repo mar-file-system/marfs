@@ -118,6 +118,7 @@ marfs_fuse_SOURCES = fuse/src/main.c
 AM_CPPFLAGS += -D_FILE_OFFSET_BITS=64
 endif
 
+AM_CPPFLAGS += -Iutilities/common/src
 # ............................................................................
 # GPFS Utilities
 # ............................................................................
@@ -127,7 +128,9 @@ bin_PROGRAMS += marfs_gc marfs_quota marfs_packer marfs_repack
 
 marfs_gc_SOURCES = utilities/gpfs/marfs_gc.c utilities/gpfs/marfs_gc.h \
 				   utilities/gpfs/utilities_common.c                   \
-				   utilities/gpfs/utilities_common.h
+				   utilities/gpfs/utilities_common.h   \
+                                   utilities/common/src/hash_table.c   \
+                                   utilities/common/src/hash_table.h
 
 marfs_quota_SOURCES = utilities/gpfs/marfs_quota.c utilities/gpfs/marfs_quota.h \
 					  utilities/gpfs/utilities_common.c                         \
