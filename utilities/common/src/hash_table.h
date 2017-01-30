@@ -59,6 +59,7 @@ typedef struct ht_entry {
   struct ht_entry *next;
   char            *key;
   int              value;
+  void*            payload;
 } ht_entry_t;
 
 typedef struct hash_table {
@@ -69,6 +70,9 @@ typedef struct hash_table {
 
 void *ht_init(hash_table_t *ht, unsigned int size);
 int   ht_lookup(hash_table_t *ht, const char* key);
+void* ht_retrieve(hash_table_t* ht, const char* key);
 void  ht_insert(hash_table_t *ht, const char* key);
+void ht_insert_payload(hash_table_t* ht, const char* key, void* payload, void (*ins_func) (void* new, void* old) );
+ht_entry_t* ht_traverse( hash_table_t* ht, ht_entry_t* ht_pos );
 
 #endif // HASH_TABLE_H
