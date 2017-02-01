@@ -896,12 +896,13 @@ int mc_init(DAL_Context* ctx, struct DAL* dal, void* fh) {
       LOG(LOG_ERR, "failed to allocate memory for MC_Context\n");
       return -1;
    }
+   memset(MC_CONTEXT(ctx), 0, sizeof(MC_Context));
 
-   memset(MC_CONTEXT(ctx)->path_template, '\0', MC_MAX_PATH_LEN);   
+   // memset(MC_CONTEXT(ctx)->path_template, '\0', MC_MAX_PATH_LEN);   
    MC_FH(ctx) = (MarFS_FileHandle*)fh;
-   MC_HANDLE(ctx) = NULL;
-   MC_CONTEXT(ctx)->chunk_offset = 0;
-   ctx->flags = 0;
+   // MC_HANDLE(ctx) = NULL;
+   // MC_CONTEXT(ctx)->chunk_offset = 0;
+   // ctx->flags = 0;
    MC_CONFIG(ctx) = (MC_Config*)dal->global_state;
 
    EXIT();
