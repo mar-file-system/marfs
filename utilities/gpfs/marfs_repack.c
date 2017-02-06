@@ -321,7 +321,7 @@ int pack_objects( File_Handles *file_info,
    size_t obj_size;
    //size_t offset;
    size_t unique;
-   //IOBuf *nb = aws_iobuf_new();
+   IOBuf *nb = aws_iobuf_new();
    //char test_obj[2048];
    obj_files *files;
    //int ret;
@@ -459,7 +459,7 @@ int update_meta(File_Handles *file_info,
 //  char pre[MARFS_MAX_XATTR_SIZE];
 
   char post_str[MARFS_MAX_XATTR_SIZE];
-  //char post_xattr[MARFS_MAX_XATTR_SIZE];
+  char post_xattr[MARFS_MAX_XATTR_SIZE];
   //int rc;
 
 

@@ -74,5 +74,6 @@ void* ht_retrieve(hash_table_t* ht, const char* key);
 void  ht_insert(hash_table_t *ht, const char* key);
 void ht_insert_payload(hash_table_t* ht, const char* key, void* payload, void (*ins_func) (void* new, void* old) );
 ht_entry_t* ht_traverse( hash_table_t* ht, ht_entry_t* ht_pos );
+ht_entry_t* ht_traverse_and_destroy( hash_table_t* ht, ht_entry_t* ht_pos );
 
 #endif // HASH_TABLE_H

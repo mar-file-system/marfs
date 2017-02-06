@@ -117,6 +117,10 @@ void ht_insert(hash_table_t *ht, const char* key) {
       }
       e = e->next;
     }
+    if(!strcmp(e->key, key)) {
+      e->value++;
+      return;
+    }
     e->next = new_ht_entry(key, 1);
     ht->num_elements++;
   }
@@ -155,6 +159,12 @@ void ht_insert_payload(hash_table_t* ht, const char* key, void* payload, void (*
       }
       e = e->next;
     }
+    if(!strcmp(e->key, key)) {
+      e->value++;
+      ins_func( payload, e->payload);
+      e->payload = payload;
+      return;
+    }
     e->next = new_ht_entry(key, 1);
     e->next->payload = payload;
     ht->num_elements++;
@@ -164,30 +174,72 @@ void ht_insert_payload(hash_table_t* ht, const char* key, void* payload, void (*
 /**
  * Traverses the hash table, returning the first non-NULL entry encountered.
  *
- * @param ht      the hash table to traverse
- * @param ht_pos  the previous entry returned by a traversal, or NULL if starting at the beginning
+ * @param ht        the hash table to traverse
+ * @param prev_ent  the previous entry returned by a traversal, or NULL if starting at the beginning
  *
  * @return the next entry encountered, or NULL if the end of the table has been reached
  */
-ht_entry_t* ht_traverse( hash_table_t* ht, ht_entry_t* ht_pos ) {
-  if ( ht->size == 0  ||  ht_pos == ht->table[ht->size - 1] ) {
+ht_entry_t* ht_traverse( hash_table_t* ht, ht_entry_t* prev_ent ) {
+  if ( ht->size == 0 ) {
     return NULL;
   }
 
-  if( ht_pos == NULL ){
-    ht_pos = ht->table[0];
+  if( prev_ent == NULL ){
+    return ht->table[0];
+  }
+
+  unsigned int pos = ( polyhash( prev_ent->key ) % ht->size );
+
+  if ( prev_ent->next ) {
+    return prev_ent->next;
+  }
+
+  pos++;
+
+  while( pos != ht->size ) {
+    if( ht->table[pos] ) {
+      return ht->table[pos];
+    }
+    pos++;
+  }
+
+  return NULL;
+}
+
+
+ht_entry_t* ht_traverse_and_destroy( hash_table_t* ht, ht_entry_t* prev_ent ) {
+  if ( ht->size == 0 ) {
+    return NULL;
+  }
+
+  ht_entry_t* ret_ent = NULL;
+  unsigned int pos;
+
+  if( prev_ent == NULL ){
+    ret_ent = ht->table[0];
+    ht->table[0] = NULL;
+  }
+  else if ( prev_ent->next ) {
+    ret_ent = prev_ent->next;
+    free( prev_ent->key );
+    free( prev_ent );
   }
   else {
-    ht_pos++;
-  }
+    pos = ( polyhash( prev_ent->key ) % ht->size );
+    free( prev_ent->key );
+    free( prev_ent );
 
-  while( ht_pos != ht->table[ht->size - 1] ) {
-    if( ht_pos ) {
-      return ht_pos;
+    pos++;
+
+    while( pos != ht->size ) {
+      if( ht->table[pos] ) {
+        ret_ent = ht->table[pos];
+        ht->table[pos] = NULL;
+        break;
+      }
+      pos++;
     }
-    ht_pos++;
   }
-
-  return ht_pos;
+  return ret_ent;
 }
 

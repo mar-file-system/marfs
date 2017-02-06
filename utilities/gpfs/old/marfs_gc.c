@@ -83,14 +83,6 @@ OF SUCH DAMAGE.
 #include "common.h"
 #include "utilities_common.h"
 
-typedef struct payload_struct {
-   char* objid;
-   size_t chunks;
-   char* md_path;
-   struct payload_struct* next;
-} *ht_payload;
-   
-
 /******************************************************************************
 * This program scans the inodes looking specifically at trash filesets.  It will
 * determine if post xattr and gc.path defined and if so, gets the objid xattr
@@ -200,28 +192,14 @@ int main(int argc, char **argv) {
    // Configure aws for the user specified on command line
    aws_read_config(aws_user_name);
 
-   // GRAN
-   // Create a hash table for packed files
-   hash_table_t* ht;
-   if ( (ht = malloc( sizeof( struct hash_table ) )) == NULL ) {
-      fprintf( stderr, "Failed to allocate hash table\n" );
-      exit(1);
-   }
-   if ( ht_init( ht, 100000 ) == NULL ) {
-      fprintf( stderr, "Failed to initialize hash table\n" );
-      exit(1);
-   }
-
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,
-               fileset_count,time_threshold_sec,ht);
+               fileset_count,time_threshold_sec);
 
    if (file_status->is_packed) {
       fclose(file_status->packedfd);
-      process_packed(file_status, ht);
+      process_packed(file_status);
    }
    fclose(file_status->outfd);
-
-   free( ht );
 
    //TEMP TEMP TEMP FOR DEBUG
    //unlink(packed_log);
@@ -384,23 +362,6 @@ int clean_exit(FILE                 *fd,
       return(0);
 }
 
-
-/***************************************************************************** 
-Name:  update_payload
-
-This acts as the update function for hash table payload-insertion, creating
-a linked list of payload entries.
-
-*****************************************************************************/
-
-void update_payload( void* new, void* old){
-   ht_payload NP = (ht_payload) new;
-   ht_payload OP = (ht_payload) old;
-
-   NP->next = OP;
-}
-
-
 /***************************************************************************** 
 Name: read_inodes 
 
@@ -423,8 +384,7 @@ int read_inodes(const char *fnameP,
                 int fileset_id,
                 Fileset_Info *fileset_info_ptr, 
                 size_t rec_count, 
-                unsigned int day_seconds,
-                hash_table_t* ht) {
+                unsigned int day_seconds) {
 
 
    int rc = 0;
@@ -639,51 +599,8 @@ int read_inodes(const char *fnameP,
                         //      process_packed() compute it as needed.
                         if (post->obj_type == OBJ_PACKED) {
                            update_pre(pre);
-                        // GRAN
-                        //   fprintf(file_info_ptr->packedfd,"%s %zu %s\n", 
-                        //           xattr_ptr->xattr_value, post->chunks, md_path_ptr );
-                           void (*update) (void*,void*) = &update_payload;
-                           ht_payload payload;
-                           if ( (payload = malloc( sizeof( struct payload_struct ) )) == NULL ) {
-                              // This is a duplication of Alfred's exit code, should verify
-                              rc = errno;
-                              fprintf(stderr, "marfs_gc: failed to allocate space for a hash table payload\n");
-                              early_exit = 1;
-                              clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
-                           }
-
-                           int len_objid = strlen( xattr_ptr->xattr_value ) + 1;
-                           int len_mdpath = strlen( md_path_ptr ) + 1;
-
-                           if ( (payload->objid = malloc( sizeof( char ) * len_objid )) == NULL ) {
-                              rc = errno;
-                              fprintf(stderr, "marfs_gc: failed to allocate space for an objid string\n");
-                              early_exit = 1;
-                              clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
-                           }
-                           if ( (payload->md_path = malloc( sizeof( char ) * len_mdpath )) == NULL ) {
-                              rc = errno;
-                              fprintf(stderr, "marfs_gc: failed to allocate space for a path string\n");
-                              early_exit = 1;
-                              clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
-                           }
-                           if ( (payload->objid = strncpy( payload->objid, xattr_ptr->xattr_value, len_objid )) == NULL ) {
-                              fprintf( stderr, "marfs_gc: failure of strncpy for packed file objectID\n" );
-                              rc = errno;
-                              early_exit = 1;
-                              clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
-                           }
-                           if ( (payload->md_path = strncpy( payload->md_path, md_path_ptr, len_mdpath )) == NULL ) {
-                              fprintf( stderr, "marfs_gc: failure of strncpy for packed file md_path\n" );
-                              rc = errno;
-                              early_exit = 1;
-                              clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
-                           }
-                           
-                           payload->chunks = post->chunks;
-                           payload->next = NULL;
-
-                           ht_insert_payload( ht, xattr_ptr->xattr_value, payload, update );
+                           fprintf(file_info_ptr->packedfd,"%s %zu %s\n", 
+                                   xattr_ptr->xattr_value, post->chunks, md_path_ptr );
                            file_info_ptr->is_packed = 1;
                         }
 
@@ -980,7 +897,7 @@ the object and files are deleted.  Ohterwise they are left in place and a
 repack utility will be run on the trash directory.
 *****************************************************************************/
 
-int process_packed(File_Info *file_info_ptr, hash_table_t* ht)
+int process_packed(File_Info *file_info_ptr)
 {
    FILE *pipe_cat = NULL;
    FILE *pipe_grep = NULL;
@@ -992,8 +909,8 @@ int process_packed(File_Info *file_info_ptr, hash_table_t* ht)
    char objid[MARFS_MAX_OBJID_SIZE];
    char last_objid[MARFS_MAX_OBJID_SIZE];
    char grep_command[MARFS_MAX_MD_PATH+MAX_PACKED_NAME_SIZE+64];
-//   char cat_command[MAX_PACKED_NAME_SIZE];
-//   char wc_command[MAX_PACKED_NAME_SIZE];
+   char cat_command[MAX_PACKED_NAME_SIZE];
+   char wc_command[MAX_PACKED_NAME_SIZE];
    int obj_return;
    int df_return;
 
@@ -1002,28 +919,25 @@ int process_packed(File_Info *file_info_ptr, hash_table_t* ht)
    int count = 0;
    int multi_flag = 0;
    int wc_count;
-//   
-//   sprintf(cat_command, "cat %s | sort", file_info_ptr->packed_filename);
-//   
-//   // open STREAM for cat
-//   if (( pipe_cat = popen(cat_command, "r")) == NULL) {
-//      fprintf(stderr, "Error with popen\n");
-//      return(-1); 
-//   }
-//   // Get the first line and sscanf into object_name, chunk_cnt, and filename
-//   fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat);
-//
-//   sscanf(obj_buf,"%s,%d,%s", objid, &chunk_count, filename);
-//
-//   // Keep track of of when objid name changes 
-//   // count is used to see how many files have been counted
-//   // so that a check of whether all files are accounted for in the packed
-//   // object
-//   strcpy(last_objid, objid);
-//   count++;
-//
+   
+   sprintf(cat_command, "cat %s | sort", file_info_ptr->packed_filename);
+   
+   // open STREAM for cat
+   if (( pipe_cat = popen(cat_command, "r")) == NULL) {
+      fprintf(stderr, "Error with popen\n");
+      return(-1); 
+   }
+   // Get the first line and sscanf into object_name, chunk_cnt, and filename
+   fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat);
 
-   ht_entry_t* entry = NULL;
+   sscanf(obj_buf,"%s,%d,%s", objid, &chunk_count, filename);
+
+   // Keep track of of when objid name changes 
+   // count is used to see how many files have been counted
+   // so that a check of whether all files are accounted for in the packed
+   // object
+   strcpy(last_objid, objid);
+   count++;
 
    // In a loop get all lines from the file
    // Example line (with 'xx' instead of IP-addr octets, and altered MD paths):
@@ -1031,147 +945,105 @@ int process_packed(File_Info *file_info_ptr, hash_table_t* ht)
    // proxy1/bparc/ver.001_001/ns.development/P___/inode.0000016572/md_ctime.20160526_124320-0600_1/obj_ctime.20160526_124320-0600_1/unq.0/chnksz.40000000/chnkno.0 403
    // /gpfs/fileset/trash/development.0/8/7/3/uni.255.trash_0000016873_20160526_125809-0600_1
    //
-//   while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
-   ht_payload Ptmp;
-
-   while ( (entry = ht_traverse_and_destroy( ht, entry )) != NULL ) {
+   while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
       // if objid the same - keep counting files
-      
-      
-      ht_payload payload = (ht_payload) entry->payload;      
+      sscanf(obj_buf,"%s %d %s", objid, &chunk_count, filename);
+      if (!strcmp(last_objid,objid) || chunk_count==1) {
+         count++;
+         // printf("count: %d chunk_count: %d\n", count, chunk_count);
+         // If file count == chuck count - all files accounted for
+         // delete objec
+         if (chunk_count == count || chunk_count==1) {
+            // So make sure that the chunk_count (from xattr) matches the number
+            // of files found 
+            sprintf(wc_command, "grep -c %s %s", objid, file_info_ptr->packed_filename);
 
+            if (( pipe_wc = popen(wc_command, "r")) == NULL) {
+               fprintf(stderr, "Error with popen\n");
+               return(-1); 
+            }
+            while(fgets(wc_buf,1024, pipe_wc)) {
+               sscanf(wc_buf, "%d", &wc_count);
+            }
+            if (wc_count != chunk_count) {
+               fprintf(stderr, "object %s has %d files while chunk count is %d\n",
+                       objid, wc_count, chunk_count);
 
-//      sscanf(obj_buf,"%s %d %s", objid, &chunk_count, filename);
-//      if (!strcmp(last_objid,objid) || chunk_count==1) {
-//         count++;
-//         // printf("count: %d chunk_count: %d\n", count, chunk_count);
-//         // If file count == chuck count - all files accounted for
-//         // delete objec
-//         if (chunk_count == count || chunk_count==1) {
-//            // So make sure that the chunk_count (from xattr) matches the number
-//            // of files found 
-//            sprintf(wc_command, "grep -c %s %s", objid, file_info_ptr->packed_filename);
-//
-//            if (( pipe_wc = popen(wc_command, "r")) == NULL) {
-//               fprintf(stderr, "Error with popen\n");
-//               return(-1); 
-//            }
-//            while(fgets(wc_buf,1024, pipe_wc)) {
-//               sscanf(wc_buf, "%d", &wc_count);
-//            }
-//            if (wc_count != chunk_count) {
-//               fprintf(stderr, "object %s has %d files while chunk count is %d\n",
-//                       objid, wc_count, chunk_count);
-//
-//               // Need to close pipe before continuing
-//               if (pclose(pipe_wc) == -1) {
-//                  fprintf(stderr, "Error closing wc pipe in process_packed\n");
-//                  return(-1);
-//               }
-//               continue;
-//            }
-//            // just close pipe
-//            else {
-//               if (pclose(pipe_wc) == -1) {
-//                  fprintf(stderr, "Error closing wc pipe in process_packed\n");
-//                  return(-1);
-//               }
-//            }
+               // Need to close pipe before continuing
+               if (pclose(pipe_wc) == -1) {
+                  fprintf(stderr, "Error closing wc pipe in process_packed\n");
+                  return(-1);
+               }
+               continue;
+            }
+            // just close pipe
+            else {
+               if (pclose(pipe_wc) == -1) {
+                  fprintf(stderr, "Error closing wc pipe in process_packed\n");
+                  return(-1);
+               }
+            }
 
-      // tmp
+            // If we get here, counts are matching up
+            // Go ahead and start deleting
+            MarFS_FileHandle fh;
+            if (fake_filehandle_for_delete(&fh, objid, filename)) {
+               fprintf(file_info_ptr->outfd,
+                       "failed to create filehandle for %s %s\n",
+                       objid, filename);
+               continue;
+            }
 
-      if (entry->value != payload->chunks) {
-         //Here is where this info should be delivered to the repacker
-         //The var 'payload' is the head of a linked list of file info for this object
-         fprintf(stderr, "object %s has %d files while chunk count is %d\n",
-               objid, entry->value, payload->chunks);
+            update_pre(&fh.info.pre);
+            update_url(&fh.os, &fh.info);
+            // Delete object first
+            if ((obj_return = delete_object(&fh, file_info_ptr, multi_flag)) != 0) 
+               fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
+                       %d) on object %s\n", obj_return, objid);
 
-         continue;
-      }
+            else if ( file_info_ptr->no_delete) 
+               fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", objid);
 
+            // Get metafile name from tmp_packed_log and delelte 
+            else 
+               fprintf(file_info_ptr->outfd, "deleted object %s\n", objid);
 
-      // If we get here, counts are matching up
-      // Go ahead and start deleting
-      MarFS_FileHandle fh;
-      if (fake_filehandle_for_delete(&fh, payload->objid, payload->md_path)) {
-         fprintf(file_info_ptr->outfd,
-                 "failed to create filehandle for %s %s\n",
-                 payload->objid, payload->md_path);
-         continue;
-      }
-
-      update_pre(&fh.info.pre);
-      update_url(&fh.os, &fh.info);
-      // Delete object first
-      if ((obj_return = delete_object(&fh, file_info_ptr, multi_flag)) != 0) {
-         fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
-                 %d) on object %s\n", obj_return, payload->objid);
-      }
-      else if ( file_info_ptr->no_delete) {
-         fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", payload->objid);
-      }
-      // Get metafile name from tmp_packed_log and delelte 
-      else {
-         fprintf(file_info_ptr->outfd, "deleted object %s\n", payload->objid);
-      }
-//      sprintf(grep_command,"grep %s %s | awk '{print $3}' ", 
-//              objid, file_info_ptr->packed_filename);
-//      //Now open pipe to find all files associated with object 
-//      if (( pipe_grep = popen(grep_command, "r")) == NULL) {
-//         fprintf(stderr, "Error with popen\n");
-//         return(-1); 
-//      }
-
-
-      Ptmp = NULL;
-      while ( payload != NULL ) {
-         //Delete files
-//         while(fgets(file_buf, MARFS_MAX_MD_PATH, pipe_grep)) {
-//            sscanf(file_buf,"%s",filename);
-         df_return = delete_file(payload->md_path, file_info_ptr);
-//         }
-//         if (pclose(pipe_grep) == -1) {
-//            fprintf(stderr, "Error closing grep pipe in process_packed\n");
-//            return(-1);
-//         }
-
-         // free payload struct and referenced strings
-         if ( Ptmp ) {
-            free( Ptmp->objid );
-            free( Ptmp->md_path );
-            free( Ptmp );
+            sprintf(grep_command,"grep %s %s | awk '{print $3}' ", 
+                    objid, file_info_ptr->packed_filename);
+            //Now open pipe to find all files associated with object 
+            if (( pipe_grep = popen(grep_command, "r")) == NULL) {
+               fprintf(stderr, "Error with popen\n");
+               return(-1); 
+            }
+            //Delete files
+            while(fgets(file_buf, MARFS_MAX_MD_PATH, pipe_grep)) {
+               sscanf(file_buf,"%s",filename);
+               df_return = delete_file(filename, file_info_ptr);
+            }
+            if (pclose(pipe_grep) == -1) {
+               fprintf(stderr, "Error closing grep pipe in process_packed\n");
+               return(-1);
+            }
          }
-         Ptmp = payload;
-         payload = payload->next;
       }
 
-      if( Ptmp ) {
-         free( Ptmp->objid );
-         free( Ptmp->md_path );
-         free( Ptmp );
+      //current object did not match last one so on to next object and new count
+      else {
+         strcpy(last_objid, objid);
+         count = 1;
       }
-//
-//      //current object did not match last one so on to next object and new count
-//      else {
-//         strcpy(last_objid, objid);
-//         count = 1;
-//      }
-
-      //TODO free entry struct?
 
    }
-   if (df_return == -1 || obj_return == -1) {
+   if (df_return == -1 || obj_return == -1)
+      return(-1);
+
+   if (pclose(pipe_cat) == -1) {
+      fprintf(stderr, "Error closing cat pipe in process_packed\n");
       return(-1);
    }
    else 
       return(0);
-
-//   if (pclose(pipe_cat) == -1) {
-//      fprintf(stderr, "Error closing cat pipe in process_packed\n");
-//      return(-1);
-//   }
 }
-
 /******************************************************************************
  * Name read_config_gc
  * This function reads the config file in order to extract the object hostname
