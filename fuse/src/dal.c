@@ -1345,7 +1345,7 @@ DAL mc_dal = {
 
 DAL mc_sockets_dal = {
    .name         = "MC_SOCKETS",
-   .name_len     = strlen("MC_SOCKETS"),
+   .name_len     = 10,
 
    .global_state = NULL,
 
