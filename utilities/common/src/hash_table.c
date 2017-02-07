@@ -184,29 +184,44 @@ ht_entry_t* ht_traverse( hash_table_t* ht, ht_entry_t* prev_ent ) {
     return NULL;
   }
 
-  if( prev_ent == NULL ){
-    return ht->table[0];
-  }
+  unsigned int pos;
 
-  unsigned int pos = ( polyhash( prev_ent->key ) % ht->size );
-
-  if ( prev_ent->next ) {
+  // If we are in an entry list, give the next list element
+  if ( prev_ent != NULL  &&  prev_ent->next ) {
     return prev_ent->next;
   }
-
-  pos++;
-
-  while( pos != ht->size ) {
-    if( ht->table[pos] ) {
-      return ht->table[pos];
+  else {
+    // If we are beginning a new traversal, start at 0
+    if ( prev_ent == NULL ) {
+      pos = 0;
     }
-    pos++;
-  }
+    // Otherwise, begin at the element following the last one
+    else {
+      pos = ( polyhash( prev_ent->key ) % ht->size );
+      pos++;
+    }
 
+    // Loop through all table positions
+    while( pos != ht->size ) {
+      if( ht->table[pos] ) {
+        return ht->table[pos];
+      }
+      pos++;
+    }
+  }
   return NULL;
 }
 
-
+/**
+ * Traverses the hash table, returning the first non-NULL entry encountered.  Simultaneously, this 
+ * function removes entries from the table and frees the memory associated with previous elements.
+ * Stopping a traversal partway through the list may result in improperly set values and mem-leaks.
+ *
+ * @param ht        the hash table to traverse
+ * @param prev_ent  the previous entry returned by a traversal, or NULL if starting at the beginning
+ *
+ * @return the next entry encountered, or NULL if the end of the table has been reached
+ */
 ht_entry_t* ht_traverse_and_destroy( hash_table_t* ht, ht_entry_t* prev_ent ) {
   if ( ht->size == 0 ) {
     return NULL;
@@ -215,22 +230,26 @@ ht_entry_t* ht_traverse_and_destroy( hash_table_t* ht, ht_entry_t* prev_ent ) {
   ht_entry_t* ret_ent = NULL;
   unsigned int pos;
 
-  if( prev_ent == NULL ){
-    ret_ent = ht->table[0];
-    ht->table[0] = NULL;
-  }
-  else if ( prev_ent->next ) {
+  // If we are in an entry list, give the next list element
+  if ( prev_ent != NULL  &&  prev_ent->next ) {
     ret_ent = prev_ent->next;
     free( prev_ent->key );
     free( prev_ent );
   }
   else {
-    pos = ( polyhash( prev_ent->key ) % ht->size );
-    free( prev_ent->key );
-    free( prev_ent );
+    // If we are beginning a new traversal, start at 0
+    if ( prev_ent == NULL ) {
+      pos = 0;
+    }
+    // Otherwise, begin at the element following the last one
+    else {
+      pos = ( polyhash( prev_ent->key ) % ht->size );
+      free( prev_ent->key );
+      free( prev_ent );
+      pos++;
+    }
 
-    pos++;
-
+    // Loop through all table positions
     while( pos != ht->size ) {
       if( ht->table[pos] ) {
         ret_ent = ht->table[pos];
@@ -240,6 +259,10 @@ ht_entry_t* ht_traverse_and_destroy( hash_table_t* ht, ht_entry_t* prev_ent ) {
       pos++;
     }
   }
+
+  if ( ret_ent != NULL )
+    ht->num_elements--;
+
   return ret_ent;
 }
 
