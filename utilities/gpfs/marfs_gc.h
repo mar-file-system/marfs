@@ -152,7 +152,7 @@ int  delete_object(MarFS_FileHandle *fh,
                    File_Info        *file_info_ptr,
                    int               is_mult);
 int  delete_file(char *filename, File_Info *file_info_ptr);
-int  process_packed(File_Info *file_info_ptr, hash_table_t* ht);
+int  process_packed(File_Info *file_info_ptr, hash_table_t* ht, unsigned char repack_flag);
 void print_current_time(File_Info *file_info_ptr);
 int  read_config_gc(Fileset_Info *fileset_info_ptr);
 
