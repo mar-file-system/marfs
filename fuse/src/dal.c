@@ -1110,6 +1110,11 @@ int mc_sync(DAL_Context* ctx) {
        POST(&config->lock);
      }
      else if(error_pattern < 0) {
+       // close the stream, a failed sync renders the ne_handle
+       // invalid calling mc_close should prevent marfs from ever
+       // trying to use it again.
+       mc_close(ctx);
+       os->flags |= OSF_ERRORS;
        LOG(LOG_ERR, "ne_close failed on %s", mc_context->path_template);
        return -1;
      }
