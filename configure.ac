@@ -98,7 +98,8 @@ AC_ARG_ENABLE([dal],
 # Enable Muti-Component Storage
 AC_ARG_ENABLE([mc],
         AS_HELP_STRING([  --enable-mc],
-                       [one of {yes|sockets|no}.  Build the multi-component storage framework. NOTE: multi-component storage requires the DAL to be enabled.]))
+                       [one of {yes|sockets|no}.  Build the multi-component storage framework.  NOTE: requires DAL to be enabled.]))
+
 # Don't build GPFS utilities.
 AC_ARG_WITH([gpfs],
         AS_HELP_STRING([  --without-gpfs],
@@ -173,20 +174,21 @@ AS_IF([test x"$enable_fuse" != xno],
 
 AS_IF([test x"$enable_mc" != xno],
     [AC_CHECK_LIB([isal], [crc32_ieee])])
-# look for libne    
+# need libne for any MC variant
 AS_IF([test x"$enable_mc" != xno],
       [AC_CHECK_LIB([ne], [ne_open])])
-# AS_IF([test x"$enable_mc" = xsockets],
-#       [AC_CHECK_LIB([rdma_sockets], [skt_open])
-#        AC_CHECK_LIB([rdmacm], [rsocket])])
+# also need rdma_sockets and rdmacm, for MC sockets
+AS_IF([test x"$enable_mc" = xsockets],
+      [AC_CHECK_LIB([rdma_sockets], [skt_open])
+       AC_CHECK_LIB([rdmacm], [rsocket])])
 
 
 
 # automake conditionals 
-AM_CONDITIONAL([USE_DAL], [test x"$enable_dal" != xno])
+AM_CONDITIONAL([USE_DAL],  [test x"$enable_dal" != xno])
 AM_CONDITIONAL([USE_MDAL], [test x"$enable_mdal" != xno])
 
-AM_CONDITIONAL([USE_MC], [test x"$enable_mc" != xno])
+AM_CONDITIONAL([USE_MC],         [test x"$enable_mc" != xno])
 AM_CONDITIONAL([USE_MC_SOCKETS], [test x"$enable_mc" = xsockets])
 
 AM_CONDITIONAL([WANT_FUSE], [test x"$enable_fuse" != xno])
