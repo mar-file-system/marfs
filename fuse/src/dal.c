@@ -963,18 +963,8 @@ int mc_put(DAL_Context* ctx,
       return -1;
    }
 
-   // ne_write() takes a signed int to specify size.
-   // Make sure the DAL-caller's size_t doesn't exceed that size
-   if (size > INT_MAX) {
-     LOG(LOG_ERR, "DAL size_t arg %lu exceeds max signed-int size accepted by ne_write()\n",
-	 size);
-     errno = EIO;
-     return -1;
-   }
-   int int_size = (int)size;
-
    ne_handle handle = MC_HANDLE(ctx);
-   int written = ne_write(handle, buf, int_size);
+   int written = ne_write(handle, buf, size);
 
    if(written < 0) {
       LOG(LOG_ERR, "ftone_write() failed.\n");
@@ -1026,12 +1016,12 @@ ssize_t mc_get(DAL_Context* ctx, char* buf, size_t size) {
 // logged to the "degraded object log".
 int mc_sync(DAL_Context* ctx) {
    ENTRY();
-   
+
    ObjectStream* os         = MC_OS(ctx);
    ne_handle     handle     = MC_HANDLE(ctx);
    MC_Config*    config     = MC_CONFIG(ctx);
    MC_Context*   mc_context = MC_CONTEXT(ctx);
-
+   
    if(! (os->flags & OSF_OPEN)) {
       LOG(LOG_ERR, "%s isn't open\n", os->url);
       errno = EINVAL;
@@ -1062,15 +1052,15 @@ int mc_sync(DAL_Context* ctx) {
       // If the degraded log file has not already been opened, open it now.
       if(config->degraded_log_fd == -1) {
          config->degraded_log_fd =
-           open_degraded_object_log(config->degraded_log_path);
+            open_degraded_object_log(config->degraded_log_path);
          if(config->degraded_log_fd < 0) {
-           LOG(LOG_ERR, "failed to open degraded log file\n");
+            LOG(LOG_ERR, "failed to open degraded log file\n");
          }
          else {
-           // If we successfully opened it, then free the resources
-           // used to store the path.
-           free(config->degraded_log_path);
-           config->degraded_log_path = NULL;
+            // If we successfully opened it, then free the resources
+            // used to store the path.
+            free(config->degraded_log_path);
+            config->degraded_log_path = NULL;
          }
       }
 
@@ -1083,6 +1073,11 @@ int mc_sync(DAL_Context* ctx) {
       POST(&config->lock);
    }
    else if(error_pattern < 0) {
+      // close the stream, a failed sync renders the ne_handle
+      // invalid calling mc_close should prevent marfs from ever
+      // trying to use it again.
+      mc_close(ctx);
+      os->flags |= OSF_ERRORS;
       LOG(LOG_ERR, "ne_close failed on %s", mc_context->path_template);
       return -1;
    }

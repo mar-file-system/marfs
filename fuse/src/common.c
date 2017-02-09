@@ -953,7 +953,10 @@ int batch_pre_process(const char* path, size_t file_size) {
 
    info.post.obj_type         = ((n_chunks > 1) ? OBJ_MULTI : OBJ_UNI);
    info.post.chunks           = n_chunks;
-   info.post.chunk_info_bytes = n_chunks * sizeof(MultiChunkInfo);
+   // chunk_info_bytes should be 0 if n_chunks == 1
+   info.post.chunk_info_bytes = (n_chunks > 1 ?
+                                 n_chunks * sizeof(MultiChunkInfo) :
+                                 0);
 
    // save Pre and Post
    SAVE_XATTRS(&info, (XVT_PRE | XVT_POST));
@@ -1964,6 +1967,7 @@ int delete_data(MarFS_FileHandle* fh) {
    TRY_DECLS();
 
    TRY0( init_data(fh) );
+   TRY0( DAL_OP(update_object_location, fh) );
    TRY0( DAL_OP(del, fh) );
    TRY0( destroy_data(fh) );
    return 0;
