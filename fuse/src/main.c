@@ -244,7 +244,36 @@ int fuse_chown (const char* path,
    WRAP_PLUS( marfs_chown(path, uid, gid) );
 }
 
-// int fuse_close()   --->  it's called "fuse_release()".
+// int fuse_close()   --->  it's called "fuse_flush()".
+
+// Fuse "flush" is not the same as "fflush()".  Fuse flush is called as
+// part of fuse close, and shouldn't return until all I/O is complete on
+// the file-handle, such that no further I/O errors are possible.  In other
+// words, this is our last chance to return errors to the user.
+//
+// Maybe flush() is also the best place to assure that final recovery-blobs
+// are written into objects, and pending object-reads are cut short, etc,
+// ... instead of doing that in close.
+//
+// TBD: Don't do object-interaction if file is DIRECT.  See fuse_open().
+//
+// NOTE: It also appears that fuse calls stat immediately after flush.
+//       (Hard to be sure, because fuse calls stat all the time.)  I'd
+//       guess we shouldn't return until we are sure that stat will see the
+//       final state of the file.  Probably also applies to xattrs (?)
+//       But hanging here seems to cause fuse to hang.
+//
+//       BECAUSE OF THIS, we took a simpler route: move all the
+//       synchronization into fuse_release(), and don't implement fuse
+//       flush.  This seems to have the desired effect of getting fuse to
+//       do all the sync at close-time.
+
+int fuse_flush (const char*            path,
+                struct fuse_file_info* ffi) {
+
+   WRAP( marfs_flush(path, (MarFS_FileHandle*)ffi->fh) );
+}
+
 
 
 int fuse_fsync (const char*            path,
@@ -807,36 +836,6 @@ int fuse_fgetattr(const char*            path,
    WRAP_PLUS( marfs_fgetattr(path, st, (MarFS_FileHandle*)ffi->fh) );
 }
 
-
-// Fuse "flush" is not the same as "fflush()".  Fuse flush is called as
-// part of fuse close, and shouldn't return until all I/O is complete on
-// the file-handle, such that no further I/O errors are possible.  In other
-// words, this is our last chance to return errors to the user.
-//
-// Maybe flush() is also the best place to assure that final recovery-blobs
-// are written into objects, and pending object-reads are cut short, etc,
-// ... instead of doing that in close.
-//
-// TBD: Don't do object-interaction if file is DIRECT.  See fuse_open().
-//
-// NOTE: It also appears that fuse calls stat immediately after flush.
-//       (Hard to be sure, because fuse calls stat all the time.)  I'd
-//       guess we shouldn't return until we are sure that stat will see the
-//       final state of the file.  Probably also applies to xattrs (?)
-//       But hanging here seems to cause fuse to hang.
-//
-//       BECAUSE OF THIS, we took a simpler route: move all the
-//       synchronization into fuse_release(), and don't implement fuse
-//       flush.  This seems to have the desired effect of getting fuse to
-//       do all the sync at close-time.
-
-int fuse_flush (const char*            path,
-                struct fuse_file_info* ffi) {
-
-   WRAP( marfs_flush(path, (MarFS_FileHandle*)ffi->fh) );
-}
-
-
 // new in 2.6, yet deprecated?
 // combines opendir(), readdir(), closedir() into one call.
 int fuse_getdir(const char*    path,
@@ -975,6 +974,7 @@ int main(int argc, char* argv[])
       .access      = fuse_access,
       .chmod       = fuse_chmod,
       .chown       = fuse_chown,
+      .flush       = fuse_flush,
       .ftruncate   = fuse_ftruncate,
       .fsync       = fuse_fsync,
       .fsyncdir    = fuse_fsyncdir,
@@ -1009,7 +1009,6 @@ int main(int argc, char* argv[])
       .fallocate   = fuse_fallocate /* not in 2.6 */
       .fgetattr    = fuse_fgetattr,
       .flock       = fuse_flock,
-      .flush       = fuse_flush,
       .getdir      = fuse_getdir, /* deprecated in 2.6 */
       .link        = fuse_link,
       .lock        = fuse_lock,
