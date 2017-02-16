@@ -275,15 +275,23 @@ abort: fusectl
 #	RUN $* $(MNT)/test00
 
 
-# TODO: FUSE_FLAGS, EXEC, PID
-FUSE_FLAGS = -o allow_other,direct_io,use_ino,intr
-PID = marfs_fuse.pid
-LOG =  >fuse.log 2>&1
+
+# NOTE: NFS-exporting (v3 or v4) a fuse-mount mounted with 'direct_io'
+#       causes all reads received at fuse to have size=4K.  Without
+#       direct_io, read sizes in this scenario are 128K.
+
+FUSE_FLAGS = -o allow_other,use_ino,intr
 # ifeq ($(DEBUG),2)
 #	FUSE_FLAGS += -d -f
 # endif
 
+PID = marfs_fuse.pid
+LOG =  >fuse.log 2>&1
+
+
 # convenience targets for fuse.
+# TODO: re-introduce the old EXEC, which allowed e.g. gprof, valgrind, etc.
+
 _mnt:
 	@ echo
 	@ echo "mounting at $(MARFS_MNT)"
