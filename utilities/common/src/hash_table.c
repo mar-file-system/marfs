@@ -134,18 +134,17 @@ void ht_insert(hash_table_t *ht, const char* key) {
  * @param payload   payload to attatch to entry (this value will replace any original payload)
  * @param ins_func  function to be called on new+old payload values when a matching entry in encountered
  */
-void ht_insert_payload(hash_table_t* ht, const char* key, void* payload, void (*ins_func) (void* new, void* old) ) {
+void ht_insert_payload(hash_table_t* ht, const char* key, void* payload, void (*ins_func) (void* new, void** old) ) {
   unsigned long hash = polyhash(key);
 
   if(!ht->table[hash % ht->size]) {
     ht->table[hash % ht->size] = new_ht_entry(key, 1);
-    ht->table[hash % ht->size]->payload = payload;
+    ins_func( payload, &(ht->table[hash % ht->size]->payload) );
     ht->num_elements++;
   }
   else if(!strcmp(ht->table[hash % ht->size]->key, key)) {
     ht->table[hash % ht->size]->value++;
-    ins_func(payload, ht->table[hash % ht->size]->payload);
-    ht->table[hash % ht->size]->payload = payload;
+    ins_func( payload, &(ht->table[hash % ht->size]->payload) );
     return;
   }
   else {
@@ -153,20 +152,18 @@ void ht_insert_payload(hash_table_t* ht, const char* key, void* payload, void (*
     while(e->next) {
       if(!strcmp(e->key, key)) {
         e->value++;
-        ins_func( payload, e->payload);
-        e->payload = payload;
+        ins_func( payload, &(e->payload) );
         return;
       }
       e = e->next;
     }
     if(!strcmp(e->key, key)) {
       e->value++;
-      ins_func( payload, e->payload);
-      e->payload = payload;
+      ins_func( payload, &(e->payload) );
       return;
     }
     e->next = new_ht_entry(key, 1);
-    e->next->payload = payload;
+    ins_func( payload, &(e->next->payload) );
     ht->num_elements++;
   }
 }

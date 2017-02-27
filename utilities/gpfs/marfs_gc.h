@@ -95,6 +95,9 @@ OF SUCH DAMAGE.
 
 #define MAX_PACKED_NAME_SIZE 1024
 
+#define PACKED_TABLE_SIZE 10000
+#define REPACK_TABLE_SIZE 1000
+
 #define TMP_LOCAL_FILE_LEN 1024 
 
 struct marfs_xattr {
@@ -152,7 +155,7 @@ int  delete_object(MarFS_FileHandle *fh,
                    File_Info        *file_info_ptr,
                    int               is_mult);
 int  delete_file(char *filename, File_Info *file_info_ptr);
-int  process_packed(File_Info *file_info_ptr, hash_table_t* ht, unsigned char repack_flag);
+int  process_packed(File_Info *file_info_ptr, hash_table_t* ht, hash_table_t* rt);
 void print_current_time(File_Info *file_info_ptr);
 int  read_config_gc(Fileset_Info *fileset_info_ptr);
 

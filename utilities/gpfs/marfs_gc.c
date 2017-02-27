@@ -83,12 +83,20 @@ OF SUCH DAMAGE.
 #include "common.h"
 #include "utilities_common.h"
 
-typedef struct payload_struct {
-   char* objid;
+typedef struct payload_file_struct {
+   char* md_path;
+   struct payload_file_struct* next;
+} *ht_file;
+
+typedef struct payload_header_struct {
+   size_t chunks;
+   struct payload_file_struct* files;
+} *ht_header;
+
+typedef struct payload_package_struct {
    size_t chunks;
    char* md_path;
-   struct payload_struct* next;
-} *ht_payload;
+} *ht_package;
  
 // ---- Repack structs ----
 //
@@ -245,9 +253,21 @@ int main(int argc, char **argv) {
       fprintf( stderr, "Failed to allocate hash table\n" );
       exit(1);
    }
-   if ( ht_init( ht, 100000 ) == NULL ) {
+   if ( ht_init( ht, PACKED_TABLE_SIZE ) == NULL ) {
       fprintf( stderr, "Failed to initialize hash table\n" );
       exit(1);
+   }
+
+   hash_table_t* rt = NULL;
+   if ( repack_flag ) {
+      if ( (rt = malloc( sizeof( struct hash_table ) )) == NULL ) {
+         fprintf( stderr, "Failed to allocate repack hash table\n" );
+         exit(1);
+      }
+      if ( ht_init( rt, REPACK_TABLE_SIZE ) == NULL ) {
+         fprintf( stderr, "Failed to initialize repack hash table\n" );
+         exit(1);
+      }  
    }
 
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,
@@ -255,13 +275,17 @@ int main(int argc, char **argv) {
 
    fclose(file_status->packedfd);
    if (file_status->is_packed) {
-      process_packed(file_status, ht, repack_flag);
+      process_packed(file_status, ht, rt);
    }
    fclose(file_status->outfd);
 
    free( fileset_info_ptr );
    free( ht->table );
    free( ht );
+   if( rt ) {
+      free( rt->table );
+      free( rt );
+   }
 
    //TEMP TEMP TEMP FOR DEBUG
    //unlink(packed_log);
@@ -433,11 +457,45 @@ a linked list of payload entries.
 
 *****************************************************************************/
 
-void update_payload( void* new, void* old){
-   ht_payload NP = (ht_payload) new;
-   ht_payload OP = (ht_payload) old;
+void update_payload( void* new, void** old){
+   ht_package NP = (ht_package) new;
+   ht_header OP = *((ht_header*) old);
 
-   NP->next = OP;
+   if ( OP == NULL ) {
+      if( (OP = malloc( sizeof( struct payload_header_struct ) )) == NULL ) {
+         fprintf( stderr, "update_payload: failed to allocate a payload header struct\n" );
+         exit( -1 );
+      }
+
+      if ( (OP->files = malloc( sizeof( struct payload_file_struct ) )) == NULL ) {
+         fprintf( stderr, "update_payload: failed to allocate a payload file struct\n" );
+         exit( -1 );
+      }
+
+      OP->chunks = NP->chunks;
+      OP->files->md_path = NP->md_path;
+      OP->files->next = NULL;
+      *old = OP;
+   }
+   else {
+      ht_file* trav = &(OP->files);
+
+      while ( *trav != NULL ) {
+         trav = &((*trav)->next);
+      }
+
+      if ( (*trav = malloc( sizeof( struct payload_file_struct ) )) == NULL ) {
+         fprintf( stderr, "update_payload: failed to allocate a payload file struct\n" );
+         exit( -1 );
+      }
+
+      (*trav)->md_path = NP->md_path;
+      (*trav)->next = NULL;
+
+      if ( OP->chunks != NP->chunks ) {
+         fprintf( stderr, "update_payload: WARNING: xattr file count of %d for %s does not match expected %d (from %s)\n", NP->chunks, NP->md_path, OP->chunks, OP->files->md_path );
+      }
+   }
 }
 
 
@@ -536,6 +594,15 @@ int read_inodes(const char *fnameP,
       rc = errno;
       fprintf(stderr, "%s: line %d - gpfs_open_inodescan: %s\n", 
       ProgName,__LINE__,strerror(rc));
+      early_exit = 1;
+      clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
+   }
+
+   ht_package payload;
+   if ( (payload = malloc( sizeof( struct payload_package_struct ) )) == NULL ) {
+      // This is a duplication of Alfred's exit code, should verify
+      rc = errno;
+      fprintf(stderr, "marfs_gc: failed to allocate space for a hash table payload\n");
       early_exit = 1;
       clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
    }
@@ -682,34 +749,11 @@ int read_inodes(const char *fnameP,
                         // GRAN
                         //   fprintf(file_info_ptr->packedfd,"%s %zu %s\n", 
                         //      xattr_ptr->xattr_value, post->chunks, md_path_ptr );
-                           void (*update) (void*,void*) = &update_payload;
-                           ht_payload payload;
-                           if ( (payload = malloc( sizeof( struct payload_struct ) )) == NULL ) {
-                              // This is a duplication of Alfred's exit code, should verify
-                              rc = errno;
-                              fprintf(stderr, "marfs_gc: failed to allocate space for a hash table payload\n");
-                              early_exit = 1;
-                              clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
-                           }
-
-                           int len_objid = strlen( xattr_ptr->xattr_value ) + 1;
                            int len_mdpath = strlen( md_path_ptr ) + 1;
 
-                           if ( (payload->objid = malloc( sizeof( char ) * len_objid )) == NULL ) {
-                              rc = errno;
-                              fprintf(stderr, "marfs_gc: failed to allocate space for an objid string\n");
-                              early_exit = 1;
-                              clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
-                           }
                            if ( (payload->md_path = malloc( sizeof( char ) * len_mdpath )) == NULL ) {
                               rc = errno;
                               fprintf(stderr, "marfs_gc: failed to allocate space for a path string\n");
-                              early_exit = 1;
-                              clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
-                           }
-                           if ( (payload->objid = strncpy( payload->objid, xattr_ptr->xattr_value, len_objid )) == NULL ) {
-                              fprintf( stderr, "marfs_gc: failure of strncpy for packed file objectID\n" );
-                              rc = errno;
                               early_exit = 1;
                               clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
                            }
@@ -721,9 +765,8 @@ int read_inodes(const char *fnameP,
                            }
                            
                            payload->chunks = post->chunks;
-                           payload->next = NULL;
 
-                           ht_insert_payload( ht, xattr_ptr->xattr_value, payload, update );
+                           ht_insert_payload( ht, xattr_ptr->xattr_value, payload, &update_payload );
                            file_info_ptr->is_packed = 1;
                         }
 
@@ -746,6 +789,7 @@ int read_inodes(const char *fnameP,
 ******/
       }
    } // endwhile
+   free( payload );
    clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
    return(rc);
 }
@@ -1018,7 +1062,7 @@ exists for that object_name.  If the files counted equal the total file_count,
 the object and files are deleted.  Ohterwise they are left in place and a 
 repack utility will be run on the trash directory.
 *****************************************************************************/
-int process_packed(File_Info *file_info_ptr, hash_table_t* ht, unsigned char repack_flag)
+int process_packed(File_Info *file_info_ptr, hash_table_t* ht, hash_table_t* rt)
 {
 //   FILE *pipe_cat = NULL;
 //   FILE *pipe_grep = NULL;
@@ -1045,29 +1089,40 @@ int process_packed(File_Info *file_info_ptr, hash_table_t* ht, unsigned char rep
    // proxy1/bparc/ver.001_001/ns.development/P___/inode.0000016572/md_ctime.20160526_124320-0600_1/obj_ctime.20160526_124320-0600_1/unq.0/chnksz.40000000/chnkno.0 403
    // /gpfs/fileset/trash/development.0/8/7/3/uni.255.trash_0000016873_20160526_125809-0600_1
    //
-   ht_payload Ptmp;
+   ht_file Ptmp;
+   ht_file file;
 
    while ( (entry = ht_traverse_and_destroy( ht, entry )) != NULL ) {
       
       
-      ht_payload payload = (ht_payload) entry->payload;      
+      ht_header p_header = (ht_header) entry->payload;      
+      file = p_header->files;
 
 
-      if (entry->value != payload->chunks) {
-         //Here is where this info should be delivered to the repacker
-         //The var 'payload' is the head of a linked list of file info for this object
-         fprintf(stderr, "object %s has %d files while chunk count is %d\n",
-               payload->objid, entry->value, payload->chunks);
+      if (entry->value != p_header->chunks) {
 
-         //free the payload list
-         while ( payload != NULL ) {
-            Ptmp = payload;
-            payload = payload->next;
-            free( Ptmp->objid );
-            free( Ptmp->md_path );
-            free( Ptmp );
+         // TODO check min_pack_file_count to determine canidacy for repack
+         if ( rt  &&  entry->value ) {
+            fprintf( stderr, "repack canidate found\n" );
+            // TODO insert into rt table
          }
+         else {
+            //The var 'p_header' is the head of a linked list of file info for this object
+            fprintf(stderr, "object %s has %d files while chunk count is %d\n",
+                  entry->key, entry->value, p_header->chunks);
 
+            //free the payload list
+            while ( file != NULL ) {
+               Ptmp = file;
+               file = file->next;
+               free( Ptmp->md_path );
+               free( Ptmp );
+               if( file )
+                  fprintf(stderr, "REPEAT: object %s has %d files while chunk count is %d   MD = %s\n",
+                     entry->key, entry->value, p_header->chunks, file->md_path);
+            }
+            free( p_header );
+         }
          continue;
       }
 
@@ -1075,10 +1130,10 @@ int process_packed(File_Info *file_info_ptr, hash_table_t* ht, unsigned char rep
       // If we get here, counts are matching up
       // Go ahead and start deleting
       MarFS_FileHandle fh;
-      if (fake_filehandle_for_delete(&fh, payload->objid, payload->md_path)) {
+      if (fake_filehandle_for_delete(&fh, entry->key, file->md_path)) {
          fprintf(file_info_ptr->outfd,
                  "failed to create filehandle for %s %s\n",
-                 payload->objid, payload->md_path);
+                 entry->key, file->md_path);
          continue;
       }
 
@@ -1087,32 +1142,30 @@ int process_packed(File_Info *file_info_ptr, hash_table_t* ht, unsigned char rep
       // Delete object first
       if ( delete_object(&fh, file_info_ptr, multi_flag) != 0 ) {
          fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
-                 %d) on object %s\n", obj_return, payload->objid);
+                 %d) on object %s\n", obj_return, entry->key);
          obj_return = -1;
       }
       else if ( file_info_ptr->no_delete) {
-         fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", payload->objid);
+         fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", entry->key);
       }
       // Get metafile name from tmp_packed_log and delelte 
       else {
-         fprintf(file_info_ptr->outfd, "deleted object %s\n", payload->objid);
+         fprintf(file_info_ptr->outfd, "deleted object %s\n", entry->key);
       }
 
       Ptmp = NULL;
-      while ( payload != NULL ) {
+      while ( file != NULL ) {
          //Delete files
-         if ( delete_file(payload->md_path, file_info_ptr) == -1 )
+         if ( delete_file(file->md_path, file_info_ptr) == -1 )
             df_return = -1;
 
          // free payload struct and referenced strings
-         Ptmp = payload;
-         payload = payload->next;
-         free( Ptmp->objid );
+         Ptmp = file;
+         file = file->next;
          free( Ptmp->md_path );
          free( Ptmp );
       }
-
-      //TODO free entry struct?
+      free( p_header );
 
    }
 
@@ -1271,8 +1324,8 @@ int read_config_gc(Fileset_Info *fileset_info_ptr)
 ////   FILE *pipe_cat = NULL;
 ////   FILE *pipe_grep = NULL;
 //
-//   char obj_buf[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
-//   char obj_buf1[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
+////   char obj_buf[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
+////   char obj_buf1[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
 //   char objid[MARFS_MAX_OBJID_SIZE];
 ////   char cat_command[MAX_CMD_LENGTH];
 ////   char grep_command[MAX_CMD_LENGTH];
@@ -1305,7 +1358,7 @@ int read_config_gc(Fileset_Info *fileset_info_ptr)
 //            strcpy(objects->objid, objid);
 //         }
 //         objects->chunk_count = payload->chunk_count;
-//         sscanf(obj_buf1,"%s %d %s", objid, &chunk_count, filename);
+////         sscanf(obj_buf1,"%s %d %s", objid, &chunk_count, filename);
 //         // Need to look into this - do we need a minimum value to repack?
 //         // same question as packer script
 //         // Well for now this is not an issue because just trying to repack
@@ -1502,6 +1555,7 @@ int read_config_gc(Fileset_Info *fileset_info_ptr)
 //      objects=objects->next;
 //   } return 0;
 //}
+//
 ///******************************************************************************
 //* Name update_meta
 //*
@@ -1560,6 +1614,7 @@ int read_config_gc(Fileset_Info *fileset_info_ptr)
 //  }
 //  return 0;
 //}
+//
 ///******************************************************************************
 // * * Name free_objects
 // * * 
