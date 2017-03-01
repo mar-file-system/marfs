@@ -837,6 +837,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
    MarFS_Repo_Range_List  marfs_repo_range_list;
 
    struct config* config = read_PA2X_config();
+   if (! config) {
+      LOG(LOG_ERR, "read_PA2X_config() failed\n");
+      return NULL;
+   }
 
    marfs_config = (MarFS_Config_Ptr) malloc( sizeof(MarFS_Config));
    if ( marfs_config == NULL) {
