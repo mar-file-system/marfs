@@ -65,10 +65,10 @@ extern "C" {
 
 
 
-// Makefile makes a local symlink to the PA2X-generated header, which is
-// found in the PA2X install-dir.  That way, this header can be used
-// elsewhere in MarFS, without needing to know about PA2X.
-#include "config-structs.h"
+// The build now copies this file into the build-destination, at install-time.
+// PA2X needs to load it from there at run-time.  But at compile-time, we're just
+// reading the copy under $PARSE_DIR.  See read_PA2X_config().
+#include "parse-inc/config-structs.h"
 
 
 struct config* read_PA2X_config();

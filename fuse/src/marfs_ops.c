@@ -1078,7 +1078,7 @@ int marfs_open(const char*         path,
        ((content_length > info->pre.repo->max_pack_file_size) ||
         (content_length >= (info->pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))) {
 
-      return -2;
+      return ENOTPACKABLE;
    }
 
 
@@ -1158,8 +1158,8 @@ int marfs_open(const char*         path,
                 info->pre.repo->max_pack_file_count);
             // we need to close the current object stream and open a new
             // one if it is a packed object
-            marfs_release_fh(fh);
-            return marfs_open_packed(path, fh, flags, content_length);
+            // we will now just tell pftool (or something else to do the work)
+            return EFHFULL;
          }
 
          // set the object type
@@ -1313,16 +1313,17 @@ int marfs_open(const char*         path,
 //
 // It only makes sense to use this on a create call.
 //
-// -2 will be returned if the content_length exceeds the max packed size
+// ENOTPACKABLE will be returned if the file is not packable
+// EFHFULL will be returned if the filehandle is full
 int  marfs_open_packed   (const char* path, MarFS_FileHandle* fh, int flags,
                           curl_off_t content_length) {
    // if you are trying to read the file just use regular open
    if(!(flags & O_WRONLY)) {
-      return -2;
+      return ENOTPACKABLE;
    }
 
    if( 0 >= content_length) {
-      return -2;
+      return ENOTPACKABLE;
    }
 
    // if the flag is not already set go ahead set and clear the data structure
@@ -2202,10 +2203,16 @@ int marfs_release (const char*        path,
    return 0;
 }
 
-// Pftool needs a way to clear restart on files that it packed once the object
-// stream has been closed
-// TODO: can this be merged with batch_post_process
-int marfs_clear_restart(const char* path) {
+/**
+ * Pftool needs a way to finialize files after it has confirmed that those
+ * files have been commited. This function clears the restart flag and sets
+ * the object field to be correct for packed files.
+ *
+ * @param path The path to cleanup
+ * @param packFileCount The number of packed files in the object
+ * @return 0 on success
+ */
+int marfs_packed_cleanup(const char* path, size_t packedFileCount) {
    TRY_DECLS();
    LOG(LOG_INFO, "%s\n", path);
 
@@ -2229,10 +2236,15 @@ int marfs_clear_restart(const char* path) {
          new_mode = info.restart.mode;
       }
 
-      // remove "restart" xattr.  [Can't do this at close-time, in the case
-      // of N:1 files, so we do it here, for them.] Also for packed files
+      // remove "restart" xattr. cannot do this at close time for packed files
+      // because the object stream has not been closed and we cannot know that
+      // the data has been commited to disc
       info.xattrs &= ~(XVT_RESTART);
-      SAVE_XATTRS(&info, (XVT_RESTART));
+      // set the packed file count for the packed file
+      info.post.chunks = packedFileCount;
+
+      // save the new xattr
+      SAVE_XATTRS(&info, (XVT_RESTART|XVT_POST));
 
       // install more-restrictive mode, if needed.
       if (install_new_mode) {

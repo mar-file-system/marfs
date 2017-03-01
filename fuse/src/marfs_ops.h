@@ -101,6 +101,9 @@ OF SUCH DAMAGE.
 extern "C" {
 #  endif
 
+#define ENOTPACKABLE (-2)
+#define EFHFULL (-3)
+
 
 int  marfs_access(const char* path, int mask);
 
@@ -155,7 +158,7 @@ ssize_t marfs_readlink   (const char* path, char* buf, size_t size);
 
 int  marfs_release(const char* path, MarFS_FileHandle* fh);
 
-int marfs_clear_restart(const char* path);
+int marfs_packed_cleanup(const char* path, size_t packedFileCount);
 
 int marfs_release_fh(MarFS_FileHandle* fh);
 
