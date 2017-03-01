@@ -655,12 +655,6 @@ DAL posix_dal = {
 #define MC_CONFIG(CTX)  MC_CONTEXT(CTX)->config
 #define MC_CONTEXT(CTX) ((MC_Context*)((CTX)->data.ptr))
 
-enum mc_flags {
-   MCF_DEFERED_OPEN = 0x1, // we called open, and said we opened the
-                           // object, but really we are waiting until
-                           // you call put() or get() to do the open.
-};
-
 typedef struct mc_context {
    ObjectStream*     os;
    ne_handle         mc_handle;
@@ -713,12 +707,14 @@ static int open_degraded_object_log(const char *log_dir_path) {
    //      with no read permission since root can read anything and
    //      the rebuild utility will be run by an admin.
    if(fd < 0) {
-      LOG(LOG_ERR, "Failed to open degraded object log (%s): %s\n", log_path, strerror(errno));
+      LOG(LOG_ERR, "Failed to open degraded object log (%s): %s\n",
+          log_path, strerror(errno));
    }
    else {
-      // If we successfully opened the file, the try to chmod it, since we might have
-      // created it. If the file exists this is wasted effort, but there isn't an easy way
-      // to tell whether open created it without also doing a stat().
+      // If we successfully opened the file, the try to chmod it,
+      // since we might have created it. If the file exists this is
+      // wasted effort, but there isn't an easy way to tell whether
+      // open created it without also doing a stat().
       chmod(log_path, S_IWUSR|S_IWGRP|S_IWOTH);
    }
       
@@ -905,48 +901,10 @@ int mc_update_path(DAL_Context* ctx) {
    return 0;
 }
 
-// Actually open an object, don't just defer it and say we did it.
-int mc_do_open(DAL_Context* ctx) {
-   ENTRY();
-
-   ObjectStream* os            = MC_OS(ctx);
-   char*         path_template = MC_CONTEXT(ctx)->path_template;
-
-   unsigned int n = MC_CONFIG(ctx)->n;
-   unsigned int e = MC_CONFIG(ctx)->e;
-
-   // QUESTION: Should we test os->flags & OSF_OPEN here? It would be
-   // an error to call this except after mc_open(), but... this should
-   // only be used internally anyway, so we can pretty much guarantee
-   // that won't happen.
-   
-   int mode = (os->flags & OSF_WRITING) ? NE_WRONLY : NE_RDONLY;
-   MC_HANDLE(ctx) = ne_open(path_template, mode,
-                            MC_CONTEXT(ctx)->start_block, n, e);
-   if(! MC_HANDLE(ctx)) {
-      LOG(LOG_ERR, "Failed to open MC Handle %s\n", path_template);
-      return -1;
-   }
-
-   // open is no longer defered.
-   ctx->flags &= ~MCF_DEFERED_OPEN;
-   
-   EXIT();
-   return 0;
-}
-
-// We want to use the mc DAL to defer opens until put() or get() are
-// called. marfs_open() already implements this for reads, but not
-// writes, by not calling DAL->open() until marfs_read() is called. In
-// the interest consistency, however, we will defer all opens until a
-// MC_DAL operation is invoked that actually requires an open data
-// stream (put() or get()). All flags will be set in the object stream
-// that is passed to init() to make it look like the stream is opened,
-// but an additional flag in the dal context will also be set
-// indicating to ->put() or ->get() that the open has been defered.
+// Open a multi-component object stream backed by a ne_handle.
 //
-// Could fail if the object stream is being reused and is not in a
-// good state.
+// This used to defer opens, since that is now done in MarFS proper,
+// we no longer need to do it here.
 int mc_open(DAL_Context* ctx,
             int is_put,
             size_t chunk_offset,
@@ -956,9 +914,21 @@ int mc_open(DAL_Context* ctx,
    ENTRY();
 
    ObjectStream* os = MC_OS(ctx);
+   char*         path_template = MC_CONTEXT(ctx)->path_template;
+
+   unsigned int n = MC_CONFIG(ctx)->n;
+   unsigned int e = MC_CONFIG(ctx)->e;
 
    // do the generic cleanup stuff like resetting flags.
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
+
+   int mode = is_put ? NE_WRONLY : NE_RDONLY;
+   MC_HANDLE(ctx) = ne_open(path_template, mode,
+                            MC_CONTEXT(ctx)->start_block, n, e);
+   if(! MC_HANDLE(ctx)) {
+      LOG(LOG_ERR, "Failed to open MC Handle %s\n", path_template);
+      return -1;
+   }
 
    if(is_put) {
       os->flags |= OSF_WRITING;
@@ -967,7 +937,6 @@ int mc_open(DAL_Context* ctx,
       os->flags |= OSF_READING;
    }
 
-   ctx->flags |= MCF_DEFERED_OPEN;
    os->flags  |= OSF_OPEN;
    MC_CONTEXT(ctx)->chunk_offset = chunk_offset;
    
@@ -992,13 +961,6 @@ int mc_put(DAL_Context* ctx,
       LOG(LOG_ERR, "Attempted put on OS that is not open.\n");
       errno = EBADF;
       return -1;
-   }
-   else if(ctx->flags & MCF_DEFERED_OPEN) {
-      if(mc_do_open(ctx)) {
-         LOG(LOG_ERR, "%s (start-block: %d) could not be opened for writing\n",
-             MC_CONTEXT(ctx)->path_template, MC_CONTEXT(ctx)->start_block);
-         return -1; // errno should be set in do_open()
-      }
    }
 
    ne_handle handle = MC_HANDLE(ctx);
@@ -1025,23 +987,15 @@ ssize_t mc_get(DAL_Context* ctx, char* buf, size_t size) {
       errno = EBADF;
       LOG(LOG_ERR, "Attempted get on OS that is not open.\n");
    }
-   else if(ctx->flags & MCF_DEFERED_OPEN) {
-      if(mc_do_open(ctx)) {
-         LOG(LOG_ERR, "%s could not be opened for reading\n", os->url);
-         return -1;
-      }
-   }
 
    ne_handle handle = MC_HANDLE(ctx);
 
-   // Need to figure out how to get the offset from the os.  May be as
-   // simple as reading from os->written.  Note that stream_get()
-   // truncates requests to fit within os->content_len, thus avoiding
-   // reads that return fewer than the number of bytes requested.
+   // context->chunk_offset tracks the offset we are reading at within
+   // the object.
    size_read = ne_read(handle, buf, size, MC_CONTEXT(ctx)->chunk_offset);
 
    if(size_read < 0) {
-      LOG(LOG_ERR, "netof_read() failed.\n");
+      LOG(LOG_ERR, "ne_read() failed.\n");
       return -1;
    }
    else if(size_read == 0) { // EOF
@@ -1056,68 +1010,76 @@ ssize_t mc_get(DAL_Context* ctx, char* buf, size_t size) {
    return size_read;
 }
 
-// Upon return no more I/O is possible. The stream is closed.  If
-// DEFERED_OPEN is asserted, then this is almost no-op only flags are
-// changed.
+// Upon return no more I/O is possible. The stream is closed.
+//
+// If ne_close indicates a recoverable error, then the object is
+// logged to the "degraded object log".
 int mc_sync(DAL_Context* ctx) {
    ENTRY();
-   
+
    ObjectStream* os         = MC_OS(ctx);
    ne_handle     handle     = MC_HANDLE(ctx);
    MC_Config*    config     = MC_CONFIG(ctx);
    MC_Context*   mc_context = MC_CONTEXT(ctx);
-
+   
    if(! (os->flags & OSF_OPEN)) {
       LOG(LOG_ERR, "%s isn't open\n", os->url);
       errno = EINVAL;
       return -1;
    }
-   else if(! (ctx->flags & MCF_DEFERED_OPEN)) {
-     // the result of close for a handle opened for reading is an
-     // indicator of whether the data is degraded and, if so, which
-     // block is corrupt or missing.
-     int error_pattern = ne_close(handle);
-     if(error_pattern > 0) {
-       // Keeping the log message as well as writing to the degraded
-       // object file for debugging purposes.
-       LOG(LOG_INFO, "WARNING: Object %s degraded. Error pattern: 0x%x."
-            " (N: %d, E: %d, Start: %d).\n",
-           mc_context->path_template, error_pattern,
-           config->n, config->e, mc_context->start_block);
-       // we shouldn't need more then 512 bytes to hold the extra data
-       // needed for rebuild
-       char buf[MC_MAX_PATH_LEN + 512];
-       snprintf(buf, MC_MAX_PATH_LEN + 512,
-                MC_DEGRADED_LOG_FORMAT, mc_context->path_template,
-                config->n, config->e,
-                mc_context->start_block, error_pattern,
-                MC_FH(ctx)->info.pre.repo->name,
-                mc_context->pod, mc_context->cap);
-       WAIT(&config->lock);
-       // If the degraded log file has not already been opened, open it now.
-       if(config->degraded_log_fd == -1) {
-          config->degraded_log_fd = open_degraded_object_log(config->degraded_log_path);
-          free(config->degraded_log_path);
-          config->degraded_log_path = NULL;
-       }
 
-       if(write(config->degraded_log_fd, buf, strlen(buf))
-          != strlen(buf)) {
+   // the result of close for a handle opened for reading is an
+   // indicator of whether the data is degraded and, if so, which
+   // block is corrupt or missing.
+   int error_pattern = ne_close(handle);
+   if(error_pattern > 0) {
+      // Keeping the log message as well as writing to the degraded
+      // object file for debugging purposes.
+      LOG(LOG_INFO, "WARNING: Object %s degraded. Error pattern: 0x%x."
+          " (N: %d, E: %d, Start: %d).\n",
+          mc_context->path_template, error_pattern,
+          config->n, config->e, mc_context->start_block);
+      // we shouldn't need more then 512 bytes to hold the extra data
+      // needed for rebuild
+      char buf[MC_MAX_PATH_LEN + 512];
+      snprintf(buf, MC_MAX_PATH_LEN + 512,
+               MC_DEGRADED_LOG_FORMAT, mc_context->path_template,
+               config->n, config->e,
+               mc_context->start_block, error_pattern,
+               MC_FH(ctx)->info.pre.repo->name,
+               mc_context->pod, mc_context->cap);
+      WAIT(&config->lock);
+      // If the degraded log file has not already been opened, open it now.
+      if(config->degraded_log_fd == -1) {
+         config->degraded_log_fd =
+            open_degraded_object_log(config->degraded_log_path);
+         if(config->degraded_log_fd < 0) {
+            LOG(LOG_ERR, "failed to open degraded log file\n");
+         }
+         else {
+            // If we successfully opened it, then free the resources
+            // used to store the path.
+            free(config->degraded_log_path);
+            config->degraded_log_path = NULL;
+         }
+      }
+
+      if(write(config->degraded_log_fd, buf, strlen(buf))
+         != strlen(buf)) {
          LOG(LOG_ERR, "Failed to write to degraded object log\n");
          // theoretically the data is still safe, so we can just log
          // and ignore the failure.
-       }
-       POST(&config->lock);
-     }
-     else if(error_pattern < 0) {
-       LOG(LOG_ERR, "ne_close failed on %s", mc_context->path_template);
-       return -1;
-     }
+      }
+      POST(&config->lock);
    }
-   else {
-      LOG(LOG_INFO, "%s DEFERED_OPEN asserted. sync is a noop\n",
-          mc_context->path_template);
-      ctx->flags &= ~MCF_DEFERED_OPEN;
+   else if(error_pattern < 0) {
+      // close the stream, a failed sync renders the ne_handle
+      // invalid calling mc_close should prevent marfs from ever
+      // trying to use it again.
+      mc_close(ctx);
+      os->flags |= OSF_ERRORS;
+      LOG(LOG_ERR, "ne_close failed on %s", mc_context->path_template);
+      return -1;
    }
 
    EXIT();
@@ -1134,8 +1096,6 @@ int mc_abort(DAL_Context* ctx) {
       return -1;
    }
 
-   // defered open is no longer possible.
-   ctx->flags &= ~MCF_DEFERED_OPEN;
    MC_OS(ctx)->flags |= OSF_ABORT;
    
    EXIT();
@@ -1154,8 +1114,6 @@ int mc_close(DAL_Context* ctx) {
       LOG(LOG_INFO, "Close on not-open stream %s\n", os->url);
       return 0;
    }
-   // Don't need to worry about defered opens here since that should
-   // have been taken care of in mc_sync.
 
    os->flags &= ~OSF_OPEN;
    os->flags |= OSF_CLOSED;

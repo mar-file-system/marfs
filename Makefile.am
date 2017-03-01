@@ -2,9 +2,13 @@ AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
 	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
 	      -DDATAPARSE -DPARSE_DIR=$(PARSE_DIR) -I$(PARSE_DIR)
 
+AM_CFLAGS =
+AM_LDFLAGS =
+LDADD =
+
 if GPROF
-AM_CFLAGS = -pg
-AM_LDFLAGS = -pg
+AM_CFLAGS  += -pg
+AM_LDFLAGS += -pg
 endif
 
 if DEBUG
@@ -32,6 +36,7 @@ if NO_AWSAUTH
 AM_CPPFLAGS += -DUSE_SPROXYD=1
 endif
 
+
 #if PIPETOOL
 #bin_PROGRAMS = marfs_pipe
 #marfs_pipe_SOURCES = marfs_pipe_main.c
@@ -40,7 +45,7 @@ endif
 PARSE_OBJ_Files = confpars.o path-switch.o parsedata.o
 PARSE_OBJ = $(PARSE_DIR)/confpars.o $(PARSE_DIR)/path-switch.o $(PARSE_DIR)/parsedata.o
 
-LDADD = libmarfs.a $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
+LDADD += libmarfs.a $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
 
 # Generally we will always want to build the config tester program.
 bin_PROGRAMS = marfs_config
@@ -60,7 +65,7 @@ libmarfs_a_SOURCES = parser fuse/src/common.c fuse/src/common.h        \
 					 fuse/src/marfs_configuration.c                    \
 					 fuse/src/marfs_configuration.h
 
-libmarfs_a_LIBADD = $(PARSE_OBJ) $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
+libmarfs_a_LIBADD = $(PARSE_OBJ)
 
 # Use our own polite spin locks
 if SPINLOCKS
@@ -69,15 +74,22 @@ libmarfs_a_SOURCES += fuse/src/spinlock.h fuse/src/spinlock.c \
 AM_CPPFLAGS += -DSPINLOCKS
 endif
 
-if USE_MC
-AM_CPPFLAGS += -I$(LIBNE) -DUSE_MC=1
-libmarfs_a_LIBADD += $(LIBNE)/libne.a
 
+
+# --- additions for multi-component builds
+if USE_MC
+AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
+AM_LDFLAGS  += -L$(LIBNE)/lib
+LDADD       += -L$(LIBNE)/lib -lne
+
+# rebuilder is used to rebuild MC repositories
 bin_PROGRAMS += rebuilder
 rebuilder_SOURCES = utilities/multi-component/rebuilder.c
 
 endif
 
+
+# --- marfs_config
 include_HEADERS = fuse/src/marfs_base.h \
                   fuse/src/object_stream.h \
                   fuse/src/common.h \
@@ -107,6 +119,8 @@ marfs_config_SOURCES = fuse/src/marfs_config.c                   \
 #
 # marfs_config_SOURCES = fuse/src/marfs_config.c
 # marfs_config_LDADD = libmarfs.a
+
+
 
 # ............................................................................
 # FUSE
@@ -252,15 +266,23 @@ abort: fusectl
 #	RUN $* $(MNT)/test00
 
 
-# TODO: FUSE_FLAGS, EXEC, PID
-FUSE_FLAGS = -o allow_other,direct_io,use_ino,intr
-PID = marfs_fuse.pid
-LOG =  >fuse.log 2>&1
+
+# NOTE: NFS-exporting (v3 or v4) a fuse-mount mounted with 'direct_io'
+#       causes all reads received at fuse to have size=4K.  Without
+#       direct_io, read sizes in this scenario are 128K.
+
+FUSE_FLAGS = -o allow_other,use_ino,intr
 # ifeq ($(DEBUG),2)
 #	FUSE_FLAGS += -d -f
 # endif
 
+PID = marfs_fuse.pid
+LOG =  >fuse.log 2>&1
+
+
 # convenience targets for fuse.
+# TODO: re-introduce the old EXEC, which allowed e.g. gprof, valgrind, etc.
+
 _mnt:
 	@ echo
 	@ echo "mounting at $(MARFS_MNT)"

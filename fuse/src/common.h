@@ -443,6 +443,7 @@ typedef enum {
    FH_MULTI_THR       = 0x0020,  // multi-threaded reads of FH (i.e. NFS)
    FH_RELEASING       = 0x0040,  // added to inform multi-thr during release
    FH_PACKED          = 0x0080,  // the object in the file handle is packed
+   FH_FLUSHED         = 0x0100,  // the file has been flushed to storage
 } FHFlags;
 
 typedef uint16_t FHFlagType;

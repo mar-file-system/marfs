@@ -66,6 +66,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdio.h>
 #include <pthread.h>
 #include <fnmatch.h>
+#include <sys/types.h>
+#include <pwd.h>
 
 // we absolutely must have multi-component enabled to build this
 // program.  This ensures that the necessary symbols are exposed from
@@ -354,6 +356,8 @@ void usage(const char *program) {
          "failure statistics from the logs.\n");
   printf("\nThe -o <filename> flag may be used to specify a file to which \n"
          "rebuild failures should be logged rather than standard output\n");
+  printf("\nTo run the rebuilder as some other user (ie. storageadmin) use "
+         "the -u <username> option\n");
 }
 
 /**
@@ -694,18 +698,19 @@ void rebuild_component(const char *repo_name,
 
 int main(int argc, char **argv) {
 
-  unsigned int  ht_size           = 1024;
-  int           component_rebuild = 0;
-  char         *repo_name         = NULL;
-  int           threads           = 1;
-  int           pod, block, cap;
-  int           opt;
-  int           scatter_range[2];
-  int           range_given = 0;
+  unsigned int   ht_size           = 1024;
+  int            component_rebuild = 0;
+  char          *repo_name         = NULL;
+  int            threads           = 1;
+  int            pod, block, cap;
+  int            opt;
+  int            scatter_range[2];
+  int            range_given = 0;
+  struct passwd *pw = NULL;
   pod = block = cap = -1;
   verbose = dry_run = 0;
   error_log = stderr;
-  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dvs:o:")) != -1) {
+  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dvs:o:u:")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -769,6 +774,17 @@ int main(int argc, char **argv) {
       free(start);
       break;
     }
+    case 'u':
+      if((pw = getpwnam(optarg)) == NULL) {
+        perror("getpwnam()");
+        exit(-1);
+      }
+      // set the uid.
+      if(seteuid(pw->pw_uid) != 0) {
+        perror("seteuid()");
+        exit(-1);
+      }
+      break;
     default:
       usage(argv[0]);
       exit(-1);
@@ -784,7 +800,6 @@ int main(int argc, char **argv) {
     fprintf(stderr, "failed to validate marfs configuration\n");
     exit(-1);
   }
-
 
   stats.rebuild_failures  = 0;
   stats.rebuild_successes = 0;
