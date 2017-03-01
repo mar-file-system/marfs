@@ -878,11 +878,11 @@ int mc_update_path(DAL_Context* ctx) {
    unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
    unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
 
-   srandom(objid_hash);
+   unsigned int seed = objid_hash;
    uint64_t a[3];
    int i;
    for(i = 0; i < 3; i++)
-      a[i] = random() * 2 + 1; // generate 32 random bits
+      a[i] = rand_r(&seed) * 2 + 1; // generate 32 random bits
 
    MC_CONTEXT(ctx)->pod         = objid_hash % num_pods;
    MC_CONTEXT(ctx)->cap         = h_a(objid_hash, a[0]) % num_cap;
