@@ -1,6 +1,15 @@
+# At build-time, the PA2X package generates the file
+# $PARSE_DIR/parse-inc/config-structs.h (where environment-var
+# $PARSE_DIR points to the PA2X installation).  At run-time, the PA2X
+# parser loads "./parse-inc/config-structs.h", but at run-time there
+# might not be any PA2X installation.  So, the build will now copy
+# that header-file to include/parse-inc/config-structs.h, under the
+# install-dir.  Thus, you need to build with '--prefix=' a destination
+# that will also exist at run-time, but you no longer need the PA2X
+# install at run-time.
 AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
 	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
-	      -DDATAPARSE -DPARSE_DIR=$(PARSE_DIR) -I$(PARSE_DIR)
+	      -DDATAPARSE -DBUILD_INC_DIR=@includedir@ -I$(PARSE_DIR)
 
 AM_CFLAGS =
 AM_LDFLAGS =
@@ -204,13 +213,18 @@ parser:
 	@ echo; echo "#-- making $(PARSE_DIR)/*.o (again, because makefile deleted them)"
 	@ $(MAKE) -C $(PARSE_DIR) $(PARSE_OBJ_Files) CFLAGS="$(OPTIONS) $(PARSE_OPT)"
 
-	@ echo; echo "#-- making a symlink to $(PARSE_DIR)/$(PARSE_h_file)"
-	ln -fs $(PARSE_H) $(PARSE_H_file)
+#	@ echo; echo "#-- making a symlink to $(PARSE_H)"
+#	ln -fs $(PARSE_H) $(PARSE_H_file)
 
 
 # a super nasty way to make sure that parser is always built first.
 BUILT_SOURCES = parser
 CLEANFILES = $(PARSE_H_file)
+
+
+### include_HEADERS += $(PARSE_H)
+otherincludedir = $(includedir)/parse-inc
+otherinclude_HEADERS = $(PARSE_H)
 
 # ............................................................................
 # Various Testing

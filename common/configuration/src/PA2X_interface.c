@@ -68,7 +68,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "logging.h"
 
-// #include "parse-inc/config-structs.h"
 #include "PA2X_interface.h"
 
 #include "confpars-structs.h"
@@ -111,9 +110,9 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 
 // STRING() transforms a command-line -D argument-value into a string
-// For example, we are given -DPARSE_DIR=/path/to/parse/src, and we want
-// "/path/to/parse/src" It requires two steps, like this:
-//
+// For example, if we are given -DBUILD_INC_DIR=/usr/include, and we
+// want "/usr/include".  It requires two steps, like this:
+
 #define STRING2(X) #X
 #define STRING(X) STRING2(X)
 
@@ -196,31 +195,35 @@ struct config* read_PA2X_config() {
   }
   memset(config,      0x00, sizeof(struct config));
 
-  // Ron's parser assumes it is running in the current working directory It
-  // tries to read "./parse-inc/config-structs.h", at run-time.  Now that
-  // we are agnostic about where the library is built, and we want to
-  // produce a generic parser-library which can run with a different
-  // working-dir, we require -DPARSE_DIR to tell us where the parser-source
-  // was built, so that we can chdir() to there, while running Ron's code.
+  // Ron's parser tries to read "./parse-inc/config-structs.h", at
+  // run-time.  The build now copies parse-inc/config-structs.h from
+  // the PA2X source to the MarFS build-destination, with the same
+  // directory-path, under there.  The BUILD_INC_DIR define is
+  // provided by the build, so that we can chdir() to there, while
+  // running Ron's code.
   { const size_t MAX_WD = 2048;
      char orig_wd[MAX_WD];
      if (! getcwd(orig_wd, MAX_WD)) {
         LOG( LOG_ERR, "Couldn't capture CWD.\n");
         return NULL;
      }
-     if (chdir(STRING(PARSE_DIR))) {
-        LOG( LOG_ERR, "Couldn't set CWD to '%s'.\n", STRING(PARSE_DIR));
+     LOG( LOG_INFO, "original working-dir: '%s'.\n", orig_wd);
+
+     if (chdir(STRING(BUILD_INC_DIR))) {
+        LOG( LOG_ERR, "Couldn't set CWD to '%s'.\n", STRING(BUILD_INC_DIR));
         return NULL;
      }
-     LOG( LOG_INFO, "calling parseConfigFile, with CWD='%s'.\n", STRING(PARSE_DIR));
+     LOG( LOG_INFO, "new working-dir:      '%s'.\n", STRING(BUILD_INC_DIR));
 
      // Ron's most-recent commits [2015-09-21] use this, but listObjByName() is broken
+     LOG( LOG_INFO, "calling parseConfigFile(...)\n", path);
      parseConfigFile( path, CREATE_STRUCT_PATHS, &h_page, &fld_nm_lst, config, &vNTL, QUIET );
 
      if (chdir(orig_wd)) {
         LOG( LOG_ERR, "Couldn't restore CWD to '%s'.\n", orig_wd);
         return NULL;
      }
+     LOG( LOG_INFO, "working-dir restored: '%s'.\n", orig_wd);
   }
   freeHeaderFile(h_page.next);
 
