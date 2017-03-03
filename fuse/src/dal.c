@@ -870,15 +870,20 @@ void mc_deconfig(struct DAL *dal) {
 // Horner's rule.
 //
 // Reference: http://cseweb.ucsd.edu/~kube/cls/100/Lectures/lec16/lec16-14.html
-static unsigned long polyhash(const char* string) {
+static uint64_t polyhash(const char* string) {
    // According to http://www.cse.yorku.ca/~oz/hash.html
    // 33 is a magical number that inexplicably works the best.
    const int salt = 33;
    char c;
-   unsigned long h = *string++;
+   uint64_t h = *string++;
    while((c = *string++))
       h = salt * h + c;
    return h;
+}
+
+// compute the hash function h(x) = (a*x) >> 32
+static uint64_t h_a(const uint64_t key, uint64_t a) {
+   return ((a * key) >> 32);
 }
 
 // Initialize the context for a multi-component backed object.
@@ -999,13 +1004,17 @@ int mc_update_path(DAL_Context* ctx) {
    unsigned int num_pods      = MC_CONFIG(ctx)->num_pods;
    unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
    unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
-   
-   MC_CONTEXT(ctx)->pod       = objid_hash % num_pods;
-   MC_CONTEXT(ctx)->cap       = objid_hash % num_cap;
-   unsigned long scatter      = objid_hash % scatter_width;
 
-   MC_CONTEXT(ctx)->start_block = objid_hash % num_blocks;
+   unsigned int seed = objid_hash;
+   uint64_t a[3];
+   int i;
+   for(i = 0; i < 3; i++)
+      a[i] = rand_r(&seed) * 2 + 1; // generate 32 random bits
 
+   MC_CONTEXT(ctx)->pod         = objid_hash % num_pods;
+   MC_CONTEXT(ctx)->cap         = h_a(objid_hash, a[0]) % num_cap;
+   unsigned long scatter        = h_a(objid_hash, a[1]) % scatter_width;
+   MC_CONTEXT(ctx)->start_block = h_a(objid_hash, a[2]) % num_blocks;
 
    // fill in path template
    // the mc_path_format is sometheing like:

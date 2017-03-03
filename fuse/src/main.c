@@ -904,11 +904,13 @@ int main(int argc, char* argv[])
    __TRY0( seteuid(0) );
 
    if (read_configuration()) {
-      LOG(LOG_ERR, "read_configuration() failed.  Quitting\n");
+      // LOG(LOG_ERR, "read_configuration() failed.  Quitting\n");
+      fprintf(stderr, "read_configuration() failed.  Quitting\n");
       return -1;
    }
    if (validate_configuration()) {
-      LOG(LOG_ERR, "validate_configuration() failed.  Quitting\n");
+      // LOG(LOG_ERR, "validate_configuration() failed.  Quitting\n");
+     fprintf(stderr, "validate_configuration() failed.  Quitting\n");
       return -1;
    }
 
