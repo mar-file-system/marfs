@@ -85,6 +85,9 @@ OF SUCH DAMAGE.
 #include <unistd.h>
 #include <dlfcn.h>
 #include <assert.h>
+#if !defined(dlclose)
+#include <dlfcn.h>
+#endif
 
 
 // ===========================================================================
