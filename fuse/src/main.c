@@ -351,6 +351,7 @@ int fuse_ioctl(const char*            path,
    // ***Maybe a way to get fuse deamon to read up new config file
    // *** we need a way for daemon to read up new config file without stopping
 
+   LOG(LOG_INFO, "fuse_ioctl for %s (cmd 0x%x)(flags 0x%x)", path, cmd, flags);
    WRAP( marfs_ioctl(path, cmd, arg, (MarFS_FileHandle*)ffi->fh, flags, data) );
 }
 
