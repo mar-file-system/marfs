@@ -97,6 +97,10 @@ include the files on which a code unit depends.
 #include <stdio.h>
 
 
+// for the FVIO library code running outside of MarFS fuse daemon process
+// we need to have an access to the user.marfs_objid xattr
+#define FVIO_MODE 1
+
 
 // ---------------------------------------------------------------------------
 // Fuse/pftool support-routines in alpha order (so you can actually find them)
@@ -425,7 +429,38 @@ int marfs_getattr (const char*  path,
       // NOTE: kernel should already have called readlink, to get past any
       //     symlinks.  lstat here is just to be safe.
       LOG(LOG_INFO, "lstat %s\n", info.post.md_path);
-      TRY0( MD_PATH_OP(lstat, info.ns, info.post.md_path, stp) );
+      // FVIO: add special /.fvio file on the fly
+      const char* sub_path = info.post.md_path + info.ns->md_path_len; /* below NS */
+#if 0
+      LOG(LOG_INFO, "lstat (sub-path %s)\n", sub_path);
+      LOG(LOG_INFO, "lstat (mnt_path %s)(mnt_path_len %d)\n", info.ns->mnt_path, info.ns->mnt_path_len);
+      LOG(LOG_INFO, "lstat (md_path %s)(md_path_len %d)\n", info.ns->md_path, info.ns->md_path_len);
+#endif
+      if (strncmp(sub_path, "/.fvio", 6) == 0) {
+          stp->st_size = 0; // FIXME
+          stp->st_blksize = 262144;
+
+          stp->st_blocks  = 1;
+
+          time_t     now = time(NULL);
+          if (now == (time_t)-1) {
+             LOG(LOG_ERR, "time() failed\n");
+             return -1;
+          }
+          stp->st_atime  = now;
+          stp->st_mtime  = now;     // TBD: use mtime of config-file, or mount-time
+          stp->st_ctime  = now;     // TBD: use ctime of config-file, or mount-time
+
+          stp->st_uid     = 0;
+          stp->st_gid     = 0;
+          stp->st_mode = (S_IFREG
+                            | (S_IRUSR | S_IXUSR)
+                            | (S_IRGRP | S_IXGRP)
+                            | S_IXOTH );            // "-r-xr-x--x."
+      }
+      else {
+         TRY0( MD_PATH_OP(lstat, info.ns, info.post.md_path, stp) );
+      }
    }
 
    // mask out setuid bits.  Those are belong to us.  (see marfs_chmod())
@@ -464,12 +499,34 @@ int marfs_getxattr (const char* path,
       return -1;
    }
 
+#ifdef FVIO_MODE
+   // want to get info.pre.objid on request of user.camstor_objid
+   if ( !strcmp(name, "user.camstor_objid") ) {
+       // initialize the Pre struct
+       MarFS_Repo*      repo     = info.ns->iwrite_repo;
+       __TRY0( stat(info.post.md_path, &info.st) );
+       init_pre(&info.pre, OBJ_UNI, info.ns, repo, &info.st);
+
+       // __TRY0( pre_2_str((void*)value, size, &info.pre) );
+       update_pre(&info.pre);
+       // (gdb) p info.ns->iwrite_repo->host
+       //    $5 = 0x660c70 "192.168.1.14:8080"
+       LOG(LOG_INFO, "value: %.*s\n", size, value);
+       int write_count = snprintf(value, size,
+                              "%s/%s/%s",
+                              info.pre.ns->iwrite_repo->host,
+                              info.pre.bucket,
+                              info.pre.objid);
+       return write_count;
+   }
+#else
    // *** make sure they aren’t getting a reserved xattr***
    if ( !strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize) ) {
       LOG(LOG_ERR, "denying reserved getxattr(%s, %s, ...)\n", path, name);
       errno = EPERM;
       return -1;
    }
+#endif
 
    // No need for access check, just try the op
    // Appropriate  getxattr call filling in fuse structure
@@ -481,7 +538,6 @@ int marfs_getxattr (const char* path,
    TRY_GE0( MD_PATH_OP(lgetxattr, info.ns,
                        info.post.md_path, name, (void*)value, size) );
    ssize_t result = rc_ssize;
-
    EXIT();
    return result;
 }
@@ -497,7 +553,17 @@ int marfs_ioctl(const char*            path,
    // if we need an ioctl for something or other
    // *** we need a way for daemon to read up new config file without stopping
 
-   LOG(LOG_INFO, "NOP for %s", path);
+   LOG(LOG_INFO, "NOP for %s (cmd 0x%x)", path, cmd);
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+   EXPAND_PATH_INFO(&info, path);
+   // The "root" namespace is artificial
+   if (IS_ROOT_NS(info.ns)) {
+      LOG(LOG_INFO, "is_root_ns\n");
+      errno = ENOATTR;          // fingers in ears, la-la-la
+      return -1;
+   }
+
    EXIT();
    return 0;
 }
@@ -799,6 +865,7 @@ int marfs_open(const char*         path,
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
    //   IOBuf*            b    = &fh->os.iob;
+   int8_t           is_fvio_special = 0;
 
    EXPAND_PATH_INFO(info, path);
 
@@ -863,30 +930,36 @@ int marfs_open(const char*         path,
       // NOTE: O_RDONLY is not actually a flag!
       //       It's just the absence of O_WRONLY!
       fh->flags |= FH_READING;
-      ACCESS(info->ns, info->post.md_path, R_OK);
-      CHECK_PERMS(info->ns, (R_META | R_DATA));
+      const char* sub_path = info->post.md_path + info->ns->md_path_len; /* below NS */
+      if (strncmp(sub_path, "/.fvio", 6) != 0) {
+         ACCESS(info->ns, info->post.md_path, R_OK);
+         CHECK_PERMS(info->ns, (R_META | R_DATA));
+      }
+      else {
+          is_fvio_special = 1;
+      }
    }
 
    //   if (info->flags & (O_TRUNC)) {
    //      CHECK_PERMS(info->ns, (T_DATA));
    //   }
 
+   if (!is_fvio_special) {
+      STAT_XATTRS(info);
 
-   STAT_XATTRS(info);
+      // we need to check if it is a packed file, and should not be one.
+      // Maybe pftool is opening what will be the first chunk in an Nto1 file.
+      // We should not let it write that object-ID with a "Packed" type,
+      // because object-IDs for all the subsequent chunks will have "N" type.
+      // Q: How do we tell if that is the situation?  A: if pftool is opening
+      // a full chunk-sized object, we decree that it can't be packed.
+      if ((fh->flags & FH_PACKED) &&
+          ((content_length > info->pre.repo->max_pack_file_size) ||
+           (content_length >= (info->pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))) {
 
-   // we need to check if it is a packed file, and should not be one.
-   // Maybe pftool is opening what will be the first chunk in an Nto1 file.
-   // We should not let it write that object-ID with a "Packed" type,
-   // because object-IDs for all the subsequent chunks will have "N" type.
-   // Q: How do we tell if that is the situation?  A: if pftool is opening
-   // a full chunk-sized object, we decree that it can't be packed.
-   if ((fh->flags & FH_PACKED) &&
-       ((content_length > info->pre.repo->max_pack_file_size) ||
-        (content_length >= (info->pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))) {
-
-      return -2;
+         return -2;
+      }
    }
-
 
 
    // If no xattrs, we let user read/write directly on the file.
@@ -2382,12 +2455,14 @@ int marfs_setxattr (const char* path,
       return -1;
    }
 
+#ifndef FVIO_MODE
    // *** make sure they aren’t setting a reserved xattr***
    if ( !strncmp(MarFS_XattrPrefix, name, MarFS_XattrPrefixSize) ) {
       LOG(LOG_ERR, "denying reserved setxattr(%s, %s, ...)\n", path, name);
       errno = EPERM;
       return -1;
    }
+#endif
 
    // No need for access check, just try the op
    // Appropriate  setxattr call filling in fuse structure 

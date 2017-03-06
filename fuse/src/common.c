@@ -343,7 +343,33 @@ int stat_regular(PathInfo* info) {
       return 0;                 /* already called stat_regular() */
 
    memset(&(info->st), 0, sizeof(struct stat));
-   __TRY0( MD_PATH_OP(lstat, info->ns, info->post.md_path, &info->st) );
+   const char* sub_path = info->post.md_path + info->ns->md_path_len; /* below NS */
+   LOG(LOG_INFO, "stat_regular(sub_path %s)\n", sub_path);
+   if (strncmp(sub_path, "/.fvio", 6) == 0) {
+       info->st.st_size = 0; // FIXME
+       info->st.st_blksize = 262144;
+
+       info->st.st_blocks  = 1;
+
+       time_t     now = time(NULL);
+       if (now == (time_t)-1) {
+          LOG(LOG_ERR, "time() failed\n");
+          return -1;
+       }
+       info->st.st_atime  = now;
+       info->st.st_mtime  = now;     // TBD: use mtime of config-file, or mount-time
+       info->st.st_ctime  = now;     // TBD: use ctime of config-file, or mount-time
+
+       info->st.st_uid     = 0;
+       info->st.st_gid     = 0;
+       info->st.st_mode = (S_IFREG
+                         | (S_IRUSR | S_IXUSR)
+                         | (S_IRGRP | S_IXGRP)
+                         | S_IXOTH );            // "-r-xr-x--x."
+   }
+   else {
+       __TRY0( MD_PATH_OP(lstat, info->ns, info->post.md_path, &info->st) );
+   }
 
    info->flags |= PI_STAT_QUERY;
    return 0;
@@ -477,6 +503,7 @@ int stat_xattrs(PathInfo* info) {
                   || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
             // (a) ENOATTR means no attr, or no access.  Treat as the former.
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
+            // translate Pre to xattr-value-string
             __TRY0( init_pre(&info->pre, OBJ_FUSE, info->ns,
                              info->ns->iwrite_repo, &info->st) );
             info->xattr_inits |= spec->value_type; /* initialized this one */
