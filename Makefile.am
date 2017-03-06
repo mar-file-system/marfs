@@ -1,5 +1,5 @@
 AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
-	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
+	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -fPIC        \
 	      -DDATAPARSE -DPARSE_DIR=$(PARSE_DIR) -I$(PARSE_DIR)
 
 if GPROF

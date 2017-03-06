@@ -848,6 +848,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
   /* REPOS ----------------------------------------------------------------- */
   repoList = (struct repo **) config->repo;
+  if (repoList == NULL) {
+    LOG( LOG_ERR, "No MarFS repo list structure: config->repo == NULL\n");
+    return NULL;
+  }
 
 
   // count repos

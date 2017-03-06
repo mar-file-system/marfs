@@ -87,6 +87,9 @@ OF SUCH DAMAGE.
 #include <dlfcn.h>
 #include <assert.h>
 #include <limits.h>		// INT_MAX
+#if !defined(dlclose)
+#include <dlfcn.h>
+#endif
 
 
 // ===========================================================================

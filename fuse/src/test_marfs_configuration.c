@@ -211,8 +211,7 @@ int main( int argc, char *argv[] ) {
 			namespacePtr->name,
 			repoPtr->name );
   } else {
-    fprintf( stderr, "ERROR: Namespace \"%s\" should have a repo for files of size 38.\n",
-			namespacePtr->name );
+    fprintf( stderr, "ERROR: \"s3\" namespace wasn't found, can't find repo for files of size 38.\n");
   }
   fprintf( stdout, "\n" );
 
