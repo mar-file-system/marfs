@@ -32,13 +32,14 @@ function git_modules_PA2X()
     fi
 }
 
-git_submodule_init
-git_modules_aws4c
-git_modules_PA2X
+if [ -d ".git" ] ; then
+    git_modules_aws4c
+    git_modules_PA2X
+fi
 
 autoreconf -i --force
 
-# export DEBUG=0
+export DEBUG=0
 PARSE_DIR=`pwd`/PA2X/ \
     AWS4C=`pwd`/aws4c/ \
     ./configure --prefix=/usr --enable-debug --without-aws-auth

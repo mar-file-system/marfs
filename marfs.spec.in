@@ -5,15 +5,21 @@
 %define        __spec_install_post %{nil}
 %define          debug_package %{nil}
 %define        __os_install_post %{_dbpath}/brp-compress
+%define        marfs_rev %{_marfs_rev}
+%define        marfs_id %{_marfs_id}
 Name:		marfs
-Version:	1.6
-Release:	1%{?dist}
+# Version:	1.6
+Version:	%{marfs_version}
+Release:	%{marfs_rev}%{?dist}
 Summary:	MarFS
 
 Group:		Utilities/System
 License:	BSD
 URL:		https://github.com/mar-file-system/marfs
+# Source0:	%{name}-%{version}.tar.gz
 Source0:	%{name}-%{version}.tar.gz
+Source1:	marfs-aws4c-%{version}.tar.gz
+Source2:	marfs-PA2X-%{version}.tar.gz
 BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root
 
 BuildRequires:	libcurl-devel libattr-devel
@@ -29,8 +35,8 @@ will use GPFS file systems as the metadata component and Scality and EMC ECS
 ViPR object stores as the data component.
 
 
-%prep
-%setup -q
+%prep 
+%setup -q -n %{name}-%{version}-%{marfs_rev}-%{marfs_id} -a1 -a2
 
 
 %build
@@ -50,7 +56,7 @@ find %buildroot -type f \( -name '*.so' -o -name '*.so.*' \) -exec chmod 755 {} 
 %{_bindir}/*
 %{_libdir}/libmarfs.so*
 /usr/lib/marfs/scripts/*
-/usr/lib/marfs/parse-inc/*
+/usr/include/parse-inc/*
 %doc /usr/share/doc/%{name}-%{version}/*
 
 
