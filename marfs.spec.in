@@ -53,6 +53,7 @@ make DESTDIR=%{buildroot} install
 #install -m 755 ./marfs_fuse   %{buildroot}/usr/sbin/
 mkdir -p  %{buildroot}/usr/include/marfs/parse-inc/
 cp -avr ./PA2X/parse-inc/* %{buildroot}/usr/include/marfs/parse-inc/
+cp -avr aws4c/libaws4c*.a %{buildroot}/usr/lib/
 find %buildroot -type f \( -name '*.so' -o -name '*.so.*' \) -exec chmod 755 {} \;
 find %buildroot -type f -name '*.a'  -exec chmod 644 {} \;
 
@@ -60,10 +61,9 @@ find %buildroot -type f -name '*.a'  -exec chmod 644 {} \;
 %files
 %defattr(-,root,root,-)
 %{_bindir}/*
-%{_libdir}/libmarfs.so*
-%{_libdir}/lib*.a
+/usr/lib/lib*.a
+/usr/include/marfs/*
 /usr/lib/marfs/scripts/*
-/usr/include/marfs/parse-inc/*
 %doc /usr/share/doc/%{name}-%{version}/*
 
 
