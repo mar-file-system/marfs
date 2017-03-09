@@ -42,7 +42,9 @@ autoreconf -i --force
 export DEBUG=0
 PARSE_DIR=`pwd`/PA2X/ \
     AWS4C=`pwd`/aws4c/ \
-    ./configure --prefix=/usr --enable-debug --without-aws-auth
+    ./configure --prefix=/usr --includedir=/usr/include/marfs \
+        --sbindir=/usr/sbin \
+        --enable-debug --without-aws-auth
 
 make -j3 -C aws4c lib lib_extra
 make -j3

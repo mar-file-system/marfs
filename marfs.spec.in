@@ -45,9 +45,14 @@ ViPR object stores as the data component.
 %install
 rm -rf %{buildroot}
 mkdir -p  %{buildroot}
+make DESTDIR=%{buildroot} install
 
 # in builddir
-cp -a * %{buildroot}
+#cp -a * %{buildroot}
+#install -m 755 ./marfs_config %{buildroot}/usr/bin/
+#install -m 755 ./marfs_fuse   %{buildroot}/usr/sbin/
+mkdir -p  %{buildroot}/usr/include/parse-inc/
+cp -avr ./PA2X/parse-inc/* %{buildroot}/usr/include/parse-inc/
 find %buildroot -type f \( -name '*.so' -o -name '*.so.*' \) -exec chmod 755 {} +
 
 
