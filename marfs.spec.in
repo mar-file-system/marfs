@@ -56,7 +56,8 @@ cp -avr ./PA2X/parse-inc/* %{buildroot}/usr/include/marfs/parse-inc/
 cp -avr aws4c/libaws4c*.a %{buildroot}/usr/lib/
 find %buildroot -type f \( -name '*.so' -o -name '*.so.*' \) -exec chmod 755 {} \;
 find %buildroot -type f -name '*.a'  -exec chmod 644 {} \;
-
+cp -av utilities/pipetool/* %{buildroot}/usr/lib/marfs/scripts/
+cp -av README.md LICENSE.txt %{buildroot}/usr/share/doc/%{name}-%{version}/
 
 %files
 %defattr(-,root,root,-)
