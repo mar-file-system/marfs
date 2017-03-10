@@ -85,19 +85,40 @@ OF SUCH DAMAGE.
 
 typedef struct payload_file_struct {
    char* md_path;
+   size_t size;
+   time_t md_ctime;
    struct payload_file_struct* next;
 } *ht_file;
 
 typedef struct payload_header_struct {
    size_t chunks;
+   MarFS_Namespace_Ptr ns;
+   time_t md_ctime;
    struct payload_file_struct* files;
+   struct payload_file_struct* tail;
 } *ht_header;
 
 typedef struct payload_package_struct {
+   MarFS_Namespace_Ptr ns;
    size_t chunks;
    char* md_path;
+   time_t md_ctime;
 } *ht_package;
+
+typedef struct rpayload_object_struct {
+   size_t file_count;
+   size_t obj_size;
+   time_t min_ctime;
+   time_t max_ctime;
+   ht_file files;
+   struct rpayload_object_struct* next;
+} *rt_object;
  
+typedef struct rpayload_header_struct {
+   MarFS_Namespace_Ptr ns;
+   rt_object objects;
+} *rt_header;
+
 // ---- Repack structs ----
 //
 //typedef struct File_Handles {
@@ -143,6 +164,7 @@ typedef struct payload_package_struct {
 ******************************************************************************/
 
 char    *ProgName;
+MarFS_Repo_Ptr repoPtr;
 
 /*****************************************************************************
 Name: main
@@ -154,9 +176,9 @@ int main(int argc, char **argv) {
    //FILE *packedfd;
    char *outf = NULL;
    char *rdir = NULL;
-   char *packed_log = NULL;
+//   char *packed_log = NULL;
    char *aws_user_name = NULL;
-   char packed_filename[MAX_PACKED_NAME_SIZE];
+//   char packed_filename[MAX_PACKED_NAME_SIZE];
    //unsigned int uid = 0;
    int fileset_id = -1;
    int  c;
@@ -168,17 +190,17 @@ int main(int argc, char **argv) {
  
    Fileset_Info *fileset_info_ptr;
 
-   if ((ProgName = strrchr(argv[0],'/')) == NULL)
+   if ( (ProgName = strrchr( argv[0], '/' )) == NULL)
       ProgName = argv[0];
    else
       ProgName++;
 
-   while ((c=getopt(argc,argv,"d:t:p:hnro:u:")) != EOF) {
+   while ((c=getopt(argc,argv,"d:t:hnro:u:")) != EOF) {
       switch (c) {
          case 'd': rdir = optarg; break;
          case 'o': outf = optarg; break;
          case 't': time_threshold_sec=atoi(optarg) * DAY_SECONDS; break;
-         case 'p': packed_log = optarg; break;
+//         case 'p': packed_log = optarg; break;
          case 'u': aws_user_name = optarg; break;
          case 'n': delete_flag = 1; break;
          case 'r': repack_flag = 1; break;
@@ -225,21 +247,21 @@ int main(int argc, char **argv) {
    init_records(fileset_info_ptr, fileset_count);
    aws_init();
 
-   if (packed_log == NULL) {
-      strcpy(packed_filename,"./tmp_packed_log");
-      packed_log = packed_filename;
-   }
+//   if (packed_log == NULL) {
+//      strcpy(packed_filename,"./tmp_packed_log");
+//      packed_log = packed_filename;
+//   }
 
    // open associated log file and packed log file
    if ((file_status->outfd = fopen(outf,"w")) == NULL){ 
       fprintf(stderr, "Failed to open %s\n", outf);
       exit(1);
    }
-   if ((file_status->packedfd = fopen(packed_log, "w"))==NULL){ 
-      fprintf(stderr, "Failed to open %s\n", packed_log);
-      exit(1);
-   }
-   strcpy(file_status->packed_filename, packed_log);
+//   if ((file_status->packedfd = fopen(packed_log, "w"))==NULL){ 
+//      fprintf(stderr, "Failed to open %s\n", packed_log);
+//      exit(1);
+//   }
+//   strcpy(file_status->packed_filename, packed_log);
    file_status->is_packed=0;
    file_status->no_delete = delete_flag;
 
@@ -273,7 +295,7 @@ int main(int argc, char **argv) {
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec,ht);
 
-   fclose(file_status->packedfd);
+//   fclose(file_status->packedfd);
    if (file_status->is_packed) {
       process_packed(file_status, ht, rt);
    }
@@ -300,6 +322,30 @@ void init_records(Fileset_Info *fileset_info_buf, unsigned int record_count)
 {
    memset(fileset_info_buf, 0, (size_t)record_count * sizeof(Fileset_Info)); 
 }
+
+/******************************************************************************
+ * Name read_config_gc
+ * This function reads the config file in order to extract the object hostname
+ * associated with the current gpfs file (from the inode scan) 
+ *
+******************************************************************************/
+int read_config_gc(Fileset_Info *fileset_info_ptr)
+{
+
+   //Find the correct repo so that the hostname can be determined
+   LOG(LOG_INFO, "fileset repo name = %s\n", fileset_info_ptr->repo_name);
+   if ((repoPtr = find_repo_by_name(fileset_info_ptr->repo_name)) == NULL) {
+      fprintf(stderr, "Repo %s not found in configuration\n", 
+              fileset_info_ptr->repo_name);
+      return -1;
+   }
+   else {
+      strcpy(fileset_info_ptr->host, repoPtr->host);
+      LOG(LOG_INFO, "fileset name = %s/n", fileset_info_ptr->host);
+      return 0;
+   }
+}
+
 
 /***************************************************************************** 
 Name: print_usage 
@@ -472,31 +518,195 @@ void update_payload( void* new, void** old){
          exit( -1 );
       }
 
+      OP->ns = NP->ns;
+      OP->md_ctime = NP->md_ctime;
       OP->chunks = NP->chunks;
       OP->files->md_path = NP->md_path;
+      OP->files->md_ctime = 0;
+      OP->files->size = 0;
       OP->files->next = NULL;
+      OP->tail = OP->files;
       *old = OP;
    }
    else {
-      ht_file* trav = &(OP->files);
+      ht_file* tmp = &(OP->tail->next);
 
-      while ( *trav != NULL ) {
-         trav = &((*trav)->next);
-      }
-
-      if ( (*trav = malloc( sizeof( struct payload_file_struct ) )) == NULL ) {
+      //generate a new element at the tail
+      if ( (*tmp = malloc( sizeof( struct payload_file_struct ) )) == NULL ) {
          fprintf( stderr, "update_payload: failed to allocate a payload file struct\n" );
          exit( -1 );
       }
 
-      (*trav)->md_path = NP->md_path;
-      (*trav)->next = NULL;
+      (*tmp)->md_path = NP->md_path;
+      (*tmp)->md_ctime = 0;
+      (*tmp)->size = 0;
+      (*tmp)->next = NULL;
 
       if ( OP->chunks != NP->chunks ) {
          fprintf( stderr, "update_payload: WARNING: xattr file count of %d for %s does not match expected %d (from %s)\n", NP->chunks, NP->md_path, OP->chunks, OP->files->md_path );
       }
+      if ( OP->ns != NP->ns ) {
+         fprintf( stderr, "update_payload: WARNING: xattr MarFS Namespace for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
+      }
+      if ( OP->md_ctime != NP->md_ctime ) {
+         fprintf( stderr, "update_payload: WARNING: xattr md_ctime for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
+      }
    }
 }
+
+
+/***************************************************************************** 
+Name:  split_insert
+
+This is an internal helper function which acts to insert a list of files into the 
+repacker payload structures
+
+*****************************************************************************/
+
+rt_object split_insert( rt_object match, ht_header list_head, size_t opt_count, size_t max_obj ) {
+      size_t file_count = 0;
+      size_t obj_size = 0;
+      struct stat st;
+
+      if( list_head->files == NULL )
+         return NULL;
+
+      ht_file* cur = &(match->files);
+      while( *cur != NULL  &&  (*cur)->md_ctime < list_head->md_ctime ) {
+         obj_size += (*cur)->size;
+         if( (*cur)->size  == 0 ) {
+            fprintf( stderr, "split_insert: WARNING: hit file with unexpected 0 size \"%s\"\n", (*cur)->md_path );
+         }
+         file_count++;
+         cur = &((*cur)->next);
+      }
+
+      list_head->tail = *cur;
+      *cur = list_head->files;
+      while( *cur != NULL  &&  (obj_size + (*cur)->size) <= max_obj  &&  (file_count + 1) <= opt_count ) {
+         file_count++;
+         if ( stat( (*cur)->md_path, &st ) != 0 ) {
+            fprintf( stderr, "split_insert: failed to stat md_path %s\n", (*cur)->md_path );
+         }
+         (*cur)->md_ctime = list_head->md_ctime;
+         (*cur)->size = st.st_size;
+         obj_size += st.st_size;
+         cur = &((*cur)->next);
+      }
+      
+      list_head->files = *cur;
+      if( *cur == NULL ) {
+         list_head->tail = NULL;
+         return NULL;
+      }
+
+      *cur = NULL;
+      if( match->next == NULL ) {
+         if( (match->next = malloc( sizeof( struct rpayload_object_struct ) )) == NULL ) {
+            fprintf( stderr, "split_insert: failed to allocate space for a new object structure\n" );
+            exit( -1 );
+         }
+         match->next->next=NULL;
+         match->next->obj_size = 0;
+         match->next->file_count = 0;
+         match->next->files = NULL;
+         match->next->min_ctime = list_head->md_ctime;
+         match->next->max_ctime = list_head->md_ctime;
+      }
+
+      return match->next;
+}
+
+
+/***************************************************************************** 
+Name:  repack_update_payload
+
+This acts as the update function for repack hash table payload-insertion.
+
+*****************************************************************************/
+void repack_update_payload( void* new, void** old ) {
+   // When called, new should be a pointer to the payload for the original GC hash-table 
+   // while old is a pointer to the pointer to the payload for a repack hash-table entry
+   ht_header NP = (ht_header) new;
+   rt_header OP = *((rt_header *) old);
+
+   // if this is the first object for this directory, simply populate structures
+   if ( OP == NULL ) {
+      struct stat st;
+      if( (OP = malloc( sizeof( struct rpayload_header_struct ) )) == NULL ) {
+         fprintf( stderr, "repack_update_payload: failed to allocate a repack payload header struct\n" );
+         exit( -1 );
+      }
+      if( (OP->objects = malloc( sizeof( struct rpayload_object_struct ) )) == NULL ) {
+         fprintf( stderr, "repack_update_payload: failed to allocate a repack payload object struct\n" );
+         exit( -1 );
+      }
+
+      OP->objects->next = NULL;
+      OP->objects->obj_size = 0;
+      OP->objects->file_count = 0;
+      OP->objects->files = NP->files; //still need to set size and ctime for this list
+      OP->ns = NP->ns;
+      time_t md_ctime = NP->md_ctime;
+      OP->objects->min_ctime = md_ctime;
+      OP->objects->max_ctime = md_ctime;
+      
+      ht_file nfile = OP->objects->files;
+      while ( nfile != NULL ) { //set size and ctime for all files
+         nfile->md_ctime = md_ctime;
+         OP->objects->file_count++;
+         if ( stat( nfile->md_path, &st ) != 0 ) {
+            fprintf( stderr, "repack_update_payload: failed to stat md_path %s\n", nfile->md_path );
+            continue;
+         }
+         nfile->size = st.st_size;
+         OP->objects->obj_size += st.st_size;
+      }
+   }
+   else { //otherwise, we need to insert according to md_ctime
+      ssize_t min_pack_count = OP->ns->iwrite_repo->min_pack_file_count;
+      ssize_t max_pack_count = OP->ns->iwrite_repo->max_pack_file_count;
+      ssize_t min_pack_size = OP->ns->iwrite_repo->min_pack_file_size;
+      ssize_t max_pack_size = OP->ns->iwrite_repo->max_pack_file_size;
+      size_t obj_size = OP->ns->iwrite_repo->chunk_size;
+      size_t opt_count;
+
+      if ( max_pack_count == 0 ) {
+         fprintf( stderr, "repack_update_payload: ERROR: repacking objects for repo \"%s\" but max_pack_file_count == 0\n", NP->ns->iwrite_repo->name );
+         exit( -1 );
+      }
+      if( max_pack_count == -1  ||  (max_pack_count*max_pack_size) > obj_size ) {
+         // if count is unbounded or otherwise excessive, limit optimal count to a value that will allow squeezing in excess files
+         opt_count = ( ( obj_size - (min_pack_count*max_pack_size) ) / max_pack_size );
+      }
+      else {
+         opt_count = max_pack_count - min_pack_count;
+         if( opt_count > max_pack_count ) //unnecessary? Only hit if min_pack_count < 0
+            opt_count = max_pack_count;
+      }
+
+      if( opt_count < min_pack_count )
+         opt_count = min_pack_count;
+
+      printf( "opt_count = %zu,  Repo: %s - min_pc=%zd, max_pc=%zd, min_ps=%zd, max_ps=%zd\n", opt_count, NP->ns->iwrite_repo->name, min_pack_count, max_pack_count, min_pack_size, max_pack_size );
+
+      rt_object matchobj = OP->objects;
+      rt_object prevobj = NULL;
+      while( matchobj != NULL  &&  matchobj->max_ctime < NP->md_ctime ) {
+         prevobj = matchobj;
+         matchobj = matchobj->next;
+      }
+
+      if( matchobj == NULL )
+         matchobj = prevobj;
+
+      while( (matchobj = split_insert( matchobj, NP, opt_count, NP->ns->iwrite_repo->chunk_size)) != NULL ) {
+         ; //NO-OP
+      }
+
+   }
+}
+
 
 
 /***************************************************************************** 
@@ -598,15 +808,8 @@ int read_inodes(const char *fnameP,
       clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
    }
 
-   ht_package payload;
-   if ( (payload = malloc( sizeof( struct payload_package_struct ) )) == NULL ) {
-      // This is a duplication of Alfred's exit code, should verify
-      rc = errno;
-      fprintf(stderr, "marfs_gc: failed to allocate space for a hash table payload\n");
-      early_exit = 1;
-      clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
-   }
-
+   struct payload_package_struct p_struct;
+   ht_package payload = &p_struct;
 
    while (1) {
       rc = gpfs_next_inode_with_xattrs(iscanP,
@@ -765,6 +968,8 @@ int read_inodes(const char *fnameP,
                            }
                            
                            payload->chunks = post->chunks;
+                           payload->ns = pre->ns;
+                           payload->md_ctime = pre->md_ctime;
 
                            ht_insert_payload( ht, xattr_ptr->xattr_value, payload, &update_payload );
                            file_info_ptr->is_packed = 1;
@@ -789,7 +994,6 @@ int read_inodes(const char *fnameP,
 ******/
       }
    } // endwhile
-   free( payload );
    clean_exit(file_info_ptr->outfd, iscanP, fsP, early_exit);
    return(rc);
 }
@@ -1064,24 +1268,16 @@ repack utility will be run on the trash directory.
 *****************************************************************************/
 int process_packed(File_Info *file_info_ptr, hash_table_t* ht, hash_table_t* rt)
 {
-//   FILE *pipe_cat = NULL;
-//   FILE *pipe_grep = NULL;
-//   FILE *pipe_wc = NULL;
-
-//   char obj_buf[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
-//   char file_buf[MARFS_MAX_MD_PATH];
-//   char wc_buf[64];
-//   char objid[MARFS_MAX_OBJID_SIZE];
-//   char grep_command[MARFS_MAX_MD_PATH+MAX_PACKED_NAME_SIZE+64];
    int obj_return;
    int df_return;
 
    int chunk_count;
-//   char filename[MARFS_MAX_MD_PATH];
    int count = 0;
    int multi_flag = 0;
-//   int wc_count;
    ht_entry_t* entry = NULL;
+
+   MarFS_XattrPost post;
+   char post_xattr[MARFS_MAX_XATTR_SIZE];
 
    // In a loop get all lines from the file
    // Example line (with 'xx' instead of IP-addr octets, and altered MD paths):
@@ -1095,6 +1291,7 @@ int process_packed(File_Info *file_info_ptr, hash_table_t* ht, hash_table_t* rt)
    while ( (entry = ht_traverse_and_destroy( ht, entry )) != NULL ) {
       
       
+      //The var 'p_header' is the head of a linked list of file info for this object
       ht_header p_header = (ht_header) entry->payload;      
       file = p_header->files;
 
@@ -1102,13 +1299,25 @@ int process_packed(File_Info *file_info_ptr, hash_table_t* ht, hash_table_t* rt)
       if (entry->value != p_header->chunks) {
 
          // TODO check min_pack_file_count to determine canidacy for repack
-         if ( rt  &&  entry->value ) {
+         if ( rt  &&  ( entry->value < p_header->chunks ) ) {
             fprintf( stderr, "repack canidate found\n" );
+
+            // Get the post xattr to determine offset in the objec
+//            if ((getxattr(file->md_path, "user.marfs_post", &post_xattr, MARFS_MAX_XATTR_SIZE) != -1)) {
+//               //fprintf(stdout, "xattr = %s\n", post_xattr);
+//               rc = str_2_post(&post, post_xattr, 1);
+//               files->original_offset = post.obj_offset;
+//               LOG(LOG_INFO, "filename %s xattr = %s offset=%ld\n", files->filename, post_xattr,post.obj_offset);
+//            }
+
             // TODO insert into rt table
          }
          else {
-            //The var 'p_header' is the head of a linked list of file info for this object
-            fprintf(stderr, "object %s has %d files while chunk count is %d\n",
+            if ( entry->value < p_header->chunks ) 
+               fprintf(stderr, "Repack Canidate: object %s has %d files while chunk count is %d\n",
+                  entry->key, entry->value, p_header->chunks);
+            else
+               fprintf(stderr, "ERROR: Potential Faulty 'marfs_post' Xattr: object %s has %d files while chunk count is %d\n",
                   entry->key, entry->value, p_header->chunks);
 
             //free the payload list
@@ -1174,31 +1383,6 @@ int process_packed(File_Info *file_info_ptr, hash_table_t* ht, hash_table_t* rt)
    }
    return(0);
 }
-
-/******************************************************************************
- * Name read_config_gc
- * This function reads the config file in order to extract the object hostname
- * associated with the current gpfs file (from the inode scan) 
- *
-******************************************************************************/
-int read_config_gc(Fileset_Info *fileset_info_ptr)
-{
-   MarFS_Repo_Ptr repoPtr;
-
-   //Find the correct repo so that the hostname can be determined
-   LOG(LOG_INFO, "fileset repo name = %s\n", fileset_info_ptr->repo_name);
-   if ((repoPtr = find_repo_by_name(fileset_info_ptr->repo_name)) == NULL) {
-      fprintf(stderr, "Repo %s not found in configuration\n", 
-              fileset_info_ptr->repo_name);
-      return(-1);
-   }
-   else {
-      strcpy(fileset_info_ptr->host, repoPtr->host);
-      LOG(LOG_INFO, "fileset name = %s/n", fileset_info_ptr->host);
-      return(0);
-   }
-}
-
 
 //  ---------   Begin Repacker Code ----------
 //
@@ -1300,6 +1484,7 @@ int read_config_gc(Fileset_Info *fileset_info_ptr)
 //   return 0;
 //}
 //
+//
 ///******************************************************************************
 //* Name find_repack_objects 
 //* 
@@ -1318,98 +1503,112 @@ int read_config_gc(Fileset_Info *fileset_info_ptr)
 //* link list of files that belong to the * new object. 
 //* 
 //******************************************************************************/
-//int find_repack_objects(File_Handles *file_info, ht_table *ht, 
-//                        repack_objects **objects_ptr) {
+//int find_repack_objects(File_Handles *file_info, repack_objects **objects_ptr) {
+//   FILE *pipe_cat = NULL;
+//   FILE *pipe_grep = NULL;
 //
-////   FILE *pipe_cat = NULL;
-////   FILE *pipe_grep = NULL;
-//
-////   char obj_buf[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
-////   char obj_buf1[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
+//   char obj_buf[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
+//   char obj_buf1[MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64];
 //   char objid[MARFS_MAX_OBJID_SIZE];
-////   char cat_command[MAX_CMD_LENGTH];
-////   char grep_command[MAX_CMD_LENGTH];
-//   char marfs_path[1024];
-//   const char* sub_path;
+//   char cat_command[MAX_CMD_LENGTH];
+//   char grep_command[MAX_CMD_LENGTH];
 //   int file_count;
 //
 //   int chunk_count;
 //   char filename[MARFS_MAX_MD_PATH];
+//   int rc;
+//   MarFS_XattrPost post;
+//   char post_xattr[MARFS_MAX_XATTR_SIZE];
+//
 //
 //   obj_files *files, *files_head;
 //   repack_objects *objects, *objects_head;
 //   files_head=NULL;
 //   objects_head=NULL;
+//
+//
+//   // create command to cat and sort the list of objects that are packed
+//   sprintf(cat_command, "cat %s | awk '{print $1}' | sort | uniq", file_info->packed_log);
+//
+//   // open STREAM for cat
+//   if (( pipe_cat = popen(cat_command, "r")) == NULL) {
+//      fprintf(stderr, "Error with popen\n");
+//      return(-1);
+//   }
 //   // Now loop through all objects sorted by name in order to count number 
 //   // of files associated with that object
-//   ht_entry *entry = NULL;
+//   while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
+//      sscanf(obj_buf,"%s", objid);
+//      sprintf(grep_command, "cat %s | grep %s ", file_info->packed_log, objid);
+//      if (( pipe_grep = popen(grep_command, "r")) == NULL) {
+//         fprintf(stderr, "Error with popen\n");
+//         return(-1);
+//      }
+//      file_count = 0;
+//      while(fgets(obj_buf1, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_grep)) {
+//         sscanf(obj_buf1,"%s %d %s", objid, &chunk_count, filename);
+//         // Need to look into this - do we need a minimum value to repack?
+//         // same question as packer script
+//         file_count++;
+//         if (chunk_count <= 1) { 
+//            continue;
+//         }
+// 
+//         // file count is the number of files associated with an object (from tmp_packed_log)
+//         // chunck count is the post xattr value that states how many files in packed
+//         // objecd
+//         // if file_count < chunk_count, the files can be packed
+//         if (file_count < chunk_count) {
+//            // Create object link list here
+//            //fprintf(stdout, "object = %s\n", objid);
+//            //fprintf(stdout, "file_count = %d chunk_count=%d\n", file_count, chunk_count);
+//            if ((files = (obj_files *)malloc(sizeof(obj_files)))==NULL) {
+//               fprintf(stderr, "Error allocating memory\n");
+//               return -1;
+//            }
+//            //fprintf(stdout, "%s %s\n", objid, filename);
+//            
+//            strcpy(files->filename, filename);
 //
-//   while( (entry = ht_traverse_and_destroy( ht, entry )) != NULL ) {
+//
+//            // Get the post xattr to determine offset in the objec
+//            if ((getxattr(files->filename, "user.marfs_post", &post_xattr, MARFS_MAX_XATTR_SIZE) != -1)) {
+//               //fprintf(stdout, "xattr = %s\n", post_xattr);
+//               rc = str_2_post(&post, post_xattr, 1);
+//               files->original_offset = post.obj_offset;
+//               LOG(LOG_INFO, "filename %s xattr = %s offset=%ld\n", files->filename, post_xattr,post.obj_offset);
+//            }
+//            // adjust files link list pointers
+//            files->next =  files_head;
+//            files_head = files;
+//         }
+//
+//      }      
+//      if (pclose(pipe_grep) == -1) {
+//         fprintf(stderr, "Error closing cat pipe in process_packed\n");
+//         return(-1);
+//      }
 //      if ((objects = (repack_objects *)malloc(sizeof(repack_objects)))==NULL) {
 //         fprintf(stderr, "Error allocating memory\n");
 //         return -1;
 //      }
-//      objects->objid = NULL;
-//
-//      ht_payload payload = entry->payload;
-//
-//      while( payload != NULL ) {
-//         if( objid == NULL ) {
-//            strcpy(objects->objid, objid);
-//         }
-//         objects->chunk_count = payload->chunk_count;
-////         sscanf(obj_buf1,"%s %d %s", objid, &chunk_count, filename);
-//         // Need to look into this - do we need a minimum value to repack?
-//         // same question as packer script
-//         // Well for now this is not an issue because just trying to repack
-//         // so that garbage collection can delete the objects
-// 
-//         // Create the first files link list node
-//         if ((files = (obj_files *)malloc(sizeof(obj_files)))==NULL) {
-//            fprintf(stderr, "Error allocating memory\n");
-//            return -1;
-//         }
-//         
-//         strcpy(files->filename, payload->md_path);
-//
-//         // Get info into MarFS_FileHandle structure because this is needed for 
-//         // further operations such as read with offset and write
-//         //
-//         memset(&files->fh, 0, sizeof(MarFS_FileHandle));
-//         
-//         // First convert md path to a fuse path
-//         get_marfs_path(payload->md_path, &marfs_path[0]);
-//
-//         // now get fuse path minus mount
-//         sub_path = marfs_sub_path(marfs_path);
-//
-//         // Fill in the file handle structure
-//         expand_path_info(&files->fh->info, sub_path);
-//
-//         stat_xattrs(&files->fh->info);
-//
-//         files->original_offset = files->fh->info.post.obj_offset;
-//         LOG(LOG_INFO, "filename %s offset=%ld\n", files->filename, files->fh->info.post.obj_offset);
-//
-//
-//         // adjust files link list pointers
-//         files->next =  files_head;
-//         files_head = files;
-//
-//         free( payload->md_path );
-//         free( payload->objid );
-//         free( payload );
-//      }      
 //      // Update objects structure entries based on file info
-//      objects->pack_count = entry->value;
+//      strcpy(objects->objid, objid);
+//      objects->pack_count = file_count;
+//      objects->chunk_count = chunk_count;
 //      objects->files_ptr = files_head;
 //      objects->next = objects_head;
 //      objects_head = objects;
 //      files_head=NULL;
 //   }
+//   if (pclose(pipe_cat) == -1) {
+//      fprintf(stderr, "Error closing cat pipe in process_packed\n");
+//      return(-1);
+//   }
 //   *objects_ptr=objects_head;
 //   return 0;
 //}
+//
 //
 ///******************************************************************************
 //* Name  pack_objects 
