@@ -55,28 +55,46 @@
 # GNU licenses can be found at http://www.gnu.org/licenses/.
 
 import os
+import subprocess
 import re
 import errno
 import sys
 
+# The location of the 'marfs_config' executable
+MARFS_CONFIG="/opt/campaign/gransom/marfs/install/bin/marfs_config"
 # The number of bytes to be read/written per iteration
 BYTES = 8192
+
+
+try:
+   config = subprocess.Popen([ MARFS_CONFIG, "-t", "mnt_top" ],
+                             shell=False,
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE )
+except OSError as err:
+   print >> sys.stderr, "pipetool_remote: ERROR: failed to execute marfs_config binary: {0}".format( err )
+   exit( err.errno )
+
+out, err = config.communicate()
+
+if ( err != "" ):
+   perr = err.split( " ", 1 )
+   sys.stderr.write( "pipetool_remote: Error reading MarFS configuration: "+perr[-1] )
+   exit( errno.EIO )
+
 regstr = ""
 store = False
 data = ""
 
-for line in open(os.environ['MARFSCONFIGRC']):
-   if "mdfs_top" in line or "md_path" in line:
-      tmp = re.sub( r"</.*>\n",r"",line )
-      tmp = re.sub( r"(\w)*<.*?>",r"",tmp ).strip()
-      if ( regstr != "" ):
-         tmp = re.sub( regstr+".*",r"",tmp )
-      if ( tmp != "" ):
-         regstr = re.sub( "\("+tmp+".*?\)\|?", "", regstr )
-         if ( regstr != "" ):
-            regstr += "|"
-         regstr += "("+tmp+")"
-
+lines = out.split( "\n" )
+for line in lines:
+   if ( line == "" ):
+      continue
+   if ( not line.endswith( "/" ) ):
+      line+="/" #mnt_top is a directory
+   if ( regstr != "" ):
+      regstr += "|"
+   regstr += "("+line+")"
 regstr += ".*"
 
 regex = re.compile( regstr  )
@@ -88,19 +106,9 @@ if ( len(sys.argv) != 3 ):
 
 path = os.path.realpath( sys.argv[2] )
 
-# Verify that this will not access metadata
-if ( regex.match(path) ):
-   print >> sys.stderr, "pipetool_remote: ERROR: Accessing this directory is forbidden by MarFS!"
-   exit( errno.EPERM )
-
-homepath = os.path.realpath( "" )
-forbid = "("+homepath+"/\.bash.*)|("+homepath+"/\.profile.*)|("+homepath+"/\.login.*)"
-
-regex = re.compile( forbid )
-
-# Verify that this will not access files where env vars may be altered
-if ( regex.match(path) ):
-   print >> sys.stderr, "pipetool_remote: ERROR: Accessing this file is forbidden!"
+# Verify that this access is under the MarFS 'mnt_top'
+if ( not regex.match(path) ):
+   print >> sys.stderr, "pipetool_remote: ERROR: Accessing non-MarFS paths is forbidden"
    exit( errno.EPERM )
 
 # Parse args
@@ -110,7 +118,8 @@ elif ( sys.argv[1] == "detect" ):
    data = sys.stdin.read( BYTES )
    if ( data != "" ):
       if ( os.path.isfile( path ) ):
-         print >> sys.stderr, "pipetool_remote: WARNING: The specified file exists.  Defaulted to 'retrieve'.  Use 'store' option to overwrite the file instead."
+         print >> sys.stderr, "pipetool_remote: ERROR: The specified file exists and the desired operation is uncertain.  Use the \"store\" option to overwrite the existing file or the \"retrieve\" option to read it."
+         exit( errno.EEXIST )
       else:
          store = True
 elif ( sys.argv[1] != "retrieve" ):
@@ -121,31 +130,27 @@ if ( store ):
    # Open the target location for writing
    try:
       target = open( path, 'w' )
+      # Read form stdin and write to the target file location
+      if ( data == "" ):
+         data = sys.stdin.read( BYTES )
+      while ( data != "" ):
+         target.write( data )
+         data = sys.stdin.read( BYTES )
    except IOError as err:
       print >> sys.stderr, "pipetool_remote: ERROR: {0}".format( err )
       exit( err.errno )
-   
-   # Read form stdin and write to the target file location
-   if ( data == "" ):
-      data = sys.stdin.read( BYTES )
-
-   while ( data != "" ):
-      target.write( data )
-      data = sys.stdin.read( BYTES )
 else:
    # Open the target location for reading
    try:
       target = open( path, 'r' )
+      # Read form stdin and write to the target file location
+      data = target.read( BYTES )
+      while ( data != "" ):
+         sys.stdout.write( data )
+         data = target.read( BYTES )
    except IOError as err:
       print >> sys.stderr, "pipetool_remote: ERROR: {0}".format( err )
       exit( err.errno )
-   
-   # Read form stdin and write to the target file location
-   data = target.read( BYTES )
-   
-   while ( data != "" ):
-      sys.stdout.write( data )
-      data = target.read( BYTES )
 
 # Cleanup
 target.close()
