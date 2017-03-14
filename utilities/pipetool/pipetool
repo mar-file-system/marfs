@@ -62,16 +62,31 @@ import argparse
 import sys
 import random
 
-hstr = os.environ['BATCH_FTAS']
-
-# Hostnames (or IPs) of batch-ftas where the backend pipetool can be found
-HOSTS = hstr.split(':')
-# Complete path to the backend pipetool on the batch-fta
-LOC = os.environ['PIPETOOL_REMOTE']
+# Name of the environment-var storing a colon-separated list of batch-FTA hostnames/IPs to be used for transfers
+BATCH_FTA_VAR='BATCH_FTAS'
+# Name of the environment-var storing the location of the pipetool_remote script on the batch-FTAs
+PIPE_REMOTE_VAR='PIPETOOL_REMOTE'
+# The name (not complete path) of the remote pipetool script (used if the above env-var is not set)
+PIPE_REMOTE_NAME='pipetool_remote'
 # Number of bytes to be read/written per iteration
 BYTES = 8192
-fail=False
 
+try:
+   hstr = os.environ[BATCH_FTA_VAR]
+except KeyError:
+   print >> sys.stderr, "pipetool: the environment variable '"+BATCH_FTA_VAR+"' is not set\n        this should contain a colon-separated list of batch-FTAs hostnames/IPs"
+   exit( errno.ENOKEY )
+
+# Identify the path to the backend pipetool on the batch-fta
+try:
+   LOC = os.environ['PIPETOOL_REMOTE']
+except KeyError:
+   # if the env-var is not set, just use the name and hope the remote script is in PATH
+   LOC = PIPE_REMOTE_NAME
+
+
+fail=False
+HOSTS = hstr.split(':') # batch-FTAs
 host=random.choice(HOSTS)
 
 # Parse cmd line inputs
@@ -91,27 +106,28 @@ if ( args.verbose ):
 
 # Start pipetool_remote on host with the appropriate arg
 if ( args.store):
+   cmd=LOC+" store "+path
    if ( args.verbose ):
       sys.stderr.write("pipetool: opening connection process for write...")
-   ssh = subprocess.Popen([ "ssh", host, LOC+" store "+path ],
-                          shell=False,
-                          stdin=subprocess.PIPE,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE)
 elif ( args.retrieve ):
+   cmd=LOC+" retrieve "+path
    if ( args.verbose ):
       sys.stderr.write("pipetool: opening connection process for read...")
-   ssh = subprocess.Popen([ "ssh", host, LOC+" retrieve "+path ],
-                          shell=False,
-                          stdin=subprocess.PIPE,
-                          stderr=subprocess.PIPE)
 else:
+   cmd=LOC+" detect "+path
    if ( args.verbose ):
       sys.stderr.write("pipetool: opening connection process for an undetermined operation...")
-   ssh = subprocess.Popen([ "ssh", host, LOC+" detect "+path ],
+
+try:
+   ssh = subprocess.Popen([ "ssh", host, cmd ],
                           shell=False,
                           stdin=subprocess.PIPE,
                           stderr=subprocess.PIPE)
+except OSError as err:
+   if ( args.verbose ):
+      print >> sys.stderr, "error detected"
+   print >> sys.stderr, "pipetool: error connecting to batch-fta "+host+": {0}".format(err)
+   exit( err.errno )
 
 if ( args.verbose ):
    print >> sys.stderr, "done"
@@ -128,7 +144,7 @@ if( args.store  or  not ( sys.stdin.isatty() or args.retrieve ) ):
          ssh.stdin.write( data )
       except IOError as e:
          if ( e.errno != errno.EPIPE ): #if not a broken pipe, notify immediately
-            print "pipetool: ERROR: {0}".format( e )
+            print >> sys.stderr, "pipetool: ERROR: {0}".format( e )
             exit( e.errno )
          fail=True #if a broken pipe, just note and move on
          break
@@ -147,7 +163,11 @@ if ( err != "" ):
       print >> sys.stderr, "error detected"
    split = err.split( " ", 1 )
    if ( "pipetool_remote:" == split[0] ):
-      sys.stderr.write( "pipetool: "+split[1] )
+      sys.stderr.write( "pipetool: "+split[-1] )
+   elif ( ssh.returncode == 127 ): #command not found
+      print >> sys.stderr, "pipetool: could not locate the remote script on batch-FTA \""+host+"\n          This could be a problem with the env-var \""+PIPE_REMOTE_VAR+"\" or the configuration of that batch-FTA."
+   elif ( ssh.returncode == 126 ): #can not execute
+      print >> sys.stderr, "pipetool: could not execute the remote script on batch-FTA \""+host+"\"\n          This could be a problem with the env-var \""+PIPE_REMOTE_VAR+"\" or the configuration of that batch-FTA."
    else:
       sys.stderr.write( err )
    sys.stderr.flush()
