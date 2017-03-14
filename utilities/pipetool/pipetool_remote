@@ -62,33 +62,45 @@ import sys
 
 # The number of bytes to be read/written per iteration
 BYTES = 8192
-# The location of the 'marfs_config' executable
+# The environment-var which stores the location of the MarFS config reader executable
+MARFS_CONF_ENV='MARFSCONFIGEX'
+# The name of the config reader executable (used for PATH lookup if the above env-var is not set)
+MARFS_CONF_NAME='marfs_config'
+
+
+# locate the 'marfs_config' executable
 try:
-   MARFS_CONFIG=os.environ['MARFSCONFIGEX']
-except KeyError as err:
-   print >> sys.stderr, "pipetool_remote: batch fta is missing necessary environment variable"
-   exit( errno.EOPNOTSUPP )
+   MARFS_CONFIG=os.environ[MARFS_CONF_ENV]
+except KeyError:
+   # if the environment var is not set, assume the executable is in the path
+   MARFS_CONFIG=MARFS_CONF_NAME
 
 try:
+   # launch the marfs configuration parser
    config = subprocess.Popen([ MARFS_CONFIG, "-t", "mnt_top" ],
                              shell=False,
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE )
 except OSError as err:
-   print >> sys.stderr, "pipetool_remote: failed to execute marfs_config binary: {0}".format( err )
+   # if the config reader didn't launch, print the error and terminate
+   print >> sys.stderr, "pipetool_remote: failed to execute MarFS configuration parser on the batch-FTA: {0}".format( err )
    exit( err.errno )
 
 out, err = config.communicate()
 
+# if the parser hit an error, print it and terminate
 if ( err != "" ):
    perr = err.split( " ", 1 )
    sys.stderr.write( "pipetool_remote: error reading MarFS configuration: "+perr[-1] )
    exit( errno.EIO )
 
-regstr = "^"
-store = False
-data = ""
+# Verify number of arguments
+if ( len(sys.argv) != 3 ):
+   print >> sys.stderr, "pipetool_remote: usage: pipetool_remote {store, retrieve} PATHNAME"
+   exit( errno.EINVAL )
 
+# construct a regex based upon the mnt_top paths in the MarFS config
+regstr = "^"
 lines = out.split( "\n" )
 for line in lines:
    if ( line == "" ):
@@ -101,18 +113,15 @@ for line in lines:
 regstr += "$"
 
 regex = re.compile( regstr  )
-
-# Verify number of arguments
-if ( len(sys.argv) != 3 ):
-   print >> sys.stderr, "pipetool_remote: usage: pipetool_remote {store, retrieve} PATHNAME"
-   exit( errno.EINVAL )
-
 path = os.path.realpath( sys.argv[2] )
 
 # Verify that this access is under the MarFS 'mnt_top'
 if ( not regex.match(path) ):
    print >> sys.stderr, "pipetool_remote: operation not permitted: accessing non-MarFS paths is forbidden"
    exit( errno.EPERM )
+
+store = False  #specifies the operation to perform
+data = ""      #data read from stdin
 
 # Parse args
 if ( sys.argv[1] == "store" ):
