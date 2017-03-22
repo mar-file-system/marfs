@@ -112,6 +112,7 @@ int main(int argc, char **argv) {
    extern char *optarg;
    unsigned int time_threshold_sec=0;
    unsigned int delete_flag = 0;
+   char*        target_ns = NULL;
  
    Fileset_Info *fileset_info_ptr;
 
@@ -120,7 +121,7 @@ int main(int argc, char **argv) {
    else
       ProgName++;
 
-   while ((c=getopt(argc,argv,"d:t:p:hno:u:")) != EOF) {
+   while ((c=getopt(argc,argv, "d:t:p:hno:u:f:N:")) != EOF) {
       switch (c) {
          case 'd': rdir = optarg; break;
          case 'o': outf = optarg; break;
@@ -128,8 +129,11 @@ int main(int argc, char **argv) {
          case 'p': packed_log = optarg; break;
          case 'u': aws_user_name = optarg; break;
          case 'n': delete_flag = 1; break;
-         case 'h': print_usage();
+         case 'f': fileset_id = atoi(optarg); break;
+         case 'N': target_ns = optarg; break;
+
          default:
+         case 'h': print_usage();
             exit(0);
       }
    }
@@ -138,7 +142,7 @@ int main(int argc, char **argv) {
        outf == NULL || 
        aws_user_name == NULL ) {
 
-      fprintf(stderr,"%s: no directory (-d) or output file name (-o) or\
+      fprintf(stderr, "%s: no directory (-d) or output file name (-o) or\
  aws user name (-u) specified\n\n",ProgName);
       print_usage();
       exit(1);
@@ -148,6 +152,7 @@ int main(int argc, char **argv) {
    // for trashing packed type objects
    File_Info file_stat_info;
    File_Info *file_status = &file_stat_info;
+   memset(&file_stat_info, 0, sizeof(File_Info));
 
    // Read the configuation file
    if (read_configuration()) { 
@@ -165,19 +170,19 @@ int main(int argc, char **argv) {
    // Create structure containing fileset information
    fileset_info_ptr = (Fileset_Info *) malloc(sizeof(*fileset_info_ptr));
    if (fileset_info_ptr == NULL ) {
-      fprintf(stderr,"Memory allocation failed\n");
+      fprintf(stderr, "Memory allocation failed\n");
       exit(1);
    }
    init_records(fileset_info_ptr, fileset_count);
    aws_init();
 
    if (packed_log == NULL) {
-      strcpy(packed_filename,"./tmp_packed_log");
+      strcpy(packed_filename, "./tmp_packed_log");
       packed_log = packed_filename;
    }
 
    // open associated log file and packed log file
-   if ((file_status->outfd = fopen(outf,"w")) == NULL){ 
+   if ((file_status->outfd = fopen(outf, "w")) == NULL){ 
       fprintf(stderr, "Failed to open %s\n", outf);
       exit(1);
    }
@@ -189,14 +194,26 @@ int main(int argc, char **argv) {
    file_status->is_packed=0;
    file_status->no_delete = delete_flag;
 
+   if (target_ns) {
+     size_t target_ns_size = strlen(target_ns);
+     if (target_ns_size >= MARFS_MAX_NAMESPACE_NAME) {
+      fprintf(stderr, "target_ns name is longer than %u chars\n", MARFS_MAX_NAMESPACE_NAME);
+      exit(1);
+     }
+     file_status->target_ns_size = target_ns_size;
+     strncpy(file_status->target_ns, target_ns, MARFS_MAX_NAMESPACE_NAME-1);
+   }
+
    // Configure aws for the user specified on command line
    aws_read_config(aws_user_name);
 
+   fprintf(file_status->outfd, "\nPhase 1: processing inodes in order\n");
    read_inodes(rdir,file_status,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec);
 
    if (file_status->is_packed) {
       fclose(file_status->packedfd);
+      fprintf(file_status->outfd, "\nPhase 2: processing packed files\n");
       process_packed(file_status);
    }
    fclose(file_status->outfd);
@@ -221,9 +238,19 @@ Name: print_usage
 *****************************************************************************/
 void print_usage()
 {
-   fprintf(stderr,"Usage: %s -d gpfs_path -o ouput_log_file -u aws_user_name\
- [-p packed_tmp_file] [-t time_threshold-days] [-n] [-h] \n\n",ProgName);
-   fprintf(stderr, "where -n = no delete and -h = help\n\n");
+  fprintf(stderr, "Usage: %s\n", ProgName);
+  fprintf(stderr, "  -d gpfs_path\n");
+  fprintf(stderr, "  -o ouput_log_file\n");
+  fprintf(stderr, "  -u aws_user_name\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, " [-f fileset_id     (of trash fileset, for speed)]\n");
+  fprintf(stderr, " [-N target_namespace  (in object-ID / PRE xattrs)]\n");
+  fprintf(stderr, " [-p packed_tmp_file]\n");
+  fprintf(stderr, " [-t time_threshold-days]\n");
+  fprintf(stderr, " [-n]               (dry run)\n");
+  fprintf(stderr, " [-h]               (help)\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "where -n = no delete and -h = help\n\n");
 }
 
 
@@ -379,12 +406,12 @@ PACKED = scan makes a list (>file) that is post processed to determine if
  
 
 *****************************************************************************/
-int read_inodes(const char *fnameP, 
-                File_Info *file_info_ptr, 
-                int fileset_id,
+int read_inodes(const char   *fnameP, 
+                File_Info    *file_info_ptr, 
+                int           fileset_id,
                 Fileset_Info *fileset_info_ptr, 
-                size_t rec_count, 
-                unsigned int day_seconds) {
+                size_t        rec_count, 
+                unsigned int  day_seconds) {
 
 
    int rc = 0;
@@ -480,15 +507,19 @@ int read_inodes(const char *fnameP,
 
       // Determine if invalid inode error 
       if (iattrP->ia_flags & GPFS_IAFLAG_ERROR) {
-         fprintf(stderr,"%s: invalid inode %9d (GPFS_IAFLAG_ERROR)\n", 
+         fprintf(stderr, "%s: invalid inode %9d (GPFS_IAFLAG_ERROR)\n", 
                  ProgName,iattrP->ia_inode);
          continue;
       } 
 
       // If fileset_id is specified then only look for those inodes and xattrs
+      // The new use for this is to provide the file-set-ID of trash on the command-line.
+      // This allows us to avoid even considering anything not in trash.
       if (fileset_id >= 0) {
-         if (fileset_id != iattrP->ia_filesetid){
-            continue; 
+         if (fileset_id != iattrP->ia_filesetid) {
+           LOG(LOG_INFO, "skipping inode %u (fset: %d)\n",
+               iattrP->ia_inode, iattrP->ia_filesetid);
+            continue;
          }
       }
 
@@ -497,7 +528,7 @@ int read_inodes(const char *fnameP,
       if (iattrP->ia_inode != 3) {	/* skip the root inode */
  
          // This log commented out due to amount of inodes dumped
-         //LOG(LOG_INFO,"%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
+         //LOG(LOG_INFO, "%u|%lld|%lld|%d|%d|%u|%u|%u|%u|%u|%lld|%d\n",
          //   iattrP->ia_inode, iattrP->ia_size,iattrP->ia_blocks,
          //   iattrP->ia_nlink,iattrP->ia_filesetid,
          //   iattrP->ia_uid, iattrP->ia_gid, iattrP->ia_mode,
@@ -533,17 +564,17 @@ int read_inodes(const char *fnameP,
                if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                     marfs_xattrs[post_index], xattr_count)) != -1 ) { 
                     xattr_ptr = &mar_xattrs[xattr_index];
-                  LOG(LOG_INFO,"post xattr name = %s value = %s \
+                  LOG(LOG_INFO, "post xattr name = %s value = %s \
                       count = %d index=%d\n", xattr_ptr->xattr_name, \
                       xattr_ptr->xattr_value, xattr_count,xattr_index);
                   if ((str_2_post(post, xattr_ptr->xattr_value, 1))) {
-                      fprintf(stderr,"Error parsing  post xattr for inode %d\n",
+                      fprintf(stderr, "Error parsing  post xattr for inode %d\n",
                       iattrP->ia_inode);
                       continue;
                   }
                }
                else {
-                  fprintf(stderr,"Error:  Not finding post xattr for inode %d\n", 
+                  fprintf(stderr, "Error:  Not finding post xattr for inode %d\n", 
                           iattrP->ia_inode);
                }
                LOG(LOG_INFO, "found post chunk info bytes %zu\n", 
@@ -562,18 +593,26 @@ int read_inodes(const char *fnameP,
                      if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                           marfs_xattrs[objid_index], xattr_count)) != -1) { 
                           xattr_ptr = &mar_xattrs[xattr_index];
+
                         LOG(LOG_INFO, "objid xattr name = %s xattr_value =%s\n",
                             xattr_ptr->xattr_name, xattr_ptr->xattr_value);
-                        LOG(LOG_INFO, "remove file: %s  remove object:  %s\n",
-                            md_path_ptr, xattr_ptr->xattr_value); 
 
                         // Going to get the repo name now from the objid xattr
                         // To do this, must call marfs str_2_pre to parse out
                         // the bucket name which include repo name
-                        //fprintf(stderr,"going to call str_2_pre %s\n",xattr_ptr->xattr_value);
                         if (str_2_pre(pre, xattr_ptr->xattr_value, st) != 0) {
                            LOG(LOG_ERR, "str_2_pre failed\n");
                            continue;
+                        }
+
+                        // command-line option 'N' allows us to ignore everything
+                        // except trashed files that have a certain namespace in their
+                        // object-ID.
+                        if (file_info_ptr->target_ns_size
+                            && strcmp(file_info_ptr->target_ns, pre->ns->name)) {
+                          LOG(LOG_INFO, "skipping inode %u (namespace: %s)\n",
+                              iattrP->ia_inode, pre->ns->name);
+                          continue;
                         }
 
                         // Now check if we have RESTART xattr which may imply
@@ -587,6 +626,11 @@ int read_inodes(const char *fnameP,
 
                         check_security_access(pre);
 
+                        // file has passed all the checks.  We would delete it.
+                        // Actually, no.  It hasn't passed the packed checks.
+                        LOG(LOG_INFO, "remove file: %s  remove object:  %s\n",
+                            md_path_ptr, xattr_ptr->xattr_value); 
+
                         // Deterimine if object type is packed.  If so we 
                         // must complete scan to determine if all files 
                         // exist for the object.  So, just add the particulars to a file,
@@ -599,14 +643,14 @@ int read_inodes(const char *fnameP,
                         //      process_packed() compute it as needed.
                         if (post->obj_type == OBJ_PACKED) {
                            update_pre(pre);
-                           fprintf(file_info_ptr->packedfd,"%s %zu %s\n", 
+                           fprintf(file_info_ptr->packedfd, "%s %zu %s\n", 
                                    xattr_ptr->xattr_value, post->chunks, md_path_ptr );
                            file_info_ptr->is_packed = 1;
                         }
 
 
                         // Not checking return because log has error message
-                        // and want to keep running even if errors exists on 
+                        // and want to keep running even if errors exist on 
                         // certain objects or files
                         else {
                            fake_filehandle_for_delete_inits(&fh);
@@ -783,42 +827,53 @@ int delete_object(MarFS_FileHandle *fh,
 
    if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_Nto1) {
       if ( file_info_ptr->no_delete )
-         fprintf(file_info_ptr->outfd,"ID'd incomplete Nto1 multi object %s\n", object);
-      // else delete object
-      else 
+         fprintf(file_info_ptr->outfd, "ID'd incomplete Nto1 multi object %s\n", object);
+      else
          // s3_return = s3_delete( obj_buffer, object );
          rc = delete_data(fh);
    }
    else if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_FUSE) {
       if ( file_info_ptr->no_delete )
-         fprintf(file_info_ptr->outfd,"ID'd incomplete FUSE multi object %s\n", object);
+         fprintf(file_info_ptr->outfd, "ID'd incomplete FUSE multi object %s\n", object);
+      else 
+         // s3_return = s3_delete( obj_buffer, object );
+         rc = delete_data(fh);
+   }
+   else if ( is_multi ) {
+      // Check if no delete just print to log
+      if ( file_info_ptr->no_delete )
+         fprintf(file_info_ptr->outfd, "ID'd multi object %s\n", object);
       // else delete object
       else 
          // s3_return = s3_delete( obj_buffer, object );
          rc = delete_data(fh);
    }
-   else if ( is_multi )
+   else if (pre_ptr->obj_type == OBJ_PACKED) {
       // Check if no delete just print to log
       if ( file_info_ptr->no_delete )
-         fprintf(file_info_ptr->outfd,"ID'd multi object %s\n", object);
-      // else delete object
-      else 
-         // s3_return = s3_delete( obj_buffer, object );
-         rc = delete_data(fh);
-   else 
-      // Check if no delete just print to log
-      if ( file_info_ptr->no_delete )
-         fprintf(file_info_ptr->outfd,"ID' uni object %s\n", pre_ptr->objid);
+         fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", pre_ptr->objid);
       // else delete object
       else 
          // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
          rc = delete_data(fh);
+   }
+   else {
+      // Check if no delete just print to log
+      if ( file_info_ptr->no_delete )
+         fprintf(file_info_ptr->outfd, "ID'd uni object %s\n", pre_ptr->objid);
+      // else delete object
+      else 
+         // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
+         rc = delete_data(fh);
+   }
       
+
    if ( file_info_ptr->no_delete )
       return_val = 0;
    else if (rc)
       // return_val=check_S3_error(s3_return, obj_buffer, S3_DELETE);
       return_val=check_S3_error(fh->os.op_rc, &fh->os.iob, S3_DELETE);
+
 
    return(return_val);
 }
@@ -826,37 +881,41 @@ int delete_object(MarFS_FileHandle *fh,
 /***************************************************************************** 
 Name: delete_file 
 
-this function deletes the gpfs files assoiated with an object
+this function deletes the gpfs files associated with an object
 *****************************************************************************/
 int delete_file(char *filename, File_Info *file_info_ptr)
 {
    int return_value = 0;
    char path_file[MARFS_MAX_MD_PATH];
-   sprintf(path_file,"%s.path",filename);
-   print_current_time(file_info_ptr);
+   sprintf(path_file, "%s.path",filename);
   
    // Check if no_delete option so that no files or objects deleted 
    if (file_info_ptr->no_delete) {
-      fprintf(file_info_ptr->outfd,"ID'd file %s\n", filename);
-      fprintf(file_info_ptr->outfd,"ID'd path file %s\n", path_file);
+      print_current_time(file_info_ptr);
+      fprintf(file_info_ptr->outfd, "ID'd  MD-file   %s\n", filename);
+      print_current_time(file_info_ptr);
+      fprintf(file_info_ptr->outfd, "ID'd  path-file %s\n", path_file);
       return(return_value);
    }
 
    // Delete files
+   print_current_time(file_info_ptr);
    if ((unlink(filename) == -1)) {
-      fprintf(file_info_ptr->outfd,"Error removing file %s\n",filename);
+      fprintf(file_info_ptr->outfd, "Error removing MD-file %s\n",filename);
       return_value = -1;
    }
    else {
-      fprintf(file_info_ptr->outfd,"deleted file %s\n",filename);
+      fprintf(file_info_ptr->outfd, "deleted MD-file   %s\n",filename);
    }
+
+
    print_current_time(file_info_ptr);
    if ((unlink(path_file) == -1)) {
-      fprintf(file_info_ptr->outfd,"Error removing file %s\n",path_file);
+      fprintf(file_info_ptr->outfd, "Error removing path-file %s\n",path_file);
       return_value = -1;
    }
    else {
-      fprintf(file_info_ptr->outfd,"deleted file %s\n",path_file);
+      fprintf(file_info_ptr->outfd, "deleted path-file %s\n",path_file);
    }
    return(return_value);
 }
@@ -875,7 +934,7 @@ void print_current_time(File_Info *file_info_ptr)
    time_t now = time(0);
    time_info = localtime(&now);
    strftime(time_string, sizeof(time_string), "%Y-%m-%d %H:%M:%S", time_info);
-   fprintf(file_info_ptr->outfd, "%s ", time_string);
+   fprintf(file_info_ptr->outfd, "%s  ", time_string);
 }
 
 
@@ -930,7 +989,7 @@ int process_packed(File_Info *file_info_ptr)
    // Get the first line and sscanf into object_name, chunk_cnt, and filename
    fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat);
 
-   sscanf(obj_buf,"%s,%d,%s", objid, &chunk_count, filename);
+   sscanf(obj_buf, "%s,%d,%s", objid, &chunk_count, filename);
 
    // Keep track of of when objid name changes 
    // count is used to see how many files have been counted
@@ -944,10 +1003,10 @@ int process_packed(File_Info *file_info_ptr)
    //
    // proxy1/bparc/ver.001_001/ns.development/P___/inode.0000016572/md_ctime.20160526_124320-0600_1/obj_ctime.20160526_124320-0600_1/unq.0/chnksz.40000000/chnkno.0 403
    // /gpfs/fileset/trash/development.0/8/7/3/uni.255.trash_0000016873_20160526_125809-0600_1
-   //
+
    while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
       // if objid the same - keep counting files
-      sscanf(obj_buf,"%s %d %s", objid, &chunk_count, filename);
+      sscanf(obj_buf, "%s %d %s", objid, &chunk_count, filename);
       if (!strcmp(last_objid,objid) || chunk_count==1) {
          count++;
          // printf("count: %d chunk_count: %d\n", count, chunk_count);
@@ -996,28 +1055,33 @@ int process_packed(File_Info *file_info_ptr)
 
             update_pre(&fh.info.pre);
             update_url(&fh.os, &fh.info);
+
             // Delete object first
-            if ((obj_return = delete_object(&fh, file_info_ptr, multi_flag)) != 0) 
-               fprintf(file_info_ptr->outfd, "s3_delete error (HTTP Code: \
-                       %d) on object %s\n", obj_return, objid);
+            obj_return = delete_object(&fh, file_info_ptr, multi_flag);
 
-            else if ( file_info_ptr->no_delete) 
-               fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", objid);
-
-            // Get metafile name from tmp_packed_log and delelte 
-            else 
+            if (obj_return) {
+               print_current_time(file_info_ptr);
+               fprintf(file_info_ptr->outfd,
+                       "s3_delete error (HTTP Code: %d) on object %s\n",
+                       obj_return, objid);
+            }
+            else if (! file_info_ptr->no_delete) {
+               print_current_time(file_info_ptr);
                fprintf(file_info_ptr->outfd, "deleted object %s\n", objid);
+            }
 
-            sprintf(grep_command,"grep %s %s | awk '{print $3}' ", 
+
+            // Now open pipe to find all files associated with object 
+            sprintf(grep_command, "grep %s %s | awk '{print $3}' ", 
                     objid, file_info_ptr->packed_filename);
-            //Now open pipe to find all files associated with object 
             if (( pipe_grep = popen(grep_command, "r")) == NULL) {
                fprintf(stderr, "Error with popen\n");
                return(-1); 
             }
-            //Delete files
+
+            // Delete files
             while(fgets(file_buf, MARFS_MAX_MD_PATH, pipe_grep)) {
-               sscanf(file_buf,"%s",filename);
+               sscanf(file_buf, "%s",filename);
                df_return = delete_file(filename, file_info_ptr);
             }
             if (pclose(pipe_grep) == -1) {
