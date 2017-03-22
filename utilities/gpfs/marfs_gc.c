@@ -389,6 +389,34 @@ int clean_exit(FILE                 *fd,
       return(0);
 }
 
+
+/***************************************************************************** 
+Name: print_current_file 
+
+This function prints current time to the log entry
+*****************************************************************************/
+
+void print_current_time(File_Info *file_info_ptr)
+{
+   char time_string[20];
+   struct tm *time_info;
+   
+   time_t now = time(0);
+   time_info = localtime(&now);
+   strftime(time_string, sizeof(time_string), "%Y-%m-%d %H:%M:%S", time_info);
+   fprintf(file_info_ptr->outfd, "%s  ", time_string);
+}
+
+void print_delete_preamble(File_Info* file_info_ptr) {
+   print_current_time(file_info_ptr);
+   if ( file_info_ptr->no_delete )
+      fprintf(file_info_ptr->outfd, "ID'd ");
+   else
+      fprintf(file_info_ptr->outfd, "deleting ");
+}
+
+
+
 /***************************************************************************** 
 Name: read_inodes 
 
@@ -681,10 +709,10 @@ int dump_trash(MarFS_FileHandle   *fh,
                struct marfs_xattr *xattr_ptr, // object-ID
                File_Info          *file_info_ptr)
 {
-   int return_value =0;
-   int i;
-   int delete_obj_status;
-   int multi_flag = 0;
+   int    return_value =0;
+   int    delete_obj_status;
+   int    multi_flag = 0;
+   size_t i;
 
    // PathInfo        *info        = &fh->info;
    MarFS_XattrPre  *pre_ptr     = &fh->info.pre;
@@ -705,6 +733,8 @@ int dump_trash(MarFS_FileHandle   *fh,
    if (file_info_ptr->restart_found
        && (pre_ptr->obj_type == OBJ_Nto1)) {
 
+      multi_flag = 1;
+
 #if 0
       // COMMENTED OUT.  This will slow everything down.  We already parsed
       // the xattrs we got from the inode scan.  They are in fh->info.pre,
@@ -716,7 +746,6 @@ int dump_trash(MarFS_FileHandle   *fh,
          return -1;
       }
 #endif
-
 
       // assure the MD is open for reading
       //fh->flags |= FH_READING;
@@ -735,15 +764,13 @@ int dump_trash(MarFS_FileHandle   *fh,
             pre_ptr->chunk_no = chunk_info.chunk_no;
             update_pre(pre_ptr);
             update_url(&fh->os, &fh->info);
+
             if ((delete_obj_status = delete_object(fh, file_info_ptr, multi_flag))) {
+               print_current_time(file_info_ptr);
                fprintf(file_info_ptr->outfd,
                        "s3_delete error (HTTP Code: %d) on object %s\n",
                        delete_obj_status, fh->os.url); // xattr_ptr->xattr_value
                return_value = -1;
-            }
-            else if (!file_info_ptr->no_delete) {
-               fprintf(file_info_ptr->outfd, "deleted object %s\n",
-                       fh->os.url); // object_name
             }
          }
       }
@@ -751,39 +778,34 @@ int dump_trash(MarFS_FileHandle   *fh,
    }
    // If multi type file then delete all objects associated with file
    else if (post_ptr->obj_type == OBJ_MULTI) {
+      multi_flag = 1;
+
       for (i=0; i < post_ptr->chunks; i++ ) {
-         multi_flag = 1;
          pre_ptr->chunk_no = i;
          update_pre(pre_ptr);
          update_url(&fh->os, &fh->info);
+
          if ((delete_obj_status = delete_object(fh, file_info_ptr, multi_flag))) {
+            print_current_time(file_info_ptr);
             fprintf(file_info_ptr->outfd,
                     "s3_delete error (HTTP Code: %d) on object %s\n",
                     delete_obj_status, fh->os.url); // xattr_ptr->xattr_value
             return_value = -1;
          }
-         else {
-            if (!file_info_ptr->no_delete)
-               fprintf(file_info_ptr->outfd, "deleted object %s\n",
-                       fh->os.url);
-         }
       }
    }
 
-   // else UNI BUT NEED to implemented other formats as developed 
+   // else UNI, but need to implement other formats, as they are developed 
    else if (post_ptr->obj_type == OBJ_UNI) {
       update_pre(pre_ptr);
       update_url(&fh->os, &fh->info);
+
       if ((delete_obj_status = delete_object(fh, file_info_ptr, multi_flag))) {
+         print_current_time(file_info_ptr);
          fprintf(file_info_ptr->outfd,
                  "s3_delete error (HTTP Code:  %d) on object %s\n",
                  delete_obj_status, fh->os.url); // xattr_ptr->xattr_value
          return_value = -1;
-      }
-      else if (!file_info_ptr->no_delete) {
-            // update_url(&fh->os, &fh->info); // redundant
-            fprintf(file_info_ptr->outfd, "deleted object %s\n",
-                    fh->os.url); // object_name
       }
    }
 
@@ -799,8 +821,10 @@ int dump_trash(MarFS_FileHandle   *fh,
       delete_file(md_path_ptr, file_info_ptr); 
    }
    else {
+      print_current_time(file_info_ptr);
       fprintf(file_info_ptr->outfd, "Object error no file deletion of %s\n", md_path_ptr);
    }
+
    return(return_value);
 }
 
@@ -820,51 +844,47 @@ int delete_object(MarFS_FileHandle *fh,
    const char*     object = fh->os.url;
    int             rc;
 
-   print_current_time(file_info_ptr);
-
    // update_pre(&fh->info.pre);
    // update_url(&fh->os, &fh->info);
 
+
+   // timestamp, plus "ID'd " or "deleting "
+   print_delete_preamble(file_info_ptr);
+
    if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_Nto1) {
-      if ( file_info_ptr->no_delete )
-         fprintf(file_info_ptr->outfd, "ID'd incomplete Nto1 multi object %s\n", object);
-      else
+      fprintf(file_info_ptr->outfd, "chunk %llu of incomplete Nto1 multi object %s\n", pre_ptr->chunk_no, object);
+      if (! file_info_ptr->no_delete ) {
          // s3_return = s3_delete( obj_buffer, object );
          rc = delete_data(fh);
+      }
    }
    else if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_FUSE) {
-      if ( file_info_ptr->no_delete )
-         fprintf(file_info_ptr->outfd, "ID'd incomplete FUSE multi object %s\n", object);
-      else 
+      fprintf(file_info_ptr->outfd, "incomplete FUSE multi object %s\n", object);
+      if (! file_info_ptr->no_delete ) {
          // s3_return = s3_delete( obj_buffer, object );
          rc = delete_data(fh);
+      }
    }
    else if ( is_multi ) {
-      // Check if no delete just print to log
-      if ( file_info_ptr->no_delete )
-         fprintf(file_info_ptr->outfd, "ID'd multi object %s\n", object);
-      // else delete object
-      else 
+      fprintf(file_info_ptr->outfd, "chunk %llu of multi object %s\n", pre_ptr->chunk_no, object);
+      if (! file_info_ptr->no_delete ) {
          // s3_return = s3_delete( obj_buffer, object );
          rc = delete_data(fh);
+      }
    }
    else if (pre_ptr->obj_type == OBJ_PACKED) {
-      // Check if no delete just print to log
-      if ( file_info_ptr->no_delete )
-         fprintf(file_info_ptr->outfd, "ID'd packed object %s\n", pre_ptr->objid);
-      // else delete object
-      else 
+      fprintf(file_info_ptr->outfd, "packed object %s\n", pre_ptr->objid);
+      if (! file_info_ptr->no_delete ) {
          // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
          rc = delete_data(fh);
+      }
    }
    else {
-      // Check if no delete just print to log
-      if ( file_info_ptr->no_delete )
-         fprintf(file_info_ptr->outfd, "ID'd uni object %s\n", pre_ptr->objid);
-      // else delete object
-      else 
+      fprintf(file_info_ptr->outfd, "uni object %s\n", pre_ptr->objid);
+      if (! file_info_ptr->no_delete ) {
          // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
          rc = delete_data(fh);
+      }
    }
       
 
@@ -888,53 +908,30 @@ int delete_file(char *filename, File_Info *file_info_ptr)
    int return_value = 0;
    char path_file[MARFS_MAX_MD_PATH];
    sprintf(path_file, "%s.path",filename);
-  
-   // Check if no_delete option so that no files or objects deleted 
-   if (file_info_ptr->no_delete) {
-      print_current_time(file_info_ptr);
-      fprintf(file_info_ptr->outfd, "ID'd  MD-file   %s\n", filename);
-      print_current_time(file_info_ptr);
-      fprintf(file_info_ptr->outfd, "ID'd  path-file %s\n", path_file);
-      return(return_value);
-   }
 
-   // Delete files
-   print_current_time(file_info_ptr);
-   if ((unlink(filename) == -1)) {
-      fprintf(file_info_ptr->outfd, "Error removing MD-file %s\n",filename);
+   // Delete MD-file (unless '-n')
+   print_delete_preamble(file_info_ptr);
+   fprintf(file_info_ptr->outfd, "  MD-file   %s\n", filename);
+
+   if ((! file_info_ptr->no_delete)
+       && ((unlink(filename) == -1))) {
+      print_current_time(file_info_ptr);
+      fprintf(file_info_ptr->outfd, "Error removing MD-file %s\n", filename);
       return_value = -1;
    }
-   else {
-      fprintf(file_info_ptr->outfd, "deleted MD-file   %s\n",filename);
-   }
 
+   // Delete path-file (unless '-n')
+   print_delete_preamble(file_info_ptr);
+   fprintf(file_info_ptr->outfd, "  path-file %s\n", path_file);
 
-   print_current_time(file_info_ptr);
-   if ((unlink(path_file) == -1)) {
-      fprintf(file_info_ptr->outfd, "Error removing path-file %s\n",path_file);
+   if ((! file_info_ptr->no_delete)
+       && (unlink(path_file) == -1)) {
+      fprintf(file_info_ptr->outfd, "Error removing path-file %s\n", path_file);
       return_value = -1;
    }
-   else {
-      fprintf(file_info_ptr->outfd, "deleted path-file %s\n",path_file);
-   }
+
+
    return(return_value);
-}
-
-/***************************************************************************** 
-Name: print_current_file 
-
-This function prints current time to the log entry
-*****************************************************************************/
-
-void print_current_time(File_Info *file_info_ptr)
-{
-   char time_string[20];
-   struct tm *time_info;
-   
-   time_t now = time(0);
-   time_info = localtime(&now);
-   strftime(time_string, sizeof(time_string), "%Y-%m-%d %H:%M:%S", time_info);
-   fprintf(file_info_ptr->outfd, "%s  ", time_string);
 }
 
 
@@ -1005,15 +1002,19 @@ int process_packed(File_Info *file_info_ptr)
    // /gpfs/fileset/trash/development.0/8/7/3/uni.255.trash_0000016873_20160526_125809-0600_1
 
    while(fgets(obj_buf, MARFS_MAX_MD_PATH+MARFS_MAX_OBJID_SIZE+64, pipe_cat)) {
+
       // if objid the same - keep counting files
       sscanf(obj_buf, "%s %d %s", objid, &chunk_count, filename);
       if (!strcmp(last_objid,objid) || chunk_count==1) {
+
          count++;
          // printf("count: %d chunk_count: %d\n", count, chunk_count);
-         // If file count == chuck count - all files accounted for
-         // delete objec
+
+         // If file count == chuck count, then all files in packed obj accounted for.
+         // delete object
          if (chunk_count == count || chunk_count==1) {
-            // So make sure that the chunk_count (from xattr) matches the number
+
+            // make sure that the chunk_count (from xattr) matches the number
             // of files found 
             sprintf(wc_command, "grep -c %s %s", objid, file_info_ptr->packed_filename);
 
@@ -1024,6 +1025,7 @@ int process_packed(File_Info *file_info_ptr)
             while(fgets(wc_buf,1024, pipe_wc)) {
                sscanf(wc_buf, "%d", &wc_count);
             }
+
             if (wc_count != chunk_count) {
                fprintf(stderr, "object %s has %d files while chunk count is %d\n",
                        objid, wc_count, chunk_count);
@@ -1058,16 +1060,11 @@ int process_packed(File_Info *file_info_ptr)
 
             // Delete object first
             obj_return = delete_object(&fh, file_info_ptr, multi_flag);
-
             if (obj_return) {
                print_current_time(file_info_ptr);
                fprintf(file_info_ptr->outfd,
                        "s3_delete error (HTTP Code: %d) on object %s\n",
                        obj_return, objid);
-            }
-            else if (! file_info_ptr->no_delete) {
-               print_current_time(file_info_ptr);
-               fprintf(file_info_ptr->outfd, "deleted object %s\n", objid);
             }
 
 
