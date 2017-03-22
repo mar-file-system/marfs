@@ -124,6 +124,7 @@ AC_ARG_ENABLE([debug],
 
 # Checks for programs.
 AC_PROG_AWK
+CC=${CC-mpicc}
 AC_PROG_CC
 AC_PROG_MAKE_SET
 AC_PROG_RANLIB

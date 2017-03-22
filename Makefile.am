@@ -95,6 +95,9 @@ LDADD       += -L$(LIBNE)/lib -lne
 bin_PROGRAMS += rebuilder
 rebuilder_SOURCES = utilities/multi-component/rebuilder.c
 
+bin_PROGRAMS += drebuilder
+drebuilder_SOURCES = utilities/multi-component/drebuilder.c
+
 endif
 
 
