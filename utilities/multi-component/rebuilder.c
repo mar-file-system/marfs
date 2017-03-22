@@ -61,13 +61,14 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  * multi-component storage.
  */
 
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <pthread.h>
-#include <fnmatch.h>
-#include <sys/types.h>
+//#include <unistd.h>
+//#include <stdlib.h>
+//#include <stdio.h>
+//#include <pthread.h>
+//#include <fnmatch.h>
+//#include <sys/types.h>
 #include <pwd.h>
+#include <mpi.h>
 
 // we absolutely must have multi-component enabled to build this
 // program.  This ensures that the necessary symbols are exposed from
@@ -636,15 +637,9 @@ void process_log_subdir(const char *subdir_path) {
   closedir(dir);
 }
 
-void rebuild_component(const char *repo_name,
+void rebuild_component(MarFS_Repo_Ptr repo,
                        int pod, int good_block, int cap,
                        int *scatter_range) {
-  MarFS_Repo *repo          = find_repo_by_name(repo_name);
-  if(! repo ) {
-    fprintf(stderr, "could not find repo %s. Please check your config.\n",
-            repo_name);
-    exit(-1);
-  }
   const char *path_template = repo->host;
   int         scatter;
 
@@ -720,7 +715,6 @@ int main(int argc, char **argv) {
       ht_size = strtol(optarg, NULL, 10);
       break;
     case 'c':
-      component_rebuild = 1;
       cap = strtol(optarg, NULL, 10);
       break;
     case 'p':
@@ -730,6 +724,7 @@ int main(int argc, char **argv) {
       block = strtol(optarg, NULL, 10);
       break;
     case 'r':
+      component_rebuild = 1;
       repo_name = optarg;
       break;
     case 't':
@@ -770,6 +765,12 @@ int main(int argc, char **argv) {
       }
       scatter_range[0] = strtol(start, NULL, 10);
       scatter_range[1] = strtol(end, NULL, 10);
+      //swap start and end if listed in reverse
+      if( scatter_range[0] > scatter_range[1] ) {
+        int tmp = scatter_range[0];
+        scatter_range[0] = scatter_range[1];
+        scatter_range[1] = tmp;
+      }
       range_given = 1;
       free(start);
       break;
@@ -809,16 +810,115 @@ int main(int argc, char **argv) {
 
   ht_init(&rebuilt_objects, ht_size);
 
-  start_threads(threads);
-
   if(component_rebuild) {
     if(pod == -1 || block == -1 || cap == -1) {
       fprintf(stderr, "Please specify all options -c -r -p and -b\n");
       usage(argv[0]);
       exit(-1);
     }
-    rebuild_component(repo_name, pod, block, cap,
-                      (range_given ? scatter_range : NULL));
+
+    MarFS_Repo *repo = find_repo_by_name(repo_name);
+
+    if( !repo ) { 
+      fprintf( stderr, "drebuilder: failed to retrieve repo"
+        " by name \"%s\", check your config file\n", repo_name );
+      return -1; 
+    }   
+
+    DAL        *dal    = repo->dal;
+    MC_Config  *config = (MC_Config*)dal->global_state;
+
+    // Initialize the MPI environment
+    MPI_Init(NULL, NULL);
+
+    // Get the number of processes
+    int num_procs;
+    MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+
+    // Get the rank of the process
+    int proc_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
+
+    //verify scatter ranges are sane
+    if( range_given ) {
+      if( config->scatter_width - 1 < scatter_range[1] ) {
+        scatter_range[1] = config->scatter_width - 1;
+        if( proc_rank == 0 )
+          fprintf( stderr, "rebuilder: upper scatter range exceeds range defined by repo,"
+            " lowering upper bound to %d\n", scatter_range[1] );
+      }
+      if( scatter_range[0] < 0 ) {
+        scatter_range[0] = 0;
+        if( proc_rank == 0 )
+          fprintf( stderr, "rebuilder: lower scatter range is negative,"
+            " reseting lower bound to %d\n", scatter_range[0] );
+      }
+    }
+
+    // Get the name of the processor
+    char hostname[MPI_MAX_PROCESSOR_NAME];
+    int name_len;
+    MPI_Get_processor_name( hostname, &name_len);
+
+    if( proc_rank != 0  ||  num_procs == 1 ) {
+      char oneproc = 1;
+      if( num_procs > 1 ) {
+        num_procs--;
+        proc_rank--;
+        oneproc = 0;
+      }
+      if( range_given) {
+        int scatter_width = scatter_range[1] - scatter_range[0] + 1;
+        scatter_range[1] = ( (scatter_width * (proc_rank + 1)) / num_procs ) - 1 + scatter_range[0];
+        scatter_range[0] = ( (scatter_width * proc_rank) / num_procs ) + scatter_range[0];
+      }
+      else {
+        scatter_range[0] = ( (config->scatter_width * proc_rank) / num_procs );
+        scatter_range[1] = ( (config->scatter_width * (proc_rank + 1)) / num_procs ) - 1;
+      }
+
+      struct timespec tspec;
+      tspec.tv_nsec = 0;
+      tspec.tv_sec = proc_rank;
+      nanosleep( &tspec, NULL );
+      // Print off a message
+      printf("processor %s, rank %d"
+         " out of %d processes  Repo = %s  scatter_width= %d  Range[%d,%d]\n",
+         hostname, proc_rank, num_procs, repo->name, config->scatter_width, scatter_range[0], scatter_range[1]);
+
+      stats.rebuild_successes++;
+
+      if( !oneproc ) {
+        if( MPI_Send( &stats.rebuild_successes, 1, MPI_INT, 0, 145, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
+           fprintf( stderr, "proc %d failed to transmit its term state to the master\n", proc_rank );
+        }
+      }
+      else {
+        print_stats();
+      }
+  //    start_threads(threads);
+  //    rebuild_component(repo, pod, block, cap,
+  //                      (range_given ? scatter_range : NULL));
+  //
+  //    stop_workers();
+  //
+    }
+    else {
+      int terminated = 1;
+
+      int buf;
+      MPI_Status status;
+      while ( terminated < num_procs ) {
+        if( MPI_Recv( &buf, 1, MPI_INT, MPI_ANY_SOURCE, 145, MPI_COMM_WORLD, &status ) == MPI_SUCCESS ) {
+          stats.rebuild_successes += buf;
+          terminated++;
+        }
+      }
+      print_stats();
+    }
+    // Finalize the MPI environment.
+    MPI_Finalize();
+
   }
   else {
     if(optind >= argc) {
@@ -826,6 +926,8 @@ int main(int argc, char **argv) {
       usage(argv[0]);
       exit(-1);
     }
+
+    start_threads(threads);
     int index;
     for(index = optind; index < argc; index++) {
 
@@ -851,11 +953,10 @@ int main(int argc, char **argv) {
 
       closedir(log_dir);
     }
+
+    stop_workers();
+    print_stats();
   }
-
-  stop_workers();
-
-  print_stats();
 
   return 0;
 }
