@@ -92,11 +92,11 @@ AM_LDFLAGS  += -L$(LIBNE)/lib
 LDADD       += -L$(LIBNE)/lib -lne
 
 # rebuilder is used to rebuild MC repositories
-bin_PROGRAMS += rebuilder
-rebuilder_SOURCES = utilities/multi-component/rebuilder.c
+#bin_PROGRAMS += rebuilder
+#rebuilder_SOURCES = utilities/multi-component/rebuilder.c
 
-bin_PROGRAMS += drebuilder
-drebuilder_SOURCES = utilities/multi-component/drebuilder.c
+mpirebuild: utilities/multi-component/rebuilder.c
+	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o $@ $^ ${LDADD} ${LIBS}
 
 endif
 

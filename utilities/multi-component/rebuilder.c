@@ -82,6 +82,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define QUEUE_MAX 256
 
+
 struct object_file {
   char path[MC_MAX_PATH_LEN];
   int n;
@@ -780,11 +781,6 @@ int main(int argc, char **argv) {
         perror("getpwnam()");
         exit(-1);
       }
-      // set the uid.
-      if(seteuid(pw->pw_uid) != 0) {
-        perror("seteuid()");
-        exit(-1);
-      }
       break;
     default:
       usage(argv[0]);
@@ -828,16 +824,19 @@ int main(int argc, char **argv) {
     DAL        *dal    = repo->dal;
     MC_Config  *config = (MC_Config*)dal->global_state;
 
+    int num_procs = 1;
+    int proc_rank = 0;
+
+#ifdef MPI_VERSION
     // Initialize the MPI environment
     MPI_Init(NULL, NULL);
 
     // Get the number of processes
-    int num_procs;
     MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
 
     // Get the rank of the process
-    int proc_rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
+#endif
 
     //verify scatter ranges are sane
     if( range_given ) {
@@ -856,11 +855,33 @@ int main(int argc, char **argv) {
     }
 
     // Get the name of the processor
-    char hostname[MPI_MAX_PROCESSOR_NAME];
+    char hostname[250];
     int name_len;
+#ifdef MPI_VERSION
     MPI_Get_processor_name( hostname, &name_len);
+#else
+    name_len = gethostname(&hostname[0], 250)
+#endif
 
     if( proc_rank != 0  ||  num_procs == 1 ) {
+
+      uid_t uid=getuid();
+      if( pw ) {
+        // set the uid.
+        printf( "1 setting (Euid=%d,Uid=%d)\n", geteuid(), getuid() );
+        if(setuid(pw->pw_uid) != 0) {
+          perror("setuid(to user)");
+          exit(-1);
+        }
+        printf( "2 (Euid=%d,Uid=%d)\n", geteuid(), getuid() );
+        if(setuid(uid) != 0) {
+          perror("setuid(to user)");
+          exit(-1);
+        }
+        printf( "3 (Euid=%d,Uid=%d)\n", geteuid(), getuid() );
+      }
+
+
       char oneproc = 1;
       if( num_procs > 1 ) {
         num_procs--;
@@ -883,25 +904,36 @@ int main(int argc, char **argv) {
       nanosleep( &tspec, NULL );
       // Print off a message
       printf("processor %s, rank %d"
-         " out of %d processes  Repo = %s  scatter_width= %d  Range[%d,%d]\n",
+         " out of %d workers  Repo = %s  scatter_width= %d  Range[%d,%d]\n",
          hostname, proc_rank, num_procs, repo->name, config->scatter_width, scatter_range[0], scatter_range[1]);
 
+//      start_threads(threads);
+//      rebuild_component(repo, pod, block, cap,
+//                        (range_given ? scatter_range : NULL));
+//      stop_workers();
       stats.rebuild_successes++;
 
+//      if( pw ) {
+//        // set the euid back
+//        if(seteuid(uid) != 0) {
+//          perror("seteuid()");
+//          exit(-1);
+//        }
+//      }
+	sleep(2);
+
       if( !oneproc ) {
+#ifdef MPI_VERSION
         if( MPI_Send( &stats.rebuild_successes, 1, MPI_INT, 0, 145, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
            fprintf( stderr, "proc %d failed to transmit its term state to the master\n", proc_rank );
         }
+#endif
       }
       else {
         print_stats();
       }
-  //    start_threads(threads);
-  //    rebuild_component(repo, pod, block, cap,
-  //                      (range_given ? scatter_range : NULL));
-  //
-  //    stop_workers();
-  //
+  
+  
     }
     else {
       int terminated = 1;
@@ -916,8 +948,10 @@ int main(int argc, char **argv) {
       }
       print_stats();
     }
+#ifdef MPI_VERSION
     // Finalize the MPI environment.
     MPI_Finalize();
+#endif
 
   }
   else {
