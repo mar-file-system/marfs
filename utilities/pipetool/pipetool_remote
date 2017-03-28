@@ -165,6 +165,9 @@ else:
       exit( err.errno )
 
 # Cleanup
-target.close()
-
+try:
+   target.close()
+except IOError as err:
+   print >> sys.stderr, "pipetool_remote: error while closing the target file: {0}".format( err )
+   exit( err.errno )
 
