@@ -84,7 +84,6 @@ AM_CPPFLAGS += -DSPINLOCKS
 endif
 
 
-
 # --- additions for multi-component builds
 if USE_MC
 AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
@@ -95,8 +94,12 @@ LDADD       += -L$(LIBNE)/lib -lne
 #bin_PROGRAMS += rebuilder
 #rebuilder_SOURCES = utilities/multi-component/rebuilder.c
 
-mpirebuild: utilities/multi-component/rebuilder.c
+mpirebuilder : utilities/multi-component/rebuilder.c
+	@ echo "${ISAL} Flags: ${CPPFLAGS} ||| ${AM_CPPFLAGS} ||| -I. ${LDFLAGS} ||| ${AM_LDFLAGS} ||| -o ||| $@ ||| $^ ||| ${LDADD} ||| ${LIBS}"
 	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o $@ $^ ${LDADD} ${LIBS}
+
+clean-mpi : mpirebuilder
+	@ rm -f mpirebuilder
 
 endif
 

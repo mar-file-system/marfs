@@ -396,16 +396,17 @@ int rebuild_object(struct object_file object) {
   if(rebuild_result < 0) {
     fprintf(error_log, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
             object.path, strerror(errno));
+    ne_close(object_handle); //close and ignore any errors
   }
-
-  int error = ne_close(object_handle);
-  if(error < 0) {
-    perror("ne_close()");
-    fprintf(stderr, "object %s could not be closed: %s\n",
-            object.path, strerror(errno));
-    // We should never fail to close an object. If we do, then
-    // something is terribly wrong.
-    exit(-1);
+  else {
+    int error = ne_close(object_handle);
+    if(error < 0) {
+      fprintf(stderr, "object %s could not be closed: %s\n",
+              object.path, strerror(errno));
+      // A failure of a close here means a failure to chown()/rename()
+      // If that happens, something is terribly wrong.
+      exit(-1);
+    }
   }
 
   return rebuild_result;
@@ -778,7 +779,11 @@ int main(int argc, char **argv) {
     }
     case 'u':
       if((pw = getpwnam(optarg)) == NULL) {
-        perror("getpwnam()");
+        fprintf( stderr, "%s: failed to retireve uid for the user \"%s\"\n", argv[0], optarg);
+        exit(-1);
+      }
+      if(setuid(pw->pw_uid) != 0) {
+        perror("failed to setuid to specified user");
         exit(-1);
       }
       break;
@@ -865,23 +870,6 @@ int main(int argc, char **argv) {
 
     if( proc_rank != 0  ||  num_procs == 1 ) {
 
-      uid_t uid=getuid();
-      if( pw ) {
-        // set the uid.
-        printf( "1 setting (Euid=%d,Uid=%d)\n", geteuid(), getuid() );
-        if(setuid(pw->pw_uid) != 0) {
-          perror("setuid(to user)");
-          exit(-1);
-        }
-        printf( "2 (Euid=%d,Uid=%d)\n", geteuid(), getuid() );
-        if(setuid(uid) != 0) {
-          perror("setuid(to user)");
-          exit(-1);
-        }
-        printf( "3 (Euid=%d,Uid=%d)\n", geteuid(), getuid() );
-      }
-
-
       char oneproc = 1;
       if( num_procs > 1 ) {
         num_procs--;
@@ -899,33 +887,35 @@ int main(int argc, char **argv) {
       }
 
       struct timespec tspec;
-      tspec.tv_nsec = 0;
-      tspec.tv_sec = proc_rank;
+      unsigned long nsecw = (proc_rank * 50000000); //5 hundredths of a sec interval per rank
+      tspec.tv_nsec = nsecw % 1000000000;
+      tspec.tv_sec = nsecw / 1000000000;
       nanosleep( &tspec, NULL );
       // Print off a message
-      printf("processor %s, rank %d"
-         " out of %d workers  Repo = %s  scatter_width= %d  Range[%d,%d]\n",
-         hostname, proc_rank, num_procs, repo->name, config->scatter_width, scatter_range[0], scatter_range[1]);
+      fprintf( stderr, "process %d"
+         " out of %d workers  Host = %s  Repo = %s  scatter_width= %d  Range[%d,%d]\n",
+         proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
 
-//      start_threads(threads);
-//      rebuild_component(repo, pod, block, cap,
-//                        (range_given ? scatter_range : NULL));
-//      stop_workers();
-      stats.rebuild_successes++;
+      nsecw = ((num_procs - proc_rank) * 50000000); //5 hundredths of a sec for each process that still needs to print
+      tspec.tv_nsec = nsecw % 1000000000;
+      tspec.tv_sec = nsecw / 1000000000;
+      nanosleep( &tspec, NULL );
+      printf( "WORK START %d\n", proc_rank+1 );
 
-//      if( pw ) {
-//        // set the euid back
-//        if(seteuid(uid) != 0) {
-//          perror("seteuid()");
-//          exit(-1);
-//        }
-//      }
-	sleep(2);
+      start_threads(threads);
+      rebuild_component( repo, pod, block, cap, scatter_range );
+      stop_workers();
 
       if( !oneproc ) {
 #ifdef MPI_VERSION
-        if( MPI_Send( &stats.rebuild_successes, 1, MPI_INT, 0, 145, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
-           fprintf( stderr, "proc %d failed to transmit its term state to the master\n", proc_rank );
+        int statbuf[5];
+        statbuf[0] = proc_rank;
+        statbuf[1] = stats.total_objects;
+        statbuf[2] = stats.intact_objects;
+        statbuf[3] = stats.rebuild_successes;
+        statbuf[4] = stats.rebuild_failures;
+        if( MPI_Send( &statbuf[0], 5, MPI_INT, 0, 145, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
+           fprintf( stderr, "worker process %d failed to transmit its term state to the master\n", proc_rank+1 );
         }
 #endif
       }
@@ -938,21 +928,27 @@ int main(int argc, char **argv) {
     else {
       int terminated = 1;
 
-      int buf;
+      int buf[5];
       MPI_Status status;
       while ( terminated < num_procs ) {
-        if( MPI_Recv( &buf, 1, MPI_INT, MPI_ANY_SOURCE, 145, MPI_COMM_WORLD, &status ) == MPI_SUCCESS ) {
-          stats.rebuild_successes += buf;
+        if( MPI_Recv( &buf[0], 5, MPI_INT, MPI_ANY_SOURCE, 145, MPI_COMM_WORLD, &status ) == MPI_SUCCESS ) {
+          stats.total_objects += buf[1];
+          stats.intact_objects += buf[2];
+          stats.rebuild_successes += buf[3];
+          stats.rebuild_failures += buf[4];
           terminated++;
+	  fprintf( stderr, "master received stats from worker %d\n", buf[0]+1 );
         }
       }
       print_stats();
     }
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
 #ifdef MPI_VERSION
     // Finalize the MPI environment.
     MPI_Finalize();
 #endif
-
   }
   else {
     if(optind >= argc) {
