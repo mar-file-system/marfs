@@ -90,16 +90,11 @@ AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
 AM_LDFLAGS  += -L$(LIBNE)/lib
 LDADD       += -L$(LIBNE)/lib -lne
 
-# rebuilder is used to rebuild MC repositories
-#bin_PROGRAMS += rebuilder
-#rebuilder_SOURCES = utilities/multi-component/rebuilder.c
+all-local : utilities/multi-component/rebuilder.c
+	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o rebuilder $^ ${LDADD} ${LIBS}
 
-mpirebuilder : utilities/multi-component/rebuilder.c
-	@ echo "${ISAL} Flags: ${CPPFLAGS} ||| ${AM_CPPFLAGS} ||| -I. ${LDFLAGS} ||| ${AM_LDFLAGS} ||| -o ||| $@ ||| $^ ||| ${LDADD} ||| ${LIBS}"
-	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o $@ $^ ${LDADD} ${LIBS}
-
-clean-mpi : mpirebuilder
-	@ rm -f mpirebuilder
+clean-local :
+	@ rm -f rebuilder
 
 endif
 

@@ -645,8 +645,8 @@ void rebuild_component(MarFS_Repo_Ptr repo,
   const char *path_template = repo->host;
   int         scatter;
 
-  for(scatter = (scatter_range == NULL ? 0 : scatter_range[0]);
-      (scatter_range == NULL ? 1 : scatter <= scatter_range[1]);
+  for(scatter = scatter_range[0];
+      scatter <= scatter_range[1];
       scatter++) {
     char ne_path[MC_MAX_PATH_LEN];
     char scatter_path[MC_MAX_PATH_LEN];
@@ -779,11 +779,11 @@ int main(int argc, char **argv) {
     }
     case 'u':
       if((pw = getpwnam(optarg)) == NULL) {
-        fprintf( stderr, "%s: failed to retireve uid for the user \"%s\"\n", argv[0], optarg);
+        fprintf( stderr, "%s: failed to retireve uid for the user \"%s\"\n", argv[0], optarg );
         exit(-1);
       }
       if(setuid(pw->pw_uid) != 0) {
-        perror("failed to setuid to specified user");
+        fprintf( stderr, "%s: failed to setuid to specified user: \n", argv[0], strerror(errno) );
         exit(-1);
       }
       break;
@@ -795,11 +795,11 @@ int main(int argc, char **argv) {
 
   // load the marfs config.
   if(read_configuration()) {
-    fprintf(stderr, "failed to read marfs configuration\n");
+    fprintf( stderr, "%s: failed to read marfs configuration\n", argv[0] );
     exit(-1);
   }
   if(validate_configuration()) {
-    fprintf(stderr, "failed to validate marfs configuration\n");
+    fprintf(stderr, "%s: failed to validate marfs configuration\n", argv[0]);
     exit(-1);
   }
 
@@ -813,7 +813,7 @@ int main(int argc, char **argv) {
 
   if(component_rebuild) {
     if(pod == -1 || block == -1 || cap == -1) {
-      fprintf(stderr, "Please specify all options -c -r -p and -b\n");
+      fprintf(stderr, "%s: please specify all options -c -r -p and -b\n", argv[0]);
       usage(argv[0]);
       exit(-1);
     }
@@ -821,8 +821,8 @@ int main(int argc, char **argv) {
     MarFS_Repo *repo = find_repo_by_name(repo_name);
 
     if( !repo ) { 
-      fprintf( stderr, "drebuilder: failed to retrieve repo"
-        " by name \"%s\", check your config file\n", repo_name );
+      fprintf( stderr, "%s: failed to retrieve repo"
+        " by name \"%s\", check your config file\n", argv[0], repo_name );
       return -1; 
     }   
 
@@ -848,14 +848,14 @@ int main(int argc, char **argv) {
       if( config->scatter_width - 1 < scatter_range[1] ) {
         scatter_range[1] = config->scatter_width - 1;
         if( proc_rank == 0 )
-          fprintf( stderr, "rebuilder: upper scatter range exceeds range defined by repo,"
-            " lowering upper bound to %d\n", scatter_range[1] );
+          fprintf( stderr, "%s: upper scatter range exceeds range defined by repo,"
+            " lowering upper bound to %d\n", argv[0], scatter_range[1] );
       }
       if( scatter_range[0] < 0 ) {
         scatter_range[0] = 0;
         if( proc_rank == 0 )
-          fprintf( stderr, "rebuilder: lower scatter range is negative,"
-            " reseting lower bound to %d\n", scatter_range[0] );
+          fprintf( stderr, "%s: lower scatter range is negative,"
+            " reseting lower bound to %d\n", argv[0], scatter_range[0] );
       }
     }
 
@@ -892,15 +892,14 @@ int main(int argc, char **argv) {
       tspec.tv_sec = nsecw / 1000000000;
       nanosleep( &tspec, NULL );
       // Print off a message
-      fprintf( stderr, "process %d"
-         " out of %d workers  Host = %s  Repo = %s  scatter_width= %d  Range[%d,%d]\n",
-         proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
+      fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width= %d, Range[%d,%d] )\n",
+         argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
 
       nsecw = ((num_procs - proc_rank) * 50000000); //5 hundredths of a sec for each process that still needs to print
       tspec.tv_nsec = nsecw % 1000000000;
       tspec.tv_sec = nsecw / 1000000000;
       nanosleep( &tspec, NULL );
-      printf( "WORK START %d\n", proc_rank+1 );
+      printf( "%s: worker %d starting\n", argv[0], proc_rank+1 );
 
       start_threads(threads);
       rebuild_component( repo, pod, block, cap, scatter_range );
@@ -915,7 +914,7 @@ int main(int argc, char **argv) {
         statbuf[3] = stats.rebuild_successes;
         statbuf[4] = stats.rebuild_failures;
         if( MPI_Send( &statbuf[0], 5, MPI_INT, 0, 145, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
-           fprintf( stderr, "worker process %d failed to transmit its term state to the master\n", proc_rank+1 );
+           fprintf( stderr, "%s: worker process %d failed to transmit its term state to the master\n", argv[0], proc_rank+1 );
         }
 #endif
       }
@@ -937,7 +936,7 @@ int main(int argc, char **argv) {
           stats.rebuild_successes += buf[3];
           stats.rebuild_failures += buf[4];
           terminated++;
-	  fprintf( stderr, "master received stats from worker %d\n", buf[0]+1 );
+	  fprintf( stderr, "%s: master received stats from worker %d\n", argv[0], buf[0]+1 );
         }
       }
       print_stats();
@@ -952,8 +951,9 @@ int main(int argc, char **argv) {
   }
   else {
     if(optind >= argc) {
-      fprintf(stderr, "Too few arguments\n");
+      fprintf( stderr, "%s: too few arguments\n", argv[0] );
       usage(argv[0]);
+      errno=EINVAL;
       exit(-1);
     }
 
@@ -963,8 +963,8 @@ int main(int argc, char **argv) {
 
       DIR *log_dir = opendir(argv[index]);
       if(!log_dir) {
-        fprintf(stderr, "Could not open log dir %s: %s\n",
-                argv[index], strerror(errno));
+        fprintf(stderr, "%s: could not open log dir %s: %s\n",
+                argv[0], argv[index], strerror(errno));
         exit(-1);
       }
 
