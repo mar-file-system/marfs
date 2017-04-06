@@ -832,7 +832,6 @@ int main(int argc, char **argv) {
     int num_procs = 1;
     int proc_rank = 0;
 
-#ifdef MPI_VERSION
     // Initialize the MPI environment
     MPI_Init(NULL, NULL);
 
@@ -841,7 +840,6 @@ int main(int argc, char **argv) {
 
     // Get the rank of the process
     MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
-#endif
 
     //verify scatter ranges are sane
     if( range_given ) {
@@ -859,16 +857,15 @@ int main(int argc, char **argv) {
       }
     }
 
+    MPI_Comm proc_com;
+
     // Get the name of the processor
     char hostname[250];
     int name_len;
-#ifdef MPI_VERSION
     MPI_Get_processor_name( hostname, &name_len);
-#else
-    name_len = gethostname(&hostname[0], 250)
-#endif
 
     if( proc_rank != 0  ||  num_procs == 1 ) {
+      MPI_Comm_split( MPI_COMM_WORLD, 1, proc_rank, &proc_com );
 
       char oneproc = 1;
       if( num_procs > 1 ) {
@@ -876,37 +873,70 @@ int main(int argc, char **argv) {
         proc_rank--;
         oneproc = 0;
       }
-      if( range_given) {
-        int scatter_width = scatter_range[1] - scatter_range[0] + 1;
-        scatter_range[1] = ( (scatter_width * (proc_rank + 1)) / num_procs ) - 1 + scatter_range[0];
-        scatter_range[0] = ( (scatter_width * proc_rank) / num_procs ) + scatter_range[0];
+
+      int scatter_width = config->scatter_width;
+      if ( range_given ) {
+        scatter_width = scatter_range[1] - scatter_range[0] + 1;
       }
       else {
-        scatter_range[0] = ( (config->scatter_width * proc_rank) / num_procs );
-        scatter_range[1] = ( (config->scatter_width * (proc_rank + 1)) / num_procs ) - 1;
+        scatter_range[0] = 0;
+        scatter_range[1] = scatter_width - 1;
+      }
+
+      int remainder = scatter_width % num_procs;
+      int rwidth = scatter_width / num_procs;
+
+      if ( proc_rank == 0 ) { printf( "rem = %d, rwidth=%d, st_low=%d, st_high=%d\n", remainder, rwidth, scatter_range[0], scatter_range[1] ); }
+
+      scatter_range[0] += ( proc_rank * rwidth ) + (( proc_rank < remainder ) ? proc_rank : remainder);
+
+      if ( proc_rank < remainder ) {
+        rwidth++;
+      }
+
+      scatter_range[1] = scatter_range[0] + rwidth - 1;
+
+      int turn;
+      for ( turn = 0; turn < proc_rank; turn++ ) {
+        MPI_Barrier( proc_com ); //wait for earlier ranks to print their messages
+      }
+
+      // Print off a message
+      if ( scatter_range[1] < scatter_range[0] ) {
+        // if there are more procs that scatters, procs with no work will have a backwards range
+        fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width= %d, Range[ No work to be done! ] )\n",
+           argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width );
+      }
+      else {
+        fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width= %d, Range[%d,%d] )\n",
+           argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
       }
 
       struct timespec tspec;
-      unsigned long nsecw = (proc_rank * 50000000); //5 hundredths of a sec interval per rank
-      tspec.tv_nsec = nsecw % 1000000000;
-      tspec.tv_sec = nsecw / 1000000000;
+      tspec.tv_nsec = 50000000; //wait 5 hundredths of a second, to allow message to travel
+      tspec.tv_sec = 0;
       nanosleep( &tspec, NULL );
-      // Print off a message
-      fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width= %d, Range[%d,%d] )\n",
-         argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
 
-      nsecw = ((num_procs - proc_rank) * 50000000); //5 hundredths of a sec for each process that still needs to print
-      tspec.tv_nsec = nsecw % 1000000000;
-      tspec.tv_sec = nsecw / 1000000000;
-      nanosleep( &tspec, NULL );
-      printf( "%s: worker %d starting\n", argv[0], proc_rank+1 );
+      for ( ; turn < num_procs; turn++ ) {
+        MPI_Barrier( proc_com ); //wait for later ranks to print their messages
+      }
 
+      tspec.tv_nsec = 0;
+      tspec.tv_sec = 1;
+      nanosleep( &tspec, NULL ); //wait for a single second, to allow messages to be noticed
+
+      // only do work if there is some to be done
+      if ( scatter_range[1] >= scatter_range[0] ) {
+        printf( "%s: worker %d starting\n", argv[0], proc_rank+1 );
       start_threads(threads);
       rebuild_component( repo, pod, block, cap, scatter_range );
       stop_workers();
+      }
+      else {
+        printf( "%s: worker %d terminating early as it has nothing to do!\n", argv[0], proc_rank+1 );
+      }
 
       if( !oneproc ) {
-#ifdef MPI_VERSION
         int statbuf[5];
         statbuf[0] = proc_rank;
         statbuf[1] = stats.total_objects;
@@ -916,7 +946,7 @@ int main(int argc, char **argv) {
         if( MPI_Send( &statbuf[0], 5, MPI_INT, 0, 145, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
            fprintf( stderr, "%s: worker process %d failed to transmit its term state to the master\n", argv[0], proc_rank+1 );
         }
-#endif
+
       }
       else {
         print_stats();
@@ -925,6 +955,8 @@ int main(int argc, char **argv) {
   
     }
     else {
+      // call comm_split, but don't bother adding the master to a new communicator
+      MPI_Comm_split( MPI_COMM_WORLD, MPI_UNDEFINED, proc_rank, &proc_com );
       int terminated = 1;
 
       int buf[5];
@@ -936,18 +968,18 @@ int main(int argc, char **argv) {
           stats.rebuild_successes += buf[3];
           stats.rebuild_failures += buf[4];
           terminated++;
-	  fprintf( stderr, "%s: master received stats from worker %d\n", argv[0], buf[0]+1 );
+          fprintf( stderr, "%s: master received stats from worker %d\n", argv[0], buf[0]+1 );
         }
       }
+      fflush( stderr );
+      sleep( 1 ); //wait for previous outputs to be displayed
       print_stats();
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-#ifdef MPI_VERSION
     // Finalize the MPI environment.
     MPI_Finalize();
-#endif
   }
   else {
     if(optind >= argc) {
