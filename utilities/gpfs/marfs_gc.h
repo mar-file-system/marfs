@@ -107,21 +107,25 @@ struct marfs_xattr {
 
 typedef struct Fileset_Info {
    char fileset_name[MARFS_MAX_NAMESPACE_NAME];
-   // CHECK THIS 
-//   char repo_name[MAX_FILESET_NAME_LEN];
-   char repo_name[MARFS_MAX_NAMESPACE_NAME];
+   char repo_name[MARFS_MAX_NAMESPACE_NAME]; // MAX_FILESET_NAME_LEN?
    char host[32];
 } Fileset_Info;
 
 typedef struct File_Info {
-   char fileset_name[MARFS_MAX_NAMESPACE_NAME];
-   FILE *outfd;
-   FILE *packedfd;
-   char packed_filename[TMP_LOCAL_FILE_LEN];
-   unsigned int is_packed;
-   unsigned int no_delete;
+   // per-run settings
+   char          packed_filename[TMP_LOCAL_FILE_LEN];
+   FILE         *packedfd;
+   FILE         *outfd;
+   unsigned int  no_delete;                            /* from option 'n': dry run */
+   char          target_ns[MARFS_MAX_NAMESPACE_NAME];  /* from option 'N' */
+   size_t        target_ns_size;
+                           
+
+   // per-file discoveries
+   char          fileset_name[MARFS_MAX_NAMESPACE_NAME];
+   unsigned int  is_packed;
    MarFS_ObjType obj_type;
-   unsigned int restart_found;
+   unsigned int  restart_found;
 } File_Info;
 
 
