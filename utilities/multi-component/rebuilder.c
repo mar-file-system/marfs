@@ -639,11 +639,12 @@ void process_log_subdir(const char *subdir_path) {
   closedir(dir);
 }
 
-void rebuild_component(MarFS_Repo_Ptr repo,
+int rebuild_component(MarFS_Repo_Ptr repo,
                        int pod, int good_block, int cap,
                        int *scatter_range) {
   const char *path_template = repo->host;
   int         scatter;
+  int         failed = 0;
 
   for(scatter = scatter_range[0];
       scatter <= scatter_range[1];
@@ -656,14 +657,17 @@ void rebuild_component(MarFS_Repo_Ptr repo,
 
     struct stat statbuf;
     if(stat(scatter_path, &statbuf) == -1) {
-      break;
+      fprintf( stderr, "CRITICAL ERROR: could not stat scatter dir %s: %s\n", scatter_path, strerror(errno) );
+      failed++;
+      continue;
     }
 
     DIR *scatter_dir = opendir(scatter_path);
     if(scatter_dir == NULL) {
-      fprintf(stderr, "could not open scatter dir %s: %s\n",
+      fprintf(stderr, "CRITICAL ERROR: could not open scatter dir %s: %s\n",
               scatter_path, strerror(errno));
-      exit(-1);
+      failed++;
+      continue;
     }
     
     if(verbose) {
@@ -691,6 +695,7 @@ void rebuild_component(MarFS_Repo_Ptr repo,
     }
     closedir(scatter_dir);
   }
+  return failed;
 }
 
 int main(int argc, char **argv) {
@@ -811,35 +816,43 @@ int main(int argc, char **argv) {
 
   ht_init(&rebuilt_objects, ht_size);
 
+  int ret_stat = 0;
+  int num_procs = 1;
+  int proc_rank = 0;
+
+  // Initialize the MPI environment
+  MPI_Init(NULL, NULL);
+
+  // Get the number of processes
+  MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+
+  // Get the rank of the process
+  MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
+
+  MPI_Comm proc_com;
+
   if(component_rebuild) {
     if(pod == -1 || block == -1 || cap == -1) {
-      fprintf(stderr, "%s: please specify all options -c -r -p and -b\n", argv[0]);
-      usage(argv[0]);
+      if ( proc_rank == 0 ) {
+         fprintf(stderr, "%s: please specify all options -c -r -p and -b\n", argv[0]);
+         usage(argv[0]);
+      }
+      MPI_Finalize();
       exit(-1);
     }
 
     MarFS_Repo *repo = find_repo_by_name(repo_name);
 
     if( !repo ) { 
-      fprintf( stderr, "%s: failed to retrieve repo"
-        " by name \"%s\", check your config file\n", argv[0], repo_name );
+      if ( proc_rank == 0 )
+         fprintf( stderr, "%s: failed to retrieve repo"
+           " by name \"%s\", check your config file\n", argv[0], repo_name );
+      MPI_Finalize();
       return -1; 
     }   
 
     DAL        *dal    = repo->dal;
     MC_Config  *config = (MC_Config*)dal->global_state;
-
-    int num_procs = 1;
-    int proc_rank = 0;
-
-    // Initialize the MPI environment
-    MPI_Init(NULL, NULL);
-
-    // Get the number of processes
-    MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
-
-    // Get the rank of the process
-    MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
 
     //verify scatter ranges are sane
     if( range_given ) {
@@ -856,8 +869,6 @@ int main(int argc, char **argv) {
             " reseting lower bound to %d\n", argv[0], scatter_range[0] );
       }
     }
-
-    MPI_Comm proc_com;
 
     // Get the name of the processor
     char hostname[250];
@@ -885,8 +896,6 @@ int main(int argc, char **argv) {
 
       int remainder = scatter_width % num_procs;
       int rwidth = scatter_width / num_procs;
-
-      if ( proc_rank == 0 ) { printf( "rem = %d, rwidth=%d, st_low=%d, st_high=%d\n", remainder, rwidth, scatter_range[0], scatter_range[1] ); }
 
       scatter_range[0] += ( proc_rank * rwidth ) + (( proc_rank < remainder ) ? proc_rank : remainder);
 
@@ -924,49 +933,61 @@ int main(int argc, char **argv) {
       tspec.tv_nsec = 0;
       tspec.tv_sec = 1;
       nanosleep( &tspec, NULL ); //wait for a single second, to allow messages to be noticed
+      int skipped_scatters = 0;
 
       // only do work if there is some to be done
       if ( scatter_range[1] >= scatter_range[0] ) {
         printf( "%s: worker %d starting\n", argv[0], proc_rank+1 );
-      start_threads(threads);
-      rebuild_component( repo, pod, block, cap, scatter_range );
-      stop_workers();
+        start_threads(threads);
+        skipped_scatters = rebuild_component( repo, pod, block, cap, scatter_range );
+        stop_workers();
       }
       else {
         printf( "%s: worker %d terminating early as it has nothing to do!\n", argv[0], proc_rank+1 );
       }
 
       if( !oneproc ) {
-        int statbuf[5];
+        int statbuf[6];
         statbuf[0] = proc_rank;
         statbuf[1] = stats.total_objects;
         statbuf[2] = stats.intact_objects;
         statbuf[3] = stats.rebuild_successes;
         statbuf[4] = stats.rebuild_failures;
-        if( MPI_Send( &statbuf[0], 5, MPI_INT, 0, 145, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
+        statbuf[5] = skipped_scatters;
+        if( MPI_Send( &statbuf[0], 6, MPI_INT, 0, 145, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
            fprintf( stderr, "%s: worker process %d failed to transmit its term state to the master\n", argv[0], proc_rank+1 );
         }
 
       }
       else {
         print_stats();
+        if ( skipped_scatters ) {
+          fprintf( stderr, "%s: CRITICAL ERROR: %d scatter dir(s) could not be accessed (see above messages)\n", argv[0], skipped_scatters );
+        }
       }
-  
   
     }
     else {
       // call comm_split, but don't bother adding the master to a new communicator
       MPI_Comm_split( MPI_COMM_WORLD, MPI_UNDEFINED, proc_rank, &proc_com );
       int terminated = 1;
+      int skipped_scatters = 0;
+      int err_procs[num_procs - 1];
+      int err_proc_count = 0;
 
-      int buf[5];
+      int buf[6];
       MPI_Status status;
       while ( terminated < num_procs ) {
-        if( MPI_Recv( &buf[0], 5, MPI_INT, MPI_ANY_SOURCE, 145, MPI_COMM_WORLD, &status ) == MPI_SUCCESS ) {
+        if( MPI_Recv( &buf[0], 6, MPI_INT, MPI_ANY_SOURCE, 145, MPI_COMM_WORLD, &status ) == MPI_SUCCESS ) {
           stats.total_objects += buf[1];
           stats.intact_objects += buf[2];
           stats.rebuild_successes += buf[3];
           stats.rebuild_failures += buf[4];
+          skipped_scatters += buf[5];
+          if ( buf[5] ) {
+            err_procs[err_proc_count] = buf[0]+1;
+            err_proc_count++; //count the number of procs that hit an error
+          }
           terminated++;
           fprintf( stderr, "%s: master received stats from worker %d\n", argv[0], buf[0]+1 );
         }
@@ -974,18 +995,43 @@ int main(int argc, char **argv) {
       fflush( stderr );
       sleep( 1 ); //wait for previous outputs to be displayed
       print_stats();
+      fflush( stdout );
+      if ( skipped_scatters ) { //if any scatters were skipped, print error messages
+        sleep( 1 ); //wait for previous outputs to be displayed
+        ret_stat = -1;
+        fprintf( stderr, "%s: CRITICAL ERROR: %d scatter dir(s) could not be accessed (see above messages)\n", argv[0], skipped_scatters );
+        if ( err_proc_count == num_procs - 1 ) {
+          fprintf( stderr, "%s: CRITICAL ERROR: All workers encountered errors that resulted in skipped scatter directories\n", argv[0] );
+        }
+        else {
+          fprintf( stderr, "%s: CRITICAL ERROR: The following workers failed to access all scatter dirs in their range :", argv[0] );
+          for( terminated = 0; terminated < err_proc_count; terminated++ ) {
+            fprintf( stderr, " %d", err_procs[terminated] );
+          }
+          fprintf( stderr, "\n" );
+        }
+      }
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    // Finalize the MPI environment.
-    MPI_Finalize();
+    MPI_Barrier( MPI_COMM_WORLD );
   }
-  else {
+  else { // Rebuilding from logs
+    // running multiple procs off of logs is not supported!
+    if ( proc_rank > 0 ) {
+      fprintf( stderr, "%s: running multiple procs for log rebuilds is not supported! (rank %d terminating early)\n", argv[0], proc_rank );
+      MPI_Comm_split( MPI_COMM_WORLD, MPI_UNDEFINED, proc_rank, &proc_com );
+      MPI_Finalize();
+      return 0;
+    }
+
+    // this is used as a pseudo-barrier, only allowing this process to continue after all others have printed their error
+    MPI_Comm_split( MPI_COMM_WORLD, 1, proc_rank, &proc_com );
+
     if(optind >= argc) {
       fprintf( stderr, "%s: too few arguments\n", argv[0] );
       usage(argv[0]);
       errno=EINVAL;
+      MPI_Finalize();
       exit(-1);
     }
 
@@ -997,6 +1043,7 @@ int main(int argc, char **argv) {
       if(!log_dir) {
         fprintf(stderr, "%s: could not open log dir %s: %s\n",
                 argv[0], argv[index], strerror(errno));
+        MPI_Finalize();
         exit(-1);
       }
 
@@ -1020,5 +1067,8 @@ int main(int argc, char **argv) {
     print_stats();
   }
 
-  return 0;
+  // Finalize the MPI environment.
+  MPI_Finalize();
+
+  return ret_stat;
 }
