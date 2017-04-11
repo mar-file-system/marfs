@@ -230,8 +230,14 @@ void print_stats() {
   printf("==== Rebuild Summary ====\n");
   printf("objects examined:  %*d\n", 10, stats.total_objects);
   printf("intact objects:    %*d\n", 10, stats.intact_objects);
-  printf("rebuilt objects:   %*d\n", 10, stats.rebuild_successes);
-  printf("failed rebuilds:   %*d\n", 10, stats.rebuild_failures);
+  if ( dry_run ) {
+    printf("objects to rebuild:%*d\n", 10, stats.rebuild_successes);
+    printf("can not rebuild:   %*d\n", 10, stats.rebuild_failures);
+  }
+  else {
+    printf("rebuilt objects:   %*d\n", 10, stats.rebuild_successes);
+    printf("failed rebuilds:   %*d\n", 10, stats.rebuild_failures);
+  }
 }
 
 typedef struct ht_entry {
@@ -374,8 +380,6 @@ int rebuild_object(struct object_file object) {
 
   ne_handle object_handle;
 
-  if(dry_run) return;
-
   if(object.start_block < 0) { // component-based rebuild
     object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
   }
@@ -391,6 +395,8 @@ int rebuild_object(struct object_file object) {
             object.path, strerror(errno));
     return -1;
   }
+
+  if(dry_run) { return ne_close( object_handle ); }
 
   int rebuild_result = ne_rebuild(object_handle);
   if(rebuild_result < 0) {
@@ -517,8 +523,6 @@ void *rebuilder(void *arg) {
         fprintf(stderr, "consumer failed to acquire queue lock.\n");
         return NULL;
       }
-
-      if(dry_run) continue;
 
       if(rebuild_result < 0) {
         stats.rebuild_failures++;
