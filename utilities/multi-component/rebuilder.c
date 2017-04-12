@@ -61,12 +61,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  * multi-component storage.
  */
 
-//#include <unistd.h>
-//#include <stdlib.h>
-//#include <stdio.h>
-//#include <pthread.h>
-//#include <fnmatch.h>
-//#include <sys/types.h>
 #include <pwd.h>
 #include <mpi.h>
 
@@ -228,13 +222,15 @@ void print_stats() {
     stat_list = stat_list->next;
   }
   printf("==== Rebuild Summary ====\n");
-  printf("objects examined:  %*d\n", 10, stats.total_objects);
-  printf("intact objects:    %*d\n", 10, stats.intact_objects);
   if ( dry_run ) {
-    printf("objects to rebuild:%*d\n", 10, stats.rebuild_successes);
-    printf("can not rebuild:   %*d\n", 10, stats.rebuild_failures);
+    printf("objects examined:         %*d\n", 10, stats.total_objects);
+    printf("objects with all blocks:  %*d\n", 10, stats.intact_objects);
+    printf("objects needing rebuild:  %*d\n", 10, stats.rebuild_successes);
+    printf("unrecoverable objects:    %*d\n", 10, stats.rebuild_failures);
   }
   else {
+    printf("objects examined:  %*d\n", 10, stats.total_objects);
+    printf("intact objects:    %*d\n", 10, stats.intact_objects);
     printf("rebuilt objects:   %*d\n", 10, stats.rebuild_successes);
     printf("failed rebuilds:   %*d\n", 10, stats.rebuild_failures);
   }
@@ -348,13 +344,22 @@ void usage(const char *program) {
          "                     rebuilding a large number of objects.\n"
          "                     Defaults to 1024.\n");
   printf("\nTo run a rebuild of an entire component use the following flags\n"
-         "%s [-t <num threads>] -c <capacity unit> -b <good block> -p <pod> -r <repo name> -s <start>:<end>\n"
+         "%s [-t <num threads>] [-s <start>:<end>] [-R] -p <pod> -b <good block> -c <capacity unit> -r <repo name>\n"
          "  <good block>       The number of a block to be used as a reference\n"
          "                     point for the rebuild\n"
          "  <capacity unit>    The capacity unit to rebuild.\n"
          "  <pod>              The pod where the capacity unit is mounted.\n"
          "  <repo name>        The name of the repo in the marfs config.\n"
-         "  Note: All four flags are required to do a component rebuild.\n",
+         "  <start>:<end>      This defines the inclusive range of scatter \n"
+         "                     directories to be scanned and possibly rebuilt.\n"
+         "                     The default is all scatters defined for a repo.\n"
+         "                     The default is all scatters defined for a repo.\n"
+         "  -R                 Specifies that pod, block, and capacity unit \n"
+         "                     values should be chosen randomly, if not \n"
+         "                     explicitly specified via \"-p/b/c\" respectively.\n"
+         "                     Using this in conjunction with \"-p\", \"-b\", \n"
+         "                     and \"-c\" simultaneously will have no effect.\n"
+         "  Note: The flags -r as well as either -p/b/c or -R are all required to do a component rebuild.\n",
          program);
   printf("\nThe -t option applies to both modes and is used to specify a "
          "number of threads to use for the rebuild. Defaults to one.\n");
@@ -702,6 +707,22 @@ int rebuild_component(MarFS_Repo_Ptr repo,
   return failed;
 }
 
+
+int rand_less_than( int max ) {
+  if ( max <= 0 ) { return -1; }
+  unsigned long bin_width = ( (unsigned long)(RAND_MAX) + 1 ) / max;
+  unsigned long rand_max = RAND_MAX - ( ( (unsigned long)(RAND_MAX) + 1) % bin_width );
+
+  unsigned long rand;
+  do {
+    rand = random();
+  }
+  while ( rand > rand_max );
+
+  return (int)(rand / bin_width);
+}
+
+
 int main(int argc, char **argv) {
 
   unsigned int   ht_size           = 1024;
@@ -714,9 +735,10 @@ int main(int argc, char **argv) {
   int            range_given = 0;
   struct passwd *pw = NULL;
   pod = block = cap = -1;
+  char randomize = -1;
   verbose = dry_run = 0;
   error_log = stderr;
-  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dvs:o:u:")) != -1) {
+  while((opt = getopt(argc, argv, "hH:c:p:b:Rr:t:dvs:o:u:")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -733,6 +755,9 @@ int main(int argc, char **argv) {
       break;
     case 'b':
       block = strtol(optarg, NULL, 10);
+      break;
+    case 'R':
+      randomize = 1;
       break;
     case 'r':
       component_rebuild = 1;
@@ -836,13 +861,19 @@ int main(int argc, char **argv) {
   MPI_Comm proc_com;
 
   if(component_rebuild) {
-    if(pod == -1 || block == -1 || cap == -1) {
+    if( (pod == -1 || block == -1 || cap == -1 )  &&  randomize == -1 ) {
       if ( proc_rank == 0 ) {
          fprintf(stderr, "%s: please specify all options -c -r -p and -b\n", argv[0]);
          usage(argv[0]);
       }
       MPI_Finalize();
       exit(-1);
+    }
+    else if ( randomize == 1  &&  pod != -1  &&  block != -1  &&  cap != -1 ) {
+      if ( proc_rank == 0 ) {
+         fprintf(stderr, "%s: warning: as \"-p/b/c\" have all been specified, the \"-R\" option is being ignored\n", argv[0]);
+      }
+      randomize = 0;
     }
 
     MarFS_Repo *repo = find_repo_by_name(repo_name);
@@ -857,6 +888,39 @@ int main(int argc, char **argv) {
 
     DAL        *dal    = repo->dal;
     MC_Config  *config = (MC_Config*)dal->global_state;
+
+    if ( randomize == 1 ) {
+      int data[3];
+      if ( proc_rank == 0 ) {
+        srand( time(0) );
+        if ( pod == -1 ) {
+          data[0] = rand_less_than( config->num_pods );
+          printf( "%s: using random pod - %d\n", argv[0], data[0] );
+        }
+        else {
+          data[0] = pod;
+        }
+        if ( block == -1 ) {
+          data[1] = rand_less_than( (config->n + config->e) );
+          printf( "%s: using random block - %d\n", argv[0], data[1] );
+        }
+        else {
+          data[1] = block;
+        }
+        if ( cap == -1 ) {
+          data[2] = rand_less_than( config->num_cap );
+          printf( "%s: using random capacity unit - %d\n", argv[0], data[2] );
+        }
+        else {
+          data[2] = cap;
+        }
+      }
+      // synchronize pod,cap,block amongst procs
+      MPI_Bcast( &data[0], 3, MPI_INT, 0, MPI_COMM_WORLD );
+      pod = data[0];
+      block = data[1];
+      cap = data[2];
+    }
 
     //verify scatter ranges are sane
     if( range_given ) {
@@ -879,6 +943,7 @@ int main(int argc, char **argv) {
     int name_len;
     MPI_Get_processor_name( hostname, &name_len);
 
+    // This process is a worker
     if( proc_rank != 0  ||  num_procs == 1 ) {
       MPI_Comm_split( MPI_COMM_WORLD, 1, proc_rank, &proc_com );
 
@@ -917,11 +982,11 @@ int main(int argc, char **argv) {
       // Print off a message
       if ( scatter_range[1] < scatter_range[0] ) {
         // if there are more procs that scatters, procs with no work will have a backwards range
-        fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width= %d, Range[ No work to be done! ] )\n",
+        fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [ No work to be done! ] )\n",
            argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width );
       }
       else {
-        fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width= %d, Range[%d,%d] )\n",
+        fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [%d,%d] )\n",
            argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
       }
 
@@ -971,6 +1036,7 @@ int main(int argc, char **argv) {
       }
   
     }
+    // This process is the master/output-aggregator
     else {
       // call comm_split, but don't bother adding the master to a new communicator
       MPI_Comm_split( MPI_COMM_WORLD, MPI_UNDEFINED, proc_rank, &proc_com );
