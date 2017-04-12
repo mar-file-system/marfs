@@ -816,8 +816,12 @@ int main(int argc, char **argv) {
         fprintf( stderr, "%s: failed to retireve uid for the user \"%s\"\n", argv[0], optarg );
         exit(-1);
       }
+      if(setgid(pw->pw_gid) != 0) {
+        fprintf( stderr, "%s: failed to setgid to specified user: %s\n", argv[0], strerror(errno) );
+        exit(-1);
+      }
       if(setuid(pw->pw_uid) != 0) {
-        fprintf( stderr, "%s: failed to setuid to specified user: \n", argv[0], strerror(errno) );
+        fprintf( stderr, "%s: failed to setuid to specified user: %s\n", argv[0], strerror(errno) );
         exit(-1);
       }
       break;
