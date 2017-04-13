@@ -1052,8 +1052,8 @@ int mc_sync(DAL_Context* ctx) {
           config->n, config->e, mc_context->start_block);
       // we shouldn't need more then 512 bytes to hold the extra data
       // needed for rebuild
-      char buf[MC_MAX_PATH_LEN + 512];
-      snprintf(buf, MC_MAX_PATH_LEN + 512,
+      char buf[MC_MAX_LOG_LEN];
+      snprintf(buf, MC_MAX_LOG_LEN,
                MC_DEGRADED_LOG_FORMAT, mc_context->path_template,
                config->n, config->e,
                mc_context->start_block, error_pattern,

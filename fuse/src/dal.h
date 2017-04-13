@@ -107,6 +107,7 @@ OF SUCH DAMAGE.
 // filled in to create the path template, 128 characters should be
 // more than enough.
 #define MC_MAX_PATH_LEN        (MARFS_MAX_OBJID_SIZE+MARFS_MAX_HOST_SIZE+128)
+#define MC_MAX_LOG_LEN         (MC_MAX_PATH_LEN+512)
 
 // The log format is:
 // <object-path-template>\t<n>\t<e>\t<start-block>\t<error-pattern>\t<repo-name>\t<pod>\t<capacity-unit>\t\n

@@ -68,13 +68,17 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 // program.  This ensures that the necessary symbols are exposed from
 // dal.h
 #include "common.h"
-#include "dal.h" // MC_MAX_PATH_LEN & MC_DEGRADED_LOG_FORMAT
+#include "dal.h" // MC_MAX_PATH_LEN, MC_MAX_LOG_LEN, & MC_DEGRADED_LOG_FORMAT
 #include "marfs_configuration.h"
 #include "marfs_base.h" // MARFS_MAX_HOST_SIZE
 
 #include "erasure.h"
 
 #define QUEUE_MAX 256
+#define MPI_STATS_CHANNEL 145
+#define MPI_ERR_CHANNEL 141
+#define MPI_SUC_CHANNEL 142
+#define MPI_INT_CHANNEL 143
 
 
 struct object_file {
@@ -99,6 +103,7 @@ typedef struct stat_list {
 // global flag indicating a dry run.
 int   dry_run;
 int   verbose;
+int   total_procs;
 FILE *error_log;
 FILE *success_log;
 
@@ -371,10 +376,12 @@ void usage(const char *program) {
          "  locations.\n");
   printf("The -t option applies to both modes and is used to specify a number \n"
          "  of threads to use for the rebuild. Defaults to one.\n");
-  printf("The -o <filename> flag may be used to specify a file to which \n"
-         "  rebuild failures should be logged rather than standard output\n");
   printf("To run the rebuilder as some other user (ie. storageadmin) use "
          "  the -u <username> option\n");
+  printf("The -o <filename> flag may be used to specify a file to which \n"
+         "  rebuild successes should be logged\n");
+  printf("The -e <filename> flag may be used to specify a file to which \n"
+         "  rebuild failures should be logged\n");
 }
 
 /**
@@ -400,7 +407,7 @@ int rebuild_object(struct object_file object) {
   }
 
   if(object_handle == NULL) {
-    fprintf(error_log, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
+    fprintf(stderr, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
             object.path, strerror(errno));
     return -1;
   }
@@ -409,7 +416,7 @@ int rebuild_object(struct object_file object) {
 
   int rebuild_result = ne_rebuild(object_handle);
   if(rebuild_result < 0) {
-    fprintf(error_log, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
+    fprintf(stderr, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
             object.path, strerror(errno));
     ne_close(object_handle); //close and ignore any errors
   }
@@ -488,6 +495,7 @@ void stop_workers() {
  * TODO: Check error codes in return value from pthred_ functions
  */
 void *rebuilder(void *arg) {
+  char buf[MC_MAX_LOG_LEN];
 
   if(pthread_mutex_lock(&rebuild_queue.queue_lock)) {
     fprintf(stderr, "consumer failed to acquire queue lock.\n");
@@ -535,9 +543,39 @@ void *rebuilder(void *arg) {
 
       if(rebuild_result < 0) {
         stats.rebuild_failures++;
+        if( error_log != NULL ) {
+          if( total_procs == 1 ) { //if this is the only process, just wite to the log
+            fprintf( error_log, MC_DEGRADED_LOG_FORMAT, 
+              object.path, object.n, object.e,
+              object.start_block, rebuild_result,
+              object.repo_name, object.pod, object.cap);
+          }
+          else { //otherwise, transmit to the master
+            snprintf(buf, MC_MAX_LOG_LEN, MC_DEGRADED_LOG_FORMAT,
+              object.path, object.n, object.e,
+              object.start_block, rebuild_result,
+              object.repo_name, object.pod, object.cap);
+            MPI_Send( &buf[0], MC_MAX_LOG_LEN, MPI_BYTE, 0, MPI_ERR_CHANNEL, MPI_COMM_WORLD );
+          }
+        }
       }
       else if(rebuild_result > 0) {
         stats.rebuild_successes++;
+        if( success_log != NULL ) {
+          if( total_procs == 1 ) {
+            fprintf( success_log, MC_DEGRADED_LOG_FORMAT, 
+              object.path, object.n, object.e,
+              object.start_block, rebuild_result,
+              object.repo_name, object.pod, object.cap);
+          }
+          else {
+            snprintf(buf, MC_MAX_LOG_LEN, MC_DEGRADED_LOG_FORMAT,
+              object.path, object.n, object.e,
+              object.start_block, rebuild_result,
+              object.repo_name, object.pod, object.cap);
+            MPI_Send( &buf[0], MC_MAX_LOG_LEN, MPI_BYTE, 0, MPI_SUC_CHANNEL, MPI_COMM_WORLD );
+          }
+        }
       }
       else {
         stats.intact_objects++;
@@ -741,9 +779,12 @@ int main(int argc, char **argv) {
   pod = block = cap = -1;
   char randomize = -1;
   verbose = 0; dry_run = 1; //default to dry-run
-  error_log = stderr; //by default, output errors to stderr
-  success_log = NULL; //by default, do not report every success
-  while((opt = getopt(argc, argv, "hH:c:p:b:Rr:t:wvs:o:u:")) != -1) {
+  error_log = NULL;
+  success_log = NULL;
+  char *s_ptr=NULL;
+  char *e_ptr=NULL;
+
+  while((opt = getopt(argc, argv, "hH:c:p:b:Rr:t:wvs:o:e:u:")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -782,11 +823,10 @@ int main(int argc, char **argv) {
       verbose = 1;
       break;
     case 'o':
-      error_log = fopen(optarg, "a");
-      if(error_log == NULL) {
-        fprintf(stderr, "failed to open log file");
-        exit(-1);
-      }
+      s_ptr=optarg;
+      break;
+    case 'e':
+      e_ptr=optarg;
       break;
     case 's':
     {
@@ -821,14 +861,6 @@ int main(int argc, char **argv) {
         fprintf( stderr, "%s: failed to retireve uid for the user \"%s\"\n", argv[0], optarg );
         exit(-1);
       }
-      if(setgid(pw->pw_gid) != 0) {
-        fprintf( stderr, "%s: failed to setgid to specified user: %s\n", argv[0], strerror(errno) );
-        exit(-1);
-      }
-      if(setuid(pw->pw_uid) != 0) {
-        fprintf( stderr, "%s: failed to setuid to specified user: %s\n", argv[0], strerror(errno) );
-        exit(-1);
-      }
       break;
     default:
       usage(argv[0]);
@@ -846,8 +878,23 @@ int main(int argc, char **argv) {
     exit(-1);
   }
 
-  if( dry_run )
-    fprintf(stderr, "%s: WARNING: this is a dry-run, no actual rebuilds will be performed (run with -w to change this)\n", argv[0] );
+  if ( pw != NULL ) {
+    if( error_log != NULL  &&  chown( e_ptr, pw->pw_uid, pw->pw_gid ) ) {
+        printf( "%s: failed to chown() error log\n", argv[0] );
+    }
+    if( success_log != NULL  &&  chown( s_ptr, pw->pw_uid, pw->pw_gid ) ) {
+        printf( "%s: failed to chown() success log\n", argv[0] );
+    }
+
+    if(setgid(pw->pw_gid) != 0) {
+      fprintf( stderr, "%s: failed to setgid to specified user: %s\n", argv[0], strerror(errno) );
+      exit(-1);
+    }
+    if(setuid(pw->pw_uid) != 0) {
+      fprintf( stderr, "%s: failed to setuid to specified user: %s\n", argv[0], strerror(errno) );
+      exit(-1);
+    }
+  }
 
   stats.rebuild_failures  = 0;
   stats.rebuild_successes = 0;
@@ -866,11 +913,48 @@ int main(int argc, char **argv) {
 
   // Get the number of processes
   MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+  total_procs = num_procs;
 
   // Get the rank of the process
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
 
+  if( proc_rank == 0  &&  dry_run )
+    fprintf(stderr, "%s: WARNING: this is a dry-run, no actual rebuilds will be performed (run with -w to change this)\n", argv[0] );
+
   MPI_Comm proc_com;
+
+  // open success and error logs as required
+  if( s_ptr != NULL ) {
+    if( proc_rank == 0 ) {
+      success_log = fopen(s_ptr, "a");
+      if( success_log == NULL ) {
+        fprintf( stderr, "failed to open log file \"%s\"\n", s_ptr );
+        MPI_Abort( MPI_COMM_WORLD, errno );
+      }
+    }
+    else {
+      success_log = stdout; //just to indicate to workers that they should be logging
+    }
+  }
+  if( e_ptr != NULL ) {
+    if( proc_rank == 0 ) {
+      if( s_ptr != NULL  &&  ! strncmp( s_ptr, e_ptr, MC_MAX_PATH_LEN ) ) {
+        //if the logs are the same file, use the same stream
+        error_log = success_log;
+      }
+      else {
+        error_log = fopen(e_ptr, "a");
+        if( error_log == NULL ) {
+          fprintf( stderr, "failed to open log file \"%s\"\n", e_ptr );
+          MPI_Abort( MPI_COMM_WORLD, errno );
+        }
+      }
+    }
+    else {
+      error_log = stderr; //just to indicate to workers that they should be logging
+    }
+  }
+
 
   if(component_rebuild) {
     if( (pod == -1 || block == -1 || cap == -1 )  &&  randomize == -1 ) {
@@ -1035,7 +1119,7 @@ int main(int argc, char **argv) {
         statbuf[3] = stats.rebuild_successes;
         statbuf[4] = stats.rebuild_failures;
         statbuf[5] = skipped_scatters;
-        if( MPI_Send( &statbuf[0], 6, MPI_INT, 0, 145, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
+        if( MPI_Send( &statbuf[0], 6, MPI_INT, 0, MPI_STATS_CHANNEL, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
            fprintf( stderr, "%s: worker process %d failed to transmit its term state to the master\n", argv[0], proc_rank+1 );
         }
 
@@ -1058,9 +1142,43 @@ int main(int argc, char **argv) {
       int err_proc_count = 0;
 
       int buf[6];
+      char err_log[MC_MAX_LOG_LEN];
+      char suc_log[MC_MAX_LOG_LEN];
+      int res_flag;
       MPI_Status status;
+      MPI_Request stats_request = MPI_REQUEST_NULL;
+      MPI_Request err_request = MPI_REQUEST_NULL;
+      MPI_Request suc_request = MPI_REQUEST_NULL;
       while ( terminated < num_procs ) {
-        if( MPI_Recv( &buf[0], 6, MPI_INT, MPI_ANY_SOURCE, 145, MPI_COMM_WORLD, &status ) == MPI_SUCCESS ) {
+        // if we are logging it, check for rebuild error output
+        if ( error_log != NULL ) { 
+          if( err_request == MPI_REQUEST_NULL )
+            MPI_Irecv( &err_log[0], MC_MAX_LOG_LEN, MPI_BYTE, MPI_ANY_SOURCE, MPI_ERR_CHANNEL, MPI_COMM_WORLD, &err_request );
+
+          MPI_Test( &err_request, &res_flag, &status );
+          if( res_flag ) {
+            fprintf( error_log, "%s", err_log );
+          }
+        }
+
+        // if we are logging it, check for rebuild success output
+        if ( success_log != NULL ) { 
+          if( suc_request == MPI_REQUEST_NULL )
+            MPI_Irecv( &suc_log[0], MC_MAX_LOG_LEN, MPI_BYTE, MPI_ANY_SOURCE, MPI_SUC_CHANNEL, MPI_COMM_WORLD, &suc_request );
+
+          MPI_Test( &suc_request, &res_flag, &status );
+          if( res_flag ) {
+            fprintf( success_log, "%s", suc_log );
+          }
+        }
+
+        // open a new non-blocking recieve request for final worker status
+        if ( stats_request == MPI_REQUEST_NULL )
+          MPI_Irecv( &buf[0], 6, MPI_INT, MPI_ANY_SOURCE, MPI_STATS_CHANNEL, MPI_COMM_WORLD, &stats_request );
+
+        MPI_Test( &stats_request, &res_flag, &status );
+        if( res_flag ) {
+          // if we recieved termination stats, tally them and increment the count of finished workers
           stats.total_objects += buf[1];
           stats.intact_objects += buf[2];
           stats.rebuild_successes += buf[3];
@@ -1073,7 +1191,19 @@ int main(int argc, char **argv) {
           terminated++;
           fprintf( stderr, "%s: master received stats from worker %d\n", argv[0], buf[0]+1 );
         }
+
       }
+
+      // if requests are still open for either errors or successes, close them
+      if ( error_log != NULL  &&  err_request != MPI_REQUEST_NULL ) {
+        MPI_Cancel( &err_request );
+        MPI_Request_free( &err_request );
+      }
+      if ( success_log != NULL  &&  suc_request != MPI_REQUEST_NULL ) {
+        MPI_Cancel( &suc_request );
+        MPI_Request_free( &suc_request );
+      }
+
       fflush( stderr );
       sleep( 1 ); //wait for previous outputs to be displayed
       print_stats();
@@ -1093,6 +1223,7 @@ int main(int argc, char **argv) {
           fprintf( stderr, "\n" );
         }
       }
+
     }
 
     MPI_Barrier( MPI_COMM_WORLD );
