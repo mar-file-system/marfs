@@ -100,6 +100,7 @@ typedef struct stat_list {
 int   dry_run;
 int   verbose;
 FILE *error_log;
+FILE *success_log;
 
 // global rebuild statistics table.
 struct rebuild_stats {
@@ -221,14 +222,16 @@ void print_stats() {
     print_repo_stats(stat_list->name, stat_list->repo_stats);
     stat_list = stat_list->next;
   }
-  printf("==== Rebuild Summary ====\n");
   if ( dry_run ) {
+    printf("==== Dry-Run Summary ====\n");
     printf("objects examined:         %*d\n", 10, stats.total_objects);
     printf("objects with all blocks:  %*d\n", 10, stats.intact_objects);
     printf("objects needing rebuild:  %*d\n", 10, stats.rebuild_successes);
     printf("unrecoverable objects:    %*d\n", 10, stats.rebuild_failures);
+    printf("PLEASE NOTE : this was a dry-run only, no object rebuilds were performed!\n" );
   }
   else {
+    printf("==== Rebuild Summary ====\n");
     printf("objects examined:  %*d\n", 10, stats.total_objects);
     printf("intact objects:    %*d\n", 10, stats.intact_objects);
     printf("rebuilt objects:   %*d\n", 10, stats.rebuild_successes);
@@ -361,16 +364,17 @@ void usage(const char *program) {
          "                     and \"-c\" simultaneously will have no effect.\n"
          "  Note: The flags -r as well as either -p/b/c or -R are all required to do a component rebuild.\n",
          program);
-  printf("\nThe -t option applies to both modes and is used to specify a "
-         "number of threads to use for the rebuild. Defaults to one.\n");
-  printf("\nThe -d flag may also be used in both modes to indicate a \"dry run\""
-         "\nwhere no rebuilds are performed, but the number of objects that\n"
-         "would be examined/rebuilt is counted. This is useful for displaying\n"
-         "failure statistics from the logs.\n");
-  printf("\nThe -o <filename> flag may be used to specify a file to which \n"
-         "rebuild failures should be logged rather than standard output\n");
-  printf("\nTo run the rebuilder as some other user (ie. storageadmin) use "
-         "the -u <username> option\n");
+  printf("\nWARNING : This program defaults to a dry-run, in which no rebuilds \n"
+         "  will actually be performed!  Use \"-w\" to rebuild and write out parts.\n");
+  printf("The -w flag may be used in both modes to indicate an actual rebuild \n"
+         "  operation.  Rebuilt parts will be written out to their appropriate \n"
+         "  locations.\n");
+  printf("The -t option applies to both modes and is used to specify a number \n"
+         "  of threads to use for the rebuild. Defaults to one.\n");
+  printf("The -o <filename> flag may be used to specify a file to which \n"
+         "  rebuild failures should be logged rather than standard output\n");
+  printf("To run the rebuilder as some other user (ie. storageadmin) use "
+         "  the -u <username> option\n");
 }
 
 /**
@@ -736,9 +740,10 @@ int main(int argc, char **argv) {
   struct passwd *pw = NULL;
   pod = block = cap = -1;
   char randomize = -1;
-  verbose = dry_run = 0;
-  error_log = stderr;
-  while((opt = getopt(argc, argv, "hH:c:p:b:Rr:t:dvs:o:u:")) != -1) {
+  verbose = 0; dry_run = 1; //default to dry-run
+  error_log = stderr; //by default, output errors to stderr
+  success_log = NULL; //by default, do not report every success
+  while((opt = getopt(argc, argv, "hH:c:p:b:Rr:t:wvs:o:u:")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -770,8 +775,8 @@ int main(int argc, char **argv) {
         threads = 1;
       }
       break;
-    case 'd':
-      dry_run = 1;
+    case 'w':
+      dry_run = 0;
       break;
     case 'v':
       verbose = 1;
@@ -840,6 +845,9 @@ int main(int argc, char **argv) {
     fprintf(stderr, "%s: failed to validate marfs configuration\n", argv[0]);
     exit(-1);
   }
+
+  if( dry_run )
+    fprintf(stderr, "%s: WARNING: this is a dry-run, no actual rebuilds will be performed (run with -w to change this)\n", argv[0] );
 
   stats.rebuild_failures  = 0;
   stats.rebuild_successes = 0;
