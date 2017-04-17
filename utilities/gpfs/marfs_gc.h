@@ -85,6 +85,8 @@ OF SUCH DAMAGE.
 #include "hash_table.h"
 
 
+#define QUEUE_MAX 50
+
 // CHECK this and compare to Jeff's
 #define MAX_FILESET_NAME_LEN 256
 
@@ -111,26 +113,26 @@ typedef struct Fileset_Info {
    char host[32];
 } Fileset_Info;
 
-typedef struct File_Info {
+typedef struct Run_Info {
    // per-run settings
-   char          packed_filename[TMP_LOCAL_FILE_LEN];
-   FILE         *packedfd;
+   //char          packed_filename[TMP_LOCAL_FILE_LEN];
+   //FILE         *packedfd;
    FILE         *outfd;
    unsigned int  no_delete;                            /* from option 'n': dry run */
    char          target_ns[MARFS_MAX_NAMESPACE_NAME];  /* from option 'N' */
    size_t        target_ns_size;
-                           
+   unsigned char has_packed;
+} Run_Info;         
 
+typedef struct File_Info {
    // per-file discoveries
    char          fileset_name[MARFS_MAX_NAMESPACE_NAME];
-   unsigned int  is_packed;
    MarFS_ObjType obj_type;
-   unsigned int  restart_found;
+   unsigned char  restart_found;
 } File_Info;
 
 
 int read_inodes(const char   *fnameP, 
-                File_Info    *file_info_ptr, 
                 int          fileset_id, 
                 Fileset_Info *fileset_info_ptr, 
                 size_t       rec_count, 
@@ -148,19 +150,17 @@ int get_xattrs(gpfs_iscan_t *iscanP,
                unsigned int xattrLen,
                const char   **marfs_xattr,
                int          max_xattr_count,
-               struct       marfs_xattr *xattr_ptr, 
-               FILE         *outfd);
+               struct       marfs_xattr *xattr_ptr);
 void print_usage();
 void init_records(Fileset_Info *fileset_info_buf, unsigned int record_count);
 int  dump_trash(MarFS_FileHandle   *fh,
-                struct marfs_xattr *xattr_ptr, 
                 File_Info          *file_info_ptr);
 int  delete_object(MarFS_FileHandle *fh,
                    File_Info        *file_info_ptr,
                    int               is_mult);
-int  delete_file(char *filename, File_Info *file_info_ptr);
-int  process_packed(File_Info *file_info_ptr, hash_table_t* ht, hash_table_t* rt);
-void print_current_time(File_Info *file_info_ptr);
+int  delete_file(char *filename);
+int  process_packed(hash_table_t* ht, hash_table_t* rt);
+void print_current_time();
 int  read_config_gc(Fileset_Info *fileset_info_ptr);
 
 #endif
