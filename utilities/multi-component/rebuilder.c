@@ -516,6 +516,8 @@ void *rebuilder(void *arg) {
       struct object_file object = rebuild_queue.items[rebuild_queue.queue_head];
       rebuild_queue.queue_head = (rebuild_queue.queue_head + 1) % QUEUE_MAX;
 
+      //printf( "GOT: PATH-%s | N-%d | E-%d | ST-%d | RES-%d | REPO-%s | POD-%d | CAP-%d\n", object.path, object.n, object.e, object.start_block, 0, object.repo_name, object.pod, object.cap );
+
       rebuild_queue.num_items--;
 
       // update statistics here so they are protected by queue locking.
@@ -733,7 +735,11 @@ int rebuild_component(MarFS_Repo_Ptr repo,
       struct object_file object;
       snprintf(object.path, MC_MAX_PATH_LEN, "%s/%s",
                ne_path, obj_dent->d_name);
+      snprintf(object.repo_name, MARFS_MAX_HOST_SIZE, "%s",
+               repo->name);
       object.start_block = object.n = object.e = -1;
+      object.pod = pod;
+      object.cap = cap;
 
       // skip files that are not complete objects
       if(!fnmatch("*" REBUILD_SFX, object.path, 0) ||
@@ -923,6 +929,11 @@ int main(int argc, char **argv) {
 
   MPI_Comm proc_com;
 
+  // Get the name of the processor
+  char hostname[250];
+  int name_len;
+  MPI_Get_processor_name( hostname, &name_len);
+
   // open success and error logs as required
   if( s_ptr != NULL ) {
     if( proc_rank == 0 ) {
@@ -1034,11 +1045,6 @@ int main(int argc, char **argv) {
       }
     }
 
-    // Get the name of the processor
-    char hostname[250];
-    int name_len;
-    MPI_Get_processor_name( hostname, &name_len);
-
     // This process is a worker
     if( proc_rank != 0  ||  num_procs == 1 ) {
       MPI_Comm_split( MPI_COMM_WORLD, 1, proc_rank, &proc_com );
@@ -1125,6 +1131,15 @@ int main(int argc, char **argv) {
 
       }
       else {
+        if ( error_log != NULL ) {
+          fclose( error_log );
+          fprintf( stderr, "%s: error log \"%s\" resides on host '%s'\n", argv[0], e_ptr, hostname );
+        }
+        if ( success_log != NULL ) {
+          fclose( success_log );
+          fprintf( stderr, "%s: success log \"%s\" resides on host '%s'\n", argv[0], s_ptr, hostname );
+        }
+        fflush( stderr );
         print_stats();
         if ( skipped_scatters ) {
           fprintf( stderr, "%s: CRITICAL ERROR: %d scatter dir(s) could not be accessed (see above messages)\n", argv[0], skipped_scatters );
@@ -1195,15 +1210,23 @@ int main(int argc, char **argv) {
       }
 
       // if requests are still open for either errors or successes, close them
-      if ( error_log != NULL  &&  err_request != MPI_REQUEST_NULL ) {
+      if (  err_request != MPI_REQUEST_NULL ) {
         MPI_Cancel( &err_request );
         MPI_Request_free( &err_request );
       }
-      if ( success_log != NULL  &&  suc_request != MPI_REQUEST_NULL ) {
+      if ( suc_request != MPI_REQUEST_NULL ) {
         MPI_Cancel( &suc_request );
         MPI_Request_free( &suc_request );
       }
 
+      if ( error_log != NULL ) {
+        fclose( error_log );
+        fprintf( stderr, "%s: error log \"%s\" resides on host '%s'\n", argv[0], e_ptr, hostname );
+      }
+      if ( success_log != NULL ) {
+        fclose( success_log );
+        fprintf( stderr, "%s: success log \"%s\" resides on host '%s'\n", argv[0], s_ptr, hostname );
+      }
       fflush( stderr );
       sleep( 1 ); //wait for previous outputs to be displayed
       print_stats();
