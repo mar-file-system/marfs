@@ -192,7 +192,7 @@ typedef struct {
 #define TRY0(FNCALL)                                                    \
    do {                                                                 \
       LOG(LOG_INFO, "TRY0(%s)\n", #FNCALL);                             \
-      rc = (size_t)FNCALL;                                              \
+      rc = (size_t)(FNCALL);                                            \
       if (rc) {                                                         \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
@@ -205,7 +205,7 @@ typedef struct {
 #define TRY_GE0(FNCALL)                                                 \
    do {                                                                 \
       LOG(LOG_INFO, "TRY_GE0(%s)\n", #FNCALL);                          \
-      rc_ssize = (ssize_t)FNCALL;                                       \
+      rc_ssize = (ssize_t)(FNCALL);                                     \
       if (rc_ssize < 0) {                                               \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
@@ -218,7 +218,7 @@ typedef struct {
 #define TRY_GT0(FNCALL)                                                 \
    do {                                                                 \
       LOG(LOG_INFO, "TRY_GT0(%s)\n", #FNCALL);                          \
-      rc_ssize = (ssize_t)FNCALL;                                       \
+      rc_ssize = (ssize_t)(FNCALL);                                     \
       if (rc_ssize <= 0) {                                              \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
@@ -238,7 +238,7 @@ typedef struct {
 #define __TRY0(FNCALL)                                                  \
    do {                                                                 \
       LOG(LOG_INFO, "TRY0: %s\n", #FNCALL);                             \
-      rc = (size_t)FNCALL;                                              \
+      rc = (size_t)(FNCALL);                                            \
       if (rc) {                                                         \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
@@ -250,8 +250,21 @@ typedef struct {
 #define __TRY_GE0(FNCALL)                                               \
    do {                                                                 \
       LOG(LOG_INFO, "TRY_GE0: %s\n", #FNCALL);                          \
-      rc_ssize = (ssize_t)FNCALL;                                       \
+      rc_ssize = (ssize_t)(FNCALL);                                     \
       if (rc_ssize < 0) {                                               \
+         PRE_RETURN();                                                  \
+         LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
+             #FNCALL, rc_ssize, errno, strerror(errno));                \
+         RETURN(-errno);                                                \
+      }                                                                 \
+   } while (0)
+
+// cap_get_proc() returns ptr for success, NULL for failure.
+#define __TRY_GT0(FNCALL)                                               \
+   do {                                                                 \
+      LOG(LOG_INFO, "TRY_GE0: %s\n", #FNCALL);                          \
+      rc_ssize = (ssize_t)(FNCALL);                                     \
+      if (rc_ssize <= 0) {                                              \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
              #FNCALL, rc_ssize, errno, strerror(errno));                \

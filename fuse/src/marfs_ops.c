@@ -267,8 +267,9 @@ int marfs_flush (const char*        path,
    //
    //   LOG(LOG_INFO, "NOP for %s", path);
 
-   PathInfo*         info = &fh->info;                  /* shorthand */
-   ObjectStream*     os   = &fh->os;
+   PathInfo*         info   = &fh->info;                  /* shorthand */
+   ObjectStream*     os     = &fh->os;
+   int               retval = 0;
 
    // It is now possible that we had never opened the stream, this
    // happens in the case of attempting to overwrite a file for which
@@ -308,7 +309,8 @@ int marfs_flush (const char*        path,
 
       // we will not close the stream for packed files
       if( !(fh->flags & FH_PACKED) ) {
-         close_data(fh, 0, 1);
+         if (close_data(fh, 0, 1))
+            retval = -1;
       }
    }
 
@@ -326,10 +328,12 @@ int marfs_flush (const char*        path,
           && (info->post.obj_type == OBJ_MULTI)) {
 
          if (info->pre.obj_type != OBJ_Nto1) {
-            TRY0( write_chunkinfo(fh,
-                                  // fh->open_offset,
-                                  (os->written - fh->write_status.sys_writes),
-                                  0) );
+            // was "TRY0", but we should persist with the rest of cleanup
+            if (write_chunkinfo(fh,
+                                // fh->open_offset,
+                                (os->written - fh->write_status.sys_writes),
+                                0) )
+               retval = -1;
          }
 
          // keep count of amount of real chunk-info written into MD file
@@ -350,18 +354,25 @@ int marfs_flush (const char*        path,
    // close MD file, if it's open
    if (is_open_md(fh)) {
       LOG(LOG_INFO, "closing MD\n");
-      close_md(fh);
+      if (close_md(fh))
+         retval = -1;
    }
 
    if (fh->os.flags & OSF_ERRORS) {
       EXIT();
       // return 0;       /* the "close" was successful */
       // return -1;      /* "close" was successful, but need to report errs */
-      return 0; // errs should be reported at EOF by marfs_write(), etc ?
+      // return 0;       // errs should be reported at EOF by marfs_write(), etc ?
+      return retval;     // if these errs already reported, we still might have new ones
    }
    else if (fh->os.flags & OSF_ABORT) {
       EXIT();
-      return 0;       /* the "close" was successful */
+      // return 0;       /* the "close" was successful */
+      return retval;     /* rc indicates whether the "close" was successful */
+   }
+   else if (retval) {
+      EXIT();
+      return -1;
    }
 
    // truncate length to reflect length of data
@@ -370,9 +381,13 @@ int marfs_flush (const char*        path,
        && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
 
       off_t size = os->written - fh->write_status.sys_writes;
-      TRY0( MD_PATH_OP(truncate, info->ns, info->post.md_path, size) );
+      if ( MD_PATH_OP(truncate, info->ns, info->post.md_path, size) )
+         retval = -1;
    }
-
+   if (retval) {
+      EXIT();
+      return retval;
+   }
 
    // Note whether RESTART is preserving a more-restrictive mode
    mode_t  final_mode; // intended final mode?

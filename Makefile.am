@@ -23,6 +23,7 @@ endif
 if DEBUG
 # Configure has -g enabled by default
 AM_CPPFLAGS += -DDEBUG=2
+AM_CPPFLAGS += -fstack-protector-all -fstack-check
 endif
 
 if USE_SYSLOG

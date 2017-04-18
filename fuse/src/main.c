@@ -101,29 +101,33 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
+
 // --- wrappers just call the corresponding library-function, to support a
 //     given fuse-function.  The library-functions are meant to be used by
 //     both fuse and pftool, so they don't do seteuid(), and don't expect
 //     any fuse-related structures.
 
-#define WRAP_internal(GROUPS_TOO, FNCALL)              \
-   __PUSH_USER(GROUPS_TOO);                            \
-   int fncall_rc = FNCALL;                             \
-   __POP_USER();                                       \
-   if (fncall_rc < 0) {                                \
-      LOG(LOG_ERR, "ERR %s, errno=%d '%s'\n",          \
-          #FNCALL, errno, strerror(errno));            \
-      return -errno;                                   \
-   }                                                   \
+#define WRAP_internal(GROUPS_TOO, FNCALL)                   \
+   __PUSH_USER(GROUPS_TOO);                                 \
+   errno = 0;                                               \
+   int fncall_rc    = FNCALL;                               \
+   int fncall_errno = errno;                                \
+   __POP_USER();                                            \
+   if (fncall_rc < 0) {                                     \
+      LOG(LOG_ERR, "%s, errno=%d '%s'\n",                   \
+          #FNCALL, fncall_errno, strerror(fncall_errno));   \
+      return -fncall_errno;                                 \
+   }                                                        \
    return fncall_rc /* caller provides semi */
+
 
 // This version doesn't call push/pop_groups()
 #define WRAP(FNCALL)                                   \
-   WRAP_internal(0, (FNCALL));
+   WRAP_internal(0, (FNCALL))
 
 // This version DOES call push/pop_groups()
 #define WRAP_PLUS(FNCALL)                              \
-   WRAP_internal(1, (FNCALL));
+   WRAP_internal(1, (FNCALL))
 
 
 

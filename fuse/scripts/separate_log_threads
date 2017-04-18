@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Useful for separating the log output written from different threads
+# in a common log, using the logging support in libmarfs, and libne.
+# They both now have log-output that always has the thread-ID as the
+# second token.
+
+if [[ $# != 1 ]]; then
+   echo "Usage:  $0 <log_file>"
+   echo
+   exit 1
+fi
+
+LOG_FNAME=$1
+
+rm -f foo.log*
+
+for THR in `cat $LOG_FNAME | awk '/[0-9][a-f]/{print $2}' | sort | uniq`; do grep $THR $LOG_FNAME > foo.log.$THR; done

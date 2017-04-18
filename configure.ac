@@ -144,7 +144,9 @@ AM_PROG_CC_C_O
 AS_IF([test x"$enable_mc" != xno && test x"$enable_dal" = xno],
       AC_ERROR([cannot specify --disable-dal if building multi-component]))
 
-# Checks for libraries.
+
+# --- Checks for libraries.
+
 # look for scality to ensure we have the right version.
 AC_CHECK_LIB([aws4c], [s3_enable_Scality_extensions])
 # this only exists in 

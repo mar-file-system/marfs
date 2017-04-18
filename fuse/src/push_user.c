@@ -132,6 +132,15 @@ int setgroups(size_t size, const gid_t *list);
 //
 // That sounds expensive.  We probably don't want to do it when we don't
 // have to, like in write().  So, we'll make it an option.
+//
+// NOTE: seteuid/setegid are actually per-process, rather than per-thread
+//       making them useless for fuse.  setfsuid/setfsgid are broken for
+//       some other reason I forget now.  What you want is the syscalls
+//       setresuid/setresgid, which are per-thread, and which afffect
+//       fsuid/fsgid just as you would hope.
+//
+// NOTE: setgroups is also per-thread, which is also what you want.
+
 
 int push_groups4(PerThreadContext* ctx, uid_t uid, gid_t gid) {
 
@@ -248,7 +257,7 @@ int push_user4(PerThreadContext* ctx,
    rc = syscall(SYS_getresuid, &old_ruid, &old_euid, &old_suid);
    if (rc) {
       LOG(LOG_ERR, "getresuid() failed\n");
-      exit(EXIT_FAILURE);       // fuse should fail
+      exit(EXIT_FAILURE);       // fuse should fail (?)
    }
 
    // install the new euid, and save the current one
@@ -273,7 +282,10 @@ int push_user4(PerThreadContext* ctx,
       }
    }
 
+   ctx->pushed = 1;             // prevent double-push
+
    return 0;
+
 #  else
 #  error "No support for seteuid()/setegid()"
 #  endif
@@ -300,6 +312,7 @@ int pop_groups4(PerThreadContext* ctx) {
 //  pop_user() changes the effective UID.  Here, we revert to the
 //  euid from before the push.
 int pop_user4(PerThreadContext* ctx) {
+
 #  if (_BSD_SOURCE || _POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
 
    int rc;
@@ -360,11 +373,10 @@ int pop_user4(PerThreadContext* ctx) {
          return -1;
    }
 
-
+   ctx->pushed = 0;
    return 0;
+
 #  else
 #  error "No support for seteuid()/setegid()"
 #  endif
 }
-
-

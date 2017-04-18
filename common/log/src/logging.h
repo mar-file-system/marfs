@@ -32,7 +32,7 @@ extern "C" {
 
 /// // without pthread_self()
 /// #define xFMT  " [%s:%4d]%*s %-21s | %s"
-#define xFMT  " %08x %s:%-4d%*s %-21.21s | %s"
+#define xFMT  "  %08x  %s:%-4d%*s %-21.21s | %s"
 
 // size of longest file-name string, plus some
 #define LOG_FNAME_SIZE 26
