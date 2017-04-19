@@ -137,12 +137,12 @@ void ht_insert(hash_table_t *ht, const char* key) {
 void ht_insert_payload(hash_table_t* ht, const char* key, void* payload, void (*ins_func) (void* new, void** old) ) {
   unsigned long hash = polyhash(key);
 
-  if(!ht->table[hash % ht->size]) {
+  if( ! ht->table[hash % ht->size] ) {
     ht->table[hash % ht->size] = new_ht_entry(key, 1);
     ins_func( payload, &(ht->table[hash % ht->size]->payload) );
     ht->num_elements++;
   }
-  else if(!strcmp(ht->table[hash % ht->size]->key, key)) {
+  else if( ! strcmp(ht->table[hash % ht->size]->key, key ) ) {
     ht->table[hash % ht->size]->value++;
     ins_func( payload, &(ht->table[hash % ht->size]->payload) );
     return;
@@ -157,7 +157,7 @@ void ht_insert_payload(hash_table_t* ht, const char* key, void* payload, void (*
       }
       e = e->next;
     }
-    if(!strcmp(e->key, key)) {
+    if( ! strcmp(e->key, key) ) {
       e->value++;
       ins_func( payload, &(e->payload) );
       return;

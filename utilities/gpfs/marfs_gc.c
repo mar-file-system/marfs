@@ -104,44 +104,37 @@ typedef struct payload_package_struct {
    char* md_path;
    time_t md_ctime;
 } *ht_package;
-
-typedef struct rpayload_object_struct {
-   size_t file_count;
-   size_t obj_size;
-   time_t min_ctime;
-   time_t max_ctime;
-   ht_file files;
-   struct rpayload_object_struct* next;
-} *rt_object;
- 
-typedef struct rpayload_header_struct {
-   MarFS_Namespace_Ptr ns;
-   rt_object objects;
-} *rt_header;
-
-struct obj_payload_struct {
-} obj_payload;
-
-typedef struct packed_payload_struct {
-} packed_payload;
+//
+//typedef struct rpayload_object_struct {
+//   size_t file_count;
+//   size_t obj_size;
+//   time_t min_ctime;
+//   time_t max_ctime;
+//   ht_file files;
+//   struct rpayload_object_struct* next;
+//} *rt_object;
+//
+//typedef struct rpayload_header_struct {
+//   MarFS_Namespace_Ptr ns;
+//   rt_object objects;
+//} *rt_header;
 
 typedef struct delete_entry_struct {
-  MarFS_ObjType  obj_type;
-  File_Info*     file_info_ptr;
-  void*          payload;
+   File_Info          file_info;
+   MarFS_FileHandle   fh;
+   struct delete_entry_struct* next;
 } delete_entry;
 
 struct delete_queue_struct {
-  pthread_mutex_t    queue_lock;
-  pthread_cond_t     queue_empty;
-  pthread_cond_t     queue_full;
-  delete_entry       items[QUEUE_MAX];
-  int                num_items;
-  int                queue_head;
-  int                queue_tail;
-  int                num_consumers;
-  char               work_done; // flag to indicate the producer is done.
-  pthread_t*         consumer_threads;
+   pthread_mutex_t    queue_lock;
+   pthread_cond_t     queue_empty;
+   pthread_cond_t     queue_full;
+   delete_entry*      head;
+   delete_entry*      tail;
+   int                num_items;
+   int                num_consumers;
+   char               work_done; // flag to indicate the producer is done.
+   pthread_t*         consumer_threads;
 } delete_queue;
 
 Run_Info run_info; //global run settings
@@ -192,6 +185,9 @@ Run_Info run_info; //global run settings
 
 char    *ProgName;
 MarFS_Repo_Ptr repoPtr;
+
+void start_threads( int num_threads );
+void stop_workers();
 
 /*****************************************************************************
 Name: main
@@ -306,7 +302,7 @@ int main(int argc, char **argv) {
 
    // GRAN
    // Create a hash table for packed files
-   hash_table_t* ht = NULL;
+   hash_table_t* ht;
    if ( (ht = malloc( sizeof( struct hash_table ) )) == NULL ) {
       fprintf( stderr, "Failed to allocate hash table\n" );
       exit(1);
@@ -328,6 +324,9 @@ int main(int argc, char **argv) {
       }  
    }
 
+   // initialize threads and work-queue
+   start_threads(16);
+
    fprintf(run_info.outfd, "\nPhase 1: processing inodes in order\n");
    read_inodes(rdir,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec,ht);
@@ -337,8 +336,11 @@ int main(int argc, char **argv) {
       fprintf(run_info.outfd, "\nPhase 2: processing packed files\n");
       process_packed( ht, rt );
    }
-   fclose(run_info.outfd);
 
+   // join with all threads
+   stop_workers();
+
+   fclose(run_info.outfd);
    free( fileset_info_ptr );
    free( ht->table );
    free( ht );
@@ -351,6 +353,141 @@ int main(int argc, char **argv) {
    //unlink(packed_log);
    return (0); 
 }
+
+
+/***************************************************************************** 
+ * Name: queue_delete
+ *
+ * *****************************************************************************/
+void queue_delete( delete_entry* del_ent ) {
+   if(pthread_mutex_lock(&delete_queue.queue_lock)) {
+      fprintf(stderr, "ERROR: producer failed to acquire queue lock.\n");
+      exit(-1); // a bit unceremonious
+   }
+
+   while(delete_queue.num_items == QUEUE_MAX)
+      pthread_cond_wait(&delete_queue.queue_full, &delete_queue.queue_lock);
+
+   if( delete_queue.num_items != 0 ) { delete_queue.tail->next = del_ent; }
+   else { delete_queue.head = del_ent; }
+   delete_queue.tail = del_ent;
+   del_ent->next = NULL;
+   delete_queue.num_items++;
+
+   // wake any consumers waiting for an item to be added
+   pthread_cond_signal(&delete_queue.queue_empty);
+
+   pthread_mutex_unlock(&delete_queue.queue_lock);
+   return;
+}
+
+
+/***************************************************************************** 
+ * Name: obj_destroyer
+ *
+ * *****************************************************************************/
+void* obj_destroyer( void* arg ) {
+   while ( 1 ) {
+      if( pthread_mutex_lock( &delete_queue.queue_lock ) ) {
+         fprintf( stderr, "ERROR: consumer failed to aquire the queue lock\n" );
+         return NULL;
+      }
+
+      // wait for the queue to fill or for the producer to finish
+      while(!delete_queue.num_items && !delete_queue.work_done)
+         pthread_cond_wait(&delete_queue.queue_empty, &delete_queue.queue_lock);
+
+      // if all work has been completed, terminate
+      if(delete_queue.num_items == 0 && delete_queue.work_done) {
+         pthread_mutex_unlock(&delete_queue.queue_lock);
+         return NULL;
+      }
+
+      //retrieve an item from the queue
+      delete_entry* del_ent = delete_queue.head; //we should be guaranteed this is valid
+      delete_queue.head = del_ent->next;
+      delete_queue.num_items--;
+      if( delete_queue.num_items < 1 ) {
+         delete_queue.tail = delete_queue.head;
+      }
+
+      // signal the producer to add to the queue, in case it was sleeping
+      pthread_cond_signal(&delete_queue.queue_full);
+
+      // exit the critical-section
+      pthread_mutex_unlock( &delete_queue.queue_lock );
+
+      if( del_ent->file_info.obj_type != OBJ_PACKED ) {
+         fake_filehandle_for_delete_inits( &(del_ent->fh) );
+         dump_trash( &(del_ent->fh), &(del_ent->file_info) ); //this return has been ignored in the past...
+         fprintf( stderr, "DELETED NON-PACKED OBJECT %s\n", del_ent->fh.info.pre.objid );
+      }
+      else {
+         // Delete object first
+         int obj_return;
+         if ( (obj_return = delete_object( &(del_ent->fh), &(del_ent->file_info), 0)) != 0 ) {
+            fprintf(run_info.outfd, "s3_delete error (HTTP Code (obj_destroyer): \
+               %d) on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+         }
+         // Get metafile name from tmp_packed_log and delelte 
+         else {
+            fprintf( stderr, "DELETED PACKED OBJECT %s\n", del_ent->fh.info.pre.objid );
+         }
+
+      }
+
+      free( del_ent );
+   }
+
+}
+
+
+/***************************************************************************** 
+ * Name: start_threads
+ *
+ * *****************************************************************************/
+void start_threads(int num_threads) {
+
+  delete_queue.consumer_threads = calloc(num_threads, sizeof(pthread_t));
+  if(delete_queue.consumer_threads == NULL) {
+    perror("start_threads: calloc()");
+    exit(-1);
+  }
+
+  pthread_mutex_init(&delete_queue.queue_lock, NULL);
+  pthread_cond_init(&delete_queue.queue_empty, NULL);
+  pthread_cond_init(&delete_queue.queue_full, NULL);
+
+  delete_queue.num_items     = 0;
+  delete_queue.work_done     = 0;
+  delete_queue.head          = NULL;
+  delete_queue.tail          = NULL;
+  delete_queue.num_consumers = num_threads;
+
+  int i;
+  for(i = 0; i < num_threads; i++) {
+    pthread_create(&delete_queue.consumer_threads[i], NULL, obj_destroyer, NULL);
+  }
+}
+
+
+/***************************************************************************** 
+ * Name: stop_workers
+ *
+ * *****************************************************************************/
+void stop_workers() {
+  pthread_mutex_lock(&delete_queue.queue_lock);
+  delete_queue.work_done = 1;
+  pthread_cond_broadcast(&delete_queue.queue_empty);
+  pthread_mutex_unlock(&delete_queue.queue_lock);
+  
+  int i;
+  for(i = 0; i < delete_queue.num_consumers; i++) {
+    pthread_join(delete_queue.consumer_threads[i], NULL);
+  }
+}
+
+
 
 /***************************************************************************** 
 Name: init_records 
@@ -366,23 +503,23 @@ void init_records(Fileset_Info *fileset_info_buf, unsigned int record_count)
  * This function reads the config file in order to extract the object hostname
  * associated with the current gpfs file (from the inode scan) 
  *
-******************************************************************************/
-int read_config_gc(Fileset_Info *fileset_info_ptr)
-{
-
-   //Find the correct repo so that the hostname can be determined
-   LOG(LOG_INFO, "fileset repo name = %s\n", fileset_info_ptr->repo_name);
-   if ((repoPtr = find_repo_by_name(fileset_info_ptr->repo_name)) == NULL) {
-      fprintf(stderr, "Repo %s not found in configuration\n", 
-              fileset_info_ptr->repo_name);
-      return -1;
-   }
-   else {
-      strcpy(fileset_info_ptr->host, repoPtr->host);
-      LOG(LOG_INFO, "fileset name = %s/n", fileset_info_ptr->host);
-      return 0;
-   }
-}
+ ******************************************************************************/
+//int read_config_gc(Fileset_Info *fileset_info_ptr)
+//{
+//
+//   //Find the correct repo so that the hostname can be determined
+//   LOG(LOG_INFO, "fileset repo name = %s\n", fileset_info_ptr->repo_name);
+//   if ((repoPtr = find_repo_by_name(fileset_info_ptr->repo_name)) == NULL) {
+//      fprintf(stderr, "Repo %s not found in configuration\n", 
+//              fileset_info_ptr->repo_name);
+//      return -1;
+//   }
+//   else {
+//      strcpy(fileset_info_ptr->host, repoPtr->host);
+//      LOG(LOG_INFO, "fileset name = %s/n", fileset_info_ptr->host);
+//      return 0;
+//   }
+//}
 
 
 /***************************************************************************** 
@@ -589,9 +726,10 @@ void update_payload( void* new, void** old){
       (*tmp)->md_ctime = 0;
       (*tmp)->size = 0;
       (*tmp)->next = NULL;
+      OP->tail = (*tmp);
 
       if ( OP->chunks != NP->chunks ) {
-         fprintf( stderr, "update_payload: WARNING: xattr file count of %d for %s does not match expected %d (from %s)\n", NP->chunks, NP->md_path, OP->chunks, OP->files->md_path );
+         fprintf( stderr, "update_payload: WARNING: xattr file count of %zd for %s does not match expected %zd (from %s)\n", NP->chunks, NP->md_path, OP->chunks, OP->files->md_path );
       }
       if ( OP->ns != NP->ns ) {
          fprintf( stderr, "update_payload: WARNING: xattr MarFS Namespace for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
@@ -610,59 +748,59 @@ This is an internal helper function which acts to insert a list of files into th
 repacker payload structures
 
 *****************************************************************************/
-rt_object split_insert( rt_object match, ht_header list_head, size_t opt_count, size_t max_obj ) {
-      size_t file_count = 0;
-      size_t obj_size = 0;
-      struct stat st;
-
-      if( list_head->files == NULL )
-         return NULL;
-
-      ht_file* cur = &(match->files);
-      while( *cur != NULL  &&  (*cur)->md_ctime < list_head->md_ctime ) {
-         obj_size += (*cur)->size;
-         if( (*cur)->size  == 0 ) {
-            fprintf( stderr, "split_insert: WARNING: hit file with unexpected 0 size \"%s\"\n", (*cur)->md_path );
-         }
-         file_count++;
-         cur = &((*cur)->next);
-      }
-
-      list_head->tail = *cur;
-      *cur = list_head->files;
-      while( *cur != NULL  &&  (obj_size + (*cur)->size) <= max_obj  &&  (file_count + 1) <= opt_count ) {
-         file_count++;
-         if ( stat( (*cur)->md_path, &st ) != 0 ) {
-            fprintf( stderr, "split_insert: failed to stat md_path %s\n", (*cur)->md_path );
-         }
-         (*cur)->md_ctime = list_head->md_ctime;
-         (*cur)->size = st.st_size;
-         obj_size += st.st_size;
-         cur = &((*cur)->next);
-      }
-      
-      list_head->files = *cur;
-      if( *cur == NULL ) {
-         list_head->tail = NULL;
-         return NULL;
-      }
-
-      *cur = NULL;
-      if( match->next == NULL ) {
-         if( (match->next = malloc( sizeof( struct rpayload_object_struct ) )) == NULL ) {
-            fprintf( stderr, "split_insert: failed to allocate space for a new object structure\n" );
-            exit( -1 );
-         }
-         match->next->next=NULL;
-         match->next->obj_size = 0;
-         match->next->file_count = 0;
-         match->next->files = NULL;
-         match->next->min_ctime = list_head->md_ctime;
-         match->next->max_ctime = list_head->md_ctime;
-      }
-
-      return match->next;
-}
+//rt_object split_insert( rt_object match, ht_header list_head, size_t opt_count, size_t max_obj ) {
+//      size_t file_count = 0;
+//      size_t obj_size = 0;
+//      struct stat st;
+//
+//      if( list_head->files == NULL )
+//         return NULL;
+//
+//      ht_file* cur = &(match->files);
+//      while( *cur != NULL  &&  (*cur)->md_ctime < list_head->md_ctime ) {
+//         obj_size += (*cur)->size;
+//         if( (*cur)->size  == 0 ) {
+//            fprintf( stderr, "split_insert: WARNING: hit file with unexpected 0 size \"%s\"\n", (*cur)->md_path );
+//         }
+//         file_count++;
+//         cur = &((*cur)->next);
+//      }
+//
+//      list_head->tail = *cur;
+//      *cur = list_head->files;
+//      while( *cur != NULL  &&  (obj_size + (*cur)->size) <= max_obj  &&  (file_count + 1) <= opt_count ) {
+//         file_count++;
+//         if ( stat( (*cur)->md_path, &st ) != 0 ) {
+//            fprintf( stderr, "split_insert: failed to stat md_path %s\n", (*cur)->md_path );
+//         }
+//         (*cur)->md_ctime = list_head->md_ctime;
+//         (*cur)->size = st.st_size;
+//         obj_size += st.st_size;
+//         cur = &((*cur)->next);
+//      }
+//      
+//      list_head->files = *cur;
+//      if( *cur == NULL ) {
+//         list_head->tail = NULL;
+//         return NULL;
+//      }
+//
+//      *cur = NULL;
+//      if( match->next == NULL ) {
+//         if( (match->next = malloc( sizeof( struct rpayload_object_struct ) )) == NULL ) {
+//            fprintf( stderr, "split_insert: failed to allocate space for a new object structure\n" );
+//            exit( -1 );
+//         }
+//         match->next->next=NULL;
+//         match->next->obj_size = 0;
+//         match->next->file_count = 0;
+//         match->next->files = NULL;
+//         match->next->min_ctime = list_head->md_ctime;
+//         match->next->max_ctime = list_head->md_ctime;
+//      }
+//
+//      return match->next;
+//}
 
 
 /***************************************************************************** 
@@ -671,88 +809,88 @@ Name:  repack_update_payload
 This acts as the update function for repack hash table payload-insertion.
 
 *****************************************************************************/
-void repack_update_payload( void* new, void** old ) {
-   // When called, new should be a pointer to the payload for the original GC hash-table 
-   // while old is a pointer to the pointer to the payload for a repack hash-table entry
-   ht_header NP = (ht_header) new;
-   rt_header OP = *((rt_header *) old);
-
-   // if this is the first object for this directory, simply populate structures
-   if ( OP == NULL ) {
-      struct stat st;
-      if( (OP = malloc( sizeof( struct rpayload_header_struct ) )) == NULL ) {
-         fprintf( stderr, "repack_update_payload: failed to allocate a repack payload header struct\n" );
-         exit( -1 );
-      }
-      if( (OP->objects = malloc( sizeof( struct rpayload_object_struct ) )) == NULL ) {
-         fprintf( stderr, "repack_update_payload: failed to allocate a repack payload object struct\n" );
-         exit( -1 );
-      }
-
-      OP->objects->next = NULL;
-      OP->objects->obj_size = 0;
-      OP->objects->file_count = 0;
-      OP->objects->files = NP->files; //still need to set size and ctime for this list
-      OP->ns = NP->ns;
-      time_t md_ctime = NP->md_ctime;
-      OP->objects->min_ctime = md_ctime;
-      OP->objects->max_ctime = md_ctime;
-      
-      ht_file nfile = OP->objects->files;
-      while ( nfile != NULL ) { //set size and ctime for all files
-         nfile->md_ctime = md_ctime;
-         OP->objects->file_count++;
-         if ( stat( nfile->md_path, &st ) != 0 ) {
-            fprintf( stderr, "repack_update_payload: failed to stat md_path %s\n", nfile->md_path );
-            continue;
-         }
-         nfile->size = st.st_size;
-         OP->objects->obj_size += st.st_size;
-      }
-   }
-   else { //otherwise, we need to insert according to md_ctime
-      ssize_t min_pack_count = OP->ns->iwrite_repo->min_pack_file_count;
-      ssize_t max_pack_count = OP->ns->iwrite_repo->max_pack_file_count;
-      ssize_t min_pack_size = OP->ns->iwrite_repo->min_pack_file_size;
-      ssize_t max_pack_size = OP->ns->iwrite_repo->max_pack_file_size;
-      size_t obj_size = OP->ns->iwrite_repo->chunk_size;
-      size_t opt_count;
-
-      if ( max_pack_count == 0 ) {
-         fprintf( stderr, "repack_update_payload: ERROR: repacking objects for repo \"%s\" but max_pack_file_count == 0\n", NP->ns->iwrite_repo->name );
-         exit( -1 );
-      }
-      if( max_pack_count == -1  ||  (max_pack_count*max_pack_size) > obj_size ) {
-         // if count is unbounded or otherwise excessive, limit optimal count to a value that will allow squeezing in excess files
-         opt_count = ( ( obj_size - (min_pack_count*max_pack_size) ) / max_pack_size );
-      }
-      else {
-         opt_count = max_pack_count - min_pack_count;
-         if( opt_count > max_pack_count ) //unnecessary? Only hit if min_pack_count < 0
-            opt_count = max_pack_count;
-      }
-
-      if( opt_count < min_pack_count )
-         opt_count = min_pack_count;
-
-      printf( "opt_count = %zu,  Repo: %s - min_pc=%zd, max_pc=%zd, min_ps=%zd, max_ps=%zd\n", opt_count, NP->ns->iwrite_repo->name, min_pack_count, max_pack_count, min_pack_size, max_pack_size );
-
-      rt_object matchobj = OP->objects;
-      rt_object prevobj = NULL;
-      while( matchobj != NULL  &&  matchobj->max_ctime < NP->md_ctime ) {
-         prevobj = matchobj;
-         matchobj = matchobj->next;
-      }
-
-      if( matchobj == NULL )
-         matchobj = prevobj;
-
-      while( (matchobj = split_insert( matchobj, NP, opt_count, NP->ns->iwrite_repo->chunk_size)) != NULL ) {
-         ; //NO-OP
-      }
-
-   }
-}
+//void repack_update_payload( void* new, void** old ) {
+//   // When called, new should be a pointer to the payload for the original GC hash-table 
+//   // while old is a pointer to the pointer to the payload for a repack hash-table entry
+//   ht_header NP = (ht_header) new;
+//   rt_header OP = *((rt_header *) old);
+//
+//   // if this is the first object for this directory, simply populate structures
+//   if ( OP == NULL ) {
+//      struct stat st;
+//      if( (OP = malloc( sizeof( struct rpayload_header_struct ) )) == NULL ) {
+//         fprintf( stderr, "repack_update_payload: failed to allocate a repack payload header struct\n" );
+//         exit( -1 );
+//      }
+//      if( (OP->objects = malloc( sizeof( struct rpayload_object_struct ) )) == NULL ) {
+//         fprintf( stderr, "repack_update_payload: failed to allocate a repack payload object struct\n" );
+//         exit( -1 );
+//      }
+//
+//      OP->objects->next = NULL;
+//      OP->objects->obj_size = 0;
+//      OP->objects->file_count = 0;
+//      OP->objects->files = NP->files; //still need to set size and ctime for this list
+//      OP->ns = NP->ns;
+//      time_t md_ctime = NP->md_ctime;
+//      OP->objects->min_ctime = md_ctime;
+//      OP->objects->max_ctime = md_ctime;
+//      
+//      ht_file nfile = OP->objects->files;
+//      while ( nfile != NULL ) { //set size and ctime for all files
+//         nfile->md_ctime = md_ctime;
+//         OP->objects->file_count++;
+//         if ( stat( nfile->md_path, &st ) != 0 ) {
+//            fprintf( stderr, "repack_update_payload: failed to stat md_path %s\n", nfile->md_path );
+//            continue;
+//         }
+//         nfile->size = st.st_size;
+//         OP->objects->obj_size += st.st_size;
+//      }
+//   }
+//   else { //otherwise, we need to insert according to md_ctime
+//      ssize_t min_pack_count = OP->ns->iwrite_repo->min_pack_file_count;
+//      ssize_t max_pack_count = OP->ns->iwrite_repo->max_pack_file_count;
+//      ssize_t min_pack_size = OP->ns->iwrite_repo->min_pack_file_size;
+//      ssize_t max_pack_size = OP->ns->iwrite_repo->max_pack_file_size;
+//      size_t obj_size = OP->ns->iwrite_repo->chunk_size;
+//      size_t opt_count;
+//
+//      if ( max_pack_count == 0 ) {
+//         fprintf( stderr, "repack_update_payload: ERROR: repacking objects for repo \"%s\" but max_pack_file_count == 0\n", NP->ns->iwrite_repo->name );
+//         exit( -1 );
+//      }
+//      if( max_pack_count == -1  ||  (max_pack_count*max_pack_size) > obj_size ) {
+//         // if count is unbounded or otherwise excessive, limit optimal count to a value that will allow squeezing in excess files
+//         opt_count = ( ( obj_size - (min_pack_count*max_pack_size) ) / max_pack_size );
+//      }
+//      else {
+//         opt_count = max_pack_count - min_pack_count;
+//         if( opt_count > max_pack_count ) //unnecessary? Only hit if min_pack_count < 0
+//            opt_count = max_pack_count;
+//      }
+//
+//      if( opt_count < min_pack_count )
+//         opt_count = min_pack_count;
+//
+//      printf( "opt_count = %zu,  Repo: %s - min_pc=%zd, max_pc=%zd, min_ps=%zd, max_ps=%zd\n", opt_count, NP->ns->iwrite_repo->name, min_pack_count, max_pack_count, min_pack_size, max_pack_size );
+//
+//      rt_object matchobj = OP->objects;
+//      rt_object prevobj = NULL;
+//      while( matchobj != NULL  &&  matchobj->max_ctime < NP->md_ctime ) {
+//         prevobj = matchobj;
+//         matchobj = matchobj->next;
+//      }
+//
+//      if( matchobj == NULL )
+//         matchobj = prevobj;
+//
+//      while( (matchobj = split_insert( matchobj, NP, opt_count, NP->ns->iwrite_repo->chunk_size)) != NULL ) {
+//         ; //NO-OP
+//      }
+//
+//   }
+//}
 
 
 /***************************************************************************** 
@@ -762,7 +900,7 @@ This function prints current time to the log entry
 *****************************************************************************/
 void print_current_time()
 {
-   char time_string[20];
+   char time_string[21];
    struct tm *time_info;
    
    time_t now = time(0);
@@ -822,12 +960,6 @@ int read_inodes(const char   *fnameP,
 
    MarFS_XattrPost post_struct;
    MarFS_XattrPre* post = &post_struct;
-#else
-   MarFS_FileHandle fh;
-   memset(&fh, 0, sizeof(MarFS_FileHandle));
-
-   MarFS_XattrPre*  pre  = &fh.info.pre;
-   MarFS_XattrPost* post = &fh.info.post;
 #endif
 
    // initialize a list of known MarFS xattrs, used by stat_xattrs(), etc.
@@ -847,8 +979,6 @@ int read_inodes(const char   *fnameP,
    int restart_index=2;
    //
    //
-
-   int trash_status;
 
    int early_exit =0;
    int xattr_index;
@@ -882,7 +1012,22 @@ int read_inodes(const char   *fnameP,
    struct payload_package_struct p_struct;
    ht_package payload = &p_struct;
 
+   delete_entry *del_ent = NULL;
+
    while (1) {
+
+      if ( ! del_ent ) {
+         del_ent = calloc( 1, sizeof( struct delete_entry_struct ) );
+         if( del_ent == NULL ) {
+            fprintf( stderr, "ERROR: read_inodes: failed to allocate a delete entry struct\n" );
+            exit( -1 );
+         }
+      }
+
+      MarFS_XattrPre*  pre  = &(del_ent->fh.info.pre);
+      MarFS_XattrPost* post = &(del_ent->fh.info.post);
+
+
       rc = gpfs_next_inode_with_xattrs(iscanP,
                                        0x7FFFFFFF,
                                        &iattrP, 
@@ -985,7 +1130,8 @@ int read_inodes(const char   *fnameP,
                      // Get OBJID xattr (aka "pre")
                      if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
                           marfs_xattrs[objid_index], xattr_count)) != -1) { 
-                          xattr_ptr = &mar_xattrs[xattr_index];
+                       
+                        xattr_ptr = &mar_xattrs[xattr_index];
 
                         LOG(LOG_INFO, "objid xattr name = %s xattr_value =%s\n",
                             xattr_ptr->xattr_name, xattr_ptr->xattr_value);
@@ -1067,17 +1213,13 @@ int read_inodes(const char   *fnameP,
                         // and want to keep running even if errors exist on 
                         // certain objects or files
                         else {
-                           File_Info *file_info_ptr = calloc( 1, sizeof( File_Info ) );
-                           if( file_info_ptr == NULL ) {
-                              fprintf( stderr, "ERROR: read_inodes: failed to allocate memory for file_info struct\n" );
-                              exit( -1 ); //if we cannot allocate memory, fail hard
-                           }
-                           file_info_ptr->restart_found = restart_found;
-                           file_info_ptr->obj_type = post->obj_type;
+                           del_ent->file_info.restart_found = restart_found;
+                           del_ent->file_info.obj_type = post->obj_type;
 
-                           fake_filehandle_for_delete_inits(&fh);
-                           trash_status = dump_trash(&fh, file_info_ptr);
-                           free( file_info_ptr ); //stupid and temporary!
+                           queue_delete( del_ent );
+                           //fake_filehandle_for_delete_inits(&fh);
+                           //trash_status = dump_trash(&fh, file_info_ptr);
+                           del_ent = NULL; //remove reference to the entry, so another will be allocated
                         } // endif dump trash
                      } // endif objid xattr 
                   } // endif days old check
@@ -1090,6 +1232,9 @@ int read_inodes(const char   *fnameP,
 ******/
       }
    } // endwhile
+   if ( del_ent )
+      free( del_ent );
+
    clean_exit(run_info.outfd, iscanP, fsP, early_exit);
    return(rc);
 }
@@ -1246,7 +1391,7 @@ int delete_object(MarFS_FileHandle *fh,
    print_delete_preamble();
 
    if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_Nto1) {
-      fprintf(run_info.outfd, "chunk %llu of incomplete Nto1 multi object %s\n", pre_ptr->chunk_no, object);
+      fprintf(run_info.outfd, "chunk %zd of incomplete Nto1 multi object %s\n", pre_ptr->chunk_no, object);
       if (! run_info.no_delete ) {
          // s3_return = s3_delete( obj_buffer, object );
          rc = delete_data(fh);
@@ -1260,7 +1405,7 @@ int delete_object(MarFS_FileHandle *fh,
       }
    }
    else if ( is_multi ) {
-      fprintf(run_info.outfd, "chunk %llu of multi object %s\n", pre_ptr->chunk_no, object);
+      fprintf(run_info.outfd, "chunk %zd of multi object %s\n", pre_ptr->chunk_no, object);
       if (! run_info.no_delete ) {
          // s3_return = s3_delete( obj_buffer, object );
          rc = delete_data(fh);
@@ -1349,13 +1494,7 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
    int obj_return;
    int df_return;
 
-   int chunk_count;
-   int count = 0;
-   int multi_flag = 0;
    ht_entry_t* entry = NULL;
-
-   MarFS_XattrPost post;
-   char post_xattr[MARFS_MAX_XATTR_SIZE];
 
    // In a loop get all lines from the file
    // Example line (with 'xx' instead of IP-addr octets, and altered MD paths):
@@ -1377,7 +1516,7 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
 
          // TODO check min_pack_file_count to determine canidacy for repack
          if ( rt  &&  ( entry->value < p_header->chunks ) ) {
-            fprintf( stderr, "repack canidate found\n" );
+            fprintf( stderr, "repack canidate found, but repack is not implemented\n" );
 
             // Get the post xattr to determine offset in the objec
 //            if ((getxattr(file->md_path, "user.marfs_post", &post_xattr, MARFS_MAX_XATTR_SIZE) != -1)) {
@@ -1390,12 +1529,12 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
             // TODO insert into rt table
          }
          else {
-            if ( entry->value < p_header->chunks ) 
-               fprintf(stderr, "Repack Canidate: object %s has %d files while chunk count is %d\n",
-                  entry->key, entry->value, p_header->chunks);
-            else
-               fprintf(stderr, "ERROR: Potential Faulty 'marfs_post' Xattr: object %s has %d files while chunk count is %d\n",
-                  entry->key, entry->value, p_header->chunks);
+//            if ( entry->value < p_header->chunks ) 
+//               fprintf(stderr, "Repack Canidate: object %s has %d files while chunk count is %zd\n",
+//                  entry->key, entry->value, p_header->chunks);
+            if ( entry->value > p_header->chunks )
+               fprintf(stderr, "ERROR: Potential Faulty 'marfs_post' Xattr: object %s has %d files while chunk count is %zd  MD-example = %s\n",
+                  entry->key, entry->value, p_header->chunks, file->md_path);
 
             //free the payload list
             while ( file != NULL ) {
@@ -1403,52 +1542,41 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
                file = file->next;
                free( Ptmp->md_path );
                free( Ptmp );
-               if( file )
-                  fprintf(stderr, "REPEAT: object %s has %d files while chunk count is %d   MD = %s\n",
-                     entry->key, entry->value, p_header->chunks, file->md_path);
+//               if( file )
+//                  fprintf(stderr, "REPEAT: object %s has %d files while chunk count is %zd   MD = %s\n",
+//                     entry->key, entry->value, p_header->chunks, file->md_path);
             }
             free( p_header );
          }
          continue;
       }
 
+      if ( run_info.no_delete ) {
+         fprintf(run_info.outfd, "ID'd packed object %s\n", entry->key);
+         continue;
+      }
 
       // If we get here, counts are matching up
       // Go ahead and start deleting
-      MarFS_FileHandle fh;
-      if (fake_filehandle_for_delete(&fh, entry->key, file->md_path)) {
+      delete_entry* del_ent = calloc( 1, sizeof( struct delete_entry_struct ) );
+      if ( del_ent == NULL ) {
+         fprintf( stderr, "ERROR: process_packed: failed to allocate space for a delete entry struct\n" );
+         exit( -1 );  //if we fail to allocate memory, just terminate
+      }
+      del_ent->file_info.obj_type = OBJ_PACKED;
+      del_ent->file_info.restart_found = 0; //assume no restart?  This was done before, but seems odd.
+
+      if ( fake_filehandle_for_delete( &(del_ent->fh), entry->key, file->md_path ) ) {
          fprintf(run_info.outfd,
                  "failed to create filehandle for %s %s\n",
                  entry->key, file->md_path);
          continue;
       }
 
-      update_pre(&fh.info.pre);
-      update_url(&fh.os, &fh.info);
+      update_pre( &(del_ent->fh.info.pre) );
+      update_url( &(del_ent->fh.os), &(del_ent->fh.info) );
 
-      File_Info* file_info_ptr = calloc( 1, sizeof( File_Info ) );
-      if ( file_info_ptr == NULL ) {
-         fprintf( stderr, "ERROR: process_packed: failed to allocate space for a file info struct\n" );
-         exit( -1 );  //if we fail to allocate memory, just terminate
-      }
-      file_info_ptr->obj_type = OBJ_PACKED;
-      file_info_ptr->restart_found = 0; //assume no restart?  This was done before, but seems odd.
-
-      // Delete object first
-      if ( delete_object(&fh, file_info_ptr, multi_flag) != 0 ) {
-         fprintf(run_info.outfd, "s3_delete error (HTTP Code: \
-                 %d) on object %s\n", obj_return, entry->key);
-         obj_return = -1;
-      }
-      else if ( run_info.no_delete) {
-         fprintf(run_info.outfd, "ID'd packed object %s\n", entry->key);
-      }
-      // Get metafile name from tmp_packed_log and delelte 
-      else {
-         fprintf(run_info.outfd, "deleted object %s\n", entry->key);
-      }
-
-      free( file_info_ptr ); //temporary and stupid
+      queue_delete( del_ent );
 
       Ptmp = NULL;
       while ( file != NULL ) {

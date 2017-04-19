@@ -126,7 +126,7 @@ typedef struct Run_Info {
 
 typedef struct File_Info {
    // per-file discoveries
-   char          fileset_name[MARFS_MAX_NAMESPACE_NAME];
+   //char          fileset_name[MARFS_MAX_NAMESPACE_NAME];
    MarFS_ObjType obj_type;
    unsigned char  restart_found;
 } File_Info;
