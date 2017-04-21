@@ -43,7 +43,7 @@ extern "C" {
 #  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PID, LOG_USER)
 
 #  define LOG(PRIO, FMT, ...)                                           \
-   syslog((PRIO), xFMT FMT,                                             \
+   syslog((PRIO), LOG_PREFIX xFMT FMT,                                  \
           (unsigned int)pthread_self(),                                 \
           __FILE__, __LINE__,                                           \
           LOG_FNAME_SIZE-(int)strlen(__FILE__), "",                     \

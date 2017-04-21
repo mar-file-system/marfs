@@ -11,39 +11,46 @@ AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
 	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
 	      -DDATAPARSE -DBUILD_INC_DIR=@includedir@ -I$(PARSE_DIR)
 
-AM_CFLAGS =
 AM_LDFLAGS =
+
 LDADD =
 
-if GPROF
-AM_CFLAGS  += -pg
-AM_LDFLAGS += -pg
+if DEBUG
+  AM_CFLAGS = -g -O1
+else
+  AM_CFLAGS = -g -O3
 endif
 
+
+
+if GPROF
+  AM_CFLAGS  += -pg
+  AM_LDFLAGS += -pg
+endif
+
+# DEBUG>1  turn on S3 transaction logging (only affects libcurl interactions)
 if DEBUG
-# Configure has -g enabled by default
-AM_CPPFLAGS += -DDEBUG=2
-AM_CPPFLAGS += -fstack-protector-all -fstack-check
+  AM_CPPFLAGS += -DDEBUG=2
+  AM_CPPFLAGS += -fstack-protector-all -fstack-check
 endif
 
 if USE_SYSLOG
-AM_CPPFLAGS += -DUSE_SYSLOG
+  AM_CPPFLAGS += -DUSE_SYSLOG
 endif
-
 if USE_STDOUT
-AM_CPPFLAGS += -DUSE_STDOUT
+  AM_CPPFLAGS += -DUSE_STDOUT
 endif
 
 if USE_DAL
-AM_CPPFLAGS += -DUSE_DAL=1
+  AM_CPPFLAGS += -DUSE_DAL=1
 endif
 
 if USE_MDAL
-AM_CPPFLAGS += -DUSE_MDAL=1
+  AM_CPPFLAGS += -DUSE_MDAL=1
 endif
 
 if NO_AWSAUTH
-AM_CPPFLAGS += -DUSE_SPROXYD=1
+  AM_CPPFLAGS += -DUSE_SPROXYD=1
 endif
 
 
@@ -79,18 +86,18 @@ libmarfs_a_LIBADD = $(PARSE_OBJ)
 
 # Use our own polite spin locks
 if SPINLOCKS
-libmarfs_a_SOURCES += fuse/src/spinlock.h fuse/src/spinlock.c \
-					  fuse/src/spinlock_asm.s
-AM_CPPFLAGS += -DSPINLOCKS
+  libmarfs_a_SOURCES += fuse/src/spinlock.h fuse/src/spinlock.c \
+                        fuse/src/spinlock_asm.s
+  AM_CPPFLAGS += -DSPINLOCKS
 endif
 
 
 
 # --- additions for multi-component builds
 if USE_MC
-AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
-AM_LDFLAGS  += -L$(LIBNE)/lib
-LDADD       += -L$(LIBNE)/lib -lne
+  AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
+  AM_LDFLAGS  += -L$(LIBNE)/lib
+  LDADD       += -L$(LIBNE)/lib -lne
 
 # rebuilder is used to rebuild MC repositories
 bin_PROGRAMS += rebuilder
@@ -99,11 +106,11 @@ endif
 
 
 if USE_MC_SOCKETS
-## these need to be appended at the end, so adding to AM_LDFLAGS wont work
-# AM_LDFLAGS  += -lrdma_sockets -lrdmacm
-# MC_SOCKET_LD_FLAGS = -lrdma_sockets -lrdmacm
-# MC_SOCKET_LD_FLAGS = -lrdmacm
-LIBS += -lrdma_sockets -lrdmacm
+  ## these need to be appended at the end, so adding to AM_LDFLAGS wont work
+  # AM_LDFLAGS  += -lrdma_sockets -lrdmacm
+  # MC_SOCKET_LD_FLAGS = -lrdma_sockets -lrdmacm
+  # MC_SOCKET_LD_FLAGS = -lrdmacm
+  LIBS += -lrdma_sockets -lrdmacm
 endif
 
 
@@ -129,9 +136,9 @@ marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 
 
 
-# The PA2X_interface needs to look in additionSal places for its #include files.
+# The PA2X_interface needs to look in additional places for its #include files.
 #common/configuration/src/PA2X_interface.o: common/configuration/src/PA2X_interface.c common/configuration/src/PA2X_interface.h
-#	$(COMPILE) -I$(PARSE_DIR) -DPARSE_DIR=$(PARSE_DIR) $(AM_CPPFLAGS) -o $@ -c $<
+#  $(COMPILE) -I$(PARSE_DIR) -DPARSE_DIR=$(PARSE_DIR) $(AM_CPPFLAGS) -o $@ -c $<
 
 # NOTE: we could build marfs_config just from marfs_config.c and add
 #       the necessary objects with LDADD like so:
@@ -149,9 +156,9 @@ marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 # ............................................................................
 
 if WANT_FUSE
-bin_PROGRAMS += marfs_fuse
-marfs_fuse_SOURCES = fuse/src/main.c
-AM_CPPFLAGS += -D_FILE_OFFSET_BITS=64
+  bin_PROGRAMS += marfs_fuse
+  marfs_fuse_SOURCES = fuse/src/main.c
+  AM_CPPFLAGS += -D_FILE_OFFSET_BITS=64
 endif
 
 # ............................................................................
@@ -186,9 +193,11 @@ marfs_repack_LDFLAGS = -lgpfs
 
 endif
 
+
 # ............................................................................
 # Parser
 # ............................................................................
+
 PARSE_OPT = -DDATAPARSE
 BLUEPRINT = $(abs_top_srcdir)/common/configuration/src/marfs_configuration_blueprint.cfg
 

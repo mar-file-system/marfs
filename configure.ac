@@ -107,7 +107,7 @@ AC_ARG_WITH([gpfs],
 
 AC_ARG_ENABLE([logging],
         AS_HELP_STRING([  --enable-logging],
-                       [one of {stdout|syslog|yes|no} enables logging to either standard output or syslogd (defaults to syslogd)]))
+                       [one of {stdout|syslog|yes|no} enables logging to stdout/stderr or syslog (default stdout/stderr)]))
 
 AC_ARG_ENABLE([spinlocks],
         AS_HELP_STRING([  --enable-spinlocks],
@@ -125,10 +125,15 @@ AC_ARG_ENABLE([debug],
 
 # Checks for programs.
 AC_PROG_AWK
-AC_PROG_CC
 AC_PROG_MAKE_SET
 AC_PROG_RANLIB
 AC_PROG_LN_S
+
+# default to empty flags, instead of "-g -O2"
+: ${CFLAGS=""}
+AC_PROG_CC
+
+
 
 # autoreconf says we need this since spinlocks uses asembly
 AM_PROG_AS
@@ -168,6 +173,7 @@ AC_CHECK_LIB([xml2], [xmlSAX2GetEntity])
 # needed for the DAL
 AC_CHECK_LIB([dl], [dlsym])
 
+
 # link lib fuse if building the fuse daemon.
 # we don't want to link libfuse for everything. Just for the marfs_fuse
 # program. This is now handled in fuse/src/Makefile.am
@@ -176,9 +182,11 @@ AS_IF([test x"$enable_fuse" != xno],
 
 AS_IF([test x"$enable_mc" != xno],
     [AC_CHECK_LIB([isal], [crc32_ieee])])
+
 # need libne for any MC variant
 AS_IF([test x"$enable_mc" != xno],
       [AC_CHECK_LIB([ne], [ne_open])])
+
 # also need rdma_sockets and rdmacm, for MC sockets
 AS_IF([test x"$enable_mc" = xsockets],
       [AC_CHECK_LIB([rdma_sockets], [skt_open])
@@ -195,11 +203,10 @@ AM_CONDITIONAL([USE_MC_SOCKETS], [test x"$enable_mc" = xsockets])
 
 AM_CONDITIONAL([WANT_FUSE], [test x"$enable_fuse" != xno])
 
-AM_CONDITIONAL([USE_SYSLOG],
-        [test x"$enable_logging" = xsyslog || test x"$enable_logging" = xyes])
-AM_CONDITIONAL([USE_STDOUT],  [test x"$enable_logging" = xstdout])
+AM_CONDITIONAL([USE_SYSLOG], [test x"$enable_logging" = xsyslog])
+AM_CONDITIONAL([USE_STDOUT], [test x"$enable_logging" = xstdout || test x"$enable_logging" = xyes])
 
-AM_CONDITIONAL([SPINLOCKS],   [test x"$enable_spinlocks" = xyes])
+AM_CONDITIONAL([SPINLOCKS], [test x"$enable_spinlocks" = xyes])
 
 AM_CONDITIONAL([NFS_THREADS], [test x"$enable_nfs_threads" = xyes])
 
