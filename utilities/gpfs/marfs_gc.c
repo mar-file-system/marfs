@@ -173,12 +173,14 @@ int main(int argc, char **argv) {
    //unsigned int uid = 0;
    int fileset_id = -1;
    int  c;
-   unsigned int thread_count = 16;
+   int thread_count = NUM_THRDS_DEFAULT;
+   int queue_max = QUEUE_MAX_DEFAULT;
    unsigned int fileset_count = 1;
    extern char *optarg;
    unsigned int time_threshold_sec=0;
    unsigned int delete_flag = 0;
    unsigned char repack_flag = 0;
+   unsigned char verbose_flag = 0;
    char*        target_ns = NULL;
  
    Fileset_Info *fileset_info_ptr;
@@ -188,16 +190,17 @@ int main(int argc, char **argv) {
    else
       ProgName++;
 
-   while ((c=getopt(argc,argv, "d:t:T:p:hnro:u:f:N:")) != EOF) {
+   while ((c=getopt(argc,argv, "d:t:T:hM:nvro:u:f:N:")) != EOF) {
       switch (c) {
          case 'd': rdir = optarg; break;
          case 'o': outf = optarg; break;
          case 't': thread_count = atoi(optarg); break;
          case 'T': time_threshold_sec=atoi(optarg) * DAY_SECONDS; break;
-//         case 'p': packed_log = optarg; break;
+         case 'M': queue_max = atoi(optarg); break;
          case 'u': aws_user_name = optarg; break;
          case 'n': delete_flag = 1; break;
          case 'r': repack_flag = 1; break;
+         case 'v': verbose_flag = 1; break;
          case 'f': fileset_id = atoi(optarg); break;
          case 'N': target_ns = optarg; break;
 
@@ -230,6 +233,17 @@ int main(int argc, char **argv) {
       return(-1);
    }
 
+   // check if thread_count is valid
+   if( thread_count < 1 ) {
+      fprintf( stderr, "%s: thread counts bellow 1 are not acceptable, defaulting to 1\n", ProgName );
+      thread_count = 1;
+   }
+   // check if queue_max is valid
+   if( queue_max < 1 ) {
+      fprintf( stderr, "%s: a work-queue maximum bellow 1 is not acceptable, defaulting to 1\n", ProgName );
+      queue_max = 1;
+   }
+
    // Create structure containing fileset information
    fileset_info_ptr = (Fileset_Info *) malloc(sizeof(*fileset_info_ptr));
    if (fileset_info_ptr == NULL ) {
@@ -258,6 +272,8 @@ int main(int argc, char **argv) {
    run_info.no_delete = delete_flag;
    run_info.deletes = 0;
    run_info.max_queue_depth = 0;
+   run_info.verbose = verbose_flag;
+   run_info.queue_max = queue_max;
 
    if (target_ns) {
      size_t target_ns_size = strlen(target_ns);
@@ -286,11 +302,11 @@ int main(int argc, char **argv) {
 
    hash_table_t* rt = NULL;
 
-   printf( "INFO: initializing %u threads...", thread_count );
+   VERB_FPRINTF( stdout, "INFO: initializing %u threads with a max queue-depth of %d...", thread_count, queue_max );
    fflush( stdout );
    // initialize threads and work-queue
    start_threads(thread_count);
-   printf( "done\n" );
+   VERB_FPRINTF( stdout, "done\n" );
 
    fprintf(run_info.outfd, "\nPhase 1: processing inodes in order\n");
    read_inodes(rdir,fileset_id,fileset_info_ptr,
@@ -330,11 +346,10 @@ void queue_delete( delete_entry* del_ent ) {
       exit(-1); // a bit unceremonious
    }
 
-   printf( "Queue_Depth = %d\n", delete_queue.num_items );
    if( delete_queue.num_items > run_info.max_queue_depth )
       run_info.max_queue_depth = delete_queue.num_items;
 
-   while(delete_queue.num_items == QUEUE_MAX)
+   while(delete_queue.num_items == run_info.queue_max)
       pthread_cond_wait(&delete_queue.queue_full, &delete_queue.queue_lock);
 
    if( delete_queue.num_items != 0 ) { delete_queue.tail->next = del_ent; }
@@ -404,7 +419,7 @@ void* obj_destroyer( void* arg ) {
             stats->failures++;
          }
          else {
-            fprintf( stderr, "INFO: deleted object -- %s\n", del_ent->fh.info.pre.objid );
+            VERB_FPRINTF( stdout, "INFO: deleted object -- %s\n", del_ent->fh.info.pre.objid );
             stats->successes++;
          }
       }
@@ -419,7 +434,7 @@ void* obj_destroyer( void* arg ) {
          }
          // Get metafile name from tmp_packed_log and delelte 
          else {
-            fprintf( stderr, "INFO: deleted packed object -- %s\n", del_ent->fh.info.pre.objid );
+            VERB_FPRINTF( stdout, "INFO: deleted packed object -- %s\n", del_ent->fh.info.pre.objid );
             stats->successes++;
          }
 
@@ -488,7 +503,7 @@ void stop_workers() {
       }
    }
 
-   printf(  "----- RUN TOTALS -----\n" \
+   printf(  "\n----- RUN TOTALS -----\n" \
             "Total Attempted Deletes = %*llu\n" \
             "Successful Deletes =      %*lu\n" \
             "Failed Deletes =          %*lu\n", \
@@ -544,12 +559,13 @@ void print_usage()
   fprintf(stderr, "  -o ouput_log_file\n");
   fprintf(stderr, "  -u aws_user_name\n");
   fprintf(stderr, "\n");
-  fprintf(stderr, " [-t num_threads  (to be used for deletions, default = 16)]" );
-  fprintf(stderr, " [-f fileset_id              (of trash fileset, for speed)]\n");
-  fprintf(stderr, " [-N target_namespace          (in object-ID / PRE xattrs)]\n");
-  fprintf(stderr, " [-p packed_tmp_file]\n");
+  fprintf(stderr, " [-N target_namespace                 (in object-ID / PRE xattrs)]\n");
+  fprintf(stderr, " [-f fileset_id                     (of trash fileset, for speed)]\n");
+  fprintf(stderr, " [-M max_queue   (max depth of thread work-queue, default = %d)]\n", QUEUE_MAX_DEFAULT );
+  fprintf(stderr, " [-t num_threads         (to be used for deletions, default = 16)]\n" );
   fprintf(stderr, " [-T time_threshold-days]\n");
   fprintf(stderr, " [-n]               (dry run)\n");
+  fprintf(stderr, " [-v]               (verbose)\n");
   fprintf(stderr, " [-h]               (help)\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "where -n = no delete and -h = help\n\n");
@@ -776,7 +792,7 @@ void print_delete_preamble() {
    if ( run_info.no_delete )
       fprintf(run_info.outfd, "INFO: ID'd ");
    else
-      fprintf(run_info.outfd, "deleting ");
+      fprintf(run_info.outfd, "INFO: deleting ");
 }
 
 
@@ -806,6 +822,7 @@ int read_inodes(const char   *fnameP,
                 hash_table_t* ht) {
 
    int rc = 0;
+   unsigned int prog_print_interval = 100000;
    unsigned int prog_count = 0;
    unsigned int tmp_prog;
    const gpfs_iattr_t *iattrP;
@@ -849,7 +866,7 @@ int read_inodes(const char   *fnameP,
    const struct stat* st = NULL;
 
 
-   printf( "Scanning Inodes." );
+   printf( "Scanning Inodes..." );
    fflush( stdout );
    char sep_char = '\n';
 
@@ -915,7 +932,7 @@ int read_inodes(const char   *fnameP,
          break;
 
       // Print progress indicator
-      tmp_prog = iattrP->ia_inode / 100000;
+      tmp_prog = iattrP->ia_inode / prog_print_interval;
       if ( prog_count < tmp_prog ) { prog_count = tmp_prog; printf( "." ); sep_char = '\n'; fflush( stdout ); }
 
       // Determine if invalid inode error 
@@ -971,6 +988,9 @@ int read_inodes(const char   *fnameP,
                         marfs_xattrs, marfs_xattr_cnt, 
                         &mar_xattrs[0])) > 0) {
 
+               int res_xattr_index;
+               int pre_xattr_index;
+
                // marfs_xattrs has a list of xattrs found.  Look for POST
                // first, because that tells us if file is in the trash.
                // POST xattr for files in the trash includes the md_path.
@@ -987,18 +1007,17 @@ int read_inodes(const char   *fnameP,
                      continue;
                   }
                }
-               else if ( (xattr_index = get_xattr_value(&mar_xattrs[0], marfs_xattrs[restart_index], xattr_count)) ){
-                  fprintf(stderr, "%cWARNING: failed to find post or restart xattr for inode %d\n", 
-                          sep_char, iattrP->ia_inode);
-                  sep_char = '\0';
-                  continue;
-               }
                else {
-                  fprintf( stderr, "%cINFO: found restart (%s) but no post xattr for inode %d\n", 
-                     sep_char, mar_xattrs[xattr_index].xattr_value, iattrP->ia_inode );
-                  sep_char = '\0';
+//                  if ( (pre_xattr_index = get_xattr_value(&mar_xattrs[0], marfs_xattrs[objid_index], xattr_count)) < 0 ) {
+//                     if ( (res_xattr_index = get_xattr_value(&mar_xattrs[0], marfs_xattrs[restart_index], xattr_count)) >= 0 ){
+//                        fprintf(stderr, "%cWARNING: foud a restart xattr (%s) but no pre/post for inode %d\n", 
+//                              sep_char, mar_xattrs[res_xattr_index].xattr_value, iattrP->ia_inode);
+//                        sep_char = '\0';
+//                     }
+//                  }
                   continue;
                }
+
                LOG(LOG_INFO, "found post chunk info bytes %zu\n", 
                    post->chunk_info_bytes);
 
@@ -1119,7 +1138,7 @@ int read_inodes(const char   *fnameP,
    if ( del_ent )
       free( del_ent );
 
-   printf( "%c", sep_char );
+   printf( "inode scan complete\n" );
 
    clean_exit(run_info.outfd, iscanP, fsP, early_exit);
    return(rc);
@@ -1382,6 +1401,7 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
    unsigned int tmp_prog;
    unsigned int prog_count = 0;
    unsigned int ent_count = 0;
+   unsigned int prog_print_interval = 100;
 
    ht_entry_t* entry = NULL;
 
@@ -1394,14 +1414,14 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
    ht_file Ptmp;
    ht_file file;
 
-   printf( "\nProcessing Packed Files." );
+   printf( "Processing Packed Files..." );
    fflush( stdout );
    char sep_char = '\n'; //silly little whitespace to make progress output look better
 
    while ( (entry = ht_traverse_and_destroy( ht, entry )) != NULL ) {
       
       ent_count++;
-      tmp_prog = ent_count / 10;
+      tmp_prog = ent_count / prog_print_interval;
       if( prog_count < tmp_prog ) { prog_count = tmp_prog; printf( "." ); sep_char='\n'; fflush( stdout ); }
       
       //The var 'p_header' is the head of a linked list of file info for this object
@@ -1412,7 +1432,7 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
 
          // TODO check min_pack_file_count to determine canidacy for repack
          if ( rt  &&  ( entry->value < p_header->chunks ) ) {
-            fprintf( stderr, "%cINFO: repack canidate found, but repack is not implemented\n", sep_char );
+            VERB_FPRINTF( stderr, "%cINFO: repack canidate found, but repack is not implemented\n", sep_char );
             sep_char = '\0';
 
             // TODO insert into rt table
@@ -1482,7 +1502,7 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
 
    }
 
-   printf( "%c", sep_char );
+   printf( "packed file processing complete\n" );
 
    if (df_return == -1 || obj_return == -1) {
       return(-1);

@@ -84,9 +84,10 @@ OF SUCH DAMAGE.
 #include "aws4c.h"
 #include "hash_table.h"
 
-#define QUEUE_MAX 1000
 #define PACKED_TABLE_SIZE 10000
 #define REPACK_TABLE_SIZE 1000
+#define QUEUE_MAX_DEFAULT 1000
+#define NUM_THRDS_DEFAULT 16
 
 // CHECK this and compare to Jeff's
 #define MAX_FILESET_NAME_LEN 256
@@ -99,6 +100,8 @@ OF SUCH DAMAGE.
 #define MAX_PACKED_NAME_SIZE 1024
 
 #define TMP_LOCAL_FILE_LEN 1024 
+
+#define VERB_FPRINTF(...)  if( run_info.verbose ) { fprintf(__VA_ARGS__); }
 
 struct marfs_xattr {
   char xattr_name[GPFS_FCNTL_XATTR_MAX_NAMELEN];
@@ -119,8 +122,10 @@ typedef struct Run_Info {
    unsigned int  no_delete;                            /* from option 'n': dry run */
    char          target_ns[MARFS_MAX_NAMESPACE_NAME];  /* from option 'N' */
    size_t        target_ns_size;
+   unsigned char verbose;
    unsigned char has_packed;
    unsigned long long deletes;
+   unsigned int  queue_max;
    unsigned int  max_queue_depth;
 } Run_Info;         
 
