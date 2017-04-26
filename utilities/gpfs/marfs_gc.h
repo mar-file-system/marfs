@@ -127,7 +127,7 @@ typedef struct Run_Info {
    unsigned long long deletes;
    unsigned long long warnings;
    unsigned int  queue_max;
-   unsigned int  max_queue_depth;
+   unsigned int  queue_high_water;
 } Run_Info;         
 
 typedef struct File_Info {

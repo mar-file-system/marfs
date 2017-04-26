@@ -258,7 +258,7 @@ int main(int argc, char **argv) {
    run_info.has_packed=0;
    run_info.no_delete = delete_flag;
    run_info.deletes = 0;
-   run_info.max_queue_depth = 0;
+   run_info.queue_high_water = 0;
    run_info.verbose = verbose_flag;
    run_info.queue_max = queue_max;
    run_info.warnings = 0;
@@ -330,9 +330,6 @@ void queue_delete( delete_entry* del_ent ) {
       exit(-1); // a bit unceremonious
    }
 
-   if( delete_queue.num_items > run_info.max_queue_depth )
-      run_info.max_queue_depth = delete_queue.num_items;
-
    while(delete_queue.num_items == run_info.queue_max)
       pthread_cond_wait(&delete_queue.queue_full, &delete_queue.queue_lock);
 
@@ -342,6 +339,9 @@ void queue_delete( delete_entry* del_ent ) {
    del_ent->next = NULL;
    delete_queue.num_items++;
    run_info.deletes++;
+
+   if( delete_queue.num_items > run_info.queue_high_water )
+      run_info.queue_high_water = delete_queue.num_items;
 
    // wake any consumers waiting for an item to be added
    pthread_cond_signal(&delete_queue.queue_empty);
@@ -356,7 +356,7 @@ void queue_delete( delete_entry* del_ent ) {
  *
  * *****************************************************************************/
 void* obj_destroyer( void* arg ) {
-   unsigned int prog_print_interval = 5;
+   unsigned int prog_print_interval = 10;
 
    delete_return* stats = malloc( sizeof( struct delete_return_struct ) );
    if( ! stats ) {
@@ -408,8 +408,6 @@ void* obj_destroyer( void* arg ) {
          if ( (obj_return = dump_trash( &(del_ent->fh), &(del_ent->file_info) )) ) {
             fprintf(run_info.outfd, "delete error (obj_destroyer): \
                %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
-            fprintf(stderr, "delete error (obj_destroyer): \
-               %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
             stats->failures++;
          }
          else {
@@ -424,8 +422,6 @@ void* obj_destroyer( void* arg ) {
          // Delete object first
          if ( (obj_return = delete_object( &(del_ent->fh), &(del_ent->file_info), 0)) != 0 ) {
             fprintf(run_info.outfd, "delete error (obj_destroyer): \
-               %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
-            fprintf(stderr, "delete error (obj_destroyer): \
                %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
             free_packed_files( del_ent->files, 0 ); //free file list but leave metadata intact
             stats->failures++;
@@ -519,7 +515,7 @@ void stop_workers() {
             10, successes, 
             10, failures,
             10, run_info.warnings );
-   printf(  " ( Max Work-Queue Depth = %d )\n", run_info.max_queue_depth );
+   printf(  " ( Max Work-Queue Depth = %d )\n", run_info.queue_high_water );
 
 }
 
@@ -1216,7 +1212,7 @@ int dump_trash(MarFS_FileHandle   *fh,
             if ((delete_obj_status = delete_object(fh, file_info_ptr, multi_flag))) {
                print_current_time();
                fprintf(run_info.outfd,
-                       "s3_delete error (HTTP Code: %d) on object %s\n",
+                       "delete error (return value: %d) on object %s\n",
                        delete_obj_status, fh->os.url); // xattr_ptr->xattr_value
                return_value = -1;
             }
@@ -1236,7 +1232,7 @@ int dump_trash(MarFS_FileHandle   *fh,
          if ((delete_obj_status = delete_object(fh, file_info_ptr, multi_flag))) {
             print_current_time();
             fprintf(run_info.outfd,
-                    "s3_delete error (HTTP Code: %d) on object %s\n",
+                    "delete error (return value: %d) on object %s\n",
                     delete_obj_status, fh->os.url); // xattr_ptr->xattr_value
             return_value = -1;
          }
@@ -1251,7 +1247,7 @@ int dump_trash(MarFS_FileHandle   *fh,
       if ((delete_obj_status = delete_object(fh, file_info_ptr, multi_flag))) {
          print_current_time();
          fprintf(run_info.outfd,
-                 "s3_delete error (HTTP Code:  %d) on object %s\n",
+                 "delete error (return value:  %d) on object %s\n",
                  delete_obj_status, fh->os.url); // xattr_ptr->xattr_value
          return_value = -1;
       }
