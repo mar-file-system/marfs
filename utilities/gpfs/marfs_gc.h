@@ -158,7 +158,6 @@ int get_xattrs(gpfs_iscan_t *iscanP,
                int          max_xattr_count,
                struct       marfs_xattr *xattr_ptr);
 void print_usage();
-void init_records(Fileset_Info *fileset_info_buf, unsigned int record_count);
 int  dump_trash(MarFS_FileHandle   *fh,
                 File_Info          *file_info_ptr);
 int  delete_object(MarFS_FileHandle *fh,

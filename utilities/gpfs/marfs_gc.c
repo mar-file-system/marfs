@@ -158,6 +158,7 @@ MarFS_Repo_Ptr repoPtr;
 int free_packed_files ( ht_file file, char delete_flag );
 void start_threads( int num_threads );
 void stop_workers();
+void print_totals();
 
 /*****************************************************************************
 Name: main
@@ -165,14 +166,9 @@ Name: main
 *****************************************************************************/
 
 int main(int argc, char **argv) {
-   //FILE *outfd;
-   //FILE *packedfd;
    char *outf = NULL;
    char *rdir = NULL;
-//   char *packed_log = NULL;
    char *aws_user_name = NULL;
-//   char packed_filename[MAX_PACKED_NAME_SIZE];
-   //unsigned int uid = 0;
    int fileset_id = -1;
    int  c;
    int thread_count = NUM_THRDS_DEFAULT;
@@ -247,29 +243,18 @@ int main(int argc, char **argv) {
    }
 
    // Create structure containing fileset information
-   fileset_info_ptr = (Fileset_Info *) malloc(sizeof(*fileset_info_ptr));
+   fileset_info_ptr = (Fileset_Info *) calloc( fileset_count, sizeof(*fileset_info_ptr) );
    if (fileset_info_ptr == NULL ) {
       fprintf(stderr, "Memory allocation failed\n");
       exit(1);
    }
-   init_records(fileset_info_ptr, fileset_count);
    aws_init();
-
-//   if (packed_log == NULL) {
-//      strcpy(packed_filename,"./tmp_packed_log");
-//      packed_log = packed_filename;
-//   }
 
    // open associated log file and packed log file
    if ((run_info.outfd = fopen(outf, "w")) == NULL){ 
       fprintf(stderr, "Failed to open %s\n", outf);
       exit(1);
    }
-//   if ((run_info.packedfd = fopen(packed_log, "w"))==NULL){ 
-//      fprintf(stderr, "Failed to open %s\n", packed_log);
-//      exit(1);
-//   }
-//   strcpy(run_info.packed_filename, packed_log);
    run_info.has_packed=0;
    run_info.no_delete = delete_flag;
    run_info.deletes = 0;
@@ -291,7 +276,6 @@ int main(int argc, char **argv) {
    // Configure aws for the user specified on command line
    aws_read_config(aws_user_name);
 
-   // GRAN
    // Create a hash table for packed files
    hash_table_t* ht;
    if ( (ht = malloc( sizeof( struct hash_table ) )) == NULL ) {
@@ -315,7 +299,6 @@ int main(int argc, char **argv) {
    read_inodes(rdir,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec,ht);
 
-//   fclose(run_info.packedfd);
    if (run_info.has_packed) {
       fprintf(run_info.outfd, "\nPhase 2: processing packed files\n");
       process_packed( ht, rt );
@@ -333,8 +316,6 @@ int main(int argc, char **argv) {
       free( rt );
    }
 
-   //TEMP TEMP TEMP FOR DEBUG
-   //unlink(packed_log);
    return (0); 
 }
 
@@ -375,6 +356,8 @@ void queue_delete( delete_entry* del_ent ) {
  *
  * *****************************************************************************/
 void* obj_destroyer( void* arg ) {
+   unsigned int prog_print_interval = 5;
+
    delete_return* stats = malloc( sizeof( struct delete_return_struct ) );
    if( ! stats ) {
       fprintf( stderr, "obj_destroyer: failed to allocate space for a return struct\n" );
@@ -409,6 +392,12 @@ void* obj_destroyer( void* arg ) {
 
       // signal the producer to add to the queue, in case it was sleeping
       pthread_cond_signal(&delete_queue.queue_full);
+
+      // if the producer is done, print a progress indication
+      if( delete_queue.work_done  &&  (delete_queue.num_items % prog_print_interval) == 0 ) {
+         printf( "." );
+         fflush( stdout );
+      }
 
       // exit the critical-section
       pthread_mutex_unlock( &delete_queue.queue_lock );
@@ -502,6 +491,8 @@ void stop_workers() {
 
    delete_return* status = NULL;
 
+   fprintf( stdout, "Awaiting Thread Termination..." );
+   fflush( stdout );
    unsigned long failures = 0;
    unsigned long successes = 0;
    int i;
@@ -517,6 +508,7 @@ void stop_workers() {
          fprintf( stderr, "THREAD_ERROR: master process recieved a NULL status from delete_thread %d\n", i+1 );
       }
    }
+   fprintf( stdout, "threads completed\n" );
 
    printf(  "\n----- RUN TOTALS -----\n" \
             "Total Attempted Deletes = %*llu\n" \
@@ -528,18 +520,9 @@ void stop_workers() {
             10, failures,
             10, run_info.warnings );
    printf(  " ( Max Work-Queue Depth = %d )\n", run_info.max_queue_depth );
+
 }
 
-
-
-/***************************************************************************** 
-Name: init_records 
-
-*****************************************************************************/
-void init_records(Fileset_Info *fileset_info_buf, unsigned int record_count)
-{
-   memset(fileset_info_buf, 0, (size_t)record_count * sizeof(Fileset_Info)); 
-}
 
 /******************************************************************************
  * Name read_config_gc
