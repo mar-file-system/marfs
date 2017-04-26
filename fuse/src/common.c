@@ -1968,11 +1968,9 @@ int delete_data(MarFS_FileHandle* fh) {
    size_t res;
 
    TRY0( init_data(fh) );
-   //TRY0( DAL_OP(update_object_location, fh) );
-   //TRY0( DAL_OP(del, fh) );
-   LOG(LOG_INFO, "TRY0(%s)\n", "DAL_OP(update_object_location, fh)");
+   LOG(LOG_INFO, "ATTEMPTING(%s)\n", "DAL_OP(update_object_location, fh)");
    if( (res = (size_t)DAL_OP(update_object_location, fh)) == 0 ) {
-      LOG(LOG_INFO, "TRY0(%s)\n", "DAL_OP(del, fh)");
+      LOG(LOG_INFO, "ATTEMPTING(%s)\n", "DAL_OP(del, fh)");
       res = (size_t)DAL_OP(del, fh);
       if(res) {
          PRE_RETURN();
