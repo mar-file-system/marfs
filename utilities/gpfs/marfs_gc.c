@@ -127,6 +127,7 @@ typedef struct delete_return_struct {
 typedef struct delete_entry_struct {
    File_Info          file_info;
    MarFS_FileHandle   fh;
+   ht_file            files;
    struct delete_entry_struct* next;
 } delete_entry;
 
@@ -154,6 +155,7 @@ Run_Info run_info; //global run settings
 char    *ProgName;
 MarFS_Repo_Ptr repoPtr;
 
+int free_packed_files ( ht_file file, char delete_flag );
 void start_threads( int num_threads );
 void stop_workers();
 
@@ -274,6 +276,7 @@ int main(int argc, char **argv) {
    run_info.max_queue_depth = 0;
    run_info.verbose = verbose_flag;
    run_info.queue_max = queue_max;
+   run_info.warnings = 0;
 
    if (target_ns) {
      size_t target_ns_size = strlen(target_ns);
@@ -377,6 +380,8 @@ void* obj_destroyer( void* arg ) {
       fprintf( stderr, "obj_destroyer: failed to allocate space for a return struct\n" );
       return NULL;
    }
+   stats->failures = 0;
+   stats->successes = 0;
 
    while ( 1 ) {
       if( pthread_mutex_lock( &delete_queue.queue_lock ) ) {
@@ -424,18 +429,28 @@ void* obj_destroyer( void* arg ) {
          }
       }
       else {
+         if( del_ent->files == NULL )
+            fprintf( stderr, "ERROR: recieved NULL metadata file list for packed object -- %s\n", del_ent->fh.info.pre.objid );
+
          // Delete object first
          if ( (obj_return = delete_object( &(del_ent->fh), &(del_ent->file_info), 0)) != 0 ) {
             fprintf(run_info.outfd, "delete error (obj_destroyer): \
                %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
             fprintf(stderr, "delete error (obj_destroyer): \
                %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+            free_packed_files( del_ent->files, 0 ); //free file list but leave metadata intact
             stats->failures++;
          }
          // Get metafile name from tmp_packed_log and delelte 
          else {
             VERB_FPRINTF( stdout, "INFO: deleted packed object -- %s\n", del_ent->fh.info.pre.objid );
-            stats->successes++;
+            if( free_packed_files( del_ent->files, !run_info.no_delete ) == 0 ) {
+               stats->successes++;
+            }
+            else {
+               fprintf( stderr, "ERROR: failed to delete all metadata files for packed object -- %s\n", del_ent->fh.info.pre.objid );
+               stats->failures++;
+            }
          }
 
       }
@@ -506,10 +521,12 @@ void stop_workers() {
    printf(  "\n----- RUN TOTALS -----\n" \
             "Total Attempted Deletes = %*llu\n" \
             "Successful Deletes =      %*lu\n" \
-            "Failed Deletes =          %*lu\n", \
+            "Failed Deletes =          %*lu\n" \
+            "Warnings =                %*lu\n", \
             10, run_info.deletes, 
             10, successes, 
-            10, failures );
+            10, failures,
+            10, run_info.warnings );
    printf(  " ( Max Work-Queue Depth = %d )\n", run_info.max_queue_depth );
 }
 
@@ -758,12 +775,15 @@ void update_payload( void* new, void** old){
 
       if ( OP->chunks != NP->chunks ) {
          fprintf( stderr, "WARNING: update_payload -- xattr file count of %zd for %s does not match expected %zd (from %s)\n", NP->chunks, NP->md_path, OP->chunks, OP->files->md_path );
+         run_info.warnings++;
       }
       if ( OP->ns != NP->ns ) {
          fprintf( stderr, "WARNING: update_payload -- xattr MarFS Namespace for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
+         run_info.warnings++;
       }
       if ( OP->md_ctime != NP->md_ctime ) {
          fprintf( stderr, "WARNING: update_payload -- xattr md_ctime for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
+         run_info.warnings++;
       }
    }
 }
@@ -1012,6 +1032,7 @@ int read_inodes(const char   *fnameP,
 //                     if ( (res_xattr_index = get_xattr_value(&mar_xattrs[0], marfs_xattrs[restart_index], xattr_count)) >= 0 ){
 //                        fprintf(stderr, "%cWARNING: foud a restart xattr (%s) but no pre/post for inode %d\n", 
 //                              sep_char, mar_xattrs[res_xattr_index].xattr_value, iattrP->ia_inode);
+//                          run_info.warnings++;
 //                        sep_char = '\0';
 //                     }
 //                  }
@@ -1282,10 +1303,8 @@ int delete_object(MarFS_FileHandle *fh,
                   File_Info        *file_info_ptr,
                   int               is_multi)
 {
-   //
-   int             return_val = 0;
    MarFS_XattrPre* pre_ptr = &fh->info.pre;
-   const char*     object = fh->os.url;
+   const char*     object;
    int             rc;
 
    // update_pre(&fh->info.pre);
@@ -1296,50 +1315,36 @@ int delete_object(MarFS_FileHandle *fh,
    print_delete_preamble();
 
    if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_Nto1) {
+      object = fh->os.url;
       fprintf(run_info.outfd, "chunk %zd of incomplete Nto1 multi object %s\n", pre_ptr->chunk_no, object);
-      if (! run_info.no_delete ) {
-         // s3_return = s3_delete( obj_buffer, object );
-         rc = delete_data(fh);
-      }
    }
    else if (file_info_ptr->restart_found && pre_ptr->obj_type == OBJ_FUSE) {
+      object = fh->os.url;
       fprintf(run_info.outfd, "incomplete FUSE multi object %s\n", object);
-      if (! run_info.no_delete ) {
-         // s3_return = s3_delete( obj_buffer, object );
-         rc = delete_data(fh);
-      }
    }
    else if ( is_multi ) {
+      object = fh->os.url;
       fprintf(run_info.outfd, "chunk %zd of multi object %s\n", pre_ptr->chunk_no, object);
-      if (! run_info.no_delete ) {
-         // s3_return = s3_delete( obj_buffer, object );
-         rc = delete_data(fh);
-      }
    }
    else if (pre_ptr->obj_type == OBJ_PACKED) {
-      fprintf(run_info.outfd, "packed object %s\n", pre_ptr->objid);
-      if (! run_info.no_delete ) {
-         // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
-         rc = delete_data(fh);
-      }
+      object = pre_ptr->objid;
+      fprintf(run_info.outfd, "packed object %s\n", object);
    }
    else {
-      fprintf(run_info.outfd, "uni object %s\n", pre_ptr->objid);
-      if (! run_info.no_delete ) {
-         // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
-         rc = delete_data(fh);
-      }
+      object = pre_ptr->objid;
+      fprintf(run_info.outfd, "uni object %s\n", object);
    }
-      
 
-   if ( run_info.no_delete )
-      return_val = 0;
-   else if (rc)
-      // return_val=check_S3_error(s3_return, obj_buffer, S3_DELETE);
-      return_val=check_S3_error(fh->os.op_rc, &fh->os.iob, S3_DELETE);
+   if ( ! run_info.no_delete ) {
+      // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
+      if( (rc = delete_data(fh)) ) {
+         fprintf( run_info.outfd, "ERROR: failed delete of object %s (returned code %d)\n", object, rc );
+         fprintf( stderr, "ERROR: failed delete of object %s (returned code %d)\n", object, rc );
+      }
+      return rc;
+   }
 
-
-   return(return_val);
+   return 0;
 }
 
 /***************************************************************************** 
@@ -1377,6 +1382,33 @@ int delete_file( char *filename )
    return(return_value);
 }
 
+
+/***************************************************************************** 
+Name: free_packed_files
+
+this function frees memory allocated within a packed file list and deletes 
+the associated metadata files if delete_flag is non-zero
+*****************************************************************************/
+int free_packed_files ( ht_file file, char delete_flag ) {
+   int ret = 0;
+
+   ht_file Ptmp = NULL;
+   while ( file != NULL ) {
+      //Delete files
+      if ( delete_flag  &&  delete_file( file->md_path ) == -1 )
+         ret = -1;
+
+      // free payload struct and referenced strings
+      Ptmp = file;
+      file = file->next;
+      free( Ptmp->md_path );
+      free( Ptmp );
+   }
+
+   return ret;
+}
+
+
 /***************************************************************************** 
 Name: process_packed
 
@@ -1411,7 +1443,6 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
    // proxy1/bparc/ver.001_001/ns.development/P___/inode.0000016572/md_ctime.20160526_124320-0600_1/obj_ctime.20160526_124320-0600_1/unq.0/chnksz.40000000/chnkno.0 403
    // /gpfs/fileset/trash/development.0/8/7/3/uni.255.trash_0000016873_20160526_125809-0600_1
    //
-   ht_file Ptmp;
    ht_file file;
 
    printf( "Processing Packed Files..." );
@@ -1441,19 +1472,12 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
             if ( entry->value > p_header->chunks ) {
                fprintf(stderr, "%cWARNING: potential faulty 'marfs_post' xattr -- object %s has %d files while chunk count is %zd  MD-example = %s\n",
                   sep_char, entry->key, entry->value, p_header->chunks, file->md_path);
+               run_info.warnings++;
                sep_char = '\0';
             }
 
             //free the payload list
-            while ( file != NULL ) {
-               Ptmp = file;
-               file = file->next;
-               free( Ptmp->md_path );
-               free( Ptmp );
-//               if( file )
-//                  fprintf(stderr, "REPEAT: object %s has %d files while chunk count is %zd   MD = %s\n",
-//                     entry->key, entry->value, p_header->chunks, file->md_path);
-            }
+            free_packed_files( file, 0 );
             free( p_header );
          }
          continue;
@@ -1473,11 +1497,15 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
       }
       del_ent->file_info.obj_type = OBJ_PACKED;
       del_ent->file_info.restart_found = 0; //assume no restart?  This was done before, but seems odd.
+      del_ent->files = file;
 
       if ( fake_filehandle_for_delete( &(del_ent->fh), entry->key, file->md_path ) ) {
          fprintf(run_info.outfd,
                  "ERROR: failed to create filehandle for %s %s\n",
                  entry->key, file->md_path);
+         if ( free_packed_files( file, 0 ) ) df_return = -1;
+         free( del_ent );
+         free( p_header );
          continue;
       }
 
@@ -1485,19 +1513,6 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
       update_url( &(del_ent->fh.os), &(del_ent->fh.info) );
 
       queue_delete( del_ent );
-
-      Ptmp = NULL;
-      while ( file != NULL ) {
-         //Delete files
-         if ( delete_file( file->md_path ) == -1 )
-            df_return = -1;
-
-         // free payload struct and referenced strings
-         Ptmp = file;
-         file = file->next;
-         free( Ptmp->md_path );
-         free( Ptmp );
-      }
       free( p_header );
 
    }
