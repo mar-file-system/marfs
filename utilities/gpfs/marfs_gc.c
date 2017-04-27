@@ -263,6 +263,7 @@ int main(int argc, char **argv) {
    run_info.verbose = verbose_flag;
    run_info.queue_max = queue_max;
    run_info.warnings = 0;
+   run_info.errors = 0;
 
    if (target_ns) {
      size_t target_ns_size = strlen(target_ns);
@@ -435,34 +436,35 @@ void* obj_destroyer( void* arg ) {
       if( del_ent->file_info.obj_type != OBJ_PACKED ) {
          fake_filehandle_for_delete_inits( &(del_ent->fh) );
          if ( (obj_return = dump_trash( &(del_ent->fh), &(del_ent->file_info) )) ) {
-            fprintf(run_info.outfd, "delete error (obj_destroyer): \
-               %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+            fprintf(run_info.outfd, "FAILURE: delete returned: %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+            fprintf( stderr, "FAILURE: could not delete object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
             stats->failures++;
          }
          else {
-            VERB_FPRINTF( stdout, "INFO: deleted object -- %s\n", del_ent->fh.info.pre.objid );
+            VERB_FPRINTF( stdout, "INFO: deleted object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
             stats->successes++;
          }
       }
       else {
-         if( del_ent->files == NULL )
-            fprintf( stderr, "ERROR: recieved NULL metadata file list for packed object -- %s\n", del_ent->fh.info.pre.objid );
-
+         if( del_ent->files == NULL ) {
+            fprintf( stderr, "FAILURE: recieved NULL metadata file list for packed object -- %s\n", del_ent->fh.info.pre.objid );
+            stats->failures++;
+         }
          // Delete object first
-         if ( (obj_return = delete_object( &(del_ent->fh), &(del_ent->file_info), 0)) != 0 ) {
-            fprintf(run_info.outfd, "delete error (obj_destroyer): \
-               %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+         else if ( (obj_return = delete_object( &(del_ent->fh), &(del_ent->file_info), 0)) != 0 ) {
+            fprintf(run_info.outfd, "FAILURE: delete returned: %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+            fprintf( stderr, "FAILURE: could not delete object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
             free_packed_files( del_ent->files, 0 ); //free file list but leave metadata intact
             stats->failures++;
          }
-         // Get metafile name from tmp_packed_log and delelte 
+         // Get metafile names and delete them
          else {
-            VERB_FPRINTF( stdout, "INFO: deleted packed object -- %s\n", del_ent->fh.info.pre.objid );
             if( free_packed_files( del_ent->files, !run_info.no_delete ) == 0 ) {
+               VERB_FPRINTF( stdout, "INFO: deleted object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
                stats->successes++;
             }
             else {
-               fprintf( stderr, "ERROR: failed to delete all metadata files for packed object -- %s\n", del_ent->fh.info.pre.objid );
+               fprintf( stderr, "FAILURE: could not delete all metadata files for packed object -- ID:%s MD-Example:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
                stats->failures++;
             }
          }
@@ -541,7 +543,8 @@ void stop_workers() {
          status = NULL;
       }
       else {
-         fprintf( stderr, "THREAD_ERROR: master process recieved a NULL status from delete_thread %d\n", i+1 );
+         fprintf( stderr, "ERROR: master process recieved a NULL status from delete_thread %d\n", i+1 );
+         run_info.errors++;
       }
    }
    fprintf( stdout, "threads completed\n" );
@@ -550,11 +553,13 @@ void stop_workers() {
             "Total Queued Deletes =  %*llu\n" \
             "Successful Deletes =    %*lu\n" \
             "Failed Deletes =        %*lu\n" \
-            "Warnings =              %*lu\n", \
+            "Warnings =              %*lu\n" \
+            "Errors =                %*lu\n", \
             10, run_info.deletes, 
             10, successes, 
             10, failures,
-            10, run_info.warnings );
+            10, run_info.warnings,
+            10, run_info.errors );
    printf(  " ( Max Work-Queue Depth = %d )\n", run_info.queue_high_water );
 
 }
@@ -828,10 +833,12 @@ void print_current_time()
 
 void print_delete_preamble() {
    print_current_time();
-   if ( run_info.no_delete )
+   if ( run_info.no_delete ) {
       fprintf(run_info.outfd, "INFO: ID'd ");
-   else
+   }
+   else {
       fprintf(run_info.outfd, "INFO: deleting ");
+   }
 }
 
 
@@ -983,6 +990,7 @@ int read_inodes(const char   *fnameP,
       if (iattrP->ia_flags & GPFS_IAFLAG_ERROR) {
          fprintf(stderr, "%sERROR: read_inodes: invalid inode %9d (GPFS_IAFLAG_ERROR)\n", 
                sep_char, ProgName,iattrP->ia_inode);
+         run_info.errors++;
          sep_char = '\0';
          continue;
       } 
@@ -1363,7 +1371,6 @@ int delete_object(MarFS_FileHandle *fh,
       // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
       if( (rc = delete_data(fh)) ) {
          fprintf( run_info.outfd, "ERROR: failed delete of object %s (returned code %d)\n", object, rc );
-         fprintf( stderr, "ERROR: failed delete of object %s (returned code %d)\n", object, rc );
       }
       return rc;
    }
@@ -1532,6 +1539,8 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
          fprintf(run_info.outfd,
                  "ERROR: failed to create filehandle for %s %s\n",
                  entry->key, file->md_path);
+         fprintf( stderr, "ERROR: failed to create filehandle for (obj) %s (md_path) %s\n", entry->key, file->md_path );
+         run_info.errors++;
          if ( free_packed_files( file, 0 ) ) df_return = -1;
          free( del_ent );
          free( p_header );

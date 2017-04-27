@@ -127,6 +127,7 @@ typedef struct Run_Info {
    unsigned char has_packed;
    unsigned long long deletes;
    unsigned long long warnings;
+   unsigned long long errors;
    unsigned int  queue_max;
    unsigned int  queue_high_water;
 } Run_Info;         
