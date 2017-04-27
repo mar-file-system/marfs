@@ -140,6 +140,7 @@ struct delete_queue_struct {
    int                num_items;
    int                num_consumers;
    char               work_done; // flag to indicate the producer is done.
+   char               abort_flag;
    pthread_t*         consumer_threads;
 } delete_queue;
 
@@ -299,7 +300,7 @@ int main(int argc, char **argv) {
    read_inodes(rdir,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec,ht);
 
-   if (run_info.has_packed) {
+   if ( !delete_queue.abort_flag  &&  run_info.has_packed) {
       fprintf(run_info.outfd, "\nPhase 2: processing packed files\n");
       process_packed( ht, rt );
    }
@@ -321,6 +322,21 @@ int main(int argc, char **argv) {
 
 
 /***************************************************************************** 
+ * Name: set_abort
+ *
+ * *****************************************************************************/
+static void set_abort(int signo) {
+   fprintf( stderr, "\nTERMINATING EARLY : signalling threads to stop..." );
+
+   //we don't actually need the queue lock here
+   delete_queue.abort_flag = 1;
+
+   fprintf( stderr, "abort issued\n" );
+}
+
+
+
+/***************************************************************************** 
  * Name: queue_delete
  *
  * *****************************************************************************/
@@ -328,6 +344,13 @@ void queue_delete( delete_entry* del_ent ) {
    if(pthread_mutex_lock(&delete_queue.queue_lock)) {
       fprintf(stderr, "ERROR: producer failed to acquire queue lock.\n");
       exit(-1); // a bit unceremonious
+   }
+
+   // if an abort was signaled, stop all threads and exit
+   if( delete_queue.abort_flag ) {
+      pthread_mutex_unlock(&delete_queue.queue_lock);
+      stop_workers();
+      exit( -1 );
    }
 
    while(delete_queue.num_items == run_info.queue_max)
@@ -370,6 +393,12 @@ void* obj_destroyer( void* arg ) {
       if( pthread_mutex_lock( &delete_queue.queue_lock ) ) {
          fprintf( stderr, "ERROR: consumer failed to aquire the queue lock\n" );
          return NULL;
+      }
+
+      // if we have recieved an abort, terminate right away
+      if( delete_queue.abort_flag ) {
+         pthread_mutex_unlock(&delete_queue.queue_lock);
+         pthread_exit( stats );
       }
 
       // wait for the queue to fill or for the producer to finish
@@ -452,26 +481,37 @@ void* obj_destroyer( void* arg ) {
  * *****************************************************************************/
 void start_threads(int num_threads) {
 
-  delete_queue.consumer_threads = calloc(num_threads, sizeof(pthread_t));
-  if(delete_queue.consumer_threads == NULL) {
-    perror("start_threads: calloc()");
-    exit(-1);
-  }
+   delete_queue.consumer_threads = calloc(num_threads, sizeof(pthread_t));
+   if(delete_queue.consumer_threads == NULL) {
+      perror("start_threads: calloc()");
+      exit(-1);
+   }
 
-  pthread_mutex_init(&delete_queue.queue_lock, NULL);
-  pthread_cond_init(&delete_queue.queue_empty, NULL);
-  pthread_cond_init(&delete_queue.queue_full, NULL);
+   pthread_mutex_init(&delete_queue.queue_lock, NULL);
+   pthread_cond_init(&delete_queue.queue_empty, NULL);
+   pthread_cond_init(&delete_queue.queue_full, NULL);
 
-  delete_queue.num_items     = 0;
-  delete_queue.work_done     = 0;
-  delete_queue.head          = NULL;
-  delete_queue.tail          = NULL;
-  delete_queue.num_consumers = num_threads;
+   delete_queue.num_items     = 0;
+   delete_queue.work_done     = 0;
+   delete_queue.abort_flag    = 0;
+   delete_queue.head          = NULL;
+   delete_queue.tail          = NULL;
+   delete_queue.num_consumers = num_threads;
 
-  int i;
-  for(i = 0; i < num_threads; i++) {
-    pthread_create(&delete_queue.consumer_threads[i], NULL, obj_destroyer, NULL);
-  }
+   struct sigaction action;
+   action.sa_handler = set_abort;
+   action.sa_flags = 0;
+   sigemptyset( &action.sa_mask );
+
+   if( sigaction( SIGINT, &action, NULL ) ) {
+      fprintf( stderr, "ERROR: failed to set signal handler for SIGINT -- %s\n", strerror( errno ) );
+      exit ( -1 ); //terminate while it's still safe to do so
+   }
+
+   int i;
+   for(i = 0; i < num_threads; i++) {
+      pthread_create(&delete_queue.consumer_threads[i], NULL, obj_destroyer, NULL);
+   }
 }
 
 
@@ -507,10 +547,10 @@ void stop_workers() {
    fprintf( stdout, "threads completed\n" );
 
    printf(  "\n----- RUN TOTALS -----\n" \
-            "Total Attempted Deletes = %*llu\n" \
-            "Successful Deletes =      %*lu\n" \
-            "Failed Deletes =          %*lu\n" \
-            "Warnings =                %*lu\n", \
+            "Total Queued Deletes =  %*llu\n" \
+            "Successful Deletes =    %*lu\n" \
+            "Failed Deletes =        %*lu\n" \
+            "Warnings =              %*lu\n", \
             10, run_info.deletes, 
             10, successes, 
             10, failures,
@@ -898,6 +938,11 @@ int read_inodes(const char   *fnameP,
    delete_entry *del_ent = NULL;
 
    while (1) {
+
+      if( delete_queue.abort_flag ) {
+         printf( "scan terminated early\n" );
+         return -1;
+      }
 
       MarFS_XattrPre*  pre;
       MarFS_XattrPost* post;
@@ -1430,6 +1475,11 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
 
    while ( (entry = ht_traverse_and_destroy( ht, entry )) != NULL ) {
       
+      if( delete_queue.abort_flag ) {
+         printf( "packed processing terminated early\n" );
+         return -1;
+      }
+
       ent_count++;
       tmp_prog = ent_count / prog_print_interval;
       if( prog_count < tmp_prog ) { prog_count = tmp_prog; printf( "." ); sep_char='\n'; fflush( stdout ); }

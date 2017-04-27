@@ -78,6 +78,7 @@ OF SUCH DAMAGE.
 #include <sys/stat.h>
 #include <math.h>               // floorf
 #include <gpfs_fcntl.h>
+#include <signal.h>
 
 #include "marfs_base.h"
 #include "common.h"             // marfs/fuse/src/common.h
