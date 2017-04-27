@@ -6,6 +6,7 @@
 /**
  * Compute the hash of key.
  */
+static
 unsigned long polyhash(const char *string) {
   const int salt = 33;
   char c;

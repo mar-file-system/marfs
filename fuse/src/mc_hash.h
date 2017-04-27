@@ -74,7 +74,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 // uniformity vs. performance: for a 16 node ring with an uneven
 // distribution this value yeilds 370ms to create the ring and 0.27
 // microseconds to compute the hash of a single key.
-#define DEFAULT_WEIGHT 4000
+#define DEFAULT_WEIGHT 2800
 
 typedef struct node {
    const char *name;
@@ -162,8 +162,8 @@ node_t *successor(ring_t *ring, const char *key);
 // provide authors of migration functions with the ability to iterate
 // through the node lists.
 node_list_t *new_node_list();
-node_t *pop(node_list_t *list);
-int push(node_list_t *list, node_t *node);
+node_t *node_pop(node_list_t *list);
+int node_push(node_list_t *list, node_t *node);
 void destroy_node_list(node_list_t *list);
 node_iterator_t *node_iterator(node_list_t *list);
 inline void destroy_node_iterator(node_iterator_t *it);

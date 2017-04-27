@@ -87,13 +87,18 @@ endif
 
 # --- additions for multi-component builds
 if USE_MC
+libmarfs_a_SOURCES += fuse/src/mc_hash.c fuse/src/mc_hash.h \
+                      fuse/src/murmur_hash.c fuse/src/murmur_hash.h
+
 AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
 AM_LDFLAGS  += -L$(LIBNE)/lib
 LDADD       += -L$(LIBNE)/lib -lne
 
 # rebuilder is used to rebuild MC repositories
 bin_PROGRAMS += rebuilder
-rebuilder_SOURCES = utilities/multi-component/rebuilder.c
+rebuilder_SOURCES = utilities/multi-component/rebuilder.c  \
+					utilities/common/src/hash_table.c      \
+					utilities/common/src/hash_table.h
 
 endif
 
@@ -108,7 +113,8 @@ include_HEADERS = fuse/src/marfs_base.h \
                   fuse/src/dal.h \
 				  fuse/src/marfs_locks.h \
                   fuse/src/marfs_configuration.h \
-                  common/log/src/logging.h
+                  common/log/src/logging.h \
+				  fuse/src/mc_hash.h
 
 marfs_config_SOURCES = fuse/src/marfs_config.c                   \
 					   fuse/src/marfs_configuration.c            \
@@ -246,6 +252,16 @@ test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
 	$(CC) -g -o $@ $^ -lpthread -lrt
 
 test_marfs_configuration_SOURCES = fuse/src/test_marfs_configuration.c
+#TESTS = test_marfs_configuration
+TESTS = 
+
+if USE_MC
+check_PROGRAMS += mc_hash_test
+mc_hash_test_SOURCES = fuse/src/mc_hash.c fuse/src/mc_hash.h fuse/src/murmur_hash.c \
+                       fuse/src/murmur_hash.h fuse/src/mc_hash_test.c
+
+TESTS += mc_hash_test
+endif
 
 # ............................................................................
 # Useful development targets

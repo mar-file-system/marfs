@@ -233,7 +233,7 @@ void four_node_variance(int hdd_size /* HDD size in TB */) {
 
    /* do it a bunch of times. */
    int iteration;
-   for(iteration = 0; iteration < 10; iteration++) {
+   for(iteration = 0; iteration < 1000; iteration++) {
       int first_node = random() % 100;
       char *nodes[4];
       int n;
@@ -324,7 +324,7 @@ void test_node_list() {
    const char * name = "asdf";
    // 1. try to pop from an empty list.
    node_list_t *list1 = new_node_list();
-   node_t *n = pop(list1);
+   node_t *n = node_pop(list1);
    printf("test_node_list: pop from empty list: %s\n",
           n == NULL ? "SUCCESS!": "FAILURE!");
    destroy_node_list(list1);
@@ -333,9 +333,9 @@ void test_node_list() {
    printf("test_node_list: push once, pop twice: ");
    node_list_t *list2 = new_node_list();
    node_t l2_n = { .name = name, .id = {0,0}, .ticket_number = 0};
-   if( push(list2, &l2_n) == 0
-       && pop(list2) == &l2_n
-       && pop(list2) == NULL) {
+   if( node_push(list2, &l2_n) == 0
+       && node_pop(list2) == &l2_n
+       && node_pop(list2) == NULL) {
       printf("SUCCESS!\n");
    }
    else {
@@ -359,7 +359,7 @@ void test_node_list() {
    for(i = 0; i < 3; i++) {
       nodes[i].name = node_names[i];
       nodes[i].ticket_number = i;
-      assert(push(list3, &nodes[i]) == 0);
+      assert(node_push(list3, &nodes[i]) == 0);
    }
    node_iterator_t *it4 = node_iterator(list4);
    const char *n4;
@@ -381,15 +381,15 @@ void test_node_list() {
    
    // 6. contains() returns false for a list that contains elements
    // other than the one we are looking for.
-   assert(push(list5, &nodes[0]) == 0);
-   assert(push(list5, &nodes[1]) == 0);
-   assert(push(list5, &nodes[2]) == 0);
+   assert(node_push(list5, &nodes[0]) == 0);
+   assert(node_push(list5, &nodes[1]) == 0);
+   assert(node_push(list5, &nodes[2]) == 0);
    printf("test_node_list: contains() should fail: %s\n",
           contains(list5, &search_node) ? "FAILURE!" : "SUCCESS!");
 
    // 7. contains() returns true for a list that contains what we are
    // looking for.
-   assert(push(list5, &search_node) == 0);
+   assert(node_push(list5, &search_node) == 0);
    // a. The list contains the exact node we are searching for.
    assert(contains(list5, &search_node));
    // b. The list contains something with the same name.
@@ -592,8 +592,8 @@ void test_migration() {
 }
 
 int main(int argc, char **argv) {
+   four_node_variance(10);
    test_performance();
-   four_node_variance(6);
    test_successor();
    test_node_list();
    test_ring_join();

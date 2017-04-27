@@ -647,6 +647,7 @@ DAL posix_dal = {
 // MC (Multi-component)
 // ===========================================================================
 #include "erasure.h"
+#include "mc_hash.h"
 
 #define MC_FH(CTX)      MC_CONTEXT(CTX)->fh
 #define MC_OS(CTX)      (&MC_FH(CTX)->os)
@@ -721,6 +722,28 @@ static int open_degraded_object_log(const char *log_dir_path) {
    return fd;
 }
 
+static
+int parse_cap_list(char *cap_list, char **cl, int num_cap) {
+   char *token;
+   int i = 0;
+   while((token = strsep(&cap_list, ",")) != NULL) {
+      while(isspace(*token)) token++;
+      token[strcspn(token, "\t\n\v\f\r ")] = '\0';
+      if(i >= num_cap) return -1;
+      cl[i++] = token;
+   }
+   return 0;
+}
+
+static
+int parse_weight_list(char *weight_list, int *wl, int num_cap) {
+   char *token;
+   int i = 0;
+   while((token = strsep(&weight_list, ",")) != NULL) {
+      wl[i] = strtol(token, NULL, 10);
+   }
+}
+
 int   mc_config(struct DAL*     dal,
                 xDALConfigOpt** opts,
                 size_t          opt_count) {
@@ -730,9 +753,11 @@ int   mc_config(struct DAL*     dal,
    config->degraded_log_fd   = -1;
    config->degraded_log_path = NULL;
 
+   char *cap_list    = NULL;
+   char *weight_list = NULL;
    int i;
    for(i = 0; i < opt_count; i++) {
-      if(!strcmp(opts[i]->key, "n")) { // ? Should be strncmp?
+      if(!strcmp(opts[i]->key, "n")) {
          config->n = strtol(opts[i]->val.value.str, NULL, 10);
          LOG(LOG_INFO, "parsing mc option \"n\" = %d\n", config->n);
       }
@@ -758,6 +783,12 @@ int   mc_config(struct DAL*     dal,
       else if(!strcmp(opts[i]->key, "degraded_log_dir")) {
          config->degraded_log_path = strdup(opts[i]->val.value.str);
       }
+      else if(!strcmp(opts[i]->key, "cap_list")) {
+         cap_list = strdup(opts[i]->val.value.str);
+      }
+      else if(!strcmp(opts[i]->key, "cap_weights")) {
+         weight_list = strdup(opts[i]->val.value.str);
+      }
       else {
          LOG(LOG_ERR, "Unrecognized MC DAL config option: %s\n",
              opts[i]->key);
@@ -768,6 +799,7 @@ int   mc_config(struct DAL*     dal,
 
    if(config->degraded_log_path == NULL) {
       LOG(LOG_ERR, "no degraded_log_dir specified in DAL.\n");
+      free(config);
       return -1;
    }
    else {
@@ -775,6 +807,40 @@ int   mc_config(struct DAL*     dal,
       SEM_INIT(&config->lock, 0, 1);
    }
 
+   char *cl[MAX_CAP];
+   int   wl[MAX_CAP];
+   /* initialize the ring for use by the hash function */
+   if(cap_list == NULL) {
+      LOG(LOG_ERR, "You must specify a cap_list in the DAL options!\n");
+      free(config);
+   }
+   else {
+      TRY0(parse_cap_list(cap_list, cl, config->num_cap));
+      LOG(LOG_INFO, "Got cap list: \n");
+      int i;
+      for(i = 0; i < config->num_cap; i++) {
+         LOG(LOG_INFO, "\t%s\n", cl[i]);
+      }
+   }
+
+   if(weight_list) {
+      TRY0(parse_weight_list(weight_list, wl, config->num_cap));
+      LOG(LOG_INFO, "Got weight list: \n");
+      int i;
+      for(i = 0; i < config->num_cap; i++) {
+         LOG(LOG_INFO, "\t%d\n", wl[i]);
+      }
+   }
+   
+   config->ring = new_ring((const char**)cl, weight_list ? wl : NULL, config->num_cap);
+   if(config->ring == NULL) {
+      LOG(LOG_ERR, "Failed to initialize ring\n");
+      free(config);
+      return -1;
+   }
+
+   free(cap_list);
+   free(weight_list);
    dal->global_state = config;
    EXIT();
    return 0;
@@ -791,33 +857,6 @@ void mc_deconfig(struct DAL *dal) {
    free(config);
 }
 #endif
-
-// Computes a good, uniform, hash of the string.
-//
-// Treats each character in the length n string as a coefficient of a
-// degree n polynomial.
-//
-// f(x) = string[n -1] + string[n - 2] * x + ... + string[0] * x^(n-1)
-//
-// The hash is computed by evaluating the polynomial for x=33 using
-// Horner's rule.
-//
-// Reference: http://cseweb.ucsd.edu/~kube/cls/100/Lectures/lec16/lec16-14.html
-static uint64_t polyhash(const char* string) {
-   // According to http://www.cse.yorku.ca/~oz/hash.html
-   // 33 is a magical number that inexplicably works the best.
-   const int salt = 33;
-   char c;
-   uint64_t h = *string++;
-   while((c = *string++))
-      h = salt * h + c;
-   return h;
-}
-
-// compute the hash function h(x) = (a*x) >> 32
-static uint64_t h_a(const uint64_t key, uint64_t a) {
-   return ((a * key) >> 32);
-}
 
 // Initialize the context for a multi-component backed object.
 // Returns 0 on success or -1 on failure (if memory cannot be

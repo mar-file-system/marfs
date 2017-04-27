@@ -113,6 +113,8 @@ OF SUCH DAMAGE.
 #define MC_DEGRADED_LOG_FORMAT "%s\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t\n"
 #define MC_LOG_SCATTER_WIDTH   400
 
+// The maximum number of capacity units per block in a MC repo.
+#define MAX_CAP 128
 #endif // USE_MC
 
 #  ifdef __cplusplus
@@ -120,6 +122,7 @@ extern "C" {
 #  endif
 
 #if USE_MC
+#include "mc_hash.h"
 // Need to export the mc_config struct here for the rebuild utility to
 // know how many pods and capacity units are in each repo when
 // generating statistics about failures.
@@ -132,6 +135,7 @@ typedef struct mc_config {
    char        *degraded_log_path;
    int          degraded_log_fd;
    SEM_T        lock;
+   ring_t      *ring;
 } MC_Config;
 
 #endif // USE_MC

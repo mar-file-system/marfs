@@ -110,18 +110,16 @@ static void node_identifier128(const char *key, uint64_t *id) {
 }
 
 static void identifier(const char *key, uint64_t *id) {
-#ifdef ID128
    identifier128(key, id);
-#else
-   *id = spooky_hash64(key, strlen(key), KEY_SEED);
+#ifndef ID128
+   id[1] = 0; // jsut use 64 bits by masking out 
 #endif
 }
 
 static void node_identifier(const char *key, uint64_t *id) {
-#ifdef ID128
    node_identifier128(key, id);
-#else
-   *id = spooky_hash64(key, strlen(key), NODE_SEED);
+#ifndef ID128
+   id[1] = 0; // just using 64 bits
 #endif
 }
 
@@ -372,7 +370,7 @@ int ring_join(ring_t     *ring,
       node_identifier(vnode, node.id);
       node_t *succ = successor_by_id(ring, node.id);
       if(!contains(rebalance_nodes, succ)) {
-         if(push(rebalance_nodes, succ) == -1) {
+         if(node_push(rebalance_nodes, succ) == -1) {
             // we could fail to push if we are out of memory.
             destroy_node_list(rebalance_nodes);
             destroy_ring(updated_ring);
@@ -466,7 +464,7 @@ int ring_leave(ring_t *ring, const char *node, migration_fn_t migrate) {
       return -1;
    }
    node_t n = { .name = node };
-   if(push(migration_nodes, &n)) {
+   if(node_push(migration_nodes, &n)) {
       destroy_ring(updated_ring);
       destroy_node_list(migration_nodes);
       free(new_nodes);
@@ -510,7 +508,7 @@ node_list_t *new_node_list() {
    return nl;
 }
 
-int push(node_list_t *list, node_t *node) {
+int node_push(node_list_t *list, node_t *node) {
    node_list_t *new_tail = malloc(sizeof(node_list_t));
    if(new_tail == NULL) {
       return -1;
@@ -524,7 +522,7 @@ int push(node_list_t *list, node_t *node) {
    return 0;
 }
 
-node_t *pop(node_list_t *list) {
+node_t *node_pop(node_list_t *list) {
    if(list->head == NULL) return NULL;
    node_t *h = list->head;
    node_list_t *t = list->tail;
@@ -557,7 +555,7 @@ inline void destroy_node_iterator(node_iterator_t *it) {
 }
 
 void destroy_node_list(node_list_t *list) {
-   while(pop(list) != NULL) continue;
+   while(node_pop(list) != NULL) continue;
    free(list);
 }
 
