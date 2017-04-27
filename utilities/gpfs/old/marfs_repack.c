@@ -157,7 +157,7 @@ int main(int argc, char **argv){
         //MarFS_Repo* repo = namespace->iwrite_repo;
         // Find the correct repo - the one with the largest range
    //MarFS_Repo* repo = find_repo_by_range(namespace, (size_t)-1);
-   //
+
 
    repack_objects *objs = NULL;
    find_repack_objects(file_status, &objs);
@@ -184,9 +184,7 @@ int main(int argc, char **argv){
 * link list of files that belong to the * new object. 
 * 
 ******************************************************************************/
-int find_repack_objects(File_Handles *file_info, 
-                        repack_objects **objects_ptr) {
-
+int find_repack_objects(File_Handles *file_info, repack_objects **objects_ptr) {
    FILE *pipe_cat = NULL;
    FILE *pipe_grep = NULL;
 
@@ -195,17 +193,22 @@ int find_repack_objects(File_Handles *file_info,
    char objid[MARFS_MAX_OBJID_SIZE];
    char cat_command[MAX_CMD_LENGTH];
    char grep_command[MAX_CMD_LENGTH];
-   char marfs_path[1024];
-   const char* sub_path;
    int file_count;
 
    int chunk_count;
    char filename[MARFS_MAX_MD_PATH];
+   int rc;
+   MarFS_XattrPost post;
+   char post_xattr[MARFS_MAX_XATTR_SIZE];
+
 
    obj_files *files, *files_head;
    repack_objects *objects, *objects_head;
    files_head=NULL;
    objects_head=NULL;
+
+
+
 
    // create command to cat and sort the list of objects that are packed
    sprintf(cat_command, "cat %s | awk '{print $1}' | sort | uniq", file_info->packed_log);
@@ -229,8 +232,6 @@ int find_repack_objects(File_Handles *file_info,
          sscanf(obj_buf1,"%s %d %s", objid, &chunk_count, filename);
          // Need to look into this - do we need a minimum value to repack?
          // same question as packer script
-         // Well for now this is not an issue because just trying to repack
-         // so that garbage collection can delete the objects
          file_count++;
          if (chunk_count <= 1) { 
             continue;
@@ -241,34 +242,25 @@ int find_repack_objects(File_Handles *file_info,
          // objecd
          // if file_count < chunk_count, the files can be packed
          if (file_count < chunk_count) {
-            // Create the first files link list node
+            // Create object link list here
+            //fprintf(stdout, "object = %s\n", objid);
+            //fprintf(stdout, "file_count = %d chunk_count=%d\n", file_count, chunk_count);
             if ((files = (obj_files *)malloc(sizeof(obj_files)))==NULL) {
                fprintf(stderr, "Error allocating memory\n");
                return -1;
             }
+            //fprintf(stdout, "%s %s\n", objid, filename);
             
             strcpy(files->filename, filename);
 
-            // Get info into MarFS_FileHandle structure because this is needed for 
-            // further operations such as read with offset and write
-            //
-            memset(&files->fh, 0, sizeof(MarFS_FileHandle));
-            
-            // First convert md path to a fuse path
-            get_marfs_path(filename, &marfs_path[0]);
 
-            // now get fuse path minus mount
-            sub_path = marfs_sub_path(marfs_path);
-
-            // Fill in the file handle structure
-            expand_path_info(&files->fh->info, sub_path);
-
-            stat_xattrs(&files->fh->info);
-
-            files->original_offset = files->fh->info.post.obj_offset;
-            LOG(LOG_INFO, "filename %s offset=%ld\n", files->filename, files->fh->info.post.obj_offset);
-
-
+            // Get the post xattr to determine offset in the objec
+            if ((getxattr(files->filename, "user.marfs_post", &post_xattr, MARFS_MAX_XATTR_SIZE) != -1)) {
+               //fprintf(stdout, "xattr = %s\n", post_xattr);
+               rc = str_2_post(&post, post_xattr, 1);
+               files->original_offset = post.obj_offset;
+               LOG(LOG_INFO, "filename %s xattr = %s offset=%ld\n", files->filename, post_xattr,post.obj_offset);
+            }
             // adjust files link list pointers
             files->next =  files_head;
             files_head = files;
@@ -309,28 +301,33 @@ int find_repack_objects(File_Handles *file_info,
 * write offset is calculated.
 *
 ******************************************************************************/
-int pack_objects( File_Handles *file_info, 
-                 repack_objects *objects)
+int pack_objects(File_Handles *file_info, repack_objects *objects)
 {
    struct stat statbuf;
    char *path = "/";
+//   repack_objects *objects; 
 
+	 //struct stat statbuf;
    stat(path, &statbuf);
    size_t write_offset = 0;
    size_t obj_raw_size;
    size_t obj_size;
-   //size_t offset;
-   size_t unique;
+   size_t offset;
+   //MarFS_XattrPre pre_struct;
+   //MarFS_XattrPre* pre = &pre_struct;
+   MarFS_XattrPre pre;
    IOBuf *nb = aws_iobuf_new();
-   //char test_obj[2048];
+   char test_obj[2048];
    obj_files *files;
-   //int ret;
-   //char *obj_ptr;
-   //CURLcode s3_return;
-   //char pre_str[MARFS_MAX_XATTR_SIZE];
-   char marfs_path[1024];
-   int flags;
+   int ret;
+   char *obj_ptr;
+   CURLcode s3_return;
+   char pre_str[MARFS_MAX_XATTR_SIZE];
 
+
+   // Also, if file_count =1 do i make uni or?
+   //
+   //
    // Traverse object link list and find those that should be packed
    while (objects) { 
       // need inner loop to get files for each object
@@ -358,79 +355,50 @@ int pack_objects( File_Handles *file_info,
       LOG(LOG_INFO, "file count = %ld chunks = %ld\n", objects->pack_count, objects->chunk_count);
       files = objects->files_ptr;
       write_offset = 0;
+      ret=str_2_pre(&pre, objects->objid, NULL);
+      sprintf(test_obj,"%s.teste",objects->objid);
 
-      files->new_offset = write_offset;
+      //Make this a unique object since it derived from an existing object 
+      pre.unique++;    
 
-      // Specify a new object being accessed 
-      unique=0;
 
+      LOG(LOG_INFO,"stdout,new object name =%s\n", test_obj); 
+  
       // Each object has a files linked list.  Read each file 
       // at the offset calculated and write back to new object with
       // new offset.
       while (files) {
-         // Get the associated Marfs file handle from from the linked list
-         MarFS_XattrPre*  pre  = &files->fh->info.pre;
 
-         // If new object increment unique to give it a new objid
-         if (unique == 0) 
-            pre->unique++;    
-        
-         // Need to make sure that objectSize
-         // does not include recovery info TBD
-         obj_raw_size = files->fh->objectSize;
-         
+         stat(files->filename, &statbuf);
+
+
+         obj_raw_size = statbuf.st_size;
          obj_size = obj_raw_size + MARFS_REC_UNI_SIZE;
          files->size = obj_size;
 
-//********************
-// Questions 
-// correct path (fuse path)?
-// set flags for open
-// offset for read becomes 0, correct?
-//
-  
-  
-         char read_buf[1024];  
-         size_t read_count;
-         ssize_t write_count;
-         
-         flags = O_RDONLY; 
-         get_marfs_path(files->filename, &marfs_path[0]);
-         marfs_open_at_offset(marfs_path,
-                              files->fh,
-                              flags,
-                              files->fh->info.post.obj_offset, 
-                              obj_size);
-         read_count = marfs_read(marfs_path, // Need recovery info as well
-                                 read_buf,
-                                 obj_size,
-                                 0,
-                                 files->fh);
+         if ((obj_ptr = (char *)malloc(obj_size))==NULL) {
+            fprintf(stderr, "Error allocating memory\n");
+            return -1;
+         }
 
-         marfs_release (marfs_path, files->fh);
-// Instead of reading more to I write now 
-// This becomes a new object because pre.unique incremented
-//
-// DO I need to do anything special with flags?
-// O_CREATE or O_APPEND?
-// Need new flag with open or new function for recovery info
-//
-         marfs_open(marfs_path,
-                    files->fh,
-                    flags,  // WRITE
-                    obj_size);
-         write_count = marfs_write(marfs_path, // Need recovery info as well
-                                   read_buf,
-                                   obj_size,
-                                   files->new_offset,
-                                   files->fh);
-         // This needs be moved outside loop
-         // and I need an open write before while (files)
-         // with O_CREATE and O_WRONLY
-         // Jeff states I may need a special release with offset 
-         // of last object
-         //
-         //marfs_release (marfs_path, files->fh);
+         // Set up S3 host
+         check_security_access(&pre);
+         update_pre(&pre);
+         s3_set_host(pre.host);
+
+         offset = files->original_offset;
+
+         // get object_data
+         // Using byte range to get data for particular offsets
+         s3_set_byte_range(offset, obj_size);
+         // Use extend to get more buffering capability on each get
+         aws_iobuf_extend_dynamic(nb, obj_ptr, obj_size);
+         LOG(LOG_INFO, "going to get file %s from object %s at offset %ld and size %ld\n", files->filename, objects->objid, offset, obj_size);
+         fprintf(file_info->outfd, "Getting file %s from object %s at offset %ld and size %ld\n", files->filename, objects->objid, offset, obj_size);
+         
+         // Read the file via s3_get
+         s3_return = s3_get(nb,objects->objid);
+         check_S3_error(s3_return, nb, S3_GET);
 
          LOG(LOG_INFO, "Read buffer write count = %ld  len = %ld\n", nb->write_count, nb->len);
          // may have to copy nb to a new buffer 
@@ -441,8 +409,23 @@ int pack_objects( File_Handles *file_info,
          write_offset += obj_size; 
 	 files = files->next;
       }
+
+      // create object string for put
+      pre_2_str(pre_str, MARFS_MAX_XATTR_SIZE,&pre);
+
+      strcpy(objects->new_objid, pre_str);
+     
+      LOG(LOG_INFO, "Going to write to object %s\n", pre_str);
+      fprintf(file_info->outfd, "Writing file to object %s\n", pre_str);
+
+      // Write data back to new object
+      s3_put(nb,pre_str);
+      check_S3_error(s3_return, nb, S3_PUT); 
+
+      aws_iobuf_reset_hard(nb);
       objects=objects->next;
-   } return 0;
+   }
+   return 0;
 }
 /******************************************************************************
 * Name update_meta
@@ -452,50 +435,44 @@ int pack_objects( File_Handles *file_info,
 * post xattr. 
 * 
 ******************************************************************************/
-int update_meta(File_Handles *file_info, 
-                repack_objects *objects)
+int update_meta(File_Handles *file_info, repack_objects *objects)
 {
   obj_files *files;
 //  char pre[MARFS_MAX_XATTR_SIZE];
 
+  MarFS_XattrPost post;
+  MarFS_XattrPre pre;
   char post_str[MARFS_MAX_XATTR_SIZE];
   char post_xattr[MARFS_MAX_XATTR_SIZE];
-  //int rc;
+  int rc;
 
 
   // Travers all repacked objects
   while(objects) {
      files = objects->files_ptr;
+     rc=str_2_pre(&pre, objects->objid, NULL);
      //Traverse the object files
      while (files) {
-
-        // retrive the MarFS_FileHandle information from the files linked
-        // list
-
-        //MarFS_XattrPre*  pre  = &files->fh->info.pre;
-        MarFS_XattrPost* post = &files->fh->info.post;
-
         // Get the file post xattr
         // and update its elements based on the repack
-        //if ((getxattr(files->filename, "user.marfs_post", &post_xattr, MARFS_MAX_XATTR_SIZE) != -1)) {
-        //   rc=str_2_post(&post, post_xattr, 1);
-           post->chunks = objects->pack_count;
-           post->obj_offset = files->new_offset;
+        if ((getxattr(files->filename, "user.marfs_post", &post_xattr, MARFS_MAX_XATTR_SIZE) != -1)) {
+           rc=str_2_post(&post, post_xattr, 1);
+           post.chunks = objects->pack_count;
+           post.obj_offset = files->new_offset;
            
-
-             
-           save_xattrs(&files->fh->info, XVT_PRE | XVT_POST);
-
            // convert the post xattr back to string so that the file xattr can
            // be re-written
-           //rc=post_2_str(post_str, MARFS_MAX_XATTR_SIZE, &post, pre.repo, 0);
+           rc=post_2_str(post_str, MARFS_MAX_XATTR_SIZE, &post, pre.repo, 0);
            LOG(LOG_INFO, "Old xattr:       %s\n", post_xattr);
            LOG(LOG_INFO, "New post xattr:  %s\n", post_str);
            fprintf(file_info->outfd, "Updating %s objid xattr to %s\n", files->filename, objects->new_objid);
            fprintf(file_info->outfd, "Updating %s post xattr  to %s\n", files->filename, post_str);
+           // Set the objid xattr to the new object name
+           setxattr(files->filename, "user.marfs_objid", objects->new_objid, strlen(objects->new_objid)+1, 0);
+           setxattr(files->filename, "user.marfs_post", post_str, strlen(post_str)+1, 0);
            //To do:
            // remove old object
-        //}
+        }
 	files = files->next;
      }
      objects=objects->next;
@@ -531,40 +508,4 @@ void print_usage()
 {
   fprintf(stderr,"Usage: ./marfs_repack -d packed_log_filename -o log_file [-h]\n\n");
   fprintf(stderr, "where -h = help\n\n");
-}
-
-/******************************************************************************
-* Name get_marfs_path
-* This function, given a metadata path, determines the fuse mount path for a 
-* file and returns it via the marfs pointer. 
-* 
-******************************************************************************/
-void get_marfs_path(char * patht, char *marfs) {
-  char *mnt_top = marfs_config->mnt_top;
-  MarFS_Namespace *ns;
-  NSIterator ns_iter;
-  ns_iter = namespace_iterator();
-  char the_path[MAX_PATH_LENGTH] = {0};
-  char ending[MAX_PATH_LENGTH] = {0};
-  int i;
-  int index;
-
-  while((ns = namespace_next(&ns_iter))){
-    if (strstr(patht, ns->md_path)){
-
-      // build path using mount point and md_path
-      strcat(the_path, mnt_top);
-      strcat(the_path, ns->mnt_path);
-
-      for (i = strlen(ns->md_path); i < strlen(patht); i++){
-        index = i - strlen(ns->md_path);
-        ending[index] = *(patht+i);
-      }
-
-      ending[index+1] = '\0';
-      strcat(the_path, ending);
-      strcpy(marfs,the_path);
-      break;
-    }
-  }
 }

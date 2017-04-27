@@ -1965,11 +1965,25 @@ int fake_filehandle_for_delete_inits(MarFS_FileHandle* fh) {
 // 
 int delete_data(MarFS_FileHandle* fh) {
    TRY_DECLS();
+   size_t res;
 
    TRY0( init_data(fh) );
-   TRY0( DAL_OP(update_object_location, fh) );
-   TRY0( DAL_OP(del, fh) );
+   LOG(LOG_INFO, "ATTEMPTING(%s)\n", "DAL_OP(update_object_location, fh)");
+   if( (res = (size_t)DAL_OP(update_object_location, fh)) == 0 ) {
+      LOG(LOG_INFO, "ATTEMPTING(%s)\n", "DAL_OP(del, fh)");
+      res = (size_t)DAL_OP(del, fh);
+      if(res) {
+         PRE_RETURN();
+         LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n", "DAL_OP(del, fh)", res, errno, strerror(errno));
+      }
+   }
+   else {
+      PRE_RETURN();
+      LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n", "DAL_OP(update_object_location, fh)", res, errno, strerror(errno));
+   }
    TRY0( destroy_data(fh) );
+   if( res )
+      RETURN(-1);
    return 0;
 }
 
