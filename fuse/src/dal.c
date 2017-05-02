@@ -667,8 +667,8 @@ typedef struct mc_context {
    char              path_template[MC_MAX_PATH_LEN];
    unsigned int      start_block;
    unsigned int      pod;
-   unsigned int      cap;
-   MC_Config         *config;
+   const char       *cap;
+   MC_Config        *config;
 } MC_Context;
 
 static int open_degraded_object_log(const char *log_dir_path) {
@@ -924,7 +924,7 @@ int mc_update_path(DAL_Context* ctx) {
       a[i] = rand_r(&seed) * 2 + 1; // generate 32 random bits
 
    MC_CONTEXT(ctx)->pod         = objid_hash % num_pods;
-   MC_CONTEXT(ctx)->cap         = h_a(objid_hash, a[0]) % num_cap;
+   MC_CONTEXT(ctx)->cap         = successor(MC_CONFIG(ctx)->ring, objid)->name;
    unsigned long scatter        = h_a(objid_hash, a[1]) % scatter_width;
    MC_CONTEXT(ctx)->start_block = h_a(objid_hash, a[2]) % num_blocks;
 
@@ -933,7 +933,6 @@ int mc_update_path(DAL_Context* ctx) {
    //   "<protected-root>/repo10+2/pod%d/block%s/cap%d/scatter%d/"
    snprintf(path_template, MC_MAX_PATH_LEN, mc_path_format,
             MC_CONTEXT(ctx)->pod,
-            "%d", // this will be filled in by the ec library
             MC_CONTEXT(ctx)->cap,
             scatter);
 

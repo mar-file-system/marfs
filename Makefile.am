@@ -252,8 +252,7 @@ test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
 	$(CC) -g -o $@ $^ -lpthread -lrt
 
 test_marfs_configuration_SOURCES = fuse/src/test_marfs_configuration.c
-#TESTS = test_marfs_configuration
-TESTS = 
+TESTS =
 
 if USE_MC
 check_PROGRAMS += mc_hash_test
