@@ -315,6 +315,60 @@ node_t *successor(ring_t *ring, const char *key) {
    return successor_by_id(ring, key_id);
 }
 
+successor_it_t *successor_iterator(ring_t *ring, const char *key) {
+   successor_it_t *it = malloc(sizeof(successor_it_t));
+   if(it == NULL) {
+      return NULL;
+   }
+
+   it->ring    = ring;
+   it->visited = new_node_list();
+   if(it->visited == NULL) {
+      return NULL;
+   }
+   it->position = successor(ring, key);
+   it->start_index = ((void *)it->position - (void *)it->ring->virtual_nodes)
+      / sizeof(node_t);
+
+   return it;
+}
+
+node_t *next_successor(successor_it_t *it) {
+   node_t *next = it->position;
+
+   if(next == NULL) { // the iterator has been exhausted.
+      return NULL;
+   }
+   
+   node_push(it->visited, next);
+   
+   if(list_length(it->visited) == it->ring->num_nodes) {
+      it->position = NULL;
+      return next;
+   }
+   
+   // loop through the vnodes in the ring to set the next position.
+   int index = ((void *)it->position - (void *)it->ring->virtual_nodes)
+      / sizeof(node_t);
+   for(index = index+1 ; index != it->start_index; index++) {
+      if(index == it->ring->total_tickets) {
+         index = 0; // wrap around to the "begining" of the ring.
+      }
+      if(!contains(it->visited, &it->ring->virtual_nodes[index])) {
+         // the node has not been visited yet.
+         it->position = &it->ring->virtual_nodes[index];
+         break;
+      }
+   }
+
+   return next;
+}
+
+void destroy_successor_iterator(successor_it_t *it) {
+   destroy_node_list(it->visited);
+   free(it);
+}
+
 int ring_join(ring_t     *ring,
               const char *new_node,
               int         weight,
@@ -504,8 +558,13 @@ node_list_t *new_node_list() {
 
    nl->head = NULL;
    nl->tail = NULL;
+   nl->length = 0;
 
    return nl;
+}
+
+int list_length(node_list_t *list) {
+   return list->length;
 }
 
 int node_push(node_list_t *list, node_t *node) {
@@ -518,6 +577,7 @@ int node_push(node_list_t *list, node_t *node) {
       new_tail->tail = list->tail;
       list->head = node;
       list->tail = new_tail;
+      list->length++;
    }
    return 0;
 }
@@ -528,6 +588,7 @@ node_t *node_pop(node_list_t *list) {
    node_list_t *t = list->tail;
    list->head = t->head;
    list->tail = t->tail;
+   list->length--;
    free(t);
    return h;
 }

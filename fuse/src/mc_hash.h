@@ -93,11 +93,19 @@ typedef struct ring {
 typedef struct node_list {
    node_t           *head;
    struct node_list *tail;
+   int               length;
 } node_list_t;
 
 typedef struct node_iterator {
    node_list_t *position;
 } node_iterator_t;
+
+typedef struct successor_iterator {
+   node_list_t  *visited;
+   node_t       *position;
+   ring_t       *ring;
+   unsigned int  start_index;
+} successor_it_t;
 
 // The same migration function can be used for both _join and _leave.
 // For join a key requires migration if it hashes to a different
@@ -157,6 +165,18 @@ int ring_leave(ring_t         *ring,
 
 // get the successor to the given key in the ring.
 node_t *successor(ring_t *ring, const char *key);
+
+// get an iterator that will move clockwise around the ring begining
+// with the successor to the specified key. The iterator is exhausted
+// once every node in the ring has been returned.
+successor_it_t *successor_iterator(ring_t *ring, const char *key);
+
+// get the next node from the successor iterator. Returns NULL if the
+// iterator is exhausted.
+node_t *next_successor(successor_it_t *it);
+
+// Free memory associated with the successor iterator
+void destroy_successor_iterator(successor_it_t *it);
 
 // utility functions for working with node lists. These functions
 // provide authors of migration functions with the ability to iterate

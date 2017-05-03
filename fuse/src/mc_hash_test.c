@@ -233,7 +233,7 @@ void four_node_variance(int hdd_size /* HDD size in TB */) {
 
    /* do it a bunch of times. */
    int iteration;
-   for(iteration = 0; iteration < 1000; iteration++) {
+   for(iteration = 0; iteration < 10; iteration++) {
       int first_node = random() % 100;
       char *nodes[4];
       int n;
@@ -405,6 +405,21 @@ void test_node_list() {
    assert(contains(list5, &nodes[2]));
    printf("test_node_list: contains() for non-head: SUCCESS!\n");
    destroy_node_list(list5);
+
+   // 9. Test list_length
+   node_list_t *list9 = new_node_list();
+   assert(list_length(list9) == 0);
+   node_push(list9, &search_node);
+   assert(list_length(list9) == 1);
+   node_pop(list9);
+   assert(list_length(list9) == 0);
+   node_pop(list9);
+   assert(list_length(list9) == 0);
+   node_push(list9, &search_node);
+   node_push(list9, &search_node);
+   assert(list_length(list9) == 2);
+   printf("test_node_list: list_length(): SUCCESS!\n");
+   destroy_node_list(list9);
 }
 
 static int check_ring(ring_t *ring, const char *target) {
@@ -591,14 +606,108 @@ void test_migration() {
    printf("test_migration: SUCCESS!\n");
 }
 
+void test_successor_iterator() {
+   // mock up a ring and an iterator for basic functionality tests.
+   char *nodes[9]   = {"foo", "bar", "baz", "biz", "fiz", "siz", "niz", "riz", "roo"};
+   int  weights[3]  = {1, 1, 1};
+   node_t vnodes[9] = {
+      {
+         .name = nodes[0],
+         .id = {0,0},
+         .ticket_number = 0,
+      },
+      {
+         .name = nodes[0],
+         .id = {0,1},
+         .ticket_number = 1,
+      },
+      {
+         .name = nodes[0],
+         .id = {0,2},
+         .ticket_number = 2,
+      },
+      {
+         .name = nodes[1],
+         .id = {1,0},
+         .ticket_number = 0,
+      },
+      {
+         .name = nodes[1],
+         .id = {1,1},
+         .ticket_number = 1,
+      },
+      {
+         .name = nodes[1],
+         .id = {1,2},
+         .ticket_number = 2,
+      },
+      {
+         .name = nodes[2],
+         .id = {2,0},
+         .ticket_number = 0,
+      },
+      {
+         .name = nodes[2],
+         .id = {2,1},
+         .ticket_number = 1,
+      },
+      {
+         .name = nodes[2],
+         .id = {2,2},
+         .ticket_number = 2,
+      }
+   };
+   ring_t mock_ring = {
+      .num_nodes = 3,
+      .weights = weights,
+      .nodes = nodes,
+      .total_tickets = 9,
+      .virtual_nodes = vnodes
+   };
+
+   successor_it_t mock_iterator = {
+      .visited = new_node_list(),
+      .position = &vnodes[2],
+      .ring = &mock_ring,
+      .start_index = 2 //???
+   };
+
+   node_t *n;
+   n = next_successor(&mock_iterator);
+   assert(n != NULL);
+   assert(strcmp(n->name, "foo") == 0);
+   n = next_successor(&mock_iterator);
+   assert(n != NULL);
+   assert(strcmp(n->name, "bar") == 0);
+   n = next_successor(&mock_iterator);
+   assert(n != NULL);
+   assert(strcmp(n->name, "baz") == 0);
+   assert(next_successor(&mock_iterator) == NULL);
+   assert(next_successor(&mock_iterator) == NULL);
+
+   // TODO:
+   // can test the start index by asserting that after creation,
+   // &vnodes[start_index] == position
+   ring_t *ring = new_ring(nodes, NULL, 9);
+   successor_it_t *it = successor_iterator(ring, "key");
+   assert(&it->ring->virtual_nodes[it->start_index] == it->position);
+   int count_nodes = 0;
+   while(next_successor(it) != NULL) {
+      count_nodes++;
+   }
+   assert(count_nodes == 9);
+   printf("test_successor_iterator: SUCCESS!\n");
+}
+
 int main(int argc, char **argv) {
-   four_node_variance(10);
-   test_performance();
    test_successor();
    test_node_list();
    test_ring_join();
    test_migration();
    test_ring_leave();
+   test_successor_iterator();
+   four_node_variance(6);
+   test_performance();
    uneven_distribution();
 
    return 0;
