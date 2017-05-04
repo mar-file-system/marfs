@@ -667,6 +667,7 @@ typedef struct mc_context {
    char              path_template[MC_MAX_PATH_LEN];
    unsigned int      start_block;
    unsigned int      pod;
+   unsigned int      scatter;
    const char       *cap;
    MC_Config        *config;
 } MC_Context;
@@ -888,6 +889,36 @@ int mc_destroy(DAL_Context *ctx, struct DAL* dal) {
    return 0;
 }
 
+static
+void mc_generate_path(DAL_Context *ctx) {
+   PathInfo*         info          = &(MC_FH(ctx)->info);
+   const MarFS_Repo* repo          = info->pre.repo;
+   char*             objid         = info->pre.objid;
+   char*             path_template = MC_CONTEXT(ctx)->path_template;
+
+   char *mc_path_format = repo->host;
+
+   char obj_filename[MARFS_MAX_OBJID_SIZE];
+   strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);
+   flatten_objid(obj_filename);   
+
+   // fill in path template
+   // the mc_path_format is sometheing like:
+   //   "<protected-root>/repo10+2/pod%d/block%s/cap%d/scatter%d/"
+   snprintf(path_template, MC_MAX_PATH_LEN, mc_path_format,
+            MC_CONTEXT(ctx)->pod,
+            MC_CONTEXT(ctx)->cap,
+            MC_CONTEXT(ctx)->scatter);
+
+   // be robust to vairation in the config... We could always just add
+   // a slash, but that will get ugly in the logs.
+   if(path_template[strlen(path_template) - 1] != '/')
+      strcat(path_template, "/");
+   
+   // append the fileified object id
+   strncat(path_template, obj_filename, MARFS_MAX_OBJID_SIZE);
+}
+
 int mc_update_path(DAL_Context* ctx) {
    // QUESTION: Do we need to prepend the bucket and ns->alias to the
    //           objid? For now We can just flatten the url to make
@@ -895,13 +926,8 @@ int mc_update_path(DAL_Context* ctx) {
 
    // shorthand
    PathInfo*         info          = &(MC_FH(ctx)->info);
-   const MarFS_Repo* repo          = info->pre.repo;
    char*             objid         = info->pre.objid;
    char*             path_template = MC_CONTEXT(ctx)->path_template;
-
-   char obj_filename[MARFS_MAX_OBJID_SIZE];
-   strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);
-   flatten_objid(obj_filename);
 
    // We will use the hash in multiple places, save it to avoid
    // recomputing.
@@ -910,8 +936,6 @@ int mc_update_path(DAL_Context* ctx) {
    // regadless of changes to the "file-ification" format.
    unsigned long objid_hash = polyhash(objid);
    
-   char *mc_path_format = repo->host;
-
    unsigned int num_blocks    = MC_CONFIG(ctx)->n+MC_CONFIG(ctx)->e;
    unsigned int num_pods      = MC_CONFIG(ctx)->num_pods;
    unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
@@ -925,25 +949,11 @@ int mc_update_path(DAL_Context* ctx) {
 
    MC_CONTEXT(ctx)->pod         = objid_hash % num_pods;
    MC_CONTEXT(ctx)->cap         = successor(MC_CONFIG(ctx)->ring, objid)->name;
-   unsigned long scatter        = h_a(objid_hash, a[1]) % scatter_width;
+   MC_CONTEXT(ctx)->scatter     = h_a(objid_hash, a[1]) % scatter_width;
    MC_CONTEXT(ctx)->start_block = h_a(objid_hash, a[2]) % num_blocks;
 
-   // fill in path template
-   // the mc_path_format is sometheing like:
-   //   "<protected-root>/repo10+2/pod%d/block%s/cap%d/scatter%d/"
-   snprintf(path_template, MC_MAX_PATH_LEN, mc_path_format,
-            MC_CONTEXT(ctx)->pod,
-            MC_CONTEXT(ctx)->cap,
-            scatter);
-
-   // be robust to vairation in the config... We could always just add
-   // a slash, but that will get ugly in the logs.
-   if(path_template[strlen(path_template) - 1] != '/')
-      strcat(path_template, "/");
+   mc_generate_path(ctx);
    
-   // append the fileified object id
-   strncat(path_template, obj_filename, MARFS_MAX_OBJID_SIZE);
-
    LOG(LOG_INFO, "MC path template: (starting block: %d) %s\n",
        MC_CONTEXT(ctx)->start_block, path_template);
    
@@ -971,9 +981,30 @@ int mc_open(DAL_Context* ctx,
    // do the generic cleanup stuff like resetting flags.
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
 
+   // try all capacity units.
    int mode = is_put ? NE_WRONLY : NE_RDONLY;
    MC_HANDLE(ctx) = ne_open(path_template, mode,
                             MC_CONTEXT(ctx)->start_block, n, e);
+
+   if( !is_put && !MC_HANDLE(ctx) ) {
+      // loop throught the ring looking for the object on other capacity units.
+      successor_it_t *succ_it = successor_iterator(MC_CONFIG(ctx)->ring,
+                                                   MC_FH(ctx)->info.pre.objid);
+      // We have already attempted the immediate successor. Skip it.
+      next_successor(succ_it);
+      node_t *cu_node;
+      while((cu_node = next_successor(succ_it)) != NULL) {
+         // regenerate the object location.
+         MC_CONTEXT(ctx)->cap = cu_node->name;
+         mc_generate_path(ctx);
+         // try to open the object. If successful, break.
+         MC_HANDLE(ctx) = ne_open(path_template, mode,
+                                  MC_CONTEXT(ctx)->start_block, n, e);
+         if(MC_HANDLE(ctx) != NULL) break;
+      }
+      destroy_successor_iterator(succ_it);
+   }
+
    if(! MC_HANDLE(ctx)) {
       LOG(LOG_ERR, "Failed to open MC Handle %s\n", path_template);
       return -1;
