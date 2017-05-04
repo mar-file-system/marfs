@@ -18,8 +18,12 @@ fi
 LOG_FNAME=$1
 TID_COL=$2
 
-rm -f foo.log*
+rm -f foo.log.[0-9a-f]*
 
-# for THR in `cat $LOG_FNAME | awk '/[0-9][a-f]/{print $2}' | sort | uniq`; do grep $THR $LOG_FNAME > foo.log.$THR; done
+# THREADS=`cat $LOG_FNAME | awk '/[0-9][a-f]/{print $2}' | sort | uniq`
+THREADS=`cat $LOG_FNAME | grep '|' | sed -E 's/([ ]+)/ /g' | cut -d ' ' -f $TID_COL | sort | uniq`
+echo "$THREADS"
 
-for THR in `cat $LOG_FNAME | sed -E 's/([ ]+)/ /g' | cut -d ' ' -f $TID_COL | sort | uniq`; do grep $THR $LOG_FNAME > foo.log.$THR; done
+for THR in $THREADS; do
+    grep $THR $LOG_FNAME > foo.log.$THR
+done

@@ -310,10 +310,10 @@ typedef struct {
 #if USE_MDAL
 // NOTE: It might be wrong to expand path info here, as this macro is
 //       often called on the info.post->md_path.
-#define ACCESS(NAMESPACE, PATH, PERMS)                                  \
+#  define ACCESS(NAMESPACE, PATH, PERMS)                    \
    TRY0( F_OP_NOCTX(access, (NAMESPACE), (PATH), (PERMS)) )
 #else
-#define ACCESS(_NS, PATH, PERMS) TRY0( access((PATH), (PERMS)) )
+#  define ACCESS(_NS, PATH, PERMS) TRY0( access((PATH), (PERMS)) )
 #endif
 
 // NOTE: faccessat, with the AT_EACCESS flag is probably a good solution to
@@ -321,11 +321,11 @@ typedef struct {
 //       effective user id.
 // With these args, this doesn't follow symlinks
 #if USE_MDAL
-#define FACCESSAT(NAMESPACE, PATH, PERMS)                               \
+#  define FACCESSAT(NAMESPACE, PATH, PERMS)                             \
    TRY0( F_OP_NOCTX(faccessat, (NAMESPACE), 0, (PATH), (PERMS),         \
                     (AT_EACCESS | AT_SYMLINK_NOFOLLOW)) )
 #else
-#define FACCESSAT(PATH, PERMS)                                          \
+#  define FACCESSAT(PATH, PERMS)                                        \
    TRY0( faccessat(0, (PATH), (PERMS), (AT_EACCESS | AT_SYMLINK_NOFOLLOW) )
 #endif
 

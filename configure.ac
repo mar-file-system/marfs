@@ -227,11 +227,11 @@ AM_CONDITIONAL([GPFS_UTILITIES], [test x"$build_gpfs_utilities" = xyes])
 
 # We depend on a number of environment variables
 AC_ARG_VAR(AWS4C, [The location of the aws4c installation])
-AC_ARG_VAR(LIBAWS4C,
-  [The location of the aws4c library installation (probably the same as AWS4C)])
+AC_ARG_VAR(LIBAWS4C, [The location of the aws4c library installation (probably the same as AWS4C)])
 AC_ARG_VAR(PA2X,  [The location of the PA2X installation])
 AC_ARG_VAR(LIBNE, [The location of the erasureUtils libne installation])
 AC_ARG_VAR(PARSE_DIR, [The location of PA2X (need this and PA2X)])
+
 # XXX: We should simply define this as: 
 # $(srcdir)/common/configuration/src/marfs_configuration_blueprint.cfg
 # rather the asking the user to pass it in. It will always be the same thing.
@@ -242,6 +242,9 @@ AC_ARG_VAR(MARFSCONFIGRC, [The path to the marfs config (or any valid config)])
 AS_IF([test -z "$PARSE_DIR"], [AC_ERROR([PARSE_DIR is not set])])
 AS_IF([test -z "$AWS4C"], [AC_ERROR([AWS4C in not set])])
 AS_IF([test x"$enable_mc" != xno && test -z "$LIBNE"], [AC_ERROR([LIBNE is not set])])
+
+AS_IF([test x"$enable_mc" = xsockets && test x"$with_aws_auth" = xno],
+      [AC_ERROR([sockets MC cant have aws-auth disabled])])
 
 AS_IF([test -z "$MARFSCONFIGRC"],
       [AC_SUBST(CONFIG, ${srcdir}/common/configuration/src/marfs_cctest.cfg)],

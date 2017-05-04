@@ -907,6 +907,9 @@ int main(int argc, char* argv[])
    // NOTE: This also now *requires* that marfs fuse is always only run as root.
    __TRY0( seteuid(0) );
 
+
+
+
    if (read_configuration()) {
       // LOG(LOG_ERR, "read_configuration() failed.  Quitting\n");
       fprintf(stderr, "read_configuration() failed.  Quitting\n");
@@ -926,10 +929,10 @@ int main(int argc, char* argv[])
    init_xattr_specs();
 
 
-   // initialize libaws4c/libcurl
+   // initialize libaws4c/libcurl.
    //
-   // NOTE: We're making initializations in the default-context.  These
-   //       will be copied into the per-file-handle context via
+   // NOTE: We're making initializations in the default AWSContext.  These
+   //       will be copied into the per-file-handle AWSContext via
    //       aws_context_clone(), in stream_open().  Instead of having to
    //       make these initializations in every context, we make them once
    //       here.
@@ -966,6 +969,8 @@ int main(int argc, char* argv[])
       if (! config_fail_ok)
          exit(1);
    }
+
+
 
    // make sure all support directories exist.  (See the config file.)
    // This includes mdfs, fsinfo, the trash "scatter-tree", for all namespaces,

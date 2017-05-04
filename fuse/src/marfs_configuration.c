@@ -804,6 +804,19 @@ ssize_t parse_xdal_config_options(xDALConfigOpt*** result_ptr,
   return opt_count;
 }
 
+void free_xdal_config_options(xDALConfigOpt** opts) {
+   if (opts) {
+
+      // free individual options
+      xDALConfigOpt** ptr;
+      for (ptr=opts; *ptr; ++ptr)
+         free(*ptr);
+
+      // free the vector
+      free(opts);
+   }
+}
+
 
 // The "TYPE" arg to EXTRACT() must match the "foo" in some foo_MAX defn in limits.h
 // e.g. UCHAR, SHRT, UINT, etc
@@ -1004,6 +1017,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
          opt_count, p_repo->name );
 
     // install the options, parsed out above.
+    // DAL is responsible for <opts> from now on
     if ((*dal_copy->config)(dal_copy, opts, opt_count)) {
       LOG( LOG_ERR, "DAL_config failed for repo '%s'.\n",
            p_repo->name);
@@ -1736,6 +1750,12 @@ static int free_configuration_internal( MarFS_Config_Ptr *config ) {
     free( marfs_repo_list[j]->host );
     free( marfs_repo_list[j]->online_cmds );
     free( marfs_repo_list[j] );
+
+    struct DAL* dal = marfs_repo_list[j]->dal;
+#if 0
+    // when we add deconfig to the DAL
+    (dal->deconfig)(dal);
+#endif
   }
   free( marfs_repo_list );
   marfs_repo_list = NULL;

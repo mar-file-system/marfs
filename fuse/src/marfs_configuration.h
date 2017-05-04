@@ -57,6 +57,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 
 #include <stdint.h>
+#include "xdal_common.h"        /* xDALConfigOpt */
 
 
 #  ifdef __cplusplus
@@ -576,6 +577,12 @@ extern double        get_configuration_version( MarFS_Config_Ptr config );
 extern char         *get_configuration_mnt_top( MarFS_Config_Ptr config );
 extern MarFS_Namespace_List get_configuration_namespace_list( MarFS_Config_Ptr config );
  */
+
+
+/* DAL is given control of parsed config-options.  It will eventually need
+   this to de-allocate them */
+void free_xdal_config_options(xDALConfigOpt** opts);
+
 
 /*
  * When the user is done with the configuration, for example if run-time

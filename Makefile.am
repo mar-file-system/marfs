@@ -44,6 +44,10 @@ endif
 if USE_DAL
   AM_CPPFLAGS += -DUSE_DAL=1
 endif
+if USE_MC_SOCKETS
+  AM_CPPFLAGS += -DS3_AUTH
+endif
+
 
 if USE_MDAL
   AM_CPPFLAGS += -DUSE_MDAL=1

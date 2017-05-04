@@ -749,6 +749,9 @@ int mc_config(struct DAL*     dal,
    config->degraded_log_fd   = -1;
    config->degraded_log_path = NULL;
 
+   char* mc_user = NULL;
+
+
    int i;
    for(i = 0; i < opt_count; i++) {
       if(!strcmp(opts[i]->key, "n")) { // ? Should be strncmp?
@@ -776,6 +779,8 @@ int mc_config(struct DAL*     dal,
       }
       else if(!strcmp(opts[i]->key, "degraded_log_dir")) {
          config->degraded_log_path = strdup(opts[i]->val.value.str);
+         LOG(LOG_INFO, "parsing mc option \"degraded_log_path\" = %s\n",
+             config->degraded_log_path);
       }
       else if (! is_sockets) {
          LOG(LOG_ERR, "Unrecognized MC DAL config option: %s\n",
@@ -816,6 +821,11 @@ int mc_config(struct DAL*     dal,
          LOG(LOG_INFO, "parsing mc option \"pod_offset\" = %d\n",
              config->pod_offset);
       }
+      else if(!strcmp(opts[i]->key, "mc_user")) {
+         mc_user = strdup(opts[i]->val.value.str);
+         LOG(LOG_INFO, "parsing mc option \"mc_user\" = %s\n",
+             mc_user);
+      }
       else {
          LOG(LOG_ERR, "Unrecognized MC DAL (sockets) config option: %s\n",
              opts[i]->key);
@@ -826,7 +836,7 @@ int mc_config(struct DAL*     dal,
 
 
    if(config->degraded_log_path == NULL) {
-      LOG(LOG_ERR, "no degraded_log_dir specified in DAL.\n");
+      LOG(LOG_ERR, "no degraded_log_dir specified for DAL '%s'.\n", dal->name);
       return -1;
    }
    else {
@@ -834,11 +844,48 @@ int mc_config(struct DAL*     dal,
       SEM_INIT(&config->lock, 0, 1);
    }
 
+#ifdef S3_AUTH
+   // To allow generating per-connection auth-signatures, capture the S3
+   // credentials up front, while we have access to the AWS config file
+   // (i.e. before de-escalation).  If mc_user is null, skt_auth_install()
+   // defaults to SKT_S3_USER.
+
+   if (is_sockets) {
+
+      if (! mc_user)
+         mc_user = strdup(DEFAULT_SKT_AUTH_USER);  // SKT_S3_USER
+
+      // (see Q&A in comments at skt_auth_init() defn)
+      int err = 0;
+      if (skt_auth_init(mc_user, &config->auth)) {
+         // probably didn't find the user in ~/.awsAuth
+         LOG(LOG_ERR, "Authentication-init failed for user '%s' in sockets-DAL '%s'.\n",
+             mc_user, dal->name);
+         err = 1;
+      }
+      else if (config->auth == NULL) {
+         LOG(LOG_ERR, "libne was built without enabling socket-authentication, "
+             " but DAL '%s' requires it.\n",
+             dal->name);
+         err = 1;
+      }
+
+      free(mc_user);
+      if (err)
+         return -1;
+   }
+#endif
+
+
    config->is_sockets = is_sockets;
    if (is_sockets)
      config->snprintf = mc_path_snprintf_sockets;
    else
      config->snprintf = ne_default_snprintf;
+
+   // we don't keep the options, themselves.
+   // we parsed out what we wanted, and installed into the MC_Config
+   free_xdal_config_options(opts);
 
 
    dal->global_state = config;
@@ -853,11 +900,17 @@ void mc_deconfig(struct DAL *dal) {
    MC_Config *config = (MC_Config*)dal->global_state;
    WAIT(&config->lock);
 
+#  ifdef S3_AUTH
+   if (config->auth)
+      skt_auth_free(config->auth);
+#  endif
+
    close(config->degraded_log_fd);
    SEM_DESTROY(&config->lock);
    free(config);
 }
 #endif
+
 
 // Computes a good, uniform, hash of the string.
 //
@@ -887,8 +940,8 @@ static uint64_t h_a(const uint64_t key, uint64_t a) {
 }
 
 // Initialize the context for a multi-component backed object.
-// Returns 0 on success or -1 on failure (if memory cannot be
-// allocated).
+// (e.g. new file-handle at open-time)
+// Returns 0 on success or -1 on failure (if memory cannot be allocated).
 int mc_init(DAL_Context* ctx, struct DAL* dal, void* fh) {
    ENTRY();
    
@@ -933,14 +986,18 @@ int mc_destroy(DAL_Context *ctx, struct DAL* dal) {
 // with some config info, to find the right offset for the host-field.
 //
 // NOTE: We assume the local file paths within each pod are the same.
+//
 //       For example:
 //         192.168.0.<octet>:/zfs/repo/pod<p>/block<b>/...
+//
 //       Where:
 //         <octet> advances sequentially across all hosts in all pods.
 //                 starting at some offset.
+//
 //         Within each pod:
 //             <p> is constant
 //             <b> starts at some offset, and increments by 1 up to N+E+offset
+//
 //         Across pods:
 //             <p> starts at some offset, and increments by 1 up to num_pods+offset
 //
@@ -1072,7 +1129,7 @@ int mc_open(DAL_Context* ctx,
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
 
    int mode = is_put ? NE_WRONLY : NE_RDONLY;
-   MC_HANDLE(ctx) = ne_open1(MC_CONFIG(ctx)->snprintf, ctx,
+   MC_HANDLE(ctx) = ne_open1(MC_CONFIG(ctx)->snprintf, ctx, MC_CONFIG(ctx)->auth,
                              path_template, mode,
                              MC_CONTEXT(ctx)->start_block, n, e);
    if(! MC_HANDLE(ctx)) {
@@ -1290,9 +1347,9 @@ int mc_close(DAL_Context* ctx) {
 
 int mc_del(DAL_Context* ctx) {
    char* path_template = MC_CONTEXT(ctx)->path_template;
-   int nblocks = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
+   int nblocks         = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
 
-   return ne_delete1(MC_CONFIG(ctx)->snprintf, ctx, path_template, nblocks);
+   return ne_delete1(MC_CONFIG(ctx)->snprintf, ctx, MC_CONFIG(ctx)->auth, path_template, nblocks);
 }
 
 DAL mc_dal = {
