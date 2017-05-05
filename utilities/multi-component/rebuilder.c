@@ -62,7 +62,9 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  */
 
 #include <pwd.h>
+#include <fnmatch.h>
 #include <mpi.h>
+#include <signal.h>
 
 // we absolutely must have multi-component enabled to build this
 // program.  This ensures that the necessary symbols are exposed from
@@ -352,7 +354,7 @@ void usage(const char *program) {
          "                     rebuilding a large number of objects.\n"
          "                     Defaults to 1024.\n");
   printf("\nTo run a rebuild of an entire component use the following flags\n"
-         "%s [-t <num threads>] [-s <start>:<end>] [-R] -p <pod> -b <good block> -c <capacity unit> -r <repo name>\n"
+         "%s [-t <num threads>] [-s <start>:<end>] [-R] [-p <pod>] [-b <good block>] [-c <capacity-unit>] -r <repo name>\n"
          "  <good block>       The number of a block to be used as a reference\n"
          "                     point for the rebuild\n"
          "  <capacity unit>    The capacity unit to rebuild.\n"
@@ -361,21 +363,16 @@ void usage(const char *program) {
          "  <start>:<end>      This defines the inclusive range of scatter \n"
          "                     directories to be scanned and possibly rebuilt.\n"
          "                     The default is all scatters defined for a repo.\n"
-         "                     The default is all scatters defined for a repo.\n"
-         "  -R                 Specifies that pod, block, and capacity unit \n"
-         "                     values should be chosen randomly, if not \n"
-         "                     explicitly specified via \"-p/b/c\" respectively.\n"
-         "                     Using this in conjunction with \"-p\", \"-b\", \n"
-         "                     and \"-c\" simultaneously will have no effect.\n"
-         "  Note: The flags -r as well as either -p/b/c or -R are all required to do a component rebuild.\n",
+         "  WARNING : Unless explicitly specified via -p/-b/-c respectively, the \n"
+         "    pod/block/capacity-unit to be rebuilt are chosen randomly!\n",
          program);
-  printf("\nWARNING : This program defaults to a dry-run, in which no rebuilds \n"
-         "  will actually be performed!  Use \"-w\" to rebuild and write out parts.\n");
+  printf("\nNOTE : This program defaults to a dry-run, in which no rebuilds \n"
+         "  will actually be performed!  Use \"-R\" to rebuild and write out parts.\n");
   printf("The -w flag may be used in both modes to indicate an actual rebuild \n"
          "  operation.  Rebuilt parts will be written out to their appropriate \n"
          "  locations.\n");
   printf("The -t option applies to both modes and is used to specify a number \n"
-         "  of threads to use for the rebuild. Defaults to one.\n");
+         "  of threads to use for the rebuild. (default = 16)\n");
   printf("To run the rebuilder as some other user (ie. storageadmin) use "
          "  the -u <username> option\n");
   printf("The -o <filename> flag may be used to specify a file to which \n"
@@ -448,6 +445,7 @@ struct rebuild_queue {
   int                queue_head;
   int                queue_tail;
   int                num_consumers;
+  char               abort; // flag to indicate an early abort of work
   pthread_t         *consumer_threads;
 } rebuild_queue;
 
@@ -460,14 +458,16 @@ void queue_rebuild(struct object_file object) {
     exit(-1); // a bit unceremonious
   }
 
-  while(rebuild_queue.num_items == QUEUE_MAX)
+  while( !rebuild_queue.abort  &&  rebuild_queue.num_items == QUEUE_MAX)
     pthread_cond_wait(&rebuild_queue.queue_full, &rebuild_queue.queue_lock);
 
-  rebuild_queue.items[rebuild_queue.queue_tail] = object;
-  rebuild_queue.num_items++;
-  rebuild_queue.queue_tail = (rebuild_queue.queue_tail + 1) % QUEUE_MAX;
-
-  pthread_cond_signal(&rebuild_queue.queue_empty);
+  if( !rebuild_queue.abort ) {
+    rebuild_queue.items[rebuild_queue.queue_tail] = object;
+    rebuild_queue.num_items++;
+    rebuild_queue.queue_tail = (rebuild_queue.queue_tail + 1) % QUEUE_MAX;
+    
+    pthread_cond_signal(&rebuild_queue.queue_empty);
+  }
 
   pthread_mutex_unlock(&rebuild_queue.queue_lock);
   return;
@@ -488,6 +488,14 @@ void stop_workers() {
   }
 }
 
+
+void abort_rebuild( int signo ) {
+  fprintf( stderr, "EARLY ABORT REQUESTED\nSignalling threads to stop..." );
+  rebuild_queue.abort = 1;
+  fprintf( stderr, "done\n" );
+}
+
+
 /**
  * The start function for the consumer threads that actually perform
  * the rebuild work.
@@ -507,7 +515,8 @@ void *rebuilder(void *arg) {
     while(!rebuild_queue.num_items && !rebuild_queue.work_done)
       pthread_cond_wait(&rebuild_queue.queue_empty, &rebuild_queue.queue_lock);
     
-    if(rebuild_queue.num_items == 0 && rebuild_queue.work_done) {
+    if( rebuild_queue.abort  ||  ( rebuild_queue.num_items == 0 && rebuild_queue.work_done ) ) {
+      if( rebuild_queue.abort ) { pthread_cond_broadcast( &rebuild_queue.queue_full ); }
       pthread_mutex_unlock(&rebuild_queue.queue_lock);
       return NULL;
     }
@@ -605,7 +614,18 @@ void start_threads(int num_threads) {
   rebuild_queue.work_done     = 0;
   rebuild_queue.queue_head    = 0;
   rebuild_queue.queue_tail    = 0;
+  rebuild_queue.abort         = 0;
   rebuild_queue.num_consumers = num_threads;
+
+  struct sigaction action;
+  action.sa_handler = abort_rebuild;
+  action.sa_flags = 0;
+  sigemptyset( &action.sa_mask );
+
+  if( sigaction( SIGINT, &action, NULL ) ) {
+    fprintf( stderr, "ERROR: failed to set signal handler for SIGINT -- %s\n", strerror( errno ) );
+    exit ( -1 ); //terminate while it's still safe to do so
+  }
 
   int i;
   for(i = 0; i < num_threads; i++) {
@@ -636,6 +656,7 @@ int nextobject(FILE *log, struct object_file *object) {
 }
 
 void process_log_subdir(const char *subdir_path) {
+
   DIR *dir = opendir(subdir_path);
   if(!dir) {
     fprintf(stderr, "Could not open subdirectory %s: %s\n",
@@ -682,12 +703,20 @@ void process_log_subdir(const char *subdir_path) {
         // only recording failure stats for log rebuilds.
         record_failure_stats(&object);
 
+        if( rebuild_queue.abort )
+          break;
+
         queue_rebuild(object);
       }
 
       fclose(degraded_object_file);
+      
+      if( rebuild_queue.abort )
+         break;
     }
     closedir(scatter);
+    if( rebuild_queue.abort )
+      break;
   }
   closedir(dir);
 }
@@ -749,8 +778,15 @@ int rebuild_component(MarFS_Repo_Ptr repo,
       }
 
       queue_rebuild(object);
+
+      if( rebuild_queue.abort ) {
+        break;
+      }
     }
     closedir(scatter_dir);
+    if( rebuild_queue.abort ) {
+      break;
+    }
   }
   return failed;
 }
@@ -776,21 +812,20 @@ int main(int argc, char **argv) {
   unsigned int   ht_size           = 1024;
   int            component_rebuild = 0;
   char          *repo_name         = NULL;
-  int            threads           = 1;
+  int            threads           = 16;
   int            pod, block, cap;
   int            opt;
   int            scatter_range[2];
   int            range_given = 0;
   struct passwd *pw = NULL;
   pod = block = cap = -1;
-  char randomize = -1;
   verbose = 0; dry_run = 1; //default to dry-run
   error_log = NULL;
   success_log = NULL;
   char *s_ptr=NULL;
   char *e_ptr=NULL;
 
-  while((opt = getopt(argc, argv, "hH:c:p:b:Rr:t:wvs:o:e:u:")) != -1) {
+  while((opt = getopt(argc, argv, "hH:c:p:b:Rr:t:vs:o:e:u:")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -809,7 +844,7 @@ int main(int argc, char **argv) {
       block = strtol(optarg, NULL, 10);
       break;
     case 'R':
-      randomize = 1;
+      dry_run = 0;
       break;
     case 'r':
       component_rebuild = 1;
@@ -821,9 +856,6 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Invalid number of threads. Defaulting to 1\n");
         threads = 1;
       }
-      break;
-    case 'w':
-      dry_run = 0;
       break;
     case 'v':
       verbose = 1;
@@ -968,20 +1000,6 @@ int main(int argc, char **argv) {
 
 
   if(component_rebuild) {
-    if( (pod == -1 || block == -1 || cap == -1 )  &&  randomize == -1 ) {
-      if ( proc_rank == 0 ) {
-         fprintf(stderr, "%s: please specify all options -c -r -p and -b\n", argv[0]);
-         usage(argv[0]);
-      }
-      MPI_Finalize();
-      exit(-1);
-    }
-    else if ( randomize == 1  &&  pod != -1  &&  block != -1  &&  cap != -1 ) {
-      if ( proc_rank == 0 ) {
-         fprintf(stderr, "%s: warning: as \"-p/b/c\" have all been specified, the \"-R\" option is being ignored\n", argv[0]);
-      }
-      randomize = 0;
-    }
 
     MarFS_Repo *repo = find_repo_by_name(repo_name);
 
@@ -996,7 +1014,7 @@ int main(int argc, char **argv) {
     DAL        *dal    = repo->dal;
     MC_Config  *config = (MC_Config*)dal->global_state;
 
-    if ( randomize == 1 ) {
+    if ( pod == -1 || block == -1 || cap == -1 ) {
       int data[3];
       if ( proc_rank == 0 ) {
         srand( time(0) );
@@ -1108,13 +1126,13 @@ int main(int argc, char **argv) {
 
       // only do work if there is some to be done
       if ( scatter_range[1] >= scatter_range[0] ) {
-        printf( "%s: worker %d starting\n", argv[0], proc_rank+1 );
+        printf( "%s: worker %d starting %d threads\n", argv[0], proc_rank+1, threads );
         start_threads(threads);
         skipped_scatters = rebuild_component( repo, pod, block, cap, scatter_range );
         stop_workers();
       }
       else {
-        printf( "%s: worker %d terminating early as it has nothing to do!\n", argv[0], proc_rank+1 );
+        fprintf( stderr, "%s: worker %d terminating early as it has nothing to do!\n", argv[0], proc_rank+1 );
       }
 
       if( !oneproc ) {
@@ -1204,7 +1222,7 @@ int main(int argc, char **argv) {
             err_proc_count++; //count the number of procs that hit an error
           }
           terminated++;
-          fprintf( stderr, "%s: master received stats from worker %d\n", argv[0], buf[0]+1 );
+          fprintf( stdout, "%s: master received stats from worker %d\n", argv[0], buf[0]+1 );
         }
 
       }
@@ -1292,6 +1310,9 @@ int main(int argc, char **argv) {
         char log_subdir[PATH_MAX];
         snprintf(log_subdir, PATH_MAX, "%s/%s", argv[index],
                  log_dirent->d_name);
+
+        if( rebuild_queue.abort )
+          break;
 
         process_log_subdir(log_subdir);
       }
