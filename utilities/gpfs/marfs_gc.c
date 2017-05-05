@@ -347,15 +347,15 @@ void queue_delete( delete_entry* del_ent ) {
       exit(-1); // a bit unceremonious
    }
 
+   while( !delete_queue.abort_flag  &&  delete_queue.num_items == run_info.queue_max )
+      pthread_cond_wait(&delete_queue.queue_full, &delete_queue.queue_lock);
+
    // if an abort was signaled, stop all threads and exit
    if( delete_queue.abort_flag ) {
       pthread_mutex_unlock(&delete_queue.queue_lock);
       stop_workers();
       exit( -1 );
    }
-
-   while(delete_queue.num_items == run_info.queue_max)
-      pthread_cond_wait(&delete_queue.queue_full, &delete_queue.queue_lock);
 
    if( delete_queue.num_items != 0 ) { delete_queue.tail->next = del_ent; }
    else { delete_queue.head = del_ent; }
@@ -398,6 +398,7 @@ void* obj_destroyer( void* arg ) {
 
       // if we have recieved an abort, terminate right away
       if( delete_queue.abort_flag ) {
+         pthread_cond_broadcast(&delete_queue.queue_full); //unblock the producer, if necessary
          pthread_mutex_unlock(&delete_queue.queue_lock);
          pthread_exit( stats );
       }
