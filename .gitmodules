@@ -1,3 +1,9 @@
 [submodule "experimentation/XAPT"]
 	path = experimentation/XAPT
 	url = git@git.lanl.gov:/broomfield/ExtendedAttributePerformanceTester.git
+[submodule "aws4c"]
+	path = aws4c
+	url = https://github.com/jti-lanl/aws4c.git
+[submodule "PA2X"]
+	path = PA2X
+	url = https://github.com/mar-file-system/PA2X.git

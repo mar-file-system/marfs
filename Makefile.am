@@ -8,7 +8,7 @@
 # that will also exist at run-time, but you no longer need the PA2X
 # install at run-time.
 AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
-	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
+	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -fPIC    \
 	      -DDATAPARSE -DBUILD_INC_DIR=@includedir@ -I$(PARSE_DIR)
 
 AM_CFLAGS =
