@@ -627,6 +627,11 @@ void start_threads(int num_threads) {
     exit ( -1 ); //terminate while it's still safe to do so
   }
 
+  if( sigaction( SIGUSR1, &action, NULL ) ) {
+    fprintf( stderr, "ERROR: failed to set signal handler for SIGUSR1 -- %s\n", strerror( errno ) );
+    exit ( -1 ); //terminate while it's still safe to do so
+  }
+
   int i;
   for(i = 0; i < num_threads; i++) {
     pthread_create(&rebuild_queue.consumer_threads[i], NULL, rebuilder, NULL);
@@ -1167,6 +1172,21 @@ int main(int argc, char **argv) {
     }
     // This process is the master/output-aggregator
     else {
+      struct sigaction action;
+      action.sa_handler = SIG_IGN;
+      action.sa_flags = 0;
+      sigemptyset( &action.sa_mask );
+
+      if( sigaction( SIGINT, &action, NULL ) ) {
+        fprintf( stderr, "ERROR: failed to set signal handler for SIGINT -- %s\n", strerror( errno ) );
+        exit ( -1 ); //terminate while it's still safe to do so
+      }
+
+      if( sigaction( SIGUSR1, &action, NULL ) ) {
+        fprintf( stderr, "ERROR: failed to set signal handler for SIGUSR1 -- %s\n", strerror( errno ) );
+        exit ( -1 ); //terminate while it's still safe to do so
+      }
+
       // call comm_split, but don't bother adding the master to a new communicator
       MPI_Comm_split( MPI_COMM_WORLD, MPI_UNDEFINED, proc_rank, &proc_com );
       int terminated = 1;
