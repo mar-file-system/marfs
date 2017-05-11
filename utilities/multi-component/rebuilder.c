@@ -367,14 +367,12 @@ void usage(const char *program) {
          "    pod/block/capacity-unit to be rebuilt are chosen randomly!\n",
          program);
   printf("\nNOTE : This program defaults to a dry-run, in which no rebuilds \n"
-         "  will actually be performed!  Use \"-R\" to rebuild and write out parts.\n");
-  printf("The -w flag may be used in both modes to indicate an actual rebuild \n"
-         "  operation.  Rebuilt parts will be written out to their appropriate \n"
-         "  locations.\n");
+         "  will actually be performed!  Use \"-R\" to rebuild and write out parts.\n"
+         "  This applies to both modes.\n");
   printf("The -t option applies to both modes and is used to specify a number \n"
          "  of threads to use for the rebuild. (default = 16)\n");
-  printf("To run the rebuilder as some other user (ie. storageadmin) use "
-         "  the -u <username> option\n");
+  printf("To run the rebuilder as some other user (ie. storageadmin) use the \n"
+         "  -u <username> option\n");
   printf("The -o <filename> flag may be used to specify a file to which \n"
          "  rebuild successes should be logged\n");
   printf("The -e <filename> flag may be used to specify a file to which \n"
@@ -393,17 +391,24 @@ int rebuild_object(struct object_file object) {
 
   ne_handle object_handle;
 
+  errno = 0;
   if(object.start_block < 0) { // component-based rebuild
     object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
   }
   else { // log-based rebuild
     object_handle = ne_open(object.path, NE_REBUILD, object.start_block,
                             object.n, object.e);
-    if(object_handle == NULL)
-          object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
+    if(object_handle == NULL) {
+      errno = 0;
+      object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
+    }
   }
 
   if(object_handle == NULL) {
+    if( errno == ENOENT ) { //ignore the failure to open an incomplete object
+      if( verbose ) printf( "INFO: skipping unfinished object %s\n", object.path );
+      return 0;
+    }
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
             object.path, strerror(errno));
     return -1;
@@ -962,7 +967,7 @@ int main(int argc, char **argv) {
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
 
   if( proc_rank == 0  &&  dry_run )
-    fprintf(stderr, "%s: WARNING: this is a dry-run, no actual rebuilds will be performed (run with -w to change this)\n", argv[0] );
+    fprintf(stdout, "%s: WARNING: this is a dry-run, no actual rebuilds will be performed (run with -R to change this)\n", argv[0] );
 
   MPI_Comm proc_com;
 
@@ -1107,11 +1112,11 @@ int main(int argc, char **argv) {
       // Print off a message
       if ( scatter_range[1] < scatter_range[0] ) {
         // if there are more procs that scatters, procs with no work will have a backwards range
-        fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [ No work to be done! ] )\n",
+        fprintf( stdout, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [ No work to be done! ] )\n",
            argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width );
       }
       else {
-        fprintf( stderr, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [%d,%d] )\n",
+        fprintf( stdout, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [%d,%d] )\n",
            argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
       }
 
@@ -1259,11 +1264,11 @@ int main(int argc, char **argv) {
 
       if ( error_log != NULL ) {
         fclose( error_log );
-        fprintf( stderr, "%s: error log \"%s\" resides on host '%s'\n", argv[0], e_ptr, hostname );
+        fprintf( stdout, "%s: error log \"%s\" resides on host '%s'\n", argv[0], e_ptr, hostname );
       }
       if ( success_log != NULL ) {
         fclose( success_log );
-        fprintf( stderr, "%s: success log \"%s\" resides on host '%s'\n", argv[0], s_ptr, hostname );
+        fprintf( stdout, "%s: success log \"%s\" resides on host '%s'\n", argv[0], s_ptr, hostname );
       }
       fflush( stderr );
       sleep( 1 ); //wait for previous outputs to be displayed
@@ -1300,6 +1305,7 @@ int main(int argc, char **argv) {
 
     // this is used as a pseudo-barrier, only allowing this process to continue after all others have printed their error
     MPI_Comm_split( MPI_COMM_WORLD, 1, proc_rank, &proc_com );
+    printf( "WARNING: This is a dry-run, no actual rebuilds will be performed!\n" );
 
     if(optind >= argc) {
       fprintf( stderr, "%s: too few arguments\n", argv[0] );
