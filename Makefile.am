@@ -114,7 +114,9 @@ if USE_MC_SOCKETS
   # AM_LDFLAGS  += -lrdma_sockets -lrdmacm
   # MC_SOCKET_LD_FLAGS = -lrdma_sockets -lrdmacm
   # MC_SOCKET_LD_FLAGS = -lrdmacm
-  LIBS += -lrdma_sockets -lrdmacm
+
+  ## these are now found and added by configure.ac
+  # LIBS += -lrdma_sockets -lrdmacm
 endif
 
 

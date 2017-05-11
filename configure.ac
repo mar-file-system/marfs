@@ -151,28 +151,32 @@ AS_IF([test x"$enable_mc" != xno && test x"$enable_dal" = xno],
 
 
 # --- Checks for libraries.
-
-# look for scality to ensure we have the right version.
-AC_CHECK_LIB([aws4c], [s3_enable_Scality_extensions])
-# this only exists in 
-AC_CHECK_LIB([aws4c_extra], [s3_create_bucket])
-# Not sure what to look for here, as marfs doesn't explicitly use any
-# libcrypto functions (?)
-AC_CHECK_LIB([crypto], [MD5_Init])
-AC_CHECK_LIB([curl], [curl_easy_cleanup])
+#
+# NOTE: Associated seachpaths, lib-specs, etc, are *prepended* for each
+#       find, so search in the reverse order of dependencies.
 
 # we use floorf for managing quotas
 AC_CHECK_LIB([m], [floorf])
 AC_CHECK_LIB([pthread], [pthread_create])
+
 # only need librt if we are using spinlocks
 AS_IF([test x"$enable_spinlocks" = xyes],
-            AC_CHECK_LIB([rt], [aio_cancel]))
-# Don't know what a reasonable function to look for would be...
-AC_CHECK_LIB([xml2], [xmlSAX2GetEntity])
+      AC_CHECK_LIB([rt], [aio_cancel]))
 
 # needed for the DAL
 AC_CHECK_LIB([dl], [dlsym])
 
+# These are needed for accessing object-stores, or DAL=MC+RDMA.
+AC_CHECK_LIB([crypto], [MD5_Init])
+AC_CHECK_LIB([curl], [curl_easy_cleanup])
+AC_CHECK_LIB([xml2], [xmlSAX2GetEntity])
+AC_CHECK_LIB([aws4c], [s3_enable_Scality_extensions])
+AC_CHECK_LIB([aws4c_extra], [s3_create_bucket])
+
+# DAL=MC+RDMA also needs rdma_sockets and rdmacm
+AS_IF([test x"$enable_mc" = xsockets],
+      [AC_CHECK_LIB([rdmacm], [rsocket])
+       AC_CHECK_LIB([rdma_sockets], [skt_open])])
 
 # link lib fuse if building the fuse daemon.
 # we don't want to link libfuse for everything. Just for the marfs_fuse
@@ -187,10 +191,7 @@ AS_IF([test x"$enable_mc" != xno],
 AS_IF([test x"$enable_mc" != xno],
       [AC_CHECK_LIB([ne], [ne_open])])
 
-# also need rdma_sockets and rdmacm, for MC sockets
-AS_IF([test x"$enable_mc" = xsockets],
-      [AC_CHECK_LIB([rdma_sockets], [skt_open])
-       AC_CHECK_LIB([rdmacm], [rsocket])])
+
 
 
 
