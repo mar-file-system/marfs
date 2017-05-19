@@ -64,8 +64,6 @@ import random
 
 # Name of the environment-var storing a colon-separated list of batch-FTA hostnames/IPs to be used for transfers
 BATCH_FTA_VAR='BATCH_FTAS'
-# Name of the environment-var storing the location of the pipetool_remote script on the batch-FTAs
-PIPE_REMOTE_VAR='PIPETOOL_REMOTE'
 # The name (not complete path) of the remote pipetool script (used if the above env-var is not set)
 PIPE_REMOTE_NAME='pipetool_remote'
 # Number of bytes to be read/written per iteration
@@ -74,15 +72,8 @@ BYTES = 8192
 try:
    hstr = os.environ[BATCH_FTA_VAR]
 except KeyError:
-   print >> sys.stderr, "pipetool: the environment variable '"+BATCH_FTA_VAR+"' is not set\n        this should contain a colon-separated list of batch-FTAs hostnames/IPs"
+   print >> sys.stderr, "pipetool: the environment variable '"+BATCH_FTA_VAR+"' is not set\n        this should contain a colon-separated list of batch-FTA hostnames or IPs"
    exit( errno.ENOKEY )
-
-# Identify the path to the backend pipetool on the batch-fta
-try:
-   LOC = os.environ['PIPETOOL_REMOTE']
-except KeyError:
-   # if the env-var is not set, just use the name and hope the remote script is in PATH
-   LOC = PIPE_REMOTE_NAME
 
 
 fail=False
@@ -90,13 +81,17 @@ HOSTS = hstr.split(':') # batch-FTAs
 host=random.choice(HOSTS)
 
 # Parse cmd line inputs
-parser = argparse.ArgumentParser( description="This program provides piping functionality into and out of filesystems via a second program (pipetool_remote) located on a batch FTA.  It is intended to provide piping of reasonably small files into marfs, but can be used with any FUSE filesystem.\n\nNote: when neither '-s' nor '-r' are specified, the program will attempt to determine the appropriate action.  If the file exists, it will be retrieved.  If not, and if input has been supplied, the input will be stored.", formatter_class=argparse.RawTextHelpFormatter )
+parser = argparse.ArgumentParser( description="This program provides piping functionality into and out of MarFS via a remote script located on a batch FTA.  It is intended to provide transport of reasonably small files.\n\nNote: when neither '-s' nor '-r' are specified, the program will attempt to determine the appropriate action.  If the file exists, it will be retrieved.  If not, and if input has been supplied, the input will be stored.", formatter_class=argparse.RawTextHelpFormatter )
 parser.add_argument( "-v", "--verbose",  help="increase output verbosity", action="store_true" )
 group = parser.add_mutually_exclusive_group()
 group.add_argument( "-s", "--store", help="forces a write/store to the specified location, overwriting any destination file already present.", action="store_true" )
 group.add_argument( "-r", "--retrieve", help="forces a read/retrieve from the specified location", action="store_true" )
 parser.add_argument( "PATHNAME", help="complete path to the desired input/output location" )
+parser.add_argument( "-R", metavar='REMOTE_NAME', help=argparse.SUPPRESS )
 args = parser.parse_args()
+
+if ( args.R ):
+   PIPE_REMOTE_NAME = args.R
 
 # Get the absolute path to the given file
 path = os.path.realpath( args.PATHNAME )
@@ -106,15 +101,15 @@ if ( args.verbose ):
 
 # Start pipetool_remote on host with the appropriate arg
 if ( args.store):
-   cmd=LOC+" store "+path
+   cmd=PIPE_REMOTE_NAME+" store "+path
    if ( args.verbose ):
       sys.stderr.write("pipetool: opening connection process for write...")
 elif ( args.retrieve ):
-   cmd=LOC+" retrieve "+path
+   cmd=PIPE_REMOTE_NAME+" retrieve "+path
    if ( args.verbose ):
       sys.stderr.write("pipetool: opening connection process for read...")
 else:
-   cmd=LOC+" detect "+path
+   cmd=PIPE_REMOTE_NAME+" detect "+path
    if ( args.verbose ):
       sys.stderr.write("pipetool: opening connection process for an undetermined operation...")
 
@@ -165,9 +160,9 @@ if ( err != "" ):
    if ( "pipetool_remote:" == split[0] ):
       sys.stderr.write( "pipetool: "+split[-1] )
    elif ( ssh.returncode == 127 ): #command not found
-      print >> sys.stderr, "pipetool: could not locate the remote script on batch-FTA \""+host+"\n          This could be a problem with the env-var \""+PIPE_REMOTE_VAR+"\" or the configuration of that batch-FTA."
+      print >> sys.stderr, "pipetool: could not locate the remote script on batch-FTA \""+host+"\""
    elif ( ssh.returncode == 126 ): #can not execute
-      print >> sys.stderr, "pipetool: could not execute the remote script on batch-FTA \""+host+"\"\n          This could be a problem with the env-var \""+PIPE_REMOTE_VAR+"\" or the configuration of that batch-FTA."
+      print >> sys.stderr, "pipetool: could not execute the remote script on batch-FTA \""+host+"\""
    else:
       sys.stderr.write( err )
    sys.stderr.flush()
