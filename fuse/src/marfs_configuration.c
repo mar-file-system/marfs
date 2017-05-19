@@ -1301,6 +1301,9 @@ static MarFS_Config_Ptr read_configuration_internal() {
  * we treat as a no-op.
  */
 
+    if (! p_ns->bperms)
+       p_ns->bperms = strdup("NONE");
+
     slen = (int) strlen( p_ns->bperms );
     perms_dup = (char *) malloc( slen + 1 );
     pd_index = 0;
@@ -1337,6 +1340,10 @@ static MarFS_Config_Ptr read_configuration_internal() {
 
     free( perms_dup );
 
+
+    if (! p_ns->iperms)
+       p_ns->iperms = strdup("NONE");
+
     slen = (int) strlen( p_ns->iperms );
     perms_dup = (char *) malloc( slen + 1 );
     pd_index = 0;
@@ -1363,7 +1370,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
         m_ns->iperms |= T_DATA;
       } else if ( ! strcasecmp( tok, "UD" )) {
         m_ns->iperms |= U_DATA;
-      } else {
+      } else if ( strcasecmp( tok, "NONE" )) {
         LOG( LOG_ERR, "Invalid iperms value of \"%s\".\n", tok );
         return NULL;
       }
