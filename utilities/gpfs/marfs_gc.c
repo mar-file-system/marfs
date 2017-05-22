@@ -798,14 +798,15 @@ void update_payload( void* new, void** old){
       (*tmp)->next = NULL;
       OP->tail = (*tmp);
 
-      //take the greatest file count as the true one
       if ( OP->chunks != NP->chunks ) {
-         if( NP->chunks > OP->chunks ) OP->chunks = NP->chunks;
-         if ( OP->chunks != 1  &&  NP->chunks != 1 ) {
-            fprintf( stderr, "WARNING: update_payload -- potential faulty MarFS POST xattr for %s or %s ( current count = %d, new count = %d )\n", 
-               NP->md_path, OP->files->md_path, OP->chunks, NP->chunks );
+         if ( OP->chunks == 1 ) {
+            OP->chunks = NP->chunks;
+         }
+         else if ( NP->chunks != 1  &&  OP->chunks != -1 ) {
+            fprintf( stderr, "WARNING: update_payload -- detected faulty MarFS POST xattr when processing %s ( current count = %d, new count = %d )\n", 
+               NP->md_path, OP->chunks, NP->chunks );
             run_info.warnings++;
-            OP->chunks++; //increment OP->chunks to avoid deleting this object
+            OP->chunks = -1; //set count to avoid deleting this object
          }
       }
       if ( OP->ns != NP->ns ) {
@@ -1502,8 +1503,8 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
       ht_header p_header = (ht_header) entry->payload;      
       file = p_header->files;
 
-      // If we are missing files from the packed object, skip the deletion
-      if (entry->value < p_header->chunks) {
+      // If we are missing files from the packed object or a problem was found, skip the deletion
+      if ( entry->value < p_header->chunks  ||  p_header->chunks == -1 ) {
          //free the payload list
          free_packed_files( file, 0 );
          free( p_header );
