@@ -85,15 +85,15 @@ OF SUCH DAMAGE.
 
 typedef struct payload_file_struct {
    char* md_path;
-   size_t size;
-   time_t md_ctime;
+   size_t size; //needed?
+   time_t md_ctime; //needed?
    struct payload_file_struct* next;
 } *ht_file;
 
 typedef struct payload_header_struct {
    size_t chunks;
    MarFS_Namespace_Ptr ns;
-   time_t md_ctime;
+   time_t md_ctime; //needed?
    struct payload_file_struct* files;
    struct payload_file_struct* tail;
 } *ht_header;
@@ -798,9 +798,15 @@ void update_payload( void* new, void** old){
       (*tmp)->next = NULL;
       OP->tail = (*tmp);
 
+      //take the greatest file count as the true one
       if ( OP->chunks != NP->chunks ) {
-         fprintf( stderr, "WARNING: update_payload -- xattr file count of %zd for %s does not match expected %zd (from %s)\n", NP->chunks, NP->md_path, OP->chunks, OP->files->md_path );
-         run_info.warnings++;
+         if( NP->chunks > OP->chunks ) OP->chunks = NP->chunks;
+         if ( OP->chunks != 1  &&  NP->chunks != 1 ) {
+            fprintf( stderr, "WARNING: update_payload -- potential faulty MarFS POST xattr for %s or %s ( current count = %d, new count = %d )\n", 
+               NP->md_path, OP->files->md_path, OP->chunks, NP->chunks );
+            run_info.warnings++;
+            OP->chunks++; //increment OP->chunks to avoid deleting this object
+         }
       }
       if ( OP->ns != NP->ns ) {
          fprintf( stderr, "WARNING: update_payload -- xattr MarFS Namespace for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
@@ -1496,32 +1502,18 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
       ht_header p_header = (ht_header) entry->payload;      
       file = p_header->files;
 
-      if (entry->value != p_header->chunks) {
-
-         // TODO check min_pack_file_count to determine canidacy for repack
-         if ( rt  &&  ( entry->value < p_header->chunks ) ) {
-            VERB_FPRINTF( stderr, "%cINFO: repack canidate found, but repack is not implemented\n", sep_char );
-            sep_char = '\0';
-
-            // TODO insert into rt table
-         }
-         else {
-            if ( entry->value > p_header->chunks ) {
-               fprintf(stderr, "%cWARNING: potential faulty 'marfs_post' xattr -- object %s has %d files while chunk count is %zd  MD-example = %s\n",
-                  sep_char, entry->key, entry->value, p_header->chunks, file->md_path);
-               run_info.warnings++;
-               sep_char = '\0';
-            }
-
-            //free the payload list
-            free_packed_files( file, 0 );
-            free( p_header );
-         }
+      // If we are missing files from the packed object, skip the deletion
+      if (entry->value < p_header->chunks) {
+         //free the payload list
+         free_packed_files( file, 0 );
+         free( p_header );
          continue;
       }
 
       if ( run_info.no_delete ) {
          fprintf(run_info.outfd, "ID'd packed object %s\n", entry->key);
+         free_packed_files( file, 0 );
+         free( p_header );
          continue;
       }
 
