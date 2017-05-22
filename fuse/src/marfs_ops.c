@@ -2205,14 +2205,14 @@ int marfs_release (const char*        path,
 
 /**
  * Pftool needs a way to finialize files after it has confirmed that those
- * files have been commited. This function clears the restart flag and sets
- * the object field to be correct for packed files.
+ * files have been commited. This function sets the object field to be correct
+ * for packed files.
  *
  * @param path The path to cleanup
  * @param packFileCount The number of packed files in the object
  * @return 0 on success
  */
-int marfs_packed_cleanup(const char* path, size_t packedFileCount) {
+int marfs_packed_set_post(const char* path, size_t packedFileCount) {
    TRY_DECLS();
    LOG(LOG_INFO, "%s\n", path);
 
@@ -2222,13 +2222,45 @@ int marfs_packed_cleanup(const char* path, size_t packedFileCount) {
 
    STAT_XATTRS(&info);
    if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
+      // set the packed file count for the packed file
+      info.post.chunks = packedFileCount;
 
+      // save the new xattr
+      SAVE_XATTRS(&info, (XVT_POST));
+
+      }
+   else
+      LOG(LOG_INFO, "no xattrs\n");
+
+   return 0;
+
+}
+
+/**
+ * Pftool needs a way to finialize files after it has confirmed that those
+ * files have been commited. This function clears the restart flag after the
+ * file is written.
+ *
+ * @param path The path to cleanup
+ * @return 0 on success
+ */
+int marfs_packed_clear_restart(const char* path) {
+   TRY_DECLS();
+   LOG(LOG_INFO, "%s\n", path);
+
+   PathInfo info;
+   memset((char*)&info, 0, sizeof(PathInfo));
+   EXPAND_PATH_INFO(&info, path);
+
+   STAT_XATTRS(&info);
+   if (has_all_xattrs(&info, MARFS_MD_XATTRS)) {
       // As in release(), we take note of whether RESTART was saved with
       // a restrictive mode, which we couldn't originally install because
       // would've prevented manipulating xattrs.  If so, then (after removing
       // the RESTART xattr) install the more-restrictive mode.
       int    install_new_mode = 0;
       mode_t new_mode = 0;      // else gcc worries about "used uninitialized"
+
       if (has_all_xattrs(&info, XVT_RESTART)
           && (info.restart.flags & RESTART_MODE_VALID)) {
 
@@ -2240,11 +2272,9 @@ int marfs_packed_cleanup(const char* path, size_t packedFileCount) {
       // because the object stream has not been closed and we cannot know that
       // the data has been commited to disc
       info.xattrs &= ~(XVT_RESTART);
-      // set the packed file count for the packed file
-      info.post.chunks = packedFileCount;
 
       // save the new xattr
-      SAVE_XATTRS(&info, (XVT_RESTART|XVT_POST));
+      SAVE_XATTRS(&info, (XVT_RESTART));
 
       // install more-restrictive mode, if needed.
       if (install_new_mode) {
@@ -2257,6 +2287,7 @@ int marfs_packed_cleanup(const char* path, size_t packedFileCount) {
    return 0;
 
 }
+
 
 // If we are sharing a file handle to write to a packed object we need to
 // close the stream once we are completly done. Before a program exists it
