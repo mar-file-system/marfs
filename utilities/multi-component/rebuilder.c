@@ -115,6 +115,7 @@ struct rebuild_stats {
   int              rebuild_successes;
   int              total_objects;
   int              intact_objects;
+  int              incomplete_objects;
   // the repo list should only be touched by the main thread. so
   // don't do any locking in record_failure_stats().
   stat_list_t     *repo_list;
@@ -232,6 +233,7 @@ void print_stats() {
   if ( dry_run ) {
     printf("==== Dry-Run Summary ====\n");
     printf("objects examined:         %*d\n", 10, stats.total_objects);
+    printf("incomplete objects:       %*d\n", 10, stats.incomplete_objects);
     printf("objects with all blocks:  %*d\n", 10, stats.intact_objects);
     printf("objects needing rebuild:  %*d\n", 10, stats.rebuild_successes);
     printf("unrecoverable objects:    %*d\n", 10, stats.rebuild_failures);
@@ -239,10 +241,11 @@ void print_stats() {
   }
   else {
     printf("==== Rebuild Summary ====\n");
-    printf("objects examined:  %*d\n", 10, stats.total_objects);
-    printf("intact objects:    %*d\n", 10, stats.intact_objects);
-    printf("rebuilt objects:   %*d\n", 10, stats.rebuild_successes);
-    printf("failed rebuilds:   %*d\n", 10, stats.rebuild_failures);
+    printf("objects examined:   %*d\n", 10, stats.total_objects);
+    printf("incomplete objects: %*d\n", 10, stats.incomplete_objects);
+    printf("intact objects:     %*d\n", 10, stats.intact_objects);
+    printf("rebuilt objects:    %*d\n", 10, stats.rebuild_successes);
+    printf("failed rebuilds:    %*d\n", 10, stats.rebuild_failures);
   }
 }
 
@@ -407,7 +410,7 @@ int rebuild_object(struct object_file object) {
   if(object_handle == NULL) {
     if( errno == ENOENT ) { //ignore the failure to open an incomplete object
       if( verbose ) printf( "INFO: skipping unfinished object %s\n", object.path );
-      return 0;
+      return -2; //signal an incomplete object
     }
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
             object.path, strerror(errno));
@@ -421,6 +424,7 @@ int rebuild_object(struct object_file object) {
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
             object.path, strerror(errno));
     ne_close(object_handle); //close and ignore any errors
+    return -1;
   }
   else {
     int error = ne_close(object_handle);
@@ -557,7 +561,10 @@ void *rebuilder(void *arg) {
         return NULL;
       }
 
-      if(rebuild_result < 0) {
+      if ( rebuild_result == -2 ) {
+        stats.incomplete_objects++;
+      }
+      else if( rebuild_result < 0 ) {
         stats.rebuild_failures++;
         if( error_log != NULL ) {
           if( total_procs == 1 ) { //if this is the only process, just wite to the log
@@ -944,11 +951,12 @@ int main(int argc, char **argv) {
     }
   }
 
-  stats.rebuild_failures  = 0;
-  stats.rebuild_successes = 0;
-  stats.intact_objects    = 0;
-  stats.total_objects     = 0;
-  stats.repo_list         = NULL;
+  stats.rebuild_failures      = 0;
+  stats.rebuild_successes     = 0;
+  stats.intact_objects        = 0;
+  stats.incomplete_objects    = 0;
+  stats.total_objects         = 0;
+  stats.repo_list             = NULL;
 
   ht_init(&rebuilt_objects, ht_size);
 
@@ -1146,14 +1154,15 @@ int main(int argc, char **argv) {
       }
 
       if( !oneproc ) {
-        int statbuf[6];
+        int statbuf[7];
         statbuf[0] = proc_rank;
         statbuf[1] = stats.total_objects;
         statbuf[2] = stats.intact_objects;
         statbuf[3] = stats.rebuild_successes;
         statbuf[4] = stats.rebuild_failures;
-        statbuf[5] = skipped_scatters;
-        if( MPI_Send( &statbuf[0], 6, MPI_INT, 0, MPI_STATS_CHANNEL, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
+        statbuf[5] = stats.incomplete_objects;
+        statbuf[6] = skipped_scatters;
+        if( MPI_Send( &statbuf[0], 7, MPI_INT, 0, MPI_STATS_CHANNEL, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
            fprintf( stderr, "%s: worker process %d failed to transmit its term state to the master\n", argv[0], proc_rank+1 );
         }
 
@@ -1199,7 +1208,7 @@ int main(int argc, char **argv) {
       int err_procs[num_procs - 1];
       int err_proc_count = 0;
 
-      int buf[6];
+      int buf[7];
       char err_log[MC_MAX_LOG_LEN];
       char suc_log[MC_MAX_LOG_LEN];
       int res_flag;
@@ -1232,7 +1241,7 @@ int main(int argc, char **argv) {
 
         // open a new non-blocking recieve request for final worker status
         if ( stats_request == MPI_REQUEST_NULL )
-          MPI_Irecv( &buf[0], 6, MPI_INT, MPI_ANY_SOURCE, MPI_STATS_CHANNEL, MPI_COMM_WORLD, &stats_request );
+          MPI_Irecv( &buf[0], 7, MPI_INT, MPI_ANY_SOURCE, MPI_STATS_CHANNEL, MPI_COMM_WORLD, &stats_request );
 
         MPI_Test( &stats_request, &res_flag, &status );
         if( res_flag ) {
@@ -1241,7 +1250,8 @@ int main(int argc, char **argv) {
           stats.intact_objects += buf[2];
           stats.rebuild_successes += buf[3];
           stats.rebuild_failures += buf[4];
-          skipped_scatters += buf[5];
+          stats.incomplete_objects += buf[5];
+          skipped_scatters += buf[6];
           if ( buf[5] ) {
             err_procs[err_proc_count] = buf[0]+1;
             err_proc_count++; //count the number of procs that hit an error
