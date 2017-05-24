@@ -77,10 +77,12 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "erasure.h"
 
 #define QUEUE_MAX 256
+#define PROGRESS_DELAY 100 //number of objects to be rebuilt before printing a progress indicator
 #define MPI_STATS_CHANNEL 145
 #define MPI_ERR_CHANNEL 141
 #define MPI_SUC_CHANNEL 142
 #define MPI_INT_CHANNEL 143
+#define VRB_FPRINTF(...)   if(verbose) { fprintf(__VA_ARGS__); }
 
 
 struct object_file {
@@ -409,7 +411,7 @@ int rebuild_object(struct object_file object) {
 
   if(object_handle == NULL) {
     if( errno == ENOENT ) { //ignore the failure to open an incomplete object
-      if( verbose ) printf( "INFO: skipping unfinished object %s\n", object.path );
+      VRB_FPRINTF( stdout, "INFO: skipping unfinished object %s\n", object.path );
       return -2; //signal an incomplete object
     }
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
@@ -540,9 +542,10 @@ void *rebuilder(void *arg) {
 
       // update statistics here so they are protected by queue locking.
       stats.total_objects++;
+      if( !verbose  &&  stats.total_objects % PROGRESS_DELAY == 0 ) { printf( "." ); fflush( stdout ); }
 
-      if(verbose && !(stats.total_objects % 100)) {
-        printf("INFO: total rebuilds completed: %d\n", stats.total_objects);
+      if( !(stats.total_objects % 100) ) {
+        VRB_FPRINTF( stdout, "INFO: total rebuilds completed: %d\n", stats.total_objects );
       }
 
       // signal the producer to wake up, in case it was sleeping, and
@@ -768,7 +771,7 @@ int rebuild_component(MarFS_Repo_Ptr repo,
       failed++;
       continue;
     }
-    
+
     if(verbose) {
       printf("INFO: rebuilding scatter%d\n", scatter);
     }
@@ -913,7 +916,7 @@ int main(int argc, char **argv) {
     }
     case 'u':
       if((pw = getpwnam(optarg)) == NULL) {
-        fprintf( stderr, "%s: failed to retireve uid for the user \"%s\"\n", argv[0], optarg );
+        fprintf( stderr, "ERROR: failed to retireve uid for the user \"%s\"\n", optarg );
         exit(-1);
       }
       break;
@@ -925,28 +928,28 @@ int main(int argc, char **argv) {
 
   // load the marfs config.
   if(read_configuration()) {
-    fprintf( stderr, "%s: failed to read marfs configuration\n", argv[0] );
+    fprintf( stderr, "ERROR: failed to read marfs configuration\n" );
     exit(-1);
   }
   if(validate_configuration()) {
-    fprintf(stderr, "%s: failed to validate marfs configuration\n", argv[0]);
+    fprintf(stderr, "ERROR: failed to validate marfs configuration\n");
     exit(-1);
   }
 
   if ( pw != NULL ) {
     if( error_log != NULL  &&  chown( e_ptr, pw->pw_uid, pw->pw_gid ) ) {
-        printf( "%s: failed to chown() error log\n", argv[0] );
+        printf( "ERROR: failed to chown() error log\n" );
     }
     if( success_log != NULL  &&  chown( s_ptr, pw->pw_uid, pw->pw_gid ) ) {
-        printf( "%s: failed to chown() success log\n", argv[0] );
+        printf( "ERROR: failed to chown() success log\n" );
     }
 
     if(setgid(pw->pw_gid) != 0) {
-      fprintf( stderr, "%s: failed to setgid to specified user: %s\n", argv[0], strerror(errno) );
+      fprintf( stderr, "ERROR: failed to setgid to specified user: %s\n", strerror(errno) );
       exit(-1);
     }
     if(setuid(pw->pw_uid) != 0) {
-      fprintf( stderr, "%s: failed to setuid to specified user: %s\n", argv[0], strerror(errno) );
+      fprintf( stderr, "ERROR: failed to setuid to specified user: %s\n", strerror(errno) );
       exit(-1);
     }
   }
@@ -975,7 +978,7 @@ int main(int argc, char **argv) {
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
 
   if( proc_rank == 0  &&  dry_run )
-    fprintf(stdout, "%s: WARNING: this is a dry-run, no actual rebuilds will be performed (run with -R to change this)\n", argv[0] );
+    fprintf(stdout, "INFO: this is a dry-run, no actual rebuilds will be performed (run with -R to change this)\n");
 
   MPI_Comm proc_com;
 
@@ -1023,8 +1026,8 @@ int main(int argc, char **argv) {
 
     if( !repo ) { 
       if ( proc_rank == 0 )
-         fprintf( stderr, "%s: failed to retrieve repo"
-           " by name \"%s\", check your config file\n", argv[0], repo_name );
+         fprintf( stderr, "ERROR: failed to retrieve repo"
+           " by name \"%s\", check your config file\n", repo_name );
       MPI_Finalize();
       return -1; 
     }   
@@ -1038,21 +1041,21 @@ int main(int argc, char **argv) {
         srand( time(0) );
         if ( pod == -1 ) {
           data[0] = rand_less_than( config->num_pods );
-          printf( "%s: using random pod - %d\n", argv[0], data[0] );
+          printf( "INFO: using random pod - %d\n", data[0] );
         }
         else {
           data[0] = pod;
         }
         if ( block == -1 ) {
           data[1] = rand_less_than( (config->n + config->e) );
-          printf( "%s: using random block - %d\n", argv[0], data[1] );
+          printf( "INFO: using random block - %d\n", data[1] );
         }
         else {
           data[1] = block;
         }
         if ( cap == -1 ) {
           data[2] = rand_less_than( config->num_cap );
-          printf( "%s: using random capacity unit - %d\n", argv[0], data[2] );
+          printf( "INFO: using random capacity unit - %d\n", data[2] );
         }
         else {
           data[2] = cap;
@@ -1070,14 +1073,14 @@ int main(int argc, char **argv) {
       if( config->scatter_width - 1 < scatter_range[1] ) {
         scatter_range[1] = config->scatter_width - 1;
         if( proc_rank == 0 )
-          fprintf( stderr, "%s: upper scatter range exceeds range defined by repo,"
-            " lowering upper bound to %d\n", argv[0], scatter_range[1] );
+          fprintf( stderr, "WARNING: upper scatter range exceeds range defined by repo,"
+            " lowering upper bound to %d\n", scatter_range[1] );
       }
       if( scatter_range[0] < 0 ) {
         scatter_range[0] = 0;
         if( proc_rank == 0 )
-          fprintf( stderr, "%s: lower scatter range is negative,"
-            " reseting lower bound to %d\n", argv[0], scatter_range[0] );
+          fprintf( stderr, "WARNING: lower scatter range is negative,"
+            " reseting lower bound to %d\n", scatter_range[0] );
       }
     }
 
@@ -1090,6 +1093,13 @@ int main(int argc, char **argv) {
         num_procs--;
         proc_rank--;
         oneproc = 0;
+      }
+      else {
+        printf( "INFO: Running with %d threads\n", threads );
+        if ( ! verbose ) {
+          printf( "Rebuilding Objects..." );
+          fflush( stdout );
+        }
       }
 
       int scatter_width = config->scatter_width;
@@ -1120,12 +1130,12 @@ int main(int argc, char **argv) {
       // Print off a message
       if ( scatter_range[1] < scatter_range[0] ) {
         // if there are more procs that scatters, procs with no work will have a backwards range
-        fprintf( stdout, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [ No work to be done! ] )\n",
-           argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width );
+        VRB_FPRINTF( stdout, "INFO: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [ No work to be done! ] )\n",
+           proc_rank+1, num_procs, hostname, repo->name, config->scatter_width );
       }
       else {
-        fprintf( stdout, "%s: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [%d,%d] )\n",
-           argv[0], proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
+        VRB_FPRINTF( stdout, "INFO: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [%d,%d] )\n",
+           proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
       }
 
       struct timespec tspec;
@@ -1144,13 +1154,13 @@ int main(int argc, char **argv) {
 
       // only do work if there is some to be done
       if ( scatter_range[1] >= scatter_range[0] ) {
-        printf( "%s: worker %d starting %d threads\n", argv[0], proc_rank+1, threads );
+        VRB_FPRINTF( stdout, "INFO: worker %d starting\n", proc_rank+1 );
         start_threads(threads);
         skipped_scatters = rebuild_component( repo, pod, block, cap, scatter_range );
         stop_workers();
       }
       else {
-        fprintf( stderr, "%s: worker %d terminating early as it has nothing to do!\n", argv[0], proc_rank+1 );
+        fprintf( stderr, "WARNING: worker %d terminating early as it has nothing to do!\n", proc_rank+1 );
       }
 
       if( !oneproc ) {
@@ -1163,23 +1173,26 @@ int main(int argc, char **argv) {
         statbuf[5] = stats.incomplete_objects;
         statbuf[6] = skipped_scatters;
         if( MPI_Send( &statbuf[0], 7, MPI_INT, 0, MPI_STATS_CHANNEL, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
-           fprintf( stderr, "%s: worker process %d failed to transmit its term state to the master\n", argv[0], proc_rank+1 );
+           fprintf( stderr, "ERROR: worker process %d failed to transmit its term state to the master\n", proc_rank+1 );
         }
 
       }
       else {
         if ( error_log != NULL ) {
           fclose( error_log );
-          fprintf( stderr, "%s: error log \"%s\" resides on host '%s'\n", argv[0], e_ptr, hostname );
+          fprintf( stdout, "INFO: error log \"%s\" resides on host '%s'\n", e_ptr, hostname );
         }
         if ( success_log != NULL ) {
           fclose( success_log );
-          fprintf( stderr, "%s: success log \"%s\" resides on host '%s'\n", argv[0], s_ptr, hostname );
+          fprintf( stdout, "INFO: success log \"%s\" resides on host '%s'\n", s_ptr, hostname );
         }
         fflush( stderr );
+        if( ! verbose ) { printf( "rebuilds completed\n" ); }
+        printf( "Rebuild of ( Pod %d, Block %d, Cap %d )\n", pod, block, cap );
         print_stats();
+
         if ( skipped_scatters ) {
-          fprintf( stderr, "%s: CRITICAL ERROR: %d scatter dir(s) could not be accessed (see above messages)\n", argv[0], skipped_scatters );
+          fprintf( stderr, "CRITICAL ERROR: %d scatter dir(s) could not be accessed (see above messages)\n", skipped_scatters );
         }
       }
   
@@ -1199,6 +1212,13 @@ int main(int argc, char **argv) {
       if( sigaction( SIGUSR1, &action, NULL ) ) {
         fprintf( stderr, "ERROR: failed to set signal handler for SIGUSR1 -- %s\n", strerror( errno ) );
         exit ( -1 ); //terminate while it's still safe to do so
+      }
+
+      printf( "INFO: Running with %d threads per worker\n", threads );
+
+      if( ! verbose ) {
+        printf( "Rebuilding Objects..." );
+        fflush( stdout );
       }
 
       // call comm_split, but don't bother adding the master to a new communicator
@@ -1257,7 +1277,7 @@ int main(int argc, char **argv) {
             err_proc_count++; //count the number of procs that hit an error
           }
           terminated++;
-          fprintf( stdout, "%s: master received stats from worker %d\n", argv[0], buf[0]+1 );
+          VRB_FPRINTF( stdout, "INFO: master received stats from worker %d\n", buf[0]+1 );
         }
 
       }
@@ -1274,16 +1294,17 @@ int main(int argc, char **argv) {
 
       if ( error_log != NULL ) {
         fclose( error_log );
-        fprintf( stdout, "%s: error log \"%s\" resides on host '%s'\n", argv[0], e_ptr, hostname );
+        fprintf( stdout, "INFO: error log \"%s\" resides on host '%s'\n", e_ptr, hostname );
       }
       if ( success_log != NULL ) {
         fclose( success_log );
-        fprintf( stdout, "%s: success log \"%s\" resides on host '%s'\n", argv[0], s_ptr, hostname );
+        fprintf( stdout, "INFO: success log \"%s\" resides on host '%s'\n", s_ptr, hostname );
       }
       fflush( stderr );
+      if( ! verbose ) { printf( "rebuilds completed\n" ); }
       sleep( 1 ); //wait for previous outputs to be displayed
+      printf( "Rebuild of ( Pod %d, Block %d, Cap %d )\n", pod, block, cap );
       print_stats();
-      fflush( stdout );
       if ( skipped_scatters ) { //if any scatters were skipped, print error messages
         sleep( 1 ); //wait for previous outputs to be displayed
         ret_stat = -1;
@@ -1325,14 +1346,19 @@ int main(int argc, char **argv) {
       exit(-1);
     }
 
+    if( ! verbose ) {
+      printf( "Rebuilding Objects..." );
+      fflush( stdout );
+    }
+
     start_threads(threads);
     int index;
     for(index = optind; index < argc; index++) {
 
       DIR *log_dir = opendir(argv[index]);
       if(!log_dir) {
-        fprintf(stderr, "%s: could not open log dir %s: %s\n",
-                argv[0], argv[index], strerror(errno));
+        fprintf(stderr, "ERROR: could not open log dir %s: %s\n",
+                argv[index], strerror(errno));
         MPI_Finalize();
         exit(-1);
       }
@@ -1357,6 +1383,7 @@ int main(int argc, char **argv) {
     }
 
     stop_workers();
+    if( ! verbose ) { printf( "rebuilds completed\n" ); }
     print_stats();
   }
 
