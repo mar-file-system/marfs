@@ -803,19 +803,21 @@ void update_payload( void* new, void** old){
             OP->chunks = NP->chunks;
          }
          else if ( NP->chunks != 1  &&  OP->chunks != -1 ) {
-            fprintf( stderr, "WARNING: update_payload -- detected faulty MarFS POST xattr when processing %s ( current count = %d, new count = %d )\n", 
+            fprintf( stderr, "ERROR: update_payload -- detected faulty MarFS POST xattr when processing %s ( current count = %d, new count = %d )\n", 
                NP->md_path, OP->chunks, NP->chunks );
-            run_info.warnings++;
+            run_info.errors++;
             OP->chunks = -1; //set count to avoid deleting this object
          }
       }
       if ( OP->ns != NP->ns ) {
-         fprintf( stderr, "WARNING: update_payload -- xattr MarFS Namespace for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
-         run_info.warnings++;
+         fprintf( stderr, "ERROR: update_payload -- xattr MarFS Namespace for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
+         run_info.errors++;
+         OP->chunks = -1; //set count to avoid deleting this object
       }
       if ( OP->md_ctime != NP->md_ctime ) {
-         fprintf( stderr, "WARNING: update_payload -- xattr md_ctime for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
-         run_info.warnings++;
+         fprintf( stderr, "ERROR: update_payload -- xattr md_ctime for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
+         run_info.errors++;
+         OP->chunks = -1; //set count to avoid deleting this object
       }
    }
 }
@@ -1061,8 +1063,9 @@ int read_inodes(const char   *fnameP,
                         count = %d index=%d\n", xattr_ptr->xattr_name, \
                         xattr_ptr->xattr_value, xattr_count,xattr_index);
                   if ((str_2_post(post, xattr_ptr->xattr_value, 1))) {
-                     fprintf(stderr, "%cError parsing  post xattr for inode %d\n",
-                           sep_char, iattrP->ia_inode);
+                     fprintf(stderr, "%cERROR: parsing of post xattr (%s) failed for inode %d\n",
+                           sep_char, xattr_ptr->xattr_value, iattrP->ia_inode);
+                     run_info.errors++;
                      sep_char = '\0';
                      continue;
                   }
@@ -1090,6 +1093,18 @@ int read_inodes(const char   *fnameP,
                   if (now-day_seconds > iattrP->ia_atime.tv_sec) {
                      LOG(LOG_INFO, "Found trash\n");
                      md_path_ptr = &post->md_path[0];
+
+                     // check for the existance of a trash companion file
+                     struct stat comp_stat;
+                     char comp_file[ MARFS_MAX_MD_PATH ];
+                     strncpy( comp_file, md_path_ptr, MARFS_MAX_MD_PATH );
+                     strncat( comp_file, MARFS_TRASH_COMPANION_SUFFIX, MARFS_MAX_MD_PATH );
+                     if ( stat( comp_file, &comp_stat ) ) {
+                        fprintf( stderr, "%cWARNING: found trash file \"%s\" with no companion file\n", sep_char, md_path_ptr );
+                        run_info.warnings++;
+                        sep_char = '\0';
+                        continue;
+                     }
 
                      // Get OBJID xattr (aka "pre")
                      if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
@@ -1395,7 +1410,7 @@ int delete_file( char *filename )
 {
    int return_value = 0;
    char path_file[MARFS_MAX_MD_PATH];
-   sprintf(path_file, "%s.path",filename);
+   sprintf(path_file, "%s%s",filename,MARFS_TRASH_COMPANION_SUFFIX);
 
    // Delete MD-file (unless '-n')
    print_delete_preamble();
