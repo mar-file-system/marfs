@@ -1048,7 +1048,11 @@ int read_inodes(const char   *fnameP,
             // check if it specifies the file is trash.
             if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
                         marfs_xattrs, marfs_xattr_cnt, 
-                        &mar_xattrs[0])) > 0) {
+                        &mar_xattrs[0])) <= 0) {
+               fprintf( stderr, "ERROR: failed to retrieve xattrs for inode %d\n", iattrP->ia_inode );
+               run_info.errors++;
+            }
+            else {
 
                int res_xattr_index;
                int pre_xattr_index;
@@ -1071,6 +1075,12 @@ int read_inodes(const char   *fnameP,
                   }
                }
                else {
+                  if ( fileset_id >= 0 ) {
+                     fprintf( stderr, "%cWARNING: encountered inode %d with no POST xattr in the trash fileset\n", 
+                           sep_char, iattrP->ia_inode );
+                     run_info.warnings++;
+                     sep_char = '\0';
+                  }
 //                  if ( (pre_xattr_index = get_xattr_value(&mar_xattrs[0], marfs_xattrs[objid_index], xattr_count)) < 0 ) {
 //                     if ( (res_xattr_index = get_xattr_value(&mar_xattrs[0], marfs_xattrs[restart_index], xattr_count)) >= 0 ){
 //                        fprintf(stderr, "%cWARNING: foud a restart xattr (%s) but no pre/post for inode %d\n", 
