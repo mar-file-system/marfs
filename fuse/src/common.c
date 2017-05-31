@@ -1596,11 +1596,20 @@ int  trash_truncate(PathInfo*   info,
    // update trash-file atime/mtime to support "undelete"
    __TRY0( MD_PATH_OP(utime, info->ns, info->trash_md_path, &trash_time) );
 
-   // clean out marfs xattrs on the original
-   __TRY0( trunc_xattrs(info) );
+   // set a RESTART xattr on the original MD-file
+   MarFS_XattrRestart orig_restart = info->restart;
+   XattrMaskType orig_xattrs = info->xattrs;
+   info->xattrs = XVT_RESTART;
+   __TRY0( init_restart( &(info->restart) ) );
+   __TRY0( save_xattrs( info, XVT_RESTART ) );
+   info->xattrs = orig_xattrs;
+   info->restart = orig_restart;
 
    // write full-MDFS-path of original-file into trash-companion file
    __TRY0( write_trash_companion_file(info, path, &trash_time) );
+
+   // clean out marfs xattrs on the original
+   __TRY0( trunc_xattrs(info) );
 
    // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
    info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY);
