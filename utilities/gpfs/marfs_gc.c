@@ -1048,11 +1048,7 @@ int read_inodes(const char   *fnameP,
             // check if it specifies the file is trash.
             if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
                         marfs_xattrs, marfs_xattr_cnt, 
-                        &mar_xattrs[0])) <= 0) {
-               fprintf( stderr, "ERROR: failed to retrieve xattrs for inode %d\n", iattrP->ia_inode );
-               run_info.errors++;
-            }
-            else {
+                        &mar_xattrs[0])) > 0) {
 
                int res_xattr_index;
                int pre_xattr_index;
