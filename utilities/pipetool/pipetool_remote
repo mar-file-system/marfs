@@ -67,6 +67,11 @@ MARFS_CONF_ENV='MARFSCONFIGEX'
 # The name of the config reader executable (used for PATH lookup if the above env-var is not set)
 MARFS_CONF_NAME='marfs_config'
 
+def print_usage():
+   print "usage -- pipetool_remote OP_CODE PATH"
+   print "   OP_CODE = { 0 = read, 1 = store, 2 = append, 3 = overwrite }"
+   return
+
 
 # locate the 'marfs_config' executable
 try:
@@ -96,7 +101,8 @@ if ( err != "" ):
 
 # Verify number of arguments
 if ( len(sys.argv) != 3 ):
-   print >> sys.stderr, "pipetool_remote: usage: pipetool_remote {store, retrieve} PATHNAME"
+   print >> sys.stderr, "pipetool_remote: received an improper number of arguments"
+   print_usage()
    exit( errno.EINVAL )
 
 # construct a regex based upon the mnt_top paths in the MarFS config
@@ -113,6 +119,8 @@ for line in lines:
 regstr += "$"
 
 regex = re.compile( regstr  )
+
+# follow symlinks to construct a true absolute-path
 path = os.path.realpath( sys.argv[2] )
 
 # Verify that this access is under the MarFS 'mnt_top'
@@ -120,48 +128,58 @@ if ( not regex.match(path) ):
    print >> sys.stderr, "pipetool_remote: operation not permitted: accessing non-MarFS paths is forbidden"
    exit( errno.EPERM )
 
-store = False  #specifies the operation to perform
-data = ""      #data read from stdin
+OP = 0      #specifies the operation to perform { 0 = read, 1 = store, 2 = append, 3 = overwrite }
 
-# Parse args
-if ( sys.argv[1] == "store" ):
-   store = True
-elif ( sys.argv[1] == "detect" ):
-   data = sys.stdin.read( BYTES )
-   if ( data != "" ):
-      if ( os.path.isfile( path ) ):
-         print >> sys.stderr, "pipetool_remote: The specified file exists and the desired operation is uncertain.\n          Use the \"store\" option to overwrite the existing file or the \"retrieve\" option to read it."
-         exit( errno.EEXIST )
-      else:
-         store = True
-elif ( sys.argv[1] != "retrieve" ):
-   print >> sys.stderr, "Usage: pipetool_remote {store, retrieve} PATHNAME"
+try:
+   OP = int( sys.argv[1] )
+except ValueError as err:
+   print >> sys.stderr, "pipetool_remote: error parsing OP_CODE input of \""+sys.argv[1]+"\": {0}".format( err )
+   print_usage()
+   exit( err.errno )
+
+# set the file mode based upon OP
+target_mode = None
+try:
+   target_mode = {
+      0: 'r',
+      1: 'w',
+      2: 'a', #note that MarFS does not support this mode
+      3: 'w'
+   }[OP]
+except KeyError:
+   print >> sys.stderr, "pipetool_remote: received an unrecognized OP_CODE - "+sys.argv[1]
+   print_usage()
    exit( errno.EINVAL )
 
-if ( store ):
-   # Open the target location for writing
+target = None
+try:
+   if ( OP == 1  and  os.path.exists( path ) ):
+      raise IOError( "[Errno "+str(errno.EEXIST)+"]: "+os.strerror(errno.EEXIST)+": '"+path+"'" )
+   target = open( path, target_mode )
+except IOError as err:
+   print >> sys.stderr, "pipetool_remote: error opening file: {0}".format( err )
+   exit( err.errno )
+
+data = ""   #data buffer
+if ( OP == 0 ):
    try:
-      target = open( path, 'w' )
-      # Read form stdin and write to the target file location
-      if ( data == "" ):
-         data = sys.stdin.read( BYTES )
-      while ( data != "" ):
-         target.write( data )
-         data = sys.stdin.read( BYTES )
-   except IOError as err:
-      print >> sys.stderr, "pipetool_remote: error writing to file: {0}".format( err )
-      exit( err.errno )
-else:
-   # Open the target location for reading
-   try:
-      target = open( path, 'r' )
-      # Read form stdin and write to the target file location
+      # Read from the target file and write to stdout
       data = target.read( BYTES )
       while ( data != "" ):
          sys.stdout.write( data )
          data = target.read( BYTES )
    except IOError as err:
       print >> sys.stderr, "pipetool_remote: error reading from file: {0}".format( err )
+      exit( err.errno )
+else:
+   try:
+      # Read from stdin and write to the target file location
+      data = sys.stdin.read( BYTES )
+      while ( data != "" ):
+         target.write( data )
+         data = sys.stdin.read( BYTES )
+   except IOError as err:
+      print >> sys.stderr, "pipetool_remote: error writing to file: {0}".format( err )
       exit( err.errno )
 
 # Cleanup
