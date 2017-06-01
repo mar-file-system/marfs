@@ -58,7 +58,8 @@
 PROG=$( echo "$0" | sed 's/^.*\///' ) # program name
 LOG_FILE="$PROG"".$$.log"             # default log-file
 MARFS_COMPANION_FILE_SUFFIX=".path"   # MarFS trash companion file suffix
-PROGRESS_INTERVAL=10                  # interval for printing progress indication dots
+SCAN_PROGRESS_INTERVAL=1000                  # interval for printing progress indication dots
+DEL_PROGRESS_INTERVAL=10                  # interval for printing progress indication dots
 TRASH_REGEX='^.*/[0-9]/[0-9]/[0-9]/.*$'
 
 S_PATH=""
@@ -114,13 +115,13 @@ fexists=0
 if [[ $S_SKIP -eq 0  &&  -e $LOG_FILE ]]; then
    fexists=1
    echo "$PROG: appending to already existing file \"$LOG_FILE\""
-else
+elif [[ $S_SKIP -eq 0 ]]; then
    touch "$LOG_FILE"
 fi
 
 if [[ $NO_DELETE -ne 1 ]]; then
    while [[ 0 ]]; do # loop until confirmation received or termination
-      if [[ $S_SKIP -ne 1 ]]; then
+      if [[ $S_SKIP -eq 0 ]]; then
          WARN_TEXT="this program will delete all files with no corresponding \"<file_name>$MARFS_COMPANION_FILE_SUFFIX\" file within the \"$S_PATH\" directory"
          if [[ $fexists -eq 1 ]]; then WARN_TEXT=$WARN_TEXT" or already present within the log file \"$LOG_FILE\""; fi
       else
@@ -140,10 +141,11 @@ fi
 
 need_sp=1
 file_count=0
+line_count=0
 if [[ $S_SKIP -eq 0 ]]; then
    echo -n "Scanning \"$S_PATH\" for files with no companions..."
    if [[ $VERBOSE -eq 1 ]]; then echo; need_sp=0; fi
-   {
+
    while read -r line; do
       if [[ ! "$line" =~ ".path"$ ]]; then
          # verify against the expected trash format
@@ -155,18 +157,15 @@ if [[ $S_SKIP -eq 0 ]]; then
             # check that there is no companion file
             if [[ ! -e "$line$MARFS_COMPANION_FILE_SUFFIX" ]]; then
                echo "$line" >> $LOG_FILE
-               if [[ $VERBOSE -eq 1 ]]; then
-                  echo "$line"
-               elif [[ $(( file_count % PROGRESS_INTERVAL )) == 0 ]]; then
-                  echo -n "."
-               fi
+               if [[ $VERBOSE -eq 1 ]]; then echo "$line"; fi
                ((file_count++))
             fi
          fi
       fi
+      if [[ $VERBOSE -ne 1  &&  $(( $line_count % SCAN_PROGRESS_INTERVAL )) == 0 ]]; then echo -n "."; fi
+      ((line_count++))
    done < <(find $S_PATH -type f)
-   echo "Identified $file_count files for deletion."
-   }
+   echo "identified $file_count files for deletion out of $line_count."
 
    if [[ $NO_DELETE -ne 1 ]]; then echo; fi
 fi
@@ -182,6 +181,7 @@ echo -n "Reverifying and deleting files..."
 need_sp=1
 if [[ $VERBOSE -eq 1 ]]; then echo; need_sp=0; fi
 delete_count=0
+line_count=0
 while read -r line; do
    if [[ ! "$line" =~ $TRASH_REGEX ]]; then
       if [[ $need_sp -eq 1 ]]; then echo; fi
@@ -189,14 +189,9 @@ while read -r line; do
       need_sp=0
    else
       if [[ ! -e "$line$MARFS_COMPANION_FILE_SUFFIX" ]]; then
-         if [[ $VERBOSE -eq 1 ]]; then
-            echo "$line"
-         elif [[ $(( delete_count % PROGRESS_INTERVAL )) == 0 ]]; then
-            echo -n "."
-            need_sp=1
-         fi
+         if [[ $VERBOSE -eq 1 ]]; then echo "$line"; fi
          #DISABLED DELETES FOR SAFETY
-         #rm $line
+         echo "DELETES DISABLED - whould have done : rm $line"
          if [[ $? -eq 0 ]]; then ((delete_count++)); fi
       else
          if [[ $need_sp -eq 1 ]]; then echo; fi
@@ -204,6 +199,11 @@ while read -r line; do
          need_sp=0
       fi
    fi
+   if [[ $(( line_count % DEL_PROGRESS_INTERVAL )) == 0 ]]; then
+      echo -n "."
+      need_sp=1
+   fi
+   ((line_count++))
 done <$LOG_FILE
-echo "Deleted $delete_count files."
+echo "deleted $delete_count out of $line_count files."
 
