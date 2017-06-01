@@ -59,6 +59,7 @@ PROG=$( echo "$0" | sed 's/^.*\///' ) # program name
 LOG_FILE="$PROG"".$$.log"             # default log-file
 MARFS_COMPANION_FILE_SUFFIX=".path"   # MarFS trash companion file suffix
 PROGRESS_INTERVAL=10                  # interval for printing progress indication dots
+TRASH_REGEX='^.*/[0-9]/[0-9]/[0-9]/.*$'
 
 S_PATH=""
 S_SKIP=1
@@ -77,15 +78,13 @@ usage() {
 }
 
 prog_desc() {
-   echo "This program is intended to clean-up any non-trash files located within a MarFS "
-   echo " trash directory."
-   echo " If '-p' is specified, the program produces a listing of files to be deleted by "
-   echo " scanning a given path, running 'getfattr' against each file to verify that no "
-   echo " xattrs are present, and verifying that no \"$MARFS_COMPANION_FILE_SUFFIX\" companion file "
-   echo " exists."
-   echo " If '-D' is specified, the program reads the log-file and, for each file, again "
-   echo " verifies the absence of both xattrs and a companion file before then deleting "
-   echo " the file."
+   echo "This program is intended to clean-up any non-trash or incomplete trash files "
+   echo " located within a MarFS trash directory.  All trash paths are expected to "
+   echo " conform to the following regex - \"$TRASH_REGEX\"."
+   echo "If '-p' is specified, the program produces a listing of files to be deleted by "
+   echo " scanning a given path and locating files with no \"$MARFS_COMPANION_FILE_SUFFIX\" companion file."
+   echo "If '-D' is specified, the program reads the log-file and, for each file, again "
+   echo " verifies the absence a companion file before then deleting it."
    echo
    usage
 }
@@ -99,34 +98,37 @@ while [[ $# -gt 0 ]]; do
       -D) NO_DELETE=0; ;;
       -v) VERBOSE=1; ;;
       -h) prog_desc; exit 0; ;;
-      *)  echo "$PROG: received unrecognized argument - \"$1\""; exit -1; ;;
+      *)  ( >&2 echo "$PROG: received unrecognized argument - \"$1\"" ); exit -1; ;;
    esac
 
    shift
 done
 
-if [[ $S_SKIP -eq 1 ]]; then
-   echo "$PROG: No search path was specified.  Skipping straight to deletions."
-fi
-
-if [[ $S_SKIP -eq 0  &&  -e $LOG_FILE ]]; then
-   echo "$PROG: the destination log-file \"$LOG_FILE\" already exists"
-   exit -1
-elif [[ $S_SKIP -eq 1  &&  $NO_DELETE -eq 1 ]]; then
-   echo "$PROG: running with neither '-p' nor '-D' is a no-op"
+if [[ $S_SKIP -eq 1  &&  $NO_DELETE -eq 1 ]]; then
+   ( >&2 echo "$PROG: running with neither '-p' nor '-D' is a no-op" )
    usage
    exit -1
 fi
 
+fexists=0
+if [[ $S_SKIP -eq 0  &&  -e $LOG_FILE ]]; then
+   fexists=1
+   echo "$PROG: appending to already existing file \"$LOG_FILE\""
+else
+   touch "$LOG_FILE"
+fi
+
 if [[ $NO_DELETE -ne 1 ]]; then
-   while [[ 0 ]]; do
+   while [[ 0 ]]; do # loop until confirmation received or termination
       if [[ $S_SKIP -ne 1 ]]; then
-         echo -n "Warning - this program will delete all files with no xattrs and no corresponding \"$MARFS_COMPANION_FILE_SUFFIX\" files within the \"$S_PATH\" directory.  Are you sure you wish to proceed? (Y/N) : "
+         WARN_TEXT="this program will delete all files with no corresponding \"<file_name>$MARFS_COMPANION_FILE_SUFFIX\" file within the \"$S_PATH\" directory"
+         if [[ $fexists -eq 1 ]]; then WARN_TEXT=$WARN_TEXT" or already present within the log file \"$LOG_FILE\""; fi
       else
-         echo -n "Warning - this program will delete all files with no xattrs and no corresponding \"$MARFS_COMPANION_FILE_SUFFIX\" files listed within \"$LOG_FILE\".  Are you sure you wish to proceed? (Y/N) : "
+         WARN_TEXT="this program will delete all files with no corresponding \"<file_name>$MARFS_COMPANION_FILE_SUFFIX\" file listed within \"$LOG_FILE\""
       fi
+      echo -n "Warning - $WARN_TEXT.  Are you sure you wish to proceed? (Y/N) : "
       read -r input
-      if [[ "$input" =~ "N" ]]; then
+      if [[ "$input" =~ [Nn] ]]; then
          exit 0
       elif [[ "$input" != "Y" ]]; then
          echo "Input unrecognized.  Please enter either 'Y' or 'N'."
@@ -136,27 +138,34 @@ if [[ $NO_DELETE -ne 1 ]]; then
    done
 fi
 
+need_sp=1
 file_count=0
-echo "Log-file is \"$LOG_FILE\""
 if [[ $S_SKIP -eq 0 ]]; then
-   echo -n "Scanning \"$S_PATH\" for files with no xattrs..."
-   if [[ $VERBOSE -eq 1 ]]; then echo; fi
+   echo -n "Scanning \"$S_PATH\" for files with no companions..."
+   if [[ $VERBOSE -eq 1 ]]; then echo; need_sp=0; fi
    {
    while read -r line; do
       if [[ ! "$line" =~ ".path"$ ]]; then
-         res=$( getfattr $line 2> /dev/null | wc -l )
-         if [[ $res -lt 1 ]]; then
-            echo "$line" >> $LOG_FILE
-            if [[ $VERBOSE -eq 1 ]]; then
-               echo "$line"
-            elif [[ $(( file_count % PROGRESS_INTERVAL )) == 0 ]]; then
-               echo -n "."
+         # verify against the expected trash format
+         if [[ ! "$line" =~ $TRASH_REGEX ]]; then
+            if [[ $need_sp -eq 1 ]]; then echo; fi
+            ( >&2 echo "$PROG: \"$line\" does not match expected trash format" )
+            need_sp=0
+         else
+            # check that there is no companion file
+            if [[ ! -e "$line$MARFS_COMPANION_FILE_SUFFIX" ]]; then
+               echo "$line" >> $LOG_FILE
+               if [[ $VERBOSE -eq 1 ]]; then
+                  echo "$line"
+               elif [[ $(( file_count % PROGRESS_INTERVAL )) == 0 ]]; then
+                  echo -n "."
+               fi
+               ((file_count++))
             fi
-            ((file_count++))
          fi
       fi
    done < <(find $S_PATH -type f)
-   echo "...done.  Identified $file_count files for deletion."
+   echo "Identified $file_count files for deletion."
    }
 
    if [[ $NO_DELETE -ne 1 ]]; then echo; fi
@@ -170,12 +179,15 @@ elif [[ ! -e $LOG_FILE ]]; then
 fi
 
 echo -n "Reverifying and deleting files..."
-if [[ $VERBOSE -eq 1 ]]; then echo; fi
+need_sp=1
+if [[ $VERBOSE -eq 1 ]]; then echo; need_sp=0; fi
 delete_count=0
-need_sp=0
 while read -r line; do
-   res=$( getfattr $line 2> /dev/null | wc -l )
-   if [[ $res -lt 1 ]]; then
+   if [[ ! "$line" =~ $TRASH_REGEX ]]; then
+      if [[ $need_sp -eq 1 ]]; then echo; fi
+      echo "$line -- does not match expected trash path format"
+      need_sp=0
+   else
       if [[ ! -e "$line$MARFS_COMPANION_FILE_SUFFIX" ]]; then
          if [[ $VERBOSE -eq 1 ]]; then
             echo "$line"
@@ -191,11 +203,7 @@ while read -r line; do
          echo "$line -- has compainion file"
          need_sp=0
       fi
-   else
-      if [[ $need_sp -eq 1 ]]; then echo; fi
-      echo "$line -- now has xattrs"
-      need_sp=0
    fi
 done <$LOG_FILE
-echo "...done.  Deleted $delete_count files."
+echo "Deleted $delete_count files."
 
