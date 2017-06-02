@@ -442,7 +442,12 @@ void* obj_destroyer( void* arg ) {
             stats->failures++;
          }
          else {
-            VERB_FPRINTF( stdout, "INFO: deleted object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+            if ( run_info.no_delete ) {
+               VERB_FPRINTF( stdout, "INFO: found object for delete -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+            }
+            else {
+               VERB_FPRINTF( stdout, "INFO: deleted object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+            }
             stats->successes++;
          }
       }
@@ -461,11 +466,16 @@ void* obj_destroyer( void* arg ) {
          // Get metafile names and delete them
          else {
             if( free_packed_files( del_ent->files, !run_info.no_delete ) == 0 ) {
-               VERB_FPRINTF( stdout, "INFO: deleted object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+               if ( run_info.no_delete ) {
+                  VERB_FPRINTF( stdout, "INFO: found object for delete -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+               }
+               else {
+                  VERB_FPRINTF( stdout, "INFO: deleted object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+               }
                stats->successes++;
             }
             else {
-               fprintf( stderr, "FAILURE: could not delete all metadata files for packed object -- ID:%s MD-Example:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+               fprintf( stderr, "FAILURE: could not delete/free all metadata files for packed object -- ID:%s MD-Example:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
                stats->failures++;
             }
          }
@@ -550,7 +560,21 @@ void stop_workers() {
    }
    fprintf( stdout, "threads completed\n" );
 
-   printf(  "\n----- RUN TOTALS -----\n" \
+   if ( run_info.no_delete ) {
+      printf(  "\n----- DRY-RUN TOTALS -----\n" \
+            "Total Potential Deletes Queued =  %*llu\n" \
+            "Valid Deletes  =                  %*lu\n" \
+            "Failed Deletes =                  %*lu\n" \
+            "Warnings =                        %*lu\n" \
+            "Errors =                          %*lu\n", \
+            10, run_info.deletes, 
+            10, successes, 
+            10, failures,
+            10, run_info.warnings,
+            10, run_info.errors );
+   }
+   else {
+      printf(  "\n----- RUN TOTALS -----\n" \
             "Total Queued Deletes =  %*llu\n" \
             "Successful Deletes =    %*lu\n" \
             "Failed Deletes =        %*lu\n" \
@@ -561,7 +585,9 @@ void stop_workers() {
             10, failures,
             10, run_info.warnings,
             10, run_info.errors );
-   printf(  " ( Max Work-Queue Depth = %d )\n", run_info.queue_high_water );
+
+   }
+   printf(  " ( Max Work-Queue Depth Achieved = %d )\n", run_info.queue_high_water );
 
 }
 
