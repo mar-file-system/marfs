@@ -1584,9 +1584,8 @@ int  trash_truncate(PathInfo*   info,
    //
    // we know it has at least one chunk, because it has PRE.
    // Help GC to delete objects.
-   if (has_all_xattrs(info, XVT_RESTART)
-       && (info->pre.obj_type == OBJ_FUSE)) {
-
+   int orig_has_restart = has_all_xattrs(info, XVT_RESTART);
+   if ( orig_has_restart  &&  (info->pre.obj_type == OBJ_FUSE) ) {
       trash_info.post.obj_type         = OBJ_MULTI;
       trash_info.post.chunks           = info->st.st_size / sizeof(MultiChunkInfo);
       trash_info.post.chunk_info_bytes = trash_info.post.chunks * sizeof(MultiChunkInfo);
@@ -1596,11 +1595,18 @@ int  trash_truncate(PathInfo*   info,
    // update trash-file atime/mtime to support "undelete"
    __TRY0( MD_PATH_OP(utime, info->ns, info->trash_md_path, &trash_time) );
 
-   // clean out marfs xattrs on the original
-   __TRY0( trunc_xattrs(info) );
+   // if not already present, set a RESTART xattr on the original MD-file
+   if ( ! orig_has_restart ) {
+      info->xattrs |= XVT_RESTART;
+      __TRY0( init_restart( &(info->restart) ) );
+      __TRY0( save_xattrs( info, XVT_RESTART ) );
+   }
 
    // write full-MDFS-path of original-file into trash-companion file
    __TRY0( write_trash_companion_file(info, path, &trash_time) );
+
+   // clean out marfs xattrs on the original
+   __TRY0( trunc_xattrs(info) );
 
    // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
    info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY);
@@ -1965,11 +1971,25 @@ int fake_filehandle_for_delete_inits(MarFS_FileHandle* fh) {
 // 
 int delete_data(MarFS_FileHandle* fh) {
    TRY_DECLS();
+   size_t res;
 
    TRY0( init_data(fh) );
-   TRY0( DAL_OP(update_object_location, fh) );
-   TRY0( DAL_OP(del, fh) );
+   LOG(LOG_INFO, "ATTEMPTING(%s)\n", "DAL_OP(update_object_location, fh)");
+   if( (res = (size_t)DAL_OP(update_object_location, fh)) == 0 ) {
+      LOG(LOG_INFO, "ATTEMPTING(%s)\n", "DAL_OP(del, fh)");
+      res = (size_t)DAL_OP(del, fh);
+      if(res) {
+         PRE_RETURN();
+         LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n", "DAL_OP(del, fh)", res, errno, strerror(errno));
+      }
+   }
+   else {
+      PRE_RETURN();
+      LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n", "DAL_OP(update_object_location, fh)", res, errno, strerror(errno));
+   }
    TRY0( destroy_data(fh) );
+   if( res )
+      RETURN(-1);
    return 0;
 }
 
