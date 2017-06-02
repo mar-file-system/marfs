@@ -61,25 +61,29 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  * multi-component storage.
  */
 
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <pthread.h>
-#include <fnmatch.h>
-#include <sys/types.h>
 #include <pwd.h>
+#include <fnmatch.h>
+#include <mpi.h>
+#include <signal.h>
 
 // we absolutely must have multi-component enabled to build this
 // program.  This ensures that the necessary symbols are exposed from
 // dal.h
 #include "common.h"
-#include "dal.h" // MC_MAX_PATH_LEN & MC_DEGRADED_LOG_FORMAT
+#include "dal.h" // MC_MAX_PATH_LEN, MC_MAX_LOG_LEN, & MC_DEGRADED_LOG_FORMAT
 #include "marfs_configuration.h"
 #include "marfs_base.h" // MARFS_MAX_HOST_SIZE
 
 #include "erasure.h"
 
 #define QUEUE_MAX 256
+#define PROGRESS_DELAY 100 //number of objects to be rebuilt before printing a progress indicator
+#define MPI_STATS_CHANNEL 145
+#define MPI_ERR_CHANNEL 141
+#define MPI_SUC_CHANNEL 142
+#define MPI_INT_CHANNEL 143
+#define VRB_FPRINTF(...)   if(verbose) { fprintf(__VA_ARGS__); }
+
 
 struct object_file {
   char path[MC_MAX_PATH_LEN];
@@ -103,7 +107,9 @@ typedef struct stat_list {
 // global flag indicating a dry run.
 int   dry_run;
 int   verbose;
+int   total_procs;
 FILE *error_log;
+FILE *success_log;
 
 // global rebuild statistics table.
 struct rebuild_stats {
@@ -111,6 +117,7 @@ struct rebuild_stats {
   int              rebuild_successes;
   int              total_objects;
   int              intact_objects;
+  int              incomplete_objects;
   // the repo list should only be touched by the main thread. so
   // don't do any locking in record_failure_stats().
   stat_list_t     *repo_list;
@@ -225,11 +232,23 @@ void print_stats() {
     print_repo_stats(stat_list->name, stat_list->repo_stats);
     stat_list = stat_list->next;
   }
-  printf("==== Rebuild Summary ====\n");
-  printf("objects examined:  %*d\n", 10, stats.total_objects);
-  printf("intact objects:    %*d\n", 10, stats.intact_objects);
-  printf("rebuilt objects:   %*d\n", 10, stats.rebuild_successes);
-  printf("failed rebuilds:   %*d\n", 10, stats.rebuild_failures);
+  if ( dry_run ) {
+    printf("==== Dry-Run Summary ====\n");
+    printf("objects examined:         %*d\n", 10, stats.total_objects);
+    printf("incomplete objects:       %*d\n", 10, stats.incomplete_objects);
+    printf("objects with all blocks:  %*d\n", 10, stats.intact_objects);
+    printf("objects needing rebuild:  %*d\n", 10, stats.rebuild_successes);
+    printf("unrecoverable objects:    %*d\n", 10, stats.rebuild_failures);
+    printf("PLEASE NOTE : this was a dry-run only, no object rebuilds were performed!\n" );
+  }
+  else {
+    printf("==== Rebuild Summary ====\n");
+    printf("objects examined:   %*d\n", 10, stats.total_objects);
+    printf("incomplete objects: %*d\n", 10, stats.incomplete_objects);
+    printf("intact objects:     %*d\n", 10, stats.intact_objects);
+    printf("rebuilt objects:    %*d\n", 10, stats.rebuild_successes);
+    printf("failed rebuilds:    %*d\n", 10, stats.rebuild_failures);
+  }
 }
 
 typedef struct ht_entry {
@@ -340,24 +359,29 @@ void usage(const char *program) {
          "                     rebuilding a large number of objects.\n"
          "                     Defaults to 1024.\n");
   printf("\nTo run a rebuild of an entire component use the following flags\n"
-         "%s [-t <num threads>] -c <capacity unit> -b <good block> -p <pod> -r <repo name> -s <start>:<end>\n"
+         "%s [-t <num threads>] [-s <start>:<end>] [-R] [-p <pod>] [-b <good block>] [-c <capacity-unit>] -r <repo name>\n"
          "  <good block>       The number of a block to be used as a reference\n"
          "                     point for the rebuild\n"
          "  <capacity unit>    The capacity unit to rebuild.\n"
          "  <pod>              The pod where the capacity unit is mounted.\n"
          "  <repo name>        The name of the repo in the marfs config.\n"
-         "  Note: All four flags are required to do a component rebuild.\n",
+         "  <start>:<end>      This defines the inclusive range of scatter \n"
+         "                     directories to be scanned and possibly rebuilt.\n"
+         "                     The default is all scatters defined for a repo.\n"
+         "  WARNING : Unless explicitly specified via -p/-b/-c respectively, the \n"
+         "    pod/block/capacity-unit to be rebuilt are chosen randomly!\n",
          program);
-  printf("\nThe -t option applies to both modes and is used to specify a "
-         "number of threads to use for the rebuild. Defaults to one.\n");
-  printf("\nThe -d flag may also be used in both modes to indicate a \"dry run\""
-         "\nwhere no rebuilds are performed, but the number of objects that\n"
-         "would be examined/rebuilt is counted. This is useful for displaying\n"
-         "failure statistics from the logs.\n");
-  printf("\nThe -o <filename> flag may be used to specify a file to which \n"
-         "rebuild failures should be logged rather than standard output\n");
-  printf("\nTo run the rebuilder as some other user (ie. storageadmin) use "
-         "the -u <username> option\n");
+  printf("\nNOTE : This program defaults to a dry-run, in which no rebuilds \n"
+         "  will actually be performed!  Use \"-R\" to rebuild and write out parts.\n"
+         "  This applies to both modes.\n");
+  printf("The -t option applies to both modes and is used to specify a number \n"
+         "  of threads to use for the rebuild. (default = 16)\n");
+  printf("To run the rebuilder as some other user (ie. storageadmin) use the \n"
+         "  -u <username> option\n");
+  printf("The -o <filename> flag may be used to specify a file to which \n"
+         "  rebuild successes should be logged\n");
+  printf("The -e <filename> flag may be used to specify a file to which \n"
+         "  rebuild failures should be logged\n");
 }
 
 /**
@@ -372,38 +396,47 @@ int rebuild_object(struct object_file object) {
 
   ne_handle object_handle;
 
-  if(dry_run) return;
-
+  errno = 0;
   if(object.start_block < 0) { // component-based rebuild
     object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
   }
   else { // log-based rebuild
     object_handle = ne_open(object.path, NE_REBUILD, object.start_block,
                             object.n, object.e);
-    if(object_handle == NULL)
-          object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
+    if(object_handle == NULL) {
+      errno = 0;
+      object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
+    }
   }
 
   if(object_handle == NULL) {
-    fprintf(error_log, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
+    if( errno == ENOENT ) { //ignore the failure to open an incomplete object
+      VRB_FPRINTF( stdout, "INFO: skipping unfinished object %s\n", object.path );
+      return -2; //signal an incomplete object
+    }
+    fprintf(stderr, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
             object.path, strerror(errno));
     return -1;
   }
 
+  if(dry_run) { return ne_close( object_handle ); }
+
   int rebuild_result = ne_rebuild(object_handle);
   if(rebuild_result < 0) {
-    fprintf(error_log, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
+    fprintf(stderr, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
             object.path, strerror(errno));
+    ne_close(object_handle); //close and ignore any errors
+    return -1;
   }
-
-  int error = ne_close(object_handle);
-  if(error < 0) {
-    perror("ne_close()");
-    fprintf(stderr, "object %s could not be closed: %s\n",
-            object.path, strerror(errno));
-    // We should never fail to close an object. If we do, then
-    // something is terribly wrong.
-    exit(-1);
+  else {
+    int error = ne_close(object_handle);
+    if(error < 0) {
+      fprintf(stderr, "object %s could not be closed: %s\n",
+              object.path, strerror(errno));
+      // A failure of a close here means a failure to chown()/rename()
+      // If that happens, something is terribly wrong.
+      exit(-1);
+    }
   }
 
   return rebuild_result;
@@ -423,6 +456,7 @@ struct rebuild_queue {
   int                queue_head;
   int                queue_tail;
   int                num_consumers;
+  char               abort; // flag to indicate an early abort of work
   pthread_t         *consumer_threads;
 } rebuild_queue;
 
@@ -435,14 +469,16 @@ void queue_rebuild(struct object_file object) {
     exit(-1); // a bit unceremonious
   }
 
-  while(rebuild_queue.num_items == QUEUE_MAX)
+  while( !rebuild_queue.abort  &&  rebuild_queue.num_items == QUEUE_MAX)
     pthread_cond_wait(&rebuild_queue.queue_full, &rebuild_queue.queue_lock);
 
-  rebuild_queue.items[rebuild_queue.queue_tail] = object;
-  rebuild_queue.num_items++;
-  rebuild_queue.queue_tail = (rebuild_queue.queue_tail + 1) % QUEUE_MAX;
-
-  pthread_cond_signal(&rebuild_queue.queue_empty);
+  if( !rebuild_queue.abort ) {
+    rebuild_queue.items[rebuild_queue.queue_tail] = object;
+    rebuild_queue.num_items++;
+    rebuild_queue.queue_tail = (rebuild_queue.queue_tail + 1) % QUEUE_MAX;
+    
+    pthread_cond_signal(&rebuild_queue.queue_empty);
+  }
 
   pthread_mutex_unlock(&rebuild_queue.queue_lock);
   return;
@@ -463,6 +499,14 @@ void stop_workers() {
   }
 }
 
+
+void abort_rebuild( int signo ) {
+  fprintf( stderr, "EARLY ABORT REQUESTED\nSignalling threads to stop..." );
+  rebuild_queue.abort = 1;
+  fprintf( stderr, "done\n" );
+}
+
+
 /**
  * The start function for the consumer threads that actually perform
  * the rebuild work.
@@ -470,6 +514,7 @@ void stop_workers() {
  * TODO: Check error codes in return value from pthred_ functions
  */
 void *rebuilder(void *arg) {
+  char buf[MC_MAX_LOG_LEN];
 
   if(pthread_mutex_lock(&rebuild_queue.queue_lock)) {
     fprintf(stderr, "consumer failed to acquire queue lock.\n");
@@ -481,7 +526,8 @@ void *rebuilder(void *arg) {
     while(!rebuild_queue.num_items && !rebuild_queue.work_done)
       pthread_cond_wait(&rebuild_queue.queue_empty, &rebuild_queue.queue_lock);
     
-    if(rebuild_queue.num_items == 0 && rebuild_queue.work_done) {
+    if( rebuild_queue.abort  ||  ( rebuild_queue.num_items == 0 && rebuild_queue.work_done ) ) {
+      if( rebuild_queue.abort ) { pthread_cond_broadcast( &rebuild_queue.queue_full ); }
       pthread_mutex_unlock(&rebuild_queue.queue_lock);
       return NULL;
     }
@@ -490,13 +536,16 @@ void *rebuilder(void *arg) {
       struct object_file object = rebuild_queue.items[rebuild_queue.queue_head];
       rebuild_queue.queue_head = (rebuild_queue.queue_head + 1) % QUEUE_MAX;
 
+      //printf( "GOT: PATH-%s | N-%d | E-%d | ST-%d | RES-%d | REPO-%s | POD-%d | CAP-%d\n", object.path, object.n, object.e, object.start_block, 0, object.repo_name, object.pod, object.cap );
+
       rebuild_queue.num_items--;
 
       // update statistics here so they are protected by queue locking.
       stats.total_objects++;
+      if( !verbose  &&  stats.total_objects % PROGRESS_DELAY == 0 ) { printf( "." ); fflush( stdout ); }
 
-      if(verbose && !(stats.total_objects % 100)) {
-        printf("INFO: total rebuilds completed: %d\n", stats.total_objects);
+      if( !(stats.total_objects % 100) ) {
+        VRB_FPRINTF( stdout, "INFO: total rebuilds completed: %d\n", stats.total_objects );
       }
 
       // signal the producer to wake up, in case it was sleeping, and
@@ -515,13 +564,44 @@ void *rebuilder(void *arg) {
         return NULL;
       }
 
-      if(dry_run) continue;
-
-      if(rebuild_result < 0) {
+      if ( rebuild_result == -2 ) {
+        stats.incomplete_objects++;
+      }
+      else if( rebuild_result < 0 ) {
         stats.rebuild_failures++;
+        if( error_log != NULL ) {
+          if( total_procs == 1 ) { //if this is the only process, just wite to the log
+            fprintf( error_log, MC_DEGRADED_LOG_FORMAT, 
+              object.path, object.n, object.e,
+              object.start_block, rebuild_result,
+              object.repo_name, object.pod, object.cap);
+          }
+          else { //otherwise, transmit to the master
+            snprintf(buf, MC_MAX_LOG_LEN, MC_DEGRADED_LOG_FORMAT,
+              object.path, object.n, object.e,
+              object.start_block, rebuild_result,
+              object.repo_name, object.pod, object.cap);
+            MPI_Send( &buf[0], MC_MAX_LOG_LEN, MPI_BYTE, 0, MPI_ERR_CHANNEL, MPI_COMM_WORLD );
+          }
+        }
       }
       else if(rebuild_result > 0) {
         stats.rebuild_successes++;
+        if( success_log != NULL ) {
+          if( total_procs == 1 ) {
+            fprintf( success_log, MC_DEGRADED_LOG_FORMAT, 
+              object.path, object.n, object.e,
+              object.start_block, rebuild_result,
+              object.repo_name, object.pod, object.cap);
+          }
+          else {
+            snprintf(buf, MC_MAX_LOG_LEN, MC_DEGRADED_LOG_FORMAT,
+              object.path, object.n, object.e,
+              object.start_block, rebuild_result,
+              object.repo_name, object.pod, object.cap);
+            MPI_Send( &buf[0], MC_MAX_LOG_LEN, MPI_BYTE, 0, MPI_SUC_CHANNEL, MPI_COMM_WORLD );
+          }
+        }
       }
       else {
         stats.intact_objects++;
@@ -549,7 +629,23 @@ void start_threads(int num_threads) {
   rebuild_queue.work_done     = 0;
   rebuild_queue.queue_head    = 0;
   rebuild_queue.queue_tail    = 0;
+  rebuild_queue.abort         = 0;
   rebuild_queue.num_consumers = num_threads;
+
+  struct sigaction action;
+  action.sa_handler = abort_rebuild;
+  action.sa_flags = 0;
+  sigemptyset( &action.sa_mask );
+
+  if( sigaction( SIGINT, &action, NULL ) ) {
+    fprintf( stderr, "ERROR: failed to set signal handler for SIGINT -- %s\n", strerror( errno ) );
+    exit ( -1 ); //terminate while it's still safe to do so
+  }
+
+  if( sigaction( SIGUSR1, &action, NULL ) ) {
+    fprintf( stderr, "ERROR: failed to set signal handler for SIGUSR1 -- %s\n", strerror( errno ) );
+    exit ( -1 ); //terminate while it's still safe to do so
+  }
 
   int i;
   for(i = 0; i < num_threads; i++) {
@@ -580,6 +676,7 @@ int nextobject(FILE *log, struct object_file *object) {
 }
 
 void process_log_subdir(const char *subdir_path) {
+
   DIR *dir = opendir(subdir_path);
   if(!dir) {
     fprintf(stderr, "Could not open subdirectory %s: %s\n",
@@ -626,30 +723,33 @@ void process_log_subdir(const char *subdir_path) {
         // only recording failure stats for log rebuilds.
         record_failure_stats(&object);
 
+        if( rebuild_queue.abort )
+          break;
+
         queue_rebuild(object);
       }
 
       fclose(degraded_object_file);
+      
+      if( rebuild_queue.abort )
+         break;
     }
     closedir(scatter);
+    if( rebuild_queue.abort )
+      break;
   }
   closedir(dir);
 }
 
-void rebuild_component(const char *repo_name,
+int rebuild_component(MarFS_Repo_Ptr repo,
                        int pod, int good_block, int cap,
                        int *scatter_range) {
-  MarFS_Repo *repo          = find_repo_by_name(repo_name);
-  if(! repo ) {
-    fprintf(stderr, "could not find repo %s. Please check your config.\n",
-            repo_name);
-    exit(-1);
-  }
   const char *path_template = repo->host;
   int         scatter;
+  int         failed = 0;
 
-  for(scatter = (scatter_range == NULL ? 0 : scatter_range[0]);
-      (scatter_range == NULL ? 1 : scatter <= scatter_range[1]);
+  for(scatter = scatter_range[0];
+      scatter <= scatter_range[1];
       scatter++) {
     char ne_path[MC_MAX_PATH_LEN];
     char scatter_path[MC_MAX_PATH_LEN];
@@ -659,16 +759,19 @@ void rebuild_component(const char *repo_name,
 
     struct stat statbuf;
     if(stat(scatter_path, &statbuf) == -1) {
-      break;
+      fprintf( stderr, "CRITICAL ERROR: could not stat scatter dir %s: %s\n", scatter_path, strerror(errno) );
+      failed++;
+      continue;
     }
 
     DIR *scatter_dir = opendir(scatter_path);
     if(scatter_dir == NULL) {
-      fprintf(stderr, "could not open scatter dir %s: %s\n",
+      fprintf(stderr, "CRITICAL ERROR: could not open scatter dir %s: %s\n",
               scatter_path, strerror(errno));
-      exit(-1);
+      failed++;
+      continue;
     }
-    
+
     if(verbose) {
       printf("INFO: rebuilding scatter%d\n", scatter);
     }
@@ -681,7 +784,11 @@ void rebuild_component(const char *repo_name,
       struct object_file object;
       snprintf(object.path, MC_MAX_PATH_LEN, "%s/%s",
                ne_path, obj_dent->d_name);
+      snprintf(object.repo_name, MARFS_MAX_HOST_SIZE, "%s",
+               repo->name);
       object.start_block = object.n = object.e = -1;
+      object.pod = pod;
+      object.cap = cap;
 
       // skip files that are not complete objects
       if(!fnmatch("*" REBUILD_SFX, object.path, 0) ||
@@ -691,26 +798,54 @@ void rebuild_component(const char *repo_name,
       }
 
       queue_rebuild(object);
+
+      if( rebuild_queue.abort ) {
+        break;
+      }
     }
     closedir(scatter_dir);
+    if( rebuild_queue.abort ) {
+      break;
+    }
   }
+  return failed;
 }
+
+
+int rand_less_than( int max ) {
+  if ( max <= 0 ) { return -1; }
+  unsigned long bin_width = ( (unsigned long)(RAND_MAX) + 1 ) / max;
+  unsigned long rand_max = RAND_MAX - ( ( (unsigned long)(RAND_MAX) + 1) % bin_width );
+
+  unsigned long rand;
+  do {
+    rand = random();
+  }
+  while ( rand > rand_max );
+
+  return (int)(rand / bin_width);
+}
+
 
 int main(int argc, char **argv) {
 
   unsigned int   ht_size           = 1024;
   int            component_rebuild = 0;
   char          *repo_name         = NULL;
-  int            threads           = 1;
+  int            threads           = 16;
   int            pod, block, cap;
   int            opt;
   int            scatter_range[2];
   int            range_given = 0;
   struct passwd *pw = NULL;
   pod = block = cap = -1;
-  verbose = dry_run = 0;
-  error_log = stderr;
-  while((opt = getopt(argc, argv, "hH:c:p:b:r:t:dvs:o:u:")) != -1) {
+  verbose = 0; dry_run = 1; //default to dry-run
+  error_log = NULL;
+  success_log = NULL;
+  char *s_ptr=NULL;
+  char *e_ptr=NULL;
+
+  while((opt = getopt(argc, argv, "hH:c:p:b:Rr:t:vs:o:e:u:")) != -1) {
     switch (opt) {
     case 'h':
       usage(argv[0]);
@@ -720,7 +855,6 @@ int main(int argc, char **argv) {
       ht_size = strtol(optarg, NULL, 10);
       break;
     case 'c':
-      component_rebuild = 1;
       cap = strtol(optarg, NULL, 10);
       break;
     case 'p':
@@ -729,7 +863,11 @@ int main(int argc, char **argv) {
     case 'b':
       block = strtol(optarg, NULL, 10);
       break;
+    case 'R':
+      dry_run = 0;
+      break;
     case 'r':
+      component_rebuild = 1;
       repo_name = optarg;
       break;
     case 't':
@@ -739,18 +877,14 @@ int main(int argc, char **argv) {
         threads = 1;
       }
       break;
-    case 'd':
-      dry_run = 1;
-      break;
     case 'v':
       verbose = 1;
       break;
     case 'o':
-      error_log = fopen(optarg, "a");
-      if(error_log == NULL) {
-        fprintf(stderr, "failed to open log file");
-        exit(-1);
-      }
+      s_ptr=optarg;
+      break;
+    case 'e':
+      e_ptr=optarg;
       break;
     case 's':
     {
@@ -770,18 +904,19 @@ int main(int argc, char **argv) {
       }
       scatter_range[0] = strtol(start, NULL, 10);
       scatter_range[1] = strtol(end, NULL, 10);
+      //swap start and end if listed in reverse
+      if( scatter_range[0] > scatter_range[1] ) {
+        int tmp = scatter_range[0];
+        scatter_range[0] = scatter_range[1];
+        scatter_range[1] = tmp;
+      }
       range_given = 1;
       free(start);
       break;
     }
     case 'u':
       if((pw = getpwnam(optarg)) == NULL) {
-        perror("getpwnam()");
-        exit(-1);
-      }
-      // set the uid.
-      if(seteuid(pw->pw_uid) != 0) {
-        perror("seteuid()");
+        fprintf( stderr, "ERROR: failed to retireve uid for the user \"%s\"\n", optarg );
         exit(-1);
       }
       break;
@@ -793,46 +928,438 @@ int main(int argc, char **argv) {
 
   // load the marfs config.
   if(read_configuration()) {
-    fprintf(stderr, "failed to read marfs configuration\n");
+    fprintf( stderr, "ERROR: failed to read marfs configuration\n" );
     exit(-1);
   }
   if(validate_configuration()) {
-    fprintf(stderr, "failed to validate marfs configuration\n");
+    fprintf(stderr, "ERROR: failed to validate marfs configuration\n");
     exit(-1);
   }
 
-  stats.rebuild_failures  = 0;
-  stats.rebuild_successes = 0;
-  stats.intact_objects    = 0;
-  stats.total_objects     = 0;
-  stats.repo_list         = NULL;
+  if ( pw != NULL ) {
+    if( error_log != NULL  &&  chown( e_ptr, pw->pw_uid, pw->pw_gid ) ) {
+        printf( "ERROR: failed to chown() error log\n" );
+    }
+    if( success_log != NULL  &&  chown( s_ptr, pw->pw_uid, pw->pw_gid ) ) {
+        printf( "ERROR: failed to chown() success log\n" );
+    }
+
+    if(setgid(pw->pw_gid) != 0) {
+      fprintf( stderr, "ERROR: failed to setgid to specified user: %s\n", strerror(errno) );
+      exit(-1);
+    }
+    if(setuid(pw->pw_uid) != 0) {
+      fprintf( stderr, "ERROR: failed to setuid to specified user: %s\n", strerror(errno) );
+      exit(-1);
+    }
+  }
+
+  stats.rebuild_failures      = 0;
+  stats.rebuild_successes     = 0;
+  stats.intact_objects        = 0;
+  stats.incomplete_objects    = 0;
+  stats.total_objects         = 0;
+  stats.repo_list             = NULL;
 
   ht_init(&rebuilt_objects, ht_size);
 
-  start_threads(threads);
+  int ret_stat = 0;
+  int num_procs = 1;
+  int proc_rank = 0;
+
+  // Initialize the MPI environment
+  MPI_Init(NULL, NULL);
+
+  // Get the number of processes
+  MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+  total_procs = num_procs;
+
+  // Get the rank of the process
+  MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
+
+  if( proc_rank == 0  &&  dry_run )
+    fprintf(stdout, "INFO: this is a dry-run, no actual rebuilds will be performed (run with -R to change this)\n");
+
+  MPI_Comm proc_com;
+
+  // Get the name of the processor
+  char hostname[250];
+  int name_len;
+  MPI_Get_processor_name( hostname, &name_len);
+
+  // open success and error logs as required
+  if( s_ptr != NULL ) {
+    if( proc_rank == 0 ) {
+      success_log = fopen(s_ptr, "a");
+      if( success_log == NULL ) {
+        fprintf( stderr, "failed to open log file \"%s\"\n", s_ptr );
+        MPI_Abort( MPI_COMM_WORLD, errno );
+      }
+    }
+    else {
+      success_log = stdout; //just to indicate to workers that they should be logging
+    }
+  }
+  if( e_ptr != NULL ) {
+    if( proc_rank == 0 ) {
+      if( s_ptr != NULL  &&  ! strncmp( s_ptr, e_ptr, MC_MAX_PATH_LEN ) ) {
+        //if the logs are the same file, use the same stream
+        error_log = success_log;
+      }
+      else {
+        error_log = fopen(e_ptr, "a");
+        if( error_log == NULL ) {
+          fprintf( stderr, "failed to open log file \"%s\"\n", e_ptr );
+          MPI_Abort( MPI_COMM_WORLD, errno );
+        }
+      }
+    }
+    else {
+      error_log = stderr; //just to indicate to workers that they should be logging
+    }
+  }
+
 
   if(component_rebuild) {
-    if(pod == -1 || block == -1 || cap == -1) {
-      fprintf(stderr, "Please specify all options -c -r -p and -b\n");
-      usage(argv[0]);
-      exit(-1);
+
+    MarFS_Repo *repo = find_repo_by_name(repo_name);
+
+    if( !repo ) { 
+      if ( proc_rank == 0 )
+         fprintf( stderr, "ERROR: failed to retrieve repo"
+           " by name \"%s\", check your config file\n", repo_name );
+      MPI_Finalize();
+      return -1; 
+    }   
+
+    DAL        *dal    = repo->dal;
+    MC_Config  *config = (MC_Config*)dal->global_state;
+
+    if ( pod == -1 || block == -1 || cap == -1 ) {
+      int data[3];
+      if ( proc_rank == 0 ) {
+        srand( time(0) );
+        if ( pod == -1 ) {
+          data[0] = rand_less_than( config->num_pods );
+          printf( "INFO: using random pod - %d\n", data[0] );
+        }
+        else {
+          data[0] = pod;
+        }
+        if ( block == -1 ) {
+          data[1] = rand_less_than( (config->n + config->e) );
+          printf( "INFO: using random block - %d\n", data[1] );
+        }
+        else {
+          data[1] = block;
+        }
+        if ( cap == -1 ) {
+          data[2] = rand_less_than( config->num_cap );
+          printf( "INFO: using random capacity unit - %d\n", data[2] );
+        }
+        else {
+          data[2] = cap;
+        }
+      }
+      // synchronize pod,cap,block amongst procs
+      MPI_Bcast( &data[0], 3, MPI_INT, 0, MPI_COMM_WORLD );
+      pod = data[0];
+      block = data[1];
+      cap = data[2];
     }
-    rebuild_component(repo_name, pod, block, cap,
-                      (range_given ? scatter_range : NULL));
+
+    //verify scatter ranges are sane
+    if( range_given ) {
+      if( config->scatter_width - 1 < scatter_range[1] ) {
+        scatter_range[1] = config->scatter_width - 1;
+        if( proc_rank == 0 )
+          fprintf( stderr, "WARNING: upper scatter range exceeds range defined by repo,"
+            " lowering upper bound to %d\n", scatter_range[1] );
+      }
+      if( scatter_range[0] < 0 ) {
+        scatter_range[0] = 0;
+        if( proc_rank == 0 )
+          fprintf( stderr, "WARNING: lower scatter range is negative,"
+            " reseting lower bound to %d\n", scatter_range[0] );
+      }
+    }
+
+    // This process is a worker
+    if( proc_rank != 0  ||  num_procs == 1 ) {
+      MPI_Comm_split( MPI_COMM_WORLD, 1, proc_rank, &proc_com );
+
+      char oneproc = 1;
+      if( num_procs > 1 ) {
+        num_procs--;
+        proc_rank--;
+        oneproc = 0;
+      }
+      else {
+        printf( "INFO: Running with %d threads\n", threads );
+        if ( ! verbose ) {
+          printf( "Rebuilding Objects..." );
+          fflush( stdout );
+        }
+      }
+
+      int scatter_width = config->scatter_width;
+      if ( range_given ) {
+        scatter_width = scatter_range[1] - scatter_range[0] + 1;
+      }
+      else {
+        scatter_range[0] = 0;
+        scatter_range[1] = scatter_width - 1;
+      }
+
+      int remainder = scatter_width % num_procs;
+      int rwidth = scatter_width / num_procs;
+
+      scatter_range[0] += ( proc_rank * rwidth ) + (( proc_rank < remainder ) ? proc_rank : remainder);
+
+      if ( proc_rank < remainder ) {
+        rwidth++;
+      }
+
+      scatter_range[1] = scatter_range[0] + rwidth - 1;
+
+      int turn;
+      for ( turn = 0; turn < proc_rank; turn++ ) {
+        MPI_Barrier( proc_com ); //wait for earlier ranks to print their messages
+      }
+
+      // Print off a message
+      if ( scatter_range[1] < scatter_range[0] ) {
+        // if there are more procs that scatters, procs with no work will have a backwards range
+        VRB_FPRINTF( stdout, "INFO: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [ No work to be done! ] )\n",
+           proc_rank+1, num_procs, hostname, repo->name, config->scatter_width );
+      }
+      else {
+        VRB_FPRINTF( stdout, "INFO: process %d out of %d workers ( Host = %s, Repo = %s, Scatter_Width = %d, Range = [%d,%d] )\n",
+           proc_rank+1, num_procs, hostname, repo->name, config->scatter_width, scatter_range[0], scatter_range[1] );
+      }
+
+      struct timespec tspec;
+      tspec.tv_nsec = 50000000; //wait 5 hundredths of a second, to allow message to travel
+      tspec.tv_sec = 0;
+      nanosleep( &tspec, NULL );
+
+      for ( ; turn < num_procs; turn++ ) {
+        MPI_Barrier( proc_com ); //wait for later ranks to print their messages
+      }
+
+      tspec.tv_nsec = 0;
+      tspec.tv_sec = 1;
+      nanosleep( &tspec, NULL ); //wait for a single second, to allow messages to be noticed
+      int skipped_scatters = 0;
+
+      // only do work if there is some to be done
+      if ( scatter_range[1] >= scatter_range[0] ) {
+        VRB_FPRINTF( stdout, "INFO: worker %d starting\n", proc_rank+1 );
+        start_threads(threads);
+        skipped_scatters = rebuild_component( repo, pod, block, cap, scatter_range );
+        stop_workers();
+      }
+      else {
+        fprintf( stderr, "WARNING: worker %d terminating early as it has nothing to do!\n", proc_rank+1 );
+      }
+
+      if( !oneproc ) {
+        int statbuf[7];
+        statbuf[0] = proc_rank;
+        statbuf[1] = stats.total_objects;
+        statbuf[2] = stats.intact_objects;
+        statbuf[3] = stats.rebuild_successes;
+        statbuf[4] = stats.rebuild_failures;
+        statbuf[5] = stats.incomplete_objects;
+        statbuf[6] = skipped_scatters;
+        if( MPI_Send( &statbuf[0], 7, MPI_INT, 0, MPI_STATS_CHANNEL, MPI_COMM_WORLD ) != MPI_SUCCESS ) {
+           fprintf( stderr, "ERROR: worker process %d failed to transmit its term state to the master\n", proc_rank+1 );
+        }
+
+      }
+      else {
+        if ( error_log != NULL ) {
+          fclose( error_log );
+          fprintf( stdout, "INFO: error log \"%s\" resides on host '%s'\n", e_ptr, hostname );
+        }
+        if ( success_log != NULL ) {
+          fclose( success_log );
+          fprintf( stdout, "INFO: success log \"%s\" resides on host '%s'\n", s_ptr, hostname );
+        }
+        fflush( stderr );
+        if( ! verbose ) { printf( "rebuilds completed\n" ); }
+        printf( "Rebuild of ( Pod %d, Block %d, Cap %d )\n", pod, block, cap );
+        print_stats();
+
+        if ( skipped_scatters ) {
+          fprintf( stderr, "CRITICAL ERROR: %d scatter dir(s) could not be accessed (see above messages)\n", skipped_scatters );
+        }
+      }
+  
+    }
+    // This process is the master/output-aggregator
+    else {
+      struct sigaction action;
+      action.sa_handler = SIG_IGN;
+      action.sa_flags = 0;
+      sigemptyset( &action.sa_mask );
+
+      if( sigaction( SIGINT, &action, NULL ) ) {
+        fprintf( stderr, "ERROR: failed to set signal handler for SIGINT -- %s\n", strerror( errno ) );
+        exit ( -1 ); //terminate while it's still safe to do so
+      }
+
+      if( sigaction( SIGUSR1, &action, NULL ) ) {
+        fprintf( stderr, "ERROR: failed to set signal handler for SIGUSR1 -- %s\n", strerror( errno ) );
+        exit ( -1 ); //terminate while it's still safe to do so
+      }
+
+      printf( "INFO: Running with %d threads per worker\n", threads );
+
+      if( ! verbose ) {
+        printf( "Rebuilding Objects..." );
+        fflush( stdout );
+      }
+
+      // call comm_split, but don't bother adding the master to a new communicator
+      MPI_Comm_split( MPI_COMM_WORLD, MPI_UNDEFINED, proc_rank, &proc_com );
+      int terminated = 1;
+      int skipped_scatters = 0;
+      int err_procs[num_procs - 1];
+      int err_proc_count = 0;
+
+      int buf[7];
+      char err_log[MC_MAX_LOG_LEN];
+      char suc_log[MC_MAX_LOG_LEN];
+      int res_flag;
+      MPI_Status status;
+      MPI_Request stats_request = MPI_REQUEST_NULL;
+      MPI_Request err_request = MPI_REQUEST_NULL;
+      MPI_Request suc_request = MPI_REQUEST_NULL;
+      while ( terminated < num_procs ) {
+        // if we are logging it, check for rebuild error output
+        if ( error_log != NULL ) { 
+          if( err_request == MPI_REQUEST_NULL )
+            MPI_Irecv( &err_log[0], MC_MAX_LOG_LEN, MPI_BYTE, MPI_ANY_SOURCE, MPI_ERR_CHANNEL, MPI_COMM_WORLD, &err_request );
+
+          MPI_Test( &err_request, &res_flag, &status );
+          if( res_flag ) {
+            fprintf( error_log, "%s", err_log );
+          }
+        }
+
+        // if we are logging it, check for rebuild success output
+        if ( success_log != NULL ) { 
+          if( suc_request == MPI_REQUEST_NULL )
+            MPI_Irecv( &suc_log[0], MC_MAX_LOG_LEN, MPI_BYTE, MPI_ANY_SOURCE, MPI_SUC_CHANNEL, MPI_COMM_WORLD, &suc_request );
+
+          MPI_Test( &suc_request, &res_flag, &status );
+          if( res_flag ) {
+            fprintf( success_log, "%s", suc_log );
+          }
+        }
+
+        // open a new non-blocking recieve request for final worker status
+        if ( stats_request == MPI_REQUEST_NULL )
+          MPI_Irecv( &buf[0], 7, MPI_INT, MPI_ANY_SOURCE, MPI_STATS_CHANNEL, MPI_COMM_WORLD, &stats_request );
+
+        MPI_Test( &stats_request, &res_flag, &status );
+        if( res_flag ) {
+          // if we recieved termination stats, tally them and increment the count of finished workers
+          stats.total_objects += buf[1];
+          stats.intact_objects += buf[2];
+          stats.rebuild_successes += buf[3];
+          stats.rebuild_failures += buf[4];
+          stats.incomplete_objects += buf[5];
+          skipped_scatters += buf[6];
+          if ( buf[5] ) {
+            err_procs[err_proc_count] = buf[0]+1;
+            err_proc_count++; //count the number of procs that hit an error
+          }
+          terminated++;
+          VRB_FPRINTF( stdout, "INFO: master received stats from worker %d\n", buf[0]+1 );
+        }
+
+      }
+
+      // if requests are still open for either errors or successes, close them
+      if (  err_request != MPI_REQUEST_NULL ) {
+        MPI_Cancel( &err_request );
+        MPI_Request_free( &err_request );
+      }
+      if ( suc_request != MPI_REQUEST_NULL ) {
+        MPI_Cancel( &suc_request );
+        MPI_Request_free( &suc_request );
+      }
+
+      if ( error_log != NULL ) {
+        fclose( error_log );
+        fprintf( stdout, "INFO: error log \"%s\" resides on host '%s'\n", e_ptr, hostname );
+      }
+      if ( success_log != NULL ) {
+        fclose( success_log );
+        fprintf( stdout, "INFO: success log \"%s\" resides on host '%s'\n", s_ptr, hostname );
+      }
+      fflush( stderr );
+      if( ! verbose ) { printf( "rebuilds completed\n" ); }
+      sleep( 1 ); //wait for previous outputs to be displayed
+      printf( "Rebuild of ( Pod %d, Block %d, Cap %d )\n", pod, block, cap );
+      print_stats();
+      if ( skipped_scatters ) { //if any scatters were skipped, print error messages
+        sleep( 1 ); //wait for previous outputs to be displayed
+        ret_stat = -1;
+        fprintf( stderr, "%s: CRITICAL ERROR: %d scatter dir(s) could not be accessed (see above messages)\n", argv[0], skipped_scatters );
+        if ( err_proc_count == num_procs - 1 ) {
+          fprintf( stderr, "%s: CRITICAL ERROR: All workers encountered errors that resulted in skipped scatter directories\n", argv[0] );
+        }
+        else {
+          fprintf( stderr, "%s: CRITICAL ERROR: The following workers failed to access all scatter dirs in their range :", argv[0] );
+          for( terminated = 0; terminated < err_proc_count; terminated++ ) {
+            fprintf( stderr, " %d", err_procs[terminated] );
+          }
+          fprintf( stderr, "\n" );
+        }
+      }
+
+    }
+
+    MPI_Barrier( MPI_COMM_WORLD );
   }
-  else {
+  else { // Rebuilding from logs
+    // running multiple procs off of logs is not supported!
+    if ( proc_rank > 0 ) {
+      fprintf( stderr, "%s: running multiple procs for log rebuilds is not supported! (rank %d terminating early)\n", argv[0], proc_rank );
+      MPI_Comm_split( MPI_COMM_WORLD, MPI_UNDEFINED, proc_rank, &proc_com );
+      MPI_Finalize();
+      return 0;
+    }
+
+    // this is used as a pseudo-barrier, only allowing this process to continue after all others have printed their error
+    MPI_Comm_split( MPI_COMM_WORLD, 1, proc_rank, &proc_com );
+    printf( "WARNING: This is a dry-run, no actual rebuilds will be performed!\n" );
+
     if(optind >= argc) {
-      fprintf(stderr, "Too few arguments\n");
+      fprintf( stderr, "%s: too few arguments\n", argv[0] );
       usage(argv[0]);
+      errno=EINVAL;
+      MPI_Finalize();
       exit(-1);
     }
+
+    if( ! verbose ) {
+      printf( "Rebuilding Objects..." );
+      fflush( stdout );
+    }
+
+    start_threads(threads);
     int index;
     for(index = optind; index < argc; index++) {
 
       DIR *log_dir = opendir(argv[index]);
       if(!log_dir) {
-        fprintf(stderr, "Could not open log dir %s: %s\n",
+        fprintf(stderr, "ERROR: could not open log dir %s: %s\n",
                 argv[index], strerror(errno));
+        MPI_Finalize();
         exit(-1);
       }
 
@@ -846,16 +1373,22 @@ int main(int argc, char **argv) {
         snprintf(log_subdir, PATH_MAX, "%s/%s", argv[index],
                  log_dirent->d_name);
 
+        if( rebuild_queue.abort )
+          break;
+
         process_log_subdir(log_subdir);
       }
 
       closedir(log_dir);
     }
+
+    stop_workers();
+    if( ! verbose ) { printf( "rebuilds completed\n" ); }
+    print_stats();
   }
 
-  stop_workers();
+  // Finalize the MPI environment.
+  MPI_Finalize();
 
-  print_stats();
-
-  return 0;
+  return ret_stat;
 }

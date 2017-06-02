@@ -84,16 +84,17 @@ AM_CPPFLAGS += -DSPINLOCKS
 endif
 
 
-
 # --- additions for multi-component builds
 if USE_MC
 AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
 AM_LDFLAGS  += -L$(LIBNE)/lib
 LDADD       += -L$(LIBNE)/lib -lne
 
-# rebuilder is used to rebuild MC repositories
-bin_PROGRAMS += rebuilder
-rebuilder_SOURCES = utilities/multi-component/rebuilder.c
+all-local : utilities/multi-component/rebuilder.c
+	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o rebuilder $^ ${LDADD} ${LIBS}
+
+clean-local :
+	@ rm -f rebuilder
 
 endif
 
