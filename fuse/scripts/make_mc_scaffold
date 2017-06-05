@@ -2,7 +2,17 @@
 
 function usage {
     echo "Usage:"
-    printf "%s {mount|scatter|sockets} <repo-name>\n\t\t<containing-directory>\n\t\t<num-pods>\n\t\t<num-blocks>\n\t\t<num-capacity-units>\n\t\t<scatter-width>\n\t[ <remote_containing_dir> ]\n" $0
+    printf "$0  options\n"
+    printf "     -t  {mount|scatter|sockets}\n"
+    printf "     -r  <repo-name>\n"
+    printf "     -d  <containing-directory>\n"
+    printf "     -p  <num-pods>\n"
+    printf "     -b  <num-blocks>\n"
+    printf "     -c  <num-capacity-units>\n"
+    printf "     -s    <scatter-width>\n"
+    printf "   [ -D  <remote_containing_dir> ]\n"
+    printf "   [ -O  <owner> ]\n"
+    printf "   [ -n ]    dry run  (ONLY APPLIES TO scatter/sockets OPERATIONS !)\n"
     echo
     echo "-- The \"mount\" option creates the mount points only."
     echo
@@ -12,36 +22,106 @@ function usage {
     echo "   builds the tree: <containing-directory>/<repo-name>/pod[0..<num-pods>-1]/block[0..<num-blocks>-1]/cap[0..<num-capacity-units>-1]/scatter[0..<scatter-width>-1]"
     echo
     echo "-- The \"sockets\" option is similar to the scatter option,"
-    echo "   but builds directories named 'socket[0..<scatter-width>-1]',"
+    echo "   but builds directories named 'sockets[0..<scatter-width>-1]',"
     echo "   rather than 'scatter[...]'"
 }
 
-if [ $# -lt 7 ] || [ $# -gt 8 ] ; then
-    echo "wrong number of arguments"
-    usage
-    exit 0
-fi
 
-if ! [ -d $3 ] ; then
+dry_run=0
+err=0
+
+# --- parse command-line
+OPTS="t:r:p:b:c:s:d:D:o:n"
+getopts $OPTS ARG
+RETVAL=$?
+
+# while [[ $RETVAL -eq 0 ]]; do
+while (( ! $RETVAL )); do
+    #echo "iterating ... (RETVAL=$RETVAL, OPTIND=$OPTIND, OPTARG=$OPTARG)"
+
+    case $ARG in
+        (t) op_type=$OPTARG ;;
+        (r) repo_name=$OPTARG ;;
+
+        (p) npods=$(( OPTARG -1 )) ;;
+        (b) nblocks=$(( OPTARG -1 )) ;;
+        (c) ncaps=$(( OPTARG -1 )) ;;
+        (s) nscatter=$(( OPTARG -1 )) ;;
+
+        (d) containing_dir=$OPTARG ;;
+        (D) r_containing_dir=$OPTARG ;;
+        (o) owner=$OPTARG ;;
+        (n) dry_run=1 ;;
+
+        (?) echo "ERROR"; err=1 ;;
+        (*) echo "UNKNOWN"; err=1 ;;
+    esac
+
+    getopts $OPTS ARG
+    RETVAL=$?
+done
+
+
+if (( err )); then
+    echo "err"
+    usage
+    exit 1
+elif [ -z "$op_type" ]; then
+    echo "op_type"
+    usage
+    exit 1
+elif [ -z "$repo_name" ]; then
+    echo "repo_name"
+    usage
+    exit 1
+elif [ -z "$npods" ]; then
+    echo "npods"
+    usage
+    exit 1
+elif [ -z "$nblocks" ]; then
+    echo "nblocks"
+    usage
+    exit 1
+elif [ -z "$ncaps" ]; then
+    echo "ncaps"
+    usage
+    exit 1
+elif [ -z "$nscatter" ]; then
+    echo "nscatter"
+    usage
+    exit 1
+elif [ -z "$containing_dir" ]; then
+    echo "containing_dir"
+    usage
+    exit 1
+# elif [ -z "$r_containing_dir" ]; then
+#     echo "r_containing_dir"
+#     usage
+#     exit 1
+# elif [ -z "$owner" ]; then
+#    echo "owner"
+#     usage
+#    exit 1
+elif ! [ -d $containing_dir ] ; then
     echo "containing dir does not exist or is not a directory"
     exit 1
-fi
-
-if [ -e $3/$2 ] && ! [ -d $3/$2 ]; then
+elif [ -e $containing_dir/$repo_name ] && ! [ -d $containing_dir/$repo_name ]; then
     echo "repo-dir exists but is not a directory"
     exit 1
 fi
 
-containing_dir=$3
-repo_name=$2
 
-let npods=$4-1
-let nblocks=$5-1
-let ncaps=$6-1
-let nscatter=$7-1
+echo "op         = $op_type"
+echo "repo_name  = $repo_name"
+echo "pods       = [0..$npods]"
+echo "blocks     = [0..$nblocks]"
+echo "caps       = [0..$ncaps]"
+echo "scatter    = [0..$nscatter]"
+echo "cont_dir   = $containing_dir"
+echo "r_cont_dir = $r_containing_dir"
+echo "own        = $owner"
+echo "dry_run    = $dry_run"
 
-# optional arg
-r_containing_dir=$8
 
 
 
@@ -141,6 +221,7 @@ function make-scatter {
 
 function make-scatter2 {
     SUBDIR=$1
+    OWNER=$2
     for p in `seq 0 $npods`
     do
         for b in `seq 0 $nblocks`
@@ -172,13 +253,20 @@ function make-scatter2 {
                 DIRN=${DIRS[ $(( N_DIRS -1 )) ]}
 
                 # --- one ssh call to make <nscatter> subdirs on remote-host
-                echo $DIR0 "..." $DIRN | xargs ssh $MOUNT_HOST echo "[$MOUNT_HOST]" "mkdir    "
-                echo "${DIRS[@]}" | xargs ssh $MOUNT_HOST      mkdir
+                echo $DIR0 "..." $DIRN | xargs ssh $MOUNT_HOST echo "[$MOUNT_HOST]" mkdir
+                (( dry_run )) || (echo "${DIRS[@]}" | xargs ssh $MOUNT_HOST      mkdir)
                 # echo
 
                 # --- one ssh call to chmod <nscatter> subdirs on remote-host
                 echo $DIR0 "..." $DIRN | xargs ssh $MOUNT_HOST echo "[$MOUNT_HOST]"  chmod 703
-                echo "${DIRS[@]}" | xargs  ssh $MOUNT_HOST     chmod 703
+                (( dry_run )) || (echo "${DIRS[@]}" | xargs  ssh $MOUNT_HOST     chmod 703)
+
+                # --- one ssh call to chown <nscatter> subdirs on remote-host
+                if [ -n "$OWNER" ]; then
+                    echo $DIR0 "..." $DIRN | xargs ssh $MOUNT_HOST echo "[$MOUNT_HOST]"  chown mcadmin
+                    (( dry_run )) || (echo "${DIRS[@]}" | xargs  ssh $MOUNT_HOST     chown mcadmin)
+                fi
+
                 echo
             done
         done
@@ -186,7 +274,7 @@ function make-scatter2 {
 }
 
 
-case $1 in
+case $op_type in
     mount)
         make-mount-points
         ;;
@@ -195,7 +283,7 @@ case $1 in
         ;;
     scatter)
         # make-scatter scatter
-        make-scatter2 scatter
+        make-scatter2 scatter $owner
         ;;
     *)
         usage
