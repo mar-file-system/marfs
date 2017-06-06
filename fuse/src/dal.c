@@ -1079,10 +1079,11 @@ int mc_update_path(DAL_Context* ctx) {
    //   "<protected-root>/repo10+2/pod%d/block%s/cap%d/scatter%d/"
    //
    if (MC_CONFIG(ctx)->is_sockets) {
-     // ZFS paths on the VLE currently lack a capacity-unit designation
-     // Also, the config-path uses "%%d", instead of "%s" that receives "%d"
+     // The config-path for MC_SOCKETS DAL uses "%%d" for the block,
+     // instead of "%s" that receives "%d"
      snprintf(path_template, MC_MAX_PATH_LEN, mc_path_format,
               MC_CONTEXT(ctx)->pod + MC_CONFIG(ctx)->pod_offset,
+              MC_CONTEXT(ctx)->cap,
               scatter);
    }
    else {
