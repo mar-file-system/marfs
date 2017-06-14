@@ -2921,22 +2921,22 @@ int init_mdfs() {
       rc = MD_PATH_OP(lstat, ns, ns->trash_md_path, &st);
       if (! rc) {
          if (! S_ISDIR(st.st_mode)) {
-            LOG(LOG_ERR, "not a directory %s\n", ns->fsinfo_path);
+            LOG(LOG_ERR, "not a directory %s\n", ns->trash_md_path);
             return -1;
          }
       }
       else if (errno == ENOENT) {
-         // LOG(LOG_ERR, "creating %s\n", ns->fsinfo_path);
+         // LOG(LOG_ERR, "creating %s\n", ns->trash_md_path);
          // rc = mkdir(ns->trash_md_path, mode);
          // if ((rc < 0) && (errno != EEXIST)) {
          //   LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_md_path);
          //   return -1;
          // }
-         LOG(LOG_ERR, "doesn't exist %s\n", ns->fsinfo_path);
+         LOG(LOG_ERR, "doesn't exist %s\n", ns->trash_md_path);
          return -1;
       }
       else {
-         LOG(LOG_ERR, "stat failed %s (%s)\n", ns->fsinfo_path, strerror(errno));
+         LOG(LOG_ERR, "stat failed %s (%s)\n", ns->trash_md_path, strerror(errno));
          return -1;
       }
 
