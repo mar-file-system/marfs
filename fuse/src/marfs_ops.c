@@ -308,7 +308,7 @@ int marfs_flush (const char*        path,
 
       // we will not close the stream for packed files
       if( !(fh->flags & FH_PACKED) ) {
-         close_data(fh, 0, 1);
+         TRY0( close_data(fh, 0, 1) );
       }
    }
 
@@ -2183,7 +2183,7 @@ int marfs_release (const char*        path,
    // been called on this object.
    if( !(fh->flags & FH_FLUSHED) ) {
       LOG(LOG_INFO, "flushing unflushed stream\n");
-      marfs_flush(path, fh);
+      TRY0(marfs_flush(path, fh));
       EXIT();
       return 0;
    }

@@ -304,7 +304,7 @@ int     nop_open(DAL_Context* ctx,
                  size_t       content_length,
                  uint8_t      preserve_write_count,
                  uint16_t     timeout) {
-
+   OS(ctx)->flags |= OSF_OPEN;
    return 0;
 }
 
@@ -368,6 +368,63 @@ DAL nop_dal = {
    .update_object_location = &nop_update_object_location
 };
 
+// ===========================================================================
+// CLOSE_FAIL - simulate a fiailed close
+// ===========================================================================
+
+int fail_close(DAL_Context *ctx) {
+   return -1;
+}
+
+DAL close_fail = {
+   .name = "CLOSE_FAIL",
+   .name_len = 10,
+
+   .global_state = NULL,
+
+   .config                 = &default_dal_config,
+   .init                   = &default_dal_ctx_init,
+   .destroy                = &default_dal_ctx_destroy,
+   .open                   = &nop_open,
+   .put                    = &nop_put,
+   .get                    = &nop_get,
+   .sync                   = &nop_sync,
+   .abort                  = &nop_abort,
+   .close                  = &fail_close,
+   .del                    = &nop_delete,
+   .update_object_location = &nop_update_object_location
+   
+};
+
+// ===========================================================================
+// SYNC_FAIL - simulate a fiailed sync
+// ===========================================================================
+
+int fail_sync(DAL_Context *ctx) {
+   return -1;
+}
+
+DAL sync_fail = {
+   .name = "SYNC_FAIL",
+   .name_len = 9,
+
+   .global_state = NULL,
+
+   .config                 = &default_dal_config,
+   .init                   = &default_dal_ctx_init,
+   .destroy                = &default_dal_ctx_destroy,
+   .open                   = &nop_open,
+   .put                    = &nop_put,
+   .get                    = &nop_get,
+   .sync                   = &fail_sync,
+   .abort                  = &nop_abort,
+   .close                  = &nop_close,
+   .del                    = &nop_delete,
+   .update_object_location = &nop_update_object_location
+   
+};
+
+   
 // ===========================================================================
 // POSIX
 // ===========================================================================
@@ -1320,6 +1377,8 @@ DAL* get_DAL(const char* name) {
 #if USE_MC
       assert(! install_DAL(&mc_dal)    );
 #endif
+      assert(! install_DAL(&sync_fail) );
+      assert(! install_DAL(&close_fail));
 
       needs_init = 0;
    }
