@@ -84,16 +84,17 @@ AM_CPPFLAGS += -DSPINLOCKS
 endif
 
 
-
 # --- additions for multi-component builds
 if USE_MC
 AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
 AM_LDFLAGS  += -L$(LIBNE)/lib
 LDADD       += -L$(LIBNE)/lib -lne
 
-# rebuilder is used to rebuild MC repositories
-bin_PROGRAMS += rebuilder
-rebuilder_SOURCES = utilities/multi-component/rebuilder.c
+all-local : utilities/multi-component/rebuilder.c
+	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o rebuilder $^ ${LDADD} ${LIBS}
+
+clean-local :
+	@ rm -f rebuilder
 
 endif
 
@@ -141,6 +142,7 @@ marfs_fuse_SOURCES = fuse/src/main.c
 AM_CPPFLAGS += -D_FILE_OFFSET_BITS=64
 endif
 
+AM_CPPFLAGS += -Iutilities/common/src
 # ............................................................................
 # GPFS Utilities
 # ............................................................................
@@ -150,7 +152,9 @@ bin_PROGRAMS += marfs_gc marfs_quota marfs_packer marfs_repack
 
 marfs_gc_SOURCES = utilities/gpfs/marfs_gc.c utilities/gpfs/marfs_gc.h \
 				   utilities/gpfs/utilities_common.c                   \
-				   utilities/gpfs/utilities_common.h
+				   utilities/gpfs/utilities_common.h   \
+                                   utilities/common/src/hash_table.c   \
+                                   utilities/common/src/hash_table.h
 
 marfs_quota_SOURCES = utilities/gpfs/marfs_quota.c utilities/gpfs/marfs_quota.h \
 					  utilities/gpfs/utilities_common.c                         \

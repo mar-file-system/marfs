@@ -1,0 +1,209 @@
+#!/bin/bash
+#
+# Copyright (c) 2015, Los Alamos National Security, LLC
+# All rights reserved.
+# 
+# Copyright 2015.  Los Alamos National Security, LLC. This software was produced
+# under U.S. Government contract DE-AC52-06NA25396 for Los Alamos National
+# Laboratory (LANL), which is operated by Los Alamos National Security, LLC for
+# the U.S. Department of Energy. The U.S. Government has rights to use, reproduce,
+# and distribute this software.  NEITHER THE GOVERNMENT NOR LOS ALAMOS NATIONAL
+# SECURITY, LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
+# FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
+# works, such modified software should be clearly marked, so as not to confuse it
+# with the version available from LANL.
+#  
+# Additionally, redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+# 1. Redistributions of source code must retain the above copyright notice, this
+# list of conditions and the following disclaimer.
+# 
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+# 
+# 3. Neither the name of Los Alamos National Security, LLC, Los Alamos National
+# Laboratory, LANL, the U.S. Government, nor the names of its contributors may be
+# used to endorse or promote products derived from this software without specific
+# prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL LOS ALAMOS NATIONAL SECURITY, LLC OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
+# OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+# STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# 
+# -----
+# NOTE:
+# -----
+# MarFS is released under the BSD license.
+# 
+# MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier:
+# LA-CC-15-039.
+# 
+# MarFS uses libaws4c for Amazon S3 object communication. The original version
+# is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
+# LANL added functionality to the original work. The original work plus
+# LANL contributions is found at https://github.com/jti-lanl/aws4c.
+# 
+# GNU licenses can be found at http://www.gnu.org/licenses/.
+#
+
+PROG=$( echo "$0" | sed 's/^.*\///' ) # program name
+LOG_FILE="$PROG"".$$.log"             # default log-file
+MARFS_COMPANION_FILE_SUFFIX=".path"   # MarFS trash companion file suffix
+SCAN_PROGRESS_INTERVAL=1000                  # interval for printing progress indication dots
+DEL_PROGRESS_INTERVAL=10                  # interval for printing progress indication dots
+TRASH_REGEX='^.*/[0-9]/[0-9]/[0-9]/.*$'
+
+S_PATH=""
+S_SKIP=1
+NO_DELETE=1
+VERBOSE=0
+
+usage() {
+   echo "usage -- $PROG [-v] [-f <log_file>] [-p <trash_path>] [-D]"
+   echo "   -v               Specifies verbose output, listing all files"
+   echo "   -f <log_file>    Specifies the name of the log-file to be generated (with -p) "
+   echo "                     and/or read (with -D)"
+   echo "   -p <trash_path>  Enables the scanning phase, where files located under the "
+   echo "                     given directory are verified and added to the log"
+   echo "   -D               Enables the deletion phase, where files read from the log "
+   echo "                     will be reverified and deleted"
+}
+
+prog_desc() {
+   echo "This program is intended to clean-up any non-trash or incomplete trash files "
+   echo " located within a MarFS trash directory.  All trash paths are expected to "
+   echo " conform to the following regex - \"$TRASH_REGEX\"."
+   echo "If '-p' is specified, the program produces a listing of files to be deleted by "
+   echo " scanning a given path and locating files with no \"$MARFS_COMPANION_FILE_SUFFIX\" companion file."
+   echo "If '-D' is specified, the program reads the log-file and, for each file, again "
+   echo " verifies the absence a companion file before then deleting it."
+   echo
+   usage
+}
+
+usage=0
+while [[ $# -gt 0 ]]; do
+
+   case $1 in
+      -f) LOG_FILE=$2; shift; ;;
+      -p) S_PATH=$2; S_SKIP=0; shift; ;;
+      -D) NO_DELETE=0; ;;
+      -v) VERBOSE=1; ;;
+      -h) prog_desc; exit 0; ;;
+      *)  ( >&2 echo "$PROG: received unrecognized argument - \"$1\"" ); exit -1; ;;
+   esac
+
+   shift
+done
+
+if [[ $S_SKIP -eq 1  &&  $NO_DELETE -eq 1 ]]; then
+   ( >&2 echo "$PROG: running with neither '-p' nor '-D' is a no-op" )
+   usage
+   exit -1
+fi
+
+fexists=0
+if [[ $S_SKIP -eq 0  &&  -e $LOG_FILE ]]; then
+   fexists=1
+   echo "$PROG: appending to already existing file \"$LOG_FILE\""
+elif [[ $S_SKIP -eq 0 ]]; then
+   touch "$LOG_FILE"
+fi
+
+if [[ $NO_DELETE -ne 1 ]]; then
+   while [[ 0 ]]; do # loop until confirmation received or termination
+      if [[ $S_SKIP -eq 0 ]]; then
+         WARN_TEXT="this program will delete all files with no corresponding \"<file_name>$MARFS_COMPANION_FILE_SUFFIX\" file within the \"$S_PATH\" directory"
+         if [[ $fexists -eq 1 ]]; then WARN_TEXT=$WARN_TEXT" or already present within the log file \"$LOG_FILE\""; fi
+      else
+         WARN_TEXT="this program will delete all files with no corresponding \"<file_name>$MARFS_COMPANION_FILE_SUFFIX\" file listed within \"$LOG_FILE\""
+      fi
+      echo -n "Warning - $WARN_TEXT.  Are you sure you wish to proceed? (Y/N) : "
+      read -r input
+      if [[ "$input" =~ [Nn] ]]; then
+         exit 0
+      elif [[ "$input" != "Y" ]]; then
+         echo "Input unrecognized.  Please enter either 'Y' or 'N'."
+      else
+         break
+      fi
+   done
+fi
+
+need_sp=1
+file_count=0
+line_count=0
+if [[ $S_SKIP -eq 0 ]]; then
+   echo -n "Scanning \"$S_PATH\" for files with no companions..."
+   if [[ $VERBOSE -eq 1 ]]; then echo; need_sp=0; fi
+
+   while read -r line; do
+      if [[ ! "$line" =~ ".path"$ ]]; then
+         # verify against the expected trash format
+         if [[ ! "$line" =~ $TRASH_REGEX ]]; then
+            if [[ $need_sp -eq 1 ]]; then echo; fi
+            ( >&2 echo "$PROG: \"$line\" does not match expected trash format" )
+            need_sp=0
+         else
+            # check that there is no companion file
+            if [[ ! -e "$line$MARFS_COMPANION_FILE_SUFFIX" ]]; then
+               echo "$line" >> $LOG_FILE
+               if [[ $VERBOSE -eq 1 ]]; then echo "$line"; fi
+               ((file_count++))
+            fi
+         fi
+      fi
+      if [[ $VERBOSE -ne 1  &&  $(( $line_count % SCAN_PROGRESS_INTERVAL )) == 0 ]]; then echo -n "."; fi
+      ((line_count++))
+   done < <(find $S_PATH -type f)
+   echo "identified $file_count files for deletion out of $line_count."
+
+   if [[ $NO_DELETE -ne 1 ]]; then echo; fi
+fi
+
+if [[ $NO_DELETE -eq 1 ]]; then
+   exit 0
+elif [[ ! -e $LOG_FILE ]]; then
+   echo "$PROG: the log-file \"$LOG_FILE\" does not exist"
+   exit -1
+fi
+
+echo -n "Reverifying and deleting files..."
+need_sp=1
+if [[ $VERBOSE -eq 1 ]]; then echo; need_sp=0; fi
+delete_count=0
+line_count=0
+while read -r line; do
+   if [[ ! "$line" =~ $TRASH_REGEX ]]; then
+      if [[ $need_sp -eq 1 ]]; then echo; fi
+      echo "$line -- does not match expected trash path format"
+      need_sp=0
+   else
+      if [[ ! -e "$line$MARFS_COMPANION_FILE_SUFFIX" ]]; then
+         if [[ $VERBOSE -eq 1 ]]; then echo "$line"; fi
+         #DISABLED DELETES FOR SAFETY
+         echo "DELETES DISABLED - whould have done : rm $line"
+         if [[ $? -eq 0 ]]; then ((delete_count++)); fi
+      else
+         if [[ $need_sp -eq 1 ]]; then echo; fi
+         echo "$line -- has compainion file"
+         need_sp=0
+      fi
+   fi
+   if [[ $(( line_count % DEL_PROGRESS_INTERVAL )) == 0 ]]; then
+      echo -n "."
+      need_sp=1
+   fi
+   ((line_count++))
+done <$LOG_FILE
+echo "deleted $delete_count out of $line_count files."
+
