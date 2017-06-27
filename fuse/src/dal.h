@@ -138,6 +138,8 @@ typedef struct mc_config {
    ring_t      *ring;
 } MC_Config;
 
+void unflatten_objid(char *objid);
+
 #endif // USE_MC
 
 

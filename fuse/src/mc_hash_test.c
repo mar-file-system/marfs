@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/time.h>
 #include <assert.h>
 
@@ -218,10 +219,14 @@ void uneven_distribution() {
 }
 
 char *random_objid() {
+   static unsigned int inode = 1234;
+   if(((double)rand() / (double) RAND_MAX) < 0.01) {
+      inode = random();
+   }
    static char objid[1024];
    sprintf(objid,
-           "qwerty%dyuiop[%0.d]asdf/hjklasdfhjkl;asdfhjklzxcv%d,asdfzxcvm,%0.5d",
-           random(), random(), random(), random());
+           "bucket/ver.1_6/ns.foo/P___/inode.%010ld/md_ctime.%d/unq.0/chnksz.2000000/chnkno.%lu",
+           inode++, random(), random(), 0);
    return objid;
 }
 
@@ -699,7 +704,113 @@ void test_successor_iterator() {
    printf("test_successor_iterator: SUCCESS!\n");
 }
 
+/**
+ * Compute the total utilization once one capacity unit is at 100%
+ * utilization for many different ring sizes, increasing the ring size
+ * by adding uniform capacity.
+ */
+void uniform_utilization() {
+   // generate random node names
+   char *nodes[128];
+   int i, n;
+   n = random();
+   for(i = 0; i < 128; i++) {
+      char name[32];
+      sprintf(name, "cap%d", n++);
+      nodes[i] = strdup(name);
+   }
+   
+   // make a 4/8/16/32/64 node ring with uniform weight
+   for(i = 4; i <= 64; i *= 2) {
+      unsigned long counts[128];
+      memset(counts, '\0', 128 * sizeof(unsigned long));
+      ring_t *ring = new_ring(nodes, NULL, i);
+      // fill the ring. But make a simplifying assumption that the
+      // capacity is 1 millon objects per capacity unit.
+      uint64_t j;
+      unsigned long max_count = 0;
+      for(j = 0; max_count < 1000000; j++) {
+         node_t *n = successor(ring, random_objid());
+         int k;
+         for(k = 0; k < i; k++) {
+            if(strcmp(n->name, nodes[k]) == 0) {
+               counts[k]++;
+               if(counts[k] > max_count) {
+                  max_count = counts[k];
+               }
+            }
+         }
+      }
+      unsigned long long total_count = 0;
+      for(j = 0; j < i; j++) {
+         total_count += counts[j];
+      }
+      printf("Utilization-uniform (%d): %f\n", i, (double)total_count/(double)(i * 1000000));
+      destroy_ring(ring);
+   }
+}
+
+int not_full(unsigned long *counts, int *weights, size_t len) {
+   int i;
+   for(i = 0; i < len; i++) {
+      if(counts[i] >= weights[i] * 1000000L) {
+         return 0;
+      }
+   }
+   return 1;
+}
+
+void exponential_utilization() {
+   int weights[28] = {1,1,1,1,
+                      2,2,2,2,
+                      4,4,4,4,
+                      8,8,8,8,
+                      16,16,16,16,
+                      32,32,32,32,
+                      64,64,64,64};
+   char *nodes[28];
+   int i, n;
+   n = random();
+   for(i = 0; i < 28; i++) {
+      char name[32];
+      sprintf(name, "cap%d", n++);
+      nodes[i] = strdup(name);
+   }
+
+   for(i = 4; i <= 28; i+=4) {
+      unsigned long counts[32];
+      memset(counts, '\0', 32 * sizeof(unsigned long));
+      ring_t *ring = new_ring(nodes, weights, i);
+      // fill the ring. But make a simplifying assumption that the
+      // capacity is 1 millon objects per capacity unit.
+      uint64_t j;
+      for(j = 0; not_full(counts, weights, i); j++) {
+         node_t *n = successor(ring, random_objid());
+         int k;
+         for(k = 0; k < i; k++) {
+            if(strcmp(n->name, nodes[k]) == 0) {
+               counts[k]++;
+            }
+         }
+      }
+      unsigned long long total_count = 0;
+      uint64_t max_cap = 0;
+      for(j = 0; j < i; j++) {
+         total_count += counts[j];
+         max_cap += weights[j] * 1000000;
+      }
+      printf("Utilization-exponential (%d): %f\n", i, (double)total_count/(double)max_cap);
+      destroy_ring(ring);
+   }
+}
+
 int main(int argc, char **argv) {
+   if(argc > 1) {
+      srandom(strtol(argv[1], NULL, 10));
+      exponential_utilization();
+      uniform_utilization();
+      return 0;
+   }
    test_successor();
    test_node_list();
    test_ring_join();

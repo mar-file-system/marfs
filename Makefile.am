@@ -95,10 +95,12 @@ AM_LDFLAGS  += -L$(LIBNE)/lib
 LDADD       += -L$(LIBNE)/lib -lne
 
 # rebuilder is used to rebuild MC repositories
-bin_PROGRAMS += rebuilder
+bin_PROGRAMS += rebuilder mc_ring
 rebuilder_SOURCES = utilities/multi-component/rebuilder.c  \
 					utilities/common/src/hash_table.c      \
 					utilities/common/src/hash_table.h
+mc_ring_SOURCES = utilities/multi-component/mc_ring.c
+mc_ring_LDFLAGS = -all-static
 
 endif
 

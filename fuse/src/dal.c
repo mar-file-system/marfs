@@ -443,6 +443,15 @@ static void flatten_objid(char* objid) {
    }
 }
 
+void unflatten_objid(char *flat_objid) {
+   while(*flat_objid) {
+      if(*flat_objid == FLAT_OBJID_SEPARATOR) {
+         *flat_objid = '/';
+      }
+      flat_objid++;
+   }
+}
+
 // Generate the full path the the object in the POSIX repository.
 // This will be used as the ->update_object_location interface
 // function.
