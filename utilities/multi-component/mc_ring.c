@@ -254,13 +254,12 @@ int copy_data(int src_fd, int dest_fd) {
 
    // read the source file and queue a bunch of async writes.
    size_t read_size;
-   while(read_size = read(src_fd, buf, BUFF_SIZE) != 0) {
+   while((read_size = read(src_fd, buf, BUFF_SIZE)) != 0) {
       if(read_size == -1) {
-         copy_fail(aiocbs, aiocb_index);
          free(buf);
+         copy_fail(aiocbs, aiocb_index);
          return -1;
       }
-      
       aiocbs[aiocb_index] = malloc(sizeof(struct aiocb));
       if(aiocbs[aiocb_index] == NULL) {
          perror("malloc()");
@@ -292,7 +291,7 @@ int copy_data(int src_fd, int dest_fd) {
    int error = 0;
    int i;
    for(i = 0; i < aiocb_index; i++) {
-      while(aio_error(aiocbs[i]) == EINPROGRESS);
+      while(aio_error(aiocbs[i]) == EINPROGRESS) pthread_yield();
       if(aio_return(aiocbs[i]) < aiocbs[i]->aio_nbytes) {
          // not short circuiting. just return error after waiting for
          // all aios to finish.
@@ -531,13 +530,19 @@ void rebalance(int argc, char **argv) {
             while(work_queue.size == QUEUE_SIZE) {
                pthread_cond_wait(&work_queue.empty_cv, &work_queue.lock);
             }
-            work_queue.queue[work_queue.tail].src = realpath(src_path, NULL);
+            work_queue.queue[work_queue.tail].src = strdup(src_path);
             if(work_queue.queue[work_queue.tail].src == NULL) {
-               perror("realpath()");
+               perror("strdup()");
                pthread_mutex_unlock(&work_queue.lock);
                continue;
             }
             work_queue.queue[work_queue.tail].dest = strdup(dest_full);
+            if(work_queue.queue[work_queue.tail].dest == NULL) {
+               perror("strdup()");
+               free(work_queue.queue[work_queue.tail].src);
+               pthread_mutex_unlock(&work_queue.lock);
+               continue;
+            }
             work_queue.tail++;
             work_queue.size++;
             if(work_queue.tail >= QUEUE_SIZE) {
@@ -549,14 +554,17 @@ void rebalance(int argc, char **argv) {
       }
       closedir(scatter);
    }
-   pthread_mutex_lock(&work_queue.lock);
-   work_queue.tail = -1; // signal that we are done.
-   pthread_cond_broadcast(&work_queue.full_cv);
-   pthread_mutex_unlock(&work_queue.lock);
 
-   // join on the threads.
-   for(i = 0; i < num_threads; i++) {
-      pthread_join(work_queue.threads[i], NULL);
+   if(num_threads > 1) {
+      pthread_mutex_lock(&work_queue.lock);
+      work_queue.tail = -1; // signal that we are done.
+      pthread_cond_broadcast(&work_queue.full_cv);
+      pthread_mutex_unlock(&work_queue.lock);
+
+      // join on the threads.
+      for(i = 0; i < num_threads; i++) {
+         pthread_join(work_queue.threads[i], NULL);
+      }
    }
 }
 
