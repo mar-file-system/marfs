@@ -55,99 +55,137 @@
 # GNU licenses can be found at http://www.gnu.org/licenses/.
 
 import os
+import subprocess
 import re
 import errno
 import sys
 
 # The number of bytes to be read/written per iteration
 BYTES = 8192
-regstr = ""
-store = False
-data = ""
+# The environment-var which stores the location of the MarFS config reader executable
+MARFS_CONF_ENV='MARFSCONFIGEX'
+# The name of the config reader executable (used for PATH lookup if the above env-var is not set)
+MARFS_CONF_NAME='marfs_config'
 
-for line in open(os.environ['MARFSCONFIGRC']):
-   if "mdfs_top" in line or "md_path" in line:
-      tmp = re.sub( r"</.*>\n",r"",line )
-      tmp = re.sub( r"(\w)*<.*?>",r"",tmp ).strip()
-      if ( regstr != "" ):
-         tmp = re.sub( regstr+".*",r"",tmp )
-      if ( tmp != "" ):
-         regstr = re.sub( "\("+tmp+".*?\)\|?", "", regstr )
-         if ( regstr != "" ):
-            regstr += "|"
-         regstr += "("+tmp+")"
+def print_usage():
+   print "usage -- pipetool_remote OP_CODE PATH"
+   print "   OP_CODE = { 0 = read, 1 = store, 2 = append, 3 = overwrite }"
+   return
 
-regstr += ".*"
 
-regex = re.compile( regstr  )
+# locate the 'marfs_config' executable
+try:
+   MARFS_CONFIG=os.environ[MARFS_CONF_ENV]
+except KeyError:
+   # if the environment var is not set, assume the executable is in the path
+   MARFS_CONFIG=MARFS_CONF_NAME
+
+try:
+   # launch the marfs configuration parser
+   config = subprocess.Popen([ MARFS_CONFIG, "-t", "mnt_top" ],
+                             shell=False,
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE )
+except OSError as err:
+   # if the config reader didn't launch, print the error and terminate
+   print >> sys.stderr, "pipetool_remote: failed to execute MarFS configuration parser on the batch-FTA: {0}".format( err )
+   exit( err.errno )
+
+out, err = config.communicate()
+
+# if the parser hit an error, print it and terminate
+if ( err != "" ):
+   perr = err.split( " ", 1 )
+   sys.stderr.write( "pipetool_remote: error reading MarFS configuration: "+perr[-1] )
+   exit( errno.EIO )
 
 # Verify number of arguments
 if ( len(sys.argv) != 3 ):
-   print >> sys.stderr, "Usage: pipetool_remote {store, retrieve} PATHNAME"
+   print >> sys.stderr, "pipetool_remote: received an improper number of arguments"
+   print_usage()
    exit( errno.EINVAL )
 
+# construct a regex based upon the mnt_top paths in the MarFS config
+regstr = "^"
+lines = out.split( "\n" )
+for line in lines:
+   if ( line == "" ):
+      continue
+   if ( not line.endswith( "/" ) ):
+      line+="/" #mnt_top is a directory
+   if ( regstr != "^" ):
+      regstr += "|"
+   regstr += "("+line+".*)"
+regstr += "$"
+
+regex = re.compile( regstr  )
+
+# follow symlinks to construct a true absolute-path
 path = os.path.realpath( sys.argv[2] )
 
-# Verify that this will not access metadata
-if ( regex.match(path) ):
-   print >> sys.stderr, "pipetool_remote: ERROR: Accessing this directory is forbidden by MarFS!"
+# Verify that this access is under the MarFS 'mnt_top'
+if ( not regex.match(path) ):
+   print >> sys.stderr, "pipetool_remote: operation not permitted: accessing non-MarFS paths is forbidden"
    exit( errno.EPERM )
 
-homepath = os.path.realpath( "" )
-forbid = "("+homepath+"/\.bash.*)|("+homepath+"/\.profile.*)|("+homepath+"/\.login.*)"
+OP = 0      #specifies the operation to perform { 0 = read, 1 = store, 2 = append, 3 = overwrite }
 
-regex = re.compile( forbid )
+try:
+   OP = int( sys.argv[1] )
+except ValueError as err:
+   print >> sys.stderr, "pipetool_remote: error parsing OP_CODE input of \""+sys.argv[1]+"\": {0}".format( err )
+   print_usage()
+   exit( err.errno )
 
-# Verify that this will not access files where env vars may be altered
-if ( regex.match(path) ):
-   print >> sys.stderr, "pipetool_remote: ERROR: Accessing this file is forbidden!"
-   exit( errno.EPERM )
-
-# Parse args
-if ( sys.argv[1] == "store" ):
-   store = True
-elif ( sys.argv[1] == "detect" ):
-   data = sys.stdin.read( BYTES )
-   if ( data != "" ):
-      if ( os.path.isfile( path ) ):
-         print >> sys.stderr, "pipetool_remote: WARNING: The specified file exists.  Defaulted to 'retrieve'.  Use 'store' option to overwrite the file instead."
-      else:
-         store = True
-elif ( sys.argv[1] != "retrieve" ):
-   print >> sys.stderr, "Usage: pipetool_remote {store, retrieve} PATHNAME"
+# set the file mode based upon OP
+target_mode = None
+try:
+   target_mode = {
+      0: 'r',
+      1: 'w',
+      2: 'a', #note that MarFS does not support this mode
+      3: 'w'
+   }[OP]
+except KeyError:
+   print >> sys.stderr, "pipetool_remote: received an unrecognized OP_CODE - "+sys.argv[1]
+   print_usage()
    exit( errno.EINVAL )
 
-if ( store ):
-   # Open the target location for writing
-   try:
-      target = open( path, 'w' )
-   except IOError as err:
-      print >> sys.stderr, "pipetool_remote: ERROR: {0}".format( err )
-      exit( err.errno )
-   
-   # Read form stdin and write to the target file location
-   if ( data == "" ):
-      data = sys.stdin.read( BYTES )
+target = None
+try:
+   if ( OP == 1  and  os.path.exists( path ) ):
+      raise IOError( "[Errno "+str(errno.EEXIST)+"]: "+os.strerror(errno.EEXIST)+": '"+path+"'" )
+   target = open( path, target_mode )
+except IOError as err:
+   print >> sys.stderr, "pipetool_remote: error opening file: {0}".format( err )
+   exit( err.errno )
 
-   while ( data != "" ):
-      target.write( data )
-      data = sys.stdin.read( BYTES )
-else:
-   # Open the target location for reading
+data = ""   #data buffer
+if ( OP == 0 ):
    try:
-      target = open( path, 'r' )
-   except IOError as err:
-      print >> sys.stderr, "pipetool_remote: ERROR: {0}".format( err )
-      exit( err.errno )
-   
-   # Read form stdin and write to the target file location
-   data = target.read( BYTES )
-   
-   while ( data != "" ):
-      sys.stdout.write( data )
+      # Read from the target file and write to stdout
       data = target.read( BYTES )
+      while ( data != "" ):
+         sys.stdout.write( data )
+         data = target.read( BYTES )
+   except IOError as err:
+      print >> sys.stderr, "pipetool_remote: error reading from file: {0}".format( err )
+      exit( err.errno )
+else:
+   try:
+      # Read from stdin and write to the target file location
+      data = sys.stdin.read( BYTES )
+      while ( data != "" ):
+         target.write( data )
+         data = sys.stdin.read( BYTES )
+   except IOError as err:
+      print >> sys.stderr, "pipetool_remote: error writing to file: {0}".format( err )
+      exit( err.errno )
 
 # Cleanup
-target.close()
-
+try:
+   target.close()
+except IOError as err:
+   print >> sys.stderr, "pipetool_remote: error while closing the target file: {0}".format( err )
+   exit( err.errno )
 

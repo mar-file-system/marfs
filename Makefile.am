@@ -84,7 +84,6 @@ AM_CPPFLAGS += -DSPINLOCKS
 endif
 
 
-
 # --- additions for multi-component builds
 if USE_MC
 libmarfs_a_SOURCES += fuse/src/mc_hash.c fuse/src/mc_hash.h \
@@ -95,12 +94,16 @@ AM_LDFLAGS  += -L$(LIBNE)/lib
 LDADD       += -L$(LIBNE)/lib -lne
 
 # rebuilder is used to rebuild MC repositories
-bin_PROGRAMS += rebuilder mc_ring
-rebuilder_SOURCES = utilities/multi-component/rebuilder.c  \
-					utilities/common/src/hash_table.c      \
-					utilities/common/src/hash_table.h
+bin_PROGRAMS += mc_ring
+
 mc_ring_SOURCES = utilities/multi-component/mc_ring.c
 mc_ring_LDFLAGS = -all-static
+
+all-local : utilities/multi-component/rebuilder.c
+	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o rebuilder $^ ${LDADD} $(top_srcdir)/utilities/common/src/hash_table.o ${LIBS}
+
+clean-local :
+	@ rm -f rebuilder
 
 endif
 

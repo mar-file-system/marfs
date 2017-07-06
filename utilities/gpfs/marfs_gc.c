@@ -85,15 +85,15 @@ OF SUCH DAMAGE.
 
 typedef struct payload_file_struct {
    char* md_path;
-   size_t size;
-   time_t md_ctime;
+   size_t size; //needed?
+   time_t md_ctime; //needed?
    struct payload_file_struct* next;
 } *ht_file;
 
 typedef struct payload_header_struct {
    size_t chunks;
    MarFS_Namespace_Ptr ns;
-   time_t md_ctime;
+   time_t md_ctime; //needed?
    struct payload_file_struct* files;
    struct payload_file_struct* tail;
 } *ht_header;
@@ -140,6 +140,7 @@ struct delete_queue_struct {
    int                num_items;
    int                num_consumers;
    char               work_done; // flag to indicate the producer is done.
+   char               abort_flag;
    pthread_t*         consumer_threads;
 } delete_queue;
 
@@ -262,6 +263,7 @@ int main(int argc, char **argv) {
    run_info.verbose = verbose_flag;
    run_info.queue_max = queue_max;
    run_info.warnings = 0;
+   run_info.errors = 0;
 
    if (target_ns) {
      size_t target_ns_size = strlen(target_ns);
@@ -299,7 +301,7 @@ int main(int argc, char **argv) {
    read_inodes(rdir,fileset_id,fileset_info_ptr,
                fileset_count,time_threshold_sec,ht);
 
-   if (run_info.has_packed) {
+   if ( !delete_queue.abort_flag  &&  run_info.has_packed) {
       fprintf(run_info.outfd, "\nPhase 2: processing packed files\n");
       process_packed( ht, rt );
    }
@@ -321,6 +323,21 @@ int main(int argc, char **argv) {
 
 
 /***************************************************************************** 
+ * Name: set_abort
+ *
+ * *****************************************************************************/
+static void set_abort(int signo) {
+   fprintf( stderr, "\nTERMINATING EARLY : signalling threads to stop..." );
+
+   //we don't actually need the queue lock here
+   delete_queue.abort_flag = 1;
+
+   fprintf( stderr, "abort issued\n" );
+}
+
+
+
+/***************************************************************************** 
  * Name: queue_delete
  *
  * *****************************************************************************/
@@ -330,8 +347,15 @@ void queue_delete( delete_entry* del_ent ) {
       exit(-1); // a bit unceremonious
    }
 
-   while(delete_queue.num_items == run_info.queue_max)
+   while( !delete_queue.abort_flag  &&  delete_queue.num_items == run_info.queue_max )
       pthread_cond_wait(&delete_queue.queue_full, &delete_queue.queue_lock);
+
+   // if an abort was signaled, stop all threads and exit
+   if( delete_queue.abort_flag ) {
+      pthread_mutex_unlock(&delete_queue.queue_lock);
+      stop_workers();
+      exit( -1 );
+   }
 
    if( delete_queue.num_items != 0 ) { delete_queue.tail->next = del_ent; }
    else { delete_queue.head = del_ent; }
@@ -372,6 +396,13 @@ void* obj_destroyer( void* arg ) {
          return NULL;
       }
 
+      // if we have recieved an abort, terminate right away
+      if( delete_queue.abort_flag ) {
+         pthread_cond_broadcast(&delete_queue.queue_full); //unblock the producer, if necessary
+         pthread_mutex_unlock(&delete_queue.queue_lock);
+         pthread_exit( stats );
+      }
+
       // wait for the queue to fill or for the producer to finish
       while(!delete_queue.num_items && !delete_queue.work_done)
          pthread_cond_wait(&delete_queue.queue_empty, &delete_queue.queue_lock);
@@ -406,34 +437,45 @@ void* obj_destroyer( void* arg ) {
       if( del_ent->file_info.obj_type != OBJ_PACKED ) {
          fake_filehandle_for_delete_inits( &(del_ent->fh) );
          if ( (obj_return = dump_trash( &(del_ent->fh), &(del_ent->file_info) )) ) {
-            fprintf(run_info.outfd, "delete error (obj_destroyer): \
-               %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+            fprintf(run_info.outfd, "FAILURE: delete returned: %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+            fprintf( stderr, "FAILURE: could not delete object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
             stats->failures++;
          }
          else {
-            VERB_FPRINTF( stdout, "INFO: deleted object -- %s\n", del_ent->fh.info.pre.objid );
+            if ( run_info.no_delete ) {
+               VERB_FPRINTF( stdout, "INFO: found object for delete -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+            }
+            else {
+               VERB_FPRINTF( stdout, "INFO: deleted object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+            }
             stats->successes++;
          }
       }
       else {
-         if( del_ent->files == NULL )
-            fprintf( stderr, "ERROR: recieved NULL metadata file list for packed object -- %s\n", del_ent->fh.info.pre.objid );
-
+         if( del_ent->files == NULL ) {
+            fprintf( stderr, "FAILURE: recieved NULL metadata file list for packed object -- %s\n", del_ent->fh.info.pre.objid );
+            stats->failures++;
+         }
          // Delete object first
-         if ( (obj_return = delete_object( &(del_ent->fh), &(del_ent->file_info), 0)) != 0 ) {
-            fprintf(run_info.outfd, "delete error (obj_destroyer): \
-               %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+         else if ( (obj_return = delete_object( &(del_ent->fh), &(del_ent->file_info), 0)) != 0 ) {
+            fprintf(run_info.outfd, "FAILURE: delete returned: %d: on object %s\n", obj_return, del_ent->fh.info.pre.objid );
+            fprintf( stderr, "FAILURE: could not delete object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
             free_packed_files( del_ent->files, 0 ); //free file list but leave metadata intact
             stats->failures++;
          }
-         // Get metafile name from tmp_packed_log and delelte 
+         // Get metafile names and delete them
          else {
-            VERB_FPRINTF( stdout, "INFO: deleted packed object -- %s\n", del_ent->fh.info.pre.objid );
             if( free_packed_files( del_ent->files, !run_info.no_delete ) == 0 ) {
+               if ( run_info.no_delete ) {
+                  VERB_FPRINTF( stdout, "INFO: found object for delete -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+               }
+               else {
+                  VERB_FPRINTF( stdout, "INFO: deleted object -- ID:%s MD:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
+               }
                stats->successes++;
             }
             else {
-               fprintf( stderr, "ERROR: failed to delete all metadata files for packed object -- %s\n", del_ent->fh.info.pre.objid );
+               fprintf( stderr, "FAILURE: could not delete/free all metadata files for packed object -- ID:%s MD-Example:%s\n", del_ent->fh.info.pre.objid, del_ent->fh.info.post.md_path );
                stats->failures++;
             }
          }
@@ -452,26 +494,37 @@ void* obj_destroyer( void* arg ) {
  * *****************************************************************************/
 void start_threads(int num_threads) {
 
-  delete_queue.consumer_threads = calloc(num_threads, sizeof(pthread_t));
-  if(delete_queue.consumer_threads == NULL) {
-    perror("start_threads: calloc()");
-    exit(-1);
-  }
+   delete_queue.consumer_threads = calloc(num_threads, sizeof(pthread_t));
+   if(delete_queue.consumer_threads == NULL) {
+      perror("start_threads: calloc()");
+      exit(-1);
+   }
 
-  pthread_mutex_init(&delete_queue.queue_lock, NULL);
-  pthread_cond_init(&delete_queue.queue_empty, NULL);
-  pthread_cond_init(&delete_queue.queue_full, NULL);
+   pthread_mutex_init(&delete_queue.queue_lock, NULL);
+   pthread_cond_init(&delete_queue.queue_empty, NULL);
+   pthread_cond_init(&delete_queue.queue_full, NULL);
 
-  delete_queue.num_items     = 0;
-  delete_queue.work_done     = 0;
-  delete_queue.head          = NULL;
-  delete_queue.tail          = NULL;
-  delete_queue.num_consumers = num_threads;
+   delete_queue.num_items     = 0;
+   delete_queue.work_done     = 0;
+   delete_queue.abort_flag    = 0;
+   delete_queue.head          = NULL;
+   delete_queue.tail          = NULL;
+   delete_queue.num_consumers = num_threads;
 
-  int i;
-  for(i = 0; i < num_threads; i++) {
-    pthread_create(&delete_queue.consumer_threads[i], NULL, obj_destroyer, NULL);
-  }
+   struct sigaction action;
+   action.sa_handler = set_abort;
+   action.sa_flags = 0;
+   sigemptyset( &action.sa_mask );
+
+   if( sigaction( SIGINT, &action, NULL ) ) {
+      fprintf( stderr, "ERROR: failed to set signal handler for SIGINT -- %s\n", strerror( errno ) );
+      exit ( -1 ); //terminate while it's still safe to do so
+   }
+
+   int i;
+   for(i = 0; i < num_threads; i++) {
+      pthread_create(&delete_queue.consumer_threads[i], NULL, obj_destroyer, NULL);
+   }
 }
 
 
@@ -501,21 +554,40 @@ void stop_workers() {
          status = NULL;
       }
       else {
-         fprintf( stderr, "THREAD_ERROR: master process recieved a NULL status from delete_thread %d\n", i+1 );
+         fprintf( stderr, "ERROR: master process recieved a NULL status from delete_thread %d\n", i+1 );
+         run_info.errors++;
       }
    }
    fprintf( stdout, "threads completed\n" );
 
-   printf(  "\n----- RUN TOTALS -----\n" \
-            "Total Attempted Deletes = %*llu\n" \
-            "Successful Deletes =      %*lu\n" \
-            "Failed Deletes =          %*lu\n" \
-            "Warnings =                %*lu\n", \
+   if ( run_info.no_delete ) {
+      printf(  "\n----- DRY-RUN TOTALS -----\n" \
+            "Total Potential Deletes Queued =  %*llu\n" \
+            "Valid Deletes  =                  %*lu\n" \
+            "Failed Deletes =                  %*lu\n" \
+            "Warnings =                        %*lu\n" \
+            "Errors =                          %*lu\n", \
             10, run_info.deletes, 
             10, successes, 
             10, failures,
-            10, run_info.warnings );
-   printf(  " ( Max Work-Queue Depth = %d )\n", run_info.queue_high_water );
+            10, run_info.warnings,
+            10, run_info.errors );
+   }
+   else {
+      printf(  "\n----- RUN TOTALS -----\n" \
+            "Total Queued Deletes =  %*llu\n" \
+            "Successful Deletes =    %*lu\n" \
+            "Failed Deletes =        %*lu\n" \
+            "Warnings =              %*lu\n" \
+            "Errors =                %*lu\n", \
+            10, run_info.deletes, 
+            10, successes, 
+            10, failures,
+            10, run_info.warnings,
+            10, run_info.errors );
+
+   }
+   printf(  " ( Max Work-Queue Depth Achieved = %d )\n", run_info.queue_high_water );
 
 }
 
@@ -753,16 +825,25 @@ void update_payload( void* new, void** old){
       OP->tail = (*tmp);
 
       if ( OP->chunks != NP->chunks ) {
-         fprintf( stderr, "WARNING: update_payload -- xattr file count of %zd for %s does not match expected %zd (from %s)\n", NP->chunks, NP->md_path, OP->chunks, OP->files->md_path );
-         run_info.warnings++;
+         if ( OP->chunks == 1 ) {
+            OP->chunks = NP->chunks;
+         }
+         else if ( NP->chunks != 1  &&  OP->chunks != -1 ) {
+            fprintf( stderr, "ERROR: update_payload -- detected faulty MarFS POST xattr when processing %s ( current count = %d, new count = %d )\n", 
+               NP->md_path, OP->chunks, NP->chunks );
+            run_info.errors++;
+            OP->chunks = -1; //set count to avoid deleting this object
+         }
       }
       if ( OP->ns != NP->ns ) {
-         fprintf( stderr, "WARNING: update_payload -- xattr MarFS Namespace for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
-         run_info.warnings++;
+         fprintf( stderr, "ERROR: update_payload -- xattr MarFS Namespace for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
+         run_info.errors++;
+         OP->chunks = -1; //set count to avoid deleting this object
       }
       if ( OP->md_ctime != NP->md_ctime ) {
-         fprintf( stderr, "WARNING: update_payload -- xattr md_ctime for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
-         run_info.warnings++;
+         fprintf( stderr, "ERROR: update_payload -- xattr md_ctime for %s does not match expected from %s\n", NP->md_path, OP->files->md_path );
+         run_info.errors++;
+         OP->chunks = -1; //set count to avoid deleting this object
       }
    }
 }
@@ -788,10 +869,12 @@ void print_current_time()
 
 void print_delete_preamble() {
    print_current_time();
-   if ( run_info.no_delete )
+   if ( run_info.no_delete ) {
       fprintf(run_info.outfd, "INFO: ID'd ");
-   else
+   }
+   else {
       fprintf(run_info.outfd, "INFO: deleting ");
+   }
 }
 
 
@@ -899,6 +982,11 @@ int read_inodes(const char   *fnameP,
 
    while (1) {
 
+      if( delete_queue.abort_flag ) {
+         printf( "scan terminated early\n" );
+         return -1;
+      }
+
       MarFS_XattrPre*  pre;
       MarFS_XattrPost* post;
 
@@ -938,6 +1026,7 @@ int read_inodes(const char   *fnameP,
       if (iattrP->ia_flags & GPFS_IAFLAG_ERROR) {
          fprintf(stderr, "%sERROR: read_inodes: invalid inode %9d (GPFS_IAFLAG_ERROR)\n", 
                sep_char, ProgName,iattrP->ia_inode);
+         run_info.errors++;
          sep_char = '\0';
          continue;
       } 
@@ -1000,13 +1089,20 @@ int read_inodes(const char   *fnameP,
                         count = %d index=%d\n", xattr_ptr->xattr_name, \
                         xattr_ptr->xattr_value, xattr_count,xattr_index);
                   if ((str_2_post(post, xattr_ptr->xattr_value, 1))) {
-                     fprintf(stderr, "%cError parsing  post xattr for inode %d\n",
-                           sep_char, iattrP->ia_inode);
+                     fprintf(stderr, "%cERROR: parsing of post xattr (%s) failed for inode %d\n",
+                           sep_char, xattr_ptr->xattr_value, iattrP->ia_inode);
+                     run_info.errors++;
                      sep_char = '\0';
                      continue;
                   }
                }
                else {
+                  if ( fileset_id >= 0 ) {
+                     fprintf( stderr, "%cWARNING: encountered inode %d with no POST xattr in the trash fileset\n", 
+                           sep_char, iattrP->ia_inode );
+                     run_info.warnings++;
+                     sep_char = '\0';
+                  }
 //                  if ( (pre_xattr_index = get_xattr_value(&mar_xattrs[0], marfs_xattrs[objid_index], xattr_count)) < 0 ) {
 //                     if ( (res_xattr_index = get_xattr_value(&mar_xattrs[0], marfs_xattrs[restart_index], xattr_count)) >= 0 ){
 //                        fprintf(stderr, "%cWARNING: foud a restart xattr (%s) but no pre/post for inode %d\n", 
@@ -1029,6 +1125,18 @@ int read_inodes(const char   *fnameP,
                   if (now-day_seconds > iattrP->ia_atime.tv_sec) {
                      LOG(LOG_INFO, "Found trash\n");
                      md_path_ptr = &post->md_path[0];
+
+                     // check for the existance of a trash companion file
+                     struct stat comp_stat;
+                     char comp_file[ MARFS_MAX_MD_PATH ];
+                     strncpy( comp_file, md_path_ptr, MARFS_MAX_MD_PATH );
+                     strncat( comp_file, MARFS_TRASH_COMPANION_SUFFIX, MARFS_MAX_MD_PATH );
+                     if ( stat( comp_file, &comp_stat ) ) {
+                        fprintf( stderr, "%cWARNING: found trash file \"%s\" with no companion file\n", sep_char, md_path_ptr );
+                        run_info.warnings++;
+                        sep_char = '\0';
+                        continue;
+                     }
 
                      // Get OBJID xattr (aka "pre")
                      if ((xattr_index=get_xattr_value(&mar_xattrs[0], 
@@ -1318,7 +1426,6 @@ int delete_object(MarFS_FileHandle *fh,
       // s3_return = s3_delete( obj_buffer, pre_ptr->objid );
       if( (rc = delete_data(fh)) ) {
          fprintf( run_info.outfd, "ERROR: failed delete of object %s (returned code %d)\n", object, rc );
-         fprintf( stderr, "ERROR: failed delete of object %s (returned code %d)\n", object, rc );
       }
       return rc;
    }
@@ -1335,7 +1442,7 @@ int delete_file( char *filename )
 {
    int return_value = 0;
    char path_file[MARFS_MAX_MD_PATH];
-   sprintf(path_file, "%s.path",filename);
+   sprintf(path_file, "%s%s",filename,MARFS_TRASH_COMPANION_SUFFIX);
 
    // Delete MD-file (unless '-n')
    print_delete_preamble();
@@ -1430,6 +1537,11 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
 
    while ( (entry = ht_traverse_and_destroy( ht, entry )) != NULL ) {
       
+      if( delete_queue.abort_flag ) {
+         printf( "packed processing terminated early\n" );
+         return -1;
+      }
+
       ent_count++;
       tmp_prog = ent_count / prog_print_interval;
       if( prog_count < tmp_prog ) { prog_count = tmp_prog; printf( "." ); sep_char='\n'; fflush( stdout ); }
@@ -1438,32 +1550,18 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
       ht_header p_header = (ht_header) entry->payload;      
       file = p_header->files;
 
-      if (entry->value != p_header->chunks) {
-
-         // TODO check min_pack_file_count to determine canidacy for repack
-         if ( rt  &&  ( entry->value < p_header->chunks ) ) {
-            VERB_FPRINTF( stderr, "%cINFO: repack canidate found, but repack is not implemented\n", sep_char );
-            sep_char = '\0';
-
-            // TODO insert into rt table
-         }
-         else {
-            if ( entry->value > p_header->chunks ) {
-               fprintf(stderr, "%cWARNING: potential faulty 'marfs_post' xattr -- object %s has %d files while chunk count is %zd  MD-example = %s\n",
-                  sep_char, entry->key, entry->value, p_header->chunks, file->md_path);
-               run_info.warnings++;
-               sep_char = '\0';
-            }
-
-            //free the payload list
-            free_packed_files( file, 0 );
-            free( p_header );
-         }
+      // If we are missing files from the packed object or a problem was found, skip the deletion
+      if ( entry->value < p_header->chunks  ||  p_header->chunks == -1 ) {
+         //free the payload list
+         free_packed_files( file, 0 );
+         free( p_header );
          continue;
       }
 
       if ( run_info.no_delete ) {
          fprintf(run_info.outfd, "ID'd packed object %s\n", entry->key);
+         free_packed_files( file, 0 );
+         free( p_header );
          continue;
       }
 
@@ -1482,6 +1580,8 @@ int process_packed(hash_table_t* ht, hash_table_t* rt)
          fprintf(run_info.outfd,
                  "ERROR: failed to create filehandle for %s %s\n",
                  entry->key, file->md_path);
+         fprintf( stderr, "ERROR: failed to create filehandle for (obj) %s (md_path) %s\n", entry->key, file->md_path );
+         run_info.errors++;
          if ( free_packed_files( file, 0 ) ) df_return = -1;
          free( del_ent );
          free( p_header );
