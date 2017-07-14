@@ -141,7 +141,8 @@ int migrate_light(node_list_t *from, ring_t *ring) {
             unflatten_objid(objid);
             node_t *new_node = successor(ring, objid);
             if(strcmp(n, new_node->name)) {
-               if(link_block(obj_dent->d_name, n, new_node->name, scatter)) {
+               if(link_block(obj_dent->d_name, n, new_node->name, scatter)
+                  && errno != EEXIST) {
                   fprintf(stderr, "failed to create symlink for object "
                           "%s (%s -> %s) in scatter %d\n",
                           obj_dent->d_name, new_node->name, n, scatter);
