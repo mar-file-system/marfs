@@ -176,7 +176,7 @@ typedef struct mc_config {
 // There is also global-state in each DAL struct (not to be confused with
 // DAL_Context).  This can be initialized (if needed) in dal_ctx_init().
 // It will initially be NULL.  If desired, one could use dal_ctx_init()
-// to associate individual contexts to have a link to the global state.
+// to give individual contexts a link to the global state.
 //
 // The MarFS calls to the DAL implementation functions will not touch the
 // contents of the Context, except that we call init_dal_context() when
@@ -283,7 +283,7 @@ typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 //
 // Additionally the implementation must guard itself against OS
 // structures that were previously used and have the OSF_CLOSED flag
-// Asserted. In the abscence of OSF_CLOSED, any other flags that are
+// asserted.  In the absence of OSF_CLOSED, any other flags that are
 // asserted (with the exception of OSF_RLOCK_INIT) should be
 // considered an error and open should fail with errno=EBADF. If given
 // an object stream with the OSF_CLOSED flag then it is also the

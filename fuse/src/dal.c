@@ -324,29 +324,16 @@ ssize_t nop_get(DAL_Context*  ctx,
    return size;
 }
 
-int     nop_sync(DAL_Context*  ctx) {
 
-   return 0;
-}
+int     nop_sync(DAL_Context*  ctx) { return 0; }
 
-int     nop_abort(DAL_Context*  ctx) {
+int     nop_abort(DAL_Context*  ctx) { return 0; }
 
-   return 0;
-}
+int     nop_close(DAL_Context*  ctx) { return 0; }
 
-int     nop_close(DAL_Context*  ctx) {
+int     nop_delete(DAL_Context*  ctx) { return 0; }
 
-   return 0;
-}
-
-int     nop_delete(DAL_Context*  ctx) {
-
-   return 0;
-}
-
-int     nop_update_object_location(DAL_Context* ctx) {
-   return 0;
-}
+int     nop_update_object_location(DAL_Context* ctx) { return 0; }
 
 
 DAL nop_dal = {
@@ -997,6 +984,9 @@ int mc_destroy(DAL_Context *ctx, struct DAL* dal) {
 //         Within each pod:
 //             <p> is constant
 //             <b> starts at some offset, and increments by 1 up to N+E+offset
+//                 [I'm not referring to the way a stripe is laid out along
+//                 the block-files but rather to the names of the N+E
+//                 block-files.]
 //
 //         Across pods:
 //             <p> starts at some offset, and increments by 1 up to num_pods+offset
@@ -1120,17 +1110,23 @@ int mc_open(DAL_Context* ctx,
             uint16_t timeout) {
    ENTRY();
 
-   ObjectStream* os = MC_OS(ctx);
+   ObjectStream* os            = MC_OS(ctx);
    char*         path_template = MC_CONTEXT(ctx)->path_template;
 
-   unsigned int n = MC_CONFIG(ctx)->n;
-   unsigned int e = MC_CONFIG(ctx)->e;
+   unsigned int  n             = MC_CONFIG(ctx)->n;
+   unsigned int  e             = MC_CONFIG(ctx)->e;
+
+   int           impl          = (MC_CONFIG(ctx)->is_sockets ? FSI_SOCKETS : FSI_POSIX);
+   int           stat_flags    = (MC_FH(ctx)->info.pre.repo->timing_flags
+                                  | MC_FH(ctx)->info.pre.ns->timing_flags );
+
+   int           mode          = (is_put ? NE_WRONLY : NE_RDONLY);
 
    // do the generic cleanup stuff like resetting flags.
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
 
-   int mode = is_put ? NE_WRONLY : NE_RDONLY;
    MC_HANDLE(ctx) = ne_open1(MC_CONFIG(ctx)->snprintf, ctx, MC_CONFIG(ctx)->auth,
+                             stat_flags, impl,
                              path_template, mode,
                              MC_CONTEXT(ctx)->start_block, n, e);
    if(! MC_HANDLE(ctx)) {
@@ -1348,10 +1344,15 @@ int mc_close(DAL_Context* ctx) {
 
 int mc_del(DAL_Context* ctx) {
    char* path_template = MC_CONTEXT(ctx)->path_template;
-   int nblocks         = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
+   int   nblocks       = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
 
-   return ne_delete1(MC_CONFIG(ctx)->snprintf, ctx, MC_CONFIG(ctx)->auth, path_template, nblocks);
+   int   impl          = (MC_CONFIG(ctx)->is_sockets ? FSI_SOCKETS : FSI_POSIX);
+   int   stat_flags    = (MC_FH(ctx)->info.pre.repo->timing_flags
+                          | MC_FH(ctx)->info.pre.ns->timing_flags );
+
+   return ne_delete1(MC_CONFIG(ctx)->snprintf, ctx, MC_CONFIG(ctx)->auth, stat_flags, impl, path_template, nblocks);
 }
+
 
 DAL mc_dal = {
    .name         = "MC",

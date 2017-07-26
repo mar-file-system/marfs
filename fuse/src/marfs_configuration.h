@@ -59,6 +59,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdint.h>
 #include "xdal_common.h"        /* xDALConfigOpt */
 
+#include "erasure.h"         /* see erasureUtils */
+
 
 #  ifdef __cplusplus
 extern "C" {
@@ -129,9 +131,13 @@ extern "C" {
 //        leaving libconfig with only the PA2X interface.
 //
 // -- 1.6 MarFS now includes the multi-component DAL
+//
+// -- 1.7 Added timing_flags spec to NS/Repo config, added parsing, and
+//        abstracted out parsing of iperms/bperms to be similar.
+
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  6
+#define MARFS_CONFIG_MINOR  7
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
@@ -324,6 +330,20 @@ typedef uint8_t  MarFS_Perms;
 
 
 /*
+ * Collection of timing statistics can be enabled on repositories
+ * and namespaces.  At run-time, the flags for a given namespace and
+ * repo are OR'ed together.  Thus, admins can choose to add timing to
+ * an entire repo, or to a specific namespace, or perhaps to a custom
+ * namespace that is only used by admins.
+ *
+ * The options that are selectable in the configuration ultimately
+ * boil down to the flags available in TimingStats in the erasureUtils
+ * (libne) library
+ */
+
+
+
+/*
  * This is the MarFS repository type for use in the MarFS software
  * components. Users of this code are not expected to rely on or
  * even know the components of this struct. Utility functions will
@@ -357,6 +377,7 @@ typedef struct marfs_repo {
    ssize_t               max_pack_file_count;
 
    struct DAL           *dal;
+   StatFlagsValue        timing_flags; // see erasure.h
 
    char                 *online_cmds;
    size_t                online_cmds_len;
@@ -435,19 +456,26 @@ typedef struct marfs_namespace {
    size_t                alias_len;
    char                 *mnt_path;
    size_t                mnt_path_len;
+
    MarFS_Perms           bperms;
    MarFS_Perms           iperms;
+
    char                 *md_path;
    size_t                md_path_len;
+
    MarFS_Repo_Ptr        iwrite_repo;
    MarFS_Repo_Range_List repo_range_list;
    int                   repo_range_list_count;
+
    char                 *trash_md_path;
    size_t                trash_md_path_len;
+
    char                 *fsinfo_path;
    size_t                fsinfo_path_len;
+
    long long             quota_space;
    long long             quota_names;
+   StatFlagsValue        timing_flags; // see erasure.h
 
    struct MDAL          *dir_MDAL;
    struct MDAL          *file_MDAL;

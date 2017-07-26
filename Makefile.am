@@ -70,9 +70,9 @@ LDADD += libmarfs.a $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
 
 # Generally we will always want to build the config tester program.
 bin_PROGRAMS = marfs_config
-lib_LIBRARIES = libmarfs.a
 
-libmarfs_a_SOURCES = parser fuse/src/common.c fuse/src/common.h        \
+lib_LIBRARIES = libmarfs.a
+libmarfs_a_SOURCES = parser fuse/src/common.c fuse/	src/common.h        \
 					 fuse/src/marfs_base.c fuse/src/marfs_base.h       \
 					 fuse/src/marfs_ops.c fuse/src/marfs_ops.h         \
 					 fuse/src/push_user.c fuse/src/push_user.h         \
@@ -101,7 +101,7 @@ endif
 if USE_MC
   AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
   AM_LDFLAGS  += -L$(LIBNE)/lib
-  LDADD       += -L$(LIBNE)/lib -lne
+  LDADD       += -L$(LIBNE)/lib -lne -lft
 
 # rebuilder is used to rebuild MC repositories
 bin_PROGRAMS += rebuilder

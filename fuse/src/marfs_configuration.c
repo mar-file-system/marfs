@@ -818,6 +818,147 @@ void free_xdal_config_options(xDALConfigOpt** opts) {
 }
 
 
+// transform permissions flags from text to bit-mask.
+//
+// <flags_field>    is e.g.  "iperms"
+// <str>            is e.g.  "RM,WM,RD,WD,..."
+//
+// <flags>          gets     (R_META | W_META | R_DATA | W_DATA | ...)
+
+/*
+ * Because strtok destroys the string on which it operates, we're going to
+ * make a copy of it first. But, we want to make sure it does not have any
+ * whitespace in it so that we get the permission mnemonics without
+ * whitespace that are delimited by a comma.
+ *
+ * Also, the parser does not allow tags without any contents, but we want to allow
+ * perms to be empty.  Therefore, we allow the value "NONE" to appear, which
+ * we treat as a no-op.
+ */
+
+int parse_access_perms(const char* flags_field, MarFS_Perms* flags, const char* str) {
+   *flags = 0;
+   if ( !str )
+      return 0;
+
+   size_t slen     = strlen( str );
+   char*  str_dup  = NULL;
+   int    pd_index = 0;
+   int    k;
+
+   if ( !slen )
+      return 0;
+
+   str_dup = (char *) malloc( slen + 1 );
+   for ( k = 0; k < slen; k++ ) {
+      if ( ! isspace( str[k] )) {
+         str_dup[pd_index] = str[k];
+         pd_index++;
+      }
+   }
+   str_dup[pd_index] = '\0';
+
+   char* tok = strtok( str_dup, "," );
+   while ( tok != NULL ) {
+      if ( ! strcasecmp( tok, "RM" )) {
+         *flags |= R_META;
+      } else if ( ! strcasecmp( tok, "WM" )) {
+         *flags |= W_META;
+      } else if ( ! strcasecmp( tok, "RD" )) {
+         *flags |= R_DATA;
+      } else if ( ! strcasecmp( tok, "WD" )) {
+         *flags |= W_DATA;
+      } else if ( ! strcasecmp( tok, "TD" )) {
+         *flags |= T_DATA;
+      } else if ( ! strcasecmp( tok, "UD" )) {
+         *flags |= U_DATA;
+      } else if ( strcasecmp( tok, "NONE" )) {
+         LOG( LOG_ERR, "Invalid %s value of \"%s\".\n", flags_field, tok );
+         return -1;
+      }
+
+      tok = strtok( NULL, "," );
+   }
+
+   free( str_dup );
+   return 0;
+}
+
+
+// transform permissions flags from text to bit-mask.
+// the flags refer to members of StatFlags in erasure.h
+//
+// <flags_field>    is e.g.  "ns.timing_flags"
+// <str>            is e.g.  "OPEN,RW,CLOSE,RENAME,CRC,ERASURE,THREAD,HANDLE"
+//
+// <flags>          gets     (SF_OPEN | SF_RW | SF_CLOSE | SF_RENAME | ...)
+
+/*
+ * Because strtok destroys the string on which it operates, we're going to
+ * make a copy of it first. But, we want to make sure it does not have any
+ * whitespace in it so that we get the permission mnemonics without
+ * whitespace that are delimited by a comma.
+ *
+ * Also, the parser does not allow tags without any contents, but we want to allow
+ * perms to be empty.  Therefore, we allow the value "NONE" to appear, which
+ * we treat as a no-op.
+ */
+
+int parse_timing_flags(const char* flags_field, StatFlagsValue* flags, const char* str) {
+
+   *flags = 0;
+   if ( !str )
+      return 0;
+
+   size_t slen     = strlen( str );
+   char*  str_dup  = NULL;
+   int    pd_index = 0;
+   int    k;
+
+   if ( !slen )
+      return 0;
+
+   str_dup = (char *) malloc( slen + 1 );
+   for ( k = 0; k < slen; k++ ) {
+      if ( ! isspace( str[k] )) {
+         str_dup[pd_index] = str[k];
+         pd_index++;
+      }
+   }
+   str_dup[pd_index] = '\0';
+
+   char* tok = strtok( str_dup, "," );
+   while ( tok != NULL ) {
+      if ( ! strcasecmp( tok, "OPEN" )) {
+         *flags |= SF_OPEN;
+      } else if ( ! strcasecmp( tok, "RW" )) {
+         *flags |= SF_RW;
+      } else if ( ! strcasecmp( tok, "CLOSE" )) {
+         *flags |= SF_CLOSE;
+      } else if ( ! strcasecmp( tok, "RENAME" )) {
+         *flags |= SF_RENAME;
+      } else if ( ! strcasecmp( tok, "CRC" )) {
+         *flags |= SF_CRC;
+      } else if ( ! strcasecmp( tok, "ERASURE" )) {
+         *flags |= SF_ERASURE;
+      } else if ( ! strcasecmp( tok, "THREAD" )) {
+         *flags |= SF_THREAD;
+      } else if ( ! strcasecmp( tok, "HANDLE" )) {
+         *flags |= SF_HANDLE;
+      } else if ( strcasecmp( tok, "NONE" )) {
+         LOG( LOG_ERR, "Invalid %s value of \"%s\".\n", flags_field, tok );
+         return -1;
+      }
+
+      tok = strtok( NULL, "," );
+   }
+
+   free( str_dup );
+   return 0;
+}
+
+
+
 // The "TYPE" arg to EXTRACT() must match the "foo" in some foo_MAX defn in limits.h
 // e.g. UCHAR, SHRT, UINT, etc
 #include <limits.h>
@@ -842,11 +983,8 @@ static MarFS_Config_Ptr read_configuration_internal() {
    struct namespace**     namespaceList;
    struct repo**          repoList;
    int                    i, j, k;
-   int                    slen;
    int                    repoRangeCount;
-   char*                  perms_dup;
    char*                  tok;
-   int                    pd_index;
    MarFS_Repo_Range_List  marfs_repo_range_list;
 
    struct config* config = read_PA2X_config();
@@ -1069,6 +1207,13 @@ static MarFS_Config_Ptr read_configuration_internal() {
        }
     }
 
+
+    if (parse_timing_flags("repo.timing_flags", &m_repo->timing_flags, p_repo->timing_flags)) {
+       LOG( LOG_ERR, "MarFS repo '%s' had a problem with timing_flags.\n", p_repo->name);
+       return NULL;
+    }
+
+
 #if 0
     if (! p_repo->pack_size) {
        LOG( LOG_ERR, "Repo '%s' has no pack_size.\n", p_repo->name );
@@ -1284,101 +1429,22 @@ static MarFS_Config_Ptr read_configuration_internal() {
     m_ns->alias_len = strlen( p_ns->alias );
 
     if ( ! p_ns->mnt_path ) {
-       LOG( LOG_ERR, "MarFS namespace '%s' has no mnt_path.\n", p_ns->name);
+      LOG( LOG_ERR, "MarFS namespace '%s' has no mnt_path.\n", p_ns->name);
       return NULL;
     }
     m_ns->mnt_path = strdup( p_ns->mnt_path );
     m_ns->mnt_path_len = strlen( p_ns->mnt_path );
 
-/*
- * Because strtok destroys the string on which it operates, we're going to
- * make a copy of it first. But, we want to make sure it does not have any
- * whitespace in it so that we get the permission mnemonics without
- * whitespace that are delimited by a comma.
- *
- * Also, the parser does not allow tags without any contents, but we want to allow
- * perms to be empty.  Therefore, we allow the value "NONE" to appear, which
- * we treat as a no-op.
- */
 
-    if (! p_ns->bperms)
-       p_ns->bperms = strdup("NONE");
-
-    slen = (int) strlen( p_ns->bperms );
-    perms_dup = (char *) malloc( slen + 1 );
-    pd_index = 0;
-
-    for ( k = 0; k < slen; k++ ) {
-      if ( ! isspace( p_ns->bperms[k] )) {
-        perms_dup[pd_index] = p_ns->bperms[k];
-        pd_index++;
-      }
-    }
-    perms_dup[pd_index] = '\0';
-
-    tok = strtok( perms_dup, "," );
-    while ( tok != NULL ) {
-      if ( ! strcasecmp( tok, "RM" )) {
-        m_ns->bperms |= R_META;
-      } else if ( ! strcasecmp( tok, "WM" )) {
-        m_ns->bperms |= W_META;
-      } else if ( ! strcasecmp( tok, "RD" )) {
-        m_ns->bperms |= R_DATA;
-      } else if ( ! strcasecmp( tok, "WD" )) {
-        m_ns->bperms |= W_DATA;
-      } else if ( ! strcasecmp( tok, "TD" )) {
-        m_ns->bperms |= T_DATA;
-      } else if ( ! strcasecmp( tok, "UD" )) {
-        m_ns->bperms |= U_DATA;
-      } else if ( strcasecmp( tok, "NONE" )) {
-        LOG( LOG_ERR, "Invalid bperms value of \"%s\".\n", tok );
-        return NULL;
-      }
-
-      tok = strtok( NULL, "," );
+    if (parse_access_perms("bperms", &m_ns->bperms, p_ns->bperms)) {
+       LOG( LOG_ERR, "MarFS namespace '%s' had a problem with bperms.\n", p_ns->name);
+       return NULL;
     }
 
-    free( perms_dup );
-
-
-    if (! p_ns->iperms)
-       p_ns->iperms = strdup("NONE");
-
-    slen = (int) strlen( p_ns->iperms );
-    perms_dup = (char *) malloc( slen + 1 );
-    pd_index = 0;
-
-    for ( k = 0; k < slen; k++ ) {
-      if ( ! isspace( p_ns->iperms[k] )) {
-        perms_dup[pd_index] = p_ns->iperms[k];
-        pd_index++;
-      }
+    if (parse_access_perms("iperms", &m_ns->iperms, p_ns->iperms)) {
+       LOG( LOG_ERR, "MarFS namespace '%s' had a problem with iperms.\n", p_ns->name);
+       return NULL;
     }
-    perms_dup[pd_index] = '\0';
-
-    tok = strtok( perms_dup, "," );
-    while ( tok != NULL ) {
-      if ( ! strcasecmp( tok, "RM" )) {
-        m_ns->iperms |= R_META;
-      } else if ( ! strcasecmp( tok, "WM" )) {
-        m_ns->iperms |= W_META;
-      } else if ( ! strcasecmp( tok, "RD" )) {
-        m_ns->iperms |= R_DATA;
-      } else if ( ! strcasecmp( tok, "WD" )) {
-        m_ns->iperms |= W_DATA;
-      } else if ( ! strcasecmp( tok, "TD" )) {
-        m_ns->iperms |= T_DATA;
-      } else if ( ! strcasecmp( tok, "UD" )) {
-        m_ns->iperms |= U_DATA;
-      } else if ( strcasecmp( tok, "NONE" )) {
-        LOG( LOG_ERR, "Invalid iperms value of \"%s\".\n", tok );
-        return NULL;
-      }
-
-      tok = strtok( NULL, "," );
-    }
-
-    free( perms_dup );
 
     if ( ! p_ns->md_path ) {
        LOG( LOG_ERR, "MarFS namespace '%s' has no md_path.\n", p_ns->md_path);
@@ -1399,7 +1465,7 @@ static MarFS_Config_Ptr read_configuration_internal() {
     }
 
 /*
- * For now we'll set this to one (1). Once the configuration parser is fixed we can
+ * For now we'll set repoRangeCount to one (1). Once the configuration parser is fixed we can
  * potentially have more than one range per namespace.
  *
  * 9/22/15: We now have the ability to access a list within the namespace list.
@@ -1509,6 +1575,12 @@ static MarFS_Config_Ptr read_configuration_internal() {
     if ( errno ) {
       LOG( LOG_ERR, "Invalid quota_names value of \"%s\".\n", p_ns->quota_names );
       return NULL;
+    }
+
+
+    if (parse_timing_flags("ns.timing_flags", &m_ns->timing_flags, p_ns->timing_flags)) {
+       LOG( LOG_ERR, "MarFS namespace '%s' had a problem with timing_flags.\n", p_ns->name);
+       return NULL;
     }
 
 
@@ -1888,32 +1960,33 @@ int debug_xdal_config_options(xDALConfigOpt** opt) {
 
 int debug_namespace( MarFS_Namespace* ns ) {
    fprintf(stdout, "Namespace\n");
-   fprintf(stdout, "\tname               %s\n",   ns->name );
-   fprintf(stdout, "\tname_len           %ld\n",  ns->name_len);
-   fprintf(stdout, "\tmnt_path           %s\n",   ns->mnt_path);
-   fprintf(stdout, "\tmnt_path_len       %ld\n",  ns->mnt_path_len);
-   fprintf(stdout, "\tbperms             0x%x\n", ns->bperms);
-   fprintf(stdout, "\tiperms             0x%x\n", ns->iperms);
-   fprintf(stdout, "\tmd_path            %s\n",   ns->md_path);
-   fprintf(stdout, "\tmd_path_len        %ld\n",  ns->md_path_len);
-   fprintf(stdout, "\tiwrite_repo        %s\n",   ns->iwrite_repo->name);
+   fprintf(stdout, "\tname                %s\n",   ns->name );
+   fprintf(stdout, "\tname_len            %ld\n",  ns->name_len);
+   fprintf(stdout, "\tmnt_path            %s\n",   ns->mnt_path);
+   fprintf(stdout, "\tmnt_path_len        %ld\n",  ns->mnt_path_len);
+   fprintf(stdout, "\tbperms              0x%x\n", ns->bperms);
+   fprintf(stdout, "\tiperms              0x%x\n", ns->iperms);
+   fprintf(stdout, "\tmd_path             %s\n",   ns->md_path);
+   fprintf(stdout, "\tmd_path_len         %ld\n",  ns->md_path_len);
+   fprintf(stdout, "\tiwrite_repo         %s\n",   ns->iwrite_repo->name);
 
    fprintf(stdout, "\trepo_range_list\n");
    debug_range_list(ns->repo_range_list, ns->repo_range_list_count);
 
-   fprintf(stdout, "\ttrash_md_path      %s\n",   ns->trash_md_path);
-   fprintf(stdout, "\ttrash_md_path_len  %ld\n",  ns->trash_md_path_len);
-   fprintf(stdout, "\tfsinfo_path        %s\n",   ns->fsinfo_path);
-   fprintf(stdout, "\tfsinfo_path_len    %ld\n",  ns->fsinfo_path_len);
-   fprintf(stdout, "\tquota_space        %lld\n", ns->quota_space);
+   fprintf(stdout, "\ttrash_md_path       %s\n",   ns->trash_md_path);
+   fprintf(stdout, "\ttrash_md_path_len   %ld\n",  ns->trash_md_path_len);
+   fprintf(stdout, "\tfsinfo_path         %s\n",   ns->fsinfo_path);
+   fprintf(stdout, "\tfsinfo_path_len     %ld\n",  ns->fsinfo_path_len);
+   fprintf(stdout, "\tquota_space         %lld\n", ns->quota_space);
+   fprintf(stdout, "\ttiming_flags        0x%x\n", ns->timing_flags);
 
-   fprintf(stdout, "\tdir_MDAL           %s\n",   (ns->dir_MDAL  ? ns->dir_MDAL->name  : "NULL"));
+   fprintf(stdout, "\tdir_MDAL            %s\n",   (ns->dir_MDAL  ? ns->dir_MDAL->name  : "NULL"));
    // We're assuming read_configuration() has already configured the MDAL in question
    if (ns->dir_MDAL && (ns->dir_MDAL->config == &default_mdal_config)) {
       debug_xdal_config_options(ns->dir_MDAL->global_state);
    }
 
-   fprintf(stdout, "\tfile_MDAL          %s\n",   (ns->file_MDAL ? ns->file_MDAL->name : "NULL"));
+   fprintf(stdout, "\tfile_MDAL           %s\n",   (ns->file_MDAL ? ns->file_MDAL->name : "NULL"));
    // We're assuming read_configuration() has already configured the MDAL in question
    if (ns->file_MDAL && (ns->file_MDAL->config == &default_mdal_config)) {
       debug_xdal_config_options(ns->file_MDAL->global_state);
@@ -1955,6 +2028,7 @@ int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "\tonline_cmds         %s\n",   repo->online_cmds);
    fprintf(stdout, "\tonline_cmds_len     %ld\n",  repo->online_cmds_len);
    fprintf(stdout, "\tlatency             %llu\n", repo->latency);
+   fprintf(stdout, "\ttiming_flags        0x%x\n", repo->timing_flags);
 
    return 0;
 }
