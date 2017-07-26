@@ -15,7 +15,7 @@
 
 #include "erasure.h"
 
-#define BUFF_SIZE   10485760 /* 10 MB */
+#define BUFF_SIZE   16777216  /* 16 MB */
 #define QUEUE_SIZE  256
 #define MAX_THREADS 1024
 
@@ -196,32 +196,26 @@ ring_t *get_ring(char *nodes) {
 void join(int argc, char **argv) {
    // The arguments for join are the repo, the capacity unit being
    // joined, and the path template
-   if(argc != 5) {
+   if(argc != 4) {
       fprintf(stderr, "wrong number of arguments for join\n"
-              "expected: join <repo name> <new capacity unit> "
+              "expected: join <new capacity unit> "
               "<existing units (CSV)> <path template> <num scatter>\n");
       exit(-1);
    }
 
-   migration_config.path_template = argv[3];
-   migration_config.num_scatter = strtol(argv[4], NULL, 10);
-#if 0
-   // commented out. PA2X won't work on the storage nodes
-   if(load_configuration(argv[0]) == -1) {
-      exit(-1);
-   }
-#endif
+   migration_config.path_template = argv[2];
+   migration_config.num_scatter = strtol(argv[3], NULL, 10);
 
-   migration_config.ring = get_ring(argv[2]);
+   migration_config.ring = get_ring(argv[1]);
 
-   if(ring_join(migration_config.ring, argv[1], 0, migrate_light) != 0) {
+   if(ring_join(migration_config.ring, argv[0], 0, migrate_light) != 0) {
       fprintf(stderr, "ring_join failed\n");
       exit(-1);
    }
    else {
-      printf("Successfully joined %s to the repo %s. "
+      printf("Successfully joined %s to %s. "
              "To complete migration please run rebalance.\n",
-             argv[1], argv[0]);
+             argv[0], argv[1]);
    }
 }
 
@@ -256,6 +250,18 @@ int copy_data(int src_fd, int dest_fd) {
    // read the source file and queue a bunch of async writes.
    size_t read_size;
    while((read_size = read(src_fd, buf, BUFF_SIZE)) != 0) {
+#if 0
+      if(read_size == -1) {
+         perror("read()");
+         free(buf);
+         return -1;
+      }
+      if(write(dest_fd, buf, read_size) < read_size) {
+         perror("write()");
+         free(buf);
+         return -1;
+      }
+#endif
       if(read_size == -1) {
          free(buf);
          copy_fail(aiocbs, aiocb_index);
@@ -287,11 +293,22 @@ int copy_data(int src_fd, int dest_fd) {
       aiocb_index++;
    }
    free(buf); // the last buffer we allocate will be unused.
-   // wait for the io to finish. Then free all the buffers.  Using a
-   // busy wait, because that is the easiest. Can optimize later.
-   int error = 0;
+   /* sync and wait for the sync to finish */
+   struct aiocb cb;
+   const struct aiocb *cblist[1];
+   bzero(&cb, sizeof(struct aiocb));
+   cblist[0] = &cb;
+   cb.aio_fildes = dest_fd;
+   aio_fsync(O_SYNC, &cb);
+   int error = aio_suspend(cblist, 1, NULL);
+   if(error == -1) {
+      copy_fail(aiocbs, aiocb_index);
+   }
    int i;
    for(i = 0; i < aiocb_index; i++) {
+      // because we wait on aio_fsync() we should be able to avoid the
+      // busy wait here, but I am leaving it in just in case something
+      // goes awry.
       while(aio_error(aiocbs[i]) == EINPROGRESS) pthread_yield();
       if(aio_return(aiocbs[i]) < aiocbs[i]->aio_nbytes) {
          // not short circuiting. just return error after waiting for
@@ -301,10 +318,14 @@ int copy_data(int src_fd, int dest_fd) {
       free(aiocbs[i]->aio_buf);
       free(aiocbs[i]);
    }
+
    return error;
 }
 
+#define BATCH_SIZE 32
 void *rebalance_worker(void *arg) {
+   migration_spec_t specs[BATCH_SIZE];
+   int i = 0;
    while( 1 ) {
       int error = 0;
       // wait for stuff to be in the queue.
@@ -318,7 +339,7 @@ void *rebalance_worker(void *arg) {
          return NULL;
       }
 
-      migration_spec_t spec = work_queue.queue[work_queue.head++];
+      specs[i] = work_queue.queue[work_queue.head++];
       if(work_queue.head >= QUEUE_SIZE) {
          work_queue.head = 0; // wrap around.
       }
@@ -329,50 +350,60 @@ void *rebalance_worker(void *arg) {
       pthread_mutex_unlock(&work_queue.lock);
       
       // copy_data() it.
-      int src_fd = open(spec.src, O_RDONLY);
+      int src_fd = open(specs[i].src, O_RDONLY);
       if(src_fd == -1) {
-         fprintf(stderr, "src: %s - ", spec.src);
+         fprintf(stderr, "src: %s - ", specs[i].src);
          perror("open()");
-         free(spec.src);
-         free(spec.dest);
+         free(specs[i].src);
+         free(specs[i].dest);
          continue;
       }
-      int dest_fd = open(spec.dest, O_CREAT|O_TRUNC|O_APPEND|O_WRONLY,
+      int dest_fd = open(specs[i].dest, O_CREAT|O_TRUNC|O_APPEND|O_WRONLY,
                          0666);
       if(dest_fd == -1) {
-         fprintf(stderr, "dest: %s - ", spec.dest);
+         fprintf(stderr, "dest: %s - ", specs[i].dest);
          perror("open()");
-         free(spec.src);
-         free(spec.dest);
+         free(specs[i].src);
+         free(specs[i].dest);
          continue;
       }
       if(copy_data(src_fd, dest_fd) == -1) {
-         fprintf(stderr, "failed to migrate %s\n", spec.src);
-         error = 1;
+         fprintf(stderr, "failed to migrate %s\n", specs[i].src);
+         close(src_fd);
+         close(dest_fd);
+         continue;
       }
 
       close(src_fd);
       close(dest_fd);
-      
-      // do the rename of the destination.
-      char dest_path[2048];
-      strcpy(dest_path, spec.dest);
-      dest_path[strlen(spec.dest) - strlen(".migrate")] = '\0';
-      if(error == 0 && rename(spec.dest, dest_path) == -1) {
-         fprintf(stderr, "failed to migrate %s -> %s\n",
-                 spec.src, spec.dest);
-         unlink(spec.dest); // clean up.
-         error = 1;
-      }
 
-      // remove the original copy only if migration was successful
-      if(error == 0) {
-         unlink(spec.src);
+      i++;
+      if(i == BATCH_SIZE-1) {
+         i--;
+         while(i >= 0) {
+            // do the rename of the destination.
+            char dest_path[2048];
+            strcpy(dest_path, specs[i].dest);
+            dest_path[strlen(specs[i].dest) - strlen(".migrate")] = '\0';
+            if(rename(specs[i].dest, dest_path) == -1) {
+               fprintf(stderr, "failed to migrate %s -> %s\n",
+                       specs[i].src, specs[i].dest);
+               unlink(specs[i].dest); // clean up.
+               error = 1;
+            }
+         
+            // remove the original copy only if migration was successful
+            if(error == 0) {
+               unlink(specs[i].src);
+            }
+         
+            // clean up the spec.
+            free(specs[i].src);
+            free(specs[i].dest);
+            i--;
+         }
+         i = 0;
       }
-      
-      // clean up the spec.
-      free(spec.src);
-      free(spec.dest);
    }
 }
 
