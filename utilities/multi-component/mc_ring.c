@@ -133,7 +133,8 @@ int migrate_light(node_list_t *from, ring_t *ring) {
             if(obj_dent->d_name[0] == '.' ||
                !fnmatch("*" REBUILD_SFX, obj_dent->d_name) ||
                !fnmatch("*" META_SFX, obj_dent->d_name)    ||
-               !fnmatch("*" WRITE_SFX, obj_dent->d_name)) {
+               !fnmatch("*" WRITE_SFX, obj_dent->d_name)   ||
+               !fnmatch("*.migrate", obj_dent->d_name )) { // skip partially migrated 
                continue;
             }
             char objid[MARFS_MAX_OBJID_SIZE];
@@ -322,10 +323,8 @@ int copy_data(int src_fd, int dest_fd) {
    return error;
 }
 
-#define BATCH_SIZE 32
 void *rebalance_worker(void *arg) {
-   migration_spec_t specs[BATCH_SIZE];
-   int i = 0;
+   migration_spec_t spec;
    while( 1 ) {
       int error = 0;
       // wait for stuff to be in the queue.
@@ -339,7 +338,7 @@ void *rebalance_worker(void *arg) {
          return NULL;
       }
 
-      specs[i] = work_queue.queue[work_queue.head++];
+      spec = work_queue.queue[work_queue.head++];
       if(work_queue.head >= QUEUE_SIZE) {
          work_queue.head = 0; // wrap around.
       }
@@ -350,25 +349,25 @@ void *rebalance_worker(void *arg) {
       pthread_mutex_unlock(&work_queue.lock);
       
       // copy_data() it.
-      int src_fd = open(specs[i].src, O_RDONLY);
+      int src_fd = open(spec.src, O_RDONLY);
       if(src_fd == -1) {
-         fprintf(stderr, "src: %s - ", specs[i].src);
+         fprintf(stderr, "src: %s - ", spec.src);
          perror("open()");
-         free(specs[i].src);
-         free(specs[i].dest);
+         free(spec.src);
+         free(spec.dest);
          continue;
       }
-      int dest_fd = open(specs[i].dest, O_CREAT|O_TRUNC|O_APPEND|O_WRONLY,
+      int dest_fd = open(spec.dest, O_CREAT|O_TRUNC|O_APPEND|O_WRONLY,
                          0666);
       if(dest_fd == -1) {
-         fprintf(stderr, "dest: %s - ", specs[i].dest);
+         fprintf(stderr, "dest: %s - ", spec.dest);
          perror("open()");
-         free(specs[i].src);
-         free(specs[i].dest);
+         free(spec.src);
+         free(spec.dest);
          continue;
       }
       if(copy_data(src_fd, dest_fd) == -1) {
-         fprintf(stderr, "failed to migrate %s\n", specs[i].src);
+         fprintf(stderr, "failed to migrate %s\n", spec.src);
          close(src_fd);
          close(dest_fd);
          continue;
@@ -377,33 +376,25 @@ void *rebalance_worker(void *arg) {
       close(src_fd);
       close(dest_fd);
 
-      i++;
-      if(i == BATCH_SIZE-1) {
-         i--;
-         while(i >= 0) {
-            // do the rename of the destination.
-            char dest_path[2048];
-            strcpy(dest_path, specs[i].dest);
-            dest_path[strlen(specs[i].dest) - strlen(".migrate")] = '\0';
-            if(rename(specs[i].dest, dest_path) == -1) {
-               fprintf(stderr, "failed to migrate %s -> %s\n",
-                       specs[i].src, specs[i].dest);
-               unlink(specs[i].dest); // clean up.
-               error = 1;
-            }
-         
-            // remove the original copy only if migration was successful
-            if(error == 0) {
-               unlink(specs[i].src);
-            }
-         
-            // clean up the spec.
-            free(specs[i].src);
-            free(specs[i].dest);
-            i--;
-         }
-         i = 0;
+      // do the rename of the destination.
+      char dest_path[2048];
+      strcpy(dest_path, spec.dest);
+      dest_path[strlen(spec.dest) - strlen(".migrate")] = '\0';
+      if(rename(spec.dest, dest_path) == -1) {
+         fprintf(stderr, "failed to migrate %s -> %s\n",
+                 spec.src, spec.dest);
+         unlink(spec.dest); // clean up.
+         error = 1;
       }
+
+      // remove the original copy only if migration was successful
+      if(error == 0) {
+         unlink(spec.src);
+      }
+
+      // clean up the spec.
+      free(spec.src);
+      free(spec.dest);
    }
 }
 
