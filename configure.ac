@@ -189,10 +189,10 @@ AS_IF([test x"$enable_mc" != xno],
 
 # need libne for any MC variant
 AS_IF([test x"$enable_mc" != xno],
-      [AC_CHECK_LIB([ne], [ne_open])])
-
-
-
+      [AC_CHECK_LIB([ft], [fast_timer_inits])
+       AC_CHECK_LIB([rt], [timer_settime])
+       AC_CHECK_LIB([dl], [dlclose])
+       AC_CHECK_LIB([ne], [ne_open], , AC_ERROR([libne is needed for an MC build])) ])
 
 
 # automake conditionals 
@@ -275,7 +275,8 @@ AC_FUNC_GETGROUPS
 AC_FUNC_LSTAT_FOLLOWS_SLASHED_SYMLINK
 AC_FUNC_MKTIME
 AC_FUNC_REALLOC
-AC_CHECK_FUNCS([clock_gettime floor ftruncate getcwd gethostname gettimeofday lchown localtime_r memmove memset mkdir pow realpath regcomp rmdir strcasecmp strchr strdup strerror strpbrk strrchr strspn strcspn strstr strtol strtoul strtoull utime])
+# AC_CHECK_FUNCS([clock_gettime floor ftruncate getcwd gethostname gettimeofday lchown localtime_r memmove memset mkdir pow realpath regcomp rmdir strcasecmp strchr strdup strerror strpbrk strrchr strspn strcspn strstr strtol strtoul strtoull utime])
+AC_CHECK_FUNCS([clock_gettime floor ftruncate getcwd gethostname gettimeofday realpath regcomp utime])
 
 # AC_FUNC_MALLOC
 AC_CHECK_FUNCS([malloc])
