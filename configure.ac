@@ -275,7 +275,7 @@ AC_FUNC_GETGROUPS
 AC_FUNC_LSTAT_FOLLOWS_SLASHED_SYMLINK
 AC_FUNC_MKTIME
 AC_FUNC_REALLOC
-# AC_CHECK_FUNCS([clock_gettime floor ftruncate getcwd gethostname gettimeofday lchown localtime_r memmove memset mkdir pow realpath regcomp rmdir strcasecmp strchr strdup strerror strpbrk strrchr strspn strcspn strstr strtol strtoul strtoull utime])
+
 AC_CHECK_FUNCS([clock_gettime floor ftruncate getcwd gethostname gettimeofday realpath regcomp utime])
 
 # AC_FUNC_MALLOC
