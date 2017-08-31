@@ -62,26 +62,38 @@ import argparse
 import sys
 import random
 
-hstr = os.environ['BATCH_FTAS']
-
-# Hostnames (or IPs) of batch-ftas where the backend pipetool can be found
-HOSTS = hstr.split(':')
-# Complete path to the backend pipetool on the batch-fta
-LOC = os.environ['PIPETOOL_REMOTE']
+# Name of the environment-var storing a colon-separated list of batch-FTA hostnames/IPs to be used for transfers
+BATCH_FTA_VAR='BATCH_FTAS'
+# The name (or complete path) of the remote pipetool script
+PIPE_REMOTE_NAME='pipetool_remote'
 # Number of bytes to be read/written per iteration
 BYTES = 8192
-fail=False
 
+try:
+   hstr = os.environ[BATCH_FTA_VAR]
+except KeyError:
+   print >> sys.stderr, "pipetool: the environment variable '"+BATCH_FTA_VAR+"' is not set, which should contain a colon-separated list of batch-FTA hostnames or IPs"
+   exit( errno.ENOKEY )
+
+
+fail=False
+HOSTS = hstr.split(':') # batch-FTAs
 host=random.choice(HOSTS)
 
 # Parse cmd line inputs
-parser = argparse.ArgumentParser( description="This program provides piping functionality into and out of filesystems via a second program (pipetool_remote) located on a batch FTA.  It is intended to provide piping of reasonably small files into marfs, but can be used with any FUSE filesystem.\n\nNote: when neither '-s' nor '-r' are specified, the program will attempt to determine the appropriate action.  If the file exists, it will be retrieved.  If not, and if input has been supplied, the input will be stored.", formatter_class=argparse.RawTextHelpFormatter )
+parser = argparse.ArgumentParser( description="This program provides piping functionality into and out of MarFS via a remote script located on a batch FTA.  It is intended to provide transport of reasonably small files.\nNote: either '-s' or '-r' is required.", formatter_class=argparse.RawTextHelpFormatter )
 parser.add_argument( "-v", "--verbose",  help="increase output verbosity", action="store_true" )
-group = parser.add_mutually_exclusive_group()
-group.add_argument( "-s", "--store", help="forces a write/store to the specified location, overwriting any destination file already present.", action="store_true" )
-group.add_argument( "-r", "--retrieve", help="forces a read/retrieve from the specified location", action="store_true" )
+group = parser.add_mutually_exclusive_group(required=True)
+group.add_argument( "-s", "--store", help="reads from stdin and writes to the specified location", action="store_true" )
+group.add_argument( "-r", "--retrieve", help="reads from the specified location and writes to stdout", action="store_true" )
+group.add_argument( "-a", "--append", help=argparse.SUPPRESS, action="store_true" )
+parser.add_argument( "-f", "--force", help="when used with '-s', overwrites any existing file (ignored with '-r')", action="store_true" )
 parser.add_argument( "PATHNAME", help="complete path to the desired input/output location" )
+parser.add_argument( "-R", metavar='REMOTE_NAME', help=argparse.SUPPRESS )
 args = parser.parse_args()
+
+if ( args.R ):
+   PIPE_REMOTE_NAME = args.R
 
 # Get the absolute path to the given file
 path = os.path.realpath( args.PATHNAME )
@@ -90,72 +102,86 @@ if ( args.verbose ):
    print >> sys.stderr, "pipetool: using batch-FTA \""+host+"\""
 
 # Start pipetool_remote on host with the appropriate arg
-if ( args.store):
+if ( args.force  and  args.store ):
+   cmd=PIPE_REMOTE_NAME+" 3 "+path
    if ( args.verbose ):
-      print >> sys.stderr, "pipetool: opening connection for write..."
-   ssh = subprocess.Popen([ "ssh", host, LOC+" store "+path ],
-                          shell=False,
-                          stdin=subprocess.PIPE,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE)
-elif ( args.retrieve ):
+      sys.stderr.write("pipetool: opening connection process for overwrite...")
+elif ( args.append ):
+   cmd=PIPE_REMOTE_NAME+" 2 "+path
+   print >> sys.stderr, "pipetool: warning: append functionality is not currently supported by MarFS"
    if ( args.verbose ):
-      print >> sys.stderr, "pipetool: opening connection for read..."
-   ssh = subprocess.Popen([ "ssh", host, LOC+" retrieve "+path ],
-                          shell=False,
-                          stdin=subprocess.PIPE,
-                          stderr=subprocess.PIPE)
+      sys.stderr.write("pipetool: opening connection process for append...")
+elif ( args.store ):
+   cmd=PIPE_REMOTE_NAME+" 1 "+path
+   if ( args.verbose ):
+      sys.stderr.write("pipetool: opening connection process for write...")
 else:
+   cmd=PIPE_REMOTE_NAME+" 0 "+path
    if ( args.verbose ):
-      print >> sys.stderr, "pipetool: opening connection for an undetermined operation..."
-   ssh = subprocess.Popen([ "ssh", host, LOC+" detect "+path ],
+      sys.stderr.write("pipetool: opening connection process for read...")
+
+try:
+   ssh = subprocess.Popen([ "ssh", host, cmd ],
                           shell=False,
                           stdin=subprocess.PIPE,
                           stderr=subprocess.PIPE)
+except OSError as err:
+   if ( args.verbose ):
+      print >> sys.stderr, "error detected"
+   print >> sys.stderr, "pipetool: error connecting to batch-fta "+host+": {0}".format(err)
+   exit( err.errno )
 
 if ( args.verbose ):
-   print >> sys.stderr, "pipetool: connection opened"
+   print >> sys.stderr, "done"
 
 # Attempt to store, writing to stdin of pipetool_remote
-if( args.store  or  not ( sys.stdin.isatty() or args.retrieve ) ):
+if( args.store  or  args.append ):
    data = sys.stdin.read(BYTES)
 
    if ( args.verbose ):
-      print >> sys.stderr, "pipetool: writing to pipe..."
+      sys.stderr.write("pipetool: writing to pipe...")
    
    while ( data != "" ):
       try:
          ssh.stdin.write( data )
       except IOError as e:
          if ( e.errno != errno.EPIPE ): #if not a broken pipe, notify immediately
-            print "pipetool: ERROR: {0}".format( e )
+            print >> sys.stderr, "pipetool: ERROR: {0}".format( e )
             exit( e.errno )
          fail=True #if a broken pipe, just note and move on
          break
       data = sys.stdin.read( BYTES )
 
    if ( args.verbose ):
-      print >> sys.stderr, "pipetool: writes completed"
+      print >> sys.stderr, "done"
 
 if ( args.verbose ):
-   print >> sys.stderr, "pipetool: checking output from remote host..."
+   sys.stderr.write("pipetool: checking output from remote host...")
 out, err = ssh.communicate()
 
 # Report errors
 if ( err != "" ):
+   if ( args.verbose ):
+      print >> sys.stderr, "error detected"
    split = err.split( " ", 1 )
    if ( "pipetool_remote:" == split[0] ):
-      sys.stderr.write( "pipetool: "+split[1] )
+      sys.stderr.write( "pipetool: "+split[-1] )
+   elif ( ssh.returncode == 127 ): #command not found
+      print >> sys.stderr, "pipetool: could not locate the remote script on batch-FTA \""+host+"\""
+   elif ( ssh.returncode == 126 ): #can not execute
+      print >> sys.stderr, "pipetool: could not execute the remote script on batch-FTA \""+host+"\""
    else:
       sys.stderr.write( err )
    sys.stderr.flush()
 elif ( fail ): #if pipetool_remote never indicated a problem, notify user of broken pipe
    print >> sys.stderr, "pipetool: ERROR: connection to remote host closed unexpectedly"
    exit( errno.EPIPE )
+elif ( args.verbose ):
+   print >> sys.stderr, "done"
 
 # Pass any appropriate errno back to the user
 if ( args.verbose ):
-   print >> sys.stderr, "pipetool: terminating..."
+   print >> sys.stderr, "pipetool: operation complete"
 exit( ssh.returncode )
 
 

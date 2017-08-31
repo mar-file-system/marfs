@@ -71,7 +71,9 @@ OF SUCH DAMAGE.
 
 
 // _GNU_SOURCE defines pthread_timedjoin_np(), and pthread_tryjoin_np()
-#define _GNU_SOURCE
+#ifndef _GNU_SOURCE
+#  define _GNU_SOURCE
+#endif
 #include <pthread.h>
 #include <signal.h>             // pthread_kill()
 

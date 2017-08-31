@@ -85,7 +85,9 @@ OF SUCH DAMAGE.
 
 
 // syscall(2) manpage says do this, but still getting "implicit decl" warnings
-#define _GNU_SOURCE
+#ifndef _GNU_SOURCE
+#  define _GNU_SOURCE
+#endif
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/syscall.h>
