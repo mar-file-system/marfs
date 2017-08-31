@@ -68,8 +68,6 @@ PARSE_OBJ = $(PARSE_DIR)/confpars.o $(PARSE_DIR)/path-switch.o $(PARSE_DIR)/pars
 
 LDADD += libmarfs.a $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
 
-# Generally we will always want to build the config tester program.
-bin_PROGRAMS = marfs_config
 
 lib_LIBRARIES = libmarfs.a
 libmarfs_a_SOURCES = parser fuse/src/common.c fuse/	src/common.h        \
@@ -97,11 +95,29 @@ endif
 
 
 
+include_HEADERS = fuse/src/marfs_base.h \
+                  fuse/src/object_stream.h \
+                  fuse/src/common.h \
+                  fuse/src/marfs_ops.h \
+                  fuse/src/xdal_common.h \
+                  fuse/src/mdal.h \
+                  fuse/src/dal.h \
+                  fuse/src/marfs_locks.h \
+                  fuse/src/marfs_configuration.h \
+                  common/log/src/logging.h
+
+
+# added individually, below
+bin_PROGRAMS =
+
+
+
 # --- additions for multi-component builds
 if USE_MC
   AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
   AM_LDFLAGS  += -L$(LIBNE)/lib
   LDADD       += -L$(LIBNE)/lib -lne -lft
+
 
 # rebuilder is used to rebuild MC repositories
 bin_PROGRAMS += rebuilder
@@ -120,17 +136,13 @@ if USE_MC_SOCKETS
 endif
 
 
+
+
+
 # --- marfs_config
-include_HEADERS = fuse/src/marfs_base.h \
-                  fuse/src/object_stream.h \
-                  fuse/src/common.h \
-                  fuse/src/marfs_ops.h \
-                  fuse/src/xdal_common.h \
-                  fuse/src/mdal.h \
-                  fuse/src/dal.h \
-                  fuse/src/marfs_locks.h \
-                  fuse/src/marfs_configuration.h \
-                  common/log/src/logging.h
+
+# Generally we will always want to build the config tester program.
+bin_PROGRAMS += marfs_config 
 
 marfs_config_SOURCES = fuse/src/marfs_config.c                   \
                        fuse/src/marfs_configuration.c            \
@@ -139,6 +151,15 @@ marfs_config_SOURCES = fuse/src/marfs_config.c                   \
                        common/configuration/src/PA2X_interface.h
 
 marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
+
+
+# --- separate_log_threads_support
+
+# allows debugging script to be more efficient
+bin_PROGRAMS += separate_log_threads_support
+
+separate_log_threads_support_SOURCES = fuse/scripts/separate_log_threads_support.c
+
 
 
 

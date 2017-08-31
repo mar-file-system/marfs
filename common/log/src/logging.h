@@ -37,6 +37,8 @@ extern "C" {
 // size of longest file-name string, plus some
 #define LOG_FNAME_SIZE 26
 
+
+
 #ifdef USE_SYSLOG
 // calling syslog() as a regular user on rrz seems to be an expensive no-op
 // #  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)

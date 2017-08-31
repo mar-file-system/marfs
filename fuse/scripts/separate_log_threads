@@ -18,12 +18,25 @@ fi
 LOG_FNAME=$1
 TID_COL=$2
 
-rm -f foo.log.[0-9a-f]*
+# rm -f foo.log.[0-9a-f]*
+rm -f foo.log.thr*
 
-# THREADS=`cat $LOG_FNAME | awk '/[0-9][a-f]/{print $2}' | sort | uniq`
-THREADS=`cat $LOG_FNAME | grep '|' | sed -E 's/([ ]+)/ /g' | cut -d ' ' -f $TID_COL | sort | uniq`
-echo "$THREADS"
+# # THREADS=`cat $LOG_FNAME | awk '/[0-9][a-f]/{print $2}' | sort | uniq`
+# THREADS=`cat $LOG_FNAME | grep '|' | sed -E 's/([ ]+)/ /g' | cut -d ' ' -f $TID_COL | sort | uniq`
+# echo "$THREADS"
 
-for THR in $THREADS; do
-    grep $THR $LOG_FNAME > foo.log.$THR
-done
+
+# # old approach reads the entire file for every thread.  Okay with a couple of threads,
+# # but doesn't scale well, if the file is huge, with many threads.
+#
+# for THR in $THREADS; do
+#     grep $THR $LOG_FNAME > foo.log.$THR
+# done
+
+
+# new approach: Read the file once, directing lines into appropriate files.
+# To avoid open/append/close of each thread-file, for every appended line,
+# we first sort the file by threads.  Helper prog splits into distinct
+# files based on thread-id.  It writes files named 'foo.log.thr_<thread_id>'
+
+cat $LOG_FNAME | grep '|' | sort -s -k $TID_COL,$TID_COL | separate_log_threads_support $TID_COL
