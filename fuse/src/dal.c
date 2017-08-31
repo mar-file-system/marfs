@@ -1116,7 +1116,7 @@ int mc_open(DAL_Context* ctx,
    unsigned int  n             = MC_CONFIG(ctx)->n;
    unsigned int  e             = MC_CONFIG(ctx)->e;
 
-   int           impl          = (MC_CONFIG(ctx)->is_sockets ? FSI_SOCKETS : FSI_POSIX);
+   int           impl          = (MC_CONFIG(ctx)->is_sockets ? UDAL_SOCKETS : UDAL_POSIX);
    int           stat_flags    = (MC_FH(ctx)->info.pre.repo->timing_flags
                                   | MC_FH(ctx)->info.pre.ns->timing_flags );
 
@@ -1125,8 +1125,8 @@ int mc_open(DAL_Context* ctx,
    // do the generic cleanup stuff like resetting flags.
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
 
-   MC_HANDLE(ctx) = ne_open1(MC_CONFIG(ctx)->snprintf, ctx, MC_CONFIG(ctx)->auth,
-                             stat_flags, impl,
+   MC_HANDLE(ctx) = ne_open1(MC_CONFIG(ctx)->snprintf, ctx,
+                             impl, MC_CONFIG(ctx)->auth, stat_flags,
                              path_template, mode,
                              MC_CONTEXT(ctx)->start_block, n, e);
    if(! MC_HANDLE(ctx)) {
@@ -1346,11 +1346,11 @@ int mc_del(DAL_Context* ctx) {
    char* path_template = MC_CONTEXT(ctx)->path_template;
    int   nblocks       = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
 
-   int   impl          = (MC_CONFIG(ctx)->is_sockets ? FSI_SOCKETS : FSI_POSIX);
+   int   impl          = (MC_CONFIG(ctx)->is_sockets ? UDAL_SOCKETS : UDAL_POSIX);
    int   stat_flags    = (MC_FH(ctx)->info.pre.repo->timing_flags
                           | MC_FH(ctx)->info.pre.ns->timing_flags );
 
-   return ne_delete1(MC_CONFIG(ctx)->snprintf, ctx, MC_CONFIG(ctx)->auth, stat_flags, impl, path_template, nblocks);
+   return ne_delete1(MC_CONFIG(ctx)->snprintf, ctx, impl, MC_CONFIG(ctx)->auth, stat_flags, path_template, nblocks);
 }
 
 
