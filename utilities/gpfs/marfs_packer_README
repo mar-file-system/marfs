@@ -9,13 +9,18 @@ make
 Usage: marfs_packer -d gpfs_path -n namespace [-l] [-h]
 
 -d gpfs_path  
-Mount path for the targeted gpfs file system.
+
+   Mount path for the targeted gpfs file system.
 
 -n namespace       
-The namespace targeted for packing.
 
--l list a summary of objects counts that can be 
-packed without actually packing 
+   The namespace targeted for packing.
+
+-l
+
+   list a summary of objects counts that can be 
+   packed without actually packing 
 
 -h
-provides script usage information
+
+   provides script usage information

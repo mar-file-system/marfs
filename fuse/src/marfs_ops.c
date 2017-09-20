@@ -108,8 +108,7 @@ int marfs_access (const char* path,
                   int         mask) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -135,8 +134,7 @@ int marfs_faccessat (const char* path,
                      int         flags) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -173,8 +171,7 @@ int marfs_chmod(const char* path,
                 mode_t      mode) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -201,8 +198,7 @@ int marfs_chown (const char* path,
                  gid_t       gid) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -570,10 +566,8 @@ int marfs_ftruncate(const char*            path,
 int marfs_getattr (const char*  path,
                    struct stat* stp) {
    ENTRY();
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
-   LOG(LOG_INFO, "expanded    %s -> %s\n", path, info.post.md_path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns, R_META);
@@ -655,12 +649,8 @@ int marfs_getxattr (const char* path,
                     size_t      size) {
    ENTRY();
    LOG(LOG_INFO, "key         %s\n", name);
-   //   LOG(LOG_INFO, "not implemented  (path %s, key %s)\n", path, name);
-   //   errno = ENOSYS;
-   //   return -1;
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -728,8 +718,7 @@ int marfs_listxattr (const char* path,
    //   errno = ENOSYS;
    //   return -1;
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -815,8 +804,7 @@ int marfs_mkdir (const char* path,
                  mode_t      mode) {
    ENTRY();
 
-   PathInfo  info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -848,15 +836,14 @@ int marfs_mkdir (const char* path,
 //    possibly install a mode that is not readable or writeable, which
 //    would affect the ability to install xattrs.  We shouldn't do the
 //    trick of stashing the intended mode on the RESTART xattr, to preserve
-//    writability of xattrs on the file.  that will be done, if needed, at
+//    writability of xattrs on the file.  That will be done, if needed, at
 //    open-time.
 int marfs_mknod (const char* path,
                  mode_t      mode,
                  dev_t       rdev) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op
@@ -1009,6 +996,8 @@ int marfs_open(const char*         path,
    ObjectStream*     os   = &fh->os;
    //   IOBuf*            b    = &fh->os.iob;
 
+   // // shouldn't we add this?
+   // memset((char*)info, 0, sizeof(PathInfo));
    EXPAND_PATH_INFO(info, path);
 
    // Check/act on iperms from expanded_path_info_structure
@@ -1099,7 +1088,7 @@ int marfs_open(const char*         path,
 
 
    // If no xattrs, we let user read/write directly on the file.
-   // This implies a file that created in DIRECT repo-mode,
+   // This implies a file that was created in DIRECT repo-mode,
    if (! has_any_xattrs(info, MARFS_ALL_XATTRS)) {
       LOG(LOG_INFO, "no xattrs.  Opening as DIRECT.\n");
 
@@ -1205,58 +1194,6 @@ int marfs_open(const char*         path,
         || (0 == fh->os_init)) {
       LOG(LOG_INFO, "opening new object stream\n");
 
-#if 0
-      // DELETE THIS after we're sure that it is working correctly
-      // in its new home as stream_init().
-
-      // Configure a private AWSContext, for this request
-      AWSContext* ctx = aws_context_clone();
-      if (ACCESSMETHOD_IS_S3(info->pre.repo->access_method)) { // (includes S3_EMC)
-
-         // install the host and bucket
-         s3_set_host_r(info->pre.host, ctx);
-         LOG(LOG_INFO, "host   '%s'\n", info->pre.host);
-         // fprintf(stderr, "host   '%s'\n", info->pre.host); // for debugging pftool
-
-         s3_set_bucket_r(info->pre.bucket, ctx);
-         LOG(LOG_INFO, "bucket '%s'\n", info->pre.bucket);
-      }
-
-      if (info->pre.repo->access_method == ACCESSMETHOD_S3_EMC) {
-         s3_enable_EMC_extensions_r(1, ctx);
-
-         // For now if we're using HTTPS, I'm just assuming that it is without
-         // validating the SSL certificate (curl's -k or --insecure flags). If
-         // we ever get a validated certificate, we will want to put a flag
-         // into the MarFS_Repo struct that says it's validated or not.
-         if ( info->pre.repo->ssl ) {
-           s3_https_r( 1, ctx );
-           s3_https_insecure_r( 1, ctx );
-         }
-      }
-      else if (info->pre.repo->access_method == ACCESSMETHOD_SPROXYD) {
-         s3_enable_Scality_extensions_r(1, ctx);
-         s3_sproxyd_r(1, ctx);
-
-         // For now if we're using HTTPS, I'm just assuming that it is without
-         // validating the SSL certificate (curl's -k or --insecure flags). If
-         // we ever get a validated certificate, we will want to put a flag
-         // into the MarFS_Repo struct that says it's validated or not.
-         if ( info->pre.repo->ssl ) {
-           s3_https_r( 1, ctx );
-           s3_https_insecure_r( 1, ctx );
-         }
-      }
-
-      if (info->pre.repo->security_method == SECURITYMETHOD_HTTP_DIGEST) {
-         s3_http_digest_r(1, ctx);
-      }
-
-      // install custom context
-      aws_iobuf_context(b, ctx);
-
-#endif
-
       // To support seek() [for reads], and allow reading at arbitrary
       // offsets, we let marfs_read() determine the offset where it should
       // open, so it can do its own GET, with byte-ranges.  Therefore, for
@@ -1294,12 +1231,16 @@ int marfs_open(const char*         path,
    }
 
 #if 0
-   // COMMENTED OUT.  Turns out NFS calls truncate() on the same path,
-   // after opening a file that exists.  In other words, it assumes we can
-   // correlate action on some path with the status of some other open
-   // file-descriptor to that path, such as the one we have here.  That's a
-   // dumb assumption.  Bottom line, for this and other reasons, NFS is not
-   // really usable on top of MarFS fuse, at the moment.
+   // COMMENTED OUT.  Turns out NFS calls truncate() [not ftruncate()] on
+   // the same path, after opening a file that exists.  In other words, it
+   // assumes we can correlate action on some path with the status of some
+   // other open file-descriptor to that path, such as the one we have
+   // here.  That's a stupid assumption.  Bottom line, for this and other
+   // reasons, NFS is not really usable on top of MarFS fuse, at the
+   // moment.
+
+   // [But, wait, wouldn't that be okay?  Wouldn't we already have trashed
+   // the original and truncated it ourselves?]
 
    // Accomodate NFS trying to open an existing file.
    // Unlike fuse, it won't automatically call ftruncate() after open().
@@ -1416,8 +1357,7 @@ int marfs_opendir (const char*       path,
                    MarFS_DirHandle*  dh) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -1656,9 +1596,6 @@ static ssize_t marfs_read_internal (const char*        path,
    ENTRY();
    LOG(LOG_INFO, "%s, fh=0x%lx, off=%lu, size=%lu\n", path, (size_t)fh, offset, size);
 
-   ///   PathInfo info;
-   ///   memset((char*)&info, 0, sizeof(PathInfo));
-   ///   EXPAND_PATH_INFO(&info, path);
    PathInfo*         info = &fh->info;                  /* shorthand */
    ObjectStream*     os   = &fh->os;
    //   IOBuf*            b    = &os->iob;
@@ -2016,8 +1953,7 @@ int marfs_readdir (const char*        path,
                    MarFS_DirHandle*   dh) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -2129,8 +2065,7 @@ ssize_t marfs_readlink (const char* path,
                         char*       buf,
                         size_t      size) {
    ENTRY();
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -2231,8 +2166,7 @@ int marfs_packed_set_post(const char* path, size_t packedFileCount) {
    TRY_DECLS();
    LOG(LOG_INFO, "%s\n", path);
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    STAT_XATTRS(&info);
@@ -2263,8 +2197,7 @@ int marfs_packed_clear_restart(const char* path) {
    TRY_DECLS();
    LOG(LOG_INFO, "%s\n", path);
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    STAT_XATTRS(&info);
@@ -2353,8 +2286,7 @@ int marfs_releasedir (const char*       path,
 
    // If path == "-", assume we are closing a deleted dir.  (see NOTE)
    if ((path[0] != '-') || (path[1] != 0)) {
-      PathInfo info;
-      memset((char*)&info, 0, sizeof(PathInfo));
+      PathInfo info = {0};
       EXPAND_PATH_INFO(&info, path);
 
       // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -2392,8 +2324,7 @@ int marfs_removexattr (const char* path,
                        const char* name) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -2425,12 +2356,10 @@ int marfs_rename (const char* path,
                   const char* to) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
-   PathInfo info2;
-   memset((char*)&info2, 0, sizeof(PathInfo));
+   PathInfo info2 = {0};
    EXPAND_PATH_INFO(&info2, to);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -2466,8 +2395,7 @@ int marfs_rename (const char* path,
 int marfs_rmdir (const char* path) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -2496,8 +2424,7 @@ int marfs_setxattr (const char* path,
                     int         flags) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -2534,8 +2461,7 @@ int marfs_statvfs (const char*      path,
                    struct statvfs*  statbuf) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
@@ -2665,8 +2591,7 @@ int marfs_symlink (const char* target,
    // <linkname> is given to us as a path under the fuse-mount,
    // in the usual way for fuse-functions.
    LOG(LOG_INFO, "linkname: %s\n", linkname);
-   PathInfo lnk_info;
-   memset((char*)&lnk_info, 0, sizeof(PathInfo));
+   PathInfo lnk_info = {0};
    EXPAND_PATH_INFO(&lnk_info, linkname);   // (okay if this file doesn't exist)
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -2708,8 +2633,7 @@ int marfs_truncate (const char* path,
       return -1;
    }
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
@@ -2754,8 +2678,7 @@ int marfs_truncate (const char* path,
 int marfs_unlink (const char* path) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
@@ -2805,8 +2728,7 @@ int marfs_utime(const char*     path,
                 struct utimbuf* buf) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -2830,8 +2752,7 @@ int marfs_utimensat(const char*           path,
                     int                   flags) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -2863,8 +2784,7 @@ int marfs_utimens(const char*           path,
                   const struct timespec tv[2]) {   
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWM
@@ -3203,8 +3123,7 @@ int marfs_create(const char*        path,
                  MarFS_FileHandle*  fh) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure
@@ -3258,8 +3177,7 @@ int marfs_fallocate(const char*        path,
                     MarFS_FileHandle*  fh) {
    ENTRY();
 
-   PathInfo info;
-   memset((char*)&info, 0, sizeof(PathInfo));
+   PathInfo info = {0};
    EXPAND_PATH_INFO(&info, path);
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD

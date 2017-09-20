@@ -134,10 +134,14 @@ extern "C" {
 //
 // -- 1.7 Added timing_flags spec to NS/Repo config, added parsing, and
 //        abstracted out parsing of iperms/bperms to be similar.
+//
+// -- 1.8 fixed rename/unlink bug (issue 200) by having stat_xattrs()
+//        ignore the md_path in the POST xattr, unless its new extra
+//        argument is non-zero.
 
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  7
+#define MARFS_CONFIG_MINOR  8
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 

@@ -281,7 +281,7 @@ typedef struct {
 #define TRASH_TRUNCATE(INFO, PATH)     TRY0( trash_truncate((INFO), (PATH)) )
 #define TRASH_NAME(INFO, PATH)         TRY0( trash_name((INFO), (PATH)) )
 
-#define STAT_XATTRS(INFO)              TRY0( stat_xattrs((INFO)) )
+#define STAT_XATTRS(INFO)              TRY0( stat_xattrs((INFO), 0) )
 #define STAT(INFO)                     TRY0( stat_regular((INFO)) )
 
 #define SAVE_XATTRS(INFO, MASK)        TRY0( save_xattrs((INFO), (MASK)) )
@@ -870,7 +870,7 @@ extern int  expand_path_info (PathInfo* info, const char* path);
 extern int  expand_trash_info(PathInfo* info, const char* path);
 
 extern int  stat_regular     (PathInfo* info);
-extern int  stat_xattrs      (PathInfo* info);
+extern int  stat_xattrs      (PathInfo* info, int load_md_path);
 extern int  save_xattrs      (PathInfo* info, XattrMaskType mask);
 
 extern int  md_exists        (PathInfo* info);

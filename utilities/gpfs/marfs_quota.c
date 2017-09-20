@@ -577,7 +577,7 @@ int read_inodes(const char    *fnameP,
                }
                // scan into post xattr structure
                // if error parsing this xattr, skip and continue
-               if (str_2_post(&post, xattr_ptr->xattr_value, 1) == -1) {
+               if (str_2_post(&post, xattr_ptr->xattr_value, 1, 1) == -1) {
                   continue;             
                }
                fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
