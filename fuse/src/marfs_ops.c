@@ -1287,6 +1287,10 @@ int  marfs_open_packed   (const char* path, MarFS_FileHandle* fh, int flags,
       memset(fh, 0, sizeof(MarFS_FileHandle));
       fh->flags |= FH_PACKED;
    }
+   else {
+      // prevent expand_path_info() (in marfs_open) from skipping out early
+      fh->info.flags &= ~(PI_EXPANDED);
+   }
 
    // run open
    return marfs_open(path, fh, flags, content_length);

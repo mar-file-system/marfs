@@ -137,17 +137,10 @@ int expand_path_info(PathInfo*   info, /* side-effect */
       return -1;            /* no such file or directory */
    }
 
-   // NOTE: Before MarFS 1.8, we always supressed this test, so that we
-   //       would always (re-)do the expansion.  The motivation was that
-   //       "it's not always the same path that is being expanded".  I
-   //       can't find a case in trashing or renaming where that should be
-   //       allowed.  But there was a case where skipping this test was
-   //       saving us from noticing that stat_xattrs was wrongly
-   //       overwriting info.post.md_path.  Was that what was making this
-   //       not "the same path"?  We've now fixed that.  So, the new
-   //       principle of operation is that if you want to expand a new
-   //       path, you should get a new PathInfo object, or unset the
-   //       PI_EXPANDED flag, or something.
+   // NOTE: Before MarFS 1.8, this test was commented out, so we would
+   //       always (re-)do the expansion.  The motivation was that "it's
+   //       not always the same path that is being expanded".  I can't find
+   //       a case in trashing or renaming where that should be allowed.
    if (info->flags & PI_EXPANDED)
       return 0;
 
