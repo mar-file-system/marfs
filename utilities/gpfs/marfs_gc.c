@@ -1088,7 +1088,7 @@ int read_inodes(const char   *fnameP,
                   LOG(LOG_INFO, "post xattr name = %s value = %s \
                         count = %d index=%d\n", xattr_ptr->xattr_name, \
                         xattr_ptr->xattr_value, xattr_count,xattr_index);
-                  if ((str_2_post(post, xattr_ptr->xattr_value, 1))) {
+                  if ((str_2_post(post, xattr_ptr->xattr_value, 1, 1))) {
                      fprintf(stderr, "%cERROR: parsing of post xattr (%s) failed for inode %d\n",
                            sep_char, xattr_ptr->xattr_value, iattrP->ia_inode);
                      run_info.errors++;
@@ -1293,7 +1293,10 @@ int dump_trash(MarFS_FileHandle   *fh,
       // and fh->info.post.  If we call this, it will do a stat() of the MD
       // file, which will hurt performance.
 
-      if (stat_xattrs(info)) {    // parse all xattrs for the MD file
+      // NOTE: The POST xattr value-string includes an md_path, for the
+      //       location of the file in the trash.  We allow that to
+      //       overwriting any existing path in info->post.md_path
+      if (stat_xattrs(info, 1)) {    // parse all xattrs for the MD file
          fprintf(stderr, "stat_xattrs() failed for MD file: '%s'\n", md_path_ptr);
          return -1;
       }

@@ -263,11 +263,10 @@ int find_repack_objects(File_Handles *file_info,
             // Fill in the file handle structure
             expand_path_info(&files->fh->info, sub_path);
 
-            stat_xattrs(&files->fh->info);
+            stat_xattrs(&files->fh->info, 0);
 
             files->original_offset = files->fh->info.post.obj_offset;
             LOG(LOG_INFO, "filename %s offset=%ld\n", files->filename, files->fh->info.post.obj_offset);
-
 
             // adjust files link list pointers
             files->next =  files_head;
@@ -469,7 +468,7 @@ int update_meta(File_Handles *file_info,
      //Traverse the object files
      while (files) {
 
-        // retrive the MarFS_FileHandle information from the files linked
+        // retrive the MarFS_FileHandle information from the <files> linked
         // list
 
         //MarFS_XattrPre*  pre  = &files->fh->info.pre;
@@ -478,12 +477,10 @@ int update_meta(File_Handles *file_info,
         // Get the file post xattr
         // and update its elements based on the repack
         //if ((getxattr(files->filename, "user.marfs_post", &post_xattr, MARFS_MAX_XATTR_SIZE) != -1)) {
-        //   rc=str_2_post(&post, post_xattr, 1);
+        //   rc=str_2_post(&post, post_xattr, 1, 0);
            post->chunks = objects->pack_count;
            post->obj_offset = files->new_offset;
-           
 
-             
            save_xattrs(&files->fh->info, XVT_PRE | XVT_POST);
 
            // convert the post xattr back to string so that the file xattr can

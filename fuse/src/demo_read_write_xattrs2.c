@@ -129,7 +129,9 @@ main(int argc, char* argv[]) {
 
    // stat_xattrs() gets MarFS-related xattr info from the file.  We parse
    // xattr values into the corresponding structs in the PathInfo object.
-   int rc = stat_xattrs(&info);
+   // NOTE: In case the POST xattr value-string includes an md_path, we
+   //       explicitly avoid overwriting the one we already installed.
+   int rc = stat_xattrs(&info, 0);
    if (rc) {
       fprintf(stderr, "stat_xattrs failed (%d) %s\n", rc, strerror(rc));
       exit(1);

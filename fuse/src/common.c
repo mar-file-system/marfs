@@ -137,15 +137,13 @@ int expand_path_info(PathInfo*   info, /* side-effect */
       return -1;            /* no such file or directory */
    }
 
-#if 0
-   // NOTE: It's not always the same path that is being expanded.
-   //       Suppressing this test (for now) so that we will always do the
-   //       expansion.  However, we do want to set the flag, so,
-   //       e.g. has_any_xattrs() can make sure it is being called with an
-   //       expanded PathInfo.
+   // NOTE: Before MarFS 1.8, this test was commented out, so we would
+   //       always (re-)do the expansion.  The motivation was that "it's
+   //       not always the same path that is being expanded".  I can't find
+   //       a case in trashing or renaming where that should be allowed.
    if (info->flags & PI_EXPANDED)
       return 0;
-#endif
+
 
    // Take user supplied path in fuse request structure to look up info,
    // using marfs_config->mnt_top and look up in MAR_namespace array, fill in all
@@ -436,8 +434,12 @@ int init_xattr_specs() {
 //       first read the original path out of the trash "companion" file
 //       (*.path), then expand_path_info() on that, then change
 //       post.md_path to the trash file, then stat_xattrs().
+//
+// NOTE: With <load_md_path> non-zero, info->post.md_path will be
+//       overwritten by the (quite possibly incorrect) md_path that is
+//       stored in the xattr.  Do we ever actually want that?
 
-int stat_xattrs(PathInfo* info) {
+int stat_xattrs(PathInfo* info, int load_md_path) {
    TRY_DECLS();
    ssize_t str_size;
 
@@ -494,10 +496,10 @@ int stat_xattrs(PathInfo* info) {
                                MARFS_MAX_XATTR_SIZE);
 
          if (str_size != -1) {
-            // got the xattr-value.  Parse it into info->pre
+            // got the xattr-value.  Parse it into info->post
             xattr_value_str[str_size] = 0;
             LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
-            __TRY0( str_2_post(&info->post, xattr_value_str, 0) );
+            __TRY0( str_2_post(&info->post, xattr_value_str, 0, load_md_path) );
             info->xattrs |= spec->value_type; /* found this one */
          }
          else if ((errno == ENOATTR)
@@ -1037,7 +1039,7 @@ int has_all_xattrs(PathInfo* info, XattrMaskType mask) {
       errno = EINVAL;
       return -1;
    }
-   stat_xattrs(info);                  /* no-op, if already done */
+   stat_xattrs(info, 0);               /* no-op, if already done */
    return ((info->xattrs & mask) == mask);
 }
 int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
@@ -1047,7 +1049,7 @@ int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
       errno = EINVAL;
       return -1;
    }
-   stat_xattrs(info);                  /* no-op, if already done */
+   stat_xattrs(info, 0);               /* no-op, if already done */
    return (info->xattrs & mask);
 }
 
@@ -1365,7 +1367,7 @@ int  trash_unlink(PathInfo*   info,
    // NOTE: We don't put xattrs on symlinks, so they also get deleted here.
    //
    TRY_DECLS();
-   __TRY0( stat_xattrs(info) );
+   __TRY0( stat_xattrs(info, 0) );
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // not enough to reclaim objs
       __TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
@@ -1411,7 +1413,7 @@ int  trash_truncate(PathInfo*   info,
    // NOTE: See "UPDATE", above trash_unlink()
 
    TRY_DECLS();
-   __TRY0( stat_xattrs(info) );
+   __TRY0( stat_xattrs(info, 0) );
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // see "UPDATE" in trash_unlink().
 
@@ -1611,7 +1613,7 @@ int  trash_truncate(PathInfo*   info,
    // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
    info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY);
    info->xattr_inits = 0;
-   __TRY0( stat_xattrs(info) );   // has none, so initialize from scratch
+   __TRY0( stat_xattrs(info, 0) );   // has none, so initialize from scratch
 
    // NOTE: Unique-ness of Object-IDs currently comes from inode, plus
    //     obj-ctime, plus MD-file ctime.  It's possible the trashed file
