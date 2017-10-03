@@ -1146,7 +1146,8 @@ int marfs_open(const char*         path,
          update_pre(&info->pre);
       }
 
-      if( fh->flags & FH_PACKED ) {
+      else if ( fh->flags & FH_PACKED ) {
+
          LOG(LOG_INFO, "writing PACKED\n");
 
          if ((  (fh->objectSize + content_length + MARFS_REC_UNI_SIZE)
@@ -1177,6 +1178,27 @@ int marfs_open(const char*         path,
          fh->fileCount += 1;
       }
 
+      else {
+         // might be overwriting a formerly-packed file.
+         // we should reset its object-type(s).
+         // we're doing what stat_xattrs() would do, if these xattrs hadn't been filled yet
+
+         // if (info->pre.obj_type == OBJ_PACKED) {
+         // info->pre.obj_type = OBJ_FUSE;
+         // update_pre(&info->pre);
+         init_pre( &info->pre, OBJ_FUSE, info->ns, info->ns->iwrite_repo, &info->st );
+         // }
+
+         // if (info->post.obj_type == OBJ_PACKED) {
+         // info->post.obj_type         = OBJ_FUSE;
+         // info->post.chunks           = 1;
+         // info->post.chunk_info_bytes = 0;
+         // info->post.obj_offset       = 0;
+         init_post( &info->post, info->ns, info->ns->iwrite_repo );
+         // }
+
+         save_xattrs(info, (XVT_PRE|XVT_POST));
+      }
    }
 
 
