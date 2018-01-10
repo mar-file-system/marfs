@@ -62,7 +62,7 @@ main(int argc, char* argv[]) {
       char  tid1_end_char = 0;
       char* tid1 = find_tok(tid_col -1, buf, BUFSIZE, &tid1_end);
       if (! *tid1) {
-         fprintf(stderr, "filed to find token %d in this line: %s\n", buf);
+         fprintf(stderr, "failed to find token %d in this line: %s\n", buf);
          exit(EXIT_FAILURE);
       }
       tid1_end_char = *tid1_end;

@@ -39,4 +39,10 @@ rm -f foo.log.thr*
 # we first sort the file by threads.  Helper prog splits into distinct
 # files based on thread-id.  It writes files named 'foo.log.thr_<thread_id>'
 
-cat $LOG_FNAME | grep '|' | sort -s -k $TID_COL,$TID_COL | separate_log_threads_support $TID_COL
+# NOTE: sort -k assumes one delimiter only, between tokens.  So, we
+#        duplicate the desired field at the head of each line, do a stable
+#        sort on that, and then strip that extra leading token back off.
+#
+# # cat $LOG_FNAME | grep '|' | sort -s -k $TID_COL,$TID_COL | separate_log_threads_support $TID_COL
+
+cat $LOG_FNAME | grep '|' | awk "{print \$$TID_COL,\$0}" | sort -s -k 1,1 |  sed -e 's/^[0-9a-f]* //' | separate_log_threads_support $TID_COL
