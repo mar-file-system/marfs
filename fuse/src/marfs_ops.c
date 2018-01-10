@@ -294,7 +294,8 @@ int marfs_flush (const char*        path,
          if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
 
             // add final recovery-info, at the tail of the object
-            TRY_GE0( write_recoveryinfo(os, info, fh) );
+            if (write_recoveryinfo(os, info, fh) < 0)
+               retval = -1;
          }
       }
       else {

@@ -1181,6 +1181,7 @@ int mc_put(DAL_Context* ctx,
 
    if(written < 0) {
       LOG(LOG_ERR, "ftone_write() failed.\n");
+      os->flags |= OSF_ERRORS;
       return -1;
    }
 
@@ -1209,6 +1210,7 @@ ssize_t mc_get(DAL_Context* ctx, char* buf, size_t size) {
 
    if(size_read < 0) {
       LOG(LOG_ERR, "ne_read() failed.\n");
+      os->flags |= OSF_ERRORS;
       return -1;
    }
    else if(size_read == 0) { // EOF

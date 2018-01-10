@@ -26,6 +26,11 @@ extern "C" {
 
 
 // LOG_PREFIX is prepended to all output.  Allows grepping in syslogs.
+//
+// NOTE: Changing this requires corresponding changes to /etc/rsyslog.conf
+//       on the destination log-server (e.g. on stb-dsu-master), so marfs
+//       output will continue to be routed to its own destination log-file
+
 #ifndef LOG_PREFIX
 #  define LOG_PREFIX  "marfs_fuse"
 #endif
