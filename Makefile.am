@@ -7,21 +7,21 @@
 # install-dir.  Thus, you need to build with '--prefix=' a destination
 # that will also exist at run-time, but you no longer need the PA2X
 # install at run-time.
+
 AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
 	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
 	      -DDATAPARSE -DBUILD_INC_DIR=@includedir@ -I$(PARSE_DIR)
 
+# automake requires '=' before '+=', even for these built-in vars
+AM_CFLAGS  =
 AM_LDFLAGS =
-
 LDADD =
 
 if DEBUG
-  AM_CFLAGS = -g -O1
+  AM_CFLAGS += -g -O0
 else
-  AM_CFLAGS = -g -O3
+  AM_CFLAGS += -g -O3
 endif
-
-
 
 if GPROF
   AM_CFLAGS  += -pg

@@ -121,7 +121,11 @@ AC_ARG_WITH([aws-auth],
         AS_HELP_STRING([  --without-aws-auth], [tell FUSE it is okay if ~/.awsAuth doesn't exist]))
 
 AC_ARG_ENABLE([debug],
-        AS_HELP_STRING([  --enable-debug], [one of {yes|no|gprof} yes enables the -g compiler flag and extra logging, gprof enables the "-pg" compiler flag]))
+        AS_HELP_STRING([  --enable-debug], [one of {yes|no}.  yes changes optimization compiler-flags and does extra logging]))
+
+AC_ARG_ENABLE([gprof],
+        AS_HELP_STRING([  --enable-gprof], [adds "-pg" compiler-flag, to dump profiling-info at run-time]))
+
 
 # Checks for programs.
 AC_PROG_AWK
@@ -213,8 +217,9 @@ AM_CONDITIONAL([NFS_THREADS], [test x"$enable_nfs_threads" = xyes])
 
 AM_CONDITIONAL([NO_AWSAUTH], [test x"$with_aws_auth" = xno])
 
-AM_CONDITIONAL([GPROF], [test x"$enable_debug" = xgprof])
 AM_CONDITIONAL([DEBUG], [test x"$enable_debug" = xyes])
+AM_CONDITIONAL([GPROF], [test x"$enable_grprof" = xyes])
+
 
 # if the gpfs header is present then build the gpfs utilities.
 build_gpfs_utilities=no
