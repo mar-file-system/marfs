@@ -381,7 +381,7 @@ typedef struct marfs_repo {
    ssize_t               max_pack_file_count;
 
    struct DAL           *dal;
-   StatFlagsValue        timing_flags; // see erasure.h
+   TimingFlagsValue      timing_flags; // see erasure.h
 
    char                 *online_cmds;
    size_t                online_cmds_len;
@@ -479,7 +479,7 @@ typedef struct marfs_namespace {
 
    long long             quota_space;
    long long             quota_names;
-   StatFlagsValue        timing_flags; // see erasure.h
+   TimingFlagsValue      timing_flags; // see erasure.h
 
    struct MDAL          *dir_MDAL;
    struct MDAL          *file_MDAL;

@@ -886,12 +886,12 @@ int parse_access_perms(const char* flags_field, MarFS_Perms* flags, const char* 
 
 
 // transform permissions flags from text to bit-mask.
-// the flags refer to members of StatFlags in erasure.h
+// the flags refer to members of TimingFlags in erasure.h
 //
 // <flags_field>    is e.g.  "ns.timing_flags"
-// <str>            is e.g.  "OPEN,RW,CLOSE,RENAME,CRC,ERASURE,THREAD,HANDLE"
+// <str>            is e.g.  "OPEN,RW,CLOSE,RENAME,STAT,XATTR,CRC,ERASURE,THREAD,HANDLE"
 //
-// <flags>          gets     (SF_OPEN | SF_RW | SF_CLOSE | SF_RENAME | ...)
+// <flags>          gets     (TF_OPEN | TF_RW | TF_CLOSE | TF_RENAME | ...)
 
 /*
  * Because strtok destroys the string on which it operates, we're going to
@@ -904,7 +904,7 @@ int parse_access_perms(const char* flags_field, MarFS_Perms* flags, const char* 
  * we treat as a no-op.
  */
 
-int parse_timing_flags(const char* flags_field, StatFlagsValue* flags, const char* str) {
+int parse_timing_flags(const char* flags_field, TimingFlagsValue* flags, const char* str) {
 
    *flags = 0;
    if ( !str )
@@ -930,21 +930,25 @@ int parse_timing_flags(const char* flags_field, StatFlagsValue* flags, const cha
    char* tok = strtok( str_dup, "," );
    while ( tok != NULL ) {
       if ( ! strcasecmp( tok, "OPEN" )) {
-         *flags |= SF_OPEN;
+         *flags |= TF_OPEN;
       } else if ( ! strcasecmp( tok, "RW" )) {
-         *flags |= SF_RW;
+         *flags |= TF_RW;
       } else if ( ! strcasecmp( tok, "CLOSE" )) {
-         *flags |= SF_CLOSE;
+         *flags |= TF_CLOSE;
       } else if ( ! strcasecmp( tok, "RENAME" )) {
-         *flags |= SF_RENAME;
+         *flags |= TF_RENAME;
       } else if ( ! strcasecmp( tok, "CRC" )) {
-         *flags |= SF_CRC;
+         *flags |= TF_CRC;
       } else if ( ! strcasecmp( tok, "ERASURE" )) {
-         *flags |= SF_ERASURE;
+         *flags |= TF_ERASURE;
+      } else if ( ! strcasecmp( tok, "XATTR" )) {
+         *flags |= TF_XATTR;
+      } else if ( ! strcasecmp( tok, "STAT" )) {
+         *flags |= TF_STAT;
       } else if ( ! strcasecmp( tok, "THREAD" )) {
-         *flags |= SF_THREAD;
+         *flags |= TF_THREAD;
       } else if ( ! strcasecmp( tok, "HANDLE" )) {
-         *flags |= SF_HANDLE;
+         *flags |= TF_HANDLE;
       } else if ( strcasecmp( tok, "NONE" )) {
          LOG( LOG_ERR, "Invalid %s value of \"%s\".\n", flags_field, tok );
          return -1;
