@@ -180,6 +180,7 @@ AC_CHECK_LIB([aws4c_extra], [s3_create_bucket])
 # DAL=MC+RDMA also needs rdma_sockets and rdmacm
 AS_IF([test x"$enable_mc" = xsockets],
       [AC_CHECK_LIB([rdmacm], [rsocket])
+       AC_CHECK_LIB([ft], [fast_timer_inits])
        AC_CHECK_LIB([rdma_sockets], [skt_open])])
 
 # link lib fuse if building the fuse daemon.
