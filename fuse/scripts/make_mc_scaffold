@@ -4,7 +4,7 @@
 #
 # on FTA run this:
 #
-#   fuse/scripts/make_mc_scaffold.new2 -t sockets-fta -d /ssd -r storage -p 1 -b 2 -c 2 -s 4096
+#   fuse/scripts/make_mc_scaffold -t sockets-fta -d /ssd -r storage -p 1 -b 2 -c 2 -s 4096
 #
 # See comments above the functions, below, to see what this will do.
 
@@ -22,6 +22,9 @@ function usage {
     printf "     -l  <cap_link_dest>\n"
     printf "   [ -L  <cap_link_offset> ]  default=0\n"
     printf "     -s  <scatter_width>\n"
+    printf "\n"
+    printf "     -N  <storage_host_count>\n"
+    printf "   [ -H  <storage_host_prefix> ]  default=\"storage-\"\n"
     printf "\n"
     printf "   [ -D  <remote_containing_dir> ]\n"
     printf "   [ -o  <owner> ]   (currently ignored)\n"
@@ -48,7 +51,7 @@ function usage {
     echo "   when invoking sockets-remote.  It allows remote-side generation of"
     echo "   the directory-tree, across a set of hosts.  For example:"
     echo 
-    echo "     $ for H in `seq 1 6`; do"
+    echo "     $ for H in \`seq 1 6\`; do"
     echo "          HOST=192.168.0.$H;"
     echo "          scp -rp make_mc_scaffold $DST:\~"
     echo "          on_s \~/make_mc_scaffold.new -t sockets-remote -d /ssd -r storage -p 1 -b 2 -B $(( (H-1) *2 )) -c 1 -s 4096 &"
@@ -66,9 +69,10 @@ boffset=0
 coffset=0
 dry_run=0
 err=0
+storage_host="storage-"
 
 # --- parse command-line
-OPTS="t:r:p:b:B:c:l:L:s:d:D:o:n"
+OPTS="t:r:p:b:B:c:l:L:s:d:D:o:H:N:n"
 getopts $OPTS ARG
 RETVAL=$?
 
@@ -89,8 +93,10 @@ while (( ! $RETVAL )); do
         (c) ncaps=$(( OPTARG -1 )) ;;
         (l) cap_link_dest=$OPTARG ;;
         (L) coffset=$(( OPTARG )) ;;
-
         (s) nscatter=$(( OPTARG -1 )) ;;
+
+        (H) storage_host=$OPTARG ;;
+        (N) nstorage=$(( OPTARG )) ;;
 
         (d) containing_dir=$OPTARG ;;
         (D) r_containing_dir=$OPTARG ;;
@@ -147,9 +153,16 @@ elif [ -z "$containing_dir" ]; then
 #    echo "owner"
 #    usage
 #    exit 1
+
 fi
 
-if [ $op_type != "sockets-fta" ]; then
+
+if [ "$op_type" == "sockets-fta" ]; then
+    if [ -z "$nstorage" ]; then
+        echo "need to provide number of storage-nodes"
+        exit 1
+    fi
+else
     if ! [ -d $containing_dir ] ; then
         echo "containing dir does not exist or is not a directory"
         exit 1
@@ -160,30 +173,41 @@ if [ $op_type != "sockets-fta" ]; then
 fi
 
 
-echo "op         = $op_type"
-echo "repo_name  = $repo_name"
-echo "pods       = [0..$npods]"
-echo "blocks     = [$boffset..$((boffset + nblocks))]"
+echo "op           = $op_type"
+echo "repo_name    = $repo_name"
+echo "pods         = [0..$npods]"
+echo "blocks       = [$boffset..$((boffset + nblocks))]"
 
-echo "caps       = [0..$ncaps]"
+echo "caps         = [0..$ncaps]"
 if [ -n "$cap_link_dest" ]; then
     printf "                  ->  $cap_link_dest\n" $boffset 0
     printf "                  ->  $cap_link_dest\n" $(( boffset + nblocks)) $ncaps
 fi
 
-echo "scatter    = [0..$nscatter]"
-echo "cont_dir   = $containing_dir"
-echo "r_cont_dir = $r_containing_dir"
-echo "own        = $owner"
-echo "dry_run    = $dry_run"
+echo "scatter      = [0..$nscatter]"
+echo "cont_dir     = $containing_dir"
+echo "r_cont_dir   = $r_containing_dir"
+echo "storage_host = $storage_host%03d"
+echo "own          = $owner"
+echo "dry_run      = $dry_run"
 echo
 echo
 
 
 
 
-LST=$(seq 1 6 | xargs -n1 printf "storage-%03d ")
+LST=$(seq 1 $nstorage | xargs -n1 printf "%s%03d " $storage_host)
 
+# run on one host
+# usage: on1 <host> <cmd> ...
+function on1() {
+    HOST=`printf "%s%03d" $storage_host $1`
+    shift
+    pdsh -R ssh -w $HOST "($@) 2>&1 | nl -n rz" | sort
+}
+
+# run on all hosts in $LST
+# usage: on_s <cmd> ...
 function on_s() {
     pdsh -R ssh -w `echo $LST | tr ' ' ','` "($@) 2>&1 | nl -n rz" | sort
 }
@@ -232,11 +256,10 @@ function to_s() {
     ZFS_BASE=$containing_dir/vol
     CAP_LINKS=$containing_dir/cap_links
     function make_cap_links() {
-    
-        for H in `seq 1 6`; do
-            on2 $H  rm -rf $CAP_LINKS
-            on2 $H  mkdir -p $CAP_LINKS
-            on2 $H  "for i in \`seq 1 4\`; do ln -s $ZFS_BASE\$i $CAP_LINKS/block\$(( $(( (H-1) *2 )) + ((i-1)/2) ))_cap\$(( (i-1) %2 )); done"
+        for H in `seq 1 $nstorage`; do
+            on1 $H  rm -rf $CAP_LINKS
+            on1 $H  mkdir -p $CAP_LINKS
+            on1 $H  "for i in \`seq 1 4\`; do ln -s $ZFS_BASE\$i $CAP_LINKS/block\$(( $(( (H-1) *2 )) + ((i-1)/2) ))_cap\$(( (i-1) %2 )); done"
         done
     }
     
@@ -296,10 +319,10 @@ function to_s() {
 
     function make_storage_tree() {
         to_s $SCRIPT
-    
-        for H in `seq 1 6`; do
-            on2 $H rm -rf /ssd/storage
-            on2 $H ./$BASENAME -t sockets-remote -d $containing_dir -r $repo_name -p $(( npods +1 )) -b $(( nblocks +1 )) -B $(( (H-1) *2 )) -c $(( ncaps +1 )) -l $CAP_LINKS/block%d_cap%d -L $coffset -s $(( nscatter +1 )) 2>&1 &
+
+        for H in `seq 1 $nstorage`; do
+            on1 $H  rm -rf /ssd/storage
+            on1 $H  ./$BASENAME -t sockets-remote -d $containing_dir -r $repo_name -p $(( npods +1 )) -b $(( nblocks +1 )) -B $(( (H-1) *2 )) -c $(( ncaps +1 )) -l $CAP_LINKS/block%d_cap%d -L $coffset -s $(( nscatter +1 )) 2>&1 &
         done > foo.scaffold
         wait
     }
@@ -441,7 +464,7 @@ function make-scatter {
                 do
                     sub=$cap/$SUBDIR$s
                     printf "making %-14s $sub\n" $SUBDIR${s}:
-                    mkdir $sub || exit 1
+                    mkdir -p $sub || exit 1
                     chmod 703 $sub || exit 1
                     [ -n "$owner" ] && (chown ${owner}:${owner} $sub || exit 1)
 
