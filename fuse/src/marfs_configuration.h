@@ -68,20 +68,28 @@ extern "C" {
 
 
 // ...........................................................................
-// This is the version of the SOFTWARE.  This shows up in 2 places:
+// This is the version of the SOFTWARE.  This shows up in 3 places:
 //
 // (1) config-file parsing.  In this case the config-file will have a
 //     version, and the parser compares it with the defines here, to
 //     assure that it is competent to perform the parse.
 //
-// (2) xattr parsing.  Any objects written by this software will have
+// (2) xattr parsing.  Metadata files written by this software will have
 //     xattrs identifying their config SW version.  When parsing xattrs
 //     (e.g. in str_2_pre()), we can thus be sure we know which version of
 //     the software wrote those xattrs.  This also identifies potential
 //     changes in chunk-info written into MD files for Multis, or in the
 //     recovery-info written into the tail of objects.
+//
+// (3) object-IDs.  The version number is also stored in obj-IDs, which
+//     also include strings from xattrs.  As with (2), this potentially
+//     allows future parsers to select the right parser for a given
+//     version.  This also allows major changes in the code to be reflected
+//     in a new "series" of object-IDs.  Thus, supposing there were some
+//     problem, we could determine which objects were written with which
+//     code version.
 //     
-// These two are somewhat independent.  config-version identifies
+// These are all somewhat independent.  config-version identifies
 // config-reader parser that's needed.  This may relate to what information
 // is kept in xattrs, but might not affect xattrs.  Meanwhile,
 // recovery-info formats could change without any changes to the config
@@ -89,7 +97,9 @@ extern "C" {
 //
 // For now, we are just glossing the problem.  What goes into object-IDs is
 // what is found in MARFS_CONFIG_MAJOR/MINOR, so changes to either (1) or
-// (2) above, should be reflected in changes these #defines.
+// (2) above, should be reflected in changes these #defines.  No reason you
+// can't increment the version number whenever you want, as well, e.g. to
+// associate objects with versions of code that were in use.  (See 1.9)
 //
 // HISTORY
 //
@@ -138,10 +148,14 @@ extern "C" {
 // -- 1.8 fixed rename/unlink bug (issue 200) by having stat_xattrs()
 //        ignore the md_path in the POST xattr, unless its new extra
 //        argument is non-zero.
-
+//
+// -- 1.9 (no changes to xattr or obj-ID format, but we're introducing RDMA
+//        (MDAL) to production, which will co-exist with NFS (MDAL).
+//        Changing the object-version number in case we ever might wish we
+//        had done so, in order to hunt for issues.)
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  8
+#define MARFS_CONFIG_MINOR  9
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
