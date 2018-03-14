@@ -219,7 +219,7 @@ AM_CONDITIONAL([NFS_THREADS], [test x"$enable_nfs_threads" = xyes])
 AM_CONDITIONAL([NO_AWSAUTH], [test x"$with_aws_auth" = xno])
 
 AM_CONDITIONAL([DEBUG], [test x"$enable_debug" = xyes])
-AM_CONDITIONAL([GPROF], [test x"$enable_grprof" = xyes])
+AM_CONDITIONAL([GPROF], [test x"$enable_gprof" = xyes])
 
 
 # if the gpfs header is present then build the gpfs utilities.
