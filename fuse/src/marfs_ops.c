@@ -251,7 +251,8 @@ int marfs_chown (const char* path,
 //         flush(). FUSE may call flush() multiple times for a given file,
 //         once each time a reference to that file is closed (this happens
 //         in the case of dup'd fds, ie. when redirecting output from the shell.
-//
+
+
 int marfs_flush (const char*        path,
                  MarFS_FileHandle*  fh) {
    ENTRY();
@@ -271,8 +272,20 @@ int marfs_flush (const char*        path,
    // happens in the case of attempting to overwrite a file for which
    // the user does not have write permission. In this case we simply
    // skip all the operations below and return.
-   if( fh->flags & FH_WRITING && !(os->flags & OSF_OPEN) ) {
+   if( (fh->flags & FH_WRITING) && !(os->flags & OSF_OPEN) ) {
       LOG(LOG_INFO, "releasing unopened stream.\n");
+      EXIT();
+      return 0;
+   }
+
+   // SURPRISE!  On RHEL7, fuse also calls flush when reading a file with
+   // 'hexdump'!  Not for 'cat', but just for hexdump.  This means that we
+   // must avoid clearing the RESTART flag in marfs_flush() if (fh->flags &
+   // FH_READING).  Otherwise, we permit hexdump to see the contents of
+   // files having RESTART.  We'll just say the flush was successful, and
+   // let marfs_read_internal() throw the error.
+   if( (fh->flags & FH_READING) && has_any_xattrs(info, XVT_RESTART) ) {
+      LOG(LOG_INFO, "trying to flush an input file having RESTART.\n");
       EXIT();
       return 0;
    }
