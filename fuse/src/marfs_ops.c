@@ -281,9 +281,8 @@ int marfs_flush (const char*        path,
    // SURPRISE!  On RHEL7, fuse also calls flush when reading a file with
    // 'hexdump'!  Not for 'cat', but just for hexdump.  This means that we
    // must avoid clearing the RESTART flag in marfs_flush() if (fh->flags &
-   // FH_READING).  Otherwise, we permit hexdump to see the contents of
-   // files having RESTART.  We'll just say the flush was successful, and
-   // let marfs_read_internal() throw the error.
+   // FH_READING).  We'll just say the flush was successful, and let
+   // marfs_read_internal() throw the error.
    if( (fh->flags & FH_READING) && has_any_xattrs(info, XVT_RESTART) ) {
       LOG(LOG_INFO, "trying to flush an input file having RESTART.\n");
       EXIT();
