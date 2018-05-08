@@ -192,7 +192,7 @@ int  marfs_utimens(const char* path, const struct timespec ts[2]);
 ssize_t  marfs_write(const char* path, const char* buf, size_t size, off_t offset,
                      MarFS_FileHandle* fh);
 
-int  marfs_check_packable(const char* path, size_t length);
+int  marfs_check_packable(const char* path, size_t content_length);
 
 // currently unimplemented
 #if 0

@@ -1208,6 +1208,7 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
       if(! F_OP(is_open, fh) ) {
          LOG(LOG_ERR, "open_md_path(%s) failed: %s\n",
              path, strerror(errno));
+	 va_end(ap);
          return -1;
       }
    }
@@ -1225,6 +1226,7 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
          LOG(LOG_ERR, "open_md_path(%s) failed: %s\n",
              info->post.md_path, strerror(errno));
          fh->md_fd = 0;
+	 va_end(ap);
          return -1;
       }
    }

@@ -3110,6 +3110,23 @@ ssize_t marfs_write(const char*        path,
    return size;
 }
 
+int marfs_check_packable(const char* path, size_t content_length)
+{
+        int rc;
+        PathInfo info = {0};
+        EXPAND_PATH_INFO(&info, path);
+        printf("MARFS CHECK PACAKBLE DONE EXPAND PATH INFO\n");
+        init_pre(&info.pre, OBJ_FUSE, info.ns, info.ns->iwrite_repo, &info.st);
+        printf("content_length %ld; max pack file size %ld;\n", content_length, info.pre.repo->max_pack_file_size);
+
+        rc = 1; //init RC
+        if((content_length > info.pre.repo->max_pack_file_size) ||(content_length >= (info.pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))
+        {
+                rc = 0;
+        }
+
+        return rc;
+}
 
 
 
@@ -3277,8 +3294,6 @@ int marfs_lock(const char*        path,
    errno = ENOSYS;
    return -1;
 }
-
-
 #endif
 
 
