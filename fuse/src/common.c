@@ -2043,6 +2043,10 @@ int open_md(MarFS_FileHandle* fh, int writing_p) {
 #if USE_MDAL
    if (! F_MDAL(fh)) {
       // copy static MDAL ptr from NS to FileHandle
+      if (info->pre.ns == NULL)
+      {
+	 printf("ERROR: info->pre.ns became NULL\nPossible reason: another writer has started thus info->pre was wiped out\n");
+      }
       F_MDAL(fh) = info->pre.ns->file_MDAL;
       LOG(LOG_INFO, "file-MDAL: %s\n", F_MDAL(fh)->name);
 
