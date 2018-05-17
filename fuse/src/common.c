@@ -2046,6 +2046,7 @@ int open_md(MarFS_FileHandle* fh, int writing_p) {
       if (info->pre.ns == NULL)
       {
 	 printf("ERROR: info->pre.ns became NULL\nPossible reason: another writer has started thus info->pre was wiped out\n");
+	 exit(-1);
       }
       F_MDAL(fh) = info->pre.ns->file_MDAL;
       LOG(LOG_INFO, "file-MDAL: %s\n", F_MDAL(fh)->name);
