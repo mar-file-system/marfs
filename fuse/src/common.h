@@ -671,6 +671,10 @@ typedef struct {
                                  // into the file
 
    FHFlagType      flags;
+   
+   int             tot_pods;
+   int             tot_stats;
+   char*           timing_stats;
 } MarFS_FileHandle;
 
 
