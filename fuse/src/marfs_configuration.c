@@ -981,6 +981,10 @@ int parse_timing_flags(const char* flags_field, TimingFlagsValue* flags, const c
   DEST = (uint8_t)temp;                                             \
 }
 
+int get_repo_count()
+{
+	return repoCount;
+}
 
 static MarFS_Config_Ptr read_configuration_internal() {
 

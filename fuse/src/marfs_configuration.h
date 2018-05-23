@@ -609,6 +609,7 @@ extern MarFS_Repo_Ptr find_repo_by_name( const char* name );
  */
 
 extern int read_configuration();
+extern int get_repo_count();
 
 /*
  * These functions return the configuration information that was given in
