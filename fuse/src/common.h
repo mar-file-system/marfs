@@ -674,7 +674,10 @@ typedef struct {
    
    int             tot_pods;
    int             tot_stats;
+   int             pod_id;
    int             data_ready;
+   int             total_blk;
+   size_t          timing_stats_buff_size;
    char*           timing_stats;
    char*           repo;
 } MarFS_FileHandle;

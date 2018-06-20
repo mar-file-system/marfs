@@ -726,7 +726,6 @@ int mc_config(struct DAL*     dal,
               xDALConfigOpt** opts,
               size_t          opt_count) {
    ENTRY();
-
    int        is_sockets = ((! strcmp(dal->name, "MC_SOCKETS"))
                             && (dal->name_len == strlen("MC_SOCKETS")));
 
@@ -776,7 +775,6 @@ int mc_config(struct DAL*     dal,
          return -1;
       }
 
-
       // options only used by MC_SOCKETS DAL
       else if(!strcmp(opts[i]->key, "host_offset")) {
          config->host_offset = strtol(opts[i]->val.value.str, NULL, 10);
@@ -821,7 +819,6 @@ int mc_config(struct DAL*     dal,
       }
    }
 
-
    if(config->degraded_log_path == NULL) {
       LOG(LOG_ERR, "no degraded_log_dir specified for DAL '%s'.\n", dal->name);
       return -1;
@@ -830,7 +827,6 @@ int mc_config(struct DAL*     dal,
       // initialize the lock to prevent concurrent writes to the log.
       SEM_INIT(&config->lock, 0, 1);
    }
-
 #ifdef S3_AUTH
    // To allow generating per-connection auth-signatures, capture the S3
    // credentials up front, while we have access to the AWS config file
@@ -862,7 +858,6 @@ int mc_config(struct DAL*     dal,
          return -1;
    }
 #endif
-
 
    config->is_sockets = is_sockets;
    if (is_sockets)
@@ -1098,6 +1093,47 @@ int mc_update_path(DAL_Context* ctx) {
    return 0;
 }
 
+int find_stats_from_tflags(int tflags)
+{
+	int tot_stats = 0;
+
+	if (tflags & TF_OPEN)
+	{
+		tot_stats++;
+	}
+	if (tflags & TF_RW)
+	{
+		tot_stats += 2;
+	}
+	if (tflags & TF_CLOSE)
+	{
+		tot_stats++;
+	}
+	/*if (tflags & TF_RENAME)
+	{
+		tot_stats++;
+	}*/
+	/*if (tflags & TF_CRC)
+	{
+		printf("DAL.C detected CRC flag\n");
+		tot_stats++;
+	}*/
+	/*if (tflags & TF_ERASURE)
+	{
+		printf("DAL.C detected ERASURE flag\n");
+		tot_stats++;
+	}*/
+	/*if (tflags & TF_XATTR)
+	{
+		tot_stats++;
+	}
+	if (tflags & TF_STAT)
+	{
+		tot_stats++;
+	}*/
+	return tot_stats;
+}
+
 // Open a multi-component object stream backed by a ne_handle.
 //
 // This used to defer opens, since that is now done in MarFS proper,
@@ -1124,11 +1160,36 @@ int mc_open(DAL_Context* ctx,
 
    // do the generic cleanup stuff like resetting flags.
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
-
+   if (MC_FH(ctx)->repo == NULL)
+   {
+   	//allocate repo
+   	MC_FH(ctx)->repo = (char*)malloc(MARFS_MAX_REPO_SIZE);
+   	memset(MC_FH(ctx)->repo, 0, MARFS_MAX_REPO_SIZE);
+        memcpy(MC_FH(ctx)->repo, MC_FH(ctx)->info.pre.repo->name, MC_FH(ctx)->info.pre.repo->name_len);
+   	//find the number of time stats to collect
+   	MC_FH(ctx)->tot_stats = find_stats_from_tflags(timing_flags);
+   	//allocate pointers include 2 characters for name of stat
+   	//MC_FH(ctx)->timing_stats = (char*)malloc(sizeof(double) * 65 * (MC_FH(ctx)->tot_stats) + 2 * (MC_FH(ctx)->tot_stats));
+   	//memset(MC_FH(ctx)->timing_stats, 0, sizeof(double) * 65 * (MC_FH(ctx)->tot_stats) + 2 * (MC_FH(ctx)->tot_stats));
+   }
    MC_HANDLE(ctx) = ne_open1(MC_CONFIG(ctx)->snprintf, ctx,
                              impl, MC_CONFIG(ctx)->auth, timing_flags,
                              path_template, mode,
                              MC_CONTEXT(ctx)->start_block, n, e);
+   //we need total_blk from ne_handle to allocate stat buffer
+   MC_FH(ctx)->total_blk = MC_HANDLE(ctx)->N + MC_HANDLE(ctx)->E;
+   MC_FH(ctx)->pod_id = MC_CONTEXT(ctx)->pod;
+   //MC_HANDLE(ctx)->repo = MC_FH(ctx)->repo;
+   //MC_HANDLE(ctx)->pod_id = &(MC_FH(ctx)->pod_id);
+   if (MC_FH(ctx)->timing_stats == NULL)
+   {
+	//allocate stat buffer based on total blks from ne_handle
+	MC_FH(ctx)->timing_stats_buff_size = sizeof(double) * 65 * (MC_FH(ctx)->tot_stats) * (MC_FH(ctx)->total_blk) + 3 * (MC_FH(ctx)->tot_stats);
+	MC_FH(ctx)->timing_stats = (char*)malloc(MC_FH(ctx)->timing_stats_buff_size);
+	memset(MC_FH(ctx)->timing_stats, 0, MC_FH(ctx)->timing_stats_buff_size);
+	
+   }
+   MC_HANDLE(ctx)->timing_stats = MC_FH(ctx)->timing_stats;
    if(! MC_HANDLE(ctx)) {
       LOG(LOG_ERR, "Failed to open MC Handle %s\n", path_template);
       return -1;
@@ -1265,6 +1326,8 @@ int mc_sync(DAL_Context* ctx) {
                mc_context->start_block, error_pattern,
                MC_FH(ctx)->info.pre.repo->name,
                mc_context->pod, mc_context->cap);
+      
+      printf("MC_SYNC buf %s\n", buf);
 
       // If the degraded log file has not already been opened, open it now.
       WAIT(&config->lock);

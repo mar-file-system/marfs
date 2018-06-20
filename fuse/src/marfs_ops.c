@@ -2283,7 +2283,7 @@ int marfs_release_fh(MarFS_FileHandle* fh) {
    // free aws4c resources
    aws_iobuf_reset_hard(&os->iob);
 
-   memset(fh, 0, sizeof(MarFS_FileHandle));
+   //memset(fh, 0, sizeof(MarFS_FileHandle));
 
    fh->flags |= FH_PACKED;
 
