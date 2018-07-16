@@ -107,11 +107,14 @@ OF SUCH DAMAGE.
 // 
 const char* marfs_sub_path(const char* path) {
    if (strncmp(path, marfs_config->mnt_top, marfs_config->mnt_top_len))
-      return NULL;
+	{
+      return NULL;}
    else if (! path[marfs_config->mnt_top_len])
-      return "/";
+     { 
+      return "/";}
    else if (path[marfs_config->mnt_top_len] != '/')
-      return NULL;
+      {
+      return NULL;}
    else
       return path + marfs_config->mnt_top_len;
 }
@@ -163,6 +166,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    const char* sub_path = path + info->ns->mnt_path_len; /* below NS */
    int prt_count = snprintf(info->post.md_path, MARFS_MAX_MD_PATH,
                             "%s%s", info->ns->md_path, sub_path);
+
    if (prt_count < 0) {
       LOG(LOG_ERR, "snprintf(..., %s, %s) failed\n",
           info->ns->md_path,
@@ -3170,4 +3174,73 @@ void terminate_all_readers(MarFS_FileHandle* fh) {
    }
 
    POST(&os->read_lock);
+}
+
+
+//functions to support path_convert tool
+
+//put here because polyhash, flatten_objid, h_a are static functions in dal.c
+static uint64_t polyhash(const char* string) {
+   // According to http://www.cse.yorku.ca/~oz/hash.html
+   // 33 is a magical number that inexplicably works the best.
+   const int salt = 33;
+   char c;
+   uint64_t h = *string++;
+   while((c = *string++))
+      h = salt * h + c;
+   return h;
+}
+
+static uint64_t h_a(const uint64_t key, uint64_t a) {
+   return ((a * key) >> 32);
+}
+
+static void flatten_objid(char* objid) {
+   int i;
+   for(i = 0; objid[i]; i++) {
+      if(objid[i] == '/')
+         objid[i] = '#';
+   }
+}
+void get_path_template(char* path, MarFS_FileHandle* fh)
+{
+        init_data(fh);
+	const MarFS_Repo* repo = fh->info.pre.repo;
+	char* objid = fh->info.pre.objid;
+	char obj_filename[MARFS_MAX_OBJID_SIZE];
+	strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);	
+	flatten_objid(obj_filename);
+	unsigned long objid_hash = polyhash(objid);
+
+	char* mc_path_format = repo->host;
+
+        unsigned int num_blocks    = ((MC_Config*)fh->dal_handle.dal->global_state)->n + ((MC_Config*)fh->dal_handle.dal->global_state)->e;
+        unsigned int num_pods      = ((MC_Config*)fh->dal_handle.dal->global_state)->num_pods;
+        unsigned int num_cap       = ((MC_Config*)fh->dal_handle.dal->global_state)->num_cap;
+        unsigned int scatter_width = ((MC_Config*)fh->dal_handle.dal->global_state)->scatter_width;
+
+	unsigned int seed = objid_hash;
+	uint64_t a[3];
+	int i;
+	for(i=0; i<3; i++)
+		a[i] = rand_r(&seed)*2+1;
+
+	unsigned int pod = objid_hash % num_pods;
+	unsigned int cap = h_a(objid_hash, a[0]) % num_cap;
+	unsigned long scatter = h_a(objid_hash, a[1]) % scatter_width;
+	unsigned int start_block = h_a(objid_hash, a[2]) % num_blocks;
+	
+	if (((MC_Config*)fh->dal_handle.dal->global_state)->is_sockets)
+	{
+		snprintf(path, MC_MAX_PATH_LEN, mc_path_format, pod + ((MC_Config*)fh->dal_handle.dal->global_state)->pod_offset, cap, scatter);
+	}
+	else
+	{
+		snprintf(path, MC_MAX_PATH_LEN, mc_path_format, pod, "%d", cap, scatter);
+	}
+	
+	if (path[strlen(path) - 1] != '/')
+		strcat(path, "/");
+	
+	strncat(path, obj_filename, MARFS_MAX_OBJID_SIZE);
 }

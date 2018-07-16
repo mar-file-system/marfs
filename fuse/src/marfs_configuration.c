@@ -285,12 +285,9 @@ MarFS_Namespace_Ptr find_namespace_by_mnt_path( const char *mnt_path ) {
   char *path_dup;
   char *path_dup_token;
   size_t path_dup_len;
-
-
   path_dup = strdup( mnt_path );
   path_dup_token = strtok( path_dup, "/" );
   path_dup_len = strlen( path_dup );
-
 /*
  * At this point path_dup will include the leading "/" and any other
  * characters up to, but not including, the next "/" character in

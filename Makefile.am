@@ -165,6 +165,20 @@ bin_PROGRAMS += separate_log_threads_support
 separate_log_threads_support_SOURCES = fuse/scripts/separate_log_threads_support.c
 
 
+bin_PROGRAMS += path_convert
+
+path_convert_SOURCES = fuse/src/path_convert.c \
+		       fuse/src/marfs_configuration.c \
+		       fuse/src/marfs_configuration.h \
+		       fuse/src/marfs_ops.c \
+		       fuse/src/marfs_ops.h \
+		       fuse/src/common.c \
+		       fuse/src/common.h \
+		       fuse/src/marfs_base.c \
+		       fuse/src/marfs_base.h \
+		       fuse/src/dal.c \
+		       fuse/src/dal.h
+marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 
 
 # The PA2X_interface needs to look in additional places for its #include files.

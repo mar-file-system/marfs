@@ -972,7 +972,8 @@ extern void          dequeue_reader(off_t offset, MarFS_FileHandle* fh);
 extern void          check_read_queue     (MarFS_FileHandle* fh);
 extern void          terminate_all_readers(MarFS_FileHandle* fh);
 
-
+//support for path conversion tool
+extern void get_path_template(char* path_template, MarFS_FileHandle* fh);
 
 #  ifdef __cplusplus
 }

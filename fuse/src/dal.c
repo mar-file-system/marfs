@@ -995,6 +995,7 @@ int mc_path_snprintf_sockets(char*       dest,
                              uint32_t    block,
                              void*       state) {
 
+
   DAL_Context* ctx    = (DAL_Context*)state;
   MC_Config*   config = MC_CONFIG(ctx);
   
@@ -1009,6 +1010,7 @@ int mc_path_snprintf_sockets(char*       dest,
                   pod_offset + host_offset,  // "192.168.0.%d"
                   block_offset);             // "block%d"
 }
+
 
 
 // For MC DALs, the MarFS configuration specifies a sprintf-format
@@ -1028,7 +1030,6 @@ int mc_update_path(DAL_Context* ctx) {
    const MarFS_Repo* repo          = info->pre.repo;
    char*             objid         = info->pre.objid;
    char*             path_template = MC_CONTEXT(ctx)->path_template;
-
    char obj_filename[MARFS_MAX_OBJID_SIZE];
    strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);
    flatten_objid(obj_filename);
@@ -1046,7 +1047,6 @@ int mc_update_path(DAL_Context* ctx) {
    unsigned int num_pods      = MC_CONFIG(ctx)->num_pods;
    unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
    unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
-
    unsigned int seed = objid_hash;
    uint64_t a[3];
    int i;
@@ -1086,7 +1086,6 @@ int mc_update_path(DAL_Context* ctx) {
    
    // append the fileified object id
    strncat(path_template, obj_filename, MARFS_MAX_OBJID_SIZE);
-
    LOG(LOG_INFO, "MC path template: (starting block: %d) %s\n",
        MC_CONTEXT(ctx)->start_block, path_template);
    
@@ -1157,7 +1156,6 @@ int mc_open(DAL_Context* ctx,
                                   | MC_FH(ctx)->info.pre.ns->timing_flags );
 
    int           mode          = (is_put ? NE_WRONLY : NE_RDONLY);
-
    // do the generic cleanup stuff like resetting flags.
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
    if (MC_FH(ctx)->repo == NULL)

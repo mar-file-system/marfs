@@ -194,6 +194,7 @@ ssize_t  marfs_write(const char* path, const char* buf, size_t size, off_t offse
 
 int  marfs_check_packable(const char* path, size_t content_length);
 
+void marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh, size_t chunk_no, char* path_template);
 // currently unimplemented
 #if 0
 

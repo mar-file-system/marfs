@@ -1,24 +1,17 @@
 /*
 This file is part of MarFS, which is released under the BSD license.
-
-
 Copyright (c) 2015, Los Alamos National Security (LANS), LLC
 All rights reserved.
-
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
-
 1. Redistributions of source code must retain the above copyright notice, this
 list of conditions and the following disclaimer.
-
 2. Redistributions in binary form must reproduce the above copyright notice,
 this list of conditions and the following disclaimer in the documentation and/or
 other materials provided with the distribution.
-
 3. Neither the name of the copyright holder nor the names of its contributors
 may be used to endorse or promote products derived from this software without
 specific prior written permission.
-
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
@@ -29,7 +22,6 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
 LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 -----
 NOTE:
 -----
@@ -37,13 +29,9 @@ MarFS uses libaws4c for Amazon S3 object communication. The original version
 is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
 LANS, LLC added functionality to the original work. The original work plus
 LANS, LLC contributions is found at https://github.com/jti-lanl/aws4c.
-
 GNU licenses can be found at <http://www.gnu.org/licenses/>.
-
-
 From Los Alamos National Security, LLC:
 LA-CC-15-039
-
 Copyright (c) 2015, Los Alamos National Security, LLC All rights reserved.
 Copyright 2015. Los Alamos National Security, LLC. This software was produced
 under U.S. Government contract DE-AC52-06NA25396 for Los Alamos National
@@ -55,7 +43,6 @@ ASSUMES ANY LIABILITY FOR THE USE OF THIS SOFTWARE.  If software is
 modified to produce derivative works, such modified software should be
 clearly marked, so as not to confuse it with the version available from
 LANL.
-
 THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND CONTRIBUTORS
 "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
 THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -101,33 +88,29 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
-
 // --- wrappers just call the corresponding library-function, to support a
 //     given fuse-function.  The library-functions are meant to be used by
 //     both fuse and pftool, so they don't do seteuid(), and don't expect
 //     any fuse-related structures.
 
-#define WRAP_internal(GROUPS_TOO, FNCALL)                   \
-   __PUSH_USER(GROUPS_TOO);                                 \
-   errno = 0;                                               \
-   int fncall_rc    = FNCALL;                               \
-   int fncall_errno = errno;                                \
-   __POP_USER();                                            \
-   if (fncall_rc < 0) {                                     \
-      LOG(LOG_ERR, "%s, errno=%d '%s'\n",                   \
-          #FNCALL, fncall_errno, strerror(fncall_errno));   \
-      return -fncall_errno;                                 \
-   }                                                        \
+#define WRAP_internal(GROUPS_TOO, FNCALL)              \
+   __PUSH_USER(GROUPS_TOO);                            \
+   int fncall_rc = FNCALL;                             \
+   __POP_USER();                                       \
+   if (fncall_rc < 0) {                                \
+      LOG(LOG_ERR, "ERR %s, errno=%d '%s'\n",          \
+          #FNCALL, errno, strerror(errno));            \
+      return -errno;                                   \
+   }                                                   \
    return fncall_rc /* caller provides semi */
-
 
 // This version doesn't call push/pop_groups()
 #define WRAP(FNCALL)                                   \
-   WRAP_internal(0, (FNCALL))
+   WRAP_internal(0, (FNCALL));
 
 // This version DOES call push/pop_groups()
 #define WRAP_PLUS(FNCALL)                              \
-   WRAP_internal(1, (FNCALL))
+   WRAP_internal(1, (FNCALL));
 
 
 
@@ -771,7 +754,6 @@ int fuse_write(const char*            path,
    size_t wk_size = size;
    if (wk_size == (128 * 1024))
       wk_size -= 96;
-
    WRAP( marfs_write(path, buf, wk_size, offset, (MarFS_FileHandle*)ffi->fh) );
 #endif
 }
@@ -907,9 +889,6 @@ int main(int argc, char* argv[])
    // NOTE: This also now *requires* that marfs fuse is always only run as root.
    __TRY0( seteuid(0) );
 
-
-
-
    if (read_configuration()) {
       // LOG(LOG_ERR, "read_configuration() failed.  Quitting\n");
       fprintf(stderr, "read_configuration() failed.  Quitting\n");
@@ -929,10 +908,10 @@ int main(int argc, char* argv[])
    init_xattr_specs();
 
 
-   // initialize libaws4c/libcurl.
+   // initialize libaws4c/libcurl
    //
-   // NOTE: We're making initializations in the default AWSContext.  These
-   //       will be copied into the per-file-handle AWSContext via
+   // NOTE: We're making initializations in the default-context.  These
+   //       will be copied into the per-file-handle context via
    //       aws_context_clone(), in stream_open().  Instead of having to
    //       make these initializations in every context, we make them once
    //       here.
@@ -969,8 +948,6 @@ int main(int argc, char* argv[])
       if (! config_fail_ok)
          exit(1);
    }
-
-
 
    // make sure all support directories exist.  (See the config file.)
    // This includes mdfs, fsinfo, the trash "scatter-tree", for all namespaces,

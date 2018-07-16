@@ -360,7 +360,6 @@ int init_pre(MarFS_XattrPre*        pre,
    pre->chunk_no     = 0;
 
    // pre->shard = ...;    // TBD: for hashing directories across shard nodes
-
    // generate random-seed, if needed
    if (init_pre_seed(pre, repo)) {
       return -1;

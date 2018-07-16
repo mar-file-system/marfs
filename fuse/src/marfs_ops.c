@@ -572,7 +572,6 @@ int marfs_getattr (const char*  path,
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns, R_META);
-
    // The "root" namespace is artificial.  If it is configured to refer to
    // a real MDFS path, then stat'ing the root-NS will look at that path.
    // Otherwise, we gin up fake data such that the root-dir appears to be
@@ -584,7 +583,6 @@ int marfs_getattr (const char*  path,
    // indicated accessibility of the directory differs from what is allowed
    // in marfs_opendir().
    if (IS_ROOT_NS(info.ns)) {
-
       LOG(LOG_INFO, "is_root_ns\n");
       if (! stat_regular(&info)) {
          *stp = info.st;        // root md_path exists.  Use that.
@@ -634,7 +632,6 @@ int marfs_getattr (const char*  path,
 
    // mask out setuid bits.  Those are belong to us.  (see marfs_chmod())
    stp->st_mode &= ~(S_ISUID);
-
    EXIT();
    return 0;
 }
@@ -923,7 +920,31 @@ int marfs_mknod (const char* path,
    return 0;
 }
 
+void marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh, size_t chunk_no, char* path_template)
+{
 
+        PathInfo* info = &fh->info;
+        ObjectStream* os = &fh->os;
+	//fake flags to always be writing
+	fh->flags = FH_WRITING;
+        int rc = expand_path_info(info, path);
+ 
+ 	//init_pre(&info->pre, OBJ_FUSE, info->ns, info->ns->iwrite_repo, &info->st);
+	if (!mode)
+	{
+		stat_xattrs(info, 0);
+	}
+	else{
+		stat_regular(info);
+		init_pre(&info->pre, OBJ_FUSE, info->ns,
+                             info->ns->iwrite_repo, &info->st);
+	}
+	info->pre.obj_type = OBJ_Nto1;
+	info->pre.chunk_no = chunk_no;
+	update_pre(&info->pre);
+	
+	get_path_template(path_template, fh);                       
+}
 
 
 // OPEN
@@ -3126,7 +3147,7 @@ int marfs_check_packable(const char* path, size_t content_length)
         return rc;
 }
 
-
+	
 
 // ---------------------------------------------------------------------------
 // unimplemented routines, for now

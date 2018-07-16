@@ -398,12 +398,9 @@ int  install_DAL(DAL* dal);
 DAL* get_DAL(const char* name);
 
 
-
-
 // exported for building custom DAL
 int     default_dal_ctx_init   (DAL_Context* ctx, DAL* dal, void* fh);
 int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal);
-
 
 
 #ifdef __cplusplus
