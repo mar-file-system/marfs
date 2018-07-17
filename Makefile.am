@@ -178,7 +178,7 @@ path_convert_SOURCES = fuse/src/path_convert.c \
 		       fuse/src/marfs_base.h \
 		       fuse/src/dal.c \
 		       fuse/src/dal.h
-marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
+path_convert_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 
 
 # The PA2X_interface needs to look in additional places for its #include files.
