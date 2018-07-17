@@ -48,10 +48,11 @@ void show_usage(char* prog_name)
 
 int main(int argc, char* argv[])
 {
-	int c;
-	int usage = 0;
-	char* path = NULL;
+	int    c;
+	int    usage = 0;
+	char*  path = NULL;
 	size_t chunk_no = 0;
+   int    got_an_option = 0;
 	while((c = getopt(argc, argv, "hp:c:")) != -1)
 	{
 		switch(c)
@@ -62,18 +63,21 @@ int main(int argc, char* argv[])
 
 			case 'p':
 				path = optarg;
+            got_an_option = 1;
 				break;
 			
 			case 'c':
 				chunk_no = str_to_size_t(optarg);
+            got_an_option = 1;
 				break;
+
 			default:
 				usage = 1;
 				break;
 		}
 	}
 	
-	if (usage == 1)
+	if (usage || !got_an_option)
 	{
 		show_usage(argv[0]);
 		return 0;
