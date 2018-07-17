@@ -381,7 +381,7 @@ enum posix_dal_flags {
 #define POSIX_DAL_FD(CTX)      POSIX_DAL_CONTEXT(CTX)->fd
 #define POSIX_DAL_OS(CTX)      (&(POSIX_DAL_CONTEXT(CTX)->fh->os))
 #define POSIX_DAL_PATH(CTX)    POSIX_DAL_CONTEXT(CTX)->file_path
-#define FLAT_OBJID_SEPARATOR '#'
+
 
 int posix_dal_ctx_init(DAL_Context* ctx, struct DAL* dal, void* fh /* ? */) {
    ENTRY();
@@ -421,14 +421,6 @@ int posix_dal_ctx_destroy(DAL_Context* ctx, struct DAL* dal) {
    return 0;
 }
 
-// file-ify an object-id.
-static void flatten_objid(char* objid) {
-   int i;
-   for(i = 0; objid[i]; i++) {
-      if(objid[i] == '/')
-         objid[i] = FLAT_OBJID_SEPARATOR;
-   }
-}
 
 // Generate the full path the the object in the POSIX repository.
 // This will be used as the ->update_object_location interface
@@ -894,33 +886,6 @@ void mc_deconfig(struct DAL *dal) {
 #endif
 
 
-// Computes a good, uniform, hash of the string.
-//
-// Treats each character in the length n string as a coefficient of a
-// degree n polynomial.
-//
-// f(x) = string[n -1] + string[n - 2] * x + ... + string[0] * x^(n-1)
-//
-// The hash is computed by evaluating the polynomial for x=33 using
-// Horner's rule.
-//
-// Reference: http://cseweb.ucsd.edu/~kube/cls/100/Lectures/lec16/lec16-14.html
-static uint64_t polyhash(const char* string) {
-   // According to http://www.cse.yorku.ca/~oz/hash.html
-   // 33 is a magical number that inexplicably works the best.
-   const int salt = 33;
-   char c;
-   uint64_t h = *string++;
-   while((c = *string++))
-      h = salt * h + c;
-   return h;
-}
-
-// compute the hash function h(x) = (a*x) >> 32
-static uint64_t h_a(const uint64_t key, uint64_t a) {
-   return ((a * key) >> 32);
-}
-
 // Initialize the context for a multi-component backed object.
 // (e.g. new file-handle at open-time)
 // Returns 0 on success or -1 on failure (if memory cannot be allocated).
@@ -1030,6 +995,7 @@ int mc_update_path(DAL_Context* ctx) {
    const MarFS_Repo* repo          = info->pre.repo;
    char*             objid         = info->pre.objid;
    char*             path_template = MC_CONTEXT(ctx)->path_template;
+
    char obj_filename[MARFS_MAX_OBJID_SIZE];
    strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);
    flatten_objid(obj_filename);
@@ -1047,9 +1013,10 @@ int mc_update_path(DAL_Context* ctx) {
    unsigned int num_pods      = MC_CONFIG(ctx)->num_pods;
    unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
    unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
+
    unsigned int seed = objid_hash;
-   uint64_t a[3];
-   int i;
+   uint64_t     a[3];
+   int          i;
    for(i = 0; i < 3; i++)
       a[i] = rand_r(&seed) * 2 + 1; // generate 32 random bits
 
@@ -1094,43 +1061,43 @@ int mc_update_path(DAL_Context* ctx) {
 
 int find_stats_from_tflags(int tflags)
 {
-	int tot_stats = 0;
+   int tot_stats = 0;
 
-	if (tflags & TF_OPEN)
-	{
-		tot_stats++;
-	}
-	if (tflags & TF_RW)
-	{
-		tot_stats += 2;
-	}
-	if (tflags & TF_CLOSE)
-	{
-		tot_stats++;
-	}
-	/*if (tflags & TF_RENAME)
-	{
-		tot_stats++;
-	}*/
-	/*if (tflags & TF_CRC)
-	{
-		printf("DAL.C detected CRC flag\n");
-		tot_stats++;
-	}*/
-	/*if (tflags & TF_ERASURE)
-	{
-		printf("DAL.C detected ERASURE flag\n");
-		tot_stats++;
-	}*/
-	/*if (tflags & TF_XATTR)
-	{
-		tot_stats++;
-	}
-	if (tflags & TF_STAT)
-	{
-		tot_stats++;
-	}*/
-	return tot_stats;
+   if (tflags & TF_OPEN)
+   {
+      tot_stats++;
+   }
+   if (tflags & TF_RW)
+   {
+      tot_stats += 2;
+   }
+   if (tflags & TF_CLOSE)
+   {
+      tot_stats++;
+   }
+   /*if (tflags & TF_RENAME)
+   {
+      tot_stats++;
+   }*/
+   /*if (tflags & TF_CRC)
+   {
+      printf("DAL.C detected CRC flag\n");
+      tot_stats++;
+   }*/
+   /*if (tflags & TF_ERASURE)
+   {
+      printf("DAL.C detected ERASURE flag\n");
+      tot_stats++;
+   }*/
+   /*if (tflags & TF_XATTR)
+   {
+      tot_stats++;
+   }
+   if (tflags & TF_STAT)
+   {
+      tot_stats++;
+   }*/
+   return tot_stats;
 }
 
 // Open a multi-component object stream backed by a ne_handle.
@@ -1160,32 +1127,39 @@ int mc_open(DAL_Context* ctx,
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
    if (MC_FH(ctx)->repo == NULL)
    {
-   	//allocate repo
-   	MC_FH(ctx)->repo = (char*)malloc(MARFS_MAX_REPO_SIZE);
-   	memset(MC_FH(ctx)->repo, 0, MARFS_MAX_REPO_SIZE);
-        memcpy(MC_FH(ctx)->repo, MC_FH(ctx)->info.pre.repo->name, MC_FH(ctx)->info.pre.repo->name_len);
-   	//find the number of time stats to collect
-   	MC_FH(ctx)->tot_stats = find_stats_from_tflags(timing_flags);
-   	//allocate pointers include 2 characters for name of stat
-   	//MC_FH(ctx)->timing_stats = (char*)malloc(sizeof(double) * 65 * (MC_FH(ctx)->tot_stats) + 2 * (MC_FH(ctx)->tot_stats));
-   	//memset(MC_FH(ctx)->timing_stats, 0, sizeof(double) * 65 * (MC_FH(ctx)->tot_stats) + 2 * (MC_FH(ctx)->tot_stats));
+      //allocate repo
+      MC_FH(ctx)->repo = (char*)malloc(MARFS_MAX_REPO_SIZE);
+      memset(MC_FH(ctx)->repo, 0, MARFS_MAX_REPO_SIZE);
+      memcpy(MC_FH(ctx)->repo, MC_FH(ctx)->info.pre.repo->name, MC_FH(ctx)->info.pre.repo->name_len);
+
+      //find the number of time stats to collect
+      MC_FH(ctx)->tot_stats = find_stats_from_tflags(timing_flags);
+
+      //allocate pointers include 2 characters for name of stat
+      //MC_FH(ctx)->timing_stats = (char*)malloc(sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
+      //                                         + 2 * (MC_FH(ctx)->tot_stats));
+      //memset(MC_FH(ctx)->timing_stats, 0, sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
+      //       + 2 * (MC_FH(ctx)->tot_stats));
    }
    MC_HANDLE(ctx) = ne_open1(MC_CONFIG(ctx)->snprintf, ctx,
                              impl, MC_CONFIG(ctx)->auth, timing_flags,
                              path_template, mode,
                              MC_CONTEXT(ctx)->start_block, n, e);
+
    //we need total_blk from ne_handle to allocate stat buffer
    MC_FH(ctx)->total_blk = MC_HANDLE(ctx)->N + MC_HANDLE(ctx)->E;
    MC_FH(ctx)->pod_id = MC_CONTEXT(ctx)->pod;
    //MC_HANDLE(ctx)->repo = MC_FH(ctx)->repo;
    //MC_HANDLE(ctx)->pod_id = &(MC_FH(ctx)->pod_id);
+
    if (MC_FH(ctx)->timing_stats == NULL)
    {
-	//allocate stat buffer based on total blks from ne_handle
-	MC_FH(ctx)->timing_stats_buff_size = sizeof(double) * 65 * (MC_FH(ctx)->tot_stats) * (MC_FH(ctx)->total_blk) + 3 * (MC_FH(ctx)->tot_stats);
-	MC_FH(ctx)->timing_stats = (char*)malloc(MC_FH(ctx)->timing_stats_buff_size);
-	memset(MC_FH(ctx)->timing_stats, 0, MC_FH(ctx)->timing_stats_buff_size);
-	
+      //allocate stat buffer based on total blks from ne_handle
+      MC_FH(ctx)->timing_stats_buff_size = (sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
+                                            * (MC_FH(ctx)->total_blk)
+                                            + 3 * (MC_FH(ctx)->tot_stats));
+      MC_FH(ctx)->timing_stats = (char*)malloc(MC_FH(ctx)->timing_stats_buff_size);
+      memset(MC_FH(ctx)->timing_stats, 0, MC_FH(ctx)->timing_stats_buff_size);
    }
    MC_HANDLE(ctx)->timing_stats = MC_FH(ctx)->timing_stats;
    if(! MC_HANDLE(ctx)) {

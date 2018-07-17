@@ -263,17 +263,6 @@ typedef struct hash_table {
 
 hash_table_t rebuilt_objects;
 
-/**
- * Compute the hash of key.
- */
-unsigned long polyhash(const char *string) {
-  const int salt = 33;
-  char c;
-  unsigned long hash = *string++;
-  while((c = *string++))
-    hash = salt * hash + c;
-  return hash;
-}
 
 /**
  * Initialize the hash table.

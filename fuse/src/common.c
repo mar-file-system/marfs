@@ -3177,10 +3177,18 @@ void terminate_all_readers(MarFS_FileHandle* fh) {
 }
 
 
-//functions to support path_convert tool
-
-//put here because polyhash, flatten_objid, h_a are static functions in dal.c
-static uint64_t polyhash(const char* string) {
+// Computes a good, uniform, hash of the string.
+//
+// Treats each character in the length n string as a coefficient of a
+// degree n polynomial.
+//
+// f(x) = string[n -1] + string[n - 2] * x + ... + string[0] * x^(n-1)
+//
+// The hash is computed by evaluating the polynomial for x=33 using
+// Horner's rule.
+//
+// Reference: http://cseweb.ucsd.edu/~kube/cls/100/Lectures/lec16/lec16-14.html
+uint64_t polyhash(const char* string) {
    // According to http://www.cse.yorku.ca/~oz/hash.html
    // 33 is a magical number that inexplicably works the best.
    const int salt = 33;
@@ -3191,17 +3199,21 @@ static uint64_t polyhash(const char* string) {
    return h;
 }
 
-static uint64_t h_a(const uint64_t key, uint64_t a) {
+// compute the hash function h(x) = (a*x) >> 32
+uint64_t h_a(const uint64_t key, uint64_t a) {
    return ((a * key) >> 32);
 }
 
-static void flatten_objid(char* objid) {
+// file-ify an object-id.
+void flatten_objid(char* objid) {
    int i;
    for(i = 0; objid[i]; i++) {
       if(objid[i] == '/')
-         objid[i] = '#';
+         objid[i] = FLAT_OBJID_SEPARATOR;
    }
 }
+
+
 void get_path_template(char* path, MarFS_FileHandle* fh)
 {
         init_data(fh);

@@ -821,7 +821,6 @@ typedef struct {
 #  define FH_DAL_CTX(FH)    (FH)->dal_handle.ctx
 #  define FH_DAL(FH)        (FH)->dal_handle.dal
 
-
 #  define DAL_OP(OP, FH, ... )                                       \
    (*(FH)->dal_handle.dal->OP)(&(FH)->dal_handle.ctx, ##__VA_ARGS__)
 
@@ -840,6 +839,17 @@ typedef struct {
 
 
 
+
+
+// functions originally intended for internal use to support DAL im
+// but which turn out to be useful for general tools, as well.
+
+extern uint64_t polyhash(const char* string);
+extern uint64_t h_a(const uint64_t key, uint64_t a);
+
+
+#define FLAT_OBJID_SEPARATOR '#'
+extern void     flatten_objid(char* objid);
 
 
 
