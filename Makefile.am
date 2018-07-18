@@ -180,6 +180,17 @@ path_convert_SOURCES = fuse/src/path_convert.c \
 		       fuse/src/dal.h
 marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 
+bin_PROGRAMS += add_namespace
+
+add_namespace_SOURCES = fuse/src/add_namespace.c \
+			fuse/src/marfs_configuration.c \
+			fuse/src/marfs_configuration.h \
+			fuse/src/marfs_ops.c \
+			fuse/src/marfs_ops.h \
+			fuse/src/common.c \
+			fuse/src/common.h \
+			fuse/src/marfs_base.c \
+			fuse/src/marfs_base.h 
 
 # The PA2X_interface needs to look in additional places for its #include files.
 #common/configuration/src/PA2X_interface.o: common/configuration/src/PA2X_interface.c common/configuration/src/PA2X_interface.h
