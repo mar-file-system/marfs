@@ -2899,6 +2899,198 @@ int init_scatter_tree(const char*    root_dir,
    return rc;
 }
 
+void get_namespace_path(char* path, char* namespace_path)
+{
+	int i;
+	size_t len = strlen(path);
+	
+	for(i = len-1; i >= 0; i--)
+	{
+		if (path[i] == '/')
+		{
+			memcpy(namespace_path, path,  i);
+			namespace_path[i] = '\0';
+			return;
+		}
+	}	
+}
+
+//similar to init_mdfs
+int build_namespace_md(char* owner, char* group)
+{
+	TRY_DECLS();
+	struct stat st;
+	char namespace_path[MARFS_MAX_MD_PATH];
+	char command[MARFS_MAX_MD_PATH * 2];
+
+	NSIterator it = namespace_iterator();
+	MarFS_Namespace* ns;
+
+	for(ns = namespace_next(&it); ns; ns = namespace_next(&it))
+	{
+		const uint32_t shard = 0;
+#if TBD
+      		MarFS_Repo*    repo  = ns->iwrite_repo; // for fuse
+#endif
+		mode_t branch_mode = (S_IRWXU | S_IXOTH );
+		mode_t leaf_mode = (branch_mode | S_IWOTH );
+		mode_t trash_leaf_mode = (S_IRWXU | S_IWOTH);
+		mode_t mdfs_mode = (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+		mode_t fsinfo_mode = (S_IRUSR | S_IWUSR);
+		mode_t ns_mode = (S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
+
+		if (IS_ROOT_NS(ns))
+		{
+			continue;
+		}
+
+		//find namespace path
+		get_namespace_path(ns->trash_md_path, namespace_path);
+		//stat namespace path, if not exists, mkdir
+		rc = MD_PATH_OP(lstat, ns, namespace_path, &st);
+		if (! rc)
+		{
+			if (! S_ISDIR(st.st_mode))
+			{
+				printf("ERROR:Not a directory %s\n", namespace_path);
+			}
+		}
+		else if (errno == ENOENT)
+		{
+			rc = mkdir(namespace_path, branch_mode);
+			if ((rc < 0) && (errno != EEXIST))
+			{
+				printf("ERROR:Failed to mkdir %s\n", namespace_path);
+				return -1;
+			}
+			rc = chmod(namespace_path, ns_mode);
+			if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR:Failed to chmod %s\n", namespace_path);
+                                return -1;
+                        }
+		}
+		else
+		{
+			printf("ERROR:stat failed %s\n", namespace_path);
+			return -1;
+		}
+		//stat trash_md_path, create if not exists
+		rc = MD_PATH_OP(lstat, ns, ns->trash_md_path, &st);
+                if (! rc)
+                {
+                        if (! S_ISDIR(st.st_mode))
+                        {
+                                printf("ERROR:Not a directory %s\n", ns->trash_md_path);
+                        }
+                }
+		else if (errno == ENOENT)
+		{
+			//directory does not exit, must create
+			rc = mkdir(ns->trash_md_path, branch_mode);
+                        if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR:Failed to mkdir %s\n", ns->trash_md_path);
+                                return -1;
+                        }
+		}
+		else
+		{
+			printf("ERROR:stat failed %s\n", ns->trash_md_path);
+			return -1;
+		}
+
+		//create scatter-tree for trash, if needed
+		__TRY0( init_scatter_tree(ns->trash_md_path, ns, shard, branch_mode, trash_leaf_mode) );
+
+		//mdfs top-level dir
+		rc = MD_PATH_OP(lstat, ns, ns->md_path, &st);
+
+                if (! rc)
+                {
+                        if (! S_ISDIR(st.st_mode))
+                        {
+                                printf("ERROR:Not a directory %s\n", ns->md_path);
+                        }
+                }
+                else if (errno == ENOENT)
+                {
+                        //directory does not exit, must create
+                        rc = mkdir(ns->md_path, mdfs_mode);
+                        if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR:Failed to mkdir %s\n", ns->md_path);
+                                return -1;
+                        }
+
+			rc = chmod(ns->md_path, mdfs_mode);
+                        if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR:Failed to chmod %s\n", ns->md_path);
+                                return -1;
+                        }
+			snprintf(command, MARFS_MAX_MD_PATH * 2, "chown %s:%s %s", owner,owner, ns->md_path);
+                        rc = system(command);
+			if (rc)
+			{
+				printf("ERROR:Failed to change mdfs ownership for %s\n", owner);
+				return -1;
+			}
+                }
+		else
+		{
+			printf("ERROR:stat failed %s\n", ns->md_path);
+			return -1;
+		}
+	
+		//now handle fsinfo
+      		rc = MD_PATH_OP(lstat, ns, ns->fsinfo_path, &st);
+      		if (! rc) 
+		{
+        		if (! S_ISREG(st.st_mode)) 
+			{
+            			LOG(LOG_ERR, "not a regular file %s\n", ns->fsinfo_path);
+				return -1;
+         		}
+      		}
+      		else if (errno == ENOENT) 
+		{
+			//first mknode
+			rc = mknod(ns->fsinfo_path, fsinfo_mode, 0);
+			if ((rc < 0) && (errno != EEXIST))
+			{
+				printf("ERROR: Failed to create fsinfo\n");
+			}
+			rc = chmod(ns->fsinfo_path, fsinfo_mode);
+			if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR: Failed to chmod fsinfo %s\n", ns->fsinfo_path);
+                        }
+        		__TRY0( truncate(ns->fsinfo_path, 0) ); // infinite quota, for now
+         		LOG(LOG_ERR, "doesn't exist %s\n", ns->fsinfo_path);
+         		return -1;
+      		}
+      		else 
+		{
+         		LOG(LOG_ERR, "stat failed %s (%s)\n", ns->fsinfo_path, strerror(errno));
+         		return -1;
+      		}
+
+#if TBD
+      // COMMENTED OUT.  Turns out there are issues with POSIX permissions
+      // in this setup, because "who owns the directory into which the
+      // user's data-files are stored"?  It was felt that, even if the
+      // storage file-system is unshared, the fact that the parent dir
+      // (i.e. leaf dir in the scatter-tree) would have to be
+      // world-writable was not good enough protection.
+
+      // create a scatter-tree for semi-direct fuse repos, if any
+      if (repo->access_method == ACCESSMETHOD_SEMI_DIRECT) {
+         __TRY0( init_scatter_tree(repo->host, ns->name, shard, branch_mode, leaf_mode) );
+      }
+#endif		
+	}
+}
 
 
 // NOTE: for now, all the marfs directories are chown root:root, cmod 770
@@ -2912,6 +3104,7 @@ int init_mdfs() {
         ns;
         ns = namespace_next(&it)) {
 
+	printf("current namespace %s\n", ns->name);
       const uint32_t shard = 0;   // FUTURE: make scatter-tree for each shard?
 #if TBD
       MarFS_Repo*    repo  = ns->iwrite_repo; // for fuse
@@ -2919,6 +3112,8 @@ int init_mdfs() {
       mode_t         branch_mode  = (S_IRWXU | S_IXOTH );     // 'chmod 701'
       mode_t         leaf_mode    = (branch_mode | S_IWOTH ); // 'chmod 703'
 
+//      mode_t	     trash_branch_mode = 
+  //    mode_t         trash_leaf_mode
 
       LOG(LOG_INFO, "\n");
       LOG(LOG_INFO, "NS %s\n", ns->name);
@@ -2938,7 +3133,6 @@ int init_mdfs() {
 
 
 
-
       // check whether "trash" dir exists (and create sub-dirs, if needed)
       LOG(LOG_INFO, "top-level trash dir   %s\n", ns->trash_md_path);
 
@@ -2951,11 +3145,11 @@ int init_mdfs() {
       }
       else if (errno == ENOENT) {
          // LOG(LOG_ERR, "creating %s\n", ns->trash_md_path);
-         // rc = mkdir(ns->trash_md_path, mode);
-         // if ((rc < 0) && (errno != EEXIST)) {
-         //   LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_md_path);
-         //   return -1;
-         // }
+          rc = mkdir(ns->trash_md_path, branch_mode);
+          if ((rc < 0) && (errno != EEXIST)) {
+            LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_md_path);
+            return -1;
+          }
          LOG(LOG_ERR, "doesn't exist %s\n", ns->trash_md_path);
          return -1;
       }
@@ -2967,7 +3161,7 @@ int init_mdfs() {
 
       // create the scatter-tree for trash, if needed
       __TRY0( init_scatter_tree(ns->trash_md_path, ns, shard, branch_mode, leaf_mode) );
-
+      
 
 
 
@@ -2984,11 +3178,11 @@ int init_mdfs() {
          }
       }
       else if (errno == ENOENT) {
-         //      rc = mkdir(ns->md_path, mode);
-         //      if ((rc < 0) && (errno != EEXIST)) {
-         //         LOG(LOG_ERR, "mkdir(%s) failed\n", ns->md_path);
-         //         return -1;
-         //      }
+               rc = mkdir(ns->md_path, branch_mode);
+               if ((rc < 0) && (errno != EEXIST)) {
+                  LOG(LOG_ERR, "mkdir(%s) failed\n", ns->md_path);
+                  return -1;
+               }
          LOG(LOG_ERR, "doesn't exist %s\n", ns->md_path);
          return -1;
       }
@@ -3020,7 +3214,7 @@ int init_mdfs() {
          }
       }
       else if (errno == ENOENT) {
-         // __TRY0( truncate(ns->fsinfo_path, 0) ); // infinite quota, for now
+          __TRY0( truncate(ns->fsinfo_path, 0) ); // infinite quota, for now
          LOG(LOG_ERR, "doesn't exist %s\n", ns->fsinfo_path);
          return -1;
       }
