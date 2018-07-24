@@ -577,7 +577,9 @@ int read_inodes(const char    *fnameP,
                }
                // scan into post xattr structure
                // if error parsing this xattr, skip and continue
-               if (str_2_post(&post, xattr_ptr->xattr_value, 1) == -1) {
+	       int test = str_2_post(&post, xattr_ptr->xattr_value, 1);
+               if (test != -3 && test != 0) {
+		  fprintf(stderr, "Something wrong with post value (return: %d). Inode: %d Value: %s\n", test, iattrP->ia_inode, xattr_ptr->xattr_value);
                   continue;             
                }
                fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;
@@ -585,7 +587,7 @@ int read_inodes(const char    *fnameP,
                LOG(LOG_INFO, "struct index = %d size = %llu file size sum\
                    = %zu inode=%d\n", last_struct_index,
                iattrP->ia_size,fileset_stat_ptr[last_struct_index].sum_size,iattrP->ia_inode);
-               fill_size_histo(iattrP, fileset_stat_ptr, last_fileset_id); 
+               fill_size_histo(iattrP, fileset_stat_ptr, last_struct_index); 
            
                //if trash and in trash fileset set flag so that non trash fileset files
                //can still be counted
@@ -600,14 +602,14 @@ int read_inodes(const char    *fnameP,
                fileset_stat_ptr[last_struct_index].sum_filespace_used += \
                                 post.chunk_info_bytes;
 
-               /* Determine if file in trash directory
-               * if this is trash there are a few steps here
-               *
-               *  1)  Read post xattr to determine which fileset the trash came from
-               *  2)  Update the fileset structure with a trash size count
-               *  3)  First sum the trash in this fileset
-               *
-               */
+/*             // Determine if file in trash directory
+               // if this is trash there are a few steps here
+               //
+               //  1)  Read post xattr to determine which fileset the trash came from
+               //  2)  Update the fileset structure with a trash size count
+               //  3)  First sum the trash in this fileset
+               //
+               //
                if ( post.flags & POST_TRASH ) {
                   xattr_ptr = &mar_xattrs[0];
                   md_path_ptr = &post.md_path[0];
@@ -639,14 +641,17 @@ int read_inodes(const char    *fnameP,
                      } 
                   }
                }
+*/
             }
             // else file is non-marfs but has other type of xattr
             else {
+//	       fprintf(outfd, "Non-MarFS inode found (xattr mismatch). Inode: %u \n", iattrP->ia_inode);
                non_marfs_inode_cnt +=1;
             }
          }
          // else no xattr so non marfs
          else {
+//	    fprintf(outfd, "Non-MarFS inode found (no xattrs found). Inode: %u\n", iattrP->ia_inode);
             non_marfs_inode_cnt +=1;
          }
       }
@@ -757,10 +762,11 @@ int trunc_fsinfo(FILE*         outfd,
                         fileset_stat_ptr[i].sum_size);
          if (ret == -1) {
             fprintf(outfd, 
-                  "Error:  Unable to truncate %s to %zu in namespace %s\n",
+                  "Error:  Unable to truncate %s to %zu in namespace %s, ERRNO: %s\n",
                    fileset_stat_ptr[i].fsinfo_path, 
                    fileset_stat_ptr[i].sum_size, 
-                   fileset_stat_ptr[i].fileset_name); 
+                   fileset_stat_ptr[i].fileset_name,
+		   strerror(errno)); 
          }
          else {
             LOG(LOG_INFO, "Truncated file %s to size %zu\n", 
@@ -775,8 +781,8 @@ int trunc_fsinfo(FILE*         outfd,
    fprintf(outfd, "All filesets total size =  %zu\n", sum_total);
    if ((ret = truncate(root_fsinfo, sum_total)) == -1) { 
             fprintf(outfd, 
-                    "Error:  Unable to truncate root fsinfo %s to %zu\n", 
-                    root_fsinfo, sum_total);
+                    "Error:  Unable to truncate root fsinfo %s to %zu, ERRNO: %s\n", 
+                    root_fsinfo, sum_total, strerror(errno));
    }
    else {
             fprintf(outfd, "Truncated root fsinfo %s to %zu\n", root_fsinfo, 
@@ -785,8 +791,8 @@ int trunc_fsinfo(FILE*         outfd,
    sprintf(root_fsinfo,"%s/%s", root_dir_fsinfo,"fsinfo.inodes");
    if ((ret = truncate(root_fsinfo, non_marfs_cnt)) == -1) { 
             fprintf(outfd, 
-                    "Error:  Unable to truncate root fsinfo.inodes %s to %zu\n", 
-                    root_fsinfo, non_marfs_cnt);
+                    "Error:  Unable to truncate root fsinfo.inodes %s to %zu, ERRNO: %s\n", 
+                    root_fsinfo, non_marfs_cnt, strerror(errno));
    }
    else {
             fprintf(outfd, "Truncated root fsinfo %s to %zu\n", root_fsinfo, 
