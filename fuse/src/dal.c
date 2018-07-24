@@ -819,6 +819,7 @@ int mc_config(struct DAL*     dal,
       // initialize the lock to prevent concurrent writes to the log.
       SEM_INIT(&config->lock, 0, 1);
    }
+
 #ifdef S3_AUTH
    // To allow generating per-connection auth-signatures, capture the S3
    // credentials up front, while we have access to the AWS config file
@@ -1064,39 +1065,35 @@ int find_stats_from_tflags(int tflags)
    int tot_stats = 0;
 
    if (tflags & TF_OPEN)
-   {
       tot_stats++;
-   }
+
    if (tflags & TF_RW)
-   {
       tot_stats += 2;
-   }
+
    if (tflags & TF_CLOSE)
-   {
       tot_stats++;
-   }
-   /*if (tflags & TF_RENAME)
-   {
+
+#if 0
+   if (tflags & TF_RENAME)
       tot_stats++;
-   }*/
-   /*if (tflags & TF_CRC)
-   {
+
+   if (tflags & TF_CRC) {
       printf("DAL.C detected CRC flag\n");
       tot_stats++;
-   }*/
-   /*if (tflags & TF_ERASURE)
-   {
+   }
+
+   if (tflags & TF_ERASURE) {
       printf("DAL.C detected ERASURE flag\n");
       tot_stats++;
-   }*/
-   /*if (tflags & TF_XATTR)
-   {
-      tot_stats++;
    }
-   if (tflags & TF_STAT)
-   {
+
+   if (tflags & TF_XATTR)
       tot_stats++;
-   }*/
+
+   if (tflags & TF_STAT)
+      tot_stats++;
+#endif
+
    return tot_stats;
 }
 

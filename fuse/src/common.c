@@ -106,15 +106,16 @@ OF SUCH DAMAGE.
 // return NULL if the path is not below there.
 // 
 const char* marfs_sub_path(const char* path) {
+
    if (strncmp(path, marfs_config->mnt_top, marfs_config->mnt_top_len))
-	{
-      return NULL;}
+      return NULL;
+
    else if (! path[marfs_config->mnt_top_len])
-     { 
-      return "/";}
+      return "/";
+
    else if (path[marfs_config->mnt_top_len] != '/')
-      {
-      return NULL;}
+      return NULL;
+
    else
       return path + marfs_config->mnt_top_len;
 }
@@ -1212,7 +1213,7 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
       if(! F_OP(is_open, fh) ) {
          LOG(LOG_ERR, "open_md_path(%s) failed: %s\n",
              path, strerror(errno));
-	 va_end(ap);
+         va_end(ap);
          return -1;
       }
    }
@@ -1230,7 +1231,7 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
          LOG(LOG_ERR, "open_md_path(%s) failed: %s\n",
              info->post.md_path, strerror(errno));
          fh->md_fd = 0;
-	 va_end(ap);
+         va_end(ap);
          return -1;
       }
    }
@@ -2047,10 +2048,10 @@ int open_md(MarFS_FileHandle* fh, int writing_p) {
 #if USE_MDAL
    if (! F_MDAL(fh)) {
       // copy static MDAL ptr from NS to FileHandle
-      if (info->pre.ns == NULL)
-      {
-	 printf("ERROR: info->pre.ns became NULL\nPossible reason: another writer has started thus info->pre was wiped out\n");
-	 exit(-1);
+      if (info->pre.ns == NULL) {
+         LOG(LOG_ERR, "info->pre.ns became NULL.  "
+             "Possible reason: another writer has started, thus info->pre was wiped out\n");
+         return -1;
       }
       F_MDAL(fh) = info->pre.ns->file_MDAL;
       LOG(LOG_INFO, "file-MDAL: %s\n", F_MDAL(fh)->name);
@@ -3216,43 +3217,96 @@ void flatten_objid(char* objid) {
 
 void get_path_template(char* path, MarFS_FileHandle* fh)
 {
-        init_data(fh);
-	const MarFS_Repo* repo = fh->info.pre.repo;
-	char* objid = fh->info.pre.objid;
-	char obj_filename[MARFS_MAX_OBJID_SIZE];
-	strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);	
-	flatten_objid(obj_filename);
-	unsigned long objid_hash = polyhash(objid);
+   init_data(fh);
 
-	char* mc_path_format = repo->host;
+   const MarFS_Repo* repo  = fh->info.pre.repo;
+   char*             objid = fh->info.pre.objid;
 
-        unsigned int num_blocks    = ((MC_Config*)fh->dal_handle.dal->global_state)->n + ((MC_Config*)fh->dal_handle.dal->global_state)->e;
-        unsigned int num_pods      = ((MC_Config*)fh->dal_handle.dal->global_state)->num_pods;
-        unsigned int num_cap       = ((MC_Config*)fh->dal_handle.dal->global_state)->num_cap;
-        unsigned int scatter_width = ((MC_Config*)fh->dal_handle.dal->global_state)->scatter_width;
+   char obj_filename[MARFS_MAX_OBJID_SIZE];
+   strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);   
+   flatten_objid(obj_filename);
 
-	unsigned int seed = objid_hash;
-	uint64_t a[3];
-	int i;
-	for(i=0; i<3; i++)
-		a[i] = rand_r(&seed)*2+1;
+   unsigned long objid_hash = polyhash(objid);
 
-	unsigned int pod = objid_hash % num_pods;
-	unsigned int cap = h_a(objid_hash, a[0]) % num_cap;
-	unsigned long scatter = h_a(objid_hash, a[1]) % scatter_width;
-	unsigned int start_block = h_a(objid_hash, a[2]) % num_blocks;
-	
-	if (((MC_Config*)fh->dal_handle.dal->global_state)->is_sockets)
-	{
-		snprintf(path, MC_MAX_PATH_LEN, mc_path_format, pod + ((MC_Config*)fh->dal_handle.dal->global_state)->pod_offset, cap, scatter);
-	}
-	else
-	{
-		snprintf(path, MC_MAX_PATH_LEN, mc_path_format, pod, "%d", cap, scatter);
-	}
-	
-	if (path[strlen(path) - 1] != '/')
-		strcat(path, "/");
-	
-	strncat(path, obj_filename, MARFS_MAX_OBJID_SIZE);
+   char* mc_path_format = repo->host;
+
+   unsigned int num_blocks    = ((MC_Config*)fh->dal_handle.dal->global_state)->n + ((MC_Config*)fh->dal_handle.dal->global_state)->e;
+   unsigned int num_pods      = ((MC_Config*)fh->dal_handle.dal->global_state)->num_pods;
+   unsigned int num_cap       = ((MC_Config*)fh->dal_handle.dal->global_state)->num_cap;
+   unsigned int scatter_width = ((MC_Config*)fh->dal_handle.dal->global_state)->scatter_width;
+
+   unsigned int seed = objid_hash;
+   uint64_t     a[3];
+   int          i;
+   for(i=0; i<3; i++)
+      a[i] = rand_r(&seed)*2+1;
+
+   unsigned int  pod         = objid_hash % num_pods;
+   unsigned int  cap         = h_a(objid_hash, a[0]) % num_cap;
+   unsigned long scatter     = h_a(objid_hash, a[1]) % scatter_width;
+   unsigned int  start_block = h_a(objid_hash, a[2]) % num_blocks;
+   
+   if (((MC_Config*)fh->dal_handle.dal->global_state)->is_sockets)
+   {
+      snprintf(path, MC_MAX_PATH_LEN, mc_path_format,
+               pod + ((MC_Config*)fh->dal_handle.dal->global_state)->pod_offset,
+               cap,
+               scatter);
+   }
+   else
+   {
+      snprintf(path, MC_MAX_PATH_LEN, mc_path_format, pod, "%d", cap, scatter);
+   }
+   
+   if (path[strlen(path) - 1] != '/')
+      strcat(path, "/");
+   
+   strncat(path, obj_filename, MARFS_MAX_OBJID_SIZE);
 }
+
+
+
+int marfs_check_packable(const char* path, size_t content_length)
+{
+        int rc;
+        PathInfo info = {0};
+        EXPAND_PATH_INFO(&info, path);
+        init_pre(&info.pre, OBJ_FUSE, info.ns, info.ns->iwrite_repo, &info.st);
+
+        rc = 1; //init RC
+        if((content_length > info.pre.repo->max_pack_file_size)
+           || (content_length >= (info.pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))
+        {
+                rc = 0;
+        }
+
+        return rc;
+}
+
+
+void marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh, size_t chunk_no, char* path_template)
+{
+   PathInfo* info = &fh->info;
+   ObjectStream* os = &fh->os;
+
+   //fake flags to always be writing
+   fh->flags = FH_WRITING;
+   int rc = expand_path_info(info, path);
+ 
+   //init_pre(&info->pre, OBJ_FUSE, info->ns, info->ns->iwrite_repo, &info->st);
+   if (!mode)
+   {
+      stat_xattrs(info, 0);
+   }
+   else{
+      stat_regular(info);
+      init_pre(&info->pre, OBJ_FUSE, info->ns,
+               info->ns->iwrite_repo, &info->st);
+   }
+   info->pre.obj_type = OBJ_Nto1;
+   info->pre.chunk_no = chunk_no;
+   update_pre(&info->pre);
+   
+   get_path_template(path_template, fh);                       
+}
+

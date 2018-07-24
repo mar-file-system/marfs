@@ -2,8 +2,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <common.h>
-#include <marfs_ops.h>
+
+#include "common.h"
+
 
 size_t get_tens(size_t idx, size_t len)
 {
@@ -37,13 +38,13 @@ size_t str_to_size_t(const char* input)
 
 void show_usage(char* prog_name)
 {
-   fprintf(stderr, "Usage: %s [option]\n", prog_name);
-   fprintf(stderr, "\n");
-   fprintf(stderr, "\toptions:\n");
-   fprintf(stderr, "\t\t-h                     help\n");
-   fprintf(stderr, "\t\t-p [ <path> ]          file path to be converted to object path\n");
-   fprintf(stderr, "\t\t-n [ <chunk number> ]  chunk number of the file\n");
-   fprintf(stderr, "\n");
+	fprintf(stderr, "Usage: %s [option]\n", prog_name);
+	fprintf(stderr, "\n");
+	fprintf(stderr, "\toptions:\n");
+	fprintf(stderr, "\t\t-h                     help\n");
+	fprintf(stderr, "\t\t-p [ <path> ]          file path to be converted to object path\n");
+	fprintf(stderr, "\t\t-n [ <chunk number> ]  chunk number of the file\n");
+	fprintf(stderr, "\n");
 }
 
 int main(int argc, char* argv[])
@@ -52,7 +53,7 @@ int main(int argc, char* argv[])
 	int    usage = 0;
 	char*  path = NULL;
 	size_t chunk_no = 0;
-   int    got_an_option = 0;
+	int    got_an_option = 0;
 	while((c = getopt(argc, argv, "hp:c:")) != -1)
 	{
 		switch(c)
@@ -63,12 +64,12 @@ int main(int argc, char* argv[])
 
 			case 'p':
 				path = optarg;
-            got_an_option = 1;
+				got_an_option = 1;
 				break;
 			
 			case 'c':
 				chunk_no = str_to_size_t(optarg);
-            got_an_option = 1;
+				got_an_option = 1;
 				break;
 
 			default:
@@ -103,13 +104,14 @@ int main(int argc, char* argv[])
 
 	MarFS_FileHandle fh;
 	memset(&fh, 0, sizeof(fh));
-	
+
 	const char* marfs_path = marfs_sub_path(path);
 	marfs_path_convert(mode, marfs_path, &fh, chunk_no, path_template);
 	//int rc = marfs_open(marfs_path, &fh, O_RDONLY, 0);
 	//get_path_template(path_template, &fh);
 
-	//printf("host from pre %s; repo form pre %s; objid from pre %s\n", fh.info.pre.host, fh.info.pre.repo, fh.info.pre.objid);
+	//printf("host from pre %s; repo form pre %s; objid from pre %s\n",
+	//       fh.info.pre.host, fh.info.pre.repo, fh.info.pre.objid);
 	//rc = marfs_release(marfs_path, &fh);
 	printf("%s\n", path_template);
 
