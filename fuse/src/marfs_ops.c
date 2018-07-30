@@ -2625,6 +2625,12 @@ int marfs_statvfs (const char*      path,
 		//get fsinfo size
 		struct stat sbuf;
 		rc = stat(info.ns->fsinfo_path, &sbuf);
+		if (rc)
+		{
+			printf("ERROR: Failed to stat fsinfo %s\n", info.ns->fsinfo_path);
+			return -1;
+		}
+		//adjust for fsinfo and print it to the user
 		statbuf->f_bfree = (((unsigned long long)statbuf->f_bfree) * ((unsigned long long)statbuf->f_bsize) - ((unsigned long long)sbuf.st_size)) / ((unsigned long long)statbuf->f_bsize);
 		printf("Namespace %s quotas %llu\n", statbuf->f_bfree);
       }
