@@ -192,6 +192,19 @@ add_namespace_SOURCES = fuse/src/add_namespace.c \
 			fuse/src/marfs_base.c \
 			fuse/src/marfs_base.h 
 
+bin_PROGRAMS += test
+
+test_SOURCES = fuse/src/test.c \
+                        fuse/src/marfs_configuration.c \
+                        fuse/src/marfs_configuration.h \
+                        fuse/src/marfs_ops.c \
+                        fuse/src/marfs_ops.h \
+                        fuse/src/common.c \
+                        fuse/src/common.h \
+                        fuse/src/marfs_base.c \
+                        fuse/src/marfs_base.h
+
+
 # The PA2X_interface needs to look in additional places for its #include files.
 #common/configuration/src/PA2X_interface.o: common/configuration/src/PA2X_interface.c common/configuration/src/PA2X_interface.h
 #  $(COMPILE) -I$(PARSE_DIR) -DPARSE_DIR=$(PARSE_DIR) $(AM_CPPFLAGS) -o $@ -c $<

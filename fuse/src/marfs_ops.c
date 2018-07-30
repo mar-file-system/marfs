@@ -2619,7 +2619,19 @@ int marfs_statvfs (const char*      path,
    }
    else {
       TRY0( MD_PATH_OP(statvfs, info.ns, info.ns->md_path, statbuf) );
+      if (info.ns->quota_space != -1)
+      {
+		//unlimited
+		//get fsinfo size
+		struct stat sbuf;
+		rc = stat(info.ns->fsinfo_path, &sbuf);
+		statbuf->f_bfree = (((unsigned long long)statbuf->f_bfree) * ((unsigned long long)statbuf->f_bsize) - ((unsigned long long)sbuf.st_size)) / ((unsigned long long)statbuf->f_bsize);
+		printf("Namespace %s quotas %llu\n", statbuf->f_bfree);
+      }
    }
+
+
+   printf("Namespace %s quotas %lld\n", info.ns->name, info.ns->quota_space);
 
    EXIT();
    return 0;
