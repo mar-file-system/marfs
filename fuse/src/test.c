@@ -70,5 +70,6 @@ int main(int argc, char* argv[])
 	}
 
 	int rc = marfs_statvfs(marfs_sub_path(path), &st);
+	printf("done\n");
 	return 0;
 }

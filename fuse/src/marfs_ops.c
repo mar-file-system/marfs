@@ -2596,7 +2596,6 @@ int marfs_statvfs (const char*      path,
 
    if (IS_ROOT_NS(info.ns)
        && stat_regular(&info)) {
-
       // backward compatibility, for old configs that still have non-existent
       // md_path installed into root NS.
       LOG(LOG_INFO, "couldn't stat md_path '%s' for root ns '%s' %s\n",
@@ -2619,7 +2618,7 @@ int marfs_statvfs (const char*      path,
    }
    else {
       TRY0( MD_PATH_OP(statvfs, info.ns, info.ns->md_path, statbuf) );
-      if (info.ns->quota_space != -1)
+      if (info.ns->quota_space == -1)
       {
 		//unlimited
 		//get fsinfo size
@@ -2632,12 +2631,11 @@ int marfs_statvfs (const char*      path,
 		}
 		//adjust for fsinfo and print it to the user
 		statbuf->f_bfree = (((unsigned long long)statbuf->f_bfree) * ((unsigned long long)statbuf->f_bsize) - ((unsigned long long)sbuf.st_size)) / ((unsigned long long)statbuf->f_bsize);
-		printf("Namespace %s quotas %llu\n", statbuf->f_bfree);
+		//printf("Namespace %s quotas %llu\n", statbuf->f_bfree);
       }
    }
 
 
-   printf("Namespace %s quotas %lld\n", info.ns->name, info.ns->quota_space);
 
    EXIT();
    return 0;
