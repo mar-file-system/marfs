@@ -989,7 +989,8 @@ extern int  marfs_check_packable(const char* path, size_t content_length);
 extern void marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh,
                                size_t chunk_no, char* path_template);
 
-
+//support for namespace build tool
+extern int build_namespace_md(char* owner, char* group);
 
 
 #  ifdef __cplusplus

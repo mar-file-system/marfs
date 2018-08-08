@@ -180,6 +180,30 @@ path_convert_SOURCES = fuse/src/path_convert.c \
 		       fuse/src/dal.h
 path_convert_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 
+bin_PROGRAMS += add_namespace
+
+add_namespace_SOURCES = fuse/src/add_namespace.c \
+			fuse/src/marfs_configuration.c \
+			fuse/src/marfs_configuration.h \
+			fuse/src/marfs_ops.c \
+			fuse/src/marfs_ops.h \
+			fuse/src/common.c \
+			fuse/src/common.h \
+			fuse/src/marfs_base.c \
+			fuse/src/marfs_base.h 
+
+bin_PROGRAMS += test_statvfs
+
+test_statvfs_SOURCES = fuse/src/test_statvfs.c \
+                        fuse/src/marfs_configuration.c \
+                        fuse/src/marfs_configuration.h \
+                        fuse/src/marfs_ops.c \
+                        fuse/src/marfs_ops.h \
+                        fuse/src/common.c \
+                        fuse/src/common.h \
+                        fuse/src/marfs_base.c \
+                        fuse/src/marfs_base.h
+
 
 # The PA2X_interface needs to look in additional places for its #include files.
 #common/configuration/src/PA2X_interface.o: common/configuration/src/PA2X_interface.c common/configuration/src/PA2X_interface.h
@@ -215,23 +239,23 @@ if GPFS_UTILITIES
 bin_PROGRAMS += marfs_gc marfs_quota marfs_packer marfs_repack
 
 marfs_gc_SOURCES = utilities/gpfs/marfs_gc.c utilities/gpfs/marfs_gc.h \
-				   utilities/gpfs/utilities_common.c                   \
+				   utilities/gpfs/utilities_common.c   \
 				   utilities/gpfs/utilities_common.h   \
-                                   utilities/common/src/hash_table.c   \
-                                   utilities/common/src/hash_table.h
+				   utilities/common/src/hash_table.c   \
+				   utilities/common/src/hash_table.h
 
 marfs_quota_SOURCES = utilities/gpfs/marfs_quota.c utilities/gpfs/marfs_quota.h \
-					  utilities/gpfs/utilities_common.c                         \
+					  utilities/gpfs/utilities_common.c  \
 					  utilities/gpfs/utilities_common.h
 
-marfs_packer_SOURCES = utilities/gpfs/marfs_packer.c     \
-					   utilities/gpfs/marfs_packer.h     \
-					   utilities/gpfs/utilities_common.c \
+marfs_packer_SOURCES = utilities/gpfs/marfs_packer.c \
+					   utilities/gpfs/marfs_packer.h      \
+					   utilities/gpfs/utilities_common.c  \
 					   utilities/gpfs/utilities_common.h 
 
-marfs_repack_SOURCES = utilities/gpfs/marfs_repack.c     \
-					   utilities/gpfs/marfs_repack.h     \
-					   utilities/gpfs/utilities_common.c \
+marfs_repack_SOURCES = utilities/gpfs/marfs_repack.c \
+					   utilities/gpfs/marfs_repack.h      \
+					   utilities/gpfs/utilities_common.c  \
 					   utilities/gpfs/utilities_common.h
 
 marfs_gc_LDFLAGS     = -lgpfs

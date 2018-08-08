@@ -2479,10 +2479,22 @@ int marfs_setxattr (const char* path,
    return 0;
 }
 
-// The OS seems to call this from time to time, with <path>=/ (and
-// euid==0).  We could walk through all the namespaces, and accumulate
-// total usage.  (Maybe we should have a top-level fsinfo path?)  But I
-// guess we don't want to allow average users to do this.
+
+// For fuse mounts, the kernel seems to call statvfs() from time to time,
+// with <path>=/ (and euid==0).  For this (root) namespace, we just report
+// what the MDFS says.  We could walk through all the namespaces, and
+// accumulate total usage from their fsinfo files.  (Maybe we should have a
+// top-level fsinfo path?).
+//
+// TBD: We could report blocksize, etc, to try to influence how the system
+// writes to us, in an attempt to optimize.
+//
+// For non-root namespaces which have a quota imposed (via the
+// configuration), we report the "total" available space as the
+// quota-limit, and the "free" space as the per-namespace used-space
+// (measured by the most-recent run of marfs_quota and stored in the form
+// of the size of the corrsponding "fsinfo" file), minus the "total".
+
 int marfs_statvfs (const char*      path,
                    struct statvfs*  statbuf) {
    ENTRY();
@@ -2596,7 +2608,40 @@ int marfs_statvfs (const char*      path,
       statbuf->f_namemax = 255;     /* maximum filename length */
    }
    else {
+
+      // actual status of the MDFS underlying this namespace
       TRY0( MD_PATH_OP(statvfs, info.ns, info.ns->md_path, statbuf) );
+
+      // modify to reflect limitations due to quotas
+      if (info.ns->quota_space != -1) {         // not unlimited
+         LOG(LOG_INFO, "NS '%s' quota = %lu\n", ns->name, info.ns->quota_space);
+
+         // fsinfo-file is truncated by the quota-tool to reflect amount
+         // of storage currently used by this namespace (in bytes).
+         struct stat st;
+         if (stat(info.ns->fsinfo_path, &st)) {
+            LOG(LOG_ERR, "failed to stat fsinfo %s\n", info.ns->fsinfo_path);
+            errno = EIO;
+            return -1;
+         }
+         LOG(LOG_INFO, "NS '%s' quota (bytes)  = %lu\n", ns->name, info.ns->quota_space);
+         LOG(LOG_INFO, "NS '%s' used  (bytes)  = %lu\n", ns->name, st.st_size);
+
+         // adjusted "free" space is quota minus used space (in blocks)
+         statbuf->f_bavail = ( info.ns->quota_space - st.st_size ) / statbuf->f_bsize;
+         if (statbuf->f_bavail < 0)
+            statbuf->f_bavail = 0;
+
+         // it doesn't matter who you are
+         statbuf->f_bfree = statbuf->f_bavail;
+
+         // "total space" in the namespace is the quota
+         statbuf->f_blocks=(info.ns->quota_space / statbuf->f_bsize);
+
+         LOG(LOG_INFO, "NS '%s' blocksize      = %lu\n", ns->name, statbuf->f_bsize);
+         LOG(LOG_INFO, "NS '%s' avail (blocks) = %lu\n", ns->name, statbuf->f_avail);
+         LOG(LOG_INFO, "NS '%s' total (blocks) = %lu\n", ns->name, statbuf->f_blocks);
+      }
    }
 
    EXIT();
