@@ -985,7 +985,7 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset, int p
       return -1;                // errno is set
    else if (sscanf_size < 9) {
       errno = EINVAL;
-      return -1;            /* ?? */
+      return -2;            /* ?? */
    }
 
    // validate version
@@ -1013,7 +1013,7 @@ int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset, int p
           major, minor,
           MARFS_CONFIG_MAJOR, MARFS_CONFIG_MINOR);
       errno = EINVAL;
-      return -1;
+      return -3;
    }
 
 
