@@ -100,7 +100,13 @@ int main(int argc, char* argv[])
 	}
 
 	//first we check if the file exists or not
-	int mode = marfs_getattr(marfs_sub_path(path), &st);
+	const char* sub_path = marfs_sub_path(path);
+	if (! sub_path) {
+		printf("ERROR: path %s doesn't appear to be a MarFS path.  "
+		       "Check config-file?\n", path);
+		return -1;
+	}
+	int mode = marfs_getattr(sub_path, &st);
 
 	MarFS_FileHandle fh;
 	memset(&fh, 0, sizeof(fh));
