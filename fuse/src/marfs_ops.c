@@ -2639,7 +2639,7 @@ int marfs_statvfs (const char*      path,
          statbuf->f_blocks=(info.ns->quota_space / statbuf->f_bsize);
 
          LOG(LOG_INFO, "NS '%s' blocksize      = %lu\n", ns->name, statbuf->f_bsize);
-         LOG(LOG_INFO, "NS '%s' avail (blocks) = %lu\n", ns->name, statbuf->f_avail);
+         LOG(LOG_INFO, "NS '%s' avail (blocks) = %lu\n", ns->name, statbuf->f_bavail);
          LOG(LOG_INFO, "NS '%s' total (blocks) = %lu\n", ns->name, statbuf->f_blocks);
       }
    }
