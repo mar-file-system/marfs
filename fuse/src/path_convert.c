@@ -43,7 +43,7 @@ void show_usage(char* prog_name)
 	fprintf(stderr, "\toptions:\n");
 	fprintf(stderr, "\t\t-h                     help\n");
 	fprintf(stderr, "\t\t-p [ <path> ]          file path to be converted to object path\n");
-	fprintf(stderr, "\t\t-n [ <chunk number> ]  chunk number of the file\n");
+	fprintf(stderr, "\t\t-c [ <chunk number> ]  chunk number of the file\n");
 	fprintf(stderr, "\n");
 }
 
@@ -86,6 +86,7 @@ int main(int argc, char* argv[])
 
 	char path_template[MC_MAX_PATH_LEN];
 	struct stat st;
+
 	//first need to read config
 	if (read_configuration())
 	{
@@ -99,20 +100,31 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
-	//first we check if the file exists or not
-	const char* sub_path = marfs_sub_path(path);
-	if (! sub_path) {
-		printf("ERROR: path %s doesn't appear to be a MarFS path.  "
+	const char* marfs_path = marfs_sub_path(path);
+	if (! marfs_path) {
+		printf("ERROR: path '%s' doesn't appear to be a MarFS path.  "
 		       "Check config-file?\n", path);
 		return -1;
 	}
-	int mode = marfs_getattr(sub_path, &st);
+
+	//first we check if the file exists or not
+	int mode = marfs_getattr(marfs_path, &st);
+	if (mode) {
+		printf("ERROR: couldn't stat marfs-path '%s': %s",
+		       marfs_path, strerror(errno));
+		return -1;
+	}
 
 	MarFS_FileHandle fh;
 	memset(&fh, 0, sizeof(fh));
+   path_template[0] = 0;
 
-	const char* marfs_path = marfs_sub_path(path);
-	marfs_path_convert(mode, marfs_path, &fh, chunk_no, path_template);
+	if (marfs_path_convert(mode, marfs_path, &fh, chunk_no, path_template)) {
+		printf("ERROR: couldn't convert marfs_pth '%s'.  Check xattrs?\n",
+		       marfs_path);
+		return -1;
+   }
+
 	//int rc = marfs_open(marfs_path, &fh, O_RDONLY, 0);
 	//get_path_template(path_template, &fh);
 

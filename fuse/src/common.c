@@ -3421,7 +3421,8 @@ void get_path_template(char* path, MarFS_FileHandle* fh)
 
    char* mc_path_format = repo->host;
 
-   unsigned int num_blocks    = ((MC_Config*)fh->dal_handle.dal->global_state)->n + ((MC_Config*)fh->dal_handle.dal->global_state)->e;
+   unsigned int num_blocks    = (((MC_Config*)fh->dal_handle.dal->global_state)->n
+                                 + ((MC_Config*)fh->dal_handle.dal->global_state)->e)
    unsigned int num_pods      = ((MC_Config*)fh->dal_handle.dal->global_state)->num_pods;
    unsigned int num_cap       = ((MC_Config*)fh->dal_handle.dal->global_state)->num_cap;
    unsigned int scatter_width = ((MC_Config*)fh->dal_handle.dal->global_state)->scatter_width;
@@ -3475,19 +3476,20 @@ int marfs_check_packable(const char* path, size_t content_length)
 }
 
 
-void marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh, size_t chunk_no, char* path_template)
+int marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh, size_t chunk_no, char* path_template)
 {
+   TRY_DECLS();
    PathInfo* info = &fh->info;
    ObjectStream* os = &fh->os;
 
    //fake flags to always be writing
    fh->flags = FH_WRITING;
-   int rc = expand_path_info(info, path);
+   EXPAND_PATH_INFO(info, path);
  
-   //init_pre(&info->pre, OBJ_FUSE, info->ns, info->ns->iwrite_repo, &info->st);
-   if (!mode)
-   {
-      stat_xattrs(info, 0);
+   if (!mode) {
+      stat_xattrs(info, XVT_PRE);
+      if (! has_all_xattrs(info, MARFS_MD_XATTRS))
+         return -1;
    }
    else{
       stat_regular(info);
@@ -3498,6 +3500,7 @@ void marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh, size_t
    info->pre.chunk_no = chunk_no;
    update_pre(&info->pre);
    
-   get_path_template(path_template, fh);                       
+   get_path_template(path_template, fh);
+   return 0;
 }
 
