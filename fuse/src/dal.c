@@ -1295,8 +1295,7 @@ int mc_sync(DAL_Context* ctx) {
                mc_context->start_block, error_pattern,
                MC_FH(ctx)->info.pre.repo->name,
                mc_context->pod, mc_context->cap);
-      
-      printf("MC_SYNC buf %s\n", buf);
+      LOG(LOG_INFO, "degraded-log record: %s\n", buf);
 
       // If the degraded log file has not already been opened, open it now.
       WAIT(&config->lock);
