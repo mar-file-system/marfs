@@ -1869,6 +1869,10 @@ int open_data(MarFS_FileHandle* fh,
 int close_data(MarFS_FileHandle* fh,
                int               abort,
                int               force) {
+
+   LOG(LOG_INFO, "close_data(0x%llx, %d, %d)\n", (size_t)fh, abort, force);
+
+   int retval = 0;
    int rc;
 
    // try the abort/sync
@@ -1877,22 +1881,29 @@ int close_data(MarFS_FileHandle* fh,
    else
       rc = DAL_OP(sync, fh);
 
-   if (rc && !force) {
+   if (rc) {
       LOG(LOG_ERR, "%s failed\n", (abort ? "abort" : "sync"));
-      return rc;
+      retval = rc;
+      if (!force)
+         return rc;
    }
 
    // try the close
    rc = DAL_OP(close, fh);
-   if (rc && !force) {
+   if (rc) {
       LOG(LOG_ERR, "close failed\n");
-      return rc;
+      retval = rc;
+      if (!force)
+         return rc;
    }
 
    rc = destroy_data(fh);
-   if (rc)
+   if (rc) {
       LOG(LOG_ERR, "destroy failed\n");
-   return rc;
+      retval = rc;
+   }
+
+   return retval;
 }
 
 
