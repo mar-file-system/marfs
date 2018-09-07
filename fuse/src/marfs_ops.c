@@ -2159,7 +2159,7 @@ int marfs_release (const char*        path,
    // been called on this object.
    if( !(fh->flags & FH_FLUSHED) ) {
       LOG(LOG_INFO, "flushing unflushed stream\n");
-      marfs_flush(path, fh);
+      TRY0( marfs_flush(path, fh) );
       EXIT();
       return 0;
    }
@@ -2273,10 +2273,10 @@ int marfs_release_fh(MarFS_FileHandle* fh) {
    ObjectStream*     os   = &fh->os;
 
    if(fh->os.flags & OSF_OPEN) {
-     // Opens are defered.
-     // If open_data wasn't called fh->dal_handle.dal will be NULL
-     // prevent problems by not closing unopened streams
-     close_data(fh, 0, 1);
+      // Opens are defered.
+      // If open_data wasn't called fh->dal_handle.dal will be NULL
+      // prevent problems by not closing unopened streams
+      TRY0( close_data(fh, 0, 1) );
    }
 
    // free aws4c resources
