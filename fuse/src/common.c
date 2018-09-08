@@ -3422,7 +3422,7 @@ void get_path_template(char* path, MarFS_FileHandle* fh)
    char* mc_path_format = repo->host;
 
    unsigned int num_blocks    = (((MC_Config*)fh->dal_handle.dal->global_state)->n
-                                 + ((MC_Config*)fh->dal_handle.dal->global_state)->e)
+                                 + ((MC_Config*)fh->dal_handle.dal->global_state)->e);
    unsigned int num_pods      = ((MC_Config*)fh->dal_handle.dal->global_state)->num_pods;
    unsigned int num_cap       = ((MC_Config*)fh->dal_handle.dal->global_state)->num_cap;
    unsigned int scatter_width = ((MC_Config*)fh->dal_handle.dal->global_state)->scatter_width;
