@@ -360,7 +360,8 @@ int marfs_flush (const char*        path,
       // return 0;       /* the "close" was successful */
       // return -1;      /* "close" was successful, but need to report errs */
       // return 0;       // errs should be reported at EOF by marfs_write(), etc ?
-      return retval;     // if these errs already reported, we still might have new ones
+      // return retval;     // if these errs already reported, we still might have new ones
+      return -1;      /* "close" was successful, but need to report errs */
    }
    else if (fh->os.flags & OSF_ABORT) {
       EXIT();
