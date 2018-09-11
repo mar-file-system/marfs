@@ -119,17 +119,11 @@ if USE_MC
   AM_LDFLAGS  += -L$(LIBNE)/lib
   LDADD       += -L$(LIBNE)/lib -lne -lft
 
-all-local : rebuilder mc_path_convert
-
-rebuilder : utilities/multi-component/rebuilder.c
+all-local : utilities/multi-component/rebuilder.c
 	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o rebuilder $^ ${LDADD} ${LIBS}
-
-mc_path_convert : utilities/multi-component/mc_path_convert.c
-	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o mc_path_convert $^ ${LDADD} ${LIBS}
 
 clean-local :
 	@ rm -f rebuilder
-	@ rm -f mc_path_convert
 
 endif
 
