@@ -381,7 +381,7 @@ enum posix_dal_flags {
 #define POSIX_DAL_FD(CTX)      POSIX_DAL_CONTEXT(CTX)->fd
 #define POSIX_DAL_OS(CTX)      (&(POSIX_DAL_CONTEXT(CTX)->fh->os))
 #define POSIX_DAL_PATH(CTX)    POSIX_DAL_CONTEXT(CTX)->file_path
-#define FLAT_OBJID_SEPARATOR '#'
+
 
 int posix_dal_ctx_init(DAL_Context* ctx, struct DAL* dal, void* fh /* ? */) {
    ENTRY();
@@ -421,14 +421,6 @@ int posix_dal_ctx_destroy(DAL_Context* ctx, struct DAL* dal) {
    return 0;
 }
 
-// file-ify an object-id.
-static void flatten_objid(char* objid) {
-   int i;
-   for(i = 0; objid[i]; i++) {
-      if(objid[i] == '/')
-         objid[i] = FLAT_OBJID_SEPARATOR;
-   }
-}
 
 // Generate the full path the the object in the POSIX repository.
 // This will be used as the ->update_object_location interface
@@ -726,7 +718,6 @@ int mc_config(struct DAL*     dal,
               xDALConfigOpt** opts,
               size_t          opt_count) {
    ENTRY();
-
    int        is_sockets = ((! strcmp(dal->name, "MC_SOCKETS"))
                             && (dal->name_len == strlen("MC_SOCKETS")));
 
@@ -776,7 +767,6 @@ int mc_config(struct DAL*     dal,
          return -1;
       }
 
-
       // options only used by MC_SOCKETS DAL
       else if(!strcmp(opts[i]->key, "host_offset")) {
          config->host_offset = strtol(opts[i]->val.value.str, NULL, 10);
@@ -821,7 +811,6 @@ int mc_config(struct DAL*     dal,
       }
    }
 
-
    if(config->degraded_log_path == NULL) {
       LOG(LOG_ERR, "no degraded_log_dir specified for DAL '%s'.\n", dal->name);
       return -1;
@@ -863,7 +852,6 @@ int mc_config(struct DAL*     dal,
    }
 #endif
 
-
    config->is_sockets = is_sockets;
    if (is_sockets)
      config->snprintf = mc_path_snprintf_sockets;
@@ -898,33 +886,6 @@ void mc_deconfig(struct DAL *dal) {
 }
 #endif
 
-
-// Computes a good, uniform, hash of the string.
-//
-// Treats each character in the length n string as a coefficient of a
-// degree n polynomial.
-//
-// f(x) = string[n -1] + string[n - 2] * x + ... + string[0] * x^(n-1)
-//
-// The hash is computed by evaluating the polynomial for x=33 using
-// Horner's rule.
-//
-// Reference: http://cseweb.ucsd.edu/~kube/cls/100/Lectures/lec16/lec16-14.html
-static uint64_t polyhash(const char* string) {
-   // According to http://www.cse.yorku.ca/~oz/hash.html
-   // 33 is a magical number that inexplicably works the best.
-   const int salt = 33;
-   char c;
-   uint64_t h = *string++;
-   while((c = *string++))
-      h = salt * h + c;
-   return h;
-}
-
-// compute the hash function h(x) = (a*x) >> 32
-static uint64_t h_a(const uint64_t key, uint64_t a) {
-   return ((a * key) >> 32);
-}
 
 // Initialize the context for a multi-component backed object.
 // (e.g. new file-handle at open-time)
@@ -1000,6 +961,7 @@ int mc_path_snprintf_sockets(char*       dest,
                              uint32_t    block,
                              void*       state) {
 
+
   DAL_Context* ctx    = (DAL_Context*)state;
   MC_Config*   config = MC_CONFIG(ctx);
   
@@ -1014,6 +976,7 @@ int mc_path_snprintf_sockets(char*       dest,
                   pod_offset + host_offset,  // "192.168.0.%d"
                   block_offset);             // "block%d"
 }
+
 
 
 // For MC DALs, the MarFS configuration specifies a sprintf-format
@@ -1053,8 +1016,8 @@ int mc_update_path(DAL_Context* ctx) {
    unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
 
    unsigned int seed = objid_hash;
-   uint64_t a[3];
-   int i;
+   uint64_t     a[3];
+   int          i;
    for(i = 0; i < 3; i++)
       a[i] = rand_r(&seed) * 2 + 1; // generate 32 random bits
 
@@ -1091,11 +1054,47 @@ int mc_update_path(DAL_Context* ctx) {
    
    // append the fileified object id
    strncat(path_template, obj_filename, MARFS_MAX_OBJID_SIZE);
-
    LOG(LOG_INFO, "MC path template: (starting block: %d) %s\n",
        MC_CONTEXT(ctx)->start_block, path_template);
    
    return 0;
+}
+
+int find_stats_from_tflags(int tflags)
+{
+   int tot_stats = 0;
+
+   if (tflags & TF_OPEN)
+      tot_stats++;
+
+   if (tflags & TF_RW)
+      tot_stats += 2;
+
+   if (tflags & TF_CLOSE)
+      tot_stats++;
+
+#if 0
+   if (tflags & TF_RENAME)
+      tot_stats++;
+
+   if (tflags & TF_CRC) {
+      printf("DAL.C detected CRC flag\n");
+      tot_stats++;
+   }
+
+   if (tflags & TF_ERASURE) {
+      printf("DAL.C detected ERASURE flag\n");
+      tot_stats++;
+   }
+
+   if (tflags & TF_XATTR)
+      tot_stats++;
+
+   if (tflags & TF_STAT)
+      tot_stats++;
+#endif
+
+   return tot_stats;
 }
 
 // Open a multi-component object stream backed by a ne_handle.
@@ -1121,14 +1120,45 @@ int mc_open(DAL_Context* ctx,
                                   | MC_FH(ctx)->info.pre.ns->timing_flags );
 
    int           mode          = (is_put ? NE_WRONLY : NE_RDONLY);
-
    // do the generic cleanup stuff like resetting flags.
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
+   if (MC_FH(ctx)->repo == NULL)
+   {
+      //allocate repo
+      MC_FH(ctx)->repo = (char*)malloc(MARFS_MAX_REPO_SIZE);
+      memset(MC_FH(ctx)->repo, 0, MARFS_MAX_REPO_SIZE);
+      memcpy(MC_FH(ctx)->repo, MC_FH(ctx)->info.pre.repo->name, MC_FH(ctx)->info.pre.repo->name_len);
 
+      //find the number of time stats to collect
+      MC_FH(ctx)->tot_stats = find_stats_from_tflags(timing_flags);
+
+      //allocate pointers include 2 characters for name of stat
+      //MC_FH(ctx)->timing_stats = (char*)malloc(sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
+      //                                         + 2 * (MC_FH(ctx)->tot_stats));
+      //memset(MC_FH(ctx)->timing_stats, 0, sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
+      //       + 2 * (MC_FH(ctx)->tot_stats));
+   }
    MC_HANDLE(ctx) = ne_open1(MC_CONFIG(ctx)->snprintf, ctx,
                              impl, MC_CONFIG(ctx)->auth, timing_flags,
                              path_template, mode,
                              MC_CONTEXT(ctx)->start_block, n, e);
+
+   //we need total_blk from ne_handle to allocate stat buffer
+   MC_FH(ctx)->total_blk = MC_HANDLE(ctx)->N + MC_HANDLE(ctx)->E;
+   MC_FH(ctx)->pod_id = MC_CONTEXT(ctx)->pod;
+   //MC_HANDLE(ctx)->repo = MC_FH(ctx)->repo;
+   //MC_HANDLE(ctx)->pod_id = &(MC_FH(ctx)->pod_id);
+
+   if (MC_FH(ctx)->timing_stats == NULL)
+   {
+      //allocate stat buffer based on total blks from ne_handle
+      MC_FH(ctx)->timing_stats_buff_size = (sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
+                                            * (MC_FH(ctx)->total_blk)
+                                            + 3 * (MC_FH(ctx)->tot_stats));
+      MC_FH(ctx)->timing_stats = (char*)malloc(MC_FH(ctx)->timing_stats_buff_size);
+      memset(MC_FH(ctx)->timing_stats, 0, MC_FH(ctx)->timing_stats_buff_size);
+   }
+   MC_HANDLE(ctx)->timing_stats = MC_FH(ctx)->timing_stats;
    if(! MC_HANDLE(ctx)) {
       LOG(LOG_ERR, "Failed to open MC Handle %s\n", path_template);
       return -1;
@@ -1265,6 +1295,7 @@ int mc_sync(DAL_Context* ctx) {
                mc_context->start_block, error_pattern,
                MC_FH(ctx)->info.pre.repo->name,
                mc_context->pod, mc_context->cap);
+      LOG(LOG_INFO, "degraded-log (path,n,e,start,err,repo,pod,cap): %s\n", buf);
 
       // If the degraded log file has not already been opened, open it now.
       WAIT(&config->lock);

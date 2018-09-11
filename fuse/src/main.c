@@ -101,25 +101,21 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
-
 // --- wrappers just call the corresponding library-function, to support a
 //     given fuse-function.  The library-functions are meant to be used by
 //     both fuse and pftool, so they don't do seteuid(), and don't expect
 //     any fuse-related structures.
 
-#define WRAP_internal(GROUPS_TOO, FNCALL)                   \
-   __PUSH_USER(GROUPS_TOO);                                 \
-   errno = 0;                                               \
-   int fncall_rc    = FNCALL;                               \
-   int fncall_errno = errno;                                \
-   __POP_USER();                                            \
-   if (fncall_rc < 0) {                                     \
-      LOG(LOG_ERR, "%s, errno=%d '%s'\n",                   \
-          #FNCALL, fncall_errno, strerror(fncall_errno));   \
-      return -fncall_errno;                                 \
-   }                                                        \
+#define WRAP_internal(GROUPS_TOO, FNCALL)              \
+   __PUSH_USER(GROUPS_TOO);                            \
+   int fncall_rc = FNCALL;                             \
+   __POP_USER();                                       \
+   if (fncall_rc < 0) {                                \
+      LOG(LOG_ERR, "ERR %s, errno=%d '%s'\n",          \
+          #FNCALL, errno, strerror(errno));            \
+      return -errno;                                   \
+   }                                                   \
    return fncall_rc /* caller provides semi */
-
 
 // This version doesn't call push/pop_groups()
 #define WRAP(FNCALL)                                   \
@@ -907,9 +903,6 @@ int main(int argc, char* argv[])
    // NOTE: This also now *requires* that marfs fuse is always only run as root.
    __TRY0( seteuid(0) );
 
-
-
-
    if (read_configuration()) {
       // LOG(LOG_ERR, "read_configuration() failed.  Quitting\n");
       fprintf(stderr, "read_configuration() failed.  Quitting\n");
@@ -929,10 +922,10 @@ int main(int argc, char* argv[])
    init_xattr_specs();
 
 
-   // initialize libaws4c/libcurl.
+   // initialize libaws4c/libcurl
    //
-   // NOTE: We're making initializations in the default AWSContext.  These
-   //       will be copied into the per-file-handle AWSContext via
+   // NOTE: We're making initializations in the default-context.  These
+   //       will be copied into the per-file-handle context via
    //       aws_context_clone(), in stream_open().  Instead of having to
    //       make these initializations in every context, we make them once
    //       here.
@@ -969,8 +962,6 @@ int main(int argc, char* argv[])
       if (! config_fail_ok)
          exit(1);
    }
-
-
 
    // make sure all support directories exist.  (See the config file.)
    // This includes mdfs, fsinfo, the trash "scatter-tree", for all namespaces,

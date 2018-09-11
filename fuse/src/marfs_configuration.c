@@ -285,12 +285,9 @@ MarFS_Namespace_Ptr find_namespace_by_mnt_path( const char *mnt_path ) {
   char *path_dup;
   char *path_dup_token;
   size_t path_dup_len;
-
-
   path_dup = strdup( mnt_path );
   path_dup_token = strtok( path_dup, "/" );
   path_dup_len = strlen( path_dup );
-
 /*
  * At this point path_dup will include the leading "/" and any other
  * characters up to, but not including, the next "/" character in
@@ -981,6 +978,10 @@ int parse_timing_flags(const char* flags_field, TimingFlagsValue* flags, const c
   DEST = (uint8_t)temp;                                             \
 }
 
+int get_repo_count()
+{
+	return repoCount;
+}
 
 static MarFS_Config_Ptr read_configuration_internal() {
 
@@ -1003,7 +1004,6 @@ static MarFS_Config_Ptr read_configuration_internal() {
       return NULL;
    }
    memset(marfs_config, 0x00, sizeof(MarFS_Config));
-
 
   /* REPOS ----------------------------------------------------------------- */
   repoList = (struct repo **) config->repo;
@@ -1028,7 +1028,6 @@ static MarFS_Config_Ptr read_configuration_internal() {
     return NULL;
   }
   marfs_repo_list[repoCount] = NULL;
-
 
   
   // initialize marfs_repos corresponding to PA2X parsed repos
@@ -1116,7 +1115,6 @@ static MarFS_Config_Ptr read_configuration_internal() {
     else
        m_repo->host_count = 1;
 
-
     // .................................................................
     // DAL
     // PA2X parsed the DAL type, as well as any options.
@@ -1147,7 +1145,6 @@ static MarFS_Config_Ptr read_configuration_internal() {
     DAL* dal_copy = (DAL*)malloc(sizeof(DAL));
     *dal_copy = *dal;
 
-
     // convert any DAL options from PA2X strings to xDALConfigOpt
     xDALConfigOpt** opts = NULL; /* array of ptrs */
     ssize_t         opt_count = parse_xdal_config_options(&opts, p_repo->dal.opt);
@@ -1155,18 +1152,19 @@ static MarFS_Config_Ptr read_configuration_internal() {
       LOG(LOG_ERR, "Couldn't parse DAL-options for repo '%s'\n", p_repo->name);
       return NULL;
     }
+
     LOG( LOG_INFO, "parser gave us a list of %ld DAL options, for repo '%s'.\n",
          opt_count, p_repo->name );
 
     // install the options, parsed out above.
     // DAL is responsible for <opts> from now on
     if ((*dal_copy->config)(dal_copy, opts, opt_count)) {
+      printf("DAL_CONFIG failed for repo '%s'.\n", p_repo->name);
       LOG( LOG_ERR, "DAL_config failed for repo '%s'.\n",
            p_repo->name);
       return NULL;
     }
     m_repo->dal = dal_copy;
-
 
     // .................................................................
     // convert remaining PA2X strings into marfs_repo member values.
@@ -1198,7 +1196,6 @@ static MarFS_Config_Ptr read_configuration_internal() {
       LOG( LOG_ERR, "Invalid chunk_size value of \"%s\".\n", p_repo->chunk_size );
       return NULL;
     }
-
     // repo.max_get_size was added in version 0.2.
     // Allow old configurations to be parsed by assigning a default (of 0)
     m_repo->max_get_size = 0;
@@ -1373,7 +1370,6 @@ static MarFS_Config_Ptr read_configuration_internal() {
     m_repo->read_timeout = rd_timeout;
   }
   free( repoList );
-
 
 
 

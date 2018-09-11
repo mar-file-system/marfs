@@ -572,7 +572,7 @@ typedef struct {
 //
 // stream_open() uses chunked-transfer-encoding when called with
 // content_length=0.  Users then call marfs_write repeatedly, which closes
-// and repoens new objects as needed, writting recovery-info at the end of
+// and reopens new objects as needed, writting recovery-info at the end of
 // each.  When called with content-length non-zero, stream_open() installs
 // that as the content-length for the request.  In this case, pftool would
 // be calling with the size of a logical chunk of user-data, expecting to
@@ -671,6 +671,15 @@ typedef struct {
                                  // into the file
 
    FHFlagType      flags;
+   
+   int             tot_pods;
+   int             tot_stats;
+   int             pod_id;
+   int             data_ready;
+   int             total_blk;
+   size_t          timing_stats_buff_size;
+   char*           timing_stats;
+   char*           repo;
 } MarFS_FileHandle;
 
 
@@ -812,7 +821,6 @@ typedef struct {
 #  define FH_DAL_CTX(FH)    (FH)->dal_handle.ctx
 #  define FH_DAL(FH)        (FH)->dal_handle.dal
 
-
 #  define DAL_OP(OP, FH, ... )                                       \
    (*(FH)->dal_handle.dal->OP)(&(FH)->dal_handle.ctx, ##__VA_ARGS__)
 
@@ -831,6 +839,16 @@ typedef struct {
 
 
 
+
+
+// functions originally intended for internal use to support DALs,
+// but which turn out to be useful for general tools, as well.
+
+extern uint64_t polyhash(const char* string);
+extern uint64_t h_a(const uint64_t key, uint64_t a);
+
+#define FLAT_OBJID_SEPARATOR '#'
+extern void     flatten_objid(char* objid);
 
 
 
@@ -963,6 +981,16 @@ extern void          dequeue_reader(off_t offset, MarFS_FileHandle* fh);
 extern void          check_read_queue     (MarFS_FileHandle* fh);
 extern void          terminate_all_readers(MarFS_FileHandle* fh);
 
+//support for path conversion tool
+extern void get_path_template(char* path_template, MarFS_FileHandle* fh);
+
+extern int  marfs_check_packable(const char* path, size_t content_length);
+
+extern int  marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh,
+                               size_t chunk_no, char* path_template);
+
+//support for namespace build tool
+extern int build_namespace_md(char* owner, char* group);
 
 
 #  ifdef __cplusplus

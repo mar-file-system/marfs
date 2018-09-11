@@ -141,7 +141,7 @@ extern "C" {
 #define   MARFS_MAX_NS_PATH       1024 /* path in namespace */
 #define   MARFS_MAX_BUCKET_SIZE     63 /* S3 spec */
 #define   MARFS_MAX_OBJID_SIZE     256
-
+#define   MARFS_MAX_REPO_SIZE     128
 // Must fit in an S3 bucket (max 63 chars), with room left for
 // namespace-name.  We also leave room for terminal '\0', because this is
 // really used to allocate buffers when parsing objid xattr-values.
