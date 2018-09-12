@@ -779,7 +779,7 @@ typedef struct {
 #  define MD_FILE_OP(...)   F_OP( __VA_ARGS__ )
 #  define MD_DIR_OP(...)    D_OP( __VA_ARFS__ )
 #  define MD_PATH_OP(...)   F_OP_NOCTX( __VA_ARGS__ )
-// unfirtunately we need this in order to use the dir_MDAL for mkdir/rmdir
+// unfortunately, we need this in order to use the dir_MDAL for mkdir/rmdir
 #  define MD_D_PATH_OP(...) D_OP_NOCTX( __VA_ARGS__ )
 
 

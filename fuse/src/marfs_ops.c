@@ -2615,22 +2615,23 @@ int marfs_statvfs (const char*      path,
 
       // modify to reflect limitations due to quotas
       if (info.ns->quota_space != -1) {         // not unlimited
-         LOG(LOG_INFO, "NS '%s' quota = %lu\n", ns->name, info.ns->quota_space);
 
          // fsinfo-file is truncated by the quota-tool to reflect amount
          // of storage currently used by this namespace (in bytes).
          struct stat st;
-         if (stat(info.ns->fsinfo_path, &st)) {
+         if ( MD_PATH_OP(lstat, info.ns, info.ns->fsinfo_path, &st) ) {
             LOG(LOG_ERR, "failed to stat fsinfo %s\n", info.ns->fsinfo_path);
             errno = EIO;
             return -1;
          }
-         LOG(LOG_INFO, "NS '%s' quota (bytes)  = %lu\n", ns->name, info.ns->quota_space);
-         LOG(LOG_INFO, "NS '%s' used  (bytes)  = %lu\n", ns->name, st.st_size);
+         LOG(LOG_INFO, "NS '%s' quota (bytes)  = %lu\n", info.ns->name, info.ns->quota_space);
+         LOG(LOG_INFO, "NS '%s' used  (bytes)  = %lu\n", info.ns->name, st.st_size);
 
          // adjusted "free" space is quota minus used space (in blocks)
-         statbuf->f_bavail = ( info.ns->quota_space - st.st_size ) / statbuf->f_bsize;
-         if (statbuf->f_bavail < 0)
+         // NOTE: this is the number of full-sized blocks available
+         if (info.ns->quota_space > st.st_size)
+            statbuf->f_bavail = ( info.ns->quota_space - st.st_size ) / statbuf->f_bsize;
+         else
             statbuf->f_bavail = 0;
 
          // it doesn't matter who you are
@@ -2639,9 +2640,9 @@ int marfs_statvfs (const char*      path,
          // "total space" in the namespace is the quota
          statbuf->f_blocks=(info.ns->quota_space / statbuf->f_bsize);
 
-         LOG(LOG_INFO, "NS '%s' blocksize      = %lu\n", ns->name, statbuf->f_bsize);
-         LOG(LOG_INFO, "NS '%s' avail (blocks) = %lu\n", ns->name, statbuf->f_bavail);
-         LOG(LOG_INFO, "NS '%s' total (blocks) = %lu\n", ns->name, statbuf->f_blocks);
+         LOG(LOG_INFO, "NS '%s' blocksize      = %lu\n", info.ns->name, statbuf->f_bsize);
+         LOG(LOG_INFO, "NS '%s' avail (blocks) = %lu\n", info.ns->name, statbuf->f_bavail);
+         LOG(LOG_INFO, "NS '%s' total (blocks) = %lu\n", info.ns->name, statbuf->f_blocks);
       }
    }
 
