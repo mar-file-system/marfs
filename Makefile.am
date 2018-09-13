@@ -119,11 +119,17 @@ if USE_MC
   AM_LDFLAGS  += -L$(LIBNE)/lib
   LDADD       += -L$(LIBNE)/lib -lne -lft
 
-all-local : utilities/multi-component/rebuilder.c
+all-local : rebuilder mc_path_convert
+
+rebuilder : utilities/multi-component/rebuilder.c
 	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o rebuilder $^ ${LDADD} ${LIBS}
+
+mc_path_convert : utilities/multi-component/mc_path_convert.c
+	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o mc_path_convert $^ ${LDADD} ${LIBS}
 
 clean-local :
 	@ rm -f rebuilder
+	@ rm -f mc_path_convert
 
 endif
 
@@ -165,20 +171,20 @@ bin_PROGRAMS += separate_log_threads_support
 separate_log_threads_support_SOURCES = fuse/scripts/separate_log_threads_support.c
 
 
-bin_PROGRAMS += path_convert
-
-path_convert_SOURCES = fuse/src/path_convert.c \
-		       fuse/src/marfs_configuration.c \
-		       fuse/src/marfs_configuration.h \
-		       fuse/src/marfs_ops.c \
-		       fuse/src/marfs_ops.h \
-		       fuse/src/common.c \
-		       fuse/src/common.h \
-		       fuse/src/marfs_base.c \
-		       fuse/src/marfs_base.h \
-		       fuse/src/dal.c \
-		       fuse/src/dal.h
-path_convert_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
+#bin_PROGRAMS += path_convert
+#
+#path_convert_SOURCES = fuse/src/path_convert.c \
+#		       fuse/src/marfs_configuration.c \
+#		       fuse/src/marfs_configuration.h \
+#		       fuse/src/marfs_ops.c \
+#		       fuse/src/marfs_ops.h \
+#		       fuse/src/common.c \
+#		       fuse/src/common.h \
+#		       fuse/src/marfs_base.c \
+#		       fuse/src/marfs_base.h \
+#		       fuse/src/dal.c \
+#		       fuse/src/dal.h
+#path_convert_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 
 bin_PROGRAMS += add_namespace
 

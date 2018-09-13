@@ -3405,57 +3405,57 @@ void flatten_objid(char* objid) {
    }
 }
 
-
-void get_path_template(char* path, MarFS_FileHandle* fh)
-{
-   init_data(fh);
-
-   const MarFS_Repo* repo  = fh->info.pre.repo;
-   char*             objid = fh->info.pre.objid;
-
-   char obj_filename[MARFS_MAX_OBJID_SIZE];
-   strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);   
-   flatten_objid(obj_filename);
-
-   unsigned long objid_hash = polyhash(objid);
-
-   char* mc_path_format = repo->host;
-
-   unsigned int num_blocks    = (((MC_Config*)fh->dal_handle.dal->global_state)->n
-                                 + ((MC_Config*)fh->dal_handle.dal->global_state)->e);
-   unsigned int num_pods      = ((MC_Config*)fh->dal_handle.dal->global_state)->num_pods;
-   unsigned int num_cap       = ((MC_Config*)fh->dal_handle.dal->global_state)->num_cap;
-   unsigned int scatter_width = ((MC_Config*)fh->dal_handle.dal->global_state)->scatter_width;
-
-   unsigned int seed = objid_hash;
-   uint64_t     a[3];
-   int          i;
-   for(i=0; i<3; i++)
-      a[i] = rand_r(&seed)*2+1;
-
-   unsigned int  pod         = objid_hash % num_pods;
-   unsigned int  cap         = h_a(objid_hash, a[0]) % num_cap;
-   unsigned long scatter     = h_a(objid_hash, a[1]) % scatter_width;
-   unsigned int  start_block = h_a(objid_hash, a[2]) % num_blocks;
-   
-   if (((MC_Config*)fh->dal_handle.dal->global_state)->is_sockets)
-   {
-      snprintf(path, MC_MAX_PATH_LEN, mc_path_format,
-               pod + ((MC_Config*)fh->dal_handle.dal->global_state)->pod_offset,
-               cap,
-               scatter);
-   }
-   else
-   {
-      snprintf(path, MC_MAX_PATH_LEN, mc_path_format, pod, "%d", cap, scatter);
-   }
-   
-   if (path[strlen(path) - 1] != '/')
-      strcat(path, "/");
-   
-   strncat(path, obj_filename, MARFS_MAX_OBJID_SIZE);
-}
-
+//
+//void get_path_template(char* path, MarFS_FileHandle* fh)
+//{
+//   init_data(fh);
+//
+//   const MarFS_Repo* repo  = fh->info.pre.repo;
+//   char*             objid = fh->info.pre.objid;
+//
+//   char obj_filename[MARFS_MAX_OBJID_SIZE];
+//   strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);   
+//   flatten_objid(obj_filename);
+//
+//   unsigned long objid_hash = polyhash(objid);
+//
+//   char* mc_path_format = repo->host;
+//
+//   unsigned int num_blocks    = (((MC_Config*)fh->dal_handle.dal->global_state)->n
+//                                 + ((MC_Config*)fh->dal_handle.dal->global_state)->e);
+//   unsigned int num_pods      = ((MC_Config*)fh->dal_handle.dal->global_state)->num_pods;
+//   unsigned int num_cap       = ((MC_Config*)fh->dal_handle.dal->global_state)->num_cap;
+//   unsigned int scatter_width = ((MC_Config*)fh->dal_handle.dal->global_state)->scatter_width;
+//
+//   unsigned int seed = objid_hash;
+//   uint64_t     a[3];
+//   int          i;
+//   for(i=0; i<3; i++)
+//      a[i] = rand_r(&seed)*2+1;
+//
+//   unsigned int  pod         = objid_hash % num_pods;
+//   unsigned int  cap         = h_a(objid_hash, a[0]) % num_cap;
+//   unsigned long scatter     = h_a(objid_hash, a[1]) % scatter_width;
+//   unsigned int  start_block = h_a(objid_hash, a[2]) % num_blocks;
+//   
+//   if (((MC_Config*)fh->dal_handle.dal->global_state)->is_sockets)
+//   {
+//      snprintf(path, MC_MAX_PATH_LEN, mc_path_format,
+//               pod + ((MC_Config*)fh->dal_handle.dal->global_state)->pod_offset,
+//               cap,
+//               scatter);
+//   }
+//   else
+//   {
+//      snprintf(path, MC_MAX_PATH_LEN, mc_path_format, pod, "%d", cap, scatter);
+//   }
+//   
+//   if (path[strlen(path) - 1] != '/')
+//      strcat(path, "/");
+//   
+//   strncat(path, obj_filename, MARFS_MAX_OBJID_SIZE);
+//}
+//
 
 
 int marfs_check_packable(const char* path, size_t content_length)
@@ -3475,32 +3475,32 @@ int marfs_check_packable(const char* path, size_t content_length)
         return rc;
 }
 
-
-int marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh, size_t chunk_no, char* path_template)
-{
-   TRY_DECLS();
-   PathInfo* info = &fh->info;
-   ObjectStream* os = &fh->os;
-
-   //fake flags to always be writing
-   fh->flags = FH_WRITING;
-   EXPAND_PATH_INFO(info, path);
- 
-   if (!mode) {
-      stat_xattrs(info, XVT_PRE);
-      if (! has_all_xattrs(info, MARFS_MD_XATTRS))
-         return -1;
-   }
-   else{
-      stat_regular(info);
-      init_pre(&info->pre, OBJ_FUSE, info->ns,
-               info->ns->iwrite_repo, &info->st);
-   }
-   info->pre.obj_type = OBJ_Nto1;
-   info->pre.chunk_no = chunk_no;
-   update_pre(&info->pre);
-   
-   get_path_template(path_template, fh);
-   return 0;
-}
-
+//
+//int marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh, size_t chunk_no, char* path_template)
+//{
+//   TRY_DECLS();
+//   PathInfo* info = &fh->info;
+//   ObjectStream* os = &fh->os;
+//
+//   //fake flags to always be writing
+//   fh->flags = FH_WRITING;
+//   EXPAND_PATH_INFO(info, path);
+// 
+//   if (!mode) {
+//      stat_xattrs(info, XVT_PRE);
+//      if (! has_all_xattrs(info, MARFS_MD_XATTRS))
+//         return -1;
+//   }
+//   else{
+//      stat_regular(info);
+//      init_pre(&info->pre, OBJ_FUSE, info->ns,
+//               info->ns->iwrite_repo, &info->st);
+//   }
+//   info->pre.obj_type = OBJ_Nto1;
+//   info->pre.chunk_no = chunk_no;
+//   update_pre(&info->pre);
+//   
+//   get_path_template(path_template, fh);
+//   return 0;
+//}
+//

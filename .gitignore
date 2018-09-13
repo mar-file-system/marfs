@@ -1,5 +1,30 @@
-core.*
-*.o
-*.a
-*.so
+### # pattern "*", even when followed by "!*/", was hiding sockets/marfs_obj
+### *
+*.*
+
+!*/
+!*.c
+!*.h
+!*.txt
+!*.am
+!*.ac
+!*.conf
+!scripts/*
+!README*
+!.gitignore
+
 *~
+config.h
+*.log
+
+Makefile
+autom4te.cache
+ar-lib
+compile
+configure
+depcomp
+install-sh
+missing
+stamp-h1
+test-driver
+

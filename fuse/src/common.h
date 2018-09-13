@@ -982,12 +982,12 @@ extern void          check_read_queue     (MarFS_FileHandle* fh);
 extern void          terminate_all_readers(MarFS_FileHandle* fh);
 
 //support for path conversion tool
-extern void get_path_template(char* path_template, MarFS_FileHandle* fh);
+//extern void get_path_template(char* path_template, MarFS_FileHandle* fh);
 
 extern int  marfs_check_packable(const char* path, size_t content_length);
 
-extern int  marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh,
-                               size_t chunk_no, char* path_template);
+//extern int  marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh,
+//                               size_t chunk_no, char* path_template);
 
 //support for namespace build tool
 extern int build_namespace_md(char* owner, char* group);
