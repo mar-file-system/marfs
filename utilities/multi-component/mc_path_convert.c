@@ -70,6 +70,7 @@
 #include <stdio.h>
 #include <string.h>
 
+// As we'll be calling some internal MarFS functions directly, include the actual source
 #include "common.c"
 #include "dal.c"
 
@@ -146,6 +147,7 @@ int main(int argc, char* argv[])
 
    printf("Full Path    -- %s\n", path );
 
+   // verify that this is actually a marfs path
    const char* marfs_path = marfs_sub_path(path);
    if (! marfs_path) {
       printf("ERROR: path '%s' doesn't appear to be a MarFS path.  "
@@ -155,7 +157,7 @@ int main(int argc, char* argv[])
 
    printf("MarFS Path   -- %s\n", marfs_path );
 
-   //first we check if the file exists or not
+   //first we check if the file exists
    int mode = marfs_getattr(marfs_path, &st);
    if (mode) {
       printf("ERROR: couldn't stat marfs-path '%s': %s\n",
@@ -165,13 +167,14 @@ int main(int argc, char* argv[])
 
    MarFS_FileHandle fh;
    memset(&fh, 0, sizeof(fh));
-   char dummy_buff[1024];
 
    int rc = marfs_open(marfs_path, &fh, O_RDONLY, 0);
    if (rc) {
       printf("ERROR: failed to open marfs file: \"%s\" (%s)\n", marfs_path, strerror(errno) );
       return -1;
    }
+
+   printf("File Size    -- %zd\n", fh.info.st.st_size );
 
    // if an offset was specified, determine the appropriate chunk_no
    if ( offset ) {
