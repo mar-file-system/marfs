@@ -2,18 +2,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "common.h"
 #include "hash_table.h"
-/**
- * Compute the hash of key.
- */
-unsigned long polyhash(const char *string) {
-  const int salt = 33;
-  char c;
-  unsigned long hash = *string++;
-  while((c = *string++))
-    hash = salt * hash + c;
-  return hash;
-}
+
 
 /**
  * Make a new ht_entry_t with the given key and value. (always

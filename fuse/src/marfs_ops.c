@@ -358,9 +358,9 @@ int marfs_flush (const char*        path,
    if (fh->os.flags & OSF_ERRORS) {
       EXIT();
       // return 0;       /* the "close" was successful */
-      // return -1;      /* "close" was successful, but need to report errs */
       // return 0;       // errs should be reported at EOF by marfs_write(), etc ?
-      return retval;     // if these errs already reported, we still might have new ones
+      // return retval;     // if these errs already reported, we still might have new ones
+      return -1;      /* "close" was successful, but need to report errs */
    }
    else if (fh->os.flags & OSF_ABORT) {
       EXIT();
@@ -572,7 +572,6 @@ int marfs_getattr (const char*  path,
 
    // Check/act on iperms from expanded_path_info_structure, this op requires RM
    CHECK_PERMS(info.ns, R_META);
-
    // The "root" namespace is artificial.  If it is configured to refer to
    // a real MDFS path, then stat'ing the root-NS will look at that path.
    // Otherwise, we gin up fake data such that the root-dir appears to be
@@ -584,7 +583,6 @@ int marfs_getattr (const char*  path,
    // indicated accessibility of the directory differs from what is allowed
    // in marfs_opendir().
    if (IS_ROOT_NS(info.ns)) {
-
       LOG(LOG_INFO, "is_root_ns\n");
       if (! stat_regular(&info)) {
          *stp = info.st;        // root md_path exists.  Use that.
@@ -634,7 +632,6 @@ int marfs_getattr (const char*  path,
 
    // mask out setuid bits.  Those are belong to us.  (see marfs_chmod())
    stp->st_mode &= ~(S_ISUID);
-
    EXIT();
    return 0;
 }
@@ -922,6 +919,7 @@ int marfs_mknod (const char* path,
    EXIT();
    return 0;
 }
+
 
 
 
@@ -1284,9 +1282,9 @@ int marfs_open(const char*         path,
    return 0;
 }
 
-// This open command allows you to provide an alreay populated fh for
+// This open command allows you to provide an already-populated fh for
 // marfs to work with. This allows marfs to create a packed file
-// by resuing a curl stream if there is still room in the current object.
+// by reusing a curl stream if there is still room in the current object.
 //
 // If there is not room the stream is closed and a new one is created.
 //
@@ -1294,6 +1292,7 @@ int marfs_open(const char*         path,
 //
 // ENOTPACKABLE will be returned if the file is not packable
 // EFHFULL will be returned if the filehandle is full
+
 int  marfs_open_packed   (const char* path, MarFS_FileHandle* fh, int flags,
                           curl_off_t content_length) {
    // if you are trying to read the file just use regular open
@@ -2274,16 +2273,16 @@ int marfs_release_fh(MarFS_FileHandle* fh) {
    ObjectStream*     os   = &fh->os;
 
    if(fh->os.flags & OSF_OPEN) {
-     // Opens are defered.
-     // If open_data wasn't called fh->dal_handle.dal will be NULL
-     // prevent problems by not closing unopened streams
-     TRY0( close_data(fh, 0, 1) );
+      // Opens are defered.
+      // If open_data wasn't called fh->dal_handle.dal will be NULL
+      // prevent problems by not closing unopened streams
+      TRY0( close_data(fh, 0, 1) );
    }
 
    // free aws4c resources
    aws_iobuf_reset_hard(&os->iob);
 
-   memset(fh, 0, sizeof(MarFS_FileHandle));
+   //memset(fh, 0, sizeof(MarFS_FileHandle));
 
    fh->flags |= FH_PACKED;
 
@@ -2480,10 +2479,22 @@ int marfs_setxattr (const char* path,
    return 0;
 }
 
-// The OS seems to call this from time to time, with <path>=/ (and
-// euid==0).  We could walk through all the namespaces, and accumulate
-// total usage.  (Maybe we should have a top-level fsinfo path?)  But I
-// guess we don't want to allow average users to do this.
+
+// For fuse mounts, the kernel seems to call statvfs() from time to time,
+// with <path>=/ (and euid==0).  For this (root) namespace, we just report
+// what the MDFS says.  We could walk through all the namespaces, and
+// accumulate total usage from their fsinfo files.  (Maybe we should have a
+// top-level fsinfo path?).
+//
+// TBD: We could report blocksize, etc, to try to influence how the system
+// writes to us, in an attempt to optimize.
+//
+// For non-root namespaces which have a quota imposed (via the
+// configuration), we report the "total" available space as the
+// quota-limit, and the "free" space as the per-namespace used-space
+// (measured by the most-recent run of marfs_quota and stored in the form
+// of the size of the corrsponding "fsinfo" file), minus the "total".
+
 int marfs_statvfs (const char*      path,
                    struct statvfs*  statbuf) {
    ENTRY();
@@ -2597,7 +2608,41 @@ int marfs_statvfs (const char*      path,
       statbuf->f_namemax = 255;     /* maximum filename length */
    }
    else {
+
+      // actual status of the MDFS underlying this namespace
       TRY0( MD_PATH_OP(statvfs, info.ns, info.ns->md_path, statbuf) );
+
+      // modify to reflect limitations due to quotas
+      if (info.ns->quota_space != -1) {         // not unlimited
+
+         // fsinfo-file is truncated by the quota-tool to reflect amount
+         // of storage currently used by this namespace (in bytes).
+         struct stat st;
+         if ( MD_PATH_OP(lstat, info.ns, info.ns->fsinfo_path, &st) ) {
+            LOG(LOG_ERR, "failed to stat fsinfo %s\n", info.ns->fsinfo_path);
+            errno = EIO;
+            return -1;
+         }
+         LOG(LOG_INFO, "NS '%s' quota (bytes)  = %lu\n", info.ns->name, info.ns->quota_space);
+         LOG(LOG_INFO, "NS '%s' used  (bytes)  = %lu\n", info.ns->name, st.st_size);
+
+         // adjusted "free" space is quota minus used space (in blocks)
+         // NOTE: this is the number of full-sized blocks available
+         if (info.ns->quota_space > st.st_size)
+            statbuf->f_bavail = ( info.ns->quota_space - st.st_size ) / statbuf->f_bsize;
+         else
+            statbuf->f_bavail = 0;
+
+         // it doesn't matter who you are
+         statbuf->f_bfree = statbuf->f_bavail;
+
+         // "total space" in the namespace is the quota
+         statbuf->f_blocks=(info.ns->quota_space / statbuf->f_bsize);
+
+         LOG(LOG_INFO, "NS '%s' blocksize      = %lu\n", info.ns->name, statbuf->f_bsize);
+         LOG(LOG_INFO, "NS '%s' avail (blocks) = %lu\n", info.ns->name, statbuf->f_bavail);
+         LOG(LOG_INFO, "NS '%s' total (blocks) = %lu\n", info.ns->name, statbuf->f_blocks);
+      }
    }
 
    EXIT();
@@ -3277,8 +3322,6 @@ int marfs_lock(const char*        path,
    errno = ENOSYS;
    return -1;
 }
-
-
 #endif
 
 

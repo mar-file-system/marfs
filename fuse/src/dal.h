@@ -241,7 +241,7 @@ typedef  int     (*dal_config) (struct DAL*     dal,
                                 size_t          opt_count);
 
 
-// used to check whether an MDAL uses the default-config, so that we can
+// used to check whether an DAL uses the default-config, so that we can
 // reliably print out the options with which it was configured, for
 // diagnostics.
 extern int   default_dal_config(struct DAL*     dal,
@@ -313,7 +313,7 @@ typedef int      (*dal_put)  (DAL_Context*  ctx,
                               const char*   buf,
                               size_t        size);
 
-// Read from an object stream begining at the offset supplied to
+// Read from an object stream beginning at the offset supplied to
 // ->open().
 //
 // Returns the number of bytes read, or zero to indicate the end of
@@ -337,7 +337,7 @@ typedef ssize_t  (*dal_get)  (DAL_Context*  ctx,
 typedef int      (*dal_sync) (DAL_Context*  ctx);
 
 // Abort an open object stream. This means we are canceling any
-// read/write operations. This is only every called when there is
+// read/write operations. This is only ever called when there is
 // nothing yet written to the stream, but theoretically it should be
 // able to roll back any data that has been written and close the
 // stream without creating a persisten object.
@@ -398,12 +398,9 @@ int  install_DAL(DAL* dal);
 DAL* get_DAL(const char* name);
 
 
-
-
 // exported for building custom DAL
 int     default_dal_ctx_init   (DAL_Context* ctx, DAL* dal, void* fh);
 int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal);
-
 
 
 #ifdef __cplusplus

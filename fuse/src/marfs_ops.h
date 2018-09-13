@@ -193,7 +193,6 @@ ssize_t  marfs_write(const char* path, const char* buf, size_t size, off_t offse
                      MarFS_FileHandle* fh);
 
 
-
 // currently unimplemented
 #if 0
 

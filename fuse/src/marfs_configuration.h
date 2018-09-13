@@ -150,7 +150,7 @@ extern "C" {
 //        argument is non-zero.
 //
 // -- 1.9 (no changes to xattr or obj-ID format, but we're introducing RDMA
-//        (MDAL) to production, which will co-exist with NFS (MDAL).
+//        (DAL) to production, which will also co-exist with NFS (DAL).
 //        Changing the object-version number in case we ever might wish we
 //        had done so, in order to hunt for issues.)
 
@@ -609,6 +609,7 @@ extern MarFS_Repo_Ptr find_repo_by_name( const char* name );
  */
 
 extern int read_configuration();
+extern int get_repo_count();
 
 /*
  * These functions return the configuration information that was given in
