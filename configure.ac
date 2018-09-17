@@ -181,7 +181,7 @@ AC_CHECK_LIB([aws4c_extra], [s3_create_bucket])
 AS_IF([test x"$enable_mc" = xsockets],
       [AC_CHECK_LIB([rdmacm], [rsocket])
        AC_CHECK_LIB([ft], [fast_timer_inits])
-       AC_CHECK_LIB([rdma_sockets], [skt_open])])
+       AC_CHECK_LIB([rdma_sockets], [skt_open]) ])
 
 # link lib fuse if building the fuse daemon.
 # we don't want to link libfuse for everything. Just for the marfs_fuse
@@ -196,8 +196,14 @@ AS_IF([test x"$enable_mc" != xno],
 AS_IF([test x"$enable_mc" != xno],
       [AC_CHECK_LIB([ft], [fast_timer_inits])
        AC_CHECK_LIB([rt], [timer_settime])
-       AC_CHECK_LIB([dl], [dlclose])
-       AC_CHECK_LIB([ne], [ne_open], , AC_ERROR([libne is needed for an MC build])) ])
+       AC_CHECK_LIB([dl], [dlclose]) ])
+
+# DAL=MC+RDMA needs libne configured with --enable-sockets={rdma|ip|unix}
+#                         (currently only 'rdma' is supported)
+AS_IF([test x"$enable_mc" = xsockets],
+      [AC_CHECK_LIB([ne], [udal_skt_fd_init], , AC_ERROR([libne was not built with --enable-sockets])) ],
+      [AC_CHECK_LIB([ne], [ne_open], ,          AC_ERROR([libne is needed for an MC build])) ] )
+
 
 
 # automake conditionals 
