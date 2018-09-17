@@ -1142,6 +1142,10 @@ int mc_open(DAL_Context* ctx,
                              impl, MC_CONFIG(ctx)->auth, timing_flags,
                              path_template, mode,
                              MC_CONTEXT(ctx)->start_block, n, e);
+   if(! MC_HANDLE(ctx)) {
+      LOG(LOG_ERR, "Failed to open MC Handle %s\n", path_template);
+      return -1;
+   }
 
    //we need total_blk from ne_handle to allocate stat buffer
    MC_FH(ctx)->total_blk = MC_HANDLE(ctx)->N + MC_HANDLE(ctx)->E;
@@ -1149,8 +1153,7 @@ int mc_open(DAL_Context* ctx,
    //MC_HANDLE(ctx)->repo = MC_FH(ctx)->repo;
    //MC_HANDLE(ctx)->pod_id = &(MC_FH(ctx)->pod_id);
 
-   if (MC_FH(ctx)->timing_stats == NULL)
-   {
+   if (MC_FH(ctx)->timing_stats == NULL) {
       //allocate stat buffer based on total blks from ne_handle
       MC_FH(ctx)->timing_stats_buff_size = (sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
                                             * (MC_FH(ctx)->total_blk)
@@ -1159,10 +1162,6 @@ int mc_open(DAL_Context* ctx,
       memset(MC_FH(ctx)->timing_stats, 0, MC_FH(ctx)->timing_stats_buff_size);
    }
    MC_HANDLE(ctx)->timing_stats = MC_FH(ctx)->timing_stats;
-   if(! MC_HANDLE(ctx)) {
-      LOG(LOG_ERR, "Failed to open MC Handle %s\n", path_template);
-      return -1;
-   }
 
    if(is_put) {
       os->flags |= OSF_WRITING;
