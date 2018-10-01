@@ -930,11 +930,11 @@ int marfs_mknod (const char* path,
 // read/write/close, etc.
 //
 // Fuse will never call open() with O_CREAT or O_TRUNC.  In the O_CREAT
-// case, it will just call maknod() first.  In the O_TRUNC case, it calls
-// truncate.  Either way, these flags are stripped off.  We had a
-// conversation about the fact that mknod() doesn't have access to the
-// open-flags, whereas create() does, but decided mknod() should check
-// RM/WM/RD/WD/TD
+// case, it will just call mknod() first.  In the O_TRUNC case, it calls
+// truncate first.  Either way, these flags are stripped off before
+// anything gets to us.  We had a conversation about the fact that mknod()
+// doesn't have access to the open-flags, whereas create() does, but
+// decided mknod() should just be conservative and check RM/WM/RD/WD/TD.
 //
 // No need to check quotas here, that's also done in mknod.
 //
@@ -1116,7 +1116,7 @@ int marfs_open(const char*         path,
       // Support for pftool N:1, where (potentially) multiple writers are
       // writing different parts of the file.  It's up to the caller to
       // assure that objects are only written to proper offsets.  Caller
-      // took on that risk when they called marfs_open_at_offset().
+      // took on that responsibility when they called marfs_open_at_offset().
       if (fh->flags & FH_Nto1_WRITES) {
 
          LOG(LOG_INFO, "writing N:1\n");
