@@ -149,13 +149,16 @@ extern "C" {
 //        ignore the md_path in the POST xattr, unless its new extra
 //        argument is non-zero.
 //
-// -- 1.9 (no changes to xattr or obj-ID format, but we're introducing RDMA
+// -- 1.9 No changes to xattr or obj-ID format, but we're introducing RDMA
 //        (DAL) to production, which will also co-exist with NFS (DAL).
 //        Changing the object-version number in case we ever might wish we
 //        had done so, in order to hunt for issues.)
+//
+// -- 1.10  Same as 1.9, but after merging rdma to master.  This allows us
+//          to refer to "1.10" and clearly mean after that merge.
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  9
+#define MARFS_CONFIG_MINOR  10
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
