@@ -820,11 +820,15 @@ int mc_config(struct DAL*     dal,
       SEM_INIT(&config->lock, 0, 1);
    }
 
-#ifdef S3_AUTH
+#if S3_AUTH
    // To allow generating per-connection auth-signatures, capture the S3
    // credentials up front, while we have access to the AWS config file
    // (i.e. before de-escalation).  If mc_user is null, skt_auth_install()
    // defaults to SKT_S3_USER.
+   //
+   // NOTE: S3_AUTH is defined during *libne* configuration.  The idea is
+   //    that, if the RMDA server is built to expect S3-authentication,
+   //    then it doesn't make sense for clients to be built without it.
 
    if (is_sockets) {
 
@@ -875,7 +879,7 @@ void mc_deconfig(struct DAL *dal) {
    MC_Config *config = (MC_Config*)dal->global_state;
    WAIT(&config->lock);
 
-#  ifdef S3_AUTH
+#  if S3_AUTH
    if (config->auth)
       skt_auth_free(config->auth);
 #  endif

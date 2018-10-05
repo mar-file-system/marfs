@@ -100,9 +100,9 @@ OF SUCH DAMAGE.
 
 #if USE_MC
 
-#  ifdef S3_AUTH
+#  include "skt_config.h"  // libne configure-time #defines, like S3_AUTH
+#  if S3_AUTH
 #    include <aws4c.h>
-#    define  SOCKETS  /* affects erasure.h */
 #  endif
 #  define DEFAULT_SKT_AUTH_USER  "mcadmin"  /* libne's SKT_S3_USER might diverge */
 

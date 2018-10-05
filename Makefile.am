@@ -46,11 +46,6 @@ if USE_DAL
   AM_CPPFLAGS += -DUSE_DAL=1
 endif
 
-if USE_MC_SOCKETS
-  AM_CPPFLAGS += -DS3_AUTH
-endif
-
-
 if USE_MDAL
   AM_CPPFLAGS += -DUSE_MDAL=1
 endif
@@ -377,7 +372,8 @@ gdb:
 #	@ exec gdb marfs_fuse `ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'`
 
 fuse_pid:
-	ps -elf | grep marfs_fuse | grep $(MARFS_MNT) | grep -v grep | awk '{print $$4}'
+	@ # make turns "$$" into "$".
+	ps -elf | grep marfs_fuse | grep -v grep | egrep "$(MARFS_MNT)\$$" | awk '{print $$4}'
 
 # fusectl filesystem.  Under the fusectl mount-point, each existing
 # connection has a numbered subdirectory.  There's a special file named
@@ -422,7 +418,8 @@ _mnt:
 	$(EXEC) ./marfs_fuse $(FUSE_FLAGS) $(MARFS_MNT) $(LOG) &
 	@ echo "sleeping to give background fuse a chance to start"
 	sleep 1
-	@ ps -elf | grep marfs_fuse | grep $(MARFS_MNT) | grep -v grep | awk '{print $$4}' > $(PID)
+	@ # make turns "$$" into "$".
+	@ ps -elf | grep marfs_fuse | grep -v grep | egrep "$(MARFS_MNT)\$$" | awk '{print $$4}' > $(PID)
 	@ echo "PID: " `cat $(PID)`
 
 mnt: mnt.std
