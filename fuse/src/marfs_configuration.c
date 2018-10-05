@@ -1057,6 +1057,11 @@ static MarFS_Config_Ptr read_configuration_internal() {
     }
     m_repo->name     = strdup( p_repo->name );
     m_repo->name_len = strlen( p_repo->name );
+    if (m_repo->name_len >= MARFS_MAX_REPO_NAME) {
+       // repo name-length is important for parsing xattrs, and recording performance stats
+       LOG( LOG_ERR, "Repo.name '%s' is longer than %d.\n", p_repo->name, MARFS_MAX_REPO_NAME );
+       return NULL;
+    }
 
 
     if (! p_repo->host) {

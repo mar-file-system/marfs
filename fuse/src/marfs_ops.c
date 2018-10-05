@@ -270,8 +270,10 @@ int marfs_flush (const char*        path,
    // It is now possible that we had never opened the stream, this
    // happens in the case of attempting to overwrite a file for which
    // the user does not have write permission. In this case we simply
-   // skip all the operations below and return.
-   if( fh->flags & FH_WRITING && !(os->flags & OSF_OPEN) ) {
+   // skip all the operations below and return.  [Also happens for
+   // a zero-length file, because no calls to marfs_write() means no
+   // opening of the underlying ObjectStream.]
+   if( (fh->flags & FH_WRITING) && !(os->flags & OSF_OPEN) ) {
       LOG(LOG_INFO, "releasing unopened stream.\n");
       EXIT();
       return 0;

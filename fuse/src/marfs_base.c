@@ -461,7 +461,7 @@ int update_pre(MarFS_XattrPre* pre) {
 
    // prepare date-string components
    char           md_ctime_str[MARFS_DATE_STRING_MAX];
-   char          obj_ctime_str[MARFS_DATE_STRING_MAX];
+   char           obj_ctime_str[MARFS_DATE_STRING_MAX];
 
    if (epoch_to_str(md_ctime_str, MARFS_DATE_STRING_MAX, &pre->md_ctime)) {
       LOG(LOG_ERR, "error converting Pre.md_time to string\n");

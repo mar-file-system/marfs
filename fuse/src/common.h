@@ -679,7 +679,7 @@ typedef struct {
    int             total_blk;
    size_t          timing_stats_buff_size;
    char*           timing_stats;
-   char*           repo;
+   char            repo_name[MARFS_MAX_REPO_NAME];    // repo where stats were gathered
 } MarFS_FileHandle;
 
 

@@ -630,12 +630,11 @@ DAL posix_dal = {
 // ===========================================================================
 
 
+#define MC_CONTEXT(CTX) ((MC_Context*)((CTX)->data.ptr))
 #define MC_FH(CTX)      MC_CONTEXT(CTX)->fh
 #define MC_OS(CTX)      (&MC_FH(CTX)->os)
-#define MC_REPO(CTX)    MC_CONTEXT(CTX)->fh->repo
 #define MC_HANDLE(CTX)  MC_CONTEXT(CTX)->mc_handle
 #define MC_CONFIG(CTX)  MC_CONTEXT(CTX)->config
-#define MC_CONTEXT(CTX) ((MC_Context*)((CTX)->data.ptr))
 
 typedef struct mc_context {
    ObjectStream*     os;
@@ -1124,14 +1123,14 @@ int mc_open(DAL_Context* ctx,
                                   | MC_FH(ctx)->info.pre.ns->timing_flags );
 
    int           mode          = (is_put ? NE_WRONLY : NE_RDONLY);
+
    // do the generic cleanup stuff like resetting flags.
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
-   if (MC_FH(ctx)->repo == NULL)
+   if (! MC_FH(ctx)->repo_name[0])
    {
-      //allocate repo
-      MC_FH(ctx)->repo = (char*)malloc(MARFS_MAX_REPO_SIZE);
-      memset(MC_FH(ctx)->repo, 0, MARFS_MAX_REPO_SIZE);
-      memcpy(MC_FH(ctx)->repo, MC_FH(ctx)->info.pre.repo->name, MC_FH(ctx)->info.pre.repo->name_len);
+      //save repo-name associated with statistics
+      memset(MC_FH(ctx)->repo_name, 0, MARFS_MAX_REPO_NAME);
+      memcpy(MC_FH(ctx)->repo_name, MC_FH(ctx)->info.pre.repo->name, MC_FH(ctx)->info.pre.repo->name_len);
 
       //find the number of time stats to collect
       MC_FH(ctx)->tot_stats = find_stats_from_tflags(timing_flags);
@@ -1154,7 +1153,7 @@ int mc_open(DAL_Context* ctx,
    //we need total_blk from ne_handle to allocate stat buffer
    MC_FH(ctx)->total_blk = MC_HANDLE(ctx)->N + MC_HANDLE(ctx)->E;
    MC_FH(ctx)->pod_id = MC_CONTEXT(ctx)->pod;
-   //MC_HANDLE(ctx)->repo = MC_FH(ctx)->repo;
+   //MC_HANDLE(ctx)->repo_name = MC_FH(ctx)->repo_name;
    //MC_HANDLE(ctx)->pod_id = &(MC_FH(ctx)->pod_id);
 
    if (MC_FH(ctx)->timing_stats == NULL) {
@@ -1329,8 +1328,8 @@ int mc_sync(DAL_Context* ctx) {
    }
    else if(error_pattern < 0) {
 
-      // close the stream, a failed sync renders the ne_handle
-      // invalid calling mc_close should prevent marfs from ever
+      // close the stream.  a failed sync renders the ne_handle
+      // invalid.  calling mc_close should prevent marfs from ever
       // trying to use it again.
       mc_close(ctx);
       os->flags |= OSF_ERRORS;
