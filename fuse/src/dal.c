@@ -1105,11 +1105,11 @@ int find_stats_from_tflags(int tflags)
 // This used to defer opens, since that is now done in MarFS proper,
 // we no longer need to do it here.
 int mc_open(DAL_Context* ctx,
-            int is_put,
-            size_t chunk_offset,
-            size_t content_length,
-            uint8_t preserve_write_count,
-            uint16_t timeout) {
+            int          is_put,
+            size_t       chunk_offset,
+            size_t       content_length,
+            uint8_t      preserve_write_count,
+            uint16_t     timeout) {
    ENTRY();
 
    ObjectStream* os            = MC_OS(ctx);
@@ -1132,7 +1132,7 @@ int mc_open(DAL_Context* ctx,
       memset(MC_FH(ctx)->repo_name, 0, MARFS_MAX_REPO_NAME);
       memcpy(MC_FH(ctx)->repo_name, MC_FH(ctx)->info.pre.repo->name, MC_FH(ctx)->info.pre.repo->name_len);
 
-      //find the number of time stats to collect
+      //find the number of timing-stats to collect
       MC_FH(ctx)->tot_stats = find_stats_from_tflags(timing_flags);
 
       //allocate pointers include 2 characters for name of stat
@@ -1150,21 +1150,23 @@ int mc_open(DAL_Context* ctx,
       return -1;
    }
 
-   //we need total_blk from ne_handle to allocate stat buffer
-   MC_FH(ctx)->total_blk = MC_HANDLE(ctx)->N + MC_HANDLE(ctx)->E;
-   MC_FH(ctx)->pod_id = MC_CONTEXT(ctx)->pod;
-   //MC_HANDLE(ctx)->repo_name = MC_FH(ctx)->repo_name;
-   //MC_HANDLE(ctx)->pod_id = &(MC_FH(ctx)->pod_id);
+   if (MC_FH(ctx)->tot_stats) {
+      //we need total_blk from ne_handle to allocate stat buffer
+      MC_FH(ctx)->total_blk = MC_HANDLE(ctx)->N + MC_HANDLE(ctx)->E;
+      MC_FH(ctx)->pod_id = MC_CONTEXT(ctx)->pod;
+      //MC_HANDLE(ctx)->repo_name = MC_FH(ctx)->repo_name;
+      //MC_HANDLE(ctx)->pod_id = &(MC_FH(ctx)->pod_id);
 
-   if (MC_FH(ctx)->timing_stats == NULL) {
-      //allocate stat buffer based on total blks from ne_handle
-      MC_FH(ctx)->timing_stats_buff_size = (sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
-                                            * (MC_FH(ctx)->total_blk)
-                                            + 3 * (MC_FH(ctx)->tot_stats));
-      MC_FH(ctx)->timing_stats = (char*)malloc(MC_FH(ctx)->timing_stats_buff_size);
-      memset(MC_FH(ctx)->timing_stats, 0, MC_FH(ctx)->timing_stats_buff_size);
+      if (MC_FH(ctx)->timing_stats == NULL) {
+         //allocate stat buffer based on total blks from ne_handle
+         MC_FH(ctx)->timing_stats_buff_size = (sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
+                                               * (MC_FH(ctx)->total_blk)
+                                               + 3 * (MC_FH(ctx)->tot_stats));
+         MC_FH(ctx)->timing_stats = (char*)malloc(MC_FH(ctx)->timing_stats_buff_size);
+         memset(MC_FH(ctx)->timing_stats, 0, MC_FH(ctx)->timing_stats_buff_size);
+      }
+      MC_HANDLE(ctx)->timing_stats = MC_FH(ctx)->timing_stats;
    }
-   MC_HANDLE(ctx)->timing_stats = MC_FH(ctx)->timing_stats;
 
    if(is_put) {
       os->flags |= OSF_WRITING;

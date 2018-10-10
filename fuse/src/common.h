@@ -672,8 +672,8 @@ typedef struct {
 
    FHFlagType      flags;
    
+   int             tot_stats;    // number of timing-stat flag-bits asserted
    int             tot_pods;
-   int             tot_stats;
    int             pod_id;
    int             data_ready;
    int             total_blk;
