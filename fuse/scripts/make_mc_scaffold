@@ -1,17 +1,33 @@
 #!/bin/bash
 
+# Example:
+#
+# on FTA run this:
+#
+#   fuse/scripts/make_mc_scaffold -t sockets-fta -d /ssd -r storage -p 1 -b 2 -c 2 -s 4096
+#
+# See comments above the functions, below, to see what this will do.
+
+
 function usage {
     echo "Usage:"
     printf "$0  options\n"
-    printf "     -t  {mount|scatter|sockets}\n"
-    printf "     -r  <repo-name>\n"
-    printf "     -d  <containing-directory>\n"
-    printf "     -p  <num-pods>\n"
-    printf "     -b  <num-blocks>\n"
-    printf "     -c  <num-capacity-units>\n"
-    printf "     -s    <scatter-width>\n"
+    printf "     -t  {mount|scatter|sockets-fta|sockets-remote}\n"
+    printf "     -d  <containing_directory>\n"
+    printf "     -r  <repo_name>\n"
+    printf "     -p  <num_pods>\n"
+    printf "     -b  <num_blocks>\n"
+    printf "   [ -B  <block_offset> ]  default=0\n"
+    printf "     -c  <num_capacity_units>\n"
+    printf "     -l  <cap_link_dest>\n"
+    printf "   [ -L  <cap_link_offset> ]  default=0\n"
+    printf "     -s  <scatter_width>\n"
+    printf "\n"
+    printf "     -N  <storage_host_count>\n"
+    printf "   [ -H  <storage_host_prefix> ]  default=\"storage-\"\n"
+    printf "\n"
     printf "   [ -D  <remote_containing_dir> ]\n"
-    printf "   [ -O  <owner> ]\n"
+    printf "   [ -o  <owner> ]   (currently ignored)\n"
     printf "   [ -n ]    dry run  (ONLY APPLIES TO scatter/sockets OPERATIONS !)\n"
     echo
     echo "-- The \"mount\" option creates the mount points only."
@@ -19,19 +35,44 @@ function usage {
     echo "-- Once the file systems have been mounted, use the \"scatter\" option"
     echo "   to create the scatter trees under each capacity unit."
     echo
-    echo "   builds the tree: <containing-directory>/<repo-name>/pod[0..<num-pods>-1]/block[0..<num-blocks>-1]/cap[0..<num-capacity-units>-1]/scatter[0..<scatter-width>-1]"
+    echo "   builds the tree: <containing_directory>/<repo_name>/pod[0..<num_pods>-1]/block[<block_offset>..<block_offset>+<num_blocks>-1]/cap[0..<num_capacity_units>-1]/scatter[0..<scatter_width>-1]"
     echo
-    echo "-- The \"sockets\" option is similar to the scatter option,"
-    echo "   but builds directories named 'sockets[0..<scatter-width>-1]',"
-    echo "   rather than 'scatter[...]'"
+    echo "-- The \"sockets-fta\" option is similar to the scatter option,"
+    echo "   but builds directories named 'sockets[0..<scatter_width>-1]',"
+    echo "   rather than 'scatter[...]'.  More importantly, it builds them"
+    echo "   remotely, rather than through NFS.  In the process of doing that,"
+    echo "   it will invoke 'sockets-remote' on each of the remote hosts."
+    echo
+    echo
+    echo "-- 'sockets-remote' is invoked recursively by sockets-fta."
+    echo     "You probably don't want to invoke this option directly."
+    echo
+    echo "-- the block-offset (-B) is used internally by sockets-fta,"
+    echo "   when invoking sockets-remote.  It allows remote-side generation of"
+    echo "   the directory-tree, across a set of hosts.  For example:"
+    echo 
+    echo "     $ for H in \`seq 1 6\`; do"
+    echo "          HOST=192.168.0.$H;"
+    echo "          scp -rp make_mc_scaffold $DST:\~"
+    echo "          on_s \~/make_mc_scaffold.new -t sockets-remote -d /ssd -r storage -p 1 -b 2 -B $(( (H-1) *2 )) -c 1 -s 4096 &"
+    echo "       done"
+    echo "       wait"
+    echo
+    echo "-- cap_link_dest (-l), if provided, means that  .../capN should be a symlink"
+    echo "   capN -> <cap_link_destination>M"
+    echo "   where <M> = <cap_link_offset> + <N>   [see '-L']"
+    echo
 }
 
 
+boffset=0
+coffset=0
 dry_run=0
 err=0
+storage_host="storage-"
 
 # --- parse command-line
-OPTS="t:r:p:b:c:s:d:D:o:n"
+OPTS="t:r:p:b:B:c:l:L:s:d:D:o:H:N:n"
 getopts $OPTS ARG
 RETVAL=$?
 
@@ -45,12 +86,21 @@ while (( ! $RETVAL )); do
 
         (p) npods=$(( OPTARG -1 )) ;;
         (b) nblocks=$(( OPTARG -1 )) ;;
+        # in the case of building remote filesystems, this lets
+        # each one compute its own range of block%d names to generate.
+        (B) boffset=$(( OPTARG )) ;;
+
         (c) ncaps=$(( OPTARG -1 )) ;;
+        (l) cap_link_dest=$OPTARG ;;
+        (L) coffset=$(( OPTARG )) ;;
         (s) nscatter=$(( OPTARG -1 )) ;;
+
+        (H) storage_host=$OPTARG ;;
+        (N) nstorage=$(( OPTARG )) ;;
 
         (d) containing_dir=$OPTARG ;;
         (D) r_containing_dir=$OPTARG ;;
-        (o) owner=$OPTARG ;;
+        (O) owner=$OPTARG ;;  # letter "O"
         (n) dry_run=1 ;;
 
         (?) echo "ERROR"; err=1 ;;
@@ -94,33 +144,260 @@ elif [ -z "$containing_dir" ]; then
     echo "containing_dir"
     usage
     exit 1
+
 # elif [ -z "$r_containing_dir" ]; then
 #     echo "r_containing_dir"
 #     usage
 #     exit 1
 # elif [ -z "$owner" ]; then
 #    echo "owner"
-#     usage
+#    usage
 #    exit 1
-elif ! [ -d $containing_dir ] ; then
-    echo "containing dir does not exist or is not a directory"
-    exit 1
-elif [ -e $containing_dir/$repo_name ] && ! [ -d $containing_dir/$repo_name ]; then
-    echo "repo-dir exists but is not a directory"
-    exit 1
+
 fi
 
 
-echo "op         = $op_type"
-echo "repo_name  = $repo_name"
-echo "pods       = [0..$npods]"
-echo "blocks     = [0..$nblocks]"
-echo "caps       = [0..$ncaps]"
-echo "scatter    = [0..$nscatter]"
-echo "cont_dir   = $containing_dir"
-echo "r_cont_dir = $r_containing_dir"
-echo "own        = $owner"
-echo "dry_run    = $dry_run"
+if [ "$op_type" == "sockets-fta" ]; then
+    if [ -z "$nstorage" ]; then
+        echo "need to provide number of storage-nodes"
+        exit 1
+    fi
+else
+    if ! [ -d $containing_dir ] ; then
+        echo "containing dir does not exist or is not a directory"
+        exit 1
+    elif [ -e $containing_dir/$repo_name ] && ! [ -d $containing_dir/$repo_name ]; then
+        echo "repo-dir exists but is not a directory"
+        exit 1
+    fi
+fi
+
+
+echo "op           = $op_type"
+echo "repo_name    = $repo_name"
+echo "pods         = [0..$npods]"
+echo "blocks       = [$boffset..$((boffset + nblocks))]"
+
+echo "caps         = [0..$ncaps]"
+if [ -n "$cap_link_dest" ]; then
+    printf "                  ->  $cap_link_dest\n" $boffset 0
+    printf "                  ->  $cap_link_dest\n" $(( boffset + nblocks)) $ncaps
+fi
+
+echo "scatter      = [0..$nscatter]"
+echo "cont_dir     = $containing_dir"
+echo "r_cont_dir   = $r_containing_dir"
+echo "storage_host = $storage_host%03d"
+echo "own          = $owner"
+echo "dry_run      = $dry_run"
+echo
+echo
+
+
+
+
+LST=$(seq 1 $nstorage | xargs -n1 printf "%s%03d " $storage_host)
+
+# run on one host
+# usage: on1 <host> <cmd> ...
+function on1() {
+    HOST=`printf "%s%03d" $storage_host $1`
+    shift
+    pdsh -R ssh -w $HOST "($@) 2>&1 | nl -n rz" | sort
+}
+
+# run on all hosts in $LST
+# usage: on_s <cmd> ...
+function on_s() {
+    pdsh -R ssh -w `echo $LST | tr ' ' ','` "($@) 2>&1 | nl -n rz" | sort
+}
+
+
+function to_s() {
+    for DST in $LST; do
+        echo -n -e "--- to $DST: "
+
+        COMMA=
+        for FILE in "$@"; do
+            echo -n -e "$COMMA $FILE"
+            scp -rp $FILE $DST:/$USER &
+            COMMA=","
+        done
+        echo
+    done
+    wait
+}
+
+
+# example:
+#
+# On some storage-cluster, 6 storage nodes each have SSD-backed ZFS pools named /ssd/vol[1-4]
+#
+# (1) If we put two blocks on each, with two cap-units per block, we need to divide up the four zpools
+#     so that any block+cap combination will go to a unique zpool (since the object files across the
+#     blocks all have the same name).
+# 
+#     So, we first create some support dirs:  /ssd/cap_links/block<B>_cap<C> -> /ssd/vol<V>
+#
+#         where <B> ranges [4-5]  (e.g)
+#               <C> ranges [0-1]
+#         and   <V> ranges [1-4]
+#
+#     such as:
+#
+#         /ssd/cap_links/block4_cap0  ->  /ssd/vol1
+#         /ssd/cap_links/block4_cap1  ->  /ssd/vol2
+#         /ssd/cap_links/block5_cap0  ->  /ssd/vol3
+#         /ssd/cap_links/block5_cap1  ->  /ssd/vol4
+#    
+#    
+
+    # --- use '-t sockets-fta' to run this on an FTA
+    ZFS_BASE=$containing_dir/vol
+    CAP_LINKS=$containing_dir/cap_links
+    function make_cap_links() {
+        for H in `seq 1 $nstorage`; do
+            on1 $H  rm -rf $CAP_LINKS
+            on1 $H  mkdir -p $CAP_LINKS
+            on1 $H  "for i in \`seq 1 4\`; do ln -s $ZFS_BASE\$i $CAP_LINKS/block\$(( $(( (H-1) *2 )) + ((i-1)/2) ))_cap\$(( (i-1) %2 )); done"
+        done
+    }
+    
+#    
+#    
+#    
+#    $ make_cap_links
+#    $ on_s ls -l /ssd/cap_links
+#    storage-001: 000001   total 0
+#    storage-001: 000002   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block0_cap0 -> /ssd/vol1
+#    storage-001: 000003   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block0_cap1 -> /ssd/vol2
+#    storage-001: 000004   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block1_cap0 -> /ssd/vol3
+#    storage-001: 000005   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block1_cap1 -> /ssd/vol4
+#    storage-002: 000001   total 0
+#    storage-002: 000002   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block2_cap0 -> /ssd/vol1
+#    storage-002: 000003   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block2_cap1 -> /ssd/vol2
+#    storage-002: 000004   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block3_cap0 -> /ssd/vol3
+#    storage-002: 000005   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block3_cap1 -> /ssd/vol4
+#    storage-003: 000001   total 0
+#    storage-003: 000002   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block4_cap0 -> /ssd/vol1
+#    storage-003: 000003   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block4_cap1 -> /ssd/vol2
+#    storage-003: 000004   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block5_cap0 -> /ssd/vol3
+#    storage-003: 000005   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block5_cap1 -> /ssd/vol4
+#    storage-004: 000001   total 0
+#    storage-004: 000002   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block6_cap0 -> /ssd/vol1
+#    storage-004: 000003   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block6_cap1 -> /ssd/vol2
+#    storage-004: 000004   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block7_cap0 -> /ssd/vol3
+#    storage-004: 000005   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block7_cap1 -> /ssd/vol4
+#    storage-005: 000001   total 0
+#    storage-005: 000002   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block8_cap0 -> /ssd/vol1
+#    storage-005: 000003   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block8_cap1 -> /ssd/vol2
+#    storage-005: 000004   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block9_cap0 -> /ssd/vol3
+#    storage-005: 000005   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block9_cap1 -> /ssd/vol4
+#    storage-006: 000001   total 0
+#    storage-006: 000002   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block10_cap0 -> /ssd/vol1
+#    storage-006: 000003   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block10_cap1 -> /ssd/vol2
+#    storage-006: 000004   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block11_cap0 -> /ssd/vol3
+#    storage-006: 000005   lrwxrwxrwx 1 root root 9 Feb  9 15:43 block11_cap1 -> /ssd/vol4
+
+
+
+
+
+
+
+
+# (2) Now, we can create the symlinks from  blah/pod%d/block%d/cap%d  into the symlinks
+#     we created above, so that every block/cap will go to a unique block/cap zpool.
+#     We also make $nscatter scatter-dirs, under each cap-dir.
+
+
+
+#    # --- use '-t sockets-fta' to run this on an FTA
+     SCRIPT=`readlink -f $0`
+     DIRNAME=`dirname $SCRIPT`
+     BASENAME=`basename $SCRIPT`
+
+    function make_storage_tree() {
+        to_s $SCRIPT
+
+        for H in `seq 1 $nstorage`; do
+            on1 $H  rm -rf /ssd/storage
+            on1 $H  ./$BASENAME -t sockets-remote -d $containing_dir -r $repo_name -p $(( npods +1 )) -b $(( nblocks +1 )) -B $(( (H-1) *2 )) -c $(( ncaps +1 )) -l $CAP_LINKS/block%d_cap%d -L $coffset -s $(( nscatter +1 )) 2>&1 &
+        done > foo.scaffold
+        wait
+    }
+
+
+
+#    $ make_storage_tree
+#
+#    # Just show the links, not the (many) scatter-dirs
+#    $ on_s 'find /ssd -type l | xargs ls -l'
+#    storage-001: 000001   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block0_cap0 -> /ssd/vol1
+#    storage-001: 000002   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block0_cap1 -> /ssd/vol2
+#    storage-001: 000003   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block1_cap0 -> /ssd/vol3
+#    storage-001: 000004   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block1_cap1 -> /ssd/vol4
+#    storage-001: 000005   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block0/cap0 -> /ssd/cap_links/block0_cap0
+#    storage-001: 000006   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block0/cap1 -> /ssd/cap_links/block0_cap1
+#    storage-001: 000007   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block1/cap0 -> /ssd/cap_links/block1_cap0
+#    storage-001: 000008   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block1/cap1 -> /ssd/cap_links/block1_cap1
+#    storage-002: 000001   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block2_cap0 -> /ssd/vol1
+#    storage-002: 000002   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block2_cap1 -> /ssd/vol2
+#    storage-002: 000003   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block3_cap0 -> /ssd/vol3
+#    storage-002: 000004   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block3_cap1 -> /ssd/vol4
+#    storage-002: 000005   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block2/cap0 -> /ssd/cap_links/block2_cap0
+#    storage-002: 000006   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block2/cap1 -> /ssd/cap_links/block2_cap1
+#    storage-002: 000007   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block3/cap0 -> /ssd/cap_links/block3_cap0
+#    storage-002: 000008   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block3/cap1 -> /ssd/cap_links/block3_cap1
+#    storage-003: 000001   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block4_cap0 -> /ssd/vol1
+#    storage-003: 000002   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block4_cap1 -> /ssd/vol2
+#    storage-003: 000003   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block5_cap0 -> /ssd/vol3
+#    storage-003: 000004   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block5_cap1 -> /ssd/vol4
+#    storage-003: 000005   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block4/cap0 -> /ssd/cap_links/block4_cap0
+#    storage-003: 000006   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block4/cap1 -> /ssd/cap_links/block4_cap1
+#    storage-003: 000007   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block5/cap0 -> /ssd/cap_links/block5_cap0
+#    storage-003: 000008   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block5/cap1 -> /ssd/cap_links/block5_cap1
+#    storage-004: 000001   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block6_cap0 -> /ssd/vol1
+#    storage-004: 000002   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block6_cap1 -> /ssd/vol2
+#    storage-004: 000003   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block7_cap0 -> /ssd/vol3
+#    storage-004: 000004   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block7_cap1 -> /ssd/vol4
+#    storage-004: 000005   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block6/cap0 -> /ssd/cap_links/block6_cap0
+#    storage-004: 000006   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block6/cap1 -> /ssd/cap_links/block6_cap1
+#    storage-004: 000007   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block7/cap0 -> /ssd/cap_links/block7_cap0
+#    storage-004: 000008   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block7/cap1 -> /ssd/cap_links/block7_cap1
+#    storage-005: 000001   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block8_cap0 -> /ssd/vol1
+#    storage-005: 000002   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block8_cap1 -> /ssd/vol2
+#    storage-005: 000003   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block9_cap0 -> /ssd/vol3
+#    storage-005: 000004   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block9_cap1 -> /ssd/vol4
+#    storage-005: 000005   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block8/cap0 -> /ssd/cap_links/block8_cap0
+#    storage-005: 000006   lrwxrwxrwx 1 root root 31 Feb  9 17:13 /ssd/storage/pod0/block8/cap1 -> /ssd/cap_links/block8_cap1
+#    storage-005: 000007   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block9/cap0 -> /ssd/cap_links/block9_cap0
+#    storage-005: 000008   lrwxrwxrwx 1 root root 31 Feb  9 17:14 /ssd/storage/pod0/block9/cap1 -> /ssd/cap_links/block9_cap1
+#    storage-006: 000001   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block10_cap0 -> /ssd/vol1
+#    storage-006: 000002   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block10_cap1 -> /ssd/vol2
+#    storage-006: 000003   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block11_cap0 -> /ssd/vol3
+#    storage-006: 000004   lrwxrwxrwx 1 root root  9 Feb  9 15:43 /ssd/cap_links/block11_cap1 -> /ssd/vol4
+#    storage-006: 000005   lrwxrwxrwx 1 root root 32 Feb  9 17:13 /ssd/storage/pod0/block10/cap0 -> /ssd/cap_links/block10_cap0
+#    storage-006: 000006   lrwxrwxrwx 1 root root 32 Feb  9 17:13 /ssd/storage/pod0/block10/cap1 -> /ssd/cap_links/block10_cap1
+#    storage-006: 000007   lrwxrwxrwx 1 root root 32 Feb  9 17:14 /ssd/storage/pod0/block11/cap0 -> /ssd/cap_links/block11_cap0
+#    storage-006: 000008   lrwxrwxrwx 1 root root 32 Feb  9 17:14 /ssd/storage/pod0/block11/cap1 -> /ssd/cap_links/block11_cap1
+
+
+
+
+
+
+
+
+
+# (3) make a test dir:
+
+    # --- use '-t sockets-fta' to run this on an FTA
+
+    function make_test_dir() {
+        on_s "ls -d $containing_dir/$repo_name/pod0/block*/cap0 | xargs -L 1 -I% mkdir %/sockets_test"
+    }
+
 
 
 
@@ -141,21 +418,56 @@ function make-mount-points {
 }
 
 
-# This makes the server-side directories through the NFS paths to their parents
+# This makes the server-side directories, from the client, through the NFS paths to their parents
+#
+# UPDATE: If run on the server, it can build the entire server-side structure.  (See usage)
+
 function make-scatter {
     SUBDIR=$1
+
     for p in `seq 0 $npods`
     do
-        for b in `seq 0 $nblocks`
+
+        pod=$containing_dir/$repo_name/pod$p
+        printf "making %-14s $pod\n" pod${p}:
+        mkdir -p $pod || exit 1
+        chmod 703 $pod || exit 1
+        [ -n "$owner" ] && (chown ${owner}:${owner} $pod || exit 1)
+
+        for b in `seq $boffset $(( boffset + nblocks ))`
         do
+
+            blk=$pod/block$b
+            printf "making %-14s $blk\n" block${b}:
+            mkdir -p $blk || exit 1
+            chmod 703 $blk || exit 1
+            [ -n "$owner" ] && (chown ${owner}:${owner} $blk || exit 1)
+
             for c in `seq 0 $ncaps`
             do
+
+                cap=$blk/cap$c
+                if [ -z "$cap_link_dest" ]; then
+                    printf "making %-14s $cap\n" cap${c}:
+                    mkdir -p $cap || exit 1
+                    chmod 703 $cap || exit 1
+                    [ -n "$owner" ] && (chown ${owner}:${owner} $cap || exit 1)
+                else
+                    # cap_link="$cap_link_dest$((coffset + $c))"
+                    cap_link=`printf "$cap_link_dest" $b $c`
+                    printf "making %-14s $cap -> $cap_link\n" cap${c}:
+                    ln -s $cap_link $cap || exit 1
+                    [ -n "$owner" ] && (chown -h ${owner}:${owner} $cap || exit 1)
+                fi
+
                 for s in `seq 0 $nscatter`
                 do
-                    path=$containing_dir/$repo_name/pod$p/block$b/cap$c/$SUBDIR$s
-                    echo "making: $path"
-                    mkdir $path || exit 1
-                    chmod 703 $path || exit 1
+                    sub=$cap/$SUBDIR$s
+                    printf "making %-14s $sub\n" $SUBDIR${s}:
+                    mkdir -p $sub || exit 1
+                    chmod 703 $sub || exit 1
+                    [ -n "$owner" ] && (chown ${owner}:${owner} $sub || exit 1)
+
                 done
             done
         done
@@ -263,8 +575,8 @@ function make-scatter2 {
 
                 # --- one ssh call to chown <nscatter> subdirs on remote-host
                 if [ -n "$OWNER" ]; then
-                    echo $DIR0 "..." $DIRN | xargs ssh $MOUNT_HOST echo "[$MOUNT_HOST]"  chown mcadmin
-                    (( dry_run )) || (echo "${DIRS[@]}" | xargs  ssh $MOUNT_HOST     chown mcadmin)
+                    echo $DIR0 "..." $DIRN | xargs ssh $MOUNT_HOST echo "[$MOUNT_HOST]"  chown $OWNER
+                    (( dry_run )) || (echo "${DIRS[@]}" | xargs  ssh $MOUNT_HOST     chown $OWNER)
                 fi
 
                 echo
@@ -275,16 +587,42 @@ function make-scatter2 {
 
 
 case $op_type in
+
+    sockets-fta)
+        # this is done on a single FTA
+        echo
+        echo "--- making cap-links"
+        make_cap_links
+        on_s "ls -l $CAP_LINKS"
+
+        echo
+        echo "--- building sockets%d sub-dirs"
+        make_storage_tree
+        on_s "find $containing_dir -type l | xargs ls -l"
+
+        echo
+        echo "--- making sockets_test dirs"
+        make_test_dir
+        on_s "find $containing_dir -type l | xargs ls -l"
+        ;;
+
+    sockets-remote)
+        # This is done on each of the remote (storage) nodes
+        # NOTE: Don't call this directly. It is invoked by "sockets-fta"
+        make-scatter sockets $owner
+        ;;
+
     mount)
+        # for NFS DAL
         make-mount-points
         ;;
-    sockets)
-        make-scatter2 sockets
-        ;;
+
     scatter)
+        # for NFS DAL (?)
         # make-scatter scatter
         make-scatter2 scatter $owner
         ;;
+
     *)
         usage
         ;;

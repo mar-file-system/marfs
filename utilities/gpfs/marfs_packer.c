@@ -926,10 +926,10 @@ int get_inodes(const char *fnameP, struct marfs_inode *inode,
                   ret = str_2_pre(&pre, valueP, NULL);
                   object=strdup(valueP);
                }
-               // else if post xattr - conver to post structure
+               // else if post xattr - convert to post structure
                else if (strcmp(nameP, "user.marfs_post") == 0){
                   //MarFS_XattrPost post;
-                  rc = str_2_post(&post, valueP, 1);
+                  rc = str_2_post(&post, valueP, 1, 1); /* do we really want the post.md_path init'ed here? */
 
                   // Check if this is a relevant object for packing 
                   if (post.flags != POST_TRASH && iattrP->ia_size > 0 && 

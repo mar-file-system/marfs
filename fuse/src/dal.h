@@ -99,40 +99,67 @@ OF SUCH DAMAGE.
 #include <stdio.h>
 
 #if USE_MC
-#include "marfs_base.h"  // MARFS_ constants
-#include "marfs_locks.h" // SEM_T
+
+#  include "skt_config.h"  // libne configure-time #defines, like S3_AUTH
+#  if S3_AUTH
+#    include <aws4c.h>
+#  endif
+#  define DEFAULT_SKT_AUTH_USER  "mcadmin"  /* libne's SKT_S3_USER might diverge */
+
+#  include "marfs_base.h"  // MARFS_ constants
+#  include "marfs_locks.h" // SEM_T
+#  include "erasure.h"     // NEPathManip
 
 // The mc path will be the host field of the repo plus an object id.
 // We need a little extra room to account for numbers that will get
 // filled in to create the path template, 128 characters should be
 // more than enough.
-#define MC_MAX_PATH_LEN        (MARFS_MAX_OBJID_SIZE+MARFS_MAX_HOST_SIZE+128)
-#define MC_MAX_LOG_LEN         (MC_MAX_PATH_LEN+512)
+#  define MC_MAX_PATH_LEN        (MARFS_MAX_OBJID_SIZE+MARFS_MAX_HOST_SIZE+128)
+#  define MC_MAX_LOG_LEN         (MC_MAX_PATH_LEN+512)
 
 // The log format is:
 // <object-path-template>\t<n>\t<e>\t<start-block>\t<error-pattern>\t<repo-name>\t<pod>\t<capacity-unit>\t\n
-#define MC_DEGRADED_LOG_FORMAT "%s\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t\n"
-#define MC_LOG_SCATTER_WIDTH   400
+#  define MC_DEGRADED_LOG_FORMAT "%s\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t\n"
+#  define MC_LOG_SCATTER_WIDTH   400
 
 #endif // USE_MC
 
-#  ifdef __cplusplus
+
+
+
+
+#ifdef __cplusplus
 extern "C" {
-#  endif
+#endif
+
 
 #if USE_MC
+
 // Need to export the mc_config struct here for the rebuild utility to
 // know how many pods and capacity units are in each repo when
 // generating statistics about failures.
 typedef struct mc_config {
-   unsigned int n;
-   unsigned int e;
-   unsigned int num_pods;
-   unsigned int num_cap;
-   unsigned int scatter_width;
-   char        *degraded_log_path;
-   int          degraded_log_fd;
-   SEM_T        lock;
+   int           is_sockets;             // MC-sockets DAL impl?
+   SnprintfFunc  snprintf;               // for libne functions
+ 
+   unsigned int  n;
+   unsigned int  e;
+   unsigned int  num_pods;
+   unsigned int  num_cap;
+   unsigned int  scatter_width;
+   char         *degraded_log_path;
+   int           degraded_log_fd;
+   SEM_T         lock;
+
+   // fields only used for the MC "sockets" DAL variant
+   unsigned int  host_offset;            // host%d  for host 0
+   unsigned int  host_count;
+   unsigned int  blocks_per_host;
+   unsigned int  block_offset;           // .../block%d/  for block 0
+   unsigned int  global_block_numbering; // increment across hosts? (in pod)
+   unsigned int  pod_offset;             // .../pod%d/  for pod 0
+   SktAuth       auth;                   // server auth (awsKeyID, awsKey)
+
 } MC_Config;
 
 #endif // USE_MC
@@ -150,7 +177,7 @@ typedef struct mc_config {
 // There is also global-state in each DAL struct (not to be confused with
 // DAL_Context).  This can be initialized (if needed) in dal_ctx_init().
 // It will initially be NULL.  If desired, one could use dal_ctx_init()
-// to associate individual contexts to have a link to the global state.
+// to give individual contexts a link to the global state.
 //
 // The MarFS calls to the DAL implementation functions will not touch the
 // contents of the Context, except that we call init_dal_context() when
@@ -203,16 +230,18 @@ struct DAL;
 // DAL copy, when it is being installed in a repo, during reading of the
 // MarFS configuration.  The options in the config file are generic, to
 // allow options to be provided to arbitrary DAL implementations without a
-// need for code-changes.  The vector of options are dynamically allocated.
-// You can store the ptr (e.g. in DAL.global_state) if you want to keep
-// them.  Otherwise, you should free() them.  (See default_dal_config().)
+// need for code-changes in the configuration parser.  The vector of
+// options <opts>, and each option, are dynamically allocated.  You can
+// store the vector (e.g. in DAL.global_state) if you want to keep the
+// options.  Otherwise, you should free() it/them.  (See
+// default_dal_config().)
 
 typedef  int     (*dal_config) (struct DAL*     dal,
                                 xDALConfigOpt** opts,
                                 size_t          opt_count);
 
 
-// used to check whether an MDAL uses the default-config, so that we can
+// used to check whether an DAL uses the default-config, so that we can
 // reliably print out the options with which it was configured, for
 // diagnostics.
 extern int   default_dal_config(struct DAL*     dal,
@@ -255,7 +284,7 @@ typedef  int     (*dal_ctx_destroy)(DAL_Context* ctx, struct DAL* dal);
 //
 // Additionally the implementation must guard itself against OS
 // structures that were previously used and have the OSF_CLOSED flag
-// Asserted. In the abscence of OSF_CLOSED, any other flags that are
+// asserted.  In the absence of OSF_CLOSED, any other flags that are
 // asserted (with the exception of OSF_RLOCK_INIT) should be
 // considered an error and open should fail with errno=EBADF. If given
 // an object stream with the OSF_CLOSED flag then it is also the
@@ -284,7 +313,7 @@ typedef int      (*dal_put)  (DAL_Context*  ctx,
                               const char*   buf,
                               size_t        size);
 
-// Read from an object stream begining at the offset supplied to
+// Read from an object stream beginning at the offset supplied to
 // ->open().
 //
 // Returns the number of bytes read, or zero to indicate the end of
@@ -308,7 +337,7 @@ typedef ssize_t  (*dal_get)  (DAL_Context*  ctx,
 typedef int      (*dal_sync) (DAL_Context*  ctx);
 
 // Abort an open object stream. This means we are canceling any
-// read/write operations. This is only every called when there is
+// read/write operations. This is only ever called when there is
 // nothing yet written to the stream, but theoretically it should be
 // able to roll back any data that has been written and close the
 // stream without creating a persisten object.
@@ -369,16 +398,15 @@ int  install_DAL(DAL* dal);
 DAL* get_DAL(const char* name);
 
 
-
-
 // exported for building custom DAL
 int     default_dal_ctx_init   (DAL_Context* ctx, DAL* dal, void* fh);
 int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal);
 
 
-
-#  ifdef __cplusplus
+#ifdef __cplusplus
 }
-#  endif
-
 #endif
+
+
+
+#endif  // _MARFS_DAL_H

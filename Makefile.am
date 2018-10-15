@@ -7,42 +7,51 @@
 # install-dir.  Thus, you need to build with '--prefix=' a destination
 # that will also exist at run-time, but you no longer need the PA2X
 # install at run-time.
+
 AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
 	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
 	      -DDATAPARSE -DBUILD_INC_DIR=@includedir@ -I$(PARSE_DIR)
 
-AM_CFLAGS =
+# automake requires '=' before '+=', even for these built-in vars
+AM_CFLAGS  =
 AM_LDFLAGS =
 LDADD =
 
-if GPROF
-AM_CFLAGS  += -pg
-AM_LDFLAGS += -pg
+if DEBUG
+  AM_CFLAGS += -g -O0
+else
+  AM_CFLAGS += -g -O3
 endif
 
+if GPROF
+  AM_CFLAGS  += -pg
+  AM_LDFLAGS += -pg
+endif
+
+# DEBUG>1  turn on S3 transaction logging (only affects libcurl interactions)
 if DEBUG
-# Configure has -g enabled by default
-AM_CPPFLAGS += -DDEBUG=2
+  AM_CPPFLAGS += -DDEBUG=2
+  AM_CPPFLAGS += -fstack-protector-all -fstack-check
 endif
 
 if USE_SYSLOG
-AM_CPPFLAGS += -DUSE_SYSLOG
+  AM_CPPFLAGS += -DUSE_SYSLOG
 endif
 
 if USE_STDOUT
-AM_CPPFLAGS += -DUSE_STDOUT
+  AM_CPPFLAGS += -DUSE_STDOUT
 endif
 
 if USE_DAL
-AM_CPPFLAGS += -DUSE_DAL=1
+  AM_CPPFLAGS += -DUSE_DAL=1
 endif
 
 if USE_MDAL
-AM_CPPFLAGS += -DUSE_MDAL=1
+  AM_CPPFLAGS += -DUSE_MDAL=1
 endif
 
 if NO_AWSAUTH
-AM_CPPFLAGS += -DUSE_SPROXYD=1
+  AM_CPPFLAGS += -DUSE_SPROXYD=1
 endif
 
 
@@ -54,13 +63,9 @@ endif
 PARSE_OBJ_Files = confpars.o path-switch.o parsedata.o
 PARSE_OBJ = $(PARSE_DIR)/confpars.o $(PARSE_DIR)/path-switch.o $(PARSE_DIR)/parsedata.o
 
-LDADD += libmarfs.a $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
 
-# Generally we will always want to build the config tester program.
-bin_PROGRAMS = marfs_config
 lib_LIBRARIES = libmarfs.a
-
-libmarfs_a_SOURCES = parser fuse/src/common.c fuse/src/common.h        \
+libmarfs_a_SOURCES = parser fuse/src/common.c fuse/	src/common.h        \
 					 fuse/src/marfs_base.c fuse/src/marfs_base.h       \
 					 fuse/src/marfs_ops.c fuse/src/marfs_ops.h         \
 					 fuse/src/push_user.c fuse/src/push_user.h         \
@@ -76,30 +81,20 @@ libmarfs_a_SOURCES = parser fuse/src/common.c fuse/src/common.h        \
 
 libmarfs_a_LIBADD = $(PARSE_OBJ)
 
+LDADD += libmarfs.a $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
+
+
+
+
 # Use our own polite spin locks
 if SPINLOCKS
-libmarfs_a_SOURCES += fuse/src/spinlock.h fuse/src/spinlock.c \
-					  fuse/src/spinlock_asm.s
-AM_CPPFLAGS += -DSPINLOCKS
+  libmarfs_a_SOURCES += fuse/src/spinlock.h fuse/src/spinlock.c \
+                        fuse/src/spinlock_asm.s
+  AM_CPPFLAGS += -DSPINLOCKS
 endif
 
 
-# --- additions for multi-component builds
-if USE_MC
-AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
-AM_LDFLAGS  += -L$(LIBNE)/lib
-LDADD       += -L$(LIBNE)/lib -lne
 
-all-local : utilities/multi-component/rebuilder.c
-	@ mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o rebuilder $^ ${LDADD} ${LIBS}
-
-clean-local :
-	@ rm -f rebuilder
-
-endif
-
-
-# --- marfs_config
 include_HEADERS = fuse/src/marfs_base.h \
                   fuse/src/object_stream.h \
                   fuse/src/common.h \
@@ -107,19 +102,128 @@ include_HEADERS = fuse/src/marfs_base.h \
                   fuse/src/xdal_common.h \
                   fuse/src/mdal.h \
                   fuse/src/dal.h \
-				  fuse/src/marfs_locks.h \
+                  fuse/src/marfs_locks.h \
                   fuse/src/marfs_configuration.h \
                   common/log/src/logging.h
 
-marfs_config_SOURCES = fuse/src/marfs_config.c                   \
-					   fuse/src/marfs_configuration.c            \
-					   fuse/src/marfs_configuration.h            \
-                       common/configuration/src/PA2X_interface.c \
-					   common/configuration/src/PA2X_interface.h
 
-# The PA2X_interface needs to look in additionSal places for its #include files.
+# added individually, below
+bin_PROGRAMS =
+
+
+
+
+# --- additions for multi-component builds
+if USE_MC
+  AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
+  AM_LDFLAGS  += -L$(LIBNE)/lib
+  LDADD       += -L$(LIBNE)/lib -lne -lft
+endif
+
+
+
+
+
+# ............................................................................
+# Tools
+# ............................................................................
+
+FUSE_SRCS =  fuse/src/marfs_configuration.c \
+		       fuse/src/marfs_configuration.h \
+		       fuse/src/marfs_ops.c \
+		       fuse/src/marfs_ops.h \
+		       fuse/src/common.c \
+		       fuse/src/common.h \
+		       fuse/src/marfs_base.c \
+		       fuse/src/marfs_base.h \
+		       fuse/src/dal.c \
+		       fuse/src/dal.h
+
+
+
+# Generally we will always want to build the config tester program.
+bin_PROGRAMS += marfs_config 
+marfs_config_SOURCES = fuse/src/marfs_config.c                   \
+                       fuse/src/marfs_configuration.c            \
+                       fuse/src/marfs_configuration.h            \
+                       common/configuration/src/PA2X_interface.c \
+                       common/configuration/src/PA2X_interface.h
+
+marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
+
+
+
+
+# allows debugging script (fuse/scripts/separate_log_threads) to be more efficient
+bin_PROGRAMS += separate_log_threads_support
+separate_log_threads_support_SOURCES = fuse/scripts/separate_log_threads_support.c
+
+
+
+
+bin_PROGRAMS += add_namespace
+add_namespace_SOURCES = fuse/src/add_namespace.c \
+			fuse/src/marfs_configuration.c \
+			fuse/src/marfs_configuration.h \
+			fuse/src/marfs_ops.c \
+			fuse/src/marfs_ops.h \
+			fuse/src/common.c \
+			fuse/src/common.h \
+			fuse/src/marfs_base.c \
+			fuse/src/marfs_base.h 
+
+
+
+
+bin_PROGRAMS += test_statvfs
+test_statvfs_SOURCES = fuse/src/test_statvfs.c \
+                        fuse/src/marfs_configuration.c \
+                        fuse/src/marfs_configuration.h \
+                        fuse/src/marfs_ops.c \
+                        fuse/src/marfs_ops.h \
+                        fuse/src/common.c \
+                        fuse/src/common.h \
+                        fuse/src/marfs_base.c \
+                        fuse/src/marfs_base.h
+
+
+
+
+if USE_MC
+
+  bin_PROGRAMS += mc_path_convert
+  mc_path_convert_SOURCES = utilities/multi-component/mc_path_convert.c
+  mc_path_convert_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
+
+
+#  bin_PROGRAMS += rebuilder
+#  # rebuilder_CC      = mpicc
+#  # rebuilder_CXX     = mpicc
+#  rebuilder_COMPILE = mpicc
+#  rebuilder_SOURCES = utilities/multi-component/rebuilder.c
+#  rebuilder_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
+#
+# build rebuilder by hand, because it needs mpicc
+# (see https://stackoverflow.com/questions/25972150/automake-per-target-compiler)
+all-local : rebuilder
+
+rebuilder : utilities/multi-component/rebuilder.c
+	mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o ${bindir}/rebuilder $^ ${LDADD} ${LIBS}
+
+clean-local :
+	@ rm -f rebuilder
+
+
+endif
+
+
+
+
+
+
+# The PA2X_interface needs to look in additional places for its #include files.
 #common/configuration/src/PA2X_interface.o: common/configuration/src/PA2X_interface.c common/configuration/src/PA2X_interface.h
-#	$(COMPILE) -I$(PARSE_DIR) -DPARSE_DIR=$(PARSE_DIR) $(AM_CPPFLAGS) -o $@ -c $<
+#  $(COMPILE) -I$(PARSE_DIR) -DPARSE_DIR=$(PARSE_DIR) $(AM_CPPFLAGS) -o $@ -c $<
 
 # NOTE: we could build marfs_config just from marfs_config.c and add
 #       the necessary objects with LDADD like so:
@@ -137,37 +241,40 @@ marfs_config_SOURCES = fuse/src/marfs_config.c                   \
 # ............................................................................
 
 if WANT_FUSE
-bin_PROGRAMS += marfs_fuse
-marfs_fuse_SOURCES = fuse/src/main.c
-AM_CPPFLAGS += -D_FILE_OFFSET_BITS=64
+  bin_PROGRAMS += marfs_fuse
+  marfs_fuse_SOURCES = fuse/src/main.c
+  AM_CPPFLAGS += -D_FILE_OFFSET_BITS=64
 endif
 
 AM_CPPFLAGS += -Iutilities/common/src
+
+
 # ............................................................................
 # GPFS Utilities
 # ............................................................................
+
 if GPFS_UTILITIES
 
 bin_PROGRAMS += marfs_gc marfs_quota marfs_packer marfs_repack
 
 marfs_gc_SOURCES = utilities/gpfs/marfs_gc.c utilities/gpfs/marfs_gc.h \
-				   utilities/gpfs/utilities_common.c                   \
+				   utilities/gpfs/utilities_common.c   \
 				   utilities/gpfs/utilities_common.h   \
-                                   utilities/common/src/hash_table.c   \
-                                   utilities/common/src/hash_table.h
+				   utilities/common/src/hash_table.c   \
+				   utilities/common/src/hash_table.h
 
 marfs_quota_SOURCES = utilities/gpfs/marfs_quota.c utilities/gpfs/marfs_quota.h \
-					  utilities/gpfs/utilities_common.c                         \
+					  utilities/gpfs/utilities_common.c  \
 					  utilities/gpfs/utilities_common.h
 
-marfs_packer_SOURCES = utilities/gpfs/marfs_packer.c     \
-					   utilities/gpfs/marfs_packer.h     \
-					   utilities/gpfs/utilities_common.c \
+marfs_packer_SOURCES = utilities/gpfs/marfs_packer.c \
+					   utilities/gpfs/marfs_packer.h      \
+					   utilities/gpfs/utilities_common.c  \
 					   utilities/gpfs/utilities_common.h 
 
-marfs_repack_SOURCES = utilities/gpfs/marfs_repack.c     \
-					   utilities/gpfs/marfs_repack.h     \
-					   utilities/gpfs/utilities_common.c \
+marfs_repack_SOURCES = utilities/gpfs/marfs_repack.c \
+					   utilities/gpfs/marfs_repack.h      \
+					   utilities/gpfs/utilities_common.c  \
 					   utilities/gpfs/utilities_common.h
 
 marfs_gc_LDFLAGS     = -lgpfs
@@ -177,9 +284,11 @@ marfs_repack_LDFLAGS = -lgpfs
 
 endif
 
+
 # ............................................................................
 # Parser
 # ............................................................................
+
 PARSE_OPT = -DDATAPARSE
 BLUEPRINT = $(abs_top_srcdir)/common/configuration/src/marfs_configuration_blueprint.cfg
 
@@ -230,9 +339,11 @@ CLEANFILES = $(PARSE_H_file)
 otherincludedir = $(includedir)/parse-inc
 otherinclude_HEADERS = $(PARSE_H)
 
+
 # ............................................................................
 # Various Testing
 # ............................................................................
+
 check_PROGRAMS = test_marfs_configuration
 
 # test_lock test_lock2 test_lock2b
@@ -248,9 +359,11 @@ test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
 
 test_marfs_configuration_SOURCES = fuse/src/test_marfs_configuration.c
 
+
 # ............................................................................
 # Useful development targets
 # ............................................................................
+
 gdb.core:
 	ls core.* | tail -n -1 | xargs exec gdb marfs_fuse
 
@@ -259,7 +372,8 @@ gdb:
 #	@ exec gdb marfs_fuse `ps -elf | egrep 'marfs_fuse(.*)/marfs' | grep -v grep | awk '{print $$4}'`
 
 fuse_pid:
-	ps -elf | grep marfs_fuse | grep $(MARFS_MNT) | grep -v grep | awk '{print $$4}'
+	@ # make turns "$$" into "$".
+	ps -elf | grep marfs_fuse | grep -v grep | egrep "$(MARFS_MNT)\$$" | awk '{print $$4}'
 
 # fusectl filesystem.  Under the fusectl mount-point, each existing
 # connection has a numbered subdirectory.  There's a special file named
@@ -304,7 +418,8 @@ _mnt:
 	$(EXEC) ./marfs_fuse $(FUSE_FLAGS) $(MARFS_MNT) $(LOG) &
 	@ echo "sleeping to give background fuse a chance to start"
 	sleep 1
-	@ ps -elf | grep marfs_fuse | grep $(MARFS_MNT) | grep -v grep | awk '{print $$4}' > $(PID)
+	@ # make turns "$$" into "$".
+	@ ps -elf | grep marfs_fuse | grep -v grep | egrep "$(MARFS_MNT)\$$" | awk '{print $$4}' > $(PID)
 	@ echo "PID: " `cat $(PID)`
 
 mnt: mnt.std

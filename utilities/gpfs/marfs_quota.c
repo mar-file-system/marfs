@@ -577,12 +577,12 @@ int read_inodes(const char    *fnameP,
                }
                // scan into post xattr structure
                // if error parsing this xattr, skip and continue
-               int test = str_2_post(&post, xattr_ptr->xattr_value, 1);
+               int test = str_2_post(&post, xattr_ptr->xattr_value, 1, 1);
                if (test != -3 && test != 0) {
-                  fprintf(stderr,
-                          "Something wrong with post value (return: %d). "
-                          "Inode: %d Value: %s\n",
-                          test, iattrP->ia_inode, xattr_ptr->xattr_value);
+                  LOG(LOG_ERR,
+                      "Something wrong with post value (return: %d). "
+                      "Inode: %d Value: %s\n",
+                      test, iattrP->ia_inode, xattr_ptr->xattr_value);
                   continue;             
                }
                fileset_stat_ptr[last_struct_index].sum_size+=iattrP->ia_size;

@@ -57,6 +57,9 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 
 #include <stdint.h>
+#include "xdal_common.h"        /* xDALConfigOpt */
+
+#include "erasure.h"         /* see erasureUtils */
 
 
 #  ifdef __cplusplus
@@ -65,20 +68,28 @@ extern "C" {
 
 
 // ...........................................................................
-// This is the version of the SOFTWARE.  This shows up in 2 places:
+// This is the version of the SOFTWARE.  This shows up in 3 places:
 //
 // (1) config-file parsing.  In this case the config-file will have a
 //     version, and the parser compares it with the defines here, to
 //     assure that it is competent to perform the parse.
 //
-// (2) xattr parsing.  Any objects written by this software will have
+// (2) xattr parsing.  Metadata files written by this software will have
 //     xattrs identifying their config SW version.  When parsing xattrs
 //     (e.g. in str_2_pre()), we can thus be sure we know which version of
 //     the software wrote those xattrs.  This also identifies potential
 //     changes in chunk-info written into MD files for Multis, or in the
 //     recovery-info written into the tail of objects.
+//
+// (3) object-IDs.  The version number is also stored in obj-IDs, which
+//     also include strings from xattrs.  As with (2), this potentially
+//     allows future parsers to select the right parser for a given
+//     version.  This also allows major changes in the code to be reflected
+//     in a new "series" of object-IDs.  Thus, supposing there were some
+//     problem, we could determine which objects were written with which
+//     code version.
 //     
-// These two are somewhat independent.  config-version identifies
+// These are all somewhat independent.  config-version identifies
 // config-reader parser that's needed.  This may relate to what information
 // is kept in xattrs, but might not affect xattrs.  Meanwhile,
 // recovery-info formats could change without any changes to the config
@@ -86,7 +97,9 @@ extern "C" {
 //
 // For now, we are just glossing the problem.  What goes into object-IDs is
 // what is found in MARFS_CONFIG_MAJOR/MINOR, so changes to either (1) or
-// (2) above, should be reflected in changes these #defines.
+// (2) above, should be reflected in changes these #defines.  No reason you
+// can't increment the version number whenever you want, as well, e.g. to
+// associate objects with versions of code that were in use.  (See 1.9)
 //
 // HISTORY
 //
@@ -128,9 +141,24 @@ extern "C" {
 //        leaving libconfig with only the PA2X interface.
 //
 // -- 1.6 MarFS now includes the multi-component DAL
+//
+// -- 1.7 Added timing_flags spec to NS/Repo config, added parsing, and
+//        abstracted out parsing of iperms/bperms to be similar.
+//
+// -- 1.8 fixed rename/unlink bug (issue 200) by having stat_xattrs()
+//        ignore the md_path in the POST xattr, unless its new extra
+//        argument is non-zero.
+//
+// -- 1.9 No changes to xattr or obj-ID format, but we're introducing RDMA
+//        (DAL) to production, which will also co-exist with NFS (DAL).
+//        Changing the object-version number in case we ever might wish we
+//        had done so, in order to hunt for issues.)
+//
+// -- 1.10  Same as 1.9, but after merging rdma to master.  This allows us
+//          to refer to "1.10" and clearly mean after that merge.
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  6
+#define MARFS_CONFIG_MINOR  10
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
@@ -323,6 +351,20 @@ typedef uint8_t  MarFS_Perms;
 
 
 /*
+ * Collection of timing statistics can be enabled on repositories
+ * and namespaces.  At run-time, the flags for a given namespace and
+ * repo are OR'ed together.  Thus, admins can choose to add timing to
+ * an entire repo, or to a specific namespace, or perhaps to a custom
+ * namespace that is only used by admins.
+ *
+ * The options that are selectable in the configuration ultimately
+ * boil down to the flags available in TimingStats in the erasureUtils
+ * (libne) library
+ */
+
+
+
+/*
  * This is the MarFS repository type for use in the MarFS software
  * components. Users of this code are not expected to rely on or
  * even know the components of this struct. Utility functions will
@@ -356,6 +398,7 @@ typedef struct marfs_repo {
    ssize_t               max_pack_file_count;
 
    struct DAL           *dal;
+   TimingFlagsValue      timing_flags; // see erasure.h
 
    char                 *online_cmds;
    size_t                online_cmds_len;
@@ -434,19 +477,26 @@ typedef struct marfs_namespace {
    size_t                alias_len;
    char                 *mnt_path;
    size_t                mnt_path_len;
+
    MarFS_Perms           bperms;
    MarFS_Perms           iperms;
+
    char                 *md_path;
    size_t                md_path_len;
+
    MarFS_Repo_Ptr        iwrite_repo;
    MarFS_Repo_Range_List repo_range_list;
    int                   repo_range_list_count;
+
    char                 *trash_md_path;
    size_t                trash_md_path_len;
+
    char                 *fsinfo_path;
    size_t                fsinfo_path_len;
+
    long long             quota_space;
    long long             quota_names;
+   TimingFlagsValue      timing_flags; // see erasure.h
 
    struct MDAL          *dir_MDAL;
    struct MDAL          *file_MDAL;
@@ -562,6 +612,7 @@ extern MarFS_Repo_Ptr find_repo_by_name( const char* name );
  */
 
 extern int read_configuration();
+extern int get_repo_count();
 
 /*
  * These functions return the configuration information that was given in
@@ -576,6 +627,12 @@ extern double        get_configuration_version( MarFS_Config_Ptr config );
 extern char         *get_configuration_mnt_top( MarFS_Config_Ptr config );
 extern MarFS_Namespace_List get_configuration_namespace_list( MarFS_Config_Ptr config );
  */
+
+
+/* DAL is given control of parsed config-options.  It will eventually need
+   this to de-allocate them */
+void free_xdal_config_options(xDALConfigOpt** opts);
+
 
 /*
  * When the user is done with the configuration, for example if run-time

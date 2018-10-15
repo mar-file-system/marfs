@@ -192,7 +192,7 @@ typedef struct {
 #define TRY0(FNCALL)                                                    \
    do {                                                                 \
       LOG(LOG_INFO, "TRY0(%s)\n", #FNCALL);                             \
-      rc = (size_t)FNCALL;                                              \
+      rc = (size_t)(FNCALL);                                            \
       if (rc) {                                                         \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
@@ -205,7 +205,7 @@ typedef struct {
 #define TRY_GE0(FNCALL)                                                 \
    do {                                                                 \
       LOG(LOG_INFO, "TRY_GE0(%s)\n", #FNCALL);                          \
-      rc_ssize = (ssize_t)FNCALL;                                       \
+      rc_ssize = (ssize_t)(FNCALL);                                     \
       if (rc_ssize < 0) {                                               \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
@@ -218,7 +218,7 @@ typedef struct {
 #define TRY_GT0(FNCALL)                                                 \
    do {                                                                 \
       LOG(LOG_INFO, "TRY_GT0(%s)\n", #FNCALL);                          \
-      rc_ssize = (ssize_t)FNCALL;                                       \
+      rc_ssize = (ssize_t)(FNCALL);                                     \
       if (rc_ssize <= 0) {                                              \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
@@ -238,7 +238,7 @@ typedef struct {
 #define __TRY0(FNCALL)                                                  \
    do {                                                                 \
       LOG(LOG_INFO, "TRY0: %s\n", #FNCALL);                             \
-      rc = (size_t)FNCALL;                                              \
+      rc = (size_t)(FNCALL);                                            \
       if (rc) {                                                         \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
@@ -250,8 +250,21 @@ typedef struct {
 #define __TRY_GE0(FNCALL)                                               \
    do {                                                                 \
       LOG(LOG_INFO, "TRY_GE0: %s\n", #FNCALL);                          \
-      rc_ssize = (ssize_t)FNCALL;                                       \
+      rc_ssize = (ssize_t)(FNCALL);                                     \
       if (rc_ssize < 0) {                                               \
+         PRE_RETURN();                                                  \
+         LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
+             #FNCALL, rc_ssize, errno, strerror(errno));                \
+         RETURN(-errno);                                                \
+      }                                                                 \
+   } while (0)
+
+// cap_get_proc() returns ptr for success, NULL for failure.
+#define __TRY_GT0(FNCALL)                                               \
+   do {                                                                 \
+      LOG(LOG_INFO, "TRY_GE0: %s\n", #FNCALL);                          \
+      rc_ssize = (ssize_t)(FNCALL);                                     \
+      if (rc_ssize <= 0) {                                              \
          PRE_RETURN();                                                  \
          LOG(LOG_INFO, "FAIL: %s (%ld), errno=%d '%s'\n\n",             \
              #FNCALL, rc_ssize, errno, strerror(errno));                \
@@ -268,7 +281,7 @@ typedef struct {
 #define TRASH_TRUNCATE(INFO, PATH)     TRY0( trash_truncate((INFO), (PATH)) )
 #define TRASH_NAME(INFO, PATH)         TRY0( trash_name((INFO), (PATH)) )
 
-#define STAT_XATTRS(INFO)              TRY0( stat_xattrs((INFO)) )
+#define STAT_XATTRS(INFO)              TRY0( stat_xattrs((INFO), 0) )
 #define STAT(INFO)                     TRY0( stat_regular((INFO)) )
 
 #define SAVE_XATTRS(INFO, MASK)        TRY0( save_xattrs((INFO), (MASK)) )
@@ -297,10 +310,10 @@ typedef struct {
 #if USE_MDAL
 // NOTE: It might be wrong to expand path info here, as this macro is
 //       often called on the info.post->md_path.
-#define ACCESS(NAMESPACE, PATH, PERMS)                                  \
+#  define ACCESS(NAMESPACE, PATH, PERMS)                    \
    TRY0( F_OP_NOCTX(access, (NAMESPACE), (PATH), (PERMS)) )
 #else
-#define ACCESS(_NS, PATH, PERMS) TRY0( access((PATH), (PERMS)) )
+#  define ACCESS(_NS, PATH, PERMS) TRY0( access((PATH), (PERMS)) )
 #endif
 
 // NOTE: faccessat, with the AT_EACCESS flag is probably a good solution to
@@ -308,11 +321,11 @@ typedef struct {
 //       effective user id.
 // With these args, this doesn't follow symlinks
 #if USE_MDAL
-#define FACCESSAT(NAMESPACE, PATH, PERMS)                               \
+#  define FACCESSAT(NAMESPACE, PATH, PERMS)                             \
    TRY0( F_OP_NOCTX(faccessat, (NAMESPACE), 0, (PATH), (PERMS),         \
                     (AT_EACCESS | AT_SYMLINK_NOFOLLOW)) )
 #else
-#define FACCESSAT(PATH, PERMS)                                          \
+#  define FACCESSAT(PATH, PERMS)                                        \
    TRY0( faccessat(0, (PATH), (PERMS), (AT_EACCESS | AT_SYMLINK_NOFOLLOW) )
 #endif
 
@@ -559,7 +572,7 @@ typedef struct {
 //
 // stream_open() uses chunked-transfer-encoding when called with
 // content_length=0.  Users then call marfs_write repeatedly, which closes
-// and repoens new objects as needed, writting recovery-info at the end of
+// and reopens new objects as needed, writting recovery-info at the end of
 // each.  When called with content-length non-zero, stream_open() installs
 // that as the content-length for the request.  In this case, pftool would
 // be calling with the size of a logical chunk of user-data, expecting to
@@ -658,6 +671,15 @@ typedef struct {
                                  // into the file
 
    FHFlagType      flags;
+   
+   int             tot_stats;    // number of timing-stat flag-bits asserted
+   int             tot_pods;
+   int             pod_id;
+   int             data_ready;
+   int             total_blk;
+   size_t          timing_stats_buff_size;
+   char*           timing_stats;
+   char            repo_name[MARFS_MAX_REPO_NAME];    // repo where stats were gathered
 } MarFS_FileHandle;
 
 
@@ -757,7 +779,7 @@ typedef struct {
 #  define MD_FILE_OP(...)   F_OP( __VA_ARGS__ )
 #  define MD_DIR_OP(...)    D_OP( __VA_ARFS__ )
 #  define MD_PATH_OP(...)   F_OP_NOCTX( __VA_ARGS__ )
-// unfirtunately we need this in order to use the dir_MDAL for mkdir/rmdir
+// unfortunately, we need this in order to use the dir_MDAL for mkdir/rmdir
 #  define MD_D_PATH_OP(...) D_OP_NOCTX( __VA_ARGS__ )
 
 
@@ -799,7 +821,6 @@ typedef struct {
 #  define FH_DAL_CTX(FH)    (FH)->dal_handle.ctx
 #  define FH_DAL(FH)        (FH)->dal_handle.dal
 
-
 #  define DAL_OP(OP, FH, ... )                                       \
    (*(FH)->dal_handle.dal->OP)(&(FH)->dal_handle.ctx, ##__VA_ARGS__)
 
@@ -818,6 +839,16 @@ typedef struct {
 
 
 
+
+
+// functions originally intended for internal use to support DALs,
+// but which turn out to be useful for general tools, as well.
+
+extern uint64_t polyhash(const char* string);
+extern uint64_t h_a(const uint64_t key, uint64_t a);
+
+#define FLAT_OBJID_SEPARATOR '#'
+extern void     flatten_objid(char* objid);
 
 
 
@@ -857,7 +888,7 @@ extern int  expand_path_info (PathInfo* info, const char* path);
 extern int  expand_trash_info(PathInfo* info, const char* path);
 
 extern int  stat_regular     (PathInfo* info);
-extern int  stat_xattrs      (PathInfo* info);
+extern int  stat_xattrs      (PathInfo* info, int load_md_path);
 extern int  save_xattrs      (PathInfo* info, XattrMaskType mask);
 
 extern int  md_exists        (PathInfo* info);
@@ -950,6 +981,16 @@ extern void          dequeue_reader(off_t offset, MarFS_FileHandle* fh);
 extern void          check_read_queue     (MarFS_FileHandle* fh);
 extern void          terminate_all_readers(MarFS_FileHandle* fh);
 
+//support for path conversion tool
+//extern void get_path_template(char* path_template, MarFS_FileHandle* fh);
+
+extern int  marfs_check_packable(const char* path, size_t content_length);
+
+//extern int  marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh,
+//                               size_t chunk_no, char* path_template);
+
+//support for namespace build tool
+extern int build_namespace_md(char* owner, char* group);
 
 
 #  ifdef __cplusplus

@@ -83,7 +83,11 @@ main(int argc, char* argv[]) {
    // install info->ns.  That would allow items in the trash that don't
    // have a PRE or POST, to be defaulted.
 
-   if (stat_xattrs(info)) {    // parse all xattrs for the MD file
+   // NOTE: In case the POST xattr value-string includes an md_path, we
+   //       explicitly avoid overwriting the one we already installed, even
+   //       though files in the trash should have an md-path that matches
+   //       the one we used to access it.
+   if (stat_xattrs(info, 0)) {    // parse all xattrs for the MD file
       fprintf(stderr, "stat_xattrs() failed for MD file: '%s'\n", md_path);
       return -1;
    }

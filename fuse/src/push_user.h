@@ -85,6 +85,8 @@ OF SUCH DAMAGE.
 #include <pwd.h>
 #include <linux/limits.h>             // NGROUPS_MAX
 
+
+
 // using "saved" uid/gid to hold the state, so no state needed in Context.
 // using syscalls to get thread-safety, based on this:
 // http://stackoverflow.com/questions/1223600/change-uid-gid-only-of-one-thread-in-linux
@@ -99,12 +101,8 @@ typedef struct PerThreadContext {
 
 
 
-int push_groups4(PerThreadContext* ctx, uid_t new_euid, gid_t new_egid);
-int push_user4  (PerThreadContext* ctx, uid_t new_euid, gid_t new_egid, int push_groups);
-
-int pop_groups4(PerThreadContext* ctx);
-int pop_user4(PerThreadContext* ctx);
-
+int push_user4(PerThreadContext* ctx, uid_t new_euid, gid_t new_egid, int push_groups);
+int pop_user4 (PerThreadContext* ctx);
 
 
 

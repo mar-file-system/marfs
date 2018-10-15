@@ -26,16 +26,23 @@ extern "C" {
 
 
 // LOG_PREFIX is prepended to all output.  Allows grepping in syslogs.
+//
+// NOTE: Changing this requires corresponding changes to /etc/rsyslog.conf
+//       on the destination log-server (e.g. on stb-dsu-master), so marfs
+//       output will continue to be routed to its own destination log-file
+
 #ifndef LOG_PREFIX
 #  define LOG_PREFIX  "marfs_fuse"
 #endif
 
 /// // without pthread_self()
 /// #define xFMT  " [%s:%4d]%*s %-21s | %s"
-#define xFMT  " %08x %s:%-4d%*s %-21.21s | %s"
+#define xFMT  "  %08x  %s:%-4d%*s %-21.21s | %s"
 
 // size of longest file-name string, plus some
 #define LOG_FNAME_SIZE 26
+
+
 
 #ifdef USE_SYSLOG
 // calling syslog() as a regular user on rrz seems to be an expensive no-op
@@ -43,7 +50,7 @@ extern "C" {
 #  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PID, LOG_USER)
 
 #  define LOG(PRIO, FMT, ...)                                           \
-   syslog((PRIO), xFMT FMT,                                             \
+   syslog((PRIO), LOG_PREFIX xFMT FMT,                                  \
           (unsigned int)pthread_self(),                                 \
           __FILE__, __LINE__,                                           \
           LOG_FNAME_SIZE-(int)strlen(__FILE__), "",                     \

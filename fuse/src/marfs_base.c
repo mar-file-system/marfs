@@ -360,7 +360,6 @@ int init_pre(MarFS_XattrPre*        pre,
    pre->chunk_no     = 0;
 
    // pre->shard = ...;    // TBD: for hashing directories across shard nodes
-
    // generate random-seed, if needed
    if (init_pre_seed(pre, repo)) {
       return -1;
@@ -462,7 +461,7 @@ int update_pre(MarFS_XattrPre* pre) {
 
    // prepare date-string components
    char           md_ctime_str[MARFS_DATE_STRING_MAX];
-   char          obj_ctime_str[MARFS_DATE_STRING_MAX];
+   char           obj_ctime_str[MARFS_DATE_STRING_MAX];
 
    if (epoch_to_str(md_ctime_str, MARFS_DATE_STRING_MAX, &pre->md_ctime)) {
       LOG(LOG_ERR, "error converting Pre.md_time to string\n");
@@ -944,32 +943,46 @@ int post_2_str(char*                  post_str,
 //     other callers (e.g. MD inode scans) are calling with a raw POST
 //     object, which they want to be initialized entirely from the string.
 //     Those callers should call with <reset> being non-zero.
+//
+// Meaning of <parse_md_path>
+//
+//     From fuse/pftool, post->md_path will typically have the path of the
+//     MD file whose xattrs we are parsing.  This xattr is not intended to
+//     be always up-to-date on regular (i.e. non-trash) files.  For
+//     example, when renaming a directory, the POST xattrs of all files in
+//     that dir become incorrect.  That's not a problem, but fuse/pftool
+//     may call this routine via stat_xattrs() to fill out other info in
+//     the POST struct inside a PathInfo struct.  They don't want to blast
+//     POST.md_path with the thing that was in the xattr.  For now, our
+//     solution is to let the caller tell us to ignore the path in the
+//     xattr, in which case we don't expect to need it.
 
-
-int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset) {
+int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset, int parse_md_path) {
 
    uint16_t major;
    uint16_t minor;
    char     obj_type_code;
+   char     ignore_md_path[MARFS_MAX_MD_PATH];
+   char*    md_path = ((parse_md_path) ? (char*)&post->md_path : ignore_md_path);
 
    if (reset)
       post->md_path[0] = 0;
 
-   // --- extract bucket, and some top-level fields
-   int scanf_size = sscanf(post_str, MARFS_POST_RD_FORMAT,
-                           &major, &minor,
-                           &obj_type_code,
-                           &post->obj_offset,
-                           &post->chunks,
-                           &post->chunk_info_bytes,
-                           &post->correct_info,
-                           &post->encrypt_info,
-                           &post->flags,
-                           (char*)&post->md_path); // might be empty
+   // identical args to sscanf(), except for post->md_path
+   int sscanf_size = sscanf(post_str, MARFS_POST_RD_FORMAT,
+                            &major, &minor,
+                            &obj_type_code,
+                            &post->obj_offset,
+                            &post->chunks,
+                            &post->chunk_info_bytes,
+                            &post->correct_info,
+                            &post->encrypt_info,
+                            &post->flags,
+                            md_path); // argument string might be empty
 
-   if (scanf_size == EOF)
+   if (sscanf_size == EOF)
       return -1;                // errno is set
-   else if (scanf_size < 9) {
+   else if (sscanf_size < 9) {
       errno = EINVAL;
       return -2;            /* ?? */
    }
@@ -1063,13 +1076,13 @@ int str_2_restart(MarFS_XattrRestart* restart, const char* restart_str) {
    }
 
    // --- extract mode, etc
-   int scanf_size = sscanf(restart_str, MARFS_RESTART_FORMAT,
-                           &major, &minor,
-                           &restart->flags,
-                           &restart->mode);
-   if (scanf_size == EOF)
+   int sscanf_size = sscanf(restart_str, MARFS_RESTART_FORMAT,
+                            &major, &minor,
+                            &restart->flags,
+                            &restart->mode);
+   if (sscanf_size == EOF)
       return -1;                // errno is set
-   else if (scanf_size < 3) {
+   else if (sscanf_size < 3) {
       errno = EINVAL;
       return -1;            /* ?? */
    }

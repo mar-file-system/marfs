@@ -119,11 +119,11 @@ OF SUCH DAMAGE.
 
 // This version doesn't call push/pop_groups()
 #define WRAP(FNCALL)                                   \
-   WRAP_internal(0, (FNCALL));
+   WRAP_internal(0, (FNCALL))
 
 // This version DOES call push/pop_groups()
 #define WRAP_PLUS(FNCALL)                              \
-   WRAP_internal(1, (FNCALL));
+   WRAP_internal(1, (FNCALL))
 
 
 

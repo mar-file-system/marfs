@@ -106,12 +106,16 @@ OF SUCH DAMAGE.
 // return NULL if the path is not below there.
 // 
 const char* marfs_sub_path(const char* path) {
+
    if (strncmp(path, marfs_config->mnt_top, marfs_config->mnt_top_len))
       return NULL;
+
    else if (! path[marfs_config->mnt_top_len])
       return "/";
+
    else if (path[marfs_config->mnt_top_len] != '/')
       return NULL;
+
    else
       return path + marfs_config->mnt_top_len;
 }
@@ -137,15 +141,13 @@ int expand_path_info(PathInfo*   info, /* side-effect */
       return -1;            /* no such file or directory */
    }
 
-#if 0
-   // NOTE: It's not always the same path that is being expanded.
-   //       Suppressing this test (for now) so that we will always do the
-   //       expansion.  However, we do want to set the flag, so,
-   //       e.g. has_any_xattrs() can make sure it is being called with an
-   //       expanded PathInfo.
+   // NOTE: Before MarFS 1.8, this test was commented out, so we would
+   //       always (re-)do the expansion.  The motivation was that "it's
+   //       not always the same path that is being expanded".  I can't find
+   //       a case in trashing or renaming where that should be allowed.
    if (info->flags & PI_EXPANDED)
       return 0;
-#endif
+
 
    // Take user supplied path in fuse request structure to look up info,
    // using marfs_config->mnt_top and look up in MAR_namespace array, fill in all
@@ -165,6 +167,7 @@ int expand_path_info(PathInfo*   info, /* side-effect */
    const char* sub_path = path + info->ns->mnt_path_len; /* below NS */
    int prt_count = snprintf(info->post.md_path, MARFS_MAX_MD_PATH,
                             "%s%s", info->ns->md_path, sub_path);
+
    if (prt_count < 0) {
       LOG(LOG_ERR, "snprintf(..., %s, %s) failed\n",
           info->ns->md_path,
@@ -436,8 +439,12 @@ int init_xattr_specs() {
 //       first read the original path out of the trash "companion" file
 //       (*.path), then expand_path_info() on that, then change
 //       post.md_path to the trash file, then stat_xattrs().
+//
+// NOTE: With <load_md_path> non-zero, info->post.md_path will be
+//       overwritten by the (quite possibly incorrect) md_path that is
+//       stored in the xattr.  Do we ever actually want that?
 
-int stat_xattrs(PathInfo* info) {
+int stat_xattrs(PathInfo* info, int load_md_path) {
    TRY_DECLS();
    ssize_t str_size;
 
@@ -494,10 +501,10 @@ int stat_xattrs(PathInfo* info) {
                                MARFS_MAX_XATTR_SIZE);
 
          if (str_size != -1) {
-            // got the xattr-value.  Parse it into info->pre
+            // got the xattr-value.  Parse it into info->post
             xattr_value_str[str_size] = 0;
             LOG(LOG_INFO, "XVT_POST %s\n", xattr_value_str);
-            __TRY0( str_2_post(&info->post, xattr_value_str, 0) );
+            __TRY0( str_2_post(&info->post, xattr_value_str, 0, load_md_path) );
             info->xattrs |= spec->value_type; /* found this one */
          }
          else if ((errno == ENOATTR)
@@ -1037,7 +1044,7 @@ int has_all_xattrs(PathInfo* info, XattrMaskType mask) {
       errno = EINVAL;
       return -1;
    }
-   stat_xattrs(info);                  /* no-op, if already done */
+   stat_xattrs(info, 0);               /* no-op, if already done */
    return ((info->xattrs & mask) == mask);
 }
 int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
@@ -1047,7 +1054,7 @@ int has_any_xattrs(PathInfo* info, XattrMaskType mask) {
       errno = EINVAL;
       return -1;
    }
-   stat_xattrs(info);                  /* no-op, if already done */
+   stat_xattrs(info, 0);               /* no-op, if already done */
    return (info->xattrs & mask);
 }
 
@@ -1206,6 +1213,7 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
       if(! F_OP(is_open, fh) ) {
          LOG(LOG_ERR, "open_md_path(%s) failed: %s\n",
              path, strerror(errno));
+         va_end(ap);
          return -1;
       }
    }
@@ -1223,6 +1231,7 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
          LOG(LOG_ERR, "open_md_path(%s) failed: %s\n",
              info->post.md_path, strerror(errno));
          fh->md_fd = 0;
+         va_end(ap);
          return -1;
       }
    }
@@ -1365,7 +1374,7 @@ int  trash_unlink(PathInfo*   info,
    // NOTE: We don't put xattrs on symlinks, so they also get deleted here.
    //
    TRY_DECLS();
-   __TRY0( stat_xattrs(info) );
+   __TRY0( stat_xattrs(info, 0) );
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // not enough to reclaim objs
       __TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
@@ -1411,7 +1420,7 @@ int  trash_truncate(PathInfo*   info,
    // NOTE: See "UPDATE", above trash_unlink()
 
    TRY_DECLS();
-   __TRY0( stat_xattrs(info) );
+   __TRY0( stat_xattrs(info, 0) );
    if (! has_all_xattrs(info, XVT_PRE)) {
       LOG(LOG_INFO, "incomplete xattrs\n"); // see "UPDATE" in trash_unlink().
 
@@ -1611,7 +1620,7 @@ int  trash_truncate(PathInfo*   info,
    // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
    info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY);
    info->xattr_inits = 0;
-   __TRY0( stat_xattrs(info) );   // has none, so initialize from scratch
+   __TRY0( stat_xattrs(info, 0) );   // has none, so initialize from scratch
 
    // NOTE: Unique-ness of Object-IDs currently comes from inode, plus
    //     obj-ctime, plus MD-file ctime.  It's possible the trashed file
@@ -2039,6 +2048,11 @@ int open_md(MarFS_FileHandle* fh, int writing_p) {
 #if USE_MDAL
    if (! F_MDAL(fh)) {
       // copy static MDAL ptr from NS to FileHandle
+      if (info->pre.ns == NULL) {
+         LOG(LOG_ERR, "info->pre.ns became NULL.  "
+             "Possible reason: another writer has started, thus info->pre was wiped out\n");
+         return -1;
+      }
       F_MDAL(fh) = info->pre.ns->file_MDAL;
       LOG(LOG_INFO, "file-MDAL: %s\n", F_MDAL(fh)->name);
 
@@ -2886,6 +2900,198 @@ int init_scatter_tree(const char*    root_dir,
    return rc;
 }
 
+void get_namespace_path(char* path, char* namespace_path)
+{
+   int i;
+   size_t len = strlen(path);
+   
+   for(i = len-1; i >= 0; i--)
+   {
+      if (path[i] == '/')
+      {
+         memcpy(namespace_path, path,  i);
+         namespace_path[i] = '\0';
+         return;
+      }
+   }  
+}
+
+//similar to init_mdfs
+int build_namespace_md(char* owner, char* group)
+{
+   TRY_DECLS();
+   struct stat st;
+   char namespace_path[MARFS_MAX_MD_PATH];
+   char command[MARFS_MAX_MD_PATH * 2];
+
+   NSIterator it = namespace_iterator();
+   MarFS_Namespace* ns;
+
+   for(ns = namespace_next(&it); ns; ns = namespace_next(&it))
+   {
+      const uint32_t shard = 0;
+#if TBD
+            MarFS_Repo*    repo  = ns->iwrite_repo; // for fuse
+#endif
+      mode_t branch_mode = (S_IRWXU | S_IXOTH );
+      mode_t leaf_mode = (branch_mode | S_IWOTH );
+      mode_t trash_leaf_mode = (S_IRWXU | S_IWOTH);
+      mode_t mdfs_mode = (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+      mode_t fsinfo_mode = (S_IRUSR | S_IWUSR);
+      mode_t ns_mode = (S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
+
+      if (IS_ROOT_NS(ns))
+      {
+         continue;
+      }
+
+      //find namespace path
+      get_namespace_path(ns->trash_md_path, namespace_path);
+      //stat namespace path, if not exists, mkdir
+      rc = MD_PATH_OP(lstat, ns, namespace_path, &st);
+      if (! rc)
+      {
+         if (! S_ISDIR(st.st_mode))
+         {
+            printf("ERROR:Not a directory %s\n", namespace_path);
+         }
+      }
+      else if (errno == ENOENT)
+      {
+         rc = mkdir(namespace_path, branch_mode);
+         if ((rc < 0) && (errno != EEXIST))
+         {
+            printf("ERROR:Failed to mkdir %s\n", namespace_path);
+            return -1;
+         }
+         rc = chmod(namespace_path, ns_mode);
+         if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR:Failed to chmod %s\n", namespace_path);
+                                return -1;
+                        }
+      }
+      else
+      {
+         printf("ERROR:stat failed %s\n", namespace_path);
+         return -1;
+      }
+      //stat trash_md_path, create if not exists
+      rc = MD_PATH_OP(lstat, ns, ns->trash_md_path, &st);
+                if (! rc)
+                {
+                        if (! S_ISDIR(st.st_mode))
+                        {
+                                printf("ERROR:Not a directory %s\n", ns->trash_md_path);
+                        }
+                }
+      else if (errno == ENOENT)
+      {
+         //directory does not exit, must create
+         rc = mkdir(ns->trash_md_path, branch_mode);
+                        if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR:Failed to mkdir %s\n", ns->trash_md_path);
+                                return -1;
+                        }
+      }
+      else
+      {
+         printf("ERROR:stat failed %s\n", ns->trash_md_path);
+         return -1;
+      }
+
+      //create scatter-tree for trash, if needed
+      __TRY0( init_scatter_tree(ns->trash_md_path, ns, shard, branch_mode, trash_leaf_mode) );
+
+      //mdfs top-level dir
+      rc = MD_PATH_OP(lstat, ns, ns->md_path, &st);
+
+                if (! rc)
+                {
+                        if (! S_ISDIR(st.st_mode))
+                        {
+                                printf("ERROR:Not a directory %s\n", ns->md_path);
+                        }
+                }
+                else if (errno == ENOENT)
+                {
+                        //directory does not exit, must create
+                        rc = mkdir(ns->md_path, mdfs_mode);
+                        if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR:Failed to mkdir %s\n", ns->md_path);
+                                return -1;
+                        }
+
+         rc = chmod(ns->md_path, mdfs_mode);
+                        if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR:Failed to chmod %s\n", ns->md_path);
+                                return -1;
+                        }
+         snprintf(command, MARFS_MAX_MD_PATH * 2, "chown %s:%s %s", owner,owner, ns->md_path);
+                        rc = system(command);
+         if (rc)
+         {
+            printf("ERROR:Failed to change mdfs ownership for %s\n", owner);
+            return -1;
+         }
+                }
+      else
+      {
+         printf("ERROR:stat failed %s\n", ns->md_path);
+         return -1;
+      }
+   
+      //now handle fsinfo
+            rc = MD_PATH_OP(lstat, ns, ns->fsinfo_path, &st);
+            if (! rc) 
+      {
+            if (! S_ISREG(st.st_mode)) 
+         {
+                     LOG(LOG_ERR, "not a regular file %s\n", ns->fsinfo_path);
+            return -1;
+               }
+            }
+            else if (errno == ENOENT) 
+      {
+         //first mknode
+         rc = mknod(ns->fsinfo_path, fsinfo_mode, 0);
+         if ((rc < 0) && (errno != EEXIST))
+         {
+            printf("ERROR: Failed to create fsinfo\n");
+         }
+         rc = chmod(ns->fsinfo_path, fsinfo_mode);
+         if ((rc < 0) && (errno != EEXIST))
+                        {
+                                printf("ERROR: Failed to chmod fsinfo %s\n", ns->fsinfo_path);
+                        }
+            __TRY0( truncate(ns->fsinfo_path, 0) ); // infinite quota, for now
+               LOG(LOG_ERR, "doesn't exist %s\n", ns->fsinfo_path);
+               return -1;
+            }
+            else 
+      {
+               LOG(LOG_ERR, "stat failed %s (%s)\n", ns->fsinfo_path, strerror(errno));
+               return -1;
+            }
+
+#if TBD
+      // COMMENTED OUT.  Turns out there are issues with POSIX permissions
+      // in this setup, because "who owns the directory into which the
+      // user's data-files are stored"?  It was felt that, even if the
+      // storage file-system is unshared, the fact that the parent dir
+      // (i.e. leaf dir in the scatter-tree) would have to be
+      // world-writable was not good enough protection.
+
+      // create a scatter-tree for semi-direct fuse repos, if any
+      if (repo->access_method == ACCESSMETHOD_SEMI_DIRECT) {
+         __TRY0( init_scatter_tree(repo->host, ns->name, shard, branch_mode, leaf_mode) );
+      }
+#endif      
+   }
+}
 
 
 // NOTE: for now, all the marfs directories are chown root:root, cmod 770
@@ -2899,13 +3105,13 @@ int init_mdfs() {
         ns;
         ns = namespace_next(&it)) {
 
+      printf("current namespace %s\n", ns->name);
       const uint32_t shard = 0;   // FUTURE: make scatter-tree for each shard?
 #if TBD
       MarFS_Repo*    repo  = ns->iwrite_repo; // for fuse
 #endif
       mode_t         branch_mode  = (S_IRWXU | S_IXOTH );     // 'chmod 701'
       mode_t         leaf_mode    = (branch_mode | S_IWOTH ); // 'chmod 703'
-
 
       LOG(LOG_INFO, "\n");
       LOG(LOG_INFO, "NS %s\n", ns->name);
@@ -2925,7 +3131,6 @@ int init_mdfs() {
 
 
 
-
       // check whether "trash" dir exists (and create sub-dirs, if needed)
       LOG(LOG_INFO, "top-level trash dir   %s\n", ns->trash_md_path);
 
@@ -2938,11 +3143,11 @@ int init_mdfs() {
       }
       else if (errno == ENOENT) {
          // LOG(LOG_ERR, "creating %s\n", ns->trash_md_path);
-         // rc = mkdir(ns->trash_md_path, mode);
-         // if ((rc < 0) && (errno != EEXIST)) {
-         //   LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_md_path);
-         //   return -1;
-         // }
+         rc = mkdir(ns->trash_md_path, branch_mode);
+         if ((rc < 0) && (errno != EEXIST)) {
+            LOG(LOG_ERR, "mkdir(%s) failed\n", ns->trash_md_path);
+            return -1;
+         }
          LOG(LOG_ERR, "doesn't exist %s\n", ns->trash_md_path);
          return -1;
       }
@@ -2954,7 +3159,7 @@ int init_mdfs() {
 
       // create the scatter-tree for trash, if needed
       __TRY0( init_scatter_tree(ns->trash_md_path, ns, shard, branch_mode, leaf_mode) );
-
+      
 
 
 
@@ -2971,11 +3176,11 @@ int init_mdfs() {
          }
       }
       else if (errno == ENOENT) {
-         //      rc = mkdir(ns->md_path, mode);
-         //      if ((rc < 0) && (errno != EEXIST)) {
-         //         LOG(LOG_ERR, "mkdir(%s) failed\n", ns->md_path);
-         //         return -1;
-         //      }
+               rc = mkdir(ns->md_path, branch_mode);
+               if ((rc < 0) && (errno != EEXIST)) {
+                  LOG(LOG_ERR, "mkdir(%s) failed\n", ns->md_path);
+                  return -1;
+               }
          LOG(LOG_ERR, "doesn't exist %s\n", ns->md_path);
          return -1;
       }
@@ -3007,7 +3212,7 @@ int init_mdfs() {
          }
       }
       else if (errno == ENOENT) {
-         // __TRY0( truncate(ns->fsinfo_path, 0) ); // infinite quota, for now
+          __TRY0( truncate(ns->fsinfo_path, 0) ); // infinite quota, for now
          LOG(LOG_ERR, "doesn't exist %s\n", ns->fsinfo_path);
          return -1;
       }
@@ -3162,3 +3367,140 @@ void terminate_all_readers(MarFS_FileHandle* fh) {
 
    POST(&os->read_lock);
 }
+
+
+// Computes a good, uniform, hash of the string.
+//
+// Treats each character in the length n string as a coefficient of a
+// degree n polynomial.
+//
+// f(x) = string[n -1] + string[n - 2] * x + ... + string[0] * x^(n-1)
+//
+// The hash is computed by evaluating the polynomial for x=33 using
+// Horner's rule.
+//
+// Reference: http://cseweb.ucsd.edu/~kube/cls/100/Lectures/lec16/lec16-14.html
+uint64_t polyhash(const char* string) {
+   // According to http://www.cse.yorku.ca/~oz/hash.html
+   // 33 is a magical number that inexplicably works the best.
+   const int salt = 33;
+   char c;
+   uint64_t h = *string++;
+   while((c = *string++))
+      h = salt * h + c;
+   return h;
+}
+
+// compute the hash function h(x) = (a*x) >> 32
+uint64_t h_a(const uint64_t key, uint64_t a) {
+   return ((a * key) >> 32);
+}
+
+// file-ify an object-id.
+void flatten_objid(char* objid) {
+   int i;
+   for(i = 0; objid[i]; i++) {
+      if(objid[i] == '/')
+         objid[i] = FLAT_OBJID_SEPARATOR;
+   }
+}
+
+//
+//void get_path_template(char* path, MarFS_FileHandle* fh)
+//{
+//   init_data(fh);
+//
+//   const MarFS_Repo* repo  = fh->info.pre.repo;
+//   char*             objid = fh->info.pre.objid;
+//
+//   char obj_filename[MARFS_MAX_OBJID_SIZE];
+//   strncpy(obj_filename, objid, MARFS_MAX_OBJID_SIZE);   
+//   flatten_objid(obj_filename);
+//
+//   unsigned long objid_hash = polyhash(objid);
+//
+//   char* mc_path_format = repo->host;
+//
+//   unsigned int num_blocks    = (((MC_Config*)fh->dal_handle.dal->global_state)->n
+//                                 + ((MC_Config*)fh->dal_handle.dal->global_state)->e);
+//   unsigned int num_pods      = ((MC_Config*)fh->dal_handle.dal->global_state)->num_pods;
+//   unsigned int num_cap       = ((MC_Config*)fh->dal_handle.dal->global_state)->num_cap;
+//   unsigned int scatter_width = ((MC_Config*)fh->dal_handle.dal->global_state)->scatter_width;
+//
+//   unsigned int seed = objid_hash;
+//   uint64_t     a[3];
+//   int          i;
+//   for(i=0; i<3; i++)
+//      a[i] = rand_r(&seed)*2+1;
+//
+//   unsigned int  pod         = objid_hash % num_pods;
+//   unsigned int  cap         = h_a(objid_hash, a[0]) % num_cap;
+//   unsigned long scatter     = h_a(objid_hash, a[1]) % scatter_width;
+//   unsigned int  start_block = h_a(objid_hash, a[2]) % num_blocks;
+//   
+//   if (((MC_Config*)fh->dal_handle.dal->global_state)->is_sockets)
+//   {
+//      snprintf(path, MC_MAX_PATH_LEN, mc_path_format,
+//               pod + ((MC_Config*)fh->dal_handle.dal->global_state)->pod_offset,
+//               cap,
+//               scatter);
+//   }
+//   else
+//   {
+//      snprintf(path, MC_MAX_PATH_LEN, mc_path_format, pod, "%d", cap, scatter);
+//   }
+//   
+//   if (path[strlen(path) - 1] != '/')
+//      strcat(path, "/");
+//   
+//   strncat(path, obj_filename, MARFS_MAX_OBJID_SIZE);
+//}
+//
+
+
+int marfs_check_packable(const char* path, size_t content_length)
+{
+        int rc;
+        PathInfo info = {0};
+        EXPAND_PATH_INFO(&info, path);
+        init_pre(&info.pre, OBJ_FUSE, info.ns, info.ns->iwrite_repo, &info.st);
+
+        rc = 1; //init RC
+        if((content_length > info.pre.repo->max_pack_file_size)
+           || (content_length >= (info.pre.repo->chunk_size - MARFS_REC_UNI_SIZE)))
+        {
+                rc = 0;
+        }
+
+        return rc;
+}
+
+//
+//int marfs_path_convert(int mode, const char* path, MarFS_FileHandle* fh, size_t chunk_no, char* path_template)
+//{
+//   TRY_DECLS();
+//   PathInfo* info = &fh->info;
+//   ObjectStream* os = &fh->os;
+//
+//   //fake flags to always be writing
+//   fh->flags = FH_WRITING;
+//   EXPAND_PATH_INFO(info, path);
+// 
+//   if (!mode) {
+//      stat_xattrs(info, XVT_PRE);
+//      if (! has_all_xattrs(info, MARFS_MD_XATTRS))
+//         return -1;
+//   }
+//   else{
+//      stat_regular(info);
+//      init_pre(&info->pre, OBJ_FUSE, info->ns,
+//               info->ns->iwrite_repo, &info->st);
+//   }
+//   info->pre.obj_type = OBJ_Nto1;
+//   info->pre.chunk_no = chunk_no;
+//   update_pre(&info->pre);
+//   
+//   get_path_template(path_template, fh);
+//   return 0;
+//}
+//

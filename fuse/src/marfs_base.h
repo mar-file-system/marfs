@@ -158,10 +158,11 @@ extern "C" {
 #define   MARFS_MAX_NAMESPACE_NAME         MARFS_MAX_OBJID_SIZE
 
 
-// Allows us to allocate buffers when parsing objid
-// xattr-values.  If this is going to go into the
-// "bucket" part of the object-ID, then it must fit there, with
-// enough room left over to fit MAX_NS_ALIAS_NAME
+// Allows us to allocate buffers when parsing objid xattr-values.  If this
+// is going to go into the "bucket" part of the object-ID, then it must fit
+// there, with enough room left over to fit MAX_NS_ALIAS_NAME.  (Also, this
+// limits the size of repo-name associated with statistics that are
+// collected in MarFS_FileHandle.)
 #define   MARFS_MAX_REPO_NAME   (MARFS_MAX_BUCKET_SIZE - MARFS_MAX_NS_ALIAS_NAME)
 
 // "http://.../<bucket>/<objid>"
@@ -535,7 +536,7 @@ int pre_2_url(char* url_str, size_t size, MarFS_XattrPre* pre);
 // <has_objid> indicates whether pre.objid is already filled-in
 int str_2_pre(MarFS_XattrPre*    pre,
               const char*        pre_str,
-              const struct stat* st); // from string
+              const struct stat* st);
 
 // initialize
 int init_pre(MarFS_XattrPre*        pre,
@@ -596,7 +597,7 @@ typedef struct MarFS_XattrPost {
 int post_2_str(char* post_str, size_t size, const MarFS_XattrPost* post, const MarFS_Repo* repo, int add_md_path);
 
 // from string to MarFS_XattrPost
-int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset); // from string
+int str_2_post(MarFS_XattrPost* post, const char* post_str, uint8_t reset, int parse_md_path);
 
 int init_post(MarFS_XattrPost* post, MarFS_Namespace* ns, MarFS_Repo* repo);
 
@@ -667,7 +668,7 @@ typedef struct MarFS_XattrShard {
 int shard_2_str(char* shard_str,        const MarFS_XattrShard* shard);
 
 // from string to MarFS_XattrShard
-int str_2_shard(MarFS_XattrShard* shard, const char* shard_str); // from string
+int str_2_shard(MarFS_XattrShard* shard, const char* shard_str);
 
 
 
@@ -883,7 +884,7 @@ typedef struct {
 // int recoveryinfo_2_str(char* rec_info_str, const size_t max_size, const RecoveryInfo* rec_info);
 
 // from string to RecoveryInfo
-int str_2_recoveryinfo(RecoveryInfo* rec_info, const char* rec_str, size_t str_size); // from string
+int str_2_recoveryinfo(RecoveryInfo* rec_info, const char* rec_str, size_t str_size);
 
 #endif
 

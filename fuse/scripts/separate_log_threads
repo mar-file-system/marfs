@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# Useful for separating the log output written from different threads
+# in a common log, using the logging support in libmarfs, and libne.
+# They both now have log-output that always has the thread-ID as the
+# second token.
+
+# ... unless they are writing to syslog, in which case the same program
+# output ends up with the TID in column 5.  Make it a command-line arg, so
+# this will work with both kinds of logs.
+
+if [[ $# != 2 ]]; then
+   echo "Usage:  $0 <log_file> <tid_column>"
+   echo
+   exit 1
+fi
+
+LOG_FNAME=$1
+TID_COL=$2
+
+# rm -f foo.log.[0-9a-f]*
+rm -f foo.log.thr*
+
+# # THREADS=`cat $LOG_FNAME | awk '/[0-9][a-f]/{print $2}' | sort | uniq`
+# THREADS=`cat $LOG_FNAME | grep '|' | sed -E 's/([ ]+)/ /g' | cut -d ' ' -f $TID_COL | sort | uniq`
+# echo "$THREADS"
+
+
+# # old approach reads the entire file for every thread.  Okay with a couple of threads,
+# # but doesn't scale well, if the file is huge, with many threads.
+#
+# for THR in $THREADS; do
+#     grep $THR $LOG_FNAME > foo.log.$THR
+# done
+
+
+# new approach: Read the file once, directing lines into appropriate files.
+# To avoid open/append/close of each thread-file, for every appended line,
+# we first sort the file by threads.  Helper prog splits into distinct
+# files based on thread-id.  It writes files named 'foo.log.thr_<thread_id>'
+
+# NOTE: sort -k assumes one delimiter only, between tokens.  So, we
+#        duplicate the desired field at the head of each line, do a stable
+#        sort on that, and then strip that extra leading token back off.
+#
+# # cat $LOG_FNAME | grep '|' | sort -s -k $TID_COL,$TID_COL | separate_log_threads_support $TID_COL
+
+cat $LOG_FNAME | grep '|' | awk "{print \$$TID_COL,\$0}" | sort -s -k 1,1 |  sed -e 's/^[0-9a-f]* //' | separate_log_threads_support $TID_COL
