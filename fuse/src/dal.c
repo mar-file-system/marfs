@@ -984,7 +984,7 @@ int mc_path_snprintf_sockets(char*       dest,
 
 // For MC DALs, the MarFS configuration specifies a sprintf-format
 // representing a generic path.  This function fills out some of those
-// fields, leaving a template that still has 1 or more "%d" fileds,
+// fields, leaving a template that still has 1 or more "%d" fields,
 // which vary across the block-elements in a stripe.  libne will then
 // call a custom function to fill out the remaining fields, to
 // generate each per-block filename, as needed.
@@ -1013,7 +1013,7 @@ int mc_update_path(DAL_Context* ctx) {
    
    char *mc_path_format = repo->host;
 
-   unsigned int num_blocks    = MC_CONFIG(ctx)->n+MC_CONFIG(ctx)->e;
+   unsigned int num_blocks    = MC_CONFIG(ctx)->n + MC_CONFIG(ctx)->e;
    unsigned int num_pods      = MC_CONFIG(ctx)->num_pods;
    unsigned int num_cap       = MC_CONFIG(ctx)->num_cap;
    unsigned int scatter_width = MC_CONFIG(ctx)->scatter_width;
@@ -1063,42 +1063,6 @@ int mc_update_path(DAL_Context* ctx) {
    return 0;
 }
 
-int find_stats_from_tflags(int tflags)
-{
-   int tot_stats = 0;
-
-   if (tflags & TF_OPEN)
-      tot_stats++;
-
-   if (tflags & TF_RW)
-      tot_stats += 2;
-
-   if (tflags & TF_CLOSE)
-      tot_stats++;
-
-#if 0
-   if (tflags & TF_RENAME)
-      tot_stats++;
-
-   if (tflags & TF_CRC) {
-      printf("DAL.C detected CRC flag\n");
-      tot_stats++;
-   }
-
-   if (tflags & TF_ERASURE) {
-      printf("DAL.C detected ERASURE flag\n");
-      tot_stats++;
-   }
-
-   if (tflags & TF_XATTR)
-      tot_stats++;
-
-   if (tflags & TF_STAT)
-      tot_stats++;
-#endif
-
-   return tot_stats;
-}
 
 // Open a multi-component object stream backed by a ne_handle.
 //
@@ -1119,30 +1083,37 @@ int mc_open(DAL_Context* ctx,
    unsigned int  e             = MC_CONFIG(ctx)->e;
 
    int           impl          = (MC_CONFIG(ctx)->is_sockets ? UDAL_SOCKETS : UDAL_POSIX);
-   int           timing_flags  = (MC_FH(ctx)->info.pre.repo->timing_flags
-                                  | MC_FH(ctx)->info.pre.ns->timing_flags );
+
+   const MarFS_Repo*      repo = MC_FH(ctx)->info.pre.repo;
+   const MarFS_Namespace* ns   = MC_FH(ctx)->info.pre.ns;
+
+   int           timing_flags  = (repo->timing_flags | ns->timing_flags );
+   TimingData*   timing        = &MC_FH(ctx)->timing_data;
 
    int           mode          = (is_put ? NE_WRONLY : NE_RDONLY);
 
    // do the generic cleanup stuff like resetting flags.
    TRY0( stream_cleanup_for_reopen(os, preserve_write_count) );
+
    if (! MC_FH(ctx)->repo_name[0])
    {
       //save repo-name associated with statistics
       memset(MC_FH(ctx)->repo_name, 0, MARFS_MAX_REPO_NAME);
-      memcpy(MC_FH(ctx)->repo_name, MC_FH(ctx)->info.pre.repo->name, MC_FH(ctx)->info.pre.repo->name_len);
+      memcpy(MC_FH(ctx)->repo_name, repo->name, repo->name_len);
 
-      //find the number of timing-stats to collect
-      MC_FH(ctx)->tot_stats = find_stats_from_tflags(timing_flags);
+      // parameters for timing
+      timing->blk_count = n + e;
 
-      //allocate pointers include 2 characters for name of stat
-      //MC_FH(ctx)->timing_stats = (char*)malloc(sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
-      //                                         + 2 * (MC_FH(ctx)->tot_stats));
-      //memset(MC_FH(ctx)->timing_stats, 0, sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
-      //       + 2 * (MC_FH(ctx)->tot_stats));
+      // these were initialized before mc_open() was called, via
+      // open_data() -> DAL_OP(update_object_location, ...).
+      // (For us, the implementation is mc_update_path(), above)
+      timing->pod_id    = MC_CONTEXT(ctx)->pod;
    }
+
+   // open the ne_handle
    MC_HANDLE(ctx) = ne_open1(MC_CONFIG(ctx)->snprintf, ctx,
-                             impl, MC_CONFIG(ctx)->auth, timing_flags,
+                             impl, MC_CONFIG(ctx)->auth,
+                             timing_flags, timing,
                              path_template, mode,
                              MC_CONTEXT(ctx)->start_block, n, e);
    if(! MC_HANDLE(ctx)) {
@@ -1150,23 +1121,6 @@ int mc_open(DAL_Context* ctx,
       return -1;
    }
 
-   if (MC_FH(ctx)->tot_stats) {
-      //we need total_blk from ne_handle to allocate stat buffer
-      MC_FH(ctx)->total_blk = MC_HANDLE(ctx)->N + MC_HANDLE(ctx)->E;
-      MC_FH(ctx)->pod_id = MC_CONTEXT(ctx)->pod;
-      //MC_HANDLE(ctx)->repo_name = MC_FH(ctx)->repo_name;
-      //MC_HANDLE(ctx)->pod_id = &(MC_FH(ctx)->pod_id);
-
-      if (MC_FH(ctx)->timing_stats == NULL) {
-         //allocate stat buffer based on total blks from ne_handle
-         MC_FH(ctx)->timing_stats_buff_size = (sizeof(double) * 65 * (MC_FH(ctx)->tot_stats)
-                                               * (MC_FH(ctx)->total_blk)
-                                               + 3 * (MC_FH(ctx)->tot_stats));
-         MC_FH(ctx)->timing_stats = (char*)malloc(MC_FH(ctx)->timing_stats_buff_size);
-         memset(MC_FH(ctx)->timing_stats, 0, MC_FH(ctx)->timing_stats_buff_size);
-      }
-      MC_HANDLE(ctx)->timing_stats = MC_FH(ctx)->timing_stats;
-   }
 
    if(is_put) {
       os->flags |= OSF_WRITING;
@@ -1386,8 +1340,10 @@ int mc_del(DAL_Context* ctx) {
    int   impl          = (MC_CONFIG(ctx)->is_sockets ? UDAL_SOCKETS : UDAL_POSIX);
    int   timing_flags  = (MC_FH(ctx)->info.pre.repo->timing_flags
                           | MC_FH(ctx)->info.pre.ns->timing_flags );
+   TimingData* timing  = &MC_FH(ctx)->timing_data;
 
-   return ne_delete1(MC_CONFIG(ctx)->snprintf, ctx, impl, MC_CONFIG(ctx)->auth, timing_flags, path_template, nblocks);
+   return ne_delete1(MC_CONFIG(ctx)->snprintf, ctx, impl, MC_CONFIG(ctx)->auth,
+                     timing_flags, timing, path_template, nblocks);
 }
 
 
