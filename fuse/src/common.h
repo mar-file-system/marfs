@@ -667,18 +667,12 @@ typedef struct {
 
    uint8_t         os_init;      // tells weather or not the object streem is inizlized
    curl_off_t      objectSize;   // The size of the object for packed files
-   int             fileCount;    // The number of files that have been packed
-                                 // into the file
+   int             fileCount;    // number of files that have been packed into the file
 
    FHFlagType      flags;
    
-   int             tot_stats;    // number of timing-stat flag-bits asserted
-   int             tot_pods;
-   int             pod_id;
    int             data_ready;
-   int             total_blk;
-   size_t          timing_stats_buff_size;
-   char*           timing_stats;
+   TimingData      timing_data;  // supersedes the TimingData in ne_handle
    char            repo_name[MARFS_MAX_REPO_NAME];    // repo where stats were gathered
 } MarFS_FileHandle;
 
