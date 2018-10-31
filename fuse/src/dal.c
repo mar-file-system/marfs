@@ -819,7 +819,7 @@ int mc_config(struct DAL*     dal,
       SEM_INIT(&config->lock, 0, 1);
    }
 
-#if S3_AUTH
+#if (SOCKETS != SKT_rdma) && S3_AUTH
    // To allow generating per-connection auth-signatures, capture the S3
    // credentials up front, while we have access to the AWS config file
    // (i.e. before de-escalation).  If mc_user is null, skt_auth_install()

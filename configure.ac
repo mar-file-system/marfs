@@ -98,7 +98,13 @@ AC_ARG_ENABLE([dal],
 # Enable Muti-Component Storage
 AC_ARG_ENABLE([mc],
         AS_HELP_STRING([  --enable-mc],
-                       [one of {yes|sockets|no}.  Build the multi-component storage framework.  NOTE: requires DAL to be enabled.]))
+                       [one of {yes|sockets|no}.  Build the Multi-Component storage framework.  Requires DAL enabled.]),
+        [case "${enableval}" in
+           (yes) ;;
+           (sockets) ;;
+           (no) ;;
+           (*)  AC_MSG_FAILURE([--enable-mc={yes,no,sockets}]) ;;
+         esac])
 
 # Don't build GPFS utilities.
 AC_ARG_WITH([gpfs],
@@ -121,7 +127,7 @@ AC_ARG_WITH([aws-auth],
         AS_HELP_STRING([  --without-aws-auth], [tell FUSE it is okay if ~/.awsAuth doesn't exist]))
 
 AC_ARG_ENABLE([debug],
-        AS_HELP_STRING([  --enable-debug], [one of {yes|no}.  yes changes optimization compiler-flags and does extra logging]))
+        AS_HELP_STRING([  --enable-debug], [one of {yes|no}.  build w/ -O0, show verbose S3 (if applicable)]))
 
 AC_ARG_ENABLE([gprof],
         AS_HELP_STRING([  --enable-gprof], [adds "-pg" compiler-flag, to dump profiling-info at run-time]))
@@ -198,11 +204,21 @@ AS_IF([test x"$enable_mc" != xno],
        AC_CHECK_LIB([rt], [timer_settime])
        AC_CHECK_LIB([dl], [dlclose]) ])
 
-# DAL=MC+RDMA needs libne configured with --enable-sockets={rdma|ip|unix}
-#                         (currently only 'rdma' is supported)
+
+# DAL=MC+RDMA needs libne     configured with --enable-sockets={rdma|ip|unix}
+# DAL=MC      needs libne NOT configured with --enable-sockets={rdma|ip|unix}
+#
 AS_IF([test x"$enable_mc" = xsockets],
-      [AC_CHECK_LIB([ne], [udal_skt_fd_init], , AC_ERROR([libne was not built with --enable-sockets])) ],
-      [AC_CHECK_LIB([ne], [ne_open], ,          AC_ERROR([libne is needed for an MC build])) ] )
+      [AC_CHECK_LIB([ne], [udal_skt_fd_init],      , AC_ERROR(m4_normalize[
+                                                         libne was not built with --enable-sockets
+                                                         You must either rebuild libne with --enable-sockets
+                                                         or  build marfs without --enable-mc=sockets])) ],
+      [AC_CHECK_LIB([ne], [udal_non_socket_build], , AC_ERROR(m4_normalize[
+                                                         libne was built with --enable-sockets
+                                                         You must either rebuild libne without --enable-sockets
+                                                         or build marfs with --enable-mc=sockets])) ])
+
+AC_CHECK_LIB([ne], [ne_open], ,          AC_ERROR([libne is needed for an MC build]))
 
 
 
