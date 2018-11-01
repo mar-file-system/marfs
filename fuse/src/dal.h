@@ -99,8 +99,7 @@ OF SUCH DAMAGE.
 #include <stdio.h>
 
 #if USE_MC
-
-#  include "skt_config.h"  // libne configure-time #defines, like S3_AUTH
+#  include "udal_config.h"  // libne configure-time #defines, like S3_AUTH
 #  if S3_AUTH
 #    include <aws4c.h>
 #  endif

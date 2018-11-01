@@ -212,13 +212,16 @@ AS_IF([test x"$enable_mc" = xsockets],
       [AC_CHECK_LIB([ne], [udal_skt_fd_init],      , AC_ERROR(m4_normalize[
                                                          libne was not built with --enable-sockets
                                                          You must either rebuild libne with --enable-sockets
-                                                         or  build marfs without --enable-mc=sockets])) ],
+                                                         or  build marfs without --enable-mc=sockets])) ])
+AS_IF([test x"$enable_mc" = xyes],
       [AC_CHECK_LIB([ne], [udal_non_socket_build], , AC_ERROR(m4_normalize[
                                                          libne was built with --enable-sockets
                                                          You must either rebuild libne without --enable-sockets
                                                          or build marfs with --enable-mc=sockets])) ])
 
-AC_CHECK_LIB([ne], [ne_open], ,          AC_ERROR([libne is needed for an MC build]))
+
+AS_IF([test x"$enable_mc" != xno],
+      [AC_CHECK_LIB([ne], [ne_open], , AC_ERROR([libne is needed for an MC build])) ])
 
 
 
