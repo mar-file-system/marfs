@@ -383,49 +383,27 @@ void usage(const char *program) {
  */
 int rebuild_object(struct object_file object) {
 
-  ne_handle object_handle;
 
   errno = 0;
-  if(object.start_block < 0) { // component-based rebuild
-    object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
-  }
-  else { // log-based rebuild
-    object_handle = ne_open(object.path, NE_REBUILD, object.start_block,
-                            object.n, object.e);
-    if(object_handle == NULL) {
-      errno = 0;
-      object_handle = ne_open(object.path, NE_REBUILD|NE_NOINFO);
-    }
+
+  if(dry_run) {
+    struct ne_stat_struct erasure_status;
+    return ne_stat( object.path, &erasure_status ); // just provide the return code of ne_stat()
   }
 
-  if(object_handle == NULL) {
+  int rebuild_result;
+  if(object.start_block < 0) // component-based rebuild
+    rebuild_result = ne_rebuild(object.path, NE_REBUILD|NE_NOINFO);
+  else
+    rebuild_result = ne_rebuild(object.path, NE_REBUILD, object.start_block, object.n, object.e);
+  if(rebuild_result < 0) {
     if( errno == ENOENT ) { //ignore the failure to open an incomplete object
       VRB_FPRINTF( stdout, "INFO: skipping unfinished object %s\n", object.path );
       return -2; //signal an incomplete object
     }
-    fprintf(stderr, "ERROR: cannot rebuild %s. ne_open() failed: %s.\n",
-            object.path, strerror(errno));
-    return -1;
-  }
-
-  if(dry_run) { return ne_close( object_handle ); }
-
-  int rebuild_result = ne_rebuild(object_handle);
-  if(rebuild_result < 0) {
     fprintf(stderr, "ERROR: cannot rebuild %s. ne_rebuild() failed: %s.\n",
             object.path, strerror(errno));
-    ne_close(object_handle); //close and ignore any errors
     return -1;
-  }
-  else {
-    int error = ne_close(object_handle);
-    if(error < 0) {
-      fprintf(stderr, "object %s could not be closed: %s\n",
-              object.path, strerror(errno));
-      // A failure of a close here means a failure to chown()/rename()
-      // If that happens, something is terribly wrong.
-      exit(-1);
-    }
   }
 
   return rebuild_result;
