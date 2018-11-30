@@ -387,8 +387,8 @@ int rebuild_object(struct object_file object) {
   errno = 0;
 
   if(dry_run) {
-    struct ne_stat_struct erasure_status;
-    return ne_stat( object.path, &erasure_status ); // just provide the return code of ne_stat()
+    struct ne_state_struct erasure_state;
+    return ne_stat( object.path, &erasure_state ); // just provide the return code of ne_stat()
   }
 
   int rebuild_result;
