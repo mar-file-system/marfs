@@ -219,12 +219,14 @@ int main(int argc, char* argv[])
       return -1;
    }
 
+#if 0  // MC_SOCKETS should be allowed, too!
    // before we reach into the context structs directly, make sure this is actually a MC obj
    if ( strncmp( fh.dal_handle.dal->name, "MC", 3 ) ) {
       printf("ERROR: marfs file-handle does not indicate the expected DAL name of 'MC': \"%s\"\n", fh.dal_handle.dal->name );
       marfs_release( "required for some reason, even though it's never used", &fh );
       return -1;
    }
+#endif
 
    // pull the path out of the open file handle
    printf("Object Path  -- %s\n", MC_CONTEXT(&(fh.dal_handle.ctx))->path_template );
