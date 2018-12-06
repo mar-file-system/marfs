@@ -156,9 +156,13 @@ extern "C" {
 //
 // -- 1.10  Same as 1.9, but after merging rdma to master.  This allows us
 //          to refer to "1.10" and clearly mean after that merge.
+//
+// -- 1.11  Merged in new multi-threaded reads, in libne.  Again, just
+//          incrementing version to make a distinction in object-IDs.
+
 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  10
+#define MARFS_CONFIG_MINOR  11
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
