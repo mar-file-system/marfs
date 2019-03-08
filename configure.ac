@@ -180,8 +180,8 @@ AC_CHECK_LIB([dl], [dlsym])
 AC_CHECK_LIB([crypto], [MD5_Init])
 AC_CHECK_LIB([curl], [curl_easy_cleanup])
 AC_CHECK_LIB([xml2], [xmlSAX2GetEntity])
-AC_CHECK_LIB([aws4c], [s3_enable_Scality_extensions])
-AC_CHECK_LIB([aws4c_extra], [s3_create_bucket])
+AC_CHECK_LIB([aws4c], [s3_enable_Scality_extensions], [], [AC_MSG_ERROR(["Failed to locate libaws4c!  Please ensure the library is installed in a default location or that your AWS4C env var is properly set."])])
+AC_CHECK_LIB([aws4c_extra], [s3_create_bucket], [], [AC_MSG_ERROR(["Failed to locate libaws4c_extra!  Please ensure the library is installed in a default location or that your AWS4C env var is properly set."])])
 
 # DAL=MC+RDMA also needs rdma_sockets and rdmacm
 AS_IF([test x"$enable_mc" = xsockets],
@@ -259,7 +259,7 @@ AM_CONDITIONAL([GPFS_UTILITIES], [test x"$build_gpfs_utilities" = xyes])
 
 # We depend on a number of environment variables
 AC_ARG_VAR(AWS4C, [The location of the aws4c installation])
-AC_ARG_VAR(PA2X,  [The location of the PA2X installation])
+#AC_ARG_VAR(PA2X,  [The location of the PA2X installation])
 AC_ARG_VAR(LIBNE, [The location of the erasureUtils libne installation])
 AC_ARG_VAR(PARSE_DIR, [The location of PA2X (need this and PA2X)])
 
@@ -271,8 +271,11 @@ AC_ARG_VAR(MARFS_MNT, [The MarFS mount point (optional)])
 AC_ARG_VAR(MARFSCONFIGRC, [The path to the marfs config (or any valid config)])
 
 AS_IF([test -z "$PARSE_DIR"], [AC_ERROR([PARSE_DIR is not set])])
-AS_IF([test -z "$AWS4C"], [AC_ERROR([AWS4C is not set])])
-AS_IF([test x"$enable_mc" != xno && test -z "$LIBNE"], [AC_ERROR([LIBNE is not set])])
+# We've already verified we have the libraries.  If we have found them, we don't necessarily need the env vars
+#AS_IF([test -z "$AWS4C"], [AC_ERROR([AWS4C is not set])])
+AM_CONDITIONAL([AWS4C],[test "$AWS4C"]) #just note if the var is set
+#AS_IF([test x"$enable_mc" != xno && test -z "$LIBNE"], [AC_ERROR([LIBNE is not set])])
+AM_CONDITIONAL([LIBNE],[test "$LIBNE"]) #just note if the var is set
 
 AS_IF([test x"$enable_mc" = xsockets && test x"$with_aws_auth" = xno],
       [AC_ERROR([sockets MC cant have aws-auth disabled])])

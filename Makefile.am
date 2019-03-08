@@ -8,9 +8,14 @@
 # that will also exist at run-time, but you no longer need the PA2X
 # install at run-time.
 
-AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C) \
+# AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C)
+AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src \
 	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
 	      -DDATAPARSE -DBUILD_INC_DIR=@includedir@ -I$(PARSE_DIR)
+
+if AWS4C
+   AM_CPPFLAGS += -I$(AWS4C)
+endif
 
 # automake requires '=' before '+=', even for these built-in vars
 AM_CFLAGS  =
@@ -81,8 +86,11 @@ libmarfs_a_SOURCES = parser fuse/src/common.c fuse/	src/common.h        \
 
 libmarfs_a_LIBADD = $(PARSE_OBJ)
 
-LDADD += libmarfs.a $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
+LDADD += libmarfs.a #$(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
 
+if AWS4C
+   LDADD += $(AWS4C)/libaws4c.a $(AWS4C)/libaws4c_extra.a
+endif
 
 
 
@@ -114,10 +122,16 @@ bin_PROGRAMS =
 
 
 # --- additions for multi-component builds
+#  Configure has already added the -lne flag and verified that libne is in our path
 if USE_MC
-  AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
-  AM_LDFLAGS  += -L$(LIBNE)/lib
-  LDADD       += -L$(LIBNE)/lib -lne -lft
+#  AM_CPPFLAGS += -I$(LIBNE)/include -DUSE_MC=1
+  AM_CPPFLAGS += -DUSE_MC=1
+#  AM_LDFLAGS  += -L$(LIBNE)/lib
+#  LDADD       += -L$(LIBNE)/lib -lne -lft
+endif
+
+if LIBNE
+   AM_CPPFLAGS += -I$(LIBNE)/include
 endif
 
 
