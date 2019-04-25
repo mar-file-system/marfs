@@ -44,7 +44,7 @@ extern "C" {
 
 
 
-#ifdef USE_SYSLOG
+#if (DEBUG) && (defined USE_SYSLOG)
 // calling syslog() as a regular user on rrz seems to be an expensive no-op
 // #  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PERROR, LOG_USER)
 #  define INIT_LOG()  openlog(LOG_PREFIX, LOG_CONS|LOG_PID, LOG_USER)
@@ -57,7 +57,7 @@ extern "C" {
           __FUNCTION__,                                                 \
           (((PRIO)<=LOG_ERR) ? "#ERR " : ""), ## __VA_ARGS__)
 
-#elif (defined USE_STDOUT)
+#elif (DEBUG) && (defined USE_STDOUT)
 // must start fuse with '-f' in order to allow stdout/stderr to work
 // NOTE: print_log call merges LOG_PREFIX w/ user format at compile-time
 #  define INIT_LOG()

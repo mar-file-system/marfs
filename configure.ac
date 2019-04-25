@@ -111,9 +111,18 @@ AC_ARG_WITH([gpfs],
         AS_HELP_STRING([  --without-gpfs],
                        [do not build GPFS-specific utilities]))
 
-AC_ARG_ENABLE([logging],
-        AS_HELP_STRING([  --enable-logging],
-                       [one of {stdout|syslog|yes|no} enables logging to stdout/stderr or syslog (default stdout/stderr)]))
+AC_ARG_ENABLE([debug],
+        AS_HELP_STRING([  --enable-debug], [one of {S3|yes|no}.  build w/ -O0 (Also show verbose S3, if selected)]))
+
+# NOTE: In the case of '--enable-debug=S3', the S3 part of the diagnostics (produced by libaws)
+#       always go to stdout.  If you are running fuse, you won't see any stdout diagnostics from fuse
+#       unless you start it with '-f', for example:
+#
+#          marfs_fuse -f -o ... > fuse.log 2>&1
+#
+AC_ARG_ENABLE([syslog],
+        AS_HELP_STRING([  --enable-syslog],
+                       [send --enable-debug output to syslog (default to stdout/stderr)]))
 
 AC_ARG_ENABLE([spinlocks],
         AS_HELP_STRING([  --enable-spinlocks],
@@ -125,9 +134,6 @@ AC_ARG_ENABLE([nfs-threads],
 
 AC_ARG_WITH([aws-auth],
         AS_HELP_STRING([  --without-aws-auth], [tell FUSE it is okay if ~/.awsAuth doesn't exist]))
-
-AC_ARG_ENABLE([debug],
-        AS_HELP_STRING([  --enable-debug], [one of {yes|no}.  build w/ -O0, show verbose S3 (if applicable)]))
 
 AC_ARG_ENABLE([gprof],
         AS_HELP_STRING([  --enable-gprof], [adds "-pg" compiler-flag, to dump profiling-info at run-time]))
@@ -234,8 +240,11 @@ AM_CONDITIONAL([USE_MC_SOCKETS], [test x"$enable_mc" = xsockets])
 
 AM_CONDITIONAL([WANT_FUSE], [test x"$enable_fuse" != xno])
 
-AM_CONDITIONAL([USE_SYSLOG], [test x"$enable_logging" = xsyslog])
-AM_CONDITIONAL([USE_STDOUT], [test x"$enable_logging" = xstdout || test x"$enable_logging" = xyes])
+AM_CONDITIONAL([DEBUG_S3], [test x"$enable_debug"  = xS3])
+AM_CONDITIONAL([DEBUG],    [test x"$enable_debug" != xno])
+
+AM_CONDITIONAL([USE_SYSLOG], [test x"$enable_syslog"  = xyes])
+AM_CONDITIONAL([USE_STDOUT], [test x"$enable_syslog" != xyes])
 
 AM_CONDITIONAL([SPINLOCKS], [test x"$enable_spinlocks" = xyes])
 
@@ -243,7 +252,6 @@ AM_CONDITIONAL([NFS_THREADS], [test x"$enable_nfs_threads" = xyes])
 
 AM_CONDITIONAL([NO_AWSAUTH], [test x"$with_aws_auth" = xno])
 
-AM_CONDITIONAL([DEBUG], [test x"$enable_debug" = xyes])
 AM_CONDITIONAL([GPROF], [test x"$enable_gprof" = xyes])
 
 
