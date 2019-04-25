@@ -34,8 +34,15 @@ if GPROF
 endif
 
 # DEBUG>1  turn on S3 transaction logging (only affects libcurl interactions)
-if DEBUG
+if DEBUG_S3
   AM_CPPFLAGS += -DDEBUG=2
+else
+if DEBUG
+  AM_CPPFLAGS += -DDEBUG=1
+endif
+endif
+
+if DEBUG
   AM_CPPFLAGS += -fstack-protector-all -fstack-check
 endif
 
