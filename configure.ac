@@ -240,8 +240,10 @@ AM_CONDITIONAL([USE_MC_SOCKETS], [test x"$enable_mc" = xsockets])
 
 AM_CONDITIONAL([WANT_FUSE], [test x"$enable_fuse" != xno])
 
+# bug in autoconf?
+#   not specifying '--enable-debug' leaves x"$enable_debug" = x, rather than xno
 AM_CONDITIONAL([DEBUG_S3], [test x"$enable_debug"  = xS3])
-AM_CONDITIONAL([DEBUG],    [test x"$enable_debug" != xno])
+AM_CONDITIONAL([DEBUG],    [test x"$enable_debug"  = xyes || test x"$enable_debug"  = xS3])
 
 AM_CONDITIONAL([USE_SYSLOG], [test x"$enable_syslog"  = xyes])
 AM_CONDITIONAL([USE_STDOUT], [test x"$enable_syslog" != xyes])
