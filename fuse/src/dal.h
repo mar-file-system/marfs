@@ -401,6 +401,9 @@ DAL* get_DAL(const char* name);
 int     default_dal_ctx_init   (DAL_Context* ctx, DAL* dal, void* fh);
 int     default_dal_ctx_destroy(DAL_Context* ctx, DAL* dal);
 
+// allows marfs_config to dump DAL contents for parsing by shell-scripts
+int     mc_debug_config(struct DAL* dal);
+
 
 #ifdef __cplusplus
 }

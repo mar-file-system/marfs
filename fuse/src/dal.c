@@ -890,6 +890,53 @@ void mc_deconfig(struct DAL *dal) {
 #endif
 
 
+// show contents (used by marfs_config)
+int mc_debug_config(struct DAL* dal) {
+
+   if (strcmp(dal->name, "MC_SOCKETS")
+       && strcmp(dal->name, "MC")) {
+      printf("\t  error: mc_debug_config() got DAL with name '%s'\n", dal->name);
+      return -1;
+   }
+
+   MC_Config* config     = (MC_Config*) dal->global_state;
+   if (! config) {
+      printf("\t   uninitialized\n");
+      return 0;
+   }
+
+   printf("\t   n:                 %d\n", config->n);
+   printf("\t   e:                 %d\n", config->e);
+   printf("\t   num_pods:          %d\n", config->num_pods);
+   printf("\t   num_cap:           %d\n", config->num_cap);
+   printf("\t   scatter_width:     %d\n", config->scatter_width);
+   printf("\t   degraded_log_path: %s\n", config->degraded_log_path);
+   if (! config->is_sockets)
+      return 0;
+
+   // options only used by MC_SOCKETS DAL
+   printf("\t   host_offset:       %d\n", config->host_offset);
+   printf("\t   host_count:        %d\n", config->host_count);
+   printf("\t   blocks_per_host:   %d\n", config->blocks_per_host);
+   printf("\t   block_offset:      %d\n", config->block_offset);
+   printf("\t   global_block_nums: %d\n", config->global_block_numbering);
+   printf("\t   pod_offset:        %d\n", config->pod_offset);
+
+   if (config->snprintf == mc_path_snprintf_sockets)
+      printf("\t   snprintf_func:    'mc_path_snprintf_sockets'\n");
+   else if (config->snprintf == ne_default_snprintf)
+      printf("\t   snprintf_func:    'mc_path_snprintf_sockets'\n");
+   else
+      printf("\t   snprintf_func:    UNKNOWN\n");
+
+   return 0;
+}
+
+
+
+
+
+
 // Initialize the context for a multi-component backed object.
 // (e.g. new file-handle at open-time)
 // Returns 0 on success or -1 on failure (if memory cannot be allocated).

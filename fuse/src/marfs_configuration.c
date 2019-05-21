@@ -2024,16 +2024,19 @@ int debug_repo (MarFS_Repo* repo ) {
    fprintf(stdout, "\tmax_pack_file_size  %ld\n",  repo->max_pack_file_size);
    fprintf(stdout, "\tmin_pack_file_size  %ld\n",  repo->min_pack_file_size);
 
-   fprintf(stdout, "\tDAL                 %s\n",   (repo->dal ? repo->dal->name : "N/A"));
-   // We're assuming read_configuration() has already configured the DAL in question
-   if (repo->dal && (repo->dal->config == &default_dal_config)) {
-      debug_xdal_config_options(repo->dal->global_state);
-   }
-
    fprintf(stdout, "\tonline_cmds         %s\n",   repo->online_cmds);
    fprintf(stdout, "\tonline_cmds_len     %ld\n",  repo->online_cmds_len);
    fprintf(stdout, "\tlatency             %llu\n", repo->latency);
    fprintf(stdout, "\ttiming_flags        0x%x\n", repo->timing_flags);
+
+   fprintf(stdout, "\tDAL                 %s\n",   (repo->dal ? repo->dal->name : "N/A"));
+   // We're assuming read_configuration() has already configured the DAL in question
+   if (repo->dal) {
+      if (repo->dal->config == &default_dal_config)
+         debug_xdal_config_options(repo->dal->global_state);
+      else if (!strncmp(repo->dal->name, "MC", 2))
+         mc_debug_config(repo->dal);
+   }
 
    return 0;
 }
