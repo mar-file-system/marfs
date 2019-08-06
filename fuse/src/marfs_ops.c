@@ -104,8 +104,8 @@ include the files on which a code unit depends.
 // ---------------------------------------------------------------------------
 
 
-int marfs_access (const char* path,
-                  int         mask) {
+int marfs_euidaccess (const char* path,
+                      int         mask) {
    ENTRY();
 
    PathInfo info = {0};
@@ -115,7 +115,7 @@ int marfs_access (const char* path,
    CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
-   TRY0( MD_PATH_OP(access, info.ns, info.post.md_path, mask) );
+   TRY0( MD_PATH_OP(euidaccess, info.ns, info.post.md_path, mask) );
  
    EXIT();
    return 0;
@@ -141,7 +141,7 @@ int marfs_faccessat (const char* path,
    CHECK_PERMS(info.ns, (R_META));
 
    // No need for access check, just try the op
-   TRY0( MD_PATH_OP(faccessat, info.ns, -1, info.post.md_path, mask, flags) );
+   TRY0( MD_PATH_OP(faccessat, info.ns, AT_FDCWD, info.post.md_path, mask, flags) );
  
    EXIT();
    return 0;

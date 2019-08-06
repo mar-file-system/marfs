@@ -14,7 +14,7 @@
 !.gitignore
 
 *~
-config.h
+marfs_auto_config.h
 *.log
 
 Makefile

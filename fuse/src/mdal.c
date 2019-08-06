@@ -195,8 +195,13 @@ off_t   posix_lseek(MDAL_Context* ctx, off_t offset, int whence) {
 
 // --- file-ops (context-free)
 
-int     posix_access(const char* path, int mask) {
-   return access(path, mask);
+int     posix_euidaccess(const char* path, int mask) {
+   #ifdef _GNU_SOURCE
+      return euidaccess(path, mask);
+   #else
+      #warning "Missing definition of _GNU_SOURCE: posix_euidaccess() is falling back to use of the access() syscall"
+      return access(path, mask);
+   #endif
 }
 
 int     posix_faccessat(int fd, const char* path, int mask, int flags) {
@@ -383,7 +388,7 @@ MDAL posix_mdal = {
    .ftruncate    = &posix_ftruncate,
    .lseek        = &posix_lseek,
 
-   .access       = &posix_access,
+   .euidaccess   = &posix_euidaccess,
    .faccessat    = &posix_faccessat,
    .mknod        = &posix_mknod,
    .chmod        = &posix_chmod,
@@ -476,7 +481,7 @@ int install_MDAL(MDAL* mdal) {
    DL_CHECK(ftruncate);
    DL_CHECK(lseek);
 
-   DL_CHECK(access);
+   DL_CHECK(euidaccess);
    DL_CHECK(faccessat);
    DL_CHECK(mknod);
    DL_CHECK(chmod);
@@ -578,7 +583,7 @@ MDAL* dynamic_MDAL(const char* name) {
       mdal->ftruncate    = (mdal_ftruncate)  dlsym(lib, "mdal_ftruncate");
       mdal->lseek        = (mdal_lseek)      dlsym(lib, "mdal_lseek");
 
-      mdal->access       = (mdal_access)     dlsym(lib, "mdal_access");
+      mdal->euidaccess   = (mdal_euidaccess) dlsym(lib, "mdal_euidaccess");
       mdal->faccessat    = (mdal_faccessat)  dlsym(lib, "mdal_faccessat");
       mdal->mknod        = (mdal_mknod)      dlsym(lib, "mdal_mknod");
       mdal->chmod        = (mdal_chmod)      dlsym(lib, "mdal_chmod");

@@ -234,15 +234,15 @@ typedef  int     (*mdal_is_open) (MDAL_Context* ctx);
 // just operate on raw pathnames.  The argument will be the full path to
 // the MDFS file.
 
-typedef  int     (*mdal_access)  (const char* path, int mask);
-typedef  int     (*mdal_faccessat)(int fd, const char* path, int mask, int flags);
-typedef  int     (*mdal_mknod)   (const char* path, mode_t mode, dev_t dev);
-typedef  int     (*mdal_chmod)   (const char* path, mode_t mode);
-typedef  int     (*mdal_truncate)(const char* path, off_t size);
-typedef  int     (*mdal_lchown)  (const char* path, uid_t owner, gid_t group);
-typedef  int     (*mdal_lstat)   (const char* path, struct stat* st);
-typedef  int     (*mdal_rename)  (const char* from, const char* to);
-typedef  int     (*mdal_readlink)(const char* path, char* buf, size_t size);
+typedef  int     (*mdal_euidaccess) (const char* path, int mask);
+typedef  int     (*mdal_faccessat)  (int fd, const char* path, int mask, int flags);
+typedef  int     (*mdal_mknod)      (const char* path, mode_t mode, dev_t dev);
+typedef  int     (*mdal_chmod)      (const char* path, mode_t mode);
+typedef  int     (*mdal_truncate)   (const char* path, off_t size);
+typedef  int     (*mdal_lchown)     (const char* path, uid_t owner, gid_t group);
+typedef  int     (*mdal_lstat)      (const char* path, struct stat* st);
+typedef  int     (*mdal_rename)     (const char* from, const char* to);
+typedef  int     (*mdal_readlink)   (const char* path, char* buf, size_t size);
 
 typedef  ssize_t (*mdal_lgetxattr)   (const char* path, const char* name,
                                       void* value, size_t size);
@@ -309,7 +309,7 @@ typedef struct MDAL {
    mdal_ftruncate     ftruncate;
    mdal_lseek         lseek;
 
-   mdal_access        access;
+   mdal_euidaccess    euidaccess;
    mdal_faccessat     faccessat;
    mdal_mknod         mknod;
    mdal_chmod         chmod;

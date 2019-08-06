@@ -195,7 +195,7 @@ void marfs_fuse_exit (void* private_data) {
 int fuse_access (const char* path,
                  int         mask) {
 
-   WRAP_PLUS( marfs_access(path, mask) );
+   WRAP_PLUS( marfs_euidaccess(path, mask) );
 }
 
 

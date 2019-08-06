@@ -105,7 +105,7 @@ extern "C" {
 #define EFHFULL (-3)
 
 
-int  marfs_access(const char* path, int mask);
+int  marfs_euidaccess(const char* path, int mask);
 
 int  marfs_faccessat(const char* path, int mask, int flags);
 
