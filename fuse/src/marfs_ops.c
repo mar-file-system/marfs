@@ -2406,12 +2406,26 @@ int marfs_rename (const char* path,
       return -1;
    }
 
-   // No need for access check, just try the op
-   // Appropriate  rename call filling in fuse structure 
-   TRY0( MD_PATH_OP(rename, info.ns, info.post.md_path, info2.post.md_path) );
+   // the MDAL rename op may fail with EEXIST.  If so, we must attempt to unlink the 
+   //   destination path before performing the rename.
+   errno = 0;
+   int retval = MD_PATH_OP(rename, info.ns, info.post.md_path, info2.post.md_path);
+   int iter;
+   int maxretry = 3; // only reattempt up to a highly arbitrary 3 times
+   for ( iter = 0; retval != 0  &&  errno == EEXIST  &&  iter < maxretry; iter++ ) { 
+      // If the previous rename failed and we haven't already aborted, unlink the destination path.
+      LOG( LOG_INFO, "MDAL indicates destination exists: unlinking destination\n" );
+      errno = 0;
+      retval = marfs_unlink( to );
+      if ( retval != 0  &&  errno != ENOENT ) { return retval; } // any non-ENOENT error means failure of this function
+      // reissue the rename
+      errno = 0;
+      retval = MD_PATH_OP(rename, info.ns, info.post.md_path, info2.post.md_path);
+   }
+   if ( iter >= maxretry ) { errno = EBUSY; } // exiting the loop due to a bounds check means we hit max reattempts
 
    EXIT();
-   return 0;
+   return retval;
 }
 
 // using looked up mdpath, do statxattr and get object name
