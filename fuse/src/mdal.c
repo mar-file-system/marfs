@@ -229,6 +229,10 @@ int     posix_rename(const char* from, const char* to) {
    #endif
 }
 
+int     posix_link( const char* oldpath, const char* newpath ) {
+   return link( oldpath, newpath );
+}
+
 int     posix_readlink(const char* path, char* buf, size_t size) {
    return readlink(path, buf, size);
 }
@@ -396,6 +400,7 @@ MDAL posix_mdal = {
    .lchown       = &posix_lchown,
    .lstat        = &posix_lstat,
    .rename       = &posix_rename,
+   .link         = &posix_link,
    .readlink     = &posix_readlink,
    .lgetxattr    = &posix_lgetxattr,
    .lsetxattr    = &posix_lsetxattr,
@@ -489,6 +494,7 @@ int install_MDAL(MDAL* mdal) {
    DL_CHECK(lchown);
    DL_CHECK(lstat);
    DL_CHECK(rename);
+   DL_CHECK(link);
    DL_CHECK(readlink);
    DL_CHECK(lgetxattr);
    DL_CHECK(lsetxattr);
@@ -591,6 +597,7 @@ MDAL* dynamic_MDAL(const char* name) {
       mdal->lchown       = (mdal_lchown)     dlsym(lib, "mdal_lchown");
       mdal->lstat        = (mdal_lstat)      dlsym(lib, "mdal_lstat");
       mdal->rename       = (mdal_rename)     dlsym(lib, "mdal_rename");
+      mdal->link         = (mdal_link)       dlsym(lib, "mdal_link");
       mdal->readlink     = (mdal_readlink)   dlsym(lib, "mdal_readlink");
       mdal->lgetxattr    = (mdal_lgetxattr)  dlsym(lib, "mdal_lgetxattr");
       mdal->lsetxattr    = (mdal_lsetxattr)  dlsym(lib, "mdal_lsetxattr");

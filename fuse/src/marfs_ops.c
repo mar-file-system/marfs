@@ -903,7 +903,7 @@ int marfs_mknod (const char* path,
    //     RESTART xattr.  (NOTE: As long as there is a RESTART xattr, all
    //     access to the file is prohibited by libmarfs.)
    //
-   STAT_XATTRS(&info);
+   STAT_XATTRS(&info); //needed? We just created this, don't we already know it has no xattrs? TODO
    if (info.pre.repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
 
@@ -2406,23 +2406,36 @@ int marfs_rename (const char* path,
       return -1;
    }
 
-   // the MDAL rename op may fail with EEXIST.  If so, we must attempt to unlink the 
-   //   destination path before performing the rename.
-   errno = 0;
-   int retval = MD_PATH_OP(rename, info.ns, info.post.md_path, info2.post.md_path);
-   int iter;
-   int maxretry = 3; // only reattempt up to a highly arbitrary 3 times
-   for ( iter = 0; retval != 0  &&  errno == EEXIST  &&  iter < maxretry; iter++ ) { 
-      // If the previous rename failed and we haven't already aborted, unlink the destination path.
-      LOG( LOG_INFO, "MDAL indicates destination exists: unlinking destination\n" );
+   // Implement a rename via a marfs_unlink of the dest, hardlink of dest to source, and marfs_unlink of the source.
+   //   This method avoids a host of race conditions that could result in leaking MarFS data objects.
+   //   We want to avoid the use of any direct MD_PATH_OPs which could destroy inodes in the namespace 
+   //   ( rename() and unlink(), for example ), as these could destroy untrashed object IDs.
+   //      For example, via simultaneous rename of two sources to the same destination.
+   int iter = 0;
+   int maxretry = 3;  // only reattempt up to an highly arbitrary 3 times
+   int retval = 0;
+   do {
+      retval = trash_unlink( &info2, to );
+      fprintf( stderr, "RENAME-UNLINK: retval = %d, error = %s\n", retval, strerror(errno) );
+      if ( retval != 0  &&  errno != ENOENT ) { return retval; } // any non-ENOENT error is an unexpected failure
+      // Given a race between this op and another, this may fail with EEXIST, triggering a reattempt.
+      //   As trash_unlink() is our sole means of properly trashing MarFS files, just 
+      //   repeatedly call it and reattempt, up to our limit.
       errno = 0;
-      retval = marfs_unlink( to );
-      if ( retval != 0  &&  errno != ENOENT ) { return retval; } // any non-ENOENT error means failure of this function
-      // reissue the rename
-      errno = 0;
-      retval = MD_PATH_OP(rename, info.ns, info.post.md_path, info2.post.md_path);
-   }
+      retval = MD_PATH_OP( link, info.ns, info.post.md_path, info2.post.md_path );
+      fprintf( stderr, "RENAME-HLINK: retval = %d, error = %s\n", retval, strerror(errno) );
+      iter++;
+   } while ( retval != 0  &&  errno == EEXIST  &&  iter < maxretry );
    if ( iter >= maxretry ) { errno = EBUSY; } // exiting the loop due to a bounds check means we hit max reattempts
+   if ( retval != 0 ) { return retval; } // any lingering error means we've failed to create the hardlink
+   // now that we've hardlinked dest -> src, trash the original src
+   retval = trash_unlink( &info, path );
+   // ignore failure to unlink due to ENOENT.  So long as src is gone, we don't really care.
+   if ( retval != 0  &&  errno == ENOENT ) { 
+      LOG( LOG_INFO, "Ignoring ENOENT when unlinking sourcefile\n" );
+      retval = 0;
+      errno = 0;
+   }
 
    EXIT();
    return retval;
@@ -2790,7 +2803,7 @@ int marfs_unlink (const char* path) {
    //
    //       Meanwhile, we can skip access().
 
-   STAT(&info);
+   //STAT(&info);
 
    // rename file with all xattrs into trashdir, preserving objects and paths 
    TRASH_UNLINK(&info, path);

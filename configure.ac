@@ -189,25 +189,6 @@ AC_CHECK_LIB([xml2], [xmlSAX2GetEntity])
 AC_CHECK_LIB([aws4c], [s3_enable_Scality_extensions], [], [AC_MSG_ERROR(["Failed to locate libaws4c!  Please ensure the library is installed in a default location or that your AWS4C env var is properly set."])])
 AC_CHECK_LIB([aws4c_extra], [s3_create_bucket], [], [AC_MSG_ERROR(["Failed to locate libaws4c_extra!  Please ensure the library is installed in a default location or that your AWS4C env var is properly set."])])
 
-# While implementation of rename() for the Posix MDAL would ideally use the renameat2() syscall, GPFS does not currently 
-#  support this feature.  Therefore, I have set the feature to be off by default and commented out the warnings related 
-#  to lacking this feature.
-renameat2sup=false # DISABLED PENDING GPFS SUPPORT
-# Ensure the renameat2() syscall is usable and warn if not
-AC_CHECK_DECL( [ SYS_renameat2 ], [], [ renameat2sup=false ], [[#include <sys/syscall.h>]] )
-AC_CHECK_DECL( [ RENAME_NOREPLACE ], [], [ renameat2sup=false ], [[#include <linux/fs.h>]] )
-AC_CHECK_DECL( [ AT_FDCWD ], [], [ renameat2sup=false ], [[#include <fcntl.h>]] )
-AS_IF( [ test "$renameat2sup" = true ], [ AC_DEFINE( [HAVE_RENAMEAT2], [1], ["Indicates kernel support for the renameat2() syscall"] ) ], [] )
-# DISABLED PENDING GPFS SUPPORT
-#	echo
-#	echo "WARNING: failed to locate definitions for renameat2() syscall."
-#	echo "         Defaulting to access()/rename() implmentation for the POSIX MDAL, "
-#	echo "         which may result in non-collectable MarFS garbage objects under "
-#	echo "         certain circumstances."
-#	echo "         The renameat2() syscall is available in 3.10+ Linux kernels."
-#	echo
-#	] )
-
 # DAL=MC+RDMA also needs rdma_sockets and rdmacm
 AS_IF([test x"$enable_mc" = xsockets],
       [AC_CHECK_LIB([rdmacm], [rsocket])

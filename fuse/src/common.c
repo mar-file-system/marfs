@@ -261,76 +261,80 @@ int expand_trash_info(PathInfo*    info,
                       const char*  path) {
    TRY_DECLS();
 
-   // won't hurt (much), if it's already been done.
-   __TRY0( expand_path_info(info, path) );
-
-   if (! (info->flags & PI_TRASH_PATH)) {
-      const char* sub_path  = path + info->ns->mnt_path_len; /* below fuse mount */
-      char*       base_name = strrchr(sub_path, '/');
-      base_name = (base_name ? base_name +1 : (char*)sub_path);
-
-      // construct date-time string in standard format
-      char       date_string[MARFS_DATE_STRING_MAX];
-      time_t     now = time(NULL);
-      if (now == (time_t)-1) {
-         LOG(LOG_ERR, "time() failed\n");
-         return -1;
-      }
-      __TRY0( epoch_to_str(date_string, MARFS_DATE_STRING_MAX, &now) );
-
-      // Won't hurt (much) if it's already been done.
-      __TRY0( stat_regular(info) );
-
-      // these are the last 3 digits (base 10), of the inode
-      ino_t   inode = info->st.st_ino; // shorthand
-      uint8_t lo  = (inode % 10);
-      uint8_t med = (inode % 100) / 10;
-      uint8_t hi  = (inode % 1000) / 100;
-
-      // FUTURE: find the actual shard to use
-      const uint32_t shard = 0;
-
-      // construct trash-path
-      int prt_count = snprintf(info->trash_md_path, MARFS_MAX_MD_PATH,
-                               "%s/%s.%d/%d/%d/%d/%s.trash_%010ld_%s",
-                               info->ns->trash_md_path,
-                               info->ns->name, shard,
-                               hi, med, lo,
-                               base_name,
-                               info->st.st_ino,
-                               date_string);
-      if (prt_count < 0) {
-         LOG(LOG_ERR, "snprintf(..., %s, %s, %010ld, %s) failed\n",
-             info->ns->trash_md_path,
-             base_name,
-             info->st.st_ino,
-             date_string);
-         return -1;
-      }
-      else if (prt_count >= MARFS_MAX_MD_PATH) {
-         LOG(LOG_ERR, "snprintf(..., %s, %s, %010ld, %s) truncated\n",
-             info->ns->trash_md_path,
-             base_name,
-             info->st.st_ino,
-             date_string);
-         errno = EIO;
-         return -1;
-      }
-      else if (prt_count + strlen(MARFS_TRASH_COMPANION_SUFFIX)
-               >= MARFS_MAX_MD_PATH) {
-         LOG(LOG_ERR, "no room for '%s' after trash_md_path '%s'\n",
-             MARFS_TRASH_COMPANION_SUFFIX,
-             info->trash_md_path);
-         errno = EIO;
-         return -1;
-      }
-      //      else
-      //         // saves us a strlen(), later
-      //         info->trash_md_path_len = prt_count;
-
-      // subsequent calls to expand_trash_info() are NOP.
-      info->flags |= PI_TRASH_PATH;
+   // caller should have already expanded path info
+   if (! (info->flags & PI_EXPANDED)) {
+      // NOTE: we could just expand it ...
+      LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
+      errno = EINVAL;
+      return -1;
    }
+
+   // repeated calls of this function are no longer a NO-OP.  It will regenerate trash paths at each call!
+   const char* sub_path  = path + info->ns->mnt_path_len; /* below fuse mount */
+   char*       base_name = strrchr(sub_path, '/');
+   base_name = (base_name ? base_name +1 : (char*)sub_path);
+
+   // construct date-time string in standard format
+   char       date_string[MARFS_DATE_STRING_MAX];
+   time_t     now = time(NULL);
+   if (now == (time_t)-1) {
+      LOG(LOG_ERR, "time() failed\n");
+      return -1;
+   }
+   __TRY0( epoch_to_str(date_string, MARFS_DATE_STRING_MAX, &now) );
+
+   // hash a trash location based on the target path
+   //  TODO: this may not be fine-grained enough
+   //        perhaps the hash should also incorporate the time?
+   unsigned long path_hash = polyhash(path);
+
+   unsigned int seed = path_hash;
+   uint64_t     a[3];
+   int          i;
+   for(i = 0; i < 3; i++)
+      a[i] = rand_r(&seed) * 2 + 1; // generate 32 random bits
+
+   uint8_t lo  = h_a( path_hash, a[0] ) % 10;
+   uint8_t med = h_a( path_hash, a[1] ) % 10;
+   uint8_t hi  = h_a( path_hash, a[2] ) % 10;
+
+   // FUTURE: find the actual shard to use
+   const uint32_t shard = 0;
+
+   // construct trash-path
+   int prt_count = snprintf(info->trash_md_path, MARFS_MAX_MD_PATH,
+                            "%s/%s.%d/%d/%d/%d/%s.trash_%s",
+                            info->ns->trash_md_path,
+                            info->ns->name, shard,
+                            hi, med, lo,
+                            base_name,
+                            date_string);
+   if (prt_count < 0) {
+      LOG(LOG_ERR, "snprintf(..., %s, %s, %s) failed\n",
+          info->ns->trash_md_path,
+          base_name,
+          date_string);
+      return -1;
+   }
+   else if (prt_count >= MARFS_MAX_MD_PATH) {
+      LOG(LOG_ERR, "snprintf(..., %s, %s, %s) truncated\n",
+          info->ns->trash_md_path,
+          base_name,
+          date_string);
+      errno = EIO;
+      return -1;
+   }
+   else if (prt_count + strlen(MARFS_TRASH_COMPANION_SUFFIX)
+            >= MARFS_MAX_MD_PATH) {
+      LOG(LOG_ERR, "no room for '%s' after trash_md_path '%s'\n",
+          MARFS_TRASH_COMPANION_SUFFIX,
+          info->trash_md_path);
+      errno = EIO;
+      return -1;
+   }
+
+   // indicate that expanded trash info is available
+   info->flags |= PI_TRASH_PATH;
 
    LOG(LOG_INFO, "trash_md_path  %s\n", info->trash_md_path);
    return 0;
@@ -1164,9 +1168,11 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
 
 static
 void init_filehandle(MarFS_FileHandle* fh, PathInfo* info) {
+   fprintf( stderr, "INIT FH\n" );
    memset((char*)fh, 0, sizeof(MarFS_FileHandle));
    fh->info = *info;
 #if USE_MDAL
+   fprintf( stderr, "INIT FH -- USE MDAL\n" );
    F_MDAL(fh) = info->pre.ns->file_MDAL;
    LOG(LOG_INFO, "file-MDAL: %s\n", F_MDAL(fh)->name);
    F_OP(f_init, fh, F_MDAL(fh));
@@ -1265,12 +1271,16 @@ int open_md_path(MarFS_FileHandle* fh, const char* path, int flags, ...) {
 // original atime of a file.
 static
 int write_trash_companion_file(PathInfo*             info,
-                               const char*           path,
-                               const struct utimbuf* utim) {
+                               const char*           path) {
    TRY_DECLS();
 
-   /* initialize info->trash_md_path */
-   __TRY0( expand_trash_info(info, path) );
+   // caller must have already expanded trash info
+   if (! (info->flags & PI_TRASH_PATH)) {
+      // NOTE: we could just expand it ...
+      LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
+      errno = EINVAL;
+      return -1;
+   }
 
    // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
    // add MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
@@ -1279,20 +1289,24 @@ int write_trash_companion_file(PathInfo*             info,
                        info->trash_md_path,
                        MARFS_TRASH_COMPANION_SUFFIX) );
 
-   // TBD: Don't want to depend on support for open(... (O_CREAT|O_EXCL)).
-   //      Should just stat() the companion-file, before opening, to assure
-   //      it doesn't already exist.
    LOG(LOG_INFO, "companion:  %s\n", companion_fname);
 
    // Set up a file handle for the trash companion file
    MarFS_FileHandle companion_fh;
+   __TRY0( init_pre(&info->pre, OBJ_FUSE, info->ns, info->ns->iwrite_repo, &info->st) );
    init_filehandle(&companion_fh, info);
 
    // Open the file
+   //    open with O_CREATE | O_EXCL should ensure we get exclusive 
+   //    access to this trash path.  This is ESSENTIAL for preventing 
+   //    races when renaming the file into trash later on.
+   fprintf( stderr, "PRE-COMP OPEN\n" );
    open_md_path(&companion_fh, companion_fname,
-                 (O_WRONLY|O_CREAT), info->st.st_mode);
+                 (O_WRONLY|O_CREAT|O_EXCL), info->st.st_mode);
    
+   fprintf( stderr, "POST-COMP OPEN\n" );
    __TRY_GE0( is_open_md(&companion_fh) );
+   fprintf( stderr, "COMP IS OPEN\n" );
 
 #if 1
    // write MDFS path into the trash companion
@@ -1305,10 +1319,11 @@ int write_trash_companion_file(PathInfo*             info,
 #endif
 
    __TRY0( close_md(&companion_fh) );
+   fprintf( stderr, "COMP FILE WRITTEN\n" );
 
    // maybe install ctime/atime to support "undelete"
-   if (utim)
-      __TRY0( MD_PATH_OP(utime, info->ns, companion_fname, utim) );
+   //if (utim)
+   //   __TRY0( MD_PATH_OP(utime, info->ns, companion_fname, utim) );
 
    return 0;
 }
@@ -1364,6 +1379,28 @@ int  trash_unlink(PathInfo*   info,
       return -1;
    }
 
+   TRY_DECLS();
+   int retval = 0;
+   int maxretry = 3; //retry up to a highly arbitrary 3 times
+   int iter = 0;
+   do {
+      // generate a (new) potential trash location
+      __TRY0( expand_trash_info(info, path) );
+      errno = 0;
+      // write full-MDFS-path of original-file into trash-companion file
+      retval = write_trash_companion_file( info, path );
+      LOG( LOG_INFO, "iteration %d: comp_create_res=%d, error=%s\n", iter, retval, strerror(errno) );
+      iter++;
+   } while ( retval != 0  &&  errno == EEXIST  &&  iter < maxretry );
+   if ( iter >= maxretry ) { errno = EBUSY; } // hitting our retry bound means EBUSY
+   if ( retval != 0 ) { return -(errno); } // fail out if we couldn't create a companion file
+
+   // As we successfully created a companion file, our trash_path should now be 'reserved'
+   //   and rename should never overwrite an existing inode
+   __TRY0( MD_PATH_OP( rename, info->ns, info->post.md_path, info->trash_md_path ) );
+
+   // TODO: add trash xattr to comp_file
+
    //    If this has no xattrs (its just a normal file using the md file
    //    for data) just unlink the file and return we have nothing to
    //    clean up, too bad for the user as we aren't going to keep the
@@ -1373,20 +1410,20 @@ int  trash_unlink(PathInfo*   info,
    //
    // NOTE: We don't put xattrs on symlinks, so they also get deleted here.
    //
-   TRY_DECLS();
-   __TRY0( stat_xattrs(info, 0) );
-   if (! has_all_xattrs(info, XVT_PRE)) {
-      LOG(LOG_INFO, "incomplete xattrs\n"); // not enough to reclaim objs
-      __TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
-      return 0;
-   }
+   //TRY_DECLS();
+   //__TRY0( stat_xattrs(info, 0) );
+   //if (! has_all_xattrs(info, XVT_PRE)) {
+   //   LOG(LOG_INFO, "incomplete xattrs\n"); // not enough to reclaim objs
+   //   __TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
+   //   return 0;
+   //}
 
    // we no longer assume that a simple rename into the trash will always
    // be possible (e.g. because trash will be in a different fileset, or
    // filesystem).  It was thought we shouldn't even *try* the rename
    // first.  Instead, we'll copy to the trash, then unlink the original.
-   __TRY0( trash_truncate(info, path) );
-   __TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
+   //__TRY0( trash_truncate(info, path) );
+   //__TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
 
    return 0;
 }
@@ -1612,7 +1649,7 @@ int  trash_truncate(PathInfo*   info,
    }
 
    // write full-MDFS-path of original-file into trash-companion file
-   __TRY0( write_trash_companion_file(info, path, &trash_time) );
+   __TRY0( write_trash_companion_file(info, path) );
 
    // clean out marfs xattrs on the original
    __TRY0( trunc_xattrs(info) );

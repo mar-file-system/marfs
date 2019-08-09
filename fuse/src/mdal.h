@@ -242,6 +242,7 @@ typedef  int     (*mdal_truncate)   (const char* path, off_t size);
 typedef  int     (*mdal_lchown)     (const char* path, uid_t owner, gid_t group);
 typedef  int     (*mdal_lstat)      (const char* path, struct stat* st);
 typedef  int     (*mdal_rename)     (const char* from, const char* to);
+typedef  int     (*mdal_link)       (const char* oldpath, const char* newpath);
 typedef  int     (*mdal_readlink)   (const char* path, char* buf, size_t size);
 
 typedef  ssize_t (*mdal_lgetxattr)   (const char* path, const char* name,
@@ -317,6 +318,7 @@ typedef struct MDAL {
    mdal_lchown        lchown;
    mdal_lstat         lstat;
    mdal_rename        rename;
+   mdal_link          link;
    mdal_readlink      readlink;
    mdal_lgetxattr     lgetxattr;
    mdal_lsetxattr     lsetxattr;
