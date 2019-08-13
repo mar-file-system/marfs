@@ -1336,37 +1336,6 @@ int write_trash_companion_file(PathInfo*             info,
 // original is gone.
 // Object-storage is untouched.
 //
-// NEW APPROACH: Because we want to allow trash directories to live outside
-//     the file-system/file-set where the gpfs metadata is stored (e.g. so
-//     there can be fewer trash directories than filesets), we can no
-//     longer expect rename(2) to work.  We could *try* rename first, and
-//     then fail-over to moving the data, but we're not sure whether that
-//     could add considerable overhead in the case where the rename is
-//     going to fail.  [NOTE: could we just compute this once, up front,
-//     and store it as a flag in the Repo or Namespace structs?]  For now,
-//     we just always do a copy + unlink.
-//
-//     On second thought, we want the inode of the truncated file to remain
-//     the same (?) Therefore, rename(2) would always be wrong.
-//
-// UPDATE: Fuse always installs RESTART on new files.  Previously, it only
-//    installed PRE and POST when closing files.  It still installs POST at
-//    close of all files, and also installs PRE at close of Uni files.
-//    However, for Multi files, fuse now installs PRE and POST, at the time
-//    when a file first becomes N:1.  At that point, there is at least one
-//    object associated with the file, and the MD file has chunk-info about
-//    which objects have been written.  If fuse were then to crash, and
-//    this file were to later be trashed, GC could still reclaim the
-//    storage for any objects that had been written, by crawling the MD
-//    file with read_chunkinfo(), and using that plus the object-ID to
-//    generate objids for the chunks.  So, if the file only has RESTART
-//    (can only happen if fuse crashed while writing a Uni, [or if another
-//    fuse is still writing the file!]), then no associated object was
-//    successfully written, and we just delete it outright, here, as though
-//    it were DIRECT.
-//
-// NOTE: Should we do something to make this thread-safe (like unlink()) ?
-//
 int  trash_unlink(PathInfo*   info,
                   const char* path) {
 
@@ -1376,7 +1345,7 @@ int  trash_unlink(PathInfo*   info,
       // NOTE: we could just expand it ...
       LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
       errno = EINVAL;
-      return -1;
+      return -(errno); //not sure why this is necessary, as FUSE uses WRAP() TODO
    }
 
    TRY_DECLS();
@@ -1397,33 +1366,21 @@ int  trash_unlink(PathInfo*   info,
 
    // As we successfully created a companion file, our trash_path should now be 'reserved'
    //   and rename should never overwrite an existing inode
-   __TRY0( MD_PATH_OP( rename, info->ns, info->post.md_path, info->trash_md_path ) );
+   retval = MD_PATH_OP( rename, info->ns, info->post.md_path, info->trash_md_path );
+   if ( retval != 0 ) {  // ensure we remove the companion file following an error 
+      // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
+      // add MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
+      char companion_fname[MARFS_MAX_MD_PATH];
+      __TRY_GE0( snprintf(companion_fname, MARFS_MAX_MD_PATH, "%s%s",
+                        info->trash_md_path, MARFS_TRASH_COMPANION_SUFFIX) );
+      LOG( LOG_ERR, "failed to perform rename of file to trash path, removing companion\n" );
+      MD_PATH_OP( unlink, info->ns, companion_fname );  // ignore the return code of this op, we're already aborting
+      return -(errno); //not sure why this is necessary, as FUSE uses WRAP() TODO
+   }
+
+   LOG( LOG_INFO, "renamed file to trash path\n", info->basename );
 
    // TODO: add trash xattr to comp_file
-
-   //    If this has no xattrs (its just a normal file using the md file
-   //    for data) just unlink the file and return we have nothing to
-   //    clean up, too bad for the user as we aren't going to keep the
-   //    unlinked file in the trash.
-   //
-   // NOTE: See "UPDATE", above
-   //
-   // NOTE: We don't put xattrs on symlinks, so they also get deleted here.
-   //
-   //TRY_DECLS();
-   //__TRY0( stat_xattrs(info, 0) );
-   //if (! has_all_xattrs(info, XVT_PRE)) {
-   //   LOG(LOG_INFO, "incomplete xattrs\n"); // not enough to reclaim objs
-   //   __TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
-   //   return 0;
-   //}
-
-   // we no longer assume that a simple rename into the trash will always
-   // be possible (e.g. because trash will be in a different fileset, or
-   // filesystem).  It was thought we shouldn't even *try* the rename
-   // first.  Instead, we'll copy to the trash, then unlink the original.
-   //__TRY0( trash_truncate(info, path) );
-   //__TRY0( MD_PATH_OP(unlink, info->ns, info->post.md_path) );
 
    return 0;
 }
