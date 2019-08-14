@@ -509,9 +509,15 @@ int marfs_ftruncate(const char*            path,
       TRY0( close_data(fh, 1, 0) );
    }
 
-   // Call access() syscall to check/act if allowed to truncate for this user
-   ACCESS(info->ns, info->post.md_path, (W_OK));
+   // trash the original file and use mknod to generate a new empty one
+   TRY0( trash_truncate( info, path ) );
 
+   // old stat-info and xattr-info is obsolete.  Generate new obj-ID, etc.
+   info->flags &= ~(PI_STAT_QUERY | PI_XATTR_QUERY);
+   info->xattr_inits = 0;
+   TRY0( stat_xattrs(info, 0) );   // has none, so initialize from scratch
+
+#if 0
    TRY0( open_md(fh, 1) );
 
    // stat_xattrs, or look up info stuffed into memory pointed at in fuse
@@ -559,6 +565,7 @@ int marfs_ftruncate(const char*            path,
    }
    else
       LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
+#endif
 
    EXIT();
    return 0;
@@ -864,59 +871,7 @@ int marfs_mknod (const char* path,
       return -1;
    }
 
-   // if mode would prevent installing RESTART xattr,
-   // then create with a more-lenient mode, at first.
-   // Save the bits to be XORed in the final state.
-   const mode_t user_rw   = (S_IRUSR | S_IWUSR);
-   mode_t       orig_mode = mode; // save intended final mode
-   mode_t       missing   = (mode & user_rw) ^ user_rw;
-   if (missing) {
-      LOG(LOG_INFO, "mode: (octal) 0%o, missing: 0%o\n", mode, missing);
-      mode |= missing;          // more-permissive mode
-   }
-
-   // No need for access check, just try the op
-   // Appropriate mknod-like/open-create-like call filling in fuse structure
-   TRY0( MD_PATH_OP(mknod, info.ns, info.post.md_path, mode, rdev) );
-   LOG(LOG_INFO, "mode: (octal) 0%o\n", mode);
-
-   // PROBLEM: marfs_open() assumes that a file that exists, which doesn't
-   //     have xattrs, is something that was created when
-   //     repo.access_method was DIRECT.  For such files, marfs_open()
-   //     expects to read directly from the file.  We have just created a
-   //     file.  If repo.access_method is not direct, we'd better find a
-   //     way to let marfs_open() know about it.  However, it would be nice
-   //     to leave most of the xattr creation to marfs_release().
-   //
-   // SOLUTION: set the RESTART xattr flag.  It will be clear that this
-   //     object hasn't been successfully closed, yet.  It will also be
-   //     clear that this is not one of those files with no xattrs, so open
-   //     will treat it properly. Thus, if someone reads from this file
-   //     while it's being written, fuse will see it as a file-with-xattrs
-   //     (which is incomplete), and could throw an error, instead of
-   //     seeing it as a file-without-xattrs, and allowing readers to see
-   //     our internal data (e.g. in a MULTI file).
-   //
-   // NOTE: If needed, marfs_open() also installs readable-writable
-   //     access-mode bits, in order to allow xattrs to be manipulated.  In
-   //     that case, it will preserve the original mode-bits into the
-   //     RESTART xattr.  (NOTE: As long as there is a RESTART xattr, all
-   //     access to the file is prohibited by libmarfs.)
-   //
-   STAT_XATTRS(&info); //needed? We just created this, don't we already know it has no xattrs? TODO
-   if (info.pre.repo->access_method != ACCESSMETHOD_DIRECT) {
-      LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-
-      info.xattrs |= XVT_RESTART;
-      if (missing) {
-         info.restart.mode   = orig_mode; // desired final mode
-         info.restart.flags |= RESTART_MODE_VALID;
-      }
-      SAVE_XATTRS(&info, XVT_RESTART);
-   }
-   else
-      LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
-
+   TRY0( mknod_path( &info, path, mode, rdev ) );
 
    EXIT();
    return 0;
@@ -2723,7 +2678,14 @@ int marfs_symlink (const char* target,
    return 0;
 }
 
-// *** this may not be needed until we implement write in the fuse daemon ***
+// As MarFS doesn't support appending to a file truncating beyond the end of 
+//  a file is impossible.  However, checking if a given truncate will extend 
+//  beyond the end of a file before performing it would introduce a race 
+//  condition with possible security implications (rename between stat() and 
+//  truncate() resulting in extending a packed file).  Therefore, the only 
+//  situation we'll be supporting is truncating a file to zero length.
+//  This effectively means, render the file unreadable and available for 
+//  overwrite, which we implement via trashing and then recreating the file.
 int marfs_truncate (const char* path,
                     off_t       size) {
    ENTRY();
@@ -2740,9 +2702,6 @@ int marfs_truncate (const char* path,
    // Check/act on iperms from expanded_path_info_structure, this op requires RMWMRDWD
    CHECK_PERMS(info.ns, (R_META | W_META | R_DATA | T_DATA));
 
-   // Call access syscall to check/act if allowed to truncate for this user 
-   ACCESS(info.ns, info.post.md_path, (W_OK));
-
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root_ns\n");
@@ -2750,26 +2709,8 @@ int marfs_truncate (const char* path,
       return -1;
    }
 
-   // If this is not just a normal md, it's the file data
-   STAT_XATTRS(&info); // to get xattrs
-   if (! has_any_xattrs(&info, MARFS_ALL_XATTRS)) {
-      LOG(LOG_INFO, "no xattrs\n");
-      TRY0( MD_PATH_OP(truncate, info.ns, info.post.md_path, size) );
-      return 0;
-   }
-
-   // copy metadata to trash, resets original file zero len and no xattr
-   TRASH_TRUNCATE(&info, path);
-
-   // (see marfs_mknod() -- empty non-DIRECT file needs *some* marfs xattr,
-   // so marfs_open() won't assume it is a DIRECT file.)
-   if (info.ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
-      LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-      info.xattrs |= XVT_RESTART;
-      SAVE_XATTRS(&info, XVT_RESTART);
-   }
-   else
-      LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
+   // trash the original file and use mknod to generate a new empty one
+   TRY0( trash_truncate( &info, path ) );
 
    EXIT();
    return 0;
@@ -2791,19 +2732,6 @@ int marfs_unlink (const char* path) {
       errno = EPERM;
       return -1;
    }
-
-   // Call access() syscall to check/act if allowed to unlink for this user 
-   //
-   // PROBLEM: access() follows symlinks.  We are unlinking the
-   //       symlink, not the thing it points to.  trash_unlink()
-   //       just unlinks them outright (because they don't have
-   //       xattrs).  There's also untested code there, to try to
-   //       move symlinks to the trash.  If you want to do that,
-   //       look at trash_unlink().
-   //
-   //       Meanwhile, we can skip access().
-
-   //STAT(&info);
 
    // rename file with all xattrs into trashdir, preserving objects and paths 
    TRASH_UNLINK(&info, path);

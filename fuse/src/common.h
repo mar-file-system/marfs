@@ -900,6 +900,8 @@ extern int  trunc_xattrs  (PathInfo* info);
 extern int  trash_unlink  (PathInfo* info, const char* path);
 extern int  trash_truncate(PathInfo* info, const char* path);
 
+extern int  mknod_path    (PathInfo* info, const char* path, mode_t mode, dev_t rdev);
+
 extern int  check_quotas  (PathInfo* info);
 
 extern int  update_url     (ObjectStream* os, PathInfo* info);

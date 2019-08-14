@@ -1378,9 +1378,68 @@ int  trash_unlink(PathInfo*   info,
       return -(errno); //not sure why this is necessary, as FUSE uses WRAP() TODO
    }
 
-   LOG( LOG_INFO, "renamed file to trash path\n", info->basename );
+   LOG( LOG_INFO, "renamed file to trash path\n" );
 
    // TODO: add trash xattr to comp_file
+
+   return 0;
+}
+
+
+int mknod_path( PathInfo* info, const char* path, mode_t mode, dev_t rdev ) {
+   // if mode would prevent installing RESTART xattr,
+   // then create with a more-lenient mode, at first.
+   // Save the bits to be XORed in the final state.
+   TRY_DECLS();
+   const mode_t user_rw   = (S_IRUSR | S_IWUSR);
+   mode_t       orig_mode = mode; // save intended final mode
+   mode_t       missing   = (mode & user_rw) ^ user_rw;
+   if (missing) {
+      LOG(LOG_INFO, "mode: (octal) 0%o, missing: 0%o\n", mode, missing);
+      mode |= missing;          // more-permissive mode
+   }
+
+   // No need for access check, just try the op
+   // Appropriate mknod-like/open-create-like call filling in fuse structure
+   TRY0( MD_PATH_OP(mknod, info->ns, info->post.md_path, mode, rdev) );
+   LOG(LOG_INFO, "mode: (octal) 0%o\n", mode);
+
+   // PROBLEM: marfs_open() assumes that a file that exists, which doesn't
+   //     have xattrs, is something that was created when
+   //     repo.access_method was DIRECT.  For such files, marfs_open()
+   //     expects to read directly from the file.  We have just created a
+   //     file.  If repo.access_method is not direct, we'd better find a
+   //     way to let marfs_open() know about it.  However, it would be nice
+   //     to leave most of the xattr creation to marfs_release().
+   //
+   // SOLUTION: set the RESTART xattr flag.  It will be clear that this
+   //     object hasn't been successfully closed, yet.  It will also be
+   //     clear that this is not one of those files with no xattrs, so open
+   //     will treat it properly. Thus, if someone reads from this file
+   //     while it's being written, fuse will see it as a file-with-xattrs
+   //     (which is incomplete), and could throw an error, instead of
+   //     seeing it as a file-without-xattrs, and allowing readers to see
+   //     our internal data (e.g. in a MULTI file).
+   //
+   // NOTE: If needed, marfs_open() also installs readable-writable
+   //     access-mode bits, in order to allow xattrs to be manipulated.  In
+   //     that case, it will preserve the original mode-bits into the
+   //     RESTART xattr.  (NOTE: As long as there is a RESTART xattr, all
+   //     access to the file is prohibited by libmarfs.)
+   //
+   STAT_XATTRS(info); //needed? We just created this, don't we already know it has no xattrs? TODO
+   if (info->pre.repo->access_method != ACCESSMETHOD_DIRECT) {
+      LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
+
+      info->xattrs |= XVT_RESTART;
+      if (missing) {
+         info->restart.mode   = orig_mode; // desired final mode
+         info->restart.flags |= RESTART_MODE_VALID;
+      }
+      SAVE_XATTRS(info, XVT_RESTART);
+   }
+   else
+      LOG(LOG_INFO, "iwrite_repo.access_method = DIRECT\n");
 
    return 0;
 }
@@ -1405,7 +1464,29 @@ int  trash_truncate(PathInfo*   info,
       errno = EINVAL;
       return -1;
    }
+   TRY_DECLS();
 
+   // Call access() syscall to check/act if allowed to truncate for this user
+   ACCESS(info->ns, info->post.md_path, (W_OK));
+
+   // make sure the file's objs get trashed
+   TRY0( trash_unlink( info, path ) );
+   mode_t def_mode = ( S_IRUSR | S_IWUSR );
+   // TODO maybe check for trash expansion?  Must have been done though
+   struct stat Tstat;
+   // just directly stat the trash path to get original mode
+   //   NOTE: technically, there is a race here.  If the GC is running, 
+   //   then we may lose the trashed file before we can stat it.  The 
+   //   effect, however, is merely that we recreate the empty file 
+   //   with only user read/write.
+   if( MD_PATH_OP( lstat, info->ns, info->trash_md_path, &Tstat ) ) {
+      def_mode = Tstat.st_mode;
+   }
+   // create a new file in place of the original
+   TRY0( mknod_path( info, path, def_mode, 0 ) );
+
+
+#if 0
    //    If this has no xattrs (its just a normal file using the md file
    //    for data) just trunc the file and return we have nothing to
    //    clean up, too bad for the user as we aren't going to keep the
@@ -1627,6 +1708,7 @@ int  trash_truncate(PathInfo*   info,
       __TRY0( update_pre(&info->pre) );
       LOG(LOG_INFO, "unique: '%s'\n", info->pre.objid);
    }
+#endif
 
    return 0;
 }

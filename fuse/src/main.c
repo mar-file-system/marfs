@@ -999,7 +999,7 @@ int main(int argc, char* argv[])
       .setxattr    = fuse_setxattr,
       .statfs      = fuse_statvfs,
       .symlink     = fuse_symlink,
-      .truncate    = fuse_truncate,
+      //.truncate    = fuse_truncate,
       .unlink      = fuse_unlink,
       .utime       = fuse_utime, /* deprecated in 2.6 */
       .utimens     = fuse_utimens,
