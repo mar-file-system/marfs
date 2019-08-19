@@ -1,5 +1,5 @@
-### # pattern "*", even when followed by "!*/", was hiding sockets/marfs_obj
-### *
+### # pattern "*", even when followed by "!*/", was hiding sockets/marfs_obj (IGNORING: isn't that path in erasureUtils?)
+*
 *.*
 
 !*/
@@ -26,5 +26,4 @@ depcomp
 install-sh
 missing
 stamp-h1
-test-driver
 
