@@ -271,7 +271,7 @@ AM_CONDITIONAL([GPFS_UTILITIES], [test x"$build_gpfs_utilities" = xyes])
 AC_ARG_VAR(AWS4C, [The location of the aws4c installation])
 #AC_ARG_VAR(PA2X,  [The location of the PA2X installation])
 AC_ARG_VAR(LIBNE, [The location of the erasureUtils libne installation])
-AC_ARG_VAR(PARSE_DIR, [The location of PA2X (need this and PA2X)])
+AC_ARG_VAR(PARSE_DIR, [The location of PA2X (defaults to ./PA2X if not set)])
 
 # XXX: We should simply define this as: 
 # $(srcdir)/common/configuration/src/marfs_configuration_blueprint.cfg
@@ -280,7 +280,7 @@ AC_ARG_VAR(conf, [The path to the marfs configuration blueprint])
 AC_ARG_VAR(MARFS_MNT, [The MarFS mount point (optional)])
 AC_ARG_VAR(MARFSCONFIGRC, [The path to the marfs config (or any valid config)])
 
-AS_IF([test -z "$PARSE_DIR"], [AC_ERROR([PARSE_DIR is not set])])
+AS_IF([test -n "$PARSE_DIR"], [], [test -d "PA2X"], [echo "Warning: PARSE_DIR env variable not set, defaulting to \"./PA2X\""  &&  export PARSE_DIR="./PA2X"], [AC_ERROR([Failed to locate PA2X.  You may need to clone the submodule or set the PARSE_DIR environment variable.])])
 # We've already verified we have the libraries.  If we have found them, we don't necessarily need the env vars
 #AS_IF([test -z "$AWS4C"], [AC_ERROR([AWS4C is not set])])
 AM_CONDITIONAL([AWS4C],[test "$AWS4C"]) #just note if the var is set
