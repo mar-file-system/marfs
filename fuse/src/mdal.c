@@ -209,24 +209,7 @@ int     posix_faccessat(int fd, const char* path, int mask, int flags) {
 }
 
 int     posix_rename(const char* from, const char* to) {
-   #ifdef HAVE_RENAMEAT2
-      // no glibc wrapper for renameat2 means we must use syscall() to map to it
-      //   This function should atomically perform a rename if 'to' doesn't 
-      //   already exist and fail with EEXIST if it already does.
-      return syscall( SYS_renameat2, AT_FDCWD, from, AT_FDCWD, to, RENAME_NOREPLACE );
-   #else
-      #warning "Posix MDAL utilizing racy access()/rename() symantics due to lack of renameat2() support!"
-      // use access to check if the destination exists before overwriting
-      //   WARNING: this is racy!  Interleaved renames may result in lost trash!
-      //            The renameat2() implementation is much safer!
-      if ( access( to, F_OK ) == 0 ) {
-         // if the access() of 'to' succeeds, fail with EEXIST to try and avoid
-         //   orphaning trashed objects
-         errno = EEXIST;
-         return -1;
-      }
-      return rename( from, to );
-   #endif
+   return rename( from, to );
 }
 
 int     posix_link( const char* oldpath, const char* newpath ) {

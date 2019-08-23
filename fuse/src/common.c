@@ -1300,13 +1300,10 @@ int write_trash_companion_file(PathInfo*             info,
    //    open with O_CREATE | O_EXCL should ensure we get exclusive 
    //    access to this trash path.  This is ESSENTIAL for preventing 
    //    races when renaming the file into trash later on.
-   fprintf( stderr, "PRE-COMP OPEN\n" );
    open_md_path(&companion_fh, companion_fname,
                  (O_WRONLY|O_CREAT|O_EXCL), info->st.st_mode);
    
-   fprintf( stderr, "POST-COMP OPEN\n" );
    __TRY_GE0( is_open_md(&companion_fh) );
-   fprintf( stderr, "COMP IS OPEN\n" );
 
 #if 1
    // write MDFS path into the trash companion
@@ -1319,7 +1316,6 @@ int write_trash_companion_file(PathInfo*             info,
 #endif
 
    __TRY0( close_md(&companion_fh) );
-   fprintf( stderr, "COMP FILE WRITTEN\n" );
 
    // maybe install ctime/atime to support "undelete"
    //if (utim)
@@ -1364,15 +1360,17 @@ int  trash_unlink(PathInfo*   info,
    if ( iter >= maxretry ) { errno = EBUSY; } // hitting our retry bound means EBUSY
    if ( retval != 0 ) { return -(errno); } // fail out if we couldn't create a companion file
 
+   // need the compainion file name for later ops
+   // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to add 
+   //  MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
+   char companion_fname[MARFS_MAX_MD_PATH];
+   __TRY_GE0( snprintf(companion_fname, MARFS_MAX_MD_PATH, "%s%s",
+                     info->trash_md_path, MARFS_TRASH_COMPANION_SUFFIX) );
+
    // As we successfully created a companion file, our trash_path should now be 'reserved'
    //   and rename should never overwrite an existing inode
    retval = MD_PATH_OP( rename, info->ns, info->post.md_path, info->trash_md_path );
    if ( retval != 0 ) {  // ensure we remove the companion file following an error 
-      // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to
-      // add MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
-      char companion_fname[MARFS_MAX_MD_PATH];
-      __TRY_GE0( snprintf(companion_fname, MARFS_MAX_MD_PATH, "%s%s",
-                        info->trash_md_path, MARFS_TRASH_COMPANION_SUFFIX) );
       LOG( LOG_ERR, "failed to perform rename of file to trash path, removing companion\n" );
       MD_PATH_OP( unlink, info->ns, companion_fname );  // ignore the return code of this op, we're already aborting
       return -(errno); //not sure why this is necessary, as FUSE uses WRAP() TODO
@@ -1380,23 +1378,65 @@ int  trash_unlink(PathInfo*   info,
 
    LOG( LOG_INFO, "renamed file to trash path\n" );
 
-   // TODO: add trash xattr to comp_file
+   // directly stat the trashed file to get size/link-count
+   struct stat Tstat;
+   // NOTE: technically, there is a race here.  If the GC is running, 
+   //   then we may lose the trashed file before we can stat it.  The 
+   //   effect, however, is merely that we skip setting the trash xattr 
+   //   (which is now irrelevant anyway).
+   if ( MD_PATH_OP( lstat, info->ns, info->trash_md_path, &Tstat ) ) {
+      if ( errno == ENOENT ) { 
+         LOG( LOG_INFO, "trashed file gave ENOENT on lstat(), assuming GC has collected\n" );
+         errno = 0;
+         return 0;
+      } // we don't care if the GC just ran
+      else { return -(errno); } // TODO same as above returns
+   }
+   // skip setting trash xattr if this is not a regular file
+   if ( ! S_ISREG( Tstat.st_mode ) ) {
+      LOG( LOG_INFO, "trashed file is non-regular and does not require a trash xattr\n" );
+      return 0;
+   }
+   // as trashed hardlinks could skew quotas downward, don't give credit for such files
+   //  Files with excessive hardlinks will be counted against quota until GCd.  This seems to be the most 
+   //  accurate way to measure such files without opening up a possible means of abusing quotas.
+   // Note: we can't safely unlink the trash file based on this knowledge, as that opens up race conditions 
+   //  for leaking data objects ( i.e. simultaneous unlinks of all hardlinks to an inode, which all stat() 
+   //  before any unlink() )
+   if ( Tstat.st_nlink > 1 ) {
+      LOG( LOG_INFO, "skipping set of trash xattr because link-count of trashed file is '%zd'\n", Tstat.st_nlink );
+      return 0;
+   }
+
+   // add trash xattr to comp_file based on st_size
+   // Note: as we just created this file, the current user MUST have the write access needed to set xattrs
+   char xattr_value_str[MARFS_MAX_XATTR_SIZE];
+   //XattrSpec* spec;
+   __TRY_GT0( snprintf(xattr_value_str, MARFS_MAX_XATTR_SIZE, "tsize.%llu", (unsigned long long) Tstat.st_size) );
+   LOG(LOG_INFO, "XVT_TRASH %s\n", xattr_value_str);
+   __TRY0( MD_PATH_OP(lsetxattr, info->ns,
+                      companion_fname,
+                      "user.marfs_trash", (void*) xattr_value_str,
+                      strlen(xattr_value_str)+1, 0) );
 
    return 0;
 }
 
 
 int mknod_path( PathInfo* info, const char* path, mode_t mode, dev_t rdev ) {
-   // if mode would prevent installing RESTART xattr,
-   // then create with a more-lenient mode, at first.
-   // Save the bits to be XORed in the final state.
    TRY_DECLS();
-   const mode_t user_rw   = (S_IRUSR | S_IWUSR);
    mode_t       orig_mode = mode; // save intended final mode
-   mode_t       missing   = (mode & user_rw) ^ user_rw;
-   if (missing) {
-      LOG(LOG_INFO, "mode: (octal) 0%o, missing: 0%o\n", mode, missing);
-      mode |= missing;          // more-permissive mode
+   mode_t       missing   = 0;
+   if (info->ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
+      const mode_t user_rw   = (S_IRUSR | S_IWUSR);
+      // if mode would prevent installing RESTART xattr,
+      // then create with a more-lenient mode, at first.
+      // Save the bits to be XORed in the final state.
+      missing = (mode & user_rw) ^ user_rw;
+      if (missing) {
+         LOG(LOG_INFO, "mode: (octal) 0%o, missing: 0%o\n", mode, missing);
+         mode |= missing;          // more-permissive mode
+      }
    }
 
    // No need for access check, just try the op
@@ -1427,11 +1467,11 @@ int mknod_path( PathInfo* info, const char* path, mode_t mode, dev_t rdev ) {
    //     RESTART xattr.  (NOTE: As long as there is a RESTART xattr, all
    //     access to the file is prohibited by libmarfs.)
    //
-   STAT_XATTRS(info); //needed? We just created this, don't we already know it has no xattrs? TODO
-   if (info->pre.repo->access_method != ACCESSMETHOD_DIRECT) {
+   if (info->ns->iwrite_repo->access_method != ACCESSMETHOD_DIRECT) {
       LOG(LOG_INFO, "marking with RESTART, so open() won't think DIRECT\n");
-
-      info->xattrs |= XVT_RESTART;
+      // we just created this file, so we know it *shouldn't* have any xattrs
+      info->xattrs = XVT_RESTART;
+      TRY0( init_restart( &(info->restart) ) );
       if (missing) {
          info->restart.mode   = orig_mode; // desired final mode
          info->restart.flags |= RESTART_MODE_VALID;
@@ -1445,13 +1485,12 @@ int mknod_path( PathInfo* info, const char* path, mode_t mode, dev_t rdev ) {
 }
 
 
-// [trash_dup_file]
 // This is used to implement truncate/ftruncate
 //
-// Copy trashed MD file into trash area, plus all its xattrs.
+// Rename trashed MD file into trash area
 // Does NOT unlink original.
 // Does NOT do anything with object-storage.
-// Wipes all xattrs on original, and truncs to zero.
+// Recreate original with zero size and only RESTART xattr
 //
 int  trash_truncate(PathInfo*   info,
                     const char* path) {
@@ -1472,14 +1511,14 @@ int  trash_truncate(PathInfo*   info,
    // make sure the file's objs get trashed
    TRY0( trash_unlink( info, path ) );
    mode_t def_mode = ( S_IRUSR | S_IWUSR );
-   // TODO maybe check for trash expansion?  Must have been done though
+   // maybe check for trash expansion?  Must have been done though
    struct stat Tstat;
    // just directly stat the trash path to get original mode
    //   NOTE: technically, there is a race here.  If the GC is running, 
    //   then we may lose the trashed file before we can stat it.  The 
    //   effect, however, is merely that we recreate the empty file 
    //   with only user read/write.
-   if( MD_PATH_OP( lstat, info->ns, info->trash_md_path, &Tstat ) ) {
+   if( MD_PATH_OP( lstat, info->ns, info->trash_md_path, &Tstat ) == 0 ) {
       def_mode = Tstat.st_mode;
    }
    // create a new file in place of the original
