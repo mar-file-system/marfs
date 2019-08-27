@@ -97,7 +97,7 @@
 
 // Xattr info
 #define MAX_MARFS_XATTR 3
-#define MARFS_QUOTA_XATTR_CNT 3
+#define MARFS_QUOTA_XATTR_CNT 4
 #define MARFS_GC_XATTR_CNT 2
 
 #ifdef DEBUG

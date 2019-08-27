@@ -445,7 +445,6 @@ int read_inodes(const char    *fnameP,
    int last_struct_index = -1;
    unsigned int struct_index;
    int fileset_trash_index = 0;
-   int trash_index = -1;
  
    unsigned int last_fileset_id = -1;
    size_t non_marfs_inode_cnt=0;
@@ -456,9 +455,10 @@ int read_inodes(const char    *fnameP,
    // changes
    int marfs_xattr_cnt = MARFS_QUOTA_XATTR_CNT;
    const char *marfs_xattrs[] = {"user.marfs_post","user.marfs_objid",
-                                 "user.marfs_restart"};
+                                 "user.marfs_restart","user.marfs_trash"};
    int post_index=0;
    int restart_index=2;
+   int trash_index=3;
 
    MarFS_XattrPost post;
   
@@ -558,6 +558,24 @@ int read_inodes(const char    *fnameP,
             if ((xattr_count = get_xattrs(iscanP, xattrBP, xattr_len, 
                                           marfs_xattrs, marfs_xattr_cnt, 
                                           &mar_xattrs[0])) > 0) {
+               // If there is a trash xattr, count this file as trash and adjust size by value
+               if ((xattr_index=get_xattr_value(&mar_xattrs[0],
+                                                marfs_xattrs[trash_index],
+                                                xattr_count, outfd)) != -1 ) {
+                  fileset_stat_ptr[last_struct_index].sum_trash_file_count+=1; //only count the actual trash file
+                  xattr_ptr = &mar_xattrs[xattr_index];
+                  LOG(LOG_INFO, "trash xattr name = %s value = %s count = %d\n",
+                      xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
+                  // parse the trash xattr to retrieve the size of the original trashed file
+                  char* tsize = ((char*)(xattr_ptr->xattr_value)) + 6;  // skip the 'tsize.' portion of string
+                  char* endptr;
+                  unsigned long long tsize_val = strtoull( tsize, &endptr, 10 );
+                  if ( *(endptr) != '\0' ) {
+                     LOG( LOG_ERR, "Failed to parse trash xattr value. Inode: %d Value: %s\n", 
+                           iattrP->ia_inode, xattr_ptr->xattr_value );
+                  }
+                  else { fileset_stat_ptr[last_struct_index].sum_trash+=tsize_val; } // sum the trash file size
+               }
                // If restart xattr keep stats on this as well
                if ((xattr_index=get_xattr_value(&mar_xattrs[0],
                                                 marfs_xattrs[restart_index],
@@ -574,6 +592,10 @@ int read_inodes(const char    *fnameP,
 
                    LOG(LOG_INFO, "post xattr name = %s value = %s count = %d\n",
                    xattr_ptr->xattr_name, xattr_ptr->xattr_value, xattr_count);
+               }
+               else { // so we don't pick up an old post value
+                  LOG( LOG_INFO, "no post xattr for inode %d\n", iattrP->ia_inode );
+                  continue;
                }
                // scan into post xattr structure
                // if error parsing this xattr, skip and continue
@@ -777,20 +799,20 @@ int trunc_fsinfo(FILE*         outfd,
          (strcmp(fileset_stat_ptr[i].fileset_name, "root") != 0) ) {
          // truncate namespace fsinfo file 
          ret = truncate(fileset_stat_ptr[i].fsinfo_path, 
-                        fileset_stat_ptr[i].sum_size);
+                        fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
          if (ret == -1) {
             fprintf(outfd, 
                     "Error:  Unable to truncate %s to %zu in namespace %s, ERRNO: %s\n",
                     fileset_stat_ptr[i].fsinfo_path, 
-                    fileset_stat_ptr[i].sum_size, 
+                    fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash, 
                     fileset_stat_ptr[i].fileset_name,
                     strerror(errno)); 
          }
          else {
             LOG(LOG_INFO, "Truncated file %s to size %zu\n", 
                 fileset_stat_ptr[i].fsinfo_path, 
-                fileset_stat_ptr[i].sum_size);
-            sum_total += fileset_stat_ptr[i].sum_size;
+                fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash);
+            sum_total += ( fileset_stat_ptr[i].sum_size - fileset_stat_ptr[i].sum_trash );
          }
       }
    }
