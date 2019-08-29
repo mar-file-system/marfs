@@ -1305,78 +1305,11 @@ int write_trash_companion_file(PathInfo*             info,
    
    __TRY_GE0( is_open_md(&companion_fh) );
 
-#if 1
    // write MDFS path into the trash companion
    __TRY_GE0( MD_FILE_OP(write, &companion_fh,
                          info->post.md_path, strlen(info->post.md_path)));
-#else // never executes
-   // write MarFS path into the trash companion
-   __TRY_GE0( write(fd, marfs_config->mnt_top, marfs_config->mnt_top_len) );
-   __TRY_GE0( write(fd, path, strlen(path)) );
-#endif
 
    __TRY0( close_md(&companion_fh) );
-
-   // maybe install ctime/atime to support "undelete"
-   //if (utim)
-   //   __TRY0( MD_PATH_OP(utime, info->ns, companion_fname, utim) );
-
-   return 0;
-}
-
-
-// [trash_file]
-// This is used to implement unlink().
-//
-// Rename MD file to trashfile, keeping all attrs.
-// original is gone.
-// Object-storage is untouched.
-//
-int  trash_unlink(PathInfo*   info,
-                  const char* path) {
-
-   //    pass in expanded_path_info_structure and file name to be trashed
-   //    rename mdfile (with all xattrs) into trashmdnamepath,
-   if (! (info->flags & PI_EXPANDED)) {
-      // NOTE: we could just expand it ...
-      LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
-      errno = EINVAL;
-      return -(errno); //not sure why this is necessary, as FUSE uses WRAP() TODO
-   }
-
-   TRY_DECLS();
-   int retval = 0;
-   int maxretry = 3; //retry up to a highly arbitrary 3 times
-   int iter = 0;
-   do {
-      // generate a (new) potential trash location
-      __TRY0( expand_trash_info(info, path) );
-      errno = 0;
-      // write full-MDFS-path of original-file into trash-companion file
-      retval = write_trash_companion_file( info, path );
-      LOG( LOG_INFO, "iteration %d: comp_create_res=%d, error=%s\n", iter, retval, strerror(errno) );
-      iter++;
-   } while ( retval != 0  &&  errno == EEXIST  &&  iter < maxretry );
-   if ( iter >= maxretry ) { errno = EBUSY; } // hitting our retry bound means EBUSY
-   if ( retval != 0 ) { return -(errno); } // fail out if we couldn't create a companion file
-
-   // need the compainion file name for later ops
-   // expand_trash_info() assures us there's room in MARFS_MAX_MD_PATH to add 
-   //  MARFS_TRASH_COMPANION_SUFFIX, so no need to check.
-   char companion_fname[MARFS_MAX_MD_PATH];
-   __TRY_GE0( snprintf(companion_fname, MARFS_MAX_MD_PATH, "%s%s",
-                     info->trash_md_path, MARFS_TRASH_COMPANION_SUFFIX) );
-
-   // As we successfully created a companion file, our trash_path should now be 'reserved'
-   //   and rename should never overwrite an existing inode
-   retval = MD_PATH_OP( rename, info->ns, info->post.md_path, info->trash_md_path );
-   if ( retval != 0 ) {  // ensure we remove the companion file following an error 
-      LOG( LOG_ERR, "failed to perform rename of file to trash path, removing companion\n" );
-      MD_PATH_OP( unlink, info->ns, companion_fname );  // ignore the return code of this op, we're already aborting
-      return -(errno); //not sure why this is necessary, as FUSE uses WRAP() TODO
-   }
-
-   LOG( LOG_INFO, "renamed file to trash path\n" );
 
    // directly stat the trashed file to get size/link-count
    struct stat Tstat;
@@ -1409,9 +1342,10 @@ int  trash_unlink(PathInfo*   info,
    }
 
    // add trash xattr to comp_file based on st_size
-   // Note: as we just created this file, the current user MUST have the write access needed to set xattrs
+   // NOTE: as we just created this file, the current user MUST have the write access needed to set xattrs
    char xattr_value_str[MARFS_MAX_XATTR_SIZE];
-   //XattrSpec* spec;
+   // NOTE: the 'tsize.' prefix appears to actullay be necessary in order to avoid a bug with the 'getfattr' command, 
+   //       which will improperly retrieve xattrs with a length less than 8 bytes.
    __TRY_GT0( snprintf(xattr_value_str, MARFS_MAX_XATTR_SIZE, "tsize.%llu", (unsigned long long) Tstat.st_size) );
    LOG(LOG_INFO, "XVT_TRASH %s\n", xattr_value_str);
    __TRY0( MD_PATH_OP(lsetxattr, info->ns,
@@ -1421,6 +1355,7 @@ int  trash_unlink(PathInfo*   info,
 
    return 0;
 }
+
 
 
 int mknod_path( PathInfo* info, const char* path, mode_t mode, dev_t rdev ) {
@@ -1483,6 +1418,69 @@ int mknod_path( PathInfo* info, const char* path, mode_t mode, dev_t rdev ) {
 
    return 0;
 }
+
+
+
+// [trash_file]
+// This is used to implement unlink().
+//
+// Rename MD file to trashfile, keeping all attrs.
+// original is gone.
+// Object-storage is untouched.
+//
+int  trash_unlink(PathInfo*   info,
+                  const char* path) {
+
+   //    pass in expanded_path_info_structure and file name to be trashed
+   //    rename mdfile (with all xattrs) into trashmdnamepath,
+   if (! (info->flags & PI_EXPANDED)) {
+      // NOTE: we could just expand it ...
+      LOG(LOG_ERR, "caller should already have called expand_path_info()\n");
+      errno = EINVAL;
+      return -(errno); //not sure why this is necessary, as FUSE uses WRAP() TODO
+   }
+
+   TRY_DECLS();
+   int retval = 0;
+   int maxretry = 3; //retry up to a highly arbitrary 3 times
+   int iter = 0;
+   do {
+      // generate a (new) potential trash location
+      __TRY0( expand_trash_info(info, path) );
+      errno = 0;
+      // create a dummy file in the destination trash path
+      // NOTE: this acts both to reserve the trash location and to prevent the accidental trashing of directories
+      //       (if path is a directory, the later rename() should fail with ENOTDIR)
+      retval = MD_PATH_OP( mknod, info->ns, info->trash_md_path, (S_IFREG | S_IRUSR | S_IWUSR), 0 );
+      LOG( LOG_INFO, "iteration %d: comp_create_res=%d, error=%s\n", iter, retval, strerror(errno) );
+      iter++;
+   } while ( retval != 0  &&  errno == EEXIST  &&  iter < maxretry );
+   if ( iter >= maxretry ) { errno = EBUSY; } // hitting our retry bound means EBUSY
+   if ( retval != 0 ) { return -(errno); } // fail out if we couldn't create a companion file
+
+   // As we successfully created a dummy file, our trash_path should now be 'reserved'
+   //   and rename should never overwrite a legitimate trash file
+   LOG( LOG_INFO, "attempting rename to trash path for \"%s\"\n", info->post.md_path );
+   retval = MD_PATH_OP( rename, info->ns, info->post.md_path, info->trash_md_path );
+   if ( retval != 0 ) { 
+      LOG( LOG_ERR, "failed to perform rename of file to trash path: %s\n", strerror(errno) );
+      if ( errno == ENOTDIR ) { 
+         errno = EISDIR; // the most likely case for this is attempted unlink of a directory TODO (renameat could clarify)
+      }
+   }
+   else { // only write the companion file if the rename succeeded
+      LOG( LOG_INFO, "renamed file to trash path\n" );
+      retval = write_trash_companion_file( info, path );
+   }
+   if ( retval != 0 ) { // ensure we remove the dummy trash file following an error of either op
+      LOG( LOG_INFO, "removing dummy trash file\n" );
+      MD_PATH_OP( unlink, info->ns, info->trash_md_path );  // ignore the return code of this op, we're already aborting
+      return -(errno); //not sure why this is necessary, as FUSE uses WRAP() TODO
+   }
+
+   return 0;
+}
+
 
 
 // This is used to implement truncate/ftruncate

@@ -2371,7 +2371,7 @@ int marfs_rename (const char* path,
    int retval = 0;
    do {
       retval = trash_unlink( &info2, to );
-      fprintf( stderr, "RENAME-UNLINK: retval = %d, error = %s\n", retval, strerror(errno) );
+      LOG( LOG_INFO, "unlink dest: retval = %d, error = %s\n", retval, strerror(errno) );
       if ( retval != 0  &&  errno != ENOENT ) { return retval; } // any non-ENOENT error is an unexpected failure
       // Given a race between this op and another, this may fail with EEXIST, triggering a reattempt.
       //   As trash_unlink() is our sole means of properly trashing MarFS files, just 
