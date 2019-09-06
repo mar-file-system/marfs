@@ -71,30 +71,9 @@ OF SUCH DAMAGE.
 
 #include "thread_queue.h"
 #include <stdio.h>
-#include <error.h>
+#include <stdlib.h>
+#include <errno.h>
 #include <pthread.h>
-
-
-// TODO TMP -- move to thread_queue.h
-typedef struct queue_init_struct {
-   unsigned int   num_threads;      /* number of threads to initialize */
-   unsigned int   max_qdepth;       /* maximum depth of the work queue */
-   void*          global_state;     /* reference to some global initial state, passed to the init_thread state func of all threads */
-   void* (*thread_init_state) (int tID, void* global_state); /* function pointer defining initilization behavior for each thread
-                                                              - This function will be run by only a single thread at a time (non-parallel)
-                                                                  Each thread completes a call to thread_init_state before the next thread starts
-                                                              - The first argument is an integer ID for the calling thread (0 to (num_threads-1))
-                                                              - The second argument is a copy of the global_state pointer for each thread
-                                                              - The return from this func will be passed as 'state' to the thread_work_func 
-                                                              - A NULL return value will cause all threads to ABORT and tq_init() to fail */
-   int   (*thread_work_func)  (void* state, void* work);     /* function pointer defining behavior of a thread for each work package
-                                                              - This function may be run by multiple threads in parallel
-                                                                  Beware of shared values in the 'state' argument
-                                                              - A return value above zero will cause the calling thread to HALT the queue
-                                                              - A return value below zero will cause the calling thread to ABORT the queue
-                                                              - A return value of zero will be ignored */
-} TQ_Init_Opts;
-
 
 
 
@@ -151,6 +130,7 @@ int tq_signal(ThreadQueue* tq, TQ_Control_Flags sig) {
    // wake ALL threads
    pthread_cond_broadcast(&tq->thread_resume);
    pthread_mutex_unlock(&tq->qlock);  
+   return 0;
 }
 
 
@@ -194,22 +174,22 @@ void* worker_thread( void* arg ) {
    // NOTE: tq_init() can only be called by one proc; however, beyond this point, multiple producer procs may be running
 
    // begin main loop
-   while ( true ) {
+   while ( 1 ) {
       // This thread should always be holding the queue lock here
       // check for available work or any finished/halt/abort conditions
       while ( ( tq->qdepth == 0  ||  (tq->con_flags & TQ_HALT) )
             &&  !((tq->con_flags & TQ_FINISHED) || (tq->con_flags & TQ_ABORT)) ) {
          // note the halted state if we were asked to pause
          if ( tq->con_flags & TQ_HALT ) {
-            tq->state_flags |= TQ_HALTED;
+            tq->state_flags[tID] |= TQ_HALTED;
             // the producer proc(s) could have been waiting for us to halt, so we must signal
             pthread_cond_broadcast(&tq->master_resume);
          }
          // whatever the reason, we're in a holding pattern until the queue/signal states change
          pthread_cond_wait( &tq->thread_resume, &tq->qlock );
          // if we were halted, make sure we immediately indicate that we aren't any more
-         if ( tq->state_flags & TQ_HALTED ) {
-            tq->state_flags &= ~(TQ_HALTED);
+         if ( tq->state_flags[tID] & TQ_HALTED ) {
+            tq->state_flags[tID] &= ~(TQ_HALTED);
          }
       } // end of holding pattern -- this thread has some action to take
 
@@ -239,8 +219,8 @@ void* worker_thread( void* arg ) {
          pthread_cond_broadcast( &tq->master_resume ); // safe with no lock? TODO
          break;
       }
-      if ( work_res > 0 ) { tq->con_flags |= TQ_HALT; pthread_condition_broadcast( &tq->thread_resume ); }
-      else if ( work_res < 0 ) { tq->con_flags |= TQ_ABORT; pthread_condition_broadcast( &tq->thread_resume ); tq->state_flags[tID] |= TQ_ERROR; }
+      if ( work_res > 0 ) { tq->con_flags |= TQ_HALT; pthread_cond_broadcast( &tq->thread_resume ); }
+      else if ( work_res < 0 ) { tq->con_flags |= TQ_ABORT; pthread_cond_broadcast( &tq->thread_resume ); tq->state_flags[tID] |= TQ_ERROR; }
    }
    // end of main loop
 
@@ -291,11 +271,11 @@ int tq_resume( ThreadQueue* tq ) {
 /**
  * Checks if the HALT flag is set for a given ThreadQueue
  * @param ThreadQueue* tq : ThreadQueue to check
- * @return bool : true if the HALT flag is set, and false if not
+ * @return char : 1 if the HALT flag is set, and 0 if not
  */
-bool tq_halt_set( ThreadQueue* tq ) {
-   if ! ( tq->con_flags & TQ_HALT ) { return false; }
-   return true;
+char tq_halt_set( ThreadQueue* tq ) {
+   if ( !(tq->con_flags & TQ_HALT) ) { return 0; }
+   return 1;
 }
 
 
@@ -312,11 +292,11 @@ int tq_abort(ThreadQueue *tq) {
 /**
  * Checks if the ABORT flag is set for a given ThreadQueue
  * @param ThreadQueue* tq : ThreadQueue to check
- * @return bool : true if the ABORT flag is set, and false if not
+ * @return char : 1 if the ABORT flag is set, and 0 if not
  */
-bool tq_abort_set( ThreadQueue* tq ) {
-   if ( tq->con_flags & TQ_ABORT ) { return true; }
-   return false;
+char tq_abort_set( ThreadQueue* tq ) {
+   if ( tq->con_flags & TQ_ABORT ) { return 1; }
+   return 0;
 }
 
 
@@ -431,7 +411,7 @@ ThreadQueue* tq_init( TQ_Init_Opts opts ) {
    ThreadArg targ;
    targ.tID = 0;
    targ.tq = tq;
-   if ( pthread_mutext_lock( &tq->qlock ) ) { i = opts.num_threads + 1; } // if we fail to get the lock, this is an easy way to cleanup
+   if ( pthread_mutex_lock( &tq->qlock ) ) { i = opts.num_threads + 1; } // if we fail to get the lock, this is an easy way to cleanup
    for ( i = 0; i < opts.num_threads; i++ ) {
       // create each thread
       if ( pthread_create( &tq->threads[i], NULL, worker_thread, (void*) &targ ) ) { break; }
