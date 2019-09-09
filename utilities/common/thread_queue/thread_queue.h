@@ -119,49 +119,49 @@ typedef struct thread_queue_struct* ThreadQueue;
 
 /**
  * Sets the FINISHED state for a given ThreadQueue, allowing thread status info to be collected
- * @param ThreadQueue* tq : ThreadQueue to mark as FINISHED
+ * @param ThreadQueue tq : ThreadQueue to mark as FINISHED
  * @return int : Zero on success and non-zero on failure
  */
-int tq_work_done(ThreadQueue tq);
+int tq_work_done( ThreadQueue tq );
 
 /**
  * Sets a HALT state for the given ThreadQueue and waits for all threads to pause
- * @param ThreadQueue* tq : ThreadQueue to pause
+ * @param ThreadQueue tq : ThreadQueue to pause
  * @return int : Zero on success and non-zero on failure
  */
 int tq_halt( ThreadQueue tq );
 
 /**
  * Unsets the HALT state for a given ThreadQueue and signals all threads to resume work
- * @param ThreadQueue* tq : ThreadQueue for which to unset the HALT state
+ * @param ThreadQueue tq : ThreadQueue for which to unset the HALT state
  * @return int : Zero on success and non-zero on failure
  */
 int tq_resume( ThreadQueue tq );
 
 /**
  * Checks if the HALT flag is set for a given ThreadQueue
- * @param ThreadQueue* tq : ThreadQueue to check
+ * @param ThreadQueue tq : ThreadQueue to check
  * @return char : 1 if the HALT flag is set, and 0 if not
  */
 char tq_halt_set( ThreadQueue tq );
 
 /**
  * Sets an ABORT state for the given ThreadQueue
- * @param ThreadQueue* tq : ThreadQueue for which to set the ABORT
+ * @param ThreadQueue tq : ThreadQueue for which to set the ABORT
  * @return int : Zero on success and non-zero on failure
  */
-int tq_abort(ThreadQueue tq);
+int tq_abort( ThreadQueue tq );
 
 /**
  * Checks if the ABORT flag is set for a given ThreadQueue
- * @param ThreadQueue* tq : ThreadQueue to check
+ * @param ThreadQueue tq : ThreadQueue to check
  * @return char : 1 if the ABORT flag is set, and 0 if not
  */
 char tq_abort_set( ThreadQueue tq );
 
 /**
  * Insert a new element of work into the ThreadQueue
- * @param ThreadQueue* tq : ThreadQueue in which to insert work
+ * @param ThreadQueue tq : ThreadQueue in which to insert work
  * @param void* workbuff : New element of work to be inserted
  * @return int : Zero on success and -1 on failure (such as, if the queue is FINISHED or ABORTED)
  */
@@ -170,23 +170,26 @@ int tq_enqueue( ThreadQueue tq, void* workbuff );
 /**
  * Returns the status info for the next uncollected thread in a FINISHED or ABORTED ThreadQueue
  *  If no uncollected threads remain in the ThreadQueue, the status info will be set to NULL
- * @param ThreadQueue* tq : ThreadQueue from which to collect status info
+ * @param ThreadQueue tq : ThreadQueue from which to collect status info
  * @param void** tstate : Reference to be populated with thread status info
  * @return int : Zero on success, -1 on failure, and 1 if all threads have already terminated
  */
 int tq_next_thread_status( ThreadQueue tq, void** tstate );
 
 /**
- * Closes a FINISHED or ABORTED ThreadQueue for which all thread status info has already been collected
- * @param ThreadQueue* tq : ThreadQueue to be closed
- * @return int : Zero on success and -1 on failure
+ * Closes a FINISHED or ABORTED ThreadQueue for which all thread status info has already been collected.
+ *  However, if the ThreadQueue still has queue elements remaining (such as if the queue ABORTED), this 
+ *  function will instead remove the first of those elements and populate 'workbuff' with its reference.
+ * @param ThreadQueue tq : ThreadQueue to be closed
+ * @param void** workbuff : Reference to a void* to be popluated with any remaining queue element
+ * @return int : Zero on success, -1 on failure, and 1 if a remaining queue element has been passed back
  */
-int tq_close( ThreadQueue tq );
+int tq_close( ThreadQueue tq, void** workbuff );
 
 /**
  * Initializes a new ThreadQueue according to the parameters of the passed options struct
  * @param TQ_Init_Opts opts : options struct defining parameters for the created ThreadQueue
- * @return ThreadQueue* : pointer to the created ThreadQueue, or NULL if an error was encountered
+ * @return ThreadQueue : pointer to the created ThreadQueue, or NULL if an error was encountered
  */
 ThreadQueue tq_init( TQ_Init_Opts opts );
 

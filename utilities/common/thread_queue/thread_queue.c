@@ -417,10 +417,10 @@ int tq_next_thread_status( ThreadQueue tq, void** tstate ) {
       }
       tq->threads_running--;
       LOG( LOG_INFO, "Successfully joined thread %u (%u threads remain)\n", tID, tq->threads_running );
-      if ( tq->state_flags[tID] & TQ_ERROR ) { // indicate a thread error occurred
-         LOG( LOG_INFO, "Noting that thread %u issued a queue ABORT\n", tID );
-         return 1;
-      }
+      //if ( tq->state_flags[tID] & TQ_ERROR ) { // indicate a thread error occurred
+      //   LOG( LOG_INFO, "Noting that thread %u issued a queue ABORT\n", tID );
+      //   return 1;
+      //}
    }
    else {
       LOG( LOG_INFO, "All threads have terminated\n" );
@@ -432,18 +432,32 @@ int tq_next_thread_status( ThreadQueue tq, void** tstate ) {
 
 
 /**
- * Closes a FINISHED or ABORTED ThreadQueue for which all thread status info has already been collected
+ * Closes a FINISHED or ABORTED ThreadQueue for which all thread status info has already been collected.
+ *  However, if the ThreadQueue still has queue elements remaining (such as if the queue ABORTED), this 
+ *  function will instead remove the first of those elements and populate 'workbuff' with its reference.
  * @param ThreadQueue tq : ThreadQueue to be closed
- * @return int : Zero on success and -1 on failure
+ * @param void** workbuff : Reference to a void* to be popluated with any remaining queue element
+ * @return int : Zero on success, -1 on failure, and 1 if a remaining queue element has been passed back
  */
-int tq_close( ThreadQueue tq ) {
+int tq_close( ThreadQueue tq, void** workbuff ) {
    // make sure the queue has been marked FINISHED/ABORTED and that all thread states have been collected
    if ( !( tq->con_flags & (TQ_FINISHED | TQ_ABORT))  ||  tq->threads_running ) {
       LOG( LOG_ERR, "cannont close a non-FINISHED/ABORTED queue or one with running threads!\n" );
       errno = EINVAL;
       return -1;
    }
-//TODO should perhaps check if work packages remain on the queue and be capable of passing those back
+   if ( pthread_mutex_lock( &tq->qlock ) ) {
+      LOG( LOG_ERR, "Failed to acquire queue lock!\n" );
+      return -1;
+   }
+   if ( tq->qdepth > 0 ) {
+      if ( workbuff != NULL ) { *workbuff = tq->workpkg[ tq->head ]; }
+      tq->workpkg[ tq->head ] = NULL;
+      tq->head = (tq->head + 1) % tq->max_qdepth;
+      tq->qdepth--;
+      pthread_mutex_unlock( &tq->qlock );
+      return 1;
+   }
    // free everything and terminate
    tq_free_all(tq);
    pthread_exit(NULL);
