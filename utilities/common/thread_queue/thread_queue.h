@@ -87,14 +87,13 @@ typedef struct queue_init_struct {
                * The second argument is a copy of the global_state pointer for each thread
                * The third argument is a reference to the user-defined state pointer for this thread
             - Return Value
-               * A non-zero return value will cause the calling thread to ABORT the queue and fail out of tq_init()
+               * A non-zero return value will cause the calling thread to ABORT the queue ( will cause tq_init() to fail )
                * A return value of zero will be ignored
          */
    int (*thread_work_func) (void** state, void* work);
          /* 
             function pointer defining the behavior of a thread for each work package
-            - This function may be run by multiple threads in parallel
-               Beware of shared values in the 'state' argument
+            - This function may be run by multiple threads in parallel.  Beware of shared values in the 'state' argument.
             - Arguments
                * The first argument is a reference to the user-defined state pointer for this thread
                * The second argument is a reference to the current work package of the thread (passed in by tq_enqueue())
@@ -106,6 +105,7 @@ typedef struct queue_init_struct {
    void (*thread_term_func) (void** state);
          /*
             function pointer defining the termination behavior of a thread
+            - This function may be run by multiple threads in parallel.  Beware of shared values in the 'state' argument.
             - Arguments
                * The first/only argument is a reference to the user-defined state pointer for this thread
             - Return Value (NONE)
@@ -180,6 +180,7 @@ int tq_next_thread_status( ThreadQueue tq, void** tstate );
  * Closes a FINISHED or ABORTED ThreadQueue for which all thread status info has already been collected.
  *  However, if the ThreadQueue still has queue elements remaining (such as if the queue ABORTED), this 
  *  function will instead remove the first of those elements and populate 'workbuff' with its reference.
+ *  The function must then be called again (potentially repeatedly) to close the ThreadQueue.
  * @param ThreadQueue tq : ThreadQueue to be closed
  * @param void** workbuff : Reference to a void* to be popluated with any remaining queue element
  * @return int : Zero on success, -1 on failure, and 1 if a remaining queue element has been passed back

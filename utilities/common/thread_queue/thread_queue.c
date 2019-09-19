@@ -69,11 +69,12 @@ IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGE.
 */
 
+// TMP DEBUG DEFS
 #define DEBUG 1
 #define USE_STDOUT 1
 
 #include "thread_queue.h"
-#include "logging.h"
+#include "logging.c" //small C file defining MarFS logging format/funcs (it's either this, or link against MarFS)
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
