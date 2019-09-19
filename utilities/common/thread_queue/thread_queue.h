@@ -114,7 +114,6 @@ typedef struct queue_init_struct {
 
 
 
-
 typedef struct thread_queue_struct* ThreadQueue;
 
 /**
@@ -168,13 +167,13 @@ char tq_abort_set( ThreadQueue tq );
 int tq_enqueue( ThreadQueue tq, void* workbuff );
 
 /**
- * Returns the status info for the next uncollected thread in a FINISHED or ABORTED ThreadQueue
- *  If no uncollected threads remain in the ThreadQueue, the status info will be set to NULL
- * @param ThreadQueue tq : ThreadQueue from which to collect status info
- * @param void** tstate : Reference to be populated with thread status info
- * @return int : Zero on success, -1 on failure, and 1 if all threads have already terminated
+ * Populates a reference to the state for the next uncollected thread in a FINISHED or ABORTED ThreadQueue
+ * @param ThreadQueue tq : ThreadQueue from which to collect state info
+ * @param void** tstate : Reference to a void* to be populated with thread state info
+ * @return int : The number of thread states to be collected (INCLUDING the state just collected), 
+ *               zero if all thread states have already been collected, or -1 if a failure occured. 
  */
-int tq_next_thread_status( ThreadQueue tq, void** tstate );
+int tq_next_thread_status( ThreadQueue tq, void** state );
 
 /**
  * Closes a FINISHED or ABORTED ThreadQueue for which all thread status info has already been collected.
@@ -182,8 +181,12 @@ int tq_next_thread_status( ThreadQueue tq, void** tstate );
  *  function will instead remove the first of those elements and populate 'workbuff' with its reference.
  *  The function must then be called again (potentially repeatedly) to close the ThreadQueue.
  * @param ThreadQueue tq : ThreadQueue to be closed
- * @param void** workbuff : Reference to a void* to be popluated with any remaining queue element
- * @return int : Zero on success, -1 on failure, and 1 if a remaining queue element has been passed back
+ * @param void** workbuff : Reference to a void* to be popluated with any remaining queue element or NULL 
+ *                          if tq_close() should attempt to free() all remaining queue buffers itself and 
+ *                          close the queue immediately
+ * @return int : Zero if the queue has been closed, -1 on failure, or a positive integer equal to the 
+ *               number of buffers found still on the queue if a remaining element has been passed back 
+ *               (the return value is INCLUDING the element just passed back)
  */
 int tq_close( ThreadQueue tq, void** workbuff );
 
@@ -192,7 +195,7 @@ int tq_close( ThreadQueue tq, void** workbuff );
  * @param TQ_Init_Opts opts : options struct defining parameters for the created ThreadQueue
  * @return ThreadQueue : pointer to the created ThreadQueue, or NULL if an error was encountered
  */
-ThreadQueue tq_init( TQ_Init_Opts opts );
+ThreadQueue tq_init( TQ_Init_Opts* opts );
 
 
 #endif

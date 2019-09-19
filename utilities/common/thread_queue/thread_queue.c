@@ -112,7 +112,8 @@ typedef struct thread_queue_struct {
 
    // Thread Definitions
    unsigned int       num_threads;      /* number of threads associated with this queue */
-   unsigned int       threads_running;  /* number of threads that have initialized and not yet returned state info */
+   unsigned int       uncoll_threads;   /* number of threads that have initialized and not yet returned state info */
+   unsigned int       running_threads;  /* number of threads currently processing work */
    pthread_t*         threads;          /* thread instances */
    void*              global_state;     /* reference to some initial state shared by all threads */
    int  (*thread_init_func) (unsigned int tID, void* global_state, void** state);
@@ -136,7 +137,7 @@ typedef struct thread_arg_struct {
 int tq_signal(ThreadQueue tq, TQ_Control_Flags sig) {
    LOG( LOG_INFO, "Signalling all threads of thread_queue with %s\n", 
                   (sig == TQ_FINISHED) ? "TQ_FINISHED" : ( (sig == TQ_ABORT) ? "TQ_ABORT" : ( (sig == TQ_HALT) ? "TQ_HALT" : "UNKNOWN_SIGNAL!" ) ) );
-   if ( pthread_mutex_lock(&tq->qlock) ) { return -1; }
+   if ( pthread_mutex_lock(&tq->qlock) ) { LOG( LOG_ERR, "Failed to acquire lock!\n" ); return -1; }
    tq->con_flags |= sig;
    // wake ALL threads
    pthread_cond_broadcast(&tq->thread_resume);
@@ -181,6 +182,7 @@ void* worker_thread( void* arg ) {
       tq->state_flags[tID] |= TQ_ERROR;
       tq->con_flags |= TQ_ABORT;
       pthread_cond_signal( &tq->master_resume );
+      pthread_cond_broadcast( &tq->thread_resume ); // so threads will abort
       pthread_mutex_unlock( &tq->qlock );
       pthread_exit( tstate );
    }
@@ -204,7 +206,9 @@ void* worker_thread( void* arg ) {
          }
          // whatever the reason, we're in a holding pattern until the queue/signal states change
          LOG( LOG_INFO, "Thread[%u]: Sleeping pending wakup signal\n", tID );
+         tq->running_threads--; // indicate that this thread is no longer available for work
          pthread_cond_wait( &tq->thread_resume, &tq->qlock );
+         tq->running_threads++; // indicate that this thread is now available for work
          LOG( LOG_INFO, "Thread[%u]: Awake and holding lock\n", tID );
          // if we were halted, make sure we immediately indicate that we aren't any more
          if ( tq->state_flags[tID] & TQ_HALTED ) {
@@ -216,7 +220,6 @@ void* worker_thread( void* arg ) {
       // First, check if we should be quitting
       if( (tq->con_flags & TQ_ABORT)  ||  ( (tq->qdepth == 0) && (tq->con_flags & TQ_FINISHED) ) ) {
          LOG( LOG_INFO, "Thread[%u]: Terminating now\n", tID );
-         pthread_mutex_unlock(&tq->qlock);
          break;
       }
 
@@ -239,9 +242,11 @@ void* worker_thread( void* arg ) {
          // failed to aquire the queue lock, terminate
          LOG( LOG_ERR, "Thread[%u]: Failed to acquire queue lock within main loop!\n", tID );
          tq->state_flags[tID] |= TQ_ERROR;
+         tq->state_flags[tID] &= (~TQ_READY);
          tq->con_flags |= TQ_ABORT; // this is an extrordinary case; try to set the ABORT flag even without a lock
-         pthread_cond_broadcast( &tq->master_resume ); // safe with no lock? TODO
-         break;
+         pthread_cond_broadcast( &tq->thread_resume );
+         pthread_cond_broadcast( &tq->master_resume ); // should be safe with no lock (also, not much choice)
+         pthread_exit( tstate );
       }
       if ( work_res > 0 ) {
          LOG( LOG_INFO, "Thread[%u]: Setting HALT state due to work processing result\n", tID );
@@ -255,7 +260,13 @@ void* worker_thread( void* arg ) {
          tq->state_flags[tID] |= TQ_ERROR;
       }
    }
-   // end of main loop
+   // end of main loop (still holding lock)
+
+   // unset the READY flag, to indicate that we are no longer processing work
+   tq->state_flags[tID] &= (~TQ_READY);
+   tq->running_threads--; // likely won't matter at this point...
+   pthread_cond_broadcast( &tq->master_resume ); // in case master proc(s) are waiting to join
+   pthread_mutex_unlock(&tq->qlock);
 
    // call the termination function
    tq->thread_term_func( &tstate );
@@ -385,8 +396,11 @@ int tq_enqueue( ThreadQueue tq, void* workbuff ) {
    tq->workpkg[ tq->tail ] = workbuff;          // insert the workbuff into the queue
    tq->tail = (tq->tail + 1 ) % tq->max_qdepth; // move the tail to the next slot
    tq->qdepth++;                                // finally, increment the queue depth
-   // tell a thread that it can now resume (better to wake too many than too few)
-   pthread_cond_signal( &tq->thread_resume );
+   // if the queue length exceeds the work being processed, tell a thread to resume
+   if ( tq->qdepth > tq->running_threads ) {
+      LOG( LOG_INFO, "Master signaling an additional thread ( depth=%u, running=%u)\n", tq->qdepth, tq->running_threads );
+      pthread_cond_signal( &tq->thread_resume );
+   }
    LOG( LOG_INFO, "Master proc has successfully enqueued work\n" );
    pthread_mutex_unlock( &tq->qlock );
 
@@ -395,11 +409,11 @@ int tq_enqueue( ThreadQueue tq, void* workbuff ) {
 
 
 /**
- * Returns the status info for the next uncollected thread in a FINISHED or ABORTED ThreadQueue
- *  If no uncollected threads remain in the ThreadQueue, the status info will be set to NULL
- * @param ThreadQueue tq : ThreadQueue from which to collect status info
- * @param void** tstate : Reference to be populated with thread status info
- * @return int : Zero on success, -1 on failure, and 1 if all threads have already terminated
+ * Populates a reference to the state for the next uncollected thread in a FINISHED or ABORTED ThreadQueue
+ * @param ThreadQueue tq : ThreadQueue from which to collect state info
+ * @param void** tstate : Reference to a void* be populated with thread state info
+ * @return int : The number of thread states to be collected (INCLUDING the state just collected), 
+ *               zero if all thread states have already been collected, or -1 if a failure occured. 
  */
 int tq_next_thread_status( ThreadQueue tq, void** tstate ) {
    // make sure the queue has been marked FINISHED/ABORTED
@@ -408,27 +422,37 @@ int tq_next_thread_status( ThreadQueue tq, void** tstate ) {
       errno = EINVAL;
       return -1;
    }
-   unsigned int tID = tq->num_threads - tq->threads_running; // get thread states in the order they were started
+   // theoretically, this function *should* only be called by a single proc at a time.
+   //   However, it seems safer to lock here, just in case.
+   if ( pthread_mutex_lock( &tq->qlock ) ) {
+      LOG( LOG_ERR, "Failed to acquire queue lock!\n" );
+      return -1;
+   }
+   unsigned int tID = tq->num_threads - tq->uncoll_threads; // get thread states in the order they were started
+   unsigned int tcnt = tq->uncoll_threads;
    if ( tID < tq->num_threads ) { // if no threads are running, set state to NULL
+      // make sure the thread is ready to join (not still trying to process work)
+      while ( ( tq->state_flags[ tID ] & TQ_READY ) != 0 ) {
+         LOG( LOG_INFO, "Waiting for thread %u to be ready for collection\n", tID );
+         // threads should already have been signaled, no need to repeat
+         pthread_cond_wait( &tq->master_resume, &tq->qlock );
+      }
       LOG( LOG_INFO, "Attempting to join thread %u\n", tID );
       int ret = pthread_join( tq->threads[tID], tstate );
       if ( ret ) { // indicate a failure if we couldn't join
          LOG( LOG_ERR, "Failed to join thread %u!\n", tID );
+         pthread_mutex_unlock( &tq->qlock );
          return -1;
       }
-      tq->threads_running--;
-      LOG( LOG_INFO, "Successfully joined thread %u (%u threads remain)\n", tID, tq->threads_running );
-      //if ( tq->state_flags[tID] & TQ_ERROR ) { // indicate a thread error occurred
-      //   LOG( LOG_INFO, "Noting that thread %u issued a queue ABORT\n", tID );
-      //   return 1;
-      //}
+      tq->uncoll_threads--;
+      LOG( LOG_INFO, "Successfully joined thread %u (%u threads remain)\n", tID, tq->uncoll_threads );
    }
    else {
       LOG( LOG_INFO, "All threads have terminated\n" );
       if ( tstate != NULL ) { *tstate = NULL; }
-      return 1;
    }
-   return 0;
+   pthread_mutex_unlock( &tq->qlock );
+   return tcnt;
 }
 
 
@@ -436,29 +460,38 @@ int tq_next_thread_status( ThreadQueue tq, void** tstate ) {
  * Closes a FINISHED or ABORTED ThreadQueue for which all thread status info has already been collected.
  *  However, if the ThreadQueue still has queue elements remaining (such as if the queue ABORTED), this 
  *  function will instead remove the first of those elements and populate 'workbuff' with its reference.
+ *  The function must then be called again (potentially repeatedly) to close the ThreadQueue.
  * @param ThreadQueue tq : ThreadQueue to be closed
- * @param void** workbuff : Reference to a void* to be popluated with any remaining queue element
- * @return int : Zero on success, -1 on failure, and 1 if a remaining queue element has been passed back
+ * @param void** workbuff : Reference to a void* to be popluated with any remaining queue element or NULL 
+ *                          if tq_close() should attempt to free() all remaining queue buffers itself and 
+ *                          close the queue immediately
+ * @return int : Zero if the queue has been closed, -1 on failure, or a positive integer equal to the 
+ *               number of buffers found still on the queue if a remaining element has been passed back 
+ *               (the return value is INCLUDING the element just passed back)
  */
 int tq_close( ThreadQueue tq, void** workbuff ) {
-   // make sure the queue has been marked FINISHED/ABORTED and that all thread states have been collected
-   if ( !( tq->con_flags & (TQ_FINISHED | TQ_ABORT))  ||  tq->threads_running ) {
-      LOG( LOG_ERR, "cannont close a non-FINISHED/ABORTED queue or one with running threads!\n" );
-      errno = EINVAL;
-      return -1;
-   }
    if ( pthread_mutex_lock( &tq->qlock ) ) {
       LOG( LOG_ERR, "Failed to acquire queue lock!\n" );
       return -1;
    }
-   if ( tq->qdepth > 0 ) {
+   // make sure the queue has been marked FINISHED/ABORTED and that all thread states have been collected
+   if ( !( tq->con_flags & (TQ_FINISHED | TQ_ABORT))  ||  tq->uncoll_threads ) {
+      LOG( LOG_ERR, "cannont close a non-FINISHED/ABORTED queue or one with running threads!\n" );
+      errno = EINVAL;
+      pthread_mutex_unlock( &tq->qlock );
+      return -1;
+   }
+   while ( tq->qdepth > 0 ) {
+      // if the client gave us a means to pass back a workpkg, do so
       if ( workbuff != NULL ) { *workbuff = tq->workpkg[ tq->head ]; }
+      else { free( tq->workpkg[ tq->head ] ); } // otherwise, free it
       tq->workpkg[ tq->head ] = NULL;
       tq->head = (tq->head + 1) % tq->max_qdepth;
-      tq->qdepth--;
-      pthread_mutex_unlock( &tq->qlock );
-      return 1;
+      unsigned int tmpdepth = tq->qdepth--; // decrement POST-assignment
+      // if we're passing back a workbuff ref, need to return now
+      if ( workbuff != NULL ) { pthread_mutex_unlock( &tq->qlock ); return tmpdepth; }
    }
+   pthread_mutex_unlock( &tq->qlock );
    // free everything and terminate
    tq_free_all(tq);
    pthread_exit(NULL);
@@ -470,19 +503,19 @@ int tq_close( ThreadQueue tq, void** workbuff ) {
  * @param TQ_Init_Opts opts : options struct defining parameters for the created ThreadQueue
  * @return ThreadQueue : pointer to the created ThreadQueue, or NULL if an error was encountered
  */
-ThreadQueue tq_init( TQ_Init_Opts opts ) {
-   LOG( LOG_INFO, "Initializing ThreadQueue with params: Num_threads=%u, Max_qdepth=%u\n", opts.num_threads, opts.max_qdepth );
+ThreadQueue tq_init( TQ_Init_Opts* opts ) {
+   LOG( LOG_INFO, "Initializing ThreadQueue with params: Num_threads=%u, Max_qdepth=%u\n", opts->num_threads, opts->max_qdepth );
    // allocate space for a new thread_queue_struct
    ThreadQueue tq = malloc( sizeof( struct thread_queue_struct ) );
    if ( tq == NULL ) { return NULL; }
 
    // initialize all fields we received from the caller
-   tq->num_threads       = opts.num_threads;
-   tq->max_qdepth        = opts.max_qdepth;
-   tq->global_state      = opts.global_state;
-   tq->thread_init_func  = opts.thread_init_func;
-   tq->thread_work_func  = opts.thread_work_func;
-   tq->thread_term_func  = opts.thread_term_func;
+   tq->num_threads       = opts->num_threads;
+   tq->max_qdepth        = opts->max_qdepth;
+   tq->global_state      = opts->global_state;
+   tq->thread_init_func  = opts->thread_init_func;
+   tq->thread_work_func  = opts->thread_work_func;
+   tq->thread_term_func  = opts->thread_term_func;
 
    // initialize basic queue vars
    tq->qdepth = 0;
@@ -493,7 +526,8 @@ ThreadQueue tq_init( TQ_Init_Opts opts ) {
    tq->con_flags = TQ_HALT; // this will allow us to wait on the master_resume condition below
 
    // initialize basic thread vars
-   tq->threads_running = 0;
+   tq->uncoll_threads = 0;
+   tq->running_threads = tq->num_threads; // at first, all threads are running
 
    // initialize pthread control structures
    LOG( LOG_INFO, "Allocating ThreadQueue memory refs\n" );
@@ -502,24 +536,24 @@ ThreadQueue tq_init( TQ_Init_Opts opts ) {
    if ( pthread_cond_init( &tq->master_resume, NULL ) ) { free( tq ); return NULL; }
 
    // initialize fields requiring memory allocation
-   if ( (tq->state_flags = calloc( sizeof(TQ_State_Flags), opts.num_threads )) == NULL ) { free(tq); return NULL; }
-   if ( (tq->workpkg = malloc( sizeof(void*) * opts.max_qdepth )) == NULL ) { free(tq->state_flags); free(tq); return NULL; }
+   if ( (tq->state_flags = calloc( sizeof(TQ_State_Flags), opts->num_threads )) == NULL ) { free(tq); return NULL; }
+   if ( (tq->workpkg = malloc( sizeof(void*) * opts->max_qdepth )) == NULL ) { free(tq->state_flags); free(tq); return NULL; }
    unsigned int i;
-   for ( i = 0; i < opts.max_qdepth; i++ ) {
+   for ( i = 0; i < opts->max_qdepth; i++ ) {
       tq->workpkg[i] = NULL;
    }
-   if ( (tq->threads = malloc( sizeof(pthread_t*) * opts.num_threads )) == NULL ) { free(tq->state_flags); free(tq->workpkg); free(tq); return NULL; }
+   if ( (tq->threads = malloc( sizeof(pthread_t*) * opts->num_threads )) == NULL ) { free(tq->state_flags); free(tq->workpkg); free(tq); return NULL; }
 
    // create all threads
    ThreadArg targ;
    targ.tID = 0;
    targ.tq = tq;
-   if ( pthread_mutex_lock( &tq->qlock ) ) { i = opts.num_threads + 1; } // if we fail to get the lock, this is an easy way to cleanup
-   for ( i = 0; i < opts.num_threads; i++ ) {
+   if ( pthread_mutex_lock( &tq->qlock ) ) { i = opts->num_threads + 1; } // if we fail to get the lock, this is an easy way to cleanup
+   for ( i = 0; i < opts->num_threads; i++ ) {
       // create each thread
       LOG( LOG_INFO, "Starting thread %u\n", targ.tID );
       if ( pthread_create( &tq->threads[i], NULL, worker_thread, (void*) &targ ) ) { LOG( LOG_ERR, "Failed to create thread %d\n", i ); break; }
-      tq->threads_running++;
+      tq->uncoll_threads++;
 
       // wait for thread to initialize (we're still holding the lock through this entire loop; not too efficient but very conventient)
       while ( (tq->state_flags[i] & (TQ_READY | TQ_ERROR)) == 0 ) { // wait for the thread to succeed or fail
@@ -539,12 +573,13 @@ ThreadQueue tq_init( TQ_Init_Opts opts ) {
 
       pthread_mutex_lock( &tq->qlock ); //assuming success of acquiring the lock after the first time
    }
-   if ( i != opts.num_threads ) { // an error occured while creating threads
+   // still holding lock
+   if ( i != opts->num_threads ) { // an error occured while creating threads
       LOG( LOG_ERR, "Failed to init all threads: signaling ABORT!\n" );
-      tq->con_flags |= TQ_ABORT; // signal all threads to abort (still holding the lock)
+      tq->con_flags |= TQ_ABORT; // signal all threads to abort (potentially redundant)
       pthread_cond_broadcast( &tq->thread_resume );
       pthread_mutex_unlock( &tq->qlock );
-      for ( i = 0; i < tq->threads_running; i++ ) {
+      for ( i = 0; i < tq->uncoll_threads; i++ ) {
          pthread_join( tq->threads[i], NULL ); // just ignore thread status, we are already aborting
          LOG( LOG_INFO, "Joined with thread %u\n", targ.tID );
       }
