@@ -33,9 +33,12 @@ int my_thread_work( void** state, void* work ) {
 
 	tstate->wkcnt++;
 	fprintf( stdout, "Thread %u received work package %d (gstate = %d, wkcnt = %d)\n", tstate->tID, wpkg->pkgnum, tstate->gstate, tstate->wkcnt );
-	//int num = wpkg->pkgnum;
+	int num = wpkg->pkgnum;
 	free( wpkg );
-	//if ( num == 30 ) { return -1; }
+	// pause the queue after completing work package 30
+	if ( num == 30 ) { fprintf( stdout, "Thread %u is pausing the queue!\n", tstate->tID ); return 1; }
+	// issue an abort after completing work package 50
+	else if (  num == 50 ) { fprintf( stdout, "Thread %u is aborting the queue!\n", tstate->tID ); return -1; }
 	return 0;
 }
 
@@ -62,7 +65,7 @@ int main( int argc, char** argv ) {
 	if ( tq == NULL ) { printf( "tq_init() failed!  Terminating...\n" ); return -1; }
 
 	int pkgnum;
-	for ( pkgnum = 0; pkgnum < 50; pkgnum++ ) {
+	for ( pkgnum = 0; pkgnum < 75; pkgnum++ ) {
 		printf( "Enqueuing work package %d...\n", pkgnum );
 		WorkPkg wpkg = malloc( sizeof( struct work_package_struct ) );
 		if ( wpkg == NULL ) {
@@ -70,7 +73,25 @@ int main( int argc, char** argv ) {
 			break;
 		}
 		wpkg->pkgnum = pkgnum;
-		if ( tq_enqueue( tq, (void*) wpkg ) ) { printf( "Failed to enqueue new work!\n" ); free(wpkg); break; }
+		if ( tq_enqueue( tq, (void*) wpkg ) ) {
+			printf( "Failed to enqueue new work!\n" );
+			if ( tq_halt_set( tq ) ) {
+				free( wpkg );
+				pkgnum--;
+				printf( "It appears that a worker thread paused the queue.  Sleeping for 3 seconds...\n" );
+				sleep( 3 );
+				printf( "Resuming queue...\n" );
+				tq_resume( tq );
+			}
+			else {
+				if( tq_abort_set( tq ) ) {
+					printf( "It appears that a worker thread issued a queue abort.  Terminating early...\n" );
+				}
+				else { printf( "An unknown error prevented the enqueuing of work.  Terminating early...\n" ); }
+				free(wpkg);
+				break;
+			}
+		}
 		if ( pkgnum == 25 ) {
 			printf( "Halting queue...\n" );
 			tq_halt( tq );
@@ -93,7 +114,7 @@ int main( int argc, char** argv ) {
 			tnum++;
 		}
 		else {
-			printf( "Recieved NULL status for thread %d\n", tnum );
+			printf( "Received NULL status for thread %d\n", tnum );
 		}
 	}
 	if ( tres != 0 ) { printf( "Failure of tq_next_thread_status()!\n" ); }
@@ -101,7 +122,7 @@ int main( int argc, char** argv ) {
 	printf( "Finally, closing thread queue...\n" );
 	WorkPkg wpkg = NULL;
 	while ( (tres=tq_close( tq, (void**)&wpkg )) > 0 ) {
-		printf( "Recieved remaining work package from ABORTED queue!\n" );
+		printf( "Received remaining work package from ABORTED queue!\n" );
 		free( wpkg );
 	}
 	if ( tres != 0 ) { printf( "Failure of tq_close()!\n" ); }
