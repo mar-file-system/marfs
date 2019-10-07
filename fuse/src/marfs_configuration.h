@@ -159,10 +159,12 @@ extern "C" {
 //
 // -- 1.11  Merged in new multi-threaded reads, in libne.  Again, just
 //          incrementing version to make a distinction in object-IDs.
-
-
+//
+// -- 1.12  Version bump to match the current tag.
+//
+ 
 #define MARFS_CONFIG_MAJOR  1
-#define MARFS_CONFIG_MINOR  11
+#define MARFS_CONFIG_MINOR  12
 
 typedef uint16_t   ConfigVersType; // one value each for major and minor
 
