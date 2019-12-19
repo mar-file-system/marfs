@@ -280,7 +280,7 @@ AC_ARG_VAR(conf, [The path to the marfs configuration blueprint])
 AC_ARG_VAR(MARFS_MNT, [The MarFS mount point (optional)])
 AC_ARG_VAR(MARFSCONFIGRC, [The path to the marfs config (or any valid config)])
 
-AS_IF([test -n "$PARSE_DIR"], [], [test -d "PA2X"], [echo "Warning: PARSE_DIR env variable not set, defaulting to \"./PA2X\""  &&  export PARSE_DIR="./PA2X"], [AC_ERROR([Failed to locate PA2X.  You may need to clone the submodule or set the PARSE_DIR environment variable.])])
+AS_IF([test -n "$PARSE_DIR"], [], [test -d "PA2X"], [echo  &&  echo "Warning: PARSE_DIR env variable not set, defaulting to \"./PA2X\""  &&  echo  &&  export PARSE_DIR="./PA2X"], [AC_ERROR([Failed to locate PA2X.  You may need to clone the submodule or set the PARSE_DIR environment variable.])])
 # We've already verified we have the libraries.  If we have found them, we don't necessarily need the env vars
 #AS_IF([test -z "$AWS4C"], [AC_ERROR([AWS4C is not set])])
 AM_CONDITIONAL([AWS4C],[test "$AWS4C"]) #just note if the var is set

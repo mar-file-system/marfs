@@ -227,13 +227,15 @@ if USE_MC
 #
 # build rebuilder by hand, because it needs mpicc
 # (see https://stackoverflow.com/questions/25972150/automake-per-target-compiler)
-all-local : rebuilder
 
-rebuilder : utilities/multi-component/rebuilder.c
-	mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o ${bindir}/rebuilder $^ ${LDADD} ${LIBS}
-
-clean-local :
-	@ rm -f rebuilder
+# DISABLED REBUILDER
+#all-local : rebuilder
+#
+#rebuilder : utilities/multi-component/rebuilder.c
+#	mpicc ${CPPFLAGS} ${AM_CPPFLAGS} -I. ${LDFLAGS} ${AM_LDFLAGS} -o ${bindir}/rebuilder $^ ${LDADD} ${LIBS}
+#
+#clean-local :
+#	@ rm -f rebuilder
 
 
 endif
@@ -275,38 +277,39 @@ endif
 # GPFS Utilities
 # ............................................................................
 
-if GPFS_UTILITIES
-
-bin_PROGRAMS += marfs_gc marfs_quota marfs_packer marfs_repack
-
-marfs_gc_SOURCES = utilities/gpfs/marfs_gc.c utilities/gpfs/marfs_gc.h \
-				   utilities/gpfs/utilities_common.c   \
-				   utilities/gpfs/utilities_common.h   \
-				   utilities/common/hash_table/hash_table.c   \
-				   utilities/common/hash_table/hash_table.h
-
-marfs_gc_CPPFLAGS = -Iutilities/common/hash_table
-
-marfs_quota_SOURCES = utilities/gpfs/marfs_quota.c utilities/gpfs/marfs_quota.h \
-					  utilities/gpfs/utilities_common.c  \
-					  utilities/gpfs/utilities_common.h
-
-marfs_packer_SOURCES = utilities/gpfs/marfs_packer.c \
-					   utilities/gpfs/marfs_packer.h      \
-					   utilities/gpfs/utilities_common.c  \
-					   utilities/gpfs/utilities_common.h 
-
-marfs_repack_SOURCES = utilities/gpfs/marfs_repack.c \
-					   utilities/gpfs/marfs_repack.h      \
-					   utilities/gpfs/utilities_common.c  \
-					   utilities/gpfs/utilities_common.h
-
-marfs_gc_LDFLAGS     = -lgpfs
-marfs_quota_LDFLAGS  = -lgpfs
-marfs_packer_LDFLAGS = -lgpfs
-marfs_repack_LDFLAGS = -lgpfs
-
-endif
+# DISABLED GPFS_UTILITIES
+#if GPFS_UTILITIES
+#
+#bin_PROGRAMS += marfs_gc marfs_quota marfs_packer marfs_repack
+#
+#marfs_gc_SOURCES = utilities/gpfs/marfs_gc.c utilities/gpfs/marfs_gc.h \
+#				   utilities/gpfs/utilities_common.c   \
+#				   utilities/gpfs/utilities_common.h   \
+#				   utilities/common/hash_table/hash_table.c   \
+#				   utilities/common/hash_table/hash_table.h
+#
+#marfs_gc_CPPFLAGS = -Iutilities/common/hash_table -Ifuse/src -Icommon/log/src
+#
+#marfs_quota_SOURCES = utilities/gpfs/marfs_quota.c utilities/gpfs/marfs_quota.h \
+#					  utilities/gpfs/utilities_common.c  \
+#					  utilities/gpfs/utilities_common.h
+#
+#marfs_packer_SOURCES = utilities/gpfs/marfs_packer.c \
+#					   utilities/gpfs/marfs_packer.h      \
+#					   utilities/gpfs/utilities_common.c  \
+#					   utilities/gpfs/utilities_common.h 
+#
+#marfs_repack_SOURCES = utilities/gpfs/marfs_repack.c \
+#					   utilities/gpfs/marfs_repack.h      \
+#					   utilities/gpfs/utilities_common.c  \
+#					   utilities/gpfs/utilities_common.h
+#
+#marfs_gc_LDFLAGS     = -lgpfs
+#marfs_quota_LDFLAGS  = -lgpfs
+#marfs_packer_LDFLAGS = -lgpfs
+#marfs_repack_LDFLAGS = -lgpfs
+#
+#endif
 
 
 # ............................................................................
