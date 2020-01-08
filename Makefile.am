@@ -10,8 +10,7 @@
 
 # AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src -I$(AWS4C)
 
-AM_CPPFLAGS = -Icommon/configuration/src -Icommon/log/src \
-	      -Ifuse/src  -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
+AM_CPPFLAGS = -Isrc -D_GNU_SOURCE -D_XOPEN_SOURCE=700          \
 	      -DDATAPARSE -DBUILD_INC_DIR=@includedir@ -I$(PARSE_DIR)
 
 if AWS4C
@@ -78,19 +77,19 @@ PARSE_OBJ = $(PARSE_DIR)/confpars.o $(PARSE_DIR)/path-switch.o $(PARSE_DIR)/pars
 
 
 lib_LIBRARIES = libmarfs.a
-libmarfs_a_SOURCES = parser fuse/src/common.c fuse/	src/common.h        \
-					 fuse/src/marfs_base.c fuse/src/marfs_base.h       \
-					 fuse/src/marfs_ops.c fuse/src/marfs_ops.h         \
-					 fuse/src/push_user.c fuse/src/push_user.h         \
-					 fuse/src/object_stream.c fuse/src/object_stream.h \
-					 fuse/src/dal.c fuse/src/dal.h                     \
-					 fuse/src/mdal.c fuse/src/mdal.h                   \
-					 fuse/src/marfs_locks.h fuse/src/marfs_locks.c     \
-					 common/log/src/logging.c common/log/src/logging.h \
-					 common/configuration/src/PA2X_interface.c         \
-					 common/configuration/src/PA2X_interface.h         \
-					 fuse/src/marfs_configuration.c                    \
-					 fuse/src/marfs_configuration.h
+libmarfs_a_SOURCES =	 parser src/core/common.c src/core/common.h      \
+			 src/core/marfs_base.c src/core/marfs_base.h     \
+			 src/core/marfs_ops.c src/core/marfs_ops.h       \
+			 src/locks/marfs_locks.h src/locks/marfs_locks.c \
+			 src/fuse/push_user.c src/fuse/push_user.h       \
+			 src/dal/object_stream.c src/dal/object_stream.h \
+			 src/dal/dal.c src/dal/dal.h                     \
+			 src/mdal/mdal.c src/mdal/mdal.h                 \
+			 src/logging/logging.c src/logging/logging.h     \
+			 src/config/PA2X_interface.c                     \
+			 src/config/PA2X_interface.h                     \
+			 src/config/marfs_configuration.c                \
+			 src/config/marfs_configuration.h
 
 libmarfs_a_LIBADD = $(PARSE_OBJ)
 
@@ -104,23 +103,23 @@ endif
 
 # Use our own polite spin locks
 if SPINLOCKS
-  libmarfs_a_SOURCES += fuse/src/spinlock.h fuse/src/spinlock.c \
-                        fuse/src/spinlock_asm.s
+  libmarfs_a_SOURCES += src/locks/spinlock.h src/locks/spinlock.c \
+                        src/locks/spinlock_asm.s
   AM_CPPFLAGS += -DSPINLOCKS
 endif
 
 
 
-include_HEADERS = fuse/src/marfs_base.h \
-                  fuse/src/object_stream.h \
-                  fuse/src/common.h \
-                  fuse/src/marfs_ops.h \
-                  fuse/src/xdal_common.h \
-                  fuse/src/mdal.h \
-                  fuse/src/dal.h \
-                  fuse/src/marfs_locks.h \
-                  fuse/src/marfs_configuration.h \
-                  common/log/src/logging.h
+include_HEADERS = src/core/marfs_base.h           \
+                  src/core/common.h               \
+                  src/core/marfs_ops.h            \
+                  src/dal/dal.h                   \
+                  src/dal/object_stream.h         \
+                  src/dal/xdal_common.h           \
+                  src/mdal/mdal.h                 \
+                  src/locks/marfs_locks.h         \
+                  src/locks/marfs_configuration.h \
+                  src/logging/logging.h
 
 
 # added individually, below
@@ -150,26 +149,26 @@ endif
 # Tools
 # ............................................................................
 
-FUSE_SRCS =  fuse/src/marfs_configuration.c \
-		       fuse/src/marfs_configuration.h \
-		       fuse/src/marfs_ops.c \
-		       fuse/src/marfs_ops.h \
-		       fuse/src/common.c \
-		       fuse/src/common.h \
-		       fuse/src/marfs_base.c \
-		       fuse/src/marfs_base.h \
-		       fuse/src/dal.c \
-		       fuse/src/dal.h
+FUSE_SRCS =	 src/config/marfs_configuration.c \
+		 src/config/marfs_configuration.h \
+		 src/core/marfs_ops.c             \
+		 src/core/marfs_ops.h             \
+		 src/core/common.c                \
+		 src/core/common.h                \
+		 src/core/marfs_base.c            \
+		 src/core/marfs_base.h            \
+		 src/dal/dal.c                    \
+		 src/dal/dal.h
 
 
 
 # Generally we will always want to build the config tester program.
 bin_PROGRAMS += marfs_config 
-marfs_config_SOURCES = fuse/src/marfs_config.c                   \
-                       fuse/src/marfs_configuration.c            \
-                       fuse/src/marfs_configuration.h            \
-                       common/configuration/src/PA2X_interface.c \
-                       common/configuration/src/PA2X_interface.h
+marfs_config_SOURCES = src/config/marfs_config.c                   \
+                       src/config/marfs_configuration.c            \
+                       src/config/marfs_configuration.h            \
+                       src/config/PA2X_interface.c                 \
+                       src/config/PA2X_interface.h
 
 marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 
@@ -177,36 +176,36 @@ marfs_config_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 
 
 # allows debugging script (fuse/scripts/separate_log_threads) to be more efficient
-bin_PROGRAMS += separate_log_threads_support
-separate_log_threads_support_SOURCES = fuse/scripts/separate_log_threads_support.c
-
-
-
-
-bin_PROGRAMS += add_namespace
-add_namespace_SOURCES = fuse/src/add_namespace.c \
-			fuse/src/marfs_configuration.c \
-			fuse/src/marfs_configuration.h \
-			fuse/src/marfs_ops.c \
-			fuse/src/marfs_ops.h \
-			fuse/src/common.c \
-			fuse/src/common.h \
-			fuse/src/marfs_base.c \
-			fuse/src/marfs_base.h 
-
-
-
-
-bin_PROGRAMS += test_statvfs
-test_statvfs_SOURCES = fuse/src/test_statvfs.c \
-                        fuse/src/marfs_configuration.c \
-                        fuse/src/marfs_configuration.h \
-                        fuse/src/marfs_ops.c \
-                        fuse/src/marfs_ops.h \
-                        fuse/src/common.c \
-                        fuse/src/common.h \
-                        fuse/src/marfs_base.c \
-                        fuse/src/marfs_base.h
+#bin_PROGRAMS += separate_log_threads_support
+#separate_log_threads_support_SOURCES = fuse/scripts/separate_log_threads_support.c
+#
+#
+#
+#
+#bin_PROGRAMS += add_namespace
+#add_namespace_SOURCES = fuse/src/add_namespace.c \
+#			fuse/src/marfs_configuration.c \
+#			fuse/src/marfs_configuration.h \
+#			fuse/src/marfs_ops.c \
+#			fuse/src/marfs_ops.h \
+#			fuse/src/common.c \
+#			fuse/src/common.h \
+#			fuse/src/marfs_base.c \
+#			fuse/src/marfs_base.h 
+#
+#
+#
+#
+#bin_PROGRAMS += test_statvfs
+#test_statvfs_SOURCES = fuse/src/test_statvfs.c \
+#                        fuse/src/marfs_configuration.c \
+#                        fuse/src/marfs_configuration.h \
+#                        fuse/src/marfs_ops.c \
+#                        fuse/src/marfs_ops.h \
+#                        fuse/src/common.c \
+#                        fuse/src/common.h \
+#                        fuse/src/marfs_base.c \
+#                        fuse/src/marfs_base.h
 
 
 
@@ -214,7 +213,7 @@ test_statvfs_SOURCES = fuse/src/test_statvfs.c \
 if USE_MC
 
   bin_PROGRAMS += mc_path_convert
-  mc_path_convert_SOURCES = utilities/multi-component/mc_path_convert.c
+  mc_path_convert_SOURCES = src/utilities/multi-component/mc_path_convert.c
   mc_path_convert_LDFLAGS = $(AM_LDFLAGS) $(MC_SOCKET_LD_FLAGS)
 
 
@@ -266,7 +265,7 @@ endif
 
 if WANT_FUSE
   bin_PROGRAMS += marfs_fuse
-  marfs_fuse_SOURCES = fuse/src/main.c
+  marfs_fuse_SOURCES = src/fuse/main.c
   AM_CPPFLAGS += -D_FILE_OFFSET_BITS=64
 endif
 
@@ -317,7 +316,7 @@ endif
 # ............................................................................
 
 PARSE_OPT = -DDATAPARSE
-BLUEPRINT = $(abs_top_srcdir)/common/configuration/src/marfs_configuration_blueprint.cfg
+BLUEPRINT = $(abs_top_srcdir)/src/config/marfs_configuration_blueprint.cfg
 
 PARSE_H_file = config-structs.h
 PARSE_H      = $(PARSE_DIR)/parse-inc/$(PARSE_H_file)
@@ -371,20 +370,20 @@ otherinclude_HEADERS = $(PARSE_H)
 # Various Testing
 # ............................................................................
 
-check_PROGRAMS = test_marfs_configuration
-
-# test_lock test_lock2 test_lock2b
-
-test_lock: test_lock.c spinlock_asm.s
-	$(CC) -g -o $@ $^ -lpthread -lrt
-
-test_lock2: test_lock2.c spinlock_asm.o spinlock.h spinlock.o
-	$(CC) -g -o $@ $^ -lpthread -lrt
-
-test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
-	$(CC) -g -o $@ $^ -lpthread -lrt
-
-test_marfs_configuration_SOURCES = fuse/src/test_marfs_configuration.c
+#check_PROGRAMS = test_marfs_configuration
+#
+## test_lock test_lock2 test_lock2b
+#
+#test_lock: test_lock.c spinlock_asm.s
+#	$(CC) -g -o $@ $^ -lpthread -lrt
+#
+#test_lock2: test_lock2.c spinlock_asm.o spinlock.h spinlock.o
+#	$(CC) -g -o $@ $^ -lpthread -lrt
+#
+#test_lock2b: test_lock2b.c spinlock_asm.o spinlock.o
+#	$(CC) -g -o $@ $^ -lpthread -lrt
+#
+#test_marfs_configuration_SOURCES = fuse/src/test_marfs_configuration.c
 
 
 # ............................................................................

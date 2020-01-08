@@ -291,7 +291,7 @@ AS_IF([test x"$enable_mc" = xsockets && test x"$with_aws_auth" = xno],
       [AC_ERROR([sockets MC cant have aws-auth disabled])])
 
 AS_IF([test -z "$MARFSCONFIGRC"],
-      [AC_SUBST(CONFIG, ${srcdir}/common/configuration/src/marfs_cctest.cfg)],
+      [AC_SUBST(CONFIG, ${srcdir}/src/config/marfs_cctest.cfg)],
       [AC_SUBST(CONFIG, $MARFSCONFIGRC)])
 
 # Checks for header files.
