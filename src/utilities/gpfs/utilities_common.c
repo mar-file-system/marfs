@@ -80,9 +80,9 @@
 #include <sys/types.h>
 #include <ctype.h>
 #include <attr/xattr.h>
-#include "marfs_base.h"
-#include "common.h"
-#include "marfs_ops.h"
+#include "core/marfs_base.h"
+#include "core/common.h"
+#include "core/marfs_ops.h"
 #include "utilities_common.h"
 
 /******************************************************************************

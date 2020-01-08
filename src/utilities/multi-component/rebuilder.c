@@ -69,10 +69,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 // we absolutely must have multi-component enabled to build this
 // program.  This ensures that the necessary symbols are exposed from
 // dal.h
-#include "common.h"
-#include "dal.h" // MC_MAX_PATH_LEN, MC_MAX_LOG_LEN, & MC_DEGRADED_LOG_FORMAT
-#include "marfs_configuration.h"
-#include "marfs_base.h" // MARFS_MAX_HOST_SIZE
+#include "core/common.h"
+#include "dal/dal.h" // MC_MAX_PATH_LEN, MC_MAX_LOG_LEN, & MC_DEGRADED_LOG_FORMAT
+#include "config/marfs_configuration.h"
+#include "core/marfs_base.h" // MARFS_MAX_HOST_SIZE
 
 #include "erasure.h"
 

@@ -57,8 +57,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdio.h>
 #include <string.h>
 
-// #include "logging.h"
-#include "marfs_configuration.h"
+// #include "logging/logging.h"
+#include "config/marfs_configuration.h"
 
 
 

@@ -77,7 +77,7 @@ OF SUCH DAMAGE.
 // rev 4
 // ...........................................................................
 
-#include "common.h"             // TRY()
+#include "core/common.h"             // TRY()
 
 #include <sys/types.h>
 

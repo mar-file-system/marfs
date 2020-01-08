@@ -74,7 +74,7 @@ OF SUCH DAMAGE.
 
 
 
-#include "common.h"
+#include "core/common.h"
 
 
 // TYPEDEF COPIED (and renamed) FROM /usr/include/fuse/fuse.h

@@ -118,7 +118,7 @@ include_HEADERS = src/core/marfs_base.h           \
                   src/dal/xdal_common.h           \
                   src/mdal/mdal.h                 \
                   src/locks/marfs_locks.h         \
-                  src/locks/marfs_configuration.h \
+                  src/config/marfs_configuration.h \
                   src/logging/logging.h
 
 
@@ -277,16 +277,16 @@ endif
 # ............................................................................
 
 # DISABLED GPFS_UTILITIES
-#if GPFS_UTILITIES
-#
-#bin_PROGRAMS += marfs_gc marfs_quota marfs_packer marfs_repack
-#
-#marfs_gc_SOURCES = utilities/gpfs/marfs_gc.c utilities/gpfs/marfs_gc.h \
-#				   utilities/gpfs/utilities_common.c   \
-#				   utilities/gpfs/utilities_common.h   \
-#				   utilities/common/hash_table/hash_table.c   \
-#				   utilities/common/hash_table/hash_table.h
-#
+if GPFS_UTILITIES
+
+bin_PROGRAMS += marfs_gc #marfs_quota marfs_packer marfs_repack
+
+marfs_gc_SOURCES =	 src/utilities/gpfs/marfs_gc.c src/utilities/gpfs/marfs_gc.h \
+			 src/utilities/gpfs/utilities_common.c   \
+			 src/utilities/gpfs/utilities_common.h   \
+			 src/frameworks/hash_table/hash_table.c   \
+			 src/frameworks/hash_table/hash_table.h
+
 #marfs_gc_CPPFLAGS = -Iutilities/common/hash_table -Ifuse/src -Icommon/log/src
 #
 #marfs_quota_SOURCES = utilities/gpfs/marfs_quota.c utilities/gpfs/marfs_quota.h \
@@ -303,12 +303,12 @@ endif
 #					   utilities/gpfs/utilities_common.c  \
 #					   utilities/gpfs/utilities_common.h
 #
-#marfs_gc_LDFLAGS     = -lgpfs
+marfs_gc_LDFLAGS     = -lgpfs
 #marfs_quota_LDFLAGS  = -lgpfs
 #marfs_packer_LDFLAGS = -lgpfs
 #marfs_repack_LDFLAGS = -lgpfs
-#
-#endif
+
+endif
 
 
 # ............................................................................

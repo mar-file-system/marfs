@@ -82,11 +82,11 @@ OF SUCH DAMAGE.
 #  undef LOG_PREFIX
 #endif
 #define LOG_PREFIX "obj_stream"
-#include "logging.h"
+#include "logging/logging.h"
 
-#include "common.h"
+#include "core/common.h"
 #include "object_stream.h"
-#include "marfs_locks.h"
+#include "locks/marfs_locks.h"
 
 #include <stdlib.h>
 #include <unistd.h>

@@ -69,9 +69,9 @@ IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGE.
 */
 
-#include "marfs_base.h"
-#include "mdal.h"
-#include "dal.h"
+#include "core/marfs_base.h"
+#include "mdal/mdal.h"
+#include "dal/dal.h"
 
 #include <math.h>
 #include <stdio.h>

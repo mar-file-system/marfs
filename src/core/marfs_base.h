@@ -105,7 +105,7 @@ OF SUCH DAMAGE.
 #include <sys/stat.h>
 #include <math.h>               // floorf
 
-#include "logging.h"
+#include "logging/logging.h"
 
 
 #  ifdef __cplusplus
@@ -302,7 +302,7 @@ extern "C" {
 
 
 
-# include "marfs_configuration.h"
+# include "config/marfs_configuration.h"
 
 
 // types for correction/encryption info, encoded into obj-iDs

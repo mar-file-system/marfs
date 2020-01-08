@@ -66,7 +66,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <errno.h>  /* checking errno needs this */
 #include <unistd.h> /* access */
 
-#include "logging.h"
+#include "logging/logging.h"
 
 #include "PA2X_interface.h"
 

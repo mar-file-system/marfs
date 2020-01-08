@@ -69,7 +69,7 @@ IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGE.
 */
 
-#include "common.h"
+#include "core/common.h"
 
 #include <sys/types.h>          /* uid_t */
 #include <unistd.h>

@@ -57,7 +57,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 
 #include <stdint.h>
-#include "xdal_common.h"        /* xDALConfigOpt */
+#include "dal/xdal_common.h"        /* xDALConfigOpt */
 
 #include "erasure.h"         /* see erasureUtils */
 

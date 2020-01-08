@@ -76,8 +76,8 @@ OF SUCH DAMAGE.
 #include <linux/fs.h>
 #endif
 
-#include "logging.h"
-#include "mdal.h"
+#include "logging/logging.h"
+#include "mdal/mdal.h"
 
 #include <stdlib.h>             // malloc()
 #include <errno.h>

@@ -79,7 +79,7 @@
 #include <getopt.h>
 #include <sys/types.h>
 #include "marfs_quota.h"
-#include "marfs_configuration.h"
+#include "config/marfs_configuration.h"
 
 /******************************************************************************
 * This program reads gpfs inodes and extended attributes in order to provide

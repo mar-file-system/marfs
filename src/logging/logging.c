@@ -1,4 +1,4 @@
-#include "logging.h"
+#include "logging/logging.h"
 
 #include <stdlib.h>             // malloc()
 #include <string.h>

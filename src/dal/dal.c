@@ -72,9 +72,9 @@ OF SUCH DAMAGE.
 
 
 
-#include "logging.h"
-#include "dal.h"
-#include "common.h"
+#include "logging/logging.h"
+#include "dal/dal.h"
+#include "core/common.h"
 
 #include <stdlib.h>             // malloc()
 #include <errno.h>

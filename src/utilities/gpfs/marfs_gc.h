@@ -80,10 +80,10 @@ OF SUCH DAMAGE.
 #include <gpfs_fcntl.h>
 #include <signal.h>
 
-#include "marfs_base.h"
-#include "common.h"             // marfs/fuse/src/common.h
+#include "core/marfs_base.h"
+#include "core/common.h"             // marfs/fuse/src/common.h
 #include "aws4c.h"
-#include "hash_table.h"
+#include "frameworks/hash_table/hash_table.h"
 
 #define PACKED_TABLE_SIZE 10000
 #define REPACK_TABLE_SIZE 1000

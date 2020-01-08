@@ -54,8 +54,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <time.h>
 #include <errno.h>
 
-#include "marfs_locks.h"
-#include "logging.h"
+#include "locks/marfs_locks.h"
+#include "logging/logging.h"
 
 #ifndef SPINLOCKS
 // support for semaphore-based locking.  (See marfs_locks.h)

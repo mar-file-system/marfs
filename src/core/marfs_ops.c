@@ -70,8 +70,8 @@ OF SUCH DAMAGE.
 */
 
 
-#include "common.h"
-#include "marfs_ops.h"
+#include "core/common.h"
+#include "core/marfs_ops.h"
 
 /*
 @@@-HTTPS:
@@ -82,7 +82,7 @@ on that fact, because that could change, it is best practice to explicitly
 include the files on which a code unit depends.
 */
 
-#include "marfs_base.h"
+#include "core/marfs_base.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>

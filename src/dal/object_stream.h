@@ -115,8 +115,8 @@ OF SUCH DAMAGE.
 #ifndef _MARFS_OBJECTS_H
 #define _MARFS_OBJECTS_H
 
-#include "common.h"             // only for MARFS_MAX_URL_SIZE
-#include "marfs_locks.h"        // SEM_T
+#include "core/common.h"             // only for MARFS_MAX_URL_SIZE
+#include "locks/marfs_locks.h"        // SEM_T
 #include <aws4c.h>
 
 #  ifdef __cplusplus

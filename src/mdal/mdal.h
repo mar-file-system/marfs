@@ -84,8 +84,8 @@ OF SUCH DAMAGE.
 // ---------------------------------------------------------------------------
 
 
-#include "marfs_configuration.h" // MDAL_Type
-#include "xdal_common.h"
+#include "config/marfs_configuration.h" // MDAL_Type
+#include "dal/xdal_common.h"
 
 #include <stdint.h>
 #include <sys/types.h>

@@ -81,7 +81,7 @@
 // TEMP for now to allow buidling of config and usable fuse mount
 #define NEW_CONFIG
 
-#include "marfs_base.h"
+#include "core/marfs_base.h"
 
 //#define MAX_XATTR_VAL_LEN 64
 //#define MAX_XATTR_NAME_LEN 32

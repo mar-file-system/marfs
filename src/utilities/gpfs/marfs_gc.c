@@ -79,8 +79,8 @@ OF SUCH DAMAGE.
 
 #include "marfs_gc.h"
 #include "aws4c.h"
-#include "marfs_configuration.h"
-#include "common.h"
+#include "config/marfs_configuration.h"
+#include "core/common.h"
 #include "utilities_common.h"
 
 typedef struct payload_file_struct {

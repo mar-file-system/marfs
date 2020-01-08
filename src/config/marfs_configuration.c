@@ -67,11 +67,11 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <errno.h>              /* checking errno needs this */
 #include <unistd.h>             /* access */
 
-#include "logging.h"
+#include "logging/logging.h"
 #include "PA2X_interface.h"
-#include "marfs_configuration.h"
-#include "dal.h"
-#include "mdal.h"
+#include "config/marfs_configuration.h"
+#include "dal/dal.h"
+#include "mdal/mdal.h"
 
 
 

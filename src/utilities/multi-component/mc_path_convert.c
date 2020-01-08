@@ -71,8 +71,8 @@
 #include <string.h>
 
 // As we'll be calling some internal MarFS functions directly, include the actual source
-#include "common.c"
-#include "dal.c"
+#include "core/common.c"
+#include "dal/dal.c"
 
 void show_usage(char* prog_name)
 {

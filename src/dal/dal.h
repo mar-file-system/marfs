@@ -83,8 +83,8 @@ OF SUCH DAMAGE.
 // what their interface suggests.
 // ---------------------------------------------------------------------------
 
-#include "marfs_configuration.h" // DAL_Type
-#include "xdal_common.h"
+#include "config/marfs_configuration.h" // DAL_Type
+#include "dal/xdal_common.h"
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -105,8 +105,8 @@ OF SUCH DAMAGE.
 #  endif
 #  define DEFAULT_SKT_AUTH_USER  "mcadmin"  /* libne's SKT_S3_USER might diverge */
 
-#  include "marfs_base.h"  // MARFS_ constants
-#  include "marfs_locks.h" // SEM_T
+#  include "core/marfs_base.h"  // MARFS_ constants
+#  include "locks/marfs_locks.h" // SEM_T
 #  include "erasure.h"     // NEPathManip
 
 // The mc path will be the host field of the repo plus an object id.

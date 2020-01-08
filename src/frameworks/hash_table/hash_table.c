@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "common.h"
+#include "core/common.h"
 #include "hash_table.h"
 
 
