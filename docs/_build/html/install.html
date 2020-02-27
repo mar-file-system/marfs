@@ -20,11 +20,20 @@
   <script type="text/javascript" src="_static/js/modernizr.min.js"></script>
   
     
-      <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+      <script type="text/javascript">
+          var DOCUMENTATION_OPTIONS = {
+              URL_ROOT:'./',
+              VERSION:'1.13',
+              LANGUAGE:'None',
+              COLLAPSE_INDEX:false,
+              FILE_SUFFIX:'.html',
+              HAS_SOURCE:  true,
+              SOURCELINK_SUFFIX: '.txt'
+          };
+      </script>
         <script type="text/javascript" src="_static/jquery.js"></script>
         <script type="text/javascript" src="_static/underscore.js"></script>
         <script type="text/javascript" src="_static/doctools.js"></script>
-        <script type="text/javascript" src="_static/language_data.js"></script>
     
     <script type="text/javascript" src="_static/js/theme.js"></script>
 
@@ -166,19 +175,17 @@
 <p>This section describes the install process for MarFS.</p>
 <div class="contents local topic" id="contents">
 <ul class="simple">
-<li><p><a class="reference internal" href="#overview" id="id1">Overview</a></p></li>
-<li><p><a class="reference internal" href="#example-cluster" id="id2">Example cluster</a></p>
-<ul>
-<li><p><a class="reference internal" href="#storage-nodes" id="id3">Storage Nodes</a></p></li>
-<li><p><a class="reference internal" href="#metadata-nodes" id="id4">Metadata Nodes</a></p></li>
-<li><p><a class="reference internal" href="#file-transfer-nodes" id="id5">File Transfer Nodes</a></p></li>
-<li><p><a class="reference internal" href="#user-facing-nodes" id="id6">User Facing Nodes</a></p></li>
+<li><a class="reference internal" href="#overview" id="id1">Overview</a></li>
+<li><a class="reference internal" href="#example-cluster" id="id2">Example cluster</a><ul>
+<li><a class="reference internal" href="#storage-nodes" id="id3">Storage Nodes</a></li>
+<li><a class="reference internal" href="#metadata-nodes" id="id4">Metadata Nodes</a></li>
+<li><a class="reference internal" href="#file-transfer-nodes" id="id5">File Transfer Nodes</a></li>
+<li><a class="reference internal" href="#user-facing-nodes" id="id6">User Facing Nodes</a></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#dependencies" id="id7">Dependencies</a></p>
-<ul>
-<li><p><a class="reference internal" href="#build-and-install-from-source" id="id8">Build and install from source</a></p></li>
-<li><p><a class="reference internal" href="#using-release-tarball" id="id9">Using release tarball</a></p></li>
+<li><a class="reference internal" href="#dependencies" id="id7">Dependencies</a><ul>
+<li><a class="reference internal" href="#build-and-install-from-source" id="id8">Build and install from source</a></li>
+<li><a class="reference internal" href="#using-release-tarball" id="id9">Using release tarball</a></li>
 </ul>
 </li>
 </ul>
@@ -215,10 +222,10 @@ which will present the MarFS cluster as a mounted filesystem to users. Our
 example cluster will have:</p>
 <blockquote>
 <div><ul class="simple">
-<li><p>4 Storage Nodes</p></li>
-<li><p>2 Metadata Nodes</p></li>
-<li><p>2 File Transfer Nodes</p></li>
-<li><p>1 User Node</p></li>
+<li>4 Storage Nodes</li>
+<li>2 Metadata Nodes</li>
+<li>2 File Transfer Nodes</li>
+<li>1 User Node</li>
 </ul>
 </div></blockquote>
 <div class="section" id="storage-nodes">
@@ -238,10 +245,37 @@ We will use <a class="reference external" href="https://github.com/pftool/pftool
 </div>
 <div class="section" id="user-facing-nodes">
 <h3><a class="toc-backref" href="#id6">User Facing Nodes</a><a class="headerlink" href="#user-facing-nodes" title="Permalink to this headline">¶</a></h3>
+<p>These nodes will be used to present MarFS to users through a FUSE mount.</p>
 </div>
 </div>
 <div class="section" id="dependencies">
 <h2><a class="toc-backref" href="#id7">Dependencies</a><a class="headerlink" href="#dependencies" title="Permalink to this headline">¶</a></h2>
+<p>Depending on things you may need different things. To install and make use of
+MarFS you will need the following tools.</p>
+<p>Fortunately many dependencies can be acquired through a package manager</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel
+curl openssl-devel openssl git libxml2-devel yasm libtool openmpi
+openmpi-devel
+</pre></div>
+</div>
+<p>Others can be obtained from source.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git clone https://github.com/mar-file-system/marfs.git
+git clone https://github.com/mar-file-system/PA2X.git
+git clone https://github.com/mar-file-system/erasureUtils.git
+git clone https://github.com/mar-file-system/aws4c.git
+git clone https://github.com/pftool/pftool.git
+git clone https://github.com/01org/isa-l.git
+</pre></div>
+</div>
+<p>A quick description of tools acquired from source:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>MarFS: The core MarFS libraries
+PA2X: An XML parser for parsing the MarFS configuration file
+ErasureUtils: The erasure coding layer used for Multi-Component storage
+Aws4c: C library for AWS, used for S3 and RDMA authentication
+Pftool: A tool for parallel data movement
+ISA-L: Intel’s Intelligent Storage Acceleration Library
+</pre></div>
+</div>
 <div class="section" id="build-and-install-from-source">
 <h3><a class="toc-backref" href="#id8">Build and install from source</a><a class="headerlink" href="#build-and-install-from-source" title="Permalink to this headline">¶</a></h3>
 </div>

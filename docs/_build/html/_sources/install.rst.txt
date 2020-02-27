@@ -8,7 +8,6 @@ This section describes the install process for MarFS.
    :local:
 
 
-
 Overview
 ========
 MarFS uses separate storage for data and for metadata (MD).  Data is stored as
@@ -64,11 +63,45 @@ We will use `PFtool <https://github.com/pftool/pftool>`_ for this.
 
 User Facing Nodes
 -----------------
-
+These nodes will be used to present MarFS to users through a FUSE mount.
 
 
 Dependencies
 ============
+
+Depending on things you may need different things. To install and make use of
+MarFS you will need the following tools.
+
+Fortunately many dependencies can be acquired through a package manager
+
+.. code-block:: bash
+
+   yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel
+   curl openssl-devel openssl git libxml2-devel yasm libtool openmpi 
+   openmpi-devel
+
+Others can be obtained from source.
+
+.. code-block:: bash
+
+   git clone https://github.com/mar-file-system/marfs.git
+   git clone https://github.com/mar-file-system/PA2X.git
+   git clone https://github.com/mar-file-system/erasureUtils.git
+   git clone https://github.com/mar-file-system/aws4c.git
+   git clone https://github.com/pftool/pftool.git
+   git clone https://github.com/01org/isa-l.git
+
+A quick description of tools acquired from source::
+
+   MarFS: The core MarFS libraries
+   PA2X: An XML parser for parsing the MarFS configuration file
+   ErasureUtils: The erasure coding layer used for Multi-Component storage
+   Aws4c: C library for AWS, used for S3 and RDMA authentication
+   Pftool: A tool for parallel data movement
+   ISA-L: Intel’s Intelligent Storage Acceleration Library
+
+
+   
 
 
 Build and install from source
