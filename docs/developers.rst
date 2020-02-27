@@ -15,8 +15,3 @@ To build MarFS online docs you need python and python-pip installed
 .. code-block:: bash
     pip install -U sphinx sphinx_rtd_theme
 
-
-
-
-
-
