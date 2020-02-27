@@ -13,4 +13,3 @@ being in Alpha. Thank you for your patience!
    :caption: Contents:
 
    install
-
