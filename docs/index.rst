@@ -5,6 +5,8 @@
 
 Welcome to MarFS's documentation!
 =================================
+These documents are currently under construction, and should be viewed as
+being in Alpha. Thank you for your patience!
 
 .. toctree::
    :maxdepth: 2
