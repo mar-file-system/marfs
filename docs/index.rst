@@ -14,11 +14,3 @@ being in Alpha. Thank you for your patience!
 
    install
 
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
