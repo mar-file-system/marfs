@@ -1,5 +1,9 @@
 #!/bin/bash
 
+base_dir=$(dirname "$0")
+
+echo $0
+echo $base_dir
 make clean
 sphinx-build . ../docs
 touch ../docs/.nojeyll

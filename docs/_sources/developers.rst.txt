@@ -20,8 +20,15 @@ To build MarFS online docs you need python and python-pip installed
 
 Contribute
 ==========
-The online documents are currently configured to checkout the branch
-`online_docs` and will only update from there.
+To build the documentation you need to clone the repo first.
 
-The plan going forward will be to uddate docs in another branch and merge into
-this branch when the docs are ready.
+.. code-block:: bash
+
+   git clone https://github.com/mar-file-system/marfs.git
+   cd doc-src
+   sphinx-build . ../docs
+
+Then simply stage your changes with git and push. This system requires
+the changes to me merged to master. The docs will only reflect if master
+has the changes.
+

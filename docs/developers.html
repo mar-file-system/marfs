@@ -170,10 +170,15 @@ pip install sphinx_rtd_theme
 </div>
 <div class="section" id="contribute">
 <h2><a class="toc-backref" href="#id2">Contribute</a><a class="headerlink" href="#contribute" title="Permalink to this headline">¶</a></h2>
-<p>The online documents are currently configured to checkout the branch
-<cite>online_docs</cite> and will only update from there.</p>
-<p>The plan going forward will be to uddate docs in another branch and merge into
-this branch when the docs are ready.</p>
+<p>To build the documentation you need to clone the repo first.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git clone https://github.com/mar-file-system/marfs.git
+<span class="nb">cd</span> doc-src
+sphinx-build . ../docs
+</pre></div>
+</div>
+<p>Then simply stage your changes with git and push. This system requires
+the changes to me merged to master. The docs will only reflect if master
+has the changes.</p>
 </div>
 </div>
 
