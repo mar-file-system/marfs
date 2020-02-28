@@ -1,0 +1,332 @@
+
+
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>Installing &mdash; MarFS 1.13 documentation</title>
+  
+
+  
+  
+  
+  
+
+  
+  <script type="text/javascript" src="_static/js/modernizr.min.js"></script>
+  
+    
+      <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+        <script type="text/javascript" src="_static/jquery.js"></script>
+        <script type="text/javascript" src="_static/underscore.js"></script>
+        <script type="text/javascript" src="_static/doctools.js"></script>
+        <script type="text/javascript" src="_static/language_data.js"></script>
+    
+    <script type="text/javascript" src="_static/js/theme.js"></script>
+
+    
+
+  
+  <link rel="stylesheet" href="_static/css/theme.css" type="text/css" />
+  <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Developers" href="developers.html" />
+    <link rel="prev" title="Welcome to MarFS’s documentation!" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav">
+
+   
+  <div class="wy-grid-for-nav">
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+          
+
+          
+            <a href="index.html" class="icon icon-home"> MarFS
+          
+
+          
+          </a>
+
+          
+            
+            
+          
+
+          
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+          
+        </div>
+
+        <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+          
+            
+            
+              
+            
+            
+              <p class="caption"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Installing</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example-cluster">Example cluster</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#storage-nodes">Storage Nodes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#metadata-nodes">Metadata Nodes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#file-transfer-nodes">File Transfer Nodes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#user-facing-nodes">User Facing Nodes</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#dependencies">Dependencies</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#build-and-install-from-source">Build and install from source</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#using-release-tarball">Using release tarball</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="developers.html">Developers</a></li>
+</ul>
+
+            
+          
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" aria-label="top navigation">
+        
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">MarFS</a>
+        
+      </nav>
+
+
+      <div class="wy-nav-content">
+        
+        <div class="rst-content">
+        
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div role="navigation" aria-label="breadcrumbs navigation">
+
+  <ul class="wy-breadcrumbs">
+    
+      <li><a href="index.html">Docs</a> &raquo;</li>
+        
+      <li>Installing</li>
+    
+    
+      <li class="wy-breadcrumbs-aside">
+        
+            
+            <a href="_sources/install.rst.txt" rel="nofollow"> View page source</a>
+          
+        
+      </li>
+    
+  </ul>
+
+  
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+            
+  <div class="section" id="installing">
+<h1>Installing<a class="headerlink" href="#installing" title="Permalink to this headline">¶</a></h1>
+<p>This section describes the install process for MarFS.</p>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview" id="id1">Overview</a></p></li>
+<li><p><a class="reference internal" href="#example-cluster" id="id2">Example cluster</a></p>
+<ul>
+<li><p><a class="reference internal" href="#storage-nodes" id="id3">Storage Nodes</a></p></li>
+<li><p><a class="reference internal" href="#metadata-nodes" id="id4">Metadata Nodes</a></p></li>
+<li><p><a class="reference internal" href="#file-transfer-nodes" id="id5">File Transfer Nodes</a></p></li>
+<li><p><a class="reference internal" href="#user-facing-nodes" id="id6">User Facing Nodes</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#dependencies" id="id7">Dependencies</a></p>
+<ul>
+<li><p><a class="reference internal" href="#build-and-install-from-source" id="id8">Build and install from source</a></p></li>
+<li><p><a class="reference internal" href="#using-release-tarball" id="id9">Using release tarball</a></p></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="overview">
+<h2><a class="toc-backref" href="#id1">Overview</a><a class="headerlink" href="#overview" title="Permalink to this headline">¶</a></h2>
+<p>MarFS uses separate storage for data and for metadata (MD).  Data is stored as
+erasure-coded objects.  MarFS metadata can use any file-system that provides
+extended-attributes and sparse-files.  For scalability, it should also be a
+distributed file-system. Previously, we have used object-storage systems,
+accessed with the S3 protocol, but this install guide covers a more-recent
+implementation called Multi-Component.  A Multi-Component object-store is a
+set of N+E identical file-systems (where N is the number of data-elements,
+and E the number of erasure-elements, in an erasure-coding).  When MarFS is
+configured for Multi-Component repositories, it will break data “objects” into
+N pieces, perform the erasure-coding on N data-elements to produce N+E new
+elements, and will “stripe” those out across the N+E file-systems.  We refer
+to the set of N+E filesystems as a “pod”.  It is possible to have multiple
+pods, in which case MarFS uses a hash to select the pod, and writes the stripe
+across members of the pod.  Each pod is a distinct set of servers, and stripes
+never span pods.</p>
+<p>MarFS is a distributed parallel filesystem, thusly setup is complicated and
+relies on a number of different technologies and systems. In this guide we
+will go over the setup of an example system. This guide assumes knowledge of
+ZFS, GPFS. MPI, and general Linux operations.</p>
+</div>
+<div class="section" id="example-cluster">
+<h2><a class="toc-backref" href="#id2">Example cluster</a><a class="headerlink" href="#example-cluster" title="Permalink to this headline">¶</a></h2>
+<p>The example cluster we will create in this guide will use a number of
+different storage systems for different functions. Our cluster is comprised of
+Storage nodes which hold object data, Metadata Nodes which hold Metadata,
+file transfer nodes for moving data in parallel, and finally a user node
+which will present the MarFS cluster as a mounted filesystem to users. Our
+example cluster will have:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>4 Storage Nodes</p></li>
+<li><p>2 Metadata Nodes</p></li>
+<li><p>2 File Transfer Nodes</p></li>
+<li><p>1 User Node</p></li>
+</ul>
+</div></blockquote>
+<div class="section" id="storage-nodes">
+<h3><a class="toc-backref" href="#id3">Storage Nodes</a><a class="headerlink" href="#storage-nodes" title="Permalink to this headline">¶</a></h3>
+<p>Each storage node uses ZFS for MarFS block storage. Each node will have four
+zpools in a RAIDZ3(17+3) configuration.</p>
+</div>
+<div class="section" id="metadata-nodes">
+<h3><a class="toc-backref" href="#id4">Metadata Nodes</a><a class="headerlink" href="#metadata-nodes" title="Permalink to this headline">¶</a></h3>
+<p>We will be using GPFS as metadata storage in this example. Your GPFS cluster
+should already be setup and ready to create filesets.</p>
+</div>
+<div class="section" id="file-transfer-nodes">
+<h3><a class="toc-backref" href="#id5">File Transfer Nodes</a><a class="headerlink" href="#file-transfer-nodes" title="Permalink to this headline">¶</a></h3>
+<p>These nodes will be used to move data in parallel from one place to another.
+We will use <a class="reference external" href="https://github.com/pftool/pftool">PFtool</a> for this.</p>
+</div>
+<div class="section" id="user-facing-nodes">
+<h3><a class="toc-backref" href="#id6">User Facing Nodes</a><a class="headerlink" href="#user-facing-nodes" title="Permalink to this headline">¶</a></h3>
+<p>These nodes will be used to present MarFS to users through a FUSE mount.</p>
+</div>
+</div>
+<div class="section" id="dependencies">
+<h2><a class="toc-backref" href="#id7">Dependencies</a><a class="headerlink" href="#dependencies" title="Permalink to this headline">¶</a></h2>
+<p>Depending on things you may need different things. To install and make use of
+MarFS you will need the following tools.</p>
+<p>Fortunately many dependencies can be acquired through a package manager</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel
+curl openssl-devel openssl git libxml2-devel yasm libtool openmpi
+openmpi-devel
+</pre></div>
+</div>
+<p>Others can be obtained from source.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git clone https://github.com/mar-file-system/marfs.git
+git clone https://github.com/mar-file-system/PA2X.git
+git clone https://github.com/mar-file-system/erasureUtils.git
+git clone https://github.com/mar-file-system/aws4c.git
+git clone https://github.com/pftool/pftool.git
+git clone https://github.com/01org/isa-l.git
+</pre></div>
+</div>
+<p>A quick description of tools acquired from source:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>MarFS: The core MarFS libraries
+PA2X: An XML parser for parsing the MarFS configuration file
+ErasureUtils: The erasure coding layer used for Multi-Component storage
+Aws4c: C library for AWS, used for S3 and RDMA authentication
+Pftool: A tool for parallel data movement
+ISA-L: Intel’s Intelligent Storage Acceleration Library
+</pre></div>
+</div>
+<div class="section" id="build-and-install-from-source">
+<h3><a class="toc-backref" href="#id8">Build and install from source</a><a class="headerlink" href="#build-and-install-from-source" title="Permalink to this headline">¶</a></h3>
+</div>
+<div class="section" id="using-release-tarball">
+<h3><a class="toc-backref" href="#id9">Using release tarball</a><a class="headerlink" href="#using-release-tarball" title="Permalink to this headline">¶</a></h3>
+</div>
+</div>
+</div>
+
+
+           </div>
+           
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="developers.html" class="btn btn-neutral float-right" title="Developers" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right"></span></a>
+      
+      
+        <a href="index.html" class="btn btn-neutral float-left" title="Welcome to MarFS’s documentation!" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &copy; Copyright 2020 Triad National Security, LLC
+
+    </p>
+  </div>
+  Built with <a href="http://sphinx-doc.org/">Sphinx</a> using a <a href="https://github.com/rtfd/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>. 
+
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+
+  <script type="text/javascript">
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script>
+
+  
+  
+    
+   
+
+</body>
+</html>

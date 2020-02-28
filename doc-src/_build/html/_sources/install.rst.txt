@@ -1,0 +1,118 @@
+Installing
+**********
+
+This section describes the install process for MarFS.
+
+.. contents::
+   :depth: 2
+   :local:
+
+
+Overview
+========
+MarFS uses separate storage for data and for metadata (MD).  Data is stored as
+erasure-coded objects.  MarFS metadata can use any file-system that provides
+extended-attributes and sparse-files.  For scalability, it should also be a
+distributed file-system. Previously, we have used object-storage systems,
+accessed with the S3 protocol, but this install guide covers a more-recent
+implementation called Multi-Component.  A Multi-Component object-store is a
+set of N+E identical file-systems (where N is the number of data-elements,
+and E the number of erasure-elements, in an erasure-coding).  When MarFS is
+configured for Multi-Component repositories, it will break data “objects” into
+N pieces, perform the erasure-coding on N data-elements to produce N+E new
+elements, and will “stripe” those out across the N+E file-systems.  We refer
+to the set of N+E filesystems as a “pod”.  It is possible to have multiple
+pods, in which case MarFS uses a hash to select the pod, and writes the stripe
+across members of the pod.  Each pod is a distinct set of servers, and stripes
+never span pods.
+
+MarFS is a distributed parallel filesystem, thusly setup is complicated and
+relies on a number of different technologies and systems. In this guide we
+will go over the setup of an example system. This guide assumes knowledge of
+ZFS, GPFS. MPI, and general Linux operations.
+
+
+Example cluster
+===============
+The example cluster we will create in this guide will use a number of
+different storage systems for different functions. Our cluster is comprised of
+Storage nodes which hold object data, Metadata Nodes which hold Metadata,
+file transfer nodes for moving data in parallel, and finally a user node
+which will present the MarFS cluster as a mounted filesystem to users. Our
+example cluster will have:
+
+  * 4 Storage Nodes
+  * 2 Metadata Nodes
+  * 2 File Transfer Nodes
+  * 1 User Node
+
+Storage Nodes
+-------------
+Each storage node uses ZFS for MarFS block storage. Each node will have four
+zpools in a RAIDZ3(17+3) configuration.
+
+Metadata Nodes
+--------------
+We will be using GPFS as metadata storage in this example. Your GPFS cluster
+should already be setup and ready to create filesets.
+
+File Transfer Nodes
+-------------------
+These nodes will be used to move data in parallel from one place to another.
+We will use `PFtool <https://github.com/pftool/pftool>`_ for this.
+
+User Facing Nodes
+-----------------
+These nodes will be used to present MarFS to users through a FUSE mount.
+
+
+Dependencies
+============
+
+Depending on things you may need different things. To install and make use of
+MarFS you will need the following tools.
+
+Fortunately many dependencies can be acquired through a package manager
+
+.. code-block:: bash
+
+   yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel
+   curl openssl-devel openssl git libxml2-devel yasm libtool openmpi 
+   openmpi-devel
+
+Others can be obtained from source.
+
+.. code-block:: bash
+
+   git clone https://github.com/mar-file-system/marfs.git
+   git clone https://github.com/mar-file-system/PA2X.git
+   git clone https://github.com/mar-file-system/erasureUtils.git
+   git clone https://github.com/mar-file-system/aws4c.git
+   git clone https://github.com/pftool/pftool.git
+   git clone https://github.com/01org/isa-l.git
+
+A quick description of tools acquired from source::
+
+   MarFS: The core MarFS libraries
+   PA2X: An XML parser for parsing the MarFS configuration file
+   ErasureUtils: The erasure coding layer used for Multi-Component storage
+   Aws4c: C library for AWS, used for S3 and RDMA authentication
+   Pftool: A tool for parallel data movement
+   ISA-L: Intel’s Intelligent Storage Acceleration Library
+
+
+   
+
+
+Build and install from source
+-----------------------------
+
+Using release tarball
+---------------------
+
+
+
+
+
+
+
