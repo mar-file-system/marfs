@@ -25,8 +25,7 @@ To build the documentation you need to clone the repo first.
 .. code-block:: bash
 
    git clone https://github.com/mar-file-system/marfs.git
-   cd doc-src
-   sphinx-build . ../docs
+   ./marfs/doc-src/publish
 
 Then simply stage your changes with git and push. This system requires
 the changes to me merged to master. The docs will only reflect if master
