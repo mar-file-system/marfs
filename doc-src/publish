@@ -1,0 +1,5 @@
+#!/bin/bash
+
+make clean
+sphinx-build . ../docs
+touch ../docs/.nojeyll
