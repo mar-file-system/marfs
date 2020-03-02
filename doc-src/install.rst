@@ -79,6 +79,38 @@ Interactive Nodes
 These nodes will be used to present MarFS to users through a FUSE mount.
 
 
+MarFS abstractions
+==================
+Remember how earlier we talked about the pod? There are more things to
+understand about the pod. There are logical data abstractions we will see
+later when understanding the configuration file. We will talk about them
+briefly here first. 
+
+Data Abstraction Layer
+----------------------
+Multi component stuff here maybe?
+
+Metadata Abstraction Layer
+--------------------------
+
+The Repository
+--------------
+A repo is where all the object data for a MarFS Filesystem lives; it’s a
+logical description of a MarFS object-store, with details on the number of
+storage servers, etc.
+
+#The repo currently includes configuration details 
+#specific to MC-NFS versus MC-RDMA.
+
+The Namespace
+-------------
+A namespace in MarFS is a logical partition of the MarFS filesystem with a
+unique (virtual) mount point and attributes like permissions, similar to ZFS
+datasets. It also includes configuration details regarding MarFS metadata
+storage for that namespace.  Each namespace in MarFS must be associated with a
+repo, and you can have multiple namespaces per repo. Both repos and namespaces
+are arbitrarily named. 
+
 Dependencies
 ============
 
