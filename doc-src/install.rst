@@ -10,58 +10,71 @@ This section describes the install process for MarFS.
 
 Overview
 ========
-MarFS uses separate storage for data and for metadata (MD).  Data is stored as
-erasure-coded objects.  MarFS metadata can use any file-system that provides
-extended-attributes and sparse-files.  For scalability, it should also be a
-distributed file-system. Previously, we have used object-storage systems,
-accessed with the S3 protocol, but this install guide covers a more-recent
-implementation called Multi-Component.  A Multi-Component object-store is a
-set of N+E identical file-systems (where N is the number of data-elements,
-and E the number of erasure-elements, in an erasure-coding).  When MarFS is
-configured for Multi-Component repositories, it will break data “objects” into
-N pieces, perform the erasure-coding on N data-elements to produce N+E new
-elements, and will “stripe” those out across the N+E file-systems.  We refer
-to the set of N+E filesystems as a “pod”.  It is possible to have multiple
-pods, in which case MarFS uses a hash to select the pod, and writes the stripe
-across members of the pod.  Each pod is a distinct set of servers, and stripes
-never span pods.
-
 MarFS is a distributed parallel filesystem, thusly setup is complicated and
 relies on a number of different technologies and systems. In this guide we
 will go over the setup of an example system. This guide assumes knowledge of
 ZFS, GPFS. MPI, and general Linux operations.
 
 
-Example cluster
-===============
-The example cluster we will create in this guide will use a number of
-different storage systems for different functions. Our cluster is comprised of
-Storage nodes which hold object data, Metadata Nodes which hold Metadata,
-file transfer nodes for moving data in parallel, and finally a user node
-which will present the MarFS cluster as a mounted filesystem to users. Our
-example cluster will have:
+Storage
+-------
+MarFS stores data and metadata differently. Data is stored as erasure-coded
+objects. When data is written it is broken up into N number of pieces. Erasure
+data is calculated on our N objects to create E number of erasure objects. 
+N+E number of objects are then mapped onto N+E identical filesystems. We refer
+to these N+E filesystems as a "pod". In our example cluster we will have four
+storage nodes in a single pod giving us a 3+1 erasure coding scheme. You can
+have multiple pods in a cluster. When you have multiple pods the pod is
+selected with a hash, and data is written to that pod. Data will never be
+written across multiple pods. So if you have 4 pods each matching our single
+pod with a 3+1 scheme those four objects will always be in the same pod.
 
+Metadata can be stores on any filesystem that supports extended attributes and
+sparse-files. For scalability purposes a distributed filesystem is highly
+recommended. In our example cluster we will use two nodes running General
+Parallel Filesystem (GPFS).
+
+Data Access
+-----------
+With object data being stored across a number of pods it is reasonable to
+provide a way to interact with the filesystem in a unified matter. Most users
+would expect a single mount point they can look through for various tasks.
+This is provided through FUSE, allowing users to look at their data. This
+FUSE mount is read only, and is there for users to locate their files for
+parallel movement. Nodes with this FUSE mount are referred to as "interactive"
+nodes. Interactive nodes are unique in the MarFS cluster, as it is the only
+node users will have direct access.
+
+Data Movement
+-------------
+Data is moved in parallel using PFTool. Nodes running PFTool are called
+"File Transfer Agent" nodes, or FTAs.
+
+Example cluster summary
+=======================
   * 4 Storage Nodes
   * 2 Metadata Nodes
   * 2 File Transfer Nodes
-  * 1 User Node
+  * 1 Interactive Node
 
 Storage Nodes
 -------------
 Each storage node uses ZFS for MarFS block storage. Each node will have four
-zpools in a RAIDZ3(17+3) configuration.
+zpools in a RAIDZ3(17+3) configuration. We have a single pod configured to
+use 3+1 erasure coding.
 
 Metadata Nodes
 --------------
 We will be using GPFS as metadata storage in this example. Your GPFS cluster
-should already be setup and ready to create filesets.
+should already be setup and ready to create filesets. You can still follow the
+example using some other filesystem.
 
 File Transfer Nodes
 -------------------
 These nodes will be used to move data in parallel from one place to another.
 We will use `PFtool <https://github.com/pftool/pftool>`_ for this.
 
-User Facing Nodes
+Interactive Nodes
 -----------------
 These nodes will be used to present MarFS to users through a FUSE mount.
 
@@ -101,7 +114,10 @@ A quick description of tools acquired from source::
    ISA-L: Intel’s Intelligent Storage Acceleration Library
 
 
-   
+MarFS Overview
+--------------
+
+
 
 
 Build and install from source
