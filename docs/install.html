@@ -20,20 +20,11 @@
   <script type="text/javascript" src="_static/js/modernizr.min.js"></script>
   
     
-      <script type="text/javascript">
-          var DOCUMENTATION_OPTIONS = {
-              URL_ROOT:'./',
-              VERSION:'1.13',
-              LANGUAGE:'None',
-              COLLAPSE_INDEX:false,
-              FILE_SUFFIX:'.html',
-              HAS_SOURCE:  true,
-              SOURCELINK_SUFFIX: '.txt'
-          };
-      </script>
+      <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
         <script type="text/javascript" src="_static/jquery.js"></script>
         <script type="text/javascript" src="_static/underscore.js"></script>
         <script type="text/javascript" src="_static/doctools.js"></script>
+        <script type="text/javascript" src="_static/language_data.js"></script>
     
     <script type="text/javascript" src="_static/js/theme.js"></script>
 
@@ -44,6 +35,7 @@
   <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Developers" href="developers.html" />
     <link rel="prev" title="Welcome to MarFS’s documentation!" href="index.html" /> 
 </head>
 
@@ -106,6 +98,7 @@
 </li>
 </ul>
 </li>
+<li class="toctree-l1"><a class="reference internal" href="developers.html">Developers</a></li>
 </ul>
 
             
@@ -175,17 +168,19 @@
 <p>This section describes the install process for MarFS.</p>
 <div class="contents local topic" id="contents">
 <ul class="simple">
-<li><a class="reference internal" href="#overview" id="id1">Overview</a></li>
-<li><a class="reference internal" href="#example-cluster" id="id2">Example cluster</a><ul>
-<li><a class="reference internal" href="#storage-nodes" id="id3">Storage Nodes</a></li>
-<li><a class="reference internal" href="#metadata-nodes" id="id4">Metadata Nodes</a></li>
-<li><a class="reference internal" href="#file-transfer-nodes" id="id5">File Transfer Nodes</a></li>
-<li><a class="reference internal" href="#user-facing-nodes" id="id6">User Facing Nodes</a></li>
+<li><p><a class="reference internal" href="#overview" id="id1">Overview</a></p></li>
+<li><p><a class="reference internal" href="#example-cluster" id="id2">Example cluster</a></p>
+<ul>
+<li><p><a class="reference internal" href="#storage-nodes" id="id3">Storage Nodes</a></p></li>
+<li><p><a class="reference internal" href="#metadata-nodes" id="id4">Metadata Nodes</a></p></li>
+<li><p><a class="reference internal" href="#file-transfer-nodes" id="id5">File Transfer Nodes</a></p></li>
+<li><p><a class="reference internal" href="#user-facing-nodes" id="id6">User Facing Nodes</a></p></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#dependencies" id="id7">Dependencies</a><ul>
-<li><a class="reference internal" href="#build-and-install-from-source" id="id8">Build and install from source</a></li>
-<li><a class="reference internal" href="#using-release-tarball" id="id9">Using release tarball</a></li>
+<li><p><a class="reference internal" href="#dependencies" id="id7">Dependencies</a></p>
+<ul>
+<li><p><a class="reference internal" href="#build-and-install-from-source" id="id8">Build and install from source</a></p></li>
+<li><p><a class="reference internal" href="#using-release-tarball" id="id9">Using release tarball</a></p></li>
 </ul>
 </li>
 </ul>
@@ -222,10 +217,10 @@ which will present the MarFS cluster as a mounted filesystem to users. Our
 example cluster will have:</p>
 <blockquote>
 <div><ul class="simple">
-<li>4 Storage Nodes</li>
-<li>2 Metadata Nodes</li>
-<li>2 File Transfer Nodes</li>
-<li>1 User Node</li>
+<li><p>4 Storage Nodes</p></li>
+<li><p>2 Metadata Nodes</p></li>
+<li><p>2 File Transfer Nodes</p></li>
+<li><p>1 User Node</p></li>
 </ul>
 </div></blockquote>
 <div class="section" id="storage-nodes">
@@ -292,6 +287,8 @@ ISA-L: Intel’s Intelligent Storage Acceleration Library
           <footer>
   
     <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="developers.html" class="btn btn-neutral float-right" title="Developers" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right"></span></a>
       
       
         <a href="index.html" class="btn btn-neutral float-left" title="Welcome to MarFS’s documentation!" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left"></span> Previous</a>

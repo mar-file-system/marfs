@@ -1,0 +1,5 @@
+#!/bin/bash
+
+make -C "$(dirname $0)" clean
+sphinx-build "$(dirname $0)" "$(dirname $0)"/../docs
+touch "$(dirname $0)/../docs/.nojekyll"
