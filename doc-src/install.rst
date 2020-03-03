@@ -61,18 +61,22 @@ Storage Nodes
 -------------
 Each storage node uses ZFS for MarFS block storage. Each node will have four
 zpools in a RAIDZ3(17+3) configuration. We have a single pod configured to
-use 3+1 erasure coding.
+use 3+1 erasure coding. Must have high performance network such as Infiniband.
 
 Metadata Nodes
 --------------
 We will be using GPFS as metadata storage in this example. Your GPFS cluster
 should already be setup and ready to create filesets. You can still follow the
-example using some other filesystem.
+example using some other filesystem. Should have high performance network such
+as Infiniband when using GPFS. It is important to note that while GPFS is not
+required to use MarFS it is required for some MarFS utilities like quota
+management and garbage collection.
 
 File Transfer Nodes
 -------------------
 These nodes will be used to move data in parallel from one place to another.
 We will use `PFtool <https://github.com/pftool/pftool>`_ for this.
+Must have high performance network such as Infiniband.
 
 Interactive Nodes
 -----------------
@@ -86,13 +90,6 @@ understand about the pod. There are logical data abstractions we will see
 later when understanding the configuration file. We will talk about them
 briefly here first. 
 
-Data Abstraction Layer
-----------------------
-Multi component stuff here maybe?
-
-Metadata Abstraction Layer
---------------------------
-
 The Repository
 --------------
 A repo is where all the object data for a MarFS Filesystem lives; it’s a
@@ -102,6 +99,13 @@ storage servers, etc.
 #The repo currently includes configuration details 
 #specific to MC-NFS versus MC-RDMA.
 
+Data Abstraction Layer
+----------------------
+Multi component stuff here maybe?
+
+Metadata Abstraction Layer
+--------------------------
+
 The Namespace
 -------------
 A namespace in MarFS is a logical partition of the MarFS filesystem with a
@@ -109,7 +113,19 @@ unique (virtual) mount point and attributes like permissions, similar to ZFS
 datasets. It also includes configuration details regarding MarFS metadata
 storage for that namespace.  Each namespace in MarFS must be associated with a
 repo, and you can have multiple namespaces per repo. Both repos and namespaces
-are arbitrarily named. 
+are arbitrarily named.
+
+Pods
+----
+A collection of storage nodes.
+
+Blocks
+------
+A storage node in a pod.
+
+Capacity Units
+--------------
+Each capacity unit (cap) is a ZFS zpool on a block in a pod :)
 
 Dependencies
 ============
@@ -117,7 +133,7 @@ Dependencies
 Depending on things you may need different things. To install and make use of
 MarFS you will need the following tools.
 
-Fortunately many dependencies can be acquired through a package manager
+Fortunately many dependencies can be acquired through a package manager.
 
 .. code-block:: bash
 
@@ -146,21 +162,62 @@ A quick description of tools acquired from source::
    ISA-L: Intel’s Intelligent Storage Acceleration Library
 
 
-MarFS Overview
---------------
+Setup Process
+=============
 
+You will need yasm 1.2.0 or later for ISA-L.
 
+It is helpful to have a shared filesystem among all the nodes in the cluster,
+in this guide we will have a NFS share mounted on all nodes. We will keep all
+our source code and other files that must be shared here.
 
+For machines that have Infiniband:
+Ensure MPI is in your :code:`$PATH` environment variable.
+It may also be required to add OpenMPI's library directory to the
+:code:`$LD_LIBRARY_PATH` environment variable.
 
-Build and install from source
------------------------------
+Your metadata nodes and FTA nodes should all be in a GPFS cluster that is set
+up.
 
-Using release tarball
----------------------
+Your storage nodes should all have ZFS installed, with your zpools set up.
 
+Our example cluster will have a single pod containing four blocks. Each block
+will have four capacity units.
+In human terms, we have one set of storage servers comprised of four storage
+servers. Each of these storage servers will have four ZFS zpools set up.
 
+Storage Nodes
+-------------
 
+MarFS object data is stored in zpools on each storage node. The path to the
+objects must match a pattern similar to 
+:code:`FTAMountPoint/RepoName/podNum/blockNum/capNum`
+examle:
+:code:`/zfs/repo3+1/pod0/block0/cap3`
+This path corresponds to storage pool number 3 on storage node 0 in pod 0 in
+repo "repo3+1".
+On storage nodes this path matching is not required. The data can actually be
+stored in any arbitrary directory. On FTA nodes that path structure is
+required, as the MarFS library is hard coded to use that path. We will be
+using the same path on our storage nodes for symmetry between the FTA nodes
+and storage nodes. Each storage node will only need the unique path that
+corresponds to the capacity units. Hostnames are arbitrary, but can help in
+the brain battle of keeping things oraginzed. Our hostnames for storage nodes
+will be::
 
+   sn01
+   sn02
+   sn03
+   sn04
 
+We'll start with sn01:
 
+.. code-block:: bash
+
+   [sn01 ~]# zpool list
+   NAME             SIZE  ALLOC   FREE  CKPOINT  EXPANDSZ   FRAG    CAP  DEDUP    HEALTH  ALTROOT
+   sn01-pool0       146T  12.7M   146T        -         -     0%     0%  1.00x    ONLINE  -
+   sn01-pool1       146T  11.0M   146T        -         -     0%     0%  1.00x    ONLINE  -
+   sn01-pool2       146T  10.8M   146T        -         -     0%     0%  1.00x    ONLINE  -
+   sn01-pool3       146T  11.0M   146T        -         -     0%     0%  1.00x    ONLINE  -
 
