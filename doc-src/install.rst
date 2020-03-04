@@ -125,7 +125,7 @@ A storage node in a pod.
 
 Capacity Units
 --------------
-Each capacity unit (cap) is a ZFS zpool on a block in a pod :)
+Each capacity unit (cap) is a datastore on a ZFS zpool on a block in a pod :)
 
 Dependencies
 ============
