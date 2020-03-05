@@ -342,4 +342,10 @@ NFS over RDMA requires the extra options.
 Metadata Nodes
 --------------
 
-Phew we made it.
+Phew we made it. Now that the easy part is over we will configure our metadata
+nodes with GPFS and get them ready to hold metadata. Just kidding. I made you
+do all the hard work for metadata nodes on GPFS way before now.
+
+Make a local directory :code:`/marfs` (for example) on the metadata nodes.
+Mount the GPFS filesystem under this directory.
+
