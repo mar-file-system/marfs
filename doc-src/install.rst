@@ -221,3 +221,125 @@ We'll start with sn01:
    sn01-pool2       146T  10.8M   146T        -         -     0%     0%  1.00x    ONLINE  -
    sn01-pool3       146T  11.0M   146T        -         -     0%     0%  1.00x    ONLINE  -
 
+
+First we want to set the optimal zpool settings on all our zpools.
+
+.. code-block:: bash
+
+   for i in {0..3}; do zfs set recordsize=1M sn01-pool$i; done
+   for i in {0..3}; do zfs set mountpoint=none sn01-pool$i; done
+   for i in {0..3}; do zfs set compression=lz4 sn01-pool$i; done
+   for i in {0..3}; do zfs set atime=off sn01-pool$i; done
+
+We are using a diskless sever for our storage nodes. We need to create a NFS
+exported ZFS datastore, with the mountpoint at :code:`/zfs`. This datastore
+must be mounted before all the others on reboot because NFS will stat the
+mountpoint which is on :code:`tmpfs` in a diskless setup. When it does the
+stat the wrong block size will be returned.
+
+.. code-block:: bash
+
+   zfs create sn01-pool0/nfs
+   zfs set mountpoint=/zfs sn01-pool0/nfs
+
+We want a datastore on each zpool that will be mounted at a path made with the
+above guidelines. The name of the datastore is irrelevant.
+
+.. code-block:: bash
+
+   for i in {0..3}; do zfs create sn002-pool$i/datastore; done
+
+On each storage node we want to make a directory under our /zfs mountpoint
+where we will create out special path
+
+.. code-block:: bash
+
+   mkdir /zfs/exports
+
+Now we want to make our :code:`pod/block/cap` directories
+under :code:`/zfs/exports`. For sn01 it looks like:
+
+.. code-block:: bash
+
+   mkdir /zfs/exports/repo3+1/pod0/block0/cap0 
+   mkdir /zfs/exports/repo3+1/pod0/block0/cap1
+   mkdir /zfs/exports/repo3+1/pod0/block0/cap2 
+   mkdir /zfs/exports/repo3+1/pod0/block0/cap3
+
+Storage node sn01 is in pod 0, is block 0 of the pod, and will have 4 capacity
+units. We will want to create the correct path on every storage node in the
+cluster. For sn02 it would look like:
+
+.. code-block:: bash
+
+   mkdir /zfs/exports/repo3+1/pod0/block1/cap0 
+   mkdir /zfs/exports/repo3+1/pod0/block1/cap1
+   mkdir /zfs/exports/repo3+1/pod0/block1/cap2 
+   mkdir /zfs/exports/repo3+1/pod0/block1/cap3
+
+For loops are very helpful for this with minor adjustments on each node.
+
+.. code-block:: bash
+
+   for i in {0..3}; do mkdir -p /zfs/exports/repo3+1/pod0/block3/cap$i
+
+All you need to do is change the pod and block to the correct number for each
+storage node. If everything is in sequence you can just wrap that loop in
+more loops to handle that with SSH. After we create the directories we need,
+we will mount our datastores on each node into the correct folder. on sn01 it
+will look like:
+
+.. code-block:: bash
+
+   [sn01 ~]# zfs list
+   NAME                       USED  AVAIL     REFER  MOUNTPOINT
+   sn01-pool0                 9.29M 113T      307K   none
+   sn01-pool0/datastore       5.14M 113T      5.14M  /zfs/exports/repo3+1/pod0/block0/cap0
+   sn01-pool0/nfs             332K  113T      332K   /zfs
+   sn01-pool1                 8.44M 113T      307K   none
+   sn01-pool1/datastore       5.14M 113T      5.14M  /zfs/exports/repo3+1/pod0/block0/cap1
+   sn01-pool2                 8.25M 113T      307K   none
+   sn01-pool2/datastore       5.14M 113T      5.14M  /zfs/exports/repo3+1/pod0/block0/cap2
+   sn01-pool3                 8.40M 113T      307K   none
+   sn01-pool3/datastore       5.14M 113T      5.14M  /zfs/exports/repo3+1/pod0/block0/cap3
+
+Once we have our capacity units mounted we must create "scatter" directories
+under the mount point for each capacity unit.
+
+.. code-block:: bash
+
+   for c in {0..3}; do
+      for s in {0..1024}; do
+         mkdir /zfs/exports/repo3+1/pod0/block0/cap$c/scatter$s
+      done
+   done
+
+The purpose of these directories is just to prevent all objects destined for a
+particular capacity-dir from being stored in a single-directory. The specific
+scatter-dir used for each object is computed at run-time by a hash. In our
+example we will only create 1024 scatter directories, but in bigger systems
+you can have many more.
+
+Now we can NFS export out datasets. Edit the file :code:`/etc/exports` to
+look like:
+
+.. code-block:: bash
+
+   [sn01 ~]# cat /etc/exports
+   /zfs/exports *(rw,fsid=0,no_subtree_check,sync,crossmnt)
+
+*Important*
+If you plan on using NFS over RDMA (you should) you will need to change the
+export options in :code:`/etc/exports`:
+
+.. code-block:: bash
+
+   [sn01 ~]# cat /etc/exports
+   /zfs/exports *(rw,fsid=0,no_root_squash,no_subtree_check,sync,insecure,crossmnt)
+
+NFS over RDMA requires the extra options.
+
+Metadata Nodes
+--------------
+
+Phew we made it.
