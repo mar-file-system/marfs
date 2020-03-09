@@ -346,6 +346,53 @@ Phew we made it. Now that the easy part is over we will configure our metadata
 nodes with GPFS and get them ready to hold metadata. Just kidding. I made you
 do all the hard work for metadata nodes on GPFS way before now.
 
-Make a local directory :code:`/marfs` (for example) on the metadata nodes.
-Mount the GPFS filesystem under this directory.
+We have our GPFS filesystem all set up and mounted under :code:`/gpfs`.
+Create a directory :code:`mkdir /gpfs/metadata`. We will create a GPFS fileset
+for each namespace that we want to create in our config file. In this example
+we will have a single namespace. We will link our filesets under the directory
+we made. We will create some directories we need under those links.
+
+.. code-block:: bash
+
+   mmcrfileset /dev/marfs namespace_one
+   mmlinkfileset /dev/marfs namespace_one -J /gpfs/metadata/namespace_one
+   mkdir /gpfs/metadata/namespace_one/mdfs
+
+All MDFS directories should be readable by everyone. We also want to set
+ownership of the MDFS directory here. The permissions and ownership of this
+directory will be reflected as the permissions in the MarFS mount later. So
+:code:`chown` this directory to the right group now if needed.
+
+There is a file MarFS will always look for under the mdfs directory called
+:code:`fsinfo`. Lets create that now.
+
+:code:`touch /gpfs/metadata/namespace_one/mdfs/fsinfo`
+
+FTA nodes
+---------
+Now that we have storage and metadata all up and running we have to unite the
+two systems so we can read and write data. FTA nodes will have the capacity
+units mounted that we exported earlier, and should have the metadata
+filesystem mounted as well. The FTAs in our setup are part of the GPFS cluster
+so we should already have /gpfs mounted on these nodes. We need to use the
+:code:`pod/block/cap/` directory tree we created earlier on the storage nodes.
+We already have our metadata mounted at :code:`/gpfs/metadata` so lets create
+a new directory to hold the :code:`pod/block/cap/` structure.
+
+.. code-block:: bash
+
+   mkdir /gpfs/repo_data
+
+   for b in {0..3}; do
+      for c in {0..3}; do
+         mkdir -p /gpfs/data/repo3+1/pod0/block$b/cap$c; done; done
+
+Behold. Now mount the datastores.
+
+.. code-block:: bash
+
+   mount -o "_netdev,async,rw,nfsvers=3,nolock,wsize=1048576,rsize=1048576,rdma,soft,port=20049" -t nfs \
+            sn01:/zfs/exports/repo3+1/pod0/block0/cap0 /gpfs/data/repo3+1/pod0/block0/cap0
+
+Do that for all caps.
 
