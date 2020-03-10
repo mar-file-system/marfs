@@ -394,5 +394,13 @@ Behold. Now mount the datastores.
    mount -o "_netdev,async,rw,nfsvers=3,nolock,wsize=1048576,rsize=1048576,rdma,soft,port=20049" -t nfs \
             sn01:/zfs/exports/repo3+1/pod0/block0/cap0 /gpfs/data/repo3+1/pod0/block0/cap0
 
-Do that for all caps.
+Do that for all capacity units with the correct pod block and cap numbers.
 
+Once that has been done we're ready to build our software dependencies.
+
+Building software for MarFS
+===========================
+
+That's right. That was just what we needed to do to be able to build MarFS.
+
+.. image:: _static/wheeze.gif
