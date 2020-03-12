@@ -855,6 +855,67 @@ $<span class="s2"> make install</span>
 </div>
 <p>Lets add our marfs build directory to our <code class="code docutils literal notranslate"><span class="pre">path</span></code>
 <code class="code docutils literal notranslate"><span class="pre">export</span> <span class="pre">PATH=$MARFS_BUILD/bin:$PATH</span></code></p>
+<p>Now we can run pftool a little easier.
+pftool has 3 admin ranks, and we must specify at least one “worker” rank, so
+providing <code class="code docutils literal notranslate"><span class="pre">-np</span> <span class="pre">4</span></code> lets us test pftool without multiple writer tasks,
+using mpirun:</p>
+<p>..code-block:: bash</p>
+<blockquote>
+<div>mpirun -H fta01 -x MARFSCONFIGRC -np 4 pftool -r -p $src -c $dst -w 0 -vv</div></blockquote>
+<p>Run <code class="code docutils literal notranslate"><span class="pre">pftool</span> <span class="pre">-h</span></code> to see more options. Note: ‘-vv’ provides maximum
+verbosity, and may be overkill when moving large amounts of data. Once we’re
+satisfied it is working, we can push it with parallel writers, on muiltiple
+FTAs, falling back to the less-verbose, periodic-summary output (updated every
+5 seconds):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mpirun -H fta01,fta02 -x MARFSCONFIGRC -np <span class="m">5</span> pftool -r -p <span class="nv">$src</span> -c <span class="nv">$dst</span> -w <span class="m">0</span>
+</pre></div>
+</div>
+<p>Python-based wrapper scripts, such as <code class="code docutils literal notranslate"><span class="pre">pfcp</span></code>, were also built in the
+pftool build. They will depend on the default pftool.cfg that was generated in
+<code class="code docutils literal notranslate"><span class="pre">$MARFS_BUILD/etc</span></code>. The default pftool.cfg looks something like this:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="p p-Indicator">[</span><span class="nv">num_procs</span><span class="p p-Indicator">]</span>
+<span class="c1">#smaller number (than in {source_dir}/etc/pftool.threaded.cfg), for mpi ranks</span>
+<span class="l l-Scalar l-Scalar-Plain">pfls</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">15</span>
+<span class="l l-Scalar l-Scalar-Plain">pfcp</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">15</span>
+<span class="l l-Scalar l-Scalar-Plain">pfcm</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">15</span>
+<span class="l l-Scalar l-Scalar-Plain">min_per_node</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">2</span>
+
+<span class="p p-Indicator">[</span><span class="nv">environment</span><span class="p p-Indicator">]</span>
+<span class="c1">#set to False for mpi mode</span>
+<span class="l l-Scalar l-Scalar-Plain">threaded</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">False</span>
+
+<span class="c1">#path to mpirun</span>
+<span class="l l-Scalar l-Scalar-Plain">mpirun</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">mpirun</span>
+
+<span class="c1">#log to syslog</span>
+<span class="l l-Scalar l-Scalar-Plain">logging</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">True</span>
+
+<span class="c1">#Enables n-to-1 writing</span>
+<span class="l l-Scalar l-Scalar-Plain">parallel_dest</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">True</span>
+
+<span class="c1">#Enable a darshan logging tool</span>
+<span class="l l-Scalar l-Scalar-Plain">darshanlib</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">/usr/projects/darshan/sw/toss-x86_64/lib/libdarshan.so</span>
+
+<span class="p p-Indicator">[</span><span class="nv">options</span><span class="p p-Indicator">]</span>
+<span class="c1">#1 MB</span>
+<span class="l l-Scalar l-Scalar-Plain">writesize</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">1MB</span>
+
+<span class="c1">#10 GB</span>
+<span class="l l-Scalar l-Scalar-Plain">chunk_at</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">10GB</span>
+
+<span class="c1">#10 GB</span>
+<span class="l l-Scalar l-Scalar-Plain">chunksize</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">10GB</span>
+
+<span class="p p-Indicator">[</span><span class="nv">active_nodes</span><span class="p p-Indicator">]</span>
+
+<span class="c1">#be sure these aren&#39;t nodename.localhost</span>
+<span class="c1">#specify all: ON to automatically use all nodes</span>
+<span class="c1">#all: ON</span>
+<span class="l l-Scalar l-Scalar-Plain">fta01</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">ON</span>
+<span class="l l-Scalar l-Scalar-Plain">fta02</span><span class="p p-Indicator">:</span> <span class="l l-Scalar l-Scalar-Plain">ON</span>
+</pre></div>
+</div>
+<p>You will need to change the hostnames to match your own.</p>
 </div>
 </div>
 </div>

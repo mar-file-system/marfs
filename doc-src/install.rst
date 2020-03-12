@@ -613,3 +613,73 @@ environment file shown ealier.
 
 Lets add our marfs build directory to our :code:`path`
 :code:`export PATH=$MARFS_BUILD/bin:$PATH`
+
+Now we can run pftool a little easier.
+pftool has 3 admin ranks, and we must specify at least one “worker” rank, so
+providing :code:`-np 4` lets us test pftool without multiple writer tasks,
+using mpirun:
+
+..code-block:: bash
+
+   mpirun -H fta01 -x MARFSCONFIGRC -np 4 pftool -r -p $src -c $dst -w 0 -vv
+
+
+Run :code:`pftool -h` to see more options. Note: ‘-vv’ provides maximum
+verbosity, and may be overkill when moving large amounts of data. Once we’re
+satisfied it is working, we can push it with parallel writers, on muiltiple
+FTAs, falling back to the less-verbose, periodic-summary output (updated every
+5 seconds):
+
+.. code-block:: bash
+
+   mpirun -H fta01,fta02 -x MARFSCONFIGRC -np 5 pftool -r -p $src -c $dst -w 0
+
+
+Python-based wrapper scripts, such as :code:`pfcp`, were also built in the
+pftool build. They will depend on the default pftool.cfg that was generated in
+:code:`$MARFS_BUILD/etc`. The default pftool.cfg looks something like this:
+
+.. code-block:: yaml
+
+   [num_procs]
+   #smaller number (than in {source_dir}/etc/pftool.threaded.cfg), for mpi ranks
+   pfls: 15
+   pfcp: 15
+   pfcm: 15
+   min_per_node: 2
+
+   [environment]
+   #set to False for mpi mode
+   threaded: False
+
+   #path to mpirun
+   mpirun: mpirun
+
+   #log to syslog
+   logging: True
+
+   #Enables n-to-1 writing
+   parallel_dest: True
+
+   #Enable a darshan logging tool
+   darshanlib: /usr/projects/darshan/sw/toss-x86_64/lib/libdarshan.so
+
+   [options]
+   #1 MB
+   writesize: 1MB
+
+   #10 GB
+   chunk_at: 10GB
+
+   #10 GB
+   chunksize: 10GB
+
+   [active_nodes]
+
+   #be sure these aren't nodename.localhost
+   #specify all: ON to automatically use all nodes
+   #all: ON
+   fta01: ON
+   fta02: ON
+
+You will need to change the hostnames to match your own.
