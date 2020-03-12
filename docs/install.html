@@ -20,11 +20,20 @@
   <script type="text/javascript" src="_static/js/modernizr.min.js"></script>
   
     
-      <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+      <script type="text/javascript">
+          var DOCUMENTATION_OPTIONS = {
+              URL_ROOT:'./',
+              VERSION:'1.13',
+              LANGUAGE:'None',
+              COLLAPSE_INDEX:false,
+              FILE_SUFFIX:'.html',
+              HAS_SOURCE:  true,
+              SOURCELINK_SUFFIX: '.txt'
+          };
+      </script>
         <script type="text/javascript" src="_static/jquery.js"></script>
         <script type="text/javascript" src="_static/underscore.js"></script>
         <script type="text/javascript" src="_static/doctools.js"></script>
-        <script type="text/javascript" src="_static/language_data.js"></script>
     
     <script type="text/javascript" src="_static/js/theme.js"></script>
 
@@ -113,7 +122,18 @@
 <li class="toctree-l3"><a class="reference internal" href="#fta-nodes">FTA nodes</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#building-software-for-marfs">Building software for MarFS</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#building-software-for-marfs">Building software for MarFS</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#build-environment">Build Environment</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#marfs-config-file">MarFS Config File</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#build-isa-l">Build ISA-L</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#build-aws4c">Build AWS4C</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#build-erasureutils">Build ErasureUtils</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#deploy-mc-rdma">Deploy MC-RDMA</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#build-marfs">Build MarFS</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#see-if-it-works">See if it works!</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#build-and-run-pftool">Build and run PFTool</a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="developers.html">Developers</a></li>
@@ -186,41 +206,48 @@
 <p>This section describes the install process for MarFS.</p>
 <div class="contents local topic" id="contents">
 <ul class="simple">
-<li><p><a class="reference internal" href="#overview" id="id3">Overview</a></p>
-<ul>
-<li><p><a class="reference internal" href="#storage" id="id4">Storage</a></p></li>
-<li><p><a class="reference internal" href="#data-access" id="id5">Data Access</a></p></li>
-<li><p><a class="reference internal" href="#data-movement" id="id6">Data Movement</a></p></li>
+<li><a class="reference internal" href="#overview" id="id3">Overview</a><ul>
+<li><a class="reference internal" href="#storage" id="id4">Storage</a></li>
+<li><a class="reference internal" href="#data-access" id="id5">Data Access</a></li>
+<li><a class="reference internal" href="#data-movement" id="id6">Data Movement</a></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#example-cluster-summary" id="id7">Example cluster summary</a></p>
-<ul>
-<li><p><a class="reference internal" href="#storage-nodes" id="id8">Storage Nodes</a></p></li>
-<li><p><a class="reference internal" href="#metadata-nodes" id="id9">Metadata Nodes</a></p></li>
-<li><p><a class="reference internal" href="#file-transfer-nodes" id="id10">File Transfer Nodes</a></p></li>
-<li><p><a class="reference internal" href="#interactive-nodes" id="id11">Interactive Nodes</a></p></li>
+<li><a class="reference internal" href="#example-cluster-summary" id="id7">Example cluster summary</a><ul>
+<li><a class="reference internal" href="#storage-nodes" id="id8">Storage Nodes</a></li>
+<li><a class="reference internal" href="#metadata-nodes" id="id9">Metadata Nodes</a></li>
+<li><a class="reference internal" href="#file-transfer-nodes" id="id10">File Transfer Nodes</a></li>
+<li><a class="reference internal" href="#interactive-nodes" id="id11">Interactive Nodes</a></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#marfs-abstractions" id="id12">MarFS abstractions</a></p>
-<ul>
-<li><p><a class="reference internal" href="#the-repository" id="id13">The Repository</a></p></li>
-<li><p><a class="reference internal" href="#data-abstraction-layer" id="id14">Data Abstraction Layer</a></p></li>
-<li><p><a class="reference internal" href="#metadata-abstraction-layer" id="id15">Metadata Abstraction Layer</a></p></li>
-<li><p><a class="reference internal" href="#the-namespace" id="id16">The Namespace</a></p></li>
-<li><p><a class="reference internal" href="#pods" id="id17">Pods</a></p></li>
-<li><p><a class="reference internal" href="#blocks" id="id18">Blocks</a></p></li>
-<li><p><a class="reference internal" href="#capacity-units" id="id19">Capacity Units</a></p></li>
+<li><a class="reference internal" href="#marfs-abstractions" id="id12">MarFS abstractions</a><ul>
+<li><a class="reference internal" href="#the-repository" id="id13">The Repository</a></li>
+<li><a class="reference internal" href="#data-abstraction-layer" id="id14">Data Abstraction Layer</a></li>
+<li><a class="reference internal" href="#metadata-abstraction-layer" id="id15">Metadata Abstraction Layer</a></li>
+<li><a class="reference internal" href="#the-namespace" id="id16">The Namespace</a></li>
+<li><a class="reference internal" href="#pods" id="id17">Pods</a></li>
+<li><a class="reference internal" href="#blocks" id="id18">Blocks</a></li>
+<li><a class="reference internal" href="#capacity-units" id="id19">Capacity Units</a></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#dependencies" id="id20">Dependencies</a></p></li>
-<li><p><a class="reference internal" href="#setup-process" id="id21">Setup Process</a></p>
-<ul>
-<li><p><a class="reference internal" href="#id1" id="id22">Storage Nodes</a></p></li>
-<li><p><a class="reference internal" href="#id2" id="id23">Metadata Nodes</a></p></li>
-<li><p><a class="reference internal" href="#fta-nodes" id="id24">FTA nodes</a></p></li>
+<li><a class="reference internal" href="#dependencies" id="id20">Dependencies</a></li>
+<li><a class="reference internal" href="#setup-process" id="id21">Setup Process</a><ul>
+<li><a class="reference internal" href="#id1" id="id22">Storage Nodes</a></li>
+<li><a class="reference internal" href="#id2" id="id23">Metadata Nodes</a></li>
+<li><a class="reference internal" href="#fta-nodes" id="id24">FTA nodes</a></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#building-software-for-marfs" id="id25">Building software for MarFS</a></p></li>
+<li><a class="reference internal" href="#building-software-for-marfs" id="id25">Building software for MarFS</a><ul>
+<li><a class="reference internal" href="#build-environment" id="id26">Build Environment</a></li>
+<li><a class="reference internal" href="#marfs-config-file" id="id27">MarFS Config File</a></li>
+<li><a class="reference internal" href="#build-isa-l" id="id28">Build ISA-L</a></li>
+<li><a class="reference internal" href="#build-aws4c" id="id29">Build AWS4C</a></li>
+<li><a class="reference internal" href="#build-erasureutils" id="id30">Build ErasureUtils</a></li>
+<li><a class="reference internal" href="#deploy-mc-rdma" id="id31">Deploy MC-RDMA</a></li>
+<li><a class="reference internal" href="#build-marfs" id="id32">Build MarFS</a></li>
+<li><a class="reference internal" href="#see-if-it-works" id="id33">See if it works!</a></li>
+<li><a class="reference internal" href="#build-and-run-pftool" id="id34">Build and run PFTool</a></li>
+</ul>
+</li>
 </ul>
 </div>
 <div class="section" id="overview">
@@ -267,10 +294,10 @@ node users will have direct access.</p>
 <h2><a class="toc-backref" href="#id7">Example cluster summary</a><a class="headerlink" href="#example-cluster-summary" title="Permalink to this headline">¶</a></h2>
 <blockquote>
 <div><ul class="simple">
-<li><p>4 Storage Nodes</p></li>
-<li><p>2 Metadata Nodes</p></li>
-<li><p>2 File Transfer Nodes</p></li>
-<li><p>1 Interactive Node</p></li>
+<li>4 Storage Nodes</li>
+<li>2 Metadata Nodes</li>
+<li>2 File Transfer Nodes</li>
+<li>1 Interactive Node</li>
 </ul>
 </div></blockquote>
 <div class="section" id="storage-nodes">
@@ -325,7 +352,7 @@ storage servers, etc.</p>
 <p>A namespace in MarFS is a logical partition of the MarFS filesystem with a
 unique (virtual) mount point and attributes like permissions, similar to ZFS
 datasets. It also includes configuration details regarding MarFS metadata
-storage for that namespace.  Each namespace in MarFS must be associated with a
+storage for that namespace. Each namespace in MarFS must be associated with a
 repo, and you can have multiple namespaces per repo. Both repos and namespaces
 are arbitrarily named.</p>
 </div>
@@ -347,18 +374,18 @@ are arbitrarily named.</p>
 <p>Depending on things you may need different things. To install and make use of
 MarFS you will need the following tools.</p>
 <p>Fortunately many dependencies can be acquired through a package manager.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel
 curl openssl-devel openssl git libxml2-devel yasm libtool openmpi
 openmpi-devel
 </pre></div>
 </div>
 <p>Others can be obtained from source.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git clone https://github.com/mar-file-system/marfs.git
-git clone https://github.com/mar-file-system/PA2X.git
-git clone https://github.com/mar-file-system/erasureUtils.git
-git clone https://github.com/mar-file-system/aws4c.git
-git clone https://github.com/pftool/pftool.git
-git clone https://github.com/01org/isa-l.git
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ git clone https://github.com/mar-file-system/marfs.git
+$ git clone https://github.com/mar-file-system/PA2X.git
+$ git clone https://github.com/mar-file-system/erasureUtils.git
+$ git clone https://github.com/mar-file-system/aws4c.git
+$ git clone https://github.com/pftool/pftool.git
+$ git clone https://github.com/01org/isa-l.git
 </pre></div>
 </div>
 <p>A quick description of tools acquired from source:</p>
@@ -370,13 +397,14 @@ Pftool: A tool for parallel data movement
 ISA-L: Intel’s Intelligent Storage Acceleration Library
 </pre></div>
 </div>
+<p>You will need yasm 1.2.0 or later for ISA-L.</p>
 </div>
 <div class="section" id="setup-process">
 <h2><a class="toc-backref" href="#id21">Setup Process</a><a class="headerlink" href="#setup-process" title="Permalink to this headline">¶</a></h2>
-<p>You will need yasm 1.2.0 or later for ISA-L.</p>
 <p>It is helpful to have a shared filesystem among all the nodes in the cluster,
 in this guide we will have a NFS share mounted on all nodes. We will keep all
-our source code and other files that must be shared here.</p>
+our source code and other files that must be shared here. In our example we
+will use <code class="code docutils literal notranslate"><span class="pre">/opt/campaign</span></code> for shared storage.</p>
 <p>For machines that have Infiniband:
 Ensure MPI is in your <code class="code docutils literal notranslate"><span class="pre">$PATH</span></code> environment variable.
 It may also be required to add OpenMPI’s library directory to the
@@ -412,7 +440,7 @@ will be:</p>
 </pre></div>
 </div>
 <p>We’ll start with sn01:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="o">[</span>sn01 ~<span class="o">]</span><span class="c1"># zpool list</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="o">[</span>sn01 ~<span class="o">]</span>$ zpool list
 NAME             SIZE  ALLOC   FREE  CKPOINT  EXPANDSZ   FRAG    CAP  DEDUP    HEALTH  ALTROOT
 sn01-pool0       146T  <span class="m">12</span>.7M   146T        -         -     <span class="m">0</span>%     <span class="m">0</span>%  <span class="m">1</span>.00x    ONLINE  -
 sn01-pool1       146T  <span class="m">11</span>.0M   146T        -         -     <span class="m">0</span>%     <span class="m">0</span>%  <span class="m">1</span>.00x    ONLINE  -
@@ -421,10 +449,10 @@ sn01-pool3       146T  <span class="m">11</span>.0M   146T        -         -   
 </pre></div>
 </div>
 <p>First we want to set the optimal zpool settings on all our zpools.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">recordsize</span><span class="o">=</span>1M sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
-<span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">mountpoint</span><span class="o">=</span>none sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
-<span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">compression</span><span class="o">=</span>lz4 sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
-<span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">atime</span><span class="o">=</span>off sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">recordsize</span><span class="o">=</span>1M sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
+$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">mountpoint</span><span class="o">=</span>none sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
+$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">compression</span><span class="o">=</span>lz4 sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
+$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">atime</span><span class="o">=</span>off sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
 </pre></div>
 </div>
 <p>We are using a diskless sever for our storage nodes. We need to create a NFS
@@ -432,39 +460,39 @@ exported ZFS datastore, with the mountpoint at <code class="code docutils litera
 must be mounted before all the others on reboot because NFS will stat the
 mountpoint which is on <code class="code docutils literal notranslate"><span class="pre">tmpfs</span></code> in a diskless setup. When it does the
 stat the wrong block size will be returned.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>zfs create sn01-pool0/nfs
-zfs <span class="nb">set</span> <span class="nv">mountpoint</span><span class="o">=</span>/zfs sn01-pool0/nfs
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ zfs create sn01-pool0/nfs
+$ zfs <span class="nb">set</span> <span class="nv">mountpoint</span><span class="o">=</span>/zfs sn01-pool0/nfs
 </pre></div>
 </div>
 <p>We want a datastore on each zpool that will be mounted at a path made with the
 above guidelines. The name of the datastore is irrelevant.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs create sn002-pool<span class="nv">$i</span>/datastore<span class="p">;</span> <span class="k">done</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs create sn002-pool<span class="nv">$i</span>/datastore<span class="p">;</span> <span class="k">done</span>
 </pre></div>
 </div>
 <p>On each storage node we want to make a directory under our /zfs mountpoint
 where we will create out special path</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /zfs/exports
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mkdir /zfs/exports
 </pre></div>
 </div>
 <p>Now we want to make our <code class="code docutils literal notranslate"><span class="pre">pod/block/cap</span></code> directories
 under <code class="code docutils literal notranslate"><span class="pre">/zfs/exports</span></code>. For sn01 it looks like:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /zfs/exports/repo3+1/pod0/block0/cap0
-mkdir /zfs/exports/repo3+1/pod0/block0/cap1
-mkdir /zfs/exports/repo3+1/pod0/block0/cap2
-mkdir /zfs/exports/repo3+1/pod0/block0/cap3
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mkdir /zfs/exports/repo3+1/pod0/block0/cap0
+$ mkdir /zfs/exports/repo3+1/pod0/block0/cap1
+$ mkdir /zfs/exports/repo3+1/pod0/block0/cap2
+$ mkdir /zfs/exports/repo3+1/pod0/block0/cap3
 </pre></div>
 </div>
 <p>Storage node sn01 is in pod 0, is block 0 of the pod, and will have 4 capacity
 units. We will want to create the correct path on every storage node in the
 cluster. For sn02 it would look like:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /zfs/exports/repo3+1/pod0/block1/cap0
-mkdir /zfs/exports/repo3+1/pod0/block1/cap1
-mkdir /zfs/exports/repo3+1/pod0/block1/cap2
-mkdir /zfs/exports/repo3+1/pod0/block1/cap3
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mkdir /zfs/exports/repo3+1/pod0/block1/cap0
+$ mkdir /zfs/exports/repo3+1/pod0/block1/cap1
+$ mkdir /zfs/exports/repo3+1/pod0/block1/cap2
+$ mkdir /zfs/exports/repo3+1/pod0/block1/cap3
 </pre></div>
 </div>
 <p>For loops are very helpful for this with minor adjustments on each node.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> mkdir -p /zfs/exports/repo3+1/pod0/block3/cap<span class="nv">$i</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> mkdir -p /zfs/exports/repo3+1/pod0/block3/cap<span class="nv">$i</span>
 </pre></div>
 </div>
 <p>All you need to do is change the pod and block to the correct number for each
@@ -472,7 +500,7 @@ storage node. If everything is in sequence you can just wrap that loop in
 more loops to handle that with SSH. After we create the directories we need,
 we will mount our datastores on each node into the correct folder. on sn01 it
 will look like:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="o">[</span>sn01 ~<span class="o">]</span><span class="c1"># zfs list</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="o">[</span>sn01 ~<span class="o">]</span>$ zfs list
 NAME                       USED  AVAIL     REFER  MOUNTPOINT
 sn01-pool0                 <span class="m">9</span>.29M 113T      307K   none
 sn01-pool0/datastore       <span class="m">5</span>.14M 113T      <span class="m">5</span>.14M  /zfs/exports/repo3+1/pod0/block0/cap0
@@ -501,14 +529,14 @@ example we will only create 1024 scatter directories, but in bigger systems
 you can have many more.</p>
 <p>Now we can NFS export out datasets. Edit the file <code class="code docutils literal notranslate"><span class="pre">/etc/exports</span></code> to
 look like:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="o">[</span>sn01 ~<span class="o">]</span><span class="c1"># cat /etc/exports</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="o">[</span>sn01 ~<span class="o">]</span>$ cat /etc/exports
 /zfs/exports *<span class="o">(</span>rw,fsid<span class="o">=</span><span class="m">0</span>,no_subtree_check,sync,crossmnt<span class="o">)</span>
 </pre></div>
 </div>
 <p><em>Important</em>
 If you plan on using NFS over RDMA (you should) you will need to change the
 export options in <code class="code docutils literal notranslate"><span class="pre">/etc/exports</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="o">[</span>sn01 ~<span class="o">]</span><span class="c1"># cat /etc/exports</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="o">[</span>sn01 ~<span class="o">]</span>$ cat /etc/exports
 /zfs/exports *<span class="o">(</span>rw,fsid<span class="o">=</span><span class="m">0</span>,no_root_squash,no_subtree_check,sync,insecure,crossmnt<span class="o">)</span>
 </pre></div>
 </div>
@@ -524,9 +552,9 @@ Create a directory <code class="code docutils literal notranslate"><span class="
 for each namespace that we want to create in our config file. In this example
 we will have a single namespace. We will link our filesets under the directory
 we made. We will create some directories we need under those links.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mmcrfileset /dev/marfs namespace_one
-mmlinkfileset /dev/marfs namespace_one -J /gpfs/metadata/namespace_one
-mkdir /gpfs/metadata/namespace_one/mdfs
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mmcrfileset /dev/marfs namespace_one
+$ mmlinkfileset /dev/marfs namespace_one -J /gpfs/metadata/namespace_one
+$ mkdir /gpfs/metadata/namespace_one/mdfs
 </pre></div>
 </div>
 <p>All MDFS directories should be readable by everyone. We also want to set
@@ -535,7 +563,7 @@ directory will be reflected as the permissions in the MarFS mount later. So
 <code class="code docutils literal notranslate"><span class="pre">chown</span></code> this directory to the right group now if needed.</p>
 <p>There is a file MarFS will always look for under the mdfs directory called
 <code class="code docutils literal notranslate"><span class="pre">fsinfo</span></code>. Lets create that now.</p>
-<p><code class="code docutils literal notranslate"><span class="pre">touch</span> <span class="pre">/gpfs/metadata/namespace_one/mdfs/fsinfo</span></code></p>
+<p><code class="code docutils literal notranslate"><span class="pre">$</span> <span class="pre">touch</span> <span class="pre">/gpfs/metadata/namespace_one/mdfs/fsinfo</span></code></p>
 </div>
 <div class="section" id="fta-nodes">
 <h3><a class="toc-backref" href="#id24">FTA nodes</a><a class="headerlink" href="#fta-nodes" title="Permalink to this headline">¶</a></h3>
@@ -547,15 +575,15 @@ so we should already have /gpfs mounted on these nodes. We need to use the
 <code class="code docutils literal notranslate"><span class="pre">pod/block/cap/</span></code> directory tree we created earlier on the storage nodes.
 We already have our metadata mounted at <code class="code docutils literal notranslate"><span class="pre">/gpfs/metadata</span></code> so lets create
 a new directory to hold the <code class="code docutils literal notranslate"><span class="pre">pod/block/cap/</span></code> structure.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /gpfs/repo_data
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mkdir /gpfs/data
 
-<span class="k">for</span> b in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span>
+$ <span class="k">for</span> b in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span>
    <span class="k">for</span> c in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span>
       mkdir -p /gpfs/data/repo3+1/pod0/block<span class="nv">$b</span>/cap<span class="nv">$c</span><span class="p">;</span> <span class="k">done</span><span class="p">;</span> <span class="k">done</span>
 </pre></div>
 </div>
 <p>Behold. Now mount the datastores.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mount -o <span class="s2">&quot;_netdev,async,rw,nfsvers=3,nolock,wsize=1048576,rsize=1048576,rdma,soft,port=20049&quot;</span> -t nfs <span class="se">\</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mount -o <span class="s2">&quot;_netdev,async,rw,nfsvers=3,nolock,wsize=1048576,rsize=1048576,rdma,soft,port=20049&quot;</span> -t nfs <span class="se">\</span>
          sn01:/zfs/exports/repo3+1/pod0/block0/cap0 /gpfs/data/repo3+1/pod0/block0/cap0
 </pre></div>
 </div>
@@ -567,6 +595,267 @@ a new directory to hold the <code class="code docutils literal notranslate"><spa
 <h2><a class="toc-backref" href="#id25">Building software for MarFS</a><a class="headerlink" href="#building-software-for-marfs" title="Permalink to this headline">¶</a></h2>
 <p>That’s right. That was just what we needed to do to be able to build MarFS.</p>
 <img alt="_images/wheeze.gif" src="_images/wheeze.gif" />
+<div class="section" id="build-environment">
+<h3><a class="toc-backref" href="#id26">Build Environment</a><a class="headerlink" href="#build-environment" title="Permalink to this headline">¶</a></h3>
+<p>As stated in the prerequisites above, we’ll be building under the directory
+<code class="code docutils literal notranslate"><span class="pre">/opt/campaign/marfs_build</span></code>, which will be shared across the FTA and
+interactive nodes. This will greatly simplify the build and mount process. All
+packages (except ISA-L) can be found at
+<a class="reference external" href="https://github.com/mar-file-system">https://github.com/mar-file-system</a>. ISA-L can be found at
+<a class="reference external" href="https://github.com/01org/isa-l">https://github.com/01org/isa-l</a> (see also:
+<a class="reference external" href="https://01.org/intel®-storage-acceleration-library-open-source-version)">https://01.org/intel®-storage-acceleration-library-open-source-version)</a></p>
+<p>Ensure you have all the software downloaded. The examples below assume that
+all packages are downloaded to <code class="code docutils literal notranslate"><span class="pre">/opt/campaign/packages/$package_name</span></code>. An
+environment file like the one shown below will be necessary for the build
+process. Note that this file must be “sourced”, rather than executed.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="ch">#!/bin/bash</span>
+
+<span class="c1"># --- examples will build everything here:</span>
+<span class="nb">export</span> <span class="nv">MARFS_BUILD</span><span class="o">=</span>/opt/campaign/marfs_build
+
+<span class="c1"># --- examples assume git packages are cloned under here:</span>
+<span class="nv">PACKAGES</span><span class="o">=</span>/opt/campaign/packages/
+<span class="nb">export</span> <span class="nv">LIBISAL</span><span class="o">=</span><span class="nv">$PACKAGES</span>/isa-l
+<span class="nb">export</span> <span class="nv">ERASURE</span><span class="o">=</span><span class="nv">$PACKAGES</span>/erasureUtils
+<span class="nb">export</span> <span class="nv">AWS4C</span><span class="o">=</span><span class="nv">$PACKAGES</span>/aws4c
+<span class="nb">export</span> <span class="nv">PA2X</span><span class="o">=</span><span class="nv">$PACKAGES</span>/PA2X
+<span class="nb">export</span> <span class="nv">PARSE_DIR</span><span class="o">=</span><span class="nv">$PA2X</span>
+<span class="nb">export</span> <span class="nv">MARFS</span><span class="o">=</span><span class="nv">$PACKAGES</span>/marfs
+
+<span class="c1"># not sure about this line</span>
+<span class="nv">configs</span><span class="o">==</span><span class="nv">$MARFS</span>/common/configuration/srcexport <span class="nv">conf</span><span class="o">=</span><span class="nv">$configs</span>/marfs_configuration_blueprint.cfg
+
+<span class="nb">export</span> <span class="nv">LIBNE</span><span class="o">=</span><span class="nv">$MARFS_BUILD</span>
+<span class="nb">export</span> <span class="nv">MARFS_CPPFLAGS</span><span class="o">=</span><span class="se">\</span>
+   <span class="s2">&quot;-I</span><span class="nv">$AWS4C</span><span class="s2"> -I</span><span class="nv">$MARFS_BUILD</span><span class="s2">/include -I/usr/include/libxml2&quot;</span>
+
+<span class="c1"># this is one single line</span>
+<span class="nb">export</span> <span class="nv">MARFS_LDFLAGS</span><span class="o">=</span><span class="s2">&quot;-L</span><span class="nv">$AWS4C</span><span class="s2"> -L</span><span class="nv">$MARFS_BUILD</span><span class="s2">/lib -L/usr/lib64 -L</span><span class="nv">$LIBISAL</span><span class="s2"> -L</span><span class="nv">$LIBNE</span><span class="s2"> -Wl,-R/opt/openmpi-1.6-gnu/lib&quot;</span>
+
+<span class="nb">export</span> <span class="nv">LD_LIBRARY_PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$LD_LIBRARY_PATH</span><span class="s2">:</span><span class="nv">$LIBISAL</span><span class="s2">:</span><span class="nv">$LIBNE</span><span class="s2">&quot;</span>
+<span class="nb">export</span> <span class="nv">MARFSCONFIGRC</span><span class="o">=</span>/opt/campaign/marfs_build/marfs.config/marfs.cfg
+</pre></div>
+</div>
+</div>
+<div class="section" id="marfs-config-file">
+<h3><a class="toc-backref" href="#id27">MarFS Config File</a><a class="headerlink" href="#marfs-config-file" title="Permalink to this headline">¶</a></h3>
+<p>MarFS uses a config file to set up repositories and namespaces. I will copy a
+marfs config file here later.</p>
+<div class="highlight-xml notranslate"><div class="highlight"><pre><span></span><span class="cp">&lt;?xml version = &quot;1.0&quot; encoding = &quot;UTF-8&quot; ?&gt;</span>
+
+<span class="nt">&lt;config&gt;</span>
+    <span class="nt">&lt;name&gt;</span>marfs-example<span class="nt">&lt;/name&gt;</span>
+    <span class="nt">&lt;version&gt;</span>1.10<span class="nt">&lt;/version&gt;</span>
+    <span class="nt">&lt;mnt_top&gt;</span>/campaign<span class="nt">&lt;/mnt_top&gt;</span>
+    <span class="nt">&lt;mdfs_top&gt;</span>/gpfs<span class="nt">&lt;/mdfs_top&gt;</span>
+
+    <span class="nt">&lt;repo&gt;</span>
+        <span class="nt">&lt;name&gt;</span>example_repository<span class="nt">&lt;/name&gt;</span>
+        <span class="nt">&lt;host&gt;</span>/gpfs/data/repo3+1/pod%d/block%s/cap%d/scatter%d<span class="nt">&lt;/host&gt;</span>
+        <span class="nt">&lt;host_offset&gt;</span>0<span class="nt">&lt;/host_offset&gt;</span>
+        <span class="nt">&lt;host_count&gt;</span>1<span class="nt">&lt;/host_count&gt;</span>
+        <span class="nt">&lt;update_in_place&gt;</span>no<span class="nt">&lt;/update_in_place&gt;</span>
+        <span class="nt">&lt;ssl&gt;</span>no<span class="nt">&lt;/ssl&gt;</span>
+        <span class="nt">&lt;access_method&gt;</span>SEMI_DIRECT<span class="nt">&lt;/access_method&gt;</span>
+        <span class="nt">&lt;chunk_size&gt;</span>1073741824<span class="nt">&lt;/chunk_size&gt;</span>
+        <span class="nt">&lt;max_pack_file_count&gt;</span>-1<span class="nt">&lt;/max_pack_file_count&gt;</span>
+        <span class="nt">&lt;min_pack_file_count&gt;</span>10<span class="nt">&lt;/min_pack_file_count&gt;</span>
+        <span class="nt">&lt;max_pack_file_size&gt;</span>104857600<span class="nt">&lt;/max_pack_file_size&gt;</span>
+        <span class="nt">&lt;min_pack_file_size&gt;</span>1<span class="nt">&lt;/min_pack_file_size&gt;</span>
+        <span class="nt">&lt;latency&gt;</span>10000<span class="nt">&lt;/latency&gt;</span>
+        <span class="nt">&lt;timing_flags&gt;</span> NONE <span class="nt">&lt;/timing_flags&gt;</span>
+        <span class="nt">&lt;dal&gt;</span>
+            <span class="nt">&lt;type&gt;</span>MC<span class="nt">&lt;/type&gt;</span>
+            <span class="nt">&lt;n&gt;</span> 3 <span class="nt">&lt;/n&gt;</span>
+            <span class="nt">&lt;e&gt;</span> 1 <span class="nt">&lt;/e&gt;</span>
+            <span class="nt">&lt;pods&gt;</span> 1 <span class="nt">&lt;/pods&gt;</span>
+            <span class="nt">&lt;caps&gt;</span> 4 <span class="nt">&lt;/caps&gt;</span>
+            <span class="nt">&lt;scatter_width&gt;</span> 1024 <span class="nt">&lt;/scatter_width&gt;</span>
+            <span class="nt">&lt;degraded_log_dir&gt;</span> /gpfs/marfs/mc-logs/degraded <span class="nt">&lt;/degraded_log_dir&gt;</span>
+        <span class="nt">&lt;/dal&gt;</span>
+
+        <span class="nt">&lt;namespace&gt;</span>
+            <span class="nt">&lt;id&gt;</span>0<span class="nt">&lt;/id&gt;</span>
+            <span class="nt">&lt;name&gt;</span>namespace_one<span class="nt">&lt;/name&gt;</span>
+            <span class="nt">&lt;mnt_path&gt;</span>/example_repository<span class="nt">&lt;/mnt_path&gt;</span>
+            <span class="nt">&lt;bperms&gt;</span>RM,WM,RD,WD,TD,UD<span class="nt">&lt;/bperms&gt;</span>
+            <span class="nt">&lt;iperms&gt;</span>RM,WM,RD,WD,TD,UD<span class="nt">&lt;/iperms&gt;</span>
+            <span class="nt">&lt;min_size&gt;</span>0<span class="nt">&lt;/min_size&gt;</span>
+            <span class="nt">&lt;max_size&gt;</span>-1<span class="nt">&lt;/max_size&gt;</span>
+            <span class="nt">&lt;md_path&gt;</span>/gpfs/metadata/namespace_one/mdfs<span class="nt">&lt;/md_path&gt;</span>
+            <span class="nt">&lt;trash_md_path&gt;</span>/gpfs/metadata/namespace_one/mc-trash<span class="nt">&lt;/trash_md_path&gt;</span>
+            <span class="nt">&lt;fsinfo_path&gt;</span>/gpfs/metadata/namespace_one/fsinfo<span class="nt">&lt;/fsinfo_path&gt;</span>
+            <span class="nt">&lt;quota_space&gt;</span>-1<span class="nt">&lt;/quota_space&gt;</span>
+            <span class="nt">&lt;quota_names&gt;</span>-1<span class="nt">&lt;/quota_names&gt;</span>
+        <span class="nt">&lt;/namespace&gt;</span>
+    <span class="nt">&lt;/repo&gt;</span>
+
+    <span class="nt">&lt;storage_node&gt;</span>
+        <span class="nt">&lt;hostname&gt;</span>sn01<span class="nt">&lt;/hostname&gt;</span>
+        <span class="nt">&lt;pod&gt;</span>0<span class="nt">&lt;/pod&gt;</span>
+        <span class="nt">&lt;block&gt;</span>0<span class="nt">&lt;/block&gt;</span>
+    <span class="nt">&lt;/storage_node&gt;</span>
+    <span class="nt">&lt;storage_node&gt;</span>
+        <span class="nt">&lt;hostname&gt;</span>sn02<span class="nt">&lt;/hostname&gt;</span>
+        <span class="nt">&lt;pod&gt;</span>0<span class="nt">&lt;/pod&gt;</span>
+        <span class="nt">&lt;block&gt;</span>1<span class="nt">&lt;/block&gt;</span>
+    <span class="nt">&lt;/storage_node&gt;</span>
+    <span class="nt">&lt;storage_node&gt;</span>
+        <span class="nt">&lt;hostname&gt;</span>sn03<span class="nt">&lt;/hostname&gt;</span>
+        <span class="nt">&lt;pod&gt;</span>0<span class="nt">&lt;/pod&gt;</span>
+        <span class="nt">&lt;block&gt;</span>2<span class="nt">&lt;/block&gt;</span>
+    <span class="nt">&lt;/storage_node&gt;</span>
+    <span class="nt">&lt;storage_node&gt;</span>
+        <span class="nt">&lt;hostname&gt;</span>sn04<span class="nt">&lt;/hostname&gt;</span>
+        <span class="nt">&lt;pod&gt;</span>0<span class="nt">&lt;/pod&gt;</span>
+        <span class="nt">&lt;block&gt;</span>3<span class="nt">&lt;/block&gt;</span>
+    <span class="nt">&lt;/storage_node&gt;</span>
+    
+    <span class="nt">&lt;fta_nodes&gt;</span>
+        <span class="nt">&lt;node&gt;</span>
+            <span class="nt">&lt;hostname&gt;</span>tn01<span class="nt">&lt;/hostname&gt;</span>
+        <span class="nt">&lt;/node&gt;</span>
+        <span class="nt">&lt;node&gt;</span>
+            <span class="nt">&lt;hostname&gt;</span>tn02<span class="nt">&lt;/hostname&gt;</span>
+        <span class="nt">&lt;/node&gt;</span>
+    <span class="nt">&lt;/fta_nodes&gt;</span>
+<span class="nt">&lt;/config&gt;</span>
+</pre></div>
+</div>
+<p>Theres a lot to unpack here. Should probabaly do some explaining. But I won’t.</p>
+<p>Note the <code class="code docutils literal notranslate"><span class="pre">&lt;mnt_top&gt;</span></code> directory. You must create this directory.
+Namespaces will then appear as subdirectories underneath it when you make the
+MarFS FUSE-mount. Note also the root namespace. This is the parent of all the
+other namespaces and is the top level FUSE mountpoint. It must be present in
+the configuration file and must be a <code class="code docutils literal notranslate"><span class="pre">/</span></code> for MarFS to work properly. No
+data or metadata is actually stored there.</p>
+<p>Note that in each namespace you can configure constraints on access to data
+and metadata, for both interactive (iperms for MarFS FUSE access) and batch
+(bperms for PFTool access). The constraint option-values are
+RM(read metadata), WM (write metadata), RD (read data), WD (write data), TD
+(truncate data), and UD (unlink data). These constraints apply in addition to
+the usual POSIX access-controls based on user/group/other, and
+read/write/execute, access mode-bits. The point of these constraints is to
+allow system-admins to restrict access to some namespaces, if desired. For
+example, if storage servers are being worked on, you might still want to allow
+users to see metadata, or even to perform deletions (note that MarFS deletions
+move metadata to the trash, but the corresponding data is not destroyed until
+the garbage-collector utility is run).</p>
+</div>
+<div class="section" id="build-isa-l">
+<h3><a class="toc-backref" href="#id28">Build ISA-L</a><a class="headerlink" href="#build-isa-l" title="Permalink to this headline">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$LIBISAL</span>
+$ ./autogen.sh
+$ ./configure --prefix<span class="o">=</span><span class="nv">$MARFS_BUILD</span> --libdir<span class="o">=</span><span class="nv">$LIBISAL</span>
+$ make install
+</pre></div>
+</div>
+</div>
+<div class="section" id="build-aws4c">
+<h3><a class="toc-backref" href="#id29">Build AWS4C</a><a class="headerlink" href="#build-aws4c" title="Permalink to this headline">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$AWS4C</span>
+$ make
+</pre></div>
+</div>
+<p>You must create a file that AWS4C will use for authentication.
+It should follow the convention <code class="code docutils literal notranslate"><span class="pre">username:username:password</span></code></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">echo</span> <span class="s2">&quot;root:root:HZxGesCYgz0K&quot;</span> &gt;&gt; /root/.awsAuth
+$ chmod <span class="m">600</span> /root/.awsAuth
+</pre></div>
+</div>
+<p>In addition, <code class="code docutils literal notranslate"><span class="pre">/root/.awsAuth</span></code> can be used to control authentication of
+requests sent to the MC-RDMA servers. This prevents any non-root user from
+being able to “spoof” commands to the RDMA-service, to gain access to
+arbitrary objects. If you are using MC_RDMA, and you configure MC-RDMA to
+authenticate in this way (the default), then consistent <code class="code docutils literal notranslate"><span class="pre">/root/.awsAuth</span></code>
+files must exist on client-side (FTA) nodes, and on server-side (storage)
+nodes. The files must be created with the same ownership and accessibility
+shown above.</p>
+</div>
+<div class="section" id="build-erasureutils">
+<h3><a class="toc-backref" href="#id30">Build ErasureUtils</a><a class="headerlink" href="#build-erasureutils" title="Permalink to this headline">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$ERASURE</span>
+$ autoconf –i
+$ ./configure --prefix<span class="o">=</span><span class="nv">$MARFS_BUILD</span> <span class="nv">LDFLAGS</span><span class="o">=</span><span class="s2">&quot; -L</span><span class="nv">$MARFS_BUILD</span><span class="s2">/lib -L</span><span class="nv">$AWS4C</span><span class="s2">&quot;</span>
+$ make install
+</pre></div>
+</div>
+<p>If you are using RDMA sockets you must add <code class="code docutils literal notranslate"><span class="pre">--enable-sockets=rdma</span></code> to
+the configure line above.</p>
+</div>
+<div class="section" id="deploy-mc-rdma">
+<h3><a class="toc-backref" href="#id31">Deploy MC-RDMA</a><a class="headerlink" href="#deploy-mc-rdma" title="Permalink to this headline">¶</a></h3>
+<p>Left Blank on purpose</p>
+</div>
+<div class="section" id="build-marfs">
+<h3><a class="toc-backref" href="#id32">Build MarFS</a><a class="headerlink" href="#build-marfs" title="Permalink to this headline">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$PACKAGES</span>/marfs
+$ autoconf -i
+
+$ ./configure --prefix<span class="o">=</span>/opt/marfs_build <span class="se">\</span>
+              --enable-logging<span class="o">=</span>syslog <span class="se">\</span>
+              --enable-mc  <span class="se">\</span>
+              <span class="nv">MARFS_MNT</span><span class="o">=</span>/campaign <span class="se">\</span>
+              <span class="nv">LDFLAGS</span><span class="o">=</span><span class="s2">&quot;-L</span><span class="nv">$MARFS_BUILD</span><span class="s2">/lib -L</span><span class="nv">$AWS4C</span><span class="s2">&quot;</span>
+
+make install
+</pre></div>
+</div>
+<p>Note <code class="code docutils literal notranslate"><span class="pre">/campaign</span></code> is our <code class="code docutils literal notranslate"><span class="pre">mnt_top</span></code> in our config file.</p>
+<p>If you are using MC-RDMA use <code class="code docutils literal notranslate"><span class="pre">--enable-mc=sockets</span></code> instead.</p>
+<p>Finally type <code class="code docutils literal notranslate"><span class="pre">make</span> <span class="pre">mnt</span></code> to start FUSE at <code class="code docutils literal notranslate"><span class="pre">/campaign</span></code></p>
+<p>If all goes according to plan, marfs_fuse will start and give you PID, and
+you’ll have a FUSE mount at <code class="code docutils literal notranslate"><span class="pre">/campaign</span></code>. If you don’t see a PID, there
+is something amiss. Because we configured to generate logging to syslog,
+MarFS will report diagnostics on the FUSE mount attempt to syslog. Consulting
+the log may reveal any problems (e.g. problems with the MarFS config file,
+missing directories, etc.). This logging will also be performed from MarFS
+internals used by pftool (described below). Therefore, once you confirm that
+the FUSE-mount is coming up successfully, it may make sense for performance
+reasons to reconfigure without <code class="code docutils literal notranslate"><span class="pre">--logging=syslog</span></code>, then rebuild, then
+run <code class="code docutils literal notranslate"><span class="pre">make</span> <span class="pre">mnt</span></code> again. This will improve performance, and reduce the
+logging burden, for both fuse and pftool.</p>
+</div>
+<div class="section" id="see-if-it-works">
+<h3><a class="toc-backref" href="#id33">See if it works!</a><a class="headerlink" href="#see-if-it-works" title="Permalink to this headline">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ ls /campaign
+namespace_one
+
+$ <span class="nb">echo</span> <span class="nb">test</span> &gt; /campaign/namespace_one/test
+$ cat /campaign/namespace_one/test
+<span class="nb">test</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="build-and-run-pftool">
+<h3><a class="toc-backref" href="#id34">Build and run PFTool</a><a class="headerlink" href="#build-and-run-pftool" title="Permalink to this headline">¶</a></h3>
+<p>In the previous section we mounted MarFS through FUSE. It is possible to use
+this FUSE mount for all accesses to MarFS, but performance is limited by going
+through a single host (and through FUSE), even though writes to the
+underlying storage-servers are performed in parallel. Therefore, for a large
+datacenter, it may make more sense to use FUSE solely for metadata access
+(rename, delete, stat, ls, etc). This could be achieved by changing the
+“iperms” in MARFSCONFIGRC, for the namespaces to be restricted.</p>
+<p>We recommend using pftool for the “heavy lifting” of transferring big
+datasets. PFTool provides fast, parallel MarFS data movement, and is preferred
+over using the FUSE mount. You can run pftool without a MarFS FUSE mount, if
+you want. In this case, tab-completion for MarFS paths on the pftool
+command-line will not work, but pftool will still be able to find MarFS paths
+at run-time.</p>
+<p>Ensure that you have <code class="code docutils literal notranslate"><span class="pre">mpicc</span></code> in your <code class="code docutils literal notranslate"><span class="pre">path</span></code>, and that the MarFS
+libraries are installed. Make sure you still have sourced the MarFS
+environment file shown ealier.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$PACKAGES</span>/pftool
+$ ./configure --prefix<span class="o">=</span><span class="nv">$MARFS_BUILD</span> <span class="se">\</span>
+              --enable-marfs <span class="se">\</span>
+              <span class="nv">CPPFLAGS</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$MARFS_CPPFLAGS</span><span class="s2">” \</span>
+<span class="s2">              LDFLAGS=&quot;</span><span class="nv">$MARFS_LDFLAGS</span><span class="s2">&quot;</span>
+$<span class="s2"> make install</span>
+</pre></div>
+</div>
+<p>Lets add our marfs build directory to our <code class="code docutils literal notranslate"><span class="pre">path</span></code>
+<code class="code docutils literal notranslate"><span class="pre">export</span> <span class="pre">PATH=$MARFS_BUILD/bin:$PATH</span></code></p>
+</div>
 </div>
 </div>
 
