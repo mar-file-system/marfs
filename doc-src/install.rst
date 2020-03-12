@@ -679,7 +679,7 @@ pftool build. They will depend on the default pftool.cfg that was generated in
    #be sure these aren't nodename.localhost
    #specify all: ON to automatically use all nodes
    #all: ON
-   fta01: ON
-   fta02: ON
+   tn01: ON
+   tn02: ON
 
 You will need to change the hostnames to match your own.
