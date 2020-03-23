@@ -1,0 +1,79 @@
+<?xml version = "1.0" encoding = "UTF-8" ?>
+
+<config>
+    <name>marfs-example</name>
+    <version>1.10</version>
+    <mnt_top>/campaign</mnt_top>
+    <mdfs_top>/gpfs</mdfs_top>
+
+    <repo>
+        <name>example_repository</name>
+        <host>/gpfs/data/repo3+1/pod%d/block%s/cap%d/scatter%d</host>
+        <host_offset>0</host_offset>
+        <host_count>1</host_count>
+        <update_in_place>no</update_in_place>
+        <ssl>no</ssl>
+        <access_method>SEMI_DIRECT</access_method>
+        <chunk_size>1073741824</chunk_size>
+        <max_pack_file_count>-1</max_pack_file_count>
+        <min_pack_file_count>10</min_pack_file_count>
+        <max_pack_file_size>104857600</max_pack_file_size>
+        <min_pack_file_size>1</min_pack_file_size>
+        <latency>10000</latency>
+        <timing_flags> NONE </timing_flags>
+        <dal>
+            <type>MC</type>
+            <n> 3 </n>
+            <e> 1 </e>
+            <pods> 1 </pods>
+            <caps> 4 </caps>
+            <scatter_width> 1024 </scatter_width>
+            <degraded_log_dir> /gpfs/marfs/mc-logs/degraded </degraded_log_dir>
+        </dal>
+
+        <namespace>
+            <id>0</id>
+            <name>namespace_one</name>
+            <mnt_path>/example_repository</mnt_path>
+            <bperms>RM,WM,RD,WD,TD,UD</bperms>
+            <iperms>RM,WM,RD,WD,TD,UD</iperms>
+            <min_size>0</min_size>
+            <max_size>-1</max_size>
+            <md_path>/gpfs/metadata/namespace_one/mdfs</md_path>
+            <trash_md_path>/gpfs/metadata/namespace_one/mc-trash</trash_md_path>
+            <fsinfo_path>/gpfs/metadata/namespace_one/fsinfo</fsinfo_path>
+            <quota_space>-1</quota_space>
+            <quota_names>-1</quota_names>
+        </namespace>
+    </repo>
+
+    <storage_node>
+        <hostname>sn01</hostname>
+        <pod>0</pod>
+        <block>0</block>
+    </storage_node>
+    <storage_node>
+        <hostname>sn02</hostname>
+        <pod>0</pod>
+        <block>1</block>
+    </storage_node>
+    <storage_node>
+        <hostname>sn03</hostname>
+        <pod>0</pod>
+        <block>2</block>
+    </storage_node>
+    <storage_node>
+        <hostname>sn04</hostname>
+        <pod>0</pod>
+        <block>3</block>
+    </storage_node>
+    
+    <fta_nodes>
+        <node>
+            <hostname>tn01</hostname>
+        </node>
+        <node>
+            <hostname>tn02</hostname>
+        </node>
+    </fta_nodes>
+</config>
