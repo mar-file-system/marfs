@@ -88,7 +88,7 @@ include the files on which a code unit depends.
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <limits.h>             // ULONG_MAX, etc
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -659,7 +659,7 @@ int marfs_getxattr (const char* path,
    // The "root" namespace is artificial
    if (IS_ROOT_NS(info.ns)) {
       LOG(LOG_INFO, "is_root_ns\n");
-      errno = ENOATTR;          // fingers in ears, la-la-la
+      errno = ENODATA;          // fingers in ears, la-la-la
       return -1;
    }
 

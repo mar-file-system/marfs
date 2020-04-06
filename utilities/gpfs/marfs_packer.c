@@ -80,7 +80,7 @@
 #include <gpfs_fcntl.h>
 #include <sys/types.h>
 #include <ctype.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include "marfs_base.h"
 #include "common.h"
 #include "marfs_ops.h"

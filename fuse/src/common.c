@@ -73,7 +73,7 @@ OF SUCH DAMAGE.
 
 #include <sys/types.h>          /* uid_t */
 #include <unistd.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include <errno.h>
 #include <stdlib.h>             /* calloc() */
 #include <string.h>
@@ -480,9 +480,9 @@ int stat_xattrs(PathInfo* info, int load_md_path) {
                 info->pre.md_ctime, info->pre.obj_ctime);
             info->xattrs |= spec->value_type; /* found this one */
          }
-         else if ((errno == ENOATTR)
+         else if ((errno == ENODATA)
                   || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
-            // (a) ENOATTR means no attr, or no access.  Treat as the former.
+            // (a) ENODATA means no attr, or no access.  Treat as the former.
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
             __TRY0( init_pre(&info->pre, OBJ_FUSE, info->ns,
                              info->ns->iwrite_repo, &info->st) );
@@ -507,9 +507,9 @@ int stat_xattrs(PathInfo* info, int load_md_path) {
             __TRY0( str_2_post(&info->post, xattr_value_str, 0, load_md_path) );
             info->xattrs |= spec->value_type; /* found this one */
          }
-         else if ((errno == ENOATTR)
+         else if ((errno == ENODATA)
                   || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
-            // (a) ENOATTR means no attr, or no access.  Treat as the former.
+            // (a) ENODATA means no attr, or no access.  Treat as the former.
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
             __TRY0( init_post(&info->post, info->ns, info->ns->iwrite_repo) );
             info->xattr_inits |= spec->value_type; /* initialized this one */
@@ -533,9 +533,9 @@ int stat_xattrs(PathInfo* info, int load_md_path) {
             __TRY0( str_2_restart(&info->restart, xattr_value_str) );
             info->xattrs |= spec->value_type; /* found this one */
          }
-         else if ((errno == ENOATTR)
+         else if ((errno == ENODATA)
                   || ((errno == EPERM) && S_ISLNK(info->st.st_mode))) {
-            // (a) ENOATTR means no attr, or no access.  Treat as the former.
+            // (a) ENODATA means no attr, or no access.  Treat as the former.
             // (b) GPFS returns EPERM for lgetxattr on symlinks.
             __TRY0( init_restart(&info->restart) );
             info->xattr_inits |= spec->value_type; /* initialized this one */
@@ -1137,7 +1137,7 @@ int save_xattrs(PathInfo* info, XattrMaskType mask) {
             ssize_t val_size = MD_PATH_OP(lremovexattr, info->ns,
                                           info->post.md_path, spec->key_name);
             if (val_size < 0) {
-               if (errno == ENOATTR)
+               if (errno == ENODATA)
                   break;           /* not a problem */
                LOG(LOG_INFO, "ERR removexattr(%s, %s) (%d) %s\n",
                    info->post.md_path, spec->key_name, errno, strerror(errno));

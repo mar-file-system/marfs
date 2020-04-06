@@ -37,7 +37,7 @@
 #include <stdio.h>
 
 #include <sys/types.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include <assert.h>
 
 void show_chunkinfo(MultiChunkInfo* chunk_info) {

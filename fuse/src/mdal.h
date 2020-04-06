@@ -93,7 +93,7 @@ OF SUCH DAMAGE.
 #include <sys/statvfs.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include <dirent.h>
 #include <utime.h>
 

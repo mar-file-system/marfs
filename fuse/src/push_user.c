@@ -75,7 +75,7 @@ OF SUCH DAMAGE.
 
 #include <sys/stat.h>
 #include <stdlib.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <string.h>

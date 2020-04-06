@@ -24,7 +24,7 @@
 #include <stdio.h>
 
 #include <sys/types.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include <assert.h>
 
 void show_pre(MarFS_XattrPre* pre) {
@@ -212,7 +212,7 @@ main(int argc, char* argv[]) {
 
    if (lgetxattr(path, key_name, &objid_str, MARFS_MAX_OBJID_SIZE) == -1) {
 
-      if (errno == ENOATTR) {
+      if (errno == ENODATA) {
          printf("path %s doesn't have xattr '%s'\n", path, key_name);
 
          // These are some pretend values to use for initialisation.
