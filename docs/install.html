@@ -374,18 +374,18 @@ are arbitrarily named.</p>
 <p>Depending on things you may need different things. To install and make use of
 MarFS you will need the following tools.</p>
 <p>Fortunately many dependencies can be acquired through a package manager.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel
-curl openssl-devel openssl git libxml2-devel yasm libtool openmpi
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel <span class="se">\</span>
+curl openssl-devel openssl git libxml2-devel yasm libtool openmpi <span class="se">\</span>
 openmpi-devel
 </pre></div>
 </div>
 <p>Others can be obtained from source.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ git clone https://github.com/mar-file-system/marfs.git
-$ git clone https://github.com/mar-file-system/PA2X.git
-$ git clone https://github.com/mar-file-system/erasureUtils.git
-$ git clone https://github.com/mar-file-system/aws4c.git
-$ git clone https://github.com/pftool/pftool.git
-$ git clone https://github.com/01org/isa-l.git
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git clone https://github.com/mar-file-system/marfs.git
+git clone https://github.com/mar-file-system/PA2X.git
+git clone https://github.com/mar-file-system/erasureUtils.git
+git clone https://github.com/mar-file-system/aws4c.git
+git clone https://github.com/pftool/pftool.git
+git clone https://github.com/01org/isa-l.git
 </pre></div>
 </div>
 <p>A quick description of tools acquired from source:</p>
@@ -449,10 +449,10 @@ sn01-pool3       146T  <span class="m">11</span>.0M   146T        -         -   
 </pre></div>
 </div>
 <p>First we want to set the optimal zpool settings on all our zpools.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">recordsize</span><span class="o">=</span>1M sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
-$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">mountpoint</span><span class="o">=</span>none sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
-$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">compression</span><span class="o">=</span>lz4 sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
-$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">atime</span><span class="o">=</span>off sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">recordsize</span><span class="o">=</span>1M sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
+<span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">mountpoint</span><span class="o">=</span>none sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
+<span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">compression</span><span class="o">=</span>lz4 sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
+<span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs <span class="nb">set</span> <span class="nv">atime</span><span class="o">=</span>off sn01-pool<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span>
 </pre></div>
 </div>
 <p>We are using a diskless sever for our storage nodes. We need to create a NFS
@@ -460,39 +460,39 @@ exported ZFS datastore, with the mountpoint at <code class="code docutils litera
 must be mounted before all the others on reboot because NFS will stat the
 mountpoint which is on <code class="code docutils literal notranslate"><span class="pre">tmpfs</span></code> in a diskless setup. When it does the
 stat the wrong block size will be returned.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ zfs create sn01-pool0/nfs
-$ zfs <span class="nb">set</span> <span class="nv">mountpoint</span><span class="o">=</span>/zfs sn01-pool0/nfs
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>zfs create sn01-pool0/nfs
+zfs <span class="nb">set</span> <span class="nv">mountpoint</span><span class="o">=</span>/zfs sn01-pool0/nfs
 </pre></div>
 </div>
 <p>We want a datastore on each zpool that will be mounted at a path made with the
 above guidelines. The name of the datastore is irrelevant.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs create sn002-pool<span class="nv">$i</span>/datastore<span class="p">;</span> <span class="k">done</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> zfs create sn002-pool<span class="nv">$i</span>/datastore<span class="p">;</span> <span class="k">done</span>
 </pre></div>
 </div>
 <p>On each storage node we want to make a directory under our /zfs mountpoint
 where we will create out special path</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mkdir /zfs/exports
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /zfs/exports
 </pre></div>
 </div>
 <p>Now we want to make our <code class="code docutils literal notranslate"><span class="pre">pod/block/cap</span></code> directories
 under <code class="code docutils literal notranslate"><span class="pre">/zfs/exports</span></code>. For sn01 it looks like:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mkdir /zfs/exports/repo3+1/pod0/block0/cap0
-$ mkdir /zfs/exports/repo3+1/pod0/block0/cap1
-$ mkdir /zfs/exports/repo3+1/pod0/block0/cap2
-$ mkdir /zfs/exports/repo3+1/pod0/block0/cap3
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /zfs/exports/repo3+1/pod0/block0/cap0
+mkdir /zfs/exports/repo3+1/pod0/block0/cap1
+mkdir /zfs/exports/repo3+1/pod0/block0/cap2
+mkdir /zfs/exports/repo3+1/pod0/block0/cap3
 </pre></div>
 </div>
 <p>Storage node sn01 is in pod 0, is block 0 of the pod, and will have 4 capacity
 units. We will want to create the correct path on every storage node in the
 cluster. For sn02 it would look like:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mkdir /zfs/exports/repo3+1/pod0/block1/cap0
-$ mkdir /zfs/exports/repo3+1/pod0/block1/cap1
-$ mkdir /zfs/exports/repo3+1/pod0/block1/cap2
-$ mkdir /zfs/exports/repo3+1/pod0/block1/cap3
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /zfs/exports/repo3+1/pod0/block1/cap0
+mkdir /zfs/exports/repo3+1/pod0/block1/cap1
+mkdir /zfs/exports/repo3+1/pod0/block1/cap2
+mkdir /zfs/exports/repo3+1/pod0/block1/cap3
 </pre></div>
 </div>
 <p>For loops are very helpful for this with minor adjustments on each node.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> mkdir -p /zfs/exports/repo3+1/pod0/block3/cap<span class="nv">$i</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> i in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span> mkdir -p /zfs/exports/repo3+1/pod0/block3/cap<span class="nv">$i</span>
 </pre></div>
 </div>
 <p>All you need to do is change the pod and block to the correct number for each
@@ -552,9 +552,9 @@ Create a directory <code class="code docutils literal notranslate"><span class="
 for each namespace that we want to create in our config file. In this example
 we will have a single namespace. We will link our filesets under the directory
 we made. We will create some directories we need under those links.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mmcrfileset /dev/marfs namespace_one
-$ mmlinkfileset /dev/marfs namespace_one -J /gpfs/metadata/namespace_one
-$ mkdir /gpfs/metadata/namespace_one/mdfs
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mmcrfileset /dev/marfs namespace_one
+mmlinkfileset /dev/marfs namespace_one -J /gpfs/metadata/namespace_one
+mkdir /gpfs/metadata/namespace_one/mdfs
 </pre></div>
 </div>
 <p>All MDFS directories should be readable by everyone. We also want to set
@@ -563,7 +563,7 @@ directory will be reflected as the permissions in the MarFS mount later. So
 <code class="code docutils literal notranslate"><span class="pre">chown</span></code> this directory to the right group now if needed.</p>
 <p>There is a file MarFS will always look for under the mdfs directory called
 <code class="code docutils literal notranslate"><span class="pre">fsinfo</span></code>. Lets create that now.</p>
-<p><code class="code docutils literal notranslate"><span class="pre">$</span> <span class="pre">touch</span> <span class="pre">/gpfs/metadata/namespace_one/mdfs/fsinfo</span></code></p>
+<p><code class="code docutils literal notranslate"><span class="pre">touch</span> <span class="pre">/gpfs/metadata/namespace_one/mdfs/fsinfo</span></code></p>
 </div>
 <div class="section" id="fta-nodes">
 <h3><a class="toc-backref" href="#id24">FTA nodes</a><a class="headerlink" href="#fta-nodes" title="Permalink to this headline">¶</a></h3>
@@ -575,15 +575,16 @@ so we should already have /gpfs mounted on these nodes. We need to use the
 <code class="code docutils literal notranslate"><span class="pre">pod/block/cap/</span></code> directory tree we created earlier on the storage nodes.
 We already have our metadata mounted at <code class="code docutils literal notranslate"><span class="pre">/gpfs/metadata</span></code> so lets create
 a new directory to hold the <code class="code docutils literal notranslate"><span class="pre">pod/block/cap/</span></code> structure.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mkdir /gpfs/data
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /gpfs/data
 
-$ <span class="k">for</span> b in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span>
+<span class="k">for</span> b in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span>
    <span class="k">for</span> c in <span class="o">{</span><span class="m">0</span>..3<span class="o">}</span><span class="p">;</span> <span class="k">do</span>
       mkdir -p /gpfs/data/repo3+1/pod0/block<span class="nv">$b</span>/cap<span class="nv">$c</span><span class="p">;</span> <span class="k">done</span><span class="p">;</span> <span class="k">done</span>
 </pre></div>
 </div>
-<p>Behold. Now mount the datastores.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ mount -o <span class="s2">&quot;_netdev,async,rw,nfsvers=3,nolock,wsize=1048576,rsize=1048576,rdma,soft,port=20049&quot;</span> -t nfs <span class="se">\</span>
+<p>Behold. Now mount the datastores. If you are not using NFS over RDMA you can
+exclude rdma and “port=20049” from the options here.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mount -o <span class="s2">&quot;_netdev,async,rw,nfsvers=3,nolock,wsize=1048576,rsize=1048576,rdma,soft,port=20049&quot;</span> -t nfs <span class="se">\</span>
          sn01:/zfs/exports/repo3+1/pod0/block0/cap0 /gpfs/data/repo3+1/pod0/block0/cap0
 </pre></div>
 </div>
@@ -593,8 +594,7 @@ $ <span class="k">for</span> b in <span class="o">{</span><span class="m">0</spa
 </div>
 <div class="section" id="building-software-for-marfs">
 <h2><a class="toc-backref" href="#id25">Building software for MarFS</a><a class="headerlink" href="#building-software-for-marfs" title="Permalink to this headline">¶</a></h2>
-<p>That’s right. That was just what we needed to do to be able to build MarFS.</p>
-<img alt="_images/wheeze.gif" src="_images/wheeze.gif" />
+<p>Now we can build our cloned dependencies.</p>
 <div class="section" id="build-environment">
 <h3><a class="toc-backref" href="#id26">Build Environment</a><a class="headerlink" href="#build-environment" title="Permalink to this headline">¶</a></h3>
 <p>As stated in the prerequisites above, we’ll be building under the directory
@@ -744,23 +744,23 @@ the garbage-collector utility is run).</p>
 </div>
 <div class="section" id="build-isa-l">
 <h3><a class="toc-backref" href="#id28">Build ISA-L</a><a class="headerlink" href="#build-isa-l" title="Permalink to this headline">¶</a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$LIBISAL</span>
-$ ./autogen.sh
-$ ./configure --prefix<span class="o">=</span><span class="nv">$MARFS_BUILD</span> --libdir<span class="o">=</span><span class="nv">$LIBISAL</span>
-$ make install
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> <span class="nv">$LIBISAL</span>
+./autogen.sh
+./configure --prefix<span class="o">=</span><span class="nv">$MARFS_BUILD</span> --libdir<span class="o">=</span><span class="nv">$LIBISAL</span>
+make install
 </pre></div>
 </div>
 </div>
 <div class="section" id="build-aws4c">
 <h3><a class="toc-backref" href="#id29">Build AWS4C</a><a class="headerlink" href="#build-aws4c" title="Permalink to this headline">¶</a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$AWS4C</span>
-$ make
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> <span class="nv">$AWS4C</span>
+make
 </pre></div>
 </div>
 <p>You must create a file that AWS4C will use for authentication.
 It should follow the convention <code class="code docutils literal notranslate"><span class="pre">username:username:password</span></code></p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">echo</span> <span class="s2">&quot;root:root:HZxGesCYgz0K&quot;</span> &gt;&gt; /root/.awsAuth
-$ chmod <span class="m">600</span> /root/.awsAuth
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">echo</span> <span class="s2">&quot;root:root:HZxGesCYgz0K&quot;</span> &gt;&gt; /root/.awsAuth
+chmod <span class="m">600</span> /root/.awsAuth
 </pre></div>
 </div>
 <p>In addition, <code class="code docutils literal notranslate"><span class="pre">/root/.awsAuth</span></code> can be used to control authentication of
@@ -774,10 +774,10 @@ shown above.</p>
 </div>
 <div class="section" id="build-erasureutils">
 <h3><a class="toc-backref" href="#id30">Build ErasureUtils</a><a class="headerlink" href="#build-erasureutils" title="Permalink to this headline">¶</a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$ERASURE</span>
-$ autoconf –i
-$ ./configure --prefix<span class="o">=</span><span class="nv">$MARFS_BUILD</span> <span class="nv">LDFLAGS</span><span class="o">=</span><span class="s2">&quot; -L</span><span class="nv">$MARFS_BUILD</span><span class="s2">/lib -L</span><span class="nv">$AWS4C</span><span class="s2">&quot;</span>
-$ make install
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> <span class="nv">$ERASURE</span>
+autoconf –i
+./configure --prefix<span class="o">=</span><span class="nv">$MARFS_BUILD</span> <span class="nv">LDFLAGS</span><span class="o">=</span><span class="s2">&quot; -L</span><span class="nv">$MARFS_BUILD</span><span class="s2">/lib -L</span><span class="nv">$AWS4C</span><span class="s2">&quot;</span>
+make install
 </pre></div>
 </div>
 <p>If you are using RDMA sockets you must add <code class="code docutils literal notranslate"><span class="pre">--enable-sockets=rdma</span></code> to
@@ -789,14 +789,14 @@ the configure line above.</p>
 </div>
 <div class="section" id="build-marfs">
 <h3><a class="toc-backref" href="#id32">Build MarFS</a><a class="headerlink" href="#build-marfs" title="Permalink to this headline">¶</a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$PACKAGES</span>/marfs
-$ autoconf -i
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> <span class="nv">$PACKAGES</span>/marfs
+autoconf -i
 
-$ ./configure --prefix<span class="o">=</span>/opt/marfs_build <span class="se">\</span>
-              --enable-logging<span class="o">=</span>syslog <span class="se">\</span>
-              --enable-mc  <span class="se">\</span>
-              <span class="nv">MARFS_MNT</span><span class="o">=</span>/campaign <span class="se">\</span>
-              <span class="nv">LDFLAGS</span><span class="o">=</span><span class="s2">&quot;-L</span><span class="nv">$MARFS_BUILD</span><span class="s2">/lib -L</span><span class="nv">$AWS4C</span><span class="s2">&quot;</span>
+./configure --prefix<span class="o">=</span>/opt/marfs_build <span class="se">\</span>
+            --enable-logging<span class="o">=</span>syslog <span class="se">\</span>
+            --enable-mc  <span class="se">\</span>
+            <span class="nv">MARFS_MNT</span><span class="o">=</span>/campaign <span class="se">\</span>
+            <span class="nv">LDFLAGS</span><span class="o">=</span><span class="s2">&quot;-L</span><span class="nv">$MARFS_BUILD</span><span class="s2">/lib -L</span><span class="nv">$AWS4C</span><span class="s2">&quot;</span>
 
 make install
 </pre></div>
@@ -845,12 +845,12 @@ at run-time.</p>
 <p>Ensure that you have <code class="code docutils literal notranslate"><span class="pre">mpicc</span></code> in your <code class="code docutils literal notranslate"><span class="pre">path</span></code>, and that the MarFS
 libraries are installed. Make sure you still have sourced the MarFS
 environment file shown ealier.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ <span class="nb">cd</span> <span class="nv">$PACKAGES</span>/pftool
-$ ./configure --prefix<span class="o">=</span><span class="nv">$MARFS_BUILD</span> <span class="se">\</span>
-              --enable-marfs <span class="se">\</span>
-              <span class="nv">CPPFLAGS</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$MARFS_CPPFLAGS</span><span class="s2">” \</span>
-<span class="s2">              LDFLAGS=&quot;</span><span class="nv">$MARFS_LDFLAGS</span><span class="s2">&quot;</span>
-$<span class="s2"> make install</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> <span class="nv">$PACKAGES</span>/pftool
+./configure --prefix<span class="o">=</span><span class="nv">$MARFS_BUILD</span> <span class="se">\</span>
+            --enable-marfs <span class="se">\</span>
+            <span class="nv">CPPFLAGS</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$MARFS_CPPFLAGS</span><span class="s2">” \</span>
+<span class="s2">            LDFLAGS=&quot;</span><span class="nv">$MARFS_LDFLAGS</span><span class="s2">&quot;</span>
+<span class="s2">make install</span>
 </pre></div>
 </div>
 <p>Lets add our marfs build directory to our <code class="code docutils literal notranslate"><span class="pre">path</span></code>

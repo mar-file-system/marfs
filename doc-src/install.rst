@@ -137,20 +137,20 @@ Fortunately many dependencies can be acquired through a package manager.
 
 .. code-block:: bash
 
-   $ yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel
-   curl openssl-devel openssl git libxml2-devel yasm libtool openmpi 
+   yum install gcc glibc-devel fuse-devel libattr-devel make curl-devel \
+   curl openssl-devel openssl git libxml2-devel yasm libtool openmpi \
    openmpi-devel
 
 Others can be obtained from source.
 
 .. code-block:: bash
 
-   $ git clone https://github.com/mar-file-system/marfs.git
-   $ git clone https://github.com/mar-file-system/PA2X.git
-   $ git clone https://github.com/mar-file-system/erasureUtils.git
-   $ git clone https://github.com/mar-file-system/aws4c.git
-   $ git clone https://github.com/pftool/pftool.git
-   $ git clone https://github.com/01org/isa-l.git
+   git clone https://github.com/mar-file-system/marfs.git
+   git clone https://github.com/mar-file-system/PA2X.git
+   git clone https://github.com/mar-file-system/erasureUtils.git
+   git clone https://github.com/mar-file-system/aws4c.git
+   git clone https://github.com/pftool/pftool.git
+   git clone https://github.com/01org/isa-l.git
 
 A quick description of tools acquired from source::
 
@@ -226,10 +226,10 @@ First we want to set the optimal zpool settings on all our zpools.
 
 .. code-block:: bash
 
-   $ for i in {0..3}; do zfs set recordsize=1M sn01-pool$i; done
-   $ for i in {0..3}; do zfs set mountpoint=none sn01-pool$i; done
-   $ for i in {0..3}; do zfs set compression=lz4 sn01-pool$i; done
-   $ for i in {0..3}; do zfs set atime=off sn01-pool$i; done
+   for i in {0..3}; do zfs set recordsize=1M sn01-pool$i; done
+   for i in {0..3}; do zfs set mountpoint=none sn01-pool$i; done
+   for i in {0..3}; do zfs set compression=lz4 sn01-pool$i; done
+   for i in {0..3}; do zfs set atime=off sn01-pool$i; done
 
 We are using a diskless sever for our storage nodes. We need to create a NFS
 exported ZFS datastore, with the mountpoint at :code:`/zfs`. This datastore
@@ -239,32 +239,32 @@ stat the wrong block size will be returned.
 
 .. code-block:: bash
 
-   $ zfs create sn01-pool0/nfs
-   $ zfs set mountpoint=/zfs sn01-pool0/nfs
+   zfs create sn01-pool0/nfs
+   zfs set mountpoint=/zfs sn01-pool0/nfs
 
 We want a datastore on each zpool that will be mounted at a path made with the
 above guidelines. The name of the datastore is irrelevant.
 
 .. code-block:: bash
 
-   $ for i in {0..3}; do zfs create sn002-pool$i/datastore; done
+   for i in {0..3}; do zfs create sn002-pool$i/datastore; done
 
 On each storage node we want to make a directory under our /zfs mountpoint
 where we will create out special path
 
 .. code-block:: bash
 
-   $ mkdir /zfs/exports
+   mkdir /zfs/exports
 
 Now we want to make our :code:`pod/block/cap` directories
 under :code:`/zfs/exports`. For sn01 it looks like:
 
 .. code-block:: bash
 
-   $ mkdir /zfs/exports/repo3+1/pod0/block0/cap0 
-   $ mkdir /zfs/exports/repo3+1/pod0/block0/cap1
-   $ mkdir /zfs/exports/repo3+1/pod0/block0/cap2 
-   $ mkdir /zfs/exports/repo3+1/pod0/block0/cap3
+   mkdir /zfs/exports/repo3+1/pod0/block0/cap0 
+   mkdir /zfs/exports/repo3+1/pod0/block0/cap1
+   mkdir /zfs/exports/repo3+1/pod0/block0/cap2 
+   mkdir /zfs/exports/repo3+1/pod0/block0/cap3
 
 Storage node sn01 is in pod 0, is block 0 of the pod, and will have 4 capacity
 units. We will want to create the correct path on every storage node in the
@@ -272,16 +272,16 @@ cluster. For sn02 it would look like:
 
 .. code-block:: bash
 
-   $ mkdir /zfs/exports/repo3+1/pod0/block1/cap0 
-   $ mkdir /zfs/exports/repo3+1/pod0/block1/cap1
-   $ mkdir /zfs/exports/repo3+1/pod0/block1/cap2 
-   $ mkdir /zfs/exports/repo3+1/pod0/block1/cap3
+   mkdir /zfs/exports/repo3+1/pod0/block1/cap0 
+   mkdir /zfs/exports/repo3+1/pod0/block1/cap1
+   mkdir /zfs/exports/repo3+1/pod0/block1/cap2 
+   mkdir /zfs/exports/repo3+1/pod0/block1/cap3
 
 For loops are very helpful for this with minor adjustments on each node.
 
 .. code-block:: bash
 
-   $ for i in {0..3}; do mkdir -p /zfs/exports/repo3+1/pod0/block3/cap$i
+   for i in {0..3}; do mkdir -p /zfs/exports/repo3+1/pod0/block3/cap$i
 
 All you need to do is change the pod and block to the correct number for each
 storage node. If everything is in sequence you can just wrap that loop in
@@ -354,9 +354,9 @@ we made. We will create some directories we need under those links.
 
 .. code-block:: bash
 
-   $ mmcrfileset /dev/marfs namespace_one
-   $ mmlinkfileset /dev/marfs namespace_one -J /gpfs/metadata/namespace_one
-   $ mkdir /gpfs/metadata/namespace_one/mdfs
+   mmcrfileset /dev/marfs namespace_one
+   mmlinkfileset /dev/marfs namespace_one -J /gpfs/metadata/namespace_one
+   mkdir /gpfs/metadata/namespace_one/mdfs
 
 All MDFS directories should be readable by everyone. We also want to set
 ownership of the MDFS directory here. The permissions and ownership of this
@@ -366,7 +366,7 @@ directory will be reflected as the permissions in the MarFS mount later. So
 There is a file MarFS will always look for under the mdfs directory called
 :code:`fsinfo`. Lets create that now.
 
-:code:`$ touch /gpfs/metadata/namespace_one/mdfs/fsinfo`
+:code:`touch /gpfs/metadata/namespace_one/mdfs/fsinfo`
 
 FTA nodes
 ---------
@@ -381,17 +381,18 @@ a new directory to hold the :code:`pod/block/cap/` structure.
 
 .. code-block:: bash
 
-   $ mkdir /gpfs/data
+   mkdir /gpfs/data
 
-   $ for b in {0..3}; do
+   for b in {0..3}; do
       for c in {0..3}; do
          mkdir -p /gpfs/data/repo3+1/pod0/block$b/cap$c; done; done
 
-Behold. Now mount the datastores.
+Behold. Now mount the datastores. If you are not using NFS over RDMA you can
+exclude rdma and "port=20049" from the options here.
 
 .. code-block:: bash
 
-   $ mount -o "_netdev,async,rw,nfsvers=3,nolock,wsize=1048576,rsize=1048576,rdma,soft,port=20049" -t nfs \
+   mount -o "_netdev,async,rw,nfsvers=3,nolock,wsize=1048576,rsize=1048576,rdma,soft,port=20049" -t nfs \
             sn01:/zfs/exports/repo3+1/pod0/block0/cap0 /gpfs/data/repo3+1/pod0/block0/cap0
 
 Do that for all capacity units with the correct pod block and cap numbers.
@@ -400,10 +401,8 @@ Once that has been done we're ready to build our software dependencies.
 
 Building software for MarFS
 ===========================
-
-That's right. That was just what we needed to do to be able to build MarFS.
-
-.. image:: _static/wheeze.gif
+ 
+Now we can build our cloned dependencies.
 
 Build Environment
 -----------------
@@ -487,26 +486,26 @@ Build ISA-L
 
 .. code-block:: bash
 
-   $ cd $LIBISAL
-   $ ./autogen.sh
-   $ ./configure --prefix=$MARFS_BUILD --libdir=$LIBISAL
-   $ make install
+   cd $LIBISAL
+   ./autogen.sh
+   ./configure --prefix=$MARFS_BUILD --libdir=$LIBISAL
+   make install
 
 Build AWS4C
 -----------
 
 .. code-block:: bash
 
-   $ cd $AWS4C
-   $ make 
+   cd $AWS4C
+   make 
 
 You must create a file that AWS4C will use for authentication.
 It should follow the convention :code:`username:username:password`
 
 .. code-block:: bash
 
-   $ echo "root:root:HZxGesCYgz0K" >> /root/.awsAuth
-   $ chmod 600 /root/.awsAuth
+   echo "root:root:HZxGesCYgz0K" >> /root/.awsAuth
+   chmod 600 /root/.awsAuth
 
 In addition, :code:`/root/.awsAuth` can be used to control authentication of
 requests sent to the MC-RDMA servers. This prevents any non-root user from
@@ -522,10 +521,10 @@ Build ErasureUtils
 
 .. code-block:: bash
 
-   $ cd $ERASURE
-   $ autoconf –i
-   $ ./configure --prefix=$MARFS_BUILD LDFLAGS=" -L$MARFS_BUILD/lib -L$AWS4C"
-   $ make install
+   cd $ERASURE
+   autoconf –i
+   ./configure --prefix=$MARFS_BUILD LDFLAGS=" -L$MARFS_BUILD/lib -L$AWS4C"
+   make install
 
 If you are using RDMA sockets you must add :code:`--enable-sockets=rdma` to
 the configure line above.
@@ -539,14 +538,14 @@ Build MarFS
 
 .. code-block:: bash
 
-   $ cd $PACKAGES/marfs
-   $ autoconf -i
+   cd $PACKAGES/marfs
+   autoconf -i
 
-   $ ./configure --prefix=/opt/marfs_build \
-                 --enable-logging=syslog \
-                 --enable-mc  \
-                 MARFS_MNT=/campaign \
-                 LDFLAGS="-L$MARFS_BUILD/lib -L$AWS4C"
+   ./configure --prefix=/opt/marfs_build \
+               --enable-logging=syslog \
+               --enable-mc  \
+               MARFS_MNT=/campaign \
+               LDFLAGS="-L$MARFS_BUILD/lib -L$AWS4C"
    
    make install
 
@@ -604,12 +603,12 @@ environment file shown ealier.
 
 .. code-block:: bash
 
-   $ cd $PACKAGES/pftool
-   $ ./configure --prefix=$MARFS_BUILD \
-                 --enable-marfs \
-                 CPPFLAGS="$MARFS_CPPFLAGS” \
-                 LDFLAGS="$MARFS_LDFLAGS"
-   $ make install
+   cd $PACKAGES/pftool
+   ./configure --prefix=$MARFS_BUILD \
+               --enable-marfs \
+               CPPFLAGS="$MARFS_CPPFLAGS” \
+               LDFLAGS="$MARFS_LDFLAGS"
+   make install
 
 Lets add our marfs build directory to our :code:`path`
 :code:`export PATH=$MARFS_BUILD/bin:$PATH`
