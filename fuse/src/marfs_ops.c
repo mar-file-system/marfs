@@ -296,8 +296,13 @@ int marfs_flush (const char*        path,
          if (! (fh->os.flags & (OSF_ERRORS | OSF_ABORT))) {
 
             // add final recovery-info, at the tail of the object
-            if (write_recoveryinfo(os, info, fh) < 0)
+            if (write_recoveryinfo(os, info, fh) < 0) {
                retval = -1;
+            }
+            // gransom edit -- adjust the size of packed objects as we close them
+            else if ( fh->flags & FH_PACKED ) {
+               fh->objectSize += MARFS_REC_UNI_SIZE;
+            }
          }
       }
       else {
@@ -1175,7 +1180,8 @@ int marfs_open(const char*         path,
          update_pre(&info->pre);
 
          // update the object info
-         fh->objectSize += content_length+MARFS_REC_UNI_SIZE;
+         // gransom edit : for packed files, unsafe to assume a successful write before it happens
+         // fh->objectSize += content_length+MARFS_REC_UNI_SIZE;
          fh->fileCount += 1;
       }
 
@@ -3073,6 +3079,11 @@ ssize_t marfs_write(const char*        path,
 
       TRY_GE0( write_recoveryinfo(os, info, fh) );
 
+      // gransom edit -- note the size of packed files as we write them
+      if ( fh->flags & FH_PACKED ) {
+         // NOTE --  I doubt this code will ever be hit (packs don't span objects), put here just in case
+         fh->objectSize += fill + recovery;
+      }
 
       // close the object
       LOG(LOG_INFO, "closing chunk: %ld\n", info->pre.chunk_no);
@@ -3131,8 +3142,13 @@ ssize_t marfs_write(const char*        path,
 
    // write more data into object. This amount doesn't finish out any
    // object, so don't write chunk-info to MD file.
-   if (write_size)
+   if (write_size) {
       TRY_GE0( DAL_OP(put, fh, buf_ptr, write_size) );
+      // gransom edit -- note the size of packed files as we write them
+      if ( fh->flags & FH_PACKED ) {
+         fh->objectSize += write_size;
+      }
+   }
 
 #if 0
    // EXPERIMENT for NFS
