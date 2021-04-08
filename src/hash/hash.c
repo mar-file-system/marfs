@@ -62,6 +62,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <string.h>
 #include <math.h>
 
+//   -------------   INTERNAL DEFINITIONS    -------------
+
 // this seed value was chosen arbitrarily
 #define KEY_SEED 17
 
@@ -81,6 +83,9 @@ typedef struct hash_table_struct {
    size_t         curnode;       // position of the next node ( for iterating )
    size_t         iterated;      // number of nodes returned so far ( for iterating )
 }* HASH_TABLE;
+
+
+//   -------------   INTERNAL FUNCTIONS    -------------
 
 // see implemtation/release info, below
 void MurmurHash3_x64_128( const void* key, const int len, const uint32_t seed, void* out );
@@ -128,6 +133,9 @@ static int compare_nodes(const void *a, const void *b) {
          return 1;
    }
 }
+
+
+//   -------------   EXTERNAL FUNCTIONS    -------------
 
 
 HASH_TABLE hash_init( HASH_NODE* nodes, size_t count ) {
@@ -259,6 +267,7 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
    // generate an ID value from the target string
    uint64_t tid[2];
    identifier( target, tid );
+   int retval = 1; // assume an approximate match
 
    // perform a binary search of the vnode ring for a matching ID value
    // NOTE -- the builtin bsearch() function is not ideal for this, as it is looking only 
@@ -281,20 +290,61 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
          min = curnode + 1;
       }
       else {
-         // the current node ID is an exact match
-         // map the resulting virtual node to the actual node
-         *node = table->nodes + table->vnodes[curnode].nodenum;
-         // set new iterator values
-         table->curnode = table->vnodes[curnode].nodenum + 1;
-         if ( table->curnode >= table->nodecount ) { table->curnode = 0; }
-         table->iterated = 1;
-         return 0;
+         // the current node ID matches
+         // while this is VERY likely to be an exact match on name as well, we must verify
+         if ( strncmp( node->name, target, strlen(target) + 1 ) ) {
+            // we have an ID collision, rather than an actual match
+            // this is an unfortunate edge case, as we must do some extra checks against nearby nodes
+            break;  // NOTE -- it is impossible for curnode==max here, so that will be our catch for this case
+         }
+         // this node is a true exact match
+         retval = 0;
+         max = curnode; // to avoid the ID collision case
       }
 
       curnode = min + ( ( max - min ) / 2 );
    }
-   // if we get here, no exact match exists
-   // instead, min/max/curnode will have converged on an ID value *just* above the target
+
+   // check for the ID collision case
+   if ( curnode != max ) {
+      // check surrounding nodes for an exact match
+      size_t tmpnode = curnode + 1;
+      int step = 1; // check higher postions first
+      while ( 1 ) {
+         // check upper bound and ID match
+         if ( tmpnode == max  ||  compareID( table->vnodes[tmpnode].id, tid ) ) {
+            // no point checking further in this direction
+            if ( step > 0 ) {
+               // reverse direction
+               if ( curnode == 0 ) {
+                  // no lesser nodes exist, so we are done
+                  // this check is REQUIRED to avoid unsigned value overflow
+                  break;
+               }
+               step = -1;
+               tmpnode = curnode - 1;
+               continue;
+            }
+            break; // we've checked both directions, so give up
+         }
+         // we've found an ID match, now check for a name match
+         HASH_NODE* newnode = table->nodes + table->vnodes[tmpnode].nodenum;
+         if ( strncmp( newnode.name, target, strlen(target) + 1 ) == 0 ) {
+            // a real exact match; return this instead
+            curnode = tmpnode;
+            retval = 0;
+            break;
+         }
+         // yet *another* ID collision, so we must continue
+         if ( tmpnode == min ) { break; } // lower bound check
+         // proceed along our current direction
+         tmpnode = tmpnode + step;
+      }
+      // we have checked all surrounding nodes, but no exact match exists
+   }
+
+   // If we get here, either curnode references a matching ID value or min/max/curnode will have converged 
+   //  on an ID value *just* above the target
    // we now have to check for the 'loop' condition
    if ( curnode == table->vnodecount ) {
       // if min/max/curnode == vnodecount, the target ID is beyond our largest existing value
@@ -307,7 +357,7 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
    table->curnode = table->vnodes[curnode].nodenum + 1;
    if ( table->curnode >= table->nodecount ) { table->curnode = 0; }
    table->iterated = 1;
-   return 1; // not an exact match
+   return retval;
 }
 
 
@@ -515,12 +565,5 @@ void MurmurHash3_x64_128 ( const void * key, const int len,
   ((uint64_t*)out)[0] = h1;
   ((uint64_t*)out)[1] = h2;
 }
-
-
-
-
-
-
-
 
 
