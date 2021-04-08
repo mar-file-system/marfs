@@ -53,11 +53,6 @@
 #LANL contributions is found at https://github.com/jti-lanl/aws4c.
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
-#
 
-ACLOCAL_AMFLAGS = -I m4
-AUTOMAKE_OPTIONS = foreign
-
-
-SUBDIRS = src
+SUBDIRS = mdal
 
