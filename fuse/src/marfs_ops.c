@@ -385,6 +385,10 @@ int marfs_flush (const char*        path,
        && has_any_xattrs(info, MARFS_ALL_XATTRS)) {
 
       off_t size = os->written - fh->write_status.sys_writes;
+      // gransom edit --  packed files require special size calculation
+      if ( fh->flags & FH_PACKED ) {
+         size -= info->post.obj_offset;
+      }
       if ( MD_PATH_OP(truncate, info->ns, info->post.md_path, size) )
          retval = -1;
    }
