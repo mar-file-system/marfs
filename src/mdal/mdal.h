@@ -142,6 +142,16 @@ typedef struct MDAL_struct {
     */
    int (*createnamespace) ( MDAL_CTXT ctxt, const char* ns, int refdepth, int refbreadth, int digits );
 
+   /**
+    * Destroy the specified namespace
+    * NOTE -- This operation will fail with errno=ENOTEMPTY if files persist in the namespace.
+    *         This includes files within the reference tree.
+    * @param MDAL_CTXT ctxt : Current MDAL context
+    * @param const char* ns : Name of the namespace to be deleted
+    * @return int : Zero on success, -1 if a failure occurred
+    */
+   int (*destroynamespace) ( MDAL_CTXT ctxt, const char* ns );
+
 
    // Usage Functions
 

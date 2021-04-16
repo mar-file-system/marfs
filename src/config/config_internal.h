@@ -1,5 +1,5 @@
-#ifndef _NAMESPACE_H
-#define _NAMESPACE_H
+#ifndef _CONFIG_INTERNAL_H
+#define _CONFIG_INTERNAL_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -58,20 +58,17 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include <stdint.h>
 
-typedef void* HASH_TABLE;
+#include "config/config.h"
 
-typedef struct hash_node_struct {
-   const char* name;
-   int         weight;
-   void*       content;
-} HASH_NODE;
 
-HASH_TABLE hash_init( HASH_NODE* nodes, size_t count );
-int hash_term( HASH_TABLE table, HASH_NODE** nodes, size_t* count );
-int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node );
-int hash_iterate( HASH_TABLE table, HASH_NODE** node );
+marfs_repo* find_repo( marfs_config* config, const char* reponame );
+int create_repo( marfs_repo* reporef, XmlNode* reporoot );
+int create_nslist( HASH_NODE** nslist, XmlNode* nsroot );
+int establish_nshierarchy( marfs_config* config );
+int count_nodes( XmlNode* root, const char* tag );
 
-#endif // _NAMESPACE_H
+
+
+#endif // _CONFIG_INTERNAL_H
 
