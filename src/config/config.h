@@ -71,20 +71,23 @@ typedef struct marfs_repo_struct marfs_repo;
 typedef struct marfs_namespace_struct marfs_ns;
 
 typedef enum {
-   NS_NOACCESS = 0,    // 0  = 0b00000 -- No access at all
-   NS_READMETA,        // 1  = 0b00001 -- Read access to metadata   ( readdir / stat / etc. )
-   NS_WRITEMETA,       // 2  = 0b00010 -- Write access to metadata  ( open / mkdir / etc. )
-   NS_RWMETA,          // 3  = 0b00011 -- Read and Write access to metadata
-   NS_READDATA,        // 4  = 0b00100 -- Read access to data
-   NS_WRITEDATA = 8,   // 8  = 0b01000 -- Write access to data
-   NS_RWDATA = 12,     // 12 = 0b01100 -- Read and Write access to data
-   NS_UNLINK = 16      // 16 = 0b10000 -- Ability to unlink existing files / dirs
+   NS_NOACCESS = 0,    // 0  = 0b0000 -- No access at all
+   NS_READMETA,        // 1  = 0b0001 -- Read access to metadata   ( readdir / stat / etc. )
+   NS_WRITEMETA,       // 2  = 0b0010 -- Write access to metadata  ( open / mkdir / etc. )
+   NS_RWMETA,          // 3  = 0b0011 -- Read and Write access to metadata
+   NS_READDATA,        // 4  = 0b0100 -- Read access to data
+   NS_WRITEDATA = 8,   // 8  = 0b1000 -- Write access to data
+   NS_RWDATA = 12,     // 12 = 0b1100 -- Read and Write access to data
 } ns_perms;
 
 
 typedef struct marfs_namespace_struct {
+   char        enforcefq;   // flag for enforcing file quotas
    size_t      fquota;      // file quota of the namespace
+   char        enforcedq;   // flag for enforcing data quotas
    size_t      dquota;      // data quota of the namespace ( in bytes )
+   ns_perms    iperms;      // interactive access perms for this namespace
+   ns_perms    bperms;      // batch access perms for this namespace
    HASH_TABLE  subspaces;   // subspace hash table, referencing namespaces below this one
    marfs_repo* prepo;       // reference to the repo containing this namespace
    marfs_ns*   pnamespace;  // reference to the parent namespace of this one
@@ -94,34 +97,37 @@ typedef struct marfs_namespace_struct {
 
 
 typedef struct marfs_datascheme_struct {
-   ne_erasure epat;
-   ne_ctxt    nectxt;
-   size_t     objfiles;
-   size_t     objsize;
-   HASH_TABLE podtable;
-   HASH_TABLE captable;
-   HASH_TABLE scattertable;
+   ne_erasure epat;             // erasure defintion for writing out objects
+   ne_ctxt    nectxt;           // LibNE context reference for data access
+   size_t     objfiles;         // maximum count of files per data object
+   char       chunkingenabled;  // flag indicating if files can span objects
+   size_t     objsize;          // maximum data object size ( IF CHUNKING ENABLED )
+   HASH_TABLE podtable;         // hash table for object POD postion
+   HASH_TABLE captable;         // hash table for object CAP position
+   HASH_TABLE scattertable;     // hash table for object SCATTER position
 } marfs_ds;
 
 
 typedef struct marfs_metadatascheme_struct {
-   char       directread;
-   char       directwrite;
-   int        nscount;
-   HASH_NODE* nslist;
-   MDAL       mdal;
+   MDAL       mdal;         // MDAL reference for metadata access
+   int        nscount;      // count of the namespaces directly referenced by this repo
+   HASH_NODE* nslist;       // array of namespaces directly referenced by this repo
+   char       directread;   // flag indicating support for data read from metadata files
+   char       directwrite;  // flag indicating support for data write to metadata files
+   int        directchunks; // maximum number of data chunks to write to a metadata file
 } marfs_ms;
 
 
 typedef struct marfs_repo_struct {
-   char*     name;
-   marfs_ds  datascheme;
-   marfs_ms  metascheme;
+   char*     name;        // name of this repo
+   marfs_ds  datascheme;  // struct defining the data structure of this repo
+   marfs_ms  metascheme;  // struct defining the metadata structure of this repo
 } marfs_repo;
 
 
 typedef struct marfs_config_struct {
    char*       mountpoint;
+   marfs_ns*   rootns;
    int         repocount;
    marfs_repo* repolist;
 } marfs_config;
