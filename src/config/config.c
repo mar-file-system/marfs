@@ -319,7 +319,7 @@ int parse_quotas( char* enforcefq, size_t* fquota, char* enforcedq, size_t* dquo
                   }
                   // check for unacceptable trailing characters
                   endptr++;
-                  if ( *endptr == 'B' ) { endptr++; } // skip acceptable 'B' character
+                  if ( *endptr == 'B'  &&  qtype == 'd' ) { endptr++; } // skip acceptable 'B' character
                   if ( *endptr != '\0' ) {
                      LOG( LOG_ERR, "encountered unrecognized trailing character in quota value: \"%c\"", *endptr );
                      return -1;
@@ -356,12 +356,7 @@ int free_ns( HASH_NODE* nsnode ) {
    marfs_ns* ns = (marfs_ns*)nsnode->content;
    const char* nsname = nsnode->name;
    int retval = 0;
-   // check if this is a remote namespace def
-   if ( ns->prepo == NULL ) {
-      // 'subspaces' is just a string, and can be directly freed
-      free( (char*)ns->subspaces );
-   }
-   else {
+   if ( ns->subspaces ) {
       // need to properly free the subspace hash table
       HASH_NODE* subspacelist;
       size_t subspacecount;
@@ -384,8 +379,12 @@ int free_ns( HASH_NODE* nsnode ) {
                retval = -1;
             }
          }
+         // regardless, we need to free the list of HASH_NODEs
+         free( subspacelist );
       }
    }
+   // free the namespace id string
+   free( ns->idstr );
    // free the namespace itself
    free( ns );
    // free the namespace name
@@ -439,8 +438,8 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
    // make sure we don't have any forbidden name characters
    char* parse = nsname;
    for ( ; *parse != '\0'; parse++ ) {
-      if ( *parse == '/' ) {
-         LOG( LOG_ERR, "found namespace \"%s\" with disallowed '/' character in name value\n", nsname );
+      if ( *parse == '/'  ||  *parse == '|' ) {
+         LOG( LOG_ERR, "found namespace \"%s\" with disallowed '%c' character in name value\n", nsname, *parse );
          errno = EINVAL;
          free( nsname );
          return -1;
@@ -477,17 +476,18 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
 
    // additional checks for remote namespaces
    if ( rns ) {
-      // make sure this isn't a remote namespace at the root of a repo
-      if ( pnamespace == NULL ) {
-         LOG( LOG_ERR, "remote namespace \"%s\" was found at the root of a repo\n", nsname );
-         free( nsname );
-         errno = EINVAL;
-         return -1;
-      }
       // make sure we actually found a 'repo' name
       if ( reponame == NULL ) {
          LOG( LOG_ERR, "remote namespace \"%s\" is missing a 'repo' value\n", nsname );
          free( nsname );
+         errno = EINVAL;
+         return -1;
+      }
+      // make sure this isn't a remote namespace at the root of a repo
+      if ( pnamespace == NULL ) {
+         LOG( LOG_ERR, "remote namespace \"%s\" was found at the root of a repo\n", nsname );
+         free( nsname );
+         free( reponame );
          errno = EINVAL;
          return -1;
       }
@@ -515,16 +515,40 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
    if ( rns ) {
       // we'll indicate this is a remote namespace by NULLing out the prepo ref
       ns->prepo = NULL;
-      // we need to know what repo to look for the full namespace def in; so...
-      //  I've jammed the string pointer into the subspace pointer
-      // TODO : this is pretty ugly, is there a better place to store this info?
-      ns->subspaces = (HASH_TABLE)reponame;
+      // we need to know what repo to look for the full namespace def in; so jam it in as the id string
+      ns->idstr = reponame;
       // make sure there aren't any other XML nodes lurking below here
       if ( nsroot->children ) {
          LOG( LOG_WARNING, "ignoring all xml elements below remote NS \"%s\"\n", nsname );
       }
       // for remote namespaces, we're done; no other values are relevant
       return 0;
+   }
+
+   // populate the namespace id string
+   int idstrlen = strlen(nsname) + 2; // nsname plus '|' prefix and NULL terminator
+   if ( pnamespace ) { idstrlen += strlen( pnamespace->idstr ); }
+   ns->idstr = malloc( sizeof(char) * idstrlen );
+   if ( ns->idstr == NULL ) {
+      LOG( LOG_ERR, "failed to allocate space for the id string of NS \"%s\"\n", nsname );
+      free( nsname );
+      free( ns );
+      return -1;
+   }
+   int prres = 0;
+   if ( pnamespace ) {
+      prres = snprintf( ns->idstr, idstrlen, "%s|%s", pnamespace->idstr, nsname );
+   }
+   else {
+      prres = snprintf( ns->idstr, idstrlen, "|%s", nsname );
+   }
+   // check for successful print (probably unnecessary)
+   if ( prres != (idstrlen - 1) ) {
+      LOG( LOG_ERR, "failed to populate id string of NS \"%s\"\n", nsname );
+      free( ns->idstr );
+      free( nsname );
+      free( ns );
+      return -1;
    }
 
    // set some default namespace values
@@ -544,6 +568,7 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
       subspacelist = malloc( sizeof( HASH_NODE ) * subspcount );
       if ( subspacelist == NULL ) {
          LOG( LOG_ERR, "failed to allocate space for subspace list of NS \"%s\"\n", nsname );
+         free( ns->idstr );
          free( nsname );
          free( ns );
          return -1;
@@ -610,6 +635,20 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
       errno = EFAULT;
    }
 
+   // check for namespace collisions
+   int index;
+   for ( index = 1; index < allocsubspaces; index++ ) {
+      int prevns = 0;
+      for ( ; prevns < index; prevns++ ) {
+         if ( strcmp( subspacelist[prevns]->name, subspacelist[index]->name ) == 0 ) {
+            LOG( LOG_ERR, "detected repeated \"%s\" subspace name below NS \"%s\"\n", nsname );
+            retval = -1;
+            errno = EINVAL;
+            break;
+         }
+      }
+   }
+
    // allocate our subspace hash table only if we aren't already aborting
    if ( retval == 0 ) {
       ns->subspaces = hash_init( subspacelist, subspcount );
@@ -629,6 +668,7 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
          }
       }
       if ( subspacelist ) { free( subspacelist ); }
+      free( ns->idstr );
       free( nsname );
       free( ns );
       return retval;
@@ -637,6 +677,265 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
    return 0;
 }
 
+
+HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) {
+   // get the node name, just for the sake of log messages
+   char* distname = (char*)distroot->name;
+   // iterate over attributes, looking for cnt and dweight values
+   int dweight = 1;
+   size_t nodecount = 0;
+   xmlAttr* attr = distroot->properties;
+   for ( ; attr; attr = attr->next ) {
+      char*  attrtype = NULL;
+      char* attrval = NULL;
+      if ( attr->type == XML_ATTRIBUTE_NODE ) {
+         // attempt to stash the attribute type and value, for later parsing
+         attrtype = (char*)attr->name;
+         if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+            attrval = (char*)attr->children->content;
+         }
+         else {
+            LOG( LOG_ERR, "encountered an unrecognized '%s' value for %s distribution of \"%s\" repo\n", attrtype, distname, reponame );
+            errno = EINVAL;
+            return NULL;
+         }
+
+         // perform some checks, specific to the attribute type
+         if ( strncmp( attrtype, "cnt", 4 ) == 0  &&  nodecount != 0 ) {
+            // we already found a 'cnt'
+            LOG( LOG_ERR, "encountered a duplicate 'cnt' value for %s distribution of \"%s\" repo\n", distname, reponame );
+            errno = EINVAL;
+            return NULL;
+         }
+         else if ( strncmp( attrtype, "dweight", 8 ) == 0  &&  dweight != 1 ) {
+            // we already found a 'dweight' ( note - this will fail to detect prior dweight='1' )
+            LOG( LOG_ERR, "encountered a duplicate 'dweight' value for %s distribution of \"%s\" repo\n", distname, reponame );
+            errno = EINVAL;
+            return NULL;
+         }
+         else {
+            // reject any unrecognized attributes
+            LOG( LOG_WARNING, "ignoring unrecognized '%s' attr of %s distribution of \"%s\" repo\n", attrtype, distname, reponame );
+            attrval = NULL; // don't try to interpret
+         }
+      }
+      else {
+         // not even certain this is possible; warn just in case our config is in a very odd state
+         LOG( LOG_WARNING, "encountered an unrecognized property of %s distribution of \"%s\" repo\n", distname, reponame );
+      }
+
+      // if we found a new attribute value, parse it
+      if ( attrval ) {
+         char* endptr = NULL;
+         unsigned long long parseval = strtoull( attrval, &(endptr), 10 );
+         if ( *endptr != '\0' ) {
+            LOG( LOG_ERR, "detected a trailing '%c' character in '%s' value for %s distribution of \"%s\" repo\n", *endptr, attrtype, distname, reponame );
+            errno = EINVAL;
+            return NULL;
+         }
+         // check for possible value overflow
+         if ( parseval >= SIZE_MAX ) {
+            LOG( LOG_ERR, "%s distribution of \"%s\" repo has a '%s' value which exceeds memory bounds: \"%s\"\n", disname, reponame, attrtype, attrval );
+            errno = EINVAL;
+            return NULL;
+         }
+
+         // assign value to the appropriate var
+         // Note -- this check can be lax, as we already know attrype == "dweight" OR "cnt"
+         if ( *attrtype = 'c' ) {
+            nodecount = parseval;
+         }
+         else {
+            dweight = parseval;
+         }
+      }
+   }
+   // all attributes of this distribution have been parsed
+   // make sure we have the required 'cnt' value
+   if ( nodecount == 0 ) {
+      LOG( LOG_ERR, "failed to identify a valid 'cnt' of %s for \"%s\" repo\n", distname, reponame );
+      errno = EINVAL;
+      return NULL;
+   }
+
+   // allocate space for all hash nodes
+   HASH_NODE* nodelist = malloc( sizeof(HASH_NODE) * nodecount );
+   if ( nodelist == NULL ) {
+      LOG( LOG_ERR, "failed to allocate space for hash nodes of %s distribution of \"%s\" repo\n", distname, reponame );
+      return NULL;
+   }
+
+   // populate all node names and set weights to default
+   size_t curnode;
+   for ( curnode = 0; curnode < nodecount; curnode++ ) {
+      nodelist[curnode]->content = NULL; // we don't care about content
+      nodelist[curnode]->weight = dweight; // every node gets the default weight, for now
+      // identify the number of characers needed for this nodename via some cheeky use of snprintf
+      int namelen = snprintf( NULL, 0, "%zu", curnode );
+      nodelist[curnode]->name = malloc( sizeof(char) * (namelen + 1) );
+      if ( nodelist[curnode]->name == NULL ) {
+         LOG( LOG_ERR, "failed to allocate space for node names of %s distribution of \"%s\" repo\n", distname, reponame );
+         break;
+      }
+      if ( snprintf( nodelist[curnode]->name, namelen + 1, "%zu", curnode ) > namelen ) {
+         LOG( LOG_ERR, "failed to populate nodename \"%zu\" of %s distribution of \"%s\" repo\n", curnode, distname, reponame );
+         errno = EFAULT;
+         free( nodelist[curnode]->name );
+         break;
+      }
+   }
+   // check for any 'break' conditions and clean up our allocated memory
+   if ( curnode != nodecount ) {
+      // free all name strings
+      size_t freenode;
+      for ( freenode = 0; freenode < curnode; freenode++ ) {
+         free( nodelist[freenode]->name );
+      }
+      // free our nodelist and terminate
+      free( nodelist );
+      return NULL;
+   }
+
+   // now, we need to check for specifically defined weight values
+   char errorflag = 0;
+   if ( distroot->children != NULL  &&
+        distroot->children->type == XML_TEXT_NODE  &&
+        distroot->children->content != NULL ) {
+      char* weightstr = (char*)distroot->children->content;
+      size_t tgtnode = nodecount;
+      while ( *weightstr != '\0' ) {
+         char* endptr;
+         unsigned long long parseval = strtoull( weightstr, &(endptr), 10 );
+         // perform checks for invalid trailing characters
+         if ( tgtnode == nodecount  &&  *endptr != '=' ) {
+            LOG( LOG_ERR, "improperly formatted node definition for %s distribution of \"%s\" repo\n", distname, reponame );
+            errno = EINVAL;
+            errorflag = 1;
+            break;
+         }
+         else if ( tgtnode != nodecount  &&  *endptr != ';' ) {
+            LOG( LOG_ERR, "improperly formatted weight value of node %zu for %s distribution of \"%s\" repo\n", tgtnode, distname, reponame );
+            errno = EINVAL;
+            errorflag = 1;
+            break;
+         }
+
+         // attempt to assign our parsed numeric value to the proper var
+         if ( tgtnode == nodecount ) {
+            // this is a definition of target node
+            // check for an out of bounds value
+            if ( parseval >= nodecount ) {
+               LOG( LOG_ERR, "%s distribution of \"%s\" repo has a node value which exceeds the defined limit of %zu\n", distname, reponame, nodecount );
+               errno = EINVAL;
+               errorflag = 1;
+               break;
+            }
+            tgtnode = parseval; // assign the tgtnode value
+         }
+         else {
+            // this is a weight definition
+            // check for an out of bounds value
+            if ( parseval >= INT_MAX ) {
+               LOG( LOG_ERR, "%s distribution of \"%s\" repo has a weight value for node %zu which exceeds memory limits\n", distname, reponame, tgtnode );
+               errno = EINVAL;
+               errorflag = 1;
+               break;
+            }
+            nodelist[tgtnode]->weight = parseval; // assign the specified weight to the target node
+            tgtnode = nodecount; // reset our target, so we know to expect a new one
+         }
+
+         // if we've gotten here, endptr either references '=' or ';'
+         // either way, we need to go one character further to find our next def
+         weightstr = (endptr + 1);
+
+      }
+   }
+   // check if we hit any error
+   if ( errorflag ) {
+      // free all name strings
+      size_t freenode;
+      for ( freenode = 0; freenode < nodecount; freenode++ ) {
+         free( nodelist[freenode]->name );
+      }
+      // free our nodelist and terminate
+      free( nodelist );
+      return NULL;
+   }
+
+   // finally, initialize the hash table
+   HASH_TABLE table = hash_init( nodelist, nodecount );
+   // verify success
+   if ( table == NULL ) {
+      LOG( LOG_ERR, "failed to initialize hash table for %s distribution of \"%s\" repo\n", distname, reponame );
+      // free all name strings
+      size_t freenode;
+      for ( freenode = 0; freenode < nodecount; freenode++ ) {
+         free( nodelist[freenode]->name );
+      }
+      // free our nodelist and terminate
+      free( nodelist );
+      return NULL;
+   }
+
+   return table;
+}
+
+
+int free_repo( marfs_repo* repo ) {
+   // note any errors
+   int retval = 0;
+
+   // free metadata scheme components
+   if ( mdal_term( repo->metascheme.mdal ) ) {
+      LOG( LOG_WARNING, "failed to terminate MDAL of \"%s\" repo\n", repo->name );
+      retval = -1;
+   }
+   int nsindex;
+   for ( nsindex = 0; nsindex < repo->metascheme.nscount; nsindex++ ) {
+      // recursively free all namespaces below this repo
+      if ( free_ns( repo->metascheme.nslist + nsindex ) ) {
+         LOG( LOG_WARNING, "failed to free NS %d of \"%s\" repo\n", nsindex, repo->name );
+         retval = -1;
+      }
+   }
+   if ( repo->metascheme.nslist ) { free( repo->metascheme.nslist ); }
+
+   // free data scheme components
+   if ( ne_term( repo->datascheme.nectxt ) ) {
+      LOG( LOG_WARNING, "failed to terminate NE context of \"%s\" repo\n", repo->name );
+      retval = -1;
+   }
+   size_t nodecount;
+   HASH_NODE* nodelist;
+   int target;
+   for( target = 0; target < 3; target++ ) {
+      HASH_TABLE ttable;
+      if ( target == 0 ) { ttable = repo->datascheme.podtable; }
+      else if ( target == 1 ) { ttable = repo->datascheme.captable; }
+      else { ttable = repo->datascheme.scattertable; }
+      // skip this table if it was never allocated
+      if ( ttable == NULL ) { continue; }
+      // otherwise, free the table
+      if ( hash_term( ttable, &(nodelist), &(nodecount) ) ) {
+         LOG( LOG_WARNING, "failed to free a distribution hash table of \"%s\" repo\n", repo->name );
+         retval = -1;
+      }
+      else {
+         // free all hash nodes
+         size_t nodeindex = 0;
+         for( ; nodeindex < nodecount; nodeindex++ ) {
+            free( nodelist[nodeindex]->name );
+         }
+         free( nodelist );
+      }
+   }
+
+   // finally, free the repo structure itself
+   free( repo );
+
+   return retval;
+}
 
 
 int create_repo( marfs_repo* reporef, XmlNode* reporoot );

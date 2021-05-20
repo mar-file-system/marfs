@@ -82,6 +82,9 @@ typedef enum {
 
 
 typedef struct marfs_namespace_struct {
+   char*       idstr;       // unique (per-repo) identification string
+   int         refbreadth;  // breadth of the metadata reference tree
+   int         refdepth;    // depth of the metadata reference tree
    char        enforcefq;   // flag for enforcing file quotas
    size_t      fquota;      // file quota of the namespace
    char        enforcedq;   // flag for enforcing data quotas
@@ -110,11 +113,11 @@ typedef struct marfs_datascheme_struct {
 
 typedef struct marfs_metadatascheme_struct {
    MDAL       mdal;         // MDAL reference for metadata access
-   int        nscount;      // count of the namespaces directly referenced by this repo
-   HASH_NODE* nslist;       // array of namespaces directly referenced by this repo
    char       directread;   // flag indicating support for data read from metadata files
    char       directwrite;  // flag indicating support for data write to metadata files
    int        directchunks; // maximum number of data chunks to write to a metadata file
+   int        nscount;      // count of the namespaces directly referenced by this repo
+   HASH_NODE* nslist;       // array of namespaces directly referenced by this repo
 } marfs_ms;
 
 

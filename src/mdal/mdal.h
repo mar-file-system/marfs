@@ -158,32 +158,32 @@ typedef struct MDAL_struct {
    /**
     * Set data usage value for the current namespace
     * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @param long long bytes : Number of bytes used by the namespace
+    * @param size_t kbytes : Number of KibiBytes used by the namespace
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*setdatausage) ( MDAL_CTXT ctxt, long long bytes );
+   int (*setdatausage) ( MDAL_CTXT ctxt, size_t kbytes );
 
    /**
     * Retrieve the data usage value of the current namespace
     * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @return long long : Number of bytes used by the namespace
+    * @return size_t : Number of KibiBytes used by the namespace
     */
-   long long (*getdatausage) ( MDAL_CTXT ctxt );
+   size_t (*getdatausage) ( MDAL_CTXT ctxt );
 
    /**
     * Set the inode usage value of the current namespace
     * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @param long long bytes : Number of inodes used by the namespace
+    * @param size_t files : Number of inodes used by the namespace
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*setinodeusage) ( MDAL_CTXT ctxt, long long files );
+   int (*setinodeusage) ( MDAL_CTXT ctxt, size_t files );
 
    /**
     * Retrieve the inode usage value of the current namespace
     * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @return long long : Number of inodes used by the current namespace
+    * @return size_t : Number of inodes used by the current namespace
     */
-   long long (*getinodeusage) ( MDAL_CTXT ctxt );
+   size_t (*getinodeusage) ( MDAL_CTXT ctxt );
 
 
    // Scanner Functions
