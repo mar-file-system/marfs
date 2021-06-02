@@ -158,15 +158,15 @@ typedef struct MDAL_struct {
    /**
     * Set data usage value for the current namespace
     * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @param size_t kbytes : Number of KibiBytes used by the namespace
+    * @param size_t bytes : Number of bytes used by the namespace
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*setdatausage) ( MDAL_CTXT ctxt, size_t kbytes );
+   int (*setdatausage) ( MDAL_CTXT ctxt, size_t bytes );
 
    /**
     * Retrieve the data usage value of the current namespace
     * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @return size_t : Number of KibiBytes used by the namespace
+    * @return size_t : Number of bytes used by the namespace
     */
    size_t (*getdatausage) ( MDAL_CTXT ctxt );
 

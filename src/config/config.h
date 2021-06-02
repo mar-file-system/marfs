@@ -83,17 +83,15 @@ typedef enum {
 
 typedef struct marfs_namespace_struct {
    char*       idstr;       // unique (per-repo) identification string
-   int         refbreadth;  // breadth of the metadata reference tree
-   int         refdepth;    // depth of the metadata reference tree
    char        enforcefq;   // flag for enforcing file quotas
    size_t      fquota;      // file quota of the namespace
    char        enforcedq;   // flag for enforcing data quotas
    size_t      dquota;      // data quota of the namespace ( in bytes )
    ns_perms    iperms;      // interactive access perms for this namespace
    ns_perms    bperms;      // batch access perms for this namespace
-   HASH_TABLE  subspaces;   // subspace hash table, referencing namespaces below this one
    marfs_repo* prepo;       // reference to the repo containing this namespace
    marfs_ns*   pnamespace;  // reference to the parent namespace of this one
+   HASH_TABLE  subspaces;   // subspace hash table, referencing namespaces below this one
 } marfs_ns;
 // NOTE -- namespaces will be wrapped in HASH_NODES for use in HASH_TABLEs
 //         the HASH_NODE struct will provide the name string of the namespace
@@ -116,6 +114,10 @@ typedef struct marfs_metadatascheme_struct {
    char       directread;   // flag indicating support for data read from metadata files
    char       directwrite;  // flag indicating support for data write to metadata files
    int        directchunks; // maximum number of data chunks to write to a metadata file
+   int        refbreadth;   // breadth of the metadata reference tree
+   int        refdepth;     // depth of the metadata reference tree
+   int        refdigits;    // minimum number of digits per reference tree branch
+   HASH_TABLE reftable;     // hash table for determining reference path
    int        nscount;      // count of the namespaces directly referenced by this repo
    HASH_NODE* nslist;       // array of namespaces directly referenced by this repo
 } marfs_ms;
@@ -129,6 +131,7 @@ typedef struct marfs_repo_struct {
 
 
 typedef struct marfs_config_struct {
+   char*       version;
    char*       mountpoint;
    marfs_ns*   rootns;
    int         repocount;

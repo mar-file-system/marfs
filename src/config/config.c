@@ -87,7 +87,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  *
  *          <!-- Chunking -->
  *          <chunking enabled="yes">
- *             <max_size>1073741824</max_size>
+ *             <max_size>1G</max_size>
  *          </chunking>
  *
  *          <!-- Object Distribution -->
@@ -125,9 +125,9 @@ int count_nodes( xmlNode* root, const char* tag ) {
 }
 
 
-marfs_ns* find_ns( HASH_NODE* nslist, int nscount, const char* nsname ) {
+marfs_ns* find_namespace( HASH_NODE* nslist, size_t nscount, const char* nsname ) {
    // iterate over the elements of the nslist, searching for a matching name
-   int index;
+   size_t index;
    for( index = 0; index < nscount; index++ ) {
       if( strncmp( nslist[index].name, nsname, strlen(nsname) ) == 0 ) {
          return ( nslist + index );
@@ -261,19 +261,93 @@ int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
 }
 
 
+int parse_size_node( size_t* target, XmlNode* node ) {
+   // note the node name, just for logging messages
+   char* nodename = (char*)node->name;
+   // check for an included value
+   if ( node->children != NULL  &&
+        node->children->type == XML_TEXT_NODE  &&
+        node->children->content != NULL ) {
+      char* valuestr = (char*)node->children->content;
+      size_t unitmult = 1;
+      char* endptr = NULL;
+      unsigned long long parsevalue = strtoull( valuestr, &(endptr), 10 );
+      // check for any trailing unit specification
+      if ( *endptr != '\0' ) {
+         if ( *endptr == 'K' ) { unitmult = 1024; }
+         else if ( *endptr == 'M' ) { unitmult = (1024 * 1024); }
+         else if ( *endptr == 'G' ) { unitmult = (1024 * 1024 * 1024); }
+         else if ( *endptr == 'T' ) { unitmult = (1024 * 1024 * 1024 * 1024); }
+         else if ( *endptr == 'P' ) { unitmult = (1024 * 1024 * 1024 * 1024 * 1024); }
+         else {
+            LOG( LOG_ERR, "encountered unrecognized character in \"%s\" value: \"%c\"", nodename, *endptr );
+            return -1;
+         }
+         // check for unacceptable trailing characters
+         endptr++;
+         if ( *endptr != '\0' ) {
+            LOG( LOG_ERR, "encountered unrecognized trailing character in \"%s\" value: \"%c\"", nodename, *endptr );
+            return -1;
+         }
+      }
+      if ( (parsevalue * unitmult) >= SIZE_MAX ) {  // check for possible overflow
+         LOG( LOG_ERR, "specified \"%s\" value is too large to store: \"%s\"\n", nodename, valuestr );
+         return -1;
+      }
+      // actually store the value
+      *target = parsevalue;
+      return 0;
+   }
+   LOG( LOG_ERR, "failed to identify a value string within the \"%s\" definition\n", nodename );
+   return -1;
+}
+
+
+int parse_int_node( int* target, XmlNode* node ) {
+   // note the node name, just for logging messages
+   char* nodename = (char*)node->name;
+   // check for an included value
+   if ( node->children != NULL  &&
+        node->children->type == XML_TEXT_NODE  &&
+        node->children->content != NULL ) {
+      char* valuestr = (char*)node->children->content;
+      char* endptr = NULL;
+      unsigned long long parsevalue = strtoull( valuestr, &(endptr), 10 );
+      // check for any trailing unit specification
+      if ( *endptr != '\0' ) {
+         LOG( LOG_ERR, "encountered unrecognized trailing character in \"%s\" value: \"%c\"", nodename, *endptr );
+         return -1;
+      }
+      if ( parsevalue >= INT_MAX ) {  // check for possible overflow
+         LOG( LOG_ERR, "specified \"%s\" value is too large to store: \"%s\"\n", nodename, valuestr );
+         return -1;
+      }
+      // actually store the value
+      *target = parsevalue;
+      return 0;
+   }
+   LOG( LOG_ERR, "failed to identify a value string within the \"%s\" definition\n", nodename );
+   return -1;
+}
+
+
 int parse_quotas( char* enforcefq, size_t* fquota, char* enforcedq, size_t* dquota, xmlNode* quotaroot ) {
    // iterate over nodes at this level
    for ( ; quotaroot; quotaroot = quotaroot->next ) {
       if ( quotaroot->type == XML_ELEMENT_NODE ) {
          // determine if we're parsing file or data quotas
-         char qtype = '\0';
          if ( strncmp( (char*)quotaroot->name, "files", 6 ) == 0 ) {
             if ( *fquota != 0  ||  *enforcefq != 0 ) {
                // this is a duplicate 'files' def
                LOG( LOG_ERR, "encountered duplicate 'files' quota set\n" );
                return -1;
             }
-            qtype = 'f';
+            // parse the value and set quota enforcement
+            if ( parse_size_node( fquota, quotaroot ) ) {
+               LOG( LOG_ERR, "failed to parse 'files' quota value\n" );
+               return -1;
+            }
+            *enforcefq = 1;
          }
          else if ( strncmp( (char*)quotaroot->name, "data", 5 ) == 0 ) {
             if ( *dquota != 0  ||  *enforcedq != 0 ) {
@@ -281,61 +355,15 @@ int parse_quotas( char* enforcefq, size_t* fquota, char* enforcedq, size_t* dquo
                LOG( LOG_ERR, "encountered duplicate 'data' quota set\n" );
                return -1;
             }
-            qtype = 'd';
+            // parse the value and set quota enforcement
+            if ( parse_size_node( dquota, quotaroot ) ) {
+               LOG( LOG_ERR, "failed to parse 'data' quota value\n" );
+               return -1;
+            }
+            *enforcedq = 1;
          }
          else {
             LOG( LOG_ERR, "encountered unexpected quota sub-node: \"%s\"\n", (char*)quotaroot->name );
-            return -1;
-         }
-
-         // parse the actual quota values
-         if ( quotaroot->children != NULL  &&  
-              quotaroot->children->type == XML_TEXT_NODE  &&  
-              quotaroot->children->content != NULL ) {
-            char* qstr = (char*)quotaroot->children->content;
-            if ( *qstr == '\0'  ||  strncmp( qstr, "none", 5 ) == 0  ||  strncmp( qstr, "NONE", 5 ) == 0 ) {
-               if ( qtype == 'f' ) {
-                  enforcefq = 0;
-               }
-               else {
-                  enforcedq = 0;
-               }
-            }
-            else {
-               // we have real quota values to parse
-               size_t unitmult = 1;
-               char* endptr = NULL;
-               unsigned long long qvalue = strtoull( qstr, &(endptr), 10 );
-               // check for any trailing unit specification
-               if ( *endptr != '\0' ) {
-                  if ( *endptr == 'K' ) { unitmult = 1024; }
-                  else if ( *endptr == 'M' ) { unitmult = (1024 * 1024); }
-                  else if ( *endptr == 'G' ) { unitmult = (1024 * 1024 * 1024); }
-                  else if ( *endptr == 'T' ) { unitmult = (1024 * 1024 * 1024 * 1024); }
-                  else if ( *endptr == 'P' ) { unitmult = (1024 * 1024 * 1024 * 1024 * 1024); }
-                  else {
-                     LOG( LOG_ERR, "encountered unrecognized character in quota value: \"%c\"", *endptr );
-                     return -1;
-                  }
-                  // check for unacceptable trailing characters
-                  endptr++;
-                  if ( *endptr == 'B'  &&  qtype == 'd' ) { endptr++; } // skip acceptable 'B' character
-                  if ( *endptr != '\0' ) {
-                     LOG( LOG_ERR, "encountered unrecognized trailing character in quota value: \"%c\"", *endptr );
-                     return -1;
-                  }
-               }
-               if ( (qvalue * unitmult) >= SIZE_MAX ) {  // check for possible overflow
-                  LOG( LOG_ERR, "specified quota value is too large to store: \"%s\"\n", qstr );
-                  return -1;
-               }
-               // actually store the quota value
-               if ( qtype == 'f' ) { *enforcefq = 1; *fquota = (qvalue * unitmult); }
-               else { *enforcedq = 1; *dquota = (qvalue * unitmult); }
-            }
-         }
-         else {
-            LOG( LOG_ERR, "encountered an unrecognized xml node type within 'quota' definition\n" );
             return -1;
          }
       }
@@ -350,7 +378,7 @@ int parse_quotas( char* enforcefq, size_t* fquota, char* enforcedq, size_t* dquo
 }
 
 
-int free_ns( HASH_NODE* nsnode ) {
+int free_namespace( HASH_NODE* nsnode ) {
    // we are assuming this function will ONLY be called on completed NS structures
    //   As in, this function will not check for certain NULL pointers, like name
    marfs_ns* ns = (marfs_ns*)nsnode->content;
@@ -374,7 +402,7 @@ int free_ns( HASH_NODE* nsnode ) {
                continue; // this namespace is referenced by another repo, so we must skip it
             }
             // recursively free this subspace
-            if ( free_ns( subspacelist[subspaceindex] ) ) {
+            if ( free_namespace( subspacelist[subspaceindex] ) ) {
                LOG( LOG_WARNING, "failed to free subspace of NS \"%s\"\n", nsname );
                retval = -1;
             }
@@ -393,7 +421,7 @@ int free_ns( HASH_NODE* nsnode ) {
 }
    
 
-int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNode* nsroot ) {
+int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNode* nsroot ) {
    // need to check if this is a real NS or a remote one
    char rns = 0;
    if ( strncmp( (char*)nsroot->name, "ns", 3 ) ) {
@@ -577,7 +605,7 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
 
    // iterate over children, populating perms, quotas, and subspaces
    xmlNode* subnode = nsroot->children;
-   int allocsubspaces = 0;
+   size_t allocsubspaces = 0;
    int retval = 0;
    for ( ; subnode; subnode = subnode->next ) {
       if ( subnode->type == XML_ELEMENT_NODE ) {
@@ -599,15 +627,24 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
          }
          else if ( strncmp( (char*)subnode->name, "ns", 3 ) == 0  ||  
                    strncmp( (char*)subnode->name, "rns", 4 ) == 0  ) {
-            // allocate a subspace
+            // ensure we haven't encountered more nodes than expected
             if ( allocsubspaces >= subspcount ) {
                LOG( LOG_ERR, "insufficient subspace allocation for NS \"%s\"\n", nsname );
                retval = -1;
                errno = EFAULT;
                break;
             }
-            if ( create_ns( subspacelist + allocsubspaces, ns, prepo, subnode ) ) {
+            // allocate a subspace
+            HASH_NODE* subnsnode = subspacelist + allocsubspaces;
+            if ( create_ns( subnsnode, ns, prepo, subnode ) ) {
                LOG( LOG_ERR, "failed to initialize subspace of NS \"%s\"\n", nsname );
+               retval = -1;
+               break;
+            }
+            // ensure we don't have any name collisions
+            if ( find_namespace( subspacelist, allocsubspaces, subnsnode->name ) ) {
+               LOG( LOG_ERR, "encountered subspace name collision: \"%s\"\n", subnsnode->name );
+               free_namespace( subnsnode );
                retval = -1;
                break;
             }
@@ -662,7 +699,7 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
    if ( retval != 0 ) {
       while ( allocsubspaces ) {
          allocsubspaces--;
-         if ( free_ns( subspacelist + allocsubspaces ) ) {
+         if ( free_namespace( subspacelist + allocsubspaces ) ) {
             // nothing to do besides complain; we're already failing out
             LOG( LOG_WARNING, "failed to free subspace %d of NS \"%s\"\n", nsname );
          }
@@ -678,7 +715,7 @@ int create_ns( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNo
 }
 
 
-HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) {
+HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
    // get the node name, just for the sake of log messages
    char* distname = (char*)distroot->name;
    // iterate over attributes, looking for cnt and dweight values
@@ -695,7 +732,7 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
             attrval = (char*)attr->children->content;
          }
          else {
-            LOG( LOG_ERR, "encountered an unrecognized '%s' value for %s distribution of \"%s\" repo\n", attrtype, distname, reponame );
+            LOG( LOG_ERR, "encountered an unrecognized '%s' value for %s distribution\n", attrtype, distname );
             errno = EINVAL;
             return NULL;
          }
@@ -703,25 +740,25 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
          // perform some checks, specific to the attribute type
          if ( strncmp( attrtype, "cnt", 4 ) == 0  &&  nodecount != 0 ) {
             // we already found a 'cnt'
-            LOG( LOG_ERR, "encountered a duplicate 'cnt' value for %s distribution of \"%s\" repo\n", distname, reponame );
+            LOG( LOG_ERR, "encountered a duplicate 'cnt' value for %s distribution\n", distname );
             errno = EINVAL;
             return NULL;
          }
          else if ( strncmp( attrtype, "dweight", 8 ) == 0  &&  dweight != 1 ) {
             // we already found a 'dweight' ( note - this will fail to detect prior dweight='1' )
-            LOG( LOG_ERR, "encountered a duplicate 'dweight' value for %s distribution of \"%s\" repo\n", distname, reponame );
+            LOG( LOG_ERR, "encountered a duplicate 'dweight' value for %s distribution\n", distname );
             errno = EINVAL;
             return NULL;
          }
          else {
             // reject any unrecognized attributes
-            LOG( LOG_WARNING, "ignoring unrecognized '%s' attr of %s distribution of \"%s\" repo\n", attrtype, distname, reponame );
+            LOG( LOG_WARNING, "ignoring unrecognized '%s' attr of %s distribution\n", attrtype, distname );
             attrval = NULL; // don't try to interpret
          }
       }
       else {
          // not even certain this is possible; warn just in case our config is in a very odd state
-         LOG( LOG_WARNING, "encountered an unrecognized property of %s distribution of \"%s\" repo\n", distname, reponame );
+         LOG( LOG_WARNING, "encountered an unrecognized property of %s distribution\n", distname );
       }
 
       // if we found a new attribute value, parse it
@@ -729,13 +766,13 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
          char* endptr = NULL;
          unsigned long long parseval = strtoull( attrval, &(endptr), 10 );
          if ( *endptr != '\0' ) {
-            LOG( LOG_ERR, "detected a trailing '%c' character in '%s' value for %s distribution of \"%s\" repo\n", *endptr, attrtype, distname, reponame );
+            LOG( LOG_ERR, "detected a trailing '%c' character in '%s' value for %s distribution\n", *endptr, attrtype, distname );
             errno = EINVAL;
             return NULL;
          }
          // check for possible value overflow
-         if ( parseval >= SIZE_MAX ) {
-            LOG( LOG_ERR, "%s distribution of \"%s\" repo has a '%s' value which exceeds memory bounds: \"%s\"\n", disname, reponame, attrtype, attrval );
+         if ( parseval >= INT_MAX ) {
+            LOG( LOG_ERR, "%s distribution has a '%s' value which exceeds memory bounds: \"%s\"\n", disname, attrtype, attrval );
             errno = EINVAL;
             return NULL;
          }
@@ -753,7 +790,7 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
    // all attributes of this distribution have been parsed
    // make sure we have the required 'cnt' value
    if ( nodecount == 0 ) {
-      LOG( LOG_ERR, "failed to identify a valid 'cnt' of %s for \"%s\" repo\n", distname, reponame );
+      LOG( LOG_ERR, "failed to identify a valid 'cnt' of %s distribution\n", distname );
       errno = EINVAL;
       return NULL;
    }
@@ -761,7 +798,7 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
    // allocate space for all hash nodes
    HASH_NODE* nodelist = malloc( sizeof(HASH_NODE) * nodecount );
    if ( nodelist == NULL ) {
-      LOG( LOG_ERR, "failed to allocate space for hash nodes of %s distribution of \"%s\" repo\n", distname, reponame );
+      LOG( LOG_ERR, "failed to allocate space for hash nodes of %s distribution\n", distname );
       return NULL;
    }
 
@@ -774,11 +811,11 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
       int namelen = snprintf( NULL, 0, "%zu", curnode );
       nodelist[curnode]->name = malloc( sizeof(char) * (namelen + 1) );
       if ( nodelist[curnode]->name == NULL ) {
-         LOG( LOG_ERR, "failed to allocate space for node names of %s distribution of \"%s\" repo\n", distname, reponame );
+         LOG( LOG_ERR, "failed to allocate space for node names of %s distribution\n", distname );
          break;
       }
       if ( snprintf( nodelist[curnode]->name, namelen + 1, "%zu", curnode ) > namelen ) {
-         LOG( LOG_ERR, "failed to populate nodename \"%zu\" of %s distribution of \"%s\" repo\n", curnode, distname, reponame );
+         LOG( LOG_ERR, "failed to populate nodename \"%zu\" of %s distribution\n", curnode, distname );
          errno = EFAULT;
          free( nodelist[curnode]->name );
          break;
@@ -808,13 +845,13 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
          unsigned long long parseval = strtoull( weightstr, &(endptr), 10 );
          // perform checks for invalid trailing characters
          if ( tgtnode == nodecount  &&  *endptr != '=' ) {
-            LOG( LOG_ERR, "improperly formatted node definition for %s distribution of \"%s\" repo\n", distname, reponame );
+            LOG( LOG_ERR, "improperly formatted node definition for %s distribution\n", distname );
             errno = EINVAL;
             errorflag = 1;
             break;
          }
          else if ( tgtnode != nodecount  &&  *endptr != ';' ) {
-            LOG( LOG_ERR, "improperly formatted weight value of node %zu for %s distribution of \"%s\" repo\n", tgtnode, distname, reponame );
+            LOG( LOG_ERR, "improperly formatted weight value of node %zu for %s distribution\n", tgtnode, distname );
             errno = EINVAL;
             errorflag = 1;
             break;
@@ -825,7 +862,7 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
             // this is a definition of target node
             // check for an out of bounds value
             if ( parseval >= nodecount ) {
-               LOG( LOG_ERR, "%s distribution of \"%s\" repo has a node value which exceeds the defined limit of %zu\n", distname, reponame, nodecount );
+               LOG( LOG_ERR, "%s distribution has a node value which exceeds the defined limit of %zu\n", distname, nodecount );
                errno = EINVAL;
                errorflag = 1;
                break;
@@ -836,7 +873,7 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
             // this is a weight definition
             // check for an out of bounds value
             if ( parseval >= INT_MAX ) {
-               LOG( LOG_ERR, "%s distribution of \"%s\" repo has a weight value for node %zu which exceeds memory limits\n", distname, reponame, tgtnode );
+               LOG( LOG_ERR, "%s distribution has a weight value for node %zu which exceeds memory limits\n", distname, tgtnode );
                errno = EINVAL;
                errorflag = 1;
                break;
@@ -849,6 +886,11 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
          // either way, we need to go one character further to find our next def
          weightstr = (endptr + 1);
 
+      }
+      if ( tgtnode != nodecount ) {
+         LOG( LOG_ERR, "%s distribution has node %zu reference, but no defined weight value\n", disname, tgtnode );
+         errno = EINVAL;
+         errorflag = 1;
       }
    }
    // check if we hit any error
@@ -867,7 +909,7 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
    HASH_TABLE table = hash_init( nodelist, nodecount );
    // verify success
    if ( table == NULL ) {
-      LOG( LOG_ERR, "failed to initialize hash table for %s distribution of \"%s\" repo\n", distname, reponame );
+      LOG( LOG_ERR, "failed to initialize hash table for %s distribution\n", distname );
       // free all name strings
       size_t freenode;
       for ( freenode = 0; freenode < nodecount; freenode++ ) {
@@ -878,6 +920,9 @@ HASH_TABLE create_distribution_table( XmlNode* distroot, const char* reponame ) 
       return NULL;
    }
 
+   // populate the provided count value
+   *count = (int)nodecount;
+   // return the created table
    return table;
 }
 
@@ -887,14 +932,30 @@ int free_repo( marfs_repo* repo ) {
    int retval = 0;
 
    // free metadata scheme components
-   if ( mdal_term( repo->metascheme.mdal ) ) {
-      LOG( LOG_WARNING, "failed to terminate MDAL of \"%s\" repo\n", repo->name );
+   if ( repo->metascheme.mdal ) {
+      if ( mdal_term( repo->metascheme.mdal ) ) {
+         LOG( LOG_WARNING, "failed to terminate MDAL of \"%s\" repo\n", repo->name );
+         retval = -1;
+      }
+   }
+   size_t nodecount;
+   HASH_NODE* nodelist;
+   if ( hash_term( ms->reftable, &(nodelist), &(nodecount) ) ) {
+      LOG( LOG_WARNING, "failed to free the reference path hash table of \"%s\" repo\n", repo->name );
       retval = -1;
+   }
+   else {
+      // free all hash nodes
+      size_t nodeindex = 0;
+      for( ; nodeindex < nodecount; nodeindex++ ) {
+         free( nodelist[nodeindex]->name );
+      }
+      free( nodelist );
    }
    int nsindex;
    for ( nsindex = 0; nsindex < repo->metascheme.nscount; nsindex++ ) {
       // recursively free all namespaces below this repo
-      if ( free_ns( repo->metascheme.nslist + nsindex ) ) {
+      if ( free_namespace( repo->metascheme.nslist + nsindex ) ) {
          LOG( LOG_WARNING, "failed to free NS %d of \"%s\" repo\n", nsindex, repo->name );
          retval = -1;
       }
@@ -902,12 +963,12 @@ int free_repo( marfs_repo* repo ) {
    if ( repo->metascheme.nslist ) { free( repo->metascheme.nslist ); }
 
    // free data scheme components
-   if ( ne_term( repo->datascheme.nectxt ) ) {
-      LOG( LOG_WARNING, "failed to terminate NE context of \"%s\" repo\n", repo->name );
-      retval = -1;
+   if ( repo->datascheme.nectxt ) {
+      if ( ne_term( repo->datascheme.nectxt ) ) {
+         LOG( LOG_WARNING, "failed to terminate NE context of \"%s\" repo\n", repo->name );
+         retval = -1;
+      }
    }
-   size_t nodecount;
-   HASH_NODE* nodelist;
    int target;
    for( target = 0; target < 3; target++ ) {
       HASH_TABLE ttable;
@@ -938,7 +999,521 @@ int free_repo( marfs_repo* repo ) {
 }
 
 
-int create_repo( marfs_repo* reporef, XmlNode* reporoot );
+int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
+   XmlNode* dalnode = NULL;
+   ne_location maxloc = { .pod = 0, .cap = 0, .scatter = 0 };
+   // iterate over nodes at this level
+   for ( ; dataroot; dataroot = dataroot->next ) {
+      if ( dataroot->type == XML_ELEMENT_NODE ) {
+         // first, check for a DAL definition
+         if ( strncmp( (char*)dataroot->name, "DAL", 4 ) == 0 ) {
+            if ( dalnode ) {
+               LOG( LOG_ERR, "detected duplicate DAL definition\n" );
+               return -1;
+            }
+            dalnode = dataroot; // save our DAL node reference for later
+            continue;
+         }
+         // check for an 'enabled' attr
+         xmlAttr* attr = dataroot->properties;
+         char enabled = 2; // assume enabled, but track if we actually get a value
+         if ( attr ) {
+            if ( attr->type == XML_ATTRIBUTE_NODE ) {
+               if ( strncmp( (char*)attr->name, "enabled", 8 ) == 0 ) {
+                  if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+                     if ( strncmp( (char*)attr->children->content, "no", 3 ) == 0 ) {
+                        enabled = 0;
+                     }
+                     else if ( strncmp( (char*)attr->children->content, "yes", 4 ) == 0 ) {
+                        enabled = 1;
+                     }
+                  }
+               }
+            }
+            // if we found any attribute value, ensure it made sense
+            if ( enabled == 2 ) {
+               LOG( LOG_ERR, "encountered an unrecognized attribute of a '%s' node within a 'data' definition\n", (char*)dataroot->name );
+               return -1;
+            }
+            // make sure this is the only attribute
+            if ( attr->next ) {
+               LOG( LOG_ERR, "detected trailing attributes of a '%s' node within a 'data' definition\n", (char*)dataroot->name );
+               return -1;
+            }
+            // if this node has been disabled, don't even bother parsing it
+            if ( !(enabled) ) { continue; }
+         }
+         // determine what definition we are parsing
+         XmlNode* subnode = dataroot->children;
+         if ( strncmp( (char*)dataroot->name, "protection", 11 ) == 0 ) {
+            // iterate over child nodes, populating N/E/PSZ
+            char haveN = 0;
+            char haveE = 0;
+            char haveP = 0;
+            for( ; subnode; subnode->next ) {
+               if ( subnode->type != XML_ELEMENT_NODE ) {
+                  LOG( LOG_ERR, "encountered unknown node within a 'protection' definition\n" );
+                  return -1;
+               }
+               if ( strncmp( (char*)dataroot->name, "N", 2 ) == 0 ) {
+                  haveN = 1;
+                  if( parse_int_node( &(ds->epat.N), dataroot ) ) {
+                     LOG( LOG_ERR, "failed to parse 'N' value within a 'protection' definition\n" );
+                     return -1;
+                  }
+               }
+               else if ( strncmp( (char*)dataroot->name, "E", 2 ) == 0 ) {
+                  haveE = 1;
+                  if( parse_int_node( &(ds->epat.E), dataroot ) ) {
+                     LOG( LOG_ERR, "failed to parse 'E' value within a 'protection' definition\n" );
+                     return -1;
+                  }
+               }
+               else if ( strncmp( (char*)dataroot->name, "PSZ", 4 ) == 0 ) {
+                  haveP = 1;
+                  if( parse_int_node( &(ds->epat.partsz), dataroot ) ) {
+                     LOG( LOG_ERR, "failed to parse 'PSZ' value within a 'protection' definition\n" );
+                     return -1;
+                  }
+               }
+               else {
+                  LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'protection' definition\n", (char*)dataroot->name );
+                  return -1;
+               }
+            }
+            // verify that all expected values were populated
+            if ( !(haveN)  ||  !(haveE)  ||  !(haveP) ) {
+               LOG( LOG_ERR, "encountered a 'protection' definition without all N/E/PSZ values\n" );
+               return -1;
+            }
+         }
+         else if ( strncmp( (char*)dataroot->name, "packing", 8 ) == 0 ) {
+            // iterate over child nodes, populating max_files
+            char haveM = 0;
+            for( ; subnode; subnode->next ) {
+               if ( subnode->type != XML_ELEMENT_NODE ) {
+                  LOG( LOG_ERR, "encountered unknown node within a 'packing' definition\n" );
+                  return -1;
+               }
+               if ( strncmp( (char*)dataroot->name, "max_files", 10 ) == 0 ) {
+                  haveM = 1;
+                  if( parse_size_node( &(ds->objfiles), dataroot ) ) {
+                     LOG( LOG_ERR, "failed to parse 'max_files' value within a 'packing' definition\n" );
+                     return -1;
+                  }
+               }
+               else {
+                  LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'packing' definition\n", (char*)dataroot->name );
+                  return -1;
+               }
+            }
+            // verify that all expected values were populated
+            if ( !(haveM) ) {
+               LOG( LOG_ERR, "encountered a 'packing' definition without a 'max_files' value\n" );
+               return -1;
+            }
+         }
+         else if ( strncmp( (char*)dataroot->name, "chunking", 9 ) == 0 ) {
+            // iterate over child nodes, populating max_size
+            char haveM = 0;
+            for( ; subnode; subnode->next ) {
+               if ( subnode->type != XML_ELEMENT_NODE ) {
+                  LOG( LOG_ERR, "encountered unknown node within a 'chunking' definition\n" );
+                  return -1;
+               }
+               if ( strncmp( (char*)dataroot->name, "max_size", 9 ) == 0 ) {
+                  haveM = 1;
+                  if( parse_size_node( &(ds->objsize), dataroot ) ) {
+                     LOG( LOG_ERR, "failed to parse 'max_size' value within a 'chunking' definition\n" );
+                     return -1;
+                  }
+               }
+               else {
+                  LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'chunking' definition\n", (char*)dataroot->name );
+                  return -1;
+               }
+            }
+            // verify that all expected values were populated
+            if ( !(haveM) ) {
+               LOG( LOG_ERR, "encountered a 'chunking' definition without a 'max_size' value\n" );
+               return -1;
+            }
+            ds->chunkingenabled = 1;
+         }
+         else if ( strncmp( (char*)dataroot->name, "distribution", 13 ) == 0 ) {
+            // iterate over child nodes, creating our distribution tables
+            for( ; subnode; subnode->next ) {
+               if ( subnode->type != XML_ELEMENT_NODE ) {
+                  LOG( LOG_ERR, "encountered unknown node within a 'distribution' definition\n" );
+                  return -1;
+               }
+               if ( strncmp( (char*)dataroot->name, "pods", 5 ) == 0 ) {
+                  if ( (ds->podtable = create_dist_table( &(maxloc.pod), dataroot )) = NULL ) {
+                     LOG( LOG_ERR, "failed to create 'pods' distribution table\n" );
+                     return -1;
+                  }
+               }
+               else if ( strncmp( (char*)dataroot->name, "caps", 5 ) == 0 ) {
+                  if ( (ds->podtable = create_dist_table( &(maxloc.cap), dataroot )) = NULL ) {
+                     LOG( LOG_ERR, "failed to create 'caps' distribution table\n" );
+                     return -1;
+                  }
+               }
+               else if ( strncmp( (char*)dataroot->name, "scatters", 9 ) == 0 ) {
+                  if ( (ds->podtable = create_dist_table( &(maxloc.scatter), dataroot )) = NULL ) {
+                     LOG( LOG_ERR, "failed to create 'scatters' distribution table\n" );
+                     return -1;
+                  }
+               }
+               else {
+                  LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'distribution' definition\n", (char*)dataroot->name );
+                  return -1;
+               }
+            }
+         }
+         else {
+            LOG( LOG_ERR, "encountered unexpected 'data' sub-node: \"%s\"\n", (char*)dataroot->name );
+            return -1;
+         }
+      }
+      else {
+         // don't know what this is supposed to be
+         LOG( LOG_ERR, "encountered unknown node within a 'data' definition\n" );
+         return -1;
+      }
+   }
+   // now that we're done iterating through our config, make sure we found a DAL definition
+   if ( !(dalnode) ) {
+      LOG( LOG_ERR, "failed to locate a DAL definition\n" );
+      return -1;
+   }
+   // attempt to create our NE context
+   if ( (ds->nectxt = ne_init( dalnode, maxloc, ds->epat.N + ds->epat.E )) == NULL ) {
+      LOG( LOG_ERR, "failed to initialize an NE context\n" );
+      return -1;
+   }
+
+   return 0;
+}
+
+
+int parse_metascheme( marfs_ds* ms, marfs_repo* repo, XmlNode* metaroot ) {
+   XmlNode* mdalnode = NULL;
+   // iterate over nodes at this level
+   for ( ; metaroot; metaroot = metaroot->next ) {
+      // make sure this is a real ELEMENT_NODE
+      if ( metaroot->type != XML_ELEMENT_NODE ) {
+         LOG( LOG_ERR, "detected unrecognized node within a 'meta' definition\n" );
+         return -1;
+      }
+      // first, check for an MDAL definition
+      if ( strncmp( (char*)metaroot->name, "MDAL", 5 ) == 0 ) {
+         if ( mdalnode ) {
+            LOG( LOG_ERR, "detected duplicate MDAL definition\n" );
+            return -1;
+         }
+         mdalnode = metaroot; // save our MDAL node reference for later
+         continue;
+      }
+      // check for attributes
+      if ( attr ) {
+         if ( attr->type == XML_ATTRIBUTE_NODE ) {
+            if ( strncmp( (char*)attr->name, "enabled", 8 ) == 0 ) {
+               if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+                  if ( strncmp( (char*)attr->children->content, "no", 3 ) == 0 ) {
+                     enabled = 0;
+                  }
+                  else if ( strncmp( (char*)attr->children->content, "yes", 4 ) == 0 ) {
+                     enabled = 1;
+                  }
+               }
+            }
+         }
+         // if we found any attribute value, ensure it made sense
+         if ( enabled == 2 ) {
+            LOG( LOG_ERR, "encountered an unrecognized attribute of a '%s' node within a 'data' definition\n", (char*)metaroot->name );
+            return -1;
+         }
+         // make sure this is the only attribute
+         if ( attr->next ) {
+            LOG( LOG_ERR, "detected trailing attributes of a '%s' node within a 'data' definition\n", (char*)metaroot->name );
+            return -1;
+         }
+         // if this node has been disabled, don't even bother parsing it
+         if ( !(enabled) ) { continue; }
+      }
+      // determine what definition we are parsing
+      xmlAttr* attr = metaroot->properties;
+      XmlNode* subnode = metaroot->children;
+      if ( strncmp( (char*)metaroot->name, "namespaces", 11 ) == 0 ) {
+         // check if we have already created a reference table, as this indicates a duplicate node
+         if ( ms->reftable ) {
+            LOG( LOG_ERR, "detected a duplicate 'namespaces' definition\n" );
+            return -1;
+         }
+         for ( ; attr; attr = attr->next ) {
+            int attrvalue = 0;
+            if ( attr->type == XML_ATTRIBUTE_NODE ) {
+               if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+                  // all attributes of this node should be integer strings
+                  char* endptr = NULL;
+                  unsigned long long parseval = strtoull( (char*)attr->children->content, &(endptr), 10 );
+                  if ( parseval >= INT_MAX ) {
+                     LOG( LOG_ERR, "value of \"%s\" attribute is to large to store\n", (char*)attr->name );
+                     return -1;
+                  }
+                  if ( *endptr != '\0' ) {
+                     LOG( LOG_ERR, "detected trailing '%c' character in value of \"%s\" attribute\n", (char*)attr->name );
+                     return -1;
+                  }
+                  attrvalue = parseval;
+               }
+            }
+            // check that we have a sensible attribute value
+            if ( attrvalue <= 0 ) {
+               LOG( LOG_ERR, "inappropriate value for a \"%s\" attribute\n", (char*)attr->name );
+               return -1;
+            }
+            // check which value this attribute provides
+            if ( strncmp( (char*)attr->name, "rbreadth", 9 ) == 0 ) {
+               ms->refbreadth = attrvalue;
+            }
+            else if ( strncmp( (char*)attr->name, "rdepth", 7 ) == 0 ) {
+               ms->refdepth = attrvalue;
+            }
+            else if ( strncmp( (char*)attr->name, "rdigits", 8 ) == 0 ) {
+               ms->refdigits = attrvalue;
+            }
+            else {
+               LOG( LOG_ERR, "encountered an unrecognized attribute of a 'namespaces' node: \"%s\"\n", (char*)attr->name );
+               return -1;
+            }
+         }
+         // create a string to hold temporary reference paths
+         int breadthdigits = 1;
+         int tmpbreadth = ms->refbreadth;
+         while ( ( (int)( tmpbreadth = tmpbreadth / 10 ) ) ) { breadthdigits++; }
+         size_t rpathlen = ( ms->refdepth * (breadthdigits + 1) ) + 1;
+         char* rpathtmp = malloc( sizeof(char) * rpathlen ); // used to populate node name strings
+         if ( rpathtmp == NULL ) {
+            LOG( LOG_ERR, "failed to allocate space for namespace refpaths\n" );
+            return -1;
+         }
+         // create an array of integers to hold reference indexes
+         int* refvals = malloc( sizeof(int) * ms->refdepth );
+         if ( refvals == NULL ) {
+            LOG( LOG_ERR, "failed to allocate space for namespace reference indexes\n" );
+            free( rpathtmp );
+            return -1;
+         }
+         // create an array of hash nodes
+         size_t rnodecount = 1;
+         int curdepth = ms->refdepth;
+         while ( curdepth ) { rnodecount *= ms->refbreadth; curdepth--; } // equiv of breadth to the depth power
+         HASH_NODE* rnodelist = malloc( sizeof(struct hash_node_struct) * rnodecount );
+         if ( rnodelist == NULL ) {
+            LOG( LOG_ERR, "failed to allocate space for namespace reference hash nodes\n" );
+            free( rpathtmp );
+            free( refvals );
+            return -1;
+         }
+         // populate all hash nodes
+         size_t curnode;
+         for ( curnode = 0; curnode < rnodecount; curnode++ ) {
+            // populate the index for each rnode, starting at the depest level
+            size_t tmpnode = curnode;
+            for ( curdepth = ms->refdepth; curdepth; curdepth-- ) {
+               refvals[curdepth-1] = tmpnode % ms->refbreadth; // what is our index at this depth
+               tmpnode /= ms->refdepth; // find how many groups we have already traversed at this depth
+            }
+            // now populate the reference pathname
+            char* outputstr = rpathtmp;
+            int pathlenremaining = rpathlen;
+            for ( curdepth = 0; curdepth < ms->refdepth; curdepth++ ) {
+               int prlen = snprintf( outputstr, pathlenremaining, "%.*d/", ms->refdigits, refvals[curdepth] );
+               if ( prlen <= 0  ||  prlen >= pathlenremaining ) {
+                  LOG( LOG_ERR, "failed to generate reference path string\n" );
+                  free( rpathtmp );
+                  free( refvals );
+                  free( rnodelist );
+                  return -1;
+               }
+               pathlenremaining -= prlen;
+               outputstr += prlen;
+            }
+            // copy the reference pathname into the hash node
+            rnodelist[curnode].name = strndup( rpathtmp, rpathlen );
+            if ( rnodelist[curnode].name == NULL ) {
+               LOG( LOG_ERR, "failed to allocate reference path hash node name\n" );
+               free( rpathtmp );
+               free( refvals );
+               free( rnodelist );
+               return -1;
+            }
+            rnodelist[curnode].weight = 0;
+            rnodelist[curnode].content = NULL;
+         }
+         // free data structures which we no longer need
+         free( rpathtmp );
+         free( refvals );
+         // create the reference tree hash table
+         ms->reftable = hash_init( rnodelist, rnodecount, 1 );
+         if ( ms->reftable == NULL ) {
+            LOG( LOG_ERR, "failed to create reference path table\n" );
+            free( rnodelist );
+            return -1;
+         } // can't free the node list now, as it is in use by the hash table
+         // count all subnodes
+         ms->nscount = 0;
+         int subspaces = 0;
+         for( ; subnode; subnode->next ) {
+            if ( subnode->type != XML_ELEMENT_NODE ) {
+               LOG( LOG_ERR, "encountered unknown node within a 'namespaces' definition\n" );
+               return -1;
+            }
+            // only 'ns' nodes are acceptible; for now, just assume every node is a NS def
+            subspaces++;
+         }
+         // if we have no subspaces at all, just warn and continue on
+         if ( !(subspaces) ) {
+            LOG( LOG_WARNING, "repo \"%s\" has no namespaces defined\n", repo->name );
+            continue;
+         }
+         // allocate an array of namespace nodes
+         ms->nslist = malloc( sizeof(HASH_NODE) * subspaces );
+         if ( ms->nslist == NULL ) {
+            LOG( LOG_ERR, "failed to allocate space for repo namespaces\n" );
+            return -1;
+         }
+         // parse and allocate all subspaces
+         for( subnode = metaroot->children; subnode; subnode->next ) {
+            // set default namespace values
+            HASH_NODE* subspace = ms->nslist + ms->nscount;
+            subspace->name = NULL;
+            subspace->weight = 0;
+            subspace->content = NULL;
+            if ( create_namespace( subspace, NULL, repo, subnode ) ) {
+               LOG( LOG_ERR, "failed to create subspace %d\n", ms->nscount );
+               return -1;
+            }
+            // ensure we don't have any name collisions
+            if ( find_namespace( ms->nslist, ms->nscount, subspace->name ) ) {
+               LOG( LOG_ERR, "encountered subspace name collision: \"%s\"\n", subspace->name );
+               free_namespace( subspace );
+               return -1;
+            }
+            ms->nscount++;
+         }
+      }
+      else if ( strncmp( (char*)metaroot->name, "direct", 7 ) == 0 ) {
+         // parse through attributes, looking for read/write attrs with yes/no values
+         for ( ; attr; attr = attr->next ) {
+            char enabled = -1;
+            if ( attr->type == XML_ATTRIBUTE_NODE ) {
+               if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+                  if ( strncmp( (char*)attr->children->content, "no", 3 ) == 0 ) {
+                     enabled = 0;
+                  }
+                  else if ( strncmp( (char*)attr->children->content, "yes", 4 ) == 0 ) {
+                     enabled = 1;
+                  }
+               }
+            }
+            // check that we have a sensible attribute value
+            if ( enabled < 0 ) {
+               LOG( LOG_ERR, "inappropriate value for a \"%s\" attribute\n", (char*)attr->name );
+               return -1;
+            }
+            // check which value this attribute provides
+            if ( strncmp( (char*)attr->name, "read", 5 ) == 0 ) {
+               ms->directread = enabled;
+            }
+            else if ( strncmp( (char*)attr->name, "write", 6 ) == 0 ) {
+               ms->directwrite = enabled;
+            }
+            else {
+               LOG( LOG_ERR, "encountered an unrecognized attribute of a 'direct' node: \"%s\"\n", (char*)attr->name );
+               return -1;
+            }
+         }
+         // iterate over child nodes, populating write_chunks
+         char haveC = 0;
+         for( ; subnode; subnode->next ) {
+            if ( subnode->type != XML_ELEMENT_NODE ) {
+               LOG( LOG_ERR, "encountered unknown node within a 'direct' definition\n" );
+               return -1;
+            }
+            if ( strncmp( (char*)metaroot->name, "write_chunks", 13 ) == 0 ) {
+               haveC = 1;
+               if( parse_int_node( &(ds->directchunks), metaroot ) ) {
+                  LOG( LOG_ERR, "failed to parse 'write_chunks' value within a 'direct' definition\n" );
+                  return -1;
+               }
+            }
+            else {
+               LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'direct' definition\n", (char*)metaroot->name );
+               return -1;
+            }
+         }
+         // verify that all expected values were populated
+         if ( ms->directwrite  &&  !(haveC) ) {
+            LOG( LOG_ERR, "encountered a 'direct' definition with write enabled, but no 'write_chunks' value\n" );
+            return -1;
+         }
+      }
+      else {
+         LOG( LOG_ERR, "encountered unexpected 'metadata' sub-node: \"%s\"\n", (char*)metaroot->name );
+         return -1;
+      }
+   }
+   // ensure we found an MDAL def
+   if ( !(mdalnode) ) {
+      LOG( LOG_ERR, "failed to locate MDAL definition\n" );
+      return -1;
+   }
+   // initialize the MDAL
+   if ( (ms->mdal = mdal_init( mdalnode )) == NULL ) {
+      LOG( LOG_ERR, "failed to initialize MDAL\n" );
+      return -1;
+   }
+
+   return 0;
+}
+
+
+int create_repo( marfs_repo* repo, XmlNode* reporoot ) {
+   // check for a name attribute
+   xmlAttr* attr = reporoot->properties;
+   for ( ; attr; attr = attr->next ) {
+      if ( strncmp( (char*)attr->name, "name", 5 ) == 0 ) {
+         if ( attr->type == XML_ATTRIBUTE_NODE ) {
+            if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+               if ( repo->name ) {
+                  LOG( LOG_ERR, "detected a repeated 'name' attribute for repo \"%s\"\n", repo->name );
+                  return -1;
+               }
+               repo->name = strcpy( (char*)attr->children->content );
+            }
+         }
+         // verify that we properly stored this attr value
+         if ( !(repo->name) ) {
+            LOG( LOG_ERR, "failed to parse name value for repo\n" );
+            return -1;
+         }
+      }
+      else {
+         LOG( LOG_ERR, "encountered an unrecognized attribute of a 'repo' node: \"%s\"\n", (char*)attr->name );
+         return -1;
+      }
+   }
+   // verify that we did find a name value
+   if ( !(repo->name) ) {
+      LOG( LOG_ERR, "failed to identify name value for repo\n" );
+      return -1;
+   }
+}
+
+
 int establish_nshierarchy( marfs_config* config );
 
 

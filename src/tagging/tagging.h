@@ -1,5 +1,5 @@
-#ifndef _HASH_H
-#define _HASH_H
+#ifndef _TAGGING_H
+#define _TAGGING_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -58,20 +58,54 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include <stdint.h>
 
-typedef void* HASH_TABLE;
+#define FTAG_CURRENT_MAJORVERSION 0
+#define FTAG_CURRENT_MINORVERSION 1
 
-typedef struct hash_node_struct {
-   const char* name;
-   int         weight;
-   void*       content;
-} HASH_NODE;
 
-HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup );
-int hash_term( HASH_TABLE table, HASH_NODE** nodes, size_t* count );
-int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node );
-int hash_iterate( HASH_TABLE table, HASH_NODE** node );
+typedef enum 
+{
+   0 = FTAG_INIT,  // initial state -- content only modifiable by original handle
+   1 = FTAG_SIZED, // sized state -- known lower bound on file size, can be written to by arbitrary handle
+   2 = FTAG_FIN,   // finalized state -- known total file size, can be completed by arbitrary handle
+   3 = FTAG_COMP,  // completed state -- all data synced, file can be read
+   4 = FTAG_LOCKED // locked state -- access to this file is temporarily restricted
+} FTAG_STATE;
 
-#endif // _HASH_H
+
+typedef struct ftag_struct {
+   // flag indicating if this truct can safely be modified
+   char editable;
+
+   // version info
+   unsigned int majorversion;
+   unsigned int minorversion;
+   // stream identification info
+   char* ctag;
+   char* streamid;
+   // stream structure info
+   size_t objfiles;
+   size_t objsz;
+   // file position info
+   size_t fileno;
+   size_t objno;
+   size_t offset;
+   ne_location location;
+   // data content info
+   size_t bytes;
+   size_t recoverybytes;
+   size_t directbytes;
+   FTAG_STATE state;
+   ne_erasure protection;
+} FTAG;
+
+/**
+ * Populate the given ftag struct based on the content of the given ftag string
+ * @param FTAG* ftag : Reference to the ftag struct to be populated
+ * @param const char* ftagstr : String value to be parsed for structure values
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int ftag_initstr( FTAG* ftag, const char* ftagstr );
+
+#endif // _TAGGING_H
 

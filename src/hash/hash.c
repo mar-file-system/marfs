@@ -138,7 +138,7 @@ static int compare_nodes(const void *a, const void *b) {
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
 
-HASH_TABLE hash_init( HASH_NODE* nodes, size_t count ) {
+HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
    // allocate the hash_table structure
    HASH_TABLE table = malloc( sizeof( struct hash_table_struct ) );
    if ( table == NULL ) {
@@ -170,14 +170,22 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count ) {
    }
 
    // calculate how many vnodes we will need
-   int weightratio;
+   int weightratio = 1;
    if ( totalweight ) {
       weightratio = (int) ( TARGET_NODE_COUNT / totalweight );
       if ( TARGET_NODE_COUNT % totalweight ) weightratio++; // overestimate our ratio, to ensure we hit the target
    }
-   else
-      weightratio = 1;
-   table->vnodecount = ( weightratio * totalweight ) + zerocount;
+   else if ( !(lookup) ) {
+      LOG( LOG_ERR, "recieved all zero weight values for a non-lookup hash table\n" );
+      free( table );
+      errno = EINVAL;
+      return -1;
+   }
+   table->vnodecount = ( weightratio * totalweight );
+   // for a lookup table, we need to add a single vnode per zero value weight
+   if ( lookup ) {
+      table->vnodecount += zerocount;
+   }
 
    // allocate space for all virtual nodes
    table->vnodes = malloc( sizeof( struct virtual_node_struct ) * table->vnodecount );
@@ -219,8 +227,8 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count ) {
          }
          curvnode += tmpvnode;
       }
-      else {
-         // zero weight is a special case where we allocate a single virtual node, with a matching name
+      else if ( lookup ) {
+         // for a lookup table, zero weight indicates a single virtual node, with a matching name
          curvnode++;
          table->vnodes[curvnode].nodenum = curnode;
          identifier( nodes[curnode].name, table->vnodes[curvnode].id );
