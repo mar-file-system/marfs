@@ -1,5 +1,5 @@
-#ifndef _NAMESPACE_H
-#define _NAMESPACE_H
+#ifndef _GENERIC_H
+#define _GENERIC_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -59,5 +59,5 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 
-#endif // _NAMESPACE_H
+#endif // _GENERIC_H
 
