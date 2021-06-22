@@ -96,11 +96,33 @@ size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t strlen ) {
 }
 
 
-int ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t strlen ) {
+/**
+ * Populate the given string buffer with the meta file ID string produced from the given ftag
+ * @param const FTAG* ftag : Reference to the ftag struct to pull values from
+ * @param char* tgtstr : String buffer to be populated with the meta file ID
+ * @param size_t strlen : Byte length of the target buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t strlen ) {
 }
 
 
-int ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t strlen ) {
+/**
+ * Populate the given string buffer with the object ID string produced from the given ftag
+ * @param const FTAG* ftag : Reference to the ftag struct to pull values from
+ * @param char* tgtstr : String buffer to be populated with the object ID
+ * @param size_t strlen : Byte length of the target buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t strlen ) {
 }
 
 STREAM stream_initstr( const char* streamstr );

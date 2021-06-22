@@ -466,7 +466,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    // make sure we don't have any forbidden name characters
    char* parse = nsname;
    for ( ; *parse != '\0'; parse++ ) {
-      if ( *parse == '/'  ||  *parse == '|' ) {
+      if ( *parse == '/'  ||  *parse == '|'  ||  *parse == '('  ||  *parse == ')' ) {
          LOG( LOG_ERR, "found namespace \"%s\" with disallowed '%c' character in name value\n", nsname, *parse );
          errno = EINVAL;
          free( nsname );

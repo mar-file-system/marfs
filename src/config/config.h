@@ -100,9 +100,9 @@ typedef struct marfs_namespace_struct {
 typedef struct marfs_datascheme_struct {
    ne_erasure epat;             // erasure defintion for writing out objects
    ne_ctxt    nectxt;           // LibNE context reference for data access
-   size_t     objfiles;         // maximum count of files per data object
+   size_t     objfiles;         // maximum count of files per data object ( ZERO value implies no limit )
    char       chunkingenabled;  // flag indicating if files can span objects
-   size_t     objsize;          // maximum data object size ( IF CHUNKING ENABLED )
+   size_t     objsize;          // maximum data object size ( ZERO value implies no limit )
    HASH_TABLE podtable;         // hash table for object POD postion
    HASH_TABLE captable;         // hash table for object CAP position
    HASH_TABLE scattertable;     // hash table for object SCATTER position

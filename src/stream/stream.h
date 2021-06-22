@@ -1,5 +1,5 @@
-#ifndef _TAGGING_H
-#define _TAGGING_H
+#ifndef _STREAM_H
+#define _STREAM_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -59,65 +59,65 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 
-#define FTAG_CURRENT_MAJORVERSION 0
-#define FTAG_CURRENT_MINORVERSION 1
-
-
-typedef enum 
+typedef enum
 {
-   0 = FTAG_INIT,  // initial state -- content only modifiable by original handle
-   1 = FTAG_SIZED, // sized state -- known lower bound on file size, can be written to by arbitrary handle
-   2 = FTAG_FIN,   // finalized state -- known total file size, can be completed by arbitrary handle
-   3 = FTAG_COMP,  // completed state -- all data synced, file can be read
-   4 = FTAG_LOCKED // locked state -- access to this file's data is temporarily restricted
-} FTAG_STATE;
+   WRITE_STREAM,
+   READ_STREAM
+} STREAM_TYPE;
 
-
-typedef struct ftag_struct {
-   // flag indicating if this struct can safely be modified
-   char editable;
-
-   // version info
+#define RECOVERY_CURRENT_MAJORVERSION 0
+#define RECOVERY_CURRENT_MINORVERSION 1
+#define RECOVERY_MSGHEAD "RECOV( "    // ALTERING THIS MAY HORRIBLY BREAK PREVIOUS RECOVERY INFO
+#define RECOVERY_MSGTAIL " )\n"       // ALTERING THIS MAY HORRIBLY BREAK PREVIOUS RECOVERY INFO
+typedef struct recovery_header_struct {
    unsigned int majorversion;
    unsigned int minorversion;
-   // stream identification info
-   char* ctag;
-   char* streamid;
-   // stream structure info
-   size_t objfiles;
-   size_t objsize;
-   // file position info
-   size_t fileno;
-   size_t objno;
-   char   endofstream;
-   size_t offset;
-   ne_location location;
-   // data content info
-   ne_erasure protection;
-   size_t bytes;
-   size_t recoverybytes;
-   size_t directbytes;
-   size_t chunkspan;
-   FTAG_STATE state;
-} FTAG;
-
-/**
- * Populate the given ftag struct based on the content of the given ftag string
- * @param FTAG* ftag : Reference to the ftag struct to be populated
- * @param const char* ftagstr : String value to be parsed for structure values
- * @return int : Zero on success, or -1 if a failure occurred
- */
-int ftag_initstr( const char* ftagstr, FTAG* ftag );
+} RECOVERY_HEADER;
+#define RECOVERY_HEADER "HEADER : "
+typedef struct recovery_finfo_struct {
+   ino_t  inode;
+   mode_t mode;
+   uid_t  owner;
+   gid_t  group;
+   size_t size;
+   struct timespec mtime;
+   char   eof;
+   char*  path;
+} RECOVERY_FINFO;
+#define RECOVERY_FINFO "FINFO : "
 
 
-size_t ftag_objectname( const FTAG* ftag, char* str, size_t size );
+typedef struct streamfile_struct {
+   MDAL_FHANDLE    metahandle;
+   FTAG            ftag;
+   struct timespec times[2];
+   size_t          size;
+   STREAMFILE      next;
+}* STREAMFILE;
 
 
-size_t ftag_metaname( const FTAG* ftag, char* str, size_t size );
+typedef struct stream_struct {
+   STREAM_TYPE type;
+   ne_handle   datahandle;
+   MDAL        mdal;
+   MDAL_CTXT   mdalctxt;
+   RECOVERY_FINFO finfo;
+   STREAMFILE  files;
+   size_t      filecount;
+}* STREAM;
 
 
-int ftag_copy( const FTAG* src, FTAG* dest );
+STREAM stream_write_init( const char* path, mode_t mode, MDAL mdal, MDAL_CTXT mdalctxt );
+STREAM stream_write_cont( STREAM stream, const char* path, mode_t mode );
+STREAM stream_write_resume( const char* path, MDAL mdal, MDAL_CTXT mdalctxt );
+
+size_t stream_read( STREAM stream, void* buffer, size_t size );
+size_t stream_write( STREAM stream, const void* buffer, size_t size );
 
 
-#endif // _TAGGING_H
+RECOVERY recovery_init( void* objectbuffer, size_t objectsize, RECOVERY_HEADER* header );
+const void* recovery_nextfile( RECOVERY recovery, RECOVERY_FINFO* finfo, size_t* buffsize );
+
+
+#endif // _STREAM_H
 

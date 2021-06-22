@@ -99,7 +99,7 @@ typedef struct MDAL_struct {
    // Name -- Used to identify and configure the MDAL
    const char*    name;
 
-   // DAL Internal Context -- passed to each DAL function
+   // MDAL Internal Context -- passed to each MDAL function
    MDAL_CTXT       ctxt;
 
 
@@ -107,11 +107,11 @@ typedef struct MDAL_struct {
 
    /**
     *
-    * @param MDAL_CTXT ctxt : MDAL_CTXT for which to perform verification
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT for which to perform verification
     * @param char fix : 
     * @return int : 
     */
-   int (*verify) ( MDAL_CTXT ctxt, char fix );
+   int (*verify) ( const MDAL_CTXT ctxt, char fix );
 
    /**
     * Cleanup all structes and state associated with the given posix MDAL
@@ -119,6 +119,20 @@ typedef struct MDAL_struct {
     * @return int : Zero on success, -1 if a failure occurred
     */
    int (*cleanup) ( MDAL mdal );
+
+   /**
+    * Duplicate the given MDAL_CTXT
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to duplicate
+    * @return MDAL_CTXT : Reference to the duplicate MDAL_CTXT, or NULL if an error occurred
+    */
+   MDAL_CTXT (*dupctxt) ( const MDAL_CTXT ctxt );
+
+   /**
+    * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
+    * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*destroyctxt) ( MDAL_CTXT ctxt );
 
 
    // Namespace Functions
@@ -133,68 +147,68 @@ typedef struct MDAL_struct {
 
    /**
     * Create the specified namespace
-    * @param MDAL_CTXT ctxt : Current MDAL context
+    * @param const MDAL_CTXT ctxt : Current MDAL context
     * @param const char* ns : Name of the namespace to be created
     * @param int refdepth : Depth of the reference tree for the new namespace
     * @param int refbreadth : Breadth of the reference tree for the new namespace
     * @param int digits : Minimum number of digits per reference dir ( i.e. 3 digits -> 001 instead of 1 )
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*createnamespace) ( MDAL_CTXT ctxt, const char* ns, int refdepth, int refbreadth, int digits );
+   int (*createnamespace) ( const MDAL_CTXT ctxt, const char* ns, int refdepth, int refbreadth, int digits );
 
    /**
     * Destroy the specified namespace
     * NOTE -- This operation will fail with errno=ENOTEMPTY if files persist in the namespace.
     *         This includes files within the reference tree.
-    * @param MDAL_CTXT ctxt : Current MDAL context
+    * @param const MDAL_CTXT ctxt : Current MDAL context
     * @param const char* ns : Name of the namespace to be deleted
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*destroynamespace) ( MDAL_CTXT ctxt, const char* ns );
+   int (*destroynamespace) ( const MDAL_CTXT ctxt, const char* ns );
 
 
    // Usage Functions
 
    /**
     * Set data usage value for the current namespace
-    * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
+    * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
     * @param size_t bytes : Number of bytes used by the namespace
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*setdatausage) ( MDAL_CTXT ctxt, size_t bytes );
+   int (*setdatausage) ( const MDAL_CTXT ctxt, size_t bytes );
 
    /**
     * Retrieve the data usage value of the current namespace
-    * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
+    * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
     * @return size_t : Number of bytes used by the namespace
     */
-   size_t (*getdatausage) ( MDAL_CTXT ctxt );
+   size_t (*getdatausage) ( const MDAL_CTXT ctxt );
 
    /**
     * Set the inode usage value of the current namespace
-    * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
+    * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
     * @param size_t files : Number of inodes used by the namespace
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*setinodeusage) ( MDAL_CTXT ctxt, size_t files );
+   int (*setinodeusage) ( const MDAL_CTXT ctxt, size_t files );
 
    /**
     * Retrieve the inode usage value of the current namespace
-    * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
+    * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
     * @return size_t : Number of inodes used by the current namespace
     */
-   size_t (*getinodeusage) ( MDAL_CTXT ctxt );
+   size_t (*getinodeusage) ( const MDAL_CTXT ctxt );
 
 
    // Scanner Functions
 
    /**
     * Open a reference scanner for the given location of the current namespace
-    * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
+    * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
     * @param const char* rpath : Target reference dir location
     * @return MDAL_SCANNER : Newly opened reference scanner
     */
-   MDAL_SCANNER (*openscanner) ( MDAL_CTXT ctxt, const char* rpath );
+   MDAL_SCANNER (*openscanner) ( const MDAL_CTXT ctxt, const char* rpath );
 
    /**
     * Close a given reference scanner
@@ -235,11 +249,11 @@ typedef struct MDAL_struct {
 
    /**
     * Open a directory, relative to the given MDAL_CTXT
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : Relative path of the target directory from the ctxt
     * @return MDAL_DHANDLE : Open directory handle, or NULL if a failure occurred
     */
-   MDAL_DHANDLE (*opendir) ( MDAL_CTXT ctxt, const char* path );
+   MDAL_DHANDLE (*opendir) ( const MDAL_CTXT ctxt, const char* path );
 
    /**
     * Edit the given MDAL_CTXT to reference the given MDAL_DHANDLE for all path operations
@@ -269,23 +283,23 @@ typedef struct MDAL_struct {
 
    /**
     * Open a file, relative to the given MDAL_CTXT
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : Relative path to the target file
     * @param int flags : Flags specifying behavior (see the 'open()' syscall 'flags' value for full info)
     * @param mode_t mode : Mode for file creation (see the 'open()' syscall 'mode' value for full info)
     * @return MDAL_FHANDLE : The newly opened MDAL_FHANDLE, or NULL if a failure occurred
     */
-   MDAL_FHANDLE (*open) ( MDAL_CTXT ctxt, const char* path, int flags, mode_t mode );
+   MDAL_FHANDLE (*open) ( const MDAL_CTXT ctxt, const char* path, int flags, mode_t mode );
 
    /**
     * Open a file, relative to the reference tree of the given MDAL_CTXT
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* rpath : Relative reference path to the target file
     * @param int flags : Flags specifying behavior (see the 'open()' syscall 'flags' value for full info)
     * @param mode_t mode : Mode for file creation (see the 'open()' syscall 'mode' value for full info)
     * @return MDAL_FHANDLE : The newly opened MDAL_FHANDLE, or NULL if a failure occurred
     */
-   MDAL_FHANDLE (*openref) ( MDAL_CTXT ctxt, const char* rpath, int flags, mode_t mode );
+   MDAL_FHANDLE (*openref) ( const MDAL_CTXT ctxt, const char* rpath, int flags, mode_t mode );
 
    /**
     * Open a file, creating both a reference location and a user visible location (hardlinks)
@@ -293,13 +307,13 @@ typedef struct MDAL_struct {
     *         AND
     *         open() with flags O_WRONLY|O_CREAT|O_TRUNC                   (2nd)
     *         with both locations referenced by the produced MDAL_FHANDLE
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : User visible path of the target file
     * @param const char* rpath : Reference path of the target file
     * @param mode_t mode : Mode for file creation (see the 'open()' syscall 'mode' value for full info)
     * @return MDAL_FHANDLE : The newly opened MDAL_FHANDLE, or NULL if a failure occurred
     */
-   MDAL_FHANDLE (*creat) ( MDAL_CTXT ctxt, const char* path, const char* rpath, mode_t mode );
+   MDAL_FHANDLE (*creat) ( const MDAL_CTXT ctxt, const char* path, const char* rpath, mode_t mode );
 
    /**
     * Close the given MDAL_FHANDLE
@@ -331,7 +345,7 @@ typedef struct MDAL_struct {
 
    /**
     * Remove the specified attribute from the file referenced by the given MDAL_FHANDLE
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* name : Name of the file attribute
     * @return int : Zero on success, or -1 if a failure occurred
     */
@@ -431,12 +445,23 @@ typedef struct MDAL_struct {
     */
    int (*fstat) ( MDAL_FHANDLE fh, struct stat* buf );
 
+   /**
+    * Update the timestamps of the target file
+    * @param MDAL_FHANDLE fh : File handle on which to set timestamps
+    * @param const struct timespec times[2] : Struct references for new times
+    *                                         times[0] - atime values
+    *                                         times[1] - mtime values
+    *                                         (see man utimensat for struct reference)
+    * @return int : Zero value on success, or -1 if a failure occurred
+    */
+   int (*futimens) ( MDAL_FH fh, const struct timespec times[2] );
+
 
    // Path Functions
 
    /**
     * Check access to the specified file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param int mode : F_OK - check for file existance
     *                      or a bitwise OR of the following...
@@ -448,11 +473,11 @@ typedef struct MDAL_struct {
     *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*access) ( MDAL_CTXT ctxt, const char* path, int mode, int flags );
+   int (*access) ( const MDAL_CTXT ctxt, const char* path, int mode, int flags );
 
    /**
     * Create a filesystem node
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target node
     * @param mode_t mode : Mode value for the created node (see inode man page)
     * @param dev_t dev : S_IFREG  - regular file
@@ -462,95 +487,95 @@ typedef struct MDAL_struct {
     *                    S_IFSOCK - socket
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*mknod) ( MDAL_CTXT ctxt, const char* path, mode_t mode, dev_t dev );
+   int (*mknod) ( const MDAL_CTXT ctxt, const char* path, mode_t mode, dev_t dev );
 
    /**
     * Edit the mode of the specified file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param mode_t mode : New mode value for the file (see inode man page)
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*chmod) ( MDAL_CTXT ctxt, const char* path, mode_t mode );
+   int (*chmod) ( const MDAL_CTXT ctxt, const char* path, mode_t mode );
 
    /**
     * Edit the ownership and group of the specified file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param uid_t owner : New owner
     * @param gid_t group : New group
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*chown) ( MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group );
+   int (*chown) ( const MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group );
 
    /**
     * Stat the specified file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param struct stat* st : Stat structure to be populated
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*lstat) ( MDAL_CTXT ctxt, const char* path, struct stat* st );
+   int (*lstat) ( const MDAL_CTXT ctxt, const char* path, struct stat* st );
 
    /**
     * Create a hardlink
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* oldpath : String path of the target file
     * @param const char* newpath : String path of the new hardlink
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*link) ( MDAL_CTXT ctxt, const char* oldpath, const char* newpath );
+   int (*link) ( const MDAL_CTXT ctxt, const char* oldpath, const char* newpath );
 
    /**
     * Create the specified directory
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the new directory
     * @param mode_t mode : Mode value of the new directory (see inode man page)
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*mkdir) ( MDAL_CTXT ctxt, const char* path, mode_t mode );
+   int (*mkdir) ( const MDAL_CTXT ctxt, const char* path, mode_t mode );
 
    /**
     * Delete the specified directory
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target directory
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*rmdir) ( MDAL_CTXT ctxt, const char* path );
+   int (*rmdir) ( const MDAL_CTXT ctxt, const char* path );
 
    /**
     * Read the target path of the specified symlink
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target symlink
     * @param char* buf : Buffer to be populated with the link value
     * @param size_t size : Size of the target buffer
     * @return ssize_t : Size of the link target string, or -1 if a failure occurred
     */
-   ssize_t (*readlink) ( MDAL_CTXT ctxt, const char* path, char* buf, size_t size );
+   ssize_t (*readlink) ( const MDAL_CTXT ctxt, const char* path, char* buf, size_t size );
 
    /**
     * Rename the specified target to a new path
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* from : String path of the target
     * @param const char* to : Destination string path
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*rename) ( MDAL_CTXT ctxt, const char* from, const char* to );
+   int (*rename) ( const MDAL_CTXT ctxt, const char* from, const char* to );
 
    /**
     * Retrieve the specified xattr value from a given file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param const char* name : Name of the target xattr
     * @param void* value : Buffer to be populated with the xattr value
     * @param size_t size : Size of the provided buffer
     * @return ssize_t : Size of the retrieved xattr value, or -1 if a failure occurred
     */
-   ssize_t (*lgetxattr) ( MDAL_CTXT ctxt, const char* path, const char* name, void* value, size_t size );
+   ssize_t (*lgetxattr) ( const MDAL_CTXT ctxt, const char* path, const char* name, void* value, size_t size );
 
    /**
     * Set the specified xattr on a given file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param const char* name : Name of the target xattr
     * @param const void* value : Buffer containing the new xattr value
@@ -560,65 +585,52 @@ typedef struct MDAL_struct {
     *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*lsetxattr) ( MDAL_CTXT ctxt, const char* path, const char* name, const void* value, size_t size, int flags );
+   int (*lsetxattr) ( const MDAL_CTXT ctxt, const char* path, const char* name, const void* value, size_t size, int flags );
 
    /**
     * Remove the specified xattr on a given file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param const char* name : Name of the target xattr
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*lremovexattr) ( MDAL_CTXT ctxt, const char* path, const char* name );
+   int (*lremovexattr) ( const MDAL_CTXT ctxt, const char* path, const char* name );
 
    /**
     * List all xattrs on a target file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param char* buf : Buffer to be populated with xattr names
     * @param size_t size : Size of the target buffer
     * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
     */
-   ssize_t (*llistxattr) ( MDAL_CTXT ctxt, const char* path, char* buf, size_t size );
+   ssize_t (*llistxattr) ( const MDAL_CTXT ctxt, const char* path, char* buf, size_t size );
 
    /**
     * Return statvfs info for the current namespace
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to retrieve info for
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to retrieve info for
     * @param struct statvfs* buf : Reference to the statvfs structure to be populated
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*statvfs) ( MDAL_CTXT ctxt, struct statvfs* buf );
+   int (*statvfs) ( const MDAL_CTXT ctxt, struct statvfs* buf );
 
    /**
     * Create a symlink
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* target : String path for the link to target
     * @param const char* linkname : String path of the new link
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*symlink) ( MDAL_CTXT ctxt, const char* target, const char* linkname );
+   int (*symlink) ( const MDAL_CTXT ctxt, const char* target, const char* linkname );
 
    /**
     * Unlink the specified file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*unlink) ( MDAL_CTXT ctxt, const char* path );
+   int (*unlink) ( const MDAL_CTXT ctxt, const char* path );
 
-   /**
-    * Update the timestamps of the target file
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
-    * @param const char* target : String path of the target file
-    * @param const struct timespec times[2] : Struct references for new times
-    *                                         times[0] - atime values
-    *                                         times[1] - mtime values
-    *                                         (see man utimensat for struct reference)
-    * @param int flags : Zero - follow symlinks
-    *                    AT_SYMLINK_NOFOLLOW - do not dereference a target symlink
-    * @return int : Zero value on success, or -1 if a failure occurred
-    */
-   int (*utimens) ( MDAL_CTXT ctxt, const char* path, const struct timespec times[2], int flags );
 
 
 } *MDAL;
