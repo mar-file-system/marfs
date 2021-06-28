@@ -146,20 +146,17 @@ typedef struct MDAL_struct {
    int (*setnamespace) ( MDAL_CTXT ctxt, const char* ns );
 
    /**
-    * Create the specified namespace
+    * Create the specified namespace root structures ( reference tree is not created by this func! )
     * @param const MDAL_CTXT ctxt : Current MDAL context
     * @param const char* ns : Name of the namespace to be created
-    * @param int refdepth : Depth of the reference tree for the new namespace
-    * @param int refbreadth : Breadth of the reference tree for the new namespace
-    * @param int digits : Minimum number of digits per reference dir ( i.e. 3 digits -> 001 instead of 1 )
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*createnamespace) ( const MDAL_CTXT ctxt, const char* ns, int refdepth, int refbreadth, int digits );
+   int (*createnamespace) ( const MDAL_CTXT ctxt, const char* ns );
 
    /**
-    * Destroy the specified namespace
-    * NOTE -- This operation will fail with errno=ENOTEMPTY if files persist in the namespace.
-    *         This includes files within the reference tree.
+    * Destroy the specified namespace root structures
+    * NOTE -- This operation will fail with errno=ENOTEMPTY if files/dirs persist in the namespace.
+    *         This includes files/dirs within the reference tree.
     * @param const MDAL_CTXT ctxt : Current MDAL context
     * @param const char* ns : Name of the namespace to be deleted
     * @return int : Zero on success, -1 if a failure occurred
@@ -198,6 +195,25 @@ typedef struct MDAL_struct {
     * @return size_t : Number of inodes used by the current namespace
     */
    size_t (*getinodeusage) ( const MDAL_CTXT ctxt );
+
+
+   // Reference Path Functions
+
+   /**
+    * 
+    */
+   int (*createrefdir) ( const MDAL_CTXT ctxt, const char* ns, const char* refdir );
+
+   int (*destroyrefdir) ( const MDAL_CTXT ctxt, const char* ns, const char* refdir );
+
+   /**
+    * Unlink the specified file reference path
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const char* rpath : String reference path of the target file
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*unlinkref) ( const MDAL_CTXT ctxt, const char* rpath );
+
 
 
    // Scanner Functions
@@ -323,6 +339,14 @@ typedef struct MDAL_struct {
    int (*close) ( MDAL_FHANDLE fh );
 
    /**
+    * Create a hardlink for the file referenced by the given MDAL_FHANDLE
+    * @param MDAL_FHANDLE fh : File handle for which to produce the new hardlink
+    * @param const char* newpath : Relative path of the hardlink to be created
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*flink) ( MDAL_FHANDLE fh, const char* newpath );
+
+   /**
     * Set the value of the specified file attribute on the given MDAL_FHANDLE
     * @param MDAL_FHANDLE fh : MDAL_FHANDLE to operate on
     * @param const char* name : Name of the file attribute
@@ -400,6 +424,7 @@ typedef struct MDAL_struct {
    /**
     * Set the specified xattr on the file referenced by the given MDAL_FHANDLE
     * @param MDAL_FHANDLE fh : File handle for which to set the xattr
+    * @param char hidden : A non-zero value indicates to store this as a 'hidden' MDAL value
     * @param const char* name : String name of the xattr to set
     * @param const void* value : Buffer containing the value of the xattr
     * @param size_t size : Size of the value buffer
@@ -408,34 +433,37 @@ typedef struct MDAL_struct {
     *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*fsetxattr) ( MDAL_FHANDLE fh, const char* name, const void* value, size_t size );
+   int (*fsetxattr) ( MDAL_FHANDLE fh, char hidden, const char* name, const void* value, size_t size, int flags );
 
    /**
     * Retrieve the specified xattr from the file referenced by the given MDAL_FHANDLE
     * @param MDAL_FHANDLE fh : File handle for which to retrieve the xattr
+    * @param char hidden : A non-zero value indicates to retrieve a 'hidden' MDAL value
     * @param const char* name : String name of the xattr to retrieve
     * @param void* value : Buffer to be populated with the xattr value
     * @param size_t size : Size of the target buffer
     * @return ssize_t : Size of the returned xattr value, or -1 if a failure occurred
     */
-   ssize_t (*fgetxattr) ( MDAL_FHANDLE fh, const char* name, void* value, size_t size );
+   ssize_t (*fgetxattr) ( MDAL_FHANDLE fh, char hidden, const char* name, void* value, size_t size );
 
    /**
     * Remove the specified xattr from the file referenced by the given MDAL_FHANDLE
+    * @param char hidden : A non-zero value indicates to operate on a 'hidden' MDAL value
     * @param MDAL_FHANDLE fh : File handle for which to remove the xattr
     * @param const char* name : String name of the xattr to remove
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*fremovexattr) ( MDAL_FHANDLE fh, const char* name );
+   int (*fremovexattr) ( MDAL_FHANDLE fh, char hidden, const char* name );
 
    /**
     * List all xattr names from the file referenced by the given MDAL_FHANDLE
     * @param MDAL_FHANDLE fh : File handle for which to list xattrs
+    * @param char hidden : A non-zero value indicates to list 'hidden' MDAL values ( normal xattrs excluded )
     * @param char* buf : Buffer to be populated with xattr names
     * @param size_t size : Size of the target buffer
     * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
     */
-   ssize_t (*flistxattr) ( MDAL_FHANDLE fh, char* buf, size_t size );
+   ssize_t (*flistxattr) ( MDAL_FHANDLE fh, char hidden, char* buf, size_t size );
 
    /**
     * Perform a stat operation on the file referenced by the given MDAL_FHANDLE

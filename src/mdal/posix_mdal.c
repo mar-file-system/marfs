@@ -75,12 +75,13 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 //   -------------    POSIX DEFINITIONS    -------------
 
-#define MDAL_REF "ref"
-#define MDAL_PATH "path"
-#define MDAL_SUBSP "subspaces"
-#define MDAL_DUSE "datasize"
-#define MDAL_IUSE "inodecount"
-#define MDAL_XATTRPRE "user.POSIXMDAL_"
+#define PMDAL_PREFX "MDAL_"
+#define PMDAL_REF PMDAL_PREFX"ref"
+#define PMDAL_PATH "path"
+#define PMDAL_SUBSP PMDAL_PREFX"subspaces"
+#define PMDAL_DUSE "datasize"
+#define PMDAL_IUSE "inodecount"
+#define PMDAL_XATTR "user."PMDAL_PREFX
 
 
 //   -------------    POSIX STRUCTURES    -------------

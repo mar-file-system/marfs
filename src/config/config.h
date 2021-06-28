@@ -82,7 +82,7 @@ typedef enum {
 
 
 typedef struct marfs_namespace_struct {
-   char*       idstr;       // unique (per-repo) identification string
+   char*       idstr;       // unique (per-repo) path of this namespace
    char        enforcefq;   // flag for enforcing file quotas
    size_t      fquota;      // file quota of the namespace
    char        enforcedq;   // flag for enforcing data quotas
@@ -98,7 +98,7 @@ typedef struct marfs_namespace_struct {
 
 
 typedef struct marfs_datascheme_struct {
-   ne_erasure epat;             // erasure defintion for writing out objects
+   ne_erasure protection;       // erasure defintion for writing out objects
    ne_ctxt    nectxt;           // LibNE context reference for data access
    size_t     objfiles;         // maximum count of files per data object ( ZERO value implies no limit )
    char       chunkingenabled;  // flag indicating if files can span objects
@@ -133,6 +133,7 @@ typedef struct marfs_repo_struct {
 typedef struct marfs_config_struct {
    char*       version;
    char*       mountpoint;
+   char*       ctag;
    marfs_ns*   rootns;
    int         repocount;
    marfs_repo* repolist;

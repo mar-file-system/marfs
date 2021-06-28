@@ -466,7 +466,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    // make sure we don't have any forbidden name characters
    char* parse = nsname;
    for ( ; *parse != '\0'; parse++ ) {
-      if ( *parse == '/'  ||  *parse == '|'  ||  *parse == '('  ||  *parse == ')' ) {
+      if ( *parse == '/'  ||  *parse == '|'  ||  *parse == '('  ||  *parse == ')'  ||  *parse == '#' ) {
          LOG( LOG_ERR, "found namespace \"%s\" with disallowed '%c' character in name value\n", nsname, *parse );
          errno = EINVAL;
          free( nsname );
@@ -555,7 +555,8 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
 
    // populate the namespace id string
    int idstrlen = strlen(nsname) + 2; // nsname plus '|' prefix and NULL terminator
-   if ( pnamespace ) { idstrlen += strlen( pnamespace->idstr ); }
+   if ( pnamespace ) { idstrlen += strlen( pnamespace->idstr ); } // append to parent name
+   else { idstrlen += strlen( prepo->name ); } // or parent repo name, if we are at the top
    ns->idstr = malloc( sizeof(char) * idstrlen );
    if ( ns->idstr == NULL ) {
       LOG( LOG_ERR, "failed to allocate space for the id string of NS \"%s\"\n", nsname );
@@ -568,7 +569,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
       prres = snprintf( ns->idstr, idstrlen, "%s|%s", pnamespace->idstr, nsname );
    }
    else {
-      prres = snprintf( ns->idstr, idstrlen, "|%s", nsname );
+      prres = snprintf( ns->idstr, idstrlen, "%s|%s", prepo->name, nsname );
    }
    // check for successful print (probably unnecessary)
    if ( prres != (idstrlen - 1) ) {
@@ -1057,21 +1058,21 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
                }
                if ( strncmp( (char*)dataroot->name, "N", 2 ) == 0 ) {
                   haveN = 1;
-                  if( parse_int_node( &(ds->epat.N), dataroot ) ) {
+                  if( parse_int_node( &(ds->protection.N), dataroot ) ) {
                      LOG( LOG_ERR, "failed to parse 'N' value within a 'protection' definition\n" );
                      return -1;
                   }
                }
                else if ( strncmp( (char*)dataroot->name, "E", 2 ) == 0 ) {
                   haveE = 1;
-                  if( parse_int_node( &(ds->epat.E), dataroot ) ) {
+                  if( parse_int_node( &(ds->protection.E), dataroot ) ) {
                      LOG( LOG_ERR, "failed to parse 'E' value within a 'protection' definition\n" );
                      return -1;
                   }
                }
                else if ( strncmp( (char*)dataroot->name, "PSZ", 4 ) == 0 ) {
                   haveP = 1;
-                  if( parse_int_node( &(ds->epat.partsz), dataroot ) ) {
+                  if( parse_int_node( &(ds->protection.partsz), dataroot ) ) {
                      LOG( LOG_ERR, "failed to parse 'PSZ' value within a 'protection' definition\n" );
                      return -1;
                   }
@@ -1138,7 +1139,6 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
                LOG( LOG_ERR, "encountered a 'chunking' definition without a 'max_size' value\n" );
                return -1;
             }
-            ds->chunkingenabled = 1;
          }
          else if ( strncmp( (char*)dataroot->name, "distribution", 13 ) == 0 ) {
             // iterate over child nodes, creating our distribution tables
@@ -1188,7 +1188,7 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
       return -1;
    }
    // attempt to create our NE context
-   if ( (ds->nectxt = ne_init( dalnode, maxloc, ds->epat.N + ds->epat.E )) == NULL ) {
+   if ( (ds->nectxt = ne_init( dalnode, maxloc, ds->protection.N + ds->protection.E )) == NULL ) {
       LOG( LOG_ERR, "failed to initialize an NE context\n" );
       return -1;
    }
@@ -1214,33 +1214,6 @@ int parse_metascheme( marfs_ds* ms, marfs_repo* repo, XmlNode* metaroot ) {
          }
          mdalnode = metaroot; // save our MDAL node reference for later
          continue;
-      }
-      // check for attributes
-      if ( attr ) {
-         if ( attr->type == XML_ATTRIBUTE_NODE ) {
-            if ( strncmp( (char*)attr->name, "enabled", 8 ) == 0 ) {
-               if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
-                  if ( strncmp( (char*)attr->children->content, "no", 3 ) == 0 ) {
-                     enabled = 0;
-                  }
-                  else if ( strncmp( (char*)attr->children->content, "yes", 4 ) == 0 ) {
-                     enabled = 1;
-                  }
-               }
-            }
-         }
-         // if we found any attribute value, ensure it made sense
-         if ( enabled == 2 ) {
-            LOG( LOG_ERR, "encountered an unrecognized attribute of a '%s' node within a 'data' definition\n", (char*)metaroot->name );
-            return -1;
-         }
-         // make sure this is the only attribute
-         if ( attr->next ) {
-            LOG( LOG_ERR, "detected trailing attributes of a '%s' node within a 'data' definition\n", (char*)metaroot->name );
-            return -1;
-         }
-         // if this node has been disabled, don't even bother parsing it
-         if ( !(enabled) ) { continue; }
       }
       // determine what definition we are parsing
       xmlAttr* attr = metaroot->properties;

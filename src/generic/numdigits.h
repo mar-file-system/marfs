@@ -1,5 +1,5 @@
-#ifndef _TAGGING_H
-#define _TAGGING_H
+#ifndef _NUMDIGITS_H
+#define _NUMDIGITS_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -14,7 +14,7 @@ LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
 FOR THE USE OF THIS SOFTWARE.  If software is modified to produce
 derivative works, such modified software should be clearly marked, so
 as not to confuse it with the version available from LANL.
- 
+
 Additionally, redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the following
 conditions are met: 1. Redistributions of source code must retain the
@@ -50,78 +50,54 @@ MarFS is released under the BSD license.
 MarFS was reviewed and released by LANL under Los Alamos Computer Code
 identifier: LA-CC-15-039.
 
-MarFS uses libaws4c for Amazon S3 object communication. The original version
-is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
-LANL added functionality to the original work. The original work plus
-LANL contributions is found at https://github.com/jti-lanl/aws4c.
+MarFS uses libaws4c for Amazon S3 object communication. The original
+version is at https://aws.amazon.com/code/Amazon-S3/2601 and under the
+LGPL license.  LANL added functionality to the original work. The
+original work plus LANL contributions is found at
+https://github.com/jti-lanl/aws4c.
 
 GNU licenses can be found at http://www.gnu.org/licenses/.
+
 */
 
 
-#define FTAG_CURRENT_MAJORVERSION 0
-#define FTAG_CURRENT_MINORVERSION 1
-#define FTAG_MINORVERSION_PADDING 3
+// NOTE: This file is intended for direct, inline inclusion in other SRC files
 
-#define FTAG_NAME "MARFS-FTAG"
+#include <limits.h>
+#include <stdint.h>
 
-typedef enum 
-{
-   0 = FTAG_INIT,  // initial state -- content only modifiable by original handle
-   1 = FTAG_SIZED, // sized state -- known lower bound on file size, can be written to by arbitrary handle
-   2 = FTAG_FIN,   // finalized state -- known total file size, can be completed by arbitrary handle
-   3 = FTAG_COMP,  // completed state -- all data synced, file can be read
-   4 = FTAG_LOCKED // locked state -- access to this file's data is temporarily restricted
-} FTAG_STATE;
+int numdigits_unsigned( unsigned long long val ) {
+   // I have used hardcoded max values, to avoid underestimating digit counts if limits ever increase
+   if( val < 10U ) { return 1; }
+   if( val < 100U ) { return 2; }
+   if( val < 1000U ) { return 3; }
+   if( val < 10000U ) { return 4; }
+   if( val < 100000U ) { return 5; }
+   if( val < 1000000U ) { return 6; }
+   if( val < 10000000U ) { return 7; }
+   if( val < 100000000U ) { return 8; }
+   if( val < 1000000000U ) { return 9; }
+#if  __WORDSIZE < 64
+   if ( val <= 4294967295U ) { return 10; } // hardcoded ULONG_MAX ( 32-bit )
+#else
+   if( val < 10000000000U ) { return 10; }
+   if( val < 100000000000U ) { return 11; }
+   if( val < 1000000000000U ) { return 12; }
+   if( val < 10000000000000U ) { return 13; }
+   if( val < 100000000000000U ) { return 14; }
+   if( val < 1000000000000000U ) { return 15; }
+   if( val < 10000000000000000U ) { return 16; }
+   if( val < 100000000000000000U ) { return 17; }
+   if( val < 1000000000000000000U ) { return 18; }
+   if( val < 10000000000000000000U ) { return 19; }
+   if( val <= 18446744073709551615U ) { return 20; } // hardcoded ULONG_MAX ( 64-bit )
+#endif
+   return -1; // error case
+}
 
+// determining digits for size_t is very common, this is shorthand
+#define SIZE_DIGITS numdigits_unsigned( (unsigned long long) SIZE_MAX )
+#define UINT_DIGITS numdigits_unsigned( (unsigned long long) UINT_MAX )
 
-typedef struct ftag_struct {
-   // flag indicating if this struct can safely be modified
-   char editable;
-
-   // version info
-   unsigned int majorversion;
-   unsigned int minorversion;
-   // stream identification info
-   char* ctag;
-   char* streamid;
-   // stream structure info
-   size_t objfiles;
-   size_t objsize;
-   // file position info
-   size_t fileno;
-   size_t objno;
-   char   endofstream;
-   size_t offset;
-   ne_location location;
-   // data content info
-   ne_erasure protection;
-   size_t bytes;
-   size_t availbytes;
-   size_t recoverybytes;
-   size_t directbytes;
-   FTAG_STATE state;
-} FTAG;
-
-/**
- * Populate the given ftag struct based on the content of the given ftag string
- * @param FTAG* ftag : Reference to the ftag struct to be populated
- * @param const char* ftagstr : String value to be parsed for structure values
- * @return int : Zero on success, or -1 if a failure occurred
- */
-int ftag_initstr( const char* ftagstr, FTAG* ftag );
-
-
-ssize_t ftag_tostr( const FTAG* ftag, char* str, size_t size );
-
-
-ssize_t ftag_objectname( const FTAG* ftag, char* str, size_t size );
-
-
-ssize_t ftag_metaname( const FTAG* ftag, char* str, size_t size );
-
-
-// ftag_copy = just assignment
-
-#endif // _TAGGING_H
+#endif // _NUMDIGITS_H
 
