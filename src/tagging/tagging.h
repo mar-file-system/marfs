@@ -67,18 +67,19 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 typedef enum 
 {
-   0 = FTAG_INIT,  // initial state -- content only modifiable by original handle
-   1 = FTAG_SIZED, // sized state -- known lower bound on file size, can be written to by arbitrary handle
-   2 = FTAG_FIN,   // finalized state -- known total file size, can be completed by arbitrary handle
-   3 = FTAG_COMP,  // completed state -- all data synced, file can be read
-   4 = FTAG_LOCKED // locked state -- access to this file's data is temporarily restricted
+   // Data Object State Indicators ( Every file will be in one of the following states )
+   FTAG_INIT = 0,  // initial state   -- no file data exists
+   FTAG_SIZED = 1, // sized state     -- known lower bound on file size
+   FTAG_FIN = 2,   // finalized state -- known total file size
+   FTAG_COMP = 3,  // completed state -- all data synced
+
+   // State Flag values ( These may or may not be set )
+   FTAG_WRITABLE = 4,  // Writable flag -- file's data is writable by arbitrary procs
+   FTAG_READABLE = 8,  // Readable flag -- file's data is readable by arbitrary procs
 } FTAG_STATE;
 
 
 typedef struct ftag_struct {
-   // flag indicating if this struct can safely be modified
-   char editable;
-
    // version info
    unsigned int majorversion;
    unsigned int minorversion;

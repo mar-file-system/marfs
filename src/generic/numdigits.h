@@ -80,6 +80,7 @@ int numdigits_unsigned( unsigned long long val ) {
 #if  __WORDSIZE < 64
    if ( val <= 4294967295U ) { return 10; } // hardcoded ULONG_MAX ( 32-bit )
 #else
+   // these values would exceed 32-bit compiler limits
    if( val < 10000000000U ) { return 10; }
    if( val < 100000000000U ) { return 11; }
    if( val < 1000000000000U ) { return 12; }
@@ -97,6 +98,7 @@ int numdigits_unsigned( unsigned long long val ) {
 
 // determining digits for size_t is very common, this is shorthand
 #define SIZE_DIGITS numdigits_unsigned( (unsigned long long) SIZE_MAX )
+// determining digits for unsigned int is very common, this is shorthand
 #define UINT_DIGITS numdigits_unsigned( (unsigned long long) UINT_MAX )
 
 #endif // _NUMDIGITS_H

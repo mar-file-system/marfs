@@ -1,5 +1,5 @@
-#ifndef _STREAM_H
-#define _STREAM_H
+#ifndef _RECOVERY_H
+#define _RECOVERY_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -59,22 +59,55 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 
-typedef struct datastream_struct* DATASTREAM;
+#define RECOVERY_CURRENT_MAJORVERSION 0
+#define RECOVERY_CURRENT_MINORVERSION 1
+#define RECOVERY_MINORVERSION_PADDING 3
+
+
+// ALTERING HEADER OR MSG STRUCTURE MAY HORRIBLY BREAK PREVIOUS RECOVERY INFO AND STREAM LOGIC
+#define RECOVERY_MSGHEAD "RECOV( "
+#define RECOVERY_MSGTAIL " )\n"
+typedef struct recovery_header_struct {
+   unsigned int majorversion;
+   unsigned int minorversion;
+   char* ctag;
+   char* streamid;
+} RECOVERY_HEADER;
+#define RECOVERY_HEADER_TYPE "HEADER : "
+#define RECOVERY_HEADER_SIZE ( 7 + 9 + UINT_DIGITS + 1 + UINT_DIGITS + 3 )
+
+
+// ALTERING PER-FILE INFO IS SAFEISH, SO LONG AS YOU INCREMENT HEADER VERSIONS AND ADJUST PARSING
+typedef struct recovery_finfo_struct {
+   ino_t  inode;
+   mode_t mode;
+   uid_t  owner;
+   gid_t  group;
+   size_t size;
+   struct timespec mtime;
+   char   eof;
+   char*  path;
+} RECOVERY_FINFO;
+#define RECOVERY_FINFO_TYPE "FINFO : "
+
+
+size_t recovery_headertostr( const RECOVERY_HEADER* header, char* tgtstr, size_t size ) {
+}
+
+size_t recovery_finfotostr( const RECOVERY_FINFO* finfo, char* tgtstr, size_t size ) {
+}
 
 
 
-DATASTREAM datastream_init( DATASTREAM stream, const char* path, MDAL mdal, MDAL_CTXT mdalctxt );
-int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath );
-int datastream_extend( DATASTREAM stream, off_t length );
-int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size_t* size );
-off_t datastream_seek( DATASTREAM stream, off_t offset, int whence );
-int datastream_truncate( DATASTREAM stream, off_t length );
-int datastream_utimens( DATASTREAM stream, const struct timespec times[2] );
-size_t datastream_write( DATASTREAM stream, const void* buff, size_t size );
-size_t datastream_read( DATASTREAM stream, void* buffer, size_t size );
-int datastream_flush( DATASTREAM stream );
-int datastream_close( DATASTREAM stream );
-int datastream_release( DATASTREAM stream );
+RECOVSTREAM recovstream_init( void* objectbuffer, size_t objectsize, RECOVSTREAM_HEADER* header );
+RECOVSTREAM recovstream_cont( RECOVSTREAM recovery, void* objectbuffer, size_t objectsize, RECOVERY_HEADER* header );
+const void* recovstream_nextfile( RECOVSTREAM recovery, RECOVERY_FINFO* finfo, size_t* buffsize );
+int recovstream_close( RECOVSTREAM recovery );
 
-#endif // _STREAM_H
+
+
+
+
+
+#endif // _RECOVERY_H
 

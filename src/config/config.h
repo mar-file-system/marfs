@@ -67,6 +67,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #error "Included Libxml2 does not support tree functionality!"
 #endif
 
+#define CONFIG_CTAG_LENGTH 32
+
 typedef struct marfs_repo_struct marfs_repo;
 typedef struct marfs_namespace_struct marfs_ns;
 

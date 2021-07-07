@@ -68,7 +68,7 @@
 #    we do generate this file, but we avoid exporting it.
 
 AC_PREREQ([2.69])
-AC_INIT([MarFS], [0.95], [gransom@lanl.gov])
+AC_INIT([MarFS], [1.0], [gransom@lanl.gov])
 AC_CONFIG_SRCDIR([COPYRIGHT.h])
 AC_CONFIG_HEADERS([src/marfs_auto_config.h])
 AC_CONFIG_MACRO_DIR([m4])
@@ -98,6 +98,7 @@ AXATTR_CHECK
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_OFF_T
 AC_TYPE_SSIZE_T
+AC_TYPE_SIZE_T
 AC_CHECK_HEADER_STDBOOL
 AC_TYPE_UINT32_T
 AC_TYPE_UINT64_T
@@ -108,8 +109,6 @@ AC_CHECK_FUNCS([bzero ftruncate memset strerror strtol strtoul malloc])
 
 AXATTR_GET_FUNC_CHECK
 AXATTR_SET_FUNC_CHECK
-
-#AC_CHECK_LIB([pthread], [pthread_create], [], [AC_MSG_ERROR(["Could not locate libpthread!"])])
 
 AC_CHECK_LIB([xml2], [xmlReadFile], [], [AC_MSG_ERROR(["Could not locate libxml2!"])])
 
@@ -125,6 +124,8 @@ PKG_CHECK_MODULES( XML, libxml-2.0 )
 #       [AC_MSG_ERROR(["Could not locate Intel's Intelligent Storage Acceleration Library (isa-l) on this system!  Please verify that the proper version of the library (v2.16.0 or higher) is installed."])])])
 
 AC_DEFINE( [GTESTNEVAR], [], [Testing variable] )
+
+AC_CHECK_LIB([logging], [printf_log], [], [AC_MSG_ERROR(["Could not locate liblogging!  Please verify that you have installed the erasureUtils libraries and that those libraries are properly referenced."])])
 
 ## check for presence of zlib
 #warnlibs=""
@@ -195,7 +196,7 @@ AM_CONDITIONAL([USE_SYSLOG], [test x"$enable_syslog" != xno])
 
 AC_CONFIG_FILES([Makefile
                  src/Makefile
-                 src/dal/Makefile
+                 src/hash/Makefile
                ])
 #                 src/logging/Makefile
 #                 src/thread_queue/Makefile

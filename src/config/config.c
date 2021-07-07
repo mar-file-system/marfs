@@ -889,7 +889,7 @@ HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
 
       }
       if ( tgtnode != nodecount ) {
-         LOG( LOG_ERR, "%s distribution has node %zu reference, but no defined weight value\n", disname, tgtnode );
+         LOG( LOG_ERR, "%s distribution has node %zu reference, but no defined weight value\n", distname, tgtnode );
          errno = EINVAL;
          errorflag = 1;
       }
@@ -907,7 +907,7 @@ HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
    }
 
    // finally, initialize the hash table
-   HASH_TABLE table = hash_init( nodelist, nodecount );
+   HASH_TABLE table = hash_init( nodelist, nodecount, 0 ); // NOT a lookup table
    // verify success
    if ( table == NULL ) {
       LOG( LOG_ERR, "failed to initialize hash table for %s distribution\n", distname );
@@ -1148,19 +1148,19 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
                   return -1;
                }
                if ( strncmp( (char*)dataroot->name, "pods", 5 ) == 0 ) {
-                  if ( (ds->podtable = create_dist_table( &(maxloc.pod), dataroot )) = NULL ) {
+                  if ( (ds->podtable = create_distribution_table( &(maxloc.pod), dataroot )) = NULL ) {
                      LOG( LOG_ERR, "failed to create 'pods' distribution table\n" );
                      return -1;
                   }
                }
                else if ( strncmp( (char*)dataroot->name, "caps", 5 ) == 0 ) {
-                  if ( (ds->podtable = create_dist_table( &(maxloc.cap), dataroot )) = NULL ) {
+                  if ( (ds->podtable = create_distribution_table( &(maxloc.cap), dataroot )) = NULL ) {
                      LOG( LOG_ERR, "failed to create 'caps' distribution table\n" );
                      return -1;
                   }
                }
                else if ( strncmp( (char*)dataroot->name, "scatters", 9 ) == 0 ) {
-                  if ( (ds->podtable = create_dist_table( &(maxloc.scatter), dataroot )) = NULL ) {
+                  if ( (ds->podtable = create_distribution_table( &(maxloc.scatter), dataroot )) = NULL ) {
                      LOG( LOG_ERR, "failed to create 'scatters' distribution table\n" );
                      return -1;
                   }

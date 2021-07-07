@@ -58,9 +58,9 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include <stdint.h>
+#include <stdlib.h>
 
-typedef void* HASH_TABLE;
+typedef struct hash_table_struct* HASH_TABLE;
 
 typedef struct hash_node_struct {
    const char* name;

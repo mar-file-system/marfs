@@ -56,9 +56,14 @@ https://github.com/jti-lanl/aws4c.
 
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
+
+#include "hash.h"
+
+#include <logging.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
 
@@ -96,7 +101,7 @@ static void identifier( const char *key, uint64_t *id ) {
 }
 
 
-static inline compareID( uint64_t *id_a, uint64_t *id_b ) {
+static inline int compareID( uint64_t *id_a, uint64_t *id_b ) {
    if(id_a[0] > id_b[0]) {
       return 1;
    }
@@ -143,7 +148,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
    HASH_TABLE table = malloc( sizeof( struct hash_table_struct ) );
    if ( table == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for HASH_TABLE\n" );
-      return -1;
+      return NULL;
    }
    table->nodecount = count;
    table->nodes = nodes;
@@ -159,7 +164,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
          LOG( LOG_ERR, "Node %zd has negative weight value: %d\n", curnode, nodes[curnode].weight );
          free( table );
          errno = EINVAL;
-         return -1;
+         return NULL;
       }
       if ( nodes[curnode].weight == 0 )
          zerocount++;  // zeros are special, so we need to count these separately
@@ -179,7 +184,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
       LOG( LOG_ERR, "recieved all zero weight values for a non-lookup hash table\n" );
       free( table );
       errno = EINVAL;
-      return -1;
+      return NULL;
    }
    table->vnodecount = ( weightratio * totalweight );
    // for a lookup table, we need to add a single vnode per zero value weight
@@ -192,7 +197,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
    if ( table->vnodes == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for virtual nodes\n" );
       free( table );
-      return -1;
+      return NULL;
    }
 
    // allocate space for all vnode name strings
@@ -204,7 +209,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
       LOG( LOG_ERR, "Failed to allocate space for virtual node names\n" );
       free( table->vnodes );
       free( table );
-      return -1;
+      return NULL;
    }
 
    // create all virtual nodes
@@ -215,13 +220,13 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
          size_t tmpvnode = 0;
          for ( ; tmpvnode < ( nodes[curnode].weight * weightratio ); tmpvnode++ ) {
             table->vnodes[curvnode + tmpvnode].nodenum = curnode;
-            int pval = snprintf( vnodename, maxname + maxdigits + 2, "%s-%d", nodes[curnode].name, tmpvnode );
+            int pval = snprintf( vnodename, maxname + maxdigits + 2, "%s-%zu", nodes[curnode].name, tmpvnode );
             if ( pval < 0  ||  pval >= ( maxname + maxdigits + 2 ) ) {
                LOG( LOG_ERR, "Failed to generate vnode name string\n" );
                free( vnodename );
                free( table->vnodes );
                free( table );
-               return -1;
+               return NULL;
             }
             identifier( vnodename, table->vnodes[curvnode + tmpvnode].id );
          }
@@ -300,7 +305,8 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
       else {
          // the current node ID matches
          // while this is VERY likely to be an exact match on name as well, we must verify
-         if ( strncmp( node->name, target, strlen(target) + 1 ) ) {
+         size_t nodenum = table->vnodes[curnode].nodenum;
+         if ( strncmp( table->nodes[nodenum].name, target, strlen(target) + 1 ) ) {
             // we have an ID collision, rather than an actual match
             // this is an unfortunate edge case, as we must do some extra checks against nearby nodes
             break;  // NOTE -- it is impossible for curnode==max here, so that will be our catch for this case
@@ -337,7 +343,7 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
          }
          // we've found an ID match, now check for a name match
          HASH_NODE* newnode = table->nodes + table->vnodes[tmpnode].nodenum;
-         if ( strncmp( newnode.name, target, strlen(target) + 1 ) == 0 ) {
+         if ( strncmp( newnode->name, target, strlen(target) + 1 ) == 0 ) {
             // a real exact match; return this instead
             curnode = tmpnode;
             retval = 0;

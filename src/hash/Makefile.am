@@ -54,5 +54,49 @@
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
 
-SUBDIRS = hash
+
+# automake requires '=' before '+=', even for these built-in vars
+AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CFLAGS   =
+AM_LDFLAGS  =
+
+
+include_HEADERS = hash.h
+
+# define sources used by many programs as noinst libraries, to avoid multiple compilations
+noinst_LTLIBRARIES = libHash.la
+
+libHash_la_SOURCES = hash.c
+Hash_LIB = libHash.la
+
+# ---
+#check_PROGRAMS = test_threadqueue test_threadqueue_enqueue test_threadqueue_getopts test_threadqueue_getflags test_threadqueue_noprod test_threadqueue_nocons test_threadqueue_mastercons test_threadqueue_masterprod
+#
+#
+#test_threadqueue_SOURCES = testing/test_threadqueue.c
+#test_threadqueue_LDADD = $(TQ_LIB) $(SIDE_LIBS)
+#
+#test_threadqueue_enqueue_SOURCES = testing/test_threadqueue_enqueue.c
+#test_threadqueue_enqueue_LDADD = $(TQ_LIB) $(SIDE_LIBS)
+#
+#test_threadqueue_getopts_SOURCES = testing/test_threadqueue_getopts.c
+#test_threadqueue_getopts_LDADD = $(TQ_LIB) $(SIDE_LIBS)
+#
+#test_threadqueue_getflags_SOURCES = testing/test_threadqueue_getflags.c
+#test_threadqueue_getflags_LDADD = $(TQ_LIB) $(SIDE_LIBS)
+#
+#test_threadqueue_noprod_SOURCES = testing/test_threadqueue_noprod.c
+#test_threadqueue_noprod_LDADD = $(TQ_LIB) $(SIDE_LIBS)
+#
+#test_threadqueue_nocons_SOURCES = testing/test_threadqueue_nocons.c
+#test_threadqueue_nocons_LDADD = $(TQ_LIB) $(SIDE_LIBS)
+#
+#test_threadqueue_mastercons_SOURCES = testing/test_threadqueue_mastercons.c
+#test_threadqueue_mastercons_LDADD = $(TQ_LIB) $(SIDE_LIBS)
+#
+#test_threadqueue_masterprod_SOURCES = testing/test_threadqueue_masterprod.c
+#test_threadqueue_masterprod_LDADD = $(TQ_LIB) $(SIDE_LIBS)
+#
+#TESTS = test_threadqueue test_threadqueue_enqueue test_threadqueue_getopts test_threadqueue_getflags test_threadqueue_noprod test_threadqueue_nocons test_threadqueue_mastercons test_threadqueue_masterprod
+
 

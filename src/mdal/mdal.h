@@ -302,10 +302,11 @@ typedef struct MDAL_struct {
     * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : Relative path to the target file
     * @param int flags : Flags specifying behavior (see the 'open()' syscall 'flags' value for full info)
+    *                    Note -- This function CANNOT create new files ( O_CREAT and O_EXCL are ignored )
     * @param mode_t mode : Mode for file creation (see the 'open()' syscall 'mode' value for full info)
     * @return MDAL_FHANDLE : The newly opened MDAL_FHANDLE, or NULL if a failure occurred
     */
-   MDAL_FHANDLE (*open) ( const MDAL_CTXT ctxt, const char* path, int flags, mode_t mode );
+   MDAL_FHANDLE (*open) ( const MDAL_CTXT ctxt, const char* path, int flags );
 
    /**
     * Open a file, relative to the reference tree of the given MDAL_CTXT

@@ -1,5 +1,3 @@
-#ifndef _STREAM_H
-#define _STREAM_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -14,7 +12,7 @@ LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
 FOR THE USE OF THIS SOFTWARE.  If software is modified to produce
 derivative works, such modified software should be clearly marked, so
 as not to confuse it with the version available from LANL.
- 
+
 Additionally, redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the following
 conditions are met: 1. Redistributions of source code must retain the
@@ -50,31 +48,27 @@ MarFS is released under the BSD license.
 MarFS was reviewed and released by LANL under Los Alamos Computer Code
 identifier: LA-CC-15-039.
 
-MarFS uses libaws4c for Amazon S3 object communication. The original version
-is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
-LANL added functionality to the original work. The original work plus
-LANL contributions is found at https://github.com/jti-lanl/aws4c.
+MarFS uses libaws4c for Amazon S3 object communication. The original
+version is at https://aws.amazon.com/code/Amazon-S3/2601 and under the
+LGPL license.  LANL added functionality to the original work. The
+original work plus LANL contributions is found at
+https://github.com/jti-lanl/aws4c.
 
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 
-typedef struct datastream_struct* DATASTREAM;
+
+
+//   -------------   INTERNAL DEFINITIONS    -------------
 
 
 
-DATASTREAM datastream_init( DATASTREAM stream, const char* path, MDAL mdal, MDAL_CTXT mdalctxt );
-int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath );
-int datastream_extend( DATASTREAM stream, off_t length );
-int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size_t* size );
-off_t datastream_seek( DATASTREAM stream, off_t offset, int whence );
-int datastream_truncate( DATASTREAM stream, off_t length );
-int datastream_utimens( DATASTREAM stream, const struct timespec times[2] );
-size_t datastream_write( DATASTREAM stream, const void* buff, size_t size );
-size_t datastream_read( DATASTREAM stream, void* buffer, size_t size );
-int datastream_flush( DATASTREAM stream );
-int datastream_close( DATASTREAM stream );
-int datastream_release( DATASTREAM stream );
+//   -------------   INTERNAL FUNCTIONS    -------------
 
-#endif // _STREAM_H
+
+
+
+//   -------------   EXTERNAL FUNCTIONS    -------------
+
 
