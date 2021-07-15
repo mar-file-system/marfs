@@ -143,6 +143,12 @@ static int compare_nodes(const void *a, const void *b) {
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
 
+int hash_rangevalue( const char* string, int maxval ) {
+   uint64_t idval;
+   identifier( string, &(idval) );
+   return ((int) ( idval % maxval ));
+}
+
 HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
    // allocate the hash_table structure
    HASH_TABLE table = malloc( sizeof( struct hash_table_struct ) );

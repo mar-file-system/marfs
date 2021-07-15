@@ -59,8 +59,36 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 
-typedef struct datastream_struct* DATASTREAM;
 
+typedef enum
+{
+   CREATE_STREAM,
+   EDIT_STREAM,
+   READ_STREAM,
+   ERROR_STREAM
+} STREAM_TYPE;
+
+typedef struct streamfile_struct {
+   MDAL_FHANDLE    metahandle;
+   FTAG            ftag;
+   struct timespec times[2];
+}* STREAMFILE;
+
+typedef struct datastream_struct {
+   STREAM_TYPE     type;
+   const marfs_ns  ns;
+   MDAL_CTXT       mdalctxt;
+   ne_handle   datahandle;
+   STREAMFILE  files;
+   size_t      filecount;
+   size_t      filealloc;
+   char*       ftagstr;
+   size_t      ftagstrsize;
+   size_t      recoveryheaderlen;
+   size_t      objno;
+   size_t      offset;
+   RECOVERY_FINFO finfo;
+}* DATASTREAM;
 
 
 DATASTREAM datastream_init( DATASTREAM stream, const char* path, MDAL mdal, MDAL_CTXT mdalctxt );

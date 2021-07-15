@@ -68,6 +68,8 @@ typedef struct hash_node_struct {
    void*       content;
 } HASH_NODE;
 
+int hash_rangevalue( const char* string, int maxval );
+
 HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup );
 int hash_term( HASH_TABLE table, HASH_NODE** nodes, size_t* count );
 int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node );

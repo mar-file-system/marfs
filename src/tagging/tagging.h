@@ -69,9 +69,10 @@ typedef enum
 {
    // Data Object State Indicators ( Every file will be in one of the following states )
    FTAG_INIT = 0,  // initial state   -- no file data exists
-   FTAG_SIZED = 1, // sized state     -- known lower bound on file size
+   FTAG_SIZED = 1, // sized state     -- known lower bound on file size (may be up to objsize bytes larger)
    FTAG_FIN = 2,   // finalized state -- known total file size
-   FTAG_COMP = 3,  // completed state -- all data synced
+   FTAG_COMP = 3,  // completed state -- all data written (not necessarily synced)
+   FTAG_DATASTATE = FTAG_COMP, // mask value for retrieving data state indicator
 
    // State Flag values ( These may or may not be set )
    FTAG_WRITABLE = 4,  // Writable flag -- file's data is writable by arbitrary procs
@@ -92,9 +93,8 @@ typedef struct ftag_struct {
    // file position info
    size_t fileno;
    size_t objno;
-   char   endofstream;
    size_t offset;
-   ne_location location;
+   char   endofstream;
    // data content info
    ne_erasure protection;
    size_t bytes;
