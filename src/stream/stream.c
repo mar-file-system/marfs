@@ -1262,6 +1262,23 @@ int datastream_extend( DATASTREAM stream, off_t length ) {
    // create some shorthand references
    marfs_ms* ms = &(stream->ns->prepo->metascheme);
    marfs_ds* ds = &(stream->ns->prepo->datascheme);
+   STREAMFILE curfile = stream->files + stream->filecount;
+
+   // check if our current offset / byte count supports extension
+   char finalizeobj = 0;
+   if ( curfile->bytes == 0 ) {
+      // this file currently has no content, and can safely be extended
+      if ( curfile->offset != stream->recoveryheaderlen ) {
+         // we need to move this file to a new object
+         finalizeobj = 1;
+         curfile->objno++;
+         curfile->offset = stream->recoveryheaderlen;
+      }
+   }
+   // Note -- if stream->offset is zero, we are sitting right on an object boundary
+   else if ( stream->offset != 0 ) {
+      // current stream offset is at the start of a new object
+      // we can extend the file without editing offsets at all
 }
 
 
