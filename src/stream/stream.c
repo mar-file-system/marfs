@@ -172,15 +172,17 @@ size_t gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno
 
    // convert all values to a seek from the start of the file ( convert to a whence == SEEK_SET offset )
    if ( whence == SEEK_END ) {
-      offset += curtag.bytes; // just add the total file size
+      offset += curtag.availbytes; // just add the total file size
    }
    else if ( whence == SEEK_CUR ) {
       if ( stream->objno > minobj ) {
          offset += (dataperobj - minoffset); // add the data in the first obj
          offset += ( stream->objno - (minobj + 1) ) * dataperobj; // add the data of all complete objs
-         offset += ( stream->offset - stream->recoveryheaderlen ); // add the data in the current obj
+         if ( stream->offset ) {
+            offset += ( stream->offset - stream->recoveryheaderlen ); // add the data in the current obj
+         }
       }
-      else {
+      else if ( stream->offset ) {
          offset += ( (stream->offset - stream->recoveryheaderlen) - minoffset );
       }
    }
@@ -191,7 +193,7 @@ size_t gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno
       return 0;
    }
    // regardless of 'whence', we are now seeking from the min values ( beginning of file )
-   if ( offset > curtag.bytes ) {
+   if ( offset > curtag.availbytes ) {
       // make sure we aren't seeking beyond the end of the file
       LOG( LOG_ERR, "Offset value extends beyond end of file\n" );
       errno = EINVAL;
@@ -205,7 +207,7 @@ size_t gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno
    }
    size_t tgtobj = minobj;
    size_t tgtoff = minoffset;
-   size_t remain = curtag.bytes - offset;
+   size_t remain = curtag.availbytes - offset;
    if ( (offset + minoffset) > dataperobj ) {
       // this offset will cross object boundaries
       offset -= (dataperobj - minoffset);
@@ -216,14 +218,38 @@ size_t gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno
       tgtoff += offset;
    }
 
-   // finally, populate our final values, accounting for recovery info
+   // finally, populate our final values, omitting recovery info
    if ( tgtobjno ) { *tgtobjno = tgtobj; }
-   if ( tgtoffset ) { *tgtoffset = tgtoff + stream->recoveryheaderlen; }
+   if ( tgtoffset ) { *tgtoffset = tgtoff; }
    if ( remaining ) { *remaining = remain; }
    return dataperobj;
 }
 
-         
+int dumpfinfo( DATASTREAM stream ) {
+   // allocate a recovery info string
+   size_t recoverybytes = curfile->ftag.recoverybytes;
+   char* recovinfo = malloc( recoverybytes + 1 );
+   if ( recovinfo == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate space for recovery info string\n" );
+      return -1;
+   }
+   // populate recovery info string
+   if ( recovery_finfotostr( &(stream->finfo), recovinfo, recoverybytes + 1 ) != recoverybytes ) {
+      LOG( LOG_ERR, "File recovery info has an inconsistent length\n" );
+      free( recovinfo );
+      return -1;
+   }
+   // Note -- previous writes should have ensured we have at least 'recoverybytes' of available obj space
+   // write out the recovery string
+   if ( ne_write( stream->datahandle, recovinfo, recoverybytes ) != recoverybytes ) {
+      LOG( LOG_ERR, "Failed to store file recovery info to data object\n" );
+      free( recovinfo );
+      return -1;
+   }
+   free( recovinfo ); // done with recovery info string
+   stream->offest += recoverybytes; // update our object offset
+   return 0;
+} 
 
 size_t allocfiles( STREAMFILE* files, size_t current, size_t max ) {
    // calculate the target size of the file list
@@ -752,7 +778,8 @@ DATASTREAM datastream_edit( const char* path, const marfs_ns* ns, const marfs_co
    stream->offset = stream->files[0].ftag.offset;
 
    // verify that this file is writable via a new handle
-   if ( ( stream->files[0].ftag.state & FTAG_WRITABLE ) == 0 ) {
+   if ( (stream->files[0].ftag.state & FTAG_WRITABLE) == 0  &&
+        (stream->files[0].ftag.state & FTAG_DATASTATE) != FTAG_COMP ) {
       LOG( LOG_ERR, "Attempting to edit file before original handle has been released\n" );
       freestream( stream );
       return NULL;
@@ -942,30 +969,8 @@ DATASTREAM datastream_wcont( DATASTREAM stream, const char* path, mode_t mode ) 
          }
       }
       if ( errorflag == 0 ) {
-         // allocate a recovery info string
-         size_t recoverybytes = curfile->ftag.recoverybytes;
-         char* recovinfo = malloc( recoverybytes + 1 );
-         if ( recovinfo == NULL ) {
-            LOG( LOG_ERR, "Failed to allocate space for recovery info string\n" );
-            errorflag = 1;
-         }
-         // populate recovery info string
-         else if ( recovery_finfotostr( &(stream->finfo), recovinfo, recoverybytes + 1 ) != recoverybytes ) {
-            LOG( LOG_ERR, "File recovery info has an inconsistent length\n" );
-            errorflag = 1;
-            free( recovinfo );
-         }
-         // Note -- previous writes should have ensured we have at least 'recoverybytes' of available obj space
-         // write out the recovery string
-         else if ( ne_write( stream->datahandle, recovinfo, recoverybytes ) != recoverybytes ) {
-            LOG( LOG_ERR, "Failed to store file recovery info to data object\n" );
-            errorflag = 1;
-            free( recovinfo );
-         }
-         else {
-            free( recovinfo ); // done with recovery info string
-            stream->offest += recoverybytes; // update our object offset
-         }
+         // output file recovery info
+         errorflag = dumpfinfo( stream );
       }
    }
 
@@ -1372,7 +1377,7 @@ int datastream_release( DATASTREAM stream ) {
    STREAMFILE curfile = stream->files + stream->filecount;
    char errorflag = 0;
 
-   // create streams require special care]
+   // create streams require special care
    if ( stream->type == CREAT_STREAM ) {
       // update current FTAG to finalize size and enable parallel access
       curfile->ftag.state = FTAG_FIN | FTAG_WRITABLE | ( curfile->ftag.state & ~(FTAG_DATASTATE) );
@@ -1433,32 +1438,13 @@ int datastream_close( DATASTREAM stream ) {
          }
       }
       if ( errorflag == 0 ) {
-         // allocate a recovery info string
-         size_t recoverybytes = curfile->ftag.recoverybytes;
-         char* recovinfo = malloc( recoverybytes + 1 );
-         if ( recovinfo == NULL ) {
-            LOG( LOG_ERR, "Failed to allocate space for recovery info string\n" );
-            errorflag = 1;
-         }
-         // populate recovery info string
-         else if ( recovery_finfotostr( &(stream->finfo), recovinfo, recoverybytes + 1 ) != recoverybytes ) {
-            LOG( LOG_ERR, "File recovery info has an inconsistent length\n" );
-            errorflag = 1;
-            free( recovinfo );
-         }
-         // Note -- previous writes should have ensured we have at least 'recoverybytes' of available obj space
-         // write out the recovery string
-         else if ( ne_write( stream->datahandle, recovinfo, recoverybytes ) != recoverybytes ) {
-            LOG( LOG_ERR, "Failed to store file recovery info to data object\n" );
-            errorflag = 1;
-            free( recovinfo );
-         }
-         else {
-            free( recovinfo ); // done with recovery info string
-            stream->offest += recoverybytes; // update our object offset
-         }
+         // output file recovery info
+         errorflag = dumpfinfo( stream );
       }
    }
+
+   // mark the current file as the end of this stream
+   curfile->ftag.endofstream = 1;
 
    char globalerror = errorflag; // failure to write recov info is unrecoverable
    // close the data object, if we have one
@@ -1549,13 +1535,305 @@ int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size
    }
 
    // now, we need to ensure our chunksize does not expand beyond appropriate file bounds
-   STREAMFILE curfile = stream->files + stream->filecount;
+   FTAG_STATE datastate = ( stream->files[stream->filecount - 1].ftag.state & FTAG_DATASTATE );
+   if ( (*size + *offset) > totsz ) {
+      // incomplete files require special care
+      if ( datastate == FTAG_SIZED  ||  datastate == FTAG_INIT ) {
+         // we can't permit access to this chunk ( final chunk ) by non-CREAT streams
+         *size = 0;
+      }
+      else {
+         // limit chunk size to the upper bound of the file itself
+         *size = totsz - *offset;
+      }
+   }
+
+   return 0;
 }
 
-off_t datastream_seek( DATASTREAM stream, off_t offset, int whence );
-int datastream_truncate( DATASTREAM stream, off_t length );
-int datastream_utimens( DATASTREAM stream, const struct timespec times[2] );
-size_t datastream_write( DATASTREAM stream, const void* buff, size_t size );
+off_t datastream_seek( DATASTREAM stream, off_t offset, int whence ) {
+   // check for NULL or ERROR stream
+   if ( stream == NULL ) {
+      LOG( LOG_ERR, "Received a NULL stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( stream->type == ERROR_STREAM ) {
+      LOG( LOG_ERR, "Received an in-error stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // CREAT streams cannot be seeked
+   if ( stream->type == CREAT_STREAM ) {
+      LOG( LOG_ERR, "Received a create stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+
+   // create some shorthand references
+   marfs_ms* ms = &(stream->ns->prepo->metascheme);
+   marfs_ds* ds = &(stream->ns->prepo->datascheme);
+   STREAMFILE curfile = stream->files + stream->filecount;
+   char errorflag = 0;
+
+   // establish targets for the seek
+   size_t tgtobj;
+   size_t tgtoff;
+   size_t remaining;
+   size_t dataperobj = gettargets( stream, offset, whence, &(tgtobj), &(tgtoff), &(remaining) );
+   if ( dataperobj == 0 ) {
+      LOG( LOG_ERR, "Cannot identify offsets of the specified target\n" );
+      return -1;
+   }
+
+   // write streams can only seek to object boundaries
+   if ( stream->type != READ_STREAM  &&  tgtoff != 0 ) {
+      LOG( LOG_ERR, "Seek target does not align with chunk boundaries\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   else {
+      // read streams need to have their offset adjusted to skip the recovery header info
+      tgtoff += stream->recoveryheaderlen;
+   }
+
+   // non-CREAT streams are not permitted to access the final chunk of an unbounded file
+   if ( (curfile->ftag.state & FTAG_DATASTATE) < FTAG_FIN  &&  remaining < dataperobj ) {
+      LOG( LOG_ERR, "Access to an unbounded data chunk is not permitted for non-CREAT streams\n" );
+      errno = EINVAL;
+      return -1;
+   }
+
+   // check if we need to switch data objects
+   if ( tgtobj != stream->objno  &&  stream->datahandle ) {
+      // non-READ streams need to output trailing recovery info
+      if ( stream->type != READ_STREAM ) {
+         errorflag = dumpfinfo( stream );
+      }
+      // close the current object reference
+      if ( ne_close( stream->datahandle ) ) {
+         LOG( LOG_ERR, "Failed to close/sync current data handle\n" );
+         errorflag = 1;
+      }
+      stream->datahandle = NULL;
+   }
+
+   // set stream offset values to the new targets
+   stream->objno = tgtobj;
+   stream->offset = tgtoffset;
+
+   // check for any previous errors
+   if ( errorflag ) {
+      errno = EBADFD;
+      stream->type = ERROR_STREAM;
+      return -1;
+   }
+
+   return offset;
+}
+
+int datastream_truncate( DATASTREAM stream, off_t length ) {
+   // check for NULL or ERROR stream
+   if ( stream == NULL ) {
+      LOG( LOG_ERR, "Received a NULL stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( stream->type == ERROR_STREAM ) {
+      LOG( LOG_ERR, "Received an in-error stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // only EDIT be truncated
+   if ( stream->type != EDIT_STREAM ) {
+      LOG( LOG_ERR, "Received a non-edit stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+
+   // negative offset values are unacceptable
+   if ( length < 0 ) {
+      LOG( LOG_ERR, "Received a negative length value\n" );
+      errno = EINVAL;
+      return -1;
+   }
+
+   // create some shorthand references
+   marfs_ms* ms = &(stream->ns->prepo->metascheme);
+   marfs_ds* ds = &(stream->ns->prepo->datascheme);
+   STREAMFILE curfile = stream->files + stream->filecount;
+   size_t oldavail = curfile->ftag.availbytes;
+
+   // EDIT streams can only truncate if a file's content is complete
+   if ( (curfile->ftag.state & FTAG_DATASTATE) != FTAG_COMP ) {
+      LOG( LOG_ERR, "Edit streams cannot truncate an incomplete file\n" );
+      errno = EPERM;
+      return -1;
+   }
+
+   // adjust the available bytes FTAG value
+   if ( length < curfile->ftag.availbytes ) {
+      curfile->ftag.availbytes = length;
+   }
+
+   // update the FTAG values
+   if ( putftag( stream, curfile ) ) {
+      LOG( LOG_ERR, "Failed to update FTAG value to reflect truncate op\n" );
+      curfile->ftag.availbytes = oldavail; // reset FTAG value
+      return -1;
+   }
+   // actually truncate the metadata file
+   if ( ms->mdal->ftruncate( curfile->metahandle, length ) ) {
+      LOG( LOG_ERR, "Failed to truncate metadata file to proper length\n" );
+      return -1;
+   }
+
+   return 0;
+}
+
+int datastream_utimens( DATASTREAM stream, const struct timespec times[2] ) {
+   // check for NULL or ERROR stream
+   if ( stream == NULL ) {
+      LOG( LOG_ERR, "Received a NULL stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( stream->type == ERROR_STREAM ) {
+      LOG( LOG_ERR, "Received an in-error stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // READ streams cannot edit time values
+   if ( stream->type == READ_STREAM ) {
+      LOG( LOG_ERR, "Received a read stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+
+   // create some shorthand references
+   marfs_ms* ms = &(stream->ns->prepo->metascheme);
+   marfs_ds* ds = &(stream->ns->prepo->datascheme);
+   STREAMFILE curfile = stream->files + stream->filecount;
+
+   if ( stream->type == EDIT_STREAM ) {
+      // EDIT streams can only update times if a file's content is complete
+      if ( (curfile->ftag.state & FTAG_DATASTATE) != FTAG_COMP ) {
+         LOG( LOG_ERR, "Edit streams cannot update times of an incomplete file\n" );
+         errno = EPERM;
+         return -1;
+      }
+      // actually update the file times
+      if ( ms->mdal->futimens( curfile->metahandle, times ) ) {
+         LOG( LOG_ERR, "Failed to update time values on current metadata handle\n" );
+         return -1;
+      }
+      return 0; // all that needs to be done for EDIT streams
+   }
+
+   // for CREAT streams, just stash the values until the file is complete
+   curfile->times = times;
+   return 0;
+}
+
+ssize_t datastream_write( DATASTREAM stream, const void* buff, size_t size ){
+   // check for NULL or ERROR stream
+   if ( stream == NULL ) {
+      LOG( LOG_ERR, "Received a NULL stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( stream->type == ERROR_STREAM ) {
+      LOG( LOG_ERR, "Received an in-error stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // READ streams cannot be written to
+   if ( stream->type == READ_STREAM ) {
+      LOG( LOG_ERR, "Received a read stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+
+   // create some shorthand references
+   marfs_ms* ms = &(stream->ns->prepo->metascheme);
+   marfs_ds* ds = &(stream->ns->prepo->datascheme);
+   STREAMFILE curfile = stream->files + stream->filecount;
+
+   // identify data boundaries
+   size_t remaining;
+   size_t dataperobj = gettargets( stream, 0, SEEK_CUR, NULL, NULL, &(remaining) );
+   if ( stream->type == EDIT_STREAM ) {
+      // EDIT streams cannot write to any unbounded data chunk
+      if ( (curfile->ftag.stat & FTAG_DATASTATE) < FTAG_FIN ) {
+         remaining -= remaining % dataperobj;
+      }
+      // reduce the write size, if necessary
+      if ( remaining < size ) {
+         LOG( LOG_INFO, "Reducing write from %zu bytes to %zu, to fit within file bounds\n", size, remaining );
+         size = remaining;
+      }
+   }
+
+   // loop until all data has been written
+   ssize_t written = 0;
+   while ( size ) {
+
+      // may need to create a new data object
+      if ( stream->datahandle == NULL ) {
+         // sanity check, we should be at a zero offset'
+         if ( stream->offset ) {
+            LOG( LOG_ERR, "No obj ref and non-zero offset value\n" );
+            errno = EBADFD;
+            stream->type = ERROR_STREAM;
+            return -1;
+         }
+         // create a new data object
+         if ( opencurrentobj( stream ) ) {
+            stream->type = ERROR_STREAM;
+            return -1;
+         }
+      }
+
+      // identify how much data we can currently write out
+      size_t canwrite = (curfile->ftag.objsize) ? curfile->ftag.objsize - (stream->offset + curfile->ftag.recoverybytes) : size;
+
+      // done with the current object
+      if ( canwrite == 0 ) {
+         // write out file recovery info
+         if ( dumpfinfo( stream ) ) {
+            LOG( LOG_ERR, "Failed to output intermediate file recovery info\n" );
+            stream->type = ERROR_STREAM;
+            return -1;
+         }
+         // finalize the current data object
+         if ( ne_close( stream->datahandle ) ) {
+            LOG( LOG_ERR, "Failed to close / sync current data object\n" );
+            stream->datahandle = NULL;
+            stream->type = ERROR_STREAM;
+            return -1;
+         }
+         stream->datahandle = NULL;
+         // progress to the next object
+         stream->objno++;
+         stream->offset = 0;
+      }
+      else {
+         // output any data we can
+         ssize_t writeres = ne_write( stream->datahandle, buff + written, (canwrite > size) ? size : canwrite );
+         if ( writeres <= 0 ) {
+            LOG( LOG_ERR, "Failed to write to current data object\n" );
+            stream->type = ERROR_STREAM;
+            return -1;
+         }
+         // adjust written and remaining counts
+         written += writeres;
+         size -= writeres;
+      }
+   }
+
+   return written;
+}
+
 size_t datastream_read( DATASTREAM stream, void* buffer, size_t size );
 int datastream_flush( DATASTREAM stream );
 
