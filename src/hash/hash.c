@@ -243,7 +243,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char directlookup ) {
    if ( directlookup ) {
       table->vnodecount += zerocount;
    }
-   LOG( LOG_INFO, "Using %zu vnodes\n", table->vnodecount );
+   LOG( LOG_INFO, "Using %zu vnodes (wratio=%d)\n", table->vnodecount, weightratio );
 
    // allocate space for all virtual nodes
    table->vnodes = malloc( sizeof( struct virtual_node_struct ) * table->vnodecount );
@@ -255,8 +255,8 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char directlookup ) {
 
    // allocate space for all vnode name strings
    int maxdigits = 1;
-   int tmpratio = weightratio;
-   while ( ( (int)( tmpratio = tmpratio / 10 ) ) ) { maxdigits++; }
+   size_t tmpratio = totalweight * weightratio;
+   while ( ( (size_t)( tmpratio = tmpratio / 10 ) ) ) { maxdigits++; }
    char* vnodename = malloc( sizeof( char ) * ( maxname + 2 + maxdigits ) );
    if ( vnodename == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for virtual node names\n" );
@@ -275,7 +275,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char directlookup ) {
             table->vnodes[curvnode + tmpvnode].nodenum = curnode;
             int pval = snprintf( vnodename, maxname + maxdigits + 2, "%s-%zu", nodes[curnode].name, tmpvnode );
             if ( pval < 0  ||  pval >= ( maxname + maxdigits + 2 ) ) {
-               LOG( LOG_ERR, "Failed to generate vnode name string\n" );
+               LOG( LOG_ERR, "Failed to generate vnode name string (%d--digits%d/name%d)\n", pval, maxdigits, maxname );
                free( vnodename );
                free( table->vnodes );
                free( table );
