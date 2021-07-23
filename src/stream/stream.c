@@ -777,7 +777,7 @@ DATASTREAM datastream_edit( const char* path, const marfs_ns* ns, const marfs_co
    stream->objno = stream->files[0].ftag.objno;
    stream->offset = stream->files[0].ftag.offset;
 
-   // verify that this file is writable via a new handle
+   // verify that this file is writable via a new handle, or has a completed data set
    if ( (stream->files[0].ftag.state & FTAG_WRITABLE) == 0  &&
         (stream->files[0].ftag.state & FTAG_DATASTATE) != FTAG_COMP ) {
       LOG( LOG_ERR, "Attempting to edit file before original handle has been released\n" );
@@ -818,9 +818,14 @@ DATASTREAM datastream_wcont( DATASTREAM stream, const char* path, mode_t mode ) 
       return NULL;
    }
 
+   // create some shorthand references
+   marfs_ms* ms = &(ns->prepo->metascheme);
+   marfs_ds* ds = &(ns->prepo->datascheme);
+   STREAMFILE curfile = stream->files + (stream->filecount - 1);
+
    // if this is an EDIT stream, ensure that this handle can finalize the current file
-   if ( stream->type == EDIT_STREAM ) {
-      FTAG_STATE curfilestate = stream->files[stream->filecount - 1].ftag.state;
+   if ( stream->type == EDIT_STREAM  &&  curfile ) {
+      FTAG_STATE curfilestate = curfile->ftag.state;
       if ( (curfilestate & FTAG_WRITABLE) == 0 ) {
          LOG( LOG_ERR, "Current file cannot be modified by the given handle\n" );
          errno = EINVAL;
@@ -832,11 +837,6 @@ DATASTREAM datastream_wcont( DATASTREAM stream, const char* path, mode_t mode ) 
          return NULL;
       }
    }
-
-   // create some shorthand references
-   marfs_ms* ms = &(ns->prepo->metascheme);
-   marfs_ds* ds = &(ns->prepo->datascheme);
-   STREAMFILE curfile = stream->files + (stream->filecount - 1);
 
    // Note -- This function has two distinct phases: creation of a new file, and completion of the previous.
    //         As completion of the previous file may involve irreversible modification of the stream, it is 
@@ -1196,7 +1196,13 @@ int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath ) {
       return -1;
    }
    if ( stream->type != CREAT_STREAM  &&  stream->type != EDIT_STREAM ) {
-      LOG( LOG_ERR, "Recieved a non-CREAT/EDIT stream reference\n" );
+      LOG( LOG_ERR, "Received a non-CREAT/EDIT stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // make sure this stream actually has a current file reference
+   if ( !(stream->filecount) ) {
+      LOG( LOG_ERR, "Current stream is not referencing an active file\n" );
       errno = EINVAL;
       return -1;
    }
@@ -1277,11 +1283,17 @@ int datastream_extend( DATASTREAM stream, off_t length ) {
       errno = EINVAL;
       return NULL;
    }
+   // make sure this stream actually has a current file reference
+   if ( !(stream->filecount) ) {
+      LOG( LOG_ERR, "Current stream is not referencing an active file\n" );
+      errno = EINVAL;
+      return -1;
+   }
 
    // create some shorthand references
    marfs_ms* ms = &(stream->ns->prepo->metascheme);
    marfs_ds* ds = &(stream->ns->prepo->datascheme);
-   STREAMFILE curfile = stream->files + stream->filecount;
+   STREAMFILE curfile = stream->files + (stream->filecount - 1);
    // preserve old offset values
    FTAG curtag = curfile->ftag;
    size_t oldoff = stream->offset;
@@ -1374,11 +1386,12 @@ int datastream_release( DATASTREAM stream ) {
    // create some shorthand references
    marfs_ms* ms = &(stream->ns->prepo->metascheme);
    marfs_ds* ds = &(stream->ns->prepo->datascheme);
-   STREAMFILE curfile = stream->files + stream->filecount;
+   STREAMFILE curfile = NULL;
+   if ( stream->filecount ) { curfile = stream->files + (stream->filecount - 1); }
    char errorflag = 0;
 
    // create streams require special care
-   if ( stream->type == CREAT_STREAM ) {
+   if ( stream->type == CREAT_STREAM  &&  curfile ) {
       // update current FTAG to finalize size and enable parallel access
       curfile->ftag.state = FTAG_FIN | FTAG_WRITABLE | ( curfile->ftag.state & ~(FTAG_DATASTATE) );
       // attach the FTAG value
@@ -1389,9 +1402,35 @@ int datastream_release( DATASTREAM stream ) {
    }
 
    // close our object handle, if present
+   char globalerror = 0;
    if ( stream->datahandle  &&  ne_close( stream->datahandle ) ) {
       LOG( LOG_ERR, "Failed to properly close data object handle\n" );
       errorflag = 1;
+      globalerror = 1;
+   }
+
+   // if we're still dealing with packed files, this becomes more complex
+   if ( stream->filecount > 1 ) {
+      // sanity check, this should always be a CREAT stream
+      if ( stream->type != CREAT_STREAM ) {
+         LOG( LOG_ERR, "Detected excessive file count for non-CREAT stream\n" );
+         errno = EBADFD;
+         errorflag = 1;
+      }
+      else if ( !(globalerror)  &&  curfile->ftag.bytes == 0 ) {
+         // only if the data object synced AND the last thing we wrote was previous file recovery info, 
+         //  can we safely finalize the previous files
+         int iter = 0;
+         for ( ; iter < (stream->filecount - 1); iter++ ) {
+            if ( finfile( stream, stream->files + iter ) ) {
+               LOG( LOG_ERR, "Failed to finalize file %zu\n", iter );
+               errorflag = 1;
+            }
+         }
+      }
+      else {
+         errorflag = 1;
+      }
    }
 
    // just destroy the stream, no need to adjust any further state
@@ -1413,11 +1452,17 @@ int datastream_close( DATASTREAM stream ) {
       errno = EINVAL;
       return NULL;
    }
+   // make sure this stream actually has a current file reference
+   if ( !(stream->filecount) ) {
+      LOG( LOG_ERR, "Current stream is not referencing an active file\n" );
+      errno = EINVAL;
+      return -1;
+   }
 
    // create some shorthand references
    marfs_ms* ms = &(stream->ns->prepo->metascheme);
    marfs_ds* ds = &(stream->ns->prepo->datascheme);
-   STREAMFILE curfile = stream->files + stream->filecount;
+   STREAMFILE curfile = stream->files + (stream->filecount - 1);
    char errorflag = 0;
 
    // if this is a create stream, and either...
@@ -1489,6 +1534,12 @@ int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size
    }
    if ( stream->type == ERROR_STREAM ) {
       LOG( LOG_ERR, "Received an in-error stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // make sure this stream actually has a current file reference
+   if ( !(stream->filecount) ) {
+      LOG( LOG_ERR, "Current stream is not referencing an active file\n" );
       errno = EINVAL;
       return -1;
    }
@@ -1569,11 +1620,17 @@ off_t datastream_seek( DATASTREAM stream, off_t offset, int whence ) {
       errno = EINVAL;
       return -1;
    }
+   // make sure this stream actually has a current file reference
+   if ( !(stream->filecount) ) {
+      LOG( LOG_ERR, "Current stream is not referencing an active file\n" );
+      errno = EINVAL;
+      return -1;
+   }
 
    // create some shorthand references
    marfs_ms* ms = &(stream->ns->prepo->metascheme);
    marfs_ds* ds = &(stream->ns->prepo->datascheme);
-   STREAMFILE curfile = stream->files + stream->filecount;
+   STREAMFILE curfile = stream->files + (stream->filecount - 1);
    char errorflag = 0;
 
    // establish targets for the seek
@@ -1644,9 +1701,15 @@ int datastream_truncate( DATASTREAM stream, off_t length ) {
       errno = EINVAL;
       return -1;
    }
-   // only EDIT be truncated
+   // only EDIT streams can be truncated
    if ( stream->type != EDIT_STREAM ) {
       LOG( LOG_ERR, "Received a non-edit stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // make sure this stream actually has a current file reference
+   if ( !(stream->filecount) ) {
+      LOG( LOG_ERR, "Current stream is not referencing an active file\n" );
       errno = EINVAL;
       return -1;
    }
@@ -1661,7 +1724,7 @@ int datastream_truncate( DATASTREAM stream, off_t length ) {
    // create some shorthand references
    marfs_ms* ms = &(stream->ns->prepo->metascheme);
    marfs_ds* ds = &(stream->ns->prepo->datascheme);
-   STREAMFILE curfile = stream->files + stream->filecount;
+   STREAMFILE curfile = stream->files + (stream->filecount - 1);
    size_t oldavail = curfile->ftag.availbytes;
 
    // EDIT streams can only truncate if a file's content is complete
@@ -1709,11 +1772,17 @@ int datastream_utimens( DATASTREAM stream, const struct timespec times[2] ) {
       errno = EINVAL;
       return -1;
    }
+   // make sure this stream actually has a current file reference
+   if ( !(stream->filecount) ) {
+      LOG( LOG_ERR, "Current stream is not referencing an active file\n" );
+      errno = EINVAL;
+      return -1;
+   }
 
    // create some shorthand references
    marfs_ms* ms = &(stream->ns->prepo->metascheme);
    marfs_ds* ds = &(stream->ns->prepo->datascheme);
-   STREAMFILE curfile = stream->files + stream->filecount;
+   STREAMFILE curfile = stream->files + (stream->filecount - 1);
 
    if ( stream->type == EDIT_STREAM ) {
       // EDIT streams can only update times if a file's content is complete
@@ -1753,16 +1822,28 @@ ssize_t datastream_write( DATASTREAM stream, const void* buff, size_t size ){
       errno = EINVAL;
       return -1;
    }
+   // make sure this stream actually has a current file reference
+   if ( !(stream->filecount) ) {
+      LOG( LOG_ERR, "Current stream is not referencing an active file\n" );
+      errno = EINVAL;
+      return -1;
+   }
 
    // create some shorthand references
    marfs_ms* ms = &(stream->ns->prepo->metascheme);
    marfs_ds* ds = &(stream->ns->prepo->datascheme);
-   STREAMFILE curfile = stream->files + stream->filecount;
+   STREAMFILE curfile = stream->files + (stream->filecount - 1);
 
    // identify data boundaries
    size_t remaining;
    size_t dataperobj = gettargets( stream, 0, SEEK_CUR, NULL, NULL, &(remaining) );
    if ( stream->type == EDIT_STREAM ) {
+      // verify that the current file is even writable via an EDIT stream
+      if ( !(curfile->ftag.state & FTAG_WRITABLE) ) {
+         LOG( LOG_ERR, "The current FTAG has not been opened for parallel write access\n" );
+         errno = EPERM;
+         return -1;
+      }
       // EDIT streams cannot write to any unbounded data chunk
       if ( (curfile->ftag.stat & FTAG_DATASTATE) < FTAG_FIN ) {
          remaining -= remaining % dataperobj;
@@ -1795,7 +1876,7 @@ ssize_t datastream_write( DATASTREAM stream, const void* buff, size_t size ){
       }
 
       // identify how much data we can currently write out
-      size_t canwrite = (curfile->ftag.objsize) ? curfile->ftag.objsize - (stream->offset + curfile->ftag.recoverybytes) : size;
+      size_t canwrite = dataperobj - (stream->offset - stream->recoveryheaderlen);
 
       // done with the current object
       if ( canwrite == 0 ) {
@@ -1834,7 +1915,84 @@ ssize_t datastream_write( DATASTREAM stream, const void* buff, size_t size ){
    return written;
 }
 
-size_t datastream_read( DATASTREAM stream, void* buffer, size_t size );
-int datastream_flush( DATASTREAM stream );
+ssize_t datastream_read( DATASTREAM stream, void* buffer, size_t size ) {
+   // check for NULL
+   if ( stream == NULL ) {
+      LOG( LOG_ERR, "Received a NULL stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // only READ streams with READABLE FTAG values can be... read...
+   if ( stream->type != READ_STREAM ) {
+      LOG( LOG_ERR, "Received a read stream reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+
+   // create some shorthand references
+   marfs_ms* ms = &(stream->ns->prepo->metascheme);
+   marfs_ds* ds = &(stream->ns->prepo->datascheme);
+   STREAMFILE curfile = stream->files + (stream->filecount - 1);
+
+   // verify that the FTAG is in a readable state
+   if ( !(curfile->ftag.state & FTAG_READABLE) ) {
+      LOG( LOG_ERR, "Current FTAG state does not support reading\n" );
+      errno = EPERM;
+      return -1;
+   }
+
+   // identify data boundaries
+   size_t remaining;
+   size_t dataperobj = gettargets( stream, 0, SEEK_CUR, NULL, NULL, &(remaining) );
+
+   // reduce the read size, if necessary
+   if ( remaining < size ) {
+      LOG( LOG_INFO, "Reducing read from %zu bytes to %zu, to fit within file bounds\n", size, remaining );
+      size = remaining;
+   }
+
+   // loop until all data has been read
+   ssize_t read = 0;
+   while ( size ) {
+
+      // may need to open a new data object
+      if ( stream->datahandle == NULL  &&  opencurrentobj( stream ) ) {
+         stream->type = ERROR_STREAM;
+         return -1;
+      }
+
+      // identify how much data we can currently write out
+      size_t canread = dataperobj - (stream->offset - stream->recoveryheaderlen);
+
+      // done with the current object
+      if ( canread == 0 ) {
+         // close the current data object
+         if ( ne_close( stream->datahandle ) ) {
+            LOG( LOG_ERR, "Failed to close / sync current data object\n" );
+            stream->datahandle = NULL;
+            stream->type = ERROR_STREAM;
+            return -1;
+         }
+         stream->datahandle = NULL;
+         // progress to the next object
+         stream->objno++;
+         stream->offset = stream->recoveryheaderlen;
+      }
+      else {
+         // output any data we can
+         ssize_t readres = ne_read( stream->datahandle, buff + read, (canread > size) ? size : canread );
+         if ( readres <= 0 ) {
+            LOG( LOG_ERR, "Failed to read from current data object\n" );
+            stream->type = ERROR_STREAM;
+            return -1;
+         }
+         // adjust written and remaining counts
+         read += readres;
+         size -= readres;
+      }
+   }
+
+   return read;
+}
 
 
