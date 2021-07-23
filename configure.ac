@@ -173,14 +173,14 @@ AC_ARG_ENABLE( [debugMDAL],
                AS_HELP_STRING( [--enable-debugMDAL], [Enable 'mdal'-subdir debug output] ),
                AC_DEFINE( [DEBUG_MDAL], [], [Enable 'mdal'-subdir debug output] ), [] )
 
-#AC_ARG_ENABLE( [debugTQ],
-#               AS_HELP_STRING( [--enable-debugTQ], [Enable 'thread_queue'-subdir debug output] ),
-#               AC_DEFINE( [DEBUG_TQ], [], [Enable 'thread_queue'-subdir debug output] ), [] )
-#
-## debugging-output should go to syslog, instead of stdout/stderr?
-#AC_ARG_ENABLE([syslog],
-#               AS_HELP_STRING( [--enable-syslog], [Send debugging output to syslog, instead of stdout/stderr] ),
-#               AC_DEFINE( [USE_SYSLOG], [], [Send debugging output to syslog, instead of stdout/stderr] ), [] )
+AC_ARG_ENABLE( [debugHASH],
+               AS_HELP_STRING( [--enable-debugHASH], [Enable 'hash'-subdir debug output] ),
+               AC_DEFINE( [DEBUG_HASH], [], [Enable 'hash'-subdir debug output] ), [] )
+
+# debugging-output should go to syslog, instead of stdout/stderr?
+AC_ARG_ENABLE([syslog],
+               AS_HELP_STRING( [--enable-syslog], [Send debugging output to syslog, instead of stdout/stderr] ),
+               AC_DEFINE( [USE_SYSLOG], [], [Send debugging output to syslog, instead of stdout/stderr] ), [] )
 
 #AM_COND_IF( [DEBUG_ALL], [test "$debug_all" = yes], [AC_DEFINE( [DEBUG_ALL] )], [])
 

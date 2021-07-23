@@ -57,7 +57,14 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#include "marfs_auto_config.h"
+
 #include "hash.h"
+
+#if defined(DEBUG_ALL) || defined(DEBUG_HASH)
+#define DEBUG 1
+#endif
+#define LOG_PREFIX "hash"
 
 #include <logging.h>
 #include <errno.h>
@@ -95,12 +102,12 @@ typedef struct hash_table_struct {
 // see implemtation/release info, below
 void MurmurHash3_x64_128( const void* key, const int len, const uint32_t seed, void* out );
 
-
+// produce a uint64_t identifier value, based on the given key string
 static void identifier( const char *key, uint64_t *id ) {
    MurmurHash3_x64_128(key, strlen(key), KEY_SEED, id);
 }
 
-
+// compare two identifiers
 static inline int compareID( uint64_t *id_a, uint64_t *id_b ) {
    if(id_a[0] > id_b[0]) {
       return 1;
@@ -120,7 +127,6 @@ static inline int compareID( uint64_t *id_a, uint64_t *id_b ) {
       }
    }
 }
-
 
 // impose an ordering on nodes based first on id, then nodenum
 static int compare_nodes(const void *a, const void *b) {
@@ -142,15 +148,48 @@ static int compare_nodes(const void *a, const void *b) {
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
-
+/**
+ * Produces a randomized integer value, between zero and maxval-1 (inclusive),
+ * which can be reproducibly generated from the given string and max values.
+ * @param const char* string : String seed value for the randomization
+ * @param int maxval : Maximum integer value ( produced value will be < maxval )
+ * @return int : Randomized integer result
+ */
 int hash_rangevalue( const char* string, int maxval ) {
    uint64_t idval;
    identifier( string, &(idval) );
    return ((int) ( idval % maxval ));
 }
 
-HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
+/**
+ * Create a HASH_TABLE
+ * @param HASH_NODE* nodes : List of hash nodes to be included in the table
+ * @param size_t count : Count of HASH_NODEs in the 'nodes' arg
+ * @param char directlookup : With a zero value ( no lookups ), HASH_NODES with a zero weight
+ *                            value will be omitted from the produced table ( no lookup will
+ *                            ever produce a reference to that node ).
+ *                            With a non-zero value ( lookups ), HASH_NODES with a zero weight
+ *                            value will be included in the produced table in a single lookup
+ *                            location, which *exactly* maps to the name of the node.
+ *                            To put it another way, a hash_lookup() of a string matching the
+ *                            node name will exactly map to that node ( hash_lookup() == 0 ).
+ * @return HASH_TABLE : Reference to the newly produced HASH_TABLE, or NULL if a failure occurred.
+ * Note -- The expected use case of a HASH_TABLE is either of the following:
+ *          DirectLookup Table:
+ *             - 'directlookup' arg == 1, and *all* HASH_NODEs have a zero weight
+ *             - In this configuration, the HASH_TABLE can be used efficiently determine the
+ *               presence ( hash_lookup() == 0 ) or absence ( hash_lookup() == 1 ) of given node
+ *               names.
+ *          Distribution Table:
+ *             - 'directlookup' arg == 0, and all relevant HASH_NODEs have non-zero weights
+ *               ( zero weight HASH_NODEs are excluded from lookups )
+ *             - In this configuration, the HASH_TABLE can be used to produce a uniform
+ *               distribution of HASH_NODE results ( in accordance with their relative weights )
+ *               for arbitrary string targets ( hash_lookup() == 1 or 0, not relevant which ).
+ */
+HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char directlookup ) {
    // allocate the hash_table structure
+   LOG( LOG_INFO, "Allocating new HT ( %zu nodes / lookup = %d )\n", count, directlookup );
    HASH_TABLE table = malloc( sizeof( struct hash_table_struct ) );
    if ( table == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for HASH_TABLE\n" );
@@ -167,7 +206,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
    for ( ; curnode < count; curnode++ ) {
       if ( nodes[curnode].weight < 0 ) {
          // negative weight values are unacceptable
-         LOG( LOG_ERR, "Node %zd has negative weight value: %d\n", curnode, nodes[curnode].weight );
+         LOG( LOG_ERR, "Node %zu has negative weight value: %d\n", curnode, nodes[curnode].weight );
          free( table );
          errno = EINVAL;
          return NULL;
@@ -176,8 +215,15 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
          zerocount++;  // zeros are special, so we need to count these separately
       else
          totalweight += nodes[curnode].weight;  // otherwise, add to our running total
+      if ( nodes[curnode].name == NULL ) {
+         LOG( LOG_ERR, "Node %zu has a NULL name string\n", curnode );
+         free( table );
+         errno = EINVAL;
+         return NULL;
+      }
       if ( maxname < strlen( nodes[curnode].name ) )
          maxname = strlen( nodes[curnode].name ); // track the longest name
+      LOG( LOG_INFO, "Parsed node%zu ( w=%d, n=\"%s\" )\n", curnode, nodes[curnode].weight, nodes[curnode].name );
    }
 
    // calculate how many vnodes we will need
@@ -186,7 +232,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
       weightratio = (int) ( TARGET_NODE_COUNT / totalweight );
       if ( TARGET_NODE_COUNT % totalweight ) weightratio++; // overestimate our ratio, to ensure we hit the target
    }
-   else if ( !(lookup) ) {
+   else if ( !(directlookup) ) {
       LOG( LOG_ERR, "recieved all zero weight values for a non-lookup hash table\n" );
       free( table );
       errno = EINVAL;
@@ -194,9 +240,10 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
    }
    table->vnodecount = ( weightratio * totalweight );
    // for a lookup table, we need to add a single vnode per zero value weight
-   if ( lookup ) {
+   if ( directlookup ) {
       table->vnodecount += zerocount;
    }
+   LOG( LOG_INFO, "Using %zu vnodes\n", table->vnodecount );
 
    // allocate space for all virtual nodes
    table->vnodes = malloc( sizeof( struct virtual_node_struct ) * table->vnodecount );
@@ -236,17 +283,21 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
             }
             identifier( vnodename, table->vnodes[curvnode + tmpvnode].id );
          }
+         LOG( LOG_INFO, "Created %zu vnodes referencing node %zu\n", tmpvnode, curnode );
          curvnode += tmpvnode;
       }
-      else if ( lookup ) {
+      else if ( directlookup ) {
          // for a lookup table, zero weight indicates a single virtual node, with a matching name
-         curvnode++;
          table->vnodes[curvnode].nodenum = curnode;
          identifier( nodes[curnode].name, table->vnodes[curvnode].id );
+         LOG( LOG_INFO, "Created vnode directly referencing node %zu\n", curnode );
+         curvnode++;
       }
    }
+   free( vnodename ); // done with this string
 
    // sort all virtual nodes
+   LOG( LOG_INFO, "Sorting virtual nodes\n" );
    qsort(table->vnodes, table->vnodecount, sizeof( struct virtual_node_struct ), compare_nodes);
 
    // initialize iterator values (probably unnecessary)
@@ -256,7 +307,15 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char lookup ) {
    return table;
 }
 
-
+/**
+ * Destroy the given HASH_TABLE, producing a reference to the original HASH_NODE list
+ * @param HASH_TABLE table : HASH_TABLE to be destroyed
+ * @param HASH_NODE** nodes : Reference to a HASH_NODE* to be populated with the original
+ *                            HASH_NODE list
+ * @param size_t* count : Reference to a size_t value to be populated with the length of
+ *                        the original HASH_NODE list
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
 int hash_term( HASH_TABLE table, HASH_NODE** nodes, size_t* count ) {
    // check for a NULL table
    if ( table == NULL ) {
@@ -264,6 +323,8 @@ int hash_term( HASH_TABLE table, HASH_NODE** nodes, size_t* count ) {
       errno = EINVAL;
       return -1;
    }
+
+   LOG( LOG_INFO, "Terminating hash table\n" );
 
    // set our node return values
    *nodes = table->nodes;
@@ -274,7 +335,25 @@ int hash_term( HASH_TABLE table, HASH_NODE** nodes, size_t* count ) {
    return 0;
 }
 
-
+/**
+ * Lookup the HASH_NODE corresponding to the given string target value
+ * @param HASH_TABLE table : HASH_TABLE to perform the lookup within
+ * @param const char* target : String target of the lookup
+ * @param HASH_NODE** node : Reference to a HASH_NODE* to be populated with the corresponding
+ *                           HASH_NODE reference
+ *                           Note -- editing the referenced HASH_NODE, prior to destorying the
+ *                           HASH_TABLE, will result in undefined behavior.
+ * @return int : 0, if the corresponding HASH_NODE is an exact match for the target string;
+ *               1, if the corresponding HASH_NODE is an approximate match;
+ *               -1, if a failure occurred
+ * Note -- Assuming no errors, every lookup will result in *some* corresponding HASH_NODE.
+ *         Only a return value of zero indicates that the name value of the returned node is an
+ *         exact match of the target string.
+ *         Additionally, if the weight of a node is non-zero and/or the 'lookup' arg used to
+ *         generate this HASH_TABLE was zero ( NO support for direct lookups ), there is no
+ *         guarantee that a hash_lookup() of a string matching the node name will map to that
+ *         same node.
+ */
 int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
    // check for a NULL table
    if ( table == NULL ) {
@@ -282,6 +361,14 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
       errno = EINVAL;
       return -1;
    }
+   // check for NULL target
+   if ( target == NULL ) {
+      LOG( LOG_ERR, "Received a NULL target string\n" );
+      errno = EINVAL;
+      return -1;
+   }
+
+   LOG( LOG_INFO, "Lookup of \"%s\"\n", target );
 
    // generate an ID value from the target string
    uint64_t tid[2];
@@ -297,7 +384,7 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
    //         will produce a node entry, just not necessarily one which matches exactly.
    size_t curnode = table->vnodecount / 2;
    size_t min = 0;                 // minimum is an INCLUSIVE bound
-   size_t max = table->vnodecount; // maximum is an EXCLUSIVE bound
+   size_t max = table->vnodecount; // maximum is an EXCLUSIVE bound (until the final iteration)
    while ( min != max ) {
       int comparison = compareID( table->vnodes[curnode].id, tid );
       if ( comparison > 0 ) {
@@ -313,13 +400,16 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
          // while this is VERY likely to be an exact match on name as well, we must verify
          size_t nodenum = table->vnodes[curnode].nodenum;
          if ( strncmp( table->nodes[nodenum].name, target, strlen(target) + 1 ) ) {
+            LOG( LOG_INFO, "ID collision for \"%s\"\n", target );
             // we have an ID collision, rather than an actual match
             // this is an unfortunate edge case, as we must do some extra checks against nearby nodes
             break;  // NOTE -- it is impossible for curnode==max here, so that will be our catch for this case
          }
          // this node is a true exact match
+         LOG( LOG_INFO, "Exact match for \"%s\"\n", target );
          retval = 0;
          max = curnode; // to avoid the ID collision case
+         break;
       }
 
       curnode = min + ( ( max - min ) / 2 );
@@ -345,17 +435,20 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
                tmpnode = curnode - 1;
                continue;
             }
+            LOG( LOG_INFO, "Collision, but no match for \"%s\"\n", target );
             break; // we've checked both directions, so give up
          }
          // we've found an ID match, now check for a name match
          HASH_NODE* newnode = table->nodes + table->vnodes[tmpnode].nodenum;
          if ( strncmp( newnode->name, target, strlen(target) + 1 ) == 0 ) {
             // a real exact match; return this instead
+            LOG( LOG_INFO, "Post-collision, exact match for \"%s\"\n", target );
             curnode = tmpnode;
             retval = 0;
             break;
          }
          // yet *another* ID collision, so we must continue
+         LOG( LOG_INFO, "Another collision for \"%s\"\n", target );
          if ( tmpnode == min ) { break; } // lower bound check
          // proceed along our current direction
          tmpnode = tmpnode + step;
