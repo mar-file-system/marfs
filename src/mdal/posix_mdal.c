@@ -99,34 +99,40 @@ typedef struct posix_file_handle_struct {
 }* POSIX_FHANDLE;
 
 typedef struct posix_mdal_context_struct {
-   char*  namespace;  // Current namespace we are working in
-   int    refdepth;   // Depth of our reference scatter tree
-   DIR*   refd;       // Dir reference for the reference tree of this NS
-   DIR*   pathd;      // Dir reference for the path tree of this NS
+   DIR*   rootd;  // Dir reference for the root dir of this NS
 }* POSIX_MDAL_CTXT;
    
 
 
 //   -------------    POSIX INTERNAL FUNCTIONS    -------------
 
+size_t namespacepath( const char* nspath, char* newpath, size_t newlen ) {
+   // parse over the path, figuring out the length of the new string we'll need to allocate
+   char* parse = nspath;
+   size_t newlen = 0;
+   for ( ; parse++; *parse != '\0' ) {
+      // identify each sub-element
+      char* elemref = parse;
+      while ( *parse != '\0'  &&  *parse != '/' ) {
+         parse++;
+      }
+      if ( strncmp( elemref, "../", 3 ) == 0 ) {
+         // a parent namespace ref actually means double that for this DAL
+         // we have to traverse the intermediate PMDAL_PREFIX"subspaces" directory
+         sizelen += 6;
+      }
+      sizelen += parse - elemref;
+      if ( *parse == '/' ) {
+         // should be safe to update our elem pointer one char ahead
+         prevelem = parse + 1;
+      }
+   }
+}
 
 
 //   -------------    POSIX IMPLEMENTATION    -------------
 
-
 // Management Functions
-
-/**
- *
- * @param MDAL_CTXT ctxt : MDAL_CTXT for which to perform verification
- * @param char fix : 
- * @return int : 
- */
-int posix_verify ( MDAL_CTXT ctxt, char fix ) {
-   errno = ENOSYS;
-   return -1; // TODO -- actually write this
-}
-
 
 /**
  * Cleanup all structes and state associated with the given posix MDAL
@@ -134,6 +140,87 @@ int posix_verify ( MDAL_CTXT ctxt, char fix ) {
  * @return int : Zero on success, -1 if a failure occurred
  */
 int posix_cleanup( MDAL mdal ) {
+   // check for NULL mdal
+   if ( !(mdal) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL reference\n" );
+      return -1;
+   }
+   // destroy the MDAL_CTXT struct
+   if ( posix_destroyctxt( mdal->ctxt ) ) {
+      LOG( LOG_ERR, "Failed to destroy the MDAL_CTXT reference\n" );
+      return -1;
+   }
+   // free the entire MDAL
+   free( mdal );
+   return 0;
+}
+
+/**
+ * Duplicate the given MDAL_CTXT
+ * @param const MDAL_CTXT ctxt : MDAL_CTXT to duplicate
+ * @return MDAL_CTXT : Reference to the duplicate MDAL_CTXT, or NULL if an error occurred
+ */
+MDAL_CTXT posix_dupctxt ( const MDAL_CTXT ctxt ) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      return NULL;
+   }
+   // create a new ctxt structure
+   POSIX_MDAL_CTXT dupctxt = malloc( sizeof(struct posix_mdal_context_struct) );
+   if ( !(dupctxt) ) {
+      LOG( LOG_ERR, "Failed to allocate space for a new posix MDAL_CTXT\n" );
+      return NULL;
+   }
+   // get the actual FD ref for the ctxt dir
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   int rootfd = dirfd( pctxt->rootd );
+   if ( rootfd < 0 ) {
+      LOG( LOG_ERR, "Failed to produce an FD reference from the current root directory\n" );
+      free( dupctxt );
+      return NULL;
+   }
+   // we shouldn't ever make use of rootdir offsets, so a real dup() call should be sufficient
+   int dupfd = dup( rootfd );
+   if ( dupfd < 0 ) {
+      LOG( LOG_ERR, "Failed to duplicate the current root directory FD\n" );
+      free( dupctxt );
+      return NULL;
+   }
+   // produce a new dir ref from the duped FD
+   dupctxt->rootd = fdopendir( dupfd );
+   if ( !(dupctxt->rootd) ) {
+      LOG( LOG_ERR, "Failed to produce a directory reference for the duplicate root FD\n" );
+      close( dupfd );
+      free( dupctxt );
+      return NULL;
+   }
+   return (MDAL_CTXT) dupctxt;
+}
+
+/**
+ * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
+ * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posix_destroyctxt ( MDAL_CTXT ctxt ) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      return NULL;
+   }
+   // close the directory ref
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   char errorflag = 0; // just note errors, don't terminate until done
+   if ( closedir( pctxt->rootd ) ) {
+      LOG( LOG_ERR, "Failed to close the root directory reference\n" );
+      errorflag = 1;
+   }
+   free( pctxt );
+   if ( errorflag ) {
+      return -1;
+   }
+   return 0;
 }
 
 

@@ -106,14 +106,6 @@ typedef struct MDAL_struct {
    // Management Functions
 
    /**
-    *
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT for which to perform verification
-    * @param char fix : 
-    * @return int : 
-    */
-   int (*verify) ( const MDAL_CTXT ctxt, char fix );
-
-   /**
     * Cleanup all structes and state associated with the given posix MDAL
     * @param MDAL mdal : MDAL to be freed
     * @return int : Zero on success, -1 if a failure occurred
