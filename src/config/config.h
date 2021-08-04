@@ -84,7 +84,7 @@ typedef enum {
 
 
 typedef struct marfs_namespace_struct {
-   char*       idstr;       // unique (per-repo) path of this namespace
+   char*       idstr;       // unique (per-repo) ID of this namespace
    char        enforcefq;   // flag for enforcing file quotas
    size_t      fquota;      // file quota of the namespace
    char        enforcedq;   // flag for enforcing data quotas

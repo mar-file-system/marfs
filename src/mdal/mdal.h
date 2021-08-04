@@ -120,6 +120,14 @@ typedef struct MDAL_struct {
    MDAL_CTXT (*dupctxt) ( const MDAL_CTXT ctxt );
 
    /**
+    * Create a new MDAL_CTXT reference, targeting the specified NS
+    * @param const char* ns : Name of the namespace for the new MDAL_CTXT to target
+    * @param const MDAL_CTXT basectxt : The new MDAL_CTXT will be created relative to this one
+    * @return MDAL_CTXT : Reference to the new MDAL_CTXT, or NULL if an error occurred
+    */
+   MDAL_CTXT (*newctxt) ( const char* ns, const MDAL_CTXT basectxt );
+
+   /**
     * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
     * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
     * @return int : Zero on success, or -1 if a failure occurred
@@ -161,42 +169,61 @@ typedef struct MDAL_struct {
    /**
     * Set data usage value for the current namespace
     * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @param size_t bytes : Number of bytes used by the namespace
+    * @param off_t bytes : Number of bytes used by the namespace
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*setdatausage) ( const MDAL_CTXT ctxt, size_t bytes );
+   int (*setdatausage) ( const MDAL_CTXT ctxt, off_t bytes );
 
    /**
     * Retrieve the data usage value of the current namespace
     * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @return size_t : Number of bytes used by the namespace
+    * @return off_t : Number of bytes used by the namespace
     */
-   size_t (*getdatausage) ( const MDAL_CTXT ctxt );
+   off_t (*getdatausage) ( const MDAL_CTXT ctxt );
 
    /**
     * Set the inode usage value of the current namespace
     * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @param size_t files : Number of inodes used by the namespace
+    * @param off_t files : Number of inodes used by the namespace
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*setinodeusage) ( const MDAL_CTXT ctxt, size_t files );
+   int (*setinodeusage) ( const MDAL_CTXT ctxt, off_t files );
 
    /**
     * Retrieve the inode usage value of the current namespace
     * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
-    * @return size_t : Number of inodes used by the current namespace
+    * @return off_t : Number of inodes used by the current namespace
     */
-   size_t (*getinodeusage) ( const MDAL_CTXT ctxt );
+   off_t (*getinodeusage) ( const MDAL_CTXT ctxt );
 
 
    // Reference Path Functions
 
    /**
-    * 
+    * Create the specified reference directory
+    * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with a target namespace
+    * @param const char* refdir : Path of the reference dir to be created
+    * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*createrefdir) ( const MDAL_CTXT ctxt, const char* ns, const char* refdir );
+   int (*createrefdir) ( const MDAL_CTXT ctxt, const char* refdir );
 
-   int (*destroyrefdir) ( const MDAL_CTXT ctxt, const char* ns, const char* refdir );
+   /**
+    * Destroy the specified reference directory
+    * NOTE -- This operation will fail with errno=ENOTEMPTY if files/dirs persist in the dir.
+    * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with a target namespace
+    * @param const char* refdir : Path of the reference dir to be destroyed
+    * @return int : Zero on success, -1 if a failure occurred
+    */
+   int (*destroyrefdir) ( const MDAL_CTXT ctxt, const char* refdir );
+
+   /**
+    * Hardlink the specified reference path to the specified user-visible path
+    * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with a target namespace
+    * @param const char* oldrpath : Reference path of the existing file target
+    * @param const char* newpath : Path at which to create the hardlink
+    * @return int : Zero on success, -1 if a failure occurred
+    */
+   int (*linkref) ( const MDAL_CTXT, const char* oldrpath, const char* newpath );
 
    /**
     * Unlink the specified file reference path
@@ -206,6 +233,24 @@ typedef struct MDAL_struct {
     */
    int (*unlinkref) ( const MDAL_CTXT ctxt, const char* rpath );
 
+   /**
+    * Stat the target reference path
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const char* rpath : String reference path of the target
+    * @param struct stat* buf : Stat buffer to be populated
+    * @return int : Zero on success, -1 if a failure occurred
+    */
+   int (*statref) ( const MDAL_CTXT ctxt, const char* rpath, struct stat* buf );
+
+   /**
+    * Open the specified reference path
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const char* rpath : String reference path of the target file
+    * @param int flags : Flags specifying behavior (see the 'open()' syscall 'flags' value for full info)
+    * @param mode_t mode : Mode value for file creation (see the 'open()' syscall 'mode' value for full info)
+    * @return MDAL_FHANDLE : An MDAL_READ handle for the target file, or NULL if a failure occurred
+    */
+   MDAL_FHANDLE (*openref) ( const MDAL_CTXT ctxt, const char* rpath, int flags, mode_t mode );
 
 
    // Scanner Functions
@@ -238,11 +283,9 @@ typedef struct MDAL_struct {
     * NOTE -- this is implicitly an open for READ
     * @param MDAL_SCANNER scanner : Reference scanner to open relative to
     * @param const char* spath : Relative path of the target file from the scanner
-    * @param int flags : Flags specifying behavior (see the 'open()' syscall 'flags' value for full info)
-    * @param mode_t mode : Mode for file creation (see the 'open()' syscall 'mode' value for full info)
     * @return MDAL_FHANDLE : An MDAL_READ handle for the target file, or NULL if a failure occurred
     */
-   MDAL_FHANDLE (*sopen) ( MDAL_SCANNER scanner, const char* spath, int flags, mode_t mode );
+   MDAL_FHANDLE (*sopen) ( MDAL_SCANNER scanner, const char* spath );
 
    /**
     * Unlink a file, relative to a given reference scanner
@@ -251,6 +294,15 @@ typedef struct MDAL_struct {
     * @return int : Zero on success, -1 if a failure occurred
     */
    int (*sunlink) ( MDAL_SCANNER scanner, const char* spath );
+
+   /**
+    * Stat the target, relative to a given reference scanner
+    * @param MDAL_SCANNER scanner : Reference scanner to operate relative to
+    * @param const char* spath : String reference path of the target
+    * @param struct stat* buf : Stat buffer to be populated
+    * @return int : Zero on success, -1 if a failure occurred
+    */
+   int (*sstat) ( MDAL_SCANNER scanner, const char* spath, struct stat* buf );
 
 
    // DHANDLE Functions
@@ -265,11 +317,12 @@ typedef struct MDAL_struct {
 
    /**
     * Edit the given MDAL_CTXT to reference the given MDAL_DHANDLE for all path operations
+    * NOTE -- this operation will destroy the provided MDAL_DHANDLE
     * @param MDAL_CTXT ctxt : MDAL_CTXT to update
     * @param MDAL_DHANDLE dh : Directory handle to be used by the MDAL_CTXT
-    * @return MDAL_DHANDLE : Old directory handle used by the MDAL_CTXT (still open!)
+    * @return int : Zero on success, -1 if a failure occurred
     */
-   MDAL_DHANDLE (*chdir) ( MDAL_CTXT ctxt, MDAL_DHANDLE dh );
+   int (*chdir) ( MDAL_CTXT ctxt, MDAL_DHANDLE dh );
 
    /**
     * Iterate to the next entry of an open directory handle
@@ -294,35 +347,10 @@ typedef struct MDAL_struct {
     * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : Relative path to the target file
     * @param int flags : Flags specifying behavior (see the 'open()' syscall 'flags' value for full info)
-    *                    Note -- This function CANNOT create new files ( O_CREAT and O_EXCL are ignored )
-    * @param mode_t mode : Mode for file creation (see the 'open()' syscall 'mode' value for full info)
+    *                    Note -- This function CANNOT create new files ( O_CREAT is forbidden )
     * @return MDAL_FHANDLE : The newly opened MDAL_FHANDLE, or NULL if a failure occurred
     */
    MDAL_FHANDLE (*open) ( const MDAL_CTXT ctxt, const char* path, int flags );
-
-   /**
-    * Open a file, relative to the reference tree of the given MDAL_CTXT
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
-    * @param const char* rpath : Relative reference path to the target file
-    * @param int flags : Flags specifying behavior (see the 'open()' syscall 'flags' value for full info)
-    * @param mode_t mode : Mode for file creation (see the 'open()' syscall 'mode' value for full info)
-    * @return MDAL_FHANDLE : The newly opened MDAL_FHANDLE, or NULL if a failure occurred
-    */
-   MDAL_FHANDLE (*openref) ( const MDAL_CTXT ctxt, const char* rpath, int flags, mode_t mode );
-
-   /**
-    * Open a file, creating both a reference location and a user visible location (hardlinks)
-    * NOTE -- equivalent to openref() with flags O_WRONLY|O_CREAT|O_EXCL   (1st)
-    *         AND
-    *         open() with flags O_WRONLY|O_CREAT|O_TRUNC                   (2nd)
-    *         with both locations referenced by the produced MDAL_FHANDLE
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
-    * @param const char* path : User visible path of the target file
-    * @param const char* rpath : Reference path of the target file
-    * @param mode_t mode : Mode for file creation (see the 'open()' syscall 'mode' value for full info)
-    * @return MDAL_FHANDLE : The newly opened MDAL_FHANDLE, or NULL if a failure occurred
-    */
-   MDAL_FHANDLE (*creat) ( const MDAL_CTXT ctxt, const char* path, const char* rpath, mode_t mode );
 
    /**
     * Close the given MDAL_FHANDLE
@@ -330,52 +358,6 @@ typedef struct MDAL_struct {
     * @return int : Zero on success, or -1 if a failure occurred
     */
    int (*close) ( MDAL_FHANDLE fh );
-
-   /**
-    * Create a hardlink for the file referenced by the given MDAL_FHANDLE
-    * @param MDAL_FHANDLE fh : File handle for which to produce the new hardlink
-    * @param const char* newpath : Relative path of the hardlink to be created
-    * @return int : Zero on success, or -1 if a failure occurred
-    */
-   int (*flink) ( MDAL_FHANDLE fh, const char* newpath );
-
-   /**
-    * Set the value of the specified file attribute on the given MDAL_FHANDLE
-    * @param MDAL_FHANDLE fh : MDAL_FHANDLE to operate on
-    * @param const char* name : Name of the file attribute
-    * @param const void* value : Buffer containing the new attribute value
-    * @param size_t size : Number of data bytes contained within the buffer
-    * @param int flags : Flags for attribute setting (see the 'setxattr()' syscall 'flags' value for full info)
-    * @return int : Zero on success, or -1 if a failure occurred
-    */
-   int (*fsetattr) ( MDAL_FHANDLE fh, const char* name, const void* value, size_t size, int flags );
-
-   /**
-    * Get the value of the specified file attribute from the given MDAL_FHANDLE
-    * @param MDAL_FHANDLE fh : MDAL_FHANDLE to operate on
-    * @param const char* name : Name of the file attribute
-    * @param void* value : Buffer to be populated with the attribute value
-    * @param size_t size : Byte size of the target buffer
-    * @return ssize_t : Byte size of the retrieved attribute value, or -1 if a failure occurred
-    */
-   ssize_t (*fgetattr) ( MDAL_FHANDLE fh, const char* name, void* value, size_t size );
-
-   /**
-    * Remove the specified attribute from the file referenced by the given MDAL_FHANDLE
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
-    * @param const char* name : Name of the file attribute
-    * @return int : Zero on success, or -1 if a failure occurred
-    */
-   int (*fremoveattr) ( MDAL_FHANDLE fh, const char* name );
-
-   /**
-    * List all attibute names from the file referenced by the given MDAL_FHANDLE
-    * @param MDAL_FHANDLE fh : File handle for which to list attributes
-    * @param char* buf : Buffer to be populated with attribute names
-    * @param size_t size : Size of the target buffer
-    * @return ssize_t : Size of the returned attribute name list, or -1 if a failure occurred
-    */
-   ssize_t (*flistattr) ( MDAL_FHANDLE fh, char* buf, size_t size );
 
    /**
     * Write data to the given MDAL_FHANDLE
@@ -441,8 +423,8 @@ typedef struct MDAL_struct {
 
    /**
     * Remove the specified xattr from the file referenced by the given MDAL_FHANDLE
-    * @param char hidden : A non-zero value indicates to operate on a 'hidden' MDAL value
     * @param MDAL_FHANDLE fh : File handle for which to remove the xattr
+    * @param char hidden : A non-zero value indicates to operate on a 'hidden' MDAL value
     * @param const char* name : String name of the xattr to remove
     * @return int : Zero on success, or -1 if a failure occurred
     */
@@ -451,7 +433,7 @@ typedef struct MDAL_struct {
    /**
     * List all xattr names from the file referenced by the given MDAL_FHANDLE
     * @param MDAL_FHANDLE fh : File handle for which to list xattrs
-    * @param char hidden : A non-zero value indicates to list 'hidden' MDAL values ( normal xattrs excluded )
+    * @param char hidden : A non-zero value indicates to list 'hidden' MDAL xattrs ( normal xattrs excluded )
     * @param char* buf : Buffer to be populated with xattr names
     * @param size_t size : Size of the target buffer
     * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
@@ -515,9 +497,11 @@ typedef struct MDAL_struct {
     * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param mode_t mode : New mode value for the file (see inode man page)
+    * @param int flags : A bitwise OR of the following...
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*chmod) ( const MDAL_CTXT ctxt, const char* path, mode_t mode );
+   int (*chmod) ( const MDAL_CTXT ctxt, const char* path, mode_t mode, int flags );
 
    /**
     * Edit the ownership and group of the specified file
@@ -525,27 +509,33 @@ typedef struct MDAL_struct {
     * @param const char* path : String path of the target file
     * @param uid_t owner : New owner
     * @param gid_t group : New group
+    * @param int flags : A bitwise OR of the following...
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*chown) ( const MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group );
+   int (*chown) ( const MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group, int flags );
 
    /**
     * Stat the specified file
     * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @param struct stat* st : Stat structure to be populated
+    * @param int flags : A bitwise OR of the following...
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*lstat) ( const MDAL_CTXT ctxt, const char* path, struct stat* st );
+   int (*stat) ( const MDAL_CTXT ctxt, const char* path, struct stat* st, int flags );
 
    /**
     * Create a hardlink
     * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* oldpath : String path of the target file
     * @param const char* newpath : String path of the new hardlink
+    * @param int flags : A bitwise OR of the following...
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*link) ( const MDAL_CTXT ctxt, const char* oldpath, const char* newpath );
+   int (*link) ( const MDAL_CTXT ctxt, const char* oldpath, const char* newpath, int flags );
 
    /**
     * Create the specified directory
@@ -582,50 +572,6 @@ typedef struct MDAL_struct {
     * @return int : Zero on success, or -1 if a failure occurred
     */
    int (*rename) ( const MDAL_CTXT ctxt, const char* from, const char* to );
-
-   /**
-    * Retrieve the specified xattr value from a given file
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
-    * @param const char* path : String path of the target file
-    * @param const char* name : Name of the target xattr
-    * @param void* value : Buffer to be populated with the xattr value
-    * @param size_t size : Size of the provided buffer
-    * @return ssize_t : Size of the retrieved xattr value, or -1 if a failure occurred
-    */
-   ssize_t (*lgetxattr) ( const MDAL_CTXT ctxt, const char* path, const char* name, void* value, size_t size );
-
-   /**
-    * Set the specified xattr on a given file
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
-    * @param const char* path : String path of the target file
-    * @param const char* name : Name of the target xattr
-    * @param const void* value : Buffer containing the new xattr value
-    * @param size_t size : Size of the provided buffer
-    * @param int flags : Zero value    - create or replace the xattr
-    *                    XATTR_CREATE  - create the xattr only (fail if xattr exists)
-    *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
-    * @return int : Zero on success, or -1 if a failure occurred
-    */
-   int (*lsetxattr) ( const MDAL_CTXT ctxt, const char* path, const char* name, const void* value, size_t size, int flags );
-
-   /**
-    * Remove the specified xattr on a given file
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
-    * @param const char* path : String path of the target file
-    * @param const char* name : Name of the target xattr
-    * @return int : Zero on success, or -1 if a failure occurred
-    */
-   int (*lremovexattr) ( const MDAL_CTXT ctxt, const char* path, const char* name );
-
-   /**
-    * List all xattrs on a target file
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
-    * @param const char* path : String path of the target file
-    * @param char* buf : Buffer to be populated with xattr names
-    * @param size_t size : Size of the target buffer
-    * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
-    */
-   ssize_t (*llistxattr) ( const MDAL_CTXT ctxt, const char* path, char* buf, size_t size );
 
    /**
     * Return statvfs info for the current namespace

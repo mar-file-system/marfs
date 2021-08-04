@@ -437,7 +437,6 @@ int opencurrentobj( DATASTREAM stream ) {
 int putftag( DATASTREAM stream, STREAMFILE file ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
-   const marfs_ds* ds = &(stream->ns->prepo->datascheme);
    // populate the ftag string format
    size_t prres = ftag_tostr( &(file->ftag), stream->ftagstr, stream->ftagstrsize );
    if ( prres >= stream->ftagstrsize ) {
@@ -469,7 +468,6 @@ int putftag( DATASTREAM stream, STREAMFILE file ) {
 int getftag( DATASTREAM stream, STREAMFILE file ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
-   const marfs_ds* ds = &(stream->ns->prepo->datascheme);
    // attempt to retrieve the ftag attr value ( leaving room for NULL terminator )
    size_t getres = ms->mdal->fgetxattr( file->metahandle, 1, FTAG_NAME, stream->ftagstr, stream->ftagstrsize - 1 );
    if ( getres >= stream->ftagstrsize ) {
@@ -502,12 +500,11 @@ int getftag( DATASTREAM stream, STREAMFILE file ) {
    return 0;
 }
 
-int linkfile( DATASTREAM stream, STREAMFILE file, const char* tgtpath ) {
+int linkfile( DATASTREAM stream, const char* refpath, const char* tgtpath ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
-   const marfs_ds* ds = &(stream->ns->prepo->datascheme);
    // attempt to link the specified file to the specified user path
-   if ( ms->mdal->flink( file->metahandle, tgtpath ) ) {
+   if ( ms->mdal->linkref( stream->mdalctxt, refpath, tgtpath ) ) {
       // if we got EEXIST, attempt to unlink the existing target and retry
       if ( errno != EEXIST ) {
          // any non-EEXIST error is fatal
@@ -520,7 +517,7 @@ int linkfile( DATASTREAM stream, STREAMFILE file, const char* tgtpath ) {
          LOG( LOG_ERR, "Failed to unlink existing file: \"%s\"\n", tgtpath );
          return -1;
       }
-      else if ( ms->mdal->flink( file->metahandle, tgtpath ) ) {
+      else if ( ms->mdal->linkref( stream->mdalctxt, refpath, tgtpath ) ) {
          // This indicates either we're racing with another proc, or something more unusual
          //   Just fail out with whatever errno we get from flink()
          LOG( LOG_ERR, "Failed to link reference file to final location after retry\n" );
@@ -533,7 +530,6 @@ int linkfile( DATASTREAM stream, STREAMFILE file, const char* tgtpath ) {
 int finfile( DATASTREAM stream, STREAMFILE file ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
-   const marfs_ds* ds = &(stream->ns->prepo->datascheme);
    // set ftag to readable and complete state
    file->ftag.state = ( FTAG_COMP & FTAG_READABLE ) | ( file->ftag.state & ~(FTAG_DATASTATE) );
    // truncate the file to an appropriate length
@@ -557,7 +553,6 @@ int finfile( DATASTREAM stream, STREAMFILE file ) {
 int genrecoveryinfo( RECOVERY_FINFO* finfo, STREAMFILE file, const char* path ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
-   const marfs_ds* ds = &(stream->ns->prepo->datascheme);
    // identify file attributes, for recovery info
    struct stat stval;
    if ( ms->mdal->fstat( file->metahandle, &(stval) ) ) {
@@ -590,7 +585,6 @@ int genrecoveryinfo( RECOVERY_FINFO* finfo, STREAMFILE file, const char* path ) 
 void freestream( DATASTREAM stream ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
-   const marfs_ds* ds = &(stream->ns->prepo->datascheme);
    // abort any data handle
    if ( stream->datahandle  &&  ne_abort( stream->datahandle ) ) {
       LOG( LOG_WARNING, "Failed to abort stream datahandle\n" );
@@ -653,14 +647,15 @@ DATASTREAM datastream_creat( const char* path, mode_t mode, const marfs_ns* ns, 
    }
    size_t streamidlen = ( sizeof(time_t) > sizeof(int) ) ? SIZE_DIGITS : UINT_DIGITS;  // see numdigits.h
    streamidlen += SIZE_DIGITS; // to account for nanosecond precision
-   streamidlen += strlen( ns->idstr ); // to include repo+NS info
-   streamidlen += 3; // for '.' seperators and null terminator
+   streamidlen += strlen( ns->idstr ); // to include NS info
+   streamidlen += strlen( ns->prepo->name ); // to include repo info
+   streamidlen += 4; // for '#' and '.' seperators and null terminator
    if ( (stream->files[0].ftag.streamid = malloc( sizeof(char) * streamidlen )) == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for streamID\n" );
       freestream( stream );
       return NULL;
    }
-   ssize_t prres = snprintf( stream->files[0].ftag.streamid, streamidlen, "%s#%zd#%ld", ns->idstr, curtime.tv_sec, curtime.tv_nsec );
+   ssize_t prres = snprintf( stream->files[0].ftag.streamid, streamidlen, "%s#%s#%zd.%ld", ns->prepo->name, ns->idstr, curtime.tv_sec, curtime.tv_nsec );
    if ( prres <= 0  ||  prres >= streamidlen ) {
       LOG( LOG_ERR, "Failed to generate streamID value\n" );
       freestream( stream );
@@ -733,7 +728,7 @@ DATASTREAM datastream_creat( const char* path, mode_t mode, const marfs_ns* ns, 
    }
 
    // link the file into the user namespace
-   if ( linkfile( stream, &(stream->files[0]), path ) ) {
+   if ( linkfile( stream, rpath, path ) ) {
       LOG( LOG_ERR, "Failed to link reference file to target user path: \"%s\"\n", path );
       ms->mdal->unlinkref( stream->mdalctxt, rpath );
       free( rpath );
@@ -936,7 +931,7 @@ DATASTREAM datastream_wcont( DATASTREAM stream, const char* path, mode_t mode ) 
    }
 
    // link the new file into the user namespace
-   if ( linkfile( stream, &(newfile), path ) ) {
+   if ( linkfile( stream, rpath, path ) ) {
       LOG( LOG_ERR, "Failed to link reference file to target user path: \"%s\"\n", path );
       ms->mdal->unlinkref( stream->mdalctxt, rpath );
       free( rpath );
