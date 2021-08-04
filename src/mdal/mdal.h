@@ -79,20 +79,11 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 
 
-
 // just to provide some type safety (don't want to pass the wrong void*)
 typedef void* MDAL_CTXT;
 typedef void* MDAL_FHANDLE;
 typedef void* MDAL_DHANDLE;
 typedef void* MDAL_SCANNER;
-
-
-// open mode
-typedef enum MDAL_MODE_enum {
-   MDAL_READ = 0,    // retrieve data or object tags
-   MDAL_WRITE = 1,   // store data or object tags
-   MDAL_DIRECT = 2   // operate on data directly ( no object tags )
-} MDAL_MODE;
 
 
 typedef struct MDAL_struct {
@@ -104,6 +95,13 @@ typedef struct MDAL_struct {
 
 
    // Management Functions
+
+   /**
+    * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
+    * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*destroyctxt) ( MDAL_CTXT ctxt );
 
    /**
     * Cleanup all structes and state associated with the given posix MDAL
@@ -126,13 +124,6 @@ typedef struct MDAL_struct {
     * @return MDAL_CTXT : Reference to the new MDAL_CTXT, or NULL if an error occurred
     */
    MDAL_CTXT (*newctxt) ( const char* ns, const MDAL_CTXT basectxt );
-
-   /**
-    * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
-    * @return int : Zero on success, or -1 if a failure occurred
-    */
-   int (*destroyctxt) ( MDAL_CTXT ctxt );
 
 
    // Namespace Functions

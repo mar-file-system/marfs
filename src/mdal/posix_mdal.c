@@ -273,6 +273,32 @@ int xattrfilter( const char* name, char hidden ) {
 // Management Functions
 
 /**
+ * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
+ * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posix_destroyctxt ( MDAL_CTXT ctxt ) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // close the directory ref
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   char errorflag = 0; // just note errors, don't terminate until done
+   if ( close( pctxt->refd )  ||  ( (pctxt->pathd >= 0)  &&  close( pctxt->pathd ) ) ) {
+      LOG( LOG_ERR, "Failed to close some dir references\n" );
+      errorflag = 1;
+   }
+   free( pctxt );
+   if ( errorflag ) {
+      return -1;
+   }
+   return 0;
+}
+
+/**
  * Cleanup all structes and state associated with the given posix MDAL
  * @param MDAL mdal : MDAL to be freed
  * @return int : Zero on success, -1 if a failure occurred
@@ -396,32 +422,6 @@ MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
       return NULL;
    }
    return (MDAL_CTXT) newctxt;
-}
-
-/**
- * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
- * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
- * @return int : Zero on success, or -1 if a failure occurred
- */
-int posix_destroyctxt ( MDAL_CTXT ctxt ) {
-   // check for NULL ctxt
-   if ( !(ctxt) ) {
-      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
-      errno = EINVAL;
-      return -1;
-   }
-   // close the directory ref
-   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
-   char errorflag = 0; // just note errors, don't terminate until done
-   if ( close( pctxt->refd )  ||  ( (pctxt->pathd >= 0)  &&  close( pctxt->pathd ) ) ) {
-      LOG( LOG_ERR, "Failed to close some dir references\n" );
-      errorflag = 1;
-   }
-   free( pctxt );
-   if ( errorflag ) {
-      return -1;
-   }
-   return 0;
 }
 
 
@@ -2096,109 +2096,108 @@ int posix_unlink( MDAL_CTXT ctxt, const char* path ) {
 //   -------------    POSIX INITIALIZATION    -------------
 
 DAL posix_mdal_init( xmlNode* root ) {
-   // first, calculate the number of digits required for pod/cap/block/scatter
-   int d_pod = num_digits( max_loc.pod );
-   if ( d_pod < 1 ) {
-      errno = EDOM;
-      LOG( LOG_ERR, "detected an inappropriate value for maximum pod: %d\n", max_loc.pod );
+   // check for NULL root
+   if ( !(root) ) {
+      LOG( LOG_ERR, "Received a NULL root XML node\n" );
+      errno = EINVAL;
       return NULL;
    }
-   int d_cap = num_digits( max_loc.cap );
-   if ( d_cap < 1 ) {
-      errno = EDOM;
-      LOG( LOG_ERR, "detected an inappropriate value for maximum cap: %d\n", max_loc.cap );
-      return NULL;
-   }
-   int d_block = num_digits( max_loc.block );
-   if ( d_block < 1 ) {
-      errno = EDOM;
-      LOG( LOG_ERR, "detected an inappropriate value for maximum block: %d\n", max_loc.block );
-      return NULL;
-   }
-   int d_scatter = num_digits( max_loc.scatter );
-   if ( d_scatter < 1 ) {
-      errno = EDOM;
-      LOG( LOG_ERR, "detected an inappropriate value for maximum scatter: %d\n", max_loc.scatter );
-      return NULL;
-   }
-
-   // make sure we start on a 'dir_template' node
-   if ( root->type == XML_ELEMENT_NODE  &&  strncmp( (char*)root->name, "dir_template", 13 ) == 0 ) {
+   // make sure we start on a 'ns_root' node
+   if ( root->type == XML_ELEMENT_NODE  &&  strncmp( (char*)root->name, "ns_root", 8 ) == 0 ) {
 
       // make sure that node contains a text element within it
       if ( root->children != NULL  &&  root->children->type == XML_TEXT_NODE ) {
 
          // allocate space for our context struct
-         POSIX_DAL_CTXT dctxt = malloc( sizeof( struct posix_dal_context_struct ) );
-         if ( dctxt == NULL ) { return NULL; } // malloc will set errno
+         POSIX_MDAL_CTXT pctxt = malloc( sizeof( struct posix_mdal_context_struct ) );
+         if ( pctxt == NULL ) {
+            LOG( LOG_ERR, "Failed to allocate context struct\n" );
+            return NULL; // malloc will set errno
+         }
+         // initialize the pathd, indicating no path set
+         pctxt->pathd = -1;
 
-         // copy the dir template into the context struct
-         dctxt->dirtmp = strdup( (char*)root->children->content );
-         if ( dctxt->dirtmp == NULL ) { free(dctxt); return NULL; } // strdup will set errno
-
-         // initialize all other context fields
-         dctxt->tmplen = strlen( dctxt->dirtmp );
-         dctxt->max_loc = max_loc;
-         dctxt->dirpad = 0;
-
-         // calculate a real value for dirpad based on number of p/c/b/s substitutions
-         char* parse = dctxt->dirtmp;
-         while ( *parse != '\0' ) {
-            if ( *parse == '{' ) {
-               // possible substituion, but of what type?
-               int increase = 0;
-               switch ( *(parse+1) ) {
-                  case 'p':
-                     increase = d_pod;
-                     break;
-
-                  case 'c':
-                     increase = d_cap;
-                     break;
-
-                  case 'b':
-                     increase = d_block;
-                     break;
-
-                  case 's':
-                     increase = d_scatter;
-                     break;
-               }
-               // if this looks like a valid substitution, check for a final '}'
-               if ( increase > 0  &&  *(parse+2) == '}' ) { // NOTE -- we know *(parse+1) != '\0'
-                  dctxt->dirpad += increase - 3; // add increase, adjusting for chars used in substitution
-               }
-            }
-            parse++; // next char
+         // open the directory specified by the node content
+         int rootfd = open( root->children->content, O_RDONLY );
+         if ( rootfd < 0 ) {
+            LOG( LOG_ERR, "Failed to open the target 'ns_root' directory: \"%s\"\n", root->children->content );
+            return NULL;
          }
 
-         // allocate and populate a new DAL structure
-         DAL pdal = malloc( sizeof( struct DAL_struct ) );
-         if ( pdal == NULL ) {
-            LOG( LOG_ERR, "failed to allocate space for a DAL_struct\n" );
-            free(dctxt);
+         // verify the target is a dir
+         struct stat dirstat;
+         if ( fstat( rootfd, &(dirstat) )  ||  !(S_ISDIR(dirstat.st_mode)) ) {
+            LOG( LOG_ERR, "Could not verify target is a directory: \"%s\"\n", root->children->content );
+            close( rootfd );
             return NULL;
-         } // malloc will set errno
-         pdal->name = "posix";
-         pdal->ctxt = (DAL_CTXT) dctxt;
-         pdal->io_size = 1048576;
-         pdal->verify = posix_verify;
-         pdal->migrate = posix_migrate;
-         pdal->open = posix_open;
-         pdal->set_meta = posix_set_meta;
-         pdal->get_meta = posix_get_meta;
-         pdal->put = posix_put;
-         pdal->get = posix_get;
-         pdal->abort = posix_abort;
-         pdal->close = posix_close;
-         pdal->del = posix_del;
-         pdal->stat = posix_stat;
-         pdal->cleanup = posix_cleanup;
-         return pdal;
+         }
+
+         // allocate and populate a new MDAL structure
+         DAL pmdal = malloc( sizeof( struct MDAL_struct ) );
+         if ( pmdal == NULL ) {
+            LOG( LOG_ERR, "failed to allocate space for an MDAL_struct\n" );
+            posix_destroyctxt( pctxt );
+            return NULL; // malloc will set errno
+         }
+         pmdal->name = "posix";
+         pmdal->ctxt = (MDAL_CTXT) pctxt;
+         pmdal->destroyctxt = posix_destroyctxt;
+         pmdal->cleanup = posix_cleanup;
+         pmdal->dupctxt = posix_dupctxt;
+         pmdal->newctxt = posix_newctxt;
+         pmdal->setnamespace = posix_setnamespace;
+         pmdal->createnamespace = posix_createnamespace;
+         pmdal->destroynamespace = posix_destroynamespace;
+         pmdal->setdatausage = posix_setdatausage;
+         pmdal->getdatausage = posix_getdatausage;
+         pmdal->setinodeusage = posix_setinodeusage;
+         pmdal->getinodeusage = posix_getinodeusage;
+         pmdal->createrefdir = posix_createrefdir;
+         pmdal->destroyrefdir = posix_destroyrefdir;
+         pmdal->linkref = posix_linkref;
+         pmdal->unlinkref = posix_unlinkref;
+         pmdal->statref = posix_statref;
+         pmdal->openref = posix_openref;
+         pmdal->openscanner = posix_openscanner;
+         pmdal->closescanner = posix_closescanner;
+         pmdal->scan = posix_scan;
+         pmdal->sopen = posix_sopen;
+         pmdal->sunlink = posix_sunlink;
+         pmdal->sstat = posix_sstat;
+         pmdal->opendir = posix_opendir;
+         pmdal->chdir = posix_chdir;
+         pmdal->readdir = posix_readdir;
+         pmdal->closedir = posix_closedir;
+         pmdal->open = posix_open;
+         pmdal->close = posix_close;
+         pmdal->write = posix_write;
+         pmdal->read = posix_read;
+         pmdal->ftruncate = posix_ftruncate;
+         pmdal->lseek = posix_lseek;
+         pmdal->fsetxattr = posix_fsetxattr;
+         pmdal->fgetxattr = posix_fgetxattr;
+         pmdal->fremovexattr = posix_fremovexattr;
+         pmdal->flistxattr = posix_flistxattr;
+         pmdal->fstat = posix_fstat;
+         pmdal->futimens = posix_futimens;
+         pmdal->access = posix_access;
+         pmdal->mknod = posix_mknod;
+         pmdal->chmod = posix_chmod;
+         pmdal->chown = posix_chown;
+         pmdal->stat = posix_stat;
+         pmdal->link = posix_link;
+         pmdal->mkdir = posix_mkdir;
+         pmdal->rmdir = posix_rmdir;
+         pmdal->readlink = posix_readlink;
+         pmdal->rename = posix_rename;
+         pmdal->statvfs = posix_statvfs;
+         pmdal->symlink = posix_symlink;
+         pmdal->unlink = posix_unlink;
+         return pmdal;
       }
-      else { LOG( LOG_ERR, "the \"dir_template\" node is expected to contain a template string\n" ); }
+      else { LOG( LOG_ERR, "the \"ns_root\" node is expected to contain a path string\n" ); }
    }
-   else { LOG( LOG_ERR, "root node of config is expected to be \"dir_template\"\n" ); }
+   else { LOG( LOG_ERR, "root node of config is expected to be \"ns_root\"\n" ); }
    errno = EINVAL;
    return NULL; // failure of any condition check fails the function
 }
