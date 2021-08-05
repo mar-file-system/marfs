@@ -456,7 +456,7 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
       mkdirres = mkdirat( pctxt->refd, nspath + 1, S_IRWXU );
    }
    else {
-      mkdirres = mkdirat( pctxt->pathd, nspath, S_IRWXU );
+      mkdirres = mkdirat( pctxt->refd, nspath, S_IRWXU );
    }
    if ( mkdirres ) {
       // here, we actually want to report EEXIST
@@ -535,7 +535,7 @@ int posix_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
       unlinkres = unlinkat( pctxt->refd, nspath + 1, AT_REMOVEDIR );
    }
    else {
-      unlinkres = unlinkat( pctxt->pathd, nspath, AT_REMOVEDIR );
+      unlinkres = unlinkat( pctxt->refd, nspath, AT_REMOVEDIR );
    }
    if ( unlinkres ) {
       LOG( LOG_ERR, "Failed to unlink NS root path: \"%s\"\n", nspath );
@@ -2205,6 +2205,7 @@ MDAL posix_mdal_init( xmlNode* root ) {
          int rootfd = open( nsrootpath, O_RDONLY );
          if ( rootfd < 0 ) {
             LOG( LOG_ERR, "Failed to open the target 'ns_root' directory: \"%s\"\n", nsrootpath );
+            free( pctxt );
             free( nsrootpath );
             return NULL;
          }
@@ -2213,11 +2214,13 @@ MDAL posix_mdal_init( xmlNode* root ) {
          struct stat dirstat;
          if ( fstat( rootfd, &(dirstat) )  ||  !(S_ISDIR(dirstat.st_mode)) ) {
             LOG( LOG_ERR, "Could not verify target is a directory: \"%s\"\n", nsrootpath );
+            free( pctxt );
             free( nsrootpath );
             close( rootfd );
             return NULL;
          }
          free( nsrootpath ); // done with the nsroot string
+         pctxt->refd = rootfd; // populate out root dir reference
 
          // allocate and populate a new MDAL structure
          MDAL pmdal = malloc( sizeof( struct MDAL_struct ) );
