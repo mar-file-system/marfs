@@ -70,7 +70,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -84,6 +84,7 @@ typedef void* MDAL_CTXT;
 typedef void* MDAL_FHANDLE;
 typedef void* MDAL_DHANDLE;
 typedef void* MDAL_SCANNER;
+typedef struct MDAL_struct* MDAL;
 
 
 typedef struct MDAL_struct {
@@ -448,7 +449,7 @@ typedef struct MDAL_struct {
     *                                         (see man utimensat for struct reference)
     * @return int : Zero value on success, or -1 if a failure occurred
     */
-   int (*futimens) ( MDAL_FH fh, const struct timespec times[2] );
+   int (*futimens) ( MDAL_FHANDLE fh, const struct timespec times[2] );
 
 
    // Path Functions

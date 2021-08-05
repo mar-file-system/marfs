@@ -64,11 +64,14 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
    #define DEBUG 1
 #endif
 #define LOG_PREFIX "posix_mdal"
-#include "logging/logging.h"
+#include <logging.h>
 
 #include "mdal.h"
 
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <errno.h>
 
@@ -127,7 +130,7 @@ size_t namespacepath( const char* nspath, char* newpath, size_t newlen ) {
    else { newlen -= 3; newpath += 3; }
    while ( *parse != '\0' ) {
       // identify each sub-element
-      char* elemref = parse;
+      const char* elemref = parse;
       // move our parse pointer to the next path element
       while ( *parse != '\0' ) {
          if ( *parse == '/' ) {
@@ -144,7 +147,7 @@ size_t namespacepath( const char* nspath, char* newpath, size_t newlen ) {
          int prout = snprintf( newpath, newlen, "../../" );
          totlen += prout;
          if ( prout >= newlen ) { newlen = 0; }
-         else { newlen -= prout; newpath += prout }
+         else { newlen -= prout; newpath += prout; }
       }
       else if ( *elemref == '/' ) {
          // this should only occur in the case of a leading '/' character
@@ -176,9 +179,9 @@ size_t namespacepath( const char* nspath, char* newpath, size_t newlen ) {
          int prout = snprintf( newpath, newlen, "%s/", PMDAL_SUBSP );
          totlen += prout;
          if ( prout >= newlen ) { newlen = 0; }
-         else { newlen -= prout; newpath += prout }
+         else { newlen -= prout; newpath += prout; }
          // now we can copy the subspace name itself
-         char* eparse = elemref;
+         const char* eparse = elemref;
          for( ; *eparse != '\0'  &&  *eparse != '/'; eparse++ ) {
             totlen++;
             if ( newlen > 1 ) {
@@ -365,6 +368,7 @@ MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
       errno = EINVAL;
       return NULL;
    }
+   POSIX_MDAL_CTXT pbasectxt = (POSIX_MDAL_CTXT) basectxt;
    // create the corresponding posix path for the target NS
    size_t nspathlen = namespacepath( ns, NULL, 0 );
    if ( nspathlen == 0 ) {
@@ -390,8 +394,8 @@ MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
    }
    // open the path dir, according to the target NS path
    if ( *nspath == '/' ) {
-      // ensure the basectxt is set to the secureroot dir
-      if ( basectxt->pathd >= 0 ) {
+      // ensure the pbasectxt is set to the secureroot dir
+      if ( pbasectxt->pathd >= 0 ) {
          LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
          errno = EINVAL;
          free( newctxt );
@@ -399,11 +403,11 @@ MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
          return NULL;
       }
       // absoulute paths are opened via the root dir (skipping the leading '/')
-      newctxt->pathd = openat( basectxt->refd, (nspath + 1), O_RDONLY );
+      newctxt->pathd = openat( pbasectxt->refd, (nspath + 1), O_RDONLY );
    }
    else {
-      // relative paths are opened via the ref dir of the basectxt
-      newctxt->pathd = openat( basectxt->refd, nspath, O_RDONLY );
+      // relative paths are opened via the ref dir of the pbasectxt
+      newctxt->pathd = openat( pbasectxt->refd, nspath, O_RDONLY );
    }
    if ( newctxt->pathd < 0 ) {
       LOG( LOG_ERR, "Failed to open the user path dir: \"%s\"\n", nspath );
@@ -695,7 +699,7 @@ int posix_setdatausage( MDAL_CTXT ctxt, off_t bytes ) {
    }
    // truncate the DUSE file to the provided length
    if ( ftruncate( dusefd, bytes ) ) {
-      LOG( LOG_ERR, "Failed to truncate the data use file to the specified length of %zd\n", len );
+      LOG( LOG_ERR, "Failed to truncate the data use file to the specified length of %zd\n", bytes );
       close( dusefd );
       return -1;
    }
@@ -739,7 +743,7 @@ off_t posix_getdatausage( MDAL_CTXT ctxt ) {
    }
    // stat the DUSE file
    struct stat dstat;
-   if ( fstatat( pctxt->pathd, dusepath, &(dstat) ) ) {
+   if ( fstatat( pctxt->pathd, dusepath, &(dstat), 0 ) ) {
       LOG( LOG_ERR, "Failed to stat the data use file\n" );
       free( dusepath );
       return -1;
@@ -788,8 +792,8 @@ int posix_setinodeusage( MDAL_CTXT ctxt, off_t files ) {
       return -1;
    }
    // truncate the IUSE file to the provided length
-   if ( ftruncate( iusefd, bytes ) ) {
-      LOG( LOG_ERR, "Failed to truncate the inode use file to the specified length of %zd\n", len );
+   if ( ftruncate( iusefd, files ) ) {
+      LOG( LOG_ERR, "Failed to truncate the inode use file to the specified length of %zd\n", files );
       close( iusefd );
       return -1;
    }
@@ -833,7 +837,7 @@ off_t posix_getinodeusage( MDAL_CTXT ctxt ) {
    }
    // stat the IUSE file
    struct stat istat;
-   if ( fstatat( pctxt->pathd, iusepath, &(istat) ) ) {
+   if ( fstatat( pctxt->pathd, iusepath, &(istat), 0 ) ) {
       LOG( LOG_ERR, "Failed to stat the inode use file\n" );
       free( iusepath );
       return -1;
@@ -851,7 +855,7 @@ off_t posix_getinodeusage( MDAL_CTXT ctxt ) {
  * @param const char* refdir : Path of the reference dir to be created
  * @return int : Zero on success, -1 if a failure occurred
  */
-int (*createrefdir) ( const MDAL_CTXT ctxt, const char* refdir ) {
+int posix_createrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -880,7 +884,7 @@ int (*createrefdir) ( const MDAL_CTXT ctxt, const char* refdir ) {
  * @param const char* refdir : Path of the reference dir to be destroyed
  * @return int : Zero on success, -1 if a failure occurred
  */
-int (*destroyrefdir) ( const MDAL_CTXT ctxt, const char* refdir ) {
+int posix_destroyrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -909,7 +913,7 @@ int (*destroyrefdir) ( const MDAL_CTXT ctxt, const char* refdir ) {
  * @param const char* newpath : Path at which to create the hardlink
  * @return int : Zero on success, -1 if a failure occurred
  */
-int (*linkref) ( const MDAL_CTXT, const char* oldrpath, const char* newpath ) {
+int posix_linkref ( const MDAL_CTXT ctxt, const char* oldrpath, const char* newpath ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -930,7 +934,7 @@ int (*linkref) ( const MDAL_CTXT, const char* oldrpath, const char* newpath ) {
       return -1;
    }
    // attempt hardlink creation
-   if ( linkat( pctxt->refd, oldrpath, pctxt->pathd, newpath ) ) {
+   if ( linkat( pctxt->refd, oldrpath, pctxt->pathd, newpath, 0 ) ) {
       LOG( LOG_ERR, "Failed to link rpath into the namespace\n" );
       return -1;
    }
@@ -943,7 +947,7 @@ int (*linkref) ( const MDAL_CTXT, const char* oldrpath, const char* newpath ) {
  * @param const char* rpath : String reference path of the target file
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int (*unlinkref) ( const MDAL_CTXT ctxt, const char* rpath ) {
+int posix_unlinkref ( const MDAL_CTXT ctxt, const char* rpath ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1023,7 +1027,7 @@ MDAL_FHANDLE posix_openref ( const MDAL_CTXT ctxt, const char* rpath, int flags,
       return NULL;
    }
    // allocate a new FHANDLE ref
-   PMDAL_FHANDLE fhandle = malloc( sizeof(struct posix_file_handle_struct) );
+   POSIX_FHANDLE fhandle = malloc( sizeof(struct posix_file_handle_struct) );
    if ( fhandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new FHANDLE struct\n" );
       close( fd );
@@ -1057,30 +1061,30 @@ MDAL_SCANNER posix_openscanner( MDAL_CTXT ctxt, const char* rpath ) {
       return NULL;
    }
    // open the target
-   int dirfd = openat( pctxt->refd, rpath, O_RDONLY );
-   if ( dirfd < 0 ) {
+   int dfd = openat( pctxt->refd, rpath, O_RDONLY );
+   if ( dfd < 0 ) {
       LOG( LOG_ERR, "Failed to open the target path: \"%s\"\n", rpath );
       return NULL;
    }
    // verify the target is a dir
    struct stat dirstat;
-   if ( fstat( dirfd, &(dirstat) )  ||  !(S_ISDIR(dirstat.st_mode)) ) {
+   if ( fstat( dfd, &(dirstat) )  ||  !(S_ISDIR(dirstat.st_mode)) ) {
       LOG( LOG_ERR, "Could not verify target is a directory: \"%s\"\n", rpath );
-      close( dirfd );
+      close( dfd );
       return NULL;
    }
    // allocate a scanner reference
-   PMDAL_SCANNER scanner = malloc( sizeof(struct posix_scanner_struct) );
+   POSIX_SCANNER scanner = malloc( sizeof(struct posix_scanner_struct) );
    if ( scanner == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new scanner\n" );
-      close( dirfd );
+      close( dfd );
       return NULL;
    }
    // translate the FD to a DIR stream
-   scanner->dirp = fopendir( dirfd );
+   scanner->dirp = fdopendir( dfd );
    if ( scanner->dirp == NULL ) {
       LOG( LOG_ERR, "Failed to create directory stream from FD\n" );
-      close( dirfd );
+      close( dfd );
       return NULL;
    }
    return (MDAL_SCANNER) scanner;
@@ -1091,14 +1095,14 @@ MDAL_SCANNER posix_openscanner( MDAL_CTXT ctxt, const char* rpath ) {
  * @param MDAL_SCANNER scanner : Reference scanner to be closed
  * @return int : Zero on success, -1 if a failure occurred
  */
-int (*closescanner) ( MDAL_SCANNER scanner ) {
+int posix_closescanner ( MDAL_SCANNER scanner ) {
    // check for a NULL scanner
    if ( !(scanner) ) {
       LOG( LOG_ERR, "Received a NULL scanner reference\n" );
       errno = EINVAL;
       return -1;
    }
-   PMDAL_SCANNER pscan = (PDMAL_SCANNER) scanner;
+   POSIX_SCANNER pscan = (POSIX_SCANNER) scanner;
    DIR* dirp = pscan->dirp;
    free( pscan );
    return closedir( dirp );
@@ -1117,7 +1121,7 @@ struct dirent* posix_scan( MDAL_SCANNER scanner ) {
       errno = EINVAL;
       return NULL;
    }
-   PMDAL_SCANNER pscan = (PDMAL_SCANNER) scanner;
+   POSIX_SCANNER pscan = (POSIX_SCANNER) scanner;
    return readdir( pscan->dirp );
 }
 
@@ -1135,21 +1139,21 @@ MDAL_FHANDLE posix_sopen( MDAL_SCANNER scanner, const char* path ) {
       errno = EINVAL;
       return NULL;
    }
-   PMDAL_SCANNER pscan = (PDMAL_SCANNER) scanner;
+   POSIX_SCANNER pscan = (POSIX_SCANNER) scanner;
    // retrieve the dir FD associated with the current dir stream
-   int dirfd = dirfd( pscan->dirp );
-   if ( dirfd < 0 ) {
+   int dfd = dirfd( pscan->dirp );
+   if ( dfd < 0 ) {
       LOG( LOG_ERR, "Failed to retrieve the FD for the current directory stream\n" );
       return NULL;
    }
    // issue the open, relative to the scanner FD
-   int fd = openat( dirfd, path, O_RDONLY );
+   int fd = openat( dfd, path, O_RDONLY );
    if ( fd < 0 ) {
       LOG( LOG_ERR, "Failed to open relative scanner path: \"%s\"\n", path );
       return NULL;
    }
    // allocate a new FHANDLE ref
-   PMDAL_FHANDLE fhandle = malloc( sizeof(struct posix_file_handle_struct) );
+   POSIX_FHANDLE fhandle = malloc( sizeof(struct posix_file_handle_struct) );
    if ( fhandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new FHANDLE struct\n" );
       close( fd );
@@ -1172,15 +1176,15 @@ int posix_sunlink( MDAL_SCANNER scanner, const char* path ) {
       errno = EINVAL;
       return -1;
    }
-   PMDAL_SCANNER pscan = (PDMAL_SCANNER) scanner;
+   POSIX_SCANNER pscan = (POSIX_SCANNER) scanner;
    // retrieve the dir FD associated with the current dir stream
-   int dirfd = dirfd( pscan->dirp );
-   if ( dirfd < 0 ) {
+   int dfd = dirfd( pscan->dirp );
+   if ( dfd < 0 ) {
       LOG( LOG_ERR, "Failed to retrieve the FD for the current directory stream\n" );
       return -1;
    }
    // issue the open, relative to the scanner FD
-   if ( unlinkat( dirfd, path, 0 ) < 0 ) {
+   if ( unlinkat( dfd, path, 0 ) < 0 ) {
       LOG( LOG_ERR, "Failed to unlink relative scanner path: \"%s\"\n", path );
       return -1;
    }
@@ -1201,15 +1205,15 @@ int posix_sstat ( MDAL_SCANNER scanner, const char* spath, struct stat* buf ) {
       errno = EINVAL;
       return -1;
    }
-   PMDAL_SCANNER pscan = (PDMAL_SCANNER) scanner;
+   POSIX_SCANNER pscan = (POSIX_SCANNER) scanner;
    // retrieve the dir FD associated with the current dir stream
-   int dirfd = dirfd( pscan->dirp );
-   if ( dirfd < 0 ) {
+   int dfd = dirfd( pscan->dirp );
+   if ( dfd < 0 ) {
       LOG( LOG_ERR, "Failed to retrieve the FD for the current directory stream\n" );
       return -1;
    }
    // issue the stat
-   if ( fstatat( dirfd, spath, buf, 0 ) ) {
+   if ( fstatat( dfd, spath, buf, 0 ) ) {
       LOG( LOG_ERR, "Failed to stat the target path: \"%s\"\n", spath );
       return -1;
    }
@@ -1240,31 +1244,31 @@ MDAL_DHANDLE posix_opendir( MDAL_CTXT ctxt, const char* path ) {
       return NULL;
    }
    // open the target
-   int dirfd = openat( pctxt->pathd, path, O_RDONLY );
-   if ( dirfd < 0 ) {
+   int dfd = openat( pctxt->pathd, path, O_RDONLY );
+   if ( dfd < 0 ) {
       LOG( LOG_ERR, "Failed to open the target path: \"%s\"\n", path );
       return NULL;
    }
    // verify the target is a dir
    struct stat dirstat;
-   if ( fstat( dirfd, &(dirstat) )  ||  !(S_ISDIR(dirstat.st_mode)) ) {
-      LOG( LOG_ERR, "Could not verify target is a directory: \"%s\"\n", rpath );
-      close( dirfd );
+   if ( fstat( dfd, &(dirstat) )  ||  !(S_ISDIR(dirstat.st_mode)) ) {
+      LOG( LOG_ERR, "Could not verify target is a directory: \"%s\"\n", path );
+      close( dfd );
       return NULL;
    }
    // allocate a dir handle reference
-   PMDAL_DHANDLE dhandle = malloc( sizeof(struct posix_directory_handle_struct) );
+   POSIX_DHANDLE dhandle = malloc( sizeof(struct posix_directory_handle_struct) );
    if ( dhandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new directory handle\n" );
-      close( dirfd );
+      close( dfd );
       return NULL;
    }
    // translate the FD to a DIR stream
-   dhandle->dirp = fopendir( dirfd );
+   dhandle->dirp = fdopendir( dfd );
    if ( dhandle->dirp == NULL ) {
       LOG( LOG_ERR, "Failed to create directory stream from FD\n" );
       free( dhandle );
-      close( dirfd );
+      close( dfd );
       return NULL;
    }
    return (MDAL_DHANDLE) dhandle;
@@ -1293,14 +1297,15 @@ int posix_chdir( MDAL_CTXT ctxt, MDAL_DHANDLE dh ) {
       return -1;
    }
    // check for a NULL dir handle
-   if ( !(dh)  ||  !(dh->dirp) ) {
+   if ( !(dh) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_DHANDLE reference\n" );
       errno = EINVAL;
       return -1;
    }
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
    // retrieve the dir FD from the dir handle
-   int dirfd = dirfd( dh->dirp );
-   if ( dirfd < 0 ) {
+   int dfd = dirfd( pdh->dirp );
+   if ( dfd < 0 ) {
       LOG( LOG_ERR, "Failed to retrieve the FD from the provided directory stream\n" );
       return -1;
    }
@@ -1311,7 +1316,7 @@ int posix_chdir( MDAL_CTXT ctxt, MDAL_DHANDLE dh ) {
    // free the provided dir handle
    free( dh );
    // update the context struct
-   pctxt->pathd = dirfd;
+   pctxt->pathd = dfd;
    return 0;
 }
 
@@ -1324,12 +1329,13 @@ int posix_chdir( MDAL_CTXT ctxt, MDAL_DHANDLE dh ) {
  */
 struct dirent* posix_readdir( MDAL_DHANDLE dh ) {
    // check for a NULL dir handle
-   if ( !(dh)  ||  !(dh->dirp) ) {
+   if ( !(dh) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_DHANDLE reference\n" );
       errno = EINVAL;
-      return -1;
+      return NULL;
    }
-   return readdir( dh->dirp );
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
+   return readdir( pdh->dirp );
 }
 
 
@@ -1340,12 +1346,13 @@ struct dirent* posix_readdir( MDAL_DHANDLE dh ) {
  */
 int posix_closedir( MDAL_DHANDLE dh ) {
    // check for a NULL dir handle
-   if ( !(dh)  ||  !(dh->dirp) ) {
+   if ( !(dh) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_DHANDLE reference\n" );
       errno = EINVAL;
       return -1;
    }
-   DIR* dirstream = dh->dirp;
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
+   DIR* dirstream = pdh->dirp;
    free( dh );
    return closedir( dirstream );
 }
@@ -1385,7 +1392,7 @@ MDAL_FHANDLE posix_open( MDAL_CTXT ctxt, const char* path, int flags ) {
    if ( pathfilter( path ) ) {
       LOG( LOG_ERR, "Rejecting reserved path target: \"%s\"\n", path );
       errno = EPERM;
-      return -1;
+      return NULL;
    }
    // issue the open
    int fd = openat( pctxt->pathd, path, flags );
@@ -1394,7 +1401,7 @@ MDAL_FHANDLE posix_open( MDAL_CTXT ctxt, const char* path, int flags ) {
       return NULL;
    }
    // allocate a new FHANDLE ref
-   PMDAL_FHANDLE fhandle = malloc( sizeof(struct posix_file_handle_struct) );
+   POSIX_FHANDLE fhandle = malloc( sizeof(struct posix_file_handle_struct) );
    if ( fhandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new FHANDLE struct\n" );
       close( fd );
@@ -1416,8 +1423,9 @@ int posix_close( MDAL_FHANDLE fh ) {
       errno = EINVAL;
       return -1;
    }
-   int fd = fh->fd;
-   free( fh );
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   int fd = pfh->fd;
+   free( pfh );
    return close( fd );
 }
 
@@ -1435,7 +1443,8 @@ ssize_t posix_write( MDAL_FHANDLE fh, const void* buf, size_t count ) {
       errno = EINVAL;
       return -1;
    }
-   return write( fh->fd, buf, count );
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   return write( pfh->fd, buf, count );
 }
 
 /**
@@ -1452,7 +1461,8 @@ ssize_t posix_read( MDAL_FHANDLE fh, void* buf, size_t count ) {
       errno = EINVAL;
       return -1;
    }
-   return read( fh->fd, buf, count );
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   return read( pfh->fd, buf, count );
 }
 
 /**
@@ -1468,7 +1478,8 @@ int posix_ftruncate( MDAL_FHANDLE fh, off_t length ) {
       errno = EINVAL;
       return -1;
    }
-   return ftruncate( fh->fd, length );
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   return ftruncate( pfh->fd, length );
 }
 
 /**
@@ -1487,7 +1498,8 @@ off_t posix_lseek( MDAL_FHANDLE fh, off_t offset, int whence ) {
       errno = EINVAL;
       return -1;
    }
-   return lseek( fh->fd, offset, whence );
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   return lseek( pfh->fd, offset, whence );
 }
 
 
@@ -1510,6 +1522,7 @@ int posix_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const void*
       errno = EINVAL;
       return -1;
    }
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
    // the non-hidden op is more straightforward
    if ( !(hidden) ) {
       // filter out any reserved name
@@ -1518,7 +1531,7 @@ int posix_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const void*
          errno = EPERM;
          return -1;
       }
-      return fsetxattr( fh->fd, name, value, size, flags );
+      return fsetxattr( pfh->fd, name, value, size, flags );
    }
    // if this is a hidden value, we need to attach the appropriate prefix
    char* newname = malloc( sizeof(char) * (strlen(PMDAL_XATTR) + 1 + strlen(name)) );
@@ -1533,7 +1546,7 @@ int posix_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const void*
       return -1;
    }
    // now we can actually perform the op
-   int retval = fsetxattr( fh->fd, newname, value, size, flags );
+   int retval = fsetxattr( pfh->fd, newname, value, size, flags );
    free( newname ); // cleanup
    return retval;
 }
@@ -1555,6 +1568,7 @@ ssize_t posix_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, void* v
       errno = EINVAL;
       return -1;
    }
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
    // the non-hidden op is more straightforward
    if ( !(hidden) ) {
       // filter out any reserved name
@@ -1563,7 +1577,7 @@ ssize_t posix_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, void* v
          errno = EPERM;
          return -1;
       }
-      return fgetxattr( fh->fd, name, value, size );
+      return fgetxattr( pfh->fd, name, value, size );
    }
    // if this is a hidden value, we need to attach the appropriate prefix
    char* newname = malloc( sizeof(char) * (strlen(PMDAL_XATTR) + 1 + strlen(name)) );
@@ -1578,7 +1592,7 @@ ssize_t posix_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, void* v
       return -1;
    }
    // now we can actually perform the op
-   ssize_t retval = fgetxattr( fh->fd, newname, value, size );
+   ssize_t retval = fgetxattr( pfh->fd, newname, value, size );
    free( newname ); // cleanup
    return retval;
 }
@@ -1598,6 +1612,7 @@ int posix_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
       errno = EINVAL;
       return -1;
    }
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
    // the non-hidden op is more straightforward
    if ( !(hidden) ) {
       // filter out any reserved name
@@ -1606,7 +1621,7 @@ int posix_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
          errno = EPERM;
          return -1;
       }
-      return fremovexattr( fh->fd, name );
+      return fremovexattr( pfh->fd, name );
    }
    // if this is a hidden value, we need to attach the appropriate prefix
    char* newname = malloc( sizeof(char) * (strlen(PMDAL_XATTR) + 1 + strlen(name)) );
@@ -1621,7 +1636,7 @@ int posix_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
       return -1;
    }
    // now we can actually perform the op
-   int retval = fremovexattr( fh->fd, newname );
+   int retval = fremovexattr( pfh->fd, newname );
    free( newname ); // cleanup
    return retval;
 }
@@ -1642,8 +1657,9 @@ ssize_t posix_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t size )
       errno = EINVAL;
       return -1;
    }
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
    // perform the op, but capture the result
-   ssize_t res = flistxattr( fh->fd, buf, size );
+   ssize_t res = flistxattr( pfh->fd, buf, size );
    if ( size == 0 ) {
       // special, no-output case, which can be immediately returned
       return res;
@@ -1668,7 +1684,7 @@ ssize_t posix_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t size )
       parse += elemlen + 1; // skip over the current element and NULL term
    }
    // return the length of the modified list
-   return (size_t) output - buf;
+   return (size_t) (output - buf);
 }
 
 /**
@@ -1684,8 +1700,9 @@ int posix_fstat ( MDAL_FHANDLE fh, struct stat* buf ) {
       errno = EINVAL;
       return -1;
    }
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
    // issue the stat
-   return fstat( fh->fd, buf );
+   return fstat( pfh->fd, buf );
 }
 
 /**
@@ -1697,15 +1714,16 @@ int posix_fstat ( MDAL_FHANDLE fh, struct stat* buf ) {
  *                                         (see man utimensat for struct reference)
  * @return int : Zero value on success, or -1 if a failure occurred
  */
-int (*futimens) ( MDAL_FH fh, const struct timespec times[2] ) {
+int posix_futimens ( MDAL_FHANDLE fh, const struct timespec times[2] ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
       errno = EINVAL;
       return -1;
    }
+   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
    // issue the utime call
-   return futimens( fh->fd, times );
+   return futimens( pfh->fd, times );
 }
 
 
@@ -1822,7 +1840,7 @@ int posix_chmod( MDAL_CTXT ctxt, const char* path, mode_t mode, int flags ) {
  *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_lchown( MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group, int flags ) {
+int posix_chown( MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group, int flags ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2095,7 +2113,7 @@ int posix_unlink( MDAL_CTXT ctxt, const char* path ) {
 
 //   -------------    POSIX INITIALIZATION    -------------
 
-DAL posix_mdal_init( xmlNode* root ) {
+MDAL posix_mdal_init( xmlNode* root ) {
    // check for NULL root
    if ( !(root) ) {
       LOG( LOG_ERR, "Received a NULL root XML node\n" );
@@ -2118,22 +2136,26 @@ DAL posix_mdal_init( xmlNode* root ) {
          pctxt->pathd = -1;
 
          // open the directory specified by the node content
-         int rootfd = open( root->children->content, O_RDONLY );
+         char* nsrootpath = strdup( (char*) root->children->content );
+         int rootfd = open( nsrootpath, O_RDONLY );
          if ( rootfd < 0 ) {
-            LOG( LOG_ERR, "Failed to open the target 'ns_root' directory: \"%s\"\n", root->children->content );
+            LOG( LOG_ERR, "Failed to open the target 'ns_root' directory: \"%s\"\n", nsrootpath );
+            free( nsrootpath );
             return NULL;
          }
 
          // verify the target is a dir
          struct stat dirstat;
          if ( fstat( rootfd, &(dirstat) )  ||  !(S_ISDIR(dirstat.st_mode)) ) {
-            LOG( LOG_ERR, "Could not verify target is a directory: \"%s\"\n", root->children->content );
+            LOG( LOG_ERR, "Could not verify target is a directory: \"%s\"\n", nsrootpath );
+            free( nsrootpath );
             close( rootfd );
             return NULL;
          }
+         free( nsrootpath ); // done with the nsroot string
 
          // allocate and populate a new MDAL structure
-         DAL pmdal = malloc( sizeof( struct MDAL_struct ) );
+         MDAL pmdal = malloc( sizeof( struct MDAL_struct ) );
          if ( pmdal == NULL ) {
             LOG( LOG_ERR, "failed to allocate space for an MDAL_struct\n" );
             posix_destroyctxt( pctxt );

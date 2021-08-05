@@ -64,15 +64,15 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 #define LOG_PREFIX "mdal"
 
-#include "logging/logging.h"
+#include <logging.h>
 #include "mdal.h"
 
 #include <ctype.h>
 
 
-// Function to provide specific DAL initialization calls based on name
-MDAL init_mdal( xmlNode* mdal_conf_root, int refdepth, int refbreadth ) {
-   // make sure we start on a 'DAL' node
+// Function to provide specific MDAL initialization calls based on name
+MDAL init_mdal( xmlNode* mdal_conf_root ) {
+   // make sure we start on a 'MDAL' node
    if ( mdal_conf_root->type != XML_ELEMENT_NODE  ||  strncmp( (char*)mdal_conf_root->name, "MDAL", 5 ) != 0 ) {
       LOG( LOG_ERR, "root xml node is not an element of type \"MDAL\"!\n" );
       errno = EINVAL;
@@ -103,12 +103,12 @@ MDAL init_mdal( xmlNode* mdal_conf_root, int refdepth, int refbreadth ) {
       return NULL;
    }
 
-   // name comparison for each DAL type
+   // name comparison for each MDAL type
    if (  strncasecmp( (char*)typetxt->content, "posix", 6 ) == 0 ) {
-      return posix_mdal_init( mdal_conf_root->children, refdepth, refbreadth );
+      return posix_mdal_init( mdal_conf_root->children );
    }
 
-   // if no DAL found, return NULL
+   // if no MDAL found, return NULL
    LOG( LOG_ERR, "failed to identify an MDAL of type: \"%s\"\n", typetxt->content );
    errno = ENODEV;
    return NULL;
