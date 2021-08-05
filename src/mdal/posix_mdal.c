@@ -172,8 +172,28 @@ size_t namespacepath( const char* nspath, char* newpath, size_t newlen ) {
             if ( newlen == 1 ) { newlen = 0; }
          }
       }
-      else if ( strncmp( elemref, "./", 2 ) != 0 ) {
-         // completely ignore './' elements, as they are not needed
+      else if ( strncmp( elemref, "./", 2 ) != 0 ) { // completely ignore './' elements
+         // trailing '.' chars can usually be skipped, but not always
+         if ( strncmp( elemref, ".", 2 ) == 0 ) {
+            // catch the "/." and "." special cases
+            if ( totlen < 2 ) {
+               // this refers specifically to the root NS
+               // we want to recreate it exactly
+               if ( newlen > 1 ) {
+                  *newpath = '.';
+                  newlen--;
+                  newpath++;
+               }
+               // ensure we append a NULL-term
+               if ( newlen > 0 ) {
+                  *newpath = '\0';
+                  // check for end of ouput condition
+                  if ( newlen == 1 ) { newlen = 0; }
+               }
+               totlen++;
+            }
+            continue; // all other trailing '.' chars will be skipped
+         }
          // all other elements should be subspace references
          // we need to insert the intermediate subspace directory name
          int prout = snprintf( newpath, newlen, "%s/", PMDAL_SUBSP );
@@ -276,32 +296,6 @@ int xattrfilter( const char* name, char hidden ) {
 // Management Functions
 
 /**
- * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
- * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
- * @return int : Zero on success, or -1 if a failure occurred
- */
-int posix_destroyctxt ( MDAL_CTXT ctxt ) {
-   // check for NULL ctxt
-   if ( !(ctxt) ) {
-      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
-      errno = EINVAL;
-      return -1;
-   }
-   // close the directory ref
-   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
-   char errorflag = 0; // just note errors, don't terminate until done
-   if ( close( pctxt->refd )  ||  ( (pctxt->pathd >= 0)  &&  close( pctxt->pathd ) ) ) {
-      LOG( LOG_ERR, "Failed to close some dir references\n" );
-      errorflag = 1;
-   }
-   free( pctxt );
-   if ( errorflag ) {
-      return -1;
-   }
-   return 0;
-}
-
-/**
  * Cleanup all structes and state associated with the given posix MDAL
  * @param MDAL mdal : MDAL to be freed
  * @return int : Zero on success, -1 if a failure occurred
@@ -321,111 +315,6 @@ int posix_cleanup( MDAL mdal ) {
    // free the entire MDAL
    free( mdal );
    return 0;
-}
-
-/**
- * Duplicate the given MDAL_CTXT
- * @param const MDAL_CTXT ctxt : MDAL_CTXT to duplicate
- * @return MDAL_CTXT : Reference to the duplicate MDAL_CTXT, or NULL if an error occurred
- */
-MDAL_CTXT posix_dupctxt ( const MDAL_CTXT ctxt ) {
-   // check for NULL ctxt
-   if ( !(ctxt) ) {
-      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
-      errno = EINVAL;
-      return NULL;
-   }
-   // create a new ctxt structure
-   POSIX_MDAL_CTXT dupctxt = malloc( sizeof(struct posix_mdal_context_struct) );
-   if ( !(dupctxt) ) {
-      LOG( LOG_ERR, "Failed to allocate space for a new posix MDAL_CTXT\n" );
-      return NULL;
-   }
-   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
-   // we shouldn't ever make use of dir offsets, so a real dup() call should be sufficient
-   dupctxt->refd = dup( pctxt->refd );
-   dupctxt->pathd = (pctxt->pathd >= 0) ? dup( pctxt->pathd ) : -1;
-   if ( dupctxt->refd < 0  ||  ( dupctxt->pathd < 0  &&  pctxt->pathd >= 0 ) ) {
-      LOG( LOG_ERR, "Failed to duplicate FD references for ctxt dirs\n" );
-      if ( dupctxt->refd >= 0 ) { close( dupctxt->refd ); }
-      if ( dupctxt->pathd >= 0 ) { close( dupctxt->pathd ); }
-      free( dupctxt );
-      return NULL;
-   }
-   return (MDAL_CTXT) dupctxt;
-}
-
-/**
- * Create a new MDAL_CTXT reference, targeting the specified NS
- * @param const char* ns : Name of the namespace for the new MDAL_CTXT to target
- * @param const MDAL_CTXT basectxt : The new MDAL_CTXT will be created relative to this one
- * @return MDAL_CTXT : Reference to the new MDAL_CTXT, or NULL if an error occurred
- */
-MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
-   // check for NULL basectxt
-   if ( !(basectxt) ) {
-      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
-      errno = EINVAL;
-      return NULL;
-   }
-   POSIX_MDAL_CTXT pbasectxt = (POSIX_MDAL_CTXT) basectxt;
-   // create the corresponding posix path for the target NS
-   size_t nspathlen = namespacepath( ns, NULL, 0 );
-   if ( nspathlen == 0 ) {
-      LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
-      return NULL;
-   }
-   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
-   if ( !(nspath) ) {
-      LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
-      return NULL;
-   }
-   if ( namespacepath( ns, nspath, nspathlen ) != nspathlen ) {
-      LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
-      free( nspath );
-      return NULL;
-   }
-   // create a new ctxt structure
-   POSIX_MDAL_CTXT newctxt = malloc( sizeof(struct posix_mdal_context_struct) );
-   if ( !(newctxt) ) {
-      LOG( LOG_ERR, "Failed to allocate space for a new posix MDAL_CTXT\n" );
-      free( nspath );
-      return NULL;
-   }
-   // open the path dir, according to the target NS path
-   if ( *nspath == '/' ) {
-      // ensure the pbasectxt is set to the secureroot dir
-      if ( pbasectxt->pathd >= 0 ) {
-         LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
-         errno = EINVAL;
-         free( newctxt );
-         free( nspath );
-         return NULL;
-      }
-      // absoulute paths are opened via the root dir (skipping the leading '/')
-      newctxt->pathd = openat( pbasectxt->refd, (nspath + 1), O_RDONLY );
-   }
-   else {
-      // relative paths are opened via the ref dir of the pbasectxt
-      newctxt->pathd = openat( pbasectxt->refd, nspath, O_RDONLY );
-   }
-   if ( newctxt->pathd < 0 ) {
-      LOG( LOG_ERR, "Failed to open the user path dir: \"%s\"\n", nspath );
-      free( newctxt );
-      free( nspath );
-      return NULL;
-   }
-   free( nspath ); // done with this path
-   // open the reference dir relative to the new path
-   newctxt->refd = openat( newctxt->pathd, PMDAL_REF, O_RDONLY );
-   if ( newctxt->refd < 0 ) {
-      LOG( LOG_ERR, "Failed to open the reference dir of NS \"%s\"\n", ns );
-      close( newctxt->pathd );
-      free( newctxt );
-      free( nspath );
-      return NULL;
-   }
-   return (MDAL_CTXT) newctxt;
 }
 
 
@@ -549,7 +438,7 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
    else {
       mkdirres = mkdirat( pctxt->refd, nspath, S_IRWXU );
    }
-   if ( mkdirres ) {
+   if ( mkdirres  &&  (errno != EEXIST) ) { // ignore pre-existence error
       LOG( LOG_ERR, "Failed to create NS root: \"%s\"\n", nspath );
       free( nspath );
       return -1;
@@ -570,6 +459,7 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
       mkdirres = mkdirat( pctxt->pathd, nspath, S_IRWXU );
    }
    if ( mkdirres ) {
+      // here, we actually want to report EEXIST
       LOG( LOG_ERR, "Failed to create NS ref path: \"%s\"\n", nspath );
       free( nspath );
       return -1;
@@ -580,7 +470,8 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
 
 /**
  * Destroy the specified namespace root structures
- * NOTE -- This operation will fail with errno=ENOTEMPTY if files/dirs persist in the namespace.
+ * NOTE -- This operation will fail with errno=ENOTEMPTY if files/dirs persist in the namespace or if 
+ *         inode / data usage values are non-zero for the namespace.
  *         This includes files/dirs within the reference tree.
  * @param const MDAL_CTXT ctxt : Current MDAL context
  * @param const char* ns : Name of the namespace to be deleted
@@ -656,6 +547,140 @@ int posix_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
 }
 
 
+// Context Functions
+
+/**
+ * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
+ * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posix_destroyctxt ( MDAL_CTXT ctxt ) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // close the directory ref
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   char errorflag = 0; // just note errors, don't terminate until done
+   if ( close( pctxt->refd )  ||  ( (pctxt->pathd >= 0)  &&  close( pctxt->pathd ) ) ) {
+      LOG( LOG_ERR, "Failed to close some dir references\n" );
+      errorflag = 1;
+   }
+   free( pctxt );
+   if ( errorflag ) {
+      return -1;
+   }
+   return 0;
+}
+
+/**
+ * Duplicate the given MDAL_CTXT
+ * @param const MDAL_CTXT ctxt : MDAL_CTXT to duplicate
+ * @return MDAL_CTXT : Reference to the duplicate MDAL_CTXT, or NULL if an error occurred
+ */
+MDAL_CTXT posix_dupctxt ( const MDAL_CTXT ctxt ) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   // create a new ctxt structure
+   POSIX_MDAL_CTXT dupctxt = malloc( sizeof(struct posix_mdal_context_struct) );
+   if ( !(dupctxt) ) {
+      LOG( LOG_ERR, "Failed to allocate space for a new posix MDAL_CTXT\n" );
+      return NULL;
+   }
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   // we shouldn't ever make use of dir offsets, so a real dup() call should be sufficient
+   dupctxt->refd = dup( pctxt->refd );
+   dupctxt->pathd = (pctxt->pathd >= 0) ? dup( pctxt->pathd ) : -1;
+   if ( dupctxt->refd < 0  ||  ( dupctxt->pathd < 0  &&  pctxt->pathd >= 0 ) ) {
+      LOG( LOG_ERR, "Failed to duplicate FD references for ctxt dirs\n" );
+      if ( dupctxt->refd >= 0 ) { close( dupctxt->refd ); }
+      if ( dupctxt->pathd >= 0 ) { close( dupctxt->pathd ); }
+      free( dupctxt );
+      return NULL;
+   }
+   return (MDAL_CTXT) dupctxt;
+}
+
+/**
+ * Create a new MDAL_CTXT reference, targeting the specified NS
+ * @param const char* ns : Name of the namespace for the new MDAL_CTXT to target
+ * @param const MDAL_CTXT basectxt : The new MDAL_CTXT will be created relative to this one
+ * @return MDAL_CTXT : Reference to the new MDAL_CTXT, or NULL if an error occurred
+ */
+MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
+   // check for NULL basectxt
+   if ( !(basectxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   POSIX_MDAL_CTXT pbasectxt = (POSIX_MDAL_CTXT) basectxt;
+   // create the corresponding posix path for the target NS
+   size_t nspathlen = namespacepath( ns, NULL, 0 );
+   if ( nspathlen == 0 ) {
+      LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
+      return NULL;
+   }
+   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
+   if ( !(nspath) ) {
+      LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
+      return NULL;
+   }
+   if ( namespacepath( ns, nspath, nspathlen ) != nspathlen ) {
+      LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
+      free( nspath );
+      return NULL;
+   }
+   // create a new ctxt structure
+   POSIX_MDAL_CTXT newctxt = malloc( sizeof(struct posix_mdal_context_struct) );
+   if ( !(newctxt) ) {
+      LOG( LOG_ERR, "Failed to allocate space for a new posix MDAL_CTXT\n" );
+      free( nspath );
+      return NULL;
+   }
+   // open the path dir, according to the target NS path
+   if ( *nspath == '/' ) {
+      // ensure the pbasectxt is set to the secureroot dir
+      if ( pbasectxt->pathd >= 0 ) {
+         LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
+         errno = EINVAL;
+         free( newctxt );
+         free( nspath );
+         return NULL;
+      }
+      // absoulute paths are opened via the root dir (skipping the leading '/')
+      newctxt->pathd = openat( pbasectxt->refd, (nspath + 1), O_RDONLY );
+   }
+   else {
+      // relative paths are opened via the ref dir of the pbasectxt
+      newctxt->pathd = openat( pbasectxt->refd, nspath, O_RDONLY );
+   }
+   if ( newctxt->pathd < 0 ) {
+      LOG( LOG_ERR, "Failed to open the user path dir: \"%s\"\n", nspath );
+      free( newctxt );
+      free( nspath );
+      return NULL;
+   }
+   free( nspath ); // done with this path
+   // open the reference dir relative to the new path
+   newctxt->refd = openat( newctxt->pathd, PMDAL_REF, O_RDONLY );
+   if ( newctxt->refd < 0 ) {
+      LOG( LOG_ERR, "Failed to open the reference dir of NS \"%s\"\n", ns );
+      close( newctxt->pathd );
+      free( newctxt );
+      free( nspath );
+      return NULL;
+   }
+   return (MDAL_CTXT) newctxt;
+}
+
+
 // Usage Functions
 
 /**
@@ -689,6 +714,19 @@ int posix_setdatausage( MDAL_CTXT ctxt, off_t bytes ) {
       LOG( LOG_ERR, "Failed to populate the usage file path\n" );
       free( dusepath );
       return -1;
+   }
+   // if we're setting to zero usage, just unlink the usage file
+   if ( !(bytes) ) {
+      // unlink, ignoring ENOENT errors
+      errno = 0;
+      if ( unlinkat( pctxt->pathd, dusepath, 0 )  &&  errno != ENOENT ) {
+         LOG( LOG_ERR, "Failed to unlink data useage file\n" );
+         free( dusepath );
+         return -1;
+      }
+      // cleanup and return
+      free( dusepath );
+      return 0;
    }
    // open a file handle for the DUSE path ( create with all perms open, if missing )
    int dusefd = openat( pctxt->pathd, dusepath, O_CREAT | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO );
@@ -742,10 +780,13 @@ off_t posix_getdatausage( MDAL_CTXT ctxt ) {
       return -1;
    }
    // stat the DUSE file
+   errno = 0;
    struct stat dstat;
    if ( fstatat( pctxt->pathd, dusepath, &(dstat), 0 ) ) {
+      free( dusepath ); // cleanup
+      // if no file exists, assume zero usage
+      if ( errno = ENOENT ) { errno = 0; return 0; }
       LOG( LOG_ERR, "Failed to stat the data use file\n" );
-      free( dusepath );
       return -1;
    }
    free( dusepath ); // done with the path
@@ -783,6 +824,19 @@ int posix_setinodeusage( MDAL_CTXT ctxt, off_t files ) {
       LOG( LOG_ERR, "Failed to populate the inode usage file path\n" );
       free( iusepath );
       return -1;
+   }
+   // if we're setting to zero usage, just unlink the usage file
+   if ( !(files) ) {
+      // unlink, ignoring ENOENT errors
+      errno = 0;
+      if ( unlinkat( pctxt->pathd, iusepath, 0 )  &&  errno != ENOENT ) {
+         LOG( LOG_ERR, "Failed to unlink inode useage file\n" );
+         free( iusepath );
+         return -1;
+      }
+      // cleanup and return
+      free( iusepath );
+      return 0;
    }
    // open a file handle for the IUSE path ( create with all perms open, if missing )
    int iusefd = openat( pctxt->pathd, iusepath, O_CREAT | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO );
@@ -838,8 +892,10 @@ off_t posix_getinodeusage( MDAL_CTXT ctxt ) {
    // stat the IUSE file
    struct stat istat;
    if ( fstatat( pctxt->pathd, iusepath, &(istat), 0 ) ) {
+      free( iusepath ); // cleanup
+      // if no file exists, assume zero usage
+      if ( errno = ENOENT ) { errno = 0; return 0; }
       LOG( LOG_ERR, "Failed to stat the inode use file\n" );
-      free( iusepath );
       return -1;
    }
    free( iusepath ); // done with the path
@@ -1672,19 +1728,28 @@ ssize_t posix_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t size )
    // parse over the xattr list, limiting it to either 'hidden' or non-'hidden' values
    char* parse = buf;
    char* output = buf;
-   while ( (parse - buf) < (size - 1) ) {
+   while ( (parse - buf) < res ) {
       size_t elemlen = strlen(parse);
       if ( xattrfilter( parse, hidden ) == 0 ) {
+         if ( hidden ) {
+            // we need to omit the reserved xattr prefix
+            size_t prefixlen = strlen( PMDAL_XATTR );
+            elemlen -= prefixlen;
+            parse += prefixlen;
+         }
          // check if we need to shift this element to a previous position
          if ( output != parse ) {
-            snprintf( output, elemlen, "%s", parse );
+            snprintf( output, elemlen + 1, "%s", parse );
          }
          output += elemlen + 1; // skip over the output string and NULL term
       }
       parse += elemlen + 1; // skip over the current element and NULL term
    }
+   // explicitly zero out the remainder of the xattr list
+   ssize_t listlen = (ssize_t)(output - buf);
+   bzero( output, res - listlen );
    // return the length of the modified list
-   return (size_t) (output - buf);
+   return (size_t) ;
 }
 
 /**
@@ -2163,13 +2228,13 @@ MDAL posix_mdal_init( xmlNode* root ) {
          }
          pmdal->name = "posix";
          pmdal->ctxt = (MDAL_CTXT) pctxt;
-         pmdal->destroyctxt = posix_destroyctxt;
          pmdal->cleanup = posix_cleanup;
-         pmdal->dupctxt = posix_dupctxt;
-         pmdal->newctxt = posix_newctxt;
          pmdal->setnamespace = posix_setnamespace;
          pmdal->createnamespace = posix_createnamespace;
          pmdal->destroynamespace = posix_destroynamespace;
+         pmdal->destroyctxt = posix_destroyctxt;
+         pmdal->dupctxt = posix_dupctxt;
+         pmdal->newctxt = posix_newctxt;
          pmdal->setdatausage = posix_setdatausage;
          pmdal->getdatausage = posix_getdatausage;
          pmdal->setinodeusage = posix_setinodeusage;
