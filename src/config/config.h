@@ -80,6 +80,7 @@ typedef enum {
    NS_READDATA,        // 4  = 0b0100 -- Read access to data
    NS_WRITEDATA = 8,   // 8  = 0b1000 -- Write access to data
    NS_RWDATA = 12,     // 12 = 0b1100 -- Read and Write access to data
+   NS_FULLACCESS = 15  // 15 = 0b1111 -- Read and Write for data and metadata
 } ns_perms;
 
 

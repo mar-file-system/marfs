@@ -197,6 +197,7 @@ AM_CONDITIONAL([USE_SYSLOG], [test x"$enable_syslog" != xno])
 AC_CONFIG_FILES([Makefile
                  src/Makefile
                  src/hash/Makefile
+                 src/mdal/Makefile
                ])
 #                 src/logging/Makefile
 #                 src/thread_queue/Makefile
