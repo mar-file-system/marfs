@@ -101,10 +101,10 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   // verify EEXIST case
+   // verify EINVAL case
    errno = 0;
-   if ( mdal->createnamespace( mdal->ctxt, "." ) == 0  ||  errno != EEXIST ) {
-      printf( "expected EEXIST for root recreation\n" );
+   if ( mdal->createnamespace( mdal->ctxt, "." ) == 0  ||  errno != EINVAL ) {
+      printf( "expected EINVAL for relative NS path of unset ctxt\n" );
       return -1;
    }
 
@@ -123,9 +123,9 @@ int main(int argc, char **argv)
    }
 
    // create a new context, referencing the root NS
-   MDAL_CTXT rootctxt = mdal->newctxt( ".", mdal->ctxt );
+   MDAL_CTXT rootctxt = mdal->newctxt( "/.", mdal->ctxt );
    if ( rootctxt == NULL ) {
-      printf( "failed to create new ctxt referencing \".\"\n" );
+      printf( "failed to create new ctxt referencing \"/.\"\n" );
       return -1;
    }
 
@@ -152,7 +152,7 @@ int main(int argc, char **argv)
       return -1;
    }
    if ( mdal->setnamespace( dupctxt, "/." ) ) {
-      printf( "failed to set dup ctxt to root NS via ABS path\n" );
+      printf( "failed to set dup ctxt to root NS\n" );
       return -1;
    }
 

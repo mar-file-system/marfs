@@ -93,7 +93,7 @@ typedef struct marfs_namespace_struct {
    ns_perms    iperms;      // interactive access perms for this namespace
    ns_perms    bperms;      // batch access perms for this namespace
    marfs_repo* prepo;       // reference to the repo containing this namespace
-   marfs_ns*   pnamespace;  // reference to the parent namespace of this one
+   marfs_ns*   pnamespace;  // reference to the parent of this namespace
    HASH_TABLE  subspaces;   // subspace hash table, referencing namespaces below this one
 } marfs_ns;
 // NOTE -- namespaces will be wrapped in HASH_NODES for use in HASH_TABLEs
@@ -103,9 +103,10 @@ typedef struct marfs_namespace_struct {
 typedef struct marfs_datascheme_struct {
    ne_erasure protection;       // erasure defintion for writing out objects
    ne_ctxt    nectxt;           // LibNE context reference for data access
-   size_t     objfiles;         // maximum count of files per data object ( ZERO value implies no limit )
-   char       chunkingenabled;  // flag indicating if files can span objects
-   size_t     objsize;          // maximum data object size ( ZERO value implies no limit )
+   char       packing;          // flag indicating if multiple files can be included in the same object
+   size_t     objfiles;         // maximum count of files per data object
+   char       chunking;         // flag indicating if files can span objects
+   size_t     objsize;          // maximum data object size
    HASH_TABLE podtable;         // hash table for object POD postion
    HASH_TABLE captable;         // hash table for object CAP position
    HASH_TABLE scattertable;     // hash table for object SCATTER position

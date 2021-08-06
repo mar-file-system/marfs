@@ -103,6 +103,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  *       </data>
  *
  *       <!-- Per-Repo Metadata Scheme -->
+ *       <meta>
+ *
+ *          <!-- Direct Data -->
+ *          <direct read="yes"/>
  *
  */
 
@@ -113,6 +117,13 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 //   -------------   INTERNAL FUNCTIONS    -------------
 
+
+/**
+ * Count the number of nodes with the given name at this level of the libxml tree structure
+ * @param xmlNode* root : XML Tree node at which to begin the scan
+ * @param const char* tag : String name to search for
+ * @return int : Count of nodes with name 'tag' at this level, beginning at 'root'
+ */
 int count_nodes( xmlNode* root, const char* tag ) {
    // iterate over all nodes at this level, checking for instances of 'tag'
    int tagcnt = 0;
@@ -124,7 +135,14 @@ int count_nodes( xmlNode* root, const char* tag ) {
    return tagcnt;
 }
 
-
+/**
+ * Scan through the list of HASH_NODEs, searching for a reference to the given namespace name
+ * NOTE -- used to identify the targets of remote namespace references
+ * @param HASH_NODE* nslist : List of HASH_NODEs referencing namespaces
+ * @param size_t nscount : Count of namespaces in the provided list
+ * @param const char* nsname : String name of the namespace to search for
+ * @return marfs_ns* : Reference to the matching namespace, or NULL if no match is found
+ */
 marfs_ns* find_namespace( HASH_NODE* nslist, size_t nscount, const char* nsname ) {
    // iterate over the elements of the nslist, searching for a matching name
    size_t index;
@@ -136,7 +154,14 @@ marfs_ns* find_namespace( HASH_NODE* nslist, size_t nscount, const char* nsname 
    return NULL;
 }
 
-
+/**
+ * Scan through the list of repos, searching for one with the given name
+ * NOTE -- used to identify the targets of remote namespace references
+ * @param marfs_repo* repolist : List of repos to be searched
+ * @param int repocount : Count of repos in the provided list
+ * @param const char* reponame : String name of the repo to search for
+ * @return marfs_repo* : Reference to the matching repo, or NULL if no match is found
+ */
 marfs_repo* find_repo( marfs_repo* repolist, int repocount, const char* reponame ) {
    // iterate over the elements of the repolist, searching for a matching name
    int index;
@@ -1224,6 +1249,9 @@ int parse_metascheme( marfs_ds* ms, marfs_repo* repo, XmlNode* metaroot ) {
             LOG( LOG_ERR, "detected a duplicate 'namespaces' definition\n" );
             return -1;
          }
+         int refbreadth = 0;
+         int refdepth = 0;
+         int refdigits = 0;
          for ( ; attr; attr = attr->next ) {
             int attrvalue = 0;
             if ( attr->type == XML_ATTRIBUTE_NODE ) {
@@ -1249,31 +1277,35 @@ int parse_metascheme( marfs_ds* ms, marfs_repo* repo, XmlNode* metaroot ) {
             }
             // check which value this attribute provides
             if ( strncmp( (char*)attr->name, "rbreadth", 9 ) == 0 ) {
-               ms->refbreadth = attrvalue;
+               refbreadth = attrvalue;
             }
             else if ( strncmp( (char*)attr->name, "rdepth", 7 ) == 0 ) {
-               ms->refdepth = attrvalue;
+               refdepth = attrvalue;
             }
             else if ( strncmp( (char*)attr->name, "rdigits", 8 ) == 0 ) {
-               ms->refdigits = attrvalue;
+               refdigits = attrvalue;
             }
             else {
                LOG( LOG_ERR, "encountered an unrecognized attribute of a 'namespaces' node: \"%s\"\n", (char*)attr->name );
                return -1;
             }
          }
+         // verify that we found the required reference dimensions
+         if ( rbreadth < 1  ||  rdepth < 1 ) {
+            LOG( LOG_ERR, "failed to locate required 'rbreadth' and/or 'rdepth' values for a 'namespaces' node\n" );
+            return -1;
+         }
          // create a string to hold temporary reference paths
-         int breadthdigits = 1;
-         int tmpbreadth = ms->refbreadth;
-         while ( ( (int)( tmpbreadth = tmpbreadth / 10 ) ) ) { breadthdigits++; }
-         size_t rpathlen = ( ms->refdepth * (breadthdigits + 1) ) + 1;
+         int breadthdigits = num_digits_unsigned( (unsigned long long) refbreadth );
+         if ( refdigits > breadthdigits ) { breadthdigits = refdigits; }
+         size_t rpathlen = ( refdepth * (breadthdigits + 1) ) + 1;
          char* rpathtmp = malloc( sizeof(char) * rpathlen ); // used to populate node name strings
          if ( rpathtmp == NULL ) {
             LOG( LOG_ERR, "failed to allocate space for namespace refpaths\n" );
             return -1;
          }
          // create an array of integers to hold reference indexes
-         int* refvals = malloc( sizeof(int) * ms->refdepth );
+         int* refvals = malloc( sizeof(int) * refdepth );
          if ( refvals == NULL ) {
             LOG( LOG_ERR, "failed to allocate space for namespace reference indexes\n" );
             free( rpathtmp );
@@ -1281,8 +1313,8 @@ int parse_metascheme( marfs_ds* ms, marfs_repo* repo, XmlNode* metaroot ) {
          }
          // create an array of hash nodes
          size_t rnodecount = 1;
-         int curdepth = ms->refdepth;
-         while ( curdepth ) { rnodecount *= ms->refbreadth; curdepth--; } // equiv of breadth to the depth power
+         int curdepth = refdepth;
+         while ( curdepth ) { rnodecount *= refbreadth; curdepth--; } // equiv of breadth to the depth power
          HASH_NODE* rnodelist = malloc( sizeof(struct hash_node_struct) * rnodecount );
          if ( rnodelist == NULL ) {
             LOG( LOG_ERR, "failed to allocate space for namespace reference hash nodes\n" );
@@ -1295,15 +1327,15 @@ int parse_metascheme( marfs_ds* ms, marfs_repo* repo, XmlNode* metaroot ) {
          for ( curnode = 0; curnode < rnodecount; curnode++ ) {
             // populate the index for each rnode, starting at the depest level
             size_t tmpnode = curnode;
-            for ( curdepth = ms->refdepth; curdepth; curdepth-- ) {
-               refvals[curdepth-1] = tmpnode % ms->refbreadth; // what is our index at this depth
-               tmpnode /= ms->refdepth; // find how many groups we have already traversed at this depth
+            for ( curdepth = refdepth; curdepth; curdepth-- ) {
+               refvals[curdepth-1] = tmpnode % refbreadth; // what is our index at this depth
+               tmpnode /= refdepth; // find how many groups we have already traversed at this depth
             }
             // now populate the reference pathname
             char* outputstr = rpathtmp;
             int pathlenremaining = rpathlen;
-            for ( curdepth = 0; curdepth < ms->refdepth; curdepth++ ) {
-               int prlen = snprintf( outputstr, pathlenremaining, "%.*d/", ms->refdigits, refvals[curdepth] );
+            for ( curdepth = 0; curdepth < refdepth; curdepth++ ) {
+               int prlen = snprintf( outputstr, pathlenremaining, "%.*d/", refdigits, refvals[curdepth] );
                if ( prlen <= 0  ||  prlen >= pathlenremaining ) {
                   LOG( LOG_ERR, "failed to generate reference path string\n" );
                   free( rpathtmp );
