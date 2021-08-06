@@ -95,6 +95,23 @@ typedef struct MDAL_struct {
    MDAL_CTXT       ctxt;
 
 
+   // Context Functions
+
+   /**
+    * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
+    * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*destroyctxt) ( MDAL_CTXT ctxt );
+
+   /**
+    * Duplicate the given MDAL_CTXT
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to duplicate
+    * @return MDAL_CTXT : Reference to the duplicate MDAL_CTXT, or NULL if an error occurred
+    */
+   MDAL_CTXT (*dupctxt) ( const MDAL_CTXT ctxt );
+
+
    // Management Functions
 
    /**
@@ -110,6 +127,7 @@ typedef struct MDAL_struct {
    /**
     * NOTE -- Namespace paths are either absolute ( begin with a '/' char ) or relative ( begin with any other char ).
     *         Absolute paths can only be used when the provided MDAL_CTXT arg IS NOT associated with a specific namespace.
+    *         Relative paths can only be used when the provided MDAL_CTXT arg IS associated with a specific namespace.
     *         The "/." absolute path refers to the root NS.  All other "/<NSname>..." absolute paths refer to subspaces.
     */
 
@@ -120,6 +138,14 @@ typedef struct MDAL_struct {
     * @return int : Zero on success, -1 if a failure occurred
     */
    int (*setnamespace) ( MDAL_CTXT ctxt, const char* ns );
+
+   /**
+    * Create a new MDAL_CTXT reference, targeting the specified NS
+    * @param const char* ns : Name of the namespace for the new MDAL_CTXT to target
+    * @param const MDAL_CTXT basectxt : The new MDAL_CTXT will be created relative to this one
+    * @return MDAL_CTXT : Reference to the new MDAL_CTXT, or NULL if an error occurred
+    */
+   MDAL_CTXT (*newctxt) ( const char* ns, const MDAL_CTXT basectxt );
 
    /**
     * Create the specified namespace root structures ( reference tree is not created by this func! )
@@ -139,31 +165,6 @@ typedef struct MDAL_struct {
     * @return int : Zero on success, -1 if a failure occurred
     */
    int (*destroynamespace) ( const MDAL_CTXT ctxt, const char* ns );
-
-
-   // Context Functions
-
-   /**
-    * Destroy a given MDAL_CTXT ( such as following a dupctxt call )
-    * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
-    * @return int : Zero on success, or -1 if a failure occurred
-    */
-   int (*destroyctxt) ( MDAL_CTXT ctxt );
-
-   /**
-    * Duplicate the given MDAL_CTXT
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to duplicate
-    * @return MDAL_CTXT : Reference to the duplicate MDAL_CTXT, or NULL if an error occurred
-    */
-   MDAL_CTXT (*dupctxt) ( const MDAL_CTXT ctxt );
-
-   /**
-    * Create a new MDAL_CTXT reference, targeting the specified NS
-    * @param const char* ns : Name of the namespace for the new MDAL_CTXT to target
-    * @param const MDAL_CTXT basectxt : The new MDAL_CTXT will be created relative to this one
-    * @return MDAL_CTXT : Reference to the new MDAL_CTXT, or NULL if an error occurred
-    */
-   MDAL_CTXT (*newctxt) ( const char* ns, const MDAL_CTXT basectxt );
 
 
    // NOTE --  all functions below this point require any MDAL_CTXT args to be set to a specific NS target

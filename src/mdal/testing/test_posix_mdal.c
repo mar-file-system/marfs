@@ -74,7 +74,8 @@ int main(int argc, char **argv)
    LIBXML_TEST_VERSION
 
    // create a subdir to be used by this test
-   if ( mkdir( "test_posix_mdal_nsroot", S_IRWXU ) ) {
+   errno = 0;
+   if ( mkdir( "test_posix_mdal_nsroot", S_IRWXU )  &&  errno != EEXIST ) {
       printf( "failed to produce nsroot subdir\n" );
       return -1;
    }
@@ -123,7 +124,7 @@ int main(int argc, char **argv)
 
    // create a new context, referencing the root NS
    MDAL_CTXT rootctxt = mdal->newctxt( ".", mdal->ctxt );
-   if ( ns1ctxt == NULL ) {
+   if ( rootctxt == NULL ) {
       printf( "failed to create new ctxt referencing \".\"\n" );
       return -1;
    }
@@ -213,12 +214,12 @@ int main(int argc, char **argv)
       return -1;
    }
    // set a user visible xattr
-   if ( mdal->fsetxattr( rootfh, 0, "user.testname", "testnamecontent", sizeof(char) * 16 ), XATTR_CREATE ) {
+   if ( mdal->fsetxattr( rootfh, 0, "user.testname", "testnamecontent", sizeof(char) * 16, XATTR_CREATE ) ) {
       printf( "failed to set testname xattr on reffile\n" );
       return -1;
    }
    // set a hidden xattr
-   if ( mdal->fsetxattr( rootfh, 0, "hidename", "hidenamecontent", sizeof(char) * 16 ), 0 ) {
+   if ( mdal->fsetxattr( rootfh, 0, "hidename", "hidenamecontent", sizeof(char) * 16, 0 ) ) {
       printf( "failed to set testname xattr on reffile\n" );
       return -1;
    }
@@ -290,8 +291,8 @@ int main(int argc, char **argv)
    struct dirent* entry;
    errno = 0;
    while ( (entry = mdal->scan( sref0 )) != NULL ) {
-      if ( strncmp( "reffile", entry->name, 8 ) ) {
-         printf( "expected \"reffile\" scanner entry, but found \"%s\"\n", entry->name );
+      if ( strncmp( "reffile", entry->d_name, 8 ) ) {
+         printf( "expected \"reffile\" scanner entry, but found \"%s\"\n", entry->d_name );
          return -1;
       }
    }
@@ -301,7 +302,7 @@ int main(int argc, char **argv)
    }
 
    // open the file via the scanner, stat it via the file handle, and compare to the original stat struct
-   struct verstat;
+   struct stat verstat;
    MDAL_FHANDLE sfh = mdal->sopen( sref0, "reffile" );
    if ( !(sfh) ) {
       printf( "failed to open reffile via scanner\n" );
@@ -311,12 +312,12 @@ int main(int argc, char **argv)
       printf( "failed to stat reffile via scanner handle\n" );
       return -1;
    }
-   if ( verstat != stbuf ) {
+   if ( memcmp( &(verstat), &(stbuf), sizeof(struct stat) ) ) {
       printf( "scanner stat does not match reference stat for reffile\n" );
       return -1;
    }
    // seek to EOF minus 8, and verify the CONTENT string
-   if ( mdal->lseek( sfh, 10234, SEEK_START ) != 10234 ) {
+   if ( mdal->lseek( sfh, 10234, SEEK_SET ) != 10234 ) {
       printf( "failed to seek to 10234 of scanner reffile\n" );
       return -1;
    }
