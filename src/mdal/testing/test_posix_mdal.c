@@ -219,8 +219,8 @@ int main(int argc, char **argv)
       return -1;
    }
    // set a hidden xattr
-   if ( mdal->fsetxattr( rootfh, 0, "hidename", "hidenamecontent", sizeof(char) * 16, 0 ) ) {
-      printf( "failed to set testname xattr on reffile\n" );
+   if ( mdal->fsetxattr( rootfh, 1, "hidename", "hidenamecontent", sizeof(char) * 16, 0 ) ) {
+      printf( "failed to set hidename hidden xattr on reffile\n" );
       return -1;
    }
    // set utime values

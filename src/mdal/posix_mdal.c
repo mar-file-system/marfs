@@ -80,10 +80,11 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define PMDAL_PREFX "MDAL_"
 #define PMDAL_REF PMDAL_PREFX"reference"
-#define PMDAL_PATH "path"
+#define PMDAL_PATH PMDAL_PREFX"path"
 #define PMDAL_SUBSP PMDAL_PREFX"subspaces"
-#define PMDAL_DUSE "datasize"
-#define PMDAL_IUSE "inodecount"
+#define PMDAL_SUBSTRLEN 14 // max length of all ref/path/subsp dir names
+#define PMDAL_DUSE PMDAL_PREFX"datasize"
+#define PMDAL_IUSE PMDAL_PREFX"inodecount"
 #define PMDAL_XATTR "user."PMDAL_PREFX
 
 
@@ -202,15 +203,15 @@ size_t namespacepath( const char* nspath, char* newpath, size_t newlen ) {
          else { newlen -= prout; newpath += prout; }
          // now we can copy the subspace name itself
          const char* eparse = elemref;
-         for( ; *eparse != '\0'  &&  *eparse != '/'; eparse++ ) {
+         for( ; *eparse != '\0'; eparse++ ) {
             totlen++;
             if ( newlen > 1 ) {
                *newpath = *eparse;
                newlen--;
                newpath++;
-               // if we've hit a '/', stop here
-               if ( *eparse == '/' ) { break; }
             }
+            // if we've hit a '/', stop here
+            if ( *eparse == '/' ) { break; }
          }
          if ( newlen > 0 ) {
             // ensure we always leave a NULL-term
@@ -402,13 +403,20 @@ int posix_setnamespace( MDAL_CTXT ctxt, const char* ns ) {
       LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
       return -1;
    }
-   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
+   char* nspath = malloc( sizeof(char) * (nspathlen + 2 + strlen(PMDAL_PATH)) );
    if ( !(nspath) ) {
       LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
       return -1;
    }
    if ( namespacepath( ns, nspath, nspathlen + 1 ) != nspathlen ) {
       LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
+      free( nspath );
+      return -1;
+   }
+   // append the path subdir name
+   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_PATH), "/%s", PMDAL_PATH ) != 
+         1 + strlen(PMDAL_PATH) ) {
+      LOG( LOG_ERR, "Failed to properly generate the location of the path subdir of NS:\"%s\"\n", ns );
       free( nspath );
       return -1;
    }
@@ -443,7 +451,7 @@ int posix_setnamespace( MDAL_CTXT ctxt, const char* ns ) {
    }
    free( nspath ); // done with this path
    // open the new ref dir, relative to the new path
-   int newref = openat( newpath, PMDAL_REF, O_RDONLY );
+   int newref = openat( newpath, "../"PMDAL_REF, O_RDONLY );
    if ( newref < 0 ) {
       LOG( LOG_ERR, "Failed to open the ref dir of NS \"%s\"\n", ns );
       close( newpath );
@@ -482,13 +490,20 @@ MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
       LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
       return NULL;
    }
-   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
+   char* nspath = malloc( sizeof(char) * (nspathlen + 2 + strlen(PMDAL_PATH)) );
    if ( !(nspath) ) {
       LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
       return NULL;
    }
    if ( namespacepath( ns, nspath, nspathlen + 1 ) != nspathlen ) {
       LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
+      free( nspath );
+      return NULL;
+   }
+   // append the path subdir name
+   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_PATH), "/%s", PMDAL_PATH ) != 
+         1 + strlen(PMDAL_PATH) ) {
+      LOG( LOG_ERR, "Failed to properly generate the location of the path subdir of NS:\"%s\"\n", ns );
       free( nspath );
       return NULL;
    }
@@ -531,7 +546,7 @@ MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
    }
    free( nspath ); // done with this path
    // open the reference dir relative to the new path
-   newctxt->refd = openat( newctxt->pathd, PMDAL_REF, O_RDONLY );
+   newctxt->refd = openat( newctxt->pathd, "../"PMDAL_REF, O_RDONLY );
    if ( newctxt->refd < 0 ) {
       LOG( LOG_ERR, "Failed to open the reference dir of NS \"%s\"\n", ns );
       close( newctxt->pathd );
@@ -562,7 +577,7 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
       LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
       return -1;
    }
-   char* nspath = malloc( sizeof(char) * (nspathlen + 2 + strlen(PMDAL_REF)) ); // leave room for ref suffix
+   char* nspath = malloc( sizeof(char) * (nspathlen + 2 + PMDAL_SUBSTRLEN) ); // leave room for ref or path suffix
    if ( !(nspath) ) {
       LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
       return -1;
@@ -572,8 +587,8 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
       free( nspath );
       return -1;
    }
-   // attempt to create the target directory
-   int mkdirres;
+   // identify the target path and abort it the CTXT isn't in an appropriate state
+   char* nstruepath = nspath;
    if ( *nspath == '/' ) {
       // ensure the refd is set to the secureroot dir
       if ( pctxt->pathd >= 0 ) {
@@ -582,7 +597,7 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
          free( nspath );
          return -1;
       }
-      mkdirres = mkdirat( pctxt->refd, nspath + 1, S_IRWXU );
+      nstruepath = nspath + 1; // need to skip the initial '/' char
    }
    else {
       // ensure the refd is set to an actual reference dir
@@ -592,10 +607,42 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
          free( nspath );
          return -1;
       }
-      mkdirres = mkdirat( pctxt->refd, nspath, S_IRWXU );
    }
-   if ( mkdirres  &&  (errno != EEXIST) ) { // ignore pre-existence error
-      LOG( LOG_ERR, "Failed to create NS root: \"%s\"\n", nspath );
+   // attempt to create the target directory
+   int mkdirres = 0;
+   char* nsparse = nstruepath;
+   errno = 0;
+   while ( mkdirres == 0  &&  nsparse != NULL ) {
+      // iterate ahead in the stream, tokenizing into intermediate path components
+      while ( 1 ) {
+         if ( *nsparse == '/' ) { *nsparse = '\0'; break; } // cut string to next dir comp
+         if ( *nsparse == '\0' ) { nsparse = NULL; break; } // end of str, prepare to exit
+         nsparse++;
+      }
+      // isssue the mkdir op
+      LOG( LOG_INFO, "Attempting to create dir: \"%s\"\n", nstruepath );
+      mkdirres = mkdirat( pctxt->refd, nstruepath, S_IRWXU );
+      // ignore any EEXIST errors, at this point
+      if ( mkdirres  &&  errno == EEXIST ) { mkdirres = 0; errno = 0; }
+      // if we cut the string short, we need to undo that and progress to the next str comp
+      if ( nsparse ) { *nsparse = '/'; nsparse++; }
+   }
+   if ( mkdirres ) { // check for error conditions ( except EEXIST )
+      LOG( LOG_ERR, "Failed to create path to NS root: \"%s\"\n", nspath );
+      free( nspath );
+      return -1;
+   }
+   // append the path subdir name
+   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_PATH), "/%s", PMDAL_PATH ) != 
+         1 + strlen(PMDAL_PATH) ) {
+      LOG( LOG_ERR, "Failed to properly generate the location of the path subdir of NS:\"%s\"\n", ns );
+      free( nspath );
+      return -1;
+   }
+   // attempt to create the path subdir
+   if ( mkdirat( pctxt->refd, nstruepath, S_IRWXU | S_IRWXO ) ) {
+      // here, we actually want to report EEXIST
+      LOG( LOG_ERR, "Failed to create NS path subdir: \"%s\"\n", nspath );
       free( nspath );
       return -1;
    }
@@ -607,14 +654,7 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
       return -1;
    }
    // attempt to create the ref subdir
-   if ( *nspath == '/' ) {
-      // no need to double check pathd state
-      mkdirres = mkdirat( pctxt->refd, nspath + 1, S_IRWXU );
-   }
-   else {
-      mkdirres = mkdirat( pctxt->refd, nspath, S_IRWXU );
-   }
-   if ( mkdirres ) {
+   if ( mkdirat( pctxt->refd, nstruepath, S_IRWXU ) ) {
       // here, we actually want to report EEXIST
       LOG( LOG_ERR, "Failed to create NS ref path: \"%s\"\n", nspath );
       free( nspath );
@@ -647,7 +687,7 @@ int posix_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
       LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
       return -1;
    }
-   char* nspath = malloc( sizeof(char) * (nspathlen + 2 + strlen(PMDAL_REF)) ); // leave room for ref suffix
+   char* nspath = malloc( sizeof(char) * (nspathlen + 2 + PMDAL_SUBSTRLEN) ); // leave room for ref suffix
    if ( !(nspath) ) {
       LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
       return -1;
@@ -657,15 +697,16 @@ int posix_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
       free( nspath );
       return -1;
    }
-   // construct the path of the reference subdir
-   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_REF), "/%s", PMDAL_REF ) >= 
-         2 + strlen(PMDAL_REF) ) {
-      LOG( LOG_ERR, "Failed to properly generate the path of the ref subdir of NS:\"%s\"\n", ns );
+   // append the subpath dir name
+   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_SUBSP), "/%s", PMDAL_SUBSP ) != 
+         1 + strlen(PMDAL_SUBSP) ) {
+      LOG( LOG_ERR, "Failed to properly generate the location of the subspace subdir of NS:\"%s\"\n", ns );
       free( nspath );
       return -1;
    }
-   // attempt to unlink the ref subdir
+   // attempt to unlink the subspace subdir
    int unlinkres;
+   errno = 0;
    if ( *nspath == '/' ) {
       // ensure the refd is set to the secureroot dir
       if ( pctxt->pathd >= 0 ) {
@@ -686,8 +727,48 @@ int posix_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
       }
       unlinkres = unlinkat( pctxt->refd, nspath, AT_REMOVEDIR );
    }
+   if ( unlinkres  &&  errno != ENOENT ) { // ignore error from non-existent subspace dir
+      LOG( LOG_ERR, "Failed to unlink NS subspace path: \"%s\"\n", nspath );
+      free( nspath );
+      return -1;
+   }
+   // construct the path of the reference subdir
+   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_REF), "/%s", PMDAL_REF ) != 
+         1 + strlen(PMDAL_REF) ) {
+      LOG( LOG_ERR, "Failed to properly generate the path of the ref subdir of NS:\"%s\"\n", ns );
+      free( nspath );
+      return -1;
+   }
+   // attempt to unlink the ref subdir
+   if ( *nspath == '/' ) {
+      // no need to double check state of pathd
+      unlinkres = unlinkat( pctxt->refd, nspath + 1, AT_REMOVEDIR );
+   }
+   else {
+      unlinkres = unlinkat( pctxt->refd, nspath, AT_REMOVEDIR );
+   }
    if ( unlinkres ) {
-      LOG( LOG_ERR, "Failed to unlink NS ref path: \"%s\"\n", nspath );
+      LOG( LOG_ERR, "Failed to unlink NS ref subdir: \"%s\"\n", nspath );
+      free( nspath );
+      return -1;
+   }
+   // construct the path of the path subdir
+   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_PATH), "/%s", PMDAL_PATH ) != 
+         1 + strlen(PMDAL_PATH) ) {
+      LOG( LOG_ERR, "Failed to properly generate the path of the path subdir of NS:\"%s\"\n", ns );
+      free( nspath );
+      return -1;
+   }
+   // attempt to unlink the path subdir
+   if ( *nspath == '/' ) {
+      // no need to double check state of pathd
+      unlinkres = unlinkat( pctxt->refd, nspath + 1, AT_REMOVEDIR );
+   }
+   else {
+      unlinkres = unlinkat( pctxt->refd, nspath, AT_REMOVEDIR );
+   }
+   if ( unlinkres ) {
+      LOG( LOG_ERR, "Failed to unlink NS path subdir: \"%s\"\n", nspath );
       free( nspath );
       return -1;
    }
@@ -733,13 +814,13 @@ int posix_setdatausage( MDAL_CTXT ctxt, off_t bytes ) {
       return -1;
    }
    // allocate a path for the DUSE file
-   char* dusepath = malloc( sizeof(char) * (strlen(PMDAL_DUSE) + 1) );
+   char* dusepath = malloc( sizeof(char) * (strlen(PMDAL_DUSE) + 4) );
    if ( !(dusepath) ) {
       LOG( LOG_ERR, "Failed to allocate a string for the data usage file\n" );
       return -1;
    }
    // populate the path
-   if ( snprintf( dusepath, (strlen(PMDAL_DUSE) + 1), "%s", PMDAL_DUSE ) >= strlen(PMDAL_DUSE) ) {
+   if ( snprintf( dusepath, (strlen(PMDAL_DUSE) + 4), "../%s", PMDAL_DUSE ) != strlen(PMDAL_DUSE) + 3 ) {
       LOG( LOG_ERR, "Failed to populate the usage file path\n" );
       free( dusepath );
       return -1;
@@ -748,7 +829,7 @@ int posix_setdatausage( MDAL_CTXT ctxt, off_t bytes ) {
    if ( !(bytes) ) {
       // unlink, ignoring ENOENT errors
       errno = 0;
-      if ( unlinkat( pctxt->pathd, dusepath, 0 )  &&  errno != ENOENT ) {
+      if ( unlinkat( pctxt->refd, dusepath, 0 )  &&  errno != ENOENT ) {
          LOG( LOG_ERR, "Failed to unlink data useage file\n" );
          free( dusepath );
          return -1;
@@ -758,7 +839,7 @@ int posix_setdatausage( MDAL_CTXT ctxt, off_t bytes ) {
       return 0;
    }
    // open a file handle for the DUSE path ( create with all perms open, if missing )
-   int dusefd = openat( pctxt->pathd, dusepath, O_CREAT | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO );
+   int dusefd = openat( pctxt->refd, dusepath, O_CREAT | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO );
    free( dusepath ); // done with the path
    if ( dusefd < 0 ) {
       LOG( LOG_ERR, "Failed to open the data use file\n" );
@@ -797,13 +878,13 @@ off_t posix_getdatausage( MDAL_CTXT ctxt ) {
       return -1;
    }
    // allocate a path for the DUSE file
-   char* dusepath = malloc( sizeof(char) * (strlen(PMDAL_DUSE) + 1) );
+   char* dusepath = malloc( sizeof(char) * (strlen(PMDAL_DUSE) + 4) );
    if ( !(dusepath) ) {
       LOG( LOG_ERR, "Failed to allocate a string for the data usage file\n" );
       return -1;
    }
    // populate the path
-   if ( snprintf( dusepath, (strlen(PMDAL_DUSE) + 1), "%s", PMDAL_DUSE ) >= strlen(PMDAL_DUSE) ) {
+   if ( snprintf( dusepath, (strlen(PMDAL_DUSE) + 4), "../%s", PMDAL_DUSE ) != strlen(PMDAL_DUSE) + 3 ) {
       LOG( LOG_ERR, "Failed to populate the usage file path\n" );
       free( dusepath );
       return -1;
@@ -811,7 +892,7 @@ off_t posix_getdatausage( MDAL_CTXT ctxt ) {
    // stat the DUSE file
    errno = 0;
    struct stat dstat;
-   if ( fstatat( pctxt->pathd, dusepath, &(dstat), 0 ) ) {
+   if ( fstatat( pctxt->refd, dusepath, &(dstat), 0 ) ) {
       free( dusepath ); // cleanup
       // if no file exists, assume zero usage
       if ( errno = ENOENT ) { errno = 0; return 0; }
@@ -843,13 +924,13 @@ int posix_setinodeusage( MDAL_CTXT ctxt, off_t files ) {
       return -1;
    }
    // allocate a path for the IUSE file
-   char* iusepath = malloc( sizeof(char) * (strlen(PMDAL_IUSE) + 1) );
+   char* iusepath = malloc( sizeof(char) * (strlen(PMDAL_IUSE) + 4) );
    if ( !(iusepath) ) {
       LOG( LOG_ERR, "Failed to allocate a string for the inode usage file\n" );
       return -1;
    }
    // populate the path
-   if ( snprintf( iusepath, (strlen(PMDAL_IUSE) + 1), "%s", PMDAL_IUSE ) >= strlen(PMDAL_IUSE) ) {
+   if ( snprintf( iusepath, (strlen(PMDAL_IUSE) + 4), "../%s", PMDAL_IUSE ) != strlen(PMDAL_IUSE) + 3 ) {
       LOG( LOG_ERR, "Failed to populate the inode usage file path\n" );
       free( iusepath );
       return -1;
@@ -858,7 +939,7 @@ int posix_setinodeusage( MDAL_CTXT ctxt, off_t files ) {
    if ( !(files) ) {
       // unlink, ignoring ENOENT errors
       errno = 0;
-      if ( unlinkat( pctxt->pathd, iusepath, 0 )  &&  errno != ENOENT ) {
+      if ( unlinkat( pctxt->refd, iusepath, 0 )  &&  errno != ENOENT ) {
          LOG( LOG_ERR, "Failed to unlink inode useage file\n" );
          free( iusepath );
          return -1;
@@ -868,7 +949,7 @@ int posix_setinodeusage( MDAL_CTXT ctxt, off_t files ) {
       return 0;
    }
    // open a file handle for the IUSE path ( create with all perms open, if missing )
-   int iusefd = openat( pctxt->pathd, iusepath, O_CREAT | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO );
+   int iusefd = openat( pctxt->refd, iusepath, O_CREAT | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO );
    free( iusepath ); // done with the path
    if ( iusefd < 0 ) {
       LOG( LOG_ERR, "Failed to open the inode use file\n" );
@@ -907,20 +988,20 @@ off_t posix_getinodeusage( MDAL_CTXT ctxt ) {
       return -1;
    }
    // allocate a path for the IUSE file
-   char* iusepath = malloc( sizeof(char) * (strlen(PMDAL_IUSE) + 1) );
+   char* iusepath = malloc( sizeof(char) * (strlen(PMDAL_IUSE) + 4) );
    if ( !(iusepath) ) {
       LOG( LOG_ERR, "Failed to allocate a string for the inode usage file\n" );
       return -1;
    }
    // populate the path
-   if ( snprintf( iusepath, (strlen(PMDAL_IUSE) + 1), "%s", PMDAL_IUSE ) >= strlen(PMDAL_IUSE) ) {
+   if ( snprintf( iusepath, (strlen(PMDAL_IUSE) + 4), "../%s", PMDAL_IUSE ) != strlen(PMDAL_IUSE) + 3 ) {
       LOG( LOG_ERR, "Failed to populate the usage file path\n" );
       free( iusepath );
       return -1;
    }
    // stat the IUSE file
    struct stat istat;
-   if ( fstatat( pctxt->pathd, iusepath, &(istat), 0 ) ) {
+   if ( fstatat( pctxt->refd, iusepath, &(istat), 0 ) ) {
       free( iusepath ); // cleanup
       // if no file exists, assume zero usage
       if ( errno = ENOENT ) { errno = 0; return 0; }
@@ -1624,8 +1705,7 @@ int posix_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const void*
       LOG( LOG_ERR, "Failed to allocate space for a hidden xattr name string\n" );
       return -1;
    }
-   if ( snprintf( newname, (strlen(PMDAL_XATTR) + 1 + strlen(name)), "%s%s", PMDAL_XATTR, name ) != 
-         (strlen(PMDAL_XATTR) + 1 + strlen(name)) ) {
+   if ( snprintf( newname, (strlen(PMDAL_XATTR) + 1 + strlen(name)), "%s%s", PMDAL_XATTR, name ) != (strlen(PMDAL_XATTR) + strlen(name)) ) {
       LOG( LOG_ERR, "Failed to populate the hidden xattr name string\n" );
       free( newname );
       return -1;
@@ -1670,8 +1750,7 @@ ssize_t posix_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, void* v
       LOG( LOG_ERR, "Failed to allocate space for a hidden xattr name string\n" );
       return -1;
    }
-   if ( snprintf( newname, (strlen(PMDAL_XATTR) + 1 + strlen(name)), "%s%s", PMDAL_XATTR, name ) != 
-         (strlen(PMDAL_XATTR) + 1 + strlen(name)) ) {
+   if ( snprintf( newname, (strlen(PMDAL_XATTR) + 1 + strlen(name)), "%s%s", PMDAL_XATTR, name ) != (strlen(PMDAL_XATTR) + strlen(name)) ) {
       LOG( LOG_ERR, "Failed to populate the hidden xattr name string\n" );
       free( newname );
       return -1;
@@ -1714,8 +1793,7 @@ int posix_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
       LOG( LOG_ERR, "Failed to allocate space for a hidden xattr name string\n" );
       return -1;
    }
-   if ( snprintf( newname, (strlen(PMDAL_XATTR) + 1 + strlen(name)), "%s%s", PMDAL_XATTR, name ) != 
-         (strlen(PMDAL_XATTR) + 1 + strlen(name)) ) {
+   if ( snprintf( newname, (strlen(PMDAL_XATTR) + 1 + strlen(name)), "%s%s", PMDAL_XATTR, name ) != (strlen(PMDAL_XATTR) + strlen(name)) ) {
       LOG( LOG_ERR, "Failed to populate the hidden xattr name string\n" );
       free( newname );
       return -1;
