@@ -125,13 +125,14 @@ size_t namespacepath( const char* nspath, char* newpath, size_t newlen ) {
    const char* parse = nspath;
    size_t totlen = 0;
    // assume we need a leading '../', to traverse to the NS root from the ref subdir
-   totlen += 3;
-   snprintf( newpath, newlen, "../" );
-   if ( 3 >= newlen ) { newlen = 0; }
-   else { newlen -= 3; newpath += 3; }
+   totlen += 2;
+   snprintf( newpath, newlen, ".." );
+   if ( newlen <= 3 ) { newlen = 0; }
+   else { newlen -= 2; newpath += 2; }
    while ( *parse != '\0' ) {
       // identify each sub-element
       const char* elemref = parse;
+      int elemlen = 0;
       // move our parse pointer to the next path element
       while ( *parse != '\0' ) {
          if ( *parse == '/' ) {
@@ -140,88 +141,44 @@ size_t namespacepath( const char* nspath, char* newpath, size_t newlen ) {
             while ( *parse == '/' ) { parse++; }
             break;
          }
+         elemlen++;
          parse++;
       }
-      if ( strncmp( elemref, "../", 3 ) == 0 ) {
-         // a parent namespace ref actually means double that for this MDAL
-         // we have to traverse the intermediate PMDAL_SUBSP directory
-         int prout = snprintf( newpath, newlen, "../../" );
-         totlen += prout;
-         if ( prout >= newlen ) { newlen = 0; }
-         else { newlen -= prout; newpath += prout; }
-      }
-      else if ( *elemref == '/' ) {
-         // this should only occur in the case of a leading '/' character
-         if ( totlen != 3 ) {
-            LOG( LOG_ERR, "Encountered unexpected '/' element at output position %zu\n", totlen );
+      if ( elemlen == 0 ) {
+         // catch the leading '/' and empty nspath cases
+         if ( totlen != 2 ) {
+            LOG( LOG_ERR, "Encountered unexpected '/' element while output at %zu\n", totlen );
             return 0;
          }
-         // this means the path is absolute, so we must replace the '../' prefix with this '/' char
-         totlen = 1;
+         // we must eliminate the '../' prefix
+         // abs path doesn't need the prefix, empty str input should produce empty str res
+         totlen = 0;
          newpath = orignewpath;
          newlen = orignewlen;
-         // insert that char, if we have room
-         if ( newlen > 1 ) {
-            *newpath = '/';
-            newlen--;
-            newpath++;
-         }
-         // ensure we append a NULL-term
-         if ( newlen > 0 ) {
-            *newpath = '\0';
-            // check for end of ouput condition
-            if ( newlen == 1 ) { newlen = 0; }
-         }
+         LOG( LOG_INFO, "\"%s\" NS path is absolute, or empty\n", nspath );
       }
-      else if ( strncmp( elemref, "./", 2 ) != 0 ) { // completely ignore './' elements
-         // trailing '.' chars can usually be skipped, but not always
-         if ( strncmp( elemref, ".", 2 ) == 0 ) {
-            // catch the "/." and "." special cases
-            if ( totlen < 2 ) {
-               // this refers specifically to the root NS
-               // we want to recreate it exactly
-               if ( newlen > 1 ) {
-                  *newpath = '.';
-                  newlen--;
-                  newpath++;
-               }
-               // ensure we append a NULL-term
-               if ( newlen > 0 ) {
-                  *newpath = '\0';
-                  // check for end of ouput condition
-                  if ( newlen == 1 ) { newlen = 0; }
-               }
-               totlen++;
-            }
-            continue; // all other trailing '.' chars will be skipped
+      else {
+         int prout = 0;
+         if ( strncmp( elemref, ".", elemlen ) == 0 ) {
+            // local ref -- no need for subspace prefix
+            prout = snprintf( newpath, newlen, "/." );
          }
-         // all other elements should be subspace references
-         // we need to insert the intermediate subspace directory name
-         int prout = snprintf( newpath, newlen, "%s/", PMDAL_SUBSP );
+         else if ( strncmp( elemref, "..", elemlen ) == 0 ) {
+            // a parent namespace ref actually means double that for this MDAL
+            // we have to traverse the intermediate PMDAL_SUBSP directory
+            prout = snprintf( newpath, newlen, "/../.." );
+         }
+         else {
+            // all other elements should be subspace references
+            // we need to insert the intermediate subspace directory name
+            prout = snprintf( newpath, newlen, "/%s/%.*s", PMDAL_SUBSP, elemlen, elemref );
+         }
          totlen += prout;
-         if ( prout >= newlen ) { newlen = 0; }
+         if ( prout + 1 >= newlen ) { newlen = 0; }
          else { newlen -= prout; newpath += prout; }
-         // now we can copy the subspace name itself
-         const char* eparse = elemref;
-         for( ; *eparse != '\0'; eparse++ ) {
-            totlen++;
-            if ( newlen > 1 ) {
-               *newpath = *eparse;
-               newlen--;
-               newpath++;
-            }
-            // if we've hit a '/', stop here
-            if ( *eparse == '/' ) { break; }
-         }
-         if ( newlen > 0 ) {
-            // ensure we always leave a NULL-term
-            *newpath = '\0';
-            // check for end of ouput condition
-            if ( newlen == 1 ) { newlen = 0; }
-         }
       }
    }
-   LOG( LOG_INFO, "generated NS path of length %zd: \"%s\"\n", totlen, orignewpath );
+   LOG( LOG_INFO, "NS path of \"%s\" translates to \"%s\" (%zd len)\n", nspath, orignewpath, totlen );
    return totlen;
 }
 
@@ -1825,11 +1782,13 @@ ssize_t posix_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t size )
    ssize_t res = flistxattr( pfh->fd, buf, size );
    if ( size == 0 ) {
       // special, no-output case, which can be immediately returned
+      LOG( LOG_INFO, "Immediately returning result of size == 0 call\n" );
       return res;
    }
    else if ( res < 0 ) {
       // error case, which can be immediately returned
       bzero( buf, size ); // but zero out the user buf, just in case
+      LOG( LOG_INFO, "Returning error res of call, with zeroed buffer\n" );
       return res;
    }
    // parse over the xattr list, limiting it to either 'hidden' or non-'hidden' values
@@ -1848,7 +1807,11 @@ ssize_t posix_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t size )
          if ( output != parse ) {
             snprintf( output, elemlen + 1, "%s", parse );
          }
+         LOG( LOG_INFO, "Preserving value: \"%s\"\n", output );
          output += elemlen + 1; // skip over the output string and NULL term
+      }
+      else {
+         LOG( LOG_INFO, "Omitting xattr: \"%s\"\n", parse );
       }
       parse += elemlen + 1; // skip over the current element and NULL term
    }
@@ -1856,6 +1819,7 @@ ssize_t posix_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t size )
    ssize_t listlen = (ssize_t)(output - buf);
    bzero( output, res - listlen );
    // return the length of the modified list
+   LOG( LOG_INFO, "Result list is %zd characters long\n", listlen );
    return listlen;
 }
 

@@ -70,8 +70,40 @@ int main(int argc, char **argv)
 {
    // NOTE -- I'm ignoring memory leaks for error contions which result in immediate termination
 
-   // Initialize the libxml lib and check for API mismatches
-   LIBXML_TEST_VERSION
+   // test the namespace path generation
+   char nspath[64];
+   if ( namespacepath( "/abs/", nspath, 64 ) != ( 1 + strlen(PMDAL_SUBSP) + 1 + 3 ) ) {
+      printf( "unexpected length of nspath for \"/abs/\": \"%s\"\n", nspath );
+      return -1;
+   }
+   if ( strcmp( nspath, "/"PMDAL_SUBSP"/abs" ) ) {
+      printf( "unexpected result of nspath for \"/abs/\": \"%s\"\n", nspath );
+      return -1;
+   }
+   if ( namespacepath( "rel", nspath, 64 ) != ( 3 + strlen(PMDAL_SUBSP) + 1 + 3 ) ) {
+      printf( "unexpected length of nspath for \"rel\": \"%s\"\n", nspath );
+      return -1;
+   }
+   if ( strcmp( nspath, "../"PMDAL_SUBSP"/rel" ) ) {
+      printf( "unexpected result of nspath for \"rel\": \"%s\"\n", nspath );
+      return -1;
+   }
+   if ( namespacepath( "..///", nspath, 64 ) != ( 3 + 3 + 2 ) ) {
+      printf( "unexpected length of nspath for \"..///\": \"%s\"\n", nspath );
+      return -1;
+   }
+   if ( strcmp( nspath, "../../.." ) ) {
+      printf( "unexpected result of nspath for \"..///\": \"%s\"\n", nspath );
+      return -1;
+   }
+   if ( namespacepath( "/////.//", nspath, 64 ) != ( 2 ) ) {
+      printf( "unexpected length of nspath for \"/.\": \"%s\"\n", nspath );
+      return -1;
+   }
+   if ( strcmp( nspath, "/." ) ) {
+      printf( "unexpected result of nspath for \"/.\": \"%s\"\n", nspath );
+      return -1;
+   }
 
    // create a subdir to be used by this test
    errno = 0;
@@ -79,6 +111,9 @@ int main(int argc, char **argv)
       printf( "failed to produce nsroot subdir\n" );
       return -1;
    }
+
+   // Initialize the libxml lib and check for API mismatches
+   LIBXML_TEST_VERSION
 
    // open the test config file and produce an XML tree
    xmlDoc* doc = xmlReadFile("./testing/posix_config.xml", NULL, XML_PARSE_NOBLANKS);
@@ -94,6 +129,10 @@ int main(int argc, char **argv)
       printf( "failed to initialize posix mdal\n" );
       return -1;
    }
+
+   // free the xml doc and cleanup parser vars
+   xmlFreeDoc(doc);
+   xmlCleanupParser();
 
    // create a root NS
    if ( mdal->createnamespace( mdal->ctxt, "/." ) ) {
@@ -183,6 +222,18 @@ int main(int argc, char **argv)
    errno = 0;
    if ( mdal->destroynamespace( dupctxt, "subsp1" ) == 0  ||  errno != ENOTEMPTY ) {
       printf( "expected ENOTEMPTY for destruction of subsp1\n" );
+      return -1;
+   }
+
+   // destroy subsp1/subsp1 by absolute path
+   if ( mdal->destroynamespace( mdal->ctxt, "/subsp1/subsp1" ) ) {
+      printf( "failed to destroy \"/subsp1/subsp1\"\n" );
+      return -1;
+   }
+
+   // actually destroy subsp1 by relative path
+   if ( mdal->destroynamespace( dupctxt, "subsp1" ) ) {
+      printf( "failed to destroy subsp1\n" );
       return -1;
    }
 
@@ -291,6 +342,10 @@ int main(int argc, char **argv)
    struct dirent* entry;
    errno = 0;
    while ( (entry = mdal->scan( sref0 )) != NULL ) {
+      // look for '.', '..', and 'reffile'
+      if ( strncmp( ".", entry->d_name, 2 ) == 0  ||  strncmp( "..", entry->d_name, 3 ) == 0 ) {
+         continue;
+      }
       if ( strncmp( "reffile", entry->d_name, 8 ) ) {
          printf( "expected \"reffile\" scanner entry, but found \"%s\"\n", entry->d_name );
          return -1;
@@ -316,6 +371,15 @@ int main(int argc, char **argv)
       printf( "scanner stat does not match reference stat for reffile\n" );
       return -1;
    }
+   // directly stat the userspace link, and verify the stat struct matches
+   if ( mdal->stat( rootctxt, "userfile", &(verstat), AT_SYMLINK_NOFOLLOW ) ) {
+      printf( "failed to stat userfile via rootctxt\n" );
+      return -1;
+   }
+   if ( memcmp( &(verstat), &(stbuf), sizeof(struct stat) ) ) {
+      printf( "userfile stat does not match reference stat\n" );
+      return -1;
+   }
    // seek to EOF minus 8, and verify the CONTENT string
    if ( mdal->lseek( sfh, 10234, SEEK_SET ) != 10234 ) {
       printf( "failed to seek to 10234 of scanner reffile\n" );
@@ -331,12 +395,21 @@ int main(int argc, char **argv)
       return -1;
    }
    // list xattrs on the file and verify
-   if ( mdal->flistxattr( sfh, 0, buf, 64 ) != 14 ) {
+   ssize_t xlistsz = mdal->flistxattr( sfh, 0, buf, 64 );
+   ssize_t origxlsz = xlistsz;
+   if ( xlistsz < 1 ) {
       printf( "list xattrs on scanner reffile gave unexpected return\n" );
       return -1;
    } 
-   if ( strncmp( buf, "user.testname", 64 ) ) {
-      printf( "xattr list does not match \"user.testname\"\n" );
+   char testxattrfound = 0;
+   char* parse = buf;
+   while ( xlistsz > 0 ) {
+      if ( strncmp( parse, "user.testname", 64 ) == 0 ) { testxattrfound = 1; }
+      xlistsz -= strlen( parse ) + 1;
+      parse += strlen( parse ) + 1;
+   }
+   if ( !(testxattrfound) ) {
+      printf( "xattr list does not contain \"user.testname\"\n" );
       return -1;
    }
    // list hidden values on the file and verify
@@ -376,7 +449,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // confirm absence of values
-   if ( mdal->flistxattr( sfh, 0, buf, 64 ) ) {
+   if ( mdal->flistxattr( sfh, 0, buf, 64 ) >= origxlsz ) {
       printf( "expected absence of any xattr vals\n" );
       return -1;
    }
@@ -390,12 +463,52 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   // free the xml doc and cleanup parser vars
-   xmlFreeDoc(doc);
-   xmlCleanupParser();
+   // unlink the reference file path
+   if ( mdal->unlinkref( rootctxt, "ref0/reffile" ) ) {
+      printf( "failed to unlink reffile\n" );
+      return -1;
+   }
+
+   // destroy the reference dir
+   if ( mdal->destroyrefdir( rootctxt, "ref0" ) ) {
+      printf( "failed to destroy ref0 dir\n" );
+      return -1;
+   }
+
+   // issue some ops directly against userfile
+   if ( mdal->chown( rootctxt, "userfile", geteuid(), getegid(), 0 ) ) {
+      printf( "failed to chown userfile\n" );
+      return -1;
+   }
+   if ( mdal->chmod( rootctxt, "userfile", S_IRWXG, 0 ) ) {
+      printf( "failed to chmod userfile\n" );
+      return -1;
+   }
+
+   // cleanup all previous state
+   if ( mdal->unlink( rootctxt, "userfile" ) ) {
+      printf( "failed to unlink userfile\n" );
+      return -1;
+   }
+   if ( mdal->setdatausage( rootctxt, 0 ) ) {
+      printf( "failed to zero out root NS data usage\n" );
+      return -1;
+   }
+   if ( mdal->setinodeusage( rootctxt, 0 ) ) {
+      printf( "failed to zero out root NS inode usage\n" );
+      return -1;
+   }
+   if ( mdal->destroyctxt( rootctxt ) ) {
+      printf( "failed to destroy rootctxt\n" );
+      return -1;
+   }
+   mdal->destroynamespace( mdal->ctxt, "/." ); // expected to fail
 
    // free the mdal itself
    mdal->cleanup( mdal );
+
+   // cleanup the root dir
+   rmdir( "./test_posix_mdal_nsroot" );
 
    return 0;
 }
