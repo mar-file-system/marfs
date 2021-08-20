@@ -86,10 +86,8 @@ typedef enum {
 
 typedef struct marfs_namespace_struct {
    char*       idstr;       // unique (per-repo) ID of this namespace
-   char        enforcefq;   // flag for enforcing file quotas
-   size_t      fquota;      // file quota of the namespace
-   char        enforcedq;   // flag for enforcing data quotas
-   size_t      dquota;      // data quota of the namespace ( in bytes )
+   size_t      fquota;      // file quota of the namespace ( zero if no limit )
+   size_t      dquota;      // data quota of the namespace ( zero if no limit )
    ns_perms    iperms;      // interactive access perms for this namespace
    ns_perms    bperms;      // batch access perms for this namespace
    marfs_repo* prepo;       // reference to the repo containing this namespace
@@ -103,10 +101,8 @@ typedef struct marfs_namespace_struct {
 typedef struct marfs_datascheme_struct {
    ne_erasure protection;       // erasure defintion for writing out objects
    ne_ctxt    nectxt;           // LibNE context reference for data access
-   char       packing;          // flag indicating if multiple files can be included in the same object
-   size_t     objfiles;         // maximum count of files per data object
-   char       chunking;         // flag indicating if files can span objects
-   size_t     objsize;          // maximum data object size
+   size_t     objfiles;         // maximum count of files per data object (zero if no limit)
+   size_t     objsize;          // maximum data object size (zero if no limit)
    HASH_TABLE podtable;         // hash table for object POD postion
    HASH_TABLE captable;         // hash table for object CAP position
    HASH_TABLE scattertable;     // hash table for object SCATTER position
@@ -117,10 +113,6 @@ typedef struct marfs_metadatascheme_struct {
    MDAL       mdal;         // MDAL reference for metadata access
    char       directread;   // flag indicating support for data read from metadata files
    char       directwrite;  // flag indicating support for data write to metadata files
-   int        directchunks; // maximum number of data chunks to write to a metadata file
-   int        refbreadth;   // breadth of the metadata reference tree
-   int        refdepth;     // depth of the metadata reference tree
-   int        refdigits;    // minimum number of digits per reference tree branch
    HASH_TABLE reftable;     // hash table for determining reference path
    int        nscount;      // count of the namespaces directly referenced by this repo
    HASH_NODE* nslist;       // array of namespaces directly referenced by this repo

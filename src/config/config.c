@@ -67,7 +67,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  *    <!-- Host Definitions ( ignored by this code ) -->
  *    <hosts> ... </hosts>
  *
- *    <!-- Repos -->
+ *    <!-- Repo Definition -->
  *    <repo name="mc10+2">
  *
  *       <!-- Per-Repo Data Scheme -->
@@ -105,8 +105,54 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  *       <!-- Per-Repo Metadata Scheme -->
  *       <meta>
  *
+ *          <!-- Namespace Definitions -->
+ *          <namespaces>
+ *          
+ *             <ns name="gransom-allocation">
+ *
+ *                <!-- Quota Limits for this NS -->
+ *                <quotas>
+ *                   <files></files>  <!-- no file count limit -->
+ *                   <data>10P</data> <!-- 10 Pibibyte data size limit -->
+ *                </quotas>
+ *
+ *                <!-- Permission Settings for this NS -->
+ *                <perms>
+ *                   <!-- metadata only inter access -->
+ *                   <interactive>RM,WM</interactive>
+ *                   <!-- full batch program access -->
+ *                   <batch>RM,WM,RD,WD</batch>
+ *                </perms>
+ *
+ *                <!-- Subspace Definition -->
+ *                <ns name="read-only-reference">
+ *                   <!-- no quota definition implies no limits -->
+ *
+ *                   <!-- perms for read only -->
+ *                   <perms>
+ *                      <interactive>RM,RD</interactive>
+ *                      <batch>RM,RD</batch>
+ *                   </perms>
+ *                </ns>
+ *
+ *                <!-- Remote Subspace Definition -->
+ *                <!-- Note : This repo def is not included -->
+ *                <rns name="heavily-protected-data" repo="mc3+2"/>
+ *
+ *             </ns>
+ *
+ *
+ *          </namespaces>
+ *
  *          <!-- Direct Data -->
- *          <direct read="yes"/>
+ *          <direct read="yes" write="yes"/>
+ *
+ *          <!-- MDAL Definition ( ignored by this code ) -->
+ *          <MDAL type="posix"> ... </MDAL>
+ *
+ *       </meta>
+ *
+ *    </repo>
  *
  */
 
@@ -173,119 +219,130 @@ marfs_repo* find_repo( marfs_repo* repolist, int repocount, const char* reponame
    return NULL;
 }
 
-
+/**
+ * Parse the givne permroot xmlNode, populating either the provided iperms or bperms sets
+ * @param ns_perms* iperms : Interactive perms, to be populated
+ * @param ns_perms* bperms : Batch perms, to be populated
+ * @param xmlNode* permroot : Reference to the permission xml root node
+ * @return int : Zero on success, or -1 on failure
+ */
 int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
    // define an unused character value and use as an indicator of a completed perm string
-   #define EOPERM 'x'
+   char eoperm = 'x'
 
    // iterate over nodes at this level
    for ( ; permroot; permroot = permroot->next ) {
-      if ( permroot->type == XML_ELEMENT_NODE ) {
-         // determine if we're parsing iteractive or batch perms
-         char ptype = '\0';
-         if ( strncmp( (char*)permroot->name, "interactive", 12 ) == 0 ) {
-            if ( *iperms != NS_NOACCESS ) {
-               // this is a duplicate 'interactive' def
-               LOG( LOG_ERR, "encountered duplicate 'interactive' perm set\n" );
-               return -1;
-            }
-            ptype = 'i';
-         }
-         else if ( strncmp( (char*)permroot->name, "batch", 6 ) == 0 ) {
-            if ( *bperms != NS_NOACCESS ) {
-               // this is a duplicate 'batch' def
-               LOG( LOG_ERR, "encountered duplicate 'batch' perm set\n" );
-               return -1;
-            }
-            ptype = 'b';
-         }
-         else {
-            LOG( LOG_ERR, "encountered unexpected perm node: \"%s\"\n", (char*)permroot->name );
-            return -1;
-         }
-
-         // parse the actual permission set
-         if ( permroot->children != NULL  &&  
-              permroot->children->type == XML_TEXT_NODE  &&  
-              permroot->children->content != NULL ) {
-            char* permstr = (char*)permroot->children->content;
-            char fchar = '\0';
-            ns_perms tmpperm = NS_NOACCESS;
-            for ( ; *permstr != '\0'; permstr++ ) {
-               switch ( *permstr ) {
-                  case 'R':
-                  case 'W':
-                     // 'R'/'W' are only acceptable as the first character of a pair
-                     if ( fchar != '\0' ) {
-                        if ( fchar == EOPERM ) LOG( LOG_ERR, "trailing '%c' character is unrecognized\n", *permstr );
-                        else LOG( LOG_ERR, "perm string '%c%c' is unrecognized\n", fchar, *permstr );
-                        return -1;
-                     }
-                     fchar = *permstr;
-                     break;
-                  
-                  case 'M':
-                  case 'D':
-                     // 'R' and 'W' must preceed 'M' or 'D'
-                     if ( fchar == '\0' ) {
-                        LOG( LOG_ERR, "perm field cannot begin with '%c'\n", *permstr );
-                        return -1;
-                     }
-                     else if ( fchar == EOPERM ) {
-                        LOG( LOG_ERR, "trailing '%c' character is unrecognized\n", *permstr );
-                        return -1;
-                     }
-                     // remember our original perm value, to check for duplicate permstrings
-                     ns_perms operm = tmpperm;
-                     if ( fchar == 'R' ) {
-                        if ( *permstr == 'M' ) tmpperm &= NS_READMETA;
-                        else tmpperm &= NS_READDATA;
-                     }
-                     else if ( fchar == 'W' ) {
-                        if ( *permstr == 'M' ) tmpperm &= NS_WRITEMETA;
-                        else tmpperm &= NS_WRITEDATA;
-                     }
-                     else {
-                        LOG( LOG_ERR, "perm string '%c%c' is unrecognized\n", fchar, *permstr );
-                        return -1;
-                     }
-                     // verify that this permision string actually resulted in a change
-                     if ( operm == tmpperm ) {
-                        LOG( LOG_WARNING, "detected repeated '%c%c' perm string\n", fchar, *permstr );
-                     }
-                     fchar = EOPERM; // set to unused character val, indicating a complete permstring
-                     break;
-
-                  case ',':
-                     fchar = '\0';
-                     break;
-
-                  default:
-                     LOG( LOG_ERR, "encountered unrecognized character value '%c'\n", *permstr );
-                     return -1;
-               }
-            }
-            if ( ptype == 'i' )
-               *iperms = tmpperms;
-            else
-               *bperms = tmpperms;
-         }
-         else {
-            LOG( LOG_ERR, "encountered an unrecognized xml node type within the perms definition\n" );
-            return -1;
-         }
-      }
-      else {
+      // check for unkown xml node type
+      if ( permroot->type != XML_ELEMENT_NODE ) {
          // don't know what this is supposed to be
          LOG( LOG_ERR, "encountered unknown tag within 'perms' definition\n" );
          return -1;
       }
+
+      // determine if we're parsing iteractive or batch perms
+      char ptype = '\0';
+      if ( strncmp( (char*)permroot->name, "interactive", 12 ) == 0 ) {
+         if ( *iperms != NS_NOACCESS ) {
+            // this is a duplicate 'interactive' def
+            LOG( LOG_ERR, "encountered duplicate 'interactive' perm set\n" );
+            return -1;
+         }
+         ptype = 'i';
+      }
+      else if ( strncmp( (char*)permroot->name, "batch", 6 ) == 0 ) {
+         if ( *bperms != NS_NOACCESS ) {
+            // this is a duplicate 'batch' def
+            LOG( LOG_ERR, "encountered duplicate 'batch' perm set\n" );
+            return -1;
+         }
+         ptype = 'b';
+      }
+      else {
+         LOG( LOG_ERR, "encountered unexpected perm node: \"%s\"\n", (char*)permroot->name );
+         return -1;
+      }
+
+      // check for unknown child node or bad content
+      if ( permroot->children == NULL  ||  
+           permroot->children->type != XML_TEXT_NODE  ||  
+           permroot->children->content == NULL ) {
+         LOG( LOG_ERR, "encountered an unrecognized xml node type within the perms definition\n" );
+         return -1;
+      }
+
+      // parse the actual permission set
+      char* permstr = (char*)permroot->children->content;
+      char fchar = '\0';
+      ns_perms tmpperm = NS_NOACCESS;
+      for ( ; *permstr != '\0'; permstr++ ) {
+         switch ( *permstr ) {
+            case 'R':
+            case 'W':
+               // 'R'/'W' are only acceptable as the first character of a pair
+               if ( fchar != '\0' ) {
+                  if ( fchar == eoperm ) LOG( LOG_ERR, "trailing '%c' character is unrecognized\n", *permstr );
+                  else LOG( LOG_ERR, "perm string '%c%c' is unrecognized\n", fchar, *permstr );
+                  return -1;
+               }
+               fchar = *permstr;
+               break;
+            
+            case 'M':
+            case 'D':
+               // 'R' and 'W' must preceed 'M' or 'D'
+               if ( fchar == '\0' ) {
+                  LOG( LOG_ERR, "perm field cannot begin with '%c'\n", *permstr );
+                  return -1;
+               }
+               else if ( fchar == eoperm ) {
+                  LOG( LOG_ERR, "trailing '%c' character is unrecognized\n", *permstr );
+                  return -1;
+               }
+               // remember our original perm value, to check for duplicate permstrings
+               ns_perms operm = tmpperm;
+               if ( fchar == 'R' ) {
+                  if ( *permstr == 'M' ) tmpperm &= NS_READMETA;
+                  else tmpperm &= NS_READDATA;
+               }
+               else if ( fchar == 'W' ) {
+                  if ( *permstr == 'M' ) tmpperm &= NS_WRITEMETA;
+                  else tmpperm &= NS_WRITEDATA;
+               }
+               else {
+                  LOG( LOG_ERR, "perm string '%c%c' is unrecognized\n", fchar, *permstr );
+                  return -1;
+               }
+               // verify that this permision string actually resulted in a change
+               if ( operm == tmpperm ) {
+                  LOG( LOG_WARNING, "detected repeated '%c%c' perm string\n", fchar, *permstr );
+               }
+               fchar = eoperm; // set to unused character val, indicating a complete permstring
+               break;
+
+            case ',':
+               fchar = '\0';
+               break;
+
+            default:
+               LOG( LOG_ERR, "encountered unrecognized character value '%c'\n", *permstr );
+               return -1;
+         }
+      }
+      if ( ptype == 'i' )
+         *iperms = tmpperms;
+      else
+         *bperms = tmpperms;
    }
    // we have iterated over all perm nodes
    return 0;
 }
 
-
+/**
+ * Parse the content of an xmlNode to populate a size value
+ * @param size_t* target : Reference to the value to populate
+ * @param xmlNode* node : Node to be parsed
+ * @return int : Zero on success, -1 on error
+ */
 int parse_size_node( size_t* target, XmlNode* node ) {
    // note the node name, just for logging messages
    char* nodename = (char*)node->name;
@@ -320,14 +377,20 @@ int parse_size_node( size_t* target, XmlNode* node ) {
          return -1;
       }
       // actually store the value
-      *target = parsevalue;
+      *target = (parsevalue * unitmult);
       return 0;
    }
-   LOG( LOG_ERR, "failed to identify a value string within the \"%s\" definition\n", nodename );
-   return -1;
+   // allow empty string to indicate zero value
+   *target = 0;
+   return 0;
 }
 
-
+/**
+ * Parse the content of an xmlNode to populate an int value
+ * @param int* target : Reference to the value to populate
+ * @param xmlNode* node : Node to be parsed
+ * @return int : Zero on success, -1 on error
+ */
 int parse_int_node( int* target, XmlNode* node ) {
    // note the node name, just for logging messages
    char* nodename = (char*)node->name;
@@ -355,46 +418,50 @@ int parse_int_node( int* target, XmlNode* node ) {
    return -1;
 }
 
-
-int parse_quotas( char* enforcefq, size_t* fquota, char* enforcedq, size_t* dquota, xmlNode* quotaroot ) {
+/**
+ * Parse the given quota node, populating the provided values
+ * @param size_t* fquota : File count quota value to be populated
+ * @param size_t* dquota : Data quota value to be populated
+ * @param xmlNode* quotaroot : Quota node to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
+int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
    // iterate over nodes at this level
    for ( ; quotaroot; quotaroot = quotaroot->next ) {
-      if ( quotaroot->type == XML_ELEMENT_NODE ) {
-         // determine if we're parsing file or data quotas
-         if ( strncmp( (char*)quotaroot->name, "files", 6 ) == 0 ) {
-            if ( *fquota != 0  ||  *enforcefq != 0 ) {
-               // this is a duplicate 'files' def
-               LOG( LOG_ERR, "encountered duplicate 'files' quota set\n" );
-               return -1;
-            }
-            // parse the value and set quota enforcement
-            if ( parse_size_node( fquota, quotaroot ) ) {
-               LOG( LOG_ERR, "failed to parse 'files' quota value\n" );
-               return -1;
-            }
-            *enforcefq = 1;
+      // check for unknown node type
+      if ( quotaroot->type != XML_ELEMENT_NODE ) {
+         // don't know what this is supposed to be
+         LOG( LOG_ERR, "encountered unknown tag within 'quota' definition\n" );
+         return -1;
+      }
+
+      // determine if we're parsing file or data quotas
+      if ( strncmp( (char*)quotaroot->name, "files", 6 ) == 0 ) {
+         if ( *fquota != 0  ||  *enforcefq != 0 ) {
+            // this is a duplicate 'files' def
+            LOG( LOG_ERR, "encountered duplicate 'files' quota set\n" );
+            return -1;
          }
-         else if ( strncmp( (char*)quotaroot->name, "data", 5 ) == 0 ) {
-            if ( *dquota != 0  ||  *enforcedq != 0 ) {
-               // this is a duplicate 'data' def
-               LOG( LOG_ERR, "encountered duplicate 'data' quota set\n" );
-               return -1;
-            }
-            // parse the value and set quota enforcement
-            if ( parse_size_node( dquota, quotaroot ) ) {
-               LOG( LOG_ERR, "failed to parse 'data' quota value\n" );
-               return -1;
-            }
-            *enforcedq = 1;
+         // parse the value and set quota enforcement
+         if ( parse_size_node( fquota, quotaroot ) ) {
+            LOG( LOG_ERR, "failed to parse 'files' quota value\n" );
+            return -1;
          }
-         else {
-            LOG( LOG_ERR, "encountered unexpected quota sub-node: \"%s\"\n", (char*)quotaroot->name );
+      }
+      else if ( strncmp( (char*)quotaroot->name, "data", 5 ) == 0 ) {
+         if ( *dquota != 0  ||  *enforcedq != 0 ) {
+            // this is a duplicate 'data' def
+            LOG( LOG_ERR, "encountered duplicate 'data' quota set\n" );
+            return -1;
+         }
+         // parse the value and set quota enforcement
+         if ( parse_size_node( dquota, quotaroot ) ) {
+            LOG( LOG_ERR, "failed to parse 'data' quota value\n" );
             return -1;
          }
       }
       else {
-         // don't know what this is supposed to be
-         LOG( LOG_ERR, "encountered unknown tag within 'quota' definition\n" );
+         LOG( LOG_ERR, "encountered unexpected quota sub-node: \"%s\"\n", (char*)quotaroot->name );
          return -1;
       }
    }
@@ -402,7 +469,11 @@ int parse_quotas( char* enforcefq, size_t* fquota, char* enforcedq, size_t* dquo
    return 0;
 }
 
-
+/**
+ * Free a namespace and other references of the given hash node
+ * @param HASH_NODE* nsnode : Reference to the namespace hash node to be freed
+ * @return int : Zero on success, or -1 on failure
+ */
 int free_namespace( HASH_NODE* nsnode ) {
    // we are assuming this function will ONLY be called on completed NS structures
    //   As in, this function will not check for certain NULL pointers, like name
@@ -421,9 +492,10 @@ int free_namespace( HASH_NODE* nsnode ) {
          // free all subspaces which are not owned by a different repo
          size_t subspaceindex = 0;
          for( ; subspaceindex < subspacecount; subspaceindex++ ) {
-            marfs_ns* subspace = (marfs_ns*)subspacelist[subspaceindex]->content;
+            marfs_ns* subspace = (marfs_ns*)(subspacelist[subspaceindex]->content);
             // omit any completed remote namespace reference
-            if ( subspace->prepo !=NULL  &&  subspace->prepo != ns->prepo ) {
+            if ( subspace->prepo != NULL  &&  subspace->prepo != ns->prepo ) {
+               free(subspacelist[subspaceindex]->name); // free the hash node name
                continue; // this namespace is referenced by another repo, so we must skip it
             }
             // recursively free this subspace
@@ -438,14 +510,21 @@ int free_namespace( HASH_NODE* nsnode ) {
    }
    // free the namespace id string
    free( ns->idstr );
-   // free the namespace itself
-   free( ns );
    // free the namespace name
    free( nsname );
+   // free the namespace itself
+   free( ns );
    return retval;
 }
-   
 
+/**
+ * Allocate a new namespace, based on the given xmlNode and parent references
+ * @param HASH_NODE* nsnode : HASH_NODE to be populated with NS info
+ * @param marfs_ns* pnamespace : Parent namespace reference of the new namespace
+ * @param marfs_repo* prepo : Parent repo reference of the new namespace
+ * @param xmlNode* nsroot : Xml node defining the new namespace
+ * @return int : Zero on success, or -1 on failure
+ */
 int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNode* nsroot ) {
    // need to check if this is a real NS or a remote one
    char rns = 0;
@@ -457,6 +536,12 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
       }
       // this is a remote namespace
       rns = 1;
+      // do not permit remote namespaces at the root of a repo
+      if ( pnamespace == NULL ) {
+         LOG( LOG_ERR, "Detected a remote namespace at the root of the \"%s\" repo namespace defs\n", prepo->name );
+         errno = EINVAL;
+         return -1;
+      }
    }
 
    // find the name of this namespace
@@ -499,7 +584,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
       }
    }
 
-   // iterate over all attributes again, looking for remote namespace values and anything unusual
+   // iterate over all attributes again, looking for errors and remote namespace values
    char* reponame = NULL;
    for( attr = nsroot->properties; attr; attr = attr->next ) {
       if ( attr->type == XML_ATTRIBUTE_NODE ) {
@@ -606,9 +691,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    }
 
    // set some default namespace values
-   ns->enforcefq = 0;
    ns->fquota = 0;
-   ns->enforcedq = 0;
    ns->dquota = 0;
    ns->iperms = NS_NOACCESS;
    ns->bperms = NS_NOACCESS;
@@ -662,7 +745,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
             }
             // allocate a subspace
             HASH_NODE* subnsnode = subspacelist + allocsubspaces;
-            if ( create_ns( subnsnode, ns, prepo, subnode ) ) {
+            if ( create_namespace( subnsnode, ns, prepo, subnode ) ) {
                LOG( LOG_ERR, "failed to initialize subspace of NS \"%s\"\n", nsname );
                retval = -1;
                break;
@@ -740,7 +823,12 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    return 0;
 }
 
-
+/**
+ * Create a new HASH_TABLE, based on the content of the given distribution node
+ * @param int* count : Integer to be populated with the count of distribution targets
+ * @param xmlNode* distroot : Xml node containing distribution info
+ * @return HASH_TABLE : Newly created HASH_TABLE, or NULL if a failure occurred
+ */
 HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
    // get the node name, just for the sake of log messages
    char* distname = (char*)distroot->name;
@@ -952,7 +1040,11 @@ HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
    return table;
 }
 
-
+/**
+ * Free the given repo structure
+ * @param marfs_repo* repo : Reference to the repo to be freed
+ * @return int : Zero on success, or -1 on failure
+ */
 int free_repo( marfs_repo* repo ) {
    // note any errors
    int retval = 0;
@@ -971,7 +1063,7 @@ int free_repo( marfs_repo* repo ) {
       retval = -1;
    }
    else {
-      // free all hash nodes
+      // free all hash nodes ( no content for reference path nodes )
       size_t nodeindex = 0;
       for( ; nodeindex < nodecount; nodeindex++ ) {
          free( nodelist[nodeindex]->name );
@@ -1018,192 +1110,194 @@ int free_repo( marfs_repo* repo ) {
       }
    }
 
-   // finally, free the repo structure itself
-   free( repo );
-
    return retval;
 }
 
-
+/**
+ * Parse the given datascheme xml node to populate the given datascheme structure
+ * @param marfs_ds* ds : Datascheme to be populated
+ * @param xmlNode* dataroot : Xml node to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
 int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
    XmlNode* dalnode = NULL;
    ne_location maxloc = { .pod = 0, .cap = 0, .scatter = 0 };
    // iterate over nodes at this level
    for ( ; dataroot; dataroot = dataroot->next ) {
-      if ( dataroot->type == XML_ELEMENT_NODE ) {
-         // first, check for a DAL definition
-         if ( strncmp( (char*)dataroot->name, "DAL", 4 ) == 0 ) {
-            if ( dalnode ) {
-               LOG( LOG_ERR, "detected duplicate DAL definition\n" );
-               return -1;
-            }
-            dalnode = dataroot; // save our DAL node reference for later
-            continue;
+      // check for unknown xml node type
+      if ( dataroot->type != XML_ELEMENT_NODE ) {
+         // don't know what this is supposed to be
+         LOG( LOG_ERR, "encountered unknown node within a 'data' definition\n" );
+         return -1;
+      }
+
+      // first, check for a DAL definition
+      if ( strncmp( (char*)dataroot->name, "DAL", 4 ) == 0 ) {
+         if ( dalnode ) {
+            LOG( LOG_ERR, "detected duplicate DAL definition\n" );
+            return -1;
          }
-         // check for an 'enabled' attr
-         xmlAttr* attr = dataroot->properties;
-         char enabled = 2; // assume enabled, but track if we actually get a value
-         if ( attr ) {
-            if ( attr->type == XML_ATTRIBUTE_NODE ) {
-               if ( strncmp( (char*)attr->name, "enabled", 8 ) == 0 ) {
-                  if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
-                     if ( strncmp( (char*)attr->children->content, "no", 3 ) == 0 ) {
-                        enabled = 0;
-                     }
-                     else if ( strncmp( (char*)attr->children->content, "yes", 4 ) == 0 ) {
-                        enabled = 1;
-                     }
+         dalnode = dataroot; // save our DAL node reference for later
+         continue;
+      }
+      // check for an 'enabled' attr
+      xmlAttr* attr = dataroot->properties;
+      char enabled = 2; // assume enabled, but track if we actually get a value
+      if ( attr ) {
+         if ( attr->type == XML_ATTRIBUTE_NODE ) {
+            if ( strncmp( (char*)attr->name, "enabled", 8 ) == 0 ) {
+               if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+                  if ( strncmp( (char*)attr->children->content, "no", 3 ) == 0 ) {
+                     enabled = 0;
                   }
-               }
-            }
-            // if we found any attribute value, ensure it made sense
-            if ( enabled == 2 ) {
-               LOG( LOG_ERR, "encountered an unrecognized attribute of a '%s' node within a 'data' definition\n", (char*)dataroot->name );
-               return -1;
-            }
-            // make sure this is the only attribute
-            if ( attr->next ) {
-               LOG( LOG_ERR, "detected trailing attributes of a '%s' node within a 'data' definition\n", (char*)dataroot->name );
-               return -1;
-            }
-            // if this node has been disabled, don't even bother parsing it
-            if ( !(enabled) ) { continue; }
-         }
-         // determine what definition we are parsing
-         XmlNode* subnode = dataroot->children;
-         if ( strncmp( (char*)dataroot->name, "protection", 11 ) == 0 ) {
-            // iterate over child nodes, populating N/E/PSZ
-            char haveN = 0;
-            char haveE = 0;
-            char haveP = 0;
-            for( ; subnode; subnode->next ) {
-               if ( subnode->type != XML_ELEMENT_NODE ) {
-                  LOG( LOG_ERR, "encountered unknown node within a 'protection' definition\n" );
-                  return -1;
-               }
-               if ( strncmp( (char*)dataroot->name, "N", 2 ) == 0 ) {
-                  haveN = 1;
-                  if( parse_int_node( &(ds->protection.N), dataroot ) ) {
-                     LOG( LOG_ERR, "failed to parse 'N' value within a 'protection' definition\n" );
-                     return -1;
+                  else if ( strncmp( (char*)attr->children->content, "yes", 4 ) == 0 ) {
+                     enabled = 1;
                   }
-               }
-               else if ( strncmp( (char*)dataroot->name, "E", 2 ) == 0 ) {
-                  haveE = 1;
-                  if( parse_int_node( &(ds->protection.E), dataroot ) ) {
-                     LOG( LOG_ERR, "failed to parse 'E' value within a 'protection' definition\n" );
-                     return -1;
-                  }
-               }
-               else if ( strncmp( (char*)dataroot->name, "PSZ", 4 ) == 0 ) {
-                  haveP = 1;
-                  if( parse_int_node( &(ds->protection.partsz), dataroot ) ) {
-                     LOG( LOG_ERR, "failed to parse 'PSZ' value within a 'protection' definition\n" );
-                     return -1;
-                  }
-               }
-               else {
-                  LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'protection' definition\n", (char*)dataroot->name );
-                  return -1;
-               }
-            }
-            // verify that all expected values were populated
-            if ( !(haveN)  ||  !(haveE)  ||  !(haveP) ) {
-               LOG( LOG_ERR, "encountered a 'protection' definition without all N/E/PSZ values\n" );
-               return -1;
-            }
-         }
-         else if ( strncmp( (char*)dataroot->name, "packing", 8 ) == 0 ) {
-            // iterate over child nodes, populating max_files
-            char haveM = 0;
-            for( ; subnode; subnode->next ) {
-               if ( subnode->type != XML_ELEMENT_NODE ) {
-                  LOG( LOG_ERR, "encountered unknown node within a 'packing' definition\n" );
-                  return -1;
-               }
-               if ( strncmp( (char*)dataroot->name, "max_files", 10 ) == 0 ) {
-                  haveM = 1;
-                  if( parse_size_node( &(ds->objfiles), dataroot ) ) {
-                     LOG( LOG_ERR, "failed to parse 'max_files' value within a 'packing' definition\n" );
-                     return -1;
-                  }
-               }
-               else {
-                  LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'packing' definition\n", (char*)dataroot->name );
-                  return -1;
-               }
-            }
-            // verify that all expected values were populated
-            if ( !(haveM) ) {
-               LOG( LOG_ERR, "encountered a 'packing' definition without a 'max_files' value\n" );
-               return -1;
-            }
-         }
-         else if ( strncmp( (char*)dataroot->name, "chunking", 9 ) == 0 ) {
-            // iterate over child nodes, populating max_size
-            char haveM = 0;
-            for( ; subnode; subnode->next ) {
-               if ( subnode->type != XML_ELEMENT_NODE ) {
-                  LOG( LOG_ERR, "encountered unknown node within a 'chunking' definition\n" );
-                  return -1;
-               }
-               if ( strncmp( (char*)dataroot->name, "max_size", 9 ) == 0 ) {
-                  haveM = 1;
-                  if( parse_size_node( &(ds->objsize), dataroot ) ) {
-                     LOG( LOG_ERR, "failed to parse 'max_size' value within a 'chunking' definition\n" );
-                     return -1;
-                  }
-               }
-               else {
-                  LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'chunking' definition\n", (char*)dataroot->name );
-                  return -1;
-               }
-            }
-            // verify that all expected values were populated
-            if ( !(haveM) ) {
-               LOG( LOG_ERR, "encountered a 'chunking' definition without a 'max_size' value\n" );
-               return -1;
-            }
-         }
-         else if ( strncmp( (char*)dataroot->name, "distribution", 13 ) == 0 ) {
-            // iterate over child nodes, creating our distribution tables
-            for( ; subnode; subnode->next ) {
-               if ( subnode->type != XML_ELEMENT_NODE ) {
-                  LOG( LOG_ERR, "encountered unknown node within a 'distribution' definition\n" );
-                  return -1;
-               }
-               if ( strncmp( (char*)dataroot->name, "pods", 5 ) == 0 ) {
-                  if ( (ds->podtable = create_distribution_table( &(maxloc.pod), dataroot )) = NULL ) {
-                     LOG( LOG_ERR, "failed to create 'pods' distribution table\n" );
-                     return -1;
-                  }
-               }
-               else if ( strncmp( (char*)dataroot->name, "caps", 5 ) == 0 ) {
-                  if ( (ds->podtable = create_distribution_table( &(maxloc.cap), dataroot )) = NULL ) {
-                     LOG( LOG_ERR, "failed to create 'caps' distribution table\n" );
-                     return -1;
-                  }
-               }
-               else if ( strncmp( (char*)dataroot->name, "scatters", 9 ) == 0 ) {
-                  if ( (ds->podtable = create_distribution_table( &(maxloc.scatter), dataroot )) = NULL ) {
-                     LOG( LOG_ERR, "failed to create 'scatters' distribution table\n" );
-                     return -1;
-                  }
-               }
-               else {
-                  LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'distribution' definition\n", (char*)dataroot->name );
-                  return -1;
                }
             }
          }
-         else {
-            LOG( LOG_ERR, "encountered unexpected 'data' sub-node: \"%s\"\n", (char*)dataroot->name );
+         // if we found any attribute value, ensure it made sense
+         if ( enabled == 2 ) {
+            LOG( LOG_ERR, "encountered an unrecognized attribute of a '%s' node within a 'data' definition\n", (char*)dataroot->name );
+            return -1;
+         }
+         // make sure this is the only attribute
+         if ( attr->next ) {
+            LOG( LOG_ERR, "detected trailing attributes of a '%s' node within a 'data' definition\n", (char*)dataroot->name );
+            return -1;
+         }
+         // if this node has been disabled, don't even bother parsing it
+         if ( !(enabled) ) { continue; }
+      }
+      // determine what definition we are parsing
+      XmlNode* subnode = dataroot->children;
+      if ( strncmp( (char*)dataroot->name, "protection", 11 ) == 0 ) {
+         // iterate over child nodes, populating N/E/PSZ
+         char haveN = 0;
+         char haveE = 0;
+         char haveP = 0;
+         for( ; subnode; subnode->next ) {
+            if ( subnode->type != XML_ELEMENT_NODE ) {
+               LOG( LOG_ERR, "encountered unknown node within a 'protection' definition\n" );
+               return -1;
+            }
+            if ( strncmp( (char*)dataroot->name, "N", 2 ) == 0 ) {
+               haveN = 1;
+               if( parse_int_node( &(ds->protection.N), dataroot ) ) {
+                  LOG( LOG_ERR, "failed to parse 'N' value within a 'protection' definition\n" );
+                  return -1;
+               }
+            }
+            else if ( strncmp( (char*)dataroot->name, "E", 2 ) == 0 ) {
+               haveE = 1;
+               if( parse_int_node( &(ds->protection.E), dataroot ) ) {
+                  LOG( LOG_ERR, "failed to parse 'E' value within a 'protection' definition\n" );
+                  return -1;
+               }
+            }
+            else if ( strncmp( (char*)dataroot->name, "PSZ", 4 ) == 0 ) {
+               haveP = 1;
+               if( parse_int_node( &(ds->protection.partsz), dataroot ) ) {
+                  LOG( LOG_ERR, "failed to parse 'PSZ' value within a 'protection' definition\n" );
+                  return -1;
+               }
+            }
+            else {
+               LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'protection' definition\n", (char*)dataroot->name );
+               return -1;
+            }
+         }
+         // verify that all expected values were populated
+         if ( !(haveN)  ||  !(haveE)  ||  !(haveP) ) {
+            LOG( LOG_ERR, "encountered a 'protection' definition without all N/E/PSZ values\n" );
             return -1;
          }
       }
+      else if ( strncmp( (char*)dataroot->name, "packing", 8 ) == 0 ) {
+         // iterate over child nodes, populating max_files
+         char haveM = 0;
+         for( ; subnode; subnode->next ) {
+            if ( subnode->type != XML_ELEMENT_NODE ) {
+               LOG( LOG_ERR, "encountered unknown node within a 'packing' definition\n" );
+               return -1;
+            }
+            if ( strncmp( (char*)dataroot->name, "max_files", 10 ) == 0 ) {
+               haveM = 1;
+               if( parse_size_node( &(ds->objfiles), dataroot ) ) {
+                  LOG( LOG_ERR, "failed to parse 'max_files' value within a 'packing' definition\n" );
+                  return -1;
+               }
+            }
+            else {
+               LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'packing' definition\n", (char*)dataroot->name );
+               return -1;
+            }
+         }
+         // verify that all expected values were populated
+         if ( !(haveM) ) {
+            LOG( LOG_ERR, "encountered a 'packing' definition without a 'max_files' value\n" );
+            return -1;
+         }
+      }
+      else if ( strncmp( (char*)dataroot->name, "chunking", 9 ) == 0 ) {
+         // iterate over child nodes, populating max_size
+         char haveM = 0;
+         for( ; subnode; subnode->next ) {
+            if ( subnode->type != XML_ELEMENT_NODE ) {
+               LOG( LOG_ERR, "encountered unknown node within a 'chunking' definition\n" );
+               return -1;
+            }
+            if ( strncmp( (char*)dataroot->name, "max_size", 9 ) == 0 ) {
+               haveM = 1;
+               if( parse_size_node( &(ds->objsize), dataroot ) ) {
+                  LOG( LOG_ERR, "failed to parse 'max_size' value within a 'chunking' definition\n" );
+                  return -1;
+               }
+            }
+            else {
+               LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'chunking' definition\n", (char*)dataroot->name );
+               return -1;
+            }
+         }
+         // verify that all expected values were populated
+         if ( !(haveM) ) {
+            LOG( LOG_ERR, "encountered a 'chunking' definition without a 'max_size' value\n" );
+            return -1;
+         }
+      }
+      else if ( strncmp( (char*)dataroot->name, "distribution", 13 ) == 0 ) {
+         // iterate over child nodes, creating our distribution tables
+         for( ; subnode; subnode->next ) {
+            if ( subnode->type != XML_ELEMENT_NODE ) {
+               LOG( LOG_ERR, "encountered unknown node within a 'distribution' definition\n" );
+               return -1;
+            }
+            if ( strncmp( (char*)dataroot->name, "pods", 5 ) == 0 ) {
+               if ( (ds->podtable = create_distribution_table( &(maxloc.pod), dataroot )) = NULL ) {
+                  LOG( LOG_ERR, "failed to create 'pods' distribution table\n" );
+                  return -1;
+               }
+            }
+            else if ( strncmp( (char*)dataroot->name, "caps", 5 ) == 0 ) {
+               if ( (ds->podtable = create_distribution_table( &(maxloc.cap), dataroot )) = NULL ) {
+                  LOG( LOG_ERR, "failed to create 'caps' distribution table\n" );
+                  return -1;
+               }
+            }
+            else if ( strncmp( (char*)dataroot->name, "scatters", 9 ) == 0 ) {
+               if ( (ds->podtable = create_distribution_table( &(maxloc.scatter), dataroot )) = NULL ) {
+                  LOG( LOG_ERR, "failed to create 'scatters' distribution table\n" );
+                  return -1;
+               }
+            }
+            else {
+               LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'distribution' definition\n", (char*)dataroot->name );
+               return -1;
+            }
+         }
+      }
       else {
-         // don't know what this is supposed to be
-         LOG( LOG_ERR, "encountered unknown node within a 'data' definition\n" );
+         LOG( LOG_ERR, "encountered unexpected 'data' sub-node: \"%s\"\n", (char*)dataroot->name );
          return -1;
       }
    }
@@ -1221,8 +1315,13 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
    return 0;
 }
 
-
-int parse_metascheme( marfs_ds* ms, marfs_repo* repo, XmlNode* metaroot ) {
+/**
+ * Parse the given metascheme xml node to populate the given metascheme structure
+ * @param marfs_ms* ms : Metascheme to be populated
+ * @param xmlNode* metaroot : Xml node to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
+int parse_metascheme( marfs_ms* ms, XmlNode* metaroot ) {
    XmlNode* mdalnode = NULL;
    // iterate over nodes at this level
    for ( ; metaroot; metaroot = metaroot->next ) {
@@ -1441,30 +1540,6 @@ int parse_metascheme( marfs_ds* ms, marfs_repo* repo, XmlNode* metaroot ) {
                return -1;
             }
          }
-         // iterate over child nodes, populating write_chunks
-         char haveC = 0;
-         for( ; subnode; subnode->next ) {
-            if ( subnode->type != XML_ELEMENT_NODE ) {
-               LOG( LOG_ERR, "encountered unknown node within a 'direct' definition\n" );
-               return -1;
-            }
-            if ( strncmp( (char*)metaroot->name, "write_chunks", 13 ) == 0 ) {
-               haveC = 1;
-               if( parse_int_node( &(ds->directchunks), metaroot ) ) {
-                  LOG( LOG_ERR, "failed to parse 'write_chunks' value within a 'direct' definition\n" );
-                  return -1;
-               }
-            }
-            else {
-               LOG( LOG_ERR, "encountered an unrecognized \"%s\" node within a 'direct' definition\n", (char*)metaroot->name );
-               return -1;
-            }
-         }
-         // verify that all expected values were populated
-         if ( ms->directwrite  &&  !(haveC) ) {
-            LOG( LOG_ERR, "encountered a 'direct' definition with write enabled, but no 'write_chunks' value\n" );
-            return -1;
-         }
       }
       else {
          LOG( LOG_ERR, "encountered unexpected 'metadata' sub-node: \"%s\"\n", (char*)metaroot->name );
@@ -1485,7 +1560,12 @@ int parse_metascheme( marfs_ds* ms, marfs_repo* repo, XmlNode* metaroot ) {
    return 0;
 }
 
-
+/**
+ * Parse the given repo xml node and populate the given marfs_repo reference
+ * @param marfs_repo* repo : Reference to the marfs_repo to be populated
+ * @param xmlNode* reporoot : Xml node to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
 int create_repo( marfs_repo* repo, XmlNode* reporoot ) {
    // check for a name attribute
    xmlAttr* attr = reporoot->properties;
@@ -1497,13 +1577,8 @@ int create_repo( marfs_repo* repo, XmlNode* reporoot ) {
                   LOG( LOG_ERR, "detected a repeated 'name' attribute for repo \"%s\"\n", repo->name );
                   return -1;
                }
-               repo->name = strcpy( (char*)attr->children->content );
+               repo->name = strdup( (char*)attr->children->content );
             }
-         }
-         // verify that we properly stored this attr value
-         if ( !(repo->name) ) {
-            LOG( LOG_ERR, "failed to parse name value for repo\n" );
-            return -1;
          }
       }
       else {
@@ -1516,10 +1591,69 @@ int create_repo( marfs_repo* repo, XmlNode* reporoot ) {
       LOG( LOG_ERR, "failed to identify name value for repo\n" );
       return -1;
    }
+   // iterate over child nodes, looking for 'data' and 'meta' defs
+   xmlNode* children = reporoot->children;
+   for ( ; children != NULL; children = children->next ) {
+      // verify that this is a node of the proper type
+      if ( children->type != XML_ELEMENT_NODE ) {
+         LOG( LOG_WARNING, "Encountered unrecognized subnode of \"%s\" repo\n", repo->name );
+         continue;
+      }
+      // check node names
+      if ( strncmp( children->name, "data", 5 ) == 0 ) {
+         if ( parse_datascheme( &(repo.datascheme), children->children ) ) {
+            LOG( LOG_ERR, "Failed to parse the 'data' subnode of the \"%s\" repo\n", repo->name );
+            break;
+         }
+      }
+      else if ( strncmp( children->name, "meta", 5 ) == 0 ) {
+         if ( parse_metascheme( &(repo.metascheme), children->children ) ) {
+            LOG( LOG_ERR, "Failed to parse the 'meta' subnode of the \"%s\" repo\n", repo->name );
+            break;
+         }
+      }
+      else {
+         LOG( LOG_WARNING, "Encountered unrecognized \"%s\" subnode of \"%s\" repo\n", children->name, repo->name );
+      }
+   }
+   if ( repo.datascheme.nectxt == NULL  ||  repo.metascheme.mdal == NULL ) {
+      LOG( LOG_ERR, "\"%s\" repo is missing required data/meta definitions\n", repo->name );
+      free_repo( repo );
+      return -1;
+   }
+
+   return 0;
 }
 
-
-int establish_nshierarchy( marfs_config* config );
+/**
+ * Traverse the namespaces of the given config, establishing remote NS refs
+ * @param marfs_config* config : Reference to the config to traverse
+ * @return int : Zero on success, or -1 on failure
+ */
+int establish_nsrefs( marfs_config* config ) {
+   // iterate over top level namespaces of every repo, looking for the root NS
+   marfs_repo* repo = config->repolist + currepo;
+   int currepo = 0;
+   for ( ; currepo < config->repocount; currepo++ ) {
+      // check for the root ns in the current repo
+      marfs_ns* rootns = find_namespace( repo->nslist, repo->nscount, "root" );
+      if ( rootns != NULL ) {
+         if ( config->rootns != NULL ) {
+            LOG( LOG_ERR, "encountered two 'root' namespaces in the same config\n" );
+            return -1;
+         }
+         config->rootns = rootns;
+      }
+   }
+   if ( config->rootns == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the root NS\n" );
+      return -1;
+   }
+   // traverse the entire NS hierarchy, replacing remote NS refs with actual NS pointers
+   marfs_ns* curns = config->rootns;
+   while ( curns ) {
+   }
+}
 
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
