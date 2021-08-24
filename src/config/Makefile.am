@@ -54,5 +54,28 @@
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
 
-SUBDIRS = hash mdal config
+
+# automake requires '=' before '+=', even for these built-in vars
+AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CFLAGS   =
+AM_LDFLAGS  =
+
+
+# define sources used by many programs as noinst libraries, to avoid multiple compilations
+noinst_LTLIBRARIES = libConfig.la
+
+libConfig_la_SOURCES = config.c
+libConfig_la_CFLAGS = $(XML_CFLAGS)
+CONFIG_LIB = libConfig.la
+
+# ---
+
+check_PROGRAMS = test_config
+
+test_config_SOURCES = testing/test_config.c
+test_config_CFLAGS = $(XML_CFLAGS)
+test_config_LDADD = $(CONFIG_LIB)
+
+TESTS = test_config
+
 

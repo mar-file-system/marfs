@@ -198,6 +198,7 @@ AC_CONFIG_FILES([Makefile
                  src/Makefile
                  src/hash/Makefile
                  src/mdal/Makefile
+                 src/config/Makefile
                ])
 #                 src/logging/Makefile
 #                 src/thread_queue/Makefile

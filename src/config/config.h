@@ -61,11 +61,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "hash/hash.h"
 #include "mdal/mdal.h"
 #include <ne.h>
-#include <libxml/tree.h>
-
-#ifndef LIBXML_TREE_ENABLED
-#error "Included Libxml2 does not support tree functionality!"
-#endif
 
 #define CONFIG_CTAG_LENGTH 32
 

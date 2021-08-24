@@ -156,6 +156,22 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  *
  */
 
+#include "marfs_auto_config.h"
+#if defined(DEBUG_ALL)  ||  defined(DEBUG_CONFIG)
+   #define DEBUG 1
+#endif
+#define LOG_PREFIX "config"
+
+#include <logging.h>
+#include "config.h"
+#include "generic/numdigits.h"
+
+#include <libxml/tree.h>
+
+#ifndef LIBXML_TREE_ENABLED
+#error "Included Libxml2 does not support tree functionality!"
+#endif
+
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
@@ -194,7 +210,7 @@ marfs_ns* find_namespace( HASH_NODE* nslist, size_t nscount, const char* nsname 
    size_t index;
    for( index = 0; index < nscount; index++ ) {
       if( strncmp( nslist[index].name, nsname, strlen(nsname) ) == 0 ) {
-         return ( nslist + index );
+         return (marfs_ns*)( ( nslist + index )->content );
       }
    }
    return NULL;
@@ -228,7 +244,7 @@ marfs_repo* find_repo( marfs_repo* repolist, int repocount, const char* reponame
  */
 int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
    // define an unused character value and use as an indicator of a completed perm string
-   char eoperm = 'x'
+   char eoperm = 'x';
 
    // iterate over nodes at this level
    for ( ; permroot; permroot = permroot->next ) {
@@ -329,9 +345,9 @@ int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
          }
       }
       if ( ptype == 'i' )
-         *iperms = tmpperms;
+         *iperms = tmpperm;
       else
-         *bperms = tmpperms;
+         *bperms = tmpperm;
    }
    // we have iterated over all perm nodes
    return 0;
@@ -343,7 +359,7 @@ int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
  * @param xmlNode* node : Node to be parsed
  * @return int : Zero on success, -1 on error
  */
-int parse_size_node( size_t* target, XmlNode* node ) {
+int parse_size_node( size_t* target, xmlNode* node ) {
    // note the node name, just for logging messages
    char* nodename = (char*)node->name;
    // check for an included value
@@ -356,11 +372,11 @@ int parse_size_node( size_t* target, XmlNode* node ) {
       unsigned long long parsevalue = strtoull( valuestr, &(endptr), 10 );
       // check for any trailing unit specification
       if ( *endptr != '\0' ) {
-         if ( *endptr == 'K' ) { unitmult = 1024; }
-         else if ( *endptr == 'M' ) { unitmult = (1024 * 1024); }
-         else if ( *endptr == 'G' ) { unitmult = (1024 * 1024 * 1024); }
-         else if ( *endptr == 'T' ) { unitmult = (1024 * 1024 * 1024 * 1024); }
-         else if ( *endptr == 'P' ) { unitmult = (1024 * 1024 * 1024 * 1024 * 1024); }
+         if ( *endptr == 'K' ) { unitmult = 1024ULL; }
+         else if ( *endptr == 'M' ) { unitmult = 1048576ULL; }
+         else if ( *endptr == 'G' ) { unitmult = 1073741824ULL; }
+         else if ( *endptr == 'T' ) { unitmult = 1099511627776ULL; }
+         else if ( *endptr == 'P' ) { unitmult = 1125899906842624ULL; }
          else {
             LOG( LOG_ERR, "encountered unrecognized character in \"%s\" value: \"%c\"", nodename, *endptr );
             return -1;
@@ -391,7 +407,7 @@ int parse_size_node( size_t* target, XmlNode* node ) {
  * @param xmlNode* node : Node to be parsed
  * @return int : Zero on success, -1 on error
  */
-int parse_int_node( int* target, XmlNode* node ) {
+int parse_int_node( int* target, xmlNode* node ) {
    // note the node name, just for logging messages
    char* nodename = (char*)node->name;
    // check for an included value
@@ -437,7 +453,7 @@ int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
 
       // determine if we're parsing file or data quotas
       if ( strncmp( (char*)quotaroot->name, "files", 6 ) == 0 ) {
-         if ( *fquota != 0  ||  *enforcefq != 0 ) {
+         if ( *fquota != 0 ) {
             // this is a duplicate 'files' def
             LOG( LOG_ERR, "encountered duplicate 'files' quota set\n" );
             return -1;
@@ -449,7 +465,7 @@ int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
          }
       }
       else if ( strncmp( (char*)quotaroot->name, "data", 5 ) == 0 ) {
-         if ( *dquota != 0  ||  *enforcedq != 0 ) {
+         if ( *dquota != 0 ) {
             // this is a duplicate 'data' def
             LOG( LOG_ERR, "encountered duplicate 'data' quota set\n" );
             return -1;
@@ -478,7 +494,7 @@ int free_namespace( HASH_NODE* nsnode ) {
    // we are assuming this function will ONLY be called on completed NS structures
    //   As in, this function will not check for certain NULL pointers, like name
    marfs_ns* ns = (marfs_ns*)nsnode->content;
-   const char* nsname = nsnode->name;
+   char* nsname = nsnode->name;
    int retval = 0;
    if ( ns->subspaces ) {
       // need to properly free the subspace hash table
@@ -492,14 +508,14 @@ int free_namespace( HASH_NODE* nsnode ) {
          // free all subspaces which are not owned by a different repo
          size_t subspaceindex = 0;
          for( ; subspaceindex < subspacecount; subspaceindex++ ) {
-            marfs_ns* subspace = (marfs_ns*)(subspacelist[subspaceindex]->content);
+            marfs_ns* subspace = (marfs_ns*)(subspacelist[subspaceindex].content);
             // omit any completed remote namespace reference
             if ( subspace->prepo != NULL  &&  subspace->prepo != ns->prepo ) {
-               free(subspacelist[subspaceindex]->name); // free the hash node name
+               free(subspacelist[subspaceindex].name); // free the hash node name
                continue; // this namespace is referenced by another repo, so we must skip it
             }
             // recursively free this subspace
-            if ( free_namespace( subspacelist[subspaceindex] ) ) {
+            if ( free_namespace( subspacelist+subspaceindex ) ) {
                LOG( LOG_WARNING, "failed to free subspace of NS \"%s\"\n", nsname );
                retval = -1;
             }
@@ -720,7 +736,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
       if ( subnode->type == XML_ELEMENT_NODE ) {
          if ( strncmp( (char*)subnode->name, "quotas", 7 ) == 0 ) {
             // parse NS quota info
-            if( parse_quotas( &(ns->enforcefq), &(ns->fquota), &(ns->enforcedq), &(ns->dquota), subnode->children ) ) {
+            if( parse_quotas( &(ns->fquota), &(ns->dquota), subnode->children ) ) {
                LOG( LOG_ERR, "failed to parse quota info for NS \"%s\"\n", nsname );
                retval = -1;
                break;
@@ -786,7 +802,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    for ( index = 1; index < allocsubspaces; index++ ) {
       int prevns = 0;
       for ( ; prevns < index; prevns++ ) {
-         if ( strcmp( subspacelist[prevns]->name, subspacelist[index]->name ) == 0 ) {
+         if ( strcmp( subspacelist[prevns].name, subspacelist[index].name ) == 0 ) {
             LOG( LOG_ERR, "detected repeated \"%s\" subspace name below NS \"%s\"\n", nsname );
             retval = -1;
             errno = EINVAL;
@@ -797,7 +813,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
 
    // allocate our subspace hash table only if we aren't already aborting
    if ( retval == 0 ) {
-      ns->subspaces = hash_init( subspacelist, subspcount );
+      ns->subspaces = hash_init( subspacelist, subspcount, 1 );
       if ( ns->subspaces == NULL ) {
          LOG( LOG_ERR, "failed to create the subspace table of NS \"%s\"\n", nsname );
          retval = -1;
@@ -829,7 +845,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
  * @param xmlNode* distroot : Xml node containing distribution info
  * @return HASH_TABLE : Newly created HASH_TABLE, or NULL if a failure occurred
  */
-HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
+HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
    // get the node name, just for the sake of log messages
    char* distname = (char*)distroot->name;
    // iterate over attributes, looking for cnt and dweight values
@@ -886,14 +902,14 @@ HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
          }
          // check for possible value overflow
          if ( parseval >= INT_MAX ) {
-            LOG( LOG_ERR, "%s distribution has a '%s' value which exceeds memory bounds: \"%s\"\n", disname, attrtype, attrval );
+            LOG( LOG_ERR, "%s distribution has a '%s' value which exceeds memory bounds: \"%s\"\n", distname, attrtype, attrval );
             errno = EINVAL;
             return NULL;
          }
 
          // assign value to the appropriate var
          // Note -- this check can be lax, as we already know attrype == "dweight" OR "cnt"
-         if ( *attrtype = 'c' ) {
+         if ( *attrtype == 'c' ) {
             nodecount = parseval;
          }
          else {
@@ -919,19 +935,19 @@ HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
    // populate all node names and set weights to default
    size_t curnode;
    for ( curnode = 0; curnode < nodecount; curnode++ ) {
-      nodelist[curnode]->content = NULL; // we don't care about content
-      nodelist[curnode]->weight = dweight; // every node gets the default weight, for now
+      nodelist[curnode].content = NULL; // we don't care about content
+      nodelist[curnode].weight = dweight; // every node gets the default weight, for now
       // identify the number of characers needed for this nodename via some cheeky use of snprintf
       int namelen = snprintf( NULL, 0, "%zu", curnode );
-      nodelist[curnode]->name = malloc( sizeof(char) * (namelen + 1) );
-      if ( nodelist[curnode]->name == NULL ) {
+      nodelist[curnode].name = malloc( sizeof(char) * (namelen + 1) );
+      if ( nodelist[curnode].name == NULL ) {
          LOG( LOG_ERR, "failed to allocate space for node names of %s distribution\n", distname );
          break;
       }
-      if ( snprintf( nodelist[curnode]->name, namelen + 1, "%zu", curnode ) > namelen ) {
+      if ( snprintf( nodelist[curnode].name, namelen + 1, "%zu", curnode ) > namelen ) {
          LOG( LOG_ERR, "failed to populate nodename \"%zu\" of %s distribution\n", curnode, distname );
          errno = EFAULT;
-         free( nodelist[curnode]->name );
+         free( nodelist[curnode].name );
          break;
       }
    }
@@ -940,7 +956,7 @@ HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
       // free all name strings
       size_t freenode;
       for ( freenode = 0; freenode < curnode; freenode++ ) {
-         free( nodelist[freenode]->name );
+         free( nodelist[freenode].name );
       }
       // free our nodelist and terminate
       free( nodelist );
@@ -992,7 +1008,7 @@ HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
                errorflag = 1;
                break;
             }
-            nodelist[tgtnode]->weight = parseval; // assign the specified weight to the target node
+            nodelist[tgtnode].weight = parseval; // assign the specified weight to the target node
             tgtnode = nodecount; // reset our target, so we know to expect a new one
          }
 
@@ -1012,7 +1028,7 @@ HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
       // free all name strings
       size_t freenode;
       for ( freenode = 0; freenode < nodecount; freenode++ ) {
-         free( nodelist[freenode]->name );
+         free( nodelist[freenode].name );
       }
       // free our nodelist and terminate
       free( nodelist );
@@ -1027,7 +1043,7 @@ HASH_TABLE create_distribution_table( int* count, XmlNode* distroot ) {
       // free all name strings
       size_t freenode;
       for ( freenode = 0; freenode < nodecount; freenode++ ) {
-         free( nodelist[freenode]->name );
+         free( nodelist[freenode].name );
       }
       // free our nodelist and terminate
       free( nodelist );
@@ -1051,14 +1067,14 @@ int free_repo( marfs_repo* repo ) {
 
    // free metadata scheme components
    if ( repo->metascheme.mdal ) {
-      if ( mdal_term( repo->metascheme.mdal ) ) {
+      if ( repo->metascheme.mdal->cleanup( repo->metascheme.mdal ) ) {
          LOG( LOG_WARNING, "failed to terminate MDAL of \"%s\" repo\n", repo->name );
          retval = -1;
       }
    }
    size_t nodecount;
    HASH_NODE* nodelist;
-   if ( hash_term( ms->reftable, &(nodelist), &(nodecount) ) ) {
+   if ( hash_term( repo->metascheme.reftable, &(nodelist), &(nodecount) ) ) {
       LOG( LOG_WARNING, "failed to free the reference path hash table of \"%s\" repo\n", repo->name );
       retval = -1;
    }
@@ -1066,7 +1082,7 @@ int free_repo( marfs_repo* repo ) {
       // free all hash nodes ( no content for reference path nodes )
       size_t nodeindex = 0;
       for( ; nodeindex < nodecount; nodeindex++ ) {
-         free( nodelist[nodeindex]->name );
+         free( nodelist[nodeindex].name );
       }
       free( nodelist );
    }
@@ -1104,7 +1120,7 @@ int free_repo( marfs_repo* repo ) {
          // free all hash nodes
          size_t nodeindex = 0;
          for( ; nodeindex < nodecount; nodeindex++ ) {
-            free( nodelist[nodeindex]->name );
+            free( nodelist[nodeindex].name );
          }
          free( nodelist );
       }
@@ -1119,8 +1135,8 @@ int free_repo( marfs_repo* repo ) {
  * @param xmlNode* dataroot : Xml node to be parsed
  * @return int : Zero on success, or -1 on failure
  */
-int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
-   XmlNode* dalnode = NULL;
+int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
+   xmlNode* dalnode = NULL;
    ne_location maxloc = { .pod = 0, .cap = 0, .scatter = 0 };
    // iterate over nodes at this level
    for ( ; dataroot; dataroot = dataroot->next ) {
@@ -1170,13 +1186,13 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
          if ( !(enabled) ) { continue; }
       }
       // determine what definition we are parsing
-      XmlNode* subnode = dataroot->children;
+      xmlNode* subnode = dataroot->children;
       if ( strncmp( (char*)dataroot->name, "protection", 11 ) == 0 ) {
          // iterate over child nodes, populating N/E/PSZ
          char haveN = 0;
          char haveE = 0;
          char haveP = 0;
-         for( ; subnode; subnode->next ) {
+         for( ; subnode; subnode = subnode->next ) {
             if ( subnode->type != XML_ELEMENT_NODE ) {
                LOG( LOG_ERR, "encountered unknown node within a 'protection' definition\n" );
                return -1;
@@ -1197,7 +1213,7 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
             }
             else if ( strncmp( (char*)dataroot->name, "PSZ", 4 ) == 0 ) {
                haveP = 1;
-               if( parse_int_node( &(ds->protection.partsz), dataroot ) ) {
+               if( parse_size_node( &(ds->protection.partsz), dataroot ) ) {
                   LOG( LOG_ERR, "failed to parse 'PSZ' value within a 'protection' definition\n" );
                   return -1;
                }
@@ -1216,7 +1232,7 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
       else if ( strncmp( (char*)dataroot->name, "packing", 8 ) == 0 ) {
          // iterate over child nodes, populating max_files
          char haveM = 0;
-         for( ; subnode; subnode->next ) {
+         for( ; subnode; subnode = subnode->next ) {
             if ( subnode->type != XML_ELEMENT_NODE ) {
                LOG( LOG_ERR, "encountered unknown node within a 'packing' definition\n" );
                return -1;
@@ -1242,7 +1258,7 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
       else if ( strncmp( (char*)dataroot->name, "chunking", 9 ) == 0 ) {
          // iterate over child nodes, populating max_size
          char haveM = 0;
-         for( ; subnode; subnode->next ) {
+         for( ; subnode; subnode = subnode->next ) {
             if ( subnode->type != XML_ELEMENT_NODE ) {
                LOG( LOG_ERR, "encountered unknown node within a 'chunking' definition\n" );
                return -1;
@@ -1267,25 +1283,25 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
       }
       else if ( strncmp( (char*)dataroot->name, "distribution", 13 ) == 0 ) {
          // iterate over child nodes, creating our distribution tables
-         for( ; subnode; subnode->next ) {
+         for( ; subnode; subnode = subnode->next ) {
             if ( subnode->type != XML_ELEMENT_NODE ) {
                LOG( LOG_ERR, "encountered unknown node within a 'distribution' definition\n" );
                return -1;
             }
             if ( strncmp( (char*)dataroot->name, "pods", 5 ) == 0 ) {
-               if ( (ds->podtable = create_distribution_table( &(maxloc.pod), dataroot )) = NULL ) {
+               if ( (ds->podtable = create_distribution_table( &(maxloc.pod), dataroot )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'pods' distribution table\n" );
                   return -1;
                }
             }
             else if ( strncmp( (char*)dataroot->name, "caps", 5 ) == 0 ) {
-               if ( (ds->podtable = create_distribution_table( &(maxloc.cap), dataroot )) = NULL ) {
+               if ( (ds->podtable = create_distribution_table( &(maxloc.cap), dataroot )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'caps' distribution table\n" );
                   return -1;
                }
             }
             else if ( strncmp( (char*)dataroot->name, "scatters", 9 ) == 0 ) {
-               if ( (ds->podtable = create_distribution_table( &(maxloc.scatter), dataroot )) = NULL ) {
+               if ( (ds->podtable = create_distribution_table( &(maxloc.scatter), dataroot )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'scatters' distribution table\n" );
                   return -1;
                }
@@ -1321,8 +1337,9 @@ int parse_datascheme( marfs_ds* ds, XmlNode* dataroot ) {
  * @param xmlNode* metaroot : Xml node to be parsed
  * @return int : Zero on success, or -1 on failure
  */
-int parse_metascheme( marfs_ms* ms, XmlNode* metaroot ) {
-   XmlNode* mdalnode = NULL;
+int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
+   marfs_ms* ms = &(repo->metascheme);
+   xmlNode* mdalnode = NULL;
    // iterate over nodes at this level
    for ( ; metaroot; metaroot = metaroot->next ) {
       // make sure this is a real ELEMENT_NODE
@@ -1341,7 +1358,7 @@ int parse_metascheme( marfs_ms* ms, XmlNode* metaroot ) {
       }
       // determine what definition we are parsing
       xmlAttr* attr = metaroot->properties;
-      XmlNode* subnode = metaroot->children;
+      xmlNode* subnode = metaroot->children;
       if ( strncmp( (char*)metaroot->name, "namespaces", 11 ) == 0 ) {
          // check if we have already created a reference table, as this indicates a duplicate node
          if ( ms->reftable ) {
@@ -1390,12 +1407,12 @@ int parse_metascheme( marfs_ms* ms, XmlNode* metaroot ) {
             }
          }
          // verify that we found the required reference dimensions
-         if ( rbreadth < 1  ||  rdepth < 1 ) {
+         if ( refbreadth < 1  ||  refdepth < 1 ) {
             LOG( LOG_ERR, "failed to locate required 'rbreadth' and/or 'rdepth' values for a 'namespaces' node\n" );
             return -1;
          }
          // create a string to hold temporary reference paths
-         int breadthdigits = num_digits_unsigned( (unsigned long long) refbreadth );
+         int breadthdigits = numdigits_unsigned( (unsigned long long) refbreadth );
          if ( refdigits > breadthdigits ) { breadthdigits = refdigits; }
          size_t rpathlen = ( refdepth * (breadthdigits + 1) ) + 1;
          char* rpathtmp = malloc( sizeof(char) * rpathlen ); // used to populate node name strings
@@ -1470,7 +1487,7 @@ int parse_metascheme( marfs_ms* ms, XmlNode* metaroot ) {
          // count all subnodes
          ms->nscount = 0;
          int subspaces = 0;
-         for( ; subnode; subnode->next ) {
+         for( ; subnode; subnode = subnode->next ) {
             if ( subnode->type != XML_ELEMENT_NODE ) {
                LOG( LOG_ERR, "encountered unknown node within a 'namespaces' definition\n" );
                return -1;
@@ -1480,7 +1497,7 @@ int parse_metascheme( marfs_ms* ms, XmlNode* metaroot ) {
          }
          // if we have no subspaces at all, just warn and continue on
          if ( !(subspaces) ) {
-            LOG( LOG_WARNING, "repo \"%s\" has no namespaces defined\n", repo->name );
+            LOG( LOG_WARNING, "metascheme has no namespaces defined\n" );
             continue;
          }
          // allocate an array of namespace nodes
@@ -1490,7 +1507,7 @@ int parse_metascheme( marfs_ms* ms, XmlNode* metaroot ) {
             return -1;
          }
          // parse and allocate all subspaces
-         for( subnode = metaroot->children; subnode; subnode->next ) {
+         for( subnode = metaroot->children; subnode; subnode = subnode->next ) {
             // set default namespace values
             HASH_NODE* subspace = ms->nslist + ms->nscount;
             subspace->name = NULL;
@@ -1552,7 +1569,7 @@ int parse_metascheme( marfs_ms* ms, XmlNode* metaroot ) {
       return -1;
    }
    // initialize the MDAL
-   if ( (ms->mdal = mdal_init( mdalnode )) == NULL ) {
+   if ( (ms->mdal = init_mdal( mdalnode )) == NULL ) {
       LOG( LOG_ERR, "failed to initialize MDAL\n" );
       return -1;
    }
@@ -1566,7 +1583,7 @@ int parse_metascheme( marfs_ms* ms, XmlNode* metaroot ) {
  * @param xmlNode* reporoot : Xml node to be parsed
  * @return int : Zero on success, or -1 on failure
  */
-int create_repo( marfs_repo* repo, XmlNode* reporoot ) {
+int create_repo( marfs_repo* repo, xmlNode* reporoot ) {
    // check for a name attribute
    xmlAttr* attr = reporoot->properties;
    for ( ; attr; attr = attr->next ) {
@@ -1600,14 +1617,14 @@ int create_repo( marfs_repo* repo, XmlNode* reporoot ) {
          continue;
       }
       // check node names
-      if ( strncmp( children->name, "data", 5 ) == 0 ) {
-         if ( parse_datascheme( &(repo.datascheme), children->children ) ) {
+      if ( strncmp( (char*)(children->name), "data", 5 ) == 0 ) {
+         if ( parse_datascheme( &(repo->datascheme), children->children ) ) {
             LOG( LOG_ERR, "Failed to parse the 'data' subnode of the \"%s\" repo\n", repo->name );
             break;
          }
       }
-      else if ( strncmp( children->name, "meta", 5 ) == 0 ) {
-         if ( parse_metascheme( &(repo.metascheme), children->children ) ) {
+      else if ( strncmp( (char*)(children->name), "meta", 5 ) == 0 ) {
+         if ( parse_metascheme( repo, children->children ) ) {
             LOG( LOG_ERR, "Failed to parse the 'meta' subnode of the \"%s\" repo\n", repo->name );
             break;
          }
@@ -1616,7 +1633,7 @@ int create_repo( marfs_repo* repo, XmlNode* reporoot ) {
          LOG( LOG_WARNING, "Encountered unrecognized \"%s\" subnode of \"%s\" repo\n", children->name, repo->name );
       }
    }
-   if ( repo.datascheme.nectxt == NULL  ||  repo.metascheme.mdal == NULL ) {
+   if ( repo->datascheme.nectxt == NULL  ||  repo->metascheme.mdal == NULL ) {
       LOG( LOG_ERR, "\"%s\" repo is missing required data/meta definitions\n", repo->name );
       free_repo( repo );
       return -1;
@@ -1632,11 +1649,11 @@ int create_repo( marfs_repo* repo, XmlNode* reporoot ) {
  */
 int establish_nsrefs( marfs_config* config ) {
    // iterate over top level namespaces of every repo, looking for the root NS
-   marfs_repo* repo = config->repolist + currepo;
    int currepo = 0;
    for ( ; currepo < config->repocount; currepo++ ) {
       // check for the root ns in the current repo
-      marfs_ns* rootns = find_namespace( repo->nslist, repo->nscount, "root" );
+      marfs_repo* repo = config->repolist + currepo;
+      marfs_ns* rootns = find_namespace( repo->metascheme.nslist, repo->metascheme.nscount, "root" );
       if ( rootns != NULL ) {
          if ( config->rootns != NULL ) {
             LOG( LOG_ERR, "encountered two 'root' namespaces in the same config\n" );
@@ -1667,7 +1684,7 @@ int establish_nsrefs( marfs_config* config ) {
                return -1;
             }
             // now determine the target NS in the target repo
-            marfs_ns* tgtns = find_namespace( tgtrepo->nslist, tgtrepo->nscount, subnode->name );
+            marfs_ns* tgtns = find_namespace( tgtrepo->metascheme.nslist, tgtrepo->metascheme.nscount, subnode->name );
             if ( tgtns == NULL ) {
                LOG( LOG_ERR, "Remote NS \"%s\" of repo \"%s\" does not have a valid NS def in target repo \"%s\"\n", subnode->name, curns->prepo->name, subspace->idstr );
                return -1;
@@ -1923,7 +1940,7 @@ int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath ) {
    }
    // shift the resulting path back to the start of the string
    if ( subpath != pathelem ) {
-      int newlen = snprintf( subpath, "%s", pathelem );
+      int newlen = sprintf( subpath, "%s", pathelem );
       if ( newlen < 0 ) {
          LOG( LOG_ERR, "Failed to update subpath\n" );
          return -1;
