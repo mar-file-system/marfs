@@ -111,6 +111,7 @@ AXATTR_GET_FUNC_CHECK
 AXATTR_SET_FUNC_CHECK
 
 AC_CHECK_LIB([xml2], [xmlReadFile], [], [AC_MSG_ERROR(["Could not locate libxml2!"])])
+AC_CHECK_LIB([ne], [ne_init], [], [AC_MSG_ERROR(["Could not locate libne!"])])
 
 PKG_CHECK_MODULES( XML, libxml-2.0 )
 

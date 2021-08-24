@@ -106,7 +106,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  *       <meta>
  *
  *          <!-- Namespace Definitions -->
- *          <namespaces>
+ *          <namespaces rbreadth="10" rdepth="3" rdigits="3">
  *          
  *             <ns name="gransom-allocation">
  *
@@ -153,6 +153,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  *       </meta>
  *
  *    </repo>
+ *
+ * </marfs_config>
  *
  */
 
@@ -317,12 +319,12 @@ int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
                // remember our original perm value, to check for duplicate permstrings
                ns_perms operm = tmpperm;
                if ( fchar == 'R' ) {
-                  if ( *permstr == 'M' ) tmpperm &= NS_READMETA;
-                  else tmpperm &= NS_READDATA;
+                  if ( *permstr == 'M' ) tmpperm |= NS_READMETA;
+                  else tmpperm |= NS_READDATA;
                }
                else if ( fchar == 'W' ) {
-                  if ( *permstr == 'M' ) tmpperm &= NS_WRITEMETA;
-                  else tmpperm &= NS_WRITEDATA;
+                  if ( *permstr == 'M' ) tmpperm |= NS_WRITEMETA;
+                  else tmpperm |= NS_WRITEDATA;
                }
                else {
                   LOG( LOG_ERR, "perm string '%c%c' is unrecognized\n", fchar, *permstr );

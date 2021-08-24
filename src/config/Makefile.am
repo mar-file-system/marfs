@@ -65,7 +65,8 @@ AM_LDFLAGS  =
 noinst_LTLIBRARIES = libConfig.la
 
 libConfig_la_SOURCES = config.c
-libConfig_la_CFLAGS = $(XML_CFLAGS)
+libConfig_la_LIBADD  = ../hash/libHash.la ../mdal/libMDAL.la
+libConfig_la_CFLAGS  = $(XML_CFLAGS)
 CONFIG_LIB = libConfig.la
 
 # ---
