@@ -1651,11 +1651,287 @@ int establish_nsrefs( marfs_config* config ) {
    }
    // traverse the entire NS hierarchy, replacing remote NS refs with actual NS pointers
    marfs_ns* curns = config->rootns;
+   size_t nscount = 1;
+   size_t rnscount = 0;
    while ( curns ) {
+      HASH_NODE* subnode = NULL;
+      int iterres = 0;
+      if ( (iterres = hash_iterate( curns->subspaces, &(subnode) )) ) {
+         marfs_ns* subspace = (marfs_ns*)(subnode->content);
+         // check for a remote NS reference
+         if ( subspace->prepo == NULL ) {
+            // the remote NS idstring should contain the name of the target repo
+            marfs_repo* tgtrepo = find_repo( config->repolist, config->repocount, subspace->idstr );
+            if ( tgtrepo == NULL ) {
+               LOG( LOG_ERR, "Remote NS \"%s\" of repo \"%s\" references non-existent target repo: \"%s\"\n", subnode->name, curns->prepo->name, subspace->idstr );
+               return -1;
+            }
+            // now determine the target NS in the target repo
+            marfs_ns* tgtns = find_namespace( tgtrepo->nslist, tgtrepo->nscount, subnode->name );
+            if ( tgtns == NULL ) {
+               LOG( LOG_ERR, "Remote NS \"%s\" of repo \"%s\" does not have a valid NS def in target repo \"%s\"\n", subnode->name, curns->prepo->name, subspace->idstr );
+               return -1;
+            }
+            // we have to clear out the remote NS ref and replace it with the actual NS
+            free( subspace->idstr );
+            free( subspace );
+            subnode->content = (void*)tgtns;
+            subspace = tgtns;
+         }
+         // continue into the subspace
+         curns = subspace;
+         continue;
+      }
+      // verify that we didn't hit some oddball iterate error
+      if ( iterres < 0 ) {
+         LOG( LOG_ERR, "Failed to iterate over subspace table of a NS in repo \"%s\"\n", curns->prepo->name );
+         return -1;
+      }
+      // we've iterated over all subspaces of this NS and can progress back up to the parent
+      curns = curns->pnamespace;
    }
+   // we've finally traversed the entire NS tree
+   LOG( LOG_INFO, "Traversed %zu namespaces and replaced %zu remote NS definitions\n", nscount, rnscount );
+   return 0;
 }
 
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
+
+/**
+ * Initialize memory structures based on the given config file
+ * @param const char* cpath : Path of the config file to be parsed
+ * @return marfs_config* : Reference to the newly populated config structures
+ */
+marfs_config* config_init( const char* cpath ) {
+   // Initialize the libxml library and check potential API mismatches between 
+   // the version it was compiled for and the actual shared library used.
+   LIBXML_TEST_VERSION
+
+   // attempt to parse the given config file into an xmlDoc
+   xmlDoc* doc = xmlReadFile( cpath, NULL, XML_PARSE_NOBLANKS );
+   if ( doc == NULL ) {
+      LOG( LOG_ERR, "Failed to parse the given XML config file: \"%s\"\n", cpath );
+      xmlCleanupParser();
+      return NULL;
+   }
+   // get the root element node
+   xmlNode* root_element = xmlDocGetRootElement(doc);
+
+   // verify the marfs_config root element
+   if ( root_element->type != XML_ELEMENT_NODE  ||  strcmp( (char*)(root_element->name), "marfs_config" ) ) {
+      LOG( LOG_ERR, "Root element of config file is not 'marfs_config'\n" );
+      xmlFreeDoc(doc);
+      xmlCleanupParser();
+      return NULL;
+   }
+
+   // locate version info
+   xmlAttr* rootattr = root_element->properties;
+   if ( rootattr == NULL  ||  rootattr->type != XML_ATTRIBUTE_NODE  ||  strcmp((char*)(rootattr->name), "version" ) ) {
+      LOG( LOG_ERR, "Failed to locate expected marfs_config 'version' attribute\n" );
+      xmlFreeDoc(doc);
+      xmlCleanupParser();
+      return NULL;
+   }
+   xmlNode* vertxt = rootattr->children;
+   if ( vertxt == NULL  ||  vertxt->type != XML_TEXT_NODE  ||  vertxt->content == NULL ) {
+      LOG( LOG_ERR, "Unrecognized 'version' attribute content\n" );
+      xmlFreeDoc(doc);
+      xmlCleanupParser();
+      return NULL;
+   }
+
+   // locate the mnt_top node
+   xmlNode* mnttxt = root_element->children;
+   for ( ; mnttxt != NULL; mnttxt = mnttxt->next ) {
+      if ( strcmp( (char*)(mnttxt->name), "mnt_top" ) == 0 ) {
+         // we've found the mnt_top node, and need its content
+         mnttxt = mnttxt->children;
+         break;
+      }
+   }
+   if ( mnttxt == NULL  ||  mnttxt->type != XML_TEXT_NODE  ||  mnttxt->content == NULL ) {
+      LOG( LOG_ERR, "Failed to locate the 'mnt_top' value\n" );
+      xmlFreeDoc(doc);
+      xmlCleanupParser();
+      return NULL;
+   }
+
+   // count up the number of repo nodes
+   int repocnt = count_nodes( root_element->children, "repo" );
+   if ( repocnt < 1 ) {
+      LOG( LOG_ERR, "Failed to locate any repo definitions in config file\n" );
+      xmlFreeDoc(doc);
+      xmlCleanupParser();
+      return NULL;
+   }
+
+   // allocate the top-level config struct
+   marfs_config* config = malloc( sizeof( struct marfs_config_struct ) );
+   if ( config == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate a new marfs_config struct\n" );
+      xmlFreeDoc(doc);
+      xmlCleanupParser();
+      return NULL;
+   }
+
+   // populate config string values and allocate repolist
+   config->version = strdup( (char*)(vertxt->content) );
+   config->mountpoint = strdup( (char*)(mnttxt->content) );
+   config->ctag = strdup( "UNKNOWN" ); // default to unknown client
+   config->repolist = malloc( sizeof( struct marfs_repo_struct ) * repocnt );
+   if ( config->version == NULL  ||  config->mountpoint == NULL  ||  config->ctag == NULL  ||  config->repolist == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate required config values\n" );
+      if ( config->version ) { free( config->version ); }
+      if ( config->mountpoint ) { free( config->mountpoint ); }
+      if ( config->ctag ) { free( config->ctag ); }
+      if ( config->repolist ) { free( config->repolist ); }
+      free( config );
+      xmlFreeDoc(doc);
+      xmlCleanupParser();
+      return NULL;
+   }
+
+   // allocate and populate all repos
+   xmlNode* reponode = root_element->children;
+   for ( config->repocount = 0; reponode; reponode = reponode->next ) {
+      // parse all repo nodes, skip all others
+      if ( strcmp( (char*)(reponode->name), "repo" ) == 0 ) {
+         if ( create_repo( config->repolist + config->repocount, reponode ) ) {
+            LOG( LOG_ERR, "Failed to parse repo %d\n", config->repocount );
+            config_term( config );
+            xmlFreeDoc(doc);
+            xmlCleanupParser();
+            return NULL;
+         }
+         config->repocount++;
+         if ( config->repocount == repocnt ) { break; }
+      }
+   }
+
+   /* Free the xml Doc */
+   xmlFreeDoc(doc);
+   /*
+   *Free the global variables that may
+   *have been allocated by the parser.
+   */
+   xmlCleanupParser();
+
+   // iterate over all namespaces and establish hierarchy
+   if ( establish_nsrefs( config ) ) {
+      LOG( LOG_ERR, "Failed to establish all NS references\n" );
+      config_term( config );
+      return NULL;
+   }
+
+   return config;
+}
+
+/**
+ * Destroy the given config structures
+ * @param marfs_config* config : Reference to the config to be destroyed
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_term( marfs_config* config ) {
+   // check for NULL config ref
+   if ( config == NULL ) {
+      LOG( LOG_ERR, "Received a NULL config reference\n" );
+      return -1;
+   }
+   // free all repos
+   int retval = 0;
+   for ( ; config->repocount > 0; config->repocount-- ) {
+      if ( free_repo( config->repolist + (config->repocount - 1) ) ) {
+         LOG( LOG_ERR, "Failed to free repo %d\n", config->repocount - 1 );
+         retval = -1;
+      }
+   }
+   // free all string values
+   free( config->ctag );
+   free( config->mountpoint );
+   free( config->version );
+   // free the config itself
+   free( config );
+   return retval;
+}
+
+/**
+ * Traverse the given path, idetifying any NS transitions and the resulting subpath
+ * NOTE -- This function will only traverse the given path until it exits the config
+ *         namespace structure.  At that point, the path will be truncated, and the
+ *         resulting NS target set.
+ *         This is required, as path elements within a NS may be symlinks or have
+ *         restrictive perms.  Such non-NS paths must actually be traversed.
+ *         Example, original values:
+ *            tgtns == rootns
+ *            subpath == "subspace/somedir/../../../target"
+ *         Result:
+ *            tgtns == subspace                      (NOT rootns)
+ *            subpath == "somedir/../../../target"   (NOT "target")
+ * @param marfs_config* config : Config to traverse
+ * @param marfs_ns** tgtns : Reference populated with the initial NS value
+ *                           This will be updated to reflect the resulting NS value
+ * @param char** subpath : Relative path from the tgtns
+ *                         This will be updated to reflect the resulting subpath from
+ *                         the new tgtns
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath ) {
+   // check for NULL config ref
+   if ( config == NULL ) {
+      LOG( LOG_ERR, "Received a NULL config reference\n" );
+      return -1;
+   }
+   // traverse the subpath, identifying any NS elements
+   char* parsepath = subpath;
+   char* pathelem = subpath;
+   while ( *parsepath != '\0' ) {
+      // move the parse pointer ahead to the next '/' char
+      while ( *parsepath != '\0'  &&  *parsepath != '/' ) { parsepath++; }
+      // replace any '/' char with a NULL
+      char replacechar = 0;
+      if ( *parsepath == '/' ) { replacechar = 1; *parsepath = '\0'; }
+      // identify the current path element
+      if ( strcmp( pathelem, ".." ) == 0 ) {
+         // parent ref, move the tgtns up one level
+         if ( (*tgtns)->pnamespace == NULL ) {
+            // we can't move up any further
+            if ( replacechar ) { *parsepath = '/'; }
+            break;
+         }
+         *tgtns = (*tgtns)->pnamespace;
+      }
+      else if ( strcmp( pathelem, "." ) ) {
+         // ignore "." references
+         // lookup all others in the current subspace table
+         HASH_NODE* resnode = NULL;
+         if ( hash_lookup( (*tgtns)->subspaces, pathelem, &(resnode) ) ) {
+            // this is not a NS path
+            if ( replacechar ) { *parsepath = '/'; }
+            break;
+         }
+         // this is a NS path, move the tgtns to the subspace
+         *tgtns = (marfs_ns*)(resnode->content);
+      }
+      // undo any previous path edit
+      if ( replacechar ) { *parsepath = '/'; }
+      // move our parse pointer ahead to the next path component
+      while ( *parsepath == '/' ) { parsepath++; }
+      // update our element pointer to the next path element
+      pathelem = parsepath;
+   }
+   // shift the resulting path back to the start of the string
+   if ( subpath != pathelem ) {
+      int newlen = snprintf( subpath, "%s", pathelem );
+      if ( newlen < 0 ) {
+         LOG( LOG_ERR, "Failed to update subpath\n" );
+         return -1;
+      }
+      // zero out the end of the subpath, just in case
+      bzero( subpath+newlen+1, pathelem-(subpath+1) );
+   }
+   return 0;
+}
 
 

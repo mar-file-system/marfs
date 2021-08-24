@@ -135,11 +135,42 @@ typedef struct marfs_config_struct {
    marfs_repo* repolist;
 } marfs_config;
 
-
+/**
+ * Initialize memory structures based on the given config file
+ * @param const char* cpath : Path of the config file to be parsed
+ * @return marfs_config* : Reference to the newly populated config structures
+ */
 marfs_config* config_init( const char* cpath );
+
+/**
+ * Destroy the given config structures
+ * @param marfs_config* config : Reference to the config to be destroyed
+ * @return int : Zero on success, or -1 on failure
+ */
 int config_term( marfs_config* config );
-int config_shiftns( marfs_config* config, marfs_ns** curns, char** newns, char** subpath );
-int config_abspath( marfs_config* config, marfs_ns* curns, char** subpath );
+
+/**
+ * Traverse the given path, idetifying any NS transitions and the resulting subpath
+ * NOTE -- This function will only traverse the given path until it exits the config 
+ *         namespace structure.  At that point, the path will be truncated, and the 
+ *         resulting NS target set.
+ *         This is required, as path elements within a NS may be symlinks or have 
+ *         restrictive perms.  Such non-NS paths must actually be traversed.
+ *         Example, original values:
+ *            tgtns == rootns
+ *            subpath == "subspace/somedir/../../../target"
+ *         Result:
+ *            tgtns == subspace                      (NOT rootns)
+ *            subpath == "somedir/../../../target"   (NOT "target")
+ * @param marfs_config* config : Config to traverse
+ * @param marfs_ns** tgtns : Reference populated with the initial NS value
+ *                           This will be updated to reflect the resulting NS value
+ * @param char** subpath : Relative path from the tgtns
+ *                         This will be updated to reflect the resulting subpath from 
+ *                         the new tgtns
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath );
 
 #endif // _CONFIG_H
 
