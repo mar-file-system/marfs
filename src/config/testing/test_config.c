@@ -195,11 +195,198 @@ int main(int argc, char **argv)
       printf( "failed to identify the root element of quota xml doc\n" );
       return -1;
    }
+   // locate the first namespace of the first repo
+   xmlNode* nsroot = root_element->children;
+   while ( strcmp( (char*)(nsroot->name), "repo" ) ) { nsroot = nsroot->next; }
+   if ( nsroot == NULL ) { printf( "failed to find 'exampleREPO' in config.xml\n" ); return -1; }
+   nsroot = nsroot->children;
+   while ( strcmp( (char*)(nsroot->name), "meta" ) ) { nsroot = nsroot->next; }
+   nsroot = nsroot->children;
+   while ( strcmp( (char*)(nsroot->name), "namespaces" ) ) { nsroot = nsroot->next; }
+   nsroot = nsroot->children;
+   while ( strcmp( (char*)(nsroot->name), "ns" ) ) { nsroot = nsroot->next; }
+
+   // parse the NS node
+   marfs_repo parentrepo;
+   parentrepo.name = "parentrepo"; // need a parent repo reference for every NS
+   HASH_NODE nsnode;
+   if ( create_namespace( &(nsnode), NULL, &(parentrepo), nsroot ) ) {
+      printf( "failed to parse NS xml node\n" );
+      return -1;
+   }
+
+   // verify NS content
+   if ( strcmp( nsnode.name, "gransom-allocation" ) ) {
+      printf( "unexpected NS name value: \"%s\"\n", nsnode.name );
+      return -1;
+   } 
+   marfs_ns* ns = (marfs_ns*)(nsnode.content);
+   if ( ns->fquota != 10240U  ||  ns->dquota != 11258999068426240ULL ) {
+      printf( "unexpected NS quota values: (fquota=%zu,dquota=%zu)\n", ns->fquota, ns->dquota );
+      return -1;
+   }
+   if ( ns->iperms != NS_RWMETA  ||  ns->bperms != NS_FULLACCESS ) {
+      printf( "unexpected NS perm values: (iperms=%d,bperms=%d)\n", ns->iperms, ns->bperms );
+      return -1;
+   }
+   if ( ns->pnamespace  ||  ns->prepo != &(parentrepo) ) {
+      printf( "unexpected parent values of NS \"%s\"\n", nsnode.name );
+      return -1;
+   }
+   HASH_NODE* subnode = NULL;
+   if ( hash_lookup( ns->subspaces, "read-only-data", &(subnode) ) != 0 ) {
+      printf( "failed to locate 'read-only-data' subspace\n" );
+      return -1;
+   }
+   if ( strcmp( subnode->name, "read-only-data" ) ) {
+      printf( "lookup of 'read-only-data' produced unexpected NS: \"%s\"\n", subnode->name );
+      return -1;
+   }
+   marfs_ns* subspace = (marfs_ns*)(subnode->content);
+   if ( subspace->fquota  ||  subspace->dquota ) {
+      printf( "detected non-zero quota values for \"%s\"\n", subnode->name );
+      return -1;
+   }
+   if ( subspace->iperms != (NS_READMETA | NS_READDATA)  ||  subspace->bperms != (NS_READMETA | NS_READDATA) ) {
+      printf( "unexpected \"%s\" subspace perm values: (iperms=%d,bperms=%d)\n", subnode->name, subspace->iperms, subspace->bperms );
+      return -1;
+   }
+   if ( subspace->subspaces ) {
+      printf( "\"%s\" subspace has non-NULL subspaces table\n", subnode->name );
+      return -1;
+   }
+   if ( subspace->pnamespace != nsnode.content ) {
+      printf( "\"%s\" subspace has unexpected parent namespace value\n", subnode->name );
+      return -1;
+   }
+   if ( subspace->prepo != &(parentrepo) ) {
+      printf( "\"%s\" subspace has unexpected parent repo value\n", subnode->name );
+      return -1;
+   }
+
+   // free the created namespace
+   if ( free_namespace( &(nsnode) ) ) {
+      printf( "failed to free initial NS\n" );
+      return -1;
+   }
+
+   // locate the first distribution node
+   nsroot = root_element->children;
+   while ( nsroot  &&  strcmp( (char*)(nsroot->name), "repo" ) ) { nsroot = nsroot->next; }
+   if ( nsroot == NULL ) { printf( "config.xml has unexpected format (no repo)\n" ); return -1; }
+   nsroot = nsroot->children;
+   while ( nsroot  &&  strcmp( (char*)(nsroot->name), "data" ) ) { nsroot = nsroot->next; }
+   if ( nsroot == NULL ) { printf( "config.xml has unexpected format (no data)\n" ); return -1; }
+   nsroot = nsroot->children;
+   while ( nsroot  &&  strcmp( (char*)(nsroot->name), "distribution" ) ) { nsroot = nsroot->next; }
+   if ( nsroot == NULL ) { printf( "config.xml has unexpected format (no dist)\n" ); return -1; }
+
+   // parse the distribution into hash tables
+   int tgtcnt = 0;
+   HASH_TABLE distable = create_distribution_table( &(tgtcnt), nsroot->children );
+   if ( distable == NULL ) {
+      printf( "failed to create dist table for \"%s\" node\n", (char*)(nsroot->children->name) );
+      return -1;
+   }
+   HASH_NODE* nodelist = NULL;
+   size_t nodecount = 0;
+   if ( hash_term( distable, &(nodelist), &(nodecount) ) ) {
+      printf( "failed to term dist table for \"%s\" node\n", (char*)(nsroot->children->name) );
+      return -1;
+   }
+   if ( nodecount != 4 ) {
+      printf( "expected 4 distribution nodes for \"%s\", but found %zu\n", 
+               (char*)(nsroot->children->name), nodecount );
+      return -1;
+   }
+   if ( (nodelist)->weight != 1 ) {
+      printf( "expected a weight of 1 for node 0\n" );
+      return -1;
+   }
+   if ( (nodelist+3)->weight != 5 ) {
+      printf( "expected a weight of 5 for node 3\n" );
+      return -1;
+   }
+
+   // free nodenames
+   while ( nodecount ) {
+      nodecount--;
+      if ( nodecount != 3  &&  nodecount != 0 ) {
+         if ( (nodelist + nodecount)->weight != 2 ) {
+            printf( "expected a weight of 2 for node %zu\n", nodecount );
+         }
+      }
+      free( (nodelist + nodecount)->name );
+   }
+   // free the retrieved nodelist
+   free( nodelist );
+
+   // locate the first data node
+   nsroot = root_element->children;
+   while ( nsroot  &&  strcmp( (char*)(nsroot->name), "repo" ) ) { nsroot = nsroot->next; }
+   if ( nsroot == NULL ) { printf( "config.xml has unexpected format (no repo)\n" ); return -1; }
+   nsroot = nsroot->children;
+   while ( nsroot  &&  strcmp( (char*)(nsroot->name), "data" ) ) { nsroot = nsroot->next; }
+   if ( nsroot == NULL ) { printf( "config.xml has unexpected format (no data)\n" ); return -1; }
+
+   // create the dirs necessary for DAL initialization
+   if ( mkdir( "./test_config_topdir", S_IRWXU ) ) {
+      printf( "failed to create test_config_topdir\n" );
+      return -1;
+   }
+   if ( mkdir( "./test_config_topdir/dal_root", S_IRWXU ) ) {
+      printf( "failed to create test_config_topdir/dal_root\n" );
+      return -1;
+   }
+
+   // parse the data node
+   marfs_repo newrepo;
+   newrepo.name = strdup( "test-scheme-parsing-repo" );
+   if ( newrepo.name == NULL ) { printf( "failed strdup\n" ); return -1; }
+   if ( parse_datascheme( &(newrepo.datascheme), nsroot->children ) ) {
+      printf( "failed to parse first data node\n" );
+      return -1;
+   }
+   // verify ds elements
+   marfs_ds* ds = &(newrepo.datascheme);
+   if ( ds->protection.N != 10  || ds->protection.E != 2  ||  ds->protection.partsz != 1024 ) {
+      printf( "unexpected protection values for datascheme: (N=%d,E=%d,psz=%zu)\n", ds->protection.N, ds->protection.E, ds->protection.partsz );
+      return -1;
+   }
+   if ( ds->nectxt == NULL ) {
+      printf( "datascheme has NULL nectxt\n" );
+      return -1;
+   }
+   if ( ds->objfiles != 4096 ) {
+      printf( "unexpected objfiles value for datascheme: %zu\n", ds->objfiles );
+      return -1;
+   }
+   if ( ds->objsize != 1073741824ULL ) {
+      printf( "unexpected objsize value for datascheme: %zu\n", ds->objsize );
+      return -1;
+   }
+   if ( ds->podtable == NULL  ||  ds->captable == NULL  ||  ds->scattertable == NULL ) {
+      printf( "not all pod/cap/scatter tables were initialized for datascheme\n" );
+      return -1;
+   }
+
+   // locate the first meta node
+   nsroot = root_element->children;
+   while ( nsroot  &&  strcmp( (char*)(nsroot->name), "repo" ) ) { nsroot = nsroot->next; }
+   if ( nsroot == NULL ) { printf( "config.xml has unexpected format (no repo)\n" ); return -1; }
+   nsroot = nsroot->children;
+   while ( nsroot  &&  strcmp( (char*)(nsroot->name), "meta" ) ) { nsroot = nsroot->next; }
+   if ( nsroot == NULL ) { printf( "config.xml has unexpected format (no data)\n" ); return -1; }
+
+
+   // delete dal/mdal dir structure
+   rmdir( "./test_config_topdir/dal_root" );
+   rmdir( "./test_config_topdir/mdal_root" );
+   rmdir( "./test_config_topdir" );
 
    // free the xml doc and cleanup parser vars
    xmlFreeDoc(doc);
    xmlCleanupParser();
-
 
    return 0;
 }

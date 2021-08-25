@@ -91,15 +91,15 @@
 
          <!-- Object Distribution -->
          <distribution>
-            <pods dweight="2">4:0=1,3=5</pods>
-            <caps>5:2=0</caps>
-            <scatters>4096</scatters>
+            <pods cnt="4" dweight="2">0=1,3=5</pods>
+            <caps cnt="5">2=0,</caps>
+            <scatters cnt="4096"/>
          </distribution>
 
          <!-- DAL Definition ( ignored by this code ) -->
          <DAL type="posix">
-            <dir_template>stripefile.{b}</dir_template>
-            <sec_root>./test_config/dal_root</sec_root>
+            <dir_template>pod{p}.cap{c}.scat{s}.stripefile.{b}</dir_template>
+            <sec_root>./test_config_topdir/dal_root</sec_root>
          </DAL>
 
       </data>
@@ -138,7 +138,7 @@
                </ns>
 
                <!-- Remote Subspace Definition -->
-               <rns name="heavily-protected-data" repo="3+2repo"/>
+               <rns name="heavily-protected-data" repo="3+2repo">test</rns>
 
             </ns>
 
@@ -150,7 +150,7 @@
 
          <!-- MDAL Definition -->
          <MDAL type="posix">
-            <ns_root>./test_config/mdal_root</ns_root>
+            <ns_root>./test_config_topdir/mdal_root</ns_root>
          </MDAL>
 
       </meta>
@@ -171,7 +171,7 @@
          </protection>
 
          <!-- Packing -->
-         <packing enabled="yes">
+         <packing enabled="no">
             <max_files>1024</max_files>
          </packing>
 
@@ -182,15 +182,15 @@
 
          <!-- Object Distribution -->
          <distribution>
-            <pods dweight="2">1</pods>
-            <caps dweight="5">5:2=0,0=1</caps>
-            <scatters>4096:4095=0</scatters>
+            <pods dweight="2" cnt="1"></pods>
+            <caps dweight="5" cnt="5">2=0,0=1,</caps>
+            <scatters cnt="4096">4095=0</scatters>
          </distribution>
 
          <!-- DAL Definition -->
          <DAL type="posix">
-            <dir_template>stripefile.{b}</dir_template>
-            <sec_root>./test_config/dal_root</sec_root>
+            <dir_template>pod{p}.cap{c}.scat{s}.stripefile.{b}</dir_template>
+            <sec_root>./test_config_topdir/dal_root</sec_root>
          </DAL>
 
       </data>
@@ -218,7 +218,7 @@
 
          <!-- MDAL Definition -->
          <MDAL type="posix">
-            <ns_root>./test_config/mdal_root</ns_root>
+            <ns_root>./test_config_topdir/mdal_root</ns_root>
          </MDAL>
 
       </meta>
