@@ -90,15 +90,15 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 //   -------------    POSIX STRUCTURES    -------------
 
-typedef struct posix_directory_handle_struct {
+typedef struct posixmdal_directory_handle_struct {
    DIR*     dirp; // Directory reference
 }* POSIX_DHANDLE;
 
-typedef struct posix_scanner_struct {
+typedef struct posixmdal_scanner_struct {
    DIR*     dirp; // Directory reference
 }* POSIX_SCANNER;
 
-typedef struct posix_file_handle_struct {
+typedef struct posixmdal_file_handle_struct {
    int        fd; // File handle
 }* POSIX_FHANDLE;
 
@@ -259,7 +259,7 @@ int xattrfilter( const char* name, char hidden ) {
  * @param MDAL_CTXT ctxt : MDAL_CTXT to be freed
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_destroyctxt ( MDAL_CTXT ctxt ) {
+int posixmdal_destroyctxt ( MDAL_CTXT ctxt ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -285,7 +285,7 @@ int posix_destroyctxt ( MDAL_CTXT ctxt ) {
  * @param const MDAL_CTXT ctxt : MDAL_CTXT to duplicate
  * @return MDAL_CTXT : Reference to the duplicate MDAL_CTXT, or NULL if an error occurred
  */
-MDAL_CTXT posix_dupctxt ( const MDAL_CTXT ctxt ) {
+MDAL_CTXT posixmdal_dupctxt ( const MDAL_CTXT ctxt ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -320,7 +320,7 @@ MDAL_CTXT posix_dupctxt ( const MDAL_CTXT ctxt ) {
  * @param MDAL mdal : MDAL to be freed
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_cleanup( MDAL mdal ) {
+int posixmdal_cleanup( MDAL mdal ) {
    // check for NULL mdal
    if ( !(mdal) ) {
       LOG( LOG_ERR, "Received a NULL MDAL reference\n" );
@@ -328,7 +328,7 @@ int posix_cleanup( MDAL mdal ) {
       return -1;
    }
    // destroy the MDAL_CTXT struct
-   if ( posix_destroyctxt( mdal->ctxt ) ) {
+   if ( posixmdal_destroyctxt( mdal->ctxt ) ) {
       LOG( LOG_ERR, "Failed to destroy the MDAL_CTXT reference\n" );
       return -1;
    }
@@ -346,7 +346,7 @@ int posix_cleanup( MDAL mdal ) {
  * @param const char* ns : Name of the namespace to set
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_setnamespace( MDAL_CTXT ctxt, const char* ns ) {
+int posixmdal_setnamespace( MDAL_CTXT ctxt, const char* ns ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -433,7 +433,7 @@ int posix_setnamespace( MDAL_CTXT ctxt, const char* ns ) {
  * @param const MDAL_CTXT basectxt : The new MDAL_CTXT will be created relative to this one
  * @return MDAL_CTXT : Reference to the new MDAL_CTXT, or NULL if an error occurred
  */
-MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
+MDAL_CTXT posixmdal_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
    // check for NULL basectxt
    if ( !(basectxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -520,7 +520,7 @@ MDAL_CTXT posix_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
  * @param const char* ns : Name of the namespace to be created
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
+int posixmdal_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -630,7 +630,7 @@ int posix_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
  * @param const char* ns : Name of the namespace to be deleted
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
+int posixmdal_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -756,7 +756,7 @@ int posix_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
  * @param off_t bytes : Number of bytes used by the namespace
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_setdatausage( MDAL_CTXT ctxt, off_t bytes ) {
+int posixmdal_setdatausage( MDAL_CTXT ctxt, off_t bytes ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -820,7 +820,7 @@ int posix_setdatausage( MDAL_CTXT ctxt, off_t bytes ) {
  * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
  * @return off_t : Number of bytes used by the namespace
  */
-off_t posix_getdatausage( MDAL_CTXT ctxt ) {
+off_t posixmdal_getdatausage( MDAL_CTXT ctxt ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -866,7 +866,7 @@ off_t posix_getdatausage( MDAL_CTXT ctxt ) {
  * @param off_t files : Number of inodes used by the namespace
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_setinodeusage( MDAL_CTXT ctxt, off_t files ) {
+int posixmdal_setinodeusage( MDAL_CTXT ctxt, off_t files ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -930,7 +930,7 @@ int posix_setinodeusage( MDAL_CTXT ctxt, off_t files ) {
  * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target namespace
  * @return off_t : Number of inodes used by the current namespace
  */
-off_t posix_getinodeusage( MDAL_CTXT ctxt ) {
+off_t posixmdal_getinodeusage( MDAL_CTXT ctxt ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -978,7 +978,7 @@ off_t posix_getinodeusage( MDAL_CTXT ctxt ) {
  * @param const char* refdir : Path of the reference dir to be created
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_createrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
+int posixmdal_createrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1007,7 +1007,7 @@ int posix_createrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
  * @param const char* refdir : Path of the reference dir to be destroyed
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_destroyrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
+int posixmdal_destroyrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1036,7 +1036,7 @@ int posix_destroyrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
  * @param const char* newpath : Path at which to create the hardlink
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_linkref ( const MDAL_CTXT ctxt, const char* oldrpath, const char* newpath ) {
+int posixmdal_linkref ( const MDAL_CTXT ctxt, const char* oldrpath, const char* newpath ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1070,7 +1070,7 @@ int posix_linkref ( const MDAL_CTXT ctxt, const char* oldrpath, const char* newp
  * @param const char* rpath : String reference path of the target file
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_unlinkref ( const MDAL_CTXT ctxt, const char* rpath ) {
+int posixmdal_unlinkref ( const MDAL_CTXT ctxt, const char* rpath ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1099,7 +1099,7 @@ int posix_unlinkref ( const MDAL_CTXT ctxt, const char* rpath ) {
  * @param struct stat* buf : Stat buffer to be populated
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_statref ( const MDAL_CTXT ctxt, const char* rpath, struct stat* buf ) {
+int posixmdal_statref ( const MDAL_CTXT ctxt, const char* rpath, struct stat* buf ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1129,7 +1129,7 @@ int posix_statref ( const MDAL_CTXT ctxt, const char* rpath, struct stat* buf ) 
  * @param mode_t mode : Mode value for file creation (see the 'open()' syscall 'mode' value for full info)
  * @return MDAL_FHANDLE : An MDAL_READ handle for the target file, or NULL if a failure occurred
  */
-MDAL_FHANDLE posix_openref ( const MDAL_CTXT ctxt, const char* rpath, int flags, mode_t mode ) {
+MDAL_FHANDLE posixmdal_openref ( const MDAL_CTXT ctxt, const char* rpath, int flags, mode_t mode ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1150,7 +1150,7 @@ MDAL_FHANDLE posix_openref ( const MDAL_CTXT ctxt, const char* rpath, int flags,
       return NULL;
    }
    // allocate a new FHANDLE ref
-   POSIX_FHANDLE fhandle = malloc( sizeof(struct posix_file_handle_struct) );
+   POSIX_FHANDLE fhandle = malloc( sizeof(struct posixmdal_file_handle_struct) );
    if ( fhandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new FHANDLE struct\n" );
       close( fd );
@@ -1169,7 +1169,7 @@ MDAL_FHANDLE posix_openref ( const MDAL_CTXT ctxt, const char* rpath, int flags,
  * @param const char* rpath : Target reference dir location
  * @return MDAL_SCANNER : Newly opened reference scanner
  */
-MDAL_SCANNER posix_openscanner( MDAL_CTXT ctxt, const char* rpath ) {
+MDAL_SCANNER posixmdal_openscanner( MDAL_CTXT ctxt, const char* rpath ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1197,7 +1197,7 @@ MDAL_SCANNER posix_openscanner( MDAL_CTXT ctxt, const char* rpath ) {
       return NULL;
    }
    // allocate a scanner reference
-   POSIX_SCANNER scanner = malloc( sizeof(struct posix_scanner_struct) );
+   POSIX_SCANNER scanner = malloc( sizeof(struct posixmdal_scanner_struct) );
    if ( scanner == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new scanner\n" );
       close( dfd );
@@ -1218,7 +1218,7 @@ MDAL_SCANNER posix_openscanner( MDAL_CTXT ctxt, const char* rpath ) {
  * @param MDAL_SCANNER scanner : Reference scanner to be closed
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_closescanner ( MDAL_SCANNER scanner ) {
+int posixmdal_closescanner ( MDAL_SCANNER scanner ) {
    // check for a NULL scanner
    if ( !(scanner) ) {
       LOG( LOG_ERR, "Received a NULL scanner reference\n" );
@@ -1237,7 +1237,7 @@ int posix_closescanner ( MDAL_SCANNER scanner ) {
  * @return struct dirent* : Reference to the next dirent struct, or NULL w/ errno unset if all 
  *                          entries have been read, or NULL w/ errno set if a failure occurred
  */
-struct dirent* posix_scan( MDAL_SCANNER scanner ) {
+struct dirent* posixmdal_scan( MDAL_SCANNER scanner ) {
    // check for a NULL scanner
    if ( !(scanner) ) {
       LOG( LOG_ERR, "Received a NULL scanner reference\n" );
@@ -1255,7 +1255,7 @@ struct dirent* posix_scan( MDAL_SCANNER scanner ) {
  * @param const char* path : Relative path of the target file from the scanner
  * @return MDAL_FHANDLE : An MDAL_READ handle for the target file, or NULL if a failure occurred
  */
-MDAL_FHANDLE posix_sopen( MDAL_SCANNER scanner, const char* path ) {
+MDAL_FHANDLE posixmdal_sopen( MDAL_SCANNER scanner, const char* path ) {
    // check for a NULL scanner
    if ( !(scanner) ) {
       LOG( LOG_ERR, "Received a NULL scanner reference\n" );
@@ -1276,7 +1276,7 @@ MDAL_FHANDLE posix_sopen( MDAL_SCANNER scanner, const char* path ) {
       return NULL;
    }
    // allocate a new FHANDLE ref
-   POSIX_FHANDLE fhandle = malloc( sizeof(struct posix_file_handle_struct) );
+   POSIX_FHANDLE fhandle = malloc( sizeof(struct posixmdal_file_handle_struct) );
    if ( fhandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new FHANDLE struct\n" );
       close( fd );
@@ -1292,7 +1292,7 @@ MDAL_FHANDLE posix_sopen( MDAL_SCANNER scanner, const char* path ) {
  * @param const char* path : Relative path of the target file from the scanner
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_sunlink( MDAL_SCANNER scanner, const char* path ) {
+int posixmdal_sunlink( MDAL_SCANNER scanner, const char* path ) {
    // check for a NULL scanner
    if ( !(scanner) ) {
       LOG( LOG_ERR, "Received a NULL scanner reference\n" );
@@ -1321,7 +1321,7 @@ int posix_sunlink( MDAL_SCANNER scanner, const char* path ) {
  * @param struct stat* buf : Stat buffer to be populated
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posix_sstat ( MDAL_SCANNER scanner, const char* spath, struct stat* buf ) {
+int posixmdal_sstat ( MDAL_SCANNER scanner, const char* spath, struct stat* buf ) {
    // check for a NULL scanner
    if ( !(scanner) ) {
       LOG( LOG_ERR, "Received a NULL scanner reference\n" );
@@ -1352,7 +1352,7 @@ int posix_sstat ( MDAL_SCANNER scanner, const char* spath, struct stat* buf ) {
  * @param const char* path : Relative path of the target directory from the ctxt
  * @return MDAL_DHANDLE : Open directory handle, or NULL if a failure occurred
  */
-MDAL_DHANDLE posix_opendir( MDAL_CTXT ctxt, const char* path ) {
+MDAL_DHANDLE posixmdal_opendir( MDAL_CTXT ctxt, const char* path ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1380,7 +1380,7 @@ MDAL_DHANDLE posix_opendir( MDAL_CTXT ctxt, const char* path ) {
       return NULL;
    }
    // allocate a dir handle reference
-   POSIX_DHANDLE dhandle = malloc( sizeof(struct posix_directory_handle_struct) );
+   POSIX_DHANDLE dhandle = malloc( sizeof(struct posixmdal_directory_handle_struct) );
    if ( dhandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new directory handle\n" );
       close( dfd );
@@ -1405,7 +1405,7 @@ MDAL_DHANDLE posix_opendir( MDAL_CTXT ctxt, const char* path ) {
  * @param MDAL_DHANDLE dh : Directory handle to be used by the MDAL_CTXT
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_chdir( MDAL_CTXT ctxt, MDAL_DHANDLE dh ) {
+int posixmdal_chdir( MDAL_CTXT ctxt, MDAL_DHANDLE dh ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1450,7 +1450,7 @@ int posix_chdir( MDAL_CTXT ctxt, MDAL_DHANDLE dh ) {
  * @return struct dirent* : Reference to the next dirent struct, or NULL w/ errno unset if all 
  *                          entries have been read, or NULL w/ errno set if a failure occurred
  */
-struct dirent* posix_readdir( MDAL_DHANDLE dh ) {
+struct dirent* posixmdal_readdir( MDAL_DHANDLE dh ) {
    // check for a NULL dir handle
    if ( !(dh) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_DHANDLE reference\n" );
@@ -1467,7 +1467,7 @@ struct dirent* posix_readdir( MDAL_DHANDLE dh ) {
  * @param MDAL_DHANDLE dh : MDAL_DHANDLE to close
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_closedir( MDAL_DHANDLE dh ) {
+int posixmdal_closedir( MDAL_DHANDLE dh ) {
    // check for a NULL dir handle
    if ( !(dh) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_DHANDLE reference\n" );
@@ -1491,7 +1491,7 @@ int posix_closedir( MDAL_DHANDLE dh ) {
  *                    Note -- This function CANNOT create new files ( O_CREAT is forbidden )
  * @return MDAL_FHANDLE : The newly opened MDAL_FHANDLE, or NULL if a failure occurred
  */
-MDAL_FHANDLE posix_open( MDAL_CTXT ctxt, const char* path, int flags ) {
+MDAL_FHANDLE posixmdal_open( MDAL_CTXT ctxt, const char* path, int flags ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1524,7 +1524,7 @@ MDAL_FHANDLE posix_open( MDAL_CTXT ctxt, const char* path, int flags ) {
       return NULL;
    }
    // allocate a new FHANDLE ref
-   POSIX_FHANDLE fhandle = malloc( sizeof(struct posix_file_handle_struct) );
+   POSIX_FHANDLE fhandle = malloc( sizeof(struct posixmdal_file_handle_struct) );
    if ( fhandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for a new FHANDLE struct\n" );
       close( fd );
@@ -1539,7 +1539,7 @@ MDAL_FHANDLE posix_open( MDAL_CTXT ctxt, const char* path, int flags ) {
  * @param fh : File handle to be closed
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_close( MDAL_FHANDLE fh ) {
+int posixmdal_close( MDAL_FHANDLE fh ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1559,7 +1559,7 @@ int posix_close( MDAL_FHANDLE fh ) {
  * @param size_t count : Number of data bytes contained within the buffer
  * @return ssize_t : Number of bytes written, or -1 if a failure occurred
  */
-ssize_t posix_write( MDAL_FHANDLE fh, const void* buf, size_t count ) {
+ssize_t posixmdal_write( MDAL_FHANDLE fh, const void* buf, size_t count ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1577,7 +1577,7 @@ ssize_t posix_write( MDAL_FHANDLE fh, const void* buf, size_t count ) {
  * @param size_t count : Number of bytes to be read
  * @return ssize_t : Number of bytes read, or -1 if a failure occurred
  */
-ssize_t posix_read( MDAL_FHANDLE fh, void* buf, size_t count ) {
+ssize_t posixmdal_read( MDAL_FHANDLE fh, void* buf, size_t count ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1594,7 +1594,7 @@ ssize_t posix_read( MDAL_FHANDLE fh, void* buf, size_t count ) {
  * @param off_t length : File length to truncate to
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_ftruncate( MDAL_FHANDLE fh, off_t length ) {
+int posixmdal_ftruncate( MDAL_FHANDLE fh, off_t length ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1614,7 +1614,7 @@ int posix_ftruncate( MDAL_FHANDLE fh, off_t length ) {
  *                     SEEK_END - seek from the end of the file
  * @return off_t : Resulting offset within the file, or -1 if a failure occurred
  */
-off_t posix_lseek( MDAL_FHANDLE fh, off_t offset, int whence ) {
+off_t posixmdal_lseek( MDAL_FHANDLE fh, off_t offset, int whence ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1638,7 +1638,7 @@ off_t posix_lseek( MDAL_FHANDLE fh, off_t offset, int whence ) {
  *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const void* value, size_t size, int flags ) {
+int posixmdal_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const void* value, size_t size, int flags ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1683,7 +1683,7 @@ int posix_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const void*
  * @param size_t size : Size of the target buffer
  * @return ssize_t : Size of the returned xattr value, or -1 if a failure occurred
  */
-ssize_t posix_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, void* value, size_t size ) {
+ssize_t posixmdal_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, void* value, size_t size ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1726,7 +1726,7 @@ ssize_t posix_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, void* v
  * @param const char* name : String name of the xattr to remove
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
+int posixmdal_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1770,7 +1770,7 @@ int posix_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
  * @param size_t size : Size of the target buffer
  * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
  */
-ssize_t posix_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t size ) {
+ssize_t posixmdal_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t size ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1829,7 +1829,7 @@ ssize_t posix_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t size )
  * @param struct stat* buf : Reference to a stat buffer to be populated
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_fstat ( MDAL_FHANDLE fh, struct stat* buf ) {
+int posixmdal_fstat ( MDAL_FHANDLE fh, struct stat* buf ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1850,7 +1850,7 @@ int posix_fstat ( MDAL_FHANDLE fh, struct stat* buf ) {
  *                                         (see man utimensat for struct reference)
  * @return int : Zero value on success, or -1 if a failure occurred
  */
-int posix_futimens ( MDAL_FHANDLE fh, const struct timespec times[2] ) {
+int posixmdal_futimens ( MDAL_FHANDLE fh, const struct timespec times[2] ) {
    // check for a NULL file handle
    if ( !(fh) ) {
       LOG( LOG_ERR, "Received a NULL file handle reference\n" );
@@ -1879,7 +1879,7 @@ int posix_futimens ( MDAL_FHANDLE fh, const struct timespec times[2] ) {
  *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_access( MDAL_CTXT ctxt, const char* path, int mode, int flags ) {
+int posixmdal_access( MDAL_CTXT ctxt, const char* path, int mode, int flags ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1915,7 +1915,7 @@ int posix_access( MDAL_CTXT ctxt, const char* path, int mode, int flags ) {
  *                    S_IFSOCK - socket
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_mknod( MDAL_CTXT ctxt, const char* path, mode_t mode, dev_t dev ) {
+int posixmdal_mknod( MDAL_CTXT ctxt, const char* path, mode_t mode, dev_t dev ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1942,7 +1942,7 @@ int posix_mknod( MDAL_CTXT ctxt, const char* path, mode_t mode, dev_t dev ) {
  *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_chmod( MDAL_CTXT ctxt, const char* path, mode_t mode, int flags ) {
+int posixmdal_chmod( MDAL_CTXT ctxt, const char* path, mode_t mode, int flags ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1976,7 +1976,7 @@ int posix_chmod( MDAL_CTXT ctxt, const char* path, mode_t mode, int flags ) {
  *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_chown( MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group, int flags ) {
+int posixmdal_chown( MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group, int flags ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2009,7 +2009,7 @@ int posix_chown( MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group, int
  *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_stat( MDAL_CTXT ctxt, const char* path, struct stat* st, int flags ) {
+int posixmdal_stat( MDAL_CTXT ctxt, const char* path, struct stat* st, int flags ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2043,7 +2043,7 @@ int posix_stat( MDAL_CTXT ctxt, const char* path, struct stat* st, int flags ) {
  *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_link( MDAL_CTXT ctxt, const char* oldpath, const char* newpath, int flags ) {
+int posixmdal_link( MDAL_CTXT ctxt, const char* oldpath, const char* newpath, int flags ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2075,7 +2075,7 @@ int posix_link( MDAL_CTXT ctxt, const char* oldpath, const char* newpath, int fl
  * @param mode_t mode : Mode value of the new directory (see inode man page)
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_mkdir( MDAL_CTXT ctxt, const char* path, mode_t mode ) {
+int posixmdal_mkdir( MDAL_CTXT ctxt, const char* path, mode_t mode ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2100,7 +2100,7 @@ int posix_mkdir( MDAL_CTXT ctxt, const char* path, mode_t mode ) {
  * @param const char* path : String path of the target directory
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_rmdir( MDAL_CTXT ctxt, const char* path ) {
+int posixmdal_rmdir( MDAL_CTXT ctxt, const char* path ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2127,7 +2127,7 @@ int posix_rmdir( MDAL_CTXT ctxt, const char* path ) {
  * @param size_t size : Size of the target buffer
  * @return ssize_t : Size of the link target string, or -1 if a failure occurred
  */
-ssize_t posix_readlink( MDAL_CTXT ctxt, const char* path, char* buf, size_t size ) {
+ssize_t posixmdal_readlink( MDAL_CTXT ctxt, const char* path, char* buf, size_t size ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2153,7 +2153,7 @@ ssize_t posix_readlink( MDAL_CTXT ctxt, const char* path, char* buf, size_t size
  * @param const char* to : Destination string path
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_rename( MDAL_CTXT ctxt, const char* from, const char* to ) {
+int posixmdal_rename( MDAL_CTXT ctxt, const char* from, const char* to ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2177,7 +2177,7 @@ int posix_rename( MDAL_CTXT ctxt, const char* from, const char* to ) {
  * @param struct statvfs* buf : Reference to the statvfs structure to be populated
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_statvfs( MDAL_CTXT ctxt, struct statvfs* buf ) {
+int posixmdal_statvfs( MDAL_CTXT ctxt, struct statvfs* buf ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2203,7 +2203,7 @@ int posix_statvfs( MDAL_CTXT ctxt, struct statvfs* buf ) {
  * @param const char* linkname : String path of the new link
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_symlink( MDAL_CTXT ctxt, const char* target, const char* linkname ) {
+int posixmdal_symlink( MDAL_CTXT ctxt, const char* target, const char* linkname ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2228,7 +2228,7 @@ int posix_symlink( MDAL_CTXT ctxt, const char* target, const char* linkname ) {
  * @param const char* path : String path of the target file
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posix_unlink( MDAL_CTXT ctxt, const char* path ) {
+int posixmdal_unlink( MDAL_CTXT ctxt, const char* path ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -2297,63 +2297,63 @@ MDAL posix_mdal_init( xmlNode* root ) {
          MDAL pmdal = malloc( sizeof( struct MDAL_struct ) );
          if ( pmdal == NULL ) {
             LOG( LOG_ERR, "failed to allocate space for an MDAL_struct\n" );
-            posix_destroyctxt( pctxt );
+            posixmdal_destroyctxt( pctxt );
             return NULL; // malloc will set errno
          }
          pmdal->name = "posix";
          pmdal->ctxt = (MDAL_CTXT) pctxt;
-         pmdal->destroyctxt = posix_destroyctxt;
-         pmdal->dupctxt = posix_dupctxt;
-         pmdal->cleanup = posix_cleanup;
-         pmdal->setnamespace = posix_setnamespace;
-         pmdal->newctxt = posix_newctxt;
-         pmdal->createnamespace = posix_createnamespace;
-         pmdal->destroynamespace = posix_destroynamespace;
-         pmdal->setdatausage = posix_setdatausage;
-         pmdal->getdatausage = posix_getdatausage;
-         pmdal->setinodeusage = posix_setinodeusage;
-         pmdal->getinodeusage = posix_getinodeusage;
-         pmdal->createrefdir = posix_createrefdir;
-         pmdal->destroyrefdir = posix_destroyrefdir;
-         pmdal->linkref = posix_linkref;
-         pmdal->unlinkref = posix_unlinkref;
-         pmdal->statref = posix_statref;
-         pmdal->openref = posix_openref;
-         pmdal->openscanner = posix_openscanner;
-         pmdal->closescanner = posix_closescanner;
-         pmdal->scan = posix_scan;
-         pmdal->sopen = posix_sopen;
-         pmdal->sunlink = posix_sunlink;
-         pmdal->sstat = posix_sstat;
-         pmdal->opendir = posix_opendir;
-         pmdal->chdir = posix_chdir;
-         pmdal->readdir = posix_readdir;
-         pmdal->closedir = posix_closedir;
-         pmdal->open = posix_open;
-         pmdal->close = posix_close;
-         pmdal->write = posix_write;
-         pmdal->read = posix_read;
-         pmdal->ftruncate = posix_ftruncate;
-         pmdal->lseek = posix_lseek;
-         pmdal->fsetxattr = posix_fsetxattr;
-         pmdal->fgetxattr = posix_fgetxattr;
-         pmdal->fremovexattr = posix_fremovexattr;
-         pmdal->flistxattr = posix_flistxattr;
-         pmdal->fstat = posix_fstat;
-         pmdal->futimens = posix_futimens;
-         pmdal->access = posix_access;
-         pmdal->mknod = posix_mknod;
-         pmdal->chmod = posix_chmod;
-         pmdal->chown = posix_chown;
-         pmdal->stat = posix_stat;
-         pmdal->link = posix_link;
-         pmdal->mkdir = posix_mkdir;
-         pmdal->rmdir = posix_rmdir;
-         pmdal->readlink = posix_readlink;
-         pmdal->rename = posix_rename;
-         pmdal->statvfs = posix_statvfs;
-         pmdal->symlink = posix_symlink;
-         pmdal->unlink = posix_unlink;
+         pmdal->destroyctxt = posixmdal_destroyctxt;
+         pmdal->dupctxt = posixmdal_dupctxt;
+         pmdal->cleanup = posixmdal_cleanup;
+         pmdal->setnamespace = posixmdal_setnamespace;
+         pmdal->newctxt = posixmdal_newctxt;
+         pmdal->createnamespace = posixmdal_createnamespace;
+         pmdal->destroynamespace = posixmdal_destroynamespace;
+         pmdal->setdatausage = posixmdal_setdatausage;
+         pmdal->getdatausage = posixmdal_getdatausage;
+         pmdal->setinodeusage = posixmdal_setinodeusage;
+         pmdal->getinodeusage = posixmdal_getinodeusage;
+         pmdal->createrefdir = posixmdal_createrefdir;
+         pmdal->destroyrefdir = posixmdal_destroyrefdir;
+         pmdal->linkref = posixmdal_linkref;
+         pmdal->unlinkref = posixmdal_unlinkref;
+         pmdal->statref = posixmdal_statref;
+         pmdal->openref = posixmdal_openref;
+         pmdal->openscanner = posixmdal_openscanner;
+         pmdal->closescanner = posixmdal_closescanner;
+         pmdal->scan = posixmdal_scan;
+         pmdal->sopen = posixmdal_sopen;
+         pmdal->sunlink = posixmdal_sunlink;
+         pmdal->sstat = posixmdal_sstat;
+         pmdal->opendir = posixmdal_opendir;
+         pmdal->chdir = posixmdal_chdir;
+         pmdal->readdir = posixmdal_readdir;
+         pmdal->closedir = posixmdal_closedir;
+         pmdal->open = posixmdal_open;
+         pmdal->close = posixmdal_close;
+         pmdal->write = posixmdal_write;
+         pmdal->read = posixmdal_read;
+         pmdal->ftruncate = posixmdal_ftruncate;
+         pmdal->lseek = posixmdal_lseek;
+         pmdal->fsetxattr = posixmdal_fsetxattr;
+         pmdal->fgetxattr = posixmdal_fgetxattr;
+         pmdal->fremovexattr = posixmdal_fremovexattr;
+         pmdal->flistxattr = posixmdal_flistxattr;
+         pmdal->fstat = posixmdal_fstat;
+         pmdal->futimens = posixmdal_futimens;
+         pmdal->access = posixmdal_access;
+         pmdal->mknod = posixmdal_mknod;
+         pmdal->chmod = posixmdal_chmod;
+         pmdal->chown = posixmdal_chown;
+         pmdal->stat = posixmdal_stat;
+         pmdal->link = posixmdal_link;
+         pmdal->mkdir = posixmdal_mkdir;
+         pmdal->rmdir = posixmdal_rmdir;
+         pmdal->readlink = posixmdal_readlink;
+         pmdal->rename = posixmdal_rename;
+         pmdal->statvfs = posixmdal_statvfs;
+         pmdal->symlink = posixmdal_symlink;
+         pmdal->unlink = posixmdal_unlink;
          return pmdal;
       }
       else { LOG( LOG_ERR, "the \"ns_root\" node is expected to contain a path string\n" ); }
