@@ -63,7 +63,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 // directly including the C file allows more flexibility for these tests
 #include "config/config.c"
 
-
 int main(int argc, char **argv)
 {
    // NOTE -- I'm ignoring memory leaks for error conditions 
@@ -329,19 +328,39 @@ int main(int argc, char **argv)
    while ( nsroot  &&  strcmp( (char*)(nsroot->name), "data" ) ) { nsroot = nsroot->next; }
    if ( nsroot == NULL ) { printf( "config.xml has unexpected format (no data)\n" ); return -1; }
 
-   // create the dirs necessary for DAL initialization
-   if ( mkdir( "./test_config_topdir", S_IRWXU ) ) {
+   // create the dirs necessary for DAL initialization (ignore EEXIST)
+   errno = 0;
+   if ( mkdir( "./test_config_topdir", S_IRWXU )  &&  errno != EEXIST ) {
       printf( "failed to create test_config_topdir\n" );
       return -1;
    }
-   if ( mkdir( "./test_config_topdir/dal_root", S_IRWXU ) ) {
+   errno = 0;
+   if ( mkdir( "./test_config_topdir/dal_root", S_IRWXU )  &&  errno != EEXIST ) {
       printf( "failed to create test_config_topdir/dal_root\n" );
       return -1;
    }
 
-   // parse the data node
+   // populate some default repo values
    marfs_repo newrepo;
    newrepo.name = strdup( "test-scheme-parsing-repo" );
+   newrepo.datascheme.protection.N = 1;
+   newrepo.datascheme.protection.E = 0;
+   newrepo.datascheme.protection.O = 0;
+   newrepo.datascheme.protection.partsz = 10;
+   newrepo.datascheme.nectxt = NULL;
+   newrepo.datascheme.objfiles = 1;
+   newrepo.datascheme.objsize = 0;
+   newrepo.datascheme.podtable = NULL;
+   newrepo.datascheme.captable = NULL;
+   newrepo.datascheme.scattertable = NULL;
+   newrepo.metascheme.mdal = NULL;
+   newrepo.metascheme.directread = 0;
+   newrepo.metascheme.directwrite = 0;
+   newrepo.metascheme.reftable = NULL;
+   newrepo.metascheme.nscount = 0;
+   newrepo.metascheme.nslist = NULL;
+
+   // parse the data node
    if ( newrepo.name == NULL ) { printf( "failed strdup\n" ); return -1; }
    if ( parse_datascheme( &(newrepo.datascheme), nsroot->children ) ) {
       printf( "failed to parse first data node\n" );
@@ -378,15 +397,107 @@ int main(int argc, char **argv)
    while ( nsroot  &&  strcmp( (char*)(nsroot->name), "meta" ) ) { nsroot = nsroot->next; }
    if ( nsroot == NULL ) { printf( "config.xml has unexpected format (no data)\n" ); return -1; }
 
+   // create the dir necessary for mdal initialization
+   errno = 0;
+   if ( mkdir( "./test_config_topdir/mdal_root", S_IRWXU )  &&  errno != EEXIST ) {
+      printf( "failed to create \"./test_config_topdir/mdal_root\"\n" );
+      return -1;
+   }
+
+   // parse the meta node
+   if ( parse_metascheme( &(newrepo), nsroot->children ) ) {
+      printf( "failed to parse metascheme\n" );
+      return -1;
+   }
+   // verify the metascheme content
+   if ( newrepo.metascheme.mdal == NULL ) {
+      printf( "metascheme has a NULL mdal ref\n" );
+      return -1;
+   }
+   if ( newrepo.metascheme.directread != 1 ) {
+      printf( "directread not set for metascheme\n" );
+      return -1;
+   }
+   if ( newrepo.metascheme.directwrite != 1 ) {
+      printf( "directwrite not set for metascheme\n" );
+      return -1;
+   }
+   if ( newrepo.metascheme.reftable == NULL ) {
+      printf( "reftable is NULL for metascheme\n" );
+      return -1;
+   }
+   if ( newrepo.metascheme.nscount != 1 ) {
+      printf( "unexpected metascheme NS count: %d\n", newrepo.metascheme.nscount );
+      return -1;
+   }
+   if ( newrepo.metascheme.nslist == NULL ) {
+      printf( "NULL nslist ref for metascheme\n" );
+      return -1;
+   }
+
+   // verify that the reference table contains all expected entries
+   int refvals[3] = { 0 , 0 , 0 };
+   int totalrefs = 0;
+   while ( refvals[0] < 3 ) {
+      while ( refvals[1] < 3 ) {
+            while ( refvals[2] < 3 ) {
+               if ( snprintf( xmlbuffer, 1024, "%.3d/%.3d/%.3d/", refvals[0], refvals[1], refvals[2] ) != 12 ) {
+                  printf( "unexpected length of refstring: \"%s\"\n", xmlbuffer );
+                  return -1;
+               }
+               HASH_NODE* noderef = NULL;
+               if ( hash_lookup( newrepo.metascheme.reftable, xmlbuffer, &(noderef) ) ) {
+                  printf( "unexpected hash_lookup return for ref path: \"%s\"\n", xmlbuffer );
+                  return -1;
+               }
+               totalrefs++;
+               refvals[2]++;
+            }
+         refvals[1]++;
+      }
+      refvals[0]++;
+   }
+
+   // free the repo
+   if ( free_repo( &(newrepo) ) ) {
+      printf( "failed to free newrepo struct\n" );
+      return -1;
+   }
+
+   // free the xml doc and cleanup parser vars
+   xmlFreeDoc(doc);
+   xmlCleanupParser();
+
+   // finally, parse the entire config
+   marfs_config* config = config_init( "./testing/config.xml" );
+   if ( config == NULL ) {
+      printf( "failed to parse the full config file\n" );
+      return -1;
+   }
+   // verify config contents
+   if ( strcmp( config->version, "0.0001-beta-notarealversion" ) ) {
+      printf( "unexpected config version string: \"%s\"\n", config->version );
+      return -1;
+   }
+   if ( strcmp( config->mountpoint, "/campaign" ) ) {
+      printf( "unexpected config mountpoint string: \"%s\"\n", config->mountpoint );
+      return -1;
+   }
+   if ( strcmp( config->ctag, "UNKNOWN" ) ) {
+      printf( "unexpected config ctag string: \"%s\"\n", config->ctag );
+      return -1;
+   }
+
+   // free the config
+   if ( config_term( config ) ) {
+      printf( "failed to terminate the config\n" );
+      return -1;
+   }
 
    // delete dal/mdal dir structure
    rmdir( "./test_config_topdir/dal_root" );
    rmdir( "./test_config_topdir/mdal_root" );
    rmdir( "./test_config_topdir" );
-
-   // free the xml doc and cleanup parser vars
-   xmlFreeDoc(doc);
-   xmlCleanupParser();
 
    return 0;
 }

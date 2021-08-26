@@ -137,7 +137,16 @@ int hash_term( HASH_TABLE table, HASH_NODE** nodes, size_t* count );
  */
 int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node );
 
-
+/**
+ * From the most recently accessed HASH_NODE, iterate over all remaining HASH_NODE
+ * entries in the given table
+ * @param HASH_TABLE table : Table on which to iterate
+ * @param HASH_NODE** node : Reference to a HASH_NODE* to be populated with the
+ *                           corresponding HASH_NODE reference
+ * @return int : 1, if a new HASH_NODE reference was produced
+ *               0, if no HASH_NODE references remain
+ *               -1, if a failure occurred
+ */
 int hash_iterate( HASH_TABLE table, HASH_NODE** node );
 
 #endif // _HASH_H

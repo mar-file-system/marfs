@@ -108,7 +108,7 @@
       <meta>
 
          <!-- Namespace Definitions -->
-         <namespaces rbreadth="10" rdepth="3" rdigits="3">
+         <namespaces rbreadth="3" rdepth="3" rdigits="3">
 
             <ns name="gransom-allocation">
 
@@ -199,15 +199,35 @@
       <meta>
 
          <!-- Namespace Definitions -->
-         <namespaces rbreadth="2" rdepth="1" rdigits="0">
+         <namespaces rbreadth="2" rdepth="1">
 
+            <!-- Root NS Definition -->
+            <ns name="root">
+               <!-- Ridiculous quota setting : A single file, up to 100PiB in size -->
+               <quotas>
+                  <files>100P</files>
+                  <data>1</data>
+               </quotas>
+
+               <!-- No metadata manipulation, and no data access -->
+               <perms>
+                  <interactive>RM</interactive>
+                  <batch>RM</batch>
+               </perms>
+
+               <!-- Remote NS : 'gransom-allocation' -->
+               <rns name="gransom-allocation" repo="exampleREPO"/>
+
+            </ns>
+
+            <!-- Target of Remote NS ref from the previous repo -->
             <ns name="heavily-protected-data">
                <!-- No Quota Limits -->
 
                <!-- Permission Settings for this NS -->
                <perms>
-                  <!-- read only inter access -->
-                  <interactive>RM,RD</interactive>
+                  <!-- full interactive access -->
+                  <interactive>RM,WM,RD,WD</interactive>
                   <!-- no batch program access -->
                </perms>
             </ns>

@@ -178,6 +178,10 @@ AC_ARG_ENABLE( [debugHASH],
                AS_HELP_STRING( [--enable-debugHASH], [Enable 'hash'-subdir debug output] ),
                AC_DEFINE( [DEBUG_HASH], [], [Enable 'hash'-subdir debug output] ), [] )
 
+AC_ARG_ENABLE( [debugCONFIG],
+               AS_HELP_STRING( [--enable-debugCONFIG], [Enable 'config'-subdir debug output] ),
+               AC_DEFINE( [DEBUG_CONFIG], [], [Enable 'config'-subdir debug output] ), [] )
+
 # debugging-output should go to syslog, instead of stdout/stderr?
 AC_ARG_ENABLE([syslog],
                AS_HELP_STRING( [--enable-syslog], [Send debugging output to syslog, instead of stdout/stderr] ),

@@ -1075,17 +1075,19 @@ int free_repo( marfs_repo* repo ) {
    }
    size_t nodecount;
    HASH_NODE* nodelist;
-   if ( hash_term( repo->metascheme.reftable, &(nodelist), &(nodecount) ) ) {
-      LOG( LOG_WARNING, "failed to free the reference path hash table of \"%s\" repo\n", repo->name );
-      retval = -1;
-   }
-   else {
-      // free all hash nodes ( no content for reference path nodes )
-      size_t nodeindex = 0;
-      for( ; nodeindex < nodecount; nodeindex++ ) {
-         free( nodelist[nodeindex].name );
+   if ( repo->metascheme.reftable ) {
+      if ( hash_term( repo->metascheme.reftable, &(nodelist), &(nodecount) ) ) {
+         LOG( LOG_WARNING, "failed to free the reference path hash table of \"%s\" repo\n", repo->name );
+         retval = -1;
       }
-      free( nodelist );
+      else {
+         // free all hash nodes ( no content for reference path nodes )
+         size_t nodeindex = 0;
+         for( ; nodeindex < nodecount; nodeindex++ ) {
+            free( nodelist[nodeindex].name );
+         }
+         free( nodelist );
+      }
    }
    int nsindex;
    for ( nsindex = 0; nsindex < repo->metascheme.nscount; nsindex++ ) {
@@ -1309,14 +1311,14 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
                maxloc.pod--; // decrement node count to get actual max value
             }
             else if ( strncmp( (char*)subnode->name, "caps", 5 ) == 0 ) {
-               if ( (ds->podtable = create_distribution_table( &(maxloc.cap), subnode )) == NULL ) {
+               if ( (ds->captable = create_distribution_table( &(maxloc.cap), subnode )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'caps' distribution table\n" );
                   return -1;
                }
                maxloc.cap--; // decrement node count to get actual max value
             }
             else if ( strncmp( (char*)subnode->name, "scatters", 9 ) == 0 ) {
-               if ( (ds->podtable = create_distribution_table( &(maxloc.scatter), subnode )) == NULL ) {
+               if ( (ds->scattertable = create_distribution_table( &(maxloc.scatter), subnode )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'scatters' distribution table\n" );
                   return -1;
                }
@@ -1469,7 +1471,7 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
             char* outputstr = rpathtmp;
             int pathlenremaining = rpathlen;
             for ( curdepth = 0; curdepth < refdepth; curdepth++ ) {
-               int prlen = snprintf( outputstr, pathlenremaining, "%.*d/", refdigits, refvals[curdepth] );
+               int prlen = snprintf( outputstr, pathlenremaining, "%.*d/", breadthdigits, refvals[curdepth] );
                if ( prlen <= 0  ||  prlen >= pathlenremaining ) {
                   LOG( LOG_ERR, "failed to generate reference path string\n" );
                   free( rpathtmp );
@@ -1491,6 +1493,7 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
             }
             rnodelist[curnode].weight = 0;
             rnodelist[curnode].content = NULL;
+            LOG( LOG_INFO, "created ref node: \"%s\"\n", rnodelist[curnode].name );
          }
          // free data structures which we no longer need
          free( rpathtmp );
@@ -1528,22 +1531,33 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
          }
          // parse and allocate all subspaces
          for( subnode = metaroot->children; subnode; subnode = subnode->next ) {
-            // set default namespace values
-            HASH_NODE* subspace = ms->nslist + ms->nscount;
-            subspace->name = NULL;
-            subspace->weight = 0;
-            subspace->content = NULL;
-            if ( create_namespace( subspace, NULL, repo, subnode ) ) {
-               LOG( LOG_ERR, "failed to create subspace %d\n", ms->nscount );
-               return -1;
+            if ( subnode->type == XML_ELEMENT_NODE ) {
+               if ( strncmp( (char*)(subnode->name), "ns", 3 ) ) {
+                  if ( strncmp( (char*)(subnode->name), "rns", 4 ) == 0 ) {
+                     LOG( LOG_ERR, "Remote NS def found at the root of a 'namespaces' definition\n" );
+                  }
+                  else {
+                     LOG( LOG_ERR, "Encountered unrecognized element in a 'namespaces' definition: \"%s\"\n", (char*)(subnode->name) );
+                  }
+                  return -1;
+               }
+               // set default namespace values
+               HASH_NODE* subspace = ms->nslist + ms->nscount;
+               subspace->name = NULL;
+               subspace->weight = 0;
+               subspace->content = NULL;
+               if ( create_namespace( subspace, NULL, repo, subnode ) ) {
+                  LOG( LOG_ERR, "failed to create subspace %d\n", ms->nscount );
+                  return -1;
+               }
+               // ensure we don't have any name collisions
+               if ( find_namespace( ms->nslist, ms->nscount, subspace->name ) ) {
+                  LOG( LOG_ERR, "encountered subspace name collision: \"%s\"\n", subspace->name );
+                  free_namespace( subspace );
+                  return -1;
+               }
+               ms->nscount++;
             }
-            // ensure we don't have any name collisions
-            if ( find_namespace( ms->nslist, ms->nscount, subspace->name ) ) {
-               LOG( LOG_ERR, "encountered subspace name collision: \"%s\"\n", subspace->name );
-               free_namespace( subspace );
-               return -1;
-            }
-            ms->nscount++;
          }
       }
       else if ( strncmp( (char*)metaroot->name, "direct", 7 ) == 0 ) {
@@ -1579,7 +1593,7 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
          }
       }
       else {
-         LOG( LOG_ERR, "encountered unexpected 'metadata' sub-node: \"%s\"\n", (char*)metaroot->name );
+         LOG( LOG_ERR, "encountered unexpected meta sub-node: \"%s\"\n", (char*)metaroot->name );
          return -1;
       }
    }
@@ -1707,12 +1721,12 @@ int establish_nsrefs( marfs_config* config ) {
    }
    // traverse the entire NS hierarchy, replacing remote NS refs with actual NS pointers
    marfs_ns* curns = config->rootns;
-   size_t nscount = 1;
+   size_t nscount = 0;
    size_t rnscount = 0;
    while ( curns ) {
       HASH_NODE* subnode = NULL;
       int iterres = 0;
-      if ( curns->subspaces  &&  (iterres = hash_iterate( curns->subspaces, &(subnode) )) ) {
+      if ( curns->subspaces  &&  (iterres = hash_iterate( curns->subspaces, &(subnode) )) > 0 ) {
          marfs_ns* subspace = (marfs_ns*)(subnode->content);
          // check for a remote NS reference
          if ( subspace->prepo == NULL ) {
@@ -1732,8 +1746,11 @@ int establish_nsrefs( marfs_config* config ) {
             free( subspace->idstr );
             free( subspace );
             subnode->content = (void*)tgtns;
+            tgtns->pnamespace = curns;
             subspace = tgtns;
+            rnscount++; // we've replaced a remote NS ref
          }
+         if ( subspace == NULL ) { LOG( LOG_ERR, "NULL subspace ref\n" ); }
          // continue into the subspace
          curns = subspace;
          continue;
@@ -1745,6 +1762,7 @@ int establish_nsrefs( marfs_config* config ) {
       }
       // we've iterated over all subspaces of this NS and can progress back up to the parent
       curns = curns->pnamespace;
+      nscount++; // we've traversed this NS completely
    }
    // we've finally traversed the entire NS tree
    LOG( LOG_INFO, "Traversed %zu namespaces and replaced %zu remote NS definitions\n", nscount, rnscount );
@@ -1862,11 +1880,16 @@ marfs_config* config_init( const char* cpath ) {
       return NULL;
    }
 
+   // populate some initial config vals
+   config->rootns = NULL;
+
    // allocate and populate all repos
    xmlNode* reponode = root_element->children;
    for ( config->repocount = 0; reponode; reponode = reponode->next ) {
       // parse all repo nodes, skip all others
       if ( strcmp( (char*)(reponode->name), "repo" ) == 0 ) {
+         // NULL out the repo's name value, to indicate an initial parse
+         ( config->repolist + config->repocount )->name = NULL;
          if ( create_repo( config->repolist + config->repocount, reponode ) ) {
             LOG( LOG_ERR, "Failed to parse repo %d\n", config->repocount );
             config_term( config );
@@ -1916,6 +1939,7 @@ int config_term( marfs_config* config ) {
          retval = -1;
       }
    }
+   free( config->repolist );
    // free all string values
    free( config->ctag );
    free( config->mountpoint );
