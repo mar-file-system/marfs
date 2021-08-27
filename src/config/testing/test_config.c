@@ -487,6 +487,22 @@ int main(int argc, char **argv)
       printf( "unexpected config ctag string: \"%s\"\n", config->ctag );
       return -1;
    }
+   if ( config->rootns == NULL ) {
+      printf( "NULL value for root NS of config\n" );
+      return -1;
+   }
+   if ( config->repocount != 2 ) {
+      printf( "unexpected repocount for config: %d\n", config->repocount );
+      return -1;
+   }
+   if ( strcmp( config->repolist->name, "exampleREPO" ) ) {
+      printf( "unexpected name of first config repo: \"%s\"\n", config->repolist->name );
+      return -1;
+   }
+   if ( strcmp( (config->repolist + 1)->name, "3+2repo" ) ) {
+      printf( "unexpected name of first config repo: \"%s\"\n", (config->repolist + 1)->name );
+      return -1;
+   }
 
    // free the config
    if ( config_term( config ) ) {

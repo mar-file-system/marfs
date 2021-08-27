@@ -205,14 +205,14 @@ int count_nodes( xmlNode* root, const char* tag ) {
  * @param HASH_NODE* nslist : List of HASH_NODEs referencing namespaces
  * @param size_t nscount : Count of namespaces in the provided list
  * @param const char* nsname : String name of the namespace to search for
- * @return marfs_ns* : Reference to the matching namespace, or NULL if no match is found
+ * @return HASH_NODE* : Reference to the HASH_NODE match, or NULL if no match is found
  */
-marfs_ns* find_namespace( HASH_NODE* nslist, size_t nscount, const char* nsname ) {
+HASH_NODE* find_namespace( HASH_NODE* nslist, size_t nscount, const char* nsname ) {
    // iterate over the elements of the nslist, searching for a matching name
    size_t index;
    for( index = 0; index < nscount; index++ ) {
       if( strncmp( nslist[index].name, nsname, strlen(nsname) ) == 0 ) {
-         return (marfs_ns*)( ( nslist + index )->content );
+         return ( nslist + index );
       }
    }
    return NULL;
@@ -506,7 +506,7 @@ int free_namespace( HASH_NODE* nsnode ) {
    marfs_ns* ns = (marfs_ns*)nsnode->content;
    char* nsname = nsnode->name;
    int retval = 0;
-   if ( ns->subspaces ) {
+   if ( ns  &&  ns->subspaces ) {
       // need to properly free the subspace hash table
       HASH_NODE* subspacelist;
       size_t subspacecount;
@@ -515,15 +515,9 @@ int free_namespace( HASH_NODE* nsnode ) {
          retval = -1;
       }
       else {
-         // free all subspaces which are not owned by a different repo
+         // free all subspaces
          size_t subspaceindex = 0;
          for( ; subspaceindex < subspacecount; subspaceindex++ ) {
-            marfs_ns* subspace = (marfs_ns*)(subspacelist[subspaceindex].content);
-            // omit any completed remote namespace reference
-            if ( subspace->prepo != NULL  &&  subspace->prepo != ns->prepo ) {
-               free(subspacelist[subspaceindex].name); // free the hash node name
-               continue; // this namespace is referenced by another repo, so we must skip it
-            }
             // recursively free this subspace
             if ( free_namespace( subspacelist+subspaceindex ) ) {
                LOG( LOG_WARNING, "failed to free subspace of NS \"%s\"\n", nsname );
@@ -534,12 +528,19 @@ int free_namespace( HASH_NODE* nsnode ) {
          free( subspacelist );
       }
    }
-   // free the namespace id string
-   free( ns->idstr );
+   // free NS componenets
+   if ( ns ) {
+      LOG( LOG_INFO, "Freeing NS: \"%s\"\n", nsname );
+      // free the namespace id string
+      free( ns->idstr );
+      // free the namespace itself
+      free( ns );
+   }
+   else {
+      LOG( LOG_INFO, "Freeing NS stub: \"%s\"\n", nsname );
+   }
    // free the namespace name
    free( nsname );
-   // free the namespace itself
-   free( ns );
    return retval;
 }
 
@@ -608,6 +609,13 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
          free( nsname );
          return -1;
       }
+   }
+   // make sure this is not a remote NS reference to the root NS ( would create FS loop )
+   if ( rns  &&  strcmp( nsname, "root" ) == 0 ) {
+      LOG( LOG_ERR, "found remote NS reference to the root NS\n" );
+      errno = EINVAL;
+      free( nsname );
+      return -1;
    }
 
    // iterate over all attributes again, looking for errors and remote namespace values
@@ -1706,8 +1714,9 @@ int establish_nsrefs( marfs_config* config ) {
    for ( ; currepo < config->repocount; currepo++ ) {
       // check for the root ns in the current repo
       marfs_repo* repo = config->repolist + currepo;
-      marfs_ns* rootns = find_namespace( repo->metascheme.nslist, repo->metascheme.nscount, "root" );
-      if ( rootns != NULL ) {
+      HASH_NODE* rootnsnode = find_namespace( repo->metascheme.nslist, repo->metascheme.nscount, "root" );
+      if ( rootnsnode != NULL ) {
+         marfs_ns* rootns = (marfs_ns*)(rootnsnode->content);
          if ( config->rootns != NULL ) {
             LOG( LOG_ERR, "encountered two 'root' namespaces in the same config\n" );
             return -1;
@@ -1737,9 +1746,14 @@ int establish_nsrefs( marfs_config* config ) {
                return -1;
             }
             // now determine the target NS in the target repo
-            marfs_ns* tgtns = find_namespace( tgtrepo->metascheme.nslist, tgtrepo->metascheme.nscount, subnode->name );
-            if ( tgtns == NULL ) {
+            HASH_NODE* tgtnsnode = find_namespace( tgtrepo->metascheme.nslist, tgtrepo->metascheme.nscount, subnode->name );
+            if ( tgtnsnode == NULL ) {
                LOG( LOG_ERR, "Remote NS \"%s\" of repo \"%s\" does not have a valid NS def in target repo \"%s\"\n", subnode->name, curns->prepo->name, subspace->idstr );
+               return -1;
+            }
+            marfs_ns* tgtns = (marfs_ns*)(tgtnsnode->content);
+            if ( tgtns == NULL ) {
+               LOG( LOG_ERR, "Remote NS \"%s\" of repo \"%s\" references the same NS as another remote NS def\n" );
                return -1;
             }
             // we have to clear out the remote NS ref and replace it with the actual NS
@@ -1747,6 +1761,7 @@ int establish_nsrefs( marfs_config* config ) {
             free( subspace );
             subnode->content = (void*)tgtns;
             tgtns->pnamespace = curns;
+            tgtnsnode->content = NULL; // remove the previous NS ref
             subspace = tgtns;
             rnscount++; // we've replaced a remote NS ref
          }
