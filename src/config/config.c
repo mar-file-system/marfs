@@ -1986,14 +1986,28 @@ int config_term( marfs_config* config ) {
  * @return int : Zero on success, or -1 on failure
  */
 int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath ) {
-   // check for NULL config ref
+   // check for NULL refs
    if ( config == NULL ) {
       LOG( LOG_ERR, "Received a NULL config reference\n" );
+      return -1;
+   }
+   if ( subpath == NULL ) {
+      LOG( LOG_ERR, "Received a NULL subpath reference\n" );
       return -1;
    }
    // traverse the subpath, identifying any NS elements
    char* parsepath = subpath;
    char* pathelem = subpath;
+   if ( *subpath == '/' ) {
+      // check that absolute paths are only used from the rootNS
+      if ( *tgtns != config->rootns ) {
+         LOG( LOG_ERR, "Absolute paths can only be used from the config root NS\n" );
+         return -1;
+      }
+      // skip over any leading '/' chars
+      while ( *pathelem == '/' ) { pathelem++; }
+      parsepath = pathelem;
+   }
    while ( *parsepath != '\0' ) {
       // move the parse pointer ahead to the next '/' char
       while ( *parsepath != '\0'  &&  *parsepath != '/' ) { parsepath++; }
