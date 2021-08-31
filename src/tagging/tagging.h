@@ -58,10 +58,13 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#include <ne.h>
+
 
 #define FTAG_CURRENT_MAJORVERSION 0
 #define FTAG_CURRENT_MINORVERSION 1
-#define FTAG_MINORVERSION_PADDING 3
+
+#define FTAG_RESERVED_CHARS "()|"
 
 #define FTAG_NAME "MARFS-FTAG"
 
@@ -75,7 +78,7 @@ typedef enum
    FTAG_DATASTATE = FTAG_COMP, // mask value for retrieving data state indicator
 
    // State Flag values ( These may or may not be set )
-   FTAG_WRITABLE = 4,  // Writable flag -- file's data is writable by arbitrary procs
+   FTAG_WRITEABLE = 4,  // Writable flag -- file's data is writable by arbitrary procs
    FTAG_READABLE = 8,  // Readable flag -- file's data is readable by arbitrary procs
 } FTAG_STATE;
 
@@ -107,22 +110,50 @@ typedef struct ftag_struct {
 /**
  * Populate the given ftag struct based on the content of the given ftag string
  * @param FTAG* ftag : Reference to the ftag struct to be populated
- * @param const char* ftagstr : String value to be parsed for structure values
+ * @param char* ftagstr : String value to be parsed for structure values
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int ftag_initstr( const char* ftagstr, FTAG* ftag );
+int ftag_initstr( FTAG* ftag, char* ftagstr );
 
+/**
+ * Populate the given string buffer with the encoded values of the given ftag struct
+ * @param const FTAG* ftag : Reference to the ftag struct to encode values from
+ * @param char* tgtstr : String buffer to be populated with encoded info
+ * @param size_t len : Byte length of the target buffer
+ * @return size_t : Length of the encoded string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len );
 
-ssize_t ftag_tostr( const FTAG* ftag, char* str, size_t size );
+/**
+ * Populate the given string buffer with the meta file ID string produced from the given ftag
+ * @param const FTAG* ftag : Reference to the ftag struct to pull values from
+ * @param char* tgtstr : String buffer to be populated with the meta file ID
+ * @param size_t len : Byte length of the target buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t len );
 
+/**
+ * Populate the given string buffer with the object ID string produced from the given ftag
+ * @param const FTAG* ftag : Reference to the ftag struct to pull values from
+ * @param char* tgtstr : String buffer to be populated with the object ID
+ * @param size_t len : Byte length of the target buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
 
-ssize_t ftag_objectname( const FTAG* ftag, char* str, size_t size );
-
-
-ssize_t ftag_metaname( const FTAG* ftag, char* str, size_t size );
-
-
-// ftag_copy = just assignment
 
 #endif // _TAGGING_H
 
