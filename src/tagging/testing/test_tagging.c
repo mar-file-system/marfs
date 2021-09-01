@@ -68,6 +68,76 @@ int main(int argc, char **argv)
    // NOTE -- I'm ignoring memory leaks for error conditions 
    //         which result in immediate termination
 
+   // initialize an FTAG struct and output a string representation
+   FTAG ftag;
+   ftag.majorversion = FTAG_CURRENT_MAJORVERSION;
+   ftag.minorversion = FTAG_CURRENT_MINORVERSION;
+   ftag.ctag = "TEST_CLIENT";
+   ftag.streamid = "teststreamidvalue";
+   ftag.objfiles = 1024;
+   ftag.objsize = 1073741824; // 1GiB
+   ftag.fileno = 0;
+   ftag.objno = 0;
+   ftag.offset = 234;
+   ftag.endofstream = 0;
+   ftag.protection.N = 10;
+   ftag.protection.E = 2;
+   ftag.protection.O = 1;
+   ftag.protection.partsz = 1024;
+   ftag.bytes = 1073741812; // 1GiB - 12 bytes
+   ftag.availbytes = 1024; // 1KiB
+   ftag.recoverybytes = 234;
+   ftag.directbytes = 0;
+   ftag.state = FTAG_SIZED | FTAG_WRITEABLE;
+   size_t ftagstrlen = ftag_tostr( &(ftag), NULL, 0 );
+   if ( ftagstrlen < 1 ) {
+      printf( "failed to generate initial ftag string\n" );
+      return -1;
+   }
+   char* ftagstr = malloc( sizeof(char) * (ftagstrlen + 1) );
+   if ( ftagstr == NULL ) {
+      printf( "failed to allocate space for initial ftag string\n" );
+      return -1;
+   }
+   if ( ftag_tostr( &(ftag), ftagstr, ftagstrlen + 1 ) != ftagstrlen ) {
+      printf( "inconsistent length of initial ftag string\n" );
+      return -1;
+   }
+   // verify the ftag string
+   FTAG oftag; // initialize to entirely different vals, ensuring all are changed
+   oftag.majorversion = FTAG_CURRENT_MAJORVERSION + 12;
+   oftag.minorversion = FTAG_CURRENT_MINORVERSION + 2;
+   oftag.ctag = "TEST_OCLIENT";
+   oftag.streamid = "testostreamid";
+   oftag.objfiles = 10;
+   oftag.objsize = 10737;
+   oftag.fileno = 1234;
+   oftag.objno = 42;
+   oftag.offset = 432;
+   oftag.endofstream = 1;
+   oftag.protection.N = 2;
+   oftag.protection.E = 10;
+   oftag.protection.O = 34;
+   oftag.protection.partsz = 1;
+   oftag.bytes = 1;
+   oftag.availbytes = 1048576; // 1MiB
+   oftag.recoverybytes = 5432;
+   oftag.directbytes = 34;
+   oftag.state = FTAG_INIT;
+   if ( ftag_initstr( &(oftag), ftagstr ) ) {
+      printf( "failed to init ftag from str: \"%s\"\n", ftagstr );
+      return -1;
+   }
+   if ( ftag_cmp( &(ftag), &(oftag) ) ) {
+      printf( "orig values differ from string vals: \"%s\"\n", ftagstr );
+      return -1;
+   }
+
+   // need to free strings allocated by us and the string initializer
+   free( ftagstr );
+   free( oftag.streamid );
+   free( oftag.ctag );
+
    return 0;
 }
 

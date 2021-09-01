@@ -129,6 +129,16 @@ int ftag_initstr( FTAG* ftag, char* ftagstr );
 size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len );
 
 /**
+ * Compare the content of the given FTAG references
+ * @param const FTAG* ftag1 : First FTAG reference to compare
+ * @param const FTAG* ftag2 : Second FTAG reference to compare
+ * @return int : 0 if the two FTAGs match,
+ *               1 if the two FTAGs differ,
+ *               -1 if a failure occurred ( NULL ftag reference )
+ */
+int ftag_cmp( const FTAG* ftag1, const FTAG* ftag2 );
+
+/**
  * Populate the given string buffer with the meta file ID string produced from the given ftag
  * @param const FTAG* ftag : Reference to the ftag struct to pull values from
  * @param char* tgtstr : String buffer to be populated with the meta file ID

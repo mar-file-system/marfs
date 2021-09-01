@@ -101,7 +101,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       return -1;
    }
    // parse in and verify version info
-   if ( strcmp( ftagstr, FTAG_VERSION_HEADER"(" ) ) {
+   if ( strncmp( ftagstr, FTAG_VERSION_HEADER"(", strlen(FTAG_VERSION_HEADER"(") ) ) {
       LOG( LOG_ERR, "FTAG string does not begin with \"%s\" header\n", FTAG_VERSION_HEADER"(" );
       return -1;
    }
@@ -117,6 +117,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       return -1;
    }
    ftag->majorversion = parseval;
+   parse = endptr + 1; // skip over '.' separator
    parseval = strtoull( parse, &(endptr), 10 );
    if ( *endptr != ')' ) {
       LOG( LOG_ERR, "Minor version string has unexpected format\n" );
@@ -127,14 +128,14 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       return -1;
    }
    ftag->minorversion = parseval;
-   parse = endptr + 1;
+   parse = endptr + 1; // skip over ')' separator
    if ( ftag->majorversion != FTAG_CURRENT_MAJORVERSION  ||
         ftag->minorversion != FTAG_CURRENT_MINORVERSION ) {
       LOG( LOG_ERR, "Unrecognized version number: %u.%.3u\n", ftag->majorversion, ftag->minorversion );
       return -1;
    }
    // parse stream identification info
-   if ( strcmp( parse, FTAG_STREAMINFO_HEADER"(" ) ) {
+   if ( strncmp( parse, FTAG_STREAMINFO_HEADER"(", strlen(FTAG_STREAMINFO_HEADER"(") ) ) {
       LOG( LOG_ERR, "Unrecognized stream info header\n" );
       return -1;
    }
@@ -164,6 +165,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       LOG( LOG_ERR, "Unrecognized CTAG format\n" );
       return -1;
    }
+   *output = '\0'; // ensure we NULL-terminate the output string
    parse++; // skip over '|' char
    ftag->streamid = NULL;
    output = NULL;
@@ -186,6 +188,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       outputlen++;
       parse++;
    }
+   *output = '\0'; // ensure we NULL-terminate the output string
    if ( ftag->streamid == NULL ) {
       LOG( LOG_ERR, "Unrecognized streamid format\n" );
       return -1;
@@ -194,8 +197,8 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
    char foundvals = 0;
    while ( *parse != '\0' ) {
       size_t* tgtval = NULL;
-      if ( *parse == 'f' ) { tgtval = &(ftag->objfiles); }
-      else if ( *parse == 'd' ) { tgtval = &(ftag->objsize); }
+      if ( *parse == 'F' ) { tgtval = &(ftag->objfiles); }
+      else if ( *parse == 'D' ) { tgtval = &(ftag->objsize); }
       else { LOG( LOG_ERR, "Unrecognized value tag: \"%c\"\n", *parse ); return -1; }
       parseval = strtoull( parse + 1, &(endptr), 10 );
       if ( parseval > SIZE_MAX ) {
@@ -216,7 +219,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       return -1;
    }
    // parse file position info
-   if ( strcmp( parse, FTAG_FILEPOSITION_HEADER"(" ) ) {
+   if ( strncmp( parse, FTAG_FILEPOSITION_HEADER"(", strlen(FTAG_FILEPOSITION_HEADER"(") ) ) {
       LOG( LOG_ERR, "Failed to locate file position header\n" );
       return -1;
    }
@@ -234,16 +237,16 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
          return -1;
       }
       switch ( *parse ) {
-         case 'F':
+         case 'f':
             ftag->fileno = parseval;
             break;
-         case 'O':
+         case 'o':
             ftag->objno = parseval;
             break;
          case '@':
             ftag->offset = parseval;
             break;
-         case 'E':
+         case 'e':
             if ( parseval == 1 ) {
                ftag->endofstream = 1;
             }
@@ -268,7 +271,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       return -1;
    }
    // parse data content info
-   if ( strcmp( parse, FTAG_DATACONTENT_HEADER"(" ) ) {
+   if ( strncmp( parse, FTAG_DATACONTENT_HEADER"(", strlen(FTAG_DATACONTENT_HEADER"(") ) ) {
       LOG( LOG_ERR, "Failed to locate data content header\n" );
       return -1;
    }
@@ -276,35 +279,35 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
    foundvals = 0;
    while ( *parse != '\0' ) {
       // check for string values
-      if ( strncmp( parse, "INIT", 4 ) ) {
+      if ( strncmp( parse, "INIT", 4 ) == 0 ) {
          ftag->state = FTAG_INIT | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 4;
       }
-      else if ( strncmp( parse, "SIZED", 5 ) ) {
+      else if ( strncmp( parse, "SIZED", 5 ) == 0 ) {
          ftag->state = FTAG_SIZED | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 5;
       }
-      else if ( strncmp( parse, "FIN", 3 ) ) {
+      else if ( strncmp( parse, "FIN", 3 ) == 0 ) {
          ftag->state = FTAG_FIN | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 3;
       }
-      else if ( strncmp( parse, "COMP", 4 ) ) {
+      else if ( strncmp( parse, "COMP", 4 ) == 0 ) {
          ftag->state = FTAG_COMP | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 4;
       }
-      else if ( strncmp( parse, "RO", 2 ) ) {
+      else if ( strncmp( parse, "RO", 2 ) == 0 ) {
          ftag->state = FTAG_READABLE | ( ftag->state & FTAG_DATASTATE );
          endptr = parse + 2;
       }
-      else if ( strncmp( parse, "WO", 2 ) ) {
+      else if ( strncmp( parse, "WO", 2 ) == 0 ) {
          ftag->state = FTAG_WRITEABLE | ( ftag->state & FTAG_DATASTATE );
          endptr = parse + 2;
       }
-      else if ( strncmp( parse, "RW", 2 ) ) {
+      else if ( strncmp( parse, "RW", 2 ) == 0 ) {
          ftag->state = (FTAG_WRITEABLE & FTAG_READABLE) | ( ftag->state & FTAG_DATASTATE );
          endptr = parse + 2;
       }
-      else if ( strncmp( parse, "NO", 2 ) ) {
+      else if ( strncmp( parse, "NO", 2 ) == 0 ) {
          ftag->state = ( ftag->state & FTAG_DATASTATE );
          endptr = parse + 2;
       }
@@ -315,29 +318,30 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
             LOG( LOG_ERR, "File position value \'%c\' exceeds size limits\n", *parse );
             return -1;
          }
+         LOG( LOG_INFO, "Parsed \'%c\' value of %llu\n", *parse, parseval );
          switch ( *parse ) {
-            case 'N':
+            case 'n':
                ftag->protection.N = parseval;
                break;
-            case 'E':
+            case 'e':
                ftag->protection.E = parseval;
                break;
-            case 'O':
+            case 'o':
                ftag->protection.O = parseval;
                break;
-            case 'S':
+            case 'p':
                ftag->protection.partsz = parseval;
                break;
-            case 'B':
+            case 'b':
                ftag->bytes = parseval;
                break;
-            case 'A':
+            case 'a':
                ftag->availbytes = parseval;
                break;
-            case 'R':
+            case 'r':
                ftag->recoverybytes = parseval;
                break;
-            case 'D':
+            case 'd':
                ftag->directbytes = parseval;
                break;
             default:
@@ -346,7 +350,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
          }
       }
       if ( *endptr != '-'  &&  *endptr != ')' ) {
-         LOG( LOG_ERR, "Unrecognized position value format\n" );
+         LOG( LOG_ERR, "Unrecognized data value format: \"%s\" (%c)\n", parse, *endptr );
          return -1;
       }
       foundvals++;
@@ -400,12 +404,12 @@ size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len ) {
       LOG( LOG_ERR, "Failed to output version info string\n" );
       return 0;
    }
-   if ( len > prres ) { len -= prres; }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
    else { len = 0; }
    totsz += prres;
 
    // output stream identification info
-   prres = snprintf( tgtstr, len, "%s(%s|%s|f%zu-d%zu)",
+   prres = snprintf( tgtstr, len, "%s(%s|%s|F%zu-D%zu)",
                      FTAG_STREAMINFO_HEADER,
                      ftag->ctag,
                      ftag->streamid,
@@ -415,17 +419,17 @@ size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len ) {
       LOG( LOG_ERR, "Failed to output stream info string\n" );
       return 0;
    }
-   if ( len > prres ) { len -= prres; }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
    else { len = 0; }
    totsz += prres;
 
    // output file position info
-   prres = snprintf( tgtstr, len, "%s(F%zu-O%zu-@%zu-E%d)", FTAG_FILEPOSITION_HEADER, ftag->fileno, ftag->objno, ftag->offset, (int)(ftag->endofstream) );
+   prres = snprintf( tgtstr, len, "%s(f%zu-o%zu-@%zu-e%d)", FTAG_FILEPOSITION_HEADER, ftag->fileno, ftag->objno, ftag->offset, (int)(ftag->endofstream) );
    if ( prres < 1 ) {
       LOG( LOG_ERR, "Failed to output file position info string\n" );
       return 0;
    }
-   if ( len > prres ) { len -= prres; }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
    else { len = 0; }
    totsz += prres;
 
@@ -451,7 +455,7 @@ size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len ) {
    else if ( ftag->state & FTAG_READABLE ) {
       daccstr = "RO"; // read only
    }
-   prres = snprintf( tgtstr, len, "%s(N%d-E%d-O%d-S%zu-B%zu-A%zu-R%zu-D%zu-%s-%s)",
+   prres = snprintf( tgtstr, len, "%s(n%d-e%d-o%d-p%zu-b%zu-a%zu-r%zu-d%zu-%s-%s)",
                      FTAG_DATACONTENT_HEADER,
                      ftag->protection.N,
                      ftag->protection.E,
@@ -467,12 +471,56 @@ size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len ) {
       LOG( LOG_ERR, "Failed to output data content info string\n" );
       return 0;
    }
-   if ( len > prres ) { len -= prres; }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
    else { len = 0; }
    totsz += prres;
 
    // all done!
    return totsz;
+}
+
+/**
+ * Compare the content of the given FTAG references
+ * @param const FTAG* ftag1 : First FTAG reference to compare
+ * @param const FTAG* ftag2 : Second FTAG reference to compare
+ * @return int : 0 if the two FTAGs match,
+ *               1 if the two FTAGs differ,
+ *               -1 if a failure occurred ( NULL ftag reference )
+ */
+int ftag_cmp( const FTAG* ftag1, const FTAG* ftag2 ) {
+   // no NULL references allowed
+   if ( ftag1 == NULL  ||  ftag2 == NULL ) {
+      LOG( LOG_ERR, "Received a NULL FTAG reference\n" );
+      return -1;
+   }
+   // compare all numeric componenets
+   if ( ftag1->majorversion != ftag2->majorversion            ||
+        ftag1->minorversion != ftag2->minorversion            ||
+        ftag1->objfiles != ftag2->objfiles                    ||
+        ftag1->objsize != ftag2->objsize                      ||
+        ftag1->fileno != ftag2->fileno                        ||
+        ftag1->objno != ftag2->objno                          ||
+        ftag1->offset != ftag2->offset                        ||
+        ftag1->endofstream != ftag2->endofstream              ||
+        ftag1->protection.N != ftag2->protection.N            ||
+        ftag1->protection.E != ftag2->protection.E            ||
+        ftag1->protection.O != ftag2->protection.O            ||
+        ftag1->protection.partsz != ftag2->protection.partsz  ||
+        ftag1->bytes != ftag2->bytes                          ||
+        ftag1->availbytes != ftag2->availbytes                ||
+        ftag1->recoverybytes != ftag2->recoverybytes          ||
+        ftag1->directbytes != ftag2->directbytes              ||
+        ftag1->state != ftag2->state ) {
+      LOG( LOG_INFO, "Detected numeric FTAG difference\n" );
+      return 1;
+   }
+   // compare string elements
+   if ( strcmp( ftag1->ctag, ftag2->ctag )  ||
+        strcmp( ftag1->streamid, ftag2->streamid ) ) {
+      LOG( LOG_INFO, "Detected string FTAG difference\n" );
+      return 1;
+   }
+   return 0;
 }
 
 /**
