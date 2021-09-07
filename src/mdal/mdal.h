@@ -95,6 +95,16 @@ typedef struct MDAL_struct {
    MDAL_CTXT       ctxt;
 
 
+   // Path Filter
+
+   /**
+    * Identify and reject any paths targeting reserved names
+    * @param const char* path : Path to verify
+    * @return : Zero if the path is acceptable, -1 if not
+    */
+   int (*pathfilter) ( const char* path );
+
+
    // Context Functions
 
    /**

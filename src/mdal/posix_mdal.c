@@ -182,38 +182,6 @@ size_t namespacepath( const char* nspath, char* newpath, size_t newlen ) {
    return totlen;
 }
 
-/**
- * Identify and reject any paths targeting reserved names
- * @param const char* path : Path to verify
- * @return : Zero if the path is acceptable, -1 if not
- */
-int pathfilter( const char* path ) {
-   // parse over the string
-   const char* parse = path;
-   const char* reserved = PMDAL_PREFX;
-   int compat = 0;
-   int complen = strlen( PMDAL_PREFX );
-   for( ; *parse != '\0'; parse++ ) {
-      // compare against the reserved prefix, so long as we are early enough in this element
-      if ( compat < complen ) {
-         if ( *parse == *(reserved + compat) ) {
-            compat++; // progress to the next char
-            if ( compat == complen ) {
-               // prefix match!
-               return -1;
-            }
-         }
-         else {
-            // any mismatch means we shouldn't continue checking this element
-            compat = complen;
-         }
-      }
-      // reset our comparison every time we hit a new path element
-      if ( *parse == '/' ) { compat = 0; }
-   }
-   // we've traversed the entire path, with no prefix found
-   return 0;
-}
 
 /**
  * Identify if the given xattr name is targeting a reserved value
@@ -251,6 +219,42 @@ int xattrfilter( const char* name, char hidden ) {
 
 
 //   -------------    POSIX IMPLEMENTATION    -------------
+
+// Path Filter
+
+/**
+ * Identify and reject any paths targeting reserved names
+ * @param const char* path : Path to verify
+ * @return : Zero if the path is acceptable, -1 if not
+ */
+int posixmdal_pathfilter( const char* path ) {
+   // parse over the string
+   const char* parse = path;
+   const char* reserved = PMDAL_PREFX;
+   int compat = 0;
+   int complen = strlen( PMDAL_PREFX );
+   for( ; *parse != '\0'; parse++ ) {
+      // compare against the reserved prefix, so long as we are early enough in this element
+      if ( compat < complen ) {
+         if ( *parse == *(reserved + compat) ) {
+            compat++; // progress to the next char
+            if ( compat == complen ) {
+               // prefix match!
+               return -1;
+            }
+         }
+         else {
+            // any mismatch means we shouldn't continue checking this element
+            compat = complen;
+         }
+      }
+      // reset our comparison every time we hit a new path element
+      if ( *parse == '/' ) { compat = 0; }
+   }
+   // we've traversed the entire path, with no prefix found
+   return 0;
+}
+
 
 // Context Functions
 
@@ -1043,12 +1047,6 @@ int posixmdal_linkref ( const MDAL_CTXT ctxt, const char* oldrpath, const char* 
       errno = EINVAL;
       return -1;
    }
-   // reject any improper paths
-   if ( pathfilter( newpath ) ) {
-      LOG( LOG_ERR, "Rejecting reserved path target: \"%s\"\n", newpath );
-      errno = EPERM;
-      return -1;
-   }
    POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
    // check for a valid NS path dir
    if ( pctxt->pathd < 0 ) {
@@ -1509,12 +1507,6 @@ MDAL_FHANDLE posixmdal_open( MDAL_CTXT ctxt, const char* path, int flags ) {
    if ( flags & O_CREAT ) {
       LOG( LOG_ERR, "Recieved disallowed O_CREAT flag\n" );
       errno = EINVAL;
-      return NULL;
-   }
-   // reject any improper paths
-   if ( pathfilter( path ) ) {
-      LOG( LOG_ERR, "Rejecting reserved path target: \"%s\"\n", path );
-      errno = EPERM;
       return NULL;
    }
    // issue the open
@@ -2302,6 +2294,7 @@ MDAL posix_mdal_init( xmlNode* root ) {
          }
          pmdal->name = "posix";
          pmdal->ctxt = (MDAL_CTXT) pctxt;
+         pmdal->pathfilter = posixmdal_pathfilter;
          pmdal->destroyctxt = posixmdal_destroyctxt;
          pmdal->dupctxt = posixmdal_dupctxt;
          pmdal->cleanup = posixmdal_cleanup;
