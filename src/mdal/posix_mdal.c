@@ -493,6 +493,7 @@ MDAL_CTXT posixmdal_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
       if ( pbasectxt->pathd < 0 ) {
          LOG( LOG_ERR, "Relative NS paths can only be used from a CTXT with a NS set\n" );
          errno = EINVAL;
+         free( newctxt );
          free( nspath );
          return NULL;
       }
