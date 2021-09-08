@@ -505,7 +505,9 @@ int main(int argc, char **argv)
    }
 
    // test NS traversal
-   if ( snprintf( xmlbuffer, 1024, "/gransom-allocation/notaNS" ) < 1 ) {
+   // 1st shift -- TGT = "/campaign/gransom-allocation/notaNS"
+   //           -- NS = 'gransom-allocation'
+   if ( snprintf( xmlbuffer, 1024, "/campaign/gransom-allocation/notaNS" ) < 1 ) {
       printf( "Failed to populate 1st NS traversal path\n" );
       return -1;
    }
@@ -519,6 +521,8 @@ int main(int argc, char **argv)
       return -1;
    }
    printf( "1st NS shift: \"%s\"\n", xmlbuffer );
+   // 2nd -- TGT = "../gransom-allocation/heavily-protected-data/" 
+   //     -- NS = 'gransom-allocation/heavily-protected-data'
    if ( snprintf( xmlbuffer, 1024, "../gransom-allocation/heavily-protected-data/" ) < 1 ) {
       printf( "Failed to populate 2nd NS traversal path\n" );
       return -1;
@@ -532,6 +536,8 @@ int main(int argc, char **argv)
       return -1;
    }
    printf( "2nd NS shift: \"%s\"\n", xmlbuffer );
+   // 3rd -- TGT = "read-only-data/../../"
+   //     -- NS = 'gransom-allocation/read-only-data'
    if ( snprintf( xmlbuffer, 1024, "read-only-data/../../" ) < 1 ) {
       printf( "Failed to populate 3rd NS traversal path\n" );
       return -1;
@@ -545,6 +551,8 @@ int main(int argc, char **argv)
       return -1;
    }
    printf( "3rd NS shift: \"%s\"\n", xmlbuffer );
+   // 4th -- TGT = "../read-only-data/.//read-only-file"
+   //     -- NS = 'gransom-allocation/read-only-data'
    if ( snprintf( xmlbuffer, 1024, "../read-only-data/.//read-only-file" ) < 1 ) {
       printf( "Failed to populate 4th NS traversal path\n" );
       return -1;
@@ -558,7 +566,9 @@ int main(int argc, char **argv)
       return -1;
    }
    printf( "4th NS shift: \"%s\"\n", xmlbuffer );
-   if ( snprintf( xmlbuffer, 1024, "../../noexist" ) < 1 ) {
+   // 5th -- TGT = "//campaign/./..///campaign/./gransom-allocation/heavily-protected-data/./test"
+   //     -- NS = 'gransom-allocation/heavily-protected-data'
+   if ( snprintf( xmlbuffer, 1024, "//campaign/./..///campaign/./gransom-allocation/heavily-protected-data/./test" ) < 1 ) {
       printf( "Failed to populate 5th NS traversal path\n" );
       return -1;
    }
@@ -566,11 +576,26 @@ int main(int argc, char **argv)
       printf( "Failure of 5th NS shift: \"%s\"\n", xmlbuffer );
       return -1;
    }
-   if ( strcmp( xmlbuffer, "noexist" ) ) {
+   if ( strcmp( xmlbuffer, "test" ) ) {
       printf( "Unexpected path for 5th NS shift: \"%s\"\n", xmlbuffer );
       return -1;
    }
    printf( "5th NS shift: \"%s\"\n", xmlbuffer );
+   // 6th -- TGT = "../../noexist"
+   //     -- NS = '/'
+   if ( snprintf( xmlbuffer, 1024, "../../noexist" ) < 1 ) {
+      printf( "Failed to populate 6th NS traversal path\n" );
+      return -1;
+   }
+   if ( config_shiftns( config, &(tgtns), xmlbuffer ) ) {
+      printf( "Failure of 6th NS shift: \"%s\"\n", xmlbuffer );
+      return -1;
+   }
+   if ( strcmp( xmlbuffer, "noexist" ) ) {
+      printf( "Unexpected path for 6th NS shift: \"%s\"\n", xmlbuffer );
+      return -1;
+   }
+   printf( "6th NS shift: \"%s\"\n", xmlbuffer );
    if ( tgtns != config->rootns ) {
       printf( "tgtns != rootns following final NS shift\n" );
       return -1;

@@ -145,27 +145,23 @@ marfs_config* config_init( const char* cpath );
 int config_term( marfs_config* config );
 
 /**
- * Traverse the given path, idetifying any NS transitions and the resulting subpath
- * NOTE -- This function will only traverse the given path until it exits the config 
- *         namespace structure.  At that point, the path will be truncated, and the 
- *         resulting NS target set.
- *         This is required, as path elements within a NS may be symlinks or have 
- *         restrictive perms.  Such non-NS paths must actually be traversed.
- *         Example, original values:
- *            tgtns == rootns
- *            subpath == "subspace/somedir/../../../target"
- *         Result:
- *            tgtns == subspace                      (NOT rootns)
- *            subpath == "somedir/../../../target"   (NOT "target")
- * @param marfs_config* config : Config to traverse
+ * Traverse the given path, idetifying a final NS target and resulting subpath
+ * @param marfs_config* config : Config reference
  * @param marfs_ns** tgtns : Reference populated with the initial NS value
- *                           This will be updated to reflect the resulting NS value
+ *                            This will be updated to reflect the resulting NS value
  * @param char** subpath : Relative path from the tgtns
  *                         This will be updated to reflect the resulting subpath from 
  *                         the new tgtns
- * @return int : Zero on success, or -1 on failure
+ *                         NOTE -- this function may completely replace the
+ *                         string reference
+ * @param char linkchk : If zero, this function will not check for symlinks in the path.
+ *                          All path componenets are assumed to be directories.
+ *                       If non-zero, this function will perform a readlink() op on all
+ *                          path components, substituting in the targets of all symlinks.
+ * @return MDAL_CTXT : A new MDAL_CTXT, associated with the resulting NS target,
+ *                     of NULL if a failure occurred
  */
-int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath );
+MDAL_CTXT config_traverse( marfs_config* config, marfs_ns** tgtns, char** subpath, char linkchk );
 
 #endif // _CONFIG_H
 

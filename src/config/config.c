@@ -177,6 +177,232 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
+/**
+ * Traverse backwards, identifying the previous element of a given path
+ * @param char* path : Reference to the head of the path string
+ * @param char* curpath : Reference to the current path element
+ * @return char* : Reference to the previous path element, or NULL if none exists
+ */
+char* config_prevpathelem( char* path, char* curpath ) {
+   while ( curpath != path ) {
+      // skip any trailing '/' chars
+      curpath--;
+      if ( *curpath != '/' ) { break; }
+   }
+   while ( curpath != path ) {
+      // reverse, until we hit another '/' char
+      curpath--;
+      if ( *curpath == '/' ) { curpath++; break; }
+   }
+   if ( curpath == path ) {
+      // we are at the foremost path element already
+      return NULL;
+   }
+   return curpath;
+}
+
+/**
+ * Identify if a given path enters (or reenters) the MarFS mountpoint
+ * @param marfs_config* config : Config reference
+ * @param marfs_ns** tgtns : Reference populated with the initial NS value
+ *                           This will be updated to reflect the resulting NS value
+ *                           NOTE -- The initial value of this reference is expected 
+ *                           to be either NULL ( external to MarFS, no current NS ) or 
+ *                           to match the root NS of the config.
+ *                           Final value is expected to be the root NS of the config.
+ * @param char* subpath : Relative path from the tgtns, or absolute path from NULL tgtns
+ * @return char* : Reference to the path element at which the subpath enters the MarFS 
+ *                 mount, or NULL if the path references any non-MarFS element
+ */
+char* config_validatemnt( marfs_config* config, marfs_ns** tgtns, char* subpath ) {
+   // the postion of our comparison pointer depends on our current NS
+   char* mntpoint = strdup( config->mountpoint );
+   char* mntparse = mntpoint;
+   char* parsepath = subpath;
+   if ( *tgtns != NULL ) {
+      LOG( LOG_INFO, "Checking for path re-entry: \"%s\"\n", subpath );
+      // we need to compare against the deepest path element of the mountpoint
+      mntparse = mntpoint + strlen(mntpoint);
+      char* prevelem = config_prevpathelem( mntpoint, mntparse );
+      // if there is no previous path element, leave mntparse at the end of string
+      if ( prevelem != NULL ) { mntparse = prevelem; }
+   }
+   else {
+      LOG( LOG_INFO, "Checking if path reaches MarFS mount: \"%s\"\n", subpath );
+      // skip any leading '/' chars in both paths
+      while ( *mntparse == '/' ) { mntparse++; }
+      while ( *parsepath == '/' ) { parsepath++; }
+   }
+   // produce a string reference for the current mountpoint path element
+   char* mntelem = mntparse;
+   while ( *mntparse != '\0'  &&  *mntparse != '/' ) { mntparse++; }
+   char replacemnt = 0;
+   if ( *mntparse == '/' ) { replacemnt = 1; *mntparse = '\0'; }
+   // parse over the path string
+   char* pathelem = parsepath;
+   while ( *parsepath != '\0' ) {
+      // move the parse pointer ahead to the next '/' char
+      while ( *parsepath != '\0'  &&  *parsepath != '/' ) { parsepath++; }
+      // replace any '/' char with a NULL
+      char replacechar = 0;
+      if ( *parsepath == '/' ) { replacechar = 1; *parsepath = '\0'; }
+      // identify the current path element
+      if ( strcmp( pathelem, ".." ) == 0 ) {
+         // restore the mntpath
+         if ( replacemnt ) { replacemnt = 0; *mntparse = '/'; }
+         // identify the previous element of the mount path
+         mntparse = config_prevpathelem( mntpoint, mntelem );
+         if ( mntparse == NULL ) {
+            if ( replacechar ) { *parsepath = '/'; }
+            LOG( LOG_ERR, "Path extends above global root: \"%s\"\n", subpath );
+            free( mntpoint );
+            errno = EINVAL;
+            return NULL;
+         }
+         mntelem = mntparse;
+         // terminate the current mount element
+         while ( *mntparse != '\0'  &&  *mntparse != '/' ) { mntparse++; }
+         if ( *mntparse == '/' ) { replacemnt = 1; *mntparse = '\0'; }
+      }
+      else if ( strcmp( pathelem, "." ) ) {  // ignore any './' path elements
+         // verify this element matches the current mount path element
+         if ( strcmp( pathelem, mntelem ) ) {
+            LOG( LOG_ERR, "Encountered non-MarFS-mount path element: \"%s\"\n", pathelem );
+            if ( replacechar ) { *parsepath = '/'; }
+            free( mntpoint );
+            errno = EINVAL;
+            return NULL;
+         }
+         // match; move on to the next mount path element
+         if ( replacemnt ) { replacemnt = 0; *mntparse = '/'; }
+         while ( *mntparse == '/' ) { mntparse++; }
+         mntelem = mntparse;
+         if ( *mntelem == '\0' ) {
+            // the path has traversed into the MarFS mount, so we are done
+            if ( replacechar ) { *parsepath = '/'; }
+            free( mntpoint );
+            // just entered the root NS
+            *tgtns = config->rootns;
+            // progress to the next path element, and return that reference
+            while ( *parsepath == '/' ) { parsepath++; }
+            LOG( LOG_INFO, "Path within MarFS mount: \"%s\"\n", parsepath );
+            return parsepath;
+         }
+         // terminate the current mount element
+         while ( *mntparse != '\0'  &&  *mntparse != '/' ) { mntparse++; }
+         if ( *mntparse == '/' ) { replacemnt = 1; *mntparse = '\0'; }
+      }
+      // undo any previous path edit
+      if ( replacechar ) { *parsepath = '/'; }
+      // move our parse pointer ahead to the next path component
+      while ( *parsepath == '/' ) { parsepath++; }
+      // update our element pointer to the next path element
+      pathelem = parsepath;
+   }
+         
+   // if we've gotten this far, the path terminates before re-entering the mountpoint
+   free( mntpoint );
+   LOG( LOG_ERR, "Path terminates above MarFS mount: \"%s\"\n", subpath );
+   errno = EINVAL;
+   return NULL;
+}
+
+/**
+ * Traverse the given path, idetifying any NS transitions and the resulting subpath
+ * NOTE -- This function will only traverse the given path until it exits the config
+ *         namespace structure.  At that point, the path will be truncated, and the
+ *         resulting NS target set.
+ *         This is required, as path elements within a NS may be symlinks or have
+ *         restrictive perms.  Such non-NS paths must actually be traversed.
+ *         Example, original values:
+ *            tgtns == rootns
+ *            subpath == "subspace/somedir/../../../target"
+ *         Result:
+ *            tgtns == subspace                      (NOT rootns)
+ *            subpath == "somedir/../../../target"   (NOT "target")
+ * @param marfs_config* config : Config to traverse
+ * @param marfs_ns** tgtns : Reference populated with the initial NS value
+ *                           This will be updated to reflect the resulting NS value
+ * @param char** subpath : Relative path from the tgtns
+ *                         This will be updated to reflect the resulting subpath from
+ *                         the new tgtns
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath ) {
+   // traverse the subpath, identifying any NS elements
+   int result = 0;
+   char* parsepath = subpath;
+   if ( *subpath == '/' ) {
+      // absolute paths are not relative to any NS
+      *tgtns = NULL;
+      // verify that the abspath contains the required mountpoint prefix
+      parsepath = config_validatemnt( config, tgtns, subpath );
+      if ( parsepath == NULL ) {
+         LOG( LOG_ERR, "Non-MarFS path: \"%s\"\n", subpath );
+         errno = EINVAL;
+         return -1;
+      }
+   }
+   char* pathelem = parsepath;
+   while ( *parsepath != '\0' ) {
+      // move the parse pointer ahead to the next '/' char
+      while ( *parsepath != '\0'  &&  *parsepath != '/' ) { parsepath++; }
+      // replace any '/' char with a NULL
+      char replacechar = 0;
+      if ( *parsepath == '/' ) { replacechar = 1; *parsepath = '\0'; }
+      // identify the current path element
+      if ( strcmp( pathelem, ".." ) == 0 ) {
+         // parent ref, move the tgtns up one level
+         if ( (*tgtns)->pnamespace == NULL ) {
+            // we can't move up any further
+            // undo any previous path edit
+            if ( replacechar ) { *parsepath = '/'; }
+            replacechar = 0;
+            // check if this relative path reenters the MarFS mountpoint
+            parsepath = config_validatemnt( config, tgtns, pathelem );
+            if ( parsepath == NULL ) {
+               result = -1;
+               errno = EINVAL;
+               LOG( LOG_ERR, "Path extends beyond config root: \"%s\"\n", pathelem );
+               break;
+            }
+         }
+         else {
+            *tgtns = (*tgtns)->pnamespace;
+         }
+      }
+      else if ( strcmp( pathelem, "." ) ) {
+         // ignore "." references
+         // lookup all others in the current subspace table
+         HASH_NODE* resnode = NULL;
+         if ( (*tgtns)->subspaces == NULL  ||  
+              hash_lookup( (*tgtns)->subspaces, pathelem, &(resnode) ) ) {
+            // this is not a NS path
+            if ( replacechar ) { *parsepath = '/'; }
+            break;
+         }
+         // this is a NS path, move the tgtns to the subspace
+         *tgtns = (marfs_ns*)(resnode->content);
+      }
+      // undo any previous path edit
+      if ( replacechar ) { *parsepath = '/'; }
+      // move our parse pointer ahead to the next path component
+      while ( *parsepath == '/' ) { parsepath++; }
+      // update our element pointer to the next path element
+      pathelem = parsepath;
+   }
+   // shift the resulting path back to the start of the string
+   if ( subpath != pathelem ) {
+      int newlen = sprintf( subpath, "%s", pathelem );
+      if ( newlen < 0 ) {
+         LOG( LOG_ERR, "Failed to update subpath\n" );
+         return -1;
+      }
+      // zero out the end of the subpath, just in case
+      bzero( subpath+newlen+1, pathelem-(subpath+1) );
+   }
+   return result;
+}
 
 
 //   -------------   INTERNAL FUNCTIONS    -------------
@@ -1965,49 +2191,51 @@ int config_term( marfs_config* config ) {
 }
 
 /**
- * Traverse the given path, idetifying any NS transitions and the resulting subpath
- * NOTE -- This function will only traverse the given path until it exits the config
- *         namespace structure.  At that point, the path will be truncated, and the
- *         resulting NS target set.
- *         This is required, as path elements within a NS may be symlinks or have
- *         restrictive perms.  Such non-NS paths must actually be traversed.
- *         Example, original values:
- *            tgtns == rootns
- *            subpath == "subspace/somedir/../../../target"
- *         Result:
- *            tgtns == subspace                      (NOT rootns)
- *            subpath == "somedir/../../../target"   (NOT "target")
- * @param marfs_config* config : Config to traverse
+ * Traverse the given path, idetifying a final NS target and resulting subpath
+ * @param marfs_config* config : Config reference
  * @param marfs_ns** tgtns : Reference populated with the initial NS value
- *                           This will be updated to reflect the resulting NS value
+ *                            This will be updated to reflect the resulting NS value
  * @param char** subpath : Relative path from the tgtns
  *                         This will be updated to reflect the resulting subpath from
  *                         the new tgtns
- * @return int : Zero on success, or -1 on failure
+ *                         NOTE -- this function may completely replace the
+ *                         string reference
+ * @param char linkchk : If zero, this function will not check for symlinks in the path.
+ *                          All path componenets are assumed to be directories.
+ *                       If non-zero, this function will perform a readlink() op on all
+ *                          path components, substituting in the targets of all symlinks.
+ * @return MDAL_CTXT : A new MDAL_CTXT, associated with the resulting NS target, 
+ *                     of NULL if a failure occurred
  */
-int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath ) {
+MDAL_CTXT config_traverse( marfs_config* config, marfs_ns** tgtns, char** subpath, char linkchk ) {
    // check for NULL refs
    if ( config == NULL ) {
       LOG( LOG_ERR, "Received a NULL config reference\n" );
-      return -1;
+      errno = EINVAL;
+      return NULL;
    }
-   if ( subpath == NULL ) {
+   if ( subpath == NULL  ||  (*subpath) == NULL ) {
       LOG( LOG_ERR, "Received a NULL subpath reference\n" );
-      return -1;
+      errno = EINVAL;
+      return NULL;
    }
-   // traverse the subpath, identifying any NS elements
-   char* parsepath = subpath;
-   char* pathelem = subpath;
-   if ( *subpath == '/' ) {
-      // check that absolute paths are only used from the rootNS
-      if ( *tgtns != config->rootns ) {
-         LOG( LOG_ERR, "Absolute paths can only be used from the config root NS\n" );
-         return -1;
-      }
-      // skip over any leading '/' chars
-      while ( *pathelem == '/' ) { pathelem++; }
-      parsepath = pathelem;
+   // first, identify a namespace target ( should guarantee relative path output )
+   if ( config_shiftns( config, tgtns, (*subpath) ) ) {
+      LOG( LOG_ERR, "Failed to identify initial NS target of subpath\n" );
+      return NULL;
    }
+   // establish an MDAL_CTXT for the target NS
+   MDAL mdal = (*tgtns)->prepo->metascheme.mdal;
+   MDAL_CTXT ctxt = mdal->newctxt( (*tgtns)->idstr, mdal->ctxt );
+   if ( ctxt == NULL ) {
+      LOG( LOG_ERR, "Failed to establish an MDAL_CTXT for initial NS target: \"%s\"\n",
+                    (*tgtns)->idstr );
+      return NULL;
+   }
+   // traverse the subpath, keeping track of depth from the current NS
+   int nsdepth = 0;
+   char* parsepath = *subpath;
+   char* pathelem = parsepath;
    while ( *parsepath != '\0' ) {
       // move the parse pointer ahead to the next '/' char
       while ( *parsepath != '\0'  &&  *parsepath != '/' ) { parsepath++; }
@@ -2016,26 +2244,146 @@ int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath ) {
       if ( *parsepath == '/' ) { replacechar = 1; *parsepath = '\0'; }
       // identify the current path element
       if ( strcmp( pathelem, ".." ) == 0 ) {
-         // parent ref, move the tgtns up one level
-         if ( (*tgtns)->pnamespace == NULL ) {
+         // parent ref
+         if ( nsdepth == 0 ) {
             // we can't move up any further
-            if ( replacechar ) { *parsepath = '/'; }
-            break;
+            // trim off previous path componenets, and hand off to NS traversal code
+            if ( replacechar ) { *parsepath = '/'; } // undo any previous edit
+            if ( *subpath != pathelem ) {
+               int newlen = sprintf( *subpath, "%s", pathelem );
+               if ( newlen < 0 ) {
+                  LOG( LOG_ERR, "Failed to update subpath\n" );
+                  return NULL;
+               }
+               // zero out the end of the subpath, just in case
+               bzero( (*subpath)+newlen+1, pathelem-((*subpath)+1) );
+            }
+            if ( config_shiftns( config, tgtns, (*subpath) ) ) {
+               LOG( LOG_ERR, "Failed to identify NS target following parent ref\n" );
+               return NULL;
+            }
+            // update our MDAL_CTXT to reference the new NS target
+            mdal = (*tgtns)->prepo->metascheme.mdal;
+            if ( mdal->destroyctxt( ctxt ) ) {
+               LOG( LOG_WARNING, "Failed to destroy previous MDAL_CTXT\n" );
+            }
+            ctxt = mdal->newctxt( (*tgtns)->idstr, mdal->ctxt );
+            if ( ctxt == NULL ) {
+               LOG( LOG_ERR, 
+                    "Failed to establish an MDAL_CTXT of parent ref NS target: \"%s\"\n",
+                    (*tgtns)->idstr );
+               return NULL;
+            }
+            // NS target identified; update our refs and continue
+            parsepath = *subpath;
+            pathelem = parsepath;
+            continue;
          }
-         *tgtns = (*tgtns)->pnamespace;
+         nsdepth--; // one level up
       }
       else if ( strcmp( pathelem, "." ) ) {
          // ignore "." references
-         // lookup all others in the current subspace table
-         HASH_NODE* resnode = NULL;
-         if ( (*tgtns)->subspaces == NULL  ||  
-              hash_lookup( (*tgtns)->subspaces, pathelem, &(resnode) ) ) {
-            // this is not a NS path
-            if ( replacechar ) { *parsepath = '/'; }
-            break;
+         // assume all others are either dirs or links
+         if ( linkchk ) {
+            // perform a readlink against the current path element
+            errno = 0;
+            ssize_t readlinkres = mdal->readlink( ctxt, (*subpath), NULL, 0 ); 
+            if ( readlinkres < 0 ) {
+               // EINVAL means this is not a symlink, which is acceptable
+               if( errno != EINVAL ) {
+                  // all other errors must be reported
+                  LOG( LOG_ERR, "Failed to readlink path component: \"%s\"\n", *subpath );
+                  return NULL;
+               }
+               nsdepth++;
+            }
+            else {
+               if ( readlinkres == 0 ) {
+                  LOG( LOG_ERR, "Empty content of link: \"%s\"\n", *subpath );
+                  errno = ENOENT;
+                  return NULL;
+               }
+               // this is a real link, so we need to follow it
+               char* linkbuf = malloc( sizeof(char) * (readlinkres + 1) );
+               if ( linkbuf == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate space for content of link: \"%s\"\n", *subpath );
+                  return NULL;
+               }
+               size_t readres2 = mdal->readlink( ctxt, (*subpath), linkbuf, readlinkres );
+               if ( readres2 != readlinkres ) {
+                  LOG( LOG_ERR, "State of link changed during traversal: \"%s\"\n", *subpath );
+                  free( linkbuf );
+                  errno = EBUSY;
+                  return NULL;
+               }
+               *(linkbuf + readlinkres) = '\0'; // manually insert NULL-term because readlink is a stupid function that doesn't bother to make any such guarantee itself
+               // validate that our MDAL will allow this link target
+               if ( mdal->pathfilter( linkbuf ) ) {
+                  LOG( LOG_ERR, "Encountered link \"%s\" with restricted target: \"%s\"\n",
+                                (*subpath), linkbuf );
+                  free( linkbuf );
+                  errno = EPERM;
+                  return NULL;
+               }
+               // restore the orignal string structure
+               if ( replacechar ) { *parsepath = '/'; }
+               replacechar = 0;
+               // reallocate our string, if necessary
+               size_t remainlen = strlen(parsepath);
+               char* oldpath = *subpath;
+               if ( (parsepath - (*subpath)) < readlinkres ) {
+                  *subpath = calloc( sizeof(char), (remainlen + 1 + readlinkres) );
+                  if ( *subpath == NULL ) {
+                     LOG( LOG_ERR, "Failed to alloc new subpath buffer\n" );
+                     free( linkbuf );
+                     free( oldpath );
+                     return NULL;
+                  }
+               }
+               // update the string with link content
+               if ( memcpy( *subpath, linkbuf, readlinkres ) != *subpath ) {
+                  LOG( LOG_ERR, "Failed to populate subpath string with link content\n" );
+                  free( linkbuf );
+                  if ( oldpath != (*subpath) ) { free( oldpath ); }
+                  errno = EFAULT;
+                  return NULL;
+               }
+               free( linkbuf ); // finally done with link content
+               if ( snprintf( *(subpath + readlinkres), remainlen + 1, "%s", parsepath ) != 
+                     remainlen ) {
+                  LOG( LOG_ERR, "Failed to append subpath elements following link content\n" );
+                  if ( oldpath != (*subpath) ) { free( oldpath ); }
+                  errno = EFAULT;
+                  return NULL;
+               }
+               if ( oldpath != (*subpath) ) { free( oldpath ); } // done with the orig
+               // check for new absolute path
+               if ( *(*subpath) == '/' ) {
+                  // a new absolute path means we have to reestablish our NS target
+                  if ( config_shiftns( config, tgtns, (*subpath) ) ) {
+                     LOG( LOG_ERR, "Failed to identify NS target of abs link\n" );
+                     return NULL;
+                  }
+                  // update our MDAL_CTXT to reference the new NS target
+                  mdal = (*tgtns)->prepo->metascheme.mdal;
+                  if ( mdal->destroyctxt( ctxt ) ) {
+                     LOG( LOG_WARNING, "Failed to destroy previous MDAL_CTXT of abs link\n" );
+                  }
+                  ctxt = mdal->newctxt( (*tgtns)->idstr, mdal->ctxt );
+                  if ( ctxt == NULL ) {
+                     LOG( LOG_ERR, 
+                          "Failed to establish an MDAL_CTXT of abs link NS target: \"%s\"\n",
+                          (*tgtns)->idstr );
+                     return NULL;
+                  }
+               }
+               // update our parser to the modified path
+               parsepath = *subpath;
+            }
          }
-         // this is a NS path, move the tgtns to the subspace
-         *tgtns = (marfs_ns*)(resnode->content);
+         else {
+            nsdepth++; // if not checking for links, assume this is a subdir
+         }
       }
       // undo any previous path edit
       if ( replacechar ) { *parsepath = '/'; }
@@ -2044,17 +2392,7 @@ int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath ) {
       // update our element pointer to the next path element
       pathelem = parsepath;
    }
-   // shift the resulting path back to the start of the string
-   if ( subpath != pathelem ) {
-      int newlen = sprintf( subpath, "%s", pathelem );
-      if ( newlen < 0 ) {
-         LOG( LOG_ERR, "Failed to update subpath\n" );
-         return -1;
-      }
-      // zero out the end of the subpath, just in case
-      bzero( subpath+newlen+1, pathelem-(subpath+1) );
-   }
-   return 0;
-}
 
+   return ctxt;
+}
 
