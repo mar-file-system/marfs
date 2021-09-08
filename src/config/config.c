@@ -224,7 +224,10 @@ char* config_validatemnt( marfs_config* config, marfs_ns** tgtns, char* subpath 
       // we need to compare against the deepest path element of the mountpoint
       mntparse = mntpoint + strlen(mntpoint);
       char* prevelem = config_prevpathelem( mntpoint, mntparse );
-      // if there is no previous path element, leave mntparse at the end of string
+      // if there is no previous path element, leave mntparse at end of string
+      // NOTE -- this should only occur when MarFS is mounted at the global FS root
+      //      -- see 'special case check' below
+      // otherwise, adjust our parse position to the deepest path element
       if ( prevelem != NULL ) { mntparse = prevelem; }
    }
    else {
@@ -254,8 +257,8 @@ char* config_validatemnt( marfs_config* config, marfs_ns** tgtns, char* subpath 
          mntparse = config_prevpathelem( mntpoint, mntelem );
          if ( mntparse == NULL ) {
             if ( replacechar ) { *parsepath = '/'; }
-            LOG( LOG_ERR, "Path extends above global root: \"%s\"\n", subpath );
             free( mntpoint );
+            LOG( LOG_ERR, "Path extends above global root: \"%s\"\n", subpath );
             errno = EINVAL;
             return NULL;
          }
@@ -265,6 +268,16 @@ char* config_validatemnt( marfs_config* config, marfs_ns** tgtns, char* subpath 
          if ( *mntparse == '/' ) { replacemnt = 1; *mntparse = '\0'; }
       }
       else if ( strcmp( pathelem, "." ) ) {  // ignore any './' path elements
+         // special case check -- mounted at global FS root
+         if ( *mntelem == '\0' ) {
+            if ( replacechar ) { *parsepath = '/'; }
+            free( mntpoint );
+            // just entered the root NS
+            *tgtns = config->rootns;
+            // return the current path element reference
+            LOG( LOG_INFO, "Subpath inherently below a global MarFS: \"%s\"\n", pathelem );
+            return pathelem;
+         }
          // verify this element matches the current mount path element
          if ( strcmp( pathelem, mntelem ) ) {
             LOG( LOG_ERR, "Encountered non-MarFS-mount path element: \"%s\"\n", pathelem );
@@ -358,8 +371,10 @@ int config_shiftns( marfs_config* config, marfs_ns** tgtns, char* subpath ) {
             // undo any previous path edit
             if ( replacechar ) { *parsepath = '/'; }
             replacechar = 0;
+            // move our parse pointer ahead to the next path component
+            while ( *parsepath == '/' ) { parsepath++; }
             // check if this relative path reenters the MarFS mountpoint
-            parsepath = config_validatemnt( config, tgtns, pathelem );
+            parsepath = config_validatemnt( config, tgtns, parsepath );
             if ( parsepath == NULL ) {
                result = -1;
                errno = EINVAL;
