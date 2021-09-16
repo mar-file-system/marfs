@@ -504,102 +504,160 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   // test NS traversal
-   // 1st shift -- TGT = "/campaign/gransom-allocation/notaNS"
-   //           -- NS = 'gransom-allocation'
-   if ( snprintf( xmlbuffer, 1024, "/campaign/gransom-allocation/notaNS" ) < 1 ) {
-      printf( "Failed to populate 1st NS traversal path\n" );
+
+   // prepare for full path traversal by actually creating config namespaces via MDAL
+   MDAL rootmdal = config->rootns->prepo->metascheme.mdal;
+   if ( rootmdal->createnamespace( rootmdal->ctxt, "/." ) ) {
+      printf( "Failed to create root NS\n" );
       return -1;
    }
-   marfs_ns* tgtns = config->rootns;
-   if ( config_shiftns( config, &(tgtns), xmlbuffer ) ) {
+   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation" ) ) {
+      printf( "Failed to create /gransom-allocation NS\n" );
+      return -1;
+   }
+   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation/read-only-data" ) ) {
+      printf( "Failed to create /gransom-allocation/read-only-data NS\n" );
+      return -1;
+   }
+   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation/heavily-protected-data" ) ) {
+      printf( "Failed to create /gransom-allocation/heavily-protected-data NS\n" );
+      return -1;
+   }
+
+   // test NS identification
+   // 1st shift -- TGT = "gransom-allocation/notaNS"
+   //           -- NS = 'gransom-allocation'
+   marfs_position pos = { .depth = 0, .ns = config->rootns, .ctxt = NULL };
+   pos.ctxt = config->rootns->prepo->metascheme.mdal->newctxt( "/.", config->rootns->prepo->metascheme.mdal->ctxt );
+   if ( pos.ctxt == NULL ) {
+      printf( "Failed to populate initial rootNS CTXT for NS shifts\n" );
+      return -1;
+   }
+   char* shiftres = NULL;
+   if ( snprintf( xmlbuffer, 1024, "gransom-allocation/notaNS" ) < 1 ) {
+      printf( "Failed to populate 1st NS shift path\n" );
+      return -1;
+   }
+   if ( (shiftres = config_shiftns( config, &(pos), xmlbuffer )) == NULL ) {
       printf( "Failure of 1st NS shift: \"%s\"\n", xmlbuffer );
       return -1;
    }
-   if ( strcmp( xmlbuffer, "notaNS" ) ) {
-      printf( "Unexpected path for 1st NS shift: \"%s\"\n", xmlbuffer );
+   if ( strcmp( shiftres, "notaNS" ) ) {
+      printf( "Unexpected path for 1st NS shift: \"%s\"\n", shiftres );
       return -1;
    }
-   printf( "1st NS shift: \"%s\"\n", xmlbuffer );
+   printf( "1st NS shift: \"%s\"\n", shiftres );
    // 2nd -- TGT = "../gransom-allocation/heavily-protected-data/" 
    //     -- NS = 'gransom-allocation/heavily-protected-data'
    if ( snprintf( xmlbuffer, 1024, "../gransom-allocation/heavily-protected-data/" ) < 1 ) {
-      printf( "Failed to populate 2nd NS traversal path\n" );
+      printf( "Failed to populate 2nd NS shift path\n" );
       return -1;
    }
-   if ( config_shiftns( config, &(tgtns), xmlbuffer ) ) {
+   if ( (shiftres = config_shiftns( config, &(pos), xmlbuffer )) == NULL ) {
       printf( "Failure of 2nd NS shift: \"%s\"\n", xmlbuffer );
       return -1;
    }
-   if ( strcmp( xmlbuffer, "" ) ) {
-      printf( "Unexpected path for 2nd NS shift: \"%s\"\n", xmlbuffer );
+   if ( strcmp( shiftres, "" ) ) {
+      printf( "Unexpected path for 2nd NS shift: \"%s\"\n", shiftres );
       return -1;
    }
-   printf( "2nd NS shift: \"%s\"\n", xmlbuffer );
+   printf( "2nd NS shift: \"%s\"\n", shiftres );
    // 3rd -- TGT = "read-only-data/../../"
-   //     -- NS = 'gransom-allocation/read-only-data'
+   //     -- NS = 'gransom-allocation/heavily-protected-data'
    if ( snprintf( xmlbuffer, 1024, "read-only-data/../../" ) < 1 ) {
-      printf( "Failed to populate 3rd NS traversal path\n" );
+      printf( "Failed to populate 3rd NS shift path\n" );
       return -1;
    }
-   if ( config_shiftns( config, &(tgtns), xmlbuffer ) ) {
+   if ( (shiftres = config_shiftns( config, &(pos), xmlbuffer )) == NULL ) {
       printf( "Failure of 3rd NS shift: \"%s\"\n", xmlbuffer );
       return -1;
    }
-   if ( strcmp( xmlbuffer, "read-only-data/../../" ) ) {
-      printf( "Unexpected path for 3rd NS shift: \"%s\"\n", xmlbuffer );
+   if ( strcmp( shiftres, "read-only-data/../../" ) ) {
+      printf( "Unexpected path for 3rd NS shift: \"%s\"\n", shiftres );
       return -1;
    }
-   printf( "3rd NS shift: \"%s\"\n", xmlbuffer );
+   printf( "3rd NS shift: \"%s\"\n", shiftres );
    // 4th -- TGT = "../read-only-data/.//read-only-file"
    //     -- NS = 'gransom-allocation/read-only-data'
    if ( snprintf( xmlbuffer, 1024, "../read-only-data/.//read-only-file" ) < 1 ) {
-      printf( "Failed to populate 4th NS traversal path\n" );
+      printf( "Failed to populate 4th NS shift path\n" );
       return -1;
    }
-   if ( config_shiftns( config, &(tgtns), xmlbuffer ) ) {
+   if ( (shiftres = config_shiftns( config, &(pos), xmlbuffer )) == NULL ) {
       printf( "Failure of 4th NS shift: \"%s\"\n", xmlbuffer );
       return -1;
    }
-   if ( strcmp( xmlbuffer, "read-only-file" ) ) {
-      printf( "Unexpected path for 4th NS shift: \"%s\"\n", xmlbuffer );
+   if ( strcmp( shiftres, "read-only-file" ) ) {
+      printf( "Unexpected path for 4th NS shift: \"%s\"\n", shiftres );
       return -1;
    }
-   printf( "4th NS shift: \"%s\"\n", xmlbuffer );
-   // 5th -- TGT = "//campaign/./..///campaign/./gransom-allocation/heavily-protected-data/./test"
+   printf( "4th NS shift: \"%s\"\n", shiftres );
+   // 5th -- TGT = "./../..//..//campaign/./gransom-allocation/heavily-protected-data/./test"
    //     -- NS = 'gransom-allocation/heavily-protected-data'
-   if ( snprintf( xmlbuffer, 1024, "//campaign/./..///campaign/./gransom-allocation/heavily-protected-data/./test" ) < 1 ) {
-      printf( "Failed to populate 5th NS traversal path\n" );
+   if ( snprintf( xmlbuffer, 1024, "./../..//..//campaign/./gransom-allocation/heavily-protected-data/./test" ) < 1 ) {
+      printf( "Failed to populate 5th NS shift path\n" );
       return -1;
    }
-   if ( config_shiftns( config, &(tgtns), xmlbuffer ) ) {
+   if ( (shiftres = config_shiftns( config, &(pos), xmlbuffer )) == NULL ) {
       printf( "Failure of 5th NS shift: \"%s\"\n", xmlbuffer );
       return -1;
    }
-   if ( strcmp( xmlbuffer, "test" ) ) {
-      printf( "Unexpected path for 5th NS shift: \"%s\"\n", xmlbuffer );
+   if ( strcmp( shiftres, "test" ) ) {
+      printf( "Unexpected path for 5th NS shift: \"%s\"\n", shiftres );
       return -1;
    }
-   printf( "5th NS shift: \"%s\"\n", xmlbuffer );
+   printf( "5th NS shift: \"%s\"\n", shiftres );
    // 6th -- TGT = "../../noexist"
    //     -- NS = '/'
    if ( snprintf( xmlbuffer, 1024, "../../noexist" ) < 1 ) {
-      printf( "Failed to populate 6th NS traversal path\n" );
+      printf( "Failed to populate 6th NS shift path\n" );
       return -1;
    }
-   if ( config_shiftns( config, &(tgtns), xmlbuffer ) ) {
+   if ( (shiftres = config_shiftns( config, &(pos), xmlbuffer )) == NULL ) {
       printf( "Failure of 6th NS shift: \"%s\"\n", xmlbuffer );
       return -1;
    }
-   if ( strcmp( xmlbuffer, "noexist" ) ) {
-      printf( "Unexpected path for 6th NS shift: \"%s\"\n", xmlbuffer );
+   if ( strcmp( shiftres, "noexist" ) ) {
+      printf( "Unexpected path for 6th NS shift: \"%s\"\n", shiftres );
       return -1;
    }
-   printf( "6th NS shift: \"%s\"\n", xmlbuffer );
-   if ( tgtns != config->rootns ) {
-      printf( "tgtns != rootns following final NS shift\n" );
+   printf( "6th NS shift: \"%s\"\n", shiftres );
+   if ( pos.ns != config->rootns ) {
+      printf( "NS != rootns following final NS shift\n" );
       return -1;
    }
+
+
+   // test full path traversal ( no link-check )
+   // 1st -- TGT = "/campaign/rootNSfile"
+   //     -- NS = '/'
+   char* travbuf = NULL;
+   if ( (travbuf = strdup( "/campaign/rootNSfile" )) == NULL ) {
+      printf( "Failed to populate 1st NS traversal path\n" );
+      return -1;
+   }
+   free( travbuf );
+
+   // cleanup position
+   if ( pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt ) ) {
+      printf( "Failed to destory final postion MDAL_CTXT\n" );
+      return -1;
+   }
+
+   // cleanup namespaces
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/gransom-allocation/heavily-protected-data" ) ) {
+      printf( "Failed to destroy /gransom-allocation/heavily-protected-data NS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/gransom-allocation/read-only-data" ) ) {
+      printf( "Failed to destroy /gransom-allocation/read-only-data NS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/gransom-allocation" ) ) {
+      printf( "Failed to destroy /gransom-allocation NS\n" );
+      return -1;
+   }
+   rootmdal->destroynamespace( rootmdal->ctxt, "/." ); // TODO : fix MDAL edge case
 
 
    // free the config

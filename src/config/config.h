@@ -130,6 +130,12 @@ typedef struct marfs_config_struct {
    marfs_repo* repolist;
 } marfs_config;
 
+typedef struct marfs_position_struct {
+   marfs_ns* ns;
+   unsigned int depth;
+   MDAL_CTXT ctxt;
+} marfs_position;
+
 /**
  * Initialize memory structures based on the given config file
  * @param const char* cpath : Path of the config file to be parsed
@@ -147,10 +153,10 @@ int config_term( marfs_config* config );
 /**
  * Traverse the given path, idetifying a final NS target and resulting subpath
  * @param marfs_config* config : Config reference
- * @param marfs_ns** tgtns : Reference populated with the initial NS value
- *                            This will be updated to reflect the resulting NS value
+ * @param marfs_position* pos : Reference populated with the initial position value
+ *                              This will be updated to reflect the resulting position
  * @param char** subpath : Relative path from the tgtns
- *                         This will be updated to reflect the resulting subpath from 
+ *                         This will be updated to reflect the resulting subpath from
  *                         the new tgtns
  *                         NOTE -- this function may completely replace the
  *                         string reference
@@ -158,10 +164,22 @@ int config_term( marfs_config* config );
  *                          All path componenets are assumed to be directories.
  *                       If non-zero, this function will perform a readlink() op on all
  *                          path components, substituting in the targets of all symlinks.
- * @return MDAL_CTXT : A new MDAL_CTXT, associated with the resulting NS target,
- *                     of NULL if a failure occurred
+ * @return int : Zero on success, or -1 if a failure occurred
  */
-MDAL_CTXT config_traverse( marfs_config* config, marfs_ns** tgtns, char** subpath, char linkchk );
+int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, char linkchk );
+
+/**
+ * Idetify the repo and NS path of the given NS ID string reference
+ * @param const char* nsidstr : Reference to the NS ID string for which to retrieve info
+ * @param char** repo : Reference to be populated with the name of the NS repo
+ *                      NOTE -- it is the caller's responsibility to free this string
+ * @param char** path : Reference to be populated with the path of the NS
+ *                      NOTE -- it is the caller's responsibility to free this string
+ * @return int : Zero on success;
+ *               One, if the NS path is invalid ( likely means NS has no parent );
+ *               -1 on failure.
+ */
+int config_nsinfo( const char* nsidstr, char** repo, char** path );
 
 #endif // _CONFIG_H
 
