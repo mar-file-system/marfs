@@ -507,19 +507,23 @@ int main(int argc, char **argv)
 
    // prepare for full path traversal by actually creating config namespaces via MDAL
    MDAL rootmdal = config->rootns->prepo->metascheme.mdal;
-   if ( rootmdal->createnamespace( rootmdal->ctxt, "/." ) ) {
+   errno = 0;
+   if ( rootmdal->createnamespace( rootmdal->ctxt, "/." )  &&  errno != EEXIST ) {
       printf( "Failed to create root NS\n" );
       return -1;
    }
-   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation" ) ) {
+   errno = 0;
+   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation" )  &&  errno != EEXIST ) {
       printf( "Failed to create /gransom-allocation NS\n" );
       return -1;
    }
-   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation/read-only-data" ) ) {
+   errno = 0;
+   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation/read-only-data" )  &&  errno != EEXIST ) {
       printf( "Failed to create /gransom-allocation/read-only-data NS\n" );
       return -1;
    }
-   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation/heavily-protected-data" ) ) {
+   errno = 0;
+   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation/heavily-protected-data" )  &&  errno != EEXIST ) {
       printf( "Failed to create /gransom-allocation/heavily-protected-data NS\n" );
       return -1;
    }
@@ -636,6 +640,151 @@ int main(int argc, char **argv)
       printf( "Failed to populate 1st NS traversal path\n" );
       return -1;
    }
+   int travdepth = config_traverse( config, &(pos), &(travbuf), 0 );
+   if ( travdepth != 1 ) {
+      printf( "Failure of 1st traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "rootNSfile" ) ) {
+      printf( "Unexpected subpath for 1st traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns != config->rootns ) {
+      printf( "Non-root NS following 1st traversal\n" );
+      return -1;
+   }
+   if ( pos.depth ) {
+      printf( "Non-zero depth value following 1st traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "1st Traversal: \"%s\"\n", travbuf );
+   free( travbuf );
+   // 2nd -- TGT = ".././/campaign/gransom-allocation/test/./this//../"
+   //     -- NS = '/gransom-allocation'
+   if ( (travbuf = strdup( ".././/campaign/gransom-allocation/test/./this//../" )) == NULL ) {
+      printf( "Failed to populate 2nd NS traversal path\n" );
+      return -1;
+   }
+   travdepth = config_traverse( config, &(pos), &(travbuf), 0 );
+   if ( travdepth != 1 ) {
+      printf( "Failure of 2nd traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "test/./this//../" ) ) {
+      printf( "Unexpected subpath for 2nd traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns == config->rootns ) {
+      printf( "Root NS following 2nd traversal\n" );
+      return -1;
+   }
+   if ( pos.depth ) {
+      printf( "Non-zero depth value following 2nd traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "2nd Traversal: \"%s\"\n", travbuf );
+   free( travbuf );
+   // 3rd -- TGT = "./not//../relevant/./../////read-only-data/./f"
+   //     -- NS = '/gransom-allocation/read-only-data'
+   if ( (travbuf = strdup( "./not//../relevant/./../////read-only-data/./f" )) == NULL ) {
+      printf( "Failed to populate 3rd NS traversal path\n" );
+      return -1;
+   }
+   travdepth = config_traverse( config, &(pos), &(travbuf), 0 );
+   if ( travdepth != 1 ) {
+      printf( "Failure of 3rd traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "f" ) ) {
+      printf( "Unexpected subpath for 3rd traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns == config->rootns ) {
+      printf( "Root NS following 3rd traversal\n" );
+      return -1;
+   }
+   if ( pos.depth ) {
+      printf( "Non-zero depth value following 3rd traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "3rd Traversal: \"%s\"\n", travbuf );
+   free( travbuf );
+   // 4th -- TGT = "/campaign/somethin///../gransom-allocation/heavily-protected-data/../.././myfile"
+   //     -- NS = '/'
+   if ( (travbuf = strdup( "/campaign/somethin///../gransom-allocation/heavily-protected-data/../.././myfile" )) == NULL ) {
+      printf( "Failed to populate 4th NS traversal path\n" );
+      return -1;
+   }
+   travdepth = config_traverse( config, &(pos), &(travbuf), 0 );
+   if ( travdepth != 1 ) {
+      printf( "Failure of 4th traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "myfile" ) ) {
+      printf( "Unexpected subpath for 4th traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns != config->rootns ) {
+      printf( "Non-root NS following 4th traversal\n" );
+      return -1;
+   }
+   if ( pos.depth ) {
+      printf( "Non-zero depth value following 4th traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "4th Traversal: \"%s\"\n", travbuf );
+   free( travbuf );
+   // 5th -- TGT = "../../../gransom-allocation/read-only-data/../heavily-protected-data/tgt/subdir/"
+   //     -- NS = '/gransom-allocation/heavily-protected-data'
+   pos.depth = 3; // make our position relative to some 3-deep subdir of the rootNS
+   if ( (travbuf = strdup( "../../../gransom-allocation/read-only-data/../heavily-protected-data/tgt/subdir/" )) == NULL ) {
+      printf( "Failed to populate 5th NS traversal path\n" );
+      return -1;
+   }
+   travdepth = config_traverse( config, &(pos), &(travbuf), 0 );
+   if ( travdepth != 2 ) {
+      printf( "Failure of 5th traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "tgt/subdir/" ) ) {
+      printf( "Unexpected subpath for 5th traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns == config->rootns ) {
+      printf( "Root NS following 5th traversal\n" );
+      return -1;
+   }
+   if ( pos.depth ) {
+      printf( "Non-zero depth value following 5th traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "5th Traversal: \"%s\"\n", travbuf );
+   free( travbuf );
+   // 6th -- TGT = ".././/test"
+   //     -- NS = '/gransom-allocation/heavily-protected-data'
+   pos.depth = 2; // make our position relative to some 2-deep subdir
+   if ( (travbuf = strdup( ".././/test" )) == NULL ) {
+      printf( "Failed to populate 6th NS traversal path\n" );
+      return -1;
+   }
+   travdepth = config_traverse( config, &(pos), &(travbuf), 0 );
+   if ( travdepth != 2 ) {
+      printf( "Failure of 6th traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, ".././/test" ) ) {
+      printf( "Unexpected subpath for 6th traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns == config->rootns ) {
+      printf( "Root NS following 6th traversal\n" );
+      return -1;
+   }
+   if ( pos.depth != 2 ) {
+      printf( "Depth value modified following 6th traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "6th Traversal: \"%s\"\n", travbuf );
    free( travbuf );
 
    // cleanup position

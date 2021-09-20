@@ -407,6 +407,13 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
          if ( pos->ns->subspaces == NULL  ||  
               hash_lookup( pos->ns->subspaces, pathelem, &(resnode) ) ) {
             // this is not a NS path
+            // check if the MDAL permits this path element
+            if ( mdal->pathfilter( pathelem ) ) {
+               LOG( LOG_ERR, "NS subpath element rejected by MDAL: \"%s\"\n", pathelem );
+               if ( replacechar ) { *parsepath = '/'; }
+               errno = EPERM;
+               return NULL;
+            }
             if ( replacechar ) { *parsepath = '/'; }
             break;
          }
@@ -415,6 +422,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
             // if the repo is the same, we can shift the current ctxt
             if ( mdal->setnamespace( pos->ctxt, pathelem ) ) {
                LOG( LOG_ERR, "Failed to transition to NS \"%s\"\n", ((marfs_ns*)(resnode->content))->idstr );
+               if ( replacechar ) { *parsepath = '/'; }
                return NULL;
             }
          }
@@ -2369,7 +2377,8 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
    // traverse the subpath, keeping track of depth from the current NS
    char* pathelem = parsepath;
    char* relpath = parsepath; // relative path of current target from pos->ctxt
-   unsigned int depth = pos->depth; // depth of current traversal
+   int depth = pos->depth; // depth of current traversal
+   char nonNS = 0;
    while ( *parsepath != '\0' ) {
       // move the parse pointer ahead to the next '/' char
       while ( *parsepath != '\0'  &&  *parsepath != '/' ) { parsepath++; }
@@ -2383,21 +2392,14 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
             // we can't move up any further
             if ( replacechar ) { *parsepath = '/'; } // undo any previous edit
             replacechar = 0;
-//            if ( *subpath != pathelem ) {
-//               int newlen = sprintf( *subpath, "%s", pathelem );
-//               if ( newlen < 0 ) {
-//                  LOG( LOG_ERR, "Failed to update subpath\n" );
-//                  return -1;
-//               }
-//               // zero out the end of the subpath, just in case
-//               bzero( (*subpath)+newlen+1, pathelem-((*subpath)+1) );
-//            }
+            // traverse the NS paths
             parsepath = config_shiftns( config, pos, pathelem );
             if ( parsepath == NULL  ||  parsepath == pathelem ) {
                LOG( LOG_ERR, "Failed to identify NS target following parent ref\n" );
                return -1;
             }
             // NS target identified; update our refs and continue
+            nonNS = 1; // don't recheck if this path elem is a NS
             pos->depth = 0;
             relpath = parsepath;
             pathelem = parsepath;
@@ -2407,7 +2409,7 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
          depth--; // one level up
       }
       else if ( strcmp( pathelem, "." ) ) { // ignore "." references
-         if ( depth == 0 ) {
+         if ( depth == 0  &&  nonNS == 0 ) {
             // check for NS shift at root of NS
             if ( replacechar ) { *parsepath = '/'; } // undo any previous edit
             char* shiftres = config_shiftns( config, pos, pathelem );
@@ -2417,6 +2419,7 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
             }
             if ( shiftres != pathelem ) {
                // NS target identified; update our refs and continue
+               nonNS = 1; // don't recheck if this path elem is a NS
                pos->depth = 0;
                relpath = shiftres;
                parsepath = shiftres;
@@ -2460,14 +2463,6 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
                   return -1;
                }
                *(linkbuf + readlinkres) = '\0'; // manually insert NULL-term because readlink is a stupid function that doesn't bother to make any such guarantee itself
-               // validate that our MDAL will allow this link target
-               if ( mdal->pathfilter( linkbuf ) ) {
-                  LOG( LOG_ERR, "Encountered link \"%s\" with restricted target: \"%s\"\n",
-                                (*subpath), linkbuf );
-                  free( linkbuf );
-                  errno = EPERM;
-                  return -1;
-               }
                LOG( LOG_INFO, "Encountered symlink \"%s\" with target \"%s\"\n",
                               *subpath, linkbuf );
                // restore the orignal string structure
@@ -2542,12 +2537,13 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
                   }
                }
                // update all of our references
+               nonNS = 0; // new path element, may be a potential subspace
                parsepath = parsestart;
                pathelem = parsestart;
                continue;
             }
          }
-         pos->depth++; // if we get here, assume this is a subdir
+         depth++; // if we get here, assume this is a subdir
       }
       // undo any previous path edit
       if ( replacechar ) { *parsepath = '/'; }
@@ -2555,9 +2551,21 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
       while ( *parsepath == '/' ) { parsepath++; }
       // update our element pointer to the next path element
       pathelem = parsepath;
+      nonNS = 0; // new path element, may be a potential subspace
+   }
+   // truncate our subpath down to a relative path from the current position
+   if ( *subpath != relpath ) {
+      int newlen = sprintf( *subpath, "%s", relpath );
+      if ( newlen < 0 ) {
+         LOG( LOG_ERR, "Failed to update subpath\n" );
+         return -1;
+      }
+      // zero out the end of the subpath, just in case
+      bzero( (*subpath)+newlen+1, relpath-((*subpath)+1) );
    }
 
-   return 0;
+
+   return depth;
 }
 
 /**

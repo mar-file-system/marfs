@@ -164,7 +164,8 @@ int config_term( marfs_config* config );
  *                          All path componenets are assumed to be directories.
  *                       If non-zero, this function will perform a readlink() op on all
  *                          path components, substituting in the targets of all symlinks.
- * @return int : Zero on success, or -1 if a failure occurred
+ * @return int : The depth of the path from the resulting NS target, 
+ *               or -1 if a failure occurred
  */
 int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, char linkchk );
 
