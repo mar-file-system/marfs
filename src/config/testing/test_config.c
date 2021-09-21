@@ -760,10 +760,10 @@ int main(int argc, char **argv)
    }
    printf( "5th Traversal: \"%s\"\n", travbuf );
    free( travbuf );
-   // 6th -- TGT = ".././/test"
+   // 6th -- TGT = ".././/MDAL_test"
    //     -- NS = '/gransom-allocation/heavily-protected-data'
    pos.depth = 2; // make our position relative to some 2-deep subdir
-   if ( (travbuf = strdup( ".././/test" )) == NULL ) {
+   if ( (travbuf = strdup( ".././/MDAL_test" )) == NULL ) {
       printf( "Failed to populate 6th NS traversal path\n" );
       return -1;
    }
@@ -772,7 +772,7 @@ int main(int argc, char **argv)
       printf( "Failure of 6th traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
       return -1;
    }
-   if ( strcmp( travbuf, ".././/test" ) ) {
+   if ( strcmp( travbuf, ".././/MDAL_test" ) ) {
       printf( "Unexpected subpath for 6th traversal: \"%s\"\n", travbuf );
       return -1;
    }
@@ -786,6 +786,198 @@ int main(int argc, char **argv)
    }
    printf( "6th Traversal: \"%s\"\n", travbuf );
    free( travbuf );
+
+   // verify rejection of MDAL_ prefix
+   // -- TGT = "..///../MDAL_shouldreject"
+   // -- NS = '/gransom-allocation/heavily-protected-data'
+   pos.depth = 2; // make our position relative to some 2-deep subdir
+   if ( (travbuf = strdup( "..///../MDAL_shouldreject" )) == NULL ) {
+      printf( "Failed to populate 6th NS traversal path\n" );
+      return -1;
+   }
+   travdepth = config_traverse( config, &(pos), &(travbuf), 0 );
+   if ( travdepth >= 0 ) {
+      printf( "Traversal expected to fail: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "..///../MDAL_shouldreject" ) ) {
+      printf( "Unexpected subpath for failed traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns == config->rootns ) {
+      printf( "Root NS following failed traversal\n" );
+      return -1;
+   }
+   if ( pos.depth != 2 ) {
+      printf( "Depth value modified following failed traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "Failed Traversal (expected failure): \"%s\"\n", travbuf );
+   free( travbuf );
+   pos.depth = 0; // reset position to appropriate depth
+
+   // construct some real dirs/links/files to verify linkchk flag
+   MDAL heavymdal = pos.ns->prepo->metascheme.mdal;
+   errno = 0;
+   if ( heavymdal->mkdir( pos.ctxt, "subdir", S_IRWXU )  &&  errno != EEXIST ) {
+      printf( "Failed to mkdir \"/gransom-allocation/heavily-protected-data/subdir\"\n" );
+      return -1;
+   }
+   errno = 0;
+   MDAL_FHANDLE fh = heavymdal->openref( pos.ctxt, "reflink", O_CREAT | O_EXCL, S_IRWXU );
+   if ( (fh == NULL  &&  errno != EEXIST)  ||  (fh != NULL  && heavymdal->close( fh )) ) {
+      printf( "Failed to create 'reflink' reference file\n" );
+      return -1;
+   }
+   errno = 0;
+   if ( heavymdal->linkref( pos.ctxt, "reflink", "subdir/tgtfile" )  &&  errno != EEXIST ) {
+      printf( "Failed to link reference file 'reflink' to real tgt 'subdir/tgtfile'\n" );
+      return -1;
+   }
+   errno = 0;
+   if ( heavymdal->symlink( pos.ctxt, "./subdir/tgtfile", "relativelink" )  &&  errno != EEXIST ) {
+      printf( "Failed to create 'relativelink'\n" );
+      return -1;
+   }
+   errno = 0;
+   if ( heavymdal->symlink( pos.ctxt, "//./campaign/gransom-allocation/heavily-protected-data/../heavily-protected-data/subdir/", "./subdir/absolutelink" )  &&  errno != EEXIST ) {
+      printf( "Failed to create 'absolutelink'\n" );
+      return -1;
+   }
+   errno = 0;
+   if ( heavymdal->symlink( pos.ctxt, "../noexist/../subdir/tgtfile", "subdir/brokenlink" )  &&  errno != EEXIST ) {
+      printf( "Failed to create 'brokenlink'\n" );
+      return -1;
+   }
+
+   // Test traversal - Dirs/files
+   // TGT = "subdir//tgtfile"
+   marfs_ns* heavyns = pos.ns;
+   if ( (travbuf = strdup( "subdir//tgtfile" )) == NULL ) {
+      printf( "Failed to populate dir/file traversal path\n" );
+      return -1;
+   }
+   travdepth = config_traverse( config, &(pos), &(travbuf), 1 );
+   if ( travdepth != 2 ) {
+      printf( "Failure of dir/file traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "subdir//tgtfile" ) ) {
+      printf( "Unexpected subpath for dir/file traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns != heavyns ) {
+      printf( "Unexpected NS following dir/file traversal\n" );
+      return -1;
+   }
+   if ( pos.depth ) {
+      printf( "Depth value modified following dir/file traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "Dir/File Traversal: \"%s\"\n", travbuf );
+   free( travbuf );
+   // Test traversal - Relative Link
+   // TGT = "relativelink"
+   if ( (travbuf = strdup( "../heavily-protected-data/relativelink" )) == NULL ) {
+      printf( "Failed to populate rellink traversal path\n" );
+      return -1;
+   }
+   travdepth = config_traverse( config, &(pos), &(travbuf), 1 );
+   if ( travdepth != 2 ) {
+      printf( "Failure of rellink traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "./subdir/tgtfile" ) ) {
+      printf( "Unexpected subpath for rellink traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns != heavyns ) {
+      printf( "Unexpected NS following rellink traversal\n" );
+      return -1;
+   }
+   if ( pos.depth ) {
+      printf( "Depth value modified following rellink traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "Rellink Traversal: \"%s\"\n", travbuf );
+   free( travbuf );
+   // Test traversal - Absolute Link
+   // TGT = "subdir/absolutelink/.."
+   if ( (travbuf = strdup( "subdir/absolutelink/.." )) == NULL ) {
+      printf( "Failed to populate abslink traversal path\n" );
+      return -1;
+   }
+   travdepth = config_traverse( config, &(pos), &(travbuf), 1 );
+   if ( travdepth != 0 ) {
+      printf( "Failure of abslink traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "subdir//.." ) ) {
+      printf( "Unexpected subpath for abslink traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns != heavyns ) {
+      printf( "Unexpected NS following abslink traversal\n" );
+      return -1;
+   }
+   if ( pos.depth ) {
+      printf( "Non-zero depth value modified following abslink traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "Abslink Traversal: \"%s\"\n", travbuf );
+   free( travbuf );
+   // Test traversal - Broken Link
+   // TGT = "subdir/brokenlink"
+   if ( (travbuf = strdup( "subdir/brokenlink" )) == NULL ) {
+      printf( "Failed to populate brokenlink traversal path\n" );
+      return -1;
+   }
+   errno = 0;
+   travdepth = config_traverse( config, &(pos), &(travbuf), 1 );
+   if ( travdepth != -1  ||  errno != ENOENT ) {
+      printf( "Unexpected success of brokenlink traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+      return -1;
+   }
+   if ( strcmp( travbuf, "subdir/../noexist/../subdir/tgtfile" ) ) {
+      printf( "Unexpected subpath for brokenlink traversal: \"%s\"\n", travbuf );
+      return -1;
+   }
+   if ( pos.ns != heavyns ) {
+      printf( "Unexpected NS following brokenlink traversal\n" );
+      return -1;
+   }
+   if ( pos.depth ) {
+      printf( "Non-zero depth value modified following brokenlink traversal: %u\n", pos.depth );
+      return -1;
+   }
+   printf( "Brokenlink Traversal: \"%s\"\n", travbuf );
+   free( travbuf );
+
+   // cleanup dirs/links/files
+   if ( heavymdal->unlink( pos.ctxt, "subdir/brokenlink" ) ) {
+      printf( "Failed to unlink 'subdir/brokenlink'\n" );
+      return -1;
+   }
+   if ( heavymdal->unlink( pos.ctxt, "subdir/absolutelink" ) ) {
+      printf( "Failed to unlink 'absolutelink'\n" );
+      return -1;
+   }
+   if ( heavymdal->unlink( pos.ctxt, "relativelink" ) ) {
+      printf( "Failed to unlink 'relativelink'\n" );
+      return -1;
+   }
+   if ( heavymdal->unlink( pos.ctxt, "subdir/tgtfile" ) ) {
+      printf( "Failed to unlink 'tgtfile'\n" );
+      return -1;
+   }
+   if ( heavymdal->rmdir( pos.ctxt, "subdir" ) ) {
+      printf( "Failed to rmdir 'subdir'\n" );
+      return -1;
+   }
+   if ( heavymdal->unlinkref( pos.ctxt, "reflink" ) ) {
+      printf( "Failed to unlinkref 'reflink'\n" );
+      return -1;
+   }
 
    // cleanup position
    if ( pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt ) ) {
@@ -806,7 +998,7 @@ int main(int argc, char **argv)
       printf( "Failed to destroy /gransom-allocation NS\n" );
       return -1;
    }
-   rootmdal->destroynamespace( rootmdal->ctxt, "/." ); // TODO : fix MDAL edge case
+   rootmdal->destroynamespace( rootmdal->ctxt, "/." ); // TODO : fix MDAL edge case?
 
 
    // free the config

@@ -2432,39 +2432,46 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
          }
          // assume all others are either dirs or links
          if ( linkchk ) {
-            // perform a readlink against the current path element
-            errno = 0;
-            ssize_t readlinkres = mdal->readlink( pos->ctxt, relpath, NULL, 0 ); 
-            if ( readlinkres < 0 ) {
-               // check for reportable errors
-               if( errno != EINVAL ) {
-                  LOG( LOG_ERR, "Failed to readlink path component: \"%s\"\n", *subpath );
-                  return -1;
-               }
-               // EINVAL means this is not a symlink, which is acceptable
+            // stat the current path element
+            struct stat linkst;
+            if ( mdal->stat( pos->ctxt, relpath, &(linkst), AT_SYMLINK_NOFOLLOW ) ) {
+               LOG( LOG_ERR, "Failed to stat relative path: \"%s\"\n", relpath );
+               if ( replacechar ) { *parsepath = '/'; } // undo any previous edit
+               return -1;
             }
-            else {
-               if ( readlinkres == 0 ) {
-                  LOG( LOG_ERR, "Empty content of link: \"%s\"\n", *subpath );
+            size_t linksize = linkst.st_size;
+            if ( S_ISLNK(linkst.st_mode) ) {
+               LOG( LOG_INFO, "Subpath is a symlink: \"%s\"\n", relpath );
+               if ( linksize == 0 ) {
+                  LOG( LOG_ERR, "Empty content of link: \"%s\"\n", relpath );
+                  if ( replacechar ) { *parsepath = '/'; } // undo any previous edit
                   errno = ENOENT;
                   return -1;
                }
-               // this is a real link, so we need to follow it
-               char* linkbuf = malloc( sizeof(char) * (readlinkres + 1) );
-               if ( linkbuf == NULL ) {
-                  LOG( LOG_ERR, "Failed to allocate space for content of link: \"%s\"\n", *subpath );
+               if ( linksize > INT_MAX ) {
+                  LOG( LOG_ERR, "Link content of %zu bytes exceeds memory limits\n", linksize );
+                  if ( replacechar ) { *parsepath = '/'; } // undo any previous edit
+                  errno = ENAMETOOLONG;
                   return -1;
                }
-               size_t readres2 = mdal->readlink( pos->ctxt, relpath, linkbuf, readlinkres );
-               if ( readres2 != readlinkres ) {
-                  LOG( LOG_ERR, "State of link changed during traversal: \"%s\"\n", *subpath );
+               // this is a real link, so we need to follow it
+               char* linkbuf = malloc( sizeof(char) * (linksize + 1) );
+               if ( linkbuf == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate space for content of link: \"%s\"\n", relpath );
+                  if ( replacechar ) { *parsepath = '/'; } // undo any previous edit
+                  return -1;
+               }
+               ssize_t readres2 = mdal->readlink( pos->ctxt, relpath, linkbuf, linksize );
+               if ( readres2 != linksize ) {
+                  LOG( LOG_ERR, "State of link changed during traversal: \"%s\"\n", relpath );
+                  if ( replacechar ) { *parsepath = '/'; } // undo any previous edit
                   free( linkbuf );
                   errno = EBUSY;
                   return -1;
                }
-               *(linkbuf + readlinkres) = '\0'; // manually insert NULL-term because readlink is a stupid function that doesn't bother to make any such guarantee itself
+               *(linkbuf + linksize) = '\0'; // manually insert NULL-term because readlink is a stupid function that doesn't bother to make any such guarantee itself
                LOG( LOG_INFO, "Encountered symlink \"%s\" with target \"%s\"\n",
-                              *subpath, linkbuf );
+                              relpath, linkbuf );
                // restore the orignal string structure
                if ( replacechar ) { *parsepath = '/'; }
                replacechar = 0;
@@ -2473,8 +2480,9 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
                size_t elemlen = parsepath - pathelem; // path element len (to discard)
                size_t prefixlen = pathelem - relpath; // len of relpath to this element
                size_t headerlen = relpath - (*subpath); // unneeded NS prefix (to discard)
+               LOG( LOG_INFO, "LINK_INFO ( remain=%zu, elemlen=%zu, prefix=%zu, header=%zu )\n", remainlen, elemlen, prefixlen, headerlen );
                char* oldpath = *subpath;
-               size_t requiredchars = remainlen + readlinkres + prefixlen;
+               size_t requiredchars = remainlen + linksize + prefixlen;
                if ( *linkbuf == '/' ) {
                   // absolute link path makes the relpath prefix irrelevant
                   requiredchars -= prefixlen;
@@ -2482,8 +2490,9 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
                size_t origstrlen = headerlen + prefixlen + elemlen + remainlen;
                // check if we can fit the modified string into the current buffer
                if ( origstrlen < requiredchars ) {
+                  LOG( LOG_INFO, "Allocating new path buffer of length %zu\n", requiredchars+1);
                   // must allocate a new string buffer to hold required chars
-                  *subpath = calloc( sizeof(char), (requiredchars + 1) );
+                  *subpath = malloc( sizeof(char) * (requiredchars + 1) );
                   if ( *subpath == NULL ) {
                      LOG( LOG_ERR, "Failed to alloc new subpath buffer\n" );
                      free( linkbuf );
@@ -2502,8 +2511,8 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
                   output += prefixlen; // update output location
                }
                char* parsestart = output; // parsing begins with link content
-               memcpy( output, linkbuf, readlinkres ); // insert link content
-               output += readlinkres; // update output location
+               memcpy( output, linkbuf, linksize ); // insert link content
+               output += linksize; // update output location
                free( linkbuf ); // finally done with link content buffer
                memcpy( output, parsepath, sizeof(char) * remainlen ); // append remaining
                output += remainlen;
@@ -2511,6 +2520,7 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
                if ( oldpath != (*subpath) ) { free( oldpath ); } // done with the orig
                LOG( LOG_INFO, "Link substitution result: \"%s\"\n", *subpath );
                // restart our parsing with updated string
+               relpath = *subpath; // update relpath to the new prefix position
                if ( *parsestart == '/' ) {
                   // absolute path means we must re-verify the mountpoint
                   parsestart = config_validatemnt( config, NULL, parsestart );
@@ -2535,6 +2545,8 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
                         return -1;
                      }
                   }
+                  depth = 0; // now at the root of the rootNS
+                  relpath = parsestart; // update relpath, as our NS has shifted
                }
                // update all of our references
                nonNS = 0; // new path element, may be a potential subspace

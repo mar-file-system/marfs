@@ -608,7 +608,7 @@ typedef struct MDAL_struct {
    int (*symlink) ( const MDAL_CTXT ctxt, const char* target, const char* linkname );
 
    /**
-    * Unlink the specified file
+    * Unlink the specified file/symlink
     * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
     * @return int : Zero on success, or -1 if a failure occurred
