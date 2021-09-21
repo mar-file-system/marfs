@@ -80,7 +80,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define PMDAL_PREFX "MDAL_"
 #define PMDAL_REF PMDAL_PREFX"reference"
-#define PMDAL_PATH PMDAL_PREFX"path"
 #define PMDAL_SUBSP PMDAL_PREFX"subspaces"
 #define PMDAL_SUBSTRLEN 14 // max length of all ref/path/subsp dir names
 #define PMDAL_DUSE PMDAL_PREFX"datasize"
@@ -364,20 +363,13 @@ int posixmdal_setnamespace( MDAL_CTXT ctxt, const char* ns ) {
       LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
       return -1;
    }
-   char* nspath = malloc( sizeof(char) * (nspathlen + 2 + strlen(PMDAL_PATH)) );
+   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
    if ( !(nspath) ) {
       LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
       return -1;
    }
    if ( namespacepath( ns, nspath, nspathlen + 1 ) != nspathlen ) {
       LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
-      free( nspath );
-      return -1;
-   }
-   // append the path subdir name
-   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_PATH), "/%s", PMDAL_PATH ) != 
-         1 + strlen(PMDAL_PATH) ) {
-      LOG( LOG_ERR, "Failed to properly generate the location of the path subdir of NS:\"%s\"\n", ns );
       free( nspath );
       return -1;
    }
@@ -412,7 +404,7 @@ int posixmdal_setnamespace( MDAL_CTXT ctxt, const char* ns ) {
    }
    free( nspath ); // done with this path
    // open the new ref dir, relative to the new path
-   int newref = openat( newpath, "../"PMDAL_REF, O_RDONLY );
+   int newref = openat( newpath, PMDAL_REF, O_RDONLY );
    if ( newref < 0 ) {
       LOG( LOG_ERR, "Failed to open the ref dir of NS \"%s\"\n", ns );
       close( newpath );
@@ -451,20 +443,13 @@ MDAL_CTXT posixmdal_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
       LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
       return NULL;
    }
-   char* nspath = malloc( sizeof(char) * (nspathlen + 2 + strlen(PMDAL_PATH)) );
+   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
    if ( !(nspath) ) {
       LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
       return NULL;
    }
    if ( namespacepath( ns, nspath, nspathlen + 1 ) != nspathlen ) {
       LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
-      free( nspath );
-      return NULL;
-   }
-   // append the path subdir name
-   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_PATH), "/%s", PMDAL_PATH ) != 
-         1 + strlen(PMDAL_PATH) ) {
-      LOG( LOG_ERR, "Failed to properly generate the location of the path subdir of NS:\"%s\"\n", ns );
       free( nspath );
       return NULL;
    }
@@ -508,7 +493,7 @@ MDAL_CTXT posixmdal_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
    }
    free( nspath ); // done with this path
    // open the reference dir relative to the new path
-   newctxt->refd = openat( newctxt->pathd, "../"PMDAL_REF, O_RDONLY );
+   newctxt->refd = openat( newctxt->pathd, PMDAL_REF, O_RDONLY );
    if ( newctxt->refd < 0 ) {
       LOG( LOG_ERR, "Failed to open the reference dir of NS \"%s\"\n", ns );
       close( newctxt->pathd );
@@ -591,20 +576,6 @@ int posixmdal_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
    }
    if ( mkdirres ) { // check for error conditions ( except EEXIST )
       LOG( LOG_ERR, "Failed to create path to NS root: \"%s\"\n", nspath );
-      free( nspath );
-      return -1;
-   }
-   // append the path subdir name
-   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_PATH), "/%s", PMDAL_PATH ) != 
-         1 + strlen(PMDAL_PATH) ) {
-      LOG( LOG_ERR, "Failed to properly generate the location of the path subdir of NS:\"%s\"\n", ns );
-      free( nspath );
-      return -1;
-   }
-   // attempt to create the path subdir
-   if ( mkdirat( pctxt->refd, nstruepath, S_IRWXU | S_IRWXO ) ) {
-      // here, we actually want to report EEXIST
-      LOG( LOG_ERR, "Failed to create NS path subdir: \"%s\"\n", nspath );
       free( nspath );
       return -1;
    }
@@ -711,26 +682,6 @@ int posixmdal_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
    }
    if ( unlinkres ) {
       LOG( LOG_ERR, "Failed to unlink NS ref subdir: \"%s\"\n", nspath );
-      free( nspath );
-      return -1;
-   }
-   // construct the path of the path subdir
-   if ( snprintf( nspath + nspathlen, 2 + strlen(PMDAL_PATH), "/%s", PMDAL_PATH ) != 
-         1 + strlen(PMDAL_PATH) ) {
-      LOG( LOG_ERR, "Failed to properly generate the path of the path subdir of NS:\"%s\"\n", ns );
-      free( nspath );
-      return -1;
-   }
-   // attempt to unlink the path subdir
-   if ( *nspath == '/' ) {
-      // no need to double check state of pathd
-      unlinkres = unlinkat( pctxt->refd, nspath + 1, AT_REMOVEDIR );
-   }
-   else {
-      unlinkres = unlinkat( pctxt->refd, nspath, AT_REMOVEDIR );
-   }
-   if ( unlinkres ) {
-      LOG( LOG_ERR, "Failed to unlink NS path subdir: \"%s\"\n", nspath );
       free( nspath );
       return -1;
    }

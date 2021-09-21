@@ -99,6 +99,7 @@ typedef struct MDAL_struct {
 
    /**
     * Identify and reject any paths targeting reserved names
+    * NOTE -- this function will only be called at the root of each NS
     * @param const char* path : Path to verify
     * @return : Zero if the path is acceptable, -1 if not
     */
