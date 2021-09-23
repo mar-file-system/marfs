@@ -204,6 +204,7 @@ AC_CONFIG_FILES([Makefile
                  src/hash/Makefile
                  src/mdal/Makefile
                  src/tagging/Makefile
+                 src/recovery/Makefile
                  src/config/Makefile
                ])
 #                 src/logging/Makefile
