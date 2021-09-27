@@ -822,6 +822,11 @@ int recovery_cont( RECOVERY recovery, void* objbuffer, size_t objsize ) {
    // we're done with new header info
    free( newheader.ctag );
    free( newheader.streamid );
+   // cleanup existing per-file info
+   while ( recovery->curfile ) {
+      free( recovery->fileinfo[ recovery->curfile - 1 ].path );
+      recovery->curfile--;
+   }
    // populate per-file info
    if ( populate_recovery( recovery, headerend, objsize ) ) {
       LOG( LOG_ERR, "Failed to populate per-file recovery info\n" );

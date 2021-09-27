@@ -149,11 +149,12 @@ int recovery_cont( RECOVERY recovery, void* objbuffer, size_t objsize );
 /**
  * Iterate over file info and content included in the current object data buffer
  * @param RECOVERY recovery : RECOVERY reference to iterate over
- * @param RECOVERY_FINFO* : Reference to the RECOVERY_FINFO struct to be populated with 
- *                          info for the next file in the stream
- * @param void** databuf : Reference to a void*, to be updated with a reference to the data 
- *                         content of the next recovery file
- * @param size_t* bufsize : Size of the data content buffer of the next recovery file
+ * @param RECOVERY_FINFO* : Reference to the RECOVERY_FINFO struct to be populated with
+ *                          info for the next file in the stream; ignored if NULL
+ * @param void** databuf : Reference to a void*, to be updated with a reference to the data
+ *                         content of the next recovery file; ignored if NULL
+ * @param size_t* bufsize : Size of the data content buffer of the next recovery file;
+ *                          ignored if NULL
  * @return int : One, if another set of file info was produced;
  *               Zero, if no files remain in the current recovery object;
  *               -1, if a failure occurred.

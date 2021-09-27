@@ -430,6 +430,12 @@ int main(int argc, char **argv)
       return -1;
    }
 
+   // attempt a nextfile() call, just using the same buffer
+   if ( recovery_cont( recov, objbuffer, objlen ) ) {
+      printf( "Failed to continue current recov object\n" );
+      return -1;
+   }
+
    // close the recovery obj
    if ( recovery_close( recov ) ) {
       printf( "Failed to close recovery ref\n" );
