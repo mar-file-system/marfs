@@ -122,18 +122,15 @@ int main(int argc, char **argv)
    free( cmpheader.ctag );
    free( cmpheader.streamid );
 
-   // free the recovery header string
-   free( headerstr );
-
    // create a new finfo struct
    RECOVERY_FINFO finfo = {
       .inode = 12345,
       .mode = 0724,
       .owner = 23456,
-      .size = 104857600,
+      .size = 10485760,
       .mtime.tv_sec = 1632428084,
       .mtime.tv_nsec = 123456789,
-      .eof = 1,
+      .eof = 0,
       .path = strdup( "/gransom-allocation/read-only-data/subdir/tgtfile" )
    };
    if ( finfo.path == NULL ) {
@@ -202,6 +199,253 @@ int main(int argc, char **argv)
 
    // free cmpfinfo vals
    free( cmpfinfo.path );
+
+   // allocate a fake data object
+   RECOVERY_FINFO finfo2 = {
+      .inode = 654321,
+      .mode = 01777,
+      .owner = 12345,
+      .size = 0,
+      .mtime.tv_sec = 2632428084,
+      .mtime.tv_nsec = 987654321,
+      .eof = 1,
+      .path = strdup( "/root-subdir/tgtfile2" )
+   };
+   if ( finfo2.path == NULL ) {
+      printf( "Failed to allocate finfo2 string\n" );
+      return -1;
+   }
+   RECOVERY_FINFO finfo3 = {
+      .inode = 6543,
+      .mode = 0027,
+      .owner = 12345,
+      .size = 102400,
+      .mtime.tv_sec = 1632428081,
+      .mtime.tv_nsec = 123,
+      .eof = 1,
+      .path = strdup( "/gransom-allocation/heavily-protected-data/tgtfile3" )
+   };
+   if ( finfo3.path == NULL ) {
+      printf( "Failed to allocate finfo3 string\n" );
+      return -1;
+   }
+   size_t finfo2strlen = recovery_finfotostr( &(finfo2), NULL, 0 );
+   size_t finfo3strlen = recovery_finfotostr( &(finfo3), NULL, 0 );
+   if ( finfo2strlen == 0  ||  finfo3strlen == 0 ) {
+      printf( "Failed string length check for finfo2 and/or 3\n" );
+      return -1;
+   }
+   size_t objlen = headerstrlen +
+                   finfostrlen + 10485760 +
+                   finfo2strlen + 0 +
+                   finfo3strlen + 10240; // only including trailing 10240 bytes of finfo3
+   void* objbuffer = malloc( objlen );
+   if ( objbuffer == NULL ) {
+      printf( "Failed to allocate object buffer of length %zu\n", objlen );
+      return -1;
+   }
+   memcpy( objbuffer, headerstr, headerstrlen );
+   size_t populated = headerstrlen;
+   bzero( objbuffer + populated, 10240 );
+   populated += 10240;
+   if ( recovery_finfotostr( &(finfo3), objbuffer + populated, finfo3strlen + 1 ) != finfo3strlen ) {
+      printf( "Inconsistent length of string for finfo3\n" );
+      return -1;
+   }
+   printf( "Finfo3 String: \"%s\"\n", (char*)objbuffer + populated );
+   populated += finfo3strlen;
+   bzero( objbuffer + populated, 0 );
+   populated += 0;
+   if ( recovery_finfotostr( &(finfo2), objbuffer + populated, finfo2strlen + 1 ) != finfo2strlen ) {
+      printf( "Inconsistent length of string for finfo2\n" );
+      return -1;
+   }
+   printf( "Finfo2 String: \"%s\"\n", (char*)objbuffer + populated );
+   populated += finfo2strlen;
+   bzero( objbuffer + populated, 10485760 );
+   populated += 10485760;
+   memcpy( objbuffer + populated, finfostr, finfostrlen );
+   populated += finfostrlen;
+   if ( populated != objlen ) { printf( "Garrett can't do math!!!!\n" ); return -1; }
+
+   // initialize a recovery object against this object
+   RECOVERY recov = recovery_init( objbuffer, objlen, &(cmpheader) );
+   if ( recov == NULL ) {
+      printf( "Failed to init recov against fake object\n" );
+      return -1;
+   }
+
+   // create a zero buff for comparision
+   void* zerobuf = calloc( 1, 10485760 );
+   if ( zerobuf == NULL ) {
+      printf( "Failed to allocate zerobuf\n" );
+      return -1;
+   }
+
+   // iterate over files, verifying all info
+   void* databuf = NULL;
+   size_t bufsize = 0;
+   // FINFO3
+   if ( recovery_nextfile( recov, &(cmpfinfo), &(databuf), &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve finfo3 info\n" );
+      return -1;
+   }
+   if ( bufsize != 10240 ) {
+      printf( "Bufsize of retrieved finfo3 has an unexpected value: %zu\n", bufsize );
+      return -1;
+   }
+   if ( memcmp( databuf, zerobuf, 10240 ) ) {
+      printf( "Databuf of finfo3 has non-zero values\n" );
+      return -1;
+   }
+   if ( cmpfinfo.inode != finfo3.inode ) {
+      printf( "Recovered finfo3 has different inode: %lu\n", cmpfinfo.inode );
+      return -1;
+   }
+   if ( cmpfinfo.mode != finfo3.mode ) {
+      printf( "Recovered finfo3 has different mode: %o\n", cmpfinfo.mode );
+      return -1;
+   }
+   if ( cmpfinfo.owner != finfo3.owner ) {
+      printf( "Recovered finfo3 has different owner: %u\n", cmpfinfo.owner );
+      return -1;
+   }
+   if ( cmpfinfo.group != finfo3.group ) {
+      printf( "Recovered finfo3 has different group: %u\n", cmpfinfo.group );
+      return -1;
+   }
+   if ( cmpfinfo.size != finfo3.size ) {
+      printf( "Recovered finfo3 has different size: %zu\n", cmpfinfo.size );
+      return -1;
+   }
+   if ( cmpfinfo.mtime.tv_sec != finfo3.mtime.tv_sec  ||
+        cmpfinfo.mtime.tv_nsec != finfo3.mtime.tv_nsec ) {
+      printf( "Recovered finfo3 has different time: %lu.%ld\n",
+              cmpfinfo.mtime.tv_sec, cmpfinfo.mtime.tv_nsec );
+      return -1;
+   }
+   if ( cmpfinfo.eof != finfo3.eof ) {
+      printf( "Recovered finfo3 has different eof: %d\n", (int)cmpfinfo.eof );
+      return -1;
+   }
+   if ( strcmp( cmpfinfo.path, finfo3.path ) ) {
+      printf( "Recovered finfo3 has different path: \"%s\"\n", cmpfinfo.path );
+      return -1;
+   }
+   free( cmpfinfo.path );
+   // FINFO2
+   if ( recovery_nextfile( recov, &(cmpfinfo), &(databuf), &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve finfo2 info\n" );
+      return -1;
+   }
+   if ( bufsize ) {
+      printf( "Bufsize of retrieved finfo2 has an unexpected value: %zu\n", bufsize );
+      return -1;
+   }
+   if ( cmpfinfo.inode != finfo2.inode ) {
+      printf( "Recovered finfo2 has different inode: %lu\n", cmpfinfo.inode );
+      return -1;
+   }
+   if ( cmpfinfo.mode != finfo2.mode ) {
+      printf( "Recovered finfo2 has different mode: %o\n", cmpfinfo.mode );
+      return -1;
+   }
+   if ( cmpfinfo.owner != finfo2.owner ) {
+      printf( "Recovered finfo2 has different owner: %u\n", cmpfinfo.owner );
+      return -1;
+   }
+   if ( cmpfinfo.group != finfo2.group ) {
+      printf( "Recovered finfo2 has different group: %u\n", cmpfinfo.group );
+      return -1;
+   }
+   if ( cmpfinfo.size != finfo2.size ) {
+      printf( "Recovered finfo2 has different size: %zu\n", cmpfinfo.size );
+      return -1;
+   }
+   if ( cmpfinfo.mtime.tv_sec != finfo2.mtime.tv_sec  ||
+        cmpfinfo.mtime.tv_nsec != finfo2.mtime.tv_nsec ) {
+      printf( "Recovered finfo2 has different time: %lu.%ld\n",
+              cmpfinfo.mtime.tv_sec, cmpfinfo.mtime.tv_nsec );
+      return -1;
+   }
+   if ( cmpfinfo.eof != finfo2.eof ) {
+      printf( "Recovered finfo2 has different eof: %d\n", (int)cmpfinfo.eof );
+      return -1;
+   }
+   if ( strcmp( cmpfinfo.path, finfo2.path ) ) {
+      printf( "Recovered finfo2 has different path: \"%s\"\n", cmpfinfo.path );
+      return -1;
+   }
+   free( cmpfinfo.path );
+   // FINFO
+   if ( recovery_nextfile( recov, &(cmpfinfo), &(databuf), &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve finfo info\n" );
+      return -1;
+   }
+   if ( bufsize != 10485760 ) {
+      printf( "Bufsize of retrieved finfo3 has an unexpected value: %zu\n", bufsize );
+      return -1;
+   }
+   if ( memcmp( databuf, zerobuf, 10485760 ) ) {
+      printf( "Databuf of finfo3 has non-zero values\n" );
+      return -1;
+   }
+   if ( cmpfinfo.inode != finfo.inode ) {
+      printf( "Recovered finfo has different inode: %lu\n", cmpfinfo.inode );
+      return -1;
+   }
+   if ( cmpfinfo.mode != finfo.mode ) {
+      printf( "Recovered finfo has different mode: %o\n", cmpfinfo.mode );
+      return -1;
+   }
+   if ( cmpfinfo.owner != finfo.owner ) {
+      printf( "Recovered finfo has different owner: %u\n", cmpfinfo.owner );
+      return -1;
+   }
+   if ( cmpfinfo.group != finfo.group ) {
+      printf( "Recovered finfo has different group: %u\n", cmpfinfo.group );
+      return -1;
+   }
+   if ( cmpfinfo.size != finfo.size ) {
+      printf( "Recovered finfo has different size: %zu\n", cmpfinfo.size );
+      return -1;
+   }
+   if ( cmpfinfo.mtime.tv_sec != finfo.mtime.tv_sec  ||
+        cmpfinfo.mtime.tv_nsec != finfo.mtime.tv_nsec ) {
+      printf( "Recovered finfo has different time: %lu.%ld\n",
+              cmpfinfo.mtime.tv_sec, cmpfinfo.mtime.tv_nsec );
+      return -1;
+   }
+   if ( cmpfinfo.eof != finfo.eof ) {
+      printf( "Recovered finfo has different eof: %d\n", (int)cmpfinfo.eof );
+      return -1;
+   }
+   if ( strcmp( cmpfinfo.path, finfo.path ) ) {
+      printf( "Recovered finfo has different path: \"%s\"\n", cmpfinfo.path );
+      return -1;
+   }
+   free( cmpfinfo.path );
+   if ( recovery_nextfile( recov, &(cmpfinfo), &(databuf), &(bufsize) ) != 0 ) {
+      printf( "4th nextfile call gave unexpected return value\n" );
+      return -1;
+   }
+
+   // close the recovery obj
+   if ( recovery_close( recov ) ) {
+      printf( "Failed to close recovery ref\n" );
+      return -1;
+   }
+
+   // cleanup object refs
+   free( finfo2.path );
+   free( finfo3.path );
+   free( cmpheader.ctag );
+   free( cmpheader.streamid );
+   free( objbuffer );
+   free( zerobuf );
+
+   // free the recovery header string
+   free( headerstr );
 
    // free finfostr
    free( finfostr );
