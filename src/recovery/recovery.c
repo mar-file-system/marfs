@@ -561,6 +561,78 @@ void* parse_recov_finfo( void* finfobuf, size_t bufsize, RECOVERY_FINFO* finfo )
    return parse + (taillen - 1);
 }
 
+int populate_recovery( RECOVERY recov, void* headerend, size_t objsize ) {
+   // traverse files in reverse, populating references as we go
+   recov->curfile = 0;
+   char errorcond = 0;
+   void* curpos = headerend + objsize; // start at the final byte of the buffer
+   while ( objsize ) {
+      // check if we need to extend our lists
+      if ( recov->curfile >= recov->filecount ) {
+         // realloc all lists to longer buffers
+         recov->filecount = ( recov->curfile + 1024 ); // allocate in batches of 1024 files
+         RECOVERY_FINFO* newfileinfo = realloc( recov->fileinfo, sizeof(RECOVERY_FINFO) * recov->filecount );
+         if ( newfileinfo == NULL ) {
+            LOG( LOG_ERR, "Failed to allocate %zu RECOVERY_FINFO references\n",
+                           recov->filecount );
+            errorcond = 1;
+            break;
+         }
+         recov->fileinfo = newfileinfo;
+         void** newfilebuffers = realloc( recov->filebuffers, sizeof(void*) * recov->filecount );
+         if ( newfilebuffers == NULL ) {
+            LOG( LOG_ERR, "Failed to allocate %zu buffer postion references\n",
+                           recov->filecount );
+            errorcond = 1;
+            break;
+         }
+         recov->filebuffers = newfilebuffers;
+         size_t* newbuffersizes = realloc( recov->buffersizes, sizeof(size_t) * recov->filecount );
+         if ( newbuffersizes == NULL ) {
+            LOG( LOG_ERR, "Failed to allocate %zu buffer size values\n", recov->filecount );
+            errorcond = 1;
+            break;
+         }
+         recov->buffersizes = newbuffersizes;
+      }
+      // locate the start of the current FINFO string
+      void* finfostart = locate_finfo_start( curpos, objsize );
+      if ( finfostart == NULL ) {
+         LOG( LOG_ERR, "Failed to locate the start of finfo %zu\n", recov->curfile );
+         errorcond = 1;
+         break;
+      }
+      size_t finfostrlen = ((curpos - finfostart) + 1);
+      objsize -= finfostrlen;
+      // parse the FINFO string
+      RECOVERY_FINFO* curfinfo = recov->fileinfo + recov->curfile;
+      if ( parse_recov_finfo( finfostart, finfostrlen, curfinfo ) != curpos ) {
+         LOG( LOG_ERR, "Failed to parse FINFO string: \"%.*s\"\n", finfostrlen, finfostart );
+         errorcond = 1;
+         break;
+      }
+      // locate the start of this file's data buffer
+      size_t datainobj = ( (curfinfo->size > objsize) ? objsize : curfinfo->size );
+      void* databuf = finfostart - datainobj;
+      recov->filebuffers[ recov->curfile ] = databuf;
+      recov->buffersizes[ recov->curfile ] = datainobj;
+      // proceed to the next file
+      recov->curfile++;
+      curpos = databuf - 1;
+      objsize -= datainobj;
+   }
+   // Post-loop error handling
+   if ( errorcond ) {
+      while ( recov->curfile ) {
+         free( recov->fileinfo[ recov->curfile - 1 ].path );
+         recov->curfile--;
+      }
+      // Leave our per-file lists alone, in case we want to use them later
+      return -1;
+   }
+   return 0;
+}
+
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
@@ -654,10 +726,6 @@ RECOVERY recovery_init( void* objbuffer, size_t objsize, RECOVERY_HEADER* header
       LOG( LOG_ERR, "Received a NULL object buffer\n" );
       return NULL;
    }
-   if ( header == NULL ) {
-      LOG( LOG_ERR, "Received a NULL RECOVERY_HEADER reference\n" );
-      return NULL;
-   }
    // create our RECOVERY struct
    RECOVERY recov = malloc( sizeof( struct recovery_struct ) );
    if ( recov == NULL ) {
@@ -671,79 +739,47 @@ RECOVERY recovery_init( void* objbuffer, size_t objsize, RECOVERY_HEADER* header
       free( recov );
       return NULL;
    }
+   // populate the caller's header struct, if provided
+   if ( header ) {
+      header->majorversion = recov->header.majorversion;
+      header->minorversion = recov->header.minorversion;
+      header->ctag = strdup( recov->header.ctag );
+      header->streamid = strdup( recov->header.streamid );
+      if ( header->ctag == NULL  ||  header->streamid == NULL ) {
+         LOG( LOG_ERR, "Failed to duplicate header strings into caller struct\n" );
+         if ( header->ctag ) { free( header->ctag ); }
+         if ( header->streamid ) { free( header->streamid ); }
+         header->ctag = NULL;
+         header->streamid = NULL;
+         free( recov->header.ctag );
+         free( recov->header.streamid );
+         free( recov );
+         return NULL;
+      }
+   }
    objsize -= (( headerend - objbuffer ) + 1);
-   // traverse files in reverse, populating references as we go
+   // populate per-file info
    recov->filecount = 0;
-   recov->curfile = 0;
    recov->fileinfo = NULL;
    recov->filebuffers = NULL;
    recov->buffersizes = NULL;
-   char errorcond = 0;
-   void* curpos = headerend + objsize; // start at the final byte of the buffer
-   while ( objsize ) {
-      // check if we need to extend our lists
-      if ( recov->curfile >= recov->filecount ) {
-         recov->filecount = ( recov->curfile + 1024 ); // allocate in batches of 1024 files
-         RECOVERY_FINFO* newfileinfo = realloc( recov->fileinfo, sizeof(RECOVERY_FINFO) * recov->filecount );
-         if ( newfileinfo == NULL ) {
-            LOG( LOG_ERR, "Failed to allocate %zu RECOVERY_FINFO references\n",
-                           recov->filecount );
-            errorcond = 1;
-            break;
-         }
-         recov->fileinfo = newfileinfo;
-         void** newfilebuffers = realloc( recov->filebuffers, sizeof(void*) * recov->filecount );
-         if ( newfilebuffers == NULL ) {
-            LOG( LOG_ERR, "Failed to allocate %zu buffer postion references\n",
-                           recov->filecount );
-            errorcond = 1;
-            break;
-         }
-         recov->filebuffers = newfilebuffers;
-         size_t* newbuffersizes = realloc( recov->buffersizes, sizeof(size_t) * recov->filecount );
-         if ( newbuffersizes == NULL ) {
-            LOG( LOG_ERR, "Failed to allocate %zu buffer size values\n", recov->filecount );
-            errorcond = 1;
-            break;
-         }
-         recov->buffersizes = newbuffersizes;
-      }
-      // locate the start of the current FINFO string
-      void* finfostart = locate_finfo_start( curpos, objsize );
-      if ( finfostart == NULL ) {
-         LOG( LOG_ERR, "Failed to locate the start of finfo %zu\n", recov->curfile );
-         errorcond = 1;
-         break;
-      }
-      size_t finfostrlen = ((curpos - finfostart) + 1);
-      objsize -= finfostrlen;
-      // parse the FINFO string
-      RECOVERY_FINFO* curfinfo = recov->fileinfo + recov->curfile;
-      if ( parse_recov_finfo( finfostart, finfostrlen, curfinfo ) != curpos ) {
-         LOG( LOG_ERR, "Failed to parse FINFO string: \"%.*s\"\n", finfostrlen, finfostart );
-         errorcond = 1;
-         break;
-      }
-      // locate the start of this file's data buffer
-      size_t datainobj = ( (curfinfo->size > objsize) ? objsize : curfinfo->size );
-      void* databuf = finfostart - datainobj;
-      recov->filebuffers[ recov->curfile ] = databuf;
-      recov->buffersizes[ recov->curfile ] = datainobj;
-      // proceed to the next file
-      recov->curfile++;
-      curpos = databuf - 1;
-      objsize -= datainobj;
-   }
-   if ( recov->curfile == 0  &&  errorcond == 0 ) {
-      // special case, object has no file content at all
-      LOG( LOG_ERR, "Object lacks any file content!\n" );
+   if ( populate_recovery( recov, headerend, objsize ) ) {
+      LOG( LOG_ERR, "Failed to populate per-file recovery info\n" );
+      if ( recov->fileinfo ) { free( recov->fileinfo ); }
+      if ( recov->filebuffers ) { free( recov->filebuffers ); }
+      if ( recov->buffersizes ) { free( recov->buffersizes ); }
+      free( recov->header.ctag );
+      free( recov->header.streamid );
       free( recov );
-      errno = EINVAL;
+      if ( header ) {
+         if ( header->ctag ) { free( header->ctag ); }
+         if ( header->streamid ) { free( header->streamid ); }
+         header->ctag = NULL;
+         header->streamid = NULL;
+      }
       return NULL;
    }
-   // TODO : Post-loop error handling
-
-
+   // all done
    return recov;
 }
 
@@ -756,27 +792,121 @@ RECOVERY recovery_init( void* objbuffer, size_t objsize, RECOVERY_HEADER* header
  *               NOTE -- an error condition will be produced if the given object buffer
  *               includes differing RECOVERY_HEADER info
  */
-int recovery_cont( RECOVERY recovery, void* objbuffer, size_t objsize );
+int recovery_cont( RECOVERY recovery, void* objbuffer, size_t objsize ) {
+   // check for NULL refs
+   if ( objbuffer == NULL ) {
+      LOG( LOG_ERR, "Received a NULL object buffer\n" );
+      return -1;
+   }
+   if ( recovery == NULL ) {
+      LOG( LOG_ERR, "Received a NULL RECOVERY reference\n" );
+      return -1;
+   }
+   // attempt to parse in the header info
+   RECOVERY_HEADER newheader;
+   void* headerend = NULL;
+   if ( (headerend = parse_recov_header( objbuffer, objsize, &(newheader) )) == NULL ) {
+      LOG( LOG_ERR, "Failed to parse the RECOVERY_HEADER of the object buffer\n" );
+      return -1;
+   }
+   objsize -= (( headerend - objbuffer ) + 1);
+   // verify that header info hasn't changed in this new object
+   if ( newheader.majorversion != recovery->header.majorversion ||
+        newheader.minorversion != recovery->header.minorversion ||
+        strcmp( newheader.ctag, recovery->header.ctag )  ||
+        strcmp( newheader.streamid, recovery->header.streamid ) ) {
+      LOG( LOG_ERR, "Header info differs in new object buffer\n" );
+      free( newheader.ctag );
+      free( newheader.streamid );
+   }
+   // we're done with new header info
+   free( newheader.ctag );
+   free( newheader.streamid );
+   // populate per-file info
+   if ( populate_recovery( recovery, headerend, objsize ) ) {
+      LOG( LOG_ERR, "Failed to populate per-file recovery info\n" );
+      return -1;
+   }
+   // all done
+   return 0;
+}
 
 /**
  * Iterate over file info and content included in the current object data buffer
  * @param RECOVERY recovery : RECOVERY reference to iterate over
  * @param RECOVERY_FINFO* : Reference to the RECOVERY_FINFO struct to be populated with
- *                          info for the next file in the stream
+ *                          info for the next file in the stream; ignored if NULL
  * @param void** databuf : Reference to a void*, to be updated with a reference to the data
- *                         content of the next recovery file
- * @param size_t* bufsize : Size of the data content buffer of the next recovery file
+ *                         content of the next recovery file; ignored if NULL
+ * @param size_t* bufsize : Size of the data content buffer of the next recovery file;
+ *                          ignored if NULL
  * @return int : One, if another set of file info was produced;
  *               Zero, if no files remain in the current recovery object;
  *               -1, if a failure occurred.
  */
-int recovery_nextfile( RECOVERY recovery, RECOVERY_FINFO* finfo, void** databuf, size_t* bufsize );
+int recovery_nextfile( RECOVERY recovery, RECOVERY_FINFO* finfo, void** databuf, size_t* bufsize ) {
+   // check for NULL refs
+   if ( recovery == NULL ) {
+      LOG( LOG_ERR, "Received a NULL RECOVERY reference\n" );
+      return -1;
+   }
+   // check if any files remain
+   if ( recovery->curfile == 0 ) {
+      LOG( LOG_INFO, "No files remain in this recovery object\n" );
+      return 0;
+   }
+   // populate the next file info set
+   if ( finfo ) {
+      finfo->inode = recovery->fileinfo[ recovery->curfile - 1 ].inode;
+      finfo->mode = recovery->fileinfo[ recovery->curfile - 1 ].mode;
+      finfo->owner = recovery->fileinfo[ recovery->curfile - 1 ].owner;
+      finfo->group = recovery->fileinfo[ recovery->curfile - 1 ].group;
+      finfo->size = recovery->fileinfo[ recovery->curfile - 1 ].size;
+      finfo->mtime.tv_sec = recovery->fileinfo[ recovery->curfile - 1 ].mtime.tv_sec;
+      finfo->mtime.tv_nsec = recovery->fileinfo[ recovery->curfile - 1 ].mtime.tv_nsec;
+      finfo->eof = recovery->fileinfo[ recovery->curfile - 1 ].eof;
+      finfo->path = strdup( recovery->fileinfo[ recovery->curfile - 1 ].path );
+      if ( finfo->path == NULL ) {
+         LOG( LOG_ERR, "Failed to populate path of caller's finfo struct\n" );
+         return -1;
+      }
+   }
+   if ( databuf ) {
+      *databuf = recovery->filebuffers[ recovery->curfile - 1 ];
+   }
+   if ( bufsize ) {
+      *bufsize = recovery->buffersizes[ recovery->curfile - 1 ];
+   }
+   // free the path string of the returned file
+   free( recovery->fileinfo[ recovery->curfile - 1 ].path );
+   // finally, decrement our count, to permanently progress to the next file
+   recovery->curfile--;
+   return 1;
+}
 
 /**
  * Close the given RECOVERY reference
  * @param RECOVERY recovery : RECOVERY reference to be closed
  * @param int : Zero on success, or -1 if a failure occurred
  */
-int recovery_close( RECOVERY recovery );
+int recovery_close( RECOVERY recovery ) {
+   // check for NULL refs
+   if ( recovery == NULL ) {
+      LOG( LOG_ERR, "Received a NULL RECOVERY reference\n" );
+      return -1;
+   }
+   // free all allocated memory
+   while ( recovery->curfile ) {
+      free( recovery->fileinfo[ recovery->curfile - 1 ].path );
+      recovery->curfile--;
+   }
+   if ( recovery->fileinfo ) { free( recovery->fileinfo ); }
+   if ( recovery->filebuffers ) { free( recovery->filebuffers ); }
+   if ( recovery->buffersizes ) { free( recovery->buffersizes ); }
+   free( recovery->header.ctag );
+   free( recovery->header.streamid );
+   free( recovery );
+   return 0;
+}
 
 
