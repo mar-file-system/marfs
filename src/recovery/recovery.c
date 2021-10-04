@@ -693,14 +693,17 @@ size_t recovery_finfotostr( const RECOVERY_FINFO* finfo, char* tgtstr, size_t si
       return 0;
    }
    // construct the output string, tracking total length
-   int prres = snprintf( tgtstr, size, "%s%si%lu|m%o|o%u|g%u|s%zu|t%llu.%llu|e%d|p:%s%s", 
+   // NOTE -- The length of this string MUST be independent of the file size.
+   //         This is because finfo size must be consistent across an entire file, even
+   //         if multiple info sets are output at various lengths throughout the file.
+   int prres = snprintf( tgtstr, size, "%s%si%lu|m%o|o%u|g%u|s%.*zu|t%llu.%llu|e%d|p:%s%s", 
                          RECOVERY_MSGHEAD,
                          RECOVERY_FINFO_TYPE,
                          (unsigned long)finfo->inode,
                          (unsigned int)finfo->mode,
                          (unsigned int)finfo->owner,
                          (unsigned int)finfo->group,
-                         finfo->size,
+                         SIZE_DIGITS, finfo->size,
                          (unsigned long long)finfo->mtime.tv_sec,
                          (unsigned long long)finfo->mtime.tv_nsec,
                          (int)finfo->eof,

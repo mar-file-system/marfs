@@ -355,7 +355,6 @@ int main(int argc, char **argv)
    newrepo.datascheme.scattertable = NULL;
    newrepo.metascheme.mdal = NULL;
    newrepo.metascheme.directread = 0;
-   newrepo.metascheme.directwrite = 0;
    newrepo.metascheme.reftable = NULL;
    newrepo.metascheme.nscount = 0;
    newrepo.metascheme.nslist = NULL;
@@ -416,10 +415,6 @@ int main(int argc, char **argv)
    }
    if ( newrepo.metascheme.directread != 1 ) {
       printf( "directread not set for metascheme\n" );
-      return -1;
-   }
-   if ( newrepo.metascheme.directwrite != 1 ) {
-      printf( "directwrite not set for metascheme\n" );
       return -1;
    }
    if ( newrepo.metascheme.reftable == NULL ) {

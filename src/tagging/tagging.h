@@ -103,7 +103,6 @@ typedef struct ftag_struct {
    size_t bytes;
    size_t availbytes;
    size_t recoverybytes;
-   size_t directbytes;
    FTAG_STATE state;
 } FTAG;
 

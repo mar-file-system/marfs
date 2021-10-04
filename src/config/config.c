@@ -1855,7 +1855,7 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
          }
       }
       else if ( strncmp( (char*)metaroot->name, "direct", 7 ) == 0 ) {
-         // parse through attributes, looking for read/write attrs with yes/no values
+         // parse through attributes, looking for a read attr with yes/no values
          for ( ; attr; attr = attr->next ) {
             char enabled = -1;
             if ( attr->type == XML_ATTRIBUTE_NODE ) {
@@ -1876,9 +1876,6 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
             // check which value this attribute provides
             if ( strncmp( (char*)attr->name, "read", 5 ) == 0 ) {
                ms->directread = enabled;
-            }
-            else if ( strncmp( (char*)attr->name, "write", 6 ) == 0 ) {
-               ms->directwrite = enabled;
             }
             else {
                LOG( LOG_ERR, "encountered an unrecognized attribute of a 'direct' node: \"%s\"\n", (char*)attr->name );
@@ -1949,7 +1946,6 @@ int create_repo( marfs_repo* repo, xmlNode* reporoot ) {
    repo->datascheme.scattertable = NULL;
    repo->metascheme.mdal = NULL;
    repo->metascheme.directread = 0;
-   repo->metascheme.directwrite = 0;
    repo->metascheme.reftable = NULL;
    repo->metascheme.nscount = 0;
    repo->metascheme.nslist = NULL;

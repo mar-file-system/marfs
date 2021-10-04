@@ -341,9 +341,6 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
             case 'r':
                ftag->recoverybytes = parseval;
                break;
-            case 'd':
-               ftag->directbytes = parseval;
-               break;
             default:
                LOG( LOG_ERR, "Unrecognized data content value: \'%c\'\n", *parse );
                return -1;
@@ -357,7 +354,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       parse = endptr + 1;
       if ( *endptr == ')' ) { break; }
    }
-   if ( foundvals != 10 ) {
+   if ( foundvals != 9 ) {
       LOG( LOG_ERR, "Failed to identify the expected number of data content values\n" );
       return -1;
    }
@@ -455,7 +452,7 @@ size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len ) {
    else if ( ftag->state & FTAG_READABLE ) {
       daccstr = "RO"; // read only
    }
-   prres = snprintf( tgtstr, len, "%s(n%d-e%d-o%d-p%zu-b%zu-a%zu-r%zu-d%zu-%s-%s)",
+   prres = snprintf( tgtstr, len, "%s(n%d-e%d-o%d-p%zu-b%zu-a%zu-r%zu-%s-%s)",
                      FTAG_DATACONTENT_HEADER,
                      ftag->protection.N,
                      ftag->protection.E,
@@ -464,7 +461,6 @@ size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len ) {
                      ftag->bytes,
                      ftag->availbytes,
                      ftag->recoverybytes,
-                     ftag->directbytes,
                      dstatestr,
                      daccstr );
    if ( prres < 1 ) {
@@ -509,7 +505,6 @@ int ftag_cmp( const FTAG* ftag1, const FTAG* ftag2 ) {
         ftag1->bytes != ftag2->bytes                          ||
         ftag1->availbytes != ftag2->availbytes                ||
         ftag1->recoverybytes != ftag2->recoverybytes          ||
-        ftag1->directbytes != ftag2->directbytes              ||
         ftag1->state != ftag2->state ) {
       LOG( LOG_INFO, "Detected numeric FTAG difference\n" );
       return 1;

@@ -87,7 +87,7 @@ typedef struct recovery_finfo_struct {
    mode_t mode;
    uid_t  owner;
    gid_t  group;
-   size_t size;
+   size_t size;            // altering this will NOT alter representative string len
    struct timespec mtime;
    char   eof;
    char*  path;

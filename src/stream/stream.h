@@ -58,7 +58,8 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-
+#include "config/config.h"
+#include "recovery/recovery.h"
 
 typedef enum
 {
@@ -72,26 +73,34 @@ typedef struct streamfile_struct {
    MDAL_FHANDLE    metahandle;
    FTAG            ftag;
    struct timespec times[2];
-}* STREAMFILE;
+} STREAMFILE;
 
 typedef struct datastream_struct {
+   // Stream Info
    STREAM_TYPE     type;
-   const marfs_ns  ns;
-   MDAL_CTXT       mdalctxt;
-   ne_handle   datahandle;
-   STREAMFILE  files;
-   size_t      filecount;
-   size_t      filealloc;
-   char*       ftagstr;
-   size_t      ftagstrsize;
+   char* ctag;       // NOTE -- this ref is shared with files->ftag structs
+   char* streamid;   // NOTE -- this ref is shared with files->ftag structs
+   marfs_ns*   ns; // a stream can only be associated with a single NS
    size_t      recoveryheaderlen;
+   // Stream Position Info
+   size_t      fileno;
    size_t      objno;
    size_t      offset;
+   // Per-Object Info
+   ne_handle   datahandle;
+   STREAMFILE* files;
+   size_t      curfile;
+   size_t      filealloc;
+   // Temporary Buffers/Structs
+   char*       ftagstr;
+   size_t      ftagstrsize;
+   char* finfostr;
+   size_t finfostrlen;
    RECOVERY_FINFO finfo;
 }* DATASTREAM;
 
 
-DATASTREAM datastream_init( DATASTREAM stream, const char* path, MDAL mdal, MDAL_CTXT mdalctxt );
+DATASTREAM datastream_init( DATASTREAM stream, marfs_position* pos, const char* subpath );
 int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath );
 int datastream_extend( DATASTREAM stream, off_t length );
 int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size_t* size );

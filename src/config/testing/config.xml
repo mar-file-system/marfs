@@ -146,7 +146,7 @@
          </namespaces>
 
          <!-- Direct Data -->
-         <direct read="yes" write="yes"/>
+         <direct read="yes"/>
 
          <!-- MDAL Definition -->
          <MDAL type="posix">

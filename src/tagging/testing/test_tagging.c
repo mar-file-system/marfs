@@ -87,7 +87,6 @@ int main(int argc, char **argv)
    ftag.bytes = 1073741812; // 1GiB - 12 bytes
    ftag.availbytes = 1024; // 1KiB
    ftag.recoverybytes = 234;
-   ftag.directbytes = 0;
    ftag.state = FTAG_SIZED | FTAG_WRITEABLE;
    size_t ftagstrlen = ftag_tostr( &(ftag), NULL, 0 );
    if ( ftagstrlen < 1 ) {
@@ -122,7 +121,6 @@ int main(int argc, char **argv)
    oftag.bytes = 1;
    oftag.availbytes = 1048576; // 1MiB
    oftag.recoverybytes = 5432;
-   oftag.directbytes = 34;
    oftag.state = FTAG_INIT;
    if ( ftag_initstr( &(oftag), ftagstr ) ) {
       printf( "failed to init ftag from str: \"%s\"\n", ftagstr );

@@ -107,7 +107,6 @@ typedef struct marfs_datascheme_struct {
 typedef struct marfs_metadatascheme_struct {
    MDAL       mdal;         // MDAL reference for metadata access
    char       directread;   // flag indicating support for data read from metadata files
-   char       directwrite;  // flag indicating support for data write to metadata files
    HASH_TABLE reftable;     // hash table for determining reference path
    int        nscount;      // count of the namespaces directly referenced by this repo
    HASH_NODE* nslist;       // array of namespaces directly referenced by this repo
