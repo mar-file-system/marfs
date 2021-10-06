@@ -66,6 +66,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include <logging.h>
 #include "recovery.h"
+#include "general_include/numdigits.h"
 
 #include <errno.h>
 #include <stdlib.h>

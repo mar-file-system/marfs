@@ -63,8 +63,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define RECOVERY_CURRENT_MINORVERSION 1
 #define RECOVERY_MINORVERSION_PADDING 3
 
-#include "generic/numdigits.h"
-
 #include <sys/types.h>
 
 // ALTERING HEADER OR MSG STRUCTURE IS DANGEROUS, 
