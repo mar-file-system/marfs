@@ -486,9 +486,8 @@ int main(int argc, char **argv)
                   printf( "unexpected length of refstring: \"%s\"\n", xmlbuffer );
                   return -1;
                }
-               HASH_NODE* noderef = NULL;
-               if ( hash_lookup( newrepo.metascheme.reftable, xmlbuffer, &(noderef) ) ) {
-                  printf( "unexpected hash_lookup return for ref path: \"%s\"\n", xmlbuffer );
+               if ( strcmp( xmlbuffer, newrepo.metascheme.refnodes[totalrefs].name ) ) {
+                  printf( "unexpected name of reference node %d: \"%s\"\n", totalrefs, newrepo.metascheme.refnodes[totalrefs].name );
                   return -1;
                }
                totalrefs++;

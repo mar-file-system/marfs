@@ -1799,7 +1799,7 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
                free( rnodelist );
                return -1;
             }
-            rnodelist[curnode].weight = 0;
+            rnodelist[curnode].weight = 1;
             rnodelist[curnode].content = NULL;
             LOG( LOG_INFO, "created ref node: \"%s\"\n", rnodelist[curnode].name );
          }
@@ -1807,7 +1807,7 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
          free( rpathtmp );
          free( refvals );
          // create the reference tree hash table
-         ms->reftable = hash_init( rnodelist, rnodecount, 1 );
+         ms->reftable = hash_init( rnodelist, rnodecount, 0 );
          if ( ms->reftable == NULL ) {
             LOG( LOG_ERR, "failed to create reference path table\n" );
             free( rnodelist );
