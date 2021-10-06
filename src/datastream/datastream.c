@@ -57,16 +57,24 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include <time.h>
+#include "marfs_auto_config.h"
+#if defined(DEBUG_ALL)  ||  defined(DEBUG_DATASTREAM)
+   #define DEBUG 1
+#endif
+#define LOG_PREFIX "datastream"
 
-#include "generic/numdigits.h"
+#include <logging.h>
+#include "datastream.h"
+#include "general_include/numdigits.h"
+
+#include <time.h>
 
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
 
-#define INTIAL_FILE_ALLOC 64
-#define FILE_ALLOC_MULT    2
+#define INITIAL_FILE_ALLOC 64
+#define FILE_ALLOC_MULT     2
 
 
 //   -------------   INTERNAL FUNCTIONS    -------------
@@ -98,7 +106,7 @@ void freestream( DATASTREAM stream ) {
    free( stream );
 }
 
-size_t allocfiles( STREAMFILEk** files, size_t current, size_t max ) {
+size_t allocfiles( STREAMFILE** files, size_t current, size_t max ) {
    // calculate the target size of the file list
    size_t allocsize = 0;
    if ( current < INITIAL_FILE_ALLOC ) {
@@ -118,7 +126,7 @@ size_t allocfiles( STREAMFILEk** files, size_t current, size_t max ) {
    return allocsize;
 }
 
-int putftag( DATASTREAM stream, STREAMFILE file ) {
+int putftag( DATASTREAM stream, STREAMFILE* file ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // populate the ftag string format
@@ -144,13 +152,15 @@ int putftag( DATASTREAM stream, STREAMFILE file ) {
       LOG( LOG_ERR, "Failed to populate ftag string for stream\n" );
       return -1;
    }
-   if ( ms->mdal->fsetxattr( file->metahandle, 1, FTAG_NAME, stream->ftagstr, prres ) ) {
+   if ( ms->mdal->fsetxattr( file->metahandle, 1, FTAG_NAME, stream->ftagstr, prres, 0 ) ) {
       LOG( LOG_ERR, "Failed to attach marfs ftag value: \"%s\"\n", stream->ftagstr );
       return -1;
    }
+
+   return 0;
 }
 
-int getftag( DATASTREAM stream, STREAMFILE file ) {
+int getftag( DATASTREAM stream, STREAMFILE* file ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // attempt to retrieve the ftag attr value ( leaving room for NULL terminator )
@@ -167,43 +177,43 @@ int getftag( DATASTREAM stream, STREAMFILE file ) {
       // reattempt, with a longer target string
       getres = ms->mdal->fgetxattr( file->metahandle, 1, FTAG_NAME, stream->ftagstr, stream->ftagstrsize - 1 );
       if ( getres >= stream->ftagstrsize ) {
-         LOG( LOG_ERR, "Ftag value of file %zu has an inconsistent length\n", filenum );
+         LOG( LOG_ERR, "Ftag value of file has an inconsistent length\n" );
          errno = EBUSY;
          return -1;
       }
    }
    if ( getres <= 0 ) {
-      LOG( LOG_ERR, "Failed to retrieve ftag value for stream file %zu\n", filenum );
+      LOG( LOG_ERR, "Failed to retrieve ftag value for stream file\n" );
       return -1;
    }
    // ensure our string is NULL terminated
    *( stream->ftagstr + getres ) = '\0';
    // attempt to set struct values based on the ftag string
-   if ( ftag_initstr( stream->ftagstr, &(file->ftag) ) ) {
-      LOG( LOG_ERR, "Failed to initialize ftag values for file %zu of stream\n", filenum );
+   if ( ftag_initstr( &(file->ftag), stream->ftagstr ) ) {
+      LOG( LOG_ERR, "Failed to initialize ftag values for file\n" );
       return -1;
    }
    return 0;
 }
 
-int linkfile( DATASTREAM stream, const char* refpath, const char* tgtpath ) {
+int linkfile( DATASTREAM stream, const char* refpath, const char* tgtpath, MDAL_CTXT ctxt ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // attempt to link the specified file to the specified user path
-   if ( ms->mdal->linkref( stream->mdalctxt, refpath, tgtpath ) ) {
+   if ( ms->mdal->linkref( ctxt, refpath, tgtpath ) ) {
       // if we got EEXIST, attempt to unlink the existing target and retry
       if ( errno != EEXIST ) {
          // any non-EEXIST error is fatal
          LOG( LOG_ERR, "Failed to link reference file to final location\n" );
          return -1;
       }
-      else if ( ms->mdal->unlink( stream->mdalctxt, tgtpath )  &&  errno != ENOENT ) {
+      else if ( ms->mdal->unlink( ctxt, tgtpath )  &&  errno != ENOENT ) {
          // ENOENT would indicate that another proc has unlinked the conflicting file for us
          //   Otherwise, we have to fail
          LOG( LOG_ERR, "Failed to unlink existing file: \"%s\"\n", tgtpath );
          return -1;
       }
-      else if ( ms->mdal->linkref( stream->mdalctxt, refpath, tgtpath ) ) {
+      else if ( ms->mdal->linkref( ctxt, refpath, tgtpath ) ) {
          // This indicates either we're racing with another proc, or something more unusual
          //   Just fail out with whatever errno we get from flink()
          LOG( LOG_ERR, "Failed to link reference file to final location after retry\n" );
@@ -214,12 +224,11 @@ int linkfile( DATASTREAM stream, const char* refpath, const char* tgtpath ) {
 }
 
 
-char* genrpath( DATASTREAM stream, STREAMFILE file ) {
+char* genrpath( DATASTREAM stream, STREAMFILE* file ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
-   const marfs_ds* ds = &(stream->ns->prepo->datascheme);
    // generate the meta reference name of this file
-   size_t rnamelen = ftag_metaname( &(file->ftag), NULL, 0 );
+   size_t rnamelen = ftag_metatgt( &(file->ftag), NULL, 0 );
    if ( rnamelen < 1 ) {
       LOG( LOG_ERR, "Failed to generate file meta reference name\n" );
       return NULL;
@@ -229,7 +238,7 @@ char* genrpath( DATASTREAM stream, STREAMFILE file ) {
       LOG( LOG_ERR, "Failed to allocate a temporary meta reference string\n" );
       return NULL;
    }
-   if ( ftag_metaname( &(file->ftag), refname, rnamelen + 1 ) != rnamelen ) {
+   if ( ftag_metatgt( &(file->ftag), refname, rnamelen + 1 ) != rnamelen ) {
       LOG( LOG_ERR, "Inconsistent length of file meta reference string\n" );
       free( refname );
       return NULL;
@@ -260,7 +269,7 @@ char* genrpath( DATASTREAM stream, STREAMFILE file ) {
    return rpath;
 }
 
-int genrecoveryinfo( RECOVERY_FINFO* finfo, STREAMFILE file, const char* path ) {
+int genrecoveryinfo( DATASTREAM stream, RECOVERY_FINFO* finfo, STREAMFILE* file, const char* path ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // identify file attributes, for recovery info
@@ -292,108 +301,8 @@ int genrecoveryinfo( RECOVERY_FINFO* finfo, STREAMFILE file, const char* path ) 
    return 0;
 }
 
-
-int create_new_file( DATASTREAM stream, char* path, mode_t mode ) {
-   // NOTE -- it is the responsibility of the caller to set fileno/objno/offset/curfile 
-   //         values to the appropraite start positions for this file prior to calling
-   // shorthand references
-   const marfs_ms* ms = &(stream->ns->prepo->metascheme);
-   const marfs_ds* ds = &(stream->ns->prepo->datascheme);
-   // construct a reference struct for our new file
-   struct streamfile_struct newfile = 
-   {
-      .metahandle = NULL,
-      .ftag.majorversion = FTAG_CURRENT_MAJORVERSION,
-      .ftag.minorversion = FTAG_CURRENT_MINORVERSION,
-      .ftag.ctag = stream->ctag,
-      .ftag.objfiles = ds->objfiles,
-      .ftag.objsize = ds->objsize,
-      .ftag.fileno = stream->fileno,
-      .ftag.objno = stream->objno,
-      .ftag.offset = stream->offset, // modified below
-      .ftag.endofstream = 0,
-      .ftag.protection = ds->protection,
-      .ftag.bytes = 0,
-      .ftag.availbytes = 0,
-      .ftag.recoverybytes = 0, // modified below
-      .ftag.state = FTAG_INIT,
-      .times[0].tv_sec = 0,
-      .times[0].tv_nsec = 0,
-      .times[1].tv_sec = 0,
-      .times[1].tv_nsec = 0
-   };
-
-   // establish a reference path for the new file
-   char* rpath = genrpath( stream, &(newfile) );
-   if ( rpath == NULL ) {
-      LOG( LOG_ERR, "Failed to identify reference path for stream\n" );
-      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
-      return -1;
-   }
-
-   // create the reference file, ensuring we don't collide with an existing reference
-   newfile.metahandle = ms->mdal->openref( stream->mdalctxt, rpath, O_CREAT | O_EXCL | O_WRONLY, mode );
-   if ( newfile.metahandle == NULL ) {
-      LOG( LOG_ERR, "Failed to create reference meta file: \"%s\"\n", rpath );
-      if ( errno = EEXIST ) { errno = EBUSY; } // a BUSY error is more indicative of the real problem
-      else if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
-      free( rpath );
-      return -1;
-   }
-   // still need to hang onto 'rpath', in case something goes wrong later
-
-   // identify file recovery info
-   RECOVERY_FINFO newfinfo;
-   if ( genrecoveryinfo( &(newfinfo), &(newfile), path ) ) {
-      LOG( LOG_ERR, "Failed to populate recovery info for file: \"%s\"\n", path );
-      ms->mdal->unlinkref( stream->mdalctxt, rpath );
-      free( rpath );
-      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
-      return -1;
-   }
-   newfile.ftag.recoverybytes = recovery_finfotostr( &(newfinfo), NULL, 0 );
-   if ( newfile.ftag.recoverybytes == 0 ) {
-      LOG( LOG_ERR, "Failed to calculate recovery info size for created file\n" );
-      ms->mdal->unlinkref( stream->mdalctxt, rpath );
-      free( rpath );
-      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
-      return -1;
-   }
-
-   // ensure the recovery info size is compatible with the current object size
-   if ( (stream->recoveryheaderlen + newfile.ftag.recoverybytes) >= newfile.ftag.objsize ) {
-      LOG( LOG_ERR, "Recovery info size of new file is incompatible with current object size\n" );
-      ms->mdal->unlinkref( stream->mdalctxt, rpath );
-      free( rpath );
-      errno = ENAMETOOLONG; // as the prev file succeeded, it must be a longer name issue
-      return NULL;
-   }
-
-   // attach updated ftag value to the new file
-   if ( putftag( stream, &(newfile) ) ) {
-      LOG( LOG_ERR, "Failed to initialize FTAG value on target file\n" );
-      ms->mdal->unlinkref( stream->mdalctxt, rpath );
-      free( rpath );
-      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
-      return NULL;
-   }
-
-   // link the new file into the user namespace
-   if ( linkfile( stream, rpath, path ) ) {
-      LOG( LOG_ERR, "Failed to link reference file to target user path: \"%s\"\n", path );
-      ms->mdal->unlinkref( stream->mdalctxt, rpath );
-      free( rpath );
-      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
-      return NULL;
-   }
-   free( rpath ); // finally done with rpath
-
-   return 0;
-}
-
 DATASTREAM genstream( STREAM_TYPE type, marfs_position* pos, const marfs_config* config ) {
    // create some shorthand references
-   marfs_ms* ms = &(pos->ns->prepo->metascheme);
    marfs_ds* ds = &(pos->ns->prepo->datascheme);
 
    // allocate the new datastream and check for success
@@ -408,7 +317,7 @@ DATASTREAM genstream( STREAM_TYPE type, marfs_position* pos, const marfs_config*
    stream->streamid = NULL;
    stream->ns = pos->ns;
    stream->recoveryheaderlen = 0;
-   stream=>fileno = 0;
+   stream->fileno = 0;
    stream->objno = 0;
    stream->offset = 0;
    stream->datahandle = NULL;
@@ -471,14 +380,14 @@ DATASTREAM genstream( STREAM_TYPE type, marfs_position* pos, const marfs_config*
       }
       char* nsrepo = NULL;
       char* nspath = NULL;
-      if ( config_nsinfo( ns->idstr, &(nsrepo), &(nspath) ) ) {
+      if ( config_nsinfo( stream->ns->idstr, &(nsrepo), &(nspath) ) ) {
          LOG( LOG_ERR, "Failed to retrieve path/repo info for this stream's NS\n" );
          freestream( stream );
          return NULL;
       }
       char* parse = nspath;
       size_t nspathlen = 0;
-      for( ; parse != '\0'; parse++ ) {
+      for( ; *parse != '\0'; parse++ ) {
          if ( *parse == '/' ) { *parse = '#'; }
          nspathlen++;
       }
@@ -509,22 +418,18 @@ DATASTREAM genstream( STREAM_TYPE type, marfs_position* pos, const marfs_config*
    stream->files[0].metahandle = NULL;
    stream->files[0].ftag.majorversion = FTAG_CURRENT_MAJORVERSION;
    stream->files[0].ftag.minorversion = FTAG_CURRENT_MINORVERSION;
-   stream->files[0].ctag = stream->ctag;
-   stream->files[0].streamid = stream->streamid;
-   stream->files[0].ftag.objfiles = ds.objfiles;
-   stream->files[0].ftag.objsize = ds.objsize;
+   stream->files[0].ftag.ctag = stream->ctag;
+   stream->files[0].ftag.streamid = stream->streamid;
+   stream->files[0].ftag.objfiles = ds->objfiles;
+   stream->files[0].ftag.objsize = ds->objsize;
    stream->files[0].ftag.fileno = 0;
    stream->files[0].ftag.objno = 0;
    stream->files[0].ftag.endofstream = 0;
    stream->files[0].ftag.offset = 0;
-   stream->files[0].ftag.location.pod = -1;
-   stream->files[0].ftag.location.cap = -1;
-   stream->files[0].ftag.location.scatter = -1;
-   stream->files[0].ftag.protection = ds.protection;
+   stream->files[0].ftag.protection = ds->protection;
    stream->files[0].ftag.bytes = 0;
    stream->files[0].ftag.availbytes = 0;
    stream->files[0].ftag.recoverybytes = 0;
-   stream->files[0].ftag.directbytes = 0;
    stream->files[0].ftag.state = FTAG_INIT; // no data written and no access by anyone else
    stream->files[0].times[0].tv_sec = 0;
    stream->files[0].times[0].tv_nsec = 0;
@@ -534,7 +439,109 @@ DATASTREAM genstream( STREAM_TYPE type, marfs_position* pos, const marfs_config*
    return stream;
 }
 
-int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, size_t* tgtoffest, size_t* remaining, size_t* maxobjdata ) {
+int create_new_file( DATASTREAM stream, char* path, MDAL_CTXT ctxt, mode_t mode ) {
+   // NOTE -- it is the responsibility of the caller to set fileno/objno/offset/curfile 
+   //         values to the appropraite start positions for this file prior to calling
+   // shorthand references
+   const marfs_ms* ms = &(stream->ns->prepo->metascheme);
+   const marfs_ds* ds = &(stream->ns->prepo->datascheme);
+   // construct a reference struct for our new file
+   struct streamfile_struct newfile = 
+   {
+      .metahandle = NULL,
+      .ftag.majorversion = FTAG_CURRENT_MAJORVERSION,
+      .ftag.minorversion = FTAG_CURRENT_MINORVERSION,
+      .ftag.ctag = stream->ctag,
+      .ftag.objfiles = ds->objfiles,
+      .ftag.objsize = ds->objsize,
+      .ftag.fileno = stream->fileno,
+      .ftag.objno = stream->objno,
+      .ftag.offset = stream->offset, // modified below
+      .ftag.endofstream = 0,
+      .ftag.protection = ds->protection,
+      .ftag.bytes = 0,
+      .ftag.availbytes = 0,
+      .ftag.recoverybytes = 0, // modified below
+      .ftag.state = FTAG_INIT,
+      .times[0].tv_sec = 0,
+      .times[0].tv_nsec = 0,
+      .times[1].tv_sec = 0,
+      .times[1].tv_nsec = 0
+   };
+
+   // establish a reference path for the new file
+   char* rpath = genrpath( stream, &(newfile) );
+   if ( rpath == NULL ) {
+      LOG( LOG_ERR, "Failed to identify reference path for stream\n" );
+      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
+      return -1;
+   }
+
+   // create the reference file, ensuring we don't collide with an existing reference
+   newfile.metahandle = ms->mdal->openref( ctxt, rpath, O_CREAT | O_EXCL | O_WRONLY, mode );
+   if ( newfile.metahandle == NULL ) {
+      LOG( LOG_ERR, "Failed to create reference meta file: \"%s\"\n", rpath );
+      if ( errno = EEXIST ) { errno = EBUSY; } // a BUSY error is more indicative of the real problem
+      else if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
+      free( rpath );
+      return -1;
+   }
+   // still need to hang onto 'rpath', in case something goes wrong later
+
+   // identify file recovery info
+   RECOVERY_FINFO newfinfo;
+   if ( genrecoveryinfo( stream, &(newfinfo), &(newfile), path ) ) {
+      LOG( LOG_ERR, "Failed to populate recovery info for file: \"%s\"\n", path );
+      ms->mdal->unlinkref( ctxt, rpath );
+      free( rpath );
+      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
+      return -1;
+   }
+   newfile.ftag.recoverybytes = recovery_finfotostr( &(newfinfo), NULL, 0 );
+   if ( newfile.ftag.recoverybytes == 0 ) {
+      LOG( LOG_ERR, "Failed to calculate recovery info size for created file\n" );
+      ms->mdal->unlinkref( ctxt, rpath );
+      free( rpath );
+      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
+      return -1;
+   }
+
+   // ensure the recovery info size is compatible with the current object size
+   if ( (stream->recoveryheaderlen + newfile.ftag.recoverybytes) >= newfile.ftag.objsize ) {
+      LOG( LOG_ERR, "Recovery info size of new file is incompatible with current object size\n" );
+      ms->mdal->unlinkref( ctxt, rpath );
+      free( rpath );
+      errno = ENAMETOOLONG; // as the prev file succeeded, it must be a longer name issue
+      return -1;
+   }
+
+   // attach updated ftag value to the new file
+   if ( putftag( stream, &(newfile) ) ) {
+      LOG( LOG_ERR, "Failed to initialize FTAG value on target file\n" );
+      ms->mdal->unlinkref( ctxt, rpath );
+      free( rpath );
+      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
+      return -1;
+   }
+
+   // link the new file into the user namespace
+   if ( linkfile( stream, rpath, path, ctxt ) ) {
+      LOG( LOG_ERR, "Failed to link reference file to target user path: \"%s\"\n", path );
+      ms->mdal->unlinkref( ctxt, rpath );
+      free( rpath );
+      if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
+      return -1;
+   }
+   free( rpath ); // finally done with rpath
+
+   // update the stream with new file information
+   stream->files[ stream->curfile ] = newfile;
+   stream->finfo = newfinfo;
+
+   return 0;
+}
+
+int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, size_t* tgtoffset, size_t* remaining, size_t* maxobjdata ) {
    // establish some bounds values that we'll need later
    FTAG curtag = stream->files[stream->curfile].ftag;
    size_t dataperobj = ( curtag.objsize - (curtag.recoverybytes + stream->recoveryheaderlen) );
@@ -599,8 +606,8 @@ int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, s
 
 int writefinfodata( DATASTREAM stream ) {
    // allocate a recovery info string
-   size_t recoverybytes = curfile->ftag.recoverybytes;
-   if ( recoverybytes + 1 > stream->finfostr ) {
+   size_t recoverybytes = stream->files[ stream->curfile ].ftag.recoverybytes;
+   if ( recoverybytes > stream->finfostrlen ) {
       LOG( LOG_INFO, "Allocating extended finfo string of %zu bytes\n", recoverybytes + 1 );
       char* oldstr = stream->finfostr;
       stream->finfostr = malloc( sizeof(char) * (recoverybytes + 1) );
@@ -619,24 +626,23 @@ int writefinfodata( DATASTREAM stream ) {
    }
    // Note -- previous writes should have ensured we have at least 'recoverybytes' of 
    //         available spaece to write out the recovery string
-   if ( ne_write( stream->datahandle, recovinfo, recoverybytes ) != recoverybytes ) {
+   if ( ne_write( stream->datahandle, stream->finfostr, recoverybytes ) != recoverybytes ) {
       LOG( LOG_ERR, "Failed to store file recovery info to data object\n" );
       return -1;
    }
-   stream->offest += recoverybytes; // update our object offset
+   stream->offset += recoverybytes; // update our object offset
    return 0;
 } 
 
-int opencurrentobj( DATASTREAM stream ) {
+int open_current_obj( DATASTREAM stream ) {
    // shorthand references
-   const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    const marfs_ds* ds = &(stream->ns->prepo->datascheme);
 
    // find the length of the current object name
-   FTAG tgttag = stream->files[stream->filecount - 1].ftag;
+   FTAG tgttag = stream->files[stream->curfile].ftag;
    tgttag.objno = stream->objno; // we actually want the stream object number
    tgttag.offset = stream->offset;
-   ssize_t objnamelen = ftag_objectname( &(tgttag), NULL, 0 );
+   ssize_t objnamelen = ftag_datatgt( &(tgttag), NULL, 0 );
    if ( objnamelen <= 0 ) {
       LOG( LOG_ERR, "Failed to determine object path from current ftag\n" );
       return -1;
@@ -647,7 +653,7 @@ int opencurrentobj( DATASTREAM stream ) {
       LOG( LOG_ERR, "Failed to allocate space for new object name\n" );
       return -1;
    }
-   if ( objnamelen != ftag_objectname( &(tgttag), objname, objnamelen + 1 ) ) {
+   if ( objnamelen != ftag_datatgt( &(tgttag), objname, objnamelen + 1 ) ) {
       LOG( LOG_ERR, "Ftag producing inconsistent object name string\n" );
       free( objname );
       return -1;
@@ -658,23 +664,22 @@ int opencurrentobj( DATASTREAM stream ) {
    int iteration = 0;
    for( ; iteration < 3; iteration++ ) {
       // determine which table we are currently pulling from
-      char* itername = "scatter";
       HASH_TABLE curtable = ds->scattertable;
       int* tgtval = &(location.scatter);
       if ( iteration < 1 ) {
-         itername = "pod";
          curtable = ds->podtable;
          tgtval = &(location.pod);
       }
       else if ( iteration < 2 ) {
-         itername = "cap";
          curtable = ds->captable;
          tgtval = &(location.cap);
       }
       // hash our object name, to identify a target node
       HASH_NODE* node = NULL;
       if ( hash_lookup( curtable, objname, &node ) < 0 ) {
-         LOG( LOG_ERR, "Failed to lookup %s location for new object \"%s\"\n", itername, objname );
+         LOG( LOG_ERR, "Failed to lookup %s location for new object \"%s\"\n",
+                       (iteration < 1) ? "pod" : (iteration < 2) ? "cap" : "scatter",
+                       objname );
          free( objname );
          return -1;
       } 
@@ -682,7 +687,9 @@ int opencurrentobj( DATASTREAM stream ) {
       char* endptr = NULL;
       unsigned long long parseval = strtoull( node->name, &(endptr), 10 );
       if ( *endptr != '\0'  ||  parseval >= INT_MAX ) {
-         LOG( LOG_ERR, "Failed to parse %s value of \"%s\" for new object \"%s\"\n", itername, node->name, objname );
+         LOG( LOG_ERR, "Failed to parse %s value of \"%s\" for new object \"%s\"\n",
+                       (iteration < 1) ? "pod" : (iteration < 2) ? "cap" : "scatter",
+                       node->name, objname );
          free( objname );
          return -1;
       }
@@ -711,7 +718,7 @@ int opencurrentobj( DATASTREAM stream ) {
    if ( stream->type == READ_STREAM ) {
       // if we're reading, we may need to seek to a specific offset
       if ( stream->offset ) {
-         if ( stream->offset != ne_seek( stream->datastream, stream->offset ) ) {
+         if ( stream->offset != ne_seek( stream->datahandle, stream->offset ) ) {
             LOG( LOG_ERR, "Failed to seek to offset %zu of object %zu\n", stream->offset, stream->objno );
             return -1;
          }
@@ -723,27 +730,27 @@ int opencurrentobj( DATASTREAM stream ) {
       {
          .majorversion = RECOVERY_CURRENT_MAJORVERSION,
          .minorversion = RECOVERY_CURRENT_MINORVERSION,
-         .ctag = stream->files[stream->filecount - 1].ftag.ctag,
-         .streamid = stream->files[stream->filecount - 1].ftag.streamid
+         .ctag = stream->files[ stream->curfile ].ftag.ctag,
+         .streamid = stream->files[ stream->curfile ].ftag.streamid
       };
       char* recovheader = malloc( sizeof(char) * (stream->recoveryheaderlen + 1) );
       if ( recovheader == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for recovery header string\n" );
          ne_abort( stream->datahandle );
-         stream->datahandle == NULL;
+         stream->datahandle = NULL;
          return -1;
       }
       if ( recovery_headertostr( &(header), recovheader, stream->recoveryheaderlen + 1 ) != stream->recoveryheaderlen ) {
          LOG( LOG_ERR, "Recovery header string has inconsistent length\n" );
          ne_abort( stream->datahandle );
-         stream->datahandle == NULL;
+         stream->datahandle = NULL;
          free( recovheader );
          return -1;
       }
       if ( ne_write( stream->datahandle, recovheader, stream->recoveryheaderlen ) != stream->recoveryheaderlen ) {
          LOG( LOG_ERR, "Failed to write recovery header to new data object\n" );
          ne_abort( stream->datahandle );
-         stream->datahandle == NULL;
+         stream->datahandle = NULL;
          free( recovheader );
          return -1;
       }
@@ -756,24 +763,24 @@ int opencurrentobj( DATASTREAM stream ) {
    return 0;
 }
 
-int finfile( DATASTREAM stream, STREAMFILE file ) {
+int finfile( DATASTREAM stream, STREAMFILE* file ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // set ftag to readable and complete state
    file->ftag.state = ( FTAG_COMP & FTAG_READABLE ) | ( file->ftag.state & ~(FTAG_DATASTATE) );
    // truncate the file to an appropriate length
    if ( ms->mdal->ftruncate( file->metahandle, file->ftag.availbytes ) ) {
-      LOG( LOG_ERR, "Failed to truncate file %zu to proper size\n", stream->filecount );
+      LOG( LOG_ERR, "Failed to truncate file %zu to proper size\n", file->ftag.fileno );
       return -1;
    }
    // set an updated ftag value
    if ( putftag( stream, file ) ) {
-      LOG( LOG_ERR, "Failed to update FTAG on file %zu to complete state\n", stream->filecount );
+      LOG( LOG_ERR, "Failed to update FTAG on file %zu to complete state\n", file->ftag.fileno );
       return -1;
    }
    // set atime/mtime values
    if ( ms->mdal->futimens( file->metahandle, file->times ) ) {
-      LOG( LOG_ERR, "Failed to update time values on file %zu\n", stream->filecount );
+      LOG( LOG_ERR, "Failed to update time values on file %zu\n", file->ftag.fileno );
       return -1;
    }
    return 0;
@@ -782,7 +789,7 @@ int finfile( DATASTREAM stream, STREAMFILE file ) {
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
-
+#if 0
 DATASTREAM datastream_creat( const char* path, mode_t mode, const marfs_ns* ns, const marfs_config* config ) {
    // create some shorthand references
    marfs_ms* ms = &(ns->prepo->metascheme);
@@ -2123,4 +2130,5 @@ ssize_t datastream_read( DATASTREAM stream, void* buffer, size_t size ) {
    return read;
 }
 
+#endif
 

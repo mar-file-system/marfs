@@ -1,5 +1,5 @@
-#ifndef _STREAM_H
-#define _STREAM_H
+#ifndef _DATASTREAM_H
+#define _DATASTREAM_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -60,6 +60,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "config/config.h"
 #include "recovery/recovery.h"
+#include "tagging/tagging.h"
 
 typedef enum
 {
@@ -113,5 +114,5 @@ int datastream_flush( DATASTREAM stream );
 int datastream_close( DATASTREAM stream );
 int datastream_release( DATASTREAM stream );
 
-#endif // _STREAM_H
+#endif // _DATASTREAM_H
 
