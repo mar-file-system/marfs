@@ -498,7 +498,6 @@ MDAL_CTXT posixmdal_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
       LOG( LOG_ERR, "Failed to open the reference dir of NS \"%s\"\n", ns );
       close( newctxt->pathd );
       free( newctxt );
-      free( nspath );
       return NULL;
    }
    return (MDAL_CTXT) newctxt;
@@ -568,7 +567,14 @@ int posixmdal_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
       }
       // isssue the mkdir op
       LOG( LOG_INFO, "Attempting to create dir: \"%s\"\n", nstruepath );
-      mkdirres = mkdirat( pctxt->refd, nstruepath, S_IRWXU );
+      if ( nsparse ) {
+         // create all intermediate dirs with global access
+         mkdirres = mkdirat( pctxt->refd, nstruepath, S_IRWXU | S_IXOTH );
+      }
+      else {
+         // create the final dir with user-only access
+         mkdirres = mkdirat( pctxt->refd, nstruepath, S_IRWXU );
+      }
       // ignore any EEXIST errors, at this point
       if ( mkdirres  &&  errno == EEXIST ) { mkdirres = 0; errno = 0; }
       // if we cut the string short, we need to undo that and progress to the next str comp
@@ -587,7 +593,8 @@ int posixmdal_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
       return -1;
    }
    // attempt to create the ref subdir
-   if ( mkdirat( pctxt->refd, nstruepath, S_IRWXU ) ) {
+   LOG( LOG_INFO, "Attempting to create ref dir: \"%s\"\n", nstruepath );
+   if ( mkdirat( pctxt->refd, nstruepath, S_IRWXU | S_IXOTH ) ) {
       // here, we actually want to report EEXIST
       LOG( LOG_ERR, "Failed to create NS ref path: \"%s\"\n", nspath );
       free( nspath );
@@ -932,9 +939,10 @@ off_t posixmdal_getinodeusage( MDAL_CTXT ctxt ) {
  * Create the specified reference directory
  * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with a target namespace
  * @param const char* refdir : Path of the reference dir to be created
+ * @param mode_t mode : Mode value of the new directory (see inode man page)
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posixmdal_createrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
+int posixmdal_createrefdir ( const MDAL_CTXT ctxt, const char* refdir, mode_t mode ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -949,7 +957,7 @@ int posixmdal_createrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
       return -1;
    }
    // issue a mkdir
-   if ( mkdirat( pctxt->refd, refdir, S_IRWXU | S_IRWXG | S_IRWXO ) ) {
+   if ( mkdirat( pctxt->refd, refdir, mode ) ) {
       LOG( LOG_ERR, "Failed to mkdir target path: \"%s\"\n", refdir );
       return -1;
    }

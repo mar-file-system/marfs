@@ -169,7 +169,7 @@ int main(int argc, char **argv)
    }
 
    // create a reference dir for this NS
-   if ( mdal->createrefdir( rootctxt, "ref0" ) ) {
+   if ( mdal->createrefdir( rootctxt, "ref0", S_IRWXU ) ) {
       printf( "failed to create ref0 for the rootNS\n" );
       return -1;
    }
@@ -197,7 +197,7 @@ int main(int argc, char **argv)
 
    // check for EEXIST from the same ref dir
    errno = 0;
-   if ( mdal->createrefdir( dupctxt, "ref0" ) == 0  ||  errno != EEXIST ) {
+   if ( mdal->createrefdir( dupctxt, "ref0", S_IRWXU ) == 0  ||  errno != EEXIST ) {
       printf( "expected EEXIST for dup creation of ref0\n" );
       return -1;
    }

@@ -220,9 +220,10 @@ typedef struct MDAL_struct {
     * Create the specified reference directory
     * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with a target namespace
     * @param const char* refdir : Path of the reference dir to be created
+    * @param mode_t mode : Mode value of the new directory (see inode man page)
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*createrefdir) ( const MDAL_CTXT ctxt, const char* refdir );
+   int (*createrefdir) ( const MDAL_CTXT ctxt, const char* refdir, mode_t mode );
 
    /**
     * Destroy the specified reference directory

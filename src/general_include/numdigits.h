@@ -66,7 +66,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <limits.h>
 #include <stdint.h>
 
-int numdigits_unsigned( unsigned long long val ) {
+static int numdigits_unsigned( unsigned long long val ) {
    // I have used hardcoded max values, to avoid underestimating digit counts if limits ever increase
    if( val < 10U ) { return 1; }
    if( val < 100U ) { return 2; }
