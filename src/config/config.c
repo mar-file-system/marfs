@@ -166,7 +166,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include <logging.h>
 #include "config.h"
-#include "generic/numdigits.h"
+#include "general_include/numdigits.h"
 
 #include <libxml/tree.h>
 
@@ -812,6 +812,10 @@ int free_namespace( HASH_NODE* nsnode ) {
          }
          // regardless, we need to free the list of HASH_NODEs
          free( subspacelist );
+         if ( subspacelist != ns->subnodes ) {
+            LOG( LOG_ERR, "Detected mismatch between HASH_TABLE subspace list and NS ref\n" );
+            retval = -1;
+         }
       }
    }
    // free NS componenets
@@ -973,6 +977,8 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    ns->iperms = NS_NOACCESS;
    ns->bperms = NS_NOACCESS;
    ns->subspaces = NULL;
+   ns->subnodes = NULL;
+   ns->subnodecount = 0;
 
    // set parent values
    ns->prepo = prepo;
@@ -1125,6 +1131,10 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
       free( ns );
       return retval;
    }
+
+   // store the node list, for later iteration
+   ns->subnodes = subspacelist;
+   ns->subnodecount = subspcount;
 
    return 0;
 }
@@ -1379,6 +1389,10 @@ int free_repo( marfs_repo* repo ) {
          size_t nodeindex = 0;
          for( ; nodeindex < nodecount; nodeindex++ ) {
             free( nodelist[nodeindex].name );
+         }
+         if ( nodelist != repo->metascheme.refnodes ) {
+            LOG( LOG_ERR, "Reference table node list differs from expected value\n" );
+            retval = -1;
          }
          free( nodelist );
       }
@@ -1799,6 +1813,8 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
             free( rnodelist );
             return -1;
          } // can't free the node list now, as it is in use by the hash table
+         ms->refnodes = rnodelist;
+         ms->refnodecount = rnodecount;
          // count all subnodes
          ms->nscount = 0;
          int subspaces = 0;
@@ -1947,6 +1963,8 @@ int create_repo( marfs_repo* repo, xmlNode* reporoot ) {
    repo->metascheme.mdal = NULL;
    repo->metascheme.directread = 0;
    repo->metascheme.reftable = NULL;
+   repo->metascheme.refnodes = NULL;
+   repo->metascheme.refnodecount = 0;
    repo->metascheme.nscount = 0;
    repo->metascheme.nslist = NULL;
    // iterate over child nodes, looking for 'data' and 'meta' defs
@@ -2300,6 +2318,164 @@ int config_term( marfs_config* config ) {
    free( config->version );
    // free the config itself
    free( config );
+   return retval;
+}
+
+/**
+ * Validates the LibNE Ctxt of every repo, creates every namespace, and creates all 
+ *  reference dirs in the given config
+ * @param marfs_config* config : Reference to the config to be validated
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_validate( marfs_config* config ) {
+   // check for NULL refs
+   if ( config == NULL ) {
+      LOG( LOG_ERR, "Received a NULL config reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+
+   // TODO : DAL validation?  Need to expose via libNE
+
+   // create a dynamic array, holding the current NS index at each depth
+   size_t curiteralloc = 1024;
+   size_t* nsiterlist = calloc( sizeof(size_t), curiteralloc );
+   if ( nsiterlist == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate NS iterator list\n" );
+      return -1;
+   }
+
+   // zero out our umask value, to avoid improper perms
+   mode_t oldmask = umask(0);
+
+   // traverse the entire NS hierarchy, creating any missing NSs and reference dirs
+   marfs_ns* curns = config->rootns;
+   size_t curdepth = 1;
+   size_t nscount = 0;
+   char createcurrent = 1;
+   size_t errcount = 0;
+   int retval = 0;
+   while ( curdepth ) {
+      if ( createcurrent ) {
+         nscount++;
+         int olderr = errno;
+         errno = 0;
+         MDAL curmdal = curns->prepo->metascheme.mdal;
+         MDAL_CTXT nsctxt = NULL;
+         // get the path of this NS
+         char* nspath = NULL;
+         if ( config_nsinfo( curns->idstr, NULL, &(nspath) ) ) {
+            LOG( LOG_ERR, "Failed to retrieve path of NS: \"%s\"\n", curns->idstr );
+            errcount++;
+            retval = -1;
+         }
+         // attempt to create the current NS
+         else if ( curmdal->createnamespace( curmdal->ctxt, nspath )  &&  errno != EEXIST ) {
+            LOG( LOG_ERR, "Failed to create NS: \"%s\" (%s)\n", curns->idstr, strerror(errno) );
+            errcount++;
+            retval = -1;
+         }
+         // attempt to create a CTXT for that NS
+         else if ( (nsctxt = curmdal->newctxt( nspath, curmdal->ctxt )) == NULL ) {
+            LOG( LOG_ERR, "Failed to create MDAL_CTXT for NS: \"%s\"\n", nspath );
+            errcount++;
+            retval = -1;
+         }
+         // attempt to create all reference dirs of this NS
+         else {
+            size_t curref = 0;
+            char anyerror = 0;
+            for ( ; curref < curns->prepo->metascheme.refnodecount; curref++ ) {
+               int mkdirres = 0;
+               char* rparse = strdup( curns->prepo->metascheme.refnodes[curref].name );
+               char* rfullpath = rparse;
+               if ( rparse == NULL ) {
+                  LOG( LOG_ERR, "Failed to duplicate reference string: \"%s\"\n", curns->prepo->metascheme.refnodes[curref].name );
+                  anyerror = 1;
+                  continue;
+               }
+               LOG( LOG_INFO, "Attempting to create refdir: \"%s\"\n", rfullpath );
+               errno = 0;
+               while ( mkdirres == 0  &&  rparse != NULL ) {
+                  // iterate ahead in the stream, tokenizing into intermediate path components
+                  while ( 1 ) {
+                     // cut string to next dir comp
+                     if ( *rparse == '/' ) {
+                        *rparse = '\0';
+                        // ignore any final, empty path component
+                        if ( *(rparse + 1) == '\0' ) { rparse = NULL; }
+                        break;
+                     }
+                     // end of str, prepare to exit
+                     if ( *rparse == '\0' ) { rparse = NULL; break; }
+                     rparse++;
+                  }
+                  // isssue the createrefdir op
+                  if ( rparse ) {
+                     // create all intermediate dirs with global execute access
+                     mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IXOTH );
+                  }
+                  else {
+                     // create the final dir with full global access
+                     mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IRWXO );
+                  }
+                  // ignore any EEXIST errors, at this point
+                  if ( mkdirres  &&  errno == EEXIST ) { mkdirres = 0; errno = 0; }
+                  // if we cut the string short, we need to undo that and progress to the next str comp
+                  if ( rparse ) { *rparse = '/'; rparse++; }
+               }
+               if ( mkdirres ) { // check for error conditions ( except EEXIST )
+                  LOG( LOG_ERR, "Failed to create refdir: \"%s\"\n", rfullpath );
+                  anyerror = 1;
+               }
+               // cleanup after ourselves
+               free( rfullpath ); // done with this reference path
+            }
+            if ( anyerror ) {
+               retval = -1;
+               errcount++;
+               LOG( LOG_ERR, "Failed to create all ref dirs for NS: \"%s\"\n", nspath );
+            }
+            else { errno = olderr; }
+         }
+         // cleanup after ourselves
+         if ( curmdal->destroyctxt( nsctxt ) ) {
+            // just warn if we can't clean this up
+            LOG( LOG_WARNING, "Failed to destory MDAL_CTXT of NS \"%s\"\n", nspath );
+         }
+         free( nspath );
+      }
+
+      // identify next NS target
+      if ( nsiterlist[curdepth - 1] < curns->subnodecount ) {
+         // proceed to the next subspace of the current NS
+         curns = (marfs_ns*)( curns->subnodes[ nsiterlist[curdepth - 1] ].content );
+         nsiterlist[ curdepth - 1 ]++; // increment our iterator at this depth
+         curdepth++;
+         if ( curdepth >= curiteralloc ) {
+            nsiterlist = realloc( nsiterlist, sizeof(size_t) * ( curiteralloc + 1024 ) );
+            if ( nsiterlist == NULL ) {
+               LOG( LOG_ERR, "Failed to allocate extended NS iterator list\n" );
+               umask(oldmask); // reset umask
+               return -1;
+            }
+            curiteralloc += 1024;
+         }
+         nsiterlist[ curdepth - 1 ] = 0; // zero out our next iterator
+         createcurrent = 1; // the subspace has yet to be verified
+      }
+      else {
+         // proceed back up to the parent of this space
+         curns = curns->pnamespace;
+         curdepth--;
+         createcurrent = 0; // the parent space has already been verified
+      }
+   }
+   // we've finally traversed the entire NS tree
+   LOG( LOG_INFO, "Traversed %zu namespaces with %zu NS creation failures\n", nscount, errcount );
+
+   free( nsiterlist );
+   umask(oldmask); // reset umask
    return retval;
 }
 

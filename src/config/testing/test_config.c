@@ -60,8 +60,54 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include <unistd.h>
 #include <stdio.h>
+#include <ftw.h>
 // directly including the C file allows more flexibility for these tests
 #include "config/config.c"
+
+
+// WARNING: error-prone and ugly method of deleting dir trees, written for simplicity only
+//          don't replicate this junk into ANY production code paths!
+size_t dirlistpos = 0;
+char** dirlist = NULL;
+int ftwnotedir( const char* fpath, const struct stat* sb, int typeflag ) {
+   if ( typeflag != FTW_D ) {
+      printf( "Encountered non-directory during tree deletion: \"%s\"\n", fpath );
+      return -1;
+   }
+   dirlist[dirlistpos] = strdup( fpath );
+   if ( dirlist[dirlistpos] == NULL ) {
+      printf( "Failed to duplicate dir name: \"%s\"\n", fpath );
+      return -1;
+   }
+   dirlistpos++;
+   if ( dirlistpos >= 1024 ) { printf( "Dirlist has insufficient lenght!\n" ); return -1; }
+   return 0;
+}
+int deletesubdirs( const char* basepath ) {
+   dirlist = malloc( sizeof(char*) * 1024 );
+   if ( dirlist == NULL ) {
+      printf( "Failed to allocate dirlist\n" );
+      return -1;
+   }
+   if ( ftw( basepath, ftwnotedir, 100 ) ) {
+      printf( "Failed to identify reference dirs of \"%s\"\n", basepath );
+      return -1;
+   }
+   int retval = 0;
+   while ( dirlistpos ) {
+      dirlistpos--;
+      if ( strcmp( dirlist[dirlistpos], basepath ) ) {
+         printf( "Deleting: \"%s\"\n", dirlist[dirlistpos] );
+         if ( rmdir( dirlist[dirlistpos] ) ) {
+            printf( "ERROR -- failed to delete \"%s\"\n", dirlist[dirlistpos] );
+            retval = -1;
+         }
+      }
+      free( dirlist[dirlistpos] );
+   }
+   free( dirlist );
+   return retval;
+}
 
 int main(int argc, char **argv)
 {
@@ -500,26 +546,9 @@ int main(int argc, char **argv)
    }
 
 
-   // prepare for full path traversal by actually creating config namespaces via MDAL
-   MDAL rootmdal = config->rootns->prepo->metascheme.mdal;
-   errno = 0;
-   if ( rootmdal->createnamespace( rootmdal->ctxt, "/." )  &&  errno != EEXIST ) {
-      printf( "Failed to create root NS\n" );
-      return -1;
-   }
-   errno = 0;
-   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation" )  &&  errno != EEXIST ) {
-      printf( "Failed to create /gransom-allocation NS\n" );
-      return -1;
-   }
-   errno = 0;
-   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation/read-only-data" )  &&  errno != EEXIST ) {
-      printf( "Failed to create /gransom-allocation/read-only-data NS\n" );
-      return -1;
-   }
-   errno = 0;
-   if ( rootmdal->createnamespace( rootmdal->ctxt, "/gransom-allocation/heavily-protected-data" )  &&  errno != EEXIST ) {
-      printf( "Failed to create /gransom-allocation/heavily-protected-data NS\n" );
+   // prepare for full path traversal by actually creating config namespaces
+   if ( config_validate(config) ) {
+      printf( "Config validation failure\n" );
       return -1;
    }
 
@@ -981,16 +1010,33 @@ int main(int argc, char **argv)
    }
 
    // cleanup namespaces
+   MDAL rootmdal = config->rootns->prepo->metascheme.mdal;
+   if ( deletesubdirs( "./test_config_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_subspaces/heavily-protected-data/MDAL_reference" ) ) {
+      printf( "Failed to delete refdirs of heavily-protected-data\n" );
+      return -1;
+   }
    if ( rootmdal->destroynamespace( rootmdal->ctxt, "/gransom-allocation/heavily-protected-data" ) ) {
       printf( "Failed to destroy /gransom-allocation/heavily-protected-data NS\n" );
+      return -1;
+   }
+   if ( deletesubdirs( "./test_config_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_subspaces/read-only-data/MDAL_reference" ) ) {
+      printf( "Failed to delete refdirs of read-only-data\n" );
       return -1;
    }
    if ( rootmdal->destroynamespace( rootmdal->ctxt, "/gransom-allocation/read-only-data" ) ) {
       printf( "Failed to destroy /gransom-allocation/read-only-data NS\n" );
       return -1;
    }
+   if ( deletesubdirs( "./test_config_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_reference" ) ) {
+      printf( "Failed to delete refdirs of gransom-allocation\n" );
+      return -1;
+   }
    if ( rootmdal->destroynamespace( rootmdal->ctxt, "/gransom-allocation" ) ) {
       printf( "Failed to destroy /gransom-allocation NS\n" );
+      return -1;
+   }
+   if ( deletesubdirs( "./test_config_topdir/mdal_root/MDAL_reference" ) ) {
+      printf( "Failed to delete refdirs of rootNS\n" );
       return -1;
    }
    rootmdal->destroynamespace( rootmdal->ctxt, "/." ); // TODO : fix MDAL edge case?

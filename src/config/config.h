@@ -80,14 +80,16 @@ typedef enum {
 
 
 typedef struct marfs_namespace_struct {
-   char*       idstr;       // unique (per-repo) ID of this namespace
-   size_t      fquota;      // file quota of the namespace ( zero if no limit )
-   size_t      dquota;      // data quota of the namespace ( zero if no limit )
-   ns_perms    iperms;      // interactive access perms for this namespace
-   ns_perms    bperms;      // batch access perms for this namespace
-   marfs_repo* prepo;       // reference to the repo containing this namespace
-   marfs_ns*   pnamespace;  // reference to the parent of this namespace
-   HASH_TABLE  subspaces;   // subspace hash table, referencing namespaces below this one
+   char*       idstr;        // unique (per-repo) ID of this namespace
+   size_t      fquota;       // file quota of the namespace ( zero if no limit )
+   size_t      dquota;       // data quota of the namespace ( zero if no limit )
+   ns_perms    iperms;       // interactive access perms for this namespace
+   ns_perms    bperms;       // batch access perms for this namespace
+   marfs_repo* prepo;        // reference to the repo containing this namespace
+   marfs_ns*   pnamespace;   // reference to the parent of this namespace
+   HASH_TABLE  subspaces;    // subspace hash table, referencing namespaces below this one
+   HASH_NODE*  subnodes;     // subnode list reference ( shared with table ) for safe iter
+   size_t      subnodecount; // count of subnode references
 } marfs_ns;
 // NOTE -- namespaces will be wrapped in HASH_NODES for use in HASH_TABLEs
 //         the HASH_NODE struct will provide the name string of the namespace
@@ -108,6 +110,8 @@ typedef struct marfs_metadatascheme_struct {
    MDAL       mdal;         // MDAL reference for metadata access
    char       directread;   // flag indicating support for data read from metadata files
    HASH_TABLE reftable;     // hash table for determining reference path
+   HASH_NODE* refnodes;     // reference node list ( shared with table ) for safe iter
+   size_t     refnodecount; // count of reference nodes
    int        nscount;      // count of the namespaces directly referenced by this repo
    HASH_NODE* nslist;       // array of namespaces directly referenced by this repo
 } marfs_ms;
@@ -148,6 +152,14 @@ marfs_config* config_init( const char* cpath );
  * @return int : Zero on success, or -1 on failure
  */
 int config_term( marfs_config* config );
+
+/**
+ * Validates the LibNE Ctxt of every repo, creates every namespace, and creates all
+ *  reference dirs in the given config
+ * @param marfs_config* config : Reference to the config to be validated
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_validate( marfs_config* config );
 
 /**
  * Traverse the given path, idetifying a final NS target and resulting subpath
