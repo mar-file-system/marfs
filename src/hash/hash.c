@@ -156,9 +156,9 @@ static int compare_nodes(const void *a, const void *b) {
  * @return int : Randomized integer result
  */
 int hash_rangevalue( const char* string, int maxval ) {
-   uint64_t idval;
-   identifier( string, &(idval) );
-   return ((int) ( idval % maxval ));
+   uint64_t idval[2];
+   identifier( string, idval );
+   return ((int) ( ((idval[1] % maxval) + (idval[0] % maxval)) % maxval ));
 }
 
 /**
