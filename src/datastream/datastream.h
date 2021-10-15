@@ -78,10 +78,10 @@ typedef struct streamfile_struct {
 
 typedef struct datastream_struct {
    // Stream Info
-   STREAM_TYPE     type;
+   STREAM_TYPE type;
    char* ctag;       // NOTE -- this ref is shared with files->ftag structs
    char* streamid;   // NOTE -- this ref is shared with files->ftag structs
-   marfs_ns*   ns; // a stream can only be associated with a single NS
+   marfs_ns*   ns;   // a stream can only be associated with a single NS
    size_t      recoveryheaderlen;
    // Stream Position Info
    size_t      fileno;

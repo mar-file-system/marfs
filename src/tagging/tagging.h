@@ -61,12 +61,14 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <ne.h>
 
 
+// MARFS FILE TAG  --  attached to every marfs file, providing stream/data info
+
 #define FTAG_CURRENT_MAJORVERSION 0
 #define FTAG_CURRENT_MINORVERSION 1
 
 #define FTAG_RESERVED_CHARS "()|"
 
-#define FTAG_NAME "MARFS-FTAG"
+#define FTAG_NAME "MARFS-FILE"
 
 typedef enum 
 {
@@ -74,7 +76,7 @@ typedef enum
    FTAG_INIT = 0,  // initial state   -- no file data exists
    FTAG_SIZED = 1, // sized state     -- known lower bound on file size (may be up to objsize bytes larger)
    FTAG_FIN = 2,   // finalized state -- known total file size
-   FTAG_COMP = 3,  // completed state -- all data written (not necessarily synced)
+   FTAG_COMP = 3,  // completed state -- all data written
    FTAG_DATASTATE = FTAG_COMP, // mask value for retrieving data state indicator
 
    // State Flag values ( These may or may not be set )
@@ -162,6 +164,19 @@ size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t len );
  *                  output string was truncated.
  */
 size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
+
+
+// MARFS REBUILD TAG  --  attached to damaged marfs files, providing rebuild info
+
+#define RTAG_CURRENT_MAJORVERSION 0
+#define RTAG_CURRENT_MINORVERSION 1
+
+#define RTAG_NAME "MARFS-REBUILD"
+
+
+int rtag_initstr( ne_state* rtag, char* rtagstr );
+
+size_t rtag_tostr( const ne_state* rtag, char* tgtstr, size_t len );
 
 
 #endif // _TAGGING_H

@@ -58,10 +58,60 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include <unistd.h>
-#include <stdio.h>
 // directly including the C file allows more flexibility for these tests
 #include "datastream/datastream.c"
+
+#include <ne.h>
+
+#include <unistd.h>
+#include <stdio.h>
+#include <ftw.h>
+
+
+// WARNING: error-prone and ugly method of deleting dir trees, written for simplicity only
+//          don't replicate this junk into ANY production code paths!
+size_t dirlistpos = 0;
+char** dirlist = NULL;
+int ftwnotedir( const char* fpath, const struct stat* sb, int typeflag ) {
+   if ( typeflag != FTW_D ) {
+      printf( "Encountered non-directory during tree deletion: \"%s\"\n", fpath );
+      return -1;
+   }
+   dirlist[dirlistpos] = strdup( fpath );
+   if ( dirlist[dirlistpos] == NULL ) {
+      printf( "Failed to duplicate dir name: \"%s\"\n", fpath );
+      return -1;
+   }
+   dirlistpos++;
+   if ( dirlistpos >= 1024 ) { printf( "Dirlist has insufficient lenght!\n" ); return -1; }
+   return 0;
+}
+int deletesubdirs( const char* basepath ) {
+   dirlist = malloc( sizeof(char*) * 1024 );
+   if ( dirlist == NULL ) {
+      printf( "Failed to allocate dirlist\n" );
+      return -1;
+   }
+   if ( ftw( basepath, ftwnotedir, 100 ) ) {
+      printf( "Failed to identify reference dirs of \"%s\"\n", basepath );
+      return -1;
+   }
+   int retval = 0;
+   while ( dirlistpos ) {
+      dirlistpos--;
+      if ( strcmp( dirlist[dirlistpos], basepath ) ) {
+         printf( "Deleting: \"%s\"\n", dirlist[dirlistpos] );
+         if ( rmdir( dirlist[dirlistpos] ) ) {
+            printf( "ERROR -- failed to delete \"%s\"\n", dirlist[dirlistpos] );
+            retval = -1;
+         }
+      }
+      free( dirlist[dirlistpos] );
+   }
+   free( dirlist );
+   return retval;
+}
+
 
 int main(int argc, char **argv)
 {
@@ -114,6 +164,46 @@ int main(int argc, char **argv)
    }
 
 
+
+
+   // generate a datastream
+   DATASTREAM stream = genstream( CREATE_STREAM, "tgtfile", &(pos), S_IRWXU | S_IRGRP, config );
+   if ( stream == NULL ) {
+      printf( "Failed to generate a create stream\n" );
+      return -1;
+   }
+
+   // attempt to create our initial object
+   if ( open_current_obj( stream ) ) {
+      printf( "Failed to create the current object of 'tgtfile' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // dump the recovery file info
+   if ( writefinfodata( stream ) ) {
+      printf( "Failed to write recovery file info for 'tgtfile' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // close the data handle
+   if ( ne_close( stream->datahandle, NULL, NULL ) ) {
+      printf( "Failed to close the stream data handle (%s)\n", strerror(errno) );
+      return -1;
+   }
+   stream->datahandle = NULL;
+
+   // finalize the file
+   if ( finfile( stream, stream->files ) ) {
+      printf( "Failed to finalize 'tgtfile' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+
+   // free our datastream
+   freestream( stream );
+
+
+
    // cleanup our position struct
    MDAL posmdal = pos.ns->prepo->metascheme.mdal;
    if ( posmdal->destroyctxt( pos.ctxt ) ) {
@@ -121,23 +211,36 @@ int main(int argc, char **argv)
       return -1;
    }
 
-#if 0
-   // cleanup all created namespaces
+   // cleanup all created NSs
+   if ( deletesubdirs( "./test_datastream_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_subspaces/heavily-protected-data/MDAL_reference" ) ) {
+      printf( "Failed to delete refdirs of heavily-protected-data\n" );
+      return -1;
+   }
    if ( rootmdal->destroynamespace( rootmdal->ctxt, "/gransom-allocation/heavily-protected-data" ) ) {
       printf( "Failed to destroy /gransom-allocation/heavily-protected-data NS\n" );
+      return -1;
+   }
+   if ( deletesubdirs( "./test_datastream_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_subspaces/read-only-data/MDAL_reference" ) ) {
+      printf( "Failed to delete refdirs of read-only-data\n" );
       return -1;
    }
    if ( rootmdal->destroynamespace( rootmdal->ctxt, "/gransom-allocation/read-only-data" ) ) {
       printf( "Failed to destroy /gransom-allocation/read-only-data NS\n" );
       return -1;
    }
+   if ( deletesubdirs( "./test_datastream_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_reference" ) ) {
+      printf( "Failed to delete refdirs of gransom-allocation\n" );
+      return -1;
+   }
    if ( rootmdal->destroynamespace( rootmdal->ctxt, "/gransom-allocation" ) ) {
       printf( "Failed to destroy /gransom-allocation NS\n" );
       return -1;
    }
+   if ( deletesubdirs( "./test_datastream_topdir/mdal_root/MDAL_reference" ) ) {
+      printf( "Failed to delete refdirs of rootNS\n" );
+      return -1;
+   }
    rootmdal->destroynamespace( rootmdal->ctxt, "/." ); // TODO : fix MDAL edge case?
-
-#endif
 
    // cleanup out config struct
    if ( config_term( config ) ) {
