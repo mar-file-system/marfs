@@ -74,6 +74,7 @@ typedef struct streamfile_struct {
    MDAL_FHANDLE    metahandle;
    FTAG            ftag;
    struct timespec times[2];
+   char            dotimes;
 } STREAMFILE;
 
 typedef struct datastream_struct {

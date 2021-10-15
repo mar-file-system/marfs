@@ -329,7 +329,7 @@ int genrecoveryinfo( DATASTREAM stream, RECOVERY_FINFO* finfo, STREAMFILE* file,
    return 0;
 }
 
-int create_new_file( DATASTREAM stream, char** rpath, const char* path, MDAL_CTXT ctxt, mode_t mode ) {
+int create_new_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt, mode_t mode ) {
    // NOTE -- it is the responsibility of the caller to set curfile/fileno/objno/offset
    //         values to the appropraite start positions prior to calling
    // populate shorthand references
@@ -357,7 +357,8 @@ int create_new_file( DATASTREAM stream, char** rpath, const char* path, MDAL_CTX
       .times[0].tv_sec = 0,
       .times[0].tv_nsec = 0,
       .times[1].tv_sec = 0,
-      .times[1].tv_nsec = 0
+      .times[1].tv_nsec = 0,
+      .dotimes = 1
    };
 
    // establish a reference path for the new file
@@ -376,7 +377,7 @@ int create_new_file( DATASTREAM stream, char** rpath, const char* path, MDAL_CTX
       if ( errno = EEXIST ) { errno = EBUSY; }
       // don't allow our reserved EBADFD value
       else if ( errno == EBADFD ) { errno = ENOMSG; }
-      free( rpath );
+      free( newrpath );
       return -1;
    }
 
@@ -391,18 +392,24 @@ int create_new_file( DATASTREAM stream, char** rpath, const char* path, MDAL_CTX
    }
 
    // ensure the recovery info size is compatible with the current object size
-   if ( (stream->recoveryheaderlen + newfile.ftag.recoverybytes) >= newfile.ftag.objsize ) {
+   if ( newfile.ftag.objsize  &&  (stream->recoveryheaderlen + newfile.ftag.recoverybytes) >= newfile.ftag.objsize ) {
       LOG( LOG_ERR, "Recovery info size of new file is incompatible with current object size\n" );
       ms->mdal->unlinkref( ctxt, newrpath );
       free( newrpath );
-      errno = ENAMETOOLONG; // as the prev file succeeded, it must be a longer name issue
+      errno = ENAMETOOLONG; // this is most likely an issue with path length
       return -1;
    }
 
-   // ensure that the current object still has space remaining for this file's recov info
-   if ( (newfile.ftag.objsize - stream->offset) < newfile.ftag.recoverybytes ) {
+   // ensure that the current object still has space remaining for this file
+   if ( newfile.ftag.objsize  &&  (newfile.ftag.objsize - stream->offset) < newfile.ftag.recoverybytes ) {
       // we're too far into the current obj to fit any more data
       LOG( LOG_INFO, "Shifting to new object, as current can't hold recovery info\n" );
+      newfile.ftag.objno++;
+      newfile.ftag.offset = stream->recoveryheaderlen;
+   }
+   else if ( newfile.ftag.objfiles  &&  stream->curfile >= newfile.ftag.objfiles ) {
+      // there are too many files in the current obj to fit this one
+      LOG( LOG_INFO, "Shifting to new object, as current can't hold another file\n" );
       newfile.ftag.objno++;
       newfile.ftag.offset = stream->recoveryheaderlen;
    }
@@ -437,9 +444,9 @@ int create_new_file( DATASTREAM stream, char** rpath, const char* path, MDAL_CTX
          return -1;
       }
    }
+   free( newrpath ); // finally done with rpath
 
    // update the stream with new file information
-   if ( rpath ) { *rpath = newrpath; } else { free( newrpath ); }
    stream->files[ stream->curfile ] = newfile;
    stream->finfo = newfinfo;
    stream->fileno = newfile.ftag.fileno;
@@ -459,32 +466,32 @@ int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
    else {
       stream->files[ stream->curfile ].metahandle = curmdal->open( ctxt, path, O_WRONLY );
    }
-   if ( stream->files[0].metahandle == NULL ) {
+   if ( stream->files[ stream->curfile ].metahandle == NULL ) {
       LOG( LOG_ERR, "Failed to open metahandle for target file: \"%s\"\n", path );
-      freestream( stream );
       return -1;
    }
+
    // retrieve the file's FTAG info
    if ( getftag( stream, stream->files + stream->curfile ) ) {
       LOG( LOG_ERR, "Failed to retrieve FTAG value of target file: \"%s\"\n", path );
-      freestream( stream );
+      curmdal->close( stream->files[ stream->curfile ].metahandle;
+      stream->files[ stream->curfile ].metahandle = NULL;
       return -1;
    }
+
+   if ( stream->type != READ_STREAM ) {
+      // non-read streams will require RECOVERY_FINFO
+      if ( genrecoveryinfo( stream, &(stream->finfo), stream->files + stream->curfile, path ) ) {
+         LOG( LOG_ERR, "Failed to identify recovery info for target file: \"%s\"\n", path );
+         curmdal->close( stream->files[ stream->curfile ].metahandle;
+         stream->files[ stream->curfile ].metahandle = NULL;
+         return -1;
+      }
+   }
+
    // the stream inherits string values from the FTAG
    stream->ctag = stream->files[ stream->curfile ].ftag.ctag;
    stream->streamid = stream->files[ stream->curfile ].ftag.streamid;
-
-   // for read streams, we're done
-   if ( stream->type == READ_STREAM ) { return 0; }
-
-   // non-read streams will require RECOVERY_FINFO
-   if ( genrecoveryinfo( stream, &(stream->finfo), stream->files + stream->curfile, path ) ) {
-      LOG( LOG_ERR, "Failed to identify recovery info for target file: \"%s\"\n", path );
-      freestream( stream );
-      return -1;
-   }
-
-   // done for all other stream types
    return 0;
 }
 
@@ -711,6 +718,7 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
    stream->files[0].times[0].tv_nsec = 0;
    stream->files[0].times[1].tv_sec = 0;
    stream->files[0].times[1].tv_nsec = 0;
+   stream->files[0].dotimes = 0;
 
    // perform type-dependent initialization
    if ( type == CREATE_STREAM ) {
@@ -783,7 +791,7 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
       stream->offset = stream->recoveryheaderlen;
 
       // create the output file
-      if ( create_new_file( stream, NULL, path, pos->ctxt, mode ) ) {
+      if ( create_new_file( stream, path, pos->ctxt, mode ) ) {
          LOG( LOG_ERR, "Failed to create output file: \"%s\"\n", path );
          freestream( stream );
          return NULL;
@@ -895,6 +903,43 @@ int putfinfo( DATASTREAM stream ) {
    return 0;
 } 
 
+int finfile( DATASTREAM stream ) {
+   // get a reference to the active file
+   STREAMFILE* curfile = stream->files + stream->curfile;
+
+   // only perform this action if the file has not yet been finalized
+   if ( (curfile.state & FTAG_DATASTATE) < FTAG_FIN ) {
+      if ( curfile->ftag.bytes == 0  &&  stream->datahandle == NULL ) {
+         // special case, non-extended create stream with no current data content
+         // Open the output object to record recov info for zero-length file
+         if ( open_current_obj( stream ) ) {
+            LOG( LOG_ERR, "Failed to open output object for zero-length prev file\n" );
+            return -1;
+         }
+      }
+      if ( stream->datahandle ) {
+         // end of prev file
+         stream->finfo.eof = 1;
+         //  output recovery info for the prev file
+         if ( putrecoveryinfo( stream ) ) {
+            LOG( LOG_ERR, "Failed to output prev file recovery info\n" );
+            stream->finfo.eof = 0;
+            return -1;
+         }
+      }
+      else {
+         // this is an extended file and thus can't pack,
+         //   so proceed to the next object by default
+         stream->objno++;
+         stream->offset = stream->recoveryheaderlen;
+      }
+      // set data state to 'FINALIZED', ensuring we never reattempt with this same handle
+      curfile->ftag.state = ( curfile->ftag.state & ~(FTAG_DATASTATE) ) | FTAG_FIN;
+   }
+
+   return 0;
+}
+
 /**
  * Completes the given file: truncating to appropriate length, setting the FTAG to a 
  *  complete + readable state, setting file times, and closing the meta handle
@@ -946,6 +991,10 @@ int completefile( DATASTREAM stream, STREAMFILE* file ) {
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
+
+// Failure w/ EBADFD -> no handle for new file, failure of previous files
+// Failure w/ any other errno -> no handle for new file, previous stream is still valid
+// Success -> handle references new file
 int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos, mode_t mode, const char* ctag ) {
    // check for a NULL path arg
    if ( path == NULL ) {
@@ -977,231 +1026,181 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
       if ( newstream->ns != pos->ns ) {
          LOG( LOG_INFO, "Received datastream has different NS target: \"%s\"\n",
                         newstream->ns->idstr );
-         // can't continue with a stream from a previous NS, just close
-         if ( datastream_close( newstream ) ) {
-            LOG( LOG_ERR, "Failed to close previous datastream\n" );
-            *stream = NULL; // don't attempt to close the original stream again
-            return -1;
-         }
-         *stream = NULL; // don't attempt to close the original stream again
+         // can't continue with a stream from a previous NS
+         closestream = 1;
          newstream = NULL; // so that stream generation logic kicks in later
       }
       else {
          // we're going to continue using the provided stream structure
-         STREAMFILE* curfile = newstream->files + newstream->curfile;
          size_t curobj = newstream->objno;
          // finalize the current file
-         if ( (curfile.state & FTAG_DATASTATE) < FTAG_FIN ) {
-            if ( curfile->ftag.bytes == 0  &&  newstream->datahandle == NULL ) {
-               // special case, non-extended create stream with no current data content
-               // Open the output object to record recov info for zero-length file
-               if ( open_current_obj( newstream ) ) {
-                  LOG( LOG_ERR, "Failed to open output object for zero-length prev file\n" );
-                  freestream( newstream );
-                  *stream = NULL; // unsafe to reuse this stream
-                  return -1;
-               }
-            }
-            // set data state to 'FINALIZED'
-            curfile->ftag.state = ( curfile->ftag.state & ~(FTAG_DATASTATE) ) | FTAG_FIN;
-            if ( newstream->datahandle ) {
-               // end of prev file
-               newstream->finfo.eof = 1;
-               //  output recovery info for the prev file
-               if ( putrecoveryinfo( newstream ) ) {
-                  LOG( LOG_ERR, "Failed to output prev file recovery info\n" );
-                  freestream( newstream );
-                  *stream = NULL; // unsafe to reuse this stream
-                  return -1;
-               }
-            }
-            else {
-               // this is an extended file and thus can't pack,
-               //   so proceed to the next object by default
-               newstream->objno++;
-               newstream->offset = newstream->recoveryheaderlen;
-            }
+         if ( finfile( newstream ) ) {
+            LOG( LOG_ERR, "Failed to finalize previous stream file\n" );
+            freestream( newstream );
+            *stream = NULL; // unsafe to reuse this stream
+            errno = EBADFD;
+            return -1;
          }
          // progress to the next file
          newstream->curfile++;
          newstream->fileno++;
          // create the new file
-         char* rpath = NULL;
-         if ( create_new_file( newstream, &(rpath), path, pos->ctxt, mode ) ) {
+         if ( create_new_file( newstream, path, pos->ctxt, mode ) ) {
             LOG( LOG_ERR, "Failed to create new file: \"%s\"\n", path );
             // roll back our stream changes
             newstream->curfile--;
             newstream->fileno--;
+            if ( errno = EBADFD ) { errno = ENOMSG; } // avoid using our reserved errno value
             return -1;
          }
          // check for an object transition
          STREAMFILE* newfile = newstream->files + newstream->curfile;
-         if ( newfile->ftag.objno != curobj  &&  newstream->datahandle != NULL ) {
+         if ( newfile->ftag.objno != curobj ) {
+            size_t newfilepos = newstream->curfile;
             LOG( LOG_INFO, "Stream has transitioned from objno %zu to %zu\n",
                            curobj, newfile->ftag.objno );
             // close our data handle
-            ne_state objstate
-            int closeres = ne_close( newstream->datahandle, NULL, &(objstate) );
-            newstream->datahandle = NULL; // NEVER reattempt this process
+            int closeres = 0;
+            ne_state objstate;
+            if ( newstream->datahandle != NULL ) {
+               closeres = ne_close( newstream->datahandle, NULL, &(objstate) );
+               newstream->datahandle = NULL; // never reattempt this process
+            }
             if ( closeres < 1 ) {
                LOG( LOG_ERR, "ne_close() indicates failure for object %zu\n", curobj );
+               freestream( newstream );
+               *stream = NULL; // unsafe to reuse this stream
+               errno = EBADFD;
+               return -1;
+            }
+            else if ( closeres ) {
+               // object synced, but with errors
+               // TODO: attach a rebuild tag to mark for future repair
             }
             // we need to mark all previous files as complete
             char comperror = 0;
             while ( newstream->curfile ) {
                newstream->curfile--;
-               if ( closeres >= 0  &&
-                    completefile( newstream, newstream->files + newstream->curfile ) ) {
+               if ( completefile( newstream, newstream->files + newstream->curfile ) ) {
                   LOG( LOG_ERR, "Failed to complete file %zu\n" );
                   comperror = 1;
                }
             }
+            // shift the new file reference to the front of the list
+            newstream->files[0] = newstream->files[newfilepos];
+            // check for any errors 
+            if ( comperror ) {
+               LOG( LOG_INFO, "Terminating datastream due to previous errors\n" );
+               freestream( newstream );
+               *stream = NULL; // unsafe to reuse this stream
+               errno = EBADFD;
+               return -1;
+            }
          }
          else {
             // at least need to push out the 'FINALIZED' state of the previous file
+            if ( putftag( newstream, newstream->files + ( newstream->curfile - 1 ) ) ) {
+               LOG( LOG_ERR, "Failed to push the FINALIZED FTAG for the previous file\n" );
+               freestream( newstream );
+               *stream = NULL; // unsafe to reuse this stream
+               errno = EBADFD;
+               return -1;
+            }
          }
       }
    }
-   if ( newstream == NULL ) { // recheck, so as to catch if the prev stream was closed
+   if ( newstream == NULL ) { // recheck, so as to catch if the prev stream was abandoned
       // we need to generate a fresh stream structure
       newstream = genstream( CREATE_STREAM, path, pos, mode, ctag );
-      if ( newstream == NULL ) {
-         LOG( LOG_ERR, "Failed to generate new stream\n" );
-         return NULL;
-      }
    }
+   // check if we need to close the previous stream
+   if ( closestream ) {
+         if ( datastream_close( *stream ) ) {
+            LOG( LOG_ERR, "Failed to close previous datastream\n" );
+            *stream = NULL; // don't attempt to close the original stream again
+            if ( newstream ) { freestream( newstream ); } // get rid of our new stream as well
+            errno = EBADFD;
+            return -1;
+         }
+         *stream = NULL; // don't attempt to close the original stream again
+   }
+   // finally, check to ensure we at least have a valid stream to return
+   if ( newstream == NULL ) {
+      // still NULL means failure of genstream()
+      LOG( LOG_ERR, "Failed to generate new stream\n" );
+      return -1;
+   }
+   // update the external stream reference
+   *stream = newstream;
+
+   return 0;
 }
 
-DATASTREAM datastream_open( DATASTREAM stream, STREAM_TYPE type, const char* path, marfs_position* pos, const char* ctag ) {
+int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, const char* ctag ) {
    // check for invalid args
    if ( type != EDIT_STREAM  &&
         type != READ_STREAM ) {
       LOG( LOG_ERR, "Received STREAM_TYPE is unsupported\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    // check for a NULL path arg
    if ( path == NULL ) {
       LOG( LOG_ERR, "Received a NULL path argument\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    // check for a NULL position
    if ( pos == NULL ) {
       LOG( LOG_ERR, "Received a NULL position argument\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
+   // check for NULL stream reference
+   if ( stream == NULL ) {
+      LOG( LOG_ERR, "Received a NULL stream reference argument\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   char closestream = 0;
+   DATASTREAM newstream = *stream;
    // check if we've been passed an existing stream
-   if ( stream ) {
-      if ( stream->type != CREATE_STREAM  &&
-           stream->type != EDIT_STREAM  &&
-           stream->type != READ_STREAM ) {
-         LOG( LOG_ERR, "Received stream is of unsupported type\n" );
+   if ( newstream ) {
+      if ( newstream->type != type ) {
+         LOG( LOG_ERR, "Received stream does not match requested STREAM_TYPE\n" );
          errno = EINVAL;
-         return NULL;
+         return -1;
       }
-      STREAMFILE* curfile = stream->files + stream->curfile;
-      char closestream = 0;
-      // stream MUST match in NS
-      if ( stream->ns != pos->ns ) {
+      STREAMFILE* curfile = newstream->files + newstream->curfile;
+      if ( newstream->ns != pos->ns ) {
+         // stream MUST match in NS
          LOG( LOG_INFO, "Received datastream has different NS target: \"%s\"\n",
-                        stream->ns->idstr );
+                        newstream->ns->idstr );
          closestream = 1;
+         newstream = NULL; // so stream generation logic kicks in
       }
-      // can only continue a read stream as another read stream
-      if ( type == READ_STREAM  &&  stream->type != type ) {
-         LOG( LOG_INFO, "Received datastream is not open for read\n" );
-         closestream = 1;
-         if ( stream->type == EDIT_STREAM ) { closestream = 2; }
-      }
-      // no point hanging onto any info in between edits
-      if ( type == EDIT_STREAM ) {
+      else if ( newstream->type == EDIT_STREAM ) {
+         // no point hanging onto any info in between edits
          LOG( LOG_INFO, "Received datastream is irrelevant for new edit stream\n" );
          closestream = 1;
-         if ( stream->type == EDIT_STREAM ) { closestream = 2; }
-      }
-      // can only progress to a create stream from an edit/creat stream
-      if ( type == CREATE_STREAM ) {
-         if ( stream->type == EDIT_STREAM ) {
-            if ( (curfile->ftag.state & FTAG_DATASTATE) != FTAG_FIN ) {
-               LOG( LOG_ERR, "Received EDIT datastream targets a non-released file\n" );
-               closestream = 1;
-               // NOTE -- The close op will fail, but is still a valid way to achieve the 
-               //         same behavior as datastream_release().
-               //         Regardless, the caller made a mistake by passing us this stream.
-            }
-         }
-         else if ( stream->type != CREATE_STREAM ) {
-            LOG( LOG_INFO, "Received datastream is not open for write\n" );
-            closestream = 1;
-         }
-      }
-      if ( closestream ) {
-         // if any condition was met, terminate the previous stream
-         if ( closestream < 2 ) {
-            LOG( LOG_INFO, "Received datastream must be closed\n" );
-            // can't continue with a stream from a previous NS, just close
-            if ( datastream_close( stream ) ) {
-               LOG( LOG_ERR, "Failed to close previous datastream\n" );
-               return NULL;
-            }
-         }
-         else {
-            LOG( LOG_INFO, "Received datastream must be released\n" );
-            // can't continue with a stream from a previous NS, just close
-            if ( datastream_release( stream ) ) {
-               LOG( LOG_ERR, "Failed to close previous datastream\n" );
-               return NULL;
-            }
-         }
-         stream = NULL; // so that stream generation logic kicks in later
+         newstream = NULL; // so stream generation logic kicks in
       }
       else {
          // we're going to continue using the provided stream structure
-         if ( type == CREATE_STREAM ) {
-
-            // finalize the current file
-            // NOTE -- if type == CREATE_STREAM,
-            //         then stream->type == EDIT or CREATE (from above check)
-            if ( stream->type == CREATE_STREAM  &&  curfile->ftag.bytes == 0
-                                                &&  stream->datahandle == NULL ) {
-               // special case, non-extended create stream with no current data content
-               // Open the output object to record recov info for zero-length file
-               if ( open_current_obj( stream ) ) {
-                  LOG( LOG_ERR, "Failed to open output object for zero-length prev file\n" );
-                  return NULL;
-               }
-            }
-            if ( stream->datahandle ) {
-               // for write streams ( which have output data ),
-               //  we have to output recovery info for the prev file
-               stream->files[ stream->curfile ].ftag.eof = 1; // end of prev file
-               if ( putrecoveryinfo( stream ) ) {
-                  LOG( LOG_ERR, "Failed to output prev file recovery info\n" );
-                  return NULL;
-               }
-            }
-
+         newstream->curfile++; // progress to the next file
+         // attempt to open the new file target
+         if ( open_existing_file( newstream, path, pos->ctxt ) ) {
+            LOG( LOG_ERR, "Failed to open target file: \"%s\"\n", path );
+            newstream->curfile--; // reset back to our old position
+            if ( errno = EBADFD ) { errno = ENOMSG; }
+            return -1;
          }
-         stream->curfile++; // progress to the next file
-         // for CREATE streams, check if we need to write out the current object
-         if ( type == CREATE_STREAM ) {
-            char syncobj = 0;
-            if ( stream->curfile >= pos->ns->prepo->datascheme.objfiles ) {
-               // we have reached the packing limit for the current object
-               syncobj = 1;
-            }
-         }
+         // check if our old stream targets the same object
       }
    }
-   if ( stream == NULL ) { // NOTE -- recheck, so as to catch if the prev stream was closed
+   if ( newstream == NULL ) { // NOTE -- recheck, so as to catch if the prev stream was closed
       // we need to generate a fresh stream structure
-      stream = genstream( type, path, pos, mode, ctag );
-      if ( stream == NULL ) {
-         LOG( LOG_ERR, "Failed to generate new stream\n" );
-         return NULL;
-      }
+      newstream = genstream( type, path, pos, mode, ctag );
    }
 }
 
