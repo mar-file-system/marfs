@@ -66,8 +66,7 @@ typedef enum
 {
    CREATE_STREAM,
    EDIT_STREAM,
-   READ_STREAM,
-   ERROR_STREAM
+   READ_STREAM
 } STREAM_TYPE;
 
 typedef struct streamfile_struct {
@@ -102,8 +101,16 @@ typedef struct datastream_struct {
 }* DATASTREAM;
 
 
-DATASTREAM datastream_init( DATASTREAM stream, marfs_position* pos, const char* subpath );
+int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos, mode_t mode, const char* ctag );
+
+int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, const char* ctag );
+
+int datastream_release( DATASTREAM* stream );
+
+int datastream_close( DATASTREAM* stream );
+
 int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath );
+
 int datastream_extend( DATASTREAM stream, off_t length );
 int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size_t* size );
 off_t datastream_seek( DATASTREAM stream, off_t offset, int whence );
@@ -111,9 +118,6 @@ int datastream_truncate( DATASTREAM stream, off_t length );
 int datastream_utimens( DATASTREAM stream, const struct timespec times[2] );
 size_t datastream_write( DATASTREAM stream, const void* buff, size_t size );
 size_t datastream_read( DATASTREAM stream, void* buffer, size_t size );
-int datastream_flush( DATASTREAM stream );
-int datastream_close( DATASTREAM stream );
-int datastream_release( DATASTREAM stream );
 
 #endif // _DATASTREAM_H
 
