@@ -295,6 +295,8 @@ int genrecoveryinfo( DATASTREAM stream, RECOVERY_FINFO* finfo, STREAMFILE* file,
    finfo->mtime.tv_nsec = stval.st_mtim.tv_nsec;
    finfo->eof = 0;
    if ( stream->type == READ_STREAM ) {
+      // read streams can terminate early
+      // we just need to track the size of the metadata file ( this defines logical file bounds )
       finfo->size = stval.st_size;
       return 0;
    }
@@ -690,6 +692,7 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
    stream->fileno = 0;
    stream->objno = 0;
    stream->offset = 0; // redefined below
+   stream->excessoffset = 0;
    stream->datahandle = NULL;
    stream->files = NULL; // redefined below
    stream->curfile = 0;
@@ -861,7 +864,7 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
    return stream;
 }
 
-int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, size_t* tgtoffset, size_t* remaining, size_t* maxobjdata ) {
+int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, size_t* tgtoffset, size_t* remaining, size_t* excess, size_t* maxobjdata ) {
    // establish some bounds values that we'll need later
    FTAG curtag = stream->files[stream->curfile].ftag;
    size_t dataperobj = ( curtag.objsize - (curtag.recoverybytes + stream->recoveryheaderlen) );
@@ -1141,11 +1144,11 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
                // attach our rebuild tag, if necessary
                if ( rtagstr  &&
                     mdal->fsetxattr( compfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {
-                  LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu\n", newstream->curfile );
+                  LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu\n", compfile->ftag.fileno );
                   abortflag = 1;
                }
                else if ( completefile( newstream, newstream->files + newstream->curfile ) ) {
-                  LOG( LOG_ERR, "Failed to complete file %zu\n", newstream->curfile );
+                  LOG( LOG_ERR, "Failed to complete file %zu\n", compfile->ftag.fileno );
                   abortflag = 1;
                }
             }
@@ -1474,7 +1477,7 @@ int datastream_close( DATASTREAM* stream ) {
    }
    // cleanup all open files
    MDAL mdal = tgtstream->ns->prepo->metascheme.mdal;
-   while ( 1 ) {
+   while ( 1 ) {  // exit cond near loop bottom ( we need to run even when curfile == 0, but don't want to decrement further )
       STREAMFILE* compfile = tgtstream->files + tgtstream->curfile;
       // attach our rebuild tag, if necessary
       if ( rtagstr  &&
@@ -1487,6 +1490,7 @@ int datastream_close( DATASTREAM* stream ) {
          LOG( LOG_ERR, "Failed to complete file %zu\n", compfile->ftag.fileno );
          abortflag = 1;
       }
+      // exit condition
       if ( tgtstream->curfile == 0 ) { break; }
       tgtstream->curfile--;
    }
