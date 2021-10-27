@@ -112,13 +112,15 @@ int datastream_close( DATASTREAM* stream );
 
 int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath );
 
+ssize_t datastream_read( DATASTREAM stream, void* buffer, size_t count );
+
+ssize_t datastream_write( DATASTREAM stream, const void* buff, size_t count );
+
 int datastream_extend( DATASTREAM stream, off_t length );
 int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size_t* size );
 off_t datastream_seek( DATASTREAM stream, off_t offset, int whence );
 int datastream_truncate( DATASTREAM stream, off_t length );
 int datastream_utimens( DATASTREAM stream, const struct timespec times[2] );
-size_t datastream_write( DATASTREAM stream, const void* buff, size_t size );
-size_t datastream_read( DATASTREAM stream, void* buffer, size_t size );
 
 #endif // _DATASTREAM_H
 

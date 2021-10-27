@@ -77,6 +77,17 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define FILE_ALLOC_MULT     2
 
 
+typedef struct datastream_position_struct {
+   size_t totaloffset;
+   size_t dataremaining;
+   size_t excessremaining;
+   size_t objno;
+   size_t offset;
+   size_t excessoffset;
+   size_t dataperobj;
+} DATASTREAM_POSITION;
+
+
 //   -------------   INTERNAL FUNCTIONS    -------------
 
 
@@ -634,29 +645,28 @@ int open_current_obj( DATASTREAM stream ) {
    return 0;
 }
 
-int close_current_obj( DATASTREAM stream, char** rtagstr ) {
+int close_current_obj( DATASTREAM stream, char** rtagstr, size_t* rtagstrlen ) {
    int closeres = 0;
    ne_state objstate;
-   size_t rtagstrlen = 0;
    char abortflag = 0;
-   if ( newstream->datahandle != NULL ) {
-      closeres = ne_close( newstream->datahandle, NULL, &(objstate) );
-      newstream->datahandle = NULL; // never reattempt this process
+   if ( stream->datahandle != NULL ) {
+      closeres = ne_close( stream->datahandle, NULL, &(objstate) );
+      stream->datahandle = NULL; // never reattempt this process
    }
    if ( closeres > 0 ) {
       // object synced, but with errors
       // generate a rebuild tag to mark for future repair
-      rtagstrlen = rtag_tostr( &(objstate), NULL, 0 );
-      if ( rtagstrlen == 0 ) {
+      *rtagstrlen = rtag_tostr( &(objstate), NULL, 0 );
+      if ( *rtagstrlen == 0 ) {
          LOG( LOG_ERR, "Failed to identify rebuild tag length\n" );
          abortflag = 1;
       }
-      *rtagstr = malloc( sizeof(char) * (rtagstrlen + 1) );
+      *rtagstr = malloc( sizeof(char) * (*rtagstrlen + 1) );
       if ( *rtagstr == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for rebuild tag string\n" );
          abortflag = 1;
       }
-      if ( rtag_tostr( &(objstate), *rtagstr, rtagstrlen + 1 ) != rtagstrlen ) {
+      if ( rtag_tostr( &(objstate), *rtagstr, *rtagstrlen + 1 ) != *rtagstrlen ) {
          LOG( LOG_ERR, "Rebuild tag has inconsistent length\n" );
          free( *rtagstr );
          *rtagstr = NULL;
@@ -665,7 +675,7 @@ int close_current_obj( DATASTREAM stream, char** rtagstr ) {
       LOG( LOG_INFO, "Attaching rebuild tag: \"%s\"\n", rtagstr );
    }
    if ( closeres < 0 ) {
-      LOG( LOG_ERR, "ne_close() indicates failure for object %zu\n", curobj );
+      LOG( LOG_ERR, "ne_close() indicates failure for object\n" );
       abortflag = 1;
    }
    if ( abortflag ) { return -1; }
@@ -864,16 +874,22 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
    return stream;
 }
 
-int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, size_t* tgtoffset, size_t* remaining, size_t* excess, size_t* maxobjdata ) {
+int gettargets( DATASTREAM stream, off_t offset, int whence, DATASTREAM_POSITION* dpos ) {
+//size_t* tgtobjno, size_t* tgtoffset, size_t* remaining, size_t* excess, size_t* maxobjdata ) {
    // establish some bounds values that we'll need later
    FTAG curtag = stream->files[stream->curfile].ftag;
    size_t dataperobj = ( curtag.objsize - (curtag.recoverybytes + stream->recoveryheaderlen) );
    size_t minobj = curtag.objno;
    size_t minoffset = curtag.offset - stream->recoveryheaderlen; // data space already occupied in first obj
+   size_t filesize = curtag.availbytes;
+   if ( stream->type == READ_STREAM ) {
+      // read streams are constrained by the actual file size
+      filesize = stream->finfo.size;
+   }
 
    // convert all values to a seek from the start of the file ( convert to a whence == SEEK_SET offset )
    if ( whence == SEEK_END ) {
-      offset += curtag.availbytes; // just add the total file size
+      offset += filesize; // just add the total file size
    }
    else if ( whence == SEEK_CUR ) {
       if ( stream->objno > minobj ) {
@@ -886,6 +902,7 @@ int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, s
       else if ( stream->offset ) {
          offset += ( (stream->offset - stream->recoveryheaderlen) - minoffset );
       }
+      offset += stream->excessoffset; // account for any zero-fill offset
    }
    else if ( whence != SEEK_SET ) {
       // catch an unknown 'whence' value
@@ -894,7 +911,8 @@ int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, s
       return -1;
    }
    // regardless of 'whence', we are now seeking from the min values ( beginning of file )
-   if ( offset > curtag.availbytes ) {
+   // Check that the offset is still within file bounds
+   if ( offset > filesize ) {
       // make sure we aren't seeking beyond the end of the file
       LOG( LOG_ERR, "Offset value extends beyond end of file\n" );
       errno = EINVAL;
@@ -906,9 +924,22 @@ int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, s
       errno = EINVAL;
       return -1;
    }
+   // establish position vals, based on target offset
    size_t tgtobj = minobj;
    size_t tgtoff = minoffset;
-   size_t remain = curtag.availbytes - offset;
+   size_t remain = 0;
+   size_t excessremain = filesize - curtag.availbytes;
+   size_t excessoff = 0;
+   if ( offset > curtag.availbytes ) {
+      // the offset is valid, but exceeds real data bounds ( use zero fill )
+      excessoff = offset - curtag.availbytes;
+      excessremain -= excessoff;
+      offset = curtag.availbytes;
+   }
+   else {
+      // the offset is within real data bounds
+      remain = curtag.availbytes - offset;
+   }
    if ( (offset + minoffset) > dataperobj ) {
       // this offset will cross object boundaries
       offset -= (dataperobj - minoffset);
@@ -919,11 +950,14 @@ int gettargets( DATASTREAM stream, off_t offset, int whence, size_t* tgtobjno, s
       tgtoff += offset;
    }
 
-   // finally, populate our final values, omitting recovery info
-   if ( tgtobjno ) { *tgtobjno = tgtobj; }
-   if ( tgtoffset ) { *tgtoffset = tgtoff; }
-   if ( remaining ) { *remaining = remain; }
-   if ( maxobjdata ) { *maxobjdata = dataperobj; }
+   // populate our final values, accounting for recovery info
+   dpos->totaloffset = offset;
+   dpos->dataremaining = remain;
+   dpos->excessremaining = excessremain;
+   dpos->objno = tgtobj;
+   dpos->offset = tgtoff + stream->recoveryheaderlen;
+   dpos->excessoffset = excessoff;
+   dpos->dataperobj = dataperobj;
    return 0;
 }
 
@@ -1130,13 +1164,16 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
                            curobj, newfile->ftag.objno );
             // close our data handle
             char* rtagstr = NULL;
-            if ( close_current_obj( stream, &(rtagstr) ) ) {
+            size_t rtagstrlen = 0;
+            if ( close_current_obj( newstream, &(rtagstr), &(rtagstrlen) ) ) {
+               LOG( LOG_ERR, "Failure to close data object %zu\n", curobj );
                freestream( newstream );
                *stream = NULL; // unsafe to reuse this stream
                errno = EBADFD;
                return -1;
             }
             // we need to mark all previous files as complete
+            char abortflag = 0;
             MDAL mdal = newstream->ns->prepo->metascheme.mdal;
             while ( newstream->curfile ) {
                newstream->curfile--;
@@ -1269,7 +1306,8 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
               curfile->ftag.objno != newfile->ftag.objno ) {
             // data objects differ, so close the old reference
             char* rtagstr = NULL;
-            if ( close_current_obj( newstream, &(rtagstr) ) ) {
+            size_t rtagstrlen = 0;
+            if ( close_current_obj( newstream, &(rtagstr), &(rtagstrlen) ) ) {
                LOG( LOG_ERR, "Failed to close old stream data handle\n" );
                freestream( newstream );
                *stream = NULL;
@@ -1278,7 +1316,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
             }
             if ( rtagstr != NULL ) {
                // need to attach rebuild tag
-               MDAL mdal = stream->ns->prepo->metascheme.mdal;
+               MDAL mdal = newstream->ns->prepo->metascheme.mdal;
                if ( mdal->fsetxattr( curfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {
                   LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu\n", curfile->ftag.fileno );
                   freestream( newstream );
@@ -1375,9 +1413,10 @@ int datastream_release( DATASTREAM* stream ) {
    }
    // close our data handle
    char* rtagstr = NULL;
+   size_t rtagstrlen = 0;
    char abortflag = 0;
    MDAL mdal = tgtstream->ns->prepo->metascheme.mdal;
-   if ( close_current_obj( tgtstream, &(rtagstr) ) ) {
+   if ( close_current_obj( tgtstream, &(rtagstr), &(rtagstrlen) ) ) {
       LOG( LOG_ERR, "Close failure for object %zu\n", tgtstream->objno );
       abortflag = 1;
    }
@@ -1468,8 +1507,9 @@ int datastream_close( DATASTREAM* stream ) {
    }
    // close our data handle
    char* rtagstr = NULL;
+   size_t rtagstrlen = 0;
    char abortflag = 0;
-   if ( close_current_obj( tgtstream, &(rtagstr) ) ) {
+   if ( close_current_obj( tgtstream, &(rtagstr), &(rtagstrlen) ) ) {
       LOG( LOG_ERR, "Failure during close of object %zu\n", tgtstream->objno );
       freestream( tgtstream );
       *stream = NULL; // unsafe to reuse this stream
@@ -1522,26 +1562,37 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
       errno = EINVAL;
       return -1;
    }
+   if ( count > SSIZE_MAX ) {
+      LOG( LOG_ERR, "Provided byte count exceeds max return value: %zu\n", count );
+      errno = EINVAL;
+      return -1;
+   }
    // identify current position info 
    MDAL mdal = stream->ns->prepo->metascheme.mdal;
    STREAMFILE* curfile = stream->files + stream->curfile;
-   size_t curoff;
-   size_t remaining;
-   size_t maxobjdata;
-   if ( gettargets( stream, 0, SEEK_CUR, NULL, &(curoff), &(remaining), &(maxobjdata) ) ) {
+   DATASTREAM_POSITION streampos = {
+      .totaloffset = 0,
+      .dataremaining = 0,
+      .excessremaining = 0,
+      .objno = 0,
+      .offset = 0,
+      .excessoffset = 0,
+      .dataperobj = 0
+   };
+   if ( gettargets( stream, 0, SEEK_CUR, &(streampos) ) ) {
       LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", curfile->ftag.fileno );
       return -1;
    }
 
    // reduce read request to account for file limits
    size_t zerotailbytes = 0;
-   if ( count > stream->finfo.size ) {
-      LOG( LOG_INFO, "Read request exceeds file bounds, resizing to %zu bytes\n", stream->finfo.size );
-      count = stream->finfo.size;
+   if ( count > streampos.dataremaining + streampos.excessremaining ) {
+      count = streampos.dataremaining + streampos.excessremaining;
+      LOG( LOG_INFO, "Read request exceeds file bounds, resizing to %zu bytes\n", count );
    }
-   if ( count > remaining ) {
-      zerotailbytes = count - remaining;
-      count = remaining;
+   if ( count > streampos.dataremaining ) {
+      zerotailbytes = count - streampos.dataremaining;
+      count = streampos.dataremaining;
       LOG( LOG_INFO, "Read request exceeds data content, appending %zu tailing zero bytes\n",
                      zerotailbytes );
    }
@@ -1550,7 +1601,7 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
    size_t readbytes = 0;
    while ( count ) {
       // calculate how much data we can read from the current data object
-      size_t toread = maxobjdata - ( stream->offset - stream->recoveryheaderlen );
+      size_t toread = streampos.dataperobj - ( stream->offset - stream->recoveryheaderlen );
       if ( toread == 0 ) {
          // close the previous data handle
          char* rtagstr = NULL;
@@ -1559,6 +1610,9 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
             LOG( LOG_WARNING, "Failed to close previous data object\n" );
          }
          if ( rtagstr != NULL ) {
+            LOG( LOG_INFO, "Attaching rebuild tag to file %zu: \"%s\"\n",
+                           curfile->ftag.fileno,
+                           rtagstr );
             if ( mdal->fsetxattr( curfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {
                LOG( LOG_WARNING, "Failed to attach rebuild tag to file %zu\n", curfile->ftag.fileno );
             }
@@ -1567,7 +1621,7 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
          // progress to the next data object
          stream->objno++;
          stream->offset = stream->recoveryheaderlen;
-         toread = maxobjdata;
+         toread = streampos.dataperobj;
          LOG( LOG_INFO, "Progressing read into object %zu\n", stream->objno );
       }
       if ( toread > count ) { toread = count; }
@@ -1596,8 +1650,8 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
    if ( zerotailbytes ) {
       bzero( buf, zerotailbytes );
       readbytes += zerotailbytes;
+      stream->excessoffset += zerotailbytes;
    }
-   // TODO : need to track this offset!  Otherwise we'll repeat for reads near EOF
 
    return readbytes;
 }
@@ -1614,6 +1668,88 @@ ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
       errno = EINVAL;
       return -1;
    }
+   if ( count > SSIZE_MAX ) {
+      LOG( LOG_ERR, "Provided byte count exceeds max return value: %zu\n", count );
+      errno = EINVAL;
+      return -1;
+   }
+   // identify current position info 
+   MDAL mdal = stream->ns->prepo->metascheme.mdal;
+   STREAMFILE* curfile = stream->files + stream->curfile;
+   DATASTREAM_POSITION streampos = {
+      .totaloffset = 0,
+      .dataremaining = 0,
+      .excessremaining = 0,
+      .objno = 0,
+      .offset = 0,
+      .excessoffset = 0,
+      .dataperobj = 0
+   };
+   if ( gettargets( stream, 0, SEEK_CUR, &(streampos) ) ) {
+      LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", curfile->ftag.fileno );
+      return -1;
+   }
+
+   // reduce write request to account for file limits
+   if ( stream->type == EDIT_STREAM  &&  count > streampos.dataremaining ) {
+      count = streampos.dataremaining;
+      LOG( LOG_INFO, "Write request exceeds file bounds, resizing to %zu bytes\n", count );
+   }
+
+   // write all provided data until we no longer can
+   size_t writtenbytes = 0;
+   while ( count ) {
+      // calculate how much data we can write to the current data object
+      size_t towrite = streampos.dataperobj - ( stream->offset - stream->recoveryheaderlen );
+      if ( towrite == 0 ) {
+         // close the previous data handle
+         char* rtagstr = NULL;
+         size_t rtagstrlen = 0;
+         if ( close_current_obj( stream, &(rtagstr), &(rtagstrlen) ) ) {
+            LOG( LOG_ERR, "Failed to close previous data object\n" );
+            return -1;
+         }
+         if ( rtagstr != NULL ) {
+            LOG( LOG_INFO, "Attaching rebuild tag to file %zu: \"%s\"\n",
+                           curfile->ftag.fileno,
+                           rtagstr );
+            if ( mdal->fsetxattr( curfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {
+               LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu\n", curfile->ftag.fileno );
+               free( rtagstr );
+               return -1;
+            }
+            free( rtagstr );
+         }
+         // progress to the next data object
+         stream->objno++;
+         stream->offset = stream->recoveryheaderlen;
+         towrite = streampos.dataperobj;
+         LOG( LOG_INFO, "Progressing write into object %zu\n", stream->objno );
+      }
+      if ( towrite > count ) { towrite = count; }
+      // open the current data object, if necessary
+      if ( stream->datahandle == NULL ) {
+         if ( open_current_obj( stream ) ) {
+            LOG( LOG_ERR, "Failed to open data object %zu\n", stream->objno );
+            return (writtenbytes) ? writtenbytes : -1;
+         }
+      }
+      // perform the actual write op
+      ssize_t writeres = ne_write( stream->datahandle, buf, towrite );
+      if ( writeres <= 0 ) {
+         LOG( LOG_ERR, "Write failure in object %zu at offset %zu\n",
+                       stream->objno, stream->offset );
+         return (writtenbytes) ? writtenbytes : -1;
+      }
+      // adjust all offsets and byte counts
+      buf += writeres;
+      count -= writeres;
+      writtenbytes += writeres;
+      stream->offset += writeres;
+   }
+
+   return writtenbytes;
+
 }
 
 int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath ) {
