@@ -206,6 +206,7 @@ AC_CONFIG_FILES([Makefile
                  src/tagging/Makefile
                  src/recovery/Makefile
                  src/config/Makefile
+                 src/datastream/Makefile
                ])
 #                 src/logging/Makefile
 #                 src/thread_queue/Makefile

@@ -76,6 +76,11 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define FTAG_FILEPOSITION_HEADER "POS"
 #define FTAG_DATACONTENT_HEADER "DAT"
 
+#define RTAG_VERSION_HEADER "VER"
+#define RTAG_STRIPEINFO_HEADER "STP"
+#define RTAG_DATAHEALTH_HEADER "DHLTH"
+#define RTAG_METAHEALTH_HEADER "MHLTH"
+
 
 //   -------------   INTERNAL FUNCTIONS    -------------
 
@@ -566,6 +571,120 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
       return 0;
    }
    return snprintf( tgtstr, len, "%s|%s.%zu", ftag->ctag, ftag->streamid, ftag->objno );
+}
+
+
+
+int rtag_initstr( ne_state* rtag, size_t stripewidth, char* rtagstr ) {
+   return 0;
+}
+
+size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_t len ) {
+   // check for NULL rtag
+   if ( rtag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL ne_state reference\n" );
+      return 0;
+   }
+   if ( rtag->meta_status == NULL  ||  rtag->data_status == NULL ) {
+      LOG( LOG_ERR, "Received ne_state struct has undefined meta/data_status\n" );
+      return 0;
+   }
+
+   // keep track of total string length, even if we can't output that much
+   size_t totsz = 0;
+
+   // output version info first
+   int prres = snprintf( tgtstr, len, "%s(%u.%.3u)", RTAG_VERSION_HEADER, RTAG_CURRENT_MAJORVERSION, RTAG_CURRENT_MINORVERSION );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output version info string\n" );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+
+   // output stripe info
+   prres = snprintf( tgtstr, len, "%s(v%zu|b%zu|t%zu)",
+                     RTAG_STRIPEINFO_HEADER,
+                     rtag->versz,
+                     rtag->blocksz,
+                     rtag->totsz );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output stripe info string\n" );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+
+   // output data health header
+   prres = snprintf( tgtstr, len, "%s(", RTAG_DATAHEALTH_HEADER );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output data health header string\n" );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+   // output per-block data health
+   size_t curblock = 0;
+   for ( ; curblock < stripewidth; curblock++ ) {
+      char* blkhealth = rtag->data_status + curblock;
+      if ( curblock ) {
+         // print flag with seperator
+         prres = snprintf( tgtstr, len, "-%c", (*blkhealth) ? '1' : '0' );
+      }
+      else {
+         // print flag without seperator
+         prres = snprintf( tgtstr, len, "%c", (*blkhealth) ? '1' : '0' );
+      }
+      if ( prres < 1 ) {
+         LOG( LOG_ERR, "Failed to output data health string for block %zu\n", curblock );
+         return 0;
+      }
+      if ( len > prres ) { len -= prres; tgtstr += prres; }
+      else { len = 0; }
+      totsz += prres;
+   }
+   // output per-block data health tail AND meta health header
+   prres = snprintf( tgtstr, len, ")%s(", RTAG_METAHEALTH_HEADER );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output meta health header string\n" );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+   // output per-block meta health info
+   for ( curblock = 0; curblock < stripewidth; curblock++ ) {
+      char* blkhealth = rtag->meta_status + curblock;
+      if ( curblock ) {
+         // print flag with seperator
+         prres = snprintf( tgtstr, len, "-%c", (*blkhealth) ? '1' : '0' );
+      }
+      else {
+         // print flag without seperator
+         prres = snprintf( tgtstr, len, "%c", (*blkhealth) ? '1' : '0' );
+      }
+      if ( prres < 1 ) {
+         LOG( LOG_ERR, "Failed to output meta health string for block %zu\n", curblock );
+         return 0;
+      }
+      if ( len > prres ) { len -= prres; tgtstr += prres; }
+      else { len = 0; }
+      totsz += prres;
+   }
+   // output per-block meta health tail
+   prres = snprintf( tgtstr, len, ")" );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output meta health tail string\n" );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+
+   return totsz;
 }
 
 

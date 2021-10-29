@@ -93,14 +93,15 @@ typedef struct datastream_struct {
    STREAMFILE* files;
    size_t      curfile;
    size_t      filealloc;
-   // Temporary Buffers/Structs
+   RECOVERY_FINFO finfo;
+   // Temporary Buffers
    char*       ftagstr;
    size_t      ftagstrsize;
    char* finfostr;
    size_t finfostrlen;
-   RECOVERY_FINFO finfo;
 }* DATASTREAM;
 
+int datastream_objtarget( FTAG* ftag, const marfs_ds* ds, char** objname, ne_erasure* erasure, ne_location* location );
 
 int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos, mode_t mode, const char* ctag );
 
@@ -116,10 +117,14 @@ ssize_t datastream_read( DATASTREAM stream, void* buffer, size_t count );
 
 ssize_t datastream_write( DATASTREAM stream, const void* buff, size_t count );
 
-int datastream_extend( DATASTREAM stream, off_t length );
+off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence );
+
 int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size_t* size );
-off_t datastream_seek( DATASTREAM stream, off_t offset, int whence );
+
+int datastream_extend( DATASTREAM* stream, off_t length );
+
 int datastream_truncate( DATASTREAM stream, off_t length );
+
 int datastream_utimens( DATASTREAM stream, const struct timespec times[2] );
 
 #endif // _DATASTREAM_H

@@ -174,9 +174,9 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
 #define RTAG_NAME "MARFS-REBUILD"
 
 
-int rtag_initstr( ne_state* rtag, char* rtagstr );
+int rtag_initstr( ne_state* rtag, size_t stipewidth, char* rtagstr );
 
-size_t rtag_tostr( const ne_state* rtag, char* tgtstr, size_t len );
+size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_t len );
 
 
 #endif // _TAGGING_H

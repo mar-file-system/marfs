@@ -54,5 +54,5 @@
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
 
-SUBDIRS = hash mdal tagging recovery config
+SUBDIRS = hash mdal tagging recovery config datastream
 

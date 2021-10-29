@@ -167,7 +167,7 @@ int main(int argc, char **argv)
 
 
    // generate a datastream
-   DATASTREAM stream = genstream( CREATE_STREAM, "tgtfile", &(pos), S_IRWXU | S_IRGRP, config );
+   DATASTREAM stream = genstream( CREATE_STREAM, "tgtfile", &(pos), S_IRWXU | S_IRGRP, config->ctag );
    if ( stream == NULL ) {
       printf( "Failed to generate a create stream\n" );
       return -1;
@@ -179,22 +179,30 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   // dump the recovery file info
-   if ( writefinfodata( stream ) ) {
-      printf( "Failed to write recovery file info for 'tgtfile' (%s)\n", strerror(errno) );
+   // keep track of this file's rpath
+   char* rpath = genrpath( stream, stream->files );
+   if ( rpath == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of 'tgtfile' (%s)\n", strerror(errno) );
       return -1;
    }
-
-   // close the data handle
-   if ( ne_close( stream->datahandle, NULL, NULL ) ) {
-      printf( "Failed to close the stream data handle (%s)\n", strerror(errno) );
+   // ...and the data object
+   char* objname;
+   ne_erasure objerasure;
+   ne_location objlocation;
+   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of 'tgtfile' (%s)\n", strerror(errno) );
       return -1;
    }
-   stream->datahandle = NULL;
 
    // finalize the file
-   if ( finfile( stream, stream->files ) ) {
+   if ( finfile( stream ) ) {
       printf( "Failed to finalize 'tgtfile' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // complete the file
+   if ( completefile( stream, stream->files ) ) {
+      printf( "Failed to complete 'tgtfile' (%s)\n", strerror(errno) );
       return -1;
    }
 
@@ -202,7 +210,21 @@ int main(int argc, char **argv)
    // free our datastream
    freestream( stream );
 
-
+   // cleanup tgtfile
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "tgtfile" ) ) {
+      printf( "Failed to unlink \"tgtfile\"\n" );
+      return -1;
+   }
+   // cleanup the reference location
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
+      return -1;
+   }
+   // cleanup the data object
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname );
+      return -1;
+   }
 
    // cleanup our position struct
    MDAL posmdal = pos.ns->prepo->metascheme.mdal;
