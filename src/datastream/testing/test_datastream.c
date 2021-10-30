@@ -200,15 +200,78 @@ int main(int argc, char **argv)
       return -1;
    }
 
+   // close the data object
+   char* rtagstr = NULL;
+   size_t rtagstrlen = 0;
+   if ( close_current_obj( stream, &(rtagstr), &(rtagstrlen) ) ) {
+      printf( "Failed to close current stream object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   if ( rtagstr != NULL ) {
+      printf( "Received unexpected rebuild tag string: \"%s\"\n", rtagstr );
+      return -1;
+   }
+
    // complete the file
    if ( completefile( stream, stream->files ) ) {
       printf( "Failed to complete 'tgtfile' (%s)\n", strerror(errno) );
       return -1;
    }
 
-
    // free our datastream
    freestream( stream );
+
+
+   // establish a data buffer to hold all data content
+   void* databuf = malloc( 1024 * 1024 * 10 ); // 10MiB
+   if ( databuf == NULL ) {
+      printf( "Failed to allocate 10MiB data buffer\n" );
+      return -1;
+   }
+   ne_handle datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname, objlocation, objerasure, NE_RDALL );
+   if ( datahandle == NULL ) {
+      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   ssize_t datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
+   if ( datasize < 1 ) {
+      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
+   if ( ne_close( datahandle, NULL, NULL ) ) {
+      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
+      return -1;
+   }
+   // use recovery to validate object content
+   RECOVERY recov = recovery_init( databuf, datasize, NULL );
+   if ( recov == NULL ) {
+      printf( "Failed to initialize recovery of 'tgtfile' data object\n" );
+      return -1;
+   }
+   RECOVERY_FINFO rfinfo;
+   size_t bufsize;
+   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
+      printf( "Unexpected return val for recovery of 'tgtfile'\n" );
+      return -1;
+   }
+   if ( bufsize  ||  rfinfo.size  ||  rfinfo.eof != 1  ||  strcmp( rfinfo.path, "tgtfile" ) ) {
+      printf( "Unexpected recovery info for 'tgtfile': bsz=%zu, sz=%zu, eof=%d, path=%s]\n",
+              bufsize, rfinfo.size, (int)rfinfo.eof, rfinfo.path );
+      return -1;
+   }
+   free( rfinfo.path );
+   if ( recovery_nextfile( recov, &(rfinfo), NULL, NULL ) ) {
+      printf( "Trailing recov file or misc failure after 'tgtfile'\n" );
+      return -1;
+   }
+   if ( recovery_close( recov ) ) {
+      printf( "Failed to close recovery of 'tgtfile'\n" );
+      return -1;
+   }
+
+   // cleanup our data buffer
+   free( databuf );
 
    // cleanup tgtfile
    if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "tgtfile" ) ) {
@@ -220,11 +283,13 @@ int main(int argc, char **argv)
       printf( "Failed to unlink rpath: \"%s\"\n", rpath );
       return -1;
    }
+   free( rpath );
    // cleanup the data object
    if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
       printf( "Failed to delete data object: \"%s\"\n", objname );
       return -1;
    }
+   free( objname );
 
    // cleanup our position struct
    MDAL posmdal = pos.ns->prepo->metascheme.mdal;

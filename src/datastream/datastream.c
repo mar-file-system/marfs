@@ -673,10 +673,16 @@ int open_current_obj( DATASTREAM stream ) {
  */
 int close_current_obj( DATASTREAM stream, char** rtagstr, size_t* rtagstrlen ) {
    marfs_ds* ds = &(stream->ns->prepo->datascheme);
-   ne_state objstate;
+   ne_state objstate = {
+      .versz = 0,
+      .blocksz = 0,
+      .totsz = 0,
+      .meta_status = NULL,
+      .data_status = NULL,
+      .csum = NULL };
    size_t stripewidth = ds->protection.N + ds->protection.E;
-   objstate.data_status = malloc( sizeof(char) * stripewidth );
-   objstate.meta_status = malloc( sizeof(char) * stripewidth );
+   objstate.data_status = calloc( sizeof(char), stripewidth );
+   objstate.meta_status = calloc( sizeof(char), stripewidth );
    if ( objstate.data_status == NULL  ||  objstate.meta_status == NULL ) {
       LOG( LOG_ERR, "Failed to allocate data object status arrays\n" );
       if ( objstate.data_status ) { free( objstate.data_status ); }
@@ -1062,6 +1068,7 @@ int putfinfo( DATASTREAM stream ) {
       return -1;
    }
    stream->offset += recoverybytes; // update our object offset
+   LOG( LOG_INFO, "Wrote out RECOVERY_FINFO: \"%s\"\n", stream->finfostr );
    return 0;
 } 
 
@@ -1083,6 +1090,7 @@ int finfile( DATASTREAM stream ) {
       if ( curfile->ftag.bytes == 0  &&  stream->datahandle == NULL ) {
          // special case, non-extended create stream with no current data content
          // Open the output object to record recov info for zero-length file
+         LOG( LOG_INFO, "Opening data object for empty file\n" );
          if ( open_current_obj( stream ) ) {
             LOG( LOG_ERR, "Failed to open output object for zero-length prev file\n" );
             return -1;
