@@ -545,7 +545,20 @@ size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
       LOG( LOG_ERR, "Receieved a NULL tgtstr value w/ non-zero len\n" );
       return 0;
    }
-   return snprintf( tgtstr, len, "%s|%s.%zu", ftag->ctag, ftag->streamid, ftag->fileno );
+   // sanitize the streamID, removing any '/' chars
+   char* sanstream = strdup( ftag->streamid );
+   if ( sanstream == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate streamID: \"%s\"\n", ftag->streamid );
+      return 0;
+   }
+   char* parse = sanstream;
+   while ( *parse != '\0' ) {
+      if ( *parse == '/' ) { *parse = '#'; }
+      parse++;
+   }
+   size_t retval = snprintf( tgtstr, len, "%s|%s|%zu", ftag->ctag, sanstream, ftag->fileno );
+   free( sanstream );
+   return retval;
 }
 
 /**
@@ -570,7 +583,20 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
       LOG( LOG_ERR, "Receieved a NULL tgtstr value w/ non-zero len\n" );
       return 0;
    }
-   return snprintf( tgtstr, len, "%s|%s.%zu", ftag->ctag, ftag->streamid, ftag->objno );
+   // sanitize the streamID, removing any '/' chars
+   char* sanstream = strdup( ftag->streamid );
+   if ( sanstream == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate streamID: \"%s\"\n", ftag->streamid );
+      return 0;
+   }
+   char* parse = sanstream;
+   while ( *parse != '\0' ) {
+      if ( *parse == '/' ) { *parse = '#'; }
+      parse++;
+   }
+   size_t retval = snprintf( tgtstr, len, "%s|%s|%zu", ftag->ctag, sanstream, ftag->objno );
+   free( sanstream );
+   return retval;
 }
 
 

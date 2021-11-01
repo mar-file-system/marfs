@@ -595,9 +595,11 @@ int open_current_obj( DATASTREAM stream ) {
 
    // open a handle for the new object
    if ( stream->type == READ_STREAM ) {
+      LOG( LOG_INFO, "Opening object for READ: \"%s\"\n", objname );
       stream->datahandle = ne_open( ds->nectxt, objname, location, erasure, NE_RDALL );
    }
    else {
+      LOG( LOG_INFO, "Opening object for WRITE: \"%s\"\n", objname );
       stream->datahandle = ne_open( ds->nectxt, objname, location, erasure, NE_WRALL );
    }
    if ( stream->datahandle == NULL ) {
@@ -610,6 +612,8 @@ int open_current_obj( DATASTREAM stream ) {
    if ( stream->type == READ_STREAM ) {
       // if we're reading, we may need to seek to a specific offset
       if ( stream->offset ) {
+         LOG( LOG_INFO, "Seeking to offset %zd of object %zu\n",
+                        stream->offset, stream->objno );
          if ( stream->offset != ne_seek( stream->datahandle, stream->offset ) ) {
             LOG( LOG_ERR, "Failed to seek to offset %zu of object %zu\n", stream->offset, stream->objno );
             ne_abort( stream->datahandle );
@@ -673,7 +677,6 @@ int open_current_obj( DATASTREAM stream ) {
  * @return int : Zero on success, or -1 on failure
  */
 int close_current_obj( DATASTREAM stream, char** rtagstr, size_t* rtagstrlen ) {
-   marfs_ds* ds = &(stream->ns->prepo->datascheme);
    ne_state objstate = {
       .versz = 0,
       .blocksz = 0,
@@ -681,7 +684,8 @@ int close_current_obj( DATASTREAM stream, char** rtagstr, size_t* rtagstrlen ) {
       .meta_status = NULL,
       .data_status = NULL,
       .csum = NULL };
-   size_t stripewidth = ds->protection.N + ds->protection.E;
+   STREAMFILE* curfile = stream->files + stream->curfile;
+   size_t stripewidth = curfile->ftag.protection.N + curfile->ftag.protection.E;
    objstate.data_status = calloc( sizeof(char), stripewidth );
    objstate.meta_status = calloc( sizeof(char), stripewidth );
    if ( objstate.data_status == NULL  ||  objstate.meta_status == NULL ) {
@@ -791,9 +795,8 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
 
    // allocate our first file reference(s)
    if ( type == READ_STREAM  ||  type == EDIT_STREAM ) {
-      // Read streams should only ever expect a single file to be referenced at a time
-      // Edit streams will *likely* only reference a single file, but may reference more later
-      stream->filealloc = allocfiles( &(stream->files), stream->curfile, 1 );
+      // Read/Edit streams should only ever expect two files to be referenced at a time
+      stream->filealloc = allocfiles( &(stream->files), stream->curfile, 2 );
    }
    else if ( type == CREATE_STREAM ) {
       // Create streams are only restriced by the object packing limits
@@ -854,16 +857,10 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
          freestream( stream );
          return NULL;
       }
-      char* parse = nspath;
-      size_t nspathlen = 0;
-      for( ; *parse != '\0'; parse++ ) {
-         if ( *parse == '/' ) { *parse = '#'; }
-         nspathlen++;
-      }
       size_t streamidlen = SIZE_DIGITS;  // to account for tv_sec (see numdigits.h)
       streamidlen += SIZE_DIGITS; // to account for tv_nsec
-      streamidlen += strlen( nsrepo ) + nspathlen; // to include NS/Repo info
-      streamidlen += 4; // for '|'/'#'/'.' seperators and null terminator
+      streamidlen += strlen( nsrepo ) + strlen( nspath ); // to include NS/Repo info
+      streamidlen += 4; // for '#'/'.' seperators and null terminator
       if ( (stream->streamid = malloc( sizeof(char) * streamidlen )) == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for streamID\n" );
          free( nsrepo );
@@ -871,7 +868,7 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
          freestream( stream );
          return NULL;
       }
-      ssize_t prres = snprintf( stream->streamid, streamidlen, "%s|%s|%zd.%ld",
+      ssize_t prres = snprintf( stream->streamid, streamidlen, "%s#%s#%zd.%ld",
                                 nsrepo, nspath, curtime.tv_sec, curtime.tv_nsec );
       if ( prres <= 0  ||  prres >= streamidlen ) {
          LOG( LOG_ERR, "Failed to generate streamID value\n" );
@@ -1818,6 +1815,7 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
       if ( toread > count ) { toread = count; }
       // open the current data object, if necessary
       if ( stream->datahandle == NULL ) {
+         LOG( LOG_INFO, "Opening object %zu\n", stream->objno );
          if ( open_current_obj( stream ) ) {
             LOG( LOG_ERR, "Failed to open data object %zu\n", stream->objno );
             return (readbytes) ? readbytes : -1;
@@ -1826,8 +1824,8 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
       // perform the actual read op
       ssize_t readres = ne_read( stream->datahandle, buf, toread );
       if ( readres <= 0 ) {
-         LOG( LOG_ERR, "Read failure in object %zu at offset %zu\n",
-                       stream->objno, stream->offset );
+         LOG( LOG_ERR, "Read failure in object %zu at offset %zu ( res = %zd )\n",
+                       stream->objno, stream->offset, readres );
          return (readbytes) ? readbytes : -1;
       }
       // adjust all offsets and byte counts
@@ -1847,6 +1845,7 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
    return readbytes;
 }
 
+//TODO : Allow to NULL out string ref ( don't complete broken files )
 ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
    // check for invalid args
    if ( stream == NULL ) {
@@ -1913,6 +1912,13 @@ ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
       // calculate how much data we can write to the current data object
       size_t towrite = streampos.dataperobj - ( stream->offset - stream->recoveryheaderlen );
       if ( towrite == 0 ) {
+         // if we have a current data handle, need to output trailing recov info
+         if ( stream->datahandle  &&  putfinfo( stream ) ) {
+            LOG( LOG_ERR, "Failed to output recovery info to tail of object %zu\n", stream->objno );
+            ne_abort( stream->datahandle );
+            stream->datahandle = NULL; // need to ensure this is never reused
+            return -1;
+         }
          // close the previous data handle
          char* rtagstr = NULL;
          size_t rtagstrlen = 0;
@@ -2071,8 +2077,8 @@ off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
    // EDIT streams require extra restrictions
    if ( tgtstream->type == EDIT_STREAM  &&
         streampos.offset != tgtstream->recoveryheaderlen ) {
-      LOG( LOG_ERR, "Edit streams can only seek to exact chunk bounds ( tgtoff = %zu )\n",
-                    streampos.offset );
+      LOG( LOG_ERR, "Edit streams can only seek to exact chunk bounds ( exoff = %zu )\n",
+                    streampos.offset - tgtstream->recoveryheaderlen );
       errno = EINVAL;
       return -1;
    }

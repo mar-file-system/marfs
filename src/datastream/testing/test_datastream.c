@@ -363,6 +363,62 @@ int main(int argc, char **argv)
       return -1;
    }
 
+   // create a chunked file off the same stream
+   if ( datastream_create( &(stream), "file3", &(pos), 0600, "NO-PACK-CLIENT" ) ) {
+      printf( "create failure for 'file3' of no-pack\n" );
+      return -1;
+   }
+   if ( stream->objno != 2 ) {
+      printf( "unexpected objno after 'file3' create for no-pack: %zu\n", stream->objno );
+      return -1;
+   }
+   if ( stream->curfile ) {
+      printf( "unexpected curfile for 'file3' of no-pack: %zu\n", stream->curfile );
+      return -1;
+   }
+   bzero( databuf, 1024 * 1024 * 2 ); // zero out 2MiB
+   if ( datastream_write( stream, databuf, 1024 * 1024 * 2 ) != (1024 * 1024 * 2) ) {
+      printf( "write failure for 'file3' of no-pack\n" );
+      return -1;
+   }
+   if ( stream->objno != 4 ) {
+      printf( "unexpected objno after write of 'file3' in no-pack: %zu\n", stream->objno );
+      return -1;
+   }
+
+   // keep track of this file's rpath
+   char* rpath3 = genrpath( stream, stream->files );
+   if ( rpath3 == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and the data objects
+   char* objname3 = NULL;
+   ne_erasure objerasure3;
+   ne_location objlocation3;
+   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname3), &(objerasure3), &(objlocation3) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object 1 of no-pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   char* objname4 = NULL;
+   ne_erasure objerasure4;
+   ne_location objlocation4;
+   FTAG tmptag = stream->files->ftag;
+   tmptag.objno++;
+   if ( datastream_objtarget( &(tmptag), &(stream->ns->prepo->datascheme), &(objname4), &(objerasure4), &(objlocation4) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object 2 of no-pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   char* objname5 = NULL;
+   ne_erasure objerasure5;
+   ne_location objlocation5;
+   tmptag.objno++;
+   if ( datastream_objtarget( &(tmptag), &(stream->ns->prepo->datascheme), &(objname5), &(objerasure5), &(objlocation5) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object 2 of no-pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+
    // close the stream
    if ( datastream_close( &(stream) ) ) {
       printf( "close failure for no-pack\n" );
@@ -370,6 +426,39 @@ int main(int argc, char **argv)
    }
 
    // read back the written files
+   // file1
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
+      printf( "failed to open 'file1' of no-pack for read\n" );
+      return -1;
+   }
+   char zeroarray[1048576] = {0}; // all zero 1MiB buffer
+   ssize_t iores = datastream_read( stream, databuf, 1048576 );
+   if ( iores != 1024 ) {
+      printf( "unexpected read res for 'file1' of no-pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( zeroarray, databuf, 1024 ) ) {
+      printf( "unexpected content of 'file1' of no-pack\n" );
+      return -1;
+   }
+   // file2
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
+      printf( "failed to open 'file2' of no-pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( stream, databuf, 1048576 );
+   if ( iores != 100 ) {
+      printf( "unexpected read res for 'file2' of no-pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( zeroarray, databuf, iores ) ) {
+      printf( "unexpected content of 'file2' of no-pack\n" );
+      return -1;
+   }
+   if ( datastream_close( &(stream) ) ) {
+      printf( "failed to close no-pack read stream\n" );
+      return -1;
+   }
 
 
    // cleanup 'file1' refs
@@ -402,6 +491,33 @@ int main(int argc, char **argv)
       return -1;
    }
    free( objname2 );
+   // cleanup 'file3' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file3" ) ) {
+      printf( "Failed to unlink \"file3\"\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath3 ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath3 );
+      return -1;
+   }
+   free( rpath3 );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname3, objlocation3 ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname3 );
+      return -1;
+   }
+   free( objname3 );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname4, objlocation4 ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname4 );
+      return -1;
+   }
+   free( objname4 );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname5, objlocation5 ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname5 );
+      return -1;
+   }
+   free( objname5 );
+
+
 
 
    // cleanup our data buffer
