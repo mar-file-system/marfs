@@ -164,7 +164,7 @@ int main(int argc, char **argv)
    }
 
 
-
+// INTERNAL FUNC CHECK
 
    // generate a datastream
    DATASTREAM stream = genstream( CREATE_STREAM, "tgtfile", &(pos), S_IRWXU | S_IRGRP, config->ctag );
@@ -220,6 +220,7 @@ int main(int argc, char **argv)
 
    // free our datastream
    freestream( stream );
+   stream = NULL;
 
 
    // establish a data buffer to hold all data content
@@ -270,9 +271,6 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   // cleanup our data buffer
-   free( databuf );
-
    // cleanup tgtfile
    if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "tgtfile" ) ) {
       printf( "Failed to unlink \"tgtfile\"\n" );
@@ -290,6 +288,124 @@ int main(int argc, char **argv)
       return -1;
    }
    free( objname );
+
+
+// EXTERNAL FUNC TESTS
+
+   // create a new stream
+   if ( datastream_create( &(stream), "file1", &(pos), 0744, "NO-PACK-CLIENT" ) ) {
+      printf( "create failure for 'file1' of no-pack\n" );
+      return -1;
+   }
+   bzero( databuf, 1024 );
+   if ( datastream_write( stream, databuf, 1024 ) != 1024 ) {
+      printf( "write failure for 'file1' of no-pack\n" );
+      return -1;
+   }
+   struct timespec times[2];
+   times[0].tv_sec = 123456;
+   times[0].tv_nsec = 0;
+   times[1].tv_sec = 7654321;
+   times[1].tv_nsec = 123;
+   if ( datastream_utimens( stream, times ) ) {
+      printf( "failed to set times on 'file1' of no-pack\n" );
+      return -1;
+   }
+
+   // keep track of this file's rpath
+   rpath = genrpath( stream, stream->files );
+   if ( rpath == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file1' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and the data object
+   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of no-pack 'file1' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // create a new file off the same stream
+   if ( datastream_create( &(stream), "file2", &(pos), 0622, "NO-PACK-CLIENT" ) ) {
+      printf( "create failure for 'file2' of no-pack\n" );
+      return -1;
+   }
+   if ( datastream_setrecoverypath( stream, "file2-recovset" ) ) {
+      printf( "failed to set recovery path for 'file2' of no-pack\n" );
+      return -1;
+   }
+   if ( datastream_write( stream, databuf, 100 ) != 100 ) {
+      printf( "write failure for 'file2' of no-pack\n" );
+      return -1;
+   }
+
+   // validate that we have switched to a fresh data object
+   if ( stream->objno != 1 ) {
+      printf( "unexpected objno for 'file2' of no-pack: %zu\n", stream->objno );
+      return -1;
+   }
+   if ( stream->curfile ) {
+      printf( "unexpected curfile for 'file2' of no-pack: %zu\n", stream->curfile );
+      return -1;
+   }
+
+   // keep track of this file's rpath
+   char* rpath2 = genrpath( stream, stream->files );
+   if ( rpath2 == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file2' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and the data object
+   char* objname2 = NULL;
+   ne_erasure objerasure2;
+   ne_location objlocation2;
+   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of no-pack 'file2' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // close the stream
+   if ( datastream_close( &(stream) ) ) {
+      printf( "close failure for no-pack\n" );
+      return -1;
+   }
+
+   // read back the written files
+
+
+   // cleanup 'file1' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file1" ) ) {
+      printf( "Failed to unlink \"file1\"\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
+      return -1;
+   }
+   free( rpath );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname );
+      return -1;
+   }
+   free( objname );
+   // cleanup 'file2' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file2" ) ) {
+      printf( "Failed to unlink \"file2\"\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath2 );
+      return -1;
+   }
+   free( rpath2 );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2 ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname2 );
+      return -1;
+   }
+   free( objname2 );
+
+
+   // cleanup our data buffer
+   free( databuf );
 
    // cleanup our position struct
    MDAL posmdal = pos.ns->prepo->metascheme.mdal;

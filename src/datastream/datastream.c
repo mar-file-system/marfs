@@ -511,6 +511,7 @@ int create_new_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt, mode_t
 
    // update the stream with new file information
    stream->files[ stream->curfile ] = newfile;
+   if ( stream->finfo.path ) { free( stream->finfo.path ); }
    stream->finfo = newfinfo;
    stream->fileno = newfile.ftag.fileno;
    stream->objno = newfile.ftag.objno;
@@ -1051,6 +1052,8 @@ int putfinfo( DATASTREAM stream ) {
       stream->finfostrlen = recoverybytes;
       free( oldstr );
    }
+   // update recovery info size values
+   stream->finfo.size = stream->files[ stream->curfile ].ftag.bytes;
    // populate recovery info string
    size_t genbytes = recovery_finfotostr( &(stream->finfo), stream->finfostr, stream->finfostrlen + 1 );
    if ( genbytes > recoverybytes ) {
@@ -2063,6 +2066,14 @@ off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
    };
    if ( gettargets( tgtstream, offset, whence, &(streampos) ) ) {
       LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", curfile->ftag.fileno );
+      return -1;
+   }
+   // EDIT streams require extra restrictions
+   if ( tgtstream->type == EDIT_STREAM  &&
+        streampos.offset != tgtstream->recoveryheaderlen ) {
+      LOG( LOG_ERR, "Edit streams can only seek to exact chunk bounds ( tgtoff = %zu )\n",
+                    streampos.offset );
+      errno = EINVAL;
       return -1;
    }
    // check if we will be switching to a new data object and need to close the old handle
