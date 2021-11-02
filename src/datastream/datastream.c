@@ -1846,14 +1846,15 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
 }
 
 //TODO : Allow to NULL out string ref ( don't complete broken files )
-ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
+ssize_t datastream_write( DATASTREAM* stream, const void* buf, size_t count ) {
    // check for invalid args
-   if ( stream == NULL ) {
+   if ( stream == NULL  ||  *stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL stream reference\n" );
       errno = EINVAL;
       return -1;
    }
-   if ( stream->type != CREATE_STREAM  &&  stream->type != EDIT_STREAM ) {
+   DATASTREAM tgtstream = *stream;
+   if ( tgtstream->type != CREATE_STREAM  &&  tgtstream->type != EDIT_STREAM ) {
       LOG( LOG_ERR, "Provided stream does not support writing\n" );
       errno = EINVAL;
       return -1;
@@ -1864,8 +1865,8 @@ ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
       return -1;
    }
    // check for FTAG states that prohibit writing
-   STREAMFILE* curfile = stream->files + stream->curfile;
-   if ( stream->type == CREATE_STREAM ) {
+   STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
+   if ( tgtstream->type == CREATE_STREAM ) {
       if ( (curfile->ftag.state & FTAG_DATASTATE) >= FTAG_FIN ) {
          LOG( LOG_ERR, "Provided create stream references a finalized file\n" );
          errno = EINVAL;
@@ -1877,7 +1878,7 @@ ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
          return -1;
       }
    }
-   if ( stream->type == EDIT_STREAM  &&
+   if ( tgtstream->type == EDIT_STREAM  &&
         ( ( curfile->ftag.state & FTAG_DATASTATE ) == FTAG_INIT  ||
           ( curfile->ftag.state & FTAG_DATASTATE ) == FTAG_COMP ) ) {
       LOG( LOG_ERR, "Provided edit stream references either a complete or un-sized file\n" );
@@ -1885,7 +1886,7 @@ ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
       return -1;
    }
    // identify current position info 
-   MDAL mdal = stream->ns->prepo->metascheme.mdal;
+   MDAL mdal = tgtstream->ns->prepo->metascheme.mdal;
    DATASTREAM_POSITION streampos = {
       .totaloffset = 0,
       .dataremaining = 0,
@@ -1895,13 +1896,13 @@ ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
       .excessoffset = 0,
       .dataperobj = 0
    };
-   if ( gettargets( stream, 0, SEEK_CUR, &(streampos) ) ) {
+   if ( gettargets( tgtstream, 0, SEEK_CUR, &(streampos) ) ) {
       LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", curfile->ftag.fileno );
       return -1;
    }
 
    // reduce write request to account for file limits
-   if ( stream->type == EDIT_STREAM  &&  count > streampos.dataremaining ) {
+   if ( tgtstream->type == EDIT_STREAM  &&  count > streampos.dataremaining ) {
       count = streampos.dataremaining;
       LOG( LOG_INFO, "Write request exceeds file bounds, resizing to %zu bytes\n", count );
    }
@@ -1910,20 +1911,22 @@ ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
    size_t writtenbytes = 0;
    while ( count ) {
       // calculate how much data we can write to the current data object
-      size_t towrite = streampos.dataperobj - ( stream->offset - stream->recoveryheaderlen );
+      size_t towrite = streampos.dataperobj - ( tgtstream->offset - tgtstream->recoveryheaderlen );
       if ( towrite == 0 ) {
          // if we have a current data handle, need to output trailing recov info
-         if ( stream->datahandle  &&  putfinfo( stream ) ) {
-            LOG( LOG_ERR, "Failed to output recovery info to tail of object %zu\n", stream->objno );
-            ne_abort( stream->datahandle );
-            stream->datahandle = NULL; // need to ensure this is never reused
+         if ( tgtstream->datahandle  &&  putfinfo( tgtstream ) ) {
+            LOG( LOG_ERR, "Failed to output recovery info to tail of object %zu\n", tgtstream->objno );
+            freestream( tgtstream );
+            *stream = NULL; // unsafe to continue with previous handle
             return -1;
          }
          // close the previous data handle
          char* rtagstr = NULL;
          size_t rtagstrlen = 0;
-         if ( close_current_obj( stream, &(rtagstr), &(rtagstrlen) ) ) {
+         if ( close_current_obj( tgtstream, &(rtagstr), &(rtagstrlen) ) ) {
             LOG( LOG_ERR, "Failed to close previous data object\n" );
+            freestream( tgtstream );
+            *stream = NULL; // unsafe to continue with previous handle
             return -1;
          }
          if ( rtagstr != NULL ) {
@@ -1933,37 +1936,39 @@ ssize_t datastream_write( DATASTREAM stream, const void* buf, size_t count ) {
             if ( mdal->fsetxattr( curfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {
                LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu\n", curfile->ftag.fileno );
                free( rtagstr );
+               freestream( tgtstream );
+               *stream = NULL; // unsafe to continue with previous handle
                return -1;
             }
             free( rtagstr );
          }
          // progress to the next data object
-         stream->objno++;
-         stream->offset = stream->recoveryheaderlen;
+         tgtstream->objno++;
+         tgtstream->offset = tgtstream->recoveryheaderlen;
          towrite = streampos.dataperobj;
-         LOG( LOG_INFO, "Progressing write into object %zu\n", stream->objno );
+         LOG( LOG_INFO, "Progressing write into object %zu\n", tgtstream->objno );
       }
       if ( towrite > count ) { towrite = count; }
       // open the current data object, if necessary
-      if ( stream->datahandle == NULL ) {
-         if ( open_current_obj( stream ) ) {
-            LOG( LOG_ERR, "Failed to open data object %zu\n", stream->objno );
+      if ( tgtstream->datahandle == NULL ) {
+         if ( open_current_obj( tgtstream ) ) {
+            LOG( LOG_ERR, "Failed to open data object %zu\n", tgtstream->objno );
             return (writtenbytes) ? writtenbytes : -1;
          }
       }
       // perform the actual write op
-      ssize_t writeres = ne_write( stream->datahandle, buf, towrite );
+      ssize_t writeres = ne_write( tgtstream->datahandle, buf, towrite );
       if ( writeres <= 0 ) {
          LOG( LOG_ERR, "Write failure in object %zu at offset %zu\n",
-                       stream->objno, stream->offset );
+                       tgtstream->objno, tgtstream->offset );
          return (writtenbytes) ? writtenbytes : -1;
       }
       // adjust all offsets and byte counts
       buf += writeres;
       count -= writeres;
       writtenbytes += writeres;
-      stream->offset += writeres;
-      if ( stream->type == CREATE_STREAM ) {
+      tgtstream->offset += writeres;
+      if ( tgtstream->type == CREATE_STREAM ) {
          // for create streams, increase the actual file data size
          curfile->ftag.bytes += writeres;
       }
