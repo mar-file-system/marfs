@@ -298,7 +298,7 @@ int main(int argc, char **argv)
       return -1;
    }
    bzero( databuf, 1024 );
-   if ( datastream_write( stream, databuf, 1024 ) != 1024 ) {
+   if ( datastream_write( &(stream), databuf, 1024 ) != 1024 ) {
       printf( "write failure for 'file1' of no-pack\n" );
       return -1;
    }
@@ -333,7 +333,7 @@ int main(int argc, char **argv)
       printf( "failed to set recovery path for 'file2' of no-pack\n" );
       return -1;
    }
-   if ( datastream_write( stream, databuf, 100 ) != 100 ) {
+   if ( datastream_write( &(stream), databuf, 100 ) != 100 ) {
       printf( "write failure for 'file2' of no-pack\n" );
       return -1;
    }
@@ -377,7 +377,7 @@ int main(int argc, char **argv)
       return -1;
    }
    bzero( databuf, 1024 * 1024 * 2 ); // zero out 2MiB
-   if ( datastream_write( stream, databuf, 1024 * 1024 * 2 ) != (1024 * 1024 * 2) ) {
+   if ( datastream_write( &(stream), databuf, 1024 * 1024 * 2 ) != (1024 * 1024 * 2) ) {
       printf( "write failure for 'file3' of no-pack\n" );
       return -1;
    }

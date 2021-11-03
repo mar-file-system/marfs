@@ -115,7 +115,7 @@ int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath );
 
 ssize_t datastream_read( DATASTREAM stream, void* buffer, size_t count );
 
-ssize_t datastream_write( DATASTREAM stream, const void* buff, size_t count );
+ssize_t datastream_write( DATASTREAM* stream, const void* buff, size_t count );
 
 off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence );
 
