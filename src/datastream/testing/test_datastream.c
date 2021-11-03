@@ -569,7 +569,7 @@ int main(int argc, char **argv)
       return -1;
    }
    bzero( databuf, 1024 * 2 );
-   if ( datastream_write( stream, databuf, 1024 * 2 ) != (1024 * 2) ) {
+   if ( datastream_write( &(stream), databuf, 1024 * 2 ) != (1024 * 2) ) {
       printf( "write failure for 'file1' of pack\n" );
       return -1;
    }
@@ -592,7 +592,7 @@ int main(int argc, char **argv)
       return -1;
    }
    bzero( databuf, 10 );
-   if ( datastream_write( stream, databuf, 10 ) != 10 ) {
+   if ( datastream_write( &(stream), databuf, 10 ) != 10 ) {
       printf( "write failure for 'file2' of pack\n" );
       return -1;
    }
@@ -634,7 +634,7 @@ int main(int argc, char **argv)
 
    // write a bit more data
    bzero( databuf, 100 );
-   if ( datastream_write( stream, databuf, 100 ) != 100 ) {
+   if ( datastream_write( &(stream), databuf, 100 ) != 100 ) {
       printf( "write failure for second write to 'file2' of pack\n" );
       return -1;
    }
@@ -649,7 +649,7 @@ int main(int argc, char **argv)
       return -1;
    }
    bzero( databuf, 1024 * 4 );
-   if ( datastream_write( stream, databuf, 1024 * 4 ) != (1024 * 4) ) {
+   if ( datastream_write( &(stream), databuf, 1024 * 4 ) != (1024 * 4) ) {
       printf( "write failure for 'file2' of pack\n" );
       return -1;
    }
@@ -662,12 +662,66 @@ int main(int argc, char **argv)
       return -1;
    }
 
+   // keep track of this file's rpath
+   rpath3 = genrpath( stream, stream->files );
+   if ( rpath3 == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and the data object
+   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
    // close the stream
    if ( datastream_close( &(stream) ) ) {
       printf( "Failed to close pack create stream\n" );
       return -1;
    }
 
+
+
+   // cleanup 'file1' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file1" ) ) {
+      printf( "Failed to unlink pack \"file1\"\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
+      return -1;
+   }
+   free( rpath );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname );
+      return -1;
+   }
+   free( objname );
+   // cleanup 'file2' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file2" ) ) {
+      printf( "Failed to unlink pack \"file2\"\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath2 );
+      return -1;
+   }
+   free( rpath2 );
+   // cleanup 'file3' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file3" ) ) {
+      printf( "Failed to unlink pack \"file3\"\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath3 ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath3 );
+      return -1;
+   }
+   free( rpath3 );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2 ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname2 );
+      return -1;
+   }
+   free( objname2 );
 
 
    // cleanup our data buffer

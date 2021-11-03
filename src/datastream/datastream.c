@@ -1621,6 +1621,7 @@ int datastream_release( DATASTREAM* stream ) {
          *stream = NULL; // unsafe to reuse this stream
          return -1;
       }
+      curfile->ftag.endofstream = 1; // indicate that the stream ends with this file
    }
    else { // for edit streams...
       // if we've output data, output file recovery info
@@ -1706,6 +1707,7 @@ int datastream_close( DATASTREAM* stream ) {
          *stream = NULL; // unsafe to reuse this stream
          return -1;
       }
+      curfile->ftag.endofstream = 1; // indicate that the stream ends with this file
    }
    else if ( tgtstream->type == EDIT_STREAM ) {
       // make sure we're closing a writeable and finalized file
@@ -1992,8 +1994,42 @@ ssize_t datastream_write( DATASTREAM* stream, const void* buf, size_t count ) {
                *stream = NULL; // unsafe to continue with previous handle
                return -1;
             }
-            free( rtagstr );
          }
+
+         // we (may) need to mark all previous files as complete
+         if ( tgtstream->type == CREATE_STREAM ) {
+            size_t curfilepos = tgtstream->curfile;
+            char abortflag = 0;
+            while ( tgtstream->curfile ) {
+               tgtstream->curfile--;
+               STREAMFILE* compfile = tgtstream->files + tgtstream->curfile;
+               // attach our rebuild tag, if necessary
+               if ( rtagstr  &&
+                    mdal->fsetxattr( compfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {
+                  LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu\n", compfile->ftag.fileno );
+                  abortflag = 1;
+               }
+               else if ( completefile( tgtstream, tgtstream->files + tgtstream->curfile ) ) {
+                  LOG( LOG_ERR, "Failed to complete file %zu\n", compfile->ftag.fileno );
+                  abortflag = 1;
+               }
+            }
+            // check for any errors 
+            if ( abortflag ) {
+               LOG( LOG_INFO, "Terminating datastream due to previous errors\n" );
+               freestream( tgtstream );
+               *stream = NULL; // unsafe to reuse this stream
+               errno = EBADFD;
+               return -1;
+            }
+            if ( curfilepos != tgtstream->curfile ) {
+               // shift the new file reference to the front of the list
+               tgtstream->files[0] = tgtstream->files[curfilepos];
+               curfile = tgtstream->files;
+            }
+         }
+         if ( rtagstr ) { free( rtagstr ); } // free our rtag string, if necessary
+
          // progress to the next data object
          tgtstream->objno++;
          tgtstream->offset = tgtstream->recoveryheaderlen;
