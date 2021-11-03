@@ -669,7 +669,9 @@ int main(int argc, char **argv)
       return -1;
    }
    // ...and the data object
-   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
+   FTAG tgttag = stream->files->ftag;
+   tgttag.objno++;
+   if ( datastream_objtarget( &(tgttag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
       LOG( LOG_ERR, "Failed to identify data object of pack 'file3' (%s)\n", strerror(errno) );
       return -1;
    }
@@ -680,6 +682,140 @@ int main(int argc, char **argv)
       return -1;
    }
 
+
+   // truncate file2 to an increased size
+   if ( datastream_open( &(stream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
+      LOG( LOG_ERR, "Failed to open edit handle for 'file2' of pack\n" );
+      return -1;
+   }
+   if ( datastream_truncate( stream, 1024 ) ) {
+      LOG( LOG_ERR, "Failed to truncate 'file2' of pack to %zu bytes\n", 1024 );
+      return -1;
+   }
+   // truncate file3 to a reduced size
+   if ( datastream_open( &(stream), EDIT_STREAM, "file3", &(pos), NULL ) ) {
+      LOG( LOG_ERR, "Failed to open edit handle for 'file3' of pack\n" );
+      return -1;
+   }
+   if ( datastream_truncate( stream, 1024*3 ) ) {
+      LOG( LOG_ERR, "Failed to truncate 'file3' of pack to %zu bytes\n", (1024*3) );
+      return -1;
+   }
+   if ( datastream_release( &(stream) ) ) {
+      LOG( LOG_ERR, "Failed to release edit stream for 'file3' of pack\n" );
+      return -1;
+   }
+
+
+   // read back the written PACK files
+   // file1
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
+      printf( "failed to open 'file1' of pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( stream, databuf, 1048576 );
+   if ( iores != (1024 * 2) ) {
+      printf( "unexpected read res for 'file1' of pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( zeroarray, databuf, (1024 * 2) ) ) {
+      printf( "unexpected content of 'file1' of pack\n" );
+      return -1;
+   }
+   // file2
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
+      printf( "failed to open 'file2' of pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( stream, databuf, 1048576 );
+   if ( iores != 1024 ) {
+      printf( "unexpected read res for 'file2' of pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( zeroarray, databuf, iores ) ) {
+      printf( "unexpected content of 'file2' of pack\n" );
+      return -1;
+   }
+   if ( datastream_release( &(stream) ) ) {
+      printf( "failed to close pack read stream1\n" );
+      return -1;
+   }
+   // file3
+   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos), NULL ) ) {
+      printf( "failed to open 'file3' of pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( stream, databuf, 1048576 );
+   if ( iores != (1024 * 3) ) {
+      printf( "unexpected read res for 'file3' of pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( zeroarray, databuf, iores ) ) {
+      printf( "unexpected content of 'file3' of pack\n" );
+      return -1;
+   }
+   char* packctag = strdup( stream->ctag );
+   char* packstreamid = strdup( stream->streamid );
+   if ( packctag == NULL  ||  packstreamid == NULL ) {
+      printf( "failed to duplicate stream ctag/id\n" );
+      return -1;
+   }
+   if ( datastream_close( &(stream) ) ) {
+      printf( "failed to close pack read stream2\n" );
+      return -1;
+   }
+
+
+   // validate recovery info in the first obj
+   datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname, objlocation, objerasure, NE_RDALL );
+   if ( datahandle == NULL ) {
+      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
+   if ( datasize < 1 ) {
+      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
+   if ( ne_close( datahandle, NULL, NULL ) ) {
+      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
+      return -1;
+   }
+   RECOVERY_HEADER rheader = {
+      .majorversion = 0,
+      .minorversion = 0,
+      .ctag = NULL,
+      .streamid = NULL
+   };
+   recov = recovery_init( databuf, datasize, &(rheader) );
+   if ( recov == NULL ) {
+      printf( "Failed to initialize recovery stream for data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   if ( strcmp( rheader.ctag, packctag )  ||  strcmp( rheader.streamid, packstreamid ) ) {
+      printf( "Recovery header has unexpcted stream values: ctag=%s, sid=%s\n",
+              rheader.ctag, rheader.streamid );
+      return -1;
+   }
+   free( packctag );
+   free( packstreamid );
+   free( rheader.ctag );
+   free( rheader.streamid );
+   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve recov info for file1 of pack\n" );
+      return -1;
+   }
+   if ( strcmp( rfinfo.path, "file1" )  ||  rfinfo.size != 1024 * 2 ) {
+      printf( "Unexpected recov info for file1 of pack\n" );
+      return -1;
+   }
+   free( rfinfo.path );
+   // TODO next file
+   if ( recovery_close( recov ) ) {
+      printf( "Failed to close recovery stream of pack\n" );
+      return -1;
+   }
 
 
    // cleanup 'file1' refs

@@ -1524,6 +1524,8 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
                //         we are now failing to tag ).  So... maybe better to fail 
                //         catastrophically.
                LOG( LOG_ERR, "Failed to close old stream data handle\n" );
+               free( curfile->ftag.ctag );
+               free( curfile->ftag.streamid );
                freestream( newstream );
                *stream = NULL;
                errno = EBADFD;
@@ -1534,6 +1536,8 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
                if ( mdal->fsetxattr( curfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {
                   LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu of stream \"%s\"\n",
                                 curfile->ftag.fileno, curfile->ftag.streamid );
+                  free( curfile->ftag.ctag );
+                  free( curfile->ftag.streamid );
                   freestream( newstream );
                   free( rtagstr );
                   *stream = NULL;
@@ -1541,6 +1545,20 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
                   return -1;
                }
                free( rtagstr );
+            }
+         }
+         else {
+            LOG( LOG_INFO, "Seeking to %zu of existing object handle\n",
+                           newfile->ftag.offset );
+            if ( ne_seek( newstream->datahandle, newfile->ftag.offset ) != newfile->ftag.offset ) {
+               LOG( LOG_ERR, "Failed to seek to %zu of existing object handle\n",
+                             newfile->ftag.offset );
+               free( curfile->ftag.ctag );
+               free( curfile->ftag.streamid );
+               freestream( newstream );
+               *stream = NULL;
+               errno = EBADFD;
+               return -1;
             }
          }
          // cleanup our old file reference
@@ -1623,7 +1641,7 @@ int datastream_release( DATASTREAM* stream ) {
       }
       curfile->ftag.endofstream = 1; // indicate that the stream ends with this file
    }
-   else { // for edit streams...
+   else if ( tgtstream->type == EDIT_STREAM ) { // for edit streams...
       // if we've output data, output file recovery info
       if ( tgtstream->datahandle != NULL  &&  putfinfo( tgtstream ) ) {
          LOG( LOG_ERR, "Failed to output file recovery info to current obj\n" );
@@ -1864,6 +1882,7 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
          LOG( LOG_INFO, "Progressing read into object %zu ( offset = %zu )\n",
                         stream->objno, stream->offset );
       }
+      // limit our data read to the actual request size
       if ( toread > count ) { toread = count; }
       // open the current data object, if necessary
       if ( stream->datahandle == NULL ) {
@@ -2368,9 +2387,11 @@ int datastream_truncate( DATASTREAM stream, off_t length ) {
       errno = EINVAL;
       return -1;
    }
-   // reduce the files available bytes to the specified size
-   size_t origbytes = curfile->ftag.availbytes;
-   curfile->ftag.availbytes = length;
+   size_t origbytes = curfile->ftag.availbytes; // stash the original availbytes value
+   if ( curfile->ftag.availbytes > length ) {
+      // reduce the files available bytes to the specified size
+      curfile->ftag.availbytes = length;
+   }
    // truncate the target file to the specified length
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    if ( ms->mdal->ftruncate( curfile->metahandle, length ) ) {
