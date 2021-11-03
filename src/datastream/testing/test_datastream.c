@@ -459,6 +459,38 @@ int main(int argc, char **argv)
       printf( "failed to close no-pack read stream\n" );
       return -1;
    }
+   // file3
+   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos), NULL ) ) {
+      printf( "failed to open 'file3' of no-pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( stream, databuf, 1048576 );
+   if ( iores != 1048576 ) {
+      printf( "unexpected res for read1 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( zeroarray, databuf, iores ) ) {
+      printf( "unexpected content of read1 for 'file3' of no-pack\n" );
+      return -1;
+   }
+   iores = datastream_read( stream, databuf, 1048576 );
+   if ( iores != 1048576 ) {
+      printf( "unexpected res for read2 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( zeroarray, databuf, iores ) ) {
+      printf( "unexpected content of read2 from 'file3' of no-pack\n" );
+      return -1;
+   }
+   iores = datastream_read( stream, databuf, 1048576 );
+   if ( iores ) {
+      printf( "unexpected res for read3 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( datastream_close( &(stream) ) ) {
+      printf( "failed to close no-pack read stream\n" );
+      return -1;
+   }
 
 
    // cleanup 'file1' refs
@@ -517,6 +549,124 @@ int main(int argc, char **argv)
    }
    free( objname5 );
 
+
+   // shift to a new NS, which has packing enabled
+   char* configtgt = strdup( "./gransom-allocation" );
+   if ( configtgt == NULL ) {
+      printf( "Failed to duplicate configtgt string\n" );
+      return -1;
+   }
+   if ( config_traverse( config, &(pos), &(configtgt), 0 ) ) {
+      printf( "failed to traverse config subpath: \"%s\"\n", configtgt );
+      return -1;
+   }
+   free( configtgt );
+
+
+   // create a new stream
+   if ( datastream_create( &(stream), "file1", &(pos), 0744, "PACK-CLIENT" ) ) {
+      printf( "create failure for 'file1' of pack\n" );
+      return -1;
+   }
+   bzero( databuf, 1024 * 2 );
+   if ( datastream_write( stream, databuf, 1024 * 2 ) != (1024 * 2) ) {
+      printf( "write failure for 'file1' of pack\n" );
+      return -1;
+   }
+
+   // keep track of this file's rpath
+   rpath = genrpath( stream, stream->files );
+   if ( rpath == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of pack 'file1' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and the data object
+   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of pack 'file1' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // create a new file off of the same stream
+   if ( datastream_create( &(stream), "file2", &(pos), 0600, "PACK-CLIENT" ) ) {
+      printf( "create failure for 'file2' of pack\n" );
+      return -1;
+   }
+   bzero( databuf, 10 );
+   if ( datastream_write( stream, databuf, 10 ) != 10 ) {
+      printf( "write failure for 'file2' of pack\n" );
+      return -1;
+   }
+   if ( stream->curfile != 1 ) {
+      printf( "unexpected curfile value for file2 of pack: %zu\n", stream->curfile );
+      return -1;
+   }
+
+   // keep track of this file's rpath
+   rpath2 = genrpath( stream, stream->files + 1 );
+   if ( rpath2 == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of pack 'file2' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and identify the data object (should match previous)
+   if ( datastream_objtarget( &(stream->files[1].ftag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of pack 'file2' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // validate that the data object matches the previous
+   if ( strcmp( objname, objname2 ) ) {
+      printf( "Object mismatch between file1 and file2 of pack:\n   obj1: \"%s\"\n   obj2: \"%s\"\n", objname, objname2 );
+      return -1;
+   }
+   if ( objerasure.N != objerasure2.N  ||
+        objerasure.E != objerasure2.E  ||
+        objerasure.O != objerasure2.O  ||
+        objerasure.partsz  != objerasure2.partsz ) {
+      printf( "Erasure mismatch between file1 and file2 of pack:\n   obj1.N: %d\n   obj2.N %d\n   obj1.E: %d\n   obj2.E: %d\n   obj1.O: %d\n   obj2.O: %d\n   obj1.partsz: %zu\n   obj2.partsz: %zu\n", objerasure.N, objerasure2.N, objerasure.E, objerasure2.E, objerasure.O, objerasure2.O, objerasure.partsz, objerasure2.partsz );
+      return -1;
+   }
+   if ( objlocation.pod != objlocation2.pod  ||
+        objlocation.cap != objlocation2.cap  ||
+        objlocation.scatter != objlocation2.scatter ) {
+      printf( "Location mismatch between file1 and file2 of pack:\n   obj1.pod: %d\n   obj2.pod: %d\n   obj1.cap: %d\n   obj2.cap: %d\n   obj1.scat: %d\n   obj2.scat: %d\n", objlocation.pod, objlocation2.pod, objlocation.cap, objlocation2.cap, objlocation.scatter, objlocation2.scatter );
+      return -1;
+   }
+   free( objname2 );
+
+   // write a bit more data
+   bzero( databuf, 100 );
+   if ( datastream_write( stream, databuf, 100 ) != 100 ) {
+      printf( "write failure for second write to 'file2' of pack\n" );
+      return -1;
+   }
+
+   // create a new 'multi' file off of the same stream
+   if ( datastream_create( &(stream), "file3", &(pos), 0777, "PACK-CLIENT" ) ) {
+      printf( "create failure for 'file3' of pack\n" );
+      return -1;
+   }
+   if ( stream->curfile != 2 ) {
+      printf( "unexpected curfile value after 'file3' creation: %zu\n", stream->curfile );
+      return -1;
+   }
+   bzero( databuf, 1024 * 4 );
+   if ( datastream_write( stream, databuf, 1024 * 4 ) != (1024 * 4) ) {
+      printf( "write failure for 'file2' of pack\n" );
+      return -1;
+   }
+   if ( stream->curfile ) {
+      printf( "unexpected curfile value after write of 'file3': %zu\n", stream->curfile );
+      return -1;
+   }
+   if ( stream->objno != 1 ) {
+      printf( "unexpected objno value after write of 'file3': %zu\n", stream->objno );
+      return -1;
+   }
+
+   // close the stream
+   if ( datastream_close( &(stream) ) ) {
+      printf( "Failed to close pack create stream\n" );
+      return -1;
+   }
 
 
 

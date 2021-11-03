@@ -559,9 +559,26 @@ int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
       return -1;
    }
 
+   // calculate the recovery header length
+   RECOVERY_HEADER header = 
+   {
+      .majorversion = RECOVERY_CURRENT_MAJORVERSION,
+      .minorversion = RECOVERY_CURRENT_MINORVERSION,
+      .ctag = stream->files[ stream->curfile ].ftag.ctag,
+      .streamid = stream->files[ stream->curfile ].ftag.streamid
+   };
+   size_t recoveryheaderlen = recovery_headertostr( &(header), NULL, 0 );
+   if ( recoveryheaderlen < 1 ) {
+      LOG( LOG_ERR, "Failed to identify length of stream recov header\n" );
+      curmdal->close( stream->files[ stream->curfile ].metahandle );
+      stream->files[ stream->curfile ].metahandle = NULL;
+      return -1;
+   }
+
    // the stream inherits string values from the FTAG
    stream->ctag = stream->files[ stream->curfile ].ftag.ctag;
    stream->streamid = stream->files[ stream->curfile ].ftag.streamid;
+   stream->recoveryheaderlen = recoveryheaderlen; // make sure to set the header length
    // the stream also inherits position values from the FTAG
    stream->fileno = stream->files[ stream->curfile ].ftag.fileno;
    stream->objno = stream->files[ stream->curfile ].ftag.objno;
@@ -951,8 +968,12 @@ int gettargets( DATASTREAM stream, off_t offset, int whence, DATASTREAM_POSITION
    size_t minoffset = curtag.offset - stream->recoveryheaderlen; // data space already occupied in first obj
    size_t filesize = curtag.availbytes;
    if ( stream->type == READ_STREAM ) {
-      // read streams are constrained by the actual file size
+      // read streams are constrained by the metadata file size
       filesize = stream->finfo.size;
+   }
+   else if ( stream->type == CREATE_STREAM ) {
+      // create streams are constrained by the actual data size
+      filesize = curtag.bytes;
    }
 
    // convert all values to a seek from the start of the file ( convert to a whence == SEEK_SET offset )
@@ -1479,6 +1500,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
       }
       else {
          // we're going to continue using the provided READ stream structure
+         MDAL mdal = newstream->ns->prepo->metascheme.mdal;
          newstream->curfile++; // progress to the next file
          // attempt to open the new file target
          if ( open_existing_file( newstream, path, pos->ctxt ) ) {
@@ -1496,6 +1518,11 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
             char* rtagstr = NULL;
             size_t rtagstrlen = 0;
             if ( close_current_obj( newstream, &(rtagstr), &(rtagstrlen) ) ) {
+               // NOTE -- this doesn't necessarily have to be a fatal error on read.
+               //         However, I really don't want us to ignore this sort of thing, 
+               //         as it could indicate imminent data loss ( corrupt object which 
+               //         we are now failing to tag ).  So... maybe better to fail 
+               //         catastrophically.
                LOG( LOG_ERR, "Failed to close old stream data handle\n" );
                freestream( newstream );
                *stream = NULL;
@@ -1504,9 +1531,9 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
             }
             if ( rtagstr != NULL ) {
                // need to attach rebuild tag
-               MDAL mdal = newstream->ns->prepo->metascheme.mdal;
                if ( mdal->fsetxattr( curfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {
-                  LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu\n", curfile->ftag.fileno );
+                  LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu of stream \"%s\"\n",
+                                curfile->ftag.fileno, curfile->ftag.streamid );
                   freestream( newstream );
                   free( rtagstr );
                   *stream = NULL;
@@ -1519,6 +1546,11 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
          // cleanup our old file reference
          free( curfile->ftag.ctag );
          free( curfile->ftag.streamid );
+         if ( mdal->close( curfile->metahandle ) ) {
+            // this has no effect on data integrity, so just complain
+            LOG( LOG_WARNING, "Failed to close metahandle of old stream file\n" );
+         }
+         curfile->metahandle = NULL;
          // move the new file reference to the first position
          *curfile = *newfile;
          // clean out the old reference location (probably unnecessary)
@@ -1711,13 +1743,23 @@ int datastream_close( DATASTREAM* stream ) {
       if ( rtagstr  &&
            mdal->fsetxattr( compfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {
          LOG( LOG_ERR, "Failed to attach rebuild tag to file %zu\n", compfile->ftag.fileno );
+         mdal->close( compfile->metahandle );
          abortflag = 1;
       }
       // for non-read streams, complete the current file
-      else if ( tgtstream->type != READ_STREAM  &&  completefile( tgtstream, compfile ) ) {
-         LOG( LOG_ERR, "Failed to complete file %zu\n", compfile->ftag.fileno );
+      else if ( tgtstream->type != READ_STREAM ) {
+         // for non-read streams, mark all outstanding files as 'complete'
+         if ( completefile( tgtstream, compfile ) ) {
+            LOG( LOG_ERR, "Failed to complete file %zu\n", compfile->ftag.fileno );
+            abortflag = 1;
+         }
+      }
+      // for read streams, just close the handle
+      else if ( mdal->close( compfile->metahandle ) ) {
+         LOG( LOG_ERR, "Failed to close metahandle for file %zu\n", compfile->ftag.fileno );
          abortflag = 1;
       }
+      compfile->metahandle = NULL; // don't reattempt this close op
       // exit condition
       if ( tgtstream->curfile == 0 ) { break; }
       tgtstream->curfile--;
@@ -1738,6 +1780,7 @@ int datastream_close( DATASTREAM* stream ) {
    return 0;
 }
 
+// TODO : stream ref allowing NULLout
 ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
    // check for invalid args
    if ( stream == NULL ) {
@@ -1795,7 +1838,13 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
          char* rtagstr = NULL;
          size_t rtagstrlen = 0;
          if ( close_current_obj( stream, &(rtagstr), &(rtagstrlen) ) ) {
-            LOG( LOG_WARNING, "Failed to close previous data object\n" );
+            // NOTE -- this doesn't necessarily have to be a fatal error on read.
+            //         However, I really don't want us to ignore this sort of thing, 
+            //         as it could indicate imminent data loss ( corrupt object which 
+            //         we are now failing to tag ).  So... maybe better to fail 
+            //         catastrophically.
+            LOG( LOG_ERR, "Failed to close previous data object\n" );
+            // TODO : fail catastrophically
          }
          if ( rtagstr != NULL ) {
             LOG( LOG_INFO, "Attaching rebuild tag to file %zu: \"%s\"\n",
@@ -1810,7 +1859,8 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
          stream->objno++;
          stream->offset = stream->recoveryheaderlen;
          toread = streampos.dataperobj;
-         LOG( LOG_INFO, "Progressing read into object %zu\n", stream->objno );
+         LOG( LOG_INFO, "Progressing read into object %zu ( offset = %zu )\n",
+                        stream->objno, stream->offset );
       }
       if ( toread > count ) { toread = count; }
       // open the current data object, if necessary
@@ -1822,12 +1872,14 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
          }
       }
       // perform the actual read op
+      LOG( LOG_INFO, "Reading %zu bytes from object %zu\n", toread, stream->objno );
       ssize_t readres = ne_read( stream->datahandle, buf, toread );
       if ( readres <= 0 ) {
          LOG( LOG_ERR, "Read failure in object %zu at offset %zu ( res = %zd )\n",
                        stream->objno, stream->offset, readres );
          return (readbytes) ? readbytes : -1;
       }
+      LOG( LOG_INFO, "Read op returned %zd bytes\n", readres );
       // adjust all offsets and byte counts
       buf += readres;
       count -= readres;

@@ -1621,6 +1621,9 @@ int posixmdal_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const v
    }
    // now we can actually perform the op
    int retval = fsetxattr( pfh->fd, newname, value, size, flags );
+   if ( retval ) {
+      LOG( LOG_ERR, "fsetxattr failure for \"%s\" value (%s)\n", newname, strerror(errno) );
+   }
    free( newname ); // cleanup
    return retval;
 }
