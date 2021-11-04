@@ -101,6 +101,15 @@ typedef struct datastream_struct {
    size_t finfostrlen;
 }* DATASTREAM;
 
+/**
+ * Generate a reference path for the given FTAG
+ * @param const marfs_ms* ms : Reference to the current MarFS metadata scheme
+ * @param FTAG* ftag : Reference to the FTAG value to generate an rpath for
+ * @return char* : Reference to the newly generated reference path, or NULL on failure
+ *                 NOTE -- returned path must be freed by caller
+ */
+char* datastream_genrpath( const marfs_ms* ms , FTAG* ftag );
+
 int datastream_objtarget( FTAG* ftag, const marfs_ds* ds, char** objname, ne_erasure* erasure, ne_location* location );
 
 int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos, mode_t mode, const char* ctag );

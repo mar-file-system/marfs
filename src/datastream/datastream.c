@@ -273,58 +273,6 @@ int linkfile( DATASTREAM stream, const char* refpath, const char* tgtpath, MDAL_
 }
 
 /**
- * Generate a reference path for the given STREAMFILE
- * @param DATASTREAM stream : Current DATASTREAM
- * @param STREAMFILE* file : Reference to the STREAMFILE to generate an rpath for
- * @return char* : Reference to the newly generated reference path, or NULL on failure
- *                 NOTE -- returned path must be freed by caller
- */
-char* genrpath( DATASTREAM stream, STREAMFILE* file ) {
-   // shorthand references
-   const marfs_ms* ms = &(stream->ns->prepo->metascheme);
-   // generate the meta reference name of this file
-   size_t rnamelen = ftag_metatgt( &(file->ftag), NULL, 0 );
-   if ( rnamelen < 1 ) {
-      LOG( LOG_ERR, "Failed to generate file meta reference name\n" );
-      return NULL;
-   }
-   char* refname = malloc( sizeof(char) * (rnamelen + 1) );
-   if ( refname == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate a temporary meta reference string\n" );
-      return NULL;
-   }
-   if ( ftag_metatgt( &(file->ftag), refname, rnamelen + 1 ) != rnamelen ) {
-      LOG( LOG_ERR, "Inconsistent length of file meta reference string\n" );
-      free( refname );
-      return NULL;
-   }
-   // determine the target reference path of this file
-   HASH_NODE* noderef = NULL;
-   if ( hash_lookup( ms->reftable, refname, &(noderef) ) < 0 ) {
-      LOG( LOG_ERR, "Failed to identify reference path for metaname \"%s\"\n", refname );
-      free( refname );
-      return NULL;
-   }
-   // populate the complete rpath
-   size_t rpathlen = strlen(noderef->name) + strlen(refname);
-   char* rpath = malloc( sizeof(char) * ( rpathlen + 1 ) );
-   if ( rpath == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate rpath string\n" );
-      free( refname );
-      return NULL;
-   }
-   if ( snprintf( rpath, rpathlen + 1, "%s%s", noderef->name, refname ) != rpathlen ) {
-      LOG( LOG_ERR, "Failed to populate rpath string\n" );
-      free( refname );
-      free( rpath );
-      errno = EFAULT;
-      return NULL;
-   }
-   free( refname ); // done with this tmp string
-   return rpath;
-}
-
-/**
  * Populate the given RECOVERY_FINFO struct with values based on the given STREAMFILE
  * @param DATASTREAM stream : Current DATASTREAM
  * @param RECOVERY_FINFO* finfo : Reference to the RECOVERY_FINFO struct to be populated
@@ -425,7 +373,7 @@ int create_new_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt, mode_t
    };
 
    // establish a reference path for the new file
-   char* newrpath = genrpath( stream, &(newfile) );
+   char* newrpath = datastream_genrpath( &(stream->ns->prepo->metascheme), &(newfile.ftag) );
    if ( newrpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify reference path for stream\n" );
       if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
@@ -1203,6 +1151,56 @@ int completefile( DATASTREAM stream, STREAMFILE* file ) {
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
+
+/**
+ * Generate a reference path for the given STREAMFILE
+ * @param const marfs_ms* ms : Reference to the current MarFS metadata scheme
+ * @param STREAMFILE* file : Reference to the STREAMFILE to generate an rpath for
+ * @return char* : Reference to the newly generated reference path, or NULL on failure
+ *                 NOTE -- returned path must be freed by caller
+ */
+char* datastream_genrpath( const marfs_ms* ms , FTAG* ftag ) {
+   // generate the meta reference name of this file
+   size_t rnamelen = ftag_metatgt( ftag, NULL, 0 );
+   if ( rnamelen < 1 ) {
+      LOG( LOG_ERR, "Failed to generate file meta reference name\n" );
+      return NULL;
+   }
+   char* refname = malloc( sizeof(char) * (rnamelen + 1) );
+   if ( refname == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate a temporary meta reference string\n" );
+      return NULL;
+   }
+   if ( ftag_metatgt( ftag, refname, rnamelen + 1 ) != rnamelen ) {
+      LOG( LOG_ERR, "Inconsistent length of file meta reference string\n" );
+      free( refname );
+      return NULL;
+   }
+   // determine the target reference path of this file
+   HASH_NODE* noderef = NULL;
+   if ( hash_lookup( ms->reftable, refname, &(noderef) ) < 0 ) {
+      LOG( LOG_ERR, "Failed to identify reference path for metaname \"%s\"\n", refname );
+      free( refname );
+      return NULL;
+   }
+   // populate the complete rpath
+   size_t rpathlen = strlen(noderef->name) + strlen(refname);
+   char* rpath = malloc( sizeof(char) * ( rpathlen + 1 ) );
+   if ( rpath == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate rpath string\n" );
+      free( refname );
+      return NULL;
+   }
+   if ( snprintf( rpath, rpathlen + 1, "%s%s", noderef->name, refname ) != rpathlen ) {
+      LOG( LOG_ERR, "Failed to populate rpath string\n" );
+      free( refname );
+      free( rpath );
+      errno = EFAULT;
+      return NULL;
+   }
+   free( refname ); // done with this tmp string
+   return rpath;
+}
 
 int datastream_objtarget( FTAG* ftag, const marfs_ds* ds, char** objectname, ne_erasure* erasure, ne_location* location ) {
    // check for invalid args

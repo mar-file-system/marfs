@@ -180,7 +180,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   char* rpath = genrpath( stream, stream->files );
+   char* rpath = datastream_genrpath( &(stream->ns->prepo->metascheme), &(stream->files->ftag) );
    if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of 'tgtfile' (%s)\n", strerror(errno) );
       return -1;
@@ -313,7 +313,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath = genrpath( stream, stream->files );
+   rpath = datastream_genrpath( &(stream->ns->prepo->metascheme), &(stream->files->ftag) );
    if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file1' (%s)\n", strerror(errno) );
       return -1;
@@ -349,7 +349,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   char* rpath2 = genrpath( stream, stream->files );
+   char* rpath2 = datastream_genrpath( &(stream->ns->prepo->metascheme), &(stream->files->ftag) );
    if ( rpath2 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file2' (%s)\n", strerror(errno) );
       return -1;
@@ -387,7 +387,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   char* rpath3 = genrpath( stream, stream->files );
+   char* rpath3 = datastream_genrpath( &(stream->ns->prepo->metascheme), &(stream->files->ftag) );
    if ( rpath3 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file3' (%s)\n", strerror(errno) );
       return -1;
@@ -563,6 +563,9 @@ int main(int argc, char **argv)
    free( configtgt );
 
 
+// PACKED OBJECT TESTING
+
+
    // create a new stream
    if ( datastream_create( &(stream), "file1", &(pos), 0744, "PACK-CLIENT" ) ) {
       printf( "create failure for 'file1' of pack\n" );
@@ -575,7 +578,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath = genrpath( stream, stream->files );
+   rpath = datastream_genrpath( &(stream->ns->prepo->metascheme), &(stream->files->ftag) );
    if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file1' (%s)\n", strerror(errno) );
       return -1;
@@ -602,7 +605,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath2 = genrpath( stream, stream->files + 1 );
+   rpath2 = datastream_genrpath( &(stream->ns->prepo->metascheme), &(stream->files[1].ftag) );
    if ( rpath2 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file2' (%s)\n", strerror(errno) );
       return -1;
@@ -663,7 +666,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath3 = genrpath( stream, stream->files );
+   rpath3 = datastream_genrpath( &(stream->ns->prepo->metascheme), &(stream->files->ftag) );
    if ( rpath3 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file3' (%s)\n", strerror(errno) );
       return -1;
@@ -806,12 +809,79 @@ int main(int argc, char **argv)
       printf( "Failed to retrieve recov info for file1 of pack\n" );
       return -1;
    }
-   if ( strcmp( rfinfo.path, "file1" )  ||  rfinfo.size != 1024 * 2 ) {
+   if ( strcmp( rfinfo.path, "file1" )  ||
+         rfinfo.size != 1024 * 2  ||
+         rfinfo.size != bufsize  ||
+         rfinfo.eof != 1 ) {
       printf( "Unexpected recov info for file1 of pack\n" );
       return -1;
    }
    free( rfinfo.path );
-   // TODO next file
+   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve recov info for file2 of pack\n" );
+      return -1;
+   }
+   if ( strcmp( rfinfo.path, "file2" )  ||
+         rfinfo.size != 110  ||
+         rfinfo.size != bufsize  ||
+         rfinfo.eof != 1 ) {
+      printf( "Unexpected recov info for file2 of pack\n" );
+      return -1;
+   }
+   free( rfinfo.path );
+   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve recov info for file3 of pack\n" );
+      return -1;
+   }
+   if ( strcmp( rfinfo.path, "file3" )  ||
+         rfinfo.size >= 1024 * 4  ||
+         rfinfo.size != bufsize  ||
+         rfinfo.eof ) {
+      printf( "Unexpected recov info for file3 of pack\n" );
+      return -1;
+   }
+   size_t origrfinfosize = rfinfo.size; // stash this for later check
+   free( rfinfo.path );
+   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
+      printf( "Unexpected trailing file in obj0 of pack\n" );
+      return -1;
+   }
+   // continue to object2
+   datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2, objerasure2, NE_RDALL );
+   if ( datahandle == NULL ) {
+      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
+   if ( datasize < 1 ) {
+      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
+   if ( ne_close( datahandle, NULL, NULL ) ) {
+      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
+      return -1;
+   }
+   if ( recovery_cont( recov, databuf, datasize ) ) {
+      printf( "Failed to continue pack recovery process into object1 data\n" );
+      return -1;
+   }
+   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve recov info for file3 of pack object2\n" );
+      return -1;
+   }
+   if ( strcmp( rfinfo.path, "file3" )  ||
+         rfinfo.size != 1024 * 4  ||
+         bufsize != (1024 * 4) - origrfinfosize  ||
+         rfinfo.eof != 1 ) {
+      printf( "Unexpected recov info for file3 of pack object1\n" );
+      return -1;
+   }
+   free( rfinfo.path );
+   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
+      printf( "Unexpected trailing file in obj1 of pack\n" );
+      return -1;
+   }
    if ( recovery_close( recov ) ) {
       printf( "Failed to close recovery stream of pack\n" );
       return -1;
@@ -858,6 +928,11 @@ int main(int argc, char **argv)
       return -1;
    }
    free( objname2 );
+
+
+// PARALLEL WRITE TEST
+
+   // startup an additional data stream
 
 
    // cleanup our data buffer
