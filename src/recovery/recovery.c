@@ -307,36 +307,32 @@ void* parse_recov_finfo( void* finfobuf, size_t bufsize, RECOVERY_FINFO* finfo )
    char tval = 0;
    char eval = 0;
    char pval = 0;
-   while ( bufsize >= taillen  &&  strncmp( parse, tailstr, taillen ) ) {
-      unsigned long long parseval;
-      char* endptr = parse;
-      // identify the length of this value element string
-      // This allows us to avoid extending beyond end-of-buffer while parsing later on
-      size_t elemlen = 0;
-      while ( (elemlen + taillen) <= bufsize  &&  *endptr != '\0'  &&  *endptr != '|' ) {
-         // the tail string is also a terminating condition
-         if ( *endptr == *tailstr  &&  strncmp( endptr, tailstr, taillen ) == 0 ) { break; }
-         endptr++;
-         elemlen++;
-      }
-      if ( (elemlen + taillen) > bufsize  ||  elemlen < 2  ||  elemlen > INT_MAX  ||  *endptr == '\0' ) {
-         LOG( LOG_ERR, "Encountered RECOVERY_FINFO value string with unexpected format\n" );
-         LOG( LOG_ERR, "Problem element string: %.*s\n", elemlen, parse );
+   while ( bufsize >= taillen  &&
+           strncmp( parse, tailstr, taillen )  &&
+           *parse != '\0' ) {
+      // all value strings should contain a number following their initial chacter
+      // parse that number now
+      char* endptr = NULL;
+      int parsemode = 10;
+      if ( *parse == 'm' ) { parsemode = 8; } // silly check to allow octal mode value
+      unsigned long long parseval = strtoull( parse+1, &(endptr), parsemode );
+      if ( *endptr == '|' ) { endptr++; } // skip over the '|' seperator
+      else if ( *endptr != *tailstr  &&  *endptr != ':'  &&  *endptr != '.' ) {
+         LOG( LOG_ERR, "'%c' value string of RECOVERY_FINFO terminates unexpectedly\n", *parse, endptr );
          errno = EINVAL;
          return NULL;
       }
-      // parse the value string, according to its initial character 'tag'
+      // check if strtoull has extended beyond acceptible bounds
+      if ( (endptr - parse) > (bufsize - taillen) ) {
+         LOG( LOG_ERR, "Numeric parse has extended beyond end of buffer\n" );
+         errno = EINVAL;
+         return NULL;
+      }
+      // interpret the value string according to its initial character 'tag'
       switch ( *parse ) {
          case 'i':
             if ( ival ) {
                LOG( LOG_ERR, "Detected duplicate inode value string\n" );
-               errno = EINVAL;
-               return NULL;
-            }
-            parseval = strtoull( parse+1, &(endptr), 10 );
-            if ( *endptr == '|' ) { endptr++; } // skip over the '|' seperator
-            else if ( *endptr != *tailstr ) {
-               LOG( LOG_ERR, "Inode string of RECOVERY_FINFO terminates unexpectedly\n" );
                errno = EINVAL;
                return NULL;
             }
@@ -356,13 +352,6 @@ void* parse_recov_finfo( void* finfobuf, size_t bufsize, RECOVERY_FINFO* finfo )
                errno = EINVAL;
                return NULL;
             }
-            parseval = strtoull( parse+1, &(endptr), 8 );
-            if ( *endptr == '|' ) { endptr++; } // skip over the '|' seperator
-            else if ( *endptr != *tailstr ) {
-               LOG( LOG_ERR, "Mode string of RECOVERY_FINFO terminates unexpectedly\n" );
-               errno = EINVAL;
-               return NULL;
-            }
             if ( parseval > UINT_MAX ) {
                LOG( LOG_ERR, "Mode value exceeds type bounds\n" );
                errno = ERANGE;
@@ -376,13 +365,6 @@ void* parse_recov_finfo( void* finfobuf, size_t bufsize, RECOVERY_FINFO* finfo )
          case 'o':
             if ( oval ) {
                LOG( LOG_ERR, "Detected duplicate owner value string\n" );
-               errno = EINVAL;
-               return NULL;
-            }
-            parseval = strtoull( parse+1, &(endptr), 10 );
-            if ( *endptr == '|' ) { endptr++; } // skip over the '|' seperator
-            else if ( *endptr != *tailstr ) {
-               LOG( LOG_ERR, "Owner string of RECOVERY_FINFO terminates unexpectedly\n" );
                errno = EINVAL;
                return NULL;
             }
@@ -402,13 +384,6 @@ void* parse_recov_finfo( void* finfobuf, size_t bufsize, RECOVERY_FINFO* finfo )
                errno = EINVAL;
                return NULL;
             }
-            parseval = strtoull( parse+1, &(endptr), 10 );
-            if ( *endptr == '|' ) { endptr++; } // skip over the '|' seperator
-            else if ( *endptr != *tailstr ) {
-               LOG( LOG_ERR, "Group string of RECOVERY_FINFO terminates unexpectedly\n" );
-               errno = EINVAL;
-               return NULL;
-            }
             if ( parseval > UINT_MAX ) {
                LOG( LOG_ERR, "Group value exceeds type bounds\n" );
                errno = ERANGE;
@@ -422,13 +397,6 @@ void* parse_recov_finfo( void* finfobuf, size_t bufsize, RECOVERY_FINFO* finfo )
          case 's':
             if ( sval ) {
                LOG( LOG_ERR, "Detected duplicate size value string\n" );
-               errno = EINVAL;
-               return NULL;
-            }
-            parseval = strtoull( parse+1, &(endptr), 10 );
-            if ( *endptr == '|' ) { endptr++; } // skip over the '|' seperator
-            else if ( *endptr != *tailstr ) {
-               LOG( LOG_ERR, "Size string of RECOVERY_FINFO terminates unexpectedly\n" );
                errno = EINVAL;
                return NULL;
             }
@@ -448,7 +416,6 @@ void* parse_recov_finfo( void* finfobuf, size_t bufsize, RECOVERY_FINFO* finfo )
                errno = EINVAL;
                return NULL;
             }
-            parseval = strtoull( parse+1, &(endptr), 10 );
             if ( *endptr != '.' ) {
                LOG( LOG_ERR, "Timestamp string of RECOVERY_FINFO has unexpected format\n" );
                errno = EINVAL;
@@ -485,13 +452,6 @@ void* parse_recov_finfo( void* finfobuf, size_t bufsize, RECOVERY_FINFO* finfo )
                errno = EINVAL;
                return NULL;
             }
-            parseval = strtoull( parse+1, &(endptr), 10 );
-            if ( *endptr == '|' ) { endptr++; } // skip over the '|' seperator
-            else if ( *endptr != *tailstr ) {
-               LOG( LOG_ERR, "EOF string of RECOVERY_FINFO terminates unexpectedly\n" );
-               errno = EINVAL;
-               return NULL;
-            }
             if ( parseval  &&  parseval != 1 ) {
                LOG( LOG_ERR, "Unexpected EOF value of %llu\n", parseval );
                errno = ERANGE;
@@ -508,33 +468,33 @@ void* parse_recov_finfo( void* finfobuf, size_t bufsize, RECOVERY_FINFO* finfo )
                errno = EINVAL;
                return NULL;
             }
-            if ( *(parse+1) != ':' ) {
+            if ( *endptr != ':' ) {
                LOG( LOG_ERR, "Path string of RECOVERY_FINFO has an unexpected format\n" );
                errno = EINVAL;
                return NULL;
             }
             // skip over the 'p:' prefix
-            parse += 2;
-            bufsize -= 2;
-            elemlen -= 2;
-            if ( elemlen < 1 ) {
-               LOG( LOG_ERR, "Path string of RECOVERY_FINFO has no content\n" );
+            endptr++;
+            bufsize -= (endptr - parse);
+            parse = endptr;
+            if ( (bufsize - taillen) < parseval ) {
+               LOG( LOG_ERR, "Path string of RECOVERY_FINFO exceeds remaining buffer\n" );
                errno = EINVAL;
                return NULL;
             }
             // allocate and populate a new path string
-            finfo->path = malloc( sizeof(char) * (elemlen + 1) );
+            finfo->path = malloc( sizeof(char) * (parseval + 1) );
             if ( finfo->path == NULL ) {
-               LOG( LOG_ERR, "Failed to allocate new RECOVERY_FINFO path string of length %zu\n", elemlen );
+               LOG( LOG_ERR, "Failed to allocate new RECOVERY_FINFO path string of length %zu\n", parseval );
                return NULL;
             }
-            if ( snprintf( finfo->path, elemlen+1, "%.*s", (int)elemlen, parse ) != elemlen ) {
+            if ( snprintf( finfo->path, parseval+1, "%.*s", (int)parseval, parse ) != parseval ) {
                LOG( LOG_ERR, "Failed to populate RECOVERY_FINFO path string\n" );
                errno = EFAULT;
                return NULL;
             }
-            parse += elemlen;
-            bufsize -= elemlen;
+            parse += parseval;
+            bufsize -= parseval;
             if ( *parse == '|' ) {
                // skip over any '|' seperator char
                parse++;
@@ -697,7 +657,7 @@ size_t recovery_finfotostr( const RECOVERY_FINFO* finfo, char* tgtstr, size_t si
    // NOTE -- The length of this string MUST be independent of the file size.
    //         This is because finfo size must be consistent across an entire file, even
    //         if multiple info sets are output at various lengths throughout the file.
-   int prres = snprintf( tgtstr, size, "%s%si%lu|m%o|o%u|g%u|s%.*zu|t%*.llu.%*.llu|e%d|p:%s%s", 
+   int prres = snprintf( tgtstr, size, "%s%si%lu|m0%o|o%u|g%u|s%.*zu|t%.*llu.%.*llu|e%d|p%zu:%s%s", 
                          RECOVERY_MSGHEAD,
                          RECOVERY_FINFO_TYPE,
                          (unsigned long)finfo->inode,
@@ -708,7 +668,7 @@ size_t recovery_finfotostr( const RECOVERY_FINFO* finfo, char* tgtstr, size_t si
                          SIZE_DIGITS, (unsigned long long)finfo->mtime.tv_sec,
                          SIZE_DIGITS, (unsigned long long)finfo->mtime.tv_nsec,
                          (int)finfo->eof,
-                         finfo->path,
+                         strlen(finfo->path), finfo->path,
                          RECOVERY_MSGTAIL );
    if ( prres < 0 ) { return 0; }
    return (size_t)prres;
