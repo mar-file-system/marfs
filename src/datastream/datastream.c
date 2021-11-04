@@ -373,7 +373,7 @@ int create_new_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt, mode_t
    };
 
    // establish a reference path for the new file
-   char* newrpath = datastream_genrpath( &(stream->ns->prepo->metascheme), &(newfile.ftag) );
+   char* newrpath = datastream_genrpath( &(newfile.ftag), &(stream->ns->prepo->metascheme) );
    if ( newrpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify reference path for stream\n" );
       if ( errno == EBADFD ) { errno = ENOMSG; } // don't allow our reserved EBADFD value
@@ -1153,13 +1153,13 @@ int completefile( DATASTREAM stream, STREAMFILE* file ) {
 
 
 /**
- * Generate a reference path for the given STREAMFILE
+ * Generate a reference path for the given FTAG
+ * @param FTAG* ftag : Reference to the FTAG value to generate an rpath for
  * @param const marfs_ms* ms : Reference to the current MarFS metadata scheme
- * @param STREAMFILE* file : Reference to the STREAMFILE to generate an rpath for
  * @return char* : Reference to the newly generated reference path, or NULL on failure
  *                 NOTE -- returned path must be freed by caller
  */
-char* datastream_genrpath( const marfs_ms* ms , FTAG* ftag ) {
+char* datastream_genrpath( FTAG* ftag, const marfs_ms* ms ) {
    // generate the meta reference name of this file
    size_t rnamelen = ftag_metatgt( ftag, NULL, 0 );
    if ( rnamelen < 1 ) {
