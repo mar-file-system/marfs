@@ -479,13 +479,14 @@ int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
 
    // open a handle for the target file
    MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+   STREAMFILE* curfile = stream->files + stream->curfile;
    if ( stream->type == READ_STREAM ) {
-      stream->files[ stream->curfile ].metahandle = curmdal->open( ctxt, path, O_RDONLY );
+      curfile->metahandle = curmdal->open( ctxt, path, O_RDONLY );
    }
    else {
-      stream->files[ stream->curfile ].metahandle = curmdal->open( ctxt, path, O_WRONLY );
+      curfile->metahandle = curmdal->open( ctxt, path, O_WRONLY );
    }
-   if ( stream->files[ stream->curfile ].metahandle == NULL ) {
+   if ( curfile->metahandle == NULL ) {
       LOG( LOG_ERR, "Failed to open metahandle for target file: \"%s\"\n", path );
       return -1;
    }
@@ -493,17 +494,34 @@ int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
    // retrieve the file's FTAG info
    if ( getftag( stream, stream->files + stream->curfile ) ) {
       LOG( LOG_ERR, "Failed to retrieve FTAG value of target file: \"%s\"\n", path );
-      curmdal->close( stream->files[ stream->curfile ].metahandle );
-      stream->files[ stream->curfile ].metahandle = NULL;
+      curmdal->close( curfile->metahandle );
+      curfile->metahandle = NULL;
       return -1;
    }
-   stream->files[ stream->curfile ].dotimes = 0; // make sure our time flag is cleared
+   curfile->dotimes = 0; // make sure our time flag is cleared
+
+   // check if it is safe to access this file
+   if ( stream->type == EDIT_STREAM  &&
+        !(curfile->ftag.state & FTAG_WRITEABLE)  &&
+        (curfile->ftag.state & FTAG_DATASTATE) != FTAG_COMP ) {
+      LOG( LOG_ERR, "Cannot edit a non-complete, non-extended file\n" );
+      curmdal->close( curfile->metahandle );
+      curfile->metahandle = NULL;
+      return -1;
+   }
+   if ( stream->type == READ_STREAM  &&
+        !(curfile->ftag.state & FTAG_READABLE) ) {
+      LOG( LOG_ERR, "Target file is not yet readable\n" );
+      curmdal->close( curfile->metahandle );
+      curfile->metahandle = NULL;
+      return -1;
+   }
 
    // populate RECOVERY_FINFO
-   if ( genrecoveryinfo( stream, &(stream->finfo), stream->files + stream->curfile, path ) ) {
+   if ( genrecoveryinfo( stream, &(stream->finfo), curfile, path ) ) {
       LOG( LOG_ERR, "Failed to identify recovery info for target file: \"%s\"\n", path );
-      curmdal->close( stream->files[ stream->curfile ].metahandle );
-      stream->files[ stream->curfile ].metahandle = NULL;
+      curmdal->close( curfile->metahandle );
+      curfile->metahandle = NULL;
       return -1;
    }
 
@@ -512,25 +530,25 @@ int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
    {
       .majorversion = RECOVERY_CURRENT_MAJORVERSION,
       .minorversion = RECOVERY_CURRENT_MINORVERSION,
-      .ctag = stream->files[ stream->curfile ].ftag.ctag,
-      .streamid = stream->files[ stream->curfile ].ftag.streamid
+      .ctag = curfile->ftag.ctag,
+      .streamid = curfile->ftag.streamid
    };
    size_t recoveryheaderlen = recovery_headertostr( &(header), NULL, 0 );
    if ( recoveryheaderlen < 1 ) {
       LOG( LOG_ERR, "Failed to identify length of stream recov header\n" );
-      curmdal->close( stream->files[ stream->curfile ].metahandle );
-      stream->files[ stream->curfile ].metahandle = NULL;
+      curmdal->close( curfile->metahandle );
+      curfile->metahandle = NULL;
       return -1;
    }
 
    // the stream inherits string values from the FTAG
-   stream->ctag = stream->files[ stream->curfile ].ftag.ctag;
-   stream->streamid = stream->files[ stream->curfile ].ftag.streamid;
+   stream->ctag = curfile->ftag.ctag;
+   stream->streamid = curfile->ftag.streamid;
    stream->recoveryheaderlen = recoveryheaderlen; // make sure to set the header length
    // the stream also inherits position values from the FTAG
-   stream->fileno = stream->files[ stream->curfile ].ftag.fileno;
-   stream->objno = stream->files[ stream->curfile ].ftag.objno;
-   stream->offset = stream->files[ stream->curfile ].ftag.offset;
+   stream->fileno = curfile->ftag.fileno;
+   stream->objno = curfile->ftag.objno;
+   stream->offset = curfile->ftag.offset;
    stream->excessoffset = 0; // always zero out this offset to start
    return 0;
 }
@@ -564,6 +582,17 @@ int open_current_obj( DATASTREAM stream ) {
       stream->datahandle = ne_open( ds->nectxt, objname, location, erasure, NE_RDALL );
    }
    else {
+      if ( stream->type == CREATE_STREAM ) {
+         // need to update file bytes and/or datastate
+         STREAMFILE* curfile = stream->files + stream->curfile;
+         if ( (curfile->ftag.state & FTAG_DATASTATE) < FTAG_SIZED ) {
+            curfile->ftag.state = FTAG_SIZED | (curfile->ftag.state & ~(FTAG_DATASTATE));
+         }
+         if ( putftag( stream, curfile ) ) {
+            LOG( LOG_ERR, "Failed to update FTAG of file %zu\n", curfile->ftag.fileno );
+            return -1;
+         }
+      }
       LOG( LOG_INFO, "Opening object for WRITE: \"%s\"\n", objname );
       stream->datahandle = ne_open( ds->nectxt, objname, location, erasure, NE_WRALL );
    }
@@ -875,23 +904,6 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
          freestream( stream );
          return NULL;
       }
-      // perform type dependent state checks
-      FTAG_STATE curstate = (stream->files + stream->curfile)->ftag.state;
-      if ( type == EDIT_STREAM  &&
-           !(curstate & FTAG_WRITEABLE)  &&
-           (curstate & FTAG_DATASTATE) != FTAG_COMP ) {
-         LOG( LOG_ERR, "Cannot edit a non-complete, non-extended file\n" );
-         freestream( stream );
-         errno = EPERM;
-         return NULL;
-      }
-      if ( type == READ_STREAM  &&
-           !(curstate & FTAG_READABLE) ) {
-         LOG( LOG_ERR, "Target file is not yet readable\n" );
-         freestream( stream );
-         errno = EPERM;
-         return NULL;
-      }
    }
 
    return stream;
@@ -965,7 +977,7 @@ int gettargets( DATASTREAM stream, off_t offset, int whence, DATASTREAM_POSITION
    size_t tgtobj = minobj;
    size_t tgtoff = minoffset;
    size_t remain = 0;
-   size_t excessremain = filesize - curtag.availbytes;
+   size_t excessremain = (filesize > curtag.availbytes) ? filesize - curtag.availbytes : 0;
    size_t excessoff = 0;
    if ( offset > curtag.availbytes ) {
       // the offset is valid, but exceeds real data bounds ( use zero fill )
@@ -977,24 +989,31 @@ int gettargets( DATASTREAM stream, off_t offset, int whence, DATASTREAM_POSITION
       // the offset is within real data bounds
       remain = curtag.availbytes - offset;
    }
-   if ( (offset + minoffset) > dataperobj ) {
+   if ( (offset + minoffset) >= dataperobj ) {
       // this offset will cross object boundaries
-      offset -= (dataperobj - minoffset);
-      tgtobj += ( offset / dataperobj ) + 1;
-      tgtoff = offset % dataperobj;
+      tgtobj += ( (offset + minoffset) / dataperobj );
+      tgtoff = (offset + minoffset) % dataperobj;
    }
    else {
       tgtoff += offset;
    }
 
    // populate our final values, accounting for recovery info
-   dpos->totaloffset = offset;
+   dpos->totaloffset = offset + excessoff;
    dpos->dataremaining = remain;
    dpos->excessremaining = excessremain;
    dpos->objno = tgtobj;
    dpos->offset = tgtoff + stream->recoveryheaderlen;
    dpos->excessoffset = excessoff;
    dpos->dataperobj = dataperobj;
+   LOG( LOG_INFO, "Data Targets relative to offset %zu\n", dpos->totaloffset );
+   LOG( LOG_INFO, "   DataRemaining: %zu\n", dpos->dataremaining );
+   LOG( LOG_INFO, "   ExcessRemaining: %zu\n", dpos->excessremaining);
+   LOG( LOG_INFO, "   ObjNo: %zu\n", dpos->objno );
+   LOG( LOG_INFO, "   Offset: %zu\n", dpos->offset);
+   LOG( LOG_INFO, "   ExcessOffset: %zu\n", dpos->excessoffset );
+   LOG( LOG_INFO, "   DataPerObj: %zu\n", dpos->dataperobj );
+   LOG( LOG_INFO, "   Filesize: %zu\n", filesize );
    return 0;
 }
 
@@ -1638,6 +1657,7 @@ int datastream_release( DATASTREAM* stream ) {
          return -1;
       }
       curfile->ftag.endofstream = 1; // indicate that the stream ends with this file
+      curfile->ftag.availbytes = curfile->ftag.bytes; // allow access to all data content
    }
    else if ( tgtstream->type == EDIT_STREAM ) { // for edit streams...
       // if we've output data, output file recovery info
@@ -2079,6 +2099,14 @@ ssize_t datastream_write( DATASTREAM* stream, const void* buf, size_t count ) {
       }
    }
 
+   // special case check, identify if this is an edit stream just wrote to EOF 
+   if ( tgtstream->type == EDIT_STREAM  &&
+         ( curfile->ftag.state & FTAG_DATASTATE ) == FTAG_FIN  &&
+         writtenbytes == streampos.dataremaining ) {
+      tgtstream->finfo.eof = 1;
+   }
+
+
    return writtenbytes;
 
 }
@@ -2194,6 +2222,17 @@ off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
    }
    // check if we will be switching to a new data object and need to close the old handle
    if ( tgtstream->objno != streampos.objno  &&  tgtstream->datahandle != NULL ) {
+      // check if we need to output recovery info to the current obj
+      if ( tgtstream->type == EDIT_STREAM ) {
+         // if we have a current data handle, need to output trailing recov info
+         if ( putfinfo( tgtstream ) ) {
+            LOG( LOG_ERR, "Failed to output recovery info to tail of object %zu\n", tgtstream->objno );
+            freestream( tgtstream );
+            *stream = NULL; // unsafe to continue with previous handle
+            return -1;
+         }
+         tgtstream->finfo.eof = 0; // unset the EOF flag, as it no longer applies
+      }
       // close any existing object handle
       char* rtagstr = NULL;
       size_t rtagstrlen = 0;
@@ -2300,8 +2339,8 @@ int datastream_extend( DATASTREAM* stream, off_t length ) {
       errno = EINVAL;
       return -1;
    }
-   if ( curfile->ftag.bytes > length ) {
-      LOG( LOG_ERR, "The current file already exceeds the specified length of %zu\n", length );
+   if ( curfile->ftag.bytes >= length ) {
+      LOG( LOG_ERR, "The current file exceeds or matches the specified length of %zu\n", length );
       errno = EINVAL;
       return -1;
    }
@@ -2355,8 +2394,53 @@ int datastream_extend( DATASTREAM* stream, off_t length ) {
       curfile->ftag.offset = tgtstream->offset;
    }
    // increase the current file to the specified size
+   size_t origbytes = curfile->ftag.bytes;
    curfile->ftag.bytes = length;
-   curfile->ftag.availbytes = length; // make this data accessible
+
+   // identify current object boundaries
+   DATASTREAM_POSITION streampos = {
+      .totaloffset = 0,
+      .dataremaining = 0,
+      .excessremaining = 0, // data added by this op will show up as 'excess' until complete
+      .objno = 0,
+      .offset = 0,
+      .excessoffset = 0,
+      .dataperobj = 0
+   };
+   if ( gettargets( tgtstream, 0, SEEK_SET, &(streampos) ) ) {
+      LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", curfile->ftag.fileno );
+      curfile->ftag.bytes = origbytes;
+      return -1;
+   }
+   if ( streampos.offset != tgtstream->recoveryheaderlen ) {
+      LOG( LOG_ERR, "Unexpected offset value for extended file: %zu\n", streampos.offset );
+      curfile->ftag.bytes = origbytes;
+      return -1;
+   }
+   // calculate the number of complete data objects covered by this file
+   //  (excluding the current object)
+   size_t independentobjs = (streampos.dataremaining + streampos.excessremaining) / streampos.dataperobj;
+
+   // if not done so already, mark the file as sized and writable by other procs
+   curfile->ftag.state |= FTAG_WRITEABLE;
+   if ( (curfile->ftag.state & FTAG_DATASTATE) < FTAG_SIZED  ||
+        (curfile->ftag.state & FTAG_WRITEABLE) == 0 ) {
+      curfile->ftag.state = ( curfile->ftag.state & ~(FTAG_DATASTATE) ) |
+                              FTAG_WRITEABLE |
+                              FTAG_SIZED;
+   }
+   // make any independent objects accessible
+   curfile->ftag.availbytes = independentobjs * streampos.dataperobj;
+
+   // update the ftag of the extended file
+   if ( putftag( tgtstream, curfile ) ) {
+      LOG( LOG_ERR, "Failed to update FTAG value of file %zu\n", curfile->ftag.fileno );
+      freestream( tgtstream );
+      *stream = NULL; // unsafe to reuse this stream
+      errno = EBADFD;
+      return -1;
+   }
+
    return 0;
 }
 

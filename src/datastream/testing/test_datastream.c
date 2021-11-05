@@ -931,8 +931,335 @@ int main(int argc, char **argv)
 
 
 // PARALLEL WRITE TEST
+   // create a new stream
+   if ( datastream_create( &(stream), "file1", &(pos), 0700, "PARLLEL-CLIENT" ) ) {
+      printf( "create failure for 'file1' of pwrite\n" );
+      return -1;
+   }
+   bzero( databuf, 1234 );
+   if ( datastream_write( &(stream), databuf, 34 ) != 34 ) {
+      printf( "write1 failure for 'file1' of pwrite\n" );
+      return -1;
+   }
+   if ( datastream_write( &(stream), databuf, 1000 ) != 1000 ) {
+      printf( "write2 failure for 'file1' of pwrite\n" );
+      return -1;
+   }
+   if ( datastream_write( &(stream), databuf, 200 ) != 200 ) {
+      printf( "write3 failure for 'file1' of pwrite\n" );
+      return -1;
+   }
 
-   // startup an additional data stream
+   // keep track of this file's rpath
+   rpath = datastream_genrpath( &(stream->files->ftag), &(stream->ns->prepo->metascheme) );
+   if ( rpath == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of pwrite 'file1' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and the data object
+   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of pwrite 'file1' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // create a new file off of the same stream
+   if ( datastream_create( &(stream), "file2", &(pos), 0666, NULL ) ) {
+      printf( "create failure for 'file2' of pwrite\n" );
+      return -1;
+   }
+   if ( stream->curfile != 1 ) {
+      printf( "unexpected curfile following creation of 'file2' of pwrite: %zu\n", stream->curfile );
+      return -1;
+   }
+   if ( stream->objno ) {
+      printf( "unexpected objno following creation of 'file2' of pwrite: %zu\n", stream->objno );
+      return -1;
+   }
+
+   // keep track of this file's rpath
+   rpath2 = datastream_genrpath( &(stream->files[1].ftag), &(stream->ns->prepo->metascheme) );
+   if ( rpath2 == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of pwrite 'file2' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // extend the file, making it available for parallel write
+   if ( datastream_extend( &(stream), 5 * 1024 ) ) {
+      printf( "extend failure for 'file2' of pwrite\n" );
+      return -1;
+   }
+   if ( stream->curfile ) {
+      printf( "unexpected curfile following extension of 'file2' of pwrite: %zu\n", stream->curfile );
+      return -1;
+   }
+   if ( stream->objno != 1 ) {
+      printf( "unexpected objno following extension of 'file2' of pwrite: %zu\n", stream->objno );
+      return -1;
+   }
+
+   // open a second stream
+   DATASTREAM pstream = NULL;
+   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
+      printf( "failed to open 1st edit stream for 'file2' of pwrite\n" );
+      return -1;
+   }
+   off_t  chunkoffset = 0;
+   size_t chunksize = 0;
+   if ( datastream_chunkbounds( pstream, 0, &(chunkoffset), &(chunksize) ) ) {
+      printf( "failed to identify bounds of chunk 0 for 1st edit stream of 'file2' of pwrite\n" );
+      return -1;
+   }
+   if ( chunkoffset  ||  chunksize != 4096 - (stream->recoveryheaderlen + stream->files->ftag.recoverybytes) ) {
+      printf( "unexpected bounds of chunk 0 for 1st edit stream of 'file2' of pwrite: o=%zd, s=%zu\n", chunkoffset, chunksize );
+      return -1;
+   }
+
+   // keep track of this data object and the next
+   tgttag = pstream->files->ftag;
+   if ( datastream_objtarget( &(tgttag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   tgttag.objno++;
+   if ( datastream_objtarget( &(tgttag), &(stream->ns->prepo->datascheme), &(objname3), &(objerasure3), &(objlocation3) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // write to chunk 0 of the file
+   bzero( databuf, chunksize );
+   if ( datastream_write( &(pstream), databuf, chunksize ) != chunksize ) {
+      printf( "paralell write failure for chunk 0 of 'file2'\n" );
+      return -1;
+   }
+   if ( datastream_release( &(pstream) ) ) {
+      printf( "release failure for 1st edit stream for 'file2' of pwrite\n" );
+      return -1;
+   }
+
+   // release the original stream
+   if ( datastream_release( &(stream) ) ) {
+      printf( "release failure for create stream of 'file2' of pwrite\n" );
+      return -1;
+   }
+
+   // reopen an edit stream to write out the final data obj and complete the file
+   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
+      printf( "failed to open 1st edit stream for 'file2' of pwrite\n" );
+      return -1;
+   }
+   if ( datastream_chunkbounds( pstream, 1, &(chunkoffset), &(chunksize) ) ) {
+      printf( "failed to identify bounds of chunk 0 for 1st edit stream of 'file2' of pwrite\n" );
+      return -1;
+   }
+   if ( chunkoffset != 4096 - (pstream->recoveryheaderlen + pstream->files->ftag.recoverybytes)  ||  chunksize != ( (5 * 1024) - chunkoffset ) ) {
+      printf( "unexpected bounds of chunk 1 for 2nd edit stream of 'file2' of pwrite: o=%zd, s=%zu\n", chunkoffset, chunksize );
+      return -1;
+   }
+   if ( datastream_seek( &(pstream), chunkoffset, SEEK_SET ) != chunkoffset ) {
+      printf( "failed to seek to offset %zu of 2nd edit stream for 'file2' of pwrite\n", chunkoffset );
+      return -1;
+   }
+   bzero( databuf, chunksize );
+   if ( datastream_write( &(pstream), databuf, chunksize ) != chunksize ) {
+      printf( "paralell write failure for chunk 1 of 'file2'\n" );
+      return -1;
+   }
+   if ( datastream_close( &(pstream) ) ) {
+      printf( "release failure for 2nd edit stream for 'file2' of pwrite\n" );
+      return -1;
+   }
+
+
+   // read back the written pwrite files
+   // file1
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
+      printf( "failed to open 'file1' of pwrite for read\n" );
+      return -1;
+   }
+   iores = datastream_read( stream, databuf, 12345 );
+   if ( iores != 1234 ) {
+      printf( "unexpected read res for 'file1' of pwrite: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( zeroarray, databuf, 1234 ) ) {
+      printf( "unexpected content of 'file1' of pwrite\n" );
+      return -1;
+   }
+   // file2
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
+      printf( "failed to open 'file2' of pwrite for read\n" );
+      return -1;
+   }
+   iores = datastream_read( stream, databuf, 1048576 );
+   if ( iores != 1024 * 5 ) {
+      printf( "unexpected read res for 'file2' of pwrite: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( zeroarray, databuf, iores ) ) {
+      printf( "unexpected content of 'file2' of pwrite\n" );
+      return -1;
+   }
+   if ( datastream_release( &(stream) ) ) {
+      printf( "failed to close pwrite read stream1\n" );
+      return -1;
+   }
+
+   // TODO validate recovery info of written files
+#if 0
+   // validate recovery info in the first obj
+   datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname, objlocation, objerasure, NE_RDALL );
+   if ( datahandle == NULL ) {
+      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
+   if ( datasize < 1 ) {
+      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
+   if ( ne_close( datahandle, NULL, NULL ) ) {
+      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
+      return -1;
+   }
+   recov = recovery_init( databuf, datasize, NULL );
+   if ( recov == NULL ) {
+      printf( "Failed to initialize recovery stream for data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve recov info for file1 of pwrite\n" );
+      return -1;
+   }
+   if ( strcmp( rfinfo.path, "file1" )  ||
+         rfinfo.size != 1234  ||
+         rfinfo.size != bufsize  ||
+         rfinfo.eof != 1 ) {
+      printf( "Unexpected recov info for file1 of pwrite\n" );
+      return -1;
+   }
+   free( rfinfo.path );
+   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
+      printf( "Unexpected trailing file in obj0 of pwrite\n" );
+      return -1;
+   }
+
+   // continue to object2
+   datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2, objerasure2, NE_RDALL );
+   if ( datahandle == NULL ) {
+      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
+   if ( datasize < 1 ) {
+      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
+   if ( ne_close( datahandle, NULL, NULL ) ) {
+      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
+      return -1;
+   }
+   if ( recovery_cont( recov, databuf, datasize ) ) {
+      printf( "Failed to continue pwrite recovery process into object1 data\n" );
+      return -1;
+   }
+   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve recov info for file2 of pwrite\n" );
+      return -1;
+   }
+   if ( strcmp( rfinfo.path, "file2" )  ||
+         rfinfo.size != chunkoffset  ||
+         rfinfo.size != bufsize  ||
+         rfinfo.eof ) {
+      printf( "Unexpected recov info for file2 chunk 1 of pwrite\n" );
+      return -1;
+   }
+   free( rfinfo.path );
+   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
+      printf( "Unexpected trailing file in obj0 of pwrite\n" );
+      return -1;
+   }
+
+   // continue to object3
+   datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname3, objlocation3, objerasure3, NE_RDALL );
+   if ( datahandle == NULL ) {
+      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
+   if ( datasize < 1 ) {
+      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
+      return -1;
+   }
+   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
+   if ( ne_close( datahandle, NULL, NULL ) ) {
+      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
+      return -1;
+   }
+   if ( recovery_cont( recov, databuf, datasize ) ) {
+      printf( "Failed to continue pwrite recovery process into object2 data\n" );
+      return -1;
+   }
+   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
+      printf( "Failed to retrieve recov info for file3 of pwrite object2\n" );
+      return -1;
+   }
+   if ( strcmp( rfinfo.path, "file2" )  ||
+         rfinfo.size != chunksize  ||
+         bufsize != chunksize  ||
+         rfinfo.eof != 1 ) {
+      printf( "Unexpected recov info for file2 chunk 2 of pwrite object2\n" );
+      return -1;
+   }
+   free( rfinfo.path );
+   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
+      printf( "Unexpected trailing file in obj1 of pwrite\n" );
+      return -1;
+   }
+   if ( recovery_close( recov ) ) {
+      printf( "Failed to close recovery stream of pwrite\n" );
+      return -1;
+   }
+#endif
+
+
+   // cleanup 'file1' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file1" ) ) {
+      printf( "Failed to unlink pwrite \"file1\"\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
+      return -1;
+   }
+   free( rpath );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname );
+      return -1;
+   }
+   free( objname );
+   // cleanup 'file2' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file2" ) ) {
+      printf( "Failed to unlink pwrite \"file2\"\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath2 );
+      return -1;
+   }
+   free( rpath2 );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2 ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname2 );
+      return -1;
+   }
+   free( objname2 );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname3, objlocation3 ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname3 );
+      return -1;
+   }
+   free( objname3 );
 
 
    // cleanup our data buffer

@@ -309,7 +309,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
          endptr = parse + 2;
       }
       else if ( strncmp( parse, "RW", 2 ) == 0 ) {
-         ftag->state = (FTAG_WRITEABLE & FTAG_READABLE) | ( ftag->state & FTAG_DATASTATE );
+         ftag->state = (FTAG_WRITEABLE | FTAG_READABLE) | ( ftag->state & FTAG_DATASTATE );
          endptr = parse + 2;
       }
       else if ( strncmp( parse, "NO", 2 ) == 0 ) {
