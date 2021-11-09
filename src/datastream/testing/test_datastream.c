@@ -1106,7 +1106,6 @@ int main(int argc, char **argv)
    }
 
    // TODO validate recovery info of written files
-#if 0
    // validate recovery info in the first obj
    datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname, objlocation, objerasure, NE_RDALL );
    if ( datahandle == NULL ) {
@@ -1207,10 +1206,11 @@ int main(int argc, char **argv)
       return -1;
    }
    if ( strcmp( rfinfo.path, "file2" )  ||
-         rfinfo.size != chunksize  ||
+         rfinfo.size != (5 * 1024)  ||
          bufsize != chunksize  ||
          rfinfo.eof != 1 ) {
       printf( "Unexpected recov info for file2 chunk 2 of pwrite object2\n" );
+      printf( "path: %s, size = %zu, buf = %zu, eof = %d\n", rfinfo.path, rfinfo.size, bufsize, rfinfo.eof );
       return -1;
    }
    free( rfinfo.path );
@@ -1222,7 +1222,6 @@ int main(int argc, char **argv)
       printf( "Failed to close recovery stream of pwrite\n" );
       return -1;
    }
-#endif
 
 
    // cleanup 'file1' refs

@@ -1038,7 +1038,25 @@ int putfinfo( DATASTREAM stream ) {
       free( oldstr );
    }
    // update recovery info size values
-   stream->finfo.size = stream->files[ stream->curfile ].ftag.bytes;
+   if ( stream->type == EDIT_STREAM ) {
+      DATASTREAM_POSITION dpos = {
+         .totaloffset = 0,
+         .dataremaining = 0,
+         .excessremaining = 0,
+         .objno = 0,
+         .offset = 0,
+         .excessoffset = 0,
+         .dataperobj = 0
+      };
+      if ( gettargets( stream, 0, SEEK_CUR, &(dpos) ) ) {
+         LOG( LOG_ERR, "Failed to calculate current data offset\n" );
+         return -1;
+      }
+      stream->finfo.size = dpos.totaloffset;
+   }
+   else {
+      stream->finfo.size = stream->files[ stream->curfile ].ftag.bytes;
+   }
    // populate recovery info string
    size_t genbytes = recovery_finfotostr( &(stream->finfo), stream->finfostr, stream->finfostrlen + 1 );
    if ( genbytes > recoverybytes ) {
