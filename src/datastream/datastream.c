@@ -1239,6 +1239,17 @@ char* datastream_genrpath( FTAG* ftag, const marfs_ms* ms ) {
    return rpath;
 }
 
+/**
+ * Generate data object target info based on the given FTAG and datascheme references
+ * @param FTAG* ftag : Reference to the FTAG value to generate target info for
+ * @param const marfs_ds* ds : Reference to the current MarFS data scheme
+ * @param char** objectname : Reference to a char* to be populated with the object name
+ * @param ne_erasure* erasure : Reference to an ne_erasure struct to be populated with 
+ *                              object erasure info
+ * @param ne_location* location : Reference to an ne_location struct to be populated with 
+ *                                object location info
+ * @return int : Zero on success, or -1 on failure
+ */
 int datastream_objtarget( FTAG* ftag, const marfs_ds* ds, char** objectname, ne_erasure* erasure, ne_location* location ) {
    // check for invalid args
    if ( ftag == NULL ) {
@@ -1339,9 +1350,21 @@ int datastream_objtarget( FTAG* ftag, const marfs_ds* ds, char** objectname, ne_
    return 0;
 }
 
-// Failure w/ EBADFD -> no handle for new file, failure of previous files
-// Failure w/ any other errno -> no handle for new file, previous stream is still valid
-// Success -> handle references new file
+/**
+ * Create a new file associated with a CREATE stream
+ * @param DATASTREAM* stream : Reference to an existing CREATE stream; if that ref is NULL 
+ *                             a fresh stream will be generated to replace that ref
+ * @param const char* path : Path of the file to be created
+ * @param marfs_position* pos : Reference to the marfs_position value of the target file
+ * @param mode_t mode : Mode value of the file to be created
+ * @param const char* ctag : Client tag to be associated with this stream
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be 
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set 
+ *            to NULL, and errno set to EBADFD.
+ */
 int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos, mode_t mode, const char* ctag ) {
    // check for a NULL path arg
    if ( path == NULL ) {
@@ -1484,7 +1507,22 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
    return 0;
 }
 
-int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, const char* ctag ) {
+/**
+ * Open an existing file associated with a READ or EDIT stream
+ * @param DATASTREAM* stream : Reference to an existing DATASTREAM of the requested type;
+ *                             if that ref is NULL a fresh stream will be generated to 
+ *                             replace that ref
+ * @param STREAM_TYPE type : Type of the DATASTREAM ( READ_STREAM or EDIT_STREAM )
+ * @param const char* path : Path of the file to be opened
+ * @param marfs_position* pos : Reference to the marfs_position value of the target file
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
+ *            to NULL, and errno set to EBADFD.
+ */
+int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos ) {
    // check for invalid args
    if ( type != EDIT_STREAM  &&
         type != READ_STREAM ) {
@@ -1615,7 +1653,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
    }
    if ( newstream == NULL ) { // NOTE -- recheck, so as to catch if the prev stream was closed
       // we need to generate a fresh stream structure
-      newstream = genstream( type, path, pos, 0, ctag );
+      newstream = genstream( type, path, pos, 0, NULL );
    }
    // check if we need to close the previous stream
    if ( closestream ) {
@@ -1639,6 +1677,11 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
    return 0;
 }
 
+/**
+ * Release the given DATASTREAM ( close the stream without completing the referenced file )
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be released
+ * @return int : Zero on success, or -1 on failure
+ */
 int datastream_release( DATASTREAM* stream ) {
    // check for invalid args
    if ( stream == NULL  ||  *stream == NULL ) {
@@ -1727,6 +1770,11 @@ int datastream_release( DATASTREAM* stream ) {
    return 0;
 }
 
+/**
+ * Close the given DATASTREAM ( marking the referenced file as complete, for non-READ )
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be closed
+ * @return int : Zero on success, or -1 on failure
+ */
 int datastream_close( DATASTREAM* stream ) {
    // check for invalid args
    if ( stream == NULL  ||  *stream == NULL ) {
@@ -1836,15 +1884,22 @@ int datastream_close( DATASTREAM* stream ) {
    return 0;
 }
 
-// TODO : stream ref allowing NULLout
-ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
+/**
+ * Read from the file currently referenced by the given READ DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be read from
+ * @param void* buf : Reference to the buffer to be populated with read data
+ * @param size_t count : Number of bytes to be read
+ * @return ssize_t : Number of bytes read, or -1 on failure
+ */
+ssize_t datastream_read( DATASTREAM* stream, void* buf, size_t count ) {
    // check for invalid args
-   if ( stream == NULL ) {
+   if ( stream == NULL  ||  *stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL stream reference\n" );
       errno = EINVAL;
       return -1;
    }
-   if ( stream->type != READ_STREAM ) {
+   DATASTREAM tgtstream = *stream;
+   if ( tgtstream->type != READ_STREAM ) {
       LOG( LOG_ERR, "Provided stream does not support reading\n" );
       errno = EINVAL;
       return -1;
@@ -1855,8 +1910,8 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
       return -1;
    }
    // identify current position info 
-   MDAL mdal = stream->ns->prepo->metascheme.mdal;
-   STREAMFILE* curfile = stream->files + stream->curfile;
+   MDAL mdal = tgtstream->ns->prepo->metascheme.mdal;
+   STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
    DATASTREAM_POSITION streampos = {
       .totaloffset = 0,
       .dataremaining = 0,
@@ -1866,7 +1921,7 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
       .excessoffset = 0,
       .dataperobj = 0
    };
-   if ( gettargets( stream, 0, SEEK_CUR, &(streampos) ) ) {
+   if ( gettargets( tgtstream, 0, SEEK_CUR, &(streampos) ) ) {
       LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", curfile->ftag.fileno );
       return -1;
    }
@@ -1888,12 +1943,12 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
    size_t readbytes = 0;
    while ( count ) {
       // calculate how much data we can read from the current data object
-      size_t toread = streampos.dataperobj - ( stream->offset - stream->recoveryheaderlen );
+      size_t toread = streampos.dataperobj - ( tgtstream->offset - tgtstream->recoveryheaderlen );
       if ( toread == 0 ) {
          // close the previous data handle
          char* rtagstr = NULL;
          size_t rtagstrlen = 0;
-         if ( close_current_obj( stream, &(rtagstr), &(rtagstrlen) ) ) {
+         if ( close_current_obj( tgtstream, &(rtagstr), &(rtagstrlen) ) ) {
             // NOTE -- this doesn't necessarily have to be a fatal error on read.
             //         However, I really don't want us to ignore this sort of thing, 
             //         as it could indicate imminent data loss ( corrupt object which 
@@ -1912,28 +1967,28 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
             free( rtagstr );
          }
          // progress to the next data object
-         stream->objno++;
-         stream->offset = stream->recoveryheaderlen;
+         tgtstream->objno++;
+         tgtstream->offset = tgtstream->recoveryheaderlen;
          toread = streampos.dataperobj;
          LOG( LOG_INFO, "Progressing read into object %zu ( offset = %zu )\n",
-                        stream->objno, stream->offset );
+                        tgtstream->objno, tgtstream->offset );
       }
       // limit our data read to the actual request size
       if ( toread > count ) { toread = count; }
       // open the current data object, if necessary
-      if ( stream->datahandle == NULL ) {
-         LOG( LOG_INFO, "Opening object %zu\n", stream->objno );
-         if ( open_current_obj( stream ) ) {
-            LOG( LOG_ERR, "Failed to open data object %zu\n", stream->objno );
+      if ( tgtstream->datahandle == NULL ) {
+         LOG( LOG_INFO, "Opening object %zu\n", tgtstream->objno );
+         if ( open_current_obj( tgtstream ) ) {
+            LOG( LOG_ERR, "Failed to open data object %zu\n", tgtstream->objno );
             return (readbytes) ? readbytes : -1;
          }
       }
       // perform the actual read op
-      LOG( LOG_INFO, "Reading %zu bytes from object %zu\n", toread, stream->objno );
-      ssize_t readres = ne_read( stream->datahandle, buf, toread );
+      LOG( LOG_INFO, "Reading %zu bytes from object %zu\n", toread, tgtstream->objno );
+      ssize_t readres = ne_read( tgtstream->datahandle, buf, toread );
       if ( readres <= 0 ) {
          LOG( LOG_ERR, "Read failure in object %zu at offset %zu ( res = %zd )\n",
-                       stream->objno, stream->offset, readres );
+                       tgtstream->objno, tgtstream->offset, readres );
          return (readbytes) ? readbytes : -1;
       }
       LOG( LOG_INFO, "Read op returned %zd bytes\n", readres );
@@ -1941,20 +1996,26 @@ ssize_t datastream_read( DATASTREAM stream, void* buf, size_t count ) {
       buf += readres;
       count -= readres;
       readbytes += readres;
-      stream->offset += readres;
+      tgtstream->offset += readres;
    }
 
    // append zero bytes to account for file truncated beyond data length
    if ( zerotailbytes ) {
       bzero( buf, zerotailbytes );
       readbytes += zerotailbytes;
-      stream->excessoffset += zerotailbytes;
+      tgtstream->excessoffset += zerotailbytes;
    }
 
    return readbytes;
 }
 
-//TODO : Allow to NULL out string ref ( don't complete broken files )
+/**
+ * Write to the file currently referenced by the given EDIT or CREATE DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be written to
+ * @param const void* buf : Reference to the buffer containing data to be written
+ * @param size_t count : Number of bytes to be written
+ * @return ssize_t : Number of bytes written, or -1 on failure
+ */
 ssize_t datastream_write( DATASTREAM* stream, const void* buf, size_t count ) {
    // check for invalid args
    if ( stream == NULL  ||  *stream == NULL ) {
@@ -2124,14 +2185,19 @@ ssize_t datastream_write( DATASTREAM* stream, const void* buf, size_t count ) {
       tgtstream->finfo.eof = 1;
    }
 
-
    return writtenbytes;
-
 }
 
-int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath ) {
+/**
+ * Change the recovery info pathname for the file referenced by the given CREATE or 
+ * EDIT DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to set recovery pathname for
+ * @param const char* recovpath : New recovery info pathname for the file
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_setrecoverypath( DATASTREAM* stream, const char* recovpath ) {
    // check for invalid args
-   if ( stream == NULL ) {
+   if ( stream == NULL  ||  *stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL stream reference\n" );
       errno = EINVAL;
       return -1;
@@ -2142,14 +2208,15 @@ int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath ) {
       return -1;
    }
    // check if this stream is of an appropriate type
-   if ( stream->type != CREATE_STREAM  &&  stream->type != EDIT_STREAM ) {
+   DATASTREAM tgtstream = *stream;
+   if ( tgtstream->type != CREATE_STREAM  &&  tgtstream->type != EDIT_STREAM ) {
       LOG( LOG_ERR, "Received stream type is not supported\n" );
       errno = EINVAL;
       return -1;
    }
    // perform stream->type specific check
-   STREAMFILE* curfile = stream->files + stream->curfile;
-   if ( stream->type == CREATE_STREAM ) {
+   STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
+   if ( tgtstream->type == CREATE_STREAM ) {
       // cannot adjust recovery path after we've started laying out data ( write or extend )
       if ( curfile->ftag.bytes ) {
          LOG( LOG_ERR, "Received CREATE stream already has associated data\n" );
@@ -2158,28 +2225,28 @@ int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath ) {
       }
    }
    // adjust the finfo path
-   char* oldpath = stream->finfo.path;
-   stream->finfo.path = strdup( recovpath );
-   if ( stream->finfo.path == NULL ) {
+   char* oldpath = tgtstream->finfo.path;
+   tgtstream->finfo.path = strdup( recovpath );
+   if ( tgtstream->finfo.path == NULL ) {
       LOG( LOG_ERR, "Failed to duplicate new recovery path: \"%s\"\n", recovpath );
-      stream->finfo.path = oldpath;
+      tgtstream->finfo.path = oldpath;
       return -1;
    }
    // identify the new finfo strlen
-   size_t newstrlen = recovery_finfotostr( &(stream->finfo), NULL, 0 );
+   size_t newstrlen = recovery_finfotostr( &(tgtstream->finfo), NULL, 0 );
    if ( newstrlen < 1 ) {
       LOG( LOG_ERR, "Failed to produce recovery string with new recovery path\n" );
-      free( stream->finfo.path );
-      stream->finfo.path = oldpath;
+      free( tgtstream->finfo.path );
+      tgtstream->finfo.path = oldpath;
       return -1;
    }
    // perform stream->type specific actions
-   if ( stream->type == EDIT_STREAM ) {
+   if ( tgtstream->type == EDIT_STREAM ) {
       // ensure the new path won't exceed the file's existing recovery bytes setting
       if ( newstrlen > curfile->ftag.recoverybytes ) {
          LOG( LOG_ERR, "New recovery path results in excessive recovery string lenght of %zu bytes\n", newstrlen );
-         free( stream->finfo.path );
-         stream->finfo.path = oldpath;
+         free( tgtstream->finfo.path );
+         tgtstream->finfo.path = oldpath;
          errno = ENAMETOOLONG; // probably the best way to describe this
          return -1;
       }
@@ -2188,11 +2255,11 @@ int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath ) {
       // for create streams, we actually need to update our FTAG
       size_t oldrecovbytes = curfile->ftag.recoverybytes;
       curfile->ftag.recoverybytes = newstrlen;
-      if ( putftag( stream, curfile ) ) {
+      if ( putftag( tgtstream, curfile ) ) {
          LOG( LOG_ERR, "Failed to update FTAG value to reflect new recovery length\n" );
          curfile->ftag.recoverybytes = oldrecovbytes;
-         free( stream->finfo.path );
-         stream->finfo.path = oldpath;
+         free( tgtstream->finfo.path );
+         tgtstream->finfo.path = oldpath;
          return -1;
       }
    }
@@ -2202,6 +2269,13 @@ int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath ) {
    return 0;
 }
 
+/**
+ * Seek to the provided offset of the file referenced by the given DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM
+ * @param off_t offset : Offset for the seek
+ * @param int whence : Flag defining seek start location ( see 'seek()' syscall manpage )
+ * @return off_t : Resulting offset within the file, or -1 if a failure occurred
+ */
 off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
    // check for invalid args
    if ( stream == NULL  ||  *stream == NULL ) {
@@ -2282,9 +2356,20 @@ off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
    return streampos.totaloffset;
 }
 
-int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size_t* size ) {
+/**
+ * Identify the data object boundaries of the file referenced by the given DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM for which to retrieve info
+ * @param int chunknum : Index of the data chunk to retrieve info for ( beginning at zero )
+ * @param off_t* offset : Reference to be populated with the data offset of the start of 
+ *                        the target data chunk
+ *                        ( as in, datastream_seek( stream, 'offset', SEEK_SET ) will move 
+ *                        you to the start of this data chunk )
+ * @param size_t* size : Reference to be populated with the size of the target data chunk
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_chunkbounds( DATASTREAM* stream, int chunknum, off_t* offset, size_t* size ) {
    // check for invalid args
-   if ( stream == NULL ) {
+   if ( stream == NULL  ||  *stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL stream reference\n" );
       errno = EINVAL;
       return -1;
@@ -2295,7 +2380,8 @@ int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size
       return -1;
    }
    // identify the start position info for the current file
-   STREAMFILE* curfile = stream->files + stream->curfile;
+   DATASTREAM tgtstream = *stream;
+   STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
    DATASTREAM_POSITION streampos = {
       .totaloffset = 0,
       .dataremaining = 0,
@@ -2305,11 +2391,11 @@ int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size
       .excessoffset = 0,
       .dataperobj = 0
    };
-   if ( gettargets( stream, 0, SEEK_SET, &(streampos) ) ) {
+   if ( gettargets( tgtstream, 0, SEEK_SET, &(streampos) ) ) {
       LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", curfile->ftag.fileno );
       return -1;
    }
-   streampos.offset -= stream->recoveryheaderlen; // adjust offset to ignore recovery info
+   streampos.offset -= tgtstream->recoveryheaderlen; // adjust offset to ignore recovery info
    // calculate the total offset of the target chunk
    size_t tgtoff = 0;
    size_t chunksize = streampos.dataperobj - streampos.offset;
@@ -2331,6 +2417,17 @@ int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size
    return 0;
 }
 
+/**
+ * Extend the file referenced by the given CREATE DATASTREAM to the specified total size
+ * This makes the specified data size accessible for parallel write.
+ * NOTE -- The final data object of the file will only be accessible after this CREATE 
+ *         DATASTREAM has been released ( as that finalizes the file's data size ).
+ *         This function can only be performed if no data has been written to the target 
+ *         file via this DATASTREAM.
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be extended
+ * @param off_t length : Target total file length to extend to
+ * @return int : Zero on success, or -1 on failure
+ */
 int datastream_extend( DATASTREAM* stream, off_t length ) {
    // check for invalid args
    if ( stream == NULL  ||  *stream == NULL ) {
@@ -2462,9 +2559,16 @@ int datastream_extend( DATASTREAM* stream, off_t length ) {
    return 0;
 }
 
-int datastream_truncate( DATASTREAM stream, off_t length ) {
+/**
+ * Truncate the file referenced by the given EDIT DATASTREAM to the specified length
+ * NOTE -- This operation can only be performed on completed data files
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be truncated
+ * @param off_t length : Target total file length to truncate to
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_truncate( DATASTREAM* stream, off_t length ) {
    // check for invalid args
-   if ( stream == NULL ) {
+   if ( stream == NULL  ||  *stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL stream reference\n" );
       errno = EINVAL;
       return -1;
@@ -2475,13 +2579,14 @@ int datastream_truncate( DATASTREAM stream, off_t length ) {
       return -1;
    }
    // check if this stream is of an appropriate type
-   if ( stream->type != EDIT_STREAM ) {
+   DATASTREAM tgtstream = *stream;
+   if ( tgtstream->type != EDIT_STREAM ) {
       LOG( LOG_ERR, "Received stream type is not supported\n" );
       errno = EINVAL;
       return -1;
    }
    // verify that the current file is in an appropriate state
-   STREAMFILE* curfile = stream->files + stream->curfile;
+   STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
    if ( (curfile->ftag.state & FTAG_DATASTATE) != FTAG_COMP ) {
       LOG( LOG_ERR, "Cannon truncate an incomplete file\n" );
       errno = EINVAL;
@@ -2493,23 +2598,30 @@ int datastream_truncate( DATASTREAM stream, off_t length ) {
       curfile->ftag.availbytes = length;
    }
    // truncate the target file to the specified length
-   const marfs_ms* ms = &(stream->ns->prepo->metascheme);
+   const marfs_ms* ms = &(tgtstream->ns->prepo->metascheme);
    if ( ms->mdal->ftruncate( curfile->metahandle, length ) ) {
       LOG( LOG_ERR, "Failed to truncate file %zu to proper size\n", curfile->ftag.fileno );
       curfile->ftag.availbytes = origbytes;
       return -1;
    }
    // set the updated ftag value
-   if ( putftag( stream, curfile ) ) {
+   if ( putftag( tgtstream, curfile ) ) {
       LOG( LOG_ERR, "Failed to update FTAG on file %zu\n", curfile->ftag.fileno );
       return -1;
    }
    return 0;
 }
 
-int datastream_utimens( DATASTREAM stream, const struct timespec times[2] ) {
+/**
+ * Set time values on the file referenced by the given EDIT or CREATE DATASTREAM
+ * NOTE -- Time values will only be finalized during datastream_close/release
+ * @param DATASTREAM* stream : Reference to the DATASTREAM on which to set times
+ * @param const struct timespec times[2] : Time values ( see manpage for 'utimensat' )
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_utimens( DATASTREAM* stream, const struct timespec times[2] ) {
    // check for invalid args
-   if ( stream == NULL ) {
+   if ( stream == NULL  ||  *stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL stream reference\n" );
       errno = EINVAL;
       return -1;
@@ -2520,15 +2632,16 @@ int datastream_utimens( DATASTREAM stream, const struct timespec times[2] ) {
       return -1;
    }
    // check if this stream is of an appropriate type
-   if ( stream->type != EDIT_STREAM  &&  stream->type != CREATE_STREAM ) {
+   DATASTREAM tgtstream = *stream;
+   if ( tgtstream->type != EDIT_STREAM  &&  tgtstream->type != CREATE_STREAM ) {
       LOG( LOG_ERR, "Received stream type is not supported\n" );
       errno = EINVAL;
       return -1;
    }
    // verify that the current file is in an appropriate state
-   STREAMFILE* curfile = stream->files + stream->curfile;
+   STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
    if ( (curfile->ftag.state & FTAG_DATASTATE) != FTAG_COMP  &&
-        stream->type != CREATE_STREAM  &&
+        tgtstream->type != CREATE_STREAM  &&
         (curfile->ftag.state & FTAG_WRITEABLE) == 0 ) {
       LOG( LOG_ERR, "Cannot set times on an incomplete/unreleased file\n" );
       errno = EINVAL;
@@ -2538,7 +2651,7 @@ int datastream_utimens( DATASTREAM stream, const struct timespec times[2] ) {
    curfile->times[0] = times[0];
    curfile->times[1] = times[1];
    curfile->dotimes = 1;
-   stream->finfo.mtime = times[1];
+   tgtstream->finfo.mtime = times[1];
    return 0;
 }
 

@@ -110,31 +110,146 @@ typedef struct datastream_struct {
  */
 char* datastream_genrpath( FTAG* ftag, const marfs_ms* ms );
 
+/**
+ * Generate data object target info based on the given FTAG and datascheme references
+ * @param FTAG* ftag : Reference to the FTAG value to generate target info for
+ * @param const marfs_ds* ds : Reference to the current MarFS data scheme
+ * @param char** objectname : Reference to a char* to be populated with the object name
+ * @param ne_erasure* erasure : Reference to an ne_erasure struct to be populated with
+ *                              object erasure info
+ * @param ne_location* location : Reference to an ne_location struct to be populated with
+ *                                object location info
+ * @return int : Zero on success, or -1 on failure
+ */
 int datastream_objtarget( FTAG* ftag, const marfs_ds* ds, char** objname, ne_erasure* erasure, ne_location* location );
 
+/**
+ * Create a new file associated with a CREATE stream
+ * @param DATASTREAM* stream : Reference to an existing CREATE stream; if that ref is NULL
+ *                             a fresh stream will be generated to replace that ref
+ * @param const char* path : Path of the file to be created
+ * @param marfs_position* pos : Reference to the marfs_position value of the target file
+ * @param mode_t mode : Mode value of the file to be created
+ * @param const char* ctag : Client tag to be associated with this stream
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
+ *            to NULL, and errno set to EBADFD.
+ */
 int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos, mode_t mode, const char* ctag );
 
-int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, const char* ctag );
+/**
+ * Open an existing file associated with a READ or EDIT stream
+ * @param DATASTREAM* stream : Reference to an existing DATASTREAM of the requested type;
+ *                             if that ref is NULL a fresh stream will be generated to
+ *                             replace that ref
+ * @param STREAM_TYPE type : Type of the DATASTREAM ( READ_STREAM or EDIT_STREAM )
+ * @param const char* path : Path of the file to be opened
+ * @param marfs_position* pos : Reference to the marfs_position value of the target file
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
+ *            to NULL, and errno set to EBADFD.
+ */
+int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos );
 
+/**
+ * Release the given DATASTREAM ( close the stream without completing the referenced file )
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be released
+ * @return int : Zero on success, or -1 on failure
+ */
 int datastream_release( DATASTREAM* stream );
 
+/**
+ * Close the given DATASTREAM ( marking the referenced file as complete, for non-READ )
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be closed
+ * @return int : Zero on success, or -1 on failure
+ */
 int datastream_close( DATASTREAM* stream );
 
-int datastream_setrecoverypath( DATASTREAM stream, const char* recovpath );
+/**
+ * Read from the file currently referenced by the given READ DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be read from
+ * @param void* buf : Reference to the buffer to be populated with read data
+ * @param size_t count : Number of bytes to be read
+ * @return ssize_t : Number of bytes read, or -1 on failure
+ */
+ssize_t datastream_read( DATASTREAM* stream, void* buffer, size_t count );
 
-ssize_t datastream_read( DATASTREAM stream, void* buffer, size_t count );
-
+/**
+ * Write to the file currently referenced by the given EDIT or CREATE DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be written to
+ * @param const void* buf : Reference to the buffer containing data to be written
+ * @param size_t count : Number of bytes to be written
+ * @return ssize_t : Number of bytes written, or -1 on failure
+ */
 ssize_t datastream_write( DATASTREAM* stream, const void* buff, size_t count );
 
+/**
+ * Change the recovery info pathname for the file referenced by the given CREATE or
+ * EDIT DATASTREAM  ( NOTE -- the file must not have been written to via this stream )
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to set recovery pathname for
+ * @param const char* recovpath : New recovery info pathname for the file
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_setrecoverypath( DATASTREAM* stream, const char* recovpath );
+
+/**
+ * Seek to the provided offset of the file referenced by the given DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM
+ * @param off_t offset : Offset for the seek
+ * @param int whence : Flag defining seek start location ( see 'seek()' syscall manpage )
+ * @return off_t : Resulting offset within the file, or -1 if a failure occurred
+ */
 off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence );
 
-int datastream_chunkbounds( DATASTREAM stream, int chunknum, off_t* offset, size_t* size );
+/**
+ * Identify the data object boundaries of the file referenced by the given DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM for which to retrieve info
+ * @param int chunknum : Index of the data chunk to retrieve info for ( beginning at zero )
+ * @param off_t* offset : Reference to be populated with the data offset of the start of
+ *                        the target data chunk
+ *                        ( as in, datastream_seek( stream, 'offset', SEEK_SET ) will move
+ *                        you to the start of this data chunk )
+ * @param size_t* size : Reference to be populated with the size of the target data chunk
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_chunkbounds( DATASTREAM* stream, int chunknum, off_t* offset, size_t* size );
 
+/**
+ * Extend the file referenced by the given CREATE DATASTREAM to the specified total size
+ * This makes the specified data size accessible for parallel write.
+ * NOTE -- The final data object of the file will only be accessible after this CREATE
+ *         DATASTREAM has been released ( as that finalizes the file's data size ).
+ *         This function can only be performed if no data has been written to the target
+ *         file via this DATASTREAM.
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be extended
+ * @param off_t length : Target total file length to extend to
+ * @return int : Zero on success, or -1 on failure
+ */
 int datastream_extend( DATASTREAM* stream, off_t length );
 
-int datastream_truncate( DATASTREAM stream, off_t length );
+/**
+ * Truncate the file referenced by the given EDIT DATASTREAM to the specified length
+ * NOTE -- This operation can only be performed on completed data files
+ * @param DATASTREAM* stream : Reference to the DATASTREAM to be truncated
+ * @param off_t length : Target total file length to truncate to
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_truncate( DATASTREAM* stream, off_t length );
 
-int datastream_utimens( DATASTREAM stream, const struct timespec times[2] );
+/**
+ * Set time values on the file referenced by the given EDIT or CREATE DATASTREAM
+ * NOTE -- Time values will only be finalized during datastream_close/release
+ * @param DATASTREAM* stream : Reference to the DATASTREAM on which to set times
+ * @param const struct timespec times[2] : Time values ( see manpage for 'utimensat' )
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_utimens( DATASTREAM* stream, const struct timespec times[2] );
 
 #endif // _DATASTREAM_H
 

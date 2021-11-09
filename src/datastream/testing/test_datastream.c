@@ -307,7 +307,7 @@ int main(int argc, char **argv)
    times[0].tv_nsec = 0;
    times[1].tv_sec = 7654321;
    times[1].tv_nsec = 123;
-   if ( datastream_utimens( stream, times ) ) {
+   if ( datastream_utimens( &(stream), times ) ) {
       printf( "failed to set times on 'file1' of no-pack\n" );
       return -1;
    }
@@ -329,7 +329,7 @@ int main(int argc, char **argv)
       printf( "create failure for 'file2' of no-pack\n" );
       return -1;
    }
-   if ( datastream_setrecoverypath( stream, "file2-recovset" ) ) {
+   if ( datastream_setrecoverypath( &(stream), "file2-recovset" ) ) {
       printf( "failed to set recovery path for 'file2' of no-pack\n" );
       return -1;
    }
@@ -427,12 +427,12 @@ int main(int argc, char **argv)
 
    // read back the written files
    // file1
-   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos) ) ) {
       printf( "failed to open 'file1' of no-pack for read\n" );
       return -1;
    }
    char zeroarray[1048576] = {0}; // all zero 1MiB buffer
-   ssize_t iores = datastream_read( stream, databuf, 1048576 );
+   ssize_t iores = datastream_read( &(stream), databuf, 1048576 );
    if ( iores != 1024 ) {
       printf( "unexpected read res for 'file1' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -442,11 +442,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // file2
-   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos) ) ) {
       printf( "failed to open 'file2' of no-pack for read\n" );
       return -1;
    }
-   iores = datastream_read( stream, databuf, 1048576 );
+   iores = datastream_read( &(stream), databuf, 1048576 );
    if ( iores != 100 ) {
       printf( "unexpected read res for 'file2' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -460,11 +460,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // file3
-   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos) ) ) {
       printf( "failed to open 'file3' of no-pack for read\n" );
       return -1;
    }
-   iores = datastream_read( stream, databuf, 1048576 );
+   iores = datastream_read( &(stream), databuf, 1048576 );
    if ( iores != 1048576 ) {
       printf( "unexpected res for read1 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -473,7 +473,7 @@ int main(int argc, char **argv)
       printf( "unexpected content of read1 for 'file3' of no-pack\n" );
       return -1;
    }
-   iores = datastream_read( stream, databuf, 1048576 );
+   iores = datastream_read( &(stream), databuf, 1048576 );
    if ( iores != 1048576 ) {
       printf( "unexpected res for read2 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -482,7 +482,7 @@ int main(int argc, char **argv)
       printf( "unexpected content of read2 from 'file3' of no-pack\n" );
       return -1;
    }
-   iores = datastream_read( stream, databuf, 1048576 );
+   iores = datastream_read( &(stream), databuf, 1048576 );
    if ( iores ) {
       printf( "unexpected res for read3 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -687,20 +687,20 @@ int main(int argc, char **argv)
 
 
    // truncate file2 to an increased size
-   if ( datastream_open( &(stream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), EDIT_STREAM, "file2", &(pos) ) ) {
       LOG( LOG_ERR, "Failed to open edit handle for 'file2' of pack\n" );
       return -1;
    }
-   if ( datastream_truncate( stream, 1024 ) ) {
+   if ( datastream_truncate( &(stream), 1024 ) ) {
       LOG( LOG_ERR, "Failed to truncate 'file2' of pack to %zu bytes\n", 1024 );
       return -1;
    }
    // truncate file3 to a reduced size
-   if ( datastream_open( &(stream), EDIT_STREAM, "file3", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), EDIT_STREAM, "file3", &(pos) ) ) {
       LOG( LOG_ERR, "Failed to open edit handle for 'file3' of pack\n" );
       return -1;
    }
-   if ( datastream_truncate( stream, 1024*3 ) ) {
+   if ( datastream_truncate( &(stream), 1024*3 ) ) {
       LOG( LOG_ERR, "Failed to truncate 'file3' of pack to %zu bytes\n", (1024*3) );
       return -1;
    }
@@ -712,11 +712,11 @@ int main(int argc, char **argv)
 
    // read back the written PACK files
    // file1
-   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos) ) ) {
       printf( "failed to open 'file1' of pack for read\n" );
       return -1;
    }
-   iores = datastream_read( stream, databuf, 1048576 );
+   iores = datastream_read( &(stream), databuf, 1048576 );
    if ( iores != (1024 * 2) ) {
       printf( "unexpected read res for 'file1' of pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -726,11 +726,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // file2
-   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos) ) ) {
       printf( "failed to open 'file2' of pack for read\n" );
       return -1;
    }
-   iores = datastream_read( stream, databuf, 1048576 );
+   iores = datastream_read( &(stream), databuf, 1048576 );
    if ( iores != 1024 ) {
       printf( "unexpected read res for 'file2' of pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -744,11 +744,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // file3
-   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos) ) ) {
       printf( "failed to open 'file3' of pack for read\n" );
       return -1;
    }
-   iores = datastream_read( stream, databuf, 1048576 );
+   iores = datastream_read( &(stream), databuf, 1048576 );
    if ( iores != (1024 * 3) ) {
       printf( "unexpected read res for 'file3' of pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -999,13 +999,13 @@ int main(int argc, char **argv)
 
    // open a second stream
    DATASTREAM pstream = NULL;
-   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
+   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos) ) ) {
       printf( "failed to open 1st edit stream for 'file2' of pwrite\n" );
       return -1;
    }
    off_t  chunkoffset = 0;
    size_t chunksize = 0;
-   if ( datastream_chunkbounds( pstream, 0, &(chunkoffset), &(chunksize) ) ) {
+   if ( datastream_chunkbounds( &(pstream), 0, &(chunkoffset), &(chunksize) ) ) {
       printf( "failed to identify bounds of chunk 0 for 1st edit stream of 'file2' of pwrite\n" );
       return -1;
    }
@@ -1044,11 +1044,11 @@ int main(int argc, char **argv)
    }
 
    // reopen an edit stream to write out the final data obj and complete the file
-   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
+   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos) ) ) {
       printf( "failed to open 1st edit stream for 'file2' of pwrite\n" );
       return -1;
    }
-   if ( datastream_chunkbounds( pstream, 1, &(chunkoffset), &(chunksize) ) ) {
+   if ( datastream_chunkbounds( &(pstream), 1, &(chunkoffset), &(chunksize) ) ) {
       printf( "failed to identify bounds of chunk 0 for 1st edit stream of 'file2' of pwrite\n" );
       return -1;
    }
@@ -1073,11 +1073,11 @@ int main(int argc, char **argv)
 
    // read back the written pwrite files
    // file1
-   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos) ) ) {
       printf( "failed to open 'file1' of pwrite for read\n" );
       return -1;
    }
-   iores = datastream_read( stream, databuf, 12345 );
+   iores = datastream_read( &(stream), databuf, 12345 );
    if ( iores != 1234 ) {
       printf( "unexpected read res for 'file1' of pwrite: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -1087,11 +1087,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // file2
-   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos) ) ) {
       printf( "failed to open 'file2' of pwrite for read\n" );
       return -1;
    }
-   iores = datastream_read( stream, databuf, 1048576 );
+   iores = datastream_read( &(stream), databuf, 1048576 );
    if ( iores != 1024 * 5 ) {
       printf( "unexpected read res for 'file2' of pwrite: %zd (%s)\n", iores, strerror(errno) );
       return -1;
