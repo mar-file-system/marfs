@@ -2422,6 +2422,7 @@ int datastream_chunkbounds( DATASTREAM* stream, int chunknum, off_t* offset, siz
    // determine if we've exceeded actual data limits
    if ( tgtoff > streampos.dataremaining ) {
       LOG( LOG_ERR, "Target chunk ( %d ) is not within data bounds\n", chunknum );
+      errno = EINVAL;
       return -1;
    }
    // determine if we need to limit chunksize
@@ -2500,6 +2501,7 @@ int datastream_extend( DATASTREAM* stream, off_t length ) {
       while ( tgtstream->curfile ) {
          tgtstream->curfile--;
          STREAMFILE* compfile = tgtstream->files + tgtstream->curfile;
+         LOG( LOG_INFO, "Completing file %zu\n", compfile->ftag.fileno );
          // attach our rebuild tag, if necessary
          if ( rtagstr  &&
               mdal->fsetxattr( compfile->metahandle, 1, RTAG_NAME, rtagstr, rtagstrlen, 0 ) ) {

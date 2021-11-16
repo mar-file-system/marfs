@@ -158,7 +158,7 @@ void usage(const char *op)
           "Seek the given datastream" );
 
    USAGE( "chunkbounds",
-          "[-s stream-num] [-c chunknum]",
+          "[-s stream-num] [-n chunknum]",
           "Identify chunk boundries for the given datastream" );
 
    USAGE( "extend",
@@ -279,7 +279,7 @@ int release_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
       printf( OUTPREFX "ERROR: Failure of datastream_release(): %d (%s)\n",
               retval, strerror(errno) );
    }
-   return retval;
+   return 0; // always consider the stream as released, even if an error occurred
 }
 
 int close_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
@@ -288,7 +288,7 @@ int close_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
       printf( OUTPREFX "ERROR: Failure of datastream_close(): %d (%s)\n",
               retval, strerror(errno) );
    }
-   return retval;
+   return 0; // always consider the stream as released, even if an error occurred
 }
 
 int read_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
@@ -397,7 +397,8 @@ int write_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
       ssize_t writeres = datastream_write( stream, iobuf, readres );
       if ( writeres != readres ) {
          printf( OUTPREFX "ERROR: Unexpected datastream_write() of %zu bytes after %zu bytes written: %zd (%s)\n", towrite, writebytes, writeres, strerror(errno) );
-         if ( opts->ifile ) { close( iofile ); return -1; }
+         if ( opts->ifile ) { close( iofile ); }
+         return -1;
       }
       writebytes += writeres;
       // check for an under-read condition
@@ -454,19 +455,85 @@ int seek_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
 }
 
 int chunkbounds_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+   // loop over all appropriate chunks
+   printf( "\n%-5s   %-15s   %-15s\n", "Chunk", "Size", "Offset" );
+   errno = 0;
+   int chunkindex = 0;
+   if ( opts->chunknum ) { chunkindex = opts->chunknumval; }
+   while ( !(opts->chunknum)  ||  chunkindex <= opts->chunknumval ) {
+      // identify bounds of this chunk
+      off_t offset = 0;
+      size_t size = 0;
+      if ( datastream_chunkbounds( stream, chunkindex, &(offset), &(size) ) ) {
+         // if we were specifically asked to target this chunk, this is a problem
+         if ( opts->chunknum  ||  errno != EINVAL ) {
+            printf( OUTPREFX "ERROR: Failed to identify bounds of chunk %d (%s)\n",
+                    chunkindex, strerror(errno) );
+            return -1;
+         }
+         break; // no data chunks remain
+      }
+      printf( "\n%-5d   %-15zu   %-15zu\n", chunkindex, size, offset );
+      chunkindex++;
+   }
+   printf( "\n" );
    return 0;
 }
 
 int extend_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
-   return 0;
+   // check for required args
+   if ( !(opts->length) ) {
+      printf( OUTPREFX "ERROR: 'extend' command is missing required '-l' arg\n" );
+      return -1;
+   }
+   // perform the extend op
+   int retval = datastream_extend( stream, opts->lengthval );
+   if ( retval ) {
+      printf( OUTPREFX "ERROR: Failed to extend stream to \"%zu\" (%s)\n",
+              opts->lengthval, strerror(errno) );
+   }
+   return retval;
 }
 
 int truncate_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
-   return 0;
+   // check for required args
+   if ( !(opts->length) ) {
+      printf( OUTPREFX "ERROR: 'truncate' command is missing required '-l' arg\n" );
+      return -1;
+   }
+   // perform the truncate op
+   int retval = datastream_truncate( stream, opts->lengthval );
+   if ( retval ) {
+      printf( OUTPREFX "ERROR: Failed to truncate stream to \"%zu\" (%s)\n",
+              opts->lengthval, strerror(errno) );
+   }
+   return retval;
 }
 
 int utime_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
-   return 0;
+   // check for required args
+   if ( !(opts->ifile) ) {
+      printf( OUTPREFX "ERROR: 'utime' command is missing required '-i' arg\n" );
+      return -1;
+   }
+   // stat the input file
+   struct stat stval;
+   if ( stat( opts->iofileval, &(stval) ) ) {
+      printf( OUTPREFX "ERROR: Failed to stat input file: \"%s\" (%s)\n",
+              opts->iofileval, strerror(errno) );
+      return -1;
+   }
+   // perform the utimens op
+   struct timespec times[2];
+   times[0].tv_sec = stval.st_atim.tv_sec;
+   times[0].tv_nsec = stval.st_atim.tv_nsec;
+   times[1].tv_sec = stval.st_mtim.tv_sec;
+   times[1].tv_nsec = stval.st_mtim.tv_nsec;
+   int retval = datastream_utimens( stream, times );
+   if ( retval ) {
+      printf( OUTPREFX "ERROR: Failed to set time values on stream to match input file \"%s\" (%s)\n", opts->iofileval, strerror(errno) );
+   }
+   return retval;
 }
 
 int command_loop( marfs_config* config ) {
