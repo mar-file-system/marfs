@@ -424,11 +424,33 @@ int write_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
 }
 
 int setrpath_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
-   return 0;
+   // check for required args
+   if ( !(opts->path) ) {
+      printf( OUTPREFX "ERROR: 'setrpath' command is missing required '-p' arg\n" );
+      return -1;
+   }
+   // perform the setrecoverypath op
+   int retval = datastream_setrecoverypath( stream, opts->pathval );
+   if ( retval ) {
+      printf( OUTPREFX "ERROR: Failed to set stream recovery path to \"%s\" (%s)\n",
+              opts->pathval, strerror(errno) );
+   }
+   return retval;
 }
 
 int seek_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
-   return 0;
+   // check for required args
+   if ( !(opts->offset)  ||  !(opts->seekfrom) ) {
+      printf( OUTPREFX "ERROR: 'seek' command is missing required '-@'/'-f' args\n" );
+      return -1;
+   }
+   // perform the seek op
+   int retval = datastream_seek( stream, opts->offsetval, opts->seekfromval );
+   if ( retval ) {
+      printf( OUTPREFX "ERROR: Failed to seek stream(%s)\n",
+              strerror(errno) );
+   }
+   return retval;
 }
 
 int chunkbounds_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
