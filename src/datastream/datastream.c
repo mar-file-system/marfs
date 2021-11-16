@@ -1890,6 +1890,11 @@ int datastream_close( DATASTREAM* stream ) {
  * @param void* buf : Reference to the buffer to be populated with read data
  * @param size_t count : Number of bytes to be read
  * @return ssize_t : Number of bytes read, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
+ *            to NULL, and errno set to EBADFD.
  */
 ssize_t datastream_read( DATASTREAM* stream, void* buf, size_t count ) {
    // check for invalid args
@@ -1955,7 +1960,9 @@ ssize_t datastream_read( DATASTREAM* stream, void* buf, size_t count ) {
             //         we are now failing to tag ).  So... maybe better to fail 
             //         catastrophically.
             LOG( LOG_ERR, "Failed to close previous data object\n" );
-            // TODO : fail catastrophically
+            freestream( tgtstream );
+            *stream = NULL;
+            return -1;
          }
          if ( rtagstr != NULL ) {
             LOG( LOG_INFO, "Attaching rebuild tag to file %zu: \"%s\"\n",
@@ -2015,6 +2022,11 @@ ssize_t datastream_read( DATASTREAM* stream, void* buf, size_t count ) {
  * @param const void* buf : Reference to the buffer containing data to be written
  * @param size_t count : Number of bytes to be written
  * @return ssize_t : Number of bytes written, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
+ *            to NULL, and errno set to EBADFD.
  */
 ssize_t datastream_write( DATASTREAM* stream, const void* buf, size_t count ) {
    // check for invalid args
@@ -2275,6 +2287,11 @@ int datastream_setrecoverypath( DATASTREAM* stream, const char* recovpath ) {
  * @param off_t offset : Offset for the seek
  * @param int whence : Flag defining seek start location ( see 'seek()' syscall manpage )
  * @return off_t : Resulting offset within the file, or -1 if a failure occurred
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
+ *            to NULL, and errno set to EBADFD.
  */
 off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
    // check for invalid args
@@ -2427,6 +2444,11 @@ int datastream_chunkbounds( DATASTREAM* stream, int chunknum, off_t* offset, siz
  * @param DATASTREAM* stream : Reference to the DATASTREAM to be extended
  * @param off_t length : Target total file length to extend to
  * @return int : Zero on success, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
+ *            to NULL, and errno set to EBADFD.
  */
 int datastream_extend( DATASTREAM* stream, off_t length ) {
    // check for invalid args

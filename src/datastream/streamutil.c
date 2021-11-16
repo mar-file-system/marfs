@@ -65,6 +65,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "marfs_auto_config.h"
 #include "datastream.h"
+#include "general_include/numdigits.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -88,8 +89,9 @@ typedef struct argopts_struct {
    STREAM_TYPE typeval;
    char bytes;
    size_t bytesval;
-   char outputfile;
-   char* outputfileval;
+   char ifile;
+   char ofile;
+   char* iofileval;
    char offset;
    off_t offsetval;
    char seekfrom;
@@ -104,7 +106,7 @@ typedef struct argopts_struct {
 void free_argopts( argopts* opts ) {
    if ( opts->pathval ) { free( opts->pathval ); }
    if ( opts->ctagval ) { free( opts->ctagval ); }
-   if ( opts->outputfileval ) { free( opts->outputfileval ); }
+   if ( opts->iofileval ) { free( opts->iofileval ); }
 }
 
 
@@ -124,7 +126,7 @@ void usage(const char *op)
             (CMD), (ARGS), (!strncmp(op, "help", 5) ? "      " DESC "\n" : "") )
 
    USAGE( "create",
-          "[-s stream-num] -p path -m mode -c ctag",
+          "[-s stream-num] -p path -m mode [-c ctag]",
           "Create a new file, associated with the given datastream" );
 
    USAGE( "open",
@@ -140,11 +142,11 @@ void usage(const char *op)
           "Close the given datastream" );
 
    USAGE( "read",
-          "[-s stream-num] [-b bytes] [-o outputfile [-@ outputoffset [-f seekfrom] ] ]",
+          "[-s stream-num] [-b bytes] [-o iofile [-@ outputoffset [-f seekfrom] ] ]",
           "Read from the given datastream" );
 
    USAGE( "write",
-          "[-s stream-num] [-b bytes] [-i inputfile [-@ inputoffset [-f seekfrom] ] ]",
+          "[-s stream-num] [-b bytes] [-i iofile [-@ inputoffset [-f seekfrom] ] ]",
           "Write to the given datastream" );
 
    USAGE( "setrpath",
@@ -187,26 +189,237 @@ void usage(const char *op)
 }
 
 int create_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
-   return 0;
+   // check for required args
+   if ( !(opts->path)  ||  !(opts->mode) ) {
+      printf( OUTPREFX "ERROR: 'create' command is missing required '-p'/'-m' args\n" );
+      return -1;
+   }
+   // perform path traversal to identify marfs position
+   char* modpath = strdup( opts->pathval );
+   if ( modpath == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", opts->pathval );
+      return -1;
+   }
+   marfs_position pos = {
+      .ns = config->rootns,
+      .depth = 0,
+      .ctxt = config->rootns->prepo->metascheme.mdal->newctxt( "/.", config->rootns->prepo->metascheme.mdal->ctxt )
+   };
+   if ( pos.ctxt == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to establish MDAL ctxt for 'create' command\n" );
+      free( modpath );
+      return -1;
+   }
+   if ( config_traverse( config, &(pos), &(modpath), 1 ) < 0 ) {
+      printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
+              opts->pathval );
+      free( modpath );
+      config->rootns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );
+      return -1;
+   }
+   int retval = datastream_create( stream, modpath, &(pos), opts->modeval,
+                                   (opts->ctag) ? opts->ctagval : config->ctag );
+   if ( retval ) {
+      printf( OUTPREFX "ERROR: Failure of datastream_create(): %d (%s)\n",
+              retval, strerror(errno) );
+   }
+   free( modpath );
+   if ( config->rootns->prepo->metascheme.mdal->destroyctxt( pos.ctxt ) ) {
+      // just complain
+      printf( OUTPREFX "WARNING: Failed to destory MDAL CTXT\n" );
+   }
+   return retval;
 }
 
 int open_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
-   return 0;
+   // check for required args
+   if ( !(opts->path)  ||  !(opts->type) ) {
+      printf( OUTPREFX "ERROR: 'open' command is missing required '-p'/'-t' args\n" );
+      return -1;
+   }
+   // perform path traversal to identify marfs position
+   char* modpath = strdup( opts->pathval );
+   if ( modpath == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", opts->pathval );
+      return -1;
+   }
+   marfs_position pos = {
+      .ns = config->rootns,
+      .depth = 0,
+      .ctxt = config->rootns->prepo->metascheme.mdal->newctxt( "/.", config->rootns->prepo->metascheme.mdal->ctxt )
+   };
+   if ( pos.ctxt == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to establish MDAL ctxt for 'open' command\n" );
+      free( modpath );
+      return -1;
+   }
+   if ( config_traverse( config, &(pos), &(modpath), 1 ) < 0 ) {
+      printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
+              opts->pathval );
+      free( modpath );
+      config->rootns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );
+      return -1;
+   }
+   int retval = datastream_open( stream, opts->typeval, modpath, &(pos) );
+   if ( retval ) {
+      printf( OUTPREFX "ERROR: Failure of datastream_open(): %d (%s)\n",
+              retval, strerror(errno) );
+   }
+   free( modpath );
+   if ( config->rootns->prepo->metascheme.mdal->destroyctxt( pos.ctxt ) ) {
+      // just complain
+      printf( OUTPREFX "WARNING: Failed to destory MDAL CTXT\n" );
+   }
+   return retval;
 }
 
 int release_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
-   return 0;
+   int retval = datastream_release( stream );
+   if ( retval ) {
+      printf( OUTPREFX "ERROR: Failure of datastream_release(): %d (%s)\n",
+              retval, strerror(errno) );
+   }
+   return retval;
 }
 
 int close_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
-   return 0;
+   int retval = datastream_close( stream );
+   if ( retval ) {
+      printf( OUTPREFX "ERROR: Failure of datastream_close(): %d (%s)\n",
+              retval, strerror(errno) );
+   }
+   return retval;
 }
 
 int read_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+   // allocate 4K buffer for I/O
+   char iobuf[4096] = {0};
+   int iofile = -1;
+   if ( opts->ofile ) {
+      iofile = open( opts->iofileval, O_WRONLY | O_CREAT, 0600 );
+      if ( iofile < 1 ) {
+         printf( OUTPREFX "ERROR: Failed to open output file: \"%s\" (%s)\n",
+                 opts->iofileval, strerror(errno) );
+         return -1;
+      }
+      if ( opts->offset ) {
+         if ( lseek( iofile, opts->offsetval,
+                     (opts->seekfrom) ? opts->seekfromval : SEEK_SET ) < 0 ) {
+            printf( OUTPREFX "ERROR: Failed to seek output file: \"%s\" (%s)\n",
+                 opts->iofileval, strerror(errno) );
+            return -1;
+         }
+      }
+   }
+   // perform read operations until complete
+   size_t readbytes = 0;
+   while ( !(opts->bytes)  ||  readbytes < opts->bytesval ) {
+      // establish the size of this read op
+      size_t toread = 4096;
+      if ( opts->bytes  &&  (readbytes + toread) > opts->bytesval ) {
+         toread = opts->bytesval - readbytes;
+      }
+      // perform the read
+      ssize_t readres = datastream_read( stream, iobuf, toread );
+      if ( readres < 0 ) {
+         printf( OUTPREFX "ERROR: Read failure after %zu bytes read (%s)\n",
+                 readbytes, strerror(errno) );
+         if ( opts->ofile ) { close( iofile ); return -1; }
+      }
+      readbytes += readres;
+      // output the read data ( if requested )
+      if ( opts->ofile  &&  write( iofile, iobuf, readres ) != readres ) {
+         printf( OUTPREFX "ERROR: Failed to output %zd read bytes to ouput file after %zu bytes read (%s)\n", readres, readbytes, strerror(errno) );
+         close( iofile );
+         return -1;
+      }
+      // check for an under-read condition
+      if ( readres < toread ) { break; } // terminate early
+   }
+
+   // close our output file ( if present )
+   if ( opts->ofile ) {
+      if ( close( iofile ) ) {
+         printf( OUTPREFX "WARNING: Failed to close output file\n" );
+      }
+   }
+
+   // check if we failed to read all requested bytes
+   if ( opts->bytes  &&  readbytes < opts->bytesval ) {
+      printf( OUTPREFX "ERROR: Read terminated early w/ only %zu bytes read\n", readbytes );
+      return -1;
+   }
+
+   printf( OUTPREFX "%zu bytes read\n", readbytes );
+
    return 0;
 }
 
 int write_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+   // allocate 4K buffer for I/O
+   char iobuf[4096] = {0};
+   int iofile = -1;
+   if ( opts->ifile ) {
+      iofile = open( opts->iofileval, O_RDONLY );
+      if ( iofile < 1 ) {
+         printf( OUTPREFX "ERROR: Failed to open input file: \"%s\" (%s)\n",
+                 opts->iofileval, strerror(errno) );
+         return -1;
+      }
+      if ( opts->offset ) {
+         if ( lseek( iofile, opts->offsetval,
+                     (opts->seekfrom) ? opts->seekfromval : SEEK_SET ) < 0 ) {
+            printf( OUTPREFX "ERROR: Failed to seek input file: \"%s\" (%s)\n",
+                    opts->iofileval, strerror(errno) );
+            return -1;
+         }
+      }
+   }
+   // perform write operations until complete
+   size_t writebytes = 0;
+   while ( !(opts->bytes)  ||  writebytes < opts->bytesval ) {
+      // establish the size of this write op
+      size_t towrite = 4096;
+      if ( opts->bytes  &&  (writebytes + towrite) > opts->bytesval ) {
+         towrite = opts->bytesval - writebytes;
+      }
+      // read input data ( if requested )
+      ssize_t readres = towrite;
+      if ( opts->ifile ) {
+         readres = read( iofile, iobuf, towrite );
+         if ( readres < 0 ) {
+            printf( OUTPREFX "ERROR: Input file read failure after %zu bytes writen (%s)\n",
+                    writebytes, strerror(errno) );
+            if ( opts->ofile ) { close( iofile ); return -1; }
+         }
+      }
+      // write to the target stream
+      ssize_t writeres = datastream_write( stream, iobuf, readres );
+      if ( writeres != readres ) {
+         printf( OUTPREFX "ERROR: Unexpected datastream_write() of %zu bytes after %zu bytes written: %zd (%s)\n", towrite, writebytes, writeres, strerror(errno) );
+         if ( opts->ifile ) { close( iofile ); return -1; }
+      }
+      writebytes += writeres;
+      // check for an under-read condition
+      if ( readres < towrite ) { break; } // terminate early
+   }
+
+   // close our input file ( if present )
+   if ( opts->ofile ) {
+      if ( close( iofile ) ) {
+         printf( OUTPREFX "WARNING: Failed to close input file\n" );
+      }
+   }
+
+   // check if we failed to read all requested bytes
+   if ( opts->bytes  &&  writebytes < opts->bytesval ) {
+      printf( OUTPREFX "ERROR: Read terminated early w/ only %zu bytes written\n", writebytes );
+      return -1;
+   }
+
+   printf( OUTPREFX "%zu bytes written\n", writebytes );
+
+
    return 0;
 }
 
@@ -230,6 +443,10 @@ int truncate_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) 
    return 0;
 }
 
+int utime_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+   return 0;
+}
+
 int command_loop( marfs_config* config ) {
    // allocate list structures
    int streamalloc = 10;
@@ -238,7 +455,7 @@ int command_loop( marfs_config* config ) {
       printf( OUTPREFX "ERROR: Failed to allocate DATASTREAM list\n" );
       return -1;
    }
-   char** streamdesc = malloc( sizeof( char* ) * streamalloc );
+   char** streamdesc = calloc( streamalloc, sizeof( char* ) );
    if ( streamdesc == NULL ) {
       printf( OUTPREFX "ERROR: Failed to allocate stream description list\n" );
       free( streamlist );
@@ -278,6 +495,16 @@ int command_loop( marfs_config* config ) {
          printf( OUTPREFX "Terminating...\n" );
          break;
       }
+      // check for 'help' command right away
+      if ( strcmp( inputline, "help" ) == 0 ) {
+         usage( inputline );
+         continue;
+      }
+      // check for empty command right away
+      if ( strcmp( inputline, "") == 0 ) {
+         // no-op
+         continue;
+      }
       if ( repchar ) {
          parse++; // proceed to the char following ' '
       }
@@ -295,8 +522,9 @@ int command_loop( marfs_config* config ) {
          .typeval = 0,
          .bytes = 0,
          .bytesval = 0,
-         .outputfile = 0,
-         .outputfileval = NULL,
+         .ifile = 0,
+         .ofile = 0,
+         .iofileval = NULL,
          .offset = 0,
          .offsetval = 0,
          .seekfrom = 0,
@@ -394,10 +622,7 @@ int command_loop( marfs_config* config ) {
                   break;
                }
                inputopts.type = 1;
-               if ( strcasecmp( argparse, "create" ) == 0 ) {
-                  inputopts.typeval = CREATE_STREAM;
-               }
-               else if ( strcasecmp( argparse, "edit" ) == 0 ) {
+               if ( strcasecmp( argparse, "edit" ) == 0 ) {
                   inputopts.typeval = EDIT_STREAM;
                }
                else if ( strcasecmp( argparse, "read" ) == 0 ) {
@@ -406,7 +631,7 @@ int command_loop( marfs_config* config ) {
                else {
                   printf( OUTPREFX "ERROR: '-t' argument is unrecognized: \"%s\"\n",
                           argparse );
-                  printf( OUTPREFX "ERROR: Acceptable values are 'read'/'edit'/'create'\n" );
+                  printf( OUTPREFX "ERROR: Acceptable values are 'read'/'edit'\n" );
                   argerror = 1;
                   break;
                }
@@ -427,16 +652,30 @@ int command_loop( marfs_config* config ) {
                inputopts.bytes = 1;
                inputopts.bytesval = (size_t)parseval;
                break;
-            case 'o':
-               if ( inputopts.outputfile ) {
-                  printf( OUTPREFX "ERROR: Duplicate '-o' argument detected\n" );
+            case 'i':
+               if ( inputopts.ifile  ||  inputopts.ofile ) {
+                  printf( OUTPREFX "ERROR: Duplicate 'iofile' argument detected\n" );
                   argerror = 1;
                   break;
                }
-               inputopts.outputfile = 1;
-               inputopts.outputfileval = strdup( argparse );
-               if ( inputopts.outputfileval == NULL ) {
-                  printf( OUTPREFX "ERROR: Failed to allocate space for 'outputfile' value: \"%s\"\n", argparse );
+               inputopts.ifile = 1;
+               inputopts.iofileval = strdup( argparse );
+               if ( inputopts.iofileval == NULL ) {
+                  printf( OUTPREFX "ERROR: Failed to allocate space for 'iofile' value: \"%s\"\n", argparse );
+                  argerror = 1;
+                  break;
+               }
+               break;
+            case 'o':
+               if ( inputopts.ifile  ||  inputopts.ofile ) {
+                  printf( OUTPREFX "ERROR: Duplicate 'iofile' argument detected\n" );
+                  argerror = 1;
+                  break;
+               }
+               inputopts.ofile = 1;
+               inputopts.iofileval = strdup( argparse );
+               if ( inputopts.iofileval == NULL ) {
+                  printf( OUTPREFX "ERROR: Failed to allocate space for 'iofile' value: \"%s\"\n", argparse );
                   argerror = 1;
                   break;
                }
@@ -535,7 +774,7 @@ int command_loop( marfs_config* config ) {
 
       // resolve a target stream, if specified
       if ( inputopts.streamnum ) {
-         tgtstream = inputopts.streamnum;
+         tgtstream = inputopts.streamnumval;
       }
       if ( tgtstream + 1 > streamalloc ) {
          // need to expand our stream allocation
@@ -547,39 +786,313 @@ int command_loop( marfs_config* config ) {
             free_argopts( &(inputopts) );
             return -1;
          }
+         streamdesc = realloc( streamdesc, (tgtstream + 1) * sizeof(char*) );
+         if ( streamdesc == NULL ) {
+            printf( OUTPREFX "ERROR: Failed to allocate expanded stream description list\n" );
+            free( streamlist );
+            free_argopts( &(inputopts) );
+            return -1;
+         }
          // zero out any added entries
          bzero( streamlist + streamalloc, sizeof(DATASTREAM) * ( (tgtstream + 1) - streamalloc ) );
+         bzero( streamdesc + streamalloc, sizeof(char*) * ( (tgtstream + 1) - streamalloc ) );
          streamalloc = (tgtstream + 1);
       }
 
       // TODO command execution
       if ( strcmp( inputline, "create" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path == 0  ||  inputopts.mode == 0 ) {
+            printf( OUTPREFX "ERROR: Missing required arguments for a 'create' op\n" );
+            usage( inputline );
+         }
+         else if ( inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+                   inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+                   inputopts.chunknum  ||  inputopts.length ) {
+            printf( OUTPREFX "ERROR: Specified args are not supported for a 'create' op\n" );
+            usage( inputline );
+         }
+         else if ( create_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            // create success, update stream description
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+            int strlen = snprintf( NULL, 0, "CREATE: \"%s\"", inputopts.pathval );
+            *(streamdesc + tgtstream) = malloc( sizeof(char) * (strlen + 1) );
+            if ( *(streamdesc + tgtstream) == NULL ) {
+               printf( OUTPREFX "ERROR: Failed to allocate stream description string\n" );
+            }
+            else {
+               snprintf( *(streamdesc + tgtstream), strlen + 1, "CREATE: \"%s\"",
+                         inputopts.pathval );
+               retval = 0; // note success
+            }
+         }
+         else if ( errno = EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
+            printf( OUTPREFX "ERROR: Stream %d has been rendered unusable\n", tgtstream );
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+         }
       }
       else if ( strcmp( inputline, "open" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path == 0  ||  inputopts.type == 0 ) {
+            printf( OUTPREFX "ERROR: Missing required arguments for an 'open' op\n" );
+            usage( inputline );
+         }
+         else if ( inputopts.mode  ||  inputopts.bytes  ||  inputopts.ifile ||
+                   inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+                   inputopts.chunknum  ||  inputopts.length  ||  inputopts.ctag ) {
+            printf( OUTPREFX "ERROR: Specified args are not supported for an 'open' op\n" );
+            usage( inputline );
+         }
+         else if ( open_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            // open success, update stream description
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+            int strlen;
+            if ( inputopts.typeval == READ_STREAM ) {
+               strlen = snprintf( NULL, 0, "READ: \"%s\"", inputopts.pathval );
+            }
+            else {
+               strlen = snprintf( NULL, 0, "EDIT: \"%s\"", inputopts.pathval );
+            }
+            *(streamdesc + tgtstream) = malloc( sizeof(char) * (strlen + 1) );
+            if ( *(streamdesc + tgtstream) == NULL ) {
+               printf( OUTPREFX "ERROR: Failed to allocate stream description string\n" );
+            }
+            else {
+               if ( inputopts.typeval == READ_STREAM ) {
+                  snprintf( *(streamdesc + tgtstream), strlen + 1, "READ: \"%s\"",
+                            inputopts.pathval );
+               }
+               else {
+                  snprintf( *(streamdesc + tgtstream), strlen + 1, "EDIT: \"%s\"",
+                            inputopts.pathval );
+               }
+               retval = 0; // note success
+            }
+         }
+         else if ( errno = EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
+            printf( OUTPREFX "ERROR: Stream %d has been rendered unusable\n", tgtstream );
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+         }
       }
       else if ( strcmp( inputline, "release" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum  ||  inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'release' op supports only the '-s' arg\n" );
+            usage( inputline );
+         }
+         else if ( release_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            // release success, delete stream description
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+            retval = 0; // note success
+         }
       }
       else if ( strcmp( inputline, "close" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum  ||  inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'close' op supports only the '-s' arg\n" );
+            usage( inputline );
+         }
+         else if ( close_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            // close success, delete stream description
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+            retval = 0; // note success
+         }
       }
       else if ( strcmp( inputline, "read" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.ifile  ||  inputopts.type  ||  inputopts.chunknum  ||
+              inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'read' op does not support all provided args\n" );
+            usage( inputline );
+         }
+         else if ( !(inputopts.ofile) &&  inputopts.offset ) {
+            printf( OUTPREFX "ERROR: The 'offset' arg requires the 'iofile' arg\n" );
+         }
+         else if ( !(inputopts.offset)  &&  inputopts.seekfrom ) {
+            printf( OUTPREFX "ERROR: The 'seekfrom' arg requires the 'offset' arg\n" );
+         }
+         else if ( read_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            retval = 0; // note success
+         }
+         else if ( errno = EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
+            printf( OUTPREFX "ERROR: Stream %d has been rendered unusable\n", tgtstream );
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+         }
       }
       else if ( strcmp( inputline, "write" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.ofile  ||  inputopts.type  ||  inputopts.chunknum  ||
+              inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'write' op does not support all provided args\n" );
+            usage( inputline );
+         }
+         else if ( !(inputopts.ifile) &&  inputopts.offset ) {
+            printf( OUTPREFX "ERROR: The 'offset' arg requires the 'iofile' arg\n" );
+         }
+         else if ( !(inputopts.offset)  &&  inputopts.seekfrom ) {
+            printf( OUTPREFX "ERROR: The 'seekfrom' arg requires the 'offset' arg\n" );
+         }
+         else if ( write_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            retval = 0; // note success
+         }
+         else if ( errno = EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
+            printf( OUTPREFX "ERROR: Stream %d has been rendered unusable\n", tgtstream );
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+         }
       }
       else if ( strcmp( inputline, "setrpath" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum  ||  inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'setrpath' op supports only the '-s'/'-p' args\n" );
+            usage( inputline );
+         }
+         else if ( setrpath_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            retval = 0; // note success
+         }
       }
       else if ( strcmp( inputline, "seek" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  || inputopts.chunknum  ||  inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'seek' op supports only '-s'/'-@'/'-f' args\n" );
+            usage( inputline );
+         }
+         else if ( seek_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            retval = 0; // note success
+         }
+         else if ( errno = EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
+            printf( OUTPREFX "ERROR: Stream %d has been rendered unusable\n", tgtstream );
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+         }
       }
       else if ( strcmp( inputline, "chunkbounds" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'chunkbounds' op supports only '-s'/'-c' args\n" );
+            usage( inputline );
+         }
+         else if ( chunkbounds_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            retval = 0; // note success
+         }
       }
       else if ( strcmp( inputline, "extend" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum ) {
+            printf( OUTPREFX "ERROR: The 'extend' op supports only the '-s'/'-l' args\n" );
+            usage( inputline );
+         }
+         else if ( extend_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            retval = 0; // note success
+         }
+         else if ( errno = EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
+            printf( OUTPREFX "ERROR: Stream %d has been rendered unusable\n", tgtstream );
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+         }
       }
       else if ( strcmp( inputline, "truncate" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum ) {
+            printf( OUTPREFX "ERROR: The 'truncate' op supports only the '-s'/'-l' args\n" );
+            usage( inputline );
+         }
+         else if ( truncate_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            retval = 0; // note success
+         }
       }
       else if ( strcmp( inputline, "utime" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum  ||  inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'utime' op supports only the '-s'/'-i' args\n" );
+            usage( inputline );
+         }
+         else if ( utime_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            retval = 0; // note success
+         }
       }
       else if ( strcmp( inputline, "streamlist" ) == 0 ) {
+         // validate arguments
+         if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum  ||  inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'streamlist' op supports only the '-s' arg\n" );
+            usage( inputline );
+         }
+         else {
+            int ibreadth = numdigits_unsigned( streamalloc - 1 );
+            printf( "\n%d Stream Postions Allocated -- \n", streamalloc );
+            int streamindex;
+            for( streamindex = 0; streamindex < streamalloc; streamindex++ ) {
+               if ( streamindex == tgtstream ) {
+                  printf( " -> %*d -- %s\n", -(ibreadth), streamindex, *(streamdesc + streamindex) );
+               }
+               else if ( *(streamlist + streamindex)  ||  *(streamdesc + streamindex) ) {
+                  printf( "    %*d -- %s\n", -(ibreadth), streamindex, *(streamdesc + streamindex) );
+               }
+            }
+            printf( "\n" );
+         }
       }
       else {
+         printf( OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline );
       }
 
 
@@ -587,7 +1100,16 @@ int command_loop( marfs_config* config ) {
       free_argopts( &(inputopts) );
    }
 
-   // TODO release active streams
+   // release active streams and cleanup descriptions
+   for ( tgtstream = 0; tgtstream < streamalloc; tgtstream++ ) {
+      if ( *(streamlist + tgtstream) ) {
+         printf( OUTPREFX "Releasing stream %d...\n", tgtstream );
+         if ( release_command( config, streamlist + tgtstream, NULL ) == 0 ) {
+            retval = -1; // note failure
+         }
+      }
+      if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+   }
 
    // cleanup
    free( streamlist );
