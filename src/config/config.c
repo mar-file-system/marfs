@@ -2605,14 +2605,21 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
          // assume all others are either dirs or links
          if ( linkchk ) {
             // stat the current path element
-            struct stat linkst;
-            if ( mdal->stat( pos->ctxt, relpath, &(linkst), AT_SYMLINK_NOFOLLOW ) ) {
+            errno = 0;
+            struct stat linkst = {
+               .st_mode = 0,
+               .st_size = 0
+            };
+            // NOTE -- stat() failure with ENOENT is acceptable, as a non-existent files
+            //         are definitely not symlinks
+            if ( mdal->stat( pos->ctxt, relpath, &(linkst), AT_SYMLINK_NOFOLLOW )  &&
+                 errno != ENOENT ) {
                LOG( LOG_ERR, "Failed to stat relative path: \"%s\"\n", relpath );
                if ( replacechar ) { *parsepath = '/'; } // undo any previous edit
                return -1;
             }
-            size_t linksize = linkst.st_size;
             if ( S_ISLNK(linkst.st_mode) ) {
+               size_t linksize = linkst.st_size;
                LOG( LOG_INFO, "Subpath is a symlink: \"%s\"\n", relpath );
                if ( linksize == 0 ) {
                   LOG( LOG_ERR, "Empty content of link: \"%s\"\n", relpath );

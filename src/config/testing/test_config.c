@@ -957,8 +957,8 @@ int main(int argc, char **argv)
    }
    errno = 0;
    travdepth = config_traverse( config, &(pos), &(travbuf), 1 );
-   if ( travdepth != -1  ||  errno != ENOENT ) {
-      printf( "Unexpected success of brokenlink traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
+   if ( travdepth != 2 ) {
+      printf( "Failure of brokenlink traversal: \"%s\" (depth: %d)\n", travbuf, travdepth );
       return -1;
    }
    if ( strcmp( travbuf, "subdir/../noexist/../subdir/tgtfile" ) ) {
