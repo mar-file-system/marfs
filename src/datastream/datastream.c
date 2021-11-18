@@ -1138,18 +1138,22 @@ int completefile( DATASTREAM stream, STREAMFILE* file ) {
       LOG( LOG_ERR, "Tgt file is already closed\n" );
       return -1;
    }
+   // shorthand references
+   const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // check for an extended file from a create stream
    if ( (file->ftag.state & FTAG_WRITEABLE)  &&  stream->type == CREATE_STREAM ) {
       LOG( LOG_ERR, "Cannot complete extended file from original create stream\n" );
+      ms->mdal->close( file->metahandle );
+      file->metahandle = NULL; // NULL out this handle, so that we never double close()
       return -1;
    }
    // check for a non-finalized file from an edit stream
    if ( (file->ftag.state & FTAG_DATASTATE) != FTAG_FIN  &&  stream->type == EDIT_STREAM ) {
       LOG( LOG_ERR, "Cannot complete non-finalized file from edit stream\n" );
+      ms->mdal->close( file->metahandle );
+      file->metahandle = NULL; // NULL out this handle, so that we never double close()
       return -1;
    }
-   // shorthand references
-   const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // set ftag to readable and complete state
    file->ftag.state = ( FTAG_COMP | FTAG_READABLE ) | ( file->ftag.state & ~(FTAG_DATASTATE) );
    // update the ftag availbytes to reflect the actual data bytes
@@ -2398,7 +2402,6 @@ int datastream_chunkbounds( DATASTREAM* stream, int chunknum, off_t* offset, siz
    }
    // identify the start position info for the current file
    DATASTREAM tgtstream = *stream;
-   STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
    DATASTREAM_POSITION streampos = {
       .totaloffset = 0,
       .dataremaining = 0,
@@ -2409,7 +2412,7 @@ int datastream_chunkbounds( DATASTREAM* stream, int chunknum, off_t* offset, siz
       .dataperobj = 0
    };
    if ( gettargets( tgtstream, 0, SEEK_SET, &(streampos) ) ) {
-      LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", curfile->ftag.fileno );
+      LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", (tgtstream->files + tgtstream->curfile)->ftag.fileno );
       return -1;
    }
    streampos.offset -= tgtstream->recoveryheaderlen; // adjust offset to ignore recovery info

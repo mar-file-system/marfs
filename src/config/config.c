@@ -650,11 +650,9 @@ int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
  * @return int : Zero on success, -1 on error
  */
 int parse_size_node( size_t* target, xmlNode* node ) {
-   // note the node name, just for logging messages
-   char* nodename = (char*)node->name;
    // check for unexpected node format
    if ( node->children == NULL  ||  node->children->type != XML_TEXT_NODE ) {
-      LOG( LOG_ERR, "unexpected format of size node: \"%s\"\n", nodename );
+      LOG( LOG_ERR, "unexpected format of size node: \"%s\"\n", (char*)node->name );
       return -1;
    }
    // check for an included value
@@ -671,22 +669,22 @@ int parse_size_node( size_t* target, xmlNode* node ) {
          else if ( *endptr == 'T' ) { unitmult = 1099511627776ULL; }
          else if ( *endptr == 'P' ) { unitmult = 1125899906842624ULL; }
          else {
-            LOG( LOG_ERR, "encountered unrecognized character in \"%s\" value: \"%c\"", nodename, *endptr );
+            LOG( LOG_ERR, "encountered unrecognized character in \"%s\" value: \"%c\"", (char*)node->name, *endptr );
             return -1;
          }
          // check for unacceptable trailing characters
          endptr++;
          if ( *endptr != '\0' ) {
-            LOG( LOG_ERR, "encountered unrecognized trailing character in \"%s\" value: \"%c\"", nodename, *endptr );
+            LOG( LOG_ERR, "encountered unrecognized trailing character in \"%s\" value: \"%c\"", (char*)node->name, *endptr );
             return -1;
          }
       }
       if ( (parsevalue * unitmult) >= SIZE_MAX ) {  // check for possible overflow
-         LOG( LOG_ERR, "specified \"%s\" value is too large to store: \"%s\"\n", nodename, valuestr );
+         LOG( LOG_ERR, "specified \"%s\" value is too large to store: \"%s\"\n", (char*)node->name, valuestr );
          return -1;
       }
       // actually store the value
-      LOG( LOG_INFO, "detected value of %llu with unit of %zu for \"%s\" node\n", parsevalue, unitmult, nodename );
+      LOG( LOG_INFO, "detected value of %llu with unit of %zu for \"%s\" node\n", parsevalue, unitmult, (char*)node->name );
       *target = (parsevalue * unitmult);
       return 0;
    }
@@ -702,8 +700,6 @@ int parse_size_node( size_t* target, xmlNode* node ) {
  * @return int : Zero on success, -1 on error
  */
 int parse_int_node( int* target, xmlNode* node ) {
-   // note the node name, just for logging messages
-   char* nodename = (char*)node->name;
    // check for an included value
    if ( node->children != NULL  &&
         node->children->type == XML_TEXT_NODE  &&
@@ -713,18 +709,18 @@ int parse_int_node( int* target, xmlNode* node ) {
       unsigned long long parsevalue = strtoull( valuestr, &(endptr), 10 );
       // check for any trailing unit specification
       if ( *endptr != '\0' ) {
-         LOG( LOG_ERR, "encountered unrecognized trailing character in \"%s\" value: \"%c\"", nodename, *endptr );
+         LOG( LOG_ERR, "encountered unrecognized trailing character in \"%s\" value: \"%c\"", (char*)node->name, *endptr );
          return -1;
       }
       if ( parsevalue >= INT_MAX ) {  // check for possible overflow
-         LOG( LOG_ERR, "specified \"%s\" value is too large to store: \"%s\"\n", nodename, valuestr );
+         LOG( LOG_ERR, "specified \"%s\" value is too large to store: \"%s\"\n", (char*)node->name, valuestr );
          return -1;
       }
       // actually store the value
       *target = parsevalue;
       return 0;
    }
-   LOG( LOG_ERR, "failed to identify a value string within the \"%s\" definition\n", nodename );
+   LOG( LOG_ERR, "failed to identify a value string within the \"%s\" definition\n", (char*)node->name );
    return -1;
 }
 
@@ -1146,8 +1142,6 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
  * @return HASH_TABLE : Newly created HASH_TABLE, or NULL if a failure occurred
  */
 HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
-   // get the node name, just for the sake of log messages
-   char* distname = (char*)distroot->name;
    // iterate over attributes, looking for cnt and dweight values
    int dweight = 1;
    size_t nodecount = 0;
@@ -1162,7 +1156,7 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
             attrval = (char*)attr->children->content;
          }
          else {
-            LOG( LOG_ERR, "encountered an unrecognized '%s' value for %s distribution\n", attrtype, distname );
+            LOG( LOG_ERR, "encountered an unrecognized '%s' value for %s distribution\n", attrtype, (char*)distroot->name );
             errno = EINVAL;
             return NULL;
          }
@@ -1171,7 +1165,7 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
          if ( strncmp( attrtype, "cnt", 4 ) == 0 ) {
             if ( nodecount != 0 ) {
                // we already found a 'cnt'
-               LOG( LOG_ERR, "encountered a duplicate 'cnt' value for %s distribution\n", distname );
+               LOG( LOG_ERR, "encountered a duplicate 'cnt' value for %s distribution\n", (char*)distroot->name );
                errno = EINVAL;
                return NULL;
             }
@@ -1179,20 +1173,20 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
          else if ( strncmp( attrtype, "dweight", 8 ) == 0 ) {
             if ( dweight != 1 ) {
                // we already found a 'dweight' ( note - this will fail to detect prior dweight='1' )
-               LOG( LOG_ERR, "encountered a duplicate 'dweight' value for %s distribution\n", distname );
+               LOG( LOG_ERR, "encountered a duplicate 'dweight' value for %s distribution\n", (char*)distroot->name );
                errno = EINVAL;
                return NULL;
             }
          }
          else {
             // reject any unrecognized attributes
-            LOG( LOG_WARNING, "ignoring unrecognized '%s' attr of %s distribution\n", attrtype, distname );
+            LOG( LOG_WARNING, "ignoring unrecognized '%s' attr of %s distribution\n", attrtype, (char*)distroot->name );
             attrval = NULL; // don't try to interpret
          }
       }
       else {
          // not even certain this is possible; warn just in case our config is in a very odd state
-         LOG( LOG_WARNING, "encountered an unrecognized property of %s distribution\n", distname );
+         LOG( LOG_WARNING, "encountered an unrecognized property of %s distribution\n", (char*)distroot->name );
       }
 
       // if we found a new attribute value, parse it
@@ -1200,13 +1194,13 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
          char* endptr = NULL;
          unsigned long long parseval = strtoull( attrval, &(endptr), 10 );
          if ( *endptr != '\0' ) {
-            LOG( LOG_ERR, "detected a trailing '%c' character in '%s' value for %s distribution\n", *endptr, attrtype, distname );
+            LOG( LOG_ERR, "detected a trailing '%c' character in '%s' value for %s distribution\n", *endptr, attrtype, (char*)distroot->name );
             errno = EINVAL;
             return NULL;
          }
          // check for possible value overflow
          if ( parseval >= INT_MAX ) {
-            LOG( LOG_ERR, "%s distribution has a '%s' value which exceeds memory bounds: \"%s\"\n", distname, attrtype, attrval );
+            LOG( LOG_ERR, "%s distribution has a '%s' value which exceeds memory bounds: \"%s\"\n", (char*)distroot->name, attrtype, attrval );
             errno = EINVAL;
             return NULL;
          }
@@ -1224,7 +1218,7 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
    // all attributes of this distribution have been parsed
    // make sure we have the required 'cnt' value
    if ( nodecount == 0 ) {
-      LOG( LOG_ERR, "failed to identify a valid 'cnt' of %s distribution\n", distname );
+      LOG( LOG_ERR, "failed to identify a valid 'cnt' of %s distribution\n", (char*)distroot->name );
       errno = EINVAL;
       return NULL;
    }
@@ -1232,7 +1226,7 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
    // allocate space for all hash nodes
    HASH_NODE* nodelist = malloc( sizeof(HASH_NODE) * nodecount );
    if ( nodelist == NULL ) {
-      LOG( LOG_ERR, "failed to allocate space for hash nodes of %s distribution\n", distname );
+      LOG( LOG_ERR, "failed to allocate space for hash nodes of %s distribution\n", (char*)distroot->name );
       return NULL;
    }
 
@@ -1245,11 +1239,11 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
       int namelen = snprintf( NULL, 0, "%zu", curnode );
       nodelist[curnode].name = malloc( sizeof(char) * (namelen + 1) );
       if ( nodelist[curnode].name == NULL ) {
-         LOG( LOG_ERR, "failed to allocate space for node names of %s distribution\n", distname );
+         LOG( LOG_ERR, "failed to allocate space for node names of %s distribution\n", (char*)distroot->name );
          break;
       }
       if ( snprintf( nodelist[curnode].name, namelen + 1, "%zu", curnode ) > namelen ) {
-         LOG( LOG_ERR, "failed to populate nodename \"%zu\" of %s distribution\n", curnode, distname );
+         LOG( LOG_ERR, "failed to populate nodename \"%zu\" of %s distribution\n", curnode, (char*)distroot->name );
          errno = EFAULT;
          free( nodelist[curnode].name );
          break;
@@ -1279,13 +1273,13 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
          unsigned long long parseval = strtoull( weightstr, &(endptr), 10 );
          // perform checks for invalid trailing characters
          if ( tgtnode == nodecount  &&  *endptr != '=' ) {
-            LOG( LOG_ERR, "improperly formatted node definition for %s distribution\n", distname );
+            LOG( LOG_ERR, "improperly formatted node definition for %s distribution\n", (char*)distroot->name );
             errno = EINVAL;
             errorflag = 1;
             break;
          }
          else if ( tgtnode != nodecount  &&  *endptr != ','  &&  *endptr != '\0' ) {
-            LOG( LOG_ERR, "improperly formatted weight value of node %zu for %s distribution\n", tgtnode, distname );
+            LOG( LOG_ERR, "improperly formatted weight value of node %zu for %s distribution\n", tgtnode, (char*)distroot->name );
             errno = EINVAL;
             errorflag = 1;
             break;
@@ -1296,7 +1290,7 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
             // this is a definition of target node
             // check for an out of bounds value
             if ( parseval >= nodecount ) {
-               LOG( LOG_ERR, "%s distribution has a node value which exceeds the defined limit of %zu\n", distname, nodecount );
+               LOG( LOG_ERR, "%s distribution has a node value which exceeds the defined limit of %zu\n", (char*)distroot->name, nodecount );
                errno = EINVAL;
                errorflag = 1;
                break;
@@ -1307,7 +1301,7 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
             // this is a weight definition
             // check for an out of bounds value
             if ( parseval >= INT_MAX ) {
-               LOG( LOG_ERR, "%s distribution has a weight value for node %zu which exceeds memory limits\n", distname, tgtnode );
+               LOG( LOG_ERR, "%s distribution has a weight value for node %zu which exceeds memory limits\n", (char*)distroot->name, tgtnode );
                errno = EINVAL;
                errorflag = 1;
                break;
@@ -1323,7 +1317,7 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
          weightstr = (endptr + 1);
       }
       if ( tgtnode != nodecount ) {
-         LOG( LOG_ERR, "%s distribution has node %zu reference, but no defined weight value\n", distname, tgtnode );
+         LOG( LOG_ERR, "%s distribution has node %zu reference, but no defined weight value\n", (char*)distroot->name, tgtnode );
          errno = EINVAL;
          errorflag = 1;
       }
@@ -1344,7 +1338,7 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
    HASH_TABLE table = hash_init( nodelist, nodecount, 0 ); // NOT a lookup table
    // verify success
    if ( table == NULL ) {
-      LOG( LOG_ERR, "failed to initialize hash table for %s distribution\n", distname );
+      LOG( LOG_ERR, "failed to initialize hash table for %s distribution\n", (char*)distroot->name );
       // free all name strings
       size_t freenode;
       for ( freenode = 0; freenode < nodecount; freenode++ ) {
@@ -2159,6 +2153,7 @@ marfs_config* config_init( const char* cpath ) {
    if ( doc == NULL ) {
       LOG( LOG_ERR, "Failed to parse the given XML config file: \"%s\"\n", cpath );
       xmlCleanupParser();
+      errno = EINVAL;
       return NULL;
    }
    // get the root element node

@@ -130,6 +130,14 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
           "Print out the location of the specified object",
           "       -n chunknum : Specifies a specific data chunk\n" )
 
+   USAGE( "bounds",
+          "",
+          "Identify the boundaries of the current stream", "" )
+
+   USAGE( "ns",
+          "",
+          "Print the current MarFS namespace target of this program", "" )
+
    USAGE( "( exit | quit )",
           "",
           "Terminate", "" )
@@ -143,7 +151,7 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
 
-int populate_ftag( marfs_config* config, marfs_position* pos, FTAG* ftag, const char* path, const char* rpath ) {
+int populate_ftag( marfs_config* config, marfs_position* pos, FTAG* ftag, const char* path, const char* rpath, char prout ) {
    char* modpath = NULL;
    if ( path != NULL ) {
       // perform path traversal to identify marfs position
@@ -152,11 +160,15 @@ int populate_ftag( marfs_config* config, marfs_position* pos, FTAG* ftag, const 
          printf( OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", path );
          return -1;
       }
+      marfs_ns* oldns = pos->ns;
       if ( config_traverse( config, pos, &(modpath), 1 ) < 0 ) {
          printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
                  path );
          free( modpath );
          return -1;
+      }
+      if ( oldns != pos->ns ) {
+         printf( "New Namespace Target : \"%s\"\n", pos->ns->idstr );
       }
    }
 
@@ -210,12 +222,17 @@ int populate_ftag( marfs_config* config, marfs_position* pos, FTAG* ftag, const 
       free( ftagstr );
       return -1;
    }
+   else if (prout) {
+      printf( OUTPREFX "Successfully populated FTAG values for target %s file: \"%s\"\n",
+              (rpath) ? "ref" : "user", (rpath) ? rpath : path );
+   }
    free( ftagstr );
    return 0;
 }
 
 
 int open_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
+   printf( "\n" );
    // parse args
    char curarg = '\0';
    char* userpath = NULL;
@@ -277,13 +294,15 @@ int open_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* a
    }
 
    // populate our FTAG and cleanup strings
-   int retval = populate_ftag( config, pos, ftag, userpath, refpath );
+   int retval = populate_ftag( config, pos, ftag, userpath, refpath, 1 );
+   printf( "\n" );
    if ( userpath ) { free( userpath ); }
    if ( refpath ) { free( refpath ); }
    return retval;
 }
 
 int shift_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
+   printf( "\n" );
    // verify that we have an FTAG value
    if ( ftag->streamid == NULL ) {
       printf( OUTPREFX "ERROR: No FTAG target to shift from\n" );
@@ -375,7 +394,8 @@ int shift_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
       return -1;
    }
 
-   int retval = populate_ftag( config, pos, ftag, NULL, newrpath );
+   int retval = populate_ftag( config, pos, ftag, NULL, newrpath, 1 );
+   printf( "\n" );
    if ( retval ) { ftag->fileno = origfileno; }
    free( newrpath );
 
@@ -383,6 +403,7 @@ int shift_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
 }
 
 int ftag_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
+   printf( "\n" );
    // verify that we have an FTAG value
    if ( ftag->streamid == NULL ) {
       printf( OUTPREFX "ERROR: No current FTAG target\n" );
@@ -405,7 +426,6 @@ int ftag_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* a
    }
    else if ( (ftag->state & FTAG_READABLE) ) { dataaccessstr = "READ-ONLY"; }
    // print out all FTAG values
-   printf( "\n" );
    printf( "Stream Info --\n" );
    printf( " Client Tag : %s\n", ftag->ctag );
    printf( " Stream ID  : %s\n", ftag->streamid );
@@ -432,14 +452,227 @@ int ftag_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* a
 }
 
 int ref_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
+   printf( "\n" );
+   // verify that we have an FTAG value
+   if ( ftag->streamid == NULL ) {
+      printf( OUTPREFX "ERROR: No FTAG target to shift from\n" );
+      return -1;
+   }
+
+   // generate a ref path for the new target file
+   char* curpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
+   if ( curpath == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to identify current ref path\n" );
+      return -1;
+   }
+
+   // print out the generated path
+   printf( "Metadata Ref Path : %s\n", curpath );
+   printf( "Sanitized Path    :  " );
+   char* parsepath = curpath;
+   while ( *parsepath != '\0' ) {
+      if ( *parsepath == '*'  ||  *parsepath == '|'  ||  *parsepath == '&' ) {
+         // escape all problem chars
+         printf( "\\" );
+      }
+      printf( "%c", *parsepath );
+      parsepath++;
+   }
+   printf( "\n\n" );
+
+   free( curpath );
+
    return 0;
 }
 
 int obj_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
+   printf( "\n" );
+   // verify that we have an FTAG value
+   if ( ftag->streamid == NULL ) {
+      printf( OUTPREFX "ERROR: No current FTAG target\n" );
+      return -1;
+   }
+
+   // parse args
+   char curarg = '\0';
+   ssize_t chunknum = -1;
+   char* parse = strtok( args, " " );
+   while ( parse ) {
+      if ( curarg == '\0' ) {
+         if ( strcmp( parse, "-n" ) == 0 ) {
+            curarg = 'n';
+         }
+         else {
+            printf( OUTPREFX "ERROR: Unrecognized argument for 'obj' command: '%s'\n", parse );
+            return -1;
+         }
+      }
+      else { // == 'n'
+         // parse the numeric arg
+         char* endptr = NULL;
+         long long parseval = strtoll( parse, &(endptr), 0 );
+         if ( *endptr != '\0' ) {
+            printf( OUTPREFX "ERROR: Expected pure numeric argument for '-%c': \"%s\"\n",
+                    curarg, parse );
+            return -1;
+         }
+
+         if ( chunknum != -1 ) {
+            printf( OUTPREFX "ERROR: Detected duplicate '-n' arg: \"%s\"\n", parse );
+            return -1;
+         }
+         if ( parseval < 0 ) {
+            printf( OUTPREFX "ERROR: Negative chunknum value: \"%lld\"\n", parseval );
+            return -1;
+         }
+         chunknum = parseval;
+         curarg = '\0';
+      }
+
+      // progress to the next arg
+      parse = strtok( NULL, " " );
+   }
+
+
+   // identify object bounds of the current file
+   RECOVERY_HEADER header = {
+      .majorversion = RECOVERY_CURRENT_MAJORVERSION,
+      .minorversion = RECOVERY_CURRENT_MINORVERSION,
+      .ctag = ftag->ctag,
+      .streamid = ftag->streamid
+   };
+   size_t headerlen = recovery_headertostr( &(header), NULL, 0 ); 
+   if ( headerlen < 1 ) {
+      printf( OUTPREFX "ERROR: Failed to identify recovery header length for file\n" );
+      headerlen = 0;
+   }
+   size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
+   size_t fileobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
+   // special case check
+   if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+        (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0 ) {
+      // if we exactly align to object bounds AND the file is FINALIZED,
+      //   we've overestimated by one object
+      fileobjbounds--;
+   }
+
+   if ( chunknum > fileobjbounds ) {
+      printf( OUTPREFX "WARNING: Specified object number exceeds file limits ( selecting object %zu instead )\n", fileobjbounds );
+      chunknum = fileobjbounds;
+   }
+
+   // iterate over appropriate objects
+   size_t curobj = 0;
+   if ( chunknum >= 0 ) { curobj = chunknum; }
+   else { chunknum = fileobjbounds; }
+   for ( ; curobj <= chunknum; curobj++ ) {
+      // identify the object target
+      char* objname = NULL;
+      ne_erasure erasure;
+      ne_location location;
+      FTAG curtag = *ftag;
+      curtag.objno += curobj;
+      if ( datastream_objtarget( &(curtag), &(pos->ns->prepo->datascheme), &(objname), &(erasure), &(location) ) ) {
+         printf( OUTPREFX "ERROR: Failed to identify data info for chunk %zu\n", curobj );
+         continue;
+      }
+      // print object info
+      printf( "Obj#%-5zu\n   Pod: %d\n   Cap:%d\n   Scatter:%d\n   ObjName: %s\n   SanitizedName: ", curobj, location.pod, location.cap, location.scatter, objname );
+      // print sanitized object name
+      char* parsepath = objname;
+      while ( *parsepath != '\0' ) {
+         if ( *parsepath == '*'  ||  *parsepath == '|'  ||  *parsepath == '&' ) {
+            // escape all problem chars
+            printf( "\\" );
+         }
+         printf( "%c", *parsepath );
+         parsepath++;
+      }
+      printf( "\n" );
+      free( objname );
+   }
+   printf( "\n" );
+   
+   return 0;
+}
+
+int bounds_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
+   printf( "\n" );
+   // verify that we have an FTAG value
+   if ( ftag->streamid == NULL ) {
+      printf( OUTPREFX "ERROR: No current FTAG target\n" );
+      return -1;
+   }
+
+   // iterate over files until we find EOS
+   int retval = 0;
+   size_t origfileno = ftag->fileno;
+   while ( ftag->endofstream == 0  &&  retval == 0  &&
+           (ftag->state & FTAG_DATASTATE) >= FTAG_FIN ) {
+      // progress to the next file
+      ftag->fileno++;
+      // generate a ref path for the new target file
+      char* newrpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
+      if ( newrpath == NULL ) {
+         printf( OUTPREFX "ERROR: Failed to identify new ref path\n" );
+         ftag->fileno = origfileno;
+         return -1;
+      }
+      // retrieve the FTAG of the new target
+      retval = populate_ftag( config, pos, ftag, NULL, newrpath, 0 );
+      if ( retval ) { ftag->fileno--; } // if we couldn't retrieve this, go to previous
+      free( newrpath );
+   }
+
+   // identify object bounds of final file
+   RECOVERY_HEADER header = {
+      .majorversion = RECOVERY_CURRENT_MAJORVERSION,
+      .minorversion = RECOVERY_CURRENT_MINORVERSION,
+      .ctag = ftag->ctag,
+      .streamid = ftag->streamid
+   };
+   size_t headerlen = recovery_headertostr( &(header), NULL, 0 ); 
+   if ( headerlen < 1 ) {
+      printf( OUTPREFX "ERROR: Failed to identify recovery header length for final file\n" );
+      headerlen = 0;
+   }
+   size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
+   size_t finobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
+   // special case check
+   if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+        (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0 ) {
+      // if we exactly align to object bounds AND the file is FINALIZED,
+      //   we've overestimated by one object
+      finobjbounds--;
+   }
+
+   // print out stream boundaries
+   char* eosreason = "End of Stream";
+   if ( retval ) { eosreason = "Failed to Identify Subsequent File"; }
+   else if ( (ftag->state & FTAG_DATASTATE) < FTAG_FIN ) {
+      eosreason = "Unfinished File";
+   }
+   printf( "File Bounds:\n   0 -- Initial File\n     to\n   %zu -- %s\n",
+           ftag->fileno, eosreason );
+   printf( "Object Bounds:\n   0 -- Initial Object\n     to\n   %zu -- End of Final File\n",
+           ftag->objno + finobjbounds );
+   // restore the original value
+   ftag->fileno = origfileno;
+   char* newrpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
+   if ( newrpath == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to identify original ref path\n" );
+      return -1;
+   }
+   // retrieve the FTAG of the new target
+   retval = populate_ftag( config, pos, ftag, NULL, newrpath, 0 );
+   free( newrpath );
+   printf( "\n" );
+
    return 0;
 }
 
 int refresh_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
+   printf( "\n" );
    // verify that we have an FTAG value
    if ( ftag->streamid == NULL ) {
       printf( OUTPREFX "ERROR: No FTAG target to shift from\n" );
@@ -459,7 +692,8 @@ int refresh_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char
       return -1;
    }
 
-   int retval = populate_ftag( config, pos, ftag, NULL, newrpath );
+   int retval = populate_ftag( config, pos, ftag, NULL, newrpath, 1 );
+   printf( "\n" );
    free( newrpath );
 
    return retval;
@@ -482,6 +716,7 @@ int command_loop( marfs_config* config ) {
       printf( OUTPREFX "ERROR: Failed to establish MDAL ctxt for the MarFS root\n" );
       return -1;
    }
+   printf( "Initial Namespace Target : \"%s\"\n", pos.ns->idstr );
 
    // infinite loop, processing user commands
    printf( OUTPREFX "Ready for user commands\n" );
@@ -567,12 +802,22 @@ int command_loop( marfs_config* config ) {
             retval = 0; // note success
          }
       }
+      else if ( strcmp( inputline, "bounds" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         if ( bounds_command( config, &(pos), &(ftag), parse ) == 0 ) {
+            retval = 0; // note success
+         }
+      }
       else if ( strcmp( inputline, "refresh" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
          if ( refresh_command( config, &(pos), &(ftag), parse ) == 0 ) {
             retval = 0; // note success
          }
+      }
+      else if ( strcmp( inputline, "ns" ) == 0 ) {
+         printf( "\nCurrent Namespace Target : \"%s\"\n\n", pos.ns->idstr );
       }
       else {
          printf( OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline );

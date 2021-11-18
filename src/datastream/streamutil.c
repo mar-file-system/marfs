@@ -140,11 +140,12 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
    USAGE( "create",
-          "[-s stream-num] -p path -m mode [-c ctag]",
+          "[-s stream-num] -p path [-m mode] [-c ctag]",
           "Create a new file, associated with the given datastream",
           "       -s stream-num : Specifies a new stream target for this operation\n"
           "       -p path       : Path of the file to be created\n"
           "       -m mode       : Mode value of the file to be created ( octal )\n"
+          "                        If omitted, a value of 0600 will be used\n"
           "       -c ctag       : Specified a Client Tag string for a new datastream\n" )
 
    USAGE( "open",
@@ -226,6 +227,10 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
           "[-s stream-num]",
           "Print a list of all active datastream references", "" )
 
+   USAGE( "ns",
+          "",
+          "Print the current MarFS namespace target of this program", "" )
+
    USAGE( "( exit | quit )",
           "",
           "Terminate ( active streams will be released )", "" )
@@ -238,12 +243,17 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 #undef USAGE
 }
 
-int create_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int create_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // check for required args
-   if ( !(opts->path)  ||  !(opts->mode) ) {
-      printf( OUTPREFX "ERROR: 'create' command is missing required '-p'/'-m' args\n" );
+   if ( !(opts->path) ) {
+      printf( OUTPREFX "ERROR: 'create' command is missing required '-p' arg\n" );
       usage( "help create" );
       return -1;
+   }
+   if ( !(opts->mode) ) {
+      // populate a default mode value
+      opts->modeval = 0600;
    }
    // perform path traversal to identify marfs position
    char* modpath = strdup( opts->pathval );
@@ -251,38 +261,33 @@ int create_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
       printf( OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", opts->pathval );
       return -1;
    }
-   marfs_position pos = {
-      .ns = config->rootns,
-      .depth = 0,
-      .ctxt = config->rootns->prepo->metascheme.mdal->newctxt( "/.", config->rootns->prepo->metascheme.mdal->ctxt )
-   };
-   if ( pos.ctxt == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to establish MDAL ctxt for 'create' command\n" );
-      free( modpath );
-      return -1;
-   }
-   if ( config_traverse( config, &(pos), &(modpath), 1 ) < 0 ) {
+   marfs_ns* origns = pos->ns;
+   if ( config_traverse( config, pos, &(modpath), 1 ) < 0 ) {
       printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
               opts->pathval );
       free( modpath );
-      config->rootns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );
+      config->rootns->prepo->metascheme.mdal->destroyctxt( pos->ctxt );
       return -1;
    }
-   int retval = datastream_create( stream, modpath, &(pos), opts->modeval,
+   if ( origns != pos->ns ) {
+      printf( "New Namespace Target: \"%s\"\n", pos->ns->idstr );
+   }
+   int retval = datastream_create( stream, modpath, pos, opts->modeval,
                                    (opts->ctag) ? opts->ctagval : config->ctag );
    if ( retval ) {
       printf( OUTPREFX "ERROR: Failure of datastream_create(): %d (%s)\n",
               retval, strerror(errno) );
    }
-   free( modpath );
-   if ( config->rootns->prepo->metascheme.mdal->destroyctxt( pos.ctxt ) ) {
-      // just complain
-      printf( OUTPREFX "WARNING: Failed to destory MDAL CTXT\n" );
+   else {
+      printf( OUTPREFX "Successfully created target file \"%s\"\n", opts->pathval );
    }
+   printf( "\n" );
+   free( modpath );
    return retval;
 }
 
-int open_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int open_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // check for required args
    if ( !(opts->path)  ||  !(opts->type) ) {
       printf( OUTPREFX "ERROR: 'open' command is missing required '-p'/'-t' args\n" );
@@ -295,55 +300,60 @@ int open_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
       printf( OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", opts->pathval );
       return -1;
    }
-   marfs_position pos = {
-      .ns = config->rootns,
-      .depth = 0,
-      .ctxt = config->rootns->prepo->metascheme.mdal->newctxt( "/.", config->rootns->prepo->metascheme.mdal->ctxt )
-   };
-   if ( pos.ctxt == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to establish MDAL ctxt for 'open' command\n" );
-      free( modpath );
-      return -1;
-   }
-   if ( config_traverse( config, &(pos), &(modpath), 1 ) < 0 ) {
+   marfs_ns* origns = pos->ns;
+   if ( config_traverse( config, pos, &(modpath), 1 ) < 0 ) {
       printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
               opts->pathval );
       free( modpath );
-      config->rootns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );
+      config->rootns->prepo->metascheme.mdal->destroyctxt( pos->ctxt );
       return -1;
    }
-   int retval = datastream_open( stream, opts->typeval, modpath, &(pos) );
+   if ( origns != pos->ns ) {
+      printf( "New Namespace Target: \"%s\"\n", pos->ns->idstr );
+   }
+   int retval = datastream_open( stream, opts->typeval, modpath, pos );
    if ( retval ) {
       printf( OUTPREFX "ERROR: Failure of datastream_open(): %d (%s)\n",
               retval, strerror(errno) );
    }
-   free( modpath );
-   if ( config->rootns->prepo->metascheme.mdal->destroyctxt( pos.ctxt ) ) {
-      // just complain
-      printf( OUTPREFX "WARNING: Failed to destory MDAL CTXT\n" );
+   else {
+      printf( OUTPREFX "Successfully opened target file \"%s\"\n", opts->pathval );
    }
+   printf( "\n" );
+   free( modpath );
    return retval;
 }
 
-int release_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int release_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    int retval = datastream_release( stream );
    if ( retval ) {
       printf( OUTPREFX "ERROR: Failure of datastream_release(): %d (%s)\n",
               retval, strerror(errno) );
    }
+   else {
+      printf( OUTPREFX "Successfully released stream\n" );
+   }
+   printf( "\n" );
    return 0; // always consider the stream as released, even if an error occurred
 }
 
-int close_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int close_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    int retval = datastream_close( stream );
    if ( retval ) {
       printf( OUTPREFX "ERROR: Failure of datastream_close(): %d (%s)\n",
               retval, strerror(errno) );
    }
+   else {
+      printf( OUTPREFX "Successfully closed stream\n" );
+   }
+   printf( "\n" );
    return 0; // always consider the stream as released, even if an error occurred
 }
 
-int read_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int read_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // allocate 4K buffer for I/O
    char iobuf[4096] = {0};
    int iofile = -1;
@@ -403,11 +413,13 @@ int read_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
    }
 
    printf( OUTPREFX "%zu bytes read\n", readbytes );
+   printf( "\n" );
 
    return 0;
 }
 
-int write_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int write_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // check for required args
    if ( !(opts->bytes)  &&  !(opts->ifile) ) {
       printf( OUTPREFX "ERROR: 'write' command requires at least a '-b' or '-i' arg\n" );
@@ -477,12 +489,14 @@ int write_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
    }
 
    printf( OUTPREFX "%zu bytes written\n", writebytes );
+   printf( "\n" );
 
 
    return 0;
 }
 
-int setrpath_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int setrpath_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // check for required args
    if ( !(opts->path) ) {
       printf( OUTPREFX "ERROR: 'setrpath' command is missing required '-p' arg\n" );
@@ -495,10 +509,15 @@ int setrpath_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) 
       printf( OUTPREFX "ERROR: Failed to set stream recovery path to \"%s\" (%s)\n",
               opts->pathval, strerror(errno) );
    }
+   else {
+      printf( OUTPREFX "Successfully set recovery path to \"%s\"\n", opts->pathval );
+   }
+   printf( "\n" );
    return retval;
 }
 
-int seek_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int seek_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // check for required args
    if ( !(opts->offset)  ||  !(opts->seekfrom) ) {
       printf( OUTPREFX "ERROR: 'seek' command is missing required '-@'/'-f' args\n" );
@@ -506,17 +525,22 @@ int seek_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
       return -1;
    }
    // perform the seek op
-   int retval = datastream_seek( stream, opts->offsetval, opts->seekfromval );
-   if ( retval ) {
+   off_t retval = datastream_seek( stream, opts->offsetval, opts->seekfromval );
+   if ( retval < 0 ) {
       printf( OUTPREFX "ERROR: Failed to seek stream(%s)\n",
               strerror(errno) );
    }
+   else {
+      printf( OUTPREFX "Successfull seek to resulting offset %zd\n", retval );
+   }
+   printf( "\n" );
    return retval;
 }
 
-int chunkbounds_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int chunkbounds_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // loop over all appropriate chunks
-   printf( "\n%-5s   %-15s   %-15s\n", "Chunk", "Size", "Offset" );
+   printf( "%-5s   %-15s   %-15s\n", "Chunk", "Size", "Offset" );
    errno = 0;
    int chunkindex = 0;
    if ( opts->chunknum ) { chunkindex = opts->chunknumval; }
@@ -533,14 +557,15 @@ int chunkbounds_command( marfs_config* config, DATASTREAM* stream, argopts* opts
          }
          break; // no data chunks remain
       }
-      printf( "\n%-5d   %-15zu   %-15zu\n", chunkindex, size, offset );
+      printf( "%-5d   %-15zu   %-15zu\n", chunkindex, size, offset );
       chunkindex++;
    }
    printf( "\n" );
    return 0;
 }
 
-int extend_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int extend_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // check for required args
    if ( !(opts->length) ) {
       printf( OUTPREFX "ERROR: 'extend' command is missing required '-l' arg\n" );
@@ -550,13 +575,18 @@ int extend_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
    // perform the extend op
    int retval = datastream_extend( stream, opts->lengthval );
    if ( retval ) {
-      printf( OUTPREFX "ERROR: Failed to extend stream to \"%zu\" (%s)\n",
+      printf( OUTPREFX "ERROR: Failed to extend stream to %zu bytes (%s)\n",
               opts->lengthval, strerror(errno) );
    }
+   else {
+      printf( OUTPREFX "Successfully extended stream to %zu bytes\n", opts->lengthval );
+   }
+   printf( "\n" );
    return retval;
 }
 
-int truncate_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int truncate_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // check for required args
    if ( !(opts->length) ) {
       printf( OUTPREFX "ERROR: 'truncate' command is missing required '-l' arg\n" );
@@ -569,10 +599,15 @@ int truncate_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) 
       printf( OUTPREFX "ERROR: Failed to truncate stream to \"%zu\" (%s)\n",
               opts->lengthval, strerror(errno) );
    }
+   else {
+      printf( OUTPREFX "Successfully truncated stream to %zu bytes\n", opts->lengthval );
+   }
+   printf( "\n" );
    return retval;
 }
 
-int utime_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
+int utime_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
    // check for required args
    if ( !(opts->ifile) ) {
       printf( OUTPREFX "ERROR: 'utime' command is missing required '-i' arg\n" );
@@ -596,6 +631,10 @@ int utime_command( marfs_config* config, DATASTREAM* stream, argopts* opts ) {
    if ( retval ) {
       printf( OUTPREFX "ERROR: Failed to set time values on stream to match input file \"%s\" (%s)\n", opts->iofileval, strerror(errno) );
    }
+   else {
+      printf( OUTPREFX "Successfully set time values on stream\n" );
+   }
+   printf( "\n" );
    return retval;
 }
 
@@ -613,6 +652,20 @@ int command_loop( marfs_config* config ) {
       free( streamlist );
       return -1;
    }
+
+   // establish a marfs root position
+   marfs_position pos = {
+      .ns = config->rootns,
+      .depth = 0,
+      .ctxt = config->rootns->prepo->metascheme.mdal->newctxt( "/.", config->rootns->prepo->metascheme.mdal->ctxt )
+   };
+   if ( pos.ctxt == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to establish a root MDAL ctxt\n" );
+      free( streamlist );
+      free( streamdesc );
+      return -1;
+   }
+   printf( "Initial Namespace Target : \"%s\"\n", pos.ns->idstr );
 
    // infinite loop, processing user commands
    printf( OUTPREFX "Ready for user commands\n" );
@@ -936,7 +989,9 @@ int command_loop( marfs_config* config ) {
          streamlist = realloc( streamlist, (tgtstream + 1) * sizeof(DATASTREAM) );
          if ( streamlist == NULL ) {
             printf( OUTPREFX "ERROR: Failed to allocate expanded stream list\n" );
+            free( streamdesc );
             free_argopts( &(inputopts) );
+            pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );
             return -1;
          }
          streamdesc = realloc( streamdesc, (tgtstream + 1) * sizeof(char*) );
@@ -944,6 +999,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: Failed to allocate expanded stream description list\n" );
             free( streamlist );
             free_argopts( &(inputopts) );
+            pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );
             return -1;
          }
          // zero out any added entries
@@ -957,17 +1013,13 @@ int command_loop( marfs_config* config ) {
          errno = 0;
          retval = -1; // assume failure
          // validate arguments
-         if ( inputopts.path == 0  ||  inputopts.mode == 0 ) {
-            printf( OUTPREFX "ERROR: Missing required arguments for a 'create' op\n" );
-            usage( "help create" );
-         }
-         else if ( inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+         if ( inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
                    inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
                    inputopts.chunknum  ||  inputopts.length ) {
             printf( OUTPREFX "ERROR: Specified args are not supported for a 'create' op\n" );
             usage( "help create" );
          }
-         else if ( create_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( create_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             // create success, update stream description
             if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
             *(streamdesc + tgtstream) = NULL;
@@ -992,17 +1044,13 @@ int command_loop( marfs_config* config ) {
          errno = 0;
          retval = -1; // assume failure
          // validate arguments
-         if ( inputopts.path == 0  ||  inputopts.type == 0 ) {
-            printf( OUTPREFX "ERROR: Missing required arguments for an 'open' op\n" );
-            usage( "help open" );
-         }
-         else if ( inputopts.mode  ||  inputopts.bytes  ||  inputopts.ifile ||
+         if ( inputopts.mode  ||  inputopts.bytes  ||  inputopts.ifile ||
                    inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
                    inputopts.chunknum  ||  inputopts.length  ||  inputopts.ctag ) {
             printf( OUTPREFX "ERROR: Specified args are not supported for an 'open' op\n" );
             usage( "help open" );
          }
-         else if ( open_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( open_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             // open success, update stream description
             if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
             *(streamdesc + tgtstream) = NULL;
@@ -1046,7 +1094,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: The 'release' op supports only the '-s' arg\n" );
             usage( "help release" );
          }
-         else if ( release_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( release_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             // release success, delete stream description
             if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
             *(streamdesc + tgtstream) = NULL;
@@ -1064,7 +1112,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: The 'close' op supports only the '-s' arg\n" );
             usage( "help close" );
          }
-         else if ( close_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( close_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             // close success, delete stream description
             if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
             *(streamdesc + tgtstream) = NULL;
@@ -1087,7 +1135,7 @@ int command_loop( marfs_config* config ) {
          else if ( !(inputopts.offset)  &&  inputopts.seekfrom ) {
             printf( OUTPREFX "ERROR: The 'seekfrom' arg requires the 'offset' arg\n" );
          }
-         else if ( read_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( read_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             retval = 0; // note success
          }
          else if ( errno == EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
@@ -1112,7 +1160,7 @@ int command_loop( marfs_config* config ) {
          else if ( !(inputopts.offset)  &&  inputopts.seekfrom ) {
             printf( OUTPREFX "ERROR: The 'seekfrom' arg requires the 'offset' arg\n" );
          }
-         else if ( write_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( write_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             retval = 0; // note success
          }
          else if ( errno == EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
@@ -1132,7 +1180,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: The 'setrpath' op supports only the '-s'/'-p' args\n" );
             usage( "help setrpath" );
          }
-         else if ( setrpath_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( setrpath_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             retval = 0; // note success
          }
       }
@@ -1146,7 +1194,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: The 'seek' op supports only '-s'/'-@'/'-f' args\n" );
             usage( "help seek" );
          }
-         else if ( seek_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( seek_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             retval = 0; // note success
          }
          else if ( errno == EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
@@ -1166,7 +1214,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: The 'chunkbounds' op supports only '-s'/'-c' args\n" );
             usage( "help chunkbounds" );
          }
-         else if ( chunkbounds_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( chunkbounds_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             retval = 0; // note success
          }
       }
@@ -1181,7 +1229,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: The 'extend' op supports only the '-s'/'-l' args\n" );
             usage( "help extend" );
          }
-         else if ( extend_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( extend_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             retval = 0; // note success
          }
          else if ( errno == EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
@@ -1201,7 +1249,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: The 'truncate' op supports only the '-s'/'-l' args\n" );
             usage( "help truncate" );
          }
-         else if ( truncate_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( truncate_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             retval = 0; // note success
          }
       }
@@ -1216,7 +1264,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: The 'utime' op supports only the '-s'/'-i' args\n" );
             usage( "help utime" );
          }
-         else if ( utime_command( config, streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( utime_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             retval = 0; // note success
          }
       }
@@ -1244,6 +1292,9 @@ int command_loop( marfs_config* config ) {
             printf( "\n" );
          }
       }
+      else if ( strcmp( inputline, "ns" ) == 0 ) {
+         printf( "\nCurrent Namespace Target: \"%s\"\n\n", pos.ns->idstr );
+      }
       else {
          printf( OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline );
       }
@@ -1257,7 +1308,7 @@ int command_loop( marfs_config* config ) {
    for ( tgtstream = 0; tgtstream < streamalloc; tgtstream++ ) {
       if ( *(streamlist + tgtstream) ) {
          printf( OUTPREFX "Releasing stream %d...\n", tgtstream );
-         if ( release_command( config, streamlist + tgtstream, NULL ) == 0 ) {
+         if ( release_command( config, &(pos), streamlist + tgtstream, NULL ) == 0 ) {
             retval = -1; // note failure
          }
       }
@@ -1267,6 +1318,9 @@ int command_loop( marfs_config* config ) {
    // cleanup
    free( streamlist );
    free( streamdesc );
+   if ( pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt ) ) {
+      printf( OUTPREFX "WARNING: Failed to destory MDAL CTXT\n" );
+   }
    return retval;
 }
 
