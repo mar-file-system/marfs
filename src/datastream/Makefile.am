@@ -69,10 +69,14 @@ libDatastream_la_LIBADD  = ../config/libConfig.la ../recovery/libRecovery.la ../
 libDatastream_la_CFLAGS  = $(XML_CFLAGS)
 DATASTREAM_LIB = libDatastream.la
 
-bin_PROGRAMS = marfs-streamutil
+bin_PROGRAMS = marfs-streamutil marfs-streamwalker
 marfs_streamutil_SOURCES = streamutil.c
 marfs_streamutil_LDADD   = $(DATASTREAM_LIB)
 marfs_streamutil_CFLAGS  = $(XML_CFLAGS)
+
+marfs_streamwalker_SOURCES = streamwalker.c
+marfs_streamwalker_LDADD   = $(DATASTREAM_LIB)
+marfs_streamwalker_CFLAGS  = $(XML_CFLAGS)
 
 # ---
 

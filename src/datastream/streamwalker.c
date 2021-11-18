@@ -65,7 +65,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "marfs_auto_config.h"
 #include "datastream.h"
-#include "general_include/numdigits.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -144,7 +143,7 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
 
-int populate_ftag( marfs_position* pos, FTAG* ftag, const char* path, const char* rpath ) {
+int populate_ftag( marfs_config* config, marfs_position* pos, FTAG* ftag, const char* path, const char* rpath ) {
    char* modpath = NULL;
    if ( path != NULL ) {
       // perform path traversal to identify marfs position
@@ -153,7 +152,7 @@ int populate_ftag( marfs_position* pos, FTAG* ftag, const char* path, const char
          printf( OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", path );
          return -1;
       }
-      if ( config_traverse( config, &(pos), &(modpath), 1 ) < 0 ) {
+      if ( config_traverse( config, pos, &(modpath), 1 ) < 0 ) {
          printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
                  path );
          free( modpath );
@@ -162,14 +161,14 @@ int populate_ftag( marfs_position* pos, FTAG* ftag, const char* path, const char
    }
 
    // attempt to open the target file
-   MDAL mdal = pos.ns->prepo->metascheme.mdal;
-   MDAL_FHANLDE handle = NULL;
+   MDAL mdal = pos->ns->prepo->metascheme.mdal;
+   MDAL_FHANDLE handle = NULL;
    if ( rpath == NULL ) {
       // only actually reference the user path if no reference path was provided
-      handle = mdal->open( pos.ctxt, modpath, O_RDONLY, 0 );
+      handle = mdal->open( pos->ctxt, modpath, O_RDONLY );
    }
    else {
-      handle = mdal->openref( pos.ctxt, rpath, O_RDONLY, 0 );
+      handle = mdal->openref( pos->ctxt, rpath, O_RDONLY, 0 );
    }
    if ( modpath ) { free( modpath ); }
    if ( handle == NULL ) {
@@ -194,6 +193,7 @@ int populate_ftag( marfs_position* pos, FTAG* ftag, const char* path, const char
    }
    if ( mdal->fgetxattr( handle, 1, FTAG_NAME, ftagstr, getres ) != getres ) {
       printf( OUTPREFX "ERROR: FTAG value changed while we were reading it\n" );
+      free( ftagstr );
       mdal->close( handle );
       return -1;
    }
@@ -207,19 +207,21 @@ int populate_ftag( marfs_position* pos, FTAG* ftag, const char* path, const char
    if ( ftag_initstr( ftag, ftagstr ) ) {
       printf( OUTPREFX "ERROR: Failed to parse FTAG string: \"%s\" (%s)\n",
               ftagstr, strerror(errno) );
+      free( ftagstr );
       return -1;
    }
+   free( ftagstr );
    return 0;
 }
 
 
-int open_command( marfs_position* pos, FTAG* ftag, char* args ) {
+int open_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
    // parse args
    char curarg = '\0';
    char* userpath = NULL;
    char* refpath = NULL;
    char* parse = strtok( args, " " );
-   while ( *parse != '\0' ) {
+   while ( parse ) {
       if ( curarg == '\0' ) {
          if ( strcmp( parse, "-p" ) == 0 ) {
             curarg = 'p';
@@ -262,7 +264,11 @@ int open_command( marfs_position* pos, FTAG* ftag, char* args ) {
             if ( refpath ) { free( refpath ); }
             return -1;
          }
+         curarg = '\0';
       }
+
+      // progress to the next arg
+      parse = strtok( NULL, " " );
    }
    // check that we have at least one arg
    if ( !(userpath)  &&  !(refpath) ) {
@@ -271,13 +277,13 @@ int open_command( marfs_position* pos, FTAG* ftag, char* args ) {
    }
 
    // populate our FTAG and cleanup strings
-   int retval = populate_ftag( pos, ftag, userpath, refpath );
+   int retval = populate_ftag( config, pos, ftag, userpath, refpath );
    if ( userpath ) { free( userpath ); }
    if ( refpath ) { free( refpath ); }
    return retval;
 }
 
-int shift_command( marfs_position* pos, FTAG* ftag, char* args ) {
+int shift_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
    // verify that we have an FTAG value
    if ( ftag->streamid == NULL ) {
       printf( OUTPREFX "ERROR: No FTAG target to shift from\n" );
@@ -289,7 +295,7 @@ int shift_command( marfs_position* pos, FTAG* ftag, char* args ) {
    ssize_t offset  = 0;
    ssize_t filenum = -1;
    char* parse = strtok( args, " " );
-   while ( *parse != '\0' ) {
+   while ( parse ) {
       if ( curarg == '\0' ) {
          if ( strcmp( parse, "-@" ) == 0 ) {
             curarg = '@';
@@ -333,12 +339,16 @@ int shift_command( marfs_position* pos, FTAG* ftag, char* args ) {
                return -1;
             }
             if ( parseval < 0 ) {
-               printf( OUTPREFX "ERROR: Negative filenum value: \"%s\"\n", parseval );
+               printf( OUTPREFX "ERROR: Negative filenum value: \"%lld\"\n", parseval );
                return -1;
             }
             filenum = parseval;
          }
+         curarg = '\0';
       }
+
+      // progress to the next arg
+      parse = strtok( NULL, " " );
    }
    // check that we have at least one arg
    if ( offset == 0  &&  filenum == -1 ) {
@@ -358,45 +368,102 @@ int shift_command( marfs_position* pos, FTAG* ftag, char* args ) {
    else { ftag->fileno = filenum; }
 
    // generate a ref path for the new target file
-   char* newrpath = NULL;
-   size_t newrpathlen = ftag_metatgt( ftag, NULL, 0 );
-   if ( newrpathlen < 1 ) {
-      printf( OUTPREFX "ERROR: Failed to generate ref path for new target file %zu (%s)\n",
-              ftag->fileno, strerror(errno) );
-      ftag->fileno = origfileno;
-      return -1;
-   }
-   newrpath = calloc( 1, (newrpathlen + 1) * sizeof(char) );
+   char* newrpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
    if ( newrpath == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to allocate string for new ref path\n" );
-      ftag->fileno = origfileno;
-      return -1;
-   }
-   if ( ftag_metatgt( ftag, newrpath, newrpathlen + 1 ) != newrpathlen ) {
-      printf( OUTPREFX "ERROR: Inconsistent length of new ref path\n" );
-      free( newrpath );
+      printf( OUTPREFX "ERROR: Failed to identify new ref path\n" );
       ftag->fileno = origfileno;
       return -1;
    }
 
-   int retval = populate_ftag( pos, ftag, NULL, newrpath );
+   int retval = populate_ftag( config, pos, ftag, NULL, newrpath );
+   if ( retval ) { ftag->fileno = origfileno; }
    free( newrpath );
 
    return retval;
 }
 
-int ftag_command( marfs_position* pos, FTAG* ftag, char* args ) {
+int ftag_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
+   // verify that we have an FTAG value
+   if ( ftag->streamid == NULL ) {
+      printf( OUTPREFX "ERROR: No current FTAG target\n" );
+      return -1;
+   }
+   const char* datastatestr = "INIT";
+   if ( (ftag->state & FTAG_DATASTATE) == FTAG_SIZED ) {
+      datastatestr = "SIZED";
+   }
+   else if ( (ftag->state & FTAG_DATASTATE) == FTAG_FIN ) {
+      datastatestr = "FINALIZED";
+   }
+   else if ( (ftag->state & FTAG_DATASTATE) == FTAG_COMP ) {
+      datastatestr = "COMPLETE";
+   }
+   const char* dataaccessstr = "NO-ACCESS";
+   if ( (ftag->state & FTAG_WRITEABLE) ) {
+      if ( (ftag->state & FTAG_READABLE) ) { dataaccessstr = "READ-WRITE"; }
+      else { dataaccessstr = "WRITE-ONLY"; }
+   }
+   else if ( (ftag->state & FTAG_READABLE) ) { dataaccessstr = "READ-ONLY"; }
+   // print out all FTAG values
+   printf( "\n" );
+   printf( "Stream Info --\n" );
+   printf( " Client Tag : %s\n", ftag->ctag );
+   printf( " Stream ID  : %s\n", ftag->streamid );
+   printf( " Max Files  : %zu\n", ftag->objfiles );
+   printf( " Max Size   : %zu\n", ftag->objsize );
+   printf( "File Position --\n" );
+   printf( " File Number   : %zu\n", ftag->fileno );
+   printf( " Object Number : %zu\n", ftag->objno );
+   printf( " Object Offset : %zu\n", ftag->offset );
+   printf( " End of Stream : %d\n", ftag->endofstream );
+   printf( "Data Structure --\n" );
+   printf( " Bytes       : %zu\n", ftag->bytes );
+   printf( " Avail Bytes : %zu\n", ftag->availbytes );
+   printf( " Recov Bytes : %zu\n", ftag->recoverybytes );
+   printf( " Data State  : %s\n", datastatestr );
+   printf( " Data Access : %s\n", dataaccessstr );
+   printf( " Protection --\n" );
+   printf( "  N   : %d\n", ftag->protection.N );
+   printf( "  E   : %d\n", ftag->protection.E );
+   printf( "  O   : %d\n", ftag->protection.O );
+   printf( "  psz : %ld\n", ftag->protection.partsz );
+   printf( "\n" );
    return 0;
 }
 
-int ref_command( marfs_position* pos, FTAG* ftag, char* args ) {
+int ref_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
    return 0;
 }
 
-int obj_command( marfs_position* pos, FTAG* ftag, char* args ) {
+int obj_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
    return 0;
 }
 
+int refresh_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
+   // verify that we have an FTAG value
+   if ( ftag->streamid == NULL ) {
+      printf( OUTPREFX "ERROR: No FTAG target to shift from\n" );
+      return -1;
+   }
+
+   // check for any args
+   if ( *args != '\0' ) {
+      printf( OUTPREFX "ERROR: The 'refresh' command does not support arguments\n" );
+      return -1;
+   }
+
+   // generate a ref path for the current target file
+   char* newrpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
+   if ( newrpath == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to identify current ref path\n" );
+      return -1;
+   }
+
+   int retval = populate_ftag( config, pos, ftag, NULL, newrpath );
+   free( newrpath );
+
+   return retval;
+}
 
 
 int command_loop( marfs_config* config ) {
@@ -468,35 +535,42 @@ int command_loop( marfs_config* config ) {
       if ( strcmp( inputline, "open" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
-         if ( open_command( config, &(ftag), parse ) == 0 ) {
+         if ( open_command( config, &(pos), &(ftag), parse ) == 0 ) {
             retval = 0; // note success
          }
       }
-      if ( strcmp( inputline, "shift" ) == 0 ) {
+      else if ( strcmp( inputline, "shift" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
-         if ( shift_command( config, &(ftag), parse ) == 0 ) {
+         if ( shift_command( config, &(pos), &(ftag), parse ) == 0 ) {
             retval = 0; // note success
          }
       }
-      if ( strcmp( inputline, "ftag" ) == 0 ) {
+      else if ( strcmp( inputline, "ftag" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
-         if ( ftag_command( config, &(ftag), parse ) == 0 ) {
+         if ( ftag_command( config, &(pos), &(ftag), parse ) == 0 ) {
             retval = 0; // note success
          }
       }
-      if ( strcmp( inputline, "ref" ) == 0 ) {
+      else if ( strcmp( inputline, "ref" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
-         if ( ref_command( config, &(ftag), parse ) == 0 ) {
+         if ( ref_command( config, &(pos), &(ftag), parse ) == 0 ) {
             retval = 0; // note success
          }
       }
-      if ( strcmp( inputline, "obj" ) == 0 ) {
+      else if ( strcmp( inputline, "obj" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
-         if ( obj_command( config, &(ftag), parse ) == 0 ) {
+         if ( obj_command( config, &(pos), &(ftag), parse ) == 0 ) {
+            retval = 0; // note success
+         }
+      }
+      else if ( strcmp( inputline, "refresh" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         if ( refresh_command( config, &(pos), &(ftag), parse ) == 0 ) {
             retval = 0; // note success
          }
       }
@@ -509,6 +583,10 @@ int command_loop( marfs_config* config ) {
    // cleanup
    if ( ftag.ctag ) { free( ftag.ctag ); }
    if ( ftag.streamid ) { free( ftag.streamid ); }
+   MDAL mdal = pos.ns->prepo->metascheme.mdal;
+   if ( mdal->destroyctxt( pos.ctxt ) ) {
+      printf( OUTPREFX "WARNING: Failed to properly destroy MDAL CTXT\n" );
+   }
    return retval;
 }
 
