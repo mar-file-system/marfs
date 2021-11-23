@@ -2317,20 +2317,36 @@ int config_term( marfs_config* config ) {
 }
 
 /**
- * Validates the LibNE Ctxt of every repo, creates every namespace, and creates all 
- *  reference dirs in the given config
+ * Verifies the LibNE Ctxt of every repo, creates every namespace, creates all 
+ *  reference dirs in the given config, and verifies the LibNE CTXT
  * @param marfs_config* config : Reference to the config to be validated
- * @return int : Zero on success, or -1 on failure
+ * @param char fix : If non-zero, attempt to correct any problems encountered
+ * @return int : A count of uncorrected errors encountered, or -1 if a failure occurred
  */
-int config_validate( marfs_config* config ) {
+int config_verify( marfs_config* config, char fix ) {
    // check for NULL refs
    if ( config == NULL ) {
       LOG( LOG_ERR, "Received a NULL config reference\n" );
       errno = EINVAL;
       return -1;
    }
+   int errcount = 0;
 
-   // TODO : DAL validation?  Need to expose via libNE
+   // verify all libNE ctxts
+   int currepo = 0;
+   for ( ; currepo < config->repocount; currepo++ ) {
+      int neres = ne_verify( (config->repolist + currepo)->datascheme.nectxt, fix );
+      if ( neres < 0 ) {
+         LOG( LOG_ERR, "Failed to verify ne_ctxt of repo: \"%s\" (%s)\n",
+                       (config->repolist + currepo)->name, strerror(errno) );
+         return -1;
+      }
+      else if ( neres ) {
+         LOG( LOG_INFO, "ne_ctxt of repo \"%s\" encountered %d errors\n",
+                        (config->repolist + currepo)->name );
+         errcount++;
+      }
+   }
 
    // create a dynamic array, holding the current NS index at each depth
    size_t curiteralloc = 1024;
@@ -2348,8 +2364,6 @@ int config_validate( marfs_config* config ) {
    size_t curdepth = 1;
    size_t nscount = 0;
    char createcurrent = 1;
-   size_t errcount = 0;
-   int retval = 0;
    while ( curdepth ) {
       if ( createcurrent ) {
          nscount++;
@@ -2362,21 +2376,19 @@ int config_validate( marfs_config* config ) {
          if ( config_nsinfo( curns->idstr, NULL, &(nspath) ) ) {
             LOG( LOG_ERR, "Failed to retrieve path of NS: \"%s\"\n", curns->idstr );
             errcount++;
-            retval = -1;
          }
-         // attempt to create the current NS
-         else if ( curmdal->createnamespace( curmdal->ctxt, nspath )  &&  errno != EEXIST ) {
+         // attempt to create the current NS ( if 'fix' is specified )
+         else if ( fix  &&  curmdal->createnamespace( curmdal->ctxt, nspath )  &&
+                   errno != EEXIST ) {
             LOG( LOG_ERR, "Failed to create NS: \"%s\" (%s)\n", curns->idstr, strerror(errno) );
             errcount++;
-            retval = -1;
          }
          // attempt to create a CTXT for that NS
          else if ( (nsctxt = curmdal->newctxt( nspath, curmdal->ctxt )) == NULL ) {
             LOG( LOG_ERR, "Failed to create MDAL_CTXT for NS: \"%s\"\n", nspath );
             errcount++;
-            retval = -1;
          }
-         // attempt to create all reference dirs of this NS
+         // verify all reference dirs of this NS
          else {
             size_t curref = 0;
             char anyerror = 0;
@@ -2389,7 +2401,7 @@ int config_validate( marfs_config* config ) {
                   anyerror = 1;
                   continue;
                }
-               LOG( LOG_INFO, "Attempting to create refdir: \"%s\"\n", rfullpath );
+               LOG( LOG_INFO, "Verifying refdir: \"%s\"\n", rfullpath );
                errno = 0;
                while ( mkdirres == 0  &&  rparse != NULL ) {
                   // iterate ahead in the stream, tokenizing into intermediate path components
@@ -2405,29 +2417,56 @@ int config_validate( marfs_config* config ) {
                      if ( *rparse == '\0' ) { rparse = NULL; break; }
                      rparse++;
                   }
-                  // isssue the createrefdir op
-                  if ( rparse ) {
-                     // create all intermediate dirs with global execute access
-                     mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IXOTH );
+                  if ( fix ) {
+                     // isssue the createrefdir op
+                     if ( rparse ) {
+                        // create all intermediate dirs with global execute access
+                        mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IXOTH );
+                     }
+                     else {
+                        // create the final dir with full global access
+                        mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IWOTH | S_IXOTH );
+                     }
+                     // ignore any EEXIST errors, at this point
+                     if ( mkdirres  &&  errno == EEXIST ) { mkdirres = 0; errno = 0; }
                   }
                   else {
-                     // create the final dir with full global access
-                     mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IRWXO );
+                     // stat the reference dir
+                     struct stat stval;
+                     mkdirres = curmdal->statref( nsctxt, rfullpath, &(stval) );
+                     if ( mkdirres == 0 ) {
+                        if ( rparse ) {
+                           // check for any group/other perms besides global execute
+                           if ( stval.st_mode & S_IRWXG  ||
+                                stval.st_mode & S_IROTH  ||
+                                stval.st_mode & S_IWOTH  ||
+                                !(stval.st_mode & S_IXOTH) ) {
+                              LOG( LOG_ERR, "Intermediate dir has unexpected perms: \"%s\"\n", rfullpath );
+                              mkdirres = -1;
+                           }
+                        }
+                        else {
+                           // check for write/execute global perms
+                           if ( stval.st_mode & S_IROTH  ||
+                                !(stval.st_mode & S_IWOTH)  ||
+                                !(stval.st_mode & S_IXOTH) ) {
+                              LOG( LOG_ERR, "Terminating dir has unexpected perms: \"%s\"\n", rfullpath );
+                              mkdirres = -1;
+                           }
+                        }
+                     }
                   }
-                  // ignore any EEXIST errors, at this point
-                  if ( mkdirres  &&  errno == EEXIST ) { mkdirres = 0; errno = 0; }
                   // if we cut the string short, we need to undo that and progress to the next str comp
                   if ( rparse ) { *rparse = '/'; rparse++; }
                }
                if ( mkdirres ) { // check for error conditions ( except EEXIST )
-                  LOG( LOG_ERR, "Failed to create refdir: \"%s\"\n", rfullpath );
+                  LOG( LOG_ERR, "Failed to verify refdir: \"%s\"\n", rfullpath );
                   anyerror = 1;
                }
                // cleanup after ourselves
                free( rfullpath ); // done with this reference path
             }
             if ( anyerror ) {
-               retval = -1;
                errcount++;
                LOG( LOG_ERR, "Failed to create all ref dirs for NS: \"%s\"\n", nspath );
             }
@@ -2467,11 +2506,11 @@ int config_validate( marfs_config* config ) {
       }
    }
    // we've finally traversed the entire NS tree
-   LOG( LOG_INFO, "Traversed %zu namespaces with %zu NS creation failures\n", nscount, errcount );
+   LOG( LOG_INFO, "Traversed %zu namespaces with %zu encountered errors\n", nscount, errcount );
 
    free( nsiterlist );
    umask(oldmask); // reset umask
-   return retval;
+   return errcount;
 }
 
 /**

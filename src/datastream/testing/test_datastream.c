@@ -83,11 +83,11 @@ int ftwnotedir( const char* fpath, const struct stat* sb, int typeflag ) {
       return -1;
    }
    dirlistpos++;
-   if ( dirlistpos >= 1024 ) { printf( "Dirlist has insufficient lenght!\n" ); return -1; }
+   if ( dirlistpos >= 4096 ) { printf( "Dirlist has insufficient length! (curtgt = %s)\n", fpath ); return -1; }
    return 0;
 }
 int deletesubdirs( const char* basepath ) {
-   dirlist = malloc( sizeof(char*) * 1024 );
+   dirlist = malloc( sizeof(char*) * 4096 );
    if ( dirlist == NULL ) {
       printf( "Failed to allocate dirlist\n" );
       return -1;
@@ -146,7 +146,7 @@ int main(int argc, char **argv)
    }
 
    // create all namespaces associated with the config
-   if ( config_validate( config ) ) {
+   if ( config_verify( config, 1 ) ) {
       printf( "Failed to validate the marfs config\n" );
       return -1;
    }
@@ -1305,6 +1305,12 @@ int main(int argc, char **argv)
    // cleanup out config struct
    if ( config_term( config ) ) {
       printf( "Failed to destory our config reference\n" );
+      return -1;
+   }
+
+   // cleanup DAL trees
+   if ( deletesubdirs( "./test_datastream_topdir/dal_root" ) ) {
+      printf( "Failed to delete subdirs of DAL root\n" );
       return -1;
    }
 

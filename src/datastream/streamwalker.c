@@ -547,9 +547,9 @@ int obj_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* ar
       headerlen = 0;
    }
    size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
-   size_t fileobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
+   ssize_t fileobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
    // special case check
-   if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+   if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&  fileobjbounds  &&
         (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0 ) {
       // if we exactly align to object bounds AND the file is FINALIZED,
       //   we've overestimated by one object
@@ -557,7 +557,7 @@ int obj_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* ar
    }
 
    if ( chunknum > fileobjbounds ) {
-      printf( OUTPREFX "WARNING: Specified object number exceeds file limits ( selecting object %zu instead )\n", fileobjbounds );
+      printf( OUTPREFX "WARNING: Specified object number exceeds file limits ( selecting object %zd instead )\n", fileobjbounds );
       chunknum = fileobjbounds;
    }
 
@@ -639,7 +639,7 @@ int bounds_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char*
    size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
    size_t finobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
    // special case check
-   if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+   if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&  finobjbounds  &&
         (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0 ) {
       // if we exactly align to object bounds AND the file is FINALIZED,
       //   we've overestimated by one object
@@ -870,7 +870,7 @@ int main(int argc, const char **argv)
       printf( OUTPREFX "Usage info --\n" );
       printf( OUTPREFX "%s -c configpath [-v] [-h]\n", PROGNAME );
       printf( OUTPREFX "   -c : Path of the MarFS config file\n" );
-      printf( OUTPREFX "   -v : Validate the MarFS config\n" );
+      printf( OUTPREFX "   -v : Verify the MarFS config\n" );
       printf( OUTPREFX "   -h : Print this usage info\n" );
       return -1;
    }
@@ -890,15 +890,15 @@ int main(int argc, const char **argv)
    }
    printf( OUTPREFX "marfs config loaded...\n" );
 
-   // validate the config, if requested
+   // verify the config, if requested
    if ( config_v ) {
-      if ( config_validate( config ) ) {
-         printf( OUTPREFX "ERROR: Failed to validate config: \"%s\" ( %s )\n",
+      if ( config_verify( config, 1 ) ) {
+         printf( OUTPREFX "ERROR: Failed to verify config: \"%s\" ( %s )\n",
                  config_path, strerror(errno) );
          config_term( config );
          return -1;
       }
-      printf( OUTPREFX "config validated...\n" );
+      printf( OUTPREFX "config verified...\n" );
    }
 
    // enter the main command loop

@@ -154,12 +154,13 @@ marfs_config* config_init( const char* cpath );
 int config_term( marfs_config* config );
 
 /**
- * Validates the LibNE Ctxt of every repo, creates every namespace, and creates all
- *  reference dirs in the given config
+ * Verifies the LibNE Ctxt of every repo, creates every namespace, creates all
+ *  reference dirs in the given config, and verifies the LibNE CTXT
  * @param marfs_config* config : Reference to the config to be validated
- * @return int : Zero on success, or -1 on failure
+ * @param char fix : If non-zero, attempt to correct any problems encountered
+ * @return int : A count of uncorrected errors encountered, or -1 if a failure occurred
  */
-int config_validate( marfs_config* config );
+int config_verify( marfs_config* config, char fix );
 
 /**
  * Traverse the given path, idetifying a final NS target and resulting subpath

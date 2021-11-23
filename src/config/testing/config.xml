@@ -99,7 +99,7 @@
          <!-- DAL Definition ( ignored by this code ) -->
          <DAL type="posix">
             <dir_template>pod{p}.cap{c}.scat{s}.stripefile.{b}</dir_template>
-            <sec_root>./test_config_topdir/dal_root</sec_root>
+            <sec_root>./test_config_topdir/dal_root/</sec_root>
          </DAL>
 
       </data>

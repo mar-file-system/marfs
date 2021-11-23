@@ -546,7 +546,7 @@ int main(int argc, char **argv)
 
 
    // prepare for full path traversal by actually creating config namespaces
-   if ( config_validate(config) ) {
+   if ( config_verify(config,1) ) {
       printf( "Config validation failure\n" );
       return -1;
    }
