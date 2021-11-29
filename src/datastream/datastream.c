@@ -851,9 +851,16 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
          freestream( stream );
          return NULL;
       }
+      char* nsparse = nspath;
+      size_t nspathlen = 0;
+      for ( ; *nsparse != '\0'; nsparse++ ) {
+         // replace all '/' chars in a NS path with '#'
+         if ( *nsparse == '/' ) { *nsparse = '#'; }
+         nspathlen++;
+      }
       size_t streamidlen = SIZE_DIGITS;  // to account for tv_sec (see numdigits.h)
       streamidlen += SIZE_DIGITS; // to account for tv_nsec
-      streamidlen += strlen( nsrepo ) + strlen( nspath ); // to include NS/Repo info
+      streamidlen += strlen( nsrepo ) + nspathlen; // to include NS/Repo info
       streamidlen += 4; // for '#'/'.' seperators and null terminator
       if ( (stream->streamid = malloc( sizeof(char) * streamidlen )) == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for streamID\n" );

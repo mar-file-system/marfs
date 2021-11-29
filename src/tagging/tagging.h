@@ -153,6 +153,13 @@ int ftag_cmp( const FTAG* ftag1, const FTAG* ftag2 );
 size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t len );
 
 /**
+ * Based on a given meta file ID, identify the fileno value of that file
+ * @param const char* fileid : String containing the meta file ID
+ * @return ssize_t : Fileno value, or -1 if a failure occurred
+ */
+ssize_t ftag_metatgt_fileno( const char* fileid );
+
+/**
  * Populate the given string buffer with the object ID string produced from the given ftag
  * @param const FTAG* ftag : Reference to the ftag struct to pull values from
  * @param char* tgtstr : String buffer to be populated with the object ID
@@ -173,9 +180,27 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
 
 #define RTAG_NAME "MARFS-REBUILD"
 
+/**
+ * Initialize a ne_state value based on the provided string value
+ * @param ne_state* rtag : Reference to the ne_state structure to be populated
+ * @param size_t stripewidth : Expected N+E stripe width
+ * @param const char* rtagstr : Reference to the string to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
+int rtag_initstr( ne_state* rtag, size_t stipewidth, const char* rtagstr );
 
-int rtag_initstr( ne_state* rtag, size_t stipewidth, char* rtagstr );
-
+/**
+ * Populate a string based on the provided ne_state value
+ * @param const ne_state* rtag : Reference to the ne_state structure to pull values from
+ * @param size_t stripewidth : Current N+E stripe width ( length of allocated health lists )
+ * @param char* tgtstr : Reference to the string to be populated
+ * @param size_t len : Allocated length of the target length
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
 size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_t len );
 
 

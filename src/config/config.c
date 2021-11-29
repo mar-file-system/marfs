@@ -167,6 +167,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <logging.h>
 #include "config.h"
 #include "general_include/numdigits.h"
+#include "general_include/restrictedchars.h"
 
 #include <libxml/tree.h>
 
@@ -887,14 +888,11 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    }
 
    // make sure we don't have any forbidden name characters
-   char* parse = nsname;
-   for ( ; *parse != '\0'; parse++ ) {
-      if ( *parse == '/'  ||  *parse == '|'  ||  *parse == '('  ||  *parse == ')'  ||  *parse == '#' ) {
-         LOG( LOG_ERR, "found namespace \"%s\" with disallowed '%c' character in name value\n", nsname, *parse );
-         errno = EINVAL;
-         free( nsname );
-         return -1;
-      }
+   if ( restrictedchars_check( nsname ) ) {
+      LOG( LOG_ERR, "Namespace has disallowed chars: \"%s\"\n", nsname );
+      errno = EINVAL;
+      free( nsname );
+      return -1;
    }
    // make sure this is not a remote NS reference to the root NS ( would create FS loop )
    if ( rns  &&  strcmp( nsname, "root" ) == 0 ) {

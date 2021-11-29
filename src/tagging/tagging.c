@@ -68,6 +68,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "tagging.h"
 
 #include <string.h>
+#include <errno.h>
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
@@ -553,13 +554,49 @@ size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
    }
    char* parse = sanstream;
    while ( *parse != '\0' ) {
-      if ( *parse == '/' ) { *parse = '#'; }
+      if ( *parse == '|' ) { *parse = '#'; }
       parse++;
    }
    size_t retval = snprintf( tgtstr, len, "%s|%s|%zu", ftag->ctag, sanstream, ftag->fileno );
    free( sanstream );
    return retval;
 }
+
+/**
+ * Based on a given meta file ID, identify the fileno value of that file
+ * @param const char* fileid : String containing the meta file ID
+ * @return ssize_t : Fileno value, or -1 if a failure occurred
+ */
+ssize_t ftag_metatgt_fileno( const char* fileid ) {
+   // parse over the fileid str, waiting for the end of the string
+   const char* parse = fileid;
+   const char* finfield = NULL;
+   while ( *parse != '\0' ) {
+      // keep track of the final '|' char before EOS
+      if ( *parse == '|' ) { finfield = parse; }
+   }
+   // verify that we located the expected tail string
+   if ( finfield == NULL  ||  *(finfield + 1) == '\0' ) {
+      LOG( LOG_ERR, "Provided string has no '|<fileno>' tail: \"%s\"\n", fileid );
+      errno = EINVAL;
+      return -1;
+   }
+   // parse the fileno value
+   char* endptr = NULL;
+   unsigned long long parseval = strtoull( finfield + 1, &(endptr), 10 );
+   if ( endptr == NULL  ||  *endptr != '\0' ) {
+      LOG( LOG_ERR, "Encountered non-numeric char in fileno string field: '%c'\n", *endptr );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( parseval > SSIZE_MAX ) {
+      LOG( LOG_ERR, "Parsed fileno value exceeds return value bounds: %llu\n", parseval );
+      errno = ERANGE;
+      return -1;
+   }
+   return (ssize_t)parseval;
+}
+
 
 /**
  * Populate the given string buffer with the object ID string produced from the given ftag
@@ -583,28 +620,186 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
       LOG( LOG_ERR, "Receieved a NULL tgtstr value w/ non-zero len\n" );
       return 0;
    }
-   // sanitize the streamID, removing any '/' chars
-   char* sanstream = strdup( ftag->streamid );
-   if ( sanstream == NULL ) {
-      LOG( LOG_ERR, "Failed to duplicate streamID: \"%s\"\n", ftag->streamid );
-      return 0;
-   }
-   char* parse = sanstream;
-   while ( *parse != '\0' ) {
-      if ( *parse == '/' ) { *parse = '#'; }
-      parse++;
-   }
-   size_t retval = snprintf( tgtstr, len, "%s|%s|%zu", ftag->ctag, sanstream, ftag->objno );
-   free( sanstream );
+   size_t retval = snprintf( tgtstr, len, "%s|%s|%zu", ftag->ctag, ftag->streamid, ftag->objno );
    return retval;
 }
 
+// MARFS REBUILD TAG  --  attached to damaged marfs files, providing rebuild info
 
-
-int rtag_initstr( ne_state* rtag, size_t stripewidth, char* rtagstr ) {
+/**
+ * Initialize a ne_state value based on the provided string value
+ * @param ne_state* rtag : Reference to the ne_state structure to be populated
+ * @param size_t stripewidth : Expected N+E stripe width
+ * @param const char* rtagstr : Reference to the string to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
+int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
+   // check for NULL rtag
+   if ( rtag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL ne_state reference\n" );
+      return -1;
+   }
+   if ( rtag->meta_status == NULL  ||  rtag->data_status == NULL ) {
+      LOG( LOG_ERR, "Received ne_state struct has undefined meta/data_status\n" );
+      return 0;
+   }
+   // parse version info first
+   const char* parse = rtagstr;
+   if ( strncmp( parse, RTAG_VERSION_HEADER "(", strlen(RTAG_VERSION_HEADER) + 1 ) ) {
+      LOG( LOG_ERR, "Unexpected version header for RTAG string\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   parse += strlen(RTAG_VERSION_HEADER) + 1;
+   char* endptr = NULL;
+   unsigned long long parseval = strtoull( parse, &(endptr), 10 );
+   if ( *endptr != '.' ) {
+      LOG( LOG_ERR, "RTAG version string has unexpected format\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( parseval != RTAG_CURRENT_MAJORVERSION ) {
+      LOG( LOG_ERR, "Unexpected RTAG major version: %llu\n", parseval );
+      errno = EINVAL;
+      return -1;
+   }
+   parse = endptr + 1;
+   parseval = strtoull( parse, &(endptr), 10 );
+   if ( *endptr != ')' ) {
+      LOG( LOG_ERR, "RTAG version string has unexpected format\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( parseval != RTAG_CURRENT_MINORVERSION ) {
+      LOG( LOG_ERR, "Unexpected RTAG minor version: %llu\n", parseval );
+      errno = EINVAL;
+      return -1;
+   }
+   parse = endptr + 1;
+   // parse stripe info values
+   if ( strncmp( parse, RTAG_STRIPEINFO_HEADER "(", strlen(RTAG_STRIPEINFO_HEADER) + 1 ) ) {
+      LOG( LOG_ERR, "Invalid stripe info header in RTAG string\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   char verszval = 0;
+   char blockszval = 0;
+   char totszval = 0;
+   while ( *parse != '\0' ) {
+      size_t* tgtval = NULL;
+      switch ( *parse ) {
+         case 'v':
+            tgtval = &(rtag->versz);
+            verszval = 1;
+            break;
+         case 'b':
+            tgtval = &(rtag->blocksz);
+            blockszval = 1;
+            break;
+         case 't':
+            tgtval = &(rtag->totsz);
+            totszval = 1;
+            break;
+         default:
+            LOG( LOG_ERR, "Unrecognized stripe info value tag: '%c'\n", *parse );
+            errno = EINVAL;
+            return -1;
+      }
+      parseval = strtoull( parse+1, &(endptr), 10 );
+      if ( parseval > SIZE_MAX ) {
+         LOG( LOG_ERR, "Parsed '%c' value exceeds type bounds: \"%llu\"\n", *parse, parseval );
+         errno = ERANGE;
+         return -1;
+      }
+      *tgtval = (size_t)parseval;
+      if ( *endptr != '|' ) {
+         if ( *endptr == ')' ) { break; } // end of stripe info
+         LOG( LOG_ERR, "Unexpected terminating char on '%c' value: '%c'\n", *parse, *endptr );
+         errno = EINVAL;
+         return -1;
+      }
+      parse = endptr + 1; // progress to the next element
+   }
+   if ( !(verszval) || !(blockszval) || !(totszval) ) {
+      LOG( LOG_ERR, "Missing some required stripe info values\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   parse = endptr + 1;
+   // parse health strings
+   char datahval = 0;
+   char metahval = 0;
+   while ( *parse != '\0' ) {
+      // check for data vs meta health
+      char* healthlist = NULL;
+      if ( strncmp( parse, RTAG_DATAHEALTH_HEADER "(", strlen(RTAG_DATAHEALTH_HEADER) + 1 ) == 0 ) {
+         if ( datahval ) {
+            LOG( LOG_ERR, "Detected duplicate data health stanza\n" );
+            break;
+         }
+         datahval = 1;
+         healthlist = rtag->data_status;
+         parse += strlen(RTAG_DATAHEALTH_HEADER) + 1;
+      }
+      else if ( strncmp( parse, RTAG_METAHEALTH_HEADER "(", strlen(RTAG_METAHEALTH_HEADER) + 1 ) == 0 ) {
+         if ( metahval ) {
+            LOG( LOG_ERR, "Detected duplicate meta health stanza\n" );
+            break;
+         }
+         metahval = 1;
+         healthlist = rtag->meta_status;
+         parse += strlen(RTAG_METAHEALTH_HEADER) + 1;
+      }
+      else {
+         LOG( LOG_ERR, "Unrecognized RTAG health header\n" );
+         break;
+      }
+      // parse over health values
+      size_t hindex = 0;
+      while ( *parse != ')'  &&  hindex < stripewidth ) {
+         switch ( *parse ) {
+            case '1':
+               *(healthlist + hindex) = 1;
+               break;
+            case '0':
+               *(healthlist + hindex) = 0;
+               break;
+            default:
+               LOG( LOG_ERR, "Health value is neither '0' nor '1': '%c'\n", *parse );
+               errno = EINVAL;
+               return -1;
+         }
+         parse++;
+         if ( *parse == '-' ) { parse++; hindex++; } // progress to the next health value
+      }
+      if ( *parse != ')' ) {
+         LOG( LOG_ERR, "Unexpected char in health info string: '%c'\n", *parse );
+         errno = EINVAL;
+         return -1;
+      }
+      parse++; // progress beyond the end of the health stanza
+   }
+   if ( *parse != '\0' ) { errno = EINVAL; return -1; } // catch previous error conditions
+   if ( metahval != 1  ||  datahval != 1 ) {
+      LOG( LOG_ERR, "Failed to locate all expected health stanzas\n" );
+      errno = EINVAL;
+      return -1;
+   }
    return 0;
 }
 
+/**
+ * Populate a string based on the provided ne_state value
+ * @param const ne_state* rtag : Reference to the ne_state structure to pull values from
+ * @param size_t stripewidth : Current N+E stripe width ( length of allocated health lists )
+ * @param char* tgtstr : Reference to the string to be populated
+ * @param size_t len : Allocated length of the target length
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
 size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_t len ) {
    // check for NULL rtag
    if ( rtag == NULL ) {
