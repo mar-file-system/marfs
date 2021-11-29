@@ -682,6 +682,7 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
       errno = EINVAL;
       return -1;
    }
+   parse += strlen(RTAG_STRIPEINFO_HEADER) + 1;
    char verszval = 0;
    char blockszval = 0;
    char totszval = 0;

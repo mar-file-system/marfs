@@ -136,6 +136,74 @@ int main(int argc, char **argv)
    free( oftag.streamid );
    free( oftag.ctag );
 
+   // test rebuild tag processing
+   ne_state rtag = {
+      .versz = 1234,
+      .blocksz = 19744,
+      .totsz = 59121,
+      .meta_status = calloc( 5, sizeof(char) ),
+      .data_status = calloc( 5, sizeof(char) ),
+      .csum = NULL
+   };
+   if ( rtag.meta_status == NULL  ||  rtag.data_status == NULL ) {
+      printf( "failed to allocate data/meta_status lists\n" );
+      return -1;
+   }
+   rtag.meta_status[4] = 1;
+   rtag.meta_status[1] = 1;
+   rtag.data_status[0] = 1;
+   size_t rtaglen = rtag_tostr( &(rtag), 5, NULL, 0 );
+   if ( rtaglen < 1 ) {
+      printf( "failed to indentify length of rebuild tag\n" );
+      return -1;
+   }
+   char* rtagstr = malloc( sizeof(char) * (rtaglen + 1) );
+   if ( rtagstr == NULL ) {
+      printf( "failed to allocate rtag string\n" );
+      return -1;
+   }
+   if ( rtag_tostr( &(rtag), 5, rtagstr, rtaglen + 1 ) != rtaglen ) {
+      printf( "inconsistent length of rebuild tag string\n" );
+      return -1;
+   }
+   ne_state newrtag = {
+      .versz = 0,
+      .blocksz = 0,
+      .totsz = 0,
+      .meta_status = calloc( 5, sizeof(char) ),
+      .data_status = calloc( 5, sizeof(char) ),
+      .csum = NULL
+   };
+   if ( newrtag.meta_status == NULL  ||  newrtag.data_status == NULL ) {
+      printf( "failed to allocate new data/meta_status lists\n" );
+      return -1;
+   }
+   if ( rtag_initstr( &(newrtag), 5, rtagstr ) ) {
+      printf( "failed to parse rebuild tag string: \"%s\"\n", rtagstr );
+      return -1;
+   }
+   if ( rtag.versz != newrtag.versz  ||  rtag.blocksz != newrtag.blocksz  ||
+        rtag.totsz != newrtag.totsz ) {
+      printf( "parsed rtag values do not match\n" );
+      return -1;
+   }
+   int index = 0;
+   for ( ; index < 5; index++ ) {
+      if ( rtag.meta_status[index] != newrtag.meta_status[index] ) {
+         printf( "meta status differs on index %d\n", index );
+         return -1;
+      }
+      if ( rtag.data_status[index] != newrtag.data_status[index] ) {
+         printf( "data status differs on index %d\n", index );
+         return -1;
+      }
+   }
+   free( rtagstr );
+   free( rtag.data_status );
+   free( rtag.meta_status );
+   free( newrtag.data_status );
+   free( newrtag.meta_status );
+
    return 0;
 }
 
