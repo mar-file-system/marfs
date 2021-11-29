@@ -1,1 +1,0 @@
-RULE 'list-everything' LIST 'test-list' WHERE XATTR('user.testattr') NOT LIKE ''

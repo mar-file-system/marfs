@@ -1,1 +1,0 @@
-RULE 'list-regex' LIST 'test-list' WHERE REGEX(XATTR('user.testattr'),',.*,.*,0+,.*,.*,.*,.*,.*,.*,.*,')
