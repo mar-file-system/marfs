@@ -574,6 +574,7 @@ ssize_t ftag_metatgt_fileno( const char* fileid ) {
    while ( *parse != '\0' ) {
       // keep track of the final '|' char before EOS
       if ( *parse == '|' ) { finfield = parse; }
+      parse++;
    }
    // verify that we located the expected tail string
    if ( finfield == NULL  ||  *(finfield + 1) == '\0' ) {

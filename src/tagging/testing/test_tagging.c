@@ -131,6 +131,19 @@ int main(int argc, char **argv)
       return -1;
    }
 
+   // output a meta tgt string
+   char metatgtstr[1024] = {0};
+   size_t metatgtstrlen = ftag_metatgt( &(ftag), metatgtstr, 1024 );
+   if ( metatgtstrlen < 1  ||  metatgtstrlen >= 1024 ) {
+      printf( "invalid length of metatgtstr: %zu\n", metatgtstrlen );
+      return -1;
+   }
+   // identify the fileno value of the metatgtstr
+   if ( ftag_metatgt_fileno( metatgtstr ) ) {
+      printf( "invalid fileno value from metatgtstr: \"%s\"\n", metatgtstr );
+      return -1;
+   }
+
    // need to free strings allocated by us and the string initializer
    free( ftagstr );
    free( oftag.streamid );
