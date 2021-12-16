@@ -148,6 +148,8 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
  * @param STREAM_TYPE type : Type of the DATASTREAM ( READ_STREAM or EDIT_STREAM )
  * @param const char* path : Path of the file to be opened
  * @param marfs_position* pos : Reference to the marfs_position value of the target file
+ * @param MDAL_FHANDLE* phandle : Reference to be populated with a preserved meta handle
+ *                                ( if no FTAG value exists; specific to READ streams )
  * @return int : Zero on success, or -1 on failure
  *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
  *            preserved ( continue to reference whatever file they previously referenced ).
@@ -155,7 +157,7 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
  *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
  *            to NULL, and errno set to EBADFD.
  */
-int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos );
+int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, MDAL_FHANDLE* phandle );
 
 /**
  * Release the given DATASTREAM ( close the stream without completing the referenced file )

@@ -262,7 +262,8 @@ int create_command( marfs_config* config, marfs_position* pos, DATASTREAM* strea
       return -1;
    }
    marfs_ns* origns = pos->ns;
-   if ( config_traverse( config, pos, &(modpath), 1 ) < 0 ) {
+   int targetdepth;
+   if ( (targetdepth = config_traverse( config, pos, &(modpath), 1 )) < 0 ) {
       printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
               opts->pathval );
       free( modpath );
@@ -270,6 +271,26 @@ int create_command( marfs_config* config, marfs_position* pos, DATASTREAM* strea
       return -1;
    }
    if ( origns != pos->ns ) {
+      if ( targetdepth == 0 ) {
+         // the target path corresponds exactly to a MarFS NS
+         printf( "WARNING: Targetting a MarFS NS path directly\n" );
+         if ( pos->ctxt == NULL ) {
+            // our MDAL_CTXT was destroyed
+            MDAL nsmdal = pos->ns->prepo->metascheme.mdal;
+            char* nspath = NULL;
+            if ( config_nsinfo( pos->ns->idstr, NULL, &(nspath) ) ) {
+               printf( "Failed to identify path of new NS target: \"%s\"\n", pos->ns->idstr );
+               return -1;
+            }
+            pos->ctxt = nsmdal->newctxt( nspath, nsmdal->ctxt );
+            if ( pos->ctxt == NULL ) {
+               printf( "Failed to establish new MDAL_CTXT for NS: \"%s\"\n", nspath );
+               free( nspath );
+               return -1;
+            }
+            free( nspath );
+         }
+      }
       printf( "New Namespace Target: \"%s\"\n", pos->ns->idstr );
    }
    int retval = datastream_create( stream, modpath, pos, opts->modeval,
@@ -301,7 +322,8 @@ int open_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream,
       return -1;
    }
    marfs_ns* origns = pos->ns;
-   if ( config_traverse( config, pos, &(modpath), 1 ) < 0 ) {
+   int targetdepth;
+   if ( (targetdepth = config_traverse( config, pos, &(modpath), 1 )) < 0 ) {
       printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
               opts->pathval );
       free( modpath );
@@ -309,9 +331,29 @@ int open_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream,
       return -1;
    }
    if ( origns != pos->ns ) {
+      if ( targetdepth == 0 ) {
+         // the target path corresponds exactly to a MarFS NS
+         printf( "WARNING: Targetting a MarFS NS path directly\n" );
+         if ( pos->ctxt == NULL ) {
+            // our MDAL_CTXT was destroyed
+            MDAL nsmdal = pos->ns->prepo->metascheme.mdal;
+            char* nspath = NULL;
+            if ( config_nsinfo( pos->ns->idstr, NULL, &(nspath) ) ) {
+               printf( "Failed to identify path of new NS target: \"%s\"\n", pos->ns->idstr );
+               return -1;
+            }
+            pos->ctxt = nsmdal->newctxt( nspath, nsmdal->ctxt );
+            if ( pos->ctxt == NULL ) {
+               printf( "Failed to establish new MDAL_CTXT for NS: \"%s\"\n", nspath );
+               free( nspath );
+               return -1;
+            }
+            free( nspath );
+         }
+      }
       printf( "New Namespace Target: \"%s\"\n", pos->ns->idstr );
    }
-   int retval = datastream_open( stream, opts->typeval, modpath, pos );
+   int retval = datastream_open( stream, opts->typeval, modpath, pos, NULL );
    if ( retval ) {
       printf( OUTPREFX "ERROR: Failure of datastream_open(): %d (%s)\n",
               retval, strerror(errno) );

@@ -167,7 +167,7 @@ int main(int argc, char **argv)
 // INTERNAL FUNC CHECK
 
    // generate a datastream
-   DATASTREAM stream = genstream( CREATE_STREAM, "tgtfile", &(pos), S_IRWXU | S_IRGRP, config->ctag );
+   DATASTREAM stream = genstream( CREATE_STREAM, "tgtfile", &(pos), S_IRWXU | S_IRGRP, config->ctag, NULL );
    if ( stream == NULL ) {
       printf( "Failed to generate a create stream\n" );
       return -1;
@@ -427,7 +427,7 @@ int main(int argc, char **argv)
 
    // read back the written files
    // file1
-   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos) ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
       printf( "failed to open 'file1' of no-pack for read\n" );
       return -1;
    }
@@ -442,7 +442,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // file2
-   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos) ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
       printf( "failed to open 'file2' of no-pack for read\n" );
       return -1;
    }
@@ -460,7 +460,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // file3
-   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos) ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos), NULL ) ) {
       printf( "failed to open 'file3' of no-pack for read\n" );
       return -1;
    }
@@ -551,12 +551,12 @@ int main(int argc, char **argv)
 
 
    // shift to a new NS, which has packing enabled
-   char* configtgt = strdup( "./gransom-allocation" );
+   char* configtgt = strdup( "./gransom-allocation/nothin" );
    if ( configtgt == NULL ) {
       printf( "Failed to duplicate configtgt string\n" );
       return -1;
    }
-   if ( config_traverse( config, &(pos), &(configtgt), 0 ) ) {
+   if ( config_traverse( config, &(pos), &(configtgt), 0 ) != 1 ) {
       printf( "failed to traverse config subpath: \"%s\"\n", configtgt );
       return -1;
    }
@@ -687,7 +687,7 @@ int main(int argc, char **argv)
 
 
    // truncate file2 to an increased size
-   if ( datastream_open( &(stream), EDIT_STREAM, "file2", &(pos) ) ) {
+   if ( datastream_open( &(stream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
       LOG( LOG_ERR, "Failed to open edit handle for 'file2' of pack\n" );
       return -1;
    }
@@ -696,7 +696,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // truncate file3 to a reduced size
-   if ( datastream_open( &(stream), EDIT_STREAM, "file3", &(pos) ) ) {
+   if ( datastream_open( &(stream), EDIT_STREAM, "file3", &(pos), NULL ) ) {
       LOG( LOG_ERR, "Failed to open edit handle for 'file3' of pack\n" );
       return -1;
    }
@@ -712,7 +712,7 @@ int main(int argc, char **argv)
 
    // read back the written PACK files
    // file1
-   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos) ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
       printf( "failed to open 'file1' of pack for read\n" );
       return -1;
    }
@@ -726,7 +726,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // file2
-   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos) ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
       printf( "failed to open 'file2' of pack for read\n" );
       return -1;
    }
@@ -744,7 +744,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // file3
-   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos) ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos), NULL ) ) {
       printf( "failed to open 'file3' of pack for read\n" );
       return -1;
    }
@@ -999,7 +999,7 @@ int main(int argc, char **argv)
 
    // open a second stream
    DATASTREAM pstream = NULL;
-   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos) ) ) {
+   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
       printf( "failed to open 1st edit stream for 'file2' of pwrite\n" );
       return -1;
    }
@@ -1044,7 +1044,7 @@ int main(int argc, char **argv)
    }
 
    // reopen an edit stream to write out the final data obj and complete the file
-   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos) ) ) {
+   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
       printf( "failed to open 1st edit stream for 'file2' of pwrite\n" );
       return -1;
    }
@@ -1073,7 +1073,7 @@ int main(int argc, char **argv)
 
    // read back the written pwrite files
    // file1
-   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos) ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
       printf( "failed to open 'file1' of pwrite for read\n" );
       return -1;
    }
@@ -1087,7 +1087,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // file2
-   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos) ) ) {
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
       printf( "failed to open 'file2' of pwrite for read\n" );
       return -1;
    }

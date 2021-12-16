@@ -198,7 +198,9 @@ int putftag( DATASTREAM stream, STREAMFILE* file ) {
  * Retrieve a given STREAMFILE's FTAG attribute
  * @param DATASTREAM stream : Current DATASTREAM
  * @param STREAMFILE* file : Reference to the STREAMFILE to have its FTAG retrieved
- * @return int : Zero on success, -1 if a failure occurred
+ * @return int : Zero on success;
+ *               One if no FTAG value exists;
+ *               -1 if a failure occurred
  */
 int getftag( DATASTREAM stream, STREAMFILE* file ) {
    // shorthand references
@@ -224,6 +226,10 @@ int getftag( DATASTREAM stream, STREAMFILE* file ) {
    }
    if ( getres <= 0 ) {
       LOG( LOG_ERR, "Failed to retrieve ftag value for stream file\n" );
+      if ( errno == ENODATA ) {
+         LOG( LOG_INFO, "Preserving meta handle for potential direct read\n" );
+         return 1;
+      }
       return -1;
    }
    // ensure our string is NULL terminated
@@ -473,7 +479,9 @@ int create_new_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt, mode_t
  * @param DATASTREAM stream : Current DATASTREAM
  * @param const char* path : Path of the file to be opened
  * @param MDAL_CTXT ctxt : Current MDAL_CTXT
- * @return int : Zero on success, or -1 on failure
+ * @return int : Zero on success;
+ *               One if no FTAG was found, but the meta handle has been preserved;
+ *               or -1 on failure
  */
 int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
 
@@ -492,8 +500,13 @@ int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
    }
 
    // retrieve the file's FTAG info
-   if ( getftag( stream, stream->files + stream->curfile ) ) {
+   int ftagres = getftag( stream, stream->files + stream->curfile );
+   if ( ftagres ) {
       LOG( LOG_ERR, "Failed to retrieve FTAG value of target file: \"%s\"\n", path );
+      if ( ftagres > 0  &&  stream->type == READ_STREAM ) {
+         // no FTAG value exists, but preserve the meta handle for potential direct read
+         return 1;
+      }
       curmdal->close( curfile->metahandle );
       curfile->metahandle = NULL;
       return -1;
@@ -740,9 +753,11 @@ int close_current_obj( DATASTREAM stream, char** rtagstr, size_t* rtagstrlen ) {
  * @param const char* path : Path of the initial file target
  * @param mode_t mode : Mode of the target file ( only used if type == CREATE_STREAM )
  * @param const char* ctag : Current MarFS ctag string ( only used if type == CREATE_STREAM )
+ * @param MDAL_FHANDLE* phandle : Reference to be populated with a preserved meta handle
+ *                                ( if no FTAG value exists; specific to READ streams )
  * @return DATASTREAM : Created DATASTREAM, or NULL on failure
  */
-DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, mode_t mode, const char* ctag ) {
+DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, mode_t mode, const char* ctag, MDAL_FHANDLE* phandle ) {
    // create some shorthand references
    marfs_ds* ds = &(pos->ns->prepo->datascheme);
 
@@ -906,7 +921,13 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
    }
    else {
       // open an existing file and populate stream info
-      if ( open_existing_file( stream, path, pos->ctxt ) ) {
+      int openres = open_existing_file( stream, path, pos->ctxt );
+      if ( openres > 0  &&  phandle ) {
+         LOG( LOG_INFO, "Preserving meta handle for target w/o FTAG: \"%s\"\n", path );
+         *phandle = stream->files->metahandle;
+         stream->files[0].metahandle = NULL; // so the handle is left open by freestream()
+      }
+      if ( openres ) {
          LOG( LOG_ERR, "Failed to initialize stream for file: \"%s\"\n", path );
          freestream( stream );
          return NULL;
@@ -1494,7 +1515,7 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
    }
    if ( newstream == NULL ) { // recheck, so as to catch if the prev stream was abandoned
       // we need to generate a fresh stream structure
-      newstream = genstream( CREATE_STREAM, path, pos, mode, ctag );
+      newstream = genstream( CREATE_STREAM, path, pos, mode, ctag, NULL );
    }
    // check if we need to close the previous stream
    if ( closestream ) {
@@ -1526,6 +1547,8 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
  * @param STREAM_TYPE type : Type of the DATASTREAM ( READ_STREAM or EDIT_STREAM )
  * @param const char* path : Path of the file to be opened
  * @param marfs_position* pos : Reference to the marfs_position value of the target file
+ * @param MDAL_FHANDLE* phandle : Reference to be populated with a preserved meta handle
+ *                                ( if no FTAG value exists; specific to READ streams )
  * @return int : Zero on success, or -1 on failure
  *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
  *            preserved ( continue to reference whatever file they previously referenced ).
@@ -1533,7 +1556,7 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
  *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
  *            to NULL, and errno set to EBADFD.
  */
-int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos ) {
+int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, MDAL_FHANDLE* phandle ) {
    // check for invalid args
    if ( type != EDIT_STREAM  &&
         type != READ_STREAM ) {
@@ -1587,7 +1610,13 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
          MDAL mdal = newstream->ns->prepo->metascheme.mdal;
          newstream->curfile++; // progress to the next file
          // attempt to open the new file target
-         if ( open_existing_file( newstream, path, pos->ctxt ) ) {
+         int openres = open_existing_file( newstream, path, pos->ctxt );
+         if ( openres > 0  &&  phandle != NULL ) {
+            LOG( LOG_INFO, "Preserving meta handle for target w/o FTAG: \"%s\"\n", path );
+            *phandle = (newstream->files + newstream->curfile)->metahandle;
+            (newstream->files + newstream->curfile)->metahandle = NULL;
+         }
+         if ( openres ) {
             LOG( LOG_ERR, "Failed to open target file: \"%s\"\n", path );
             newstream->curfile--; // reset back to our old position
             if ( errno = EBADFD ) { errno = ENOMSG; }
@@ -1664,7 +1693,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
    }
    if ( newstream == NULL ) { // NOTE -- recheck, so as to catch if the prev stream was closed
       // we need to generate a fresh stream structure
-      newstream = genstream( type, path, pos, 0, NULL );
+      newstream = genstream( type, path, pos, 0, NULL, (type == READ_STREAM) ? phandle : NULL );
    }
    // check if we need to close the previous stream
    if ( closestream ) {
