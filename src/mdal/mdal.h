@@ -168,14 +168,65 @@ typedef struct MDAL_struct {
 
    /**
     * Destroy the specified namespace root structures
-    * NOTE -- This operation will fail with errno=ENOTEMPTY if files/dirs persist in the namespace or if 
-    *         inode / data usage values are non-zero for the namespace.
+    * NOTE -- This operation will fail with errno=ENOTEMPTY if files/dirs persist in the 
+    *         namespace or if inode / data usage values are non-zero for the namespace.
     *         This includes files/dirs within the reference tree.
     * @param const MDAL_CTXT ctxt : Current MDAL context
     * @param const char* ns : Name of the namespace to be deleted
     * @return int : Zero on success, -1 if a failure occurred
     */
    int (*destroynamespace) ( const MDAL_CTXT ctxt, const char* ns );
+
+   /**
+    * Open a directory handle for the specified NS
+    * @param const MDAL_CTXT ctxt : Current MDAL context
+    * @param const char* ns : Name of the namespace target
+    * @return MDAL_DHANDLE : Open directory handle, or NULL if a failure occurred
+    */
+   MDAL_DHANDLE (*opendirnamespace) ( const MDAL_CTXT ctxt, const char* ns );
+
+   /**
+    * Check access to the specified NS
+    * @param const MDAL_CTXT ctxt : Current MDAL context
+    * @param const char* ns : Name of the namespace target
+    * @param int mode : F_OK - check for file existence
+    *                      or a bitwise OR of the following...
+    *                   R_OK - check for read access
+    *                   W_OK - check for write access
+    *                   X_OK - check for execute access
+    * @param int flags : A bitwise OR of the following...
+    *                    AT_EACCESS - Perform access checks using effective uid/gid
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*accessnamespace) (const MDAL_CTXT ctxt, const char* ns, int mode, int flags);
+
+   /**
+    * Stat the specified NS
+    * @param const MDAL_CTXT ctxt : Current MDAL context
+    * @param const char* ns : Name of the namespace target
+    * @param struct stat* st : Stat structure to be populated
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*statnamespace) (const MDAL_CTXT ctxt, const char* ns, struct stat *buf);
+
+   /**
+    * Edit the mode of the specified NS
+    * @param const MDAL_CTXT ctxt : Current MDAL context
+    * @param const char* ns : Name of the namespace target
+    * @param mode_t mode : New mode value for the NS (see inode man page)
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*chmodnamespace) (const MDAL_CTXT ctxt, const char* ns, mode_t mode);
+
+   /**
+    * Edit the ownership and group of the specified NS
+    * @param const MDAL_CTXT ctxt : Current MDAL context
+    * @param const char* ns : Name of the namespace target
+    * @param uid_t owner : New owner
+    * @param gid_t group : New group
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*chownnamespace) (const MDAL_CTXT ctxt, const char* ns, uid_t uid, gid_t gid);
 
 
    // NOTE --  all functions below this point require any MDAL_CTXT args to be set to a specific NS target
@@ -345,8 +396,9 @@ typedef struct MDAL_struct {
    /**
     * Iterate to the next entry of an open directory handle
     * @param MDAL_DHANDLE dh : MDAL_DHANDLE to read from
-    * @return struct dirent* : Reference to the next dirent struct, or NULL w/ errno unset if all 
-    *                          entries have been read, or NULL w/ errno set if a failure occurred
+    * @return struct dirent* : Reference to the next dirent struct, or NULL w/ errno unset
+    *                          if all entries have been read, or NULL w/ errno set if a
+    *                          failure occurred
     */
    struct dirent* (*readdir) ( MDAL_DHANDLE dh );
 
@@ -451,7 +503,8 @@ typedef struct MDAL_struct {
    /**
     * List all xattr names from the file referenced by the given MDAL_FHANDLE
     * @param MDAL_FHANDLE fh : File handle for which to list xattrs
-    * @param char hidden : A non-zero value indicates to list 'hidden' MDAL xattrs ( normal xattrs excluded )
+    * @param char hidden : A non-zero value indicates to list 'hidden' MDAL xattrs
+    *                      ( normal xattrs excluded )
     * @param char* buf : Buffer to be populated with xattr names
     * @param size_t size : Size of the target buffer
     * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
@@ -484,14 +537,14 @@ typedef struct MDAL_struct {
     * Check access to the specified file
     * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
     * @param const char* path : String path of the target file
-    * @param int mode : F_OK - check for file existance
+    * @param int mode : F_OK - check for file existence
     *                      or a bitwise OR of the following...
     *                   R_OK - check for read access
     *                   W_OK - check for write access
     *                   X_OK - check for execute access
     * @param int flags : A bitwise OR of the following...
     *                    AT_EACCESS - Perform access checks using effective uid/gid
-    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
     * @return int : Zero on success, or -1 if a failure occurred
     */
    int (*access) ( const MDAL_CTXT ctxt, const char* path, int mode, int flags );
@@ -516,7 +569,7 @@ typedef struct MDAL_struct {
     * @param const char* path : String path of the target file
     * @param mode_t mode : New mode value for the file (see inode man page)
     * @param int flags : A bitwise OR of the following...
-    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
     * @return int : Zero on success, or -1 if a failure occurred
     */
    int (*chmod) ( const MDAL_CTXT ctxt, const char* path, mode_t mode, int flags );
@@ -528,7 +581,7 @@ typedef struct MDAL_struct {
     * @param uid_t owner : New owner
     * @param gid_t group : New group
     * @param int flags : A bitwise OR of the following...
-    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
     * @return int : Zero on success, or -1 if a failure occurred
     */
    int (*chown) ( const MDAL_CTXT ctxt, const char* path, uid_t owner, gid_t group, int flags );
@@ -539,21 +592,22 @@ typedef struct MDAL_struct {
     * @param const char* path : String path of the target file
     * @param struct stat* st : Stat structure to be populated
     * @param int flags : A bitwise OR of the following...
-    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
     * @return int : Zero on success, or -1 if a failure occurred
     */
    int (*stat) ( const MDAL_CTXT ctxt, const char* path, struct stat* st, int flags );
 
    /**
     * Create a hardlink
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT oldctxt : MDAL_CTXT to operate relative to for 'oldpath'
     * @param const char* oldpath : String path of the target file
+    * @param const MDAL_CTXT newctxt : MDAL_CTXT to operate relative to for 'newpath'
     * @param const char* newpath : String path of the new hardlink
     * @param int flags : A bitwise OR of the following...
-    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*link) ( const MDAL_CTXT ctxt, const char* oldpath, const char* newpath, int flags );
+   int (*link) ( const MDAL_CTXT oldctxt, const char* oldpath, const MDAL_CTXT newctxt, const char* newpath, int flags );
 
    /**
     * Create the specified directory
@@ -584,12 +638,13 @@ typedef struct MDAL_struct {
 
    /**
     * Rename the specified target to a new path
-    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const MDAL_CTXT fromctxt : MDAL_CTXT to operate relative to for 'from' path
     * @param const char* from : String path of the target
+    * @param const MDAL_CTXT toctxt : MDAL_CTXT to operate relative to for 'from' path
     * @param const char* to : Destination string path
     * @return int : Zero on success, or -1 if a failure occurred
     */
-   int (*rename) ( const MDAL_CTXT ctxt, const char* from, const char* to );
+   int (*rename) ( const MDAL_CTXT fromctxt, const char* from, const MDAL_CTXT toctxt, const char* to );
 
    /**
     * Return statvfs info for the current namespace

@@ -606,8 +606,8 @@ int posixmdal_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
 
 /**
  * Destroy the specified namespace root structures
- * NOTE -- This operation will fail with errno=ENOTEMPTY if files/dirs persist in the namespace or if 
- *         inode / data usage values are non-zero for the namespace.
+ * NOTE -- This operation will fail with errno=ENOTEMPTY if files/dirs persist in the 
+ *         namespace or if inode / data usage values are non-zero for the namespace.
  *         This includes files/dirs within the reference tree.
  * @param const MDAL_CTXT ctxt : Current MDAL context
  * @param const char* ns : Name of the namespace to be deleted
@@ -708,6 +708,322 @@ int posixmdal_destroynamespace ( const MDAL_CTXT ctxt, const char* ns ) {
    }
    free( nspath );
    return 0;
+}
+
+/**
+ * Open a directory handle for the specified NS
+ * @param const MDAL_CTXT ctxt : Current MDAL context
+ * @param const char* ns : Name of the namespace target
+ * @return MDAL_DHANDLE : Open directory handle, or NULL if a failure occurred
+ */
+MDAL_DHANDLE posixmdal_opendirnamespace( const MDAL_CTXT ctxt, const char* ns ) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   // create the corresponding posix path for the target NS
+   size_t nspathlen = namespacepath( ns, NULL, 0 );
+   if ( nspathlen == 0 ) {
+      LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
+      return NULL;
+   }
+   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
+   if ( !(nspath) ) {
+      LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
+      return NULL;
+   }
+   if ( namespacepath( ns, nspath, nspathlen + 1 ) != nspathlen ) {
+      LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
+      free( nspath );
+      return NULL;
+   }
+   // identify the target path and abort it the CTXT isn't in an appropriate state
+   char* nstruepath = nspath;
+   if ( *nspath == '/' ) {
+      // ensure the refd is set to the secureroot dir
+      if ( pctxt->pathd >= 0 ) {
+         LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return NULL;
+      }
+      nstruepath = nspath + 1; // need to skip the initial '/' char
+   }
+   else {
+      // ensure the refd is set to an actual reference dir
+      if ( pctxt->pathd < 0 ) {
+         LOG( LOG_ERR, "Relative NS paths can only be used from a CTXT with a NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return NULL;
+      }
+   }
+   // open the target
+   int dfd = openat( pctxt->refd, nstruepath, O_RDONLY | O_DIRECTORY );
+   if ( dfd < 0 ) {
+      LOG( LOG_ERR, "Failed to open the target path: \"%s\"\n", nstruepath );
+      free( nspath );
+      return NULL;
+   }
+   free( nspath );
+   // allocate a dir handle reference
+   POSIX_DHANDLE dhandle = malloc( sizeof(struct posixmdal_directory_handle_struct) );
+   if ( dhandle == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate space for a new directory handle\n" );
+      close( dfd );
+      return NULL;
+   }
+   // translate the FD to a DIR stream
+   dhandle->dirp = fdopendir( dfd );
+   if ( dhandle->dirp == NULL ) {
+      LOG( LOG_ERR, "Failed to create directory stream from FD\n" );
+      free( dhandle );
+      close( dfd );
+      return NULL;
+   }
+   return (MDAL_DHANDLE) dhandle;
+}
+
+/**
+ * Check access to the specified NS
+ * @param const MDAL_CTXT ctxt : Current MDAL context
+ * @param const char* ns : Name of the namespace target
+ * @param int mode : F_OK - check for file existence
+ *                      or a bitwise OR of the following...
+ *                   R_OK - check for read access
+ *                   W_OK - check for write access
+ *                   X_OK - check for execute access
+ * @param int flags : A bitwise OR of the following...
+ *                    AT_EACCESS - Perform access checks using effective uid/gid
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posixmdal_accessnamespace (const MDAL_CTXT ctxt, const char* ns, int mode, int flags) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   // create the corresponding posix path for the target NS
+   size_t nspathlen = namespacepath( ns, NULL, 0 );
+   if ( nspathlen == 0 ) {
+      LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
+      return -1;
+   }
+   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
+   if ( !(nspath) ) {
+      LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
+      return -1;
+   }
+   if ( namespacepath( ns, nspath, nspathlen + 1 ) != nspathlen ) {
+      LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
+      free( nspath );
+      return -1;
+   }
+   // identify the target path and abort it the CTXT isn't in an appropriate state
+   char* nstruepath = nspath;
+   if ( *nspath == '/' ) {
+      // ensure the refd is set to the secureroot dir
+      if ( pctxt->pathd >= 0 ) {
+         LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return -1;
+      }
+      nstruepath = nspath + 1; // need to skip the initial '/' char
+   }
+   else {
+      // ensure the refd is set to an actual reference dir
+      if ( pctxt->pathd < 0 ) {
+         LOG( LOG_ERR, "Relative NS paths can only be used from a CTXT with a NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return -1;
+      }
+   }
+   // perform the access() op against the namespace path ( ignoring SYMLINK_NOFOLLOW )
+   int retval = faccessat( pctxt->refd, nstruepath, mode, flags & ~(AT_SYMLINK_NOFOLLOW) );
+   free( nspath );
+   return retval;
+}
+
+/**
+ * Stat the specified NS
+ * @param const MDAL_CTXT ctxt : Current MDAL context
+ * @param const char* ns : Name of the namespace target
+ * @param struct stat* st : Stat structure to be populated
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posixmdal_statnamespace (const MDAL_CTXT ctxt, const char* ns, struct stat *buf) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   // create the corresponding posix path for the target NS
+   size_t nspathlen = namespacepath( ns, NULL, 0 );
+   if ( nspathlen == 0 ) {
+      LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
+      return -1;
+   }
+   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
+   if ( !(nspath) ) {
+      LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
+      return -1;
+   }
+   if ( namespacepath( ns, nspath, nspathlen + 1 ) != nspathlen ) {
+      LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
+      free( nspath );
+      return -1;
+   }
+   // identify the target path and abort it the CTXT isn't in an appropriate state
+   char* nstruepath = nspath;
+   if ( *nspath == '/' ) {
+      // ensure the refd is set to the secureroot dir
+      if ( pctxt->pathd >= 0 ) {
+         LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return -1;
+      }
+      nstruepath = nspath + 1; // need to skip the initial '/' char
+   }
+   else {
+      // ensure the refd is set to an actual reference dir
+      if ( pctxt->pathd < 0 ) {
+         LOG( LOG_ERR, "Relative NS paths can only be used from a CTXT with a NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return -1;
+      }
+   }
+   // perform the stat() op against the namespace path ( always follow symlinks )
+   int retval = fstatat( pctxt->refd, nstruepath, buf, 0 );
+   free( nspath );
+   return retval;
+}
+
+/**
+ * Edit the mode of the specified NS
+ * @param const MDAL_CTXT ctxt : Current MDAL context
+ * @param const char* ns : Name of the namespace target
+ * @param mode_t mode : New mode value for the NS (see inode man page)
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posixmdal_chmodnamespace (const MDAL_CTXT ctxt, const char* ns, mode_t mode) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   // create the corresponding posix path for the target NS
+   size_t nspathlen = namespacepath( ns, NULL, 0 );
+   if ( nspathlen == 0 ) {
+      LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
+      return -1;
+   }
+   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
+   if ( !(nspath) ) {
+      LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
+      return -1;
+   }
+   if ( namespacepath( ns, nspath, nspathlen + 1 ) != nspathlen ) {
+      LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
+      free( nspath );
+      return -1;
+   }
+   // identify the target path and abort it the CTXT isn't in an appropriate state
+   char* nstruepath = nspath;
+   if ( *nspath == '/' ) {
+      // ensure the refd is set to the secureroot dir
+      if ( pctxt->pathd >= 0 ) {
+         LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return -1;
+      }
+      nstruepath = nspath + 1; // need to skip the initial '/' char
+   }
+   else {
+      // ensure the refd is set to an actual reference dir
+      if ( pctxt->pathd < 0 ) {
+         LOG( LOG_ERR, "Relative NS paths can only be used from a CTXT with a NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return -1;
+      }
+   }
+   // perform the chmod() op against the namespace path ( always follow symlinks )
+   int retval = fchmodat( pctxt->refd, nstruepath, mode, 0 );
+   free( nspath );
+   return retval;
+}
+
+/**
+ * Edit the ownership and group of the specified NS
+ * @param const MDAL_CTXT ctxt : Current MDAL context
+ * @param const char* ns : Name of the namespace target
+ * @param uid_t owner : New owner
+ * @param gid_t group : New group
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posixmdal_chownnamespace (const MDAL_CTXT ctxt, const char* ns, uid_t uid, gid_t gid) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   // create the corresponding posix path for the target NS
+   size_t nspathlen = namespacepath( ns, NULL, 0 );
+   if ( nspathlen == 0 ) {
+      LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", ns );
+      return -1;
+   }
+   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
+   if ( !(nspath) ) {
+      LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", ns );
+      return -1;
+   }
+   if ( namespacepath( ns, nspath, nspathlen + 1 ) != nspathlen ) {
+      LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", ns );
+      free( nspath );
+      return -1;
+   }
+   // identify the target path and abort it the CTXT isn't in an appropriate state
+   char* nstruepath = nspath;
+   if ( *nspath == '/' ) {
+      // ensure the refd is set to the secureroot dir
+      if ( pctxt->pathd >= 0 ) {
+         LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return -1;
+      }
+      nstruepath = nspath + 1; // need to skip the initial '/' char
+   }
+   else {
+      // ensure the refd is set to an actual reference dir
+      if ( pctxt->pathd < 0 ) {
+         LOG( LOG_ERR, "Relative NS paths can only be used from a CTXT with a NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         return -1;
+      }
+   }
+   // perform the chown() op against the namespace path ( always follow symlinks )
+   int retval = fchownat( pctxt->refd, nstruepath, uid, gid, 0 );
+   free( nspath );
+   return retval;
 }
 
 
@@ -1325,16 +1641,9 @@ MDAL_DHANDLE posixmdal_opendir( MDAL_CTXT ctxt, const char* path ) {
       return NULL;
    }
    // open the target
-   int dfd = openat( pctxt->pathd, path, O_RDONLY );
+   int dfd = openat( pctxt->pathd, path, O_RDONLY | O_DIRECTORY );
    if ( dfd < 0 ) {
       LOG( LOG_ERR, "Failed to open the target path: \"%s\"\n", path );
-      return NULL;
-   }
-   // verify the target is a dir
-   struct stat dirstat;
-   if ( fstat( dfd, &(dirstat) )  ||  !(S_ISDIR(dirstat.st_mode)) ) {
-      LOG( LOG_ERR, "Could not verify target is a directory: \"%s\"\n", path );
-      close( dfd );
       return NULL;
    }
    // allocate a dir handle reference
@@ -1991,24 +2300,31 @@ int posixmdal_stat( MDAL_CTXT ctxt, const char* path, struct stat* st, int flags
 
 /**
  * Create a hardlink
- * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+ * @param MDAL_CTXT oldctxt : MDAL_CTXT to operate relative to for 'oldpath'
  * @param const char* oldpath : String path of the target file
+ * @param MDAL_CTXT newctxt : MDAL_CTXT to operate relative to for 'newpath'
  * @param const char* newpath : String path of the new hardlink
  * @param int flags : A bitwise OR of the following...
  *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posixmdal_link( MDAL_CTXT ctxt, const char* oldpath, const char* newpath, int flags ) {
+int posixmdal_link( MDAL_CTXT oldctxt, const char* oldpath, MDAL_CTXT newctxt, const char* newpath, int flags ) {
    // check for NULL ctxt
-   if ( !(ctxt) ) {
+   if ( !(oldctxt)  ||  !(newctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
       errno = EINVAL;
       return -1;
    }
-   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   POSIX_MDAL_CTXT poldctxt = (POSIX_MDAL_CTXT) oldctxt;
+   POSIX_MDAL_CTXT pnewctxt = (POSIX_MDAL_CTXT) newctxt;
    // check for a valid NS path dir
-   if ( pctxt->pathd < 0 ) {
-      LOG( LOG_ERR, "Receieved a MDAL_CTXT with no namespace target\n" );
+   if ( poldctxt->pathd < 0 ) {
+      LOG( LOG_ERR, "Receieved an 'old' MDAL_CTXT with no namespace target\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( pnewctxt->pathd < 0 ) {
+      LOG( LOG_ERR, "Receieved an 'new' MDAL_CTXT with no namespace target\n" );
       errno = EINVAL;
       return -1;
    }
@@ -2019,7 +2335,7 @@ int posixmdal_link( MDAL_CTXT ctxt, const char* oldpath, const char* newpath, in
       return -1;
    }
    // issue the link op
-   return linkat( pctxt->pathd, oldpath, pctxt->pathd, newpath, flags );
+   return linkat( poldctxt->pathd, oldpath, pnewctxt->pathd, newpath, flags );
 }
 
 
@@ -2103,27 +2419,34 @@ ssize_t posixmdal_readlink( MDAL_CTXT ctxt, const char* path, char* buf, size_t 
 
 /**
  * Rename the specified target to a new path
- * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+ * @param MDAL_CTXT fromctxt : MDAL_CTXT to operate relative to for the 'from' path
  * @param const char* from : String path of the target
+ * @param MDAL_CTXT toctxt : MDAL_CTXT to operate relative to for the 'to' path
  * @param const char* to : Destination string path
  * @return int : Zero on success, or -1 if a failure occurred
  */
-int posixmdal_rename( MDAL_CTXT ctxt, const char* from, const char* to ) {
+int posixmdal_rename( MDAL_CTXT fromctxt, const char* from, MDAL_CTXT toctxt, const char* to ) {
    // check for NULL ctxt
-   if ( !(ctxt) ) {
+   if ( !(fromctxt)  ||  !(toctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
       errno = EINVAL;
       return -1;
    }
-   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   POSIX_MDAL_CTXT pfromctxt = (POSIX_MDAL_CTXT) fromctxt;
+   POSIX_MDAL_CTXT ptoctxt = (POSIX_MDAL_CTXT) toctxt;
    // check for a valid NS path dir
-   if ( pctxt->pathd < 0 ) {
-      LOG( LOG_ERR, "Receieved a MDAL_CTXT with no namespace target\n" );
+   if ( pfromctxt->pathd < 0 ) {
+      LOG( LOG_ERR, "Receieved a 'from' MDAL_CTXT with no namespace target\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( ptoctxt->pathd < 0 ) {
+      LOG( LOG_ERR, "Receieved a 'to' MDAL_CTXT with no namespace target\n" );
       errno = EINVAL;
       return -1;
    }
    // issue the rename op
-   return renameat( pctxt->pathd, from, pctxt->pathd, to );
+   return renameat( pfromctxt->pathd, from, ptoctxt->pathd, to );
 }
 
 /**
@@ -2265,6 +2588,11 @@ MDAL posix_mdal_init( xmlNode* root ) {
          pmdal->newctxt = posixmdal_newctxt;
          pmdal->createnamespace = posixmdal_createnamespace;
          pmdal->destroynamespace = posixmdal_destroynamespace;
+         pmdal->opendirnamespace = posixmdal_opendirnamespace;
+         pmdal->accessnamespace = posixmdal_accessnamespace;
+         pmdal->statnamespace = posixmdal_statnamespace;
+         pmdal->chmodnamespace = posixmdal_chmodnamespace;
+         pmdal->chownnamespace = posixmdal_chownnamespace;
          pmdal->setdatausage = posixmdal_setdatausage;
          pmdal->getdatausage = posixmdal_getdatausage;
          pmdal->setinodeusage = posixmdal_setinodeusage;
