@@ -344,6 +344,9 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
    while ( *parsepath != '\0' ) {
       // move the parse pointer ahead to the next '/' char
       while ( *parsepath != '\0'  &&  *parsepath != '/' ) { parsepath++; }
+      // identify the start of the next path component in advance
+      char* nextpelem = parsepath;
+      while ( *nextpelem == '/' ) { nextpelem++; }
       // replace any '/' char with a NULL
       char replacechar = 0;
       if ( *parsepath == '/' ) { replacechar = 1; *parsepath = '\0'; }
@@ -355,15 +358,16 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
          replacechar = 0;
          if ( pos->ns->pnamespace == NULL ) {
             // we can't move up any further
-            // move our parse pointer ahead to the next path component
-            while ( *parsepath == '/' ) { parsepath++; }
             // check if this relative path reenters the MarFS mountpoint
-            parsepath = config_validatemnt( config, pos->ns, parsepath );
+            parsepath = config_validatemnt( config, pos->ns, nextpelem );
             if ( parsepath == NULL ) {
                LOG( LOG_ERR, "Path extends beyond config root: \"%s\"\n", pathelem );
                errno = EINVAL;
                return NULL;
             }
+            // update our 'nextpelem' var
+            nextpelem = parsepath;
+            while ( *nextpelem == '/' ) { nextpelem++; }
             // back to the rootNS at this point, so no need to adjust position vals
          }
          else {
@@ -418,39 +422,53 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
             if ( replacechar ) { *parsepath = '/'; }
             break;
          }
-         // this is a NS path, move the tgtns to the subspace and update our ctxt
-         if ( pos->ns->prepo == ((marfs_ns*)(resnode->content))->prepo ) {
-            // if the repo is the same, we can shift the current ctxt
-            if ( mdal->setnamespace( pos->ctxt, pathelem ) ) {
-               LOG( LOG_ERR, "Failed to transition to NS \"%s\"\n", ((marfs_ns*)(resnode->content))->idstr );
-               if ( replacechar ) { *parsepath = '/'; }
-               return NULL;
+         // this is a NS path
+         if ( *nextpelem != '\0' ) {
+            // update our ctxt to reflect the new NS
+            if ( pos->ns->prepo == ((marfs_ns*)(resnode->content))->prepo ) {
+               // if the repo is the same, we can shift the current ctxt
+               if ( mdal->setnamespace( pos->ctxt, pathelem ) ) {
+                  LOG( LOG_ERR, "Failed to transition to NS \"%s\"\n", ((marfs_ns*)(resnode->content))->idstr );
+                  if ( replacechar ) { *parsepath = '/'; }
+                  return NULL;
+               }
+            }
+            else {
+               // the ctxt can't be shifted to a new MDAL, so we must destroy and recreate
+               if ( mdal->destroyctxt( pos->ctxt ) ) {
+                  // can only complain
+                  LOG( LOG_WARNING, "Failed to destroy ctxt referencing NS \"%s\"\n", pos->ns->idstr );
+               }
+               pos->ctxt = NULL; // just in case we exit early, make sure this isn't reused
+               char* nspath = NULL;
+               if ( config_nsinfo( ((marfs_ns*)(resnode->content))->idstr, NULL, &(nspath) ) ) {
+                  LOG( LOG_ERR, "Failed to identify path of new NS: \"%s\"\n",
+                                ((marfs_ns*)(resnode->content))->idstr );
+                  return NULL;
+               }
+               MDAL newmdal = ((marfs_ns*)(resnode->content))->prepo->metascheme.mdal;
+               pos->ctxt = newmdal->newctxt( nspath, newmdal->ctxt );
+               free( nspath );
+               if ( pos->ctxt == NULL ) {
+                  LOG( LOG_ERR, "Failed to create new MDAL_CTXT for NS \"%s\"\n",
+                                ((marfs_ns*)(resnode->content))->idstr );
+                  return NULL;
+               }
             }
          }
          else {
-            // undo any previous path edit
-            if ( replacechar ) { *parsepath = '/'; }
-            replacechar = 0;
-            // the ctxt can't be shifted to a new MDAL, so we must destroy and recreate
+            // the path is targetting the NS itself
+            // NOTE -- We need to explicitly note this special case.  We don't want to 
+            //         move our ctxt to reference the new NS, as that may be unnecessary 
+            //         for many ops ( stating the NS itself ).
+            //         Additionally, under some circumstances ( no execute perms ), it 
+            //         may not be possible to set our ctxt to the NS, but still possible 
+            //         to perform the required op ( stat(), for example ).
             if ( mdal->destroyctxt( pos->ctxt ) ) {
                // can only complain
                LOG( LOG_WARNING, "Failed to destroy ctxt referencing NS \"%s\"\n", pos->ns->idstr );
             }
-            pos->ctxt = NULL; // just in case we exit early, make sure this isn't reused
-            char* nspath = NULL;
-            if ( config_nsinfo( ((marfs_ns*)(resnode->content))->idstr, NULL, &(nspath) ) ) {
-               LOG( LOG_ERR, "Failed to identify path of new NS: \"%s\"\n",
-                             ((marfs_ns*)(resnode->content))->idstr );
-               return NULL;
-            }
-            MDAL newmdal = ((marfs_ns*)(resnode->content))->prepo->metascheme.mdal;
-            pos->ctxt = newmdal->newctxt( nspath, newmdal->ctxt );
-            free( nspath );
-            if ( pos->ctxt == NULL ) {
-               LOG( LOG_ERR, "Failed to create new MDAL_CTXT for NS \"%s\"\n",
-                             ((marfs_ns*)(resnode->content))->idstr );
-               return NULL;
-            }
+            pos->ctxt = NULL;
          }
          pos->ns = ((marfs_ns*)(resnode->content));
          mdal = pos->ns->prepo->metascheme.mdal;
@@ -458,7 +476,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
       // undo any previous path edit
       if ( replacechar ) { *parsepath = '/'; }
       // move our parse pointer ahead to the next path component
-      while ( *parsepath == '/' ) { parsepath++; }
+      parsepath = nextpelem;
       // update our element pointer to the next path element
       pathelem = parsepath;
    }
@@ -2525,7 +2543,8 @@ int config_verify( marfs_config* config, char fix ) {
  *                          All path componenets are assumed to be directories.
  *                       If non-zero, this function will perform a readlink() op on all
  *                          path components, substituting in the targets of all symlinks.
- * @return int : Zero on success, or -1 if a failure occurred
+ * @return int : The depth of the path from the resulting NS target, 
+ *               or -1 if a failure occurred
  */
 int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, char linkchk ) {
    // check for NULL refs
@@ -2561,14 +2580,14 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
          return -1;
       }
       // NOTE -- now targetting the rootNS
-      pos->depth = 0;
-      if ( pos->ns != config->rootns ) {
+      if ( pos->ns != config->rootns  ||  pos->depth != 0 ) {
          // we need to create a fresh MDAL_CTXT, referencing the rootNS
          if ( mdal->destroyctxt( pos->ctxt ) ) {
             // nothing to do, besides complain
             LOG( LOG_WARNING, "Failed to destory MDAL_CTXT of NS \"%s\"\n", pos->ns->idstr );
          }
          pos->ns = config->rootns;
+         pos->depth = 0;
          mdal = pos->ns->prepo->metascheme.mdal;
          pos->ctxt = mdal->newctxt( "/.", mdal->ctxt );
          if ( pos->ctxt == NULL ) {
@@ -2786,7 +2805,6 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
       // zero out the end of the subpath, just in case
       bzero( (*subpath)+newlen+1, relpath-((*subpath)+1) );
    }
-
 
    return depth;
 }

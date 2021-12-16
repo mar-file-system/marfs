@@ -167,6 +167,7 @@ int config_verify( marfs_config* config, char fix );
  * @param marfs_config* config : Config reference
  * @param marfs_position* pos : Reference populated with the initial position value
  *                              This will be updated to reflect the resulting position
+ *                              NOTE -- pos->ctxt may be destroyed; see below
  * @param char** subpath : Relative path from the tgtns
  *                         This will be updated to reflect the resulting subpath from
  *                         the new tgtns
@@ -178,6 +179,13 @@ int config_verify( marfs_config* config, char fix );
  *                          path components, substituting in the targets of all symlinks.
  * @return int : The depth of the path from the resulting NS target, 
  *               or -1 if a failure occurred
+ * NOTE -- If the returned depth == 0 ( path directly targets a NS ), it is possible for 
+ *         the position value to have its MDAL_CTXT destroyed ( set to NULL ).  This is 
+ *         because many ops ( such as stat() ) which directly target a NS do not require 
+ *         an MDAL_CTXT for that NS.  In fact, certain permissions ( no execute ) may 
+ *         disallow the creation of an MDAL_CTXT for the NS, but still allow the op itself.
+ *         Therefore, it is up to the caller to identify if an NS ctxt is required, and to 
+ *         create such an MDAL_CTXT themselves.
  */
 int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, char linkchk );
 
