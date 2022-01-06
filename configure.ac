@@ -207,15 +207,8 @@ AC_CONFIG_FILES([Makefile
                  src/recovery/Makefile
                  src/config/Makefile
                  src/datastream/Makefile
+                 src/api/Makefile
                ])
-#                 src/logging/Makefile
-#                 src/thread_queue/Makefile
-#                 src/io/Makefile
-#                 src/ne/Makefile
-#                 src/isal_benchmark/Makefile
-#                 config/erasure_config.h:config/erasure_config.h.in
-#                 config/udal_config.h:config/udal_config.h.in
-#                 config/Makefile
 
 AC_OUTPUT
 

@@ -58,15 +58,8 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include <dirent.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <stddef.h>
-#include <sys/types.h>
-#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/statvfs.h>
-
-#define _GNU_SOURCE
 
 /* NOTE: Functions should operate the same as their POSIX counterparts if
 possible.
@@ -95,193 +88,467 @@ typedef enum
 	MARFS_WRITE = O_WRONLY
 } marfs_flags;
 
-// CONTEXT MGMT
+// CONTEXT MGMT OPS
 
-/* This initializes a MarFS Context structure ( opaque type, from your perspective ) based on
-the content of the referenced config file.  That context will be a required arg for all
-further ops that don't instead reference a MarFS Handle structure.
-Note -- the plan is to use this initialization step as a sort of security barrier.  The
-intention is for the caller to have euid == root at this point ( or some other
-marfs-specific user, we can discuss this ).  This function will access secure files/dirs.
-This is a one time event.  After completion of initialization, the caller can safely setuid()
-to a user, dropping ALL elevated permissions.*/
-marfs_ctxt marfs_init(const char *configpath, marfs_interface type);
+/**
+ * Initializes a MarFS Context structure based on the content of the referenced config file
+ * Note -- This initialization process may act as a security barrier.  If the caller has 
+ *         EUID == root (or some marfs-admin-user), this function can access MDAL/DAL root 
+ *         dirs below a protected directory as a one time event.  After initialization, 
+ *         the caller can safely setuid() to a user, dropping all elevated perms yet 
+ *         maintaining access to the MDAL/DAL root dirs via the returned marfs_ctxt.
+ * @param const char* configpath : Path of the config file to initialize based on
+ * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
+ * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
+ */
+marfs_ctxt marfs_init(const char* configpath, marfs_interface type);
 
-/* Sets a string 'tag' value for the given context struct.  This will cause all underlying
-data objects and admin metadata references created via this context to include the specified
-'tag' prefix.*/
-int marfs_settag(marfs_ctxt ctxt, const char *tag);
+/**
+ * Sets a string 'tag' value for the given context struct, causing all output files to 
+ * include the string in metadata references and data object IDs
+ * @param marfs_ctxt ctxt : marfs_ctxt to be updated
+ * @param const char* ctag : New client tag string value
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_setctag(marfs_ctxt ctxt, const char* ctag);
 
-/* If buffer 'buf' is not NULL, fills 'buf' with a string indicating the MarFS
-configuration version. Returns the total length of the configuration string.
-*/
-int marfs_configver(marfs_ctxt ctxt, char *buf, ssize_t size, off_t offset);
+/**
+ * Populate the given string with the config version of the provided marfs_ctxt
+ * @param marfs_ctxt ctxt : marfs_ctxt to retrieve version info from
+ * @param char* verstr : String to be populated
+ * @param size_t len : Allocated length of the target string
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t marfs_configver(marfs_ctxt ctxt, char* verstr, size_t len);
 
-/* This function destroys the previous context struct.*/
+/**
+ * Destroy the provided marfs_ctxt
+ * @param marfs_ctxt ctxt : marfs_ctxt to be destroyed
+ * @return int : Zero on success, or -1 on failure
+ */
 int marfs_term(marfs_ctxt ctxt);
 
-/* METADATA OPS  -- rule of thumb:  metadata ops take a pathname argument
-                 -- exception = setting mtime / atime, which is done via file handle
-                              = chdir, which takes a directory handle arg*/
 
-/* Check file access permissions*/
-int marfs_access(marfs_ctxt ctxt, const char *path, int mode);
+// METADATA PATH OPS
 
-/* Get file attributes.  Does not follow symlinks.*/
-int marfs_lstat(marfs_ctxt ctxt, const char *path, struct stat *buf);
+/**
+ * Check access to the specified file
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the target file
+ * @param int mode : F_OK - check for file existence
+ *                      or a bitwise OR of the following...
+ *                   R_OK - check for read access
+ *                   W_OK - check for write access
+ *                   X_OK - check for execute access
+ * @param int flags : A bitwise OR of the following...
+ *                    AT_EACCESS - Perform access checks using effective uid/gid
+ *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_access(marfs_ctxt ctxt, const char* path, int mode, int flags);
 
-/* Change the permission bits of a file*/
-int marfs_chmod(marfs_ctxt ctxt, const char *path, mode_t mode);
+/**
+ * Stat the specified file
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the target file
+ * @param struct stat* st : Stat structure to be populated
+ * @param int flags : A bitwise OR of the following...
+ *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_stat(marfs_ctxt ctxt, const char* path, struct stat *buf, int flags);
 
-/* Change the owner and group of a file*/
-int marfs_chown(marfs_ctxt ctxt, const char *path, uid_t uid, gid_t gid);
+/**
+ * Edit the mode of the specified file
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the target file
+ * @param mode_t mode : New mode value for the file (see inode man page)
+ * @param int flags : A bitwise OR of the following...
+ *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_chmod(marfs_ctxt ctxt, const char* path, mode_t mode, int flags);
 
-/* Rename a file*/
-int marfs_rename(marfs_ctxt ctxt, const char *oldpath, const char *newpath);
+/**
+ * Edit the ownership and group of the specified file
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the target file
+ * @param uid_t owner : New owner
+ * @param gid_t group : New group
+ * @param int flags : A bitwise OR of the following...
+ *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_chown(marfs_ctxt ctxt, const char* path, uid_t uid, gid_t gid, int flags);
 
-/* Create a symbolic link*/
-int marfs_symlink(marfs_ctxt ctxt, const char *target, const char *linkname);
+/**
+ * Rename the specified target to a new path
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* from : String path of the target
+ * @param const char* to : Destination string path
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_rename(marfs_ctxt ctxt, const char* from, const char* to);
 
-/* Read the target of a symbolic link*/
-ssize_t marfs_readlink(marfs_ctxt ctxt, const char *path, char *buf, size_t size);
+/**
+ * Create a symlink
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* target : String path for the link to target
+ * @param const char* linkname : String path of the new link
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_symlink(marfs_ctxt ctxt, const char* target, const char* linkname);
 
-/* Remove a file*/
-int marfs_unlink(marfs_ctxt ctxt, const char *path);
+/**
+ * Read the target path of the specified symlink
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the target symlink
+ * @param char* buf : Buffer to be populated with the link value
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the link target string, or -1 if a failure occurred
+ */
+ssize_t marfs_readlink(marfs_ctxt ctxt, const char* path, char* buf, size_t size);
 
-/* Create a hardlink to an existing file*/
-int marfs_link(marfs_ctxt ctxt, const char *oldpath, const char *newpath);
+/**
+ * Unlink the specified file/symlink
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the target file
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_unlink(marfs_ctxt ctxt, const char* path);
 
-/* Create a directory*/
-int marfs_mkdir(marfs_ctxt ctxt, const char *path, mode_t mode);
+/**
+ * Create a hardlink
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* oldpath : String path of the target file
+ * @param const char* newpath : String path of the new hardlink
+ * @param int flags : A bitwise OR of the following...
+ *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_link(marfs_ctxt ctxt, const char* oldpath, const char* newpath, int flags);
 
-/* Opens a directory handle.  To me, it seems simpler to keep this as a separate function,
-which produces a handle that you can call marfs_readdir() against, rather than handling the
-marfs_open(  ...  O_DIRECTORY ... ) case.  I plan to disallow directory access via
-marfs_open().*/
-marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path);
+/**
+ * Create the specified directory
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the new directory
+ * @param mode_t mode : Mode value of the new directory (see inode man page)
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_mkdir(marfs_ctxt ctxt, const char* path, mode_t mode);
 
-/* Read directory from open directory handle*/
-struct dirent *marfs_readdir(marfs_dhandle handle);
+/**
+ * Delete the specified directory
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the target directory
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_rmdir(marfs_ctxt ctxt, const char* path);
 
-/* Close the given directory handle*/
-int marfs_closedir(marfs_dhandle handle);
+/**
+ * Return statvfs (filesystem) info for the current namespace
+ * @param const marfs_ctxt ctxt : marfs_ctxt to retrieve info for
+ * @param struct statvfs* buf : Reference to the statvfs structure to be populated
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_statvfs(marfs_ctxt ctxt, const char* path, struct statvfs *buf);
 
-/* Remove a directory*/
-int marfs_rmdir(marfs_ctxt ctxt, const char *path);
 
-/* This is my attempt to implement a current-working-directory style behavior for MarFS.  The
-idea is that any initialized context will use its own internal marfs_dhandle to reference a
-cwd path.  All 'const char* path' relative path values will be interpreted relative to that
-cwd.
-By default, this internal cwd will be the root of the MarFS mountpoint.  However, this
-function allows you to change that.
-When executed, marfs will replace the internal cwd marfs_dhandle of the context structure
-with the 'newdir' dhandle.  The original, internal marfs_dhandle will then be returned to
-the caller.
-CRUCIAL NOTES -- it is the caller's responsibility to close the returned marfs_dhandle if it
-is no longer needed.  Additionally, the caller should *not* alter the state of the 'newdir'
-handle after passing it into the context structure.*/
-marfs_dhandle marfs_chdir(marfs_ctxt ctxt, marfs_dhandle newdir);
+// METADATA FILE HANDLE OPS
 
-/* This is the only mechanism I plan to implement for setting metadata times.  See the
-manpage of utimensat() for a description of the 'times[2]' arg.  Note that I do not plan to
-offer functionality for setting times on symlinks themselves, which seems unnecessary to me.*/
+/**
+ * Perform a stat operation on the file referenced by the given marfs_fhandle
+ * @param marfs_fhandle fh : File handle to stat
+ * @param struct stat* buf : Reference to a stat buffer to be populated
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_fstat ( marfs_fhandle fh, struct stat* buf );
+
+/**
+ * Update the timestamps of the target file
+ * NOTE -- It is possible that the time values of the target file may not be updated 
+ *         until the referencing marfs_fhandle is closed or released.
+ *         Thus, it is essential to check the return values of those functions as well.
+ * @param marfs_fhandle fh : File handle on which to set timestamps
+ * @param const struct timespec times[2] : Struct references for new times
+ *                                         times[0] - atime values
+ *                                         times[1] - mtime values
+ *                                         (see man utimensat for struct reference)
+ * @return int : Zero value on success, or -1 if a failure occurred
+ */
 int marfs_futimens(marfs_fhandle stream, const struct timespec times[2]);
 
-/* Get file system statistics*/
-int marfs_statvfs(marfs_ctxt ctxt, const char *path, struct statvfs *buf);
+/**
+ * Set the specified xattr on the file referenced by the given marfs_fhandle
+ * @param marfs_fhandle fh : File handle for which to set the xattr
+ * @param const char* name : String name of the xattr to set
+ * @param const void* value : Buffer containing the value of the xattr
+ * @param size_t size : Size of the value buffer
+ * @param int flags : Zero value    - create or replace the xattr
+ *                    XATTR_CREATE  - create the xattr only (fail if xattr exists)
+ *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_fsetxattr(marfs_fhandle fh, const char* name, const void* value, size_t size, int flags);
 
-/* Set extended attributes*/
-int marfs_lsetxattr(marfs_ctxt ctxt, const char *path, const char *name, const char *value, size_t size, int flags);
+/**
+ * Retrieve the specified xattr from the file referenced by the given marfs_fhandle
+ * @param marfs_fhandle fh : File handle for which to retrieve the xattr
+ * @param const char* name : String name of the xattr to retrieve
+ * @param void* value : Buffer to be populated with the xattr value
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr value, or -1 if a failure occurred
+ */
+ssize_t marfs_fgetxattr(marfs_fhandle fh, const char* name, void* value, size_t size);
 
-/* Get extended attributes*/
-ssize_t marfs_lgetxattr(marfs_ctxt ctxt, const char *path, const char *name, void *value, size_t size);
+/**
+ * Remove the specified xattr from the file referenced by the given marfs_fhandle
+ * @param marfs_fhandle fh : File handle for which to remove the xattr
+ * @param const char* name : String name of the xattr to remove
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_fremovexattr(marfs_fhandle fh, const char* name);
 
-/* List extended attributes*/
-ssize_t marfs_llistxattr(marfs_ctxt ctxt, const char *path, char *list, size_t size);
+/**
+ * List all xattr names from the file referenced by the given marfs_fhandle
+ * @param marfs_fhandle fh : File handle for which to list xattrs
+ * @param char* buf : Buffer to be populated with xattr names
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
+ */
+ssize_t marfs_flistxattr(marfs_fhandle fh, char* buf, size_t size);
 
-/* Remove extended attributes*/
-int marfs_lremovexattr(marfs_ctxt ctxt, const char *path, const char *name);
 
-/*DATA OPS  -- rule of thumb: data ops take a marfs_fhandle argument ( no pathname )*/
+// DIRECTORY HANDLE OPS
 
-/* Open a 'write' file handle for a newly created file.  Any existing file at the given path
-will be unlinked.  An existing directory at that path will result in an error.
-Note that the 'stream' arg is meant to provide support for file packing.  Passing in a
-fhandle from a previous set of files will allow those files to be packed together.
-Otherwise, if the 'stream' arg is NULL, this will begin a new data stream.
-Note -- I've chosen to mirror the posix creat() implementation to distinguish between
-creation of a new file, and update of an existing file.  Any file creation must be a
-complete overwrite of any existing file, with the entire data set written from beginning to
-end.  The exception would be for chunked files, which can be written at specific offsets by
-parallel processes ( see below ).*/
+/**
+ * Open a directory, relative to the given marfs_ctxt
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the target directory
+ * @return marfs_dhandle : Open directory handle, or NULL if a failure occurred
+ */
+marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path);
+
+/**
+ * Iterate to the next entry of an open directory handle
+ * @param marfs_dhandle dh : marfs_dhandle to read from
+ * @return struct dirent* : Reference to the next dirent struct, or NULL w/ errno unset
+ *                          if all entries have been read, or NULL w/ errno set if a
+ *                          failure occurred
+ */
+struct dirent *marfs_readdir(marfs_dhandle handle);
+
+/**
+ * Close the given directory handle
+ * @param marfs_dhandle dh : marfs_dhandle to close
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_closedir(marfs_dhandle handle);
+
+/**
+ * Edit the given marfs_ctxt to reference the given marfs_dhandle for all path operations
+ * NOTE -- This is an attempt to implement a current-working-directory style behavior for 
+ *         MarFS.  The idea is that any initialized context holds its own internal cwd 
+ *         reference.  All 'const char* path' relative path values will be interpreted 
+ *         relative to that cwd.
+ *         By default, this internal cwd will be the root of the MarFS mountpoint.
+ *         However, this function allows you to change that.
+ * @param marfs_ctxt ctxt : marfs_ctxt to update
+ * @param marfs_dhandle dh : Directory handle to be used by the marfs_ctxt
+ *                           NOTE -- this operation will destroy the provided marfs_dhandle
+ * @return int : Zero on success, -1 if a failure occurred
+ */
+int marfs_chdir(marfs_ctxt ctxt, marfs_dhandle newdir);
+
+
+// FILE HANDLE OPS
+
+/**
+ * Create a new MarFS file, overwriting any existing file, and opening a marfs_fhandle for it
+ * NOTE -- this is the only mechanism for creating files in MarFS
+ * @param marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param marfs_fhandle stream : Reference to an existing marfs_fhandle, or NULL
+ *                               If non-NULL, the created file will be tied to the provided 
+ *                               stream, allowing it to be packed in with previous files.
+ *                               The previous stream will be modified to reference the 
+ *                               new file and returned by this function.
+ *                               If NULL, the created file will be tied to a completely 
+ *                               fresh stream.
+ *                               NOTE -- Clients should essentially always tie new files to 
+ *                               an existing stream, when feasible to do so.
+ * @param const char* path : Path of the file to be created
+ * @param mode_t mode : Mode value of the file to be created
+ * @return marfs_fhandle : marfs_fhandle referencing the created file, 
+ *                         or NULL if a failure occurred
+ *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
+ *            preserved ( continue to reference whatever file it previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, errno will be set to EBADFD and any subsequent operations 
+ *            against the provided marfs_fhandle will fail, besides marfs_release().
+ */
 marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, mode_t mode);
 
-/* This opens either a read or write handle for an existing file.  This op *will not* create
-a new file.  The 'flags' arg can be one of either MARFS_READ or MARFS_WRITE.
-A MARFS_READ handle is intended for reading data.
-A MARFS_WRITE handle is intended for use by parallel writers, writing various 'chunks' of a
-large file, or for use in data modifications such as marfs_ftruncate().
-Note -- for security reasons, it will be impossible for file handles created by this
-function to finalize this file ( via close() or creat() ) unless the 'original' handle has
-been released ( see marfs_release() below ).*/
-marfs_fhandle marfs_open(marfs_ctxt ctxt, const char *path, marfs_flags flags);
+/**
+ * Open an existing file
+ * @param marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param marfs_fhandle stream : Reference to an existing marfs_fhandle, or NULL
+ *                               If non-NULL, the previous marfs_fhandle will be modified  
+ *                               to reference the new file, preserving existing meta/data 
+ *                               values/buffers to whatever extent is possible.  The 
+ *                               modified handle will be returned by this function.
+ *                               If NULL, the created file will be tied to a completely 
+ *                               fresh marfs_fhandle.
+ *                               NOTE -- Clients should essentially always open new files 
+ *                               via an existing marfs_fhandle, when feasible to do so.
+ * @param const char* path : Path of the file to be opened
+ * @param marfs_flags flags : Flags specifying the mode in which to open the file
+ * @return marfs_fhandle : marfs_fhandle referencing the opened file,
+ *                         or NULL if a failure occurred
+ *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
+ *            preserved ( continue to reference whatever file it previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, errno will be set to EBADFD and any subsequent operations 
+ *            against the provided marfs_fhandle will fail, besides marfs_release().
+ */
+marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, marfs_flags flags);
 
-/* Read data from an open file*/
-ssize_t marfs_read(marfs_fhandle stream, void *buf, size_t size);
-
-/* Write data to an open file*/
-ssize_t marfs_write(marfs_fhandle stream, const void *buf, size_t size);
-
-/* Seek a fhandle to the given offset, relative to 'whence' (see the posix lseek() manpage
-for a description, excluding the SEEK_DATA and SEEK_HOLE values).  For MARFS_READ handles,
-this can be any offset value.  For MARFS_WRITE handles, the provided offset *must* align
-with underlying chunk boundaries (this is intended to support parallel write).*/
-off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence);
-
-/* Calculate the offset and size of the given 'chunknum' of the provided fhandle.  This is
-useful for parallel writers, allowing them to identify locations at which is is safe for
-them to write data.*/
-int marfs_chunkbounds(marfs_fhandle stream, int chunknum, off_t *offset, size_t *size);
-
-/* Truncate the file, referenced via MARFS_WRITE handle, to the given size.
-Note -- this can only be done on 'finalized' files (see below).*/
-int marfs_ftruncate(marfs_fhandle stream, off_t length);
-
-/* Similar to ftruncate, this will adjust the referenced file to the given size.  However,
-there is a crucial difference between the two.  marfs_ftruncate() will only allow the caller
-to operate on finalized files, for which the total data size has been locked in (via
-marfs_close(), marfs_creat(), or marfs_release()), and will only allow the true data size of
-the file to shrink (truncating smaller reduces actual data size, truncating larger only
-adds 'fake' zero-fill data).
-This function is the opposite case, as it can only be used against files whose data has not
-yet been finalized.  In such a case, the referenced file will have its real data bounds
-extended to include the specified amount of data.  To put it another way, this function will
-instruct marfs to assume that 'length' bytes of actual data objects will be written to this
-file.  This enables parallel writers to use marfs_open() handles to write these non-existent
-data chunks in arbitrary order.
-Note -- this function is only usable via an 'original' file handle, meaning a handle created
-specifically via a marfs_creat() operation.  This is intended to limit race-conditions
-associated with multiple processes extending file bounds as other processes attempt to close
-the file and continue with the same data stream.*/
-int marfs_extend(marfs_fhandle stream, off_t length);
-
-/* Possibly sync data objects and flush cached data.  If called more than once on the same
-file handle, is a no-op.*/
-int marfs_flush(marfs_fhandle stream);
-
-/* Close the given file handle and finalize the data stream.
-Note -- many ops, such as marfs_ftruncate, extend, utimens, and even write, may not be
-committed to the FS until 'finalization' of the data stream.  This means that it is
-*essential* to check the return code of this function.  A failure of this call may indicate
-incomplete operations throughout the *entire* data stream referenced by this handle.*/
+/**
+ * Free the given file handle and 'complete' the underlying file
+ * ( make readable and disallow further data modification )
+ * NOTE -- For MARFS_READ handles, close and release ops are functionally identical
+ * NOTE -- For marfs_fhandles produced by marfs_open(), this function will fail unless the 
+ *         original marfs_creat() handle has already been released ( the create handle must 
+ *         be released for the data size of the file to be determined )
+ * @param marfs_fhandle stream : marfs_fhandle to be closed
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- many ops, such as marfs_ftruncate, extend, utimens, and even write, may not 
+ *            be committed to the FS until 'finalization' of the data stream.  This means 
+ *            that it is *essential* to check the return code of this function.  A failure 
+ *            of this call may indicate incomplete operations throughout the *entire* data 
+ *            stream referenced by this handle.
+ */
 int marfs_close(marfs_fhandle stream);
 
-/* Close the given file handle, but allow the data stream to be updated in the future (such
-as by parallel writers).*/
+/**
+ * Free the given file handle, but do not 'complete' the underlying file
+ * NOTE -- For MARFS_READ handles, close and release ops are functionally identical
+ * @param marfs_fhandle stream : marfs_fhandle to be closed
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- many ops, such as marfs_ftruncate, extend, utimens, and even write, may not 
+ *            be committed to the FS until 'finalization' of the data stream.  This means 
+ *            that it is *essential* to check the return code of this function.  A failure 
+ *            of this call may indicate incomplete operations throughout the *entire* data 
+ *            stream referenced by this handle.
+ */
 int marfs_release(marfs_fhandle stream);
 
-/*Note -- in the case of parallel writing the workflow can be thought of like this:
+/**
+ * 'Complete' the file referenced by the given handle, but maintain the handle itself
+ * NOTE -- This function exists to better facilitate FUSE integration and is unlikely to 
+ *         be useful outside of that context.  The handle structure will be maintained, 
+ *         but all subsequent marfs ops will fail against that handle, except for release.
+ * @param marfs_fhandle stream : marfs_fhandle referencing the file to be completed
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- many ops, such as marfs_ftruncate, extend, utimens, and even write, may not 
+ *            be committed to the FS until 'finalization' of the data stream.  This means 
+ *            that it is *essential* to check the return code of this function.  A failure 
+ *            of this call may indicate incomplete operations throughout the *entire* data 
+ *            stream referenced by this handle.
+ */
+int marfs_flush(marfs_fhandle stream);
+
+
+// DATA FILE HANDLE OPS
+
+/**
+ * Read from the file currently referenced by the given marfs_fhandle
+ * @param marfs_fhandle stream : marfs_fhandle to be read from
+ * @param void* buf : Reference to the buffer to be populated with read data
+ * @param size_t count : Number of bytes to be read
+ * @return ssize_t : Number of bytes read, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
+ *            preserved ( continue to reference whatever file it previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, errno will be set to EBADFD and any subsequent operations 
+ *            against the provided marfs_fhandle will fail, besides marfs_release().
+ */
+ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size);
+
+/**
+ * Write to the file currently referenced by the given marfs_fhandle
+ * @param marfs_fhandle stream : marfs_fhandle to be written to
+ * @param const void* buf : Reference to the buffer containing data to be written
+ * @param size_t count : Number of bytes to be written
+ * @return ssize_t : Number of bytes written, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
+ *            preserved ( continue to reference whatever file it previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, errno will be set to EBADFD and any subsequent operations 
+ *            against the provided marfs_fhandle will fail, besides marfs_release().
+ */
+ssize_t marfs_write(marfs_fhandle stream, const void* buf, size_t size);
+
+/**
+ * Seek to the provided offset of the file referenced by the given marfs_fhandle
+ * @param marfs_fhandle stream : marfs_fhandle to seek
+ * @param off_t offset : Offset for the seek
+ *                       NOTE -- write handles can only seek to exact chunk boundaries
+ * @param int whence : Flag defining seek start location ( see 'seek()' syscall manpage )
+ * @return off_t : Resulting offset within the file, or -1 if a failure occurred
+ *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
+ *            preserved ( continue to reference whatever file it previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, errno will be set to EBADFD and any subsequent operations 
+ *            against the provided marfs_fhandle will fail, besides marfs_release().
+ */
+off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence);
+
+/**
+ * Identify the data object boundaries of the file referenced by the given marfs_fhandle
+ * @param marfs_fhandle stream : marfs_fhandle for which to retrieve info
+ * @param int chunknum : Index of the data chunk to retrieve info for ( beginning at zero )
+ * @param off_t* offset : Reference to be populated with the data offset of the start of
+ *                        the target data chunk
+ *                        ( as in, marfs_seek( stream, 'offset', SEEK_SET ) will move
+ *                        you to the start of this data chunk )
+ * @param size_t* size : Reference to be populated with the size of the target data chunk
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_chunkbounds(marfs_fhandle stream, int chunknum, off_t* offset, size_t* size);
+
+/**
+ * Truncate the file referenced by the given marfs_fhandle to the specified length
+ * NOTE -- This operation can only be performed on 'completed' files
+ * @param marfs_fhandle stream : marfs_fhandle to be truncated
+ * @param off_t length : Target total file length to truncate to
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_ftruncate(marfs_fhandle stream, off_t length);
+
+/**
+ * Extend the file referenced by the given marfs_fhandle to the specified total size
+ * This makes the specified data size accessible for parallel write.
+ * NOTE -- The final data object of the file will only be accessible after the creating 
+ *         marfs_fhandle has been released ( as that finalizes the file's data size ).
+ *         This function can only be performed if no data has been written to the target
+ *         file via this handle.
+ * @param marfs_fhandle stream : marfs_fhandle to be extended
+ * @param off_t length : Target total file length to extend to
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
+ *            preserved ( continue to reference whatever file it previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, errno will be set to EBADFD and any subsequent operations 
+ *            against the provided marfs_fhandle will fail, besides marfs_release().
+ */
+int marfs_extend(marfs_fhandle stream, off_t length);
+
+/*
+Note -- in the case of parallel writing the workflow can be thought of like this:
 	Initialization:	marfs_creat(...) -> ohandle
 			marfs_extend( ohandle, total_length )
 			marfs_release( ohandle )
@@ -293,7 +560,8 @@ int marfs_release(marfs_fhandle stream);
 			marfs_utimens( fhandle ... )
 			marfs_close( fhandle )
 			   OR
-			marfs_creat( newpath, fhandle ... )*/
+			marfs_creat( newpath, fhandle ... )
+*/
 
 #endif // _MARFS_H
 

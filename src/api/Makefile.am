@@ -54,5 +54,28 @@
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
 
-SUBDIRS = hash mdal tagging recovery config datastream api
+
+# automake requires '=' before '+=', even for these built-in vars
+AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CFLAGS   =
+AM_LDFLAGS  =
+
+include_HEADERS = marfs.h
+lib_LTLIBRARIES = libmarfs.la
+
+libmarfs_la_SOURCES = marfs.c
+libmarfs_la_LIBADD  = ../datastream/libDatastream.la
+libmarfs_la_CFLAGS  = $(XML_CFLAGS)
+MARFS_LIB = libmarfs.la
+
+# ---
+
+#check_PROGRAMS = test_api
+#
+#test_api_SOURCES = testing/test_api.c
+#test_api_CFLAGS = $(XML_CFLAGS)
+#test_api_LDADD = $(DATASTREAM_LIB)
+#
+#TESTS = test_api
+
 
