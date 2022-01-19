@@ -182,6 +182,14 @@ AC_ARG_ENABLE( [debugCONFIG],
                AS_HELP_STRING( [--enable-debugCONFIG], [Enable 'config'-subdir debug output] ),
                AC_DEFINE( [DEBUG_CONFIG], [], [Enable 'config'-subdir debug output] ), [] )
 
+AC_ARG_ENABLE( [debugDS],
+               AS_HELP_STRING( [--enable-debugDS], [Enable 'datastream'-subdir debug output] ),
+               AC_DEFINE( [DEBUG_DS], [], [Enable 'datastream'-subdir debug output] ), [] )
+
+AC_ARG_ENABLE( [debugAPI],
+               AS_HELP_STRING( [--enable-debugAPI], [Enable 'api'-subdir debug output] ),
+               AC_DEFINE( [DEBUG_API], [], [Enable 'api'-subdir debug output] ), [] )
+
 # debugging-output should go to syslog, instead of stdout/stderr?
 AC_ARG_ENABLE([syslog],
                AS_HELP_STRING( [--enable-syslog], [Send debugging output to syslog, instead of stdout/stderr] ),
