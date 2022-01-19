@@ -99,9 +99,12 @@ typedef enum
  *         maintaining access to the MDAL/DAL root dirs via the returned marfs_ctxt.
  * @param const char* configpath : Path of the config file to initialize based on
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
+ * @param char verify : If zero, skip config verification
+ *                      If one, verify the config and abort if any problems are found
+ *                      If two, verify the config and attempt to correct problems
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
-marfs_ctxt marfs_init(const char* configpath, marfs_interface type);
+marfs_ctxt marfs_init(const char* configpath, marfs_interface type, char verify);
 
 /**
  * Sets a string 'tag' value for the given context struct, causing all output files to 
@@ -365,7 +368,7 @@ int marfs_closedir(marfs_dhandle handle);
 int marfs_chdir(marfs_ctxt ctxt, marfs_dhandle newdir);
 
 
-// FILE HANDLE OPS
+// FILE HANDLE MGMT OPS
 
 /**
  * Create a new MarFS file, overwriting any existing file, and opening a marfs_fhandle for it

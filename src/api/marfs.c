@@ -166,24 +166,31 @@ void pathcleanup( char* subpath, marfs_position* oppos ) {
  *         maintaining access to the MDAL/DAL root dirs via the returned marfs_ctxt.
  * @param const char* configpath : Path of the config file to initialize based on
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
+ * @param char verify : If zero, skip config verification
+ *                      If one, verify the config and abort if any problems are found
+ *                      If two, verify the config and attempt to correct problems
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
-marfs_ctxt marfs_init( const char* configpath, marfs_interface type ) {
+marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid args
    if ( configpath == NULL ) {
       LOG( LOG_ERR, "Received a NULL configpath value\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    if ( type != MARFS_INTERACTIVE  &&  type != MARFS_BATCH ) {
       LOG( LOG_ERR, "Received a non-INTERACTIVE nor BATCH interface type value\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // allocate our ctxt struct
    marfs_ctxt ctxt = malloc( sizeof( struct marfs_ctxt_struct ) );
-   if ( ctxt != NULL ) {
+   if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Failed to allocate a new marfs_ctxt\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // set our interface type
@@ -192,7 +199,18 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type ) {
    if ( (ctxt->config = config_init( configpath )) == NULL ) {
       LOG( LOG_ERR, "Failed to initialize marfs_config\n" );
       free( ctxt );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
+   }
+   // verify our config, if requested
+   if ( verify ) {
+      if ( config_verify( ctxt->config, verify - 1 ) ) {
+         LOG( LOG_ERR, "Encountered uncorrected errors with the MarFS config\n" );
+         config_term( ctxt->config );
+         free( ctxt );
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
    }
    // initialize our positon to reference the root NS
    MDAL rootmdal = ctxt->config->rootns->prepo->metascheme.mdal;
@@ -203,9 +221,11 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type ) {
       LOG( LOG_ERR, "Failed to initialize MDAL_CTXT for rootNS\n" );
       config_term( ctxt->config );
       free( ctxt );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // all done
+   LOG( LOG_INFO, "EXIT - Success\n" );
    return ctxt;
 }
 
@@ -217,26 +237,31 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type ) {
  * @return int : Zero on success, or -1 on failure
  */
 int marfs_setctag( marfs_ctxt ctxt, const char* ctag ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid args
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( ctag == NULL ) {
       LOG( LOG_ERR, "Received a NULL ctag reference\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // duplicate the client string
    char* newctag = strdup( ctag );
    if ( newctag == NULL ) {
       LOG( LOG_ERR, "Failed to duplicate client tag string: \"%s\"\n", ctag );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // replace the original client tag
    free( ctxt->config->ctag );
    ctxt->config->ctag = newctag;
+   LOG( LOG_INFO, "EXIT - Success\n" );
    return 0;
 }
 
@@ -252,13 +277,16 @@ int marfs_setctag( marfs_ctxt ctxt, const char* ctag ) {
  *                  output string was truncated.
  */
 size_t marfs_configver( marfs_ctxt ctxt, char* verstr, size_t len ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return 0;
    }
    // print out the config version string
+   LOG( LOG_INFO, "EXIT - Success\n" );
    return snprintf( verstr, len, "%s", ctxt->config->version );
 }
 
@@ -268,11 +296,13 @@ size_t marfs_configver( marfs_ctxt ctxt, char* verstr, size_t len ) {
  * @return int : Zero on success, or -1 on failure
  */
 int marfs_term( marfs_ctxt ctxt ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // terminate the position MDAL_CTXT
    int retval = 0;
@@ -281,11 +311,15 @@ int marfs_term( marfs_ctxt ctxt ) {
       LOG( LOG_ERR, "Failed to destroy current position MDAL_CTXT\n" );
       retval = -1;
    }
-   // terminate the config itself
+   // terminate the config
    if ( config_term( ctxt->config ) ) {
       LOG( LOG_ERR, "Failed to destroy the config reference\n" );
       retval = -1;
    }
+   // free the ctxt struct itself
+   free( ctxt );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -307,18 +341,22 @@ int marfs_term( marfs_ctxt ctxt ) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_access( marfs_ctxt ctxt, const char* path, int mode, int flags ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for access op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -326,6 +364,8 @@ int marfs_access( marfs_ctxt ctxt, const char* path, int mode, int flags ) {
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_READMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow an access op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -341,6 +381,8 @@ int marfs_access( marfs_ctxt ctxt, const char* path, int mode, int flags ) {
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -354,18 +396,22 @@ int marfs_access( marfs_ctxt ctxt, const char* path, int mode, int flags ) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for stat op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -373,6 +419,8 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_READMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a stat op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -388,6 +436,8 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -401,18 +451,22 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_chmod( marfs_ctxt ctxt, const char* path, mode_t mode, int flags ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for chmod op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -420,6 +474,8 @@ int marfs_chmod( marfs_ctxt ctxt, const char* path, mode_t mode, int flags ) {
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a chmod op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -434,6 +490,8 @@ int marfs_chmod( marfs_ctxt ctxt, const char* path, mode_t mode, int flags ) {
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -448,18 +506,22 @@ int marfs_chmod( marfs_ctxt ctxt, const char* path, mode_t mode, int flags ) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_chown( marfs_ctxt ctxt, const char* path, uid_t uid, gid_t gid, int flags ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for chown op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -467,6 +529,8 @@ int marfs_chown( marfs_ctxt ctxt, const char* path, uid_t uid, gid_t gid, int fl
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a chown op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -481,6 +545,8 @@ int marfs_chown( marfs_ctxt ctxt, const char* path, uid_t uid, gid_t gid, int fl
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -492,32 +558,39 @@ int marfs_chown( marfs_ctxt ctxt, const char* path, uid_t uid, gid_t gid, int fl
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_rename( marfs_ctxt ctxt, const char* from, const char* to ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* frompos = NULL;
    char* frompath = NULL;
    int fromdepth = pathshift( ctxt, from, &(frompath), &(frompos) );
+   LOG( LOG_INFO, "TGT-From: Depth=%d, NS=%s, SubPath=%s\n", fromdepth, frompos->ns->idstr, frompath );
    if ( frompath == NULL ) {
       LOG( LOG_ERR, "Failed to identify 'from' target info for rename op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( fromdepth == 0 ) {
       LOG( LOG_ERR, "Cannot rename a MarFS namespace: from=\"%s\"\n", from );
       pathcleanup( frompath, frompos );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    marfs_position* topos = NULL;
    char* topath = NULL;
    int todepth = pathshift( ctxt, to, &(topath), &(topos) );
+   LOG( LOG_INFO, "TGT-To: Depth=%d, NS=%s, SubPath=%s\n", todepth, topos->ns->idstr, topath );
    if ( todepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify 'to' target info for rename op\n" );
       pathcleanup( frompath, frompos );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( todepth == 0 ) {
@@ -525,14 +598,16 @@ int marfs_rename( marfs_ctxt ctxt, const char* from, const char* to ) {
       pathcleanup( frompath, frompos );
       pathcleanup( topath, topos );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // explicitly disallow cross-NS rename ( multi-MDAL op is an unsolved problem )
    if ( frompos->ns != topos->ns ) {
       LOG( LOG_ERR, "Cross NS rename() is explicitly forbidden\n" );
-      errno = EPERM;
       pathcleanup( frompath, frompos );
       pathcleanup( topath, topos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms (only need to check one set, at we now know both positions share a NS)
@@ -542,6 +617,7 @@ int marfs_rename( marfs_ctxt ctxt, const char* from, const char* to ) {
       errno = EPERM;
       pathcleanup( frompath, frompos );
       pathcleanup( topath, topos );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -551,6 +627,8 @@ int marfs_rename( marfs_ctxt ctxt, const char* from, const char* to ) {
    pathcleanup( frompath, frompos );
    pathcleanup( topath, topos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -563,24 +641,29 @@ int marfs_rename( marfs_ctxt ctxt, const char* from, const char* to ) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_symlink( marfs_ctxt ctxt, const char* target, const char* linkname ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, linkname, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify linkname path info for symlink op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot replace MarFS NS with symlink: \"%s\"\n", linkname );
       pathcleanup( subpath, oppos );
       errno = EEXIST;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // NOTE -- we don't actually care about the target of a symlink
@@ -591,6 +674,8 @@ int marfs_symlink( marfs_ctxt ctxt, const char* target, const char* linkname ) {
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a symlink op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -599,6 +684,8 @@ int marfs_symlink( marfs_ctxt ctxt, const char* target, const char* linkname ) {
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -612,24 +699,29 @@ int marfs_symlink( marfs_ctxt ctxt, const char* target, const char* linkname ) {
  * @return ssize_t : Size of the link target string, or -1 if a failure occurred
  */
 ssize_t marfs_readlink( marfs_ctxt ctxt, const char* path, char* buf, size_t size ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for readlink op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot target a MarFS NS with a readlink op: \"%s\"\n", path );
       pathcleanup( subpath, oppos );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -637,6 +729,8 @@ ssize_t marfs_readlink( marfs_ctxt ctxt, const char* path, char* buf, size_t siz
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_READMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a readlink op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -645,6 +739,8 @@ ssize_t marfs_readlink( marfs_ctxt ctxt, const char* path, char* buf, size_t siz
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -656,24 +752,29 @@ ssize_t marfs_readlink( marfs_ctxt ctxt, const char* path, char* buf, size_t siz
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_unlink( marfs_ctxt ctxt, const char* path ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for unlink op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot unlink a MarFS NS: \"%s\"\n", path );
       pathcleanup( subpath, oppos );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -681,6 +782,8 @@ int marfs_unlink( marfs_ctxt ctxt, const char* path ) {
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow an unlink op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -689,6 +792,8 @@ int marfs_unlink( marfs_ctxt ctxt, const char* path ) {
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -703,32 +808,39 @@ int marfs_unlink( marfs_ctxt ctxt, const char* path ) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int flags ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oldpos = NULL;
    char* oldsubpath = NULL;
    int olddepth = pathshift( ctxt, oldpath, &(oldsubpath), &(oldpos) );
+   LOG( LOG_INFO, "TGT-Old: Depth=%d, NS=%s, SubPath=%s\n", olddepth, oldpos->ns->idstr, oldsubpath );
    if ( olddepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify old target info for link op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( olddepth == 0 ) {
       LOG( LOG_ERR, "Cannot link a MarFS NS to a new target: \"%s\"\n", oldpath );
       pathcleanup( oldsubpath, oldpos );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    marfs_position* newpos = NULL;
    char* newsubpath = NULL;
    int newdepth = pathshift( ctxt, newpath, &(newsubpath), &(newpos) );
+   LOG( LOG_INFO, "TGT-New: Depth=%d, NS=%s, SubPath=%s\n", newdepth, newpos->ns->idstr, newsubpath );
    if ( newdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify new target info for link op\n" );
       pathcleanup( oldsubpath, oldpos );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( newdepth == 0 ) {
@@ -736,14 +848,16 @@ int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int f
       pathcleanup( oldsubpath, oldpos );
       pathcleanup( newsubpath, newpos );
       errno = EEXIST;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // explicitly disallow cross-NS link ( multi-MDAL op is an unsolved problem )
    if ( oldpos->ns != newpos->ns ) {
       LOG( LOG_ERR, "Cross NS rename() is explicitly forbidden\n" );
-      errno = EPERM;
       pathcleanup( oldsubpath, oldpos );
       pathcleanup( newsubpath, newpos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms ( no need to check both positions, as they target the same NS )
@@ -752,6 +866,8 @@ int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int f
       LOG( LOG_ERR, "NS perms do not allow a link op\n" );
       pathcleanup( oldsubpath, oldpos );
       pathcleanup( newsubpath, newpos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -761,6 +877,8 @@ int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int f
    pathcleanup( oldsubpath, oldpos );
    pathcleanup( newsubpath, newpos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -772,24 +890,29 @@ int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int f
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_mkdir( marfs_ctxt ctxt, const char* path, mode_t mode ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for mkdir op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot target a MarFS NS with a mkdir op: \"%s\"\n", path );
       pathcleanup( subpath, oppos );
       errno = EEXIST;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -797,6 +920,8 @@ int marfs_mkdir( marfs_ctxt ctxt, const char* path, mode_t mode ) {
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a mkdir op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -805,6 +930,8 @@ int marfs_mkdir( marfs_ctxt ctxt, const char* path, mode_t mode ) {
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -815,24 +942,29 @@ int marfs_mkdir( marfs_ctxt ctxt, const char* path, mode_t mode ) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for rmdir op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot rmdir a MarFS NS: \"%s\"\n", path );
       pathcleanup( subpath, oppos );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -840,6 +972,8 @@ int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow an rmdir op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -848,6 +982,8 @@ int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -858,18 +994,22 @@ int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid arg
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
       errno = EINVAL;
-      return 0;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
    }
    // identify target info
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for statvfs op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    MDAL curmdal = oppos->ns->prepo->metascheme.mdal;
@@ -879,6 +1019,7 @@ int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
       if ( oppos->ctxt == NULL ) {
          LOG( LOG_ERR, "Failed to establish new MDAL_CTXT for NS: \"%s\"\n", subpath );
          pathcleanup( subpath, oppos );
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return -1;
       }
    }
@@ -887,6 +1028,8 @@ int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_READMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a statvfs op\n" );
       pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the MDAL op
@@ -908,6 +1051,8 @@ int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
    // cleanup references
    pathcleanup( subpath, oppos );
    // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -921,14 +1066,19 @@ int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_fstat( marfs_fhandle fh, struct stat* buf ) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( fh == NULL ) {
       LOG( LOG_ERR, "Received a NULL file handle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the op
-   return fh->ns->prepo->metascheme.mdal->fstat( fh->metahandle, buf );
+   int retval = fh->ns->prepo->metascheme.mdal->fstat( fh->metahandle, buf );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -944,10 +1094,12 @@ int marfs_fstat( marfs_fhandle fh, struct stat* buf ) {
  * @return int : Zero value on success, or -1 if a failure occurred
  */
 int marfs_futimens(marfs_fhandle fh, const struct timespec times[2]) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( fh == NULL ) {
       LOG( LOG_ERR, "Received a NULL file handle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -955,6 +1107,7 @@ int marfs_futimens(marfs_fhandle fh, const struct timespec times[2]) {
         ( fh->itype != MARFS_BATCH        &&  !(fh->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a futimens op\n" );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the op
@@ -963,7 +1116,10 @@ int marfs_futimens(marfs_fhandle fh, const struct timespec times[2]) {
       // the config has enabled direct read
       return fh->ns->prepo->metascheme.mdal->futimens( fh->metahandle, times );
    }
-   return datastream_utimens( &(fh->datastream), times );
+   int retval = datastream_utimens( &(fh->datastream), times );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -978,10 +1134,12 @@ int marfs_futimens(marfs_fhandle fh, const struct timespec times[2]) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_fsetxattr(marfs_fhandle fh, const char* name, const void* value, size_t size, int flags) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( fh == NULL ) {
       LOG( LOG_ERR, "Received a NULL file handle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -989,10 +1147,14 @@ int marfs_fsetxattr(marfs_fhandle fh, const char* name, const void* value, size_
         ( fh->itype != MARFS_BATCH        &&  !(fh->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a fsetxattr op\n" );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the op
-   return fh->ns->prepo->metascheme.mdal->fsetxattr( fh->metahandle, 0, name, value, size, flags );
+   int retval = fh->ns->prepo->metascheme.mdal->fsetxattr( fh->metahandle, 0, name, value, size, flags );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -1004,14 +1166,19 @@ int marfs_fsetxattr(marfs_fhandle fh, const char* name, const void* value, size_
  * @return ssize_t : Size of the returned xattr value, or -1 if a failure occurred
  */
 ssize_t marfs_fgetxattr(marfs_fhandle fh, const char* name, void* value, size_t size) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( fh == NULL ) {
       LOG( LOG_ERR, "Received a NULL file handle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the op
-   return fh->ns->prepo->metascheme.mdal->fgetxattr( fh->metahandle, 0, name, value, size );
+   ssize_t retval = fh->ns->prepo->metascheme.mdal->fgetxattr( fh->metahandle, 0, name, value, size );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -1021,10 +1188,12 @@ ssize_t marfs_fgetxattr(marfs_fhandle fh, const char* name, void* value, size_t 
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_fremovexattr(marfs_fhandle fh, const char* name) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( fh == NULL ) {
       LOG( LOG_ERR, "Received a NULL file handle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -1032,10 +1201,14 @@ int marfs_fremovexattr(marfs_fhandle fh, const char* name) {
         ( fh->itype != MARFS_BATCH        &&  !(fh->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a fremovexattr op\n" );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the op
-   return fh->ns->prepo->metascheme.mdal->fremovexattr( fh->metahandle, 0, name );
+   int retval = fh->ns->prepo->metascheme.mdal->fremovexattr( fh->metahandle, 0, name );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -1046,14 +1219,19 @@ int marfs_fremovexattr(marfs_fhandle fh, const char* name) {
  * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
  */
 ssize_t marfs_flistxattr(marfs_fhandle fh, char* buf, size_t size) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( fh == NULL ) {
       LOG( LOG_ERR, "Received a NULL file handle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the op
-   return fh->ns->prepo->metascheme.mdal->flistxattr( fh->metahandle, 0, buf, size );
+   ssize_t retval = fh->ns->prepo->metascheme.mdal->flistxattr( fh->metahandle, 0, buf, size );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 
@@ -1066,18 +1244,22 @@ ssize_t marfs_flistxattr(marfs_fhandle fh, char* buf, size_t size) {
  * @return marfs_dhandle : Open directory handle, or NULL if a failure occurred
  */
 marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // identify the path target
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for opendir op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // check NS perms
@@ -1086,6 +1268,7 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
       LOG( LOG_ERR, "NS perms do not allow an opendir op\n" );
       pathcleanup( subpath, oppos );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // allocate a new dhandle struct
@@ -1093,15 +1276,16 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
    if ( rethandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate a new dhandle struct\n" );
       pathcleanup( subpath, oppos );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    rethandle->ns = oppos->ns;
-   rethandle->depth = oppos->depth;
+   rethandle->depth = tgtdepth;
    rethandle->config = ctxt->config;
    MDAL curmdal = oppos->ns->prepo->metascheme.mdal;
    if ( tgtdepth == 0  &&  oppos->ctxt == NULL ) {
       // open the namespace without shifting our MDAL_CTXT
-      rethandle->metahandle = curmdal->opendirnamespace( oppos->ctxt, subpath );
+      rethandle->metahandle = curmdal->opendirnamespace( curmdal->ctxt, subpath );
    }
    else {
       // open the dir via the standard call
@@ -1112,9 +1296,11 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
       LOG( LOG_ERR, "Failed to open handle for NS target: \"%s\"\n", subpath );
       pathcleanup( subpath, oppos );
       free( rethandle );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    pathcleanup( subpath, oppos );
+   LOG( LOG_INFO, "EXIT - Success\n" );
    return rethandle;
 }
 
@@ -1126,14 +1312,20 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
  *                          failure occurred
  */
 struct dirent *marfs_readdir(marfs_dhandle dh) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( dh == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_dhandle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // perform the op
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
-   return curmdal->readdir( dh->metahandle );
+   struct dirent* retval = curmdal->readdir( dh->metahandle );
+   if ( retval != NULL ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -1142,15 +1334,19 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_closedir(marfs_dhandle dh) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( dh == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_dhandle arg\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // close the handle and free all memory
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
    int retval = curmdal->closedir( dh->metahandle );
    free( dh );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -1168,33 +1364,39 @@ int marfs_closedir(marfs_dhandle dh) {
  * @return int : Zero on success, -1 if a failure occurred
  */
 int marfs_chdir(marfs_ctxt ctxt, marfs_dhandle dh) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    if ( dh == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_dhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // validate that the ctxt and dhandle reference the same config
    if ( ctxt->config != dh->config ) {
       LOG( LOG_ERR, "Received dhandle and marfs_ctxt do not reference the same config\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // chdir to the specified dhandle
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
    if ( curmdal->chdir( ctxt->pos.ctxt, dh->metahandle ) ) {
       LOG( LOG_ERR, "Failed to chdir MDAL_CTXT\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // MDAL_CTXT has been updated; now update the position
    ctxt->pos.ns = dh->ns;
    ctxt->pos.depth = dh->depth;
    free( dh ); // the underlying MDAL_DHANDLE is no longer valid
+   LOG( LOG_INFO, "EXIT - Success\n" );
    return 0;
 }
 
@@ -1225,18 +1427,22 @@ int marfs_chdir(marfs_ctxt ctxt, marfs_dhandle dh) {
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
 marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, mode_t mode) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // identify the path target
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for create op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // check NS perms
@@ -1249,11 +1455,26 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       LOG( LOG_ERR, "NS perms do not allow a create op\n" );
       pathcleanup( subpath, oppos );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   // check for NS target
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot target a MarFS NS with a create op\n" );
       pathcleanup( subpath, oppos );
+      errno = EISDIR;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
+   // check NS quota
+   MDAL tgtmdal = oppos->ns->prepo->metascheme.mdal;
+   off_t inodeusage = tgtmdal->getinodeusage( oppos->ctxt );
+   if ( oppos->ns->fquota  &&
+         ( inodeusage < 0  ||  inodeusage >= oppos->ns->fquota ) ) {
+      LOG( LOG_ERR, "NS has excessive inode count (%zd)\n", inodeusage );
+      pathcleanup( subpath, oppos );
+      errno = EDQUOT;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // check the state of our handle argument
@@ -1264,6 +1485,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       if ( stream == NULL ) {
          LOG( LOG_ERR, "Failed to allocate a new marfs_fhandle struct\n" );
          pathcleanup( subpath, oppos );
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
       }
       stream->ns = NULL;
@@ -1276,6 +1498,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
       pathcleanup( subpath, oppos );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    else if ( stream->datastream == NULL  &&  stream->metahandle != NULL ) {
@@ -1286,6 +1509,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
          stream->metahandle = NULL;
          pathcleanup( subpath, oppos );
          errno = EBADFD;
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
       }
       stream->metahandle = NULL; // don't reattempt this op
@@ -1296,13 +1520,16 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       pathcleanup( subpath, oppos );
       if ( newstream ) { free( stream ); }
       else if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // update our stream info to reflect the new target
    stream->ns = oppos->ns;
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
+   stream->itype = ctxt->itype;
    // cleanup and return
    pathcleanup( subpath, oppos ); // done with path info
+   LOG( LOG_INFO, "EXIT - Success\n" );
    return stream;   
 }
 
@@ -1329,24 +1556,29 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
 marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, marfs_flags flags) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_ctxt arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // check for invalid flags
    if ( flags != MARFS_READ  &&  flags != MARFS_WRITE ) {
       LOG( LOG_ERR, "Unrecognized flags value\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // identify the path target
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for create op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // check NS perms
@@ -1355,11 +1587,14 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       LOG( LOG_ERR, "NS perms do not allow an open op\n" );
       pathcleanup( subpath, oppos );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot target a MarFS NS with a create op\n" );
       pathcleanup( subpath, oppos );
+      errno = EISDIR;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // check the state of our handle argument
@@ -1370,6 +1605,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       if ( stream == NULL ) {
          LOG( LOG_ERR, "Failed to allocate a new marfs_fhandle struct\n" );
          pathcleanup( subpath, oppos );
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
       }
       stream->ns = NULL;
@@ -1382,6 +1618,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
       pathcleanup( subpath, oppos );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    else if ( stream->datastream == NULL  &&  stream->metahandle != NULL ) {
@@ -1392,6 +1629,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
          stream->metahandle = NULL;
          pathcleanup( subpath, oppos );
          errno = EBADFD;
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
       }
       stream->metahandle = NULL; // don't reattempt this op
@@ -1414,6 +1652,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
             }
             stream->metahandle = NULL;
             errno = EBADFD;
+            LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
             return NULL;
          }
          // update stream info to reflect a meta-only reference
@@ -1423,12 +1662,14 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
          stream->itype = ctxt->itype;
          // cleanup and return
          pathcleanup( subpath, oppos );
+         LOG( LOG_INFO, "EXIT - Success\n" );
          return stream;
       }
       LOG( LOG_ERR, "Failure of datastream_open()\n" );
       pathcleanup( subpath, oppos );
       if ( newstream ) { free( stream ); }
       else if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
    // update our stream info to reflect the new target
@@ -1437,6 +1678,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
    stream->itype = ctxt->itype;
    // cleanup and return
    pathcleanup( subpath, oppos ); // done with path info
+   LOG( LOG_INFO, "EXIT - Success\n" );
    return stream;
 }
 
@@ -1456,16 +1698,19 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
  *            stream referenced by this handle.
  */
 int marfs_close(marfs_fhandle stream) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // reject a flushed handle
    if ( stream->metahandle == NULL  &&  stream->datastream == NULL ) {
       LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check for datastream reference
@@ -1486,6 +1731,8 @@ int marfs_close(marfs_fhandle stream) {
       }
    }
    free( stream );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -1501,10 +1748,12 @@ int marfs_close(marfs_fhandle stream) {
  *            stream referenced by this handle.
  */
 int marfs_release(marfs_fhandle stream) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check for datastream reference
@@ -1525,6 +1774,8 @@ int marfs_release(marfs_fhandle stream) {
       }
    }
    free( stream );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -1542,10 +1793,12 @@ int marfs_release(marfs_fhandle stream) {
  *            stream referenced by this handle.
  */
 int marfs_flush(marfs_fhandle stream) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check for datastream reference
@@ -1567,6 +1820,8 @@ int marfs_flush(marfs_fhandle stream) {
    }
    stream->metahandle = NULL;
    stream->datastream = NULL;
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
 
@@ -1586,10 +1841,12 @@ int marfs_flush(marfs_fhandle stream) {
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
 ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -1597,16 +1854,23 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
         ( stream->itype != MARFS_BATCH        &&  !(stream->ns->iperms & NS_READDATA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a read op\n" );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check for datastream reference
    if ( stream->datastream ) {
       // read from datastream reference
-      return datastream_read( &(stream->datastream), buf, size );
+      ssize_t retval = datastream_read( &(stream->datastream), buf, size );
+      if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+      return retval;
    }
    // meta only reference
    MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   return curmdal->read( stream->metahandle, buf, size );
+   ssize_t retval = curmdal->read( stream->metahandle, buf, size );
+   if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -1622,27 +1886,34 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
 ssize_t marfs_write(marfs_fhandle stream, const void* buf, size_t size) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
    if ( ( stream->itype != MARFS_INTERACTIVE  &&  !(stream->ns->bperms & NS_WRITEDATA) )  ||
         ( stream->itype != MARFS_BATCH        &&  !(stream->ns->iperms & NS_WRITEDATA) ) ) {
-      LOG( LOG_ERR, "NS perms do not allow a write op\n" );
+      LOG( LOG_ERR, "NS perms do not allow a write op %d\n", (int)stream->ns->bperms );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check for datastream reference
    if ( stream->datastream ) {
       // write to the datastream reference
-      return datastream_write( &(stream->datastream), buf, size );
+      ssize_t retval = datastream_write( &(stream->datastream), buf, size );
+      if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+      return retval;
    }
    // meta only reference ( direct write is currently unsupported )
    LOG( LOG_ERR, "Cannot write to a meta-only reference\n" );
    errno = EPERM;
+   LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
    return -1;
 }
 
@@ -1660,20 +1931,28 @@ ssize_t marfs_write(marfs_fhandle stream, const void* buf, size_t size) {
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
 off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check for datastream reference
    if ( stream->datastream ) {
       // seek the datastream reference
-      return datastream_seek( &(stream->datastream), offset, whence );
+      off_t retval = datastream_seek( &(stream->datastream), offset, whence );
+      if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+      return retval;
    }
    // meta only reference
    MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   return curmdal->lseek( stream->metahandle, offset, whence );
+   off_t retval = curmdal->lseek( stream->metahandle, offset, whence );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -1688,20 +1967,26 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
  * @return int : Zero on success, or -1 on failure
  */
 int marfs_chunkbounds(marfs_fhandle stream, int chunknum, off_t* offset, size_t* size) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check for datastream reference
    if ( stream->datastream ) {
       // identify datastream reference chunkbounds
-      return datastream_chunkbounds( &(stream->datastream), chunknum, offset, size );
+      int retval = datastream_chunkbounds( &(stream->datastream), chunknum, offset, size );
+      if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+      return retval;
    }
    // meta only reference ( this function does not apply )
    LOG( LOG_ERR, "Cannot identify chunk boundaries for a meta-only reference\n" );
    errno = EINVAL;
+   LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
    return -1;
 }
 
@@ -1713,10 +1998,12 @@ int marfs_chunkbounds(marfs_fhandle stream, int chunknum, off_t* offset, size_t*
  * @return int : Zero on success, or -1 on failure
  */
 int marfs_ftruncate(marfs_fhandle stream, off_t length) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check NS perms
@@ -1724,16 +2011,23 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
         ( stream->itype != MARFS_BATCH        &&  !(stream->ns->iperms & NS_WRITEDATA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a truncate op\n" );
       errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check for datastream reference
    if ( stream->datastream ) {
       // truncate the datastream reference
-      return datastream_truncate( &(stream->datastream), length );
+      int retval = datastream_truncate( &(stream->datastream), length );
+      if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+      return retval;
    }
    // meta only reference
    MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   return curmdal->ftruncate( stream->metahandle, length );
+   int retval = curmdal->ftruncate( stream->metahandle, length );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -1753,20 +2047,26 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
 int marfs_extend(marfs_fhandle stream, off_t length) {
+   LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
       errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // check for datastream reference
    if ( stream->datastream ) {
       // extend the datastream reference
-      return datastream_extend( &(stream->datastream), length );
+      int retval = datastream_extend( &(stream->datastream), length );
+      if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+      return retval;
    }
    // meta only reference ( this function does not apply )
    LOG( LOG_ERR, "Cannot extend a meta-only reference\n" );
    errno = EINVAL;
+   LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
    return -1;
 }
 
