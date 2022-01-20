@@ -275,13 +275,199 @@ int main( int argc, char** argv ) {
    }
 
 
-   // write out 
-   
+   // write out a parallel file
+   marfs_fhandle phandle = marfs_creat( batchctxt, NULL, "gransom-allocation/parallelfile", 0600 );
+   if ( phandle == NULL ) {
+      printf( "failed to create 'parallelfile'\n" );
+      return -1;
+   }
+   if ( marfs_extend( phandle, 712400 ) ) {
+      printf( "failed to extend 'parallelfile' to 5MiB\n" );
+      return -1;
+   }
+   if ( marfs_release( phandle ) ) {
+      printf( "failed to release initial handle for 'parallelfile'\n" );
+      return -1;
+   }
+   // chunk 0
+   phandle = marfs_open( batchctxt, NULL, "/campaign/gransom-allocation/gasubdir/../parallelfile", MARFS_WRITE );
+   if ( phandle == NULL ) {
+      printf( "failed to open 'parallelfile' for write\n" );
+      return -1;
+   }
+   if ( marfs_setrecoverypath( batchctxt, phandle, "gransom-allocation/parallelfile" ) ) {
+      printf( "failed to update recovery path of 'parallelfile'\n" );
+      return -1;
+   }
+   off_t chunkoffset = 0;
+   size_t chunksize = 0;
+   if ( marfs_chunkbounds( phandle, 0, &(chunkoffset), &(chunksize) ) ) {
+      printf( "failed to indentify bounds of chunk 0 of 'parallelfile'\n" );
+      return -1;
+   }
+   if ( chunkoffset + chunksize > 1048576 ) {
+      printf( "bounds of chunk 0 exceed buffer limits\n" );
+      return -1;
+   }
+   if ( marfs_seek( phandle, chunkoffset, SEEK_SET ) != chunkoffset ) {
+      printf( "failed to seek to offset %zd of 'parallelfile'\n", chunkoffset );
+      return -1;
+   }
+   if ( marfs_write( phandle, oneMBbuffer + chunkoffset, chunksize ) != chunksize ) {
+      printf( "failed to write %zu bytes to offset %zd of 'parallelfile'\n", chunksize, chunkoffset );
+      return -1;
+   }
+   // chunk 5
+   if ( marfs_chunkbounds( phandle, 5, &(chunkoffset), &(chunksize) ) ) {
+      printf( "failed to indentify bounds of chunk 5 of 'parallelfile'\n" );
+      return -1;
+   }
+   if ( chunkoffset + chunksize > 1048576 ) {
+      printf( "bounds of chunk 5 exceed buffer limits\n" );
+      return -1;
+   }
+   if ( marfs_seek( phandle, chunkoffset, SEEK_SET ) != chunkoffset ) {
+      printf( "failed to seek to offset %zd of 'parallelfile'\n", chunkoffset );
+      return -1;
+   }
+   if ( marfs_write( phandle, oneMBbuffer + chunkoffset, chunksize ) != chunksize ) {
+      printf( "failed to write %zu bytes to offset %zd of 'parallelfile'\n", chunksize, chunkoffset );
+      return -1;
+   }
+   // chunk 6
+   if ( marfs_chunkbounds( phandle, 6, &(chunkoffset), &(chunksize) ) ) {
+      printf( "failed to indentify bounds of chunk 6 of 'parallelfile'\n" );
+      return -1;
+   }
+   if ( chunkoffset + chunksize > 1048576 ) {
+      printf( "bounds of chunk 6 exceed buffer limits\n" );
+      return -1;
+   }
+   if ( marfs_seek( phandle, chunkoffset, SEEK_SET ) != chunkoffset ) {
+      printf( "failed to seek to offset %zd of 'parallelfile'\n", chunkoffset );
+      return -1;
+   }
+   if ( marfs_write( phandle, oneMBbuffer + chunkoffset, chunksize ) != chunksize ) {
+      printf( "failed to write %zu bytes to offset %zd of 'parallelfile'\n", chunksize, chunkoffset );
+      return -1;
+   }
+   // open a new handle, writing out chunk 3 from that
+   marfs_fhandle phandle2 = marfs_open( batchctxt, NULL, "/campaign/gransom-allocation/gasubdir/../parallelfile", MARFS_WRITE );
+   if ( phandle2 == NULL ) {
+      printf( "failed to open 'parallelfile' for write via handle2\n" );
+      return -1;
+   }
+   if ( marfs_setrecoverypath( batchctxt, phandle2, "gransom-allocation/parallelfile" ) ) {
+      printf( "failed to update recovery path of 'parallelfile' handle2\n" );
+      return -1;
+   }
+   if ( marfs_chunkbounds( phandle2, 3, &(chunkoffset), &(chunksize) ) ) {
+      printf( "failed to indentify bounds of chunk 3 of 'parallelfile'\n" );
+      return -1;
+   }
+   if ( chunkoffset + chunksize > 1048576 ) {
+      printf( "bounds of chunk 3 exceed buffer limits\n" );
+      return -1;
+   }
+   if ( marfs_seek( phandle2, chunkoffset, SEEK_SET ) != chunkoffset ) {
+      printf( "failed to seek to offset %zd of 'parallelfile'\n", chunkoffset );
+      return -1;
+   }
+   if ( marfs_write( phandle2, oneMBbuffer + chunkoffset, chunksize ) != chunksize ) {
+      printf( "failed to write %zu bytes to offset %zd of 'parallelfile'\n", chunksize, chunkoffset );
+      return -1;
+   }
+   size_t currentoffset_handle2 = chunkoffset + chunksize;
+   // chunk 2
+   if ( marfs_chunkbounds( phandle, 2, &(chunkoffset), &(chunksize) ) ) {
+      printf( "failed to indentify bounds of chunk 2 of 'parallelfile'\n" );
+      return -1;
+   }
+   if ( chunkoffset + chunksize > 1048576 ) {
+      printf( "bounds of chunk 2 exceed buffer limits\n" );
+      return -1;
+   }
+   if ( marfs_seek( phandle, chunkoffset, SEEK_SET ) != chunkoffset ) {
+      printf( "failed to seek to offset %zd of 'parallelfile'\n", chunkoffset );
+      return -1;
+   }
+   if ( marfs_write( phandle, oneMBbuffer + chunkoffset, chunksize ) != chunksize ) {
+      printf( "failed to write %zu bytes to offset %zd of 'parallelfile'\n", chunksize, chunkoffset );
+      return -1;
+   }
+   // chunk 4
+   if ( marfs_chunkbounds( phandle2, 4, &(chunkoffset), &(chunksize) ) ) {
+      printf( "failed to indentify bounds of chunk 4 of 'parallelfile'\n" );
+      return -1;
+   }
+   if ( chunkoffset + chunksize > 1048576 ) {
+      printf( "bounds of chunk 4 exceed buffer limits\n" );
+      return -1;
+   }
+   if ( chunkoffset != currentoffset_handle2 ) {
+      printf( "offset of chunk 4 (%zd) does not equal current handle2 offset (%zu)\n",
+              chunkoffset, currentoffset_handle2 );
+      return -1;
+   }
+   if ( marfs_write( phandle2, oneMBbuffer + chunkoffset, chunksize ) != chunksize ) {
+      printf( "failed to write %zu bytes to offset %zd of 'parallelfile'\n", chunksize, chunkoffset );
+      return -1;
+   }
+   // release our first handle
+   if ( marfs_release( phandle ) ) {
+      printf( "failed to release phandle after writing out chunk 2\n" );
+      return -1;
+   }
+   // chunk 1
+   if ( marfs_chunkbounds( phandle2, 1, &(chunkoffset), &(chunksize) ) ) {
+      printf( "failed to indentify bounds of chunk 1 of 'parallelfile'\n" );
+      return -1;
+   }
+   if ( chunkoffset + chunksize > 1048576 ) {
+      printf( "bounds of chunk 1 exceed buffer limits\n" );
+      return -1;
+   }
+   if ( marfs_seek( phandle2, chunkoffset, SEEK_SET ) != chunkoffset ) {
+      printf( "failed to seek to offset %zd of 'parallelfile'\n", chunkoffset );
+      return -1;
+   }
+   if ( marfs_write( phandle2, oneMBbuffer + chunkoffset, chunksize ) != chunksize ) {
+      printf( "failed to write %zu bytes to offset %zd of 'parallelfile'\n", chunksize, chunkoffset );
+      return -1;
+   }
+   // ensure that chunk 7 is out of bounds
+   errno = 0;
+   if ( marfs_chunkbounds( phandle2, 7, &(chunkoffset), &(chunksize) ) == 0  ||  errno != EINVAL ) {
+      printf( "chunk 7 of 'parallelfile' unnexpectedly in bounds\n" );
+      return -1;
+   }
+   // set time values and close the handle
+   struct stat stval;
+   if ( stat( "./test_datastream_topdir", &(stval) ) ) {
+      printf( "failed to stat marfs topdir for time reference\n" );
+      return -1;
+   }
+   struct timespec timevals[2];
+   timevals[0] = stval.st_atim;
+   timevals[1] = stval.st_mtim;
+   if ( marfs_futimens( phandle2, timevals ) ) {
+      printf( "failed to set mtime/atime values of 'parallelfile'\n" );
+      return -1;
+   }
+   if ( marfs_close( phandle2 ) ) {
+      printf( "failed to close phandle2 after setting time values\n" );
+      return -1;
+   }
+
 
    // free buffers
    free( oneMBbuffer );
 
    // cleanup created files/dirs
+   if ( marfs_unlink( batchctxt, "/campaign/../campaign/gransom-allocation/parallelfile" ) ) {
+      printf( "failed to unlink 'parallelfile'\n" );
+      return -1;
+   }
    if ( marfs_unlink( interctxt, "../../gransom-allocation/heavily-protected-data/chunked" ) ) {
       printf( "failed to unlink 'chunked'\n" );
       return -1;

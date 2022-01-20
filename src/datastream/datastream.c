@@ -1088,7 +1088,10 @@ int putfinfo( DATASTREAM stream ) {
    // populate recovery info string
    size_t genbytes = recovery_finfotostr( &(stream->finfo), stream->finfostr, stream->finfostrlen + 1 );
    if ( genbytes > recoverybytes ) {
-      LOG( LOG_ERR, "File recovery info has an inconsistent length\n" );
+      LOG( LOG_ERR, "File recovery info has an inconsistent length ( old=%zu, new=%zu )\n",
+           recoverybytes, genbytes );
+      errno = ENAMETOOLONG; // this is most likely to represent the issue, as this almost 
+                            //  certainly is the result of the recovery path changing
       return -1;
    }
    else if ( genbytes < recoverybytes ) {

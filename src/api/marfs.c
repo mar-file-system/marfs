@@ -353,7 +353,7 @@ int marfs_access( marfs_ctxt ctxt, const char* path, int mode, int flags ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for access op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -408,7 +408,7 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for stat op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -463,7 +463,7 @@ int marfs_chmod( marfs_ctxt ctxt, const char* path, mode_t mode, int flags ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for chmod op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -518,7 +518,7 @@ int marfs_chown( marfs_ctxt ctxt, const char* path, uid_t uid, gid_t gid, int fl
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for chown op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -570,7 +570,7 @@ int marfs_rename( marfs_ctxt ctxt, const char* from, const char* to ) {
    marfs_position* frompos = NULL;
    char* frompath = NULL;
    int fromdepth = pathshift( ctxt, from, &(frompath), &(frompos) );
-   LOG( LOG_INFO, "TGT-From: Depth=%d, NS=%s, SubPath=%s\n", fromdepth, frompos->ns->idstr, frompath );
+   LOG( LOG_INFO, "TGT-From: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", fromdepth, frompos->ns->idstr, frompath );
    if ( frompath == NULL ) {
       LOG( LOG_ERR, "Failed to identify 'from' target info for rename op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -586,7 +586,7 @@ int marfs_rename( marfs_ctxt ctxt, const char* from, const char* to ) {
    marfs_position* topos = NULL;
    char* topath = NULL;
    int todepth = pathshift( ctxt, to, &(topath), &(topos) );
-   LOG( LOG_INFO, "TGT-To: Depth=%d, NS=%s, SubPath=%s\n", todepth, topos->ns->idstr, topath );
+   LOG( LOG_INFO, "TGT-To: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", todepth, topos->ns->idstr, topath );
    if ( todepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify 'to' target info for rename op\n" );
       pathcleanup( frompath, frompos );
@@ -653,7 +653,7 @@ int marfs_symlink( marfs_ctxt ctxt, const char* target, const char* linkname ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, linkname, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify linkname path info for symlink op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -711,7 +711,7 @@ ssize_t marfs_readlink( marfs_ctxt ctxt, const char* path, char* buf, size_t siz
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for readlink op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -764,7 +764,7 @@ int marfs_unlink( marfs_ctxt ctxt, const char* path ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for unlink op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -820,7 +820,7 @@ int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int f
    marfs_position* oldpos = NULL;
    char* oldsubpath = NULL;
    int olddepth = pathshift( ctxt, oldpath, &(oldsubpath), &(oldpos) );
-   LOG( LOG_INFO, "TGT-Old: Depth=%d, NS=%s, SubPath=%s\n", olddepth, oldpos->ns->idstr, oldsubpath );
+   LOG( LOG_INFO, "TGT-Old: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", olddepth, oldpos->ns->idstr, oldsubpath );
    if ( olddepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify old target info for link op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -836,7 +836,7 @@ int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int f
    marfs_position* newpos = NULL;
    char* newsubpath = NULL;
    int newdepth = pathshift( ctxt, newpath, &(newsubpath), &(newpos) );
-   LOG( LOG_INFO, "TGT-New: Depth=%d, NS=%s, SubPath=%s\n", newdepth, newpos->ns->idstr, newsubpath );
+   LOG( LOG_INFO, "TGT-New: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", newdepth, newpos->ns->idstr, newsubpath );
    if ( newdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify new target info for link op\n" );
       pathcleanup( oldsubpath, oldpos );
@@ -902,7 +902,7 @@ int marfs_mkdir( marfs_ctxt ctxt, const char* path, mode_t mode ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for mkdir op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -954,7 +954,7 @@ int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for rmdir op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -1006,7 +1006,7 @@ int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for statvfs op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -1256,7 +1256,7 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for opendir op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -1439,7 +1439,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for create op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -1575,7 +1575,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=%s, SubPath=%s\n", tgtdepth, oppos->ns->idstr, subpath );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for create op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -1758,19 +1758,19 @@ int marfs_release(marfs_fhandle stream) {
    }
    // check for datastream reference
    int retval = 0;
-   if ( stream->metahandle ) {
+   if ( stream->datastream ) {
+      // datastream reference
+      LOG( LOG_INFO, "Releasing datastream reference\n" );
+      if ( (retval = datastream_release( &(stream->datastream) )) ) {
+         LOG( LOG_ERR, "Failed to release datastream\n" );
+      }
+   }
+   else if ( stream->metahandle ) {
       // meta only reference
       LOG( LOG_INFO, "Closing meta-only marfs_fhandle\n" );
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       if ( (retval = curmdal->close( stream->metahandle )) ) {
          LOG( LOG_ERR, "Failed to close MDAL_FHANDLE\n" );
-      }
-   }
-   else if ( stream->datastream ) {
-      // datastream reference
-      LOG( LOG_INFO, "Closing datastream reference\n" );
-      if ( (retval = datastream_close( &(stream->datastream) )) ) {
-         LOG( LOG_ERR, "Failed to close datastream\n" );
       }
    }
    free( stream );
@@ -1820,6 +1820,66 @@ int marfs_flush(marfs_fhandle stream) {
    }
    stream->metahandle = NULL;
    stream->datastream = NULL;
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+/**
+ * Set the file path recovery info to be encoded into data objects for the provided handle
+ *    NOTE -- It is essential for all data objects to be encoded with matching recovery
+ *            paths.  This happens automatically when an file is written out entirely from
+ *            a single 'create' handle, but the recovery info can shift for files written
+ *            in parallel ( if MARFS_WRITE handles are opened with varied paths ).
+ * @param marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param marfs_fhandle stream : MARFS_WRITE or create file handle for which to set the
+ *                               recovery path
+ * @param const char* recovpath : New recovery path to be set
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_setrecoverypath(marfs_ctxt ctxt, marfs_fhandle stream, const char* recovpath) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( ctxt == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_ctxt arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   if ( stream == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // check for datastream reference
+   if ( stream->datastream == NULL ) {
+      LOG( LOG_ERR, "Received marfs_fhandle has no underlying datastream\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // identify target info
+   marfs_position* oppos = NULL;
+   char* subpath = NULL;
+   int tgtdepth = pathshift( ctxt, recovpath, &(subpath), &(oppos) );
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
+   if ( tgtdepth < 0 ) {
+      LOG( LOG_ERR, "Failed to identify target info for setrecoverypath op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   if ( oppos->ns != stream->ns ) {
+      LOG( LOG_ERR, "Target NS (\"%s\") does not match stream NS (\"%s\")\n",
+           oppos->ns->idstr, stream->ns->idstr );
+      pathcleanup( subpath, oppos );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // perform the op
+   int retval = datastream_setrecoverypath( &(stream->datastream), subpath );
+   pathcleanup( subpath, oppos );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;

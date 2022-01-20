@@ -464,6 +464,20 @@ int marfs_release(marfs_fhandle stream);
  */
 int marfs_flush(marfs_fhandle stream);
 
+/**
+ * Set the file path recovery info to be encoded into data objects for the provided handle
+ *    NOTE -- It is essential for all data objects to be encoded with matching recovery 
+ *            paths.  This happens automatically when an file is written out entirely from 
+ *            a single 'create' handle, but the recovery info can shift for files written 
+ *            in parallel ( if MARFS_WRITE handles are opened with varied paths ).
+ * @param marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param marfs_fhandle stream : MARFS_WRITE or create file handle for which to set the 
+ *                               recovery path
+ * @param const char* recovpath : New recovery path to be set
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_setrecoverypath(marfs_ctxt ctxt, marfs_fhandle stream, const char* recovpath);
+
 
 // DATA FILE HANDLE OPS
 
