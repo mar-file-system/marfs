@@ -1613,6 +1613,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
          MDAL mdal = newstream->ns->prepo->metascheme.mdal;
          newstream->curfile++; // progress to the next file
          // attempt to open the new file target
+         size_t origobjno = newstream->objno; // remember original object number
          int openres = open_existing_file( newstream, path, pos->ctxt );
          if ( openres > 0  &&  phandle != NULL ) {
             LOG( LOG_INFO, "Preserving meta handle for target w/o FTAG: \"%s\"\n", path );
@@ -1629,7 +1630,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
          // check if our old stream targets the same object
          if ( strcmp( curfile->ftag.streamid, newfile->ftag.streamid )  ||
               strcmp( curfile->ftag.ctag, newfile->ftag.ctag )  ||
-              curfile->ftag.objno != newfile->ftag.objno ) {
+              origobjno != newfile->ftag.objno ) {
             // data objects differ, so close the old reference
             char* rtagstr = NULL;
             size_t rtagstrlen = 0;

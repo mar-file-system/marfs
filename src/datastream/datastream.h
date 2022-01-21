@@ -88,8 +88,8 @@ typedef struct datastream_struct {
    size_t      objno;
    size_t      offset;
    size_t      excessoffset;
-   // Per-Object Info
    ne_handle   datahandle;
+   // Per-File Info
    STREAMFILE* files;
    size_t      curfile;
    size_t      filealloc;
