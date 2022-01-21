@@ -54,5 +54,23 @@
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
 
-SUBDIRS = hash mdal tagging recovery config datastream api rsrc_mgr
+
+# automake requires '=' before '+=', even for these built-in vars
+AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CFLAGS   =
+AM_LDFLAGS  =
+
+CC = mpicc
+
+bin_PROGRAMS = marfs-rsrc_mgr
+marfs_rsrc_mgr_SOURCES = rsrc_mgr.c
+marfs_rsrc_mgr_LDADD   = ../config/libConfig.la ../mdal/libMDAL.la ../tagging/libTagging.la ../datastream/libDatastream.la
+marfs_rsrc_mgr_CFLAGS  = $(XML_CFLAGS)
+
+# ---
+
+check_PROGRAMS =
+
+TESTS =
+
 
