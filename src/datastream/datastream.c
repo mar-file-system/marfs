@@ -391,7 +391,7 @@ int create_new_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt, mode_t
    if ( newfile.metahandle == NULL ) {
       LOG( LOG_ERR, "Failed to create reference meta file: \"%s\"\n", newrpath );
       // a BUSY error is more indicative of the real problem
-      if ( errno = EEXIST ) { errno = EBUSY; }
+      if ( errno == EEXIST ) { errno = EBUSY; }
       // don't allow our reserved EBADFD value
       else if ( errno == EBADFD ) { errno = ENOMSG; }
       free( newrpath );
@@ -1455,7 +1455,7 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
             // roll back our stream changes
             newstream->curfile--;
             newstream->fileno--;
-            if ( errno = EBADFD ) { errno = ENOMSG; } // avoid using our reserved errno value
+            if ( errno == EBADFD ) { errno = ENOMSG; } // avoid using our reserved errno value
             return -1;
          }
          // check for an object transition
@@ -1623,7 +1623,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
          if ( openres ) {
             LOG( LOG_ERR, "Failed to open target file: \"%s\"\n", path );
             newstream->curfile--; // reset back to our old position
-            if ( errno = EBADFD ) { errno = ENOMSG; }
+            if ( errno == EBADFD ) { errno = ENOMSG; }
             return -1;
          }
          STREAMFILE* newfile = newstream->files + newstream->curfile;
@@ -2409,6 +2409,16 @@ off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
          }
          free( rtagstr );
       }
+   }
+   // if we have an open object, seek it to the appropriate offset
+   if ( tgtstream->datahandle != NULL  &&
+        ne_seek( tgtstream->datahandle, streampos.offset ) != streampos.offset ) {
+      LOG( LOG_ERR, "Failed to seek to offset %zu of object %zu\n",
+           streampos.offset, streampos.objno );
+      freestream( tgtstream );
+      *stream = NULL;
+      errno = EBADFD;
+      return -1;
    }
    // update stream position to reflect the new target
    tgtstream->objno = streampos.objno;

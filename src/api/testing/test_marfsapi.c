@@ -460,7 +460,176 @@ int main( int argc, char** argv ) {
    }
 
 
+   // validate stat info of parallelfile
+   stval.st_atim.tv_sec = 0;
+   stval.st_atim.tv_nsec = 0;
+   stval.st_mtim.tv_sec = 0;
+   stval.st_mtim.tv_nsec = 0;
+   if ( marfs_stat( interctxt, "/campaign/gransom-allocation/parallelfile", &(stval), 0 ) ) {
+      printf( "failed to stat 'parallelfile'\n" );
+      return -1;
+   }
+   if ( stval.st_atim.tv_sec != timevals[0].tv_sec  ||
+        stval.st_atim.tv_nsec != timevals[0].tv_nsec ) {
+      printf( "unexpected atime values on 'parallelfile'\n" );
+      return -1;
+   }
+   if ( stval.st_mtim.tv_sec != timevals[1].tv_sec  ||
+        stval.st_mtim.tv_nsec != timevals[1].tv_nsec ) {
+      printf( "unexpected mtime values on 'parallelfile'\n" );
+      return -1;
+   }
+   if ( stval.st_size != 712400 ) {
+      printf( "unexpected size of 'parallelfile'\n" );
+      return -1;
+   }
+
+
+   // read back written files
+   void* oneMBreadbuf = calloc( 1024, 1024 );
+   if ( oneMBreadbuf == NULL ) {
+      printf( "failed to allocate oneMBreadbuf\n" );
+      return -1;
+   }
+   // parallelfile
+   phandle = marfs_open( batchctxt, NULL, "gransom-allocation/parallelfile", MARFS_READ );
+   if ( phandle == NULL ) {
+      printf( "failed to open 'parallelfile' for read\n" );
+      return -1;
+   }
+   if ( marfs_read( phandle, oneMBreadbuf, 712400 ) != 712400 ) {
+      printf( "failed to read 712400 bytes from 'parallelfile'\n" );
+      return -1;
+   }
+   if ( memcmp( oneMBreadbuf, oneMBbuffer, 712400 ) ) {
+      printf( "unexpected content of 'parallelfile'\n" );
+      return -1;
+   }
+   // packed files, in reverse order ( just to force the most complex case )
+   for ( index = 4095; index >= 0; index-- ) {
+      char fname[1024];
+      if ( snprintf( fname, 1024, "/campaign/gransom-allocation/packed-files/pfile%d", index ) >= 1024 ) {
+         printf( "failed to generate name of packed-files/pfile%d\n", index );
+         return -1;
+      }
+      phandle = marfs_open( batchctxt, phandle, fname, MARFS_READ );
+      if ( phandle == NULL ) {
+         printf( "failed to open packed-files/pfile%d for read\n", index );
+         return -1;
+      }
+      bzero( oneMBreadbuf, 1048576 );
+      if ( marfs_read( phandle, oneMBreadbuf, 10 + (index % 100) ) != 10 + (index % 100) ) {
+         printf( "failed to read %d bytes from %s\n", 10 + (index % 100), fname );
+         return -1;
+      }
+      if ( memcmp( oneMBreadbuf, oneMBbuffer, 10 + (index % 100) ) ) {
+         printf( "unexpected content of %s\n", fname );
+         return -1;
+      }
+   }
+   // file1
+   phandle = marfs_open( batchctxt, phandle, "gransom-allocation/gasubdir/file1", MARFS_READ );
+   if ( phandle == NULL ) {
+      printf( "failed to open 'file1' for read\n" );
+      return -1;
+   }
+   bzero( oneMBreadbuf, 1048576 );
+   if ( marfs_read( phandle, oneMBreadbuf, 1048576 - 1234 ) != 1048576 - 1234 ) {
+      printf( "failed to read %d bytes from 'file1'\n", 1048576 - 1234 );
+      return -1;
+   }
+   if ( memcmp( oneMBreadbuf, oneMBbuffer, 1048576 - 1234 ) ) {
+      printf( "first %d bytes of 'file1' do not match expectations\n", 1048576 - 1234 );
+      return -1;
+   }
+   if ( marfs_read( phandle, oneMBreadbuf, 1234 ) != 1234 ) {
+      printf( "failed to read next 1234 bytes from 'file1'\n" );
+      return -1;
+   }
+   if ( memcmp( oneMBreadbuf, oneMBbuffer + (1048576 - 1234), 1234 ) ) {
+      printf( "last 1234 bytes of 'file1' do not match expectations\n" );
+      return -1;
+   }
+   // seek around a bit, and check for expected content
+   if ( marfs_seek( phandle, -4321, SEEK_END ) != 1048576 - 4321 ) {
+      printf( "failed to seek to 4321 bytes from end of 'file1'\n" );
+      return -1;
+   }
+   bzero( oneMBreadbuf, 1048576 );
+   if ( marfs_read( phandle, oneMBreadbuf, 1048576 ) != 4321 ) {
+      printf( "failed to read last 4321 bytes from 'file1'\n" );
+      return -1;
+   }
+   if ( memcmp( oneMBreadbuf, oneMBbuffer + (1048576 - 4321), 4321 ) ) {
+      printf( "last 4321 bytes of 'file1' do not match expectations\n" );
+      return -1;
+   }
+   if ( marfs_seek( phandle, -1048000, SEEK_CUR ) != 576 ) {
+      printf( "failed to seek 1048000 bytes back from current position of 'file1'\n" );
+      return -1;
+   }
+   bzero( oneMBreadbuf, 1048576 );
+   if ( marfs_read( phandle, oneMBreadbuf, 1048576 ) != 1048000 ) {
+      printf( "failed to read last 1048000 bytes from 'file1'\n" );
+      return -1;
+   }
+   if ( memcmp( oneMBreadbuf, oneMBbuffer + 576, 1048000 ) ) {
+      printf( "last 1048000 bytes of 'file1' do not match expectations\n" );
+      return -1;
+   }
+   if ( marfs_seek( phandle, 567890, SEEK_SET ) != 567890 ) {
+      printf( "failed to seek to offset 567890 of 'file1'\n" );
+      return -1;
+   }
+   bzero( oneMBreadbuf, 1048576 );
+   if ( marfs_read( phandle, oneMBreadbuf, 1048 ) != 1048 ) {
+      printf( "failed to read 1048 bytes from 'file1' @ offset 567890\n" );
+      return -1;
+   }
+   if ( memcmp( oneMBreadbuf, oneMBbuffer + 567890, 1048 ) ) {
+      printf( "1048 bytes of 'file1' @ offset 567890 do not match expectations\n" );
+      return -1;
+   }
+   if ( marfs_seek( phandle, 31062, SEEK_CUR ) != 600000 ) {
+      printf( "failed to seek to offset 600000 of 'file1'\n" );
+      return -1;
+   }
+   bzero( oneMBreadbuf, 1048576 );
+   if ( marfs_read( phandle, oneMBreadbuf, 104857 ) != 104857 ) {
+      printf( "failed to read 104857 bytes from 'file1' @ offset 600000\n" );
+      return -1;
+   }
+   if ( memcmp( oneMBreadbuf, oneMBbuffer + 600000, 104857 ) ) {
+      printf( "104857 bytes of 'file1' @ offset 600000 do not match expectations\n" );
+      return -1;
+   }
+   if ( marfs_close( phandle ) ) {
+      printf( "failed to close 'file1' read handle\n" );
+      return -1;
+   }
+   // open a new handle for file2
+   phandle = marfs_open( interctxt, NULL, "../gasubdir/file2", MARFS_READ );
+   if ( phandle == NULL ) {
+      printf( "failed to open 'file2' for read\n" );
+      return -1;
+   }
+   bzero( oneMBreadbuf, 1048576 );
+   if ( marfs_read( phandle, oneMBreadbuf, 1028 ) != 1028 ) {
+      printf( "failed to read 'file2'\n" );
+      return -1;
+   }
+   if ( memcmp( oneMBreadbuf, oneMBbuffer, 1028 ) ) {
+      printf( "unexpected content of 'file2'\n" );
+      return -1;
+   }
+   if ( marfs_release( phandle ) ) {
+      printf( "failed to close 'file2' read handle\n" );
+      return -1;
+   }
+
+
    // free buffers
+   free( oneMBreadbuf );
    free( oneMBbuffer );
 
    // cleanup created files/dirs

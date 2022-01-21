@@ -81,6 +81,7 @@ typedef struct marfs_fhandle_struct {
    DATASTREAM   datastream; // for standard access
    marfs_ns*            ns; // reference to the containing NS
    marfs_interface   itype; // itype of creating ctxt ( for perm checks )
+   size_t    dataremaining; // available data quota
 }* marfs_fhandle;
 
 typedef struct marfs_dhandle_struct {
@@ -1468,14 +1469,39 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
    }
    // check NS quota
    MDAL tgtmdal = oppos->ns->prepo->metascheme.mdal;
-   off_t inodeusage = tgtmdal->getinodeusage( oppos->ctxt );
-   if ( oppos->ns->fquota  &&
-         ( inodeusage < 0  ||  inodeusage >= oppos->ns->fquota ) ) {
-      LOG( LOG_ERR, "NS has excessive inode count (%zd)\n", inodeusage );
-      pathcleanup( subpath, oppos );
-      errno = EDQUOT;
-      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-      return NULL;
+   off_t inodeusage = 0;
+   if ( oppos->ns->fquota ) {
+      inodeusage = tgtmdal->getinodeusage( oppos->ctxt );
+      if ( inodeusage < 0 ) {
+         LOG( LOG_ERR, "Failed to retrieve NS inode usage info\n" );
+      }
+      else if ( inodeusage >= oppos->ns->fquota ) {
+         LOG( LOG_ERR, "NS has excessive inode count (%zd)\n", inodeusage );
+         inodeusage = -1;
+      }
+      if ( inodeusage < 0 ) {
+         pathcleanup( subpath, oppos );
+         errno = EDQUOT;
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+   }
+   off_t datausage = 0;
+   if ( oppos->ns->dquota ) {
+      datausage = tgtmdal->getdatausage( oppos->ctxt );
+      if ( datausage < 0 ) {
+         LOG( LOG_ERR, "Failed to retrieve NS data usage info\n" );
+      }
+      else if ( datausage >= oppos->ns->dquota ) {
+         LOG( LOG_ERR, "NS has excessive data usage (%zd)\n", datausage );
+         datausage = -1;
+      }
+      if ( datausage < 0 ) {
+         pathcleanup( subpath, oppos );
+         errno = EDQUOT;
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
    }
    // check the state of our handle argument
    char newstream = 0;
@@ -1491,6 +1517,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       stream->ns = NULL;
       stream->datastream = NULL;
       stream->metahandle = NULL;
+      stream->dataremaining = 0;
       newstream = 1;
    }
    else if ( stream->datastream == NULL  &&  stream->metahandle == NULL ) {
@@ -2001,16 +2028,18 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
    }
    // check for datastream reference
    if ( stream->datastream ) {
+      LOG( LOG_INFO, "Seeking datastream\n" );
       // seek the datastream reference
       off_t retval = datastream_seek( &(stream->datastream), offset, whence );
-      if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+      if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
       return retval;
    }
    // meta only reference
+   LOG( LOG_INFO, "Seeking meta handle\n" );
    MDAL curmdal = stream->ns->prepo->metascheme.mdal;
    off_t retval = curmdal->lseek( stream->metahandle, offset, whence );
-   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
