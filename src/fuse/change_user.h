@@ -1,5 +1,5 @@
-#ifndef _GENERIC_H
-#define _GENERIC_H
+#ifndef _CHANGE_USER_H
+#define _CHANGE_USER_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -58,7 +58,6 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#endif // _GENERIC_H
 
 #include <linux/limits.h>
 
@@ -72,3 +71,6 @@ typedef struct user_ctxt_struct
 
 int enter_user(user_ctxt ctxt, uid_t new_euid, gid_t new_egid, int enter_group);
 int exit_user(user_ctxt ctxt);
+
+#endif // _CHANGE_USER_H
+

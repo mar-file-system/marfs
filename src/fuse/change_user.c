@@ -57,7 +57,14 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#include "marfs_auto_config.h"
+#if defined(DEBUG_ALL)  ||  defined(DEBUG_FUSE)
+   #define DEBUG 1
+#endif
 #define LOG_PREFIX "change_user"
+#include <logging.h>
+
+#include "change_user.h"
 
 #include <unistd.h>
 #include <errno.h>
@@ -68,9 +75,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/syscall.h>
-
-#include "change_user.h"
-#include "logging.h"
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE

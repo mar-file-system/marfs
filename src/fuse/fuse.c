@@ -59,14 +59,18 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define FUSE_USE_VERSION 26
 
+#include "marfs_auto_config.h"
+#if defined(DEBUG_ALL)  ||  defined(DEBUG_FUSE)
+   #define DEBUG 1
+#endif
 #define LOG_PREFIX "fuse"
+#include <logging.h>
 
 #include <fuse.h>
 #include <unistd.h>
 
-#include "marfs.h"
 #include "change_user.h"
-#include "logging.h"
+#include "api/marfs.h"
 
 #define CTXT (marfs_ctxt)(fuse_get_context()->private_data)
 
@@ -78,7 +82,7 @@ int fuse_access(const char *path, int mode)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_access(CTXT, path, mode) * errno;
+  int ret = marfs_access(CTXT, path, mode, AT_SYMLINK_NOFOLLOW) * errno;
 
   exit_user(&u_ctxt);
 
@@ -93,7 +97,7 @@ int fuse_chmod(const char *path, mode_t mode)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_chmod(CTXT, path, mode) * errno;
+  int ret = marfs_chmod(CTXT, path, mode, AT_SYMLINK_NOFOLLOW) * errno;
 
   exit_user(&u_ctxt);
 
@@ -108,7 +112,7 @@ int fuse_chown(const char *path, uid_t uid, gid_t gid)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_chown(CTXT, path, uid, gid) * errno;
+  int ret = marfs_chown(CTXT, path, uid, gid, AT_SYMLINK_NOFOLLOW) * errno;
 
   exit_user(&u_ctxt);
 
@@ -209,7 +213,7 @@ int fuse_getattr(const char *path, struct stat *statbuf)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_lstat(CTXT, path, statbuf) * errno;
+  int ret = marfs_stat(CTXT, path, statbuf, AT_SYMLINK_NOFOLLOW) * errno;
 
   if (ret)
   {
@@ -224,16 +228,33 @@ int fuse_getattr(const char *path, struct stat *statbuf)
 int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
 {
   LOG(LOG_INFO, "%s\n", path);
+  int err = 0;
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_lgetxattr(CTXT, path, name, value, size) * errno;
+  // we need to use a file handle for this op
+  marfs_fhandle fh = marfs_open( CTXT, NULL, path, MARFS_READ );
+  if !(fh) {
+    err = errno;
+    LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
+         path, strerror(errno) );
+    exit_user(&u_ctxt);
+    return -err;
+  }
 
-  if (ret)
+  // perform the op
+  int ret = marfs_fgetxattr(fh, name, value, size);
+  if (ret < 0)
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
+
+  // cleanup our handle
+  if ( marfs_release(fh) ) {
+    LOG( LOG_WARNING, "Failed to close marfs_fhandle following getxattr() op\n" );
   }
 
   exit_user(&u_ctxt);
@@ -256,7 +277,7 @@ int fuse_link(const char *oldpath, const char *newpath)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_link(CTXT, oldpath, newpath) * errno;
+  int ret = marfs_link(CTXT, oldpath, newpath, 0) * errno;
 
   exit_user(&u_ctxt);
 
@@ -266,12 +287,34 @@ int fuse_link(const char *oldpath, const char *newpath)
 int fuse_listxattr(const char *path, char *list, size_t size)
 {
   LOG(LOG_INFO, "%s\n", path);
+  int err = 0;
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
-  int ret = marfs_llistxattr(CTXT, path, list, size) * errno;
+  // we need to use a file handle for this op
+  marfs_fhandle fh = marfs_open( CTXT, NULL, path, MARFS_READ );
+  if !(fh) {
+    err = errno;
+    LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
+         path, strerror(errno) );
+    exit_user(&u_ctxt);
+    return -err;
+  }
+
+  // perform the op
+  int ret = marfs_flistxattr(fh, path, list, size);
+  if (ret < 0)
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
+
+  // cleanup our handle
+  if ( marfs_release(fh) ) {
+    LOG( LOG_WARNING, "Failed to close marfs_fhandle following getxattr() op\n" );
+  }
 
   exit_user(&u_ctxt);
 
@@ -318,7 +361,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  ffi->fh = (uint64_t)marfs_open(CTXT, path, flags);
+  ffi->fh = (uint64_t)marfs_open(CTXT, NULL, path, flags);
   int err = errno;
 
   exit_user(&u_ctxt);
@@ -373,9 +416,9 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
-  if (marfs_seek((marfs_fhandle)ffi->fh, offset, SEEK_SET))
+  if (marfs_seek((marfs_fhandle)ffi->fh, offset, SEEK_SET) != offset)
   {
-    LOG(LOG_ERR, "failed to seek %s\n", strerror(errno));
+    LOG(LOG_ERR, "failed to seek to offset %zd (%s)\n", offset, strerror(errno));
     int err = errno;
     exit_user(&u_ctxt);
     return -err;
@@ -431,11 +474,15 @@ int fuse_readlink(const char *path, char *buf, size_t size)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_readlink(CTXT, path, buf, size) * errno;
+  ssize_t ret = marfs_readlink(CTXT, path, buf, size);
+  if ( ret < 0 ) {
+    LOG( LOG_ERR, "%s\n", strerror(errno) );
+    return -errno;
+  }
 
   exit_user(&u_ctxt);
 
-  return ret;
+  return (int)ret;
 }
 
 int fuse_release(const char *path, struct fuse_file_info *ffi)
@@ -497,7 +544,28 @@ int fuse_removexattr(const char *path, const char *name)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_lremovexattr(CTXT, path, name) * errno;
+  // we need to use a file handle for this op
+  marfs_fhandle fh = marfs_open( CTXT, NULL, path, MARFS_READ );
+  if !(fh) {
+    int err = errno;
+    LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
+         path, strerror(errno) );
+    exit_user(&u_ctxt);
+    return -err;
+  }
+
+  // perform the op
+  int ret = marfs_fremovexattr(fh, name);
+  if (ret < 0)
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
+
+  // cleanup our handle
+  if ( marfs_release(fh) ) {
+    LOG( LOG_WARNING, "Failed to close marfs_fhandle following removexattr() op\n" );
+  }
 
   exit_user(&u_ctxt);
 
@@ -542,7 +610,28 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_lsetxattr(CTXT, path, name, value, size, flags) * errno;
+  // we need to use a file handle for this op
+  marfs_fhandle fh = marfs_open( CTXT, NULL, path, MARFS_READ );
+  if !(fh) {
+    int err = errno;
+    LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
+         path, strerror(errno) );
+    exit_user(&u_ctxt);
+    return -err;
+  }
+
+  // perform the op
+  int ret = marfs_fsetxattr(fh, name, value, size, flags);
+  if (ret < 0)
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
+
+  // cleanup our handle
+  if ( marfs_release(fh) ) {
+    LOG( LOG_WARNING, "Failed to close marfs_fhandle following removexattr() op\n" );
+  }
 
   exit_user(&u_ctxt);
 
