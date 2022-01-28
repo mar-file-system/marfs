@@ -61,21 +61,21 @@ AM_CFLAGS   =
 AM_LDFLAGS  =
 
 include_HEADERS = marfs.h
-lib_LTLIBRARIES = libmarfs.la
+lib_LTLIBRARIES = libMarFS.la
 
-libmarfs_la_SOURCES = marfs.c
-libmarfs_la_LIBADD  = ../datastream/libDatastream.la
-libmarfs_la_CFLAGS  = $(XML_CFLAGS)
-MARFS_LIB = libmarfs.la
+libMarFS_la_SOURCES = marfs.c
+libMarFS_la_LIBADD  = ../datastream/libDatastream.la
+libMarFS_la_CFLAGS  = $(XML_CFLAGS)
+MARFS_LIB = libMarFS.la
 
 # ---
 
-#check_PROGRAMS = test_api
-#
-#test_api_SOURCES = testing/test_api.c
-#test_api_CFLAGS = $(XML_CFLAGS)
-#test_api_LDADD = $(DATASTREAM_LIB)
-#
-#TESTS = test_api
+check_PROGRAMS = test_marfsapi
+
+test_marfsapi_SOURCES = testing/test_marfsapi.c
+test_marfsapi_CFLAGS = $(XML_CFLAGS)
+test_marfsapi_LDADD = $(MARFS_LIB)
+
+TESTS = test_marfsapi
 
 

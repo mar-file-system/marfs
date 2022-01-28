@@ -58,7 +58,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 #include "marfs_auto_config.h"
-#if defined(DEBUG_ALL)  ||  defined(DEBUG_DATASTREAM)
+#if defined(DEBUG_ALL)  ||  defined(DEBUG_DS)
    #define DEBUG 1
 #endif
 #define LOG_PREFIX "datastream"
@@ -391,7 +391,7 @@ int create_new_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt, mode_t
    if ( newfile.metahandle == NULL ) {
       LOG( LOG_ERR, "Failed to create reference meta file: \"%s\"\n", newrpath );
       // a BUSY error is more indicative of the real problem
-      if ( errno = EEXIST ) { errno = EBUSY; }
+      if ( errno == EEXIST ) { errno = EBUSY; }
       // don't allow our reserved EBADFD value
       else if ( errno == EBADFD ) { errno = ENOMSG; }
       free( newrpath );
@@ -1088,7 +1088,10 @@ int putfinfo( DATASTREAM stream ) {
    // populate recovery info string
    size_t genbytes = recovery_finfotostr( &(stream->finfo), stream->finfostr, stream->finfostrlen + 1 );
    if ( genbytes > recoverybytes ) {
-      LOG( LOG_ERR, "File recovery info has an inconsistent length\n" );
+      LOG( LOG_ERR, "File recovery info has an inconsistent length ( old=%zu, new=%zu )\n",
+           recoverybytes, genbytes );
+      errno = ENAMETOOLONG; // this is most likely to represent the issue, as this almost 
+                            //  certainly is the result of the recovery path changing
       return -1;
    }
    else if ( genbytes < recoverybytes ) {
@@ -1452,7 +1455,7 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
             // roll back our stream changes
             newstream->curfile--;
             newstream->fileno--;
-            if ( errno = EBADFD ) { errno = ENOMSG; } // avoid using our reserved errno value
+            if ( errno == EBADFD ) { errno = ENOMSG; } // avoid using our reserved errno value
             return -1;
          }
          // check for an object transition
@@ -1610,6 +1613,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
          MDAL mdal = newstream->ns->prepo->metascheme.mdal;
          newstream->curfile++; // progress to the next file
          // attempt to open the new file target
+         size_t origobjno = newstream->objno; // remember original object number
          int openres = open_existing_file( newstream, path, pos->ctxt );
          if ( openres > 0  &&  phandle != NULL ) {
             LOG( LOG_INFO, "Preserving meta handle for target w/o FTAG: \"%s\"\n", path );
@@ -1619,14 +1623,14 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
          if ( openres ) {
             LOG( LOG_ERR, "Failed to open target file: \"%s\"\n", path );
             newstream->curfile--; // reset back to our old position
-            if ( errno = EBADFD ) { errno = ENOMSG; }
+            if ( errno == EBADFD ) { errno = ENOMSG; }
             return -1;
          }
          STREAMFILE* newfile = newstream->files + newstream->curfile;
          // check if our old stream targets the same object
          if ( strcmp( curfile->ftag.streamid, newfile->ftag.streamid )  ||
               strcmp( curfile->ftag.ctag, newfile->ftag.ctag )  ||
-              curfile->ftag.objno != newfile->ftag.objno ) {
+              origobjno != newfile->ftag.objno ) {
             // data objects differ, so close the old reference
             char* rtagstr = NULL;
             size_t rtagstrlen = 0;
@@ -2405,6 +2409,16 @@ off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
          }
          free( rtagstr );
       }
+   }
+   // if we have an open object, seek it to the appropriate offset
+   if ( tgtstream->datahandle != NULL  &&
+        ne_seek( tgtstream->datahandle, streampos.offset ) != streampos.offset ) {
+      LOG( LOG_ERR, "Failed to seek to offset %zu of object %zu\n",
+           streampos.offset, streampos.objno );
+      freestream( tgtstream );
+      *stream = NULL;
+      errno = EBADFD;
+      return -1;
    }
    // update stream position to reflect the new target
    tgtstream->objno = streampos.objno;
