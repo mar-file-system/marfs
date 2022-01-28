@@ -2797,12 +2797,18 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
    }
    // truncate our subpath down to a relative path from the current position
    if ( *subpath != relpath ) {
-      int newlen = sprintf( *subpath, "%s", relpath );
-      if ( newlen < 0 ) {
-         LOG( LOG_ERR, "Failed to update subpath\n" );
-         return -1;
+      // manually shift relpath to the front of the subpath string
+      // NOTE -- sprintf could do this, but results in overlapping memcpy errors
+      int newlen = 0;
+      char* dest = *subpath;
+      char* src = relpath;
+      while ( *src != '\0' ) {
+         *dest = *src;
+         dest++;
+         src++;
+         newlen++;
       }
-      // zero out the end of the subpath, just in case
+      *dest = '\0'; // be *certain* to append NULL terminator
       bzero( (*subpath)+newlen+1, relpath-((*subpath)+1) );
    }
 

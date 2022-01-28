@@ -1696,8 +1696,17 @@ int posixmdal_chdir( MDAL_CTXT ctxt, MDAL_DHANDLE dh ) {
    // retrieve the dir FD from the dir handle
    int dfd = dirfd( pdh->dirp );
    if ( dfd < 0 ) {
-      LOG( LOG_ERR, "Failed to retrieve the FD from the provided directory stream\n" );
+      LOG( LOG_ERR, "Failed to retrieve the FD from the provided directory handle\n" );
       return -1;
+   }
+   int newdfd = dup( dfd );
+   if ( newdfd < 0 ) {
+      LOG( LOG_ERR, "Failed to duplicate the FD of the provided directory handle\n" );
+      return -1;
+   }
+   // close the provided dir handle
+   if ( closedir( pdh->dirp ) ) {
+      LOG( LOG_WARNING, "Failed to close the provided directory handle\n" );
    }
    // close the previous path dir
    if ( close( pctxt->pathd ) ) {
@@ -1706,7 +1715,7 @@ int posixmdal_chdir( MDAL_CTXT ctxt, MDAL_DHANDLE dh ) {
    // free the provided dir handle
    free( dh );
    // update the context struct
-   pctxt->pathd = dfd;
+   pctxt->pathd = newdfd;
    return 0;
 }
 
