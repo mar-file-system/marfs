@@ -48,9 +48,11 @@ int n_ranks;
 int n_prod;
 int n_cons;
 
-typedef struct  quota_data_struct {
+typedef struct quota_data_struct {
   size_t size;
   size_t count;
+  size_t del_objs;
+  size_t del_refs;
 } quota_data;
 
 typedef struct tq_global_struct {
@@ -83,16 +85,25 @@ typedef struct work_pkg_struct {
  * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target
  * namespace
  * @param FTAG ftag : A FTAG value within the stream.
- * @param int head_ref : Starting index of the range of refs to collect.
+ * @param int v_ref : Index of the last valid ref before the range of refs to
+ * collect.
+ * @param int head_ref : Starting index of the range of refs to collect. Must be
+ * >= v_ref.
  * @param int tail_ref : Ending index of the range of refs to collect.
  * @param int first_obj : Starting index of the range of objs to collect.
  * @param int curr_obj : Ending index of the range of refs to collect.
  * @param int eos : Flag indicating if the given ranges are at the end of the
  * stream.
+ * @param quota data* q_data : Reference to the quota data struct to populate
  * @return int : Zero on success, or -1 on failure.
  */
-int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int head_ref, int tail_ref, int first_obj, int curr_obj, int eos) {
-  printf("garbage collecting refs %d:%d objs %d:%d eos(%d)\n", head_ref, tail_ref, first_obj, curr_obj, eos);
+int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int v_ref, int head_ref, int tail_ref, int first_obj, int curr_obj, int eos, quota_data* q_data) {
+  //printf("garbage collecting refs (%d) %d:%d objs %d:%d eos(%d)\n", v_ref, head_ref, tail_ref, first_obj, curr_obj, eos);
+
+  if (head_ref < v_ref) {
+    LOG(LOG_ERR, "Rank %d: Invalid ref ranges given\n");
+    return -1;
+  }
 
   // Calculate value for xattr indicating how many refs will need to be skipped
   // on future runs
@@ -101,13 +112,13 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
     if (head_ref < 0) {
     head_ref = 0;
     }
-    skip = tail_ref - head_ref - 1;
+    skip = tail_ref - v_ref - 1;
   }
 
   // Determine if the specified refs/objs have already been deleted
   char* rpath;
-  ftag.fileno = head_ref;
-  if(head_ref < 0) {
+  ftag.fileno = v_ref;
+  if(v_ref < 0) {
     ftag.fileno = 0;
   }
   if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
@@ -172,12 +183,18 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
     }
 
     LOG(LOG_INFO, "Rank %d: Garbage collecting object %d %s\n", rank, i, objname);
-    if(ne_delete(ds->nectxt, objname, location) && errno != ENOENT) {
-      LOG(LOG_ERR, "Rank %d: Failed to delete \"%s\" (%s)\n", rank, objname, strerror(errno));
-      free(objname);
-      free(xattr);
-      free(rpath);
-      return -1;
+    errno = 0;
+    if(ne_delete(ds->nectxt, objname, location)) {
+      if (errno != ENOENT) {
+        LOG(LOG_ERR, "Rank %d: Failed to delete \"%s\" (%s)\n", rank, objname, strerror(errno));
+        free(objname);
+        free(xattr);
+        free(rpath);
+        return -1;
+      }
+    }
+    else {
+      q_data->del_objs++;
     }
 
     free(objname);
@@ -238,13 +255,18 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
     }
 
     LOG(LOG_INFO, "Rank %d: Garbage collecting ref %d\n", rank, i);
-    ms->mdal->unlinkref(ctxt, dpath);
-    if (ms->mdal->unlinkref(ctxt, dpath) && errno != ENOENT){
-      LOG(LOG_ERR, "Rank %d: failed to unlink \"%s\" (%s)\n", rank, dpath, strerror(errno));
-      free(dpath);
-      free(xattr - strlen(IN_PROG) - 1);
-      free(rpath);
-      return -1;
+    errno = 0;
+    if (ms->mdal->unlinkref(ctxt, dpath)){
+      if (errno != ENOENT) {
+        LOG(LOG_ERR, "Rank %d: failed to unlink \"%s\" (%s)\n", rank, dpath, strerror(errno));
+        free(dpath);
+        free(xattr - strlen(IN_PROG) - 1);
+        free(rpath);
+        return -1;
+      }
+    }
+    else {
+      q_data->del_refs++;
     }
 
     free(dpath);
@@ -290,12 +312,13 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
  * @param FTAG* ftag : Reference to the FTAG struct to be populated
  * @param const char* rpath : Reference path of the file to retrieve ftag data
  * from
+ * @param quota data* q_data : Reference to the quota data struct to update
  * @return int : The distance to the next active reference within the stream on
  * success, or -1 if a failure occurred.
  * Ex: If the following ref has not been garbage collected, return 1. If the
  * following two refs have already been garbage collected, return 3.
  */
-int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag, const char* rpath, struct stat* st) {
+int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag, const char* rpath, struct stat* st, quota_data* q_data) {
   MDAL_FHANDLE handle;
 
   if (ms->mdal->statref(ctxt, rpath, st)) {
@@ -393,7 +416,7 @@ int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag,
         eos = 1;
       }
 
-      gc(ms, ds, ctxt, *ftag, ftag->fileno, ftag->fileno + skip + 1, -1, -1, eos);
+      gc(ms, ds, ctxt, *ftag, ftag->fileno, ftag->fileno, ftag->fileno + skip + 1, -1, -1, eos, q_data);
 
       if (eos) {
         skip = -1;
@@ -445,6 +468,8 @@ int end_obj(FTAG* ftag, size_t headerlen) {
 int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const char* node_name, const char* ref_name, quota_data* q_data) {
   q_data->size = 0;
   q_data->count = 0;
+  q_data->del_objs = 0;
+  q_data->del_refs = 0;
 
   // Generate an ftag for the beginning of the stream
   size_t rpath_len = strlen(node_name) + strlen(ref_name) + 1;
@@ -465,7 +490,7 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
   ftag.ctag = NULL;
   ftag.streamid = NULL;
   struct stat st;
-  int next = get_ftag(ms, ds, ctxt, &ftag, rpath, &st);
+  int next = get_ftag(ms, ds, ctxt, &ftag, rpath, &st, q_data);
   if(next < 0) {
     LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG for \"%s\"\n", rank, rpath);
     free(rpath);
@@ -488,24 +513,32 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
   // Iterate through the refs in the stream, gc'ing/ counting quota data
   int inactive = 0;
   int last_ref = -1;
+  int v_ref = -1;
   int last_obj = -1;
   while (ftag.endofstream == 0 && next > 0 && (ftag.state & FTAG_DATASTATE) >= FTAG_FIN) {
     if (difftime(time(NULL), st.st_ctime) > RECENT_THRESH) {
       if (st.st_nlink < 2) {
       // File has been deleted (needs to be gc'ed)
         if (!inactive) {
+          if (ftag.objno > last_obj + 1) {
+            last_obj = ftag.objno - 1;
+          }
+          if (last_ref >= 0 && ftag.fileno > last_ref + 1) {
+            last_ref = ftag.fileno - 1;
+          }
           inactive = 1;
         }
       }
       else {
       // File is active, so count towards quota and gc previous files if needed
         if(inactive) {
-          gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno, last_obj, ftag.objno, 0);
+          gc(ms, ds, ctxt, ftag, v_ref, last_ref, ftag.fileno, last_obj, ftag.objno, 0, q_data);
         }
         inactive = 0;
         q_data->size += st.st_size;
         q_data->count++;
         last_ref = ftag.fileno;
+        v_ref = ftag.fileno;
         last_obj = end_obj(&ftag, headerlen);
       }
     }
@@ -513,10 +546,11 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
     // File is too young to be gc'ed/counted, but still gc previous files if
     // needed, and treat as 'active' for future gc logic
       if(inactive) {
-        gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno, last_obj, ftag.objno, 0);
+        gc(ms, ds, ctxt, ftag, v_ref, last_ref, ftag.fileno, last_obj, ftag.objno, 0, q_data);
       }
       inactive = 0;
       last_ref = ftag.fileno;
+      v_ref = ftag.fileno;
       last_obj = end_obj(&ftag, headerlen);
     }
 
@@ -531,7 +565,7 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
       return -1;
     }
 
-    if ((next = get_ftag(ms, ds, ctxt, &ftag, rpath, &st)) < 0) {
+    if ((next = get_ftag(ms, ds, ctxt, &ftag, rpath, &st, q_data)) < 0) {
       LOG(LOG_ERR, "Rank %d: Failed to retrieve ftag for %s\n", rank, rpath);
       free(rpath);
       free(ftag.ctag);
@@ -545,12 +579,21 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
     if (st.st_nlink < 2) {
     // Since this is the last ref in the stream, gc it along with previous
     // refs if needed
-      gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno + 1, last_obj, end_obj(&ftag, headerlen) + 1, 1);
+      if (!inactive) {
+        if (ftag.objno > last_obj + 1) {
+          last_obj = ftag.objno - 1;
+        }
+        if (last_ref >= 0 && ftag.fileno > last_ref + 1) {
+          last_ref = ftag.fileno - 1;
+        }
+      }
+
+      gc(ms, ds, ctxt, ftag, v_ref, last_ref, ftag.fileno + 1, last_obj, end_obj(&ftag, headerlen) + 1, 1, q_data);
     }
     else {
     // Same as above
       if (inactive) {
-        gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno, last_obj, ftag.objno, 0);
+        gc(ms, ds, ctxt, ftag, v_ref, last_ref, ftag.fileno, last_obj, ftag.objno, 0, q_data);
       }
       q_data->size += st.st_size;
       q_data->count++;
@@ -559,7 +602,7 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
   else {
     if (inactive) {
       // Same as above
-      gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno, last_obj, ftag.objno, 0);
+      gc(ms, ds, ctxt, ftag, v_ref, last_ref, ftag.fileno, last_obj, ftag.objno, 0, q_data);
     }
   }
 
@@ -587,6 +630,8 @@ int stream_thread_init(unsigned int tID, void* global_state, void** state) {
   tstate->global = (GlobalState)global_state;
   tstate->q_data.size = 0;
   tstate->q_data.count = 0;
+  tstate->q_data.del_objs = 0;
+  tstate->q_data.del_refs = 0;
   tstate->ref_node = NULL;
   tstate->scanner = NULL;
 
@@ -626,6 +671,8 @@ int stream_cons(void** state, void**  work_todo) {
 
   tstate->q_data.size += q_data.size;
   tstate->q_data.count += q_data.count;
+  tstate->q_data.del_objs += q_data.del_objs;
+  tstate->q_data.del_refs += q_data.del_refs;
 
   return 0;
 }
@@ -836,6 +883,8 @@ int ref_paths(const marfs_ns* ns, const char* name) {
   quota_data totals;
   totals.size = 0;
   totals.count = 0;
+  totals.del_objs = 0;
+  totals.del_refs = 0;
   int tres = 0;
   ThreadState tstate = NULL;
   while ((tres = tq_next_thread_status(tq, (void**)&tstate)) > 0) {
@@ -849,6 +898,8 @@ int ref_paths(const marfs_ns* ns, const char* name) {
 
     totals.size += tstate->q_data.size;
     totals.count += tstate->q_data.count;
+    totals.del_objs += tstate->q_data.del_objs;
+    totals.del_refs += tstate->q_data.del_refs;
 
     if (tstate->scanner) {
       ms->mdal->closescanner(tstate->scanner);
@@ -883,7 +934,7 @@ int ref_paths(const marfs_ns* ns, const char* name) {
   }
 
   char msg[1024];
-  snprintf(msg, 1024, "Rank: %d NS: %s Count: %lu Size: %lu", rank, name, totals.count, totals.size);
+  snprintf(msg, 1024, "Rank: %d NS: \"%s\" Count: %lu Size: %lfTiB Deleted: (Objs: %lu Refs: %lu)", rank, name, totals.count, totals.size / 1024.0 / 1024.0 / 1024.0 / 1024.0, totals.del_objs, totals.del_refs);
   MPI_Send(msg, 1024, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
 
   ms->mdal->destroyctxt(ctxt);
