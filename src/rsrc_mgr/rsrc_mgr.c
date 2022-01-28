@@ -1,7 +1,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <math.h>
-//#include <mpi.h>
+#include <mpi.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,8 +42,8 @@
 #define NUM_CONS 2
 #define QDEPTH 100
 
-int rank = 0;
-int n_ranks = 1;
+int rank;
+int n_ranks;
 
 int n_prod;
 int n_cons;
@@ -882,10 +882,9 @@ int ref_paths(const marfs_ns* ns, const char* name) {
     LOG(LOG_ERR, "Rank %d: Failed to set inode usage for namespace %s\n", rank, ns_path);
   }
 
-  printf("Rank: %d NS: %s Count: %lu Size: %lu\n", rank, name, totals.count, totals.size);
-  /*char msg[1024];
+  char msg[1024];
   snprintf(msg, 1024, "Rank: %d NS: %s Count: %lu Size: %lu", rank, name, totals.count, totals.size);
-  MPI_Send(msg, 1024, MPI_CHAR, 0, 0, MPI_COMM_WORLD);*/
+  MPI_Send(msg, 1024, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
 
   ms->mdal->destroyctxt(ctxt);
   free(ns_path);
@@ -927,7 +926,7 @@ int find_rank_ns(const marfs_ns* ns, int idx, const char* name){
 int main(int argc, char **argv) {
   errno = 0;
 
-  /*// MPI Initialization
+  // MPI Initialization
   if (MPI_Init(&argc, &argv) != MPI_SUCCESS)
     {
         LOG(LOG_ERR, "Error in MPI_Init\n");
@@ -943,7 +942,6 @@ int main(int argc, char **argv) {
     LOG(LOG_ERR, "Error in MPI_Comm_rank\n");
     return -1;
   }
-  */
 
   if ( argc < 2 || argv[1] == NULL ) {
     LOG(LOG_ERR, "Rank %d: no config path defined\n", rank);
@@ -974,7 +972,7 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  /*// Rank 0 collects a message for each namespace from other processes
+  // Rank 0 collects a message for each namespace from other processes
   int i;
   if (rank == 0) {
     char* msg = malloc(sizeof(char) * 1024);
@@ -986,7 +984,6 @@ int main(int argc, char **argv) {
   }
 
   MPI_Finalize();
-  */
 
   config_term(cfg);
 
