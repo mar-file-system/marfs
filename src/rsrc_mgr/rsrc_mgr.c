@@ -1,47 +1,101 @@
-#include <mpi.h>
+#include <dirent.h>
+#include <errno.h>
+#include <math.h>
+//#include <mpi.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
 #include <string.h>
-#include <dirent.h>
 #include <time.h>
-#include <math.h>
-#include <sys/types.h>
 #include <attr/xattr.h>
+#include <sys/types.h>
+
+#include <thread_queue.h>
 
 #include "config/config.h"
+#include "datastream/datastream.h"
 #include "mdal/mdal.h"
 #include "tagging/tagging.h"
-#include "datastream/datastream.h"
 
-#define RECENT_THRESH 0
-
-#ifndef ENOATTR
-#define ENOATTR ENODATA
+#define DEBUG_RM 1 // TODO: Remove
+#if defined(DEBUG_ALL)  ||  defined(DEBUG_RM)
+   #define DEBUG 1
 #endif
+
+#define LOG_PREFIX "rsrc_mgr"
+
+#include <logging.h>
+
+// ENOATTR isn't always defined in Linux, so define it
+#ifndef ENOATTR
+  #define ENOATTR ENODATA
+#endif
+
+// Files created within the threshold will be ignored
+#define RECENT_THRESH 0
 
 #define N_SKIP "gc_skip"
 #define IN_PROG "IN_PROG"
 
-typedef struct stream_data_struct {
+// Default TQ values
+#define NUM_PROD 2
+#define NUM_CONS 2
+#define QDEPTH 100
+
+int rank = 0;
+int n_ranks = 1;
+
+int n_prod;
+int n_cons;
+
+typedef struct  quota_data_struct {
   size_t size;
   size_t count;
-} stream_data;
-/**
- * @param head_ref keep
- * @param tail_ref keep
- * @param first_obj keep
- * @param curr_obj keep
- * @param end flags
- * @return int
+} quota_data;
+
+typedef struct tq_global_struct {
+  pthread_mutex_t lock;
+  marfs_ms* ms;
+  marfs_ds* ds;
+  MDAL_CTXT ctxt;
+  size_t next_node;
+} *GlobalState;
+
+typedef struct tq_thread_struct {
+  unsigned int tID;
+  GlobalState global;
+  quota_data q_data;
+  HASH_NODE* ref_node;
+  MDAL_SCANNER scanner;
+} *ThreadState;
+
+typedef struct work_pkg_struct {
+  char* node_name; // Name of ref dir
+  char* ref_name; // Name of ref file
+} *WorkPkg;
+
+/** Garbage collect the reference files and objects of a stream inside the given
+ * ranges. NOTE: refs/objects corresponding to the index parameters will not be
+ * garbage collected.
+ * Ex:  gc(..., 1, 5, 0, 2, ...) will delete refs 2-4 and obj 1
+ * @param const marfs_ms* ms : Reference to the current MarFS metadata scheme
+ * @param const marfs_ds* ds : Reference to the current MarFS data scheme
+ * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target
+ * namespace
+ * @param FTAG ftag : A FTAG value within the stream.
+ * @param int head_ref : Starting index of the range of refs to collect.
+ * @param int tail_ref : Ending index of the range of refs to collect.
+ * @param int first_obj : Starting index of the range of objs to collect.
+ * @param int curr_obj : Ending index of the range of refs to collect.
+ * @param int eos : Flag indicating if the given ranges are at the end of the
+ * stream.
+ * @return int : Zero on success, or -1 on failure.
  */
 int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int head_ref, int tail_ref, int first_obj, int curr_obj, int eos) {
-  printf("gc: refs %d:%d objs %d:%d\n", head_ref, tail_ref, first_obj, curr_obj);
+  printf("garbage collecting refs %d:%d objs %d:%d eos(%d)\n", head_ref, tail_ref, first_obj, curr_obj, eos);
 
-  if(tail_ref <= head_ref + 1) {
-    return 0;
-  }
-
+  // Calculate value for xattr indicating how many refs will need to be skipped
+  // on future runs
   int skip = -1;
   if (!eos) {
     if (head_ref < 0) {
@@ -50,20 +104,20 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
     skip = tail_ref - head_ref - 1;
   }
 
-  // determine if the specified refs/objs have already been deleted
+  // Determine if the specified refs/objs have already been deleted
   char* rpath;
   ftag.fileno = head_ref;
   if(head_ref < 0) {
     ftag.fileno = 0;
   }
   if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
-    fprintf(stderr, "Failed to create rpath\n");
+    LOG(LOG_ERR, "Rank %d: Failed to create rpath\n", rank);
     return -1;
   }
 
   MDAL_FHANDLE handle;
   if ((handle = ms->mdal->openref(ctxt, rpath, O_RDWR, 0)) == NULL) {
-    fprintf(stderr, "Failed to open handle for reference path \"%s\"\n", rpath);
+    LOG(LOG_ERR, "Rank %d: Failed to open handle for reference path \"%s\"\n", rank, rpath);
     free(rpath);
     return -1;
   }
@@ -71,7 +125,7 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
   char* xattr = NULL;
   int xattr_len = ms->mdal->fgetxattr(handle, 1, N_SKIP, xattr, 0);
   if (xattr_len <= 0 && errno != ENOATTR) {
-    fprintf(stderr, "Failed to retrieve xattr skip for reference path \"%s\"\n", rpath);
+    LOG(LOG_ERR, "Rank %d: Failed to retrieve xattr skip for reference path \"%s\"\n", rank, rpath);
     ms->mdal->close(handle);
     free(rpath);
     return -1;
@@ -79,32 +133,31 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
   else if (xattr_len >= 0) {
     xattr = calloc(0, xattr_len + 1);
     if (xattr == NULL) {
-      fprintf(stderr, "Failed to allocate space for a xattr string value\n");
+      LOG(LOG_ERR, "Rank %d: Failed to allocate space for a xattr string value\n", rank);
       ms->mdal->close(handle);
       free(rpath);
       return -1;
     }
 
     if (ms->mdal->fgetxattr(handle, 1, N_SKIP, xattr, 0) != xattr_len) {
-      fprintf(stderr, "xattr skip value for \"%s\" changed while reading\n", rpath);
+      LOG(LOG_ERR, "Rank %d: xattr skip value for \"%s\" changed while reading\n", rank, rpath);
       ms->mdal->close(handle);
       free(xattr);
       free(rpath);
       return -1;
     }
 
-    // the same deletion has already been completed, no need to repeat
+    // The same deletion has already been completed, no need to repeat
     if (strtol(xattr, NULL, 10) == skip) {
-      printf("we don't have to repeat\n");
       ms->mdal->close(handle);
       free(rpath);
       return 0;
     }
 
-    printf("free(xattr)\n");
     free(xattr);
   }
 
+  // Delete the specified objects
   int i;
   char* objname;
   ne_erasure erasure;
@@ -112,15 +165,15 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
   for (i = first_obj + 1; i < curr_obj; i++) {
     ftag.objno = i;
     if (datastream_objtarget(&ftag, ds, &objname, &erasure, &location)) {
-      fprintf(stderr, "Failed to generate object name\n");
+      LOG(LOG_ERR, "Rank %d: Failed to generate object name\n", rank);
       free(xattr);
       free(rpath);
       return -1;
     }
 
-    printf("garbage collecting object %d %s\n", i, objname);
+    LOG(LOG_INFO, "Rank %d: Garbage collecting object %d %s\n", rank, i, objname);
     if(ne_delete(ds->nectxt, objname, location) && errno != ENOENT) {
-      fprintf(stderr, "Failed to delete \"%s\" (%s)\n", objname, strerror(errno));
+      LOG(LOG_ERR, "Rank %d: Failed to delete \"%s\" (%s)\n", rank, objname, strerror(errno));
       free(objname);
       free(xattr);
       free(rpath);
@@ -130,6 +183,11 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
     free(objname);
   }
 
+  if(tail_ref <= head_ref + 1) {
+    return 0;
+  }
+
+  // Set temporary xattr indicating we started deleting the specified refs
   if (eos) {
     xattr_len = 4 + strlen(IN_PROG);
   }
@@ -138,20 +196,20 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
   }
 
   if ((xattr = malloc(sizeof(char) * xattr_len)) == NULL) {
-    fprintf(stderr, "Failed to allocate xattr string\n");
+    LOG(LOG_ERR, "Rank %d: Failed to allocate xattr string\n", rank);
     free(rpath);
     return -1;
   }
 
   if (snprintf(xattr, xattr_len, "%s %d", IN_PROG, skip) != (xattr_len - 1)) {
-    fprintf(stderr, "Failed to populate rpath string\n");
+    LOG(LOG_ERR, "Rank %d: Failed to populate rpath string\n", rank);
     free(xattr);
     free(rpath);
     return -1;
   }
 
   if (ms->mdal->fsetxattr(handle, 1, N_SKIP, xattr, xattr_len, 0)) {
-    fprintf(stderr, "Failed to set temporary xattr string\n");
+    LOG(LOG_ERR, "Rank %d: Failed to set temporary xattr string\n", rank);
     ms->mdal->close(handle);
     free(xattr);
     free(rpath);
@@ -162,27 +220,27 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
   xattr += strlen(IN_PROG) + 1;
 
   if (ms->mdal->close(handle)) {
-    fprintf(stderr, "Failed to close handle\n");
+    LOG(LOG_ERR, "Rank %d: Failed to close handle\n", rank);
     free(xattr);
     free(rpath);
     return -1;
   }
 
-  // delete intermediate refs
+  // Delete specified refs
   char* dpath;
   for (i = head_ref + 1; i < tail_ref; i++) {
     ftag.fileno = i;
     if ((dpath = datastream_genrpath(&ftag, ms)) == NULL) {
-      fprintf(stderr, "Failed to create dpath\n");
+      LOG(LOG_ERR, "Rank %d: Failed to create dpath\n", rank);
       free(xattr - strlen(IN_PROG) - 1);
       free(rpath);
       return -1;
     }
 
-    printf("garbage collecting ref %d\n", i);
+    LOG(LOG_INFO, "Rank %d: Garbage collecting ref %d\n", rank, i);
     ms->mdal->unlinkref(ctxt, dpath);
     if (ms->mdal->unlinkref(ctxt, dpath) && errno != ENOENT){
-      fprintf(stderr, "failed to unlink \"%s\" (%s)\n", dpath, strerror(errno));
+      LOG(LOG_ERR, "Rank %d: failed to unlink \"%s\" (%s)\n", rank, dpath, strerror(errno));
       free(dpath);
       free(xattr - strlen(IN_PROG) - 1);
       free(rpath);
@@ -192,25 +250,24 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
     free(dpath);
   }
 
-  // rewrite xattr
+  // Rewrite xattr indicating that we finished the deletion
   if ((handle = ms->mdal->openref(ctxt, rpath, O_WRONLY, 0)) == NULL) {
-    fprintf(stderr, "Failed to open handle for reference path \"%s\"\n", rpath);
+    LOG(LOG_ERR, "Rank %d: Failed to open handle for reference path \"%s\"\n", rank, rpath);
     free(xattr - strlen(IN_PROG) - 1);
     free(rpath);
     return -1;
   }
 
   if (ms->mdal->fsetxattr(handle, 1, N_SKIP, xattr, xattr_len, 0)) {
-    fprintf(stderr, "Failed to set temporary xattr string\n");
+    LOG(LOG_ERR, "Rank %d: Failed to set temporary xattr string\n", rank);
     ms->mdal->close(handle);
     free(xattr - strlen(IN_PROG) - 1);
     free(rpath);
     return -1;
   }
 
-
   if (ms->mdal->close(handle)) {
-    fprintf(stderr, "Failed to close handle\n");
+    LOG(LOG_ERR, "Rank %d: Failed to close handle\n", rank);
     free(xattr - strlen(IN_PROG) - 1);
     free(rpath);
     return -1;
@@ -222,35 +279,74 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int he
   return 0;
 }
 
-int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag, const char* rpath) {
+/** Populate the given ftag struct based on the given reference path. If a
+ * previous run of the resource manager failed while in the process of garbage
+ * collecting the following reference in the stream, retry this garbage
+ * collection.
+ * @param const marfs_ms* ms : Reference to the current MarFS metadata scheme
+ * @param const marfs_ds* ds : Reference to the current MarFS data scheme
+ * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target
+ * namespace
+ * @param FTAG* ftag : Reference to the FTAG struct to be populated
+ * @param const char* rpath : Reference path of the file to retrieve ftag data
+ * from
+ * @return int : The distance to the next active reference within the stream on
+ * success, or -1 if a failure occurred.
+ * Ex: If the following ref has not been garbage collected, return 1. If the
+ * following two refs have already been garbage collected, return 3.
+ */
+int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag, const char* rpath, struct stat* st) {
   MDAL_FHANDLE handle;
+
+  if (ms->mdal->statref(ctxt, rpath, st)) {
+      LOG(LOG_ERR, "Rank %d: Failed to stat \"%s\" rpath\n", rank, rpath);
+      return -1;
+  }
+
+  // Get ftag string from xattr
   if ((handle = ms->mdal->openref(ctxt, rpath, O_RDONLY, 0)) == NULL) {
-    fprintf(stderr, "Failed to open handle for reference path \"%s\"\n", rpath);
+    LOG(LOG_ERR, "Rank %d: Failed to open handle for reference path \"%s\"\n", rank, rpath);
     return -1;
   }
 
   char* ftagstr = NULL;
   int ftagsz;
   if ((ftagsz = ms->mdal->fgetxattr(handle, 1, FTAG_NAME, ftagstr, 0)) <= 0) {
-    fprintf(stderr, "Failed to retrieve FTAG value for reference path \"%s\"\n", rpath);
+    LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG value for reference path \"%s\"\n", rank, rpath);
     ms->mdal->close(handle);
     return -1;
   }
 
   ftagstr = calloc(1, ftagsz + 1);
   if (ftagstr == NULL) {
-    fprintf(stderr, "Failed to allocate space for a FTAG string value\n");
+    LOG(LOG_ERR, "Rank %d: Failed to allocate space for a FTAG string value\n", rank);
     ms->mdal->close(handle);
     return -1;
   }
 
   if (ms->mdal->fgetxattr(handle, 1, FTAG_NAME, ftagstr, ftagsz) != ftagsz) {
-    fprintf(stderr, "FTAG value for \"%s\" changed while reading \n", rpath);
+    LOG(LOG_ERR, "Rank %d: FTAG value for \"%s\" changed while reading \n", rank, rpath);
     free(ftagstr);
     ms->mdal->close(handle);
     return -1;
   }
 
+  // Populate ftag with values from string
+  if(ftag->ctag) {
+    free(ftag->ctag);
+  }
+  if(ftag->streamid) {
+    free(ftag->streamid);
+  }
+  if (ftag_initstr(ftag, ftagstr)) {
+    LOG(LOG_ERR, "Rank %d: Failed to parse FTAG string for \"%s\"\n", rank, rpath);
+    free(ftagstr);
+    return -1;
+  }
+
+  free(ftagstr);
+
+  // Look if there is an xattr indicating the following ref(s) was deleted
   char* skipstr = NULL;
   int skipsz;
   int skip = 0;
@@ -258,37 +354,36 @@ int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag,
 
     skipstr = calloc(0, skipsz + 1);
     if (skipstr == NULL) {
-      fprintf(stderr, "Failed to allocate space for a skip string value\n");
-      free(ftagstr);
+      LOG(LOG_ERR, "Rank %d: Failed to allocate space for a skip string value\n", rank);
       ms->mdal->close(handle);
       return -1;
     }
 
     if (ms->mdal->fgetxattr(handle, 1, N_SKIP, skipstr, skipsz) != skipsz) {
-      fprintf(stderr, "skip value for \"%s\" changed while reading \n", rpath);
+      LOG(LOG_ERR, "Rank %d: skip value for \"%s\" changed while reading \n", rank, rpath);
       free(skipstr);
-      free(ftagstr);
       ms->mdal->close(handle);
       return -1;
     }
 
     char* end;
     errno = 0;
+    // If the following ref(s) were deleted, note we need to skip them
     skip = strtol(skipstr, &end, 10);
     if(errno) {
-      fprintf(stderr, "failed to parse skip value for \"%s\" (%s)", rpath, strerror(errno));
+      LOG(LOG_ERR, "Rank %d: Failed to parse skip value for \"%s\" (%s)", rank, rpath, strerror(errno));
       free(skipstr);
-      free(ftagstr);
       ms->mdal->close(handle);
       return -1;
     }
     else if (end == skipstr) {
       int eos = 0;
+      // Check if we started gc'ing the following ref(s), but got interrupted.
+      // If so, try again
       skip = strtol(skipstr + strlen(IN_PROG), &end, 10);
       if(errno || (end == skipstr) || (skip == 0)) {
-        fprintf(stderr, "failed to parse skip value for \"%s\" (%s)", rpath, strerror(errno));
+        LOG(LOG_ERR, "Rank %d: Failed to parse skip value for \"%s\" (%s)", rank, rpath, strerror(errno));
         free(skipstr);
-        free(ftagstr);
         ms->mdal->close(handle);
         return -1;
       }
@@ -299,25 +394,28 @@ int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag,
       }
 
       gc(ms, ds, ctxt, *ftag, ftag->fileno, ftag->fileno + skip + 1, -1, -1, eos);
+
+      if (eos) {
+        skip = -1;
+      }
     }
 
     free(skipstr);
   }
 
   if (ms->mdal->close(handle)) {
-    fprintf(stderr, "Failed to close handle for reference path \"%s\"\n", rpath);
+    LOG(LOG_ERR, "Rank %d: Failed to close handle for reference path \"%s\"\n", rank, rpath);
   }
 
-  if (ftag_initstr(ftag, ftagstr)) {
-    fprintf(stderr, "Failed to parse FTAG string for \"%s\"\n", rpath);
-    free(ftagstr);
-    return -1;
-  }
-
-  free(ftagstr);
   return skip + 1;
 }
 
+/** Determine the number of the object a given file ends in
+ * @param FTAG* ftag : Reference to the ftag struct of the file
+ * @param size_t headerlen : Length of the file header. NOTE: all files within a
+ * stream have the same header length, so this value is calculated beforehand
+ * @return int : The object number
+ */
 int end_obj(FTAG* ftag, size_t headerlen) {
   size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
   size_t finobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
@@ -331,33 +429,50 @@ int end_obj(FTAG* ftag, size_t headerlen) {
   return ftag->objno + finobjbounds;
 }
 
-int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const char* node_name, const char* ref_name, stream_data* s_data) {
-  s_data->size = 0;
-  s_data->count = 0;
+/** Walks the stream that starts at the given reference file, garbage collecting
+ * inactive references/objects and collecting quota data
+ * @param const marfs_ms* ms : Reference to the current MarFS metadata scheme
+ * @param const marfs_ds* ds : Reference to the current MarFS data scheme
+ * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target
+ * namespace
+ * @param const char* node_name : Name of the reference directory containing the
+ * start of the stream
+ * @param const char* ref_name : Name of the starting reference file within the
+ * stream
+ * @param quota data* q_data : Reference to the quota data struct to populate
+ * @return int : Zero on success, or -1 on failure.
+ */
+int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const char* node_name, const char* ref_name, quota_data* q_data) {
+  q_data->size = 0;
+  q_data->count = 0;
 
-  MDAL mdal = ms->mdal;
-
+  // Generate an ftag for the beginning of the stream
   size_t rpath_len = strlen(node_name) + strlen(ref_name) + 1;
   char* rpath = malloc(sizeof(char) * rpath_len);
   if (rpath == NULL) {
-    fprintf(stderr, "Failed to allocate rpath string\n");
+    LOG(LOG_ERR, "Rank %d: Failed to allocate rpath string\n", rank);
     return -1;
   }
 
   if (snprintf(rpath, rpath_len, "%s%s", node_name, ref_name) != (rpath_len - 1)) {
-    fprintf(stderr, "Failed to populate rpath string\n");
+    LOG(LOG_ERR, "Rank %d: Failed to populate rpath string\n", rank);
     free(rpath);
     return -1;
   }
 
   FTAG ftag;
-  int next = get_ftag(ms, ds, ctxt, &ftag, rpath);
+  ftag.fileno = 0;
+  ftag.ctag = NULL;
+  ftag.streamid = NULL;
+  struct stat st;
+  int next = get_ftag(ms, ds, ctxt, &ftag, rpath, &st);
   if(next < 0) {
-    fprintf(stderr, "Failed to retrieve FTAG for \"%s\"\n", rpath);
+    LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG for \"%s\"\n", rank, rpath);
     free(rpath);
     return -1;
   }
 
+  // Calculate the header size (constant throughout the stream)
   RECOVERY_HEADER header = {
     .majorversion = RECOVERY_CURRENT_MAJORVERSION,
     .minorversion = RECOVERY_CURRENT_MINORVERSION,
@@ -366,39 +481,37 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
   };
   size_t headerlen;
   if ((headerlen = recovery_headertostr(&(header), NULL, 0)) < 1) {
-    fprintf(stderr, "Failed to identify recovery header length for final file\n");
+    LOG(LOG_ERR, "Rank %d: Failed to identify recovery header length for final file\n", rank);
     headerlen = 0;
   }
 
-  struct stat st;
+  // Iterate through the refs in the stream, gc'ing/ counting quota data
   int inactive = 0;
   int last_ref = -1;
   int last_obj = -1;
   while (ftag.endofstream == 0 && next > 0 && (ftag.state & FTAG_DATASTATE) >= FTAG_FIN) {
-    if (mdal->statref(ctxt, rpath, &st)) {
-      fprintf(stderr, "Failed to stat \"%s\" rpath\n", rpath);
-      return -1;
-    }
-
-    if (difftime(time(NULL), st.st_ctime) > RECENT_THRESH) { // file is not young enough to be ignored
-      if (st.st_nlink < 2) { // file has been deleted (needs to be gc'ed)
-        printf("GC stream file %s\n", rpath);
+    if (difftime(time(NULL), st.st_ctime) > RECENT_THRESH) {
+      if (st.st_nlink < 2) {
+      // File has been deleted (needs to be gc'ed)
         if (!inactive) {
           inactive = 1;
         }
       }
       else {
+      // File is active, so count towards quota and gc previous files if needed
         if(inactive) {
           gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno, last_obj, ftag.objno, 0);
         }
         inactive = 0;
-        s_data->size += st.st_size;
-        s_data->count++;
+        q_data->size += st.st_size;
+        q_data->count++;
         last_ref = ftag.fileno;
         last_obj = end_obj(&ftag, headerlen);
       }
     }
     else {
+    // File is too young to be gc'ed/counted, but still gc previous files if
+    // needed, and treat as 'active' for future gc logic
       if(inactive) {
         gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno, last_obj, ftag.objno, 0);
       }
@@ -407,135 +520,405 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
       last_obj = end_obj(&ftag, headerlen);
     }
 
-    printf("%lu %d\n", ftag.fileno, inactive);
     ftag.fileno += next;
 
+    // Generate path of next (existing) ref in the stream
     free(rpath);
     if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
-      fprintf(stderr, "Failed to create rpath\n");
+      LOG(LOG_ERR, "Rank %d: Failed to create rpath\n", rpath);
+      free(ftag.ctag);
+      free(ftag.streamid);
       return -1;
     }
 
-
-    if ((next = get_ftag(ms, ds, ctxt, &ftag, rpath)) < 0) {
-      fprintf(stderr, "failed to retrieve ftag for %s\n", rpath);
+    if ((next = get_ftag(ms, ds, ctxt, &ftag, rpath, &st)) < 0) {
+      LOG(LOG_ERR, "Rank %d: Failed to retrieve ftag for %s\n", rank, rpath);
       free(rpath);
+      free(ftag.ctag);
+      free(ftag.streamid);
       return -1;
     }
   }
 
-  if (mdal->statref(ctxt, rpath, &st)) {
-    fprintf(stderr, "Failed to stat \"%s\" rpath\n", rpath);
-    free(rpath);
-    return -1;
-  }
-
-
+  // Repeat process in loop, but for last ref in stream
   if (difftime(time(NULL), st.st_ctime) > RECENT_THRESH) {
     if (st.st_nlink < 2) {
-      printf("GC stream file %s\n", rpath);
-
+    // Since this is the last ref in the stream, gc it along with previous
+    // refs if needed
       gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno + 1, last_obj, end_obj(&ftag, headerlen) + 1, 1);
-
-      inactive = 1;
     }
     else {
+    // Same as above
       if (inactive) {
         gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno, last_obj, ftag.objno, 0);
       }
-      s_data->size += st.st_size;
-      s_data->count++;
-      inactive = 0;
+      q_data->size += st.st_size;
+      q_data->count++;
     }
   }
-  else if (inactive) {
-    gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno, last_obj, ftag.objno, 0);
-    inactive = 0;
+  else {
+    if (inactive) {
+      // Same as above
+      gc(ms, ds, ctxt, ftag, last_ref, ftag.fileno, last_obj, ftag.objno, 0);
+    }
   }
 
-  printf("%lu %d\n", ftag.fileno, inactive);
-
-  printf("total stream: %lu %lu\n", s_data->count, s_data->size);
-
   free(rpath);
+  free(ftag.ctag);
+  free(ftag.streamid);
 
   return 0;
 }
 
-int ref_paths(const marfs_ns* ns) {
+/** Initialize the state for a thread in the thread queue
+ * @param unsigned int tID : The ID of this thread
+ * @param void* global_state : Reference to the thread queue's global state
+ * @param void** state : Reference to be populated with this thread's state
+ * @return int : Zero on success, or -1 on failure.
+ */
+int stream_thread_init(unsigned int tID, void* global_state, void** state) {
+  *state = malloc(sizeof(struct tq_thread_struct));
+  if (!*state) {
+    return -1;
+  }
+  ThreadState tstate = ((ThreadState)*state);
+
+  tstate->tID = tID;
+  tstate->global = (GlobalState)global_state;
+  tstate->q_data.size = 0;
+  tstate->q_data.count = 0;
+  tstate->ref_node = NULL;
+  tstate->scanner = NULL;
+
+  return 0;
+}
+
+/** Consume a work package containing the reference file at the start of the
+ * stream, and walk the stream
+ * @param void** state : Reference to the consumer thread's state
+ * @param void** work_todo : Reference to the work package containing the
+ * reference file's path
+ * @return int : Zero on success, or -1 on failure.
+ */
+int stream_cons(void** state, void**  work_todo) {
+  ThreadState tstate = ((ThreadState)*state);
+  WorkPkg work = ((WorkPkg)*work_todo);
+
+  if (!(work->node_name) || !(work->ref_name)) {
+    LOG(LOG_ERR, "Rank %d: Thread %u received invalid work package\n", rank, tstate->tID);
+    return -1;
+  }
+
+  // Walk the stream for the given ref
+  // NOTE: It might be better to combine this function with walk_stream(), but I
+  // left things as-is to still leave the interface for walking a stream easily
+  // exposed, in case we ever decide to walk streams with something other than
+  // consumer threads
+  quota_data q_data;
+  if (walk_stream(tstate->global->ms, tstate->global->ds, tstate->global->ctxt, work->node_name, work->ref_name, &q_data)) {
+    LOG(LOG_ERR, "Rank %d: Thread %u failed to walk stream\n", rank, tstate->tID);
+    return -1;
+  }
+
+  free(work->node_name);
+  free(work->ref_name);
+  free(work);
+
+  tstate->q_data.size += q_data.size;
+  tstate->q_data.count += q_data.count;
+
+  return 0;
+}
+
+/** Access the reference directory of a namespace, and scan it for reference
+ * files corresponding to the start of a stream. Once a reference file is found,
+ * create a work package for it and return. If the given reference directory is
+ * fully scanned without finding the start of a stream, access a new reference
+ * directory and repeat.
+ * @param void** state : Reference to the producer thread's state
+ * @param void** work_tofill : Reference to be populated with the work package
+ * @return int : Zero on success, -1 on failure, and 1 once all reference
+ * directories within the namespace have been accessed
+ */
+int stream_prod(void** state, void** work_tofill) {
+  ThreadState tstate = ((ThreadState)*state);
+  GlobalState gstate = tstate->global;
+
+  WorkPkg work = malloc(sizeof(struct work_pkg_struct));
+  if (!work) {
+    LOG(LOG_ERR, "Rank %d: Failed to allocate new work package\n", rank);
+    return -1;
+  }
+  work->node_name = NULL;
+  work->ref_name = NULL;
+
+  *work_tofill = (void*)work;
+
+  // Search for the beginning of a stream
+  while (1) {
+    // Access a new ref dir, if we don't still have scanning to do in our
+    // current dir
+    if (!(tstate->ref_node)) {
+      if (tstate->scanner) {
+        gstate->ms->mdal->closescanner(tstate->scanner);
+        tstate->scanner = NULL;
+      }
+
+      if (pthread_mutex_lock(&(gstate->lock))) {
+        LOG(LOG_ERR, "Rank %d: Failed to acquire lock\n", rank);
+        return -1;
+      }
+
+      if(gstate->next_node >= gstate->ms->refnodecount) {
+        pthread_mutex_unlock(&(gstate->lock));
+        return 1;
+      }
+
+      tstate->ref_node = &(gstate->ms->refnodes[gstate->next_node++]);
+
+      pthread_mutex_unlock(&(gstate->lock));
+    }
+
+    if (!(tstate->scanner)) {
+      struct stat statbuf;
+      if (gstate->ms->mdal->statref(gstate->ctxt, tstate->ref_node->name, &statbuf)) {
+        LOG(LOG_ERR, "Rank %d: Failed to stat %s\n", rank, tstate->ref_node->name);
+        tstate->ref_node = NULL;
+        continue;
+      }
+
+      tstate->scanner = gstate->ms->mdal->openscanner(gstate->ctxt, tstate->ref_node->name);
+    }
+
+    // Scan through the ref dir until we find the beginning of a stream
+    struct dirent* dent;
+    while ((dent = gstate->ms->mdal->scan(tstate->scanner))) {
+      if (*dent->d_name != '.' && ftag_metatgt_fileno(dent->d_name) == 0) {
+
+        work->node_name = strdup(tstate->ref_node->name);
+        work->ref_name = strdup(dent->d_name);
+
+        return 0;
+      }
+    }
+
+    gstate->ms->mdal->closescanner(tstate->scanner);
+    tstate->scanner = NULL;
+    tstate->ref_node = NULL;
+  }
+
+  return -1;
+}
+
+/** No-op function, just to fill out the TQ struct
+ */
+int stream_pause(void** state, void** prev_work) {
+  return 0;
+}
+
+/** No-op function, just to fill out the TQ struct
+ */
+int stream_resume(void** state, void** prev_work) {
+  return 0;
+}
+
+/** Free a work package if it is still allocated
+ * @param void** state : Reference to the thread's state
+ * @param void** prev_work : Reference to a possibly-allocated work package
+ * @param int flg : Current control flags of the thread
+ */
+void stream_term(void** state, void** prev_work, int flg) {
+  WorkPkg work = ((WorkPkg)*prev_work);
+  if(work) {
+
+    if(work->node_name) {
+      free(work->node_name);
+    }
+    if(work->ref_name) {
+      free(work->ref_name);
+    }
+    free(work);
+    *prev_work = NULL;
+  }
+}
+
+/** Launch a thread queue to access all reference directories in a namespace,
+ * performing garbage collection and updating quota data.
+ * @param const marfs_ns* ns : Reference to the current MarFS namespace
+ * @param const char* name : Name of the current MarFS namespace
+ * @return int : Zero on success, or -1 on failure.
+ */
+int ref_paths(const marfs_ns* ns, const char* name) {
   marfs_ms* ms = &ns->prepo->metascheme;
   marfs_ds* ds = &ns->prepo->datascheme;
 
+  // Initialize namespace context
   char* ns_path;
   if(config_nsinfo(ns->idstr, NULL, &ns_path)) {
-    fprintf(stderr, "Failed to retrieve path of NS: \"%s\"\n", ns->idstr);
+    LOG(LOG_ERR, "Rank %d: Failed to retrieve path of NS: \"%s\"\n", rank, ns->idstr);
     return -1;
   }
 
   MDAL_CTXT ctxt;
   if ((ctxt = ms->mdal->newctxt(ns_path, ms->mdal->ctxt)) == NULL) {
-    fprintf(stderr, "Failed to create new MDAL context for NS: \"%s\"\n", ns_path);
+    LOG(LOG_ERR, "Rank %d: Failed to create new MDAL context for NS: \"%s\"\n", rank, ns_path);
+    free(ns_path);
     return -1;
   }
 
-  HASH_NODE* ref_node = NULL;
-  struct stat stbuf;
-  MDAL_SCANNER scanner;
-  struct dirent* dent;
-  int i;
-  stream_data s_data;
-  size_t total_size = 0;
-  size_t total_count = 0;
-  for (i = 0; i < ms->refnodecount; i++) {
-    ref_node = &ms->refnodes[i];
-    if (ms->mdal->statref(ctxt, ref_node->name, &stbuf)) {
-      fprintf(stderr, "failed to stat %s\n", ref_node->name);
-    }
-    else {
-      scanner = ms->mdal->openscanner(ctxt, ref_node->name);
-      while ((dent = ms->mdal->scan(scanner)) != NULL) {
-        if (*dent->d_name != '.' && ftag_metatgt_fileno(dent->d_name) == 0) {
-          printf("fileid %s has fileno 0\n", dent->d_name);
-          if (walk_stream(ms, ds, ctxt, ref_node->name, dent->d_name, &s_data)) {
-            fprintf(stderr, "failed to walk stream\n");
-            return -1;
-          }
-          total_size += s_data.size;
-          total_count += s_data.count;
-        }
-      }
-      ms->mdal->closescanner(scanner);
-    }
-  }
-  printf("namespace %s has total size (%lu) and count (%lu)\n", ns->idstr, total_size, total_count);
-  if (ms->mdal->setdatausage(ctxt, total_size)) {
-    fprintf(stderr, "failed to set data usage for namespace %s\n", ns->idstr);
-  }
-  if (ms->mdal->setinodeusage(ctxt, total_count)) {
-    fprintf(stderr, "failed to set inode usage for namespace %s\n", ns->idstr);
+  // Initialize global state and launch threadqueue
+  struct  tq_global_struct gstate;
+  if (pthread_mutex_init(&(gstate.lock), NULL)) {
+    LOG(LOG_ERR, "Rank %d: Failed to initialize TQ lock\n", rank);
+    ms->mdal->destroyctxt(ctxt);
+    free(ns_path);
+    return -1;
   }
 
+  gstate.ms = ms;
+  gstate.ds = ds;
+  gstate.ctxt = ctxt;
+  gstate.next_node = 0;
+
+  int ns_prod = n_prod;
+  if (ms->refnodecount < n_prod) {
+    ns_prod = ms->refnodecount;
+  }
+
+  TQ_Init_Opts tqopts;
+  tqopts.log_prefix = ns_path;
+  tqopts.init_flags = TQ_HALT;
+  tqopts.global_state = (void *)&gstate;
+  tqopts.num_threads = n_cons + ns_prod;
+  tqopts.num_prod_threads = ns_prod;
+  tqopts.max_qdepth = QDEPTH;
+  tqopts.thread_init_func = stream_thread_init;
+  tqopts.thread_consumer_func = stream_cons;
+  tqopts.thread_producer_func = stream_prod;
+  tqopts.thread_pause_func = stream_pause;
+  tqopts.thread_resume_func = stream_resume;
+  tqopts.thread_term_func = stream_term;
+
+  ThreadQueue tq = tq_init(&tqopts);
+  if (!tq) {
+    LOG(LOG_ERR, "Rank %d: Failed to initialize tq\n", rank);
+    pthread_mutex_destroy(&(gstate.lock));
+    ms->mdal->destroyctxt(ctxt);
+    free(ns_path);
+    return -1;
+  }
+
+  // Wait until all threads are done executing
+  TQ_Control_Flags flags = 0;
+  while (!(flags & TQ_ABORT) && !(flags & TQ_FINISHED)) {
+    if (tq_wait_for_flags(tq, 0, &flags)) {
+      LOG(LOG_ERR, "Rank %d: NS %s failed to get TQ flags\n", rank, ns_path);
+      pthread_mutex_destroy(&(gstate.lock));
+      ms->mdal->destroyctxt(ctxt);
+      free(ns_path);
+      return -1;
+    }
+
+    // Thread queue should never halt, so just clear flag
+    if (flags & TQ_HALT) {
+      tq_unset_flags(tq, TQ_HALT);
+    }
+  }
+  if (flags & TQ_ABORT) {
+    LOG(LOG_ERR, "Rank %d: NS %s TQ aborted\n", rank, ns_path);
+    pthread_mutex_destroy(&(gstate.lock));
+    ms->mdal->destroyctxt(ctxt);
+    free(ns_path);
+    return -1;
+  }
+
+  // Aggregate quota data from all consumer threads
+  quota_data totals;
+  totals.size = 0;
+  totals.count = 0;
+  int tres = 0;
+  ThreadState tstate = NULL;
+  while ((tres = tq_next_thread_status(tq, (void**)&tstate)) > 0) {
+    if (!tstate) {
+      LOG(LOG_ERR, "Rank %d: NS %s received NULL status for thread\n", rank, ns_path);
+      pthread_mutex_destroy(&(gstate.lock));
+      ms->mdal->destroyctxt(ctxt);
+      free(ns_path);
+      return -1;
+    }
+
+    totals.size += tstate->q_data.size;
+    totals.count += tstate->q_data.count;
+
+    if (tstate->scanner) {
+      ms->mdal->closescanner(tstate->scanner);
+    }
+
+    free(tstate);
+  }
+  if (tres < 0) {
+    LOG(LOG_ERR, "Rank %d: Failed to retrieve next thread status\n", rank);
+    pthread_mutex_destroy(&(gstate.lock));
+    ms->mdal->destroyctxt(ctxt);
+    free(ns_path);
+    return -1;
+  }
+
+  if (tq_close(tq) > 0) {
+    WorkPkg work = NULL;
+    while (tq_dequeue(tq, TQ_ABORT, (void**)&work) > 0) {
+      free(work);
+    }
+    tq_close(tq);
+  }
+
+  pthread_mutex_destroy(&(gstate.lock));
+
+  // Update quota values for the namespace
+  if (ms->mdal->setdatausage(ctxt, totals.size)) {
+    LOG(LOG_ERR, "Rank %d: Failed to set data usage for namespace %s\n", rank, ns_path);
+  }
+  if (ms->mdal->setinodeusage(ctxt, totals.count)) {
+    LOG(LOG_ERR, "Rank %d: Failed to set inode usage for namespace %s\n", rank, ns_path);
+  }
+
+  printf("Rank: %d NS: %s Count: %lu Size: %lu\n", rank, name, totals.count, totals.size);
+  /*char msg[1024];
+  snprintf(msg, 1024, "Rank: %d NS: %s Count: %lu Size: %lu", rank, name, totals.count, totals.size);
+  MPI_Send(msg, 1024, MPI_CHAR, 0, 0, MPI_COMM_WORLD);*/
+
   ms->mdal->destroyctxt(ctxt);
+  free(ns_path);
 
   return 0;
 }
 
-int find_rank_ns(const marfs_ns* ns, int idx, int rank, int n_ranks, const char* name){
+/** Iterate through all the namespaces in a given tree, performing garbage
+ * collection and updating quota data on namespaces with indexes that
+ * correspond to the current process rank.
+ * @param const marfs_ns* ns : Reference to the namespace at the root of the
+ * tree
+ * @param int idx : Absolute index of the namespace at the root of the tree
+ * @param const char* name : Name of the namespace at the root of the tree
+ * @return int : Zero on success, or -1 on failure.
+ */
+int find_rank_ns(const marfs_ns* ns, int idx, const char* name){
+  // Access the namespace if it corresponds to rank
   if (idx % n_ranks == rank) {
+    if (ref_paths(ns, name)) {
+      return -1;
+    }
 
-    printf("%s\n", name);
-    ref_paths(ns);
-
-    char msg[1024];
-    printf("%d %s\n", rank, name);
-    snprintf(msg, 1024, "%d %s", rank, name);
-    MPI_Send(msg, 1024, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
   }
   idx++;
 
+  // Iterate through all subspaces
   int i;
   for (i = 0; i < ns->subnodecount; i++) {
-    idx = find_rank_ns(ns->subnodes[i].content, idx, rank, n_ranks, ns->subnodes[i].name);
+    idx = find_rank_ns(ns->subnodes[i].content, idx, ns->subnodes[i].name);
+    if (idx < 0) {
+      return -1;
+    }
   }
 
   return idx;
@@ -544,41 +927,54 @@ int find_rank_ns(const marfs_ns* ns, int idx, int rank, int n_ranks, const char*
 int main(int argc, char **argv) {
   errno = 0;
 
+  /*// MPI Initialization
   if (MPI_Init(&argc, &argv) != MPI_SUCCESS)
     {
-        fprintf(stderr, "Error in MPI_Init\n");
+        LOG(LOG_ERR, "Error in MPI_Init\n");
         return -1;
     }
 
-  int n_ranks;
   if (MPI_Comm_size(MPI_COMM_WORLD, &n_ranks) != MPI_SUCCESS) {
-    fprintf(stderr, "Error in MPI_Comm_size\n");
+    LOG(LOG_ERR, "Error in MPI_Comm_size\n");
     return -1;
   }
 
-  int rank;
   if (MPI_Comm_rank(MPI_COMM_WORLD, &rank) != MPI_SUCCESS) {
-    fprintf(stderr, "Error in MPI_Comm_rank\n");
+    LOG(LOG_ERR, "Error in MPI_Comm_rank\n");
     return -1;
   }
+  */
 
   if ( argc < 2 || argv[1] == NULL ) {
-    fprintf(stderr, "no config path defined\n");
+    LOG(LOG_ERR, "Rank %d: no config path defined\n", rank);
     return -1;
   }
 
+  // Parse thread queue size data
+  if ( argc < 4 || (n_prod = strtol(argv[2], NULL, 10)) <= 0|| (n_cons = strtol(argv[3], NULL, 10)) <= 0) {
+    n_prod = NUM_PROD;
+    n_cons = NUM_CONS;
+  }
+
+  // Initialize MarFS context
   marfs_config* cfg = config_init(argv[1]);
   if (cfg == NULL) {
-    fprintf(stderr, "Failed to initialize config: %s %s\n", argv[1], strerror(errno));
+    LOG(LOG_ERR, "Rank %d: Failed to initialize config: %s %s\n", rank, argv[1], strerror(errno));
     return -1;
   }
 
   if (config_verify(cfg, 1)) {
-    fprintf(stderr, "Failed to verify config: %s\n", strerror(errno));
+    LOG(LOG_ERR, "Rank %d: Failed to verify config: %s\n", rank, strerror(errno));
   }
 
-  int total_ns = find_rank_ns(cfg->rootns, 0, rank, n_ranks, "root");
+  // Iterate through all namespaces, gc'ing and updating quota data
+  int total_ns = find_rank_ns(cfg->rootns, 0, "root");
+  if (total_ns < 0) {
+    config_term(cfg);
+    return -1;
+  }
 
+  /*// Rank 0 collects a message for each namespace from other processes
   int i;
   if (rank == 0) {
     char* msg = malloc(sizeof(char) * 1024);
@@ -590,6 +986,9 @@ int main(int argc, char **argv) {
   }
 
   MPI_Finalize();
+  */
+
+  config_term(cfg);
 
   return 0;
 }
