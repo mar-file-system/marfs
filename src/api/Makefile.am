@@ -61,12 +61,12 @@ AM_CFLAGS   =
 AM_LDFLAGS  =
 
 include_HEADERS = marfs.h
-lib_LTLIBRARIES = libMarFS.la
+lib_LTLIBRARIES = libmarfs.la
 
-libMarFS_la_SOURCES = marfs.c
-libMarFS_la_LIBADD  = ../datastream/libDatastream.la
-libMarFS_la_CFLAGS  = $(XML_CFLAGS)
-MARFS_LIB = libMarFS.la
+libmarfs_la_SOURCES = marfs.c
+libmarfs_la_LIBADD  = ../datastream/libDatastream.la
+libmarfs_la_CFLAGS  = $(XML_CFLAGS)
+MARFS_LIB = libmarfs.la
 
 # ---
 

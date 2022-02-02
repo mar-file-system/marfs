@@ -111,6 +111,7 @@ AXATTR_GET_FUNC_CHECK
 AXATTR_SET_FUNC_CHECK
 
 AC_CHECK_LIB([xml2], [xmlReadFile], [], [AC_MSG_ERROR(["Could not locate libxml2!"])])
+AC_CHECK_LIB([fuse], [fuse_main], [], [AC_MSG_ERROR(["Could not locate libfuse!"])])
 AC_CHECK_LIB([ne], [ne_init], [], [AC_MSG_ERROR(["Could not locate libne!"])])
 AC_CHECK_LIB([mpi], [MPI_Abort], [], [AC_MSG_ERROR(["Could not locate libmpi!"])])
 
@@ -193,6 +194,10 @@ AC_ARG_ENABLE( [debugAPI],
                AS_HELP_STRING( [--enable-debugAPI], [Enable 'api'-subdir debug output] ),
                AC_DEFINE( [DEBUG_API], [], [Enable 'api'-subdir debug output] ), [] )
 
+AC_ARG_ENABLE( [debugFUSE],
+               AS_HELP_STRING( [--enable-debugFUSE], [Enable 'fuse'-subdir debug output] ),
+               AC_DEFINE( [DEBUG_FUSE], [], [Enable 'fuse'-subdir debug output] ), [] )
+
 # debugging-output should go to syslog, instead of stdout/stderr?
 AC_ARG_ENABLE([syslog],
                AS_HELP_STRING( [--enable-syslog], [Send debugging output to syslog, instead of stdout/stderr] ),
@@ -220,6 +225,7 @@ AC_CONFIG_FILES([Makefile
                  src/datastream/Makefile
                  src/api/Makefile
                  src/rsrc_mgr/Makefile
+                 src/fuse/Makefile
                ])
 
 AC_OUTPUT

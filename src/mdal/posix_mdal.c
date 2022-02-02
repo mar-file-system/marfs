@@ -905,6 +905,13 @@ int posixmdal_statnamespace (const MDAL_CTXT ctxt, const char* ns, struct stat *
    }
    // perform the stat() op against the namespace path ( always follow symlinks )
    int retval = fstatat( pctxt->refd, nstruepath, buf, 0 );
+   // adjust stat link vals to ignore MDAL subdirs
+   if ( retval == 0 ) {
+      buf->st_nlink -= 2; // subspaces and references
+   }
+   else {
+      LOG( LOG_ERR, "Failed to stat \"%s\" (%s)\n", nstruepath, strerror(errno) );
+   }
    free( nspath );
    return retval;
 }
@@ -1721,6 +1728,232 @@ int posixmdal_chdir( MDAL_CTXT ctxt, MDAL_DHANDLE dh ) {
 
 
 /**
+ * Set the specified xattr on the dir referenced by the given directory handle
+ * @param MDAL_DHANDLE dh : Directory handle for which to set the xattr
+ * @param char hidden : A non-zero value indicates to store this as a 'hidden' MDAL value
+ * @param const char* name : String name of the xattr to set
+ * @param const void* value : Buffer containing the value of the xattr
+ * @param size_t size : Size of the value buffer
+ * @param int flags : Zero value    - create or replace the xattr
+ *                    XATTR_CREATE  - create the xattr only (fail if xattr exists)
+ *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posixmdal_dsetxattr( MDAL_DHANDLE dh, char hidden, const char* name, const void* value, size_t size, int flags ) {
+   // check for a NULL dir handle
+   if ( !(dh) ) {
+      LOG( LOG_ERR, "Received a NULL dir handle reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
+   // retrieve the dir FD from the dir handle
+   int dfd = dirfd( pdh->dirp );
+   if ( dfd < 0 ) {
+      LOG( LOG_ERR, "Failed to retrieve the FD from the provided directory handle\n" );
+      return -1;
+   }
+   // the non-hidden op is more straightforward
+   if ( !(hidden) ) {
+      // filter out any reserved name
+      if ( xattrfilter( name, 0 ) ) {
+         LOG( LOG_ERR, "Xattr has a reserved name string: \"%s\"\n", name );
+         errno = EPERM;
+         return -1;
+      }
+      return fsetxattr( dfd, name, value, size, flags );
+   }
+   // if this is a hidden value, we need to attach the appropriate prefix
+   char* newname = malloc( sizeof(char) * (strlen(PMDAL_XATTR) + 1 + strlen(name)) );
+   if ( newname == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate space for a hidden xattr name string\n" );
+      return -1;
+   }
+   if ( snprintf( newname, (strlen(PMDAL_XATTR) + 1 + strlen(name)), "%s%s", PMDAL_XATTR, name ) != (strlen(PMDAL_XATTR) + strlen(name)) ) {
+      LOG( LOG_ERR, "Failed to populate the hidden xattr name string\n" );
+      free( newname );
+      return -1;
+   }
+   // now we can actually perform the op
+   int retval = fsetxattr( dfd, newname, value, size, flags );
+   if ( retval ) {
+      LOG( LOG_ERR, "fsetxattr failure for \"%s\" value (%s)\n", newname, strerror(errno) );
+   }
+   free( newname ); // cleanup
+   return retval;
+}
+
+
+/**
+ * Retrieve the specified xattr from the dir referenced by the given directory handle
+ * @param MDAL_DHANDLE dh : Directory handle for which to retrieve the xattr
+ * @param char hidden : A non-zero value indicates to retrieve a 'hidden' MDAL value
+ * @param const char* name : String name of the xattr to retrieve
+ * @param void* value : Buffer to be populated with the xattr value
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr value, or -1 if a failure occurred
+ */
+ssize_t posixmdal_dgetxattr( MDAL_DHANDLE dh, char hidden, const char* name, void* value, size_t size ) {
+   // check for a NULL dir handle
+   if ( !(dh) ) {
+      LOG( LOG_ERR, "Received a NULL dir handle reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
+   // retrieve the dir FD from the dir handle
+   int dfd = dirfd( pdh->dirp );
+   if ( dfd < 0 ) {
+      LOG( LOG_ERR, "Failed to retrieve the FD from the provided directory handle\n" );
+      return -1;
+   }
+   // the non-hidden op is more straightforward
+   if ( !(hidden) ) {
+      // filter out any reserved name
+      if ( xattrfilter( name, 0 ) ) {
+         LOG( LOG_ERR, "Xattr has a reserved name string: \"%s\"\n", name );
+         errno = EPERM;
+         return -1;
+      }
+      return fgetxattr( dfd, name, value, size );
+   }
+   // if this is a hidden value, we need to attach the appropriate prefix
+   char* newname = malloc( sizeof(char) * (strlen(PMDAL_XATTR) + 1 + strlen(name)) );
+   if ( newname == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate space for a hidden xattr name string\n" );
+      return -1;
+   }
+   if ( snprintf( newname, (strlen(PMDAL_XATTR) + 1 + strlen(name)), "%s%s", PMDAL_XATTR, name ) != (strlen(PMDAL_XATTR) + strlen(name)) ) {
+      LOG( LOG_ERR, "Failed to populate the hidden xattr name string\n" );
+      free( newname );
+      return -1;
+   }
+   // now we can actually perform the op
+   ssize_t retval = fgetxattr( dfd, newname, value, size );
+   free( newname ); // cleanup
+   return retval;
+}
+
+
+/**
+ * Remove the specified xattr from the dir referenced by the given directory handle
+ * @param MDAL_DHANDLE dh : Directory handle for which to remove the xattr
+ * @param char hidden : A non-zero value indicates to remove a 'hidden' MDAL value
+ * @param const char* name : String name of the xattr to remove
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posixmdal_dremovexattr( MDAL_DHANDLE dh, char hidden, const char* name ) {
+   // check for a NULL dir handle
+   if ( !(dh) ) {
+      LOG( LOG_ERR, "Received a NULL dir handle reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
+   // retrieve the dir FD from the dir handle
+   int dfd = dirfd( pdh->dirp );
+   if ( dfd < 0 ) {
+      LOG( LOG_ERR, "Failed to retrieve the FD from the provided directory handle\n" );
+      return -1;
+   }
+   // the non-hidden op is more straightforward
+   if ( !(hidden) ) {
+      // filter out any reserved name
+      if ( xattrfilter( name, 0 ) ) {
+         LOG( LOG_ERR, "Xattr has a reserved name string: \"%s\"\n", name );
+         errno = EPERM;
+         return -1;
+      }
+      return fremovexattr( dfd, name );
+   }
+   // if this is a hidden value, we need to attach the appropriate prefix
+   char* newname = malloc( sizeof(char) * (strlen(PMDAL_XATTR) + 1 + strlen(name)) );
+   if ( newname == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate space for a hidden xattr name string\n" );
+      return -1;
+   }
+   if ( snprintf( newname, (strlen(PMDAL_XATTR) + 1 + strlen(name)), "%s%s", PMDAL_XATTR, name ) != (strlen(PMDAL_XATTR) + strlen(name)) ) {
+      LOG( LOG_ERR, "Failed to populate the hidden xattr name string\n" );
+      free( newname );
+      return -1;
+   }
+   // now we can actually perform the op
+   int retval = fremovexattr( dfd, newname );
+   free( newname ); // cleanup
+   return retval;
+}
+
+
+/**
+ * List all xattr names from the dir referenced by the given directory handle
+ * @param MDAL_DHANDLE dh : Directory handle for which to list xattrs
+ * @param char hidden : A non-zero value indicates to list 'hidden' MDAL xattrs
+ *                      ( normal xattrs excluded )
+ * @param char* buf : Buffer to be populated with xattr names
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
+ */
+ssize_t posixmdal_dlistxattr( MDAL_DHANDLE dh, char hidden, char* buf, size_t size ) {
+   // check for a NULL dir handle
+   if ( !(dh) ) {
+      LOG( LOG_ERR, "Received a NULL dir handle reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
+   // retrieve the dir FD from the dir handle
+   int dfd = dirfd( pdh->dirp );
+   if ( dfd < 0 ) {
+      LOG( LOG_ERR, "Failed to retrieve the FD from the provided directory handle\n" );
+      return -1;
+   }
+   // perform the op, but capture the result
+   ssize_t res = flistxattr( dfd, buf, size );
+   if ( size == 0 ) {
+      // special, no-output case, which can be immediately returned
+      LOG( LOG_INFO, "Immediately returning result of size == 0 call\n" );
+      return res;
+   }
+   else if ( res < 0 ) {
+      // error case, which can be immediately returned
+      bzero( buf, size ); // but zero out the user buf, just in case
+      LOG( LOG_INFO, "Returning error res of call, with zeroed buffer\n" );
+      return res;
+   }
+   // parse over the xattr list, limiting it to either 'hidden' or non-'hidden' values
+   char* parse = buf;
+   char* output = buf;
+   while ( (parse - buf) < res ) {
+      size_t elemlen = strlen(parse);
+      if ( xattrfilter( parse, hidden ) == 0 ) {
+         if ( hidden ) {
+            // we need to omit the reserved xattr prefix
+            size_t prefixlen = strlen( PMDAL_XATTR );
+            elemlen -= prefixlen;
+            parse += prefixlen;
+         }
+         // check if we need to shift this element to a previous position
+         if ( output != parse ) {
+            snprintf( output, elemlen + 1, "%s", parse );
+         }
+         LOG( LOG_INFO, "Preserving value: \"%s\"\n", output );
+         output += elemlen + 1; // skip over the output string and NULL term
+      }
+      else {
+         LOG( LOG_INFO, "Omitting xattr: \"%s\"\n", parse );
+      }
+      parse += elemlen + 1; // skip over the current element and NULL term
+   }
+   // explicitly zero out the remainder of the xattr list
+   ssize_t listlen = (ssize_t)(output - buf);
+   bzero( output, res - listlen );
+   // return the length of the modified list
+   LOG( LOG_INFO, "Result list is %zd characters long\n", listlen );
+   return listlen;
+}
+
+
+/**
  * Iterate to the next entry of an open directory handle
  * @param MDAL_DHANDLE dh : MDAL_DHANDLE to read from
  * @return struct dirent* : Reference to the next dirent struct, or NULL w/ errno unset if all 
@@ -1791,6 +2024,19 @@ MDAL_FHANDLE posixmdal_open( MDAL_CTXT ctxt, const char* path, int flags ) {
    int fd = openat( pctxt->pathd, path, flags );
    if ( fd < 0 ) {
       LOG( LOG_ERR, "Failed to open target path: \"%s\"\n", path );
+      return NULL;
+   }
+   // ensure we're not opening a dir ( which requires opendir )
+   struct stat fdstat;
+   if ( fstat( fd, &(fdstat) ) ) {
+      LOG( LOG_ERR, "Could not verify target is a file: \"%s\" (%s)\n", path, strerror(errno) );
+      close( fd );
+      return NULL;
+   }
+   else if ( S_ISDIR(fdstat.st_mode) ) {
+      LOG( LOG_ERR, "Target is a directory: \"%s\"\n", path );
+      close( fd );
+      errno = EISDIR;
       return NULL;
    }
    // allocate a new FHANDLE ref
@@ -2620,6 +2866,10 @@ MDAL posix_mdal_init( xmlNode* root ) {
          pmdal->sstat = posixmdal_sstat;
          pmdal->opendir = posixmdal_opendir;
          pmdal->chdir = posixmdal_chdir;
+         pmdal->dsetxattr = posixmdal_dsetxattr;
+         pmdal->dgetxattr = posixmdal_dgetxattr;
+         pmdal->dremovexattr = posixmdal_dremovexattr;
+         pmdal->dlistxattr = posixmdal_dlistxattr;
          pmdal->readdir = posixmdal_readdir;
          pmdal->closedir = posixmdal_closedir;
          pmdal->open = posixmdal_open;

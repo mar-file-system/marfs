@@ -62,11 +62,13 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
    #define DEBUG 1
 #endif
 #define LOG_PREFIX "api"
-
 #include <logging.h>
+
 #include "marfs.h"
 #include "datastream/datastream.h"
 #include "mdal/mdal.h"
+
+#include <dirent.h>
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
@@ -88,7 +90,11 @@ typedef struct marfs_dhandle_struct {
    MDAL_DHANDLE metahandle;
    marfs_ns*            ns;
    unsigned int      depth;
-   marfs_config*    config; // reference to the containing config ( chdir validation only )
+   marfs_interface   itype; // itype of creating ctxt ( for perm checks )
+   size_t      subspcindex; // for tracking returned subspace direntries
+   size_t  subspcnamealloc; // for tracking the allocated d_name space in our dirent struct
+   struct dirent subspcent; // for storing returned subspace direntries
+   marfs_config*    config; // reference to the containing config ( for chdir validation )
 }* marfs_dhandle;
 
 
@@ -124,7 +130,7 @@ int pathshift( marfs_ctxt ctxt, const char* tgtpath, char** subpath, marfs_posit
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to traverse config for subpath: \"%s\"\n", modpath );
       MDAL curmdal = ctxt->pos.ns->prepo->metascheme.mdal;
-      curmdal->destroyctxt( newpos->ctxt );
+      if ( newpos->ctxt ) { curmdal->destroyctxt( newpos->ctxt ); }
       free( modpath );
       free( *oppos );
       *oppos = NULL;
@@ -267,6 +273,34 @@ int marfs_setctag( marfs_ctxt ctxt, const char* ctag ) {
 }
 
 /**
+ * Populates the given string with the path of the MarFS mountpoint
+ * ( as defined by the MarFS config file )
+ * @param marfs_ctxt ctxt : marfs_ctxt to retrieve mount path from
+ * @param char* mountstr : String to be populated with the mount path
+ * @param size_t len : Allocated length of the target string
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t marfs_mountpath( marfs_ctxt ctxt, char* mountstr, size_t len ) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for invalid arg
+   if ( ctxt == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return 0;
+   }
+   // print out the config version string
+   size_t retval = snprintf( mountstr, len, "%s", ctxt->config->mountpoint );
+   if ( retval ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+/**
  * Populate the given string with the config version of the provided marfs_ctxt
  * @param marfs_ctxt ctxt : marfs_ctxt to retrieve version info from
  * @param char* verstr : String to be populated
@@ -288,7 +322,10 @@ size_t marfs_configver( marfs_ctxt ctxt, char* verstr, size_t len ) {
    }
    // print out the config version string
    LOG( LOG_INFO, "EXIT - Success\n" );
-   return snprintf( verstr, len, "%s", ctxt->config->version );
+   size_t retval = snprintf( verstr, len, "%s", ctxt->config->version );
+   if ( retval ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
 }
 
 /**
@@ -354,12 +391,12 @@ int marfs_access( marfs_ctxt ctxt, const char* path, int mode, int flags ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for access op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    // check NS perms
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&  !(oppos->ns->bperms & NS_READMETA) )  ||
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_READMETA) ) ) {
@@ -409,12 +446,12 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for stat op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    // check NS perms
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&  !(oppos->ns->bperms & NS_READMETA) )  ||
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_READMETA) ) ) {
@@ -433,6 +470,10 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
    }
    else {
       retval = curmdal->stat( oppos->ctxt, subpath, buf, flags );
+   }
+   // adjust stat values, if necessary
+   if ( tgtdepth == 0  &&  retval == 0 ) {
+      buf->st_nlink += oppos->ns->subnodecount;
    }
    // cleanup references
    pathcleanup( subpath, oppos );
@@ -464,12 +505,12 @@ int marfs_chmod( marfs_ctxt ctxt, const char* path, mode_t mode, int flags ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for chmod op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    // check NS perms
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&  !(oppos->ns->bperms & NS_WRITEMETA) )  ||
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_WRITEMETA) ) ) {
@@ -519,12 +560,12 @@ int marfs_chown( marfs_ctxt ctxt, const char* path, uid_t uid, gid_t gid, int fl
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for chown op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    // check NS perms
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&  !(oppos->ns->bperms & NS_WRITEMETA) )  ||
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_WRITEMETA) ) ) {
@@ -571,12 +612,12 @@ int marfs_rename( marfs_ctxt ctxt, const char* from, const char* to ) {
    marfs_position* frompos = NULL;
    char* frompath = NULL;
    int fromdepth = pathshift( ctxt, from, &(frompath), &(frompos) );
-   LOG( LOG_INFO, "TGT-From: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", fromdepth, frompos->ns->idstr, frompath );
    if ( frompath == NULL ) {
       LOG( LOG_ERR, "Failed to identify 'from' target info for rename op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT-From: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", fromdepth, frompos->ns->idstr, frompath );
    if ( fromdepth == 0 ) {
       LOG( LOG_ERR, "Cannot rename a MarFS namespace: from=\"%s\"\n", from );
       pathcleanup( frompath, frompos );
@@ -587,13 +628,13 @@ int marfs_rename( marfs_ctxt ctxt, const char* from, const char* to ) {
    marfs_position* topos = NULL;
    char* topath = NULL;
    int todepth = pathshift( ctxt, to, &(topath), &(topos) );
-   LOG( LOG_INFO, "TGT-To: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", todepth, topos->ns->idstr, topath );
    if ( todepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify 'to' target info for rename op\n" );
       pathcleanup( frompath, frompos );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT-To: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", todepth, topos->ns->idstr, topath );
    if ( todepth == 0 ) {
       LOG( LOG_ERR, "Cannot target a MarFS namespace with a rename op: to=\"%s\"\n", to );
       pathcleanup( frompath, frompos );
@@ -654,12 +695,12 @@ int marfs_symlink( marfs_ctxt ctxt, const char* target, const char* linkname ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, linkname, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify linkname path info for symlink op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot replace MarFS NS with symlink: \"%s\"\n", linkname );
       pathcleanup( subpath, oppos );
@@ -712,12 +753,12 @@ ssize_t marfs_readlink( marfs_ctxt ctxt, const char* path, char* buf, size_t siz
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for readlink op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot target a MarFS NS with a readlink op: \"%s\"\n", path );
       pathcleanup( subpath, oppos );
@@ -765,12 +806,12 @@ int marfs_unlink( marfs_ctxt ctxt, const char* path ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for unlink op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot unlink a MarFS NS: \"%s\"\n", path );
       pathcleanup( subpath, oppos );
@@ -821,12 +862,12 @@ int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int f
    marfs_position* oldpos = NULL;
    char* oldsubpath = NULL;
    int olddepth = pathshift( ctxt, oldpath, &(oldsubpath), &(oldpos) );
-   LOG( LOG_INFO, "TGT-Old: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", olddepth, oldpos->ns->idstr, oldsubpath );
    if ( olddepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify old target info for link op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT-Old: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", olddepth, oldpos->ns->idstr, oldsubpath );
    if ( olddepth == 0 ) {
       LOG( LOG_ERR, "Cannot link a MarFS NS to a new target: \"%s\"\n", oldpath );
       pathcleanup( oldsubpath, oldpos );
@@ -837,13 +878,13 @@ int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int f
    marfs_position* newpos = NULL;
    char* newsubpath = NULL;
    int newdepth = pathshift( ctxt, newpath, &(newsubpath), &(newpos) );
-   LOG( LOG_INFO, "TGT-New: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", newdepth, newpos->ns->idstr, newsubpath );
    if ( newdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify new target info for link op\n" );
       pathcleanup( oldsubpath, oldpos );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT-New: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", newdepth, newpos->ns->idstr, newsubpath );
    if ( newdepth == 0 ) {
       LOG( LOG_ERR, "Cannot replace a MarFS NS with a new link: \"%s\"\n", newpath );
       pathcleanup( oldsubpath, oldpos );
@@ -903,12 +944,12 @@ int marfs_mkdir( marfs_ctxt ctxt, const char* path, mode_t mode ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for mkdir op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot target a MarFS NS with a mkdir op: \"%s\"\n", path );
       pathcleanup( subpath, oppos );
@@ -955,12 +996,12 @@ int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for rmdir op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth == 0 ) {
       LOG( LOG_ERR, "Cannot rmdir a MarFS NS: \"%s\"\n", path );
       pathcleanup( subpath, oppos );
@@ -1007,12 +1048,12 @@ int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for statvfs op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    MDAL curmdal = oppos->ns->prepo->metascheme.mdal;
    if ( tgtdepth == 0  &&  oppos->ctxt == NULL ) {
       // this is the sole op for which we really do need an MDAL_CTXT for the NS
@@ -1257,12 +1298,12 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for opendir op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    // check NS perms
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&  !(oppos->ns->bperms & NS_READMETA) )  ||
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_READMETA) ) ) {
@@ -1282,7 +1323,22 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
    }
    rethandle->ns = oppos->ns;
    rethandle->depth = tgtdepth;
+   rethandle->itype = ctxt->itype;
    rethandle->config = ctxt->config;
+   rethandle->subspcindex = 0;
+   rethandle->subspcent.d_name[0] = '\0';
+   /**
+    * NOTE -- yes, the readdir manpage *explicitly* states that 'use of sizeof(d_name) is 
+    * incorrect'.  However, that is referring to a struct returned via readdir(), with 
+    * populated values.  Obviously, strlen() will not function safely with an unpopulated 
+    * struct.  Less obviously, the _D_ALLOC_NAMELEN macro is not guaranteed to function 
+    * safely either.  sizeof() will always give us an underestimate of available d_name 
+    * space, which at least won't break anything.
+    * TODO -- if you know a better way to populate a dirent's d_name value, be my guest.
+    *         (and delete this huge NOTE when you do!)
+    */
+   rethandle->subspcnamealloc = sizeof( rethandle->subspcent.d_name);
+   bzero( &(rethandle->subspcent.d_name[0]), rethandle->subspcnamealloc );
    MDAL curmdal = oppos->ns->prepo->metascheme.mdal;
    if ( tgtdepth == 0  &&  oppos->ctxt == NULL ) {
       // open the namespace without shifting our MDAL_CTXT
@@ -1321,10 +1377,53 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   // cache our original errno value, and clear it
+   int cachederrno = errno;
+   errno = 0;
+   // potentially insert a subspace entry
+   if ( dh->depth == 0  &&  dh->subspcindex < dh->ns->subnodecount ) {
+      // stat the subspace, to identify inode info
+      marfs_ns* tgtsubspace = (marfs_ns *)(dh->ns->subnodes[dh->subspcindex].content);
+      char* subspacepath = NULL;
+      if ( config_nsinfo( tgtsubspace->idstr, NULL, &(subspacepath) ) ) {
+         LOG( LOG_ERR, "Failed to identify NS path of subspace: \"%s\"\n",
+              tgtsubspace->idstr );
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      MDAL tgtmdal = tgtsubspace->prepo->metascheme.mdal;
+      struct stat stval;
+      if ( tgtmdal->statnamespace( tgtmdal->ctxt, subspacepath, &(stval) ) ) {
+         LOG( LOG_ERR, "Failed to stat subspace root: \"%s\"\n", subspacepath );
+         free( subspacepath );
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      free( subspacepath );
+      if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->subspcindex].name ) >= dh->subspcnamealloc ) {
+         LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->subspcindex].name, dh->subspcnamealloc );
+         errno = ENAMETOOLONG;
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      // increment our index and return the dirent ref
+      dh->subspcindex++;
+      errno = cachederrno;
+      return &(dh->subspcent);
+   }
    // perform the op
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
-   struct dirent* retval = curmdal->readdir( dh->metahandle );
-   if ( retval != NULL ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   struct dirent* retval = NULL;
+   char repeat = 1;
+   while ( repeat ) {
+      retval = curmdal->readdir( dh->metahandle );
+      // filter out any restricted entries at the root of a NS
+      if ( dh->depth == 0  &&  retval != NULL  &&  curmdal->pathfilter( retval->d_name ) ) {
+         LOG( LOG_INFO, "Omitting hidden dirent: \"%s\"\n", retval->d_name );
+      }
+      else { repeat = 0; } // break on error, or if the entry wasn't filtered
+   }
+   if ( retval != NULL ) { LOG( LOG_INFO, "EXIT - Success\n" ); errno = cachederrno; }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
@@ -1401,6 +1500,118 @@ int marfs_chdir(marfs_ctxt ctxt, marfs_dhandle dh) {
    return 0;
 }
 
+/**
+ * Set the specified xattr on the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to set the xattr
+ * @param const char* name : String name of the xattr to set
+ * @param const void* value : Buffer containing the value of the xattr
+ * @param size_t size : Size of the value buffer
+ * @param int flags : Zero value    - create or replace the xattr
+ *                    XATTR_CREATE  - create the xattr only (fail if xattr exists)
+ *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_dsetxattr(marfs_dhandle dh, const char* name, const void* value, size_t size, int flags) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL directory handle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // check NS perms
+   if ( ( dh->itype != MARFS_INTERACTIVE  &&  !(dh->ns->bperms & NS_WRITEMETA) )  ||
+        ( dh->itype != MARFS_BATCH        &&  !(dh->ns->iperms & NS_WRITEMETA) ) ) {
+      LOG( LOG_ERR, "NS perms do not allow a dsetxattr op\n" );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // perform the op
+   int retval = dh->ns->prepo->metascheme.mdal->dsetxattr( dh->metahandle, 0, name, value, size, flags );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+/**
+ * Retrieve the specified xattr from the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to retrieve the xattr
+ * @param const char* name : String name of the xattr to retrieve
+ * @param void* value : Buffer to be populated with the xattr value
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr value, or -1 if a failure occurred
+ */
+ssize_t marfs_dgetxattr(marfs_dhandle dh, const char* name, void* value, size_t size) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL directory handle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // perform the op
+   ssize_t retval = dh->ns->prepo->metascheme.mdal->dgetxattr( dh->metahandle, 0, name, value, size );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+/**
+ * Remove the specified xattr from the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to remove the xattr
+ * @param const char* name : String name of the xattr to remove
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_dremovexattr(marfs_dhandle dh, const char* name) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL directory handle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // check NS perms
+   if ( ( dh->itype != MARFS_INTERACTIVE  &&  !(dh->ns->bperms & NS_WRITEMETA) )  ||
+        ( dh->itype != MARFS_BATCH        &&  !(dh->ns->iperms & NS_WRITEMETA) ) ) {
+      LOG( LOG_ERR, "NS perms do not allow a dremovexattr op\n" );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // perform the op
+   int retval = dh->ns->prepo->metascheme.mdal->dremovexattr( dh->metahandle, 0, name );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+/**
+ * List all xattr names from the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to list xattrs
+ * @param char* buf : Buffer to be populated with xattr names
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
+ */
+ssize_t marfs_dlistxattr(marfs_dhandle dh, char* buf, size_t size) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL directory handle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // perform the op
+   ssize_t retval = dh->ns->prepo->metascheme.mdal->dlistxattr( dh->metahandle, 0, buf, size );
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
 
 // FILE HANDLE OPS
 
@@ -1440,12 +1651,12 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for create op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    // check NS perms
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&
             ( (oppos->ns->bperms & NS_RWMETA) != NS_RWMETA ) )
@@ -1602,12 +1813,12 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for create op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    // check NS perms
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&  !(oppos->ns->bperms & NS_READMETA) )  ||
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_READMETA) ) ) {
@@ -1661,10 +1872,9 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       }
       stream->metahandle = NULL; // don't reattempt this op
    }
-   // attempt the op, allowing a meta-only reference ONLY if directread is set for the 
-   //    target NS and we are attempting to open for read
+   // attempt the op, allowing a meta-only reference ONLY if we are opening for read
    MDAL_FHANDLE phandle = NULL;
-   if ( datastream_open( &(stream->datastream), (flags == MARFS_READ) ? READ_STREAM : EDIT_STREAM, subpath, oppos, (oppos->ns->prepo->metascheme.directread  &&  flags == MARFS_READ) ? &(phandle) : NULL ) ) {
+   if ( datastream_open( &(stream->datastream), (flags == MARFS_READ) ? READ_STREAM : EDIT_STREAM, subpath, oppos, (flags == MARFS_READ) ? &(phandle) : NULL ) ) {
       // check for a meta-only reference
       if ( phandle != NULL ) {
          LOG( LOG_INFO, "Attempting to use meta-only reference for target file\n" );
@@ -1736,6 +1946,7 @@ int marfs_close(marfs_fhandle stream) {
    // reject a flushed handle
    if ( stream->metahandle == NULL  &&  stream->datastream == NULL ) {
       LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
+      free( stream );
       errno = EINVAL;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
@@ -1890,12 +2101,12 @@ int marfs_setrecoverypath(marfs_ctxt ctxt, marfs_fhandle stream, const char* rec
    marfs_position* oppos = NULL;
    char* subpath = NULL;
    int tgtdepth = pathshift( ctxt, recovpath, &(subpath), &(oppos) );
-   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for setrecoverypath op\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
    if ( oppos->ns != stream->ns ) {
       LOG( LOG_ERR, "Target NS (\"%s\") does not match stream NS (\"%s\")\n",
            oppos->ns->idstr, stream->ns->idstr );
@@ -1953,8 +2164,18 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
       return retval;
    }
    // meta only reference
-   MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   ssize_t retval = curmdal->read( stream->metahandle, buf, size );
+   ssize_t retval = 0;
+   if ( stream->ns->prepo->metascheme.directread == 0 ) {
+      // direct read isn't enabled
+      LOG( LOG_ERR, "Direct read is not enabled for this target\n" );
+      errno = EPERM;
+      retval = -1;
+   }
+   else {
+      // perform the direct read
+      MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+      retval = curmdal->read( stream->metahandle, buf, size );
+   }
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -2036,9 +2257,18 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       return retval;
    }
    // meta only reference
-   LOG( LOG_INFO, "Seeking meta handle\n" );
-   MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   off_t retval = curmdal->lseek( stream->metahandle, offset, whence );
+   off_t retval = 0;
+   if ( stream->ns->prepo->metascheme.directread == 0 ) {
+      // direct read isn't enabled
+      LOG( LOG_ERR, "Direct read is not enabled for this target\n" );
+      errno = EPERM;
+      retval = -1;
+   }
+   else {
+      LOG( LOG_INFO, "Seeking meta handle\n" );
+      MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+      retval = curmdal->lseek( stream->metahandle, offset, whence );
+   }
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -2112,8 +2342,18 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
       return retval;
    }
    // meta only reference
-   MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   int retval = curmdal->ftruncate( stream->metahandle, length );
+   int retval = 0;
+   if ( stream->ns->prepo->metascheme.directread == 0 ) {
+      // direct read isn't enabled
+      LOG( LOG_ERR, "Direct read is not enabled for this target\n" );
+      errno = EPERM;
+      retval = -1;
+   }
+   else {
+      LOG( LOG_INFO, "Truncating meta-only reference\n" );
+      MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+      retval = curmdal->ftruncate( stream->metahandle, length );
+   }
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;

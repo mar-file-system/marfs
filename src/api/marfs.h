@@ -1,5 +1,11 @@
 #ifndef _MARFS_H
 #define _MARFS_H
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -114,6 +120,20 @@ marfs_ctxt marfs_init(const char* configpath, marfs_interface type, char verify)
  * @return int : Zero on success, or -1 on failure
  */
 int marfs_setctag(marfs_ctxt ctxt, const char* ctag);
+
+/**
+ * Populates the given string with the path of the MarFS mountpoint
+ * ( as defined by the MarFS config file )
+ * @param marfs_ctxt ctxt : marfs_ctxt to retrieve mount path from
+ * @param char* mountstr : String to be populated with the mount path
+ * @param size_t len : Allocated length of the target string
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t marfs_mountpath( marfs_ctxt ctxt, char* mountstr, size_t len );
 
 /**
  * Populate the given string with the config version of the provided marfs_ctxt
@@ -367,6 +387,46 @@ int marfs_closedir(marfs_dhandle handle);
  */
 int marfs_chdir(marfs_ctxt ctxt, marfs_dhandle newdir);
 
+/**
+ * Set the specified xattr on the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to set the xattr
+ * @param const char* name : String name of the xattr to set
+ * @param const void* value : Buffer containing the value of the xattr
+ * @param size_t size : Size of the value buffer
+ * @param int flags : Zero value    - create or replace the xattr
+ *                    XATTR_CREATE  - create the xattr only (fail if xattr exists)
+ *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_dsetxattr(marfs_dhandle dh, const char* name, const void* value, size_t size, int flags);
+
+/**
+ * Retrieve the specified xattr from the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to retrieve the xattr
+ * @param const char* name : String name of the xattr to retrieve
+ * @param void* value : Buffer to be populated with the xattr value
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr value, or -1 if a failure occurred
+ */
+ssize_t marfs_dgetxattr(marfs_dhandle dh, const char* name, void* value, size_t size);
+
+/**
+ * Remove the specified xattr from the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to remove the xattr
+ * @param const char* name : String name of the xattr to remove
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_dremovexattr(marfs_dhandle dh, const char* name);
+
+/**
+ * List all xattr names from the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to list xattrs
+ * @param char* buf : Buffer to be populated with xattr names
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
+ */
+ssize_t marfs_dlistxattr(marfs_dhandle dh, char* buf, size_t size);
+
 
 // FILE HANDLE MGMT OPS
 
@@ -579,6 +639,11 @@ Note -- in the case of parallel writing the workflow can be thought of like this
 			   OR
 			marfs_creat( newpath, fhandle ... )
 */
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // _MARFS_H
 

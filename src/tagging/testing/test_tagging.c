@@ -139,8 +139,30 @@ int main(int argc, char **argv)
       return -1;
    }
    // identify the fileno value of the metatgtstr
-   if ( ftag_metatgt_fileno( metatgtstr ) ) {
+   char enttype = -1;
+   if ( ftag_metainfo( metatgtstr, &(enttype) ) ) {
       printf( "invalid fileno value from metatgtstr: \"%s\"\n", metatgtstr );
+      return -1;
+   }
+   if ( enttype ) {
+      printf( "unexpected type value for metatgtstr: %c\n", enttype );
+      return -1;
+   }
+
+   // output a rebuild marker string
+   metatgtstrlen = ftag_rebuildmarker( &(ftag), metatgtstr, 1024 );
+   if ( metatgtstrlen < 1  ||  metatgtstrlen >= 1024 ) {
+      printf( "invalid length of rebuild marker string: %zu\n", metatgtstrlen );
+      return -1;
+   }
+   // identify the objno value of the rebuild marker str
+   enttype = -1;
+   if ( ftag_metainfo( metatgtstr, &(enttype) ) ) {
+      printf( "invalid objno value from rebuild marker str: \"%s\"\n", metatgtstr );
+      return -1;
+   }
+   if ( enttype != 1 ) {
+      printf( "unexpected type value for rebuild marker str: %c\n", enttype );
       return -1;
    }
 
