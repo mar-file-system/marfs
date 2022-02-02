@@ -46,8 +46,8 @@
 #define NUM_CONS 2
 #define QDEPTH 100
 
-int rank;
-int n_ranks;
+int rank = 0;
+int n_ranks = 1;
 
 int n_prod = NUM_PROD;
 int n_cons = NUM_CONS;
@@ -169,7 +169,7 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int v_
     return -1;
   }
   else if (xattr_len >= 0) {
-    xattr = calloc(0, xattr_len + 1);
+    xattr = calloc(1, xattr_len + 1);
     if (xattr == NULL) {
       LOG(LOG_ERR, "Rank %d: Failed to allocate space for a xattr string value\n", rank);
       ms->mdal->close(handle);
@@ -428,7 +428,7 @@ int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag,
   int skip = 0;
   if ((skipsz = ms->mdal->fgetxattr(handle, 1, N_SKIP, skipstr, 0)) > 0) {
 
-    skipstr = calloc(0, skipsz + 1);
+    skipstr = calloc(1, skipsz + 1);
     if (skipstr == NULL) {
       LOG(LOG_ERR, "Rank %d: Failed to allocate space for a skip string value\n", rank);
       ms->mdal->close(handle);
@@ -521,16 +521,18 @@ int end_obj(FTAG* ftag, size_t headerlen) {
  * @param const marfs_ds* ds : Reference to the current MarFS data scheme
  * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target
  * namespace
- * @param const char* rpath : Path of the starting reference file within the
+ * @param const char* refpath : Path of the starting reference file within the
  * stream
  * @param quota data* q_data : Reference to the quota data struct to populate
  * @return int : Zero on success, or -1 on failure.
  */
-int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const char* rpath, quota_data* q_data) {
+int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, char** refpath, quota_data* q_data) {
   q_data->size = 0;
   q_data->count = 0;
   q_data->del_objs = 0;
   q_data->del_refs = 0;
+
+  char* rpath = *refpath;
 
   // Generate an ftag for the beginning of the stream
   FTAG ftag;
@@ -542,7 +544,6 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
   int next = get_ftag(ms, ds, ctxt, &ftag, rpath, &st, q_data, &del_zero);
   if (next < 0) {
     LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG for \"%s\"\n", rank, rpath);
-    free(rpath);
     return -1;
   }
 
@@ -625,7 +626,6 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
 
     if ((next = get_ftag(ms, ds, ctxt, &ftag, rpath, &st, q_data, &del_zero)) < 0) {
       LOG(LOG_ERR, "Rank %d: Failed to retrieve ftag for %s\n", rank, rpath);
-      free(rpath);
       free(ftag.ctag);
       free(ftag.streamid);
       return -1;
@@ -664,7 +664,6 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
     }
   }
 
-  free(rpath);
   free(ftag.ctag);
   free(ftag.streamid);
 
@@ -699,14 +698,16 @@ int rebuild_obj(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
       LOG(LOG_ERR, "Rank %d: Failed to seed status for object %s (%s)\n", rank, objID, strerror(errno));
     }
 
-    if (ne_rebuild(handle, &epat, rtag)) {
-      LOG(LOG_ERR, "Rank %d: Failed to rebuild object %s (%s)\n", rank, objID, strerror(errno));
+    errno = 0;
+    int ret = ne_rebuild(handle, &epat, rtag);
+    if (ret < 0) {
+      LOG(LOG_ERR, "Rank %d: Failed to rebuild object %s(%d, %s) %d\n", rank, objID, ret, strerror(errno), rtag->versz);
       ne_close(handle, NULL, NULL);
       free(objID);
       return -1;
     }
 
-    if (ne_close) {
+    if (ne_close(handle, NULL, NULL)) {
       LOG(LOG_ERR, "Rank %d: Failed to close object %s (%s)\n", rank, objID, strerror(errno));
     }
   }
@@ -719,7 +720,7 @@ int rebuild_obj(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
   free(objID);
 
   // Rebuild already completed, delete rebuild file from the ref tree
-  if (unlinkref(ctxt, rpath)) {
+  if (ms->mdal->unlinkref(ctxt, rpath)) {
     LOG(LOG_ERR, "Rank %d: Failed to unlink rebuild ref %s\n", rank, rpath);
     return -1;
   }
@@ -734,7 +735,7 @@ int rebuild_obj(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
  * @return int : Zero on success, or -1 on failure.
  */
 int stream_thread_init(unsigned int tID, void* global_state, void** state) {
-  *state = malloc(sizeof(struct tq_thread_struct));
+  *state = calloc(1, sizeof(struct tq_thread_struct));
   if (!*state) {
     return -1;
   }
@@ -742,14 +743,42 @@ int stream_thread_init(unsigned int tID, void* global_state, void** state) {
 
   tstate->tID = tID;
   tstate->global = (GlobalState)global_state;
-  tstate->q_data.size = 0;
-  tstate->q_data.count = 0;
-  tstate->q_data.del_objs = 0;
-  tstate->q_data.del_refs = 0;
-  tstate->ref_node = NULL;
-  tstate->scanner = NULL;
 
   return 0;
+}
+
+/** Free a work package if it is still allocated
+ * @param void** state : Reference to the thread's state
+ * @param void** prev_work : Reference to a possibly-allocated work package
+ * @param int flg : Current control flags of the thread
+ */
+void stream_term(void** state, void** prev_work, int flg) {
+  WorkPkg work = ((WorkPkg)*prev_work);
+  if (work) {
+    if (work->rpath) {
+      free(work->rpath);
+    }
+    if (work->ftag) {
+      if (work->ftag->ctag) {
+        free(work->ftag->ctag);
+      }
+      if (work->ftag->streamid) {
+        free(work->ftag->streamid);
+      }
+      free(work->ftag);
+    }
+    if (work->rtag) {
+      if (work->rtag->meta_status) {
+        free(work->rtag->meta_status);
+      }
+      if (work->rtag->csum) {
+        free(work->rtag->csum);
+      }
+      free(work->rtag);
+    }
+    free(work);
+    *prev_work = NULL;
+  }
 }
 
 /** Consume a work package containing the reference file at the start of the
@@ -775,7 +804,7 @@ int stream_cons(void** state, void** work_todo) {
     // exposed, in case we ever decide to walk streams with something other than
     // consumer threads
     quota_data q_data;
-    if (walk_stream(tstate->global->ms, tstate->global->ds, tstate->global->ctxt, work->rpath, &q_data)) {
+    if (walk_stream(tstate->global->ms, tstate->global->ds, tstate->global->ctxt, &(work->rpath), &q_data)) {
       LOG(LOG_ERR, "Rank %d: Thread %u failed to walk stream\n", rank, tstate->tID);
       return -1;
     }
@@ -873,6 +902,10 @@ int stream_prod(void** state, void** work_tofill) {
         else if (work->type == 1 || refno == 0) { // We want to submit a work
         // package for this ref
           size_t rpath_len = strlen(tstate->ref_node->name) + strlen(dent->d_name) + 1;
+          if (rpath_len == 0) {
+            LOG(LOG_ERR, "length of 0\n");
+            return -1;
+          }
           work->rpath = malloc(sizeof(char) * rpath_len);
           if (work->rpath == NULL) {
             LOG(LOG_ERR, "Rank %d: Failed to allocate rpath string\n", rank);
@@ -886,7 +919,7 @@ int stream_prod(void** state, void** work_tofill) {
 
           if (work->type == 1) { // We want to rebuild this object, pull xattrs
             // Get ftag from xattr
-            MDAL_HANDLE handle;
+            MDAL_DHANDLE handle;
             if ((handle = gstate->ms->mdal->openref(gstate->ctxt, work->rpath, O_RDONLY, 0)) == NULL) {
               LOG(LOG_ERR, "Rank %d: Failed to open handle for reference path \"%s\"\n", rank, work->rpath);
               return -1;
@@ -895,7 +928,7 @@ int stream_prod(void** state, void** work_tofill) {
             char* xattrstr = NULL;
             int xattrsz;
             if ((xattrsz = gstate->ms->mdal->fgetxattr(handle, 1, FTAG_NAME, xattrstr, 0)) <= 0) {
-              LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG value for reference path \"%s\"\n", rank, work->rpath);
+              LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG value for reference path \"%s\" (%s)\n", rank, work->rpath, strerror(errno));
               gstate->ms->mdal->close(handle);
               return -1;
             }
@@ -952,7 +985,7 @@ int stream_prod(void** state, void** work_tofill) {
               return -1;
             }
 
-            work->rtag = malloc(sizeof(struct ne_state_struct));
+            work->rtag = calloc(1, sizeof(struct ne_state_struct));
             if (!(work->rtag)) {
               LOG(LOG_ERR, "Rank %d: Failed to allocate RTAG\n", rank);
               free(xattrstr);
@@ -960,13 +993,23 @@ int stream_prod(void** state, void** work_tofill) {
               return -1;
             }
 
-            if (rtag_initstr(work->rtag, (ds->protection->N + ds->protection->E), xattrstr)) {
+            size_t stripe_width = gstate->ds->protection.N + gstate->ds->protection.E;
+
+            work->rtag->meta_status = malloc(sizeof(char) * 2 * (stripe_width + 1));
+            if (!(work->rtag->meta_status)) {
+              LOG(LOG_ERR, "Rank %d: Failed to allocate RTAG status string\n", rank);
+              free(xattrstr);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+            work->rtag->data_status = work->rtag->meta_status + stripe_width + 1;
+
+            if (rtag_initstr(work->rtag, stripe_width, xattrstr)) {
               LOG(LOG_ERR, "Rank %d: Failed to parse RTAG string for \"%s\"\n", rank, work->rpath);
               free(xattrstr);
               gstate->ms->mdal->close(handle);
               return -1;
             }
-
             free(xattrstr);
 
             if (gstate->ms->mdal->close(handle)) {
@@ -997,44 +1040,6 @@ int stream_pause(void** state, void** prev_work) {
  */
 int stream_resume(void** state, void** prev_work) {
   return 0;
-}
-
-/** Free a work package if it is still allocated
- * @param void** state : Reference to the thread's state
- * @param void** prev_work : Reference to a possibly-allocated work package
- * @param int flg : Current control flags of the thread
- */
-void stream_term(void** state, void** prev_work, int flg) {
-  WorkPkg work = ((WorkPkg)*prev_work);
-  if (work) {
-
-    if (work->rpath) {
-      free(work->rpath);
-    }
-    if (work->ftag) {
-      if (work->ftag->ctag) {
-        free(work->ctag->ctag);
-      }
-      if (work->ftag->streamid) {
-        free(work->ctag->streamid);
-      }
-      free(work->ftag);
-    }
-    if (work->rtag) {
-      if (work->rtag->meta_status) {
-        free(work->rtag->meta_status);
-      }
-      if (work->rtag->data_status) {
-        free(work->rtag->data_status);
-      }
-      if (work->rtag->csum) {
-        free(work->rtag->csum);
-      }
-      free(work->rtag);
-    }
-    free(work);
-    *prev_work = NULL;
-  }
 }
 
 /** Launch a thread queue to access all reference directories in a namespace,
