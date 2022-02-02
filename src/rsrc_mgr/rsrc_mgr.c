@@ -78,8 +78,11 @@ typedef struct tq_thread_struct {
 } *ThreadState;
 
 typedef struct work_pkg_struct {
-  char* node_name; // Name of ref dir
-  char* ref_name; // Name of ref file
+  char type; // Type of operation for consumer to perform 0 = gc/quota,
+  // 1 = rebuild
+  char* rpath; // Name of ref file at start of stream for gc/quota
+  FTAG* ftag; // Ftag information for rebuild
+  ne_state* rtag; // Rebuild tag information for rebuild
 } *WorkPkg;
 
 /** Garbage collect the reference files and objects of a stream inside the given
@@ -358,6 +361,7 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int v_
  * @param FTAG* ftag : Reference to the FTAG struct to be populated
  * @param const char* rpath : Reference path of the file to retrieve ftag data
  * from
+ * @param struct stat* st : Reference to stat buffer to be populated
  * @param quota_data* q_data : Reference to the quota data struct to update
  * @param int* del_zero : Reference to flag to be set in case zero was already
  * deleted
@@ -412,6 +416,7 @@ int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag,
   if (ftag_initstr(ftag, ftagstr)) {
     LOG(LOG_ERR, "Rank %d: Failed to parse FTAG string for \"%s\"\n", rank, rpath);
     free(ftagstr);
+    ms->mdal->close(handle);
     return -1;
   }
 
@@ -516,33 +521,18 @@ int end_obj(FTAG* ftag, size_t headerlen) {
  * @param const marfs_ds* ds : Reference to the current MarFS data scheme
  * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target
  * namespace
- * @param const char* node_name : Name of the reference directory containing the
- * start of the stream
- * @param const char* ref_name : Name of the starting reference file within the
+ * @param const char* rpath : Path of the starting reference file within the
  * stream
  * @param quota data* q_data : Reference to the quota data struct to populate
  * @return int : Zero on success, or -1 on failure.
  */
-int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const char* node_name, const char* ref_name, quota_data* q_data) {
+int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const char* rpath, quota_data* q_data) {
   q_data->size = 0;
   q_data->count = 0;
   q_data->del_objs = 0;
   q_data->del_refs = 0;
 
   // Generate an ftag for the beginning of the stream
-  size_t rpath_len = strlen(node_name) + strlen(ref_name) + 1;
-  char* rpath = malloc(sizeof(char) * rpath_len);
-  if (rpath == NULL) {
-    LOG(LOG_ERR, "Rank %d: Failed to allocate rpath string\n", rank);
-    return -1;
-  }
-
-  if (snprintf(rpath, rpath_len, "%s%s", node_name, ref_name) != (rpath_len - 1)) {
-    LOG(LOG_ERR, "Rank %d: Failed to populate rpath string\n", rank);
-    free(rpath);
-    return -1;
-  }
-
   FTAG ftag;
   ftag.fileno = 0;
   ftag.ctag = NULL;
@@ -681,6 +671,62 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
   return 0;
 }
 
+/** Attempts to rebuild the object specified by the given reference file
+ * @param const marfs_ms* ms : Reference to the current MarFS metadata scheme
+ * @param const marfs_ds* ds : Reference to the current MarFS data scheme
+ * @param MDAL_CTXT ctxt : Current MDAL_CTXT, associated with the target
+ * namespace
+ * @param const char* rpath : Path of the reference file containing the rebuild
+ * information for the object
+ * @param FTAG* ftag : Reference to a FTAG struct for the object to be rebuilt
+ * @param ne_state* rtag : Reference to a libne state struct containing
+ * rebuilding data
+ * @return int : Zero on success, or -1 on failure
+ */
+int rebuild_obj(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const char* rpath, FTAG* ftag, ne_state* rtag) {
+  char* objID;
+  ne_erasure epat;
+  ne_location loc;
+  if (datastream_objtarget(ftag, ds, &objID, &epat, &loc)) {
+    LOG(LOG_ERR, "Rank %d: Failed to generate object name (%s)\n", rank, strerror(errno));
+    return -1;
+  }
+
+  // Attempt to rebuild the object
+  ne_handle handle = ne_open(ds->nectxt, objID, loc, epat, NE_REBUILD);
+  if (handle) {
+    if (ne_seed_status(handle, rtag)) {
+      LOG(LOG_ERR, "Rank %d: Failed to seed status for object %s (%s)\n", rank, objID, strerror(errno));
+    }
+
+    if (ne_rebuild(handle, &epat, rtag)) {
+      LOG(LOG_ERR, "Rank %d: Failed to rebuild object %s (%s)\n", rank, objID, strerror(errno));
+      ne_close(handle, NULL, NULL);
+      free(objID);
+      return -1;
+    }
+
+    if (ne_close) {
+      LOG(LOG_ERR, "Rank %d: Failed to close object %s (%s)\n", rank, objID, strerror(errno));
+    }
+  }
+  else if (errno != ENOENT) {
+    LOG(LOG_ERR, "Rank %d: Failed to open object %s for rebuild (%s)\n", rank, objID, strerror(errno));
+    free(objID);
+    return -1;
+  }
+
+  free(objID);
+
+  // Rebuild already completed, delete rebuild file from the ref tree
+  if (unlinkref(ctxt, rpath)) {
+    LOG(LOG_ERR, "Rank %d: Failed to unlink rebuild ref %s\n", rank, rpath);
+    return -1;
+  }
+
+  return 0;
+}
+
 /** Initialize the state for a thread in the thread queue
  * @param unsigned int tID : The ID of this thread
  * @param void* global_state : Reference to the thread queue's global state
@@ -717,30 +763,38 @@ int stream_cons(void** state, void** work_todo) {
   ThreadState tstate = ((ThreadState)*state);
   WorkPkg work = ((WorkPkg)*work_todo);
 
-  if (!(work->node_name) || !(work->ref_name)) {
+  if (!(work->rpath)) {
     LOG(LOG_ERR, "Rank %d: Thread %u received invalid work package\n", rank, tstate->tID);
     return -1;
   }
 
-  // Walk the stream for the given ref
-  // NOTE: It might be better to combine this function with walk_stream(), but I
-  // left things as-is to still leave the interface for walking a stream easily
-  // exposed, in case we ever decide to walk streams with something other than
-  // consumer threads
-  quota_data q_data;
-  if (walk_stream(tstate->global->ms, tstate->global->ds, tstate->global->ctxt, work->node_name, work->ref_name, &q_data)) {
-    LOG(LOG_ERR, "Rank %d: Thread %u failed to walk stream\n", rank, tstate->tID);
-    return -1;
+  if (work->type == 0) { // Perform GC/quota
+    // Walk the stream for the given ref
+    // NOTE: It might be better to combine this function with walk_stream(), but I
+    // left things as-is to still leave the interface for walking a stream easily
+    // exposed, in case we ever decide to walk streams with something other than
+    // consumer threads
+    quota_data q_data;
+    if (walk_stream(tstate->global->ms, tstate->global->ds, tstate->global->ctxt, work->rpath, &q_data)) {
+      LOG(LOG_ERR, "Rank %d: Thread %u failed to walk stream\n", rank, tstate->tID);
+      return -1;
+    }
+
+    tstate->q_data.size += q_data.size;
+    tstate->q_data.count += q_data.count;
+    tstate->q_data.del_objs += q_data.del_objs;
+    tstate->q_data.del_refs += q_data.del_refs;
+  }
+  else { // Perform rebuild
+    if (!(work->ftag) || !(work->rtag)) {
+      LOG(LOG_ERR, "Rank %d: Thread %u received invalid rebuild work package\n", rank, tstate->tID);
+      return -1;
+    }
+
+    rebuild_obj(tstate->global->ms, tstate->global->ds, tstate->global->ctxt, work->rpath, work->ftag, work->rtag);
   }
 
-  free(work->node_name);
-  free(work->ref_name);
-  free(work);
-
-  tstate->q_data.size += q_data.size;
-  tstate->q_data.count += q_data.count;
-  tstate->q_data.del_objs += q_data.del_objs;
-  tstate->q_data.del_refs += q_data.del_refs;
+  stream_term(NULL, work_todo, 0);
 
   return 0;
 }
@@ -764,8 +818,9 @@ int stream_prod(void** state, void** work_tofill) {
     LOG(LOG_ERR, "Rank %d: Failed to allocate new work package\n", rank);
     return -1;
   }
-  work->node_name = NULL;
-  work->ref_name = NULL;
+  work->rpath = NULL;
+  work->ftag = NULL;
+  work->rtag = NULL;
 
   *work_tofill = (void*)work;
 
@@ -807,13 +862,120 @@ int stream_prod(void** state, void** work_tofill) {
 
     // Scan through the ref dir until we find the beginning of a stream
     struct dirent* dent;
+    int refno;
     while ((dent = gstate->ms->mdal->scan(tstate->scanner))) {
-      if (*dent->d_name != '.' && ftag_metatgt_fileno(dent->d_name) == 0) {
+      if (*dent->d_name != '.') {
+        refno = ftag_metainfo(dent->d_name, &(work->type));
+        if (refno < 0) {
+          LOG(LOG_ERR, "Rank %d: Failed to retrieve metainfo\n", rank);
+          return -1;
+        }
+        else if (work->type == 1 || refno == 0) { // We want to submit a work
+        // package for this ref
+          size_t rpath_len = strlen(tstate->ref_node->name) + strlen(dent->d_name) + 1;
+          work->rpath = malloc(sizeof(char) * rpath_len);
+          if (work->rpath == NULL) {
+            LOG(LOG_ERR, "Rank %d: Failed to allocate rpath string\n", rank);
+            return -1;
+          }
 
-        work->node_name = strdup(tstate->ref_node->name);
-        work->ref_name = strdup(dent->d_name);
+          if (snprintf(work->rpath, rpath_len, "%s%s", tstate->ref_node->name, dent->d_name) != (rpath_len - 1)) {
+            LOG(LOG_ERR, "Rank %d: Failed to populate rpath string\n", rank);
+            return -1;
+          }
 
-        return 0;
+          if (work->type == 1) { // We want to rebuild this object, pull xattrs
+            // Get ftag from xattr
+            MDAL_HANDLE handle;
+            if ((handle = gstate->ms->mdal->openref(gstate->ctxt, work->rpath, O_RDONLY, 0)) == NULL) {
+              LOG(LOG_ERR, "Rank %d: Failed to open handle for reference path \"%s\"\n", rank, work->rpath);
+              return -1;
+            }
+
+            char* xattrstr = NULL;
+            int xattrsz;
+            if ((xattrsz = gstate->ms->mdal->fgetxattr(handle, 1, FTAG_NAME, xattrstr, 0)) <= 0) {
+              LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG value for reference path \"%s\"\n", rank, work->rpath);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            xattrstr = calloc(1, xattrsz + 1);
+            if (xattrstr == NULL) {
+              LOG(LOG_ERR, "Rank %d: Failed to allocate space for a FTAG string value\n", rank);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            if (gstate->ms->mdal->fgetxattr(handle, 1, FTAG_NAME, xattrstr, xattrsz) != xattrsz) {
+              LOG(LOG_ERR, "Rank %d: FTAG value for \"%s\" changed while reading \n", rank, work->rpath);
+              free(xattrstr);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            work->ftag = malloc(sizeof(struct ftag_struct));
+            if (!(work->ftag)) {
+              LOG(LOG_ERR, "Rank %d: Failed to allocate RTAG\n", rank);
+              free(xattrstr);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            if (ftag_initstr(work->ftag, xattrstr)) {
+              LOG(LOG_ERR, "Rank %d: Failed to parse FTAG string for \"%s\"\n", rank, work->rpath);
+              free(xattrstr);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            free(xattrstr);
+
+            // Get RTAG from xattr
+            if ((xattrsz = gstate->ms->mdal->fgetxattr(handle, 1, RTAG_NAME, xattrstr, 0)) <= 0) {
+              LOG(LOG_ERR, "Rank %d: Failed to retrieve RTAG value for reference path \"%s\"\n", rank, work->rpath);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            xattrstr = calloc(1, xattrsz + 1);
+            if (xattrstr == NULL) {
+              LOG(LOG_ERR, "Rank %d: Failed to allocate space for a RTAG string value\n", rank);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            if (gstate->ms->mdal->fgetxattr(handle, 1, RTAG_NAME, xattrstr, xattrsz) != xattrsz) {
+              LOG(LOG_ERR, "Rank %d: RTAG value for \"%s\" changed while reading \n", rank, work->rpath);
+              free(xattrstr);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            work->rtag = malloc(sizeof(struct ne_state_struct));
+            if (!(work->rtag)) {
+              LOG(LOG_ERR, "Rank %d: Failed to allocate RTAG\n", rank);
+              free(xattrstr);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            if (rtag_initstr(work->rtag, (ds->protection->N + ds->protection->E), xattrstr)) {
+              LOG(LOG_ERR, "Rank %d: Failed to parse RTAG string for \"%s\"\n", rank, work->rpath);
+              free(xattrstr);
+              gstate->ms->mdal->close(handle);
+              return -1;
+            }
+
+            free(xattrstr);
+
+            if (gstate->ms->mdal->close(handle)) {
+              LOG(LOG_ERR, "Rank %d: Failed to close handle for reference path \"%s\"\n", rank, work->rpath);
+            }
+          }
+
+          return 0;
+        }
       }
     }
 
@@ -846,11 +1008,29 @@ void stream_term(void** state, void** prev_work, int flg) {
   WorkPkg work = ((WorkPkg)*prev_work);
   if (work) {
 
-    if (work->node_name) {
-      free(work->node_name);
+    if (work->rpath) {
+      free(work->rpath);
     }
-    if (work->ref_name) {
-      free(work->ref_name);
+    if (work->ftag) {
+      if (work->ftag->ctag) {
+        free(work->ctag->ctag);
+      }
+      if (work->ftag->streamid) {
+        free(work->ctag->streamid);
+      }
+      free(work->ftag);
+    }
+    if (work->rtag) {
+      if (work->rtag->meta_status) {
+        free(work->rtag->meta_status);
+      }
+      if (work->rtag->data_status) {
+        free(work->rtag->data_status);
+      }
+      if (work->rtag->csum) {
+        free(work->rtag->csum);
+      }
+      free(work->rtag);
     }
     free(work);
     *prev_work = NULL;
