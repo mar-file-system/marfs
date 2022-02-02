@@ -394,6 +394,51 @@ typedef struct MDAL_struct {
    int (*chdir) ( MDAL_CTXT ctxt, MDAL_DHANDLE dh );
 
    /**
+    * Set the specified xattr on the dir referenced by the given directory handle
+    * @param MDAL_DHANDLE dh : Directory handle for which to set the xattr
+    * @param char hidden : A non-zero value indicates to store this as a 'hidden' MDAL value
+    * @param const char* name : String name of the xattr to set
+    * @param const void* value : Buffer containing the value of the xattr
+    * @param size_t size : Size of the value buffer
+    * @param int flags : Zero value    - create or replace the xattr
+    *                    XATTR_CREATE  - create the xattr only (fail if xattr exists)
+    *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*dsetxattr) ( MDAL_DHANDLE dh, char hidden, const char* name, const void* value, size_t size, int flags );
+
+   /**
+    * Retrieve the specified xattr from the dir referenced by the given directory handle
+    * @param MDAL_DHANDLE dh : Directory handle for which to retrieve the xattr
+    * @param char hidden : A non-zero value indicates to retrieve a 'hidden' MDAL value
+    * @param const char* name : String name of the xattr to retrieve
+    * @param void* value : Buffer to be populated with the xattr value
+    * @param size_t size : Size of the target buffer
+    * @return ssize_t : Size of the returned xattr value, or -1 if a failure occurred
+    */
+   ssize_t (*dgetxattr) ( MDAL_DHANDLE dh, char hidden, const char* name, void* value, size_t size );
+
+   /**
+    * Remove the specified xattr from the dir referenced by the given directory handle
+    * @param MDAL_DHANDLE dh : Directory handle for which to remove the xattr
+    * @param char hidden : A non-zero value indicates to remove a 'hidden' MDAL value
+    * @param const char* name : String name of the xattr to remove
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*dremovexattr) ( MDAL_DHANDLE dh, char hidden, const char* name );
+
+   /**
+    * List all xattr names from the dir referenced by the given directory handle
+    * @param MDAL_DHANDLE dh : Directory handle for which to list xattrs
+    * @param char hidden : A non-zero value indicates to list 'hidden' MDAL xattrs
+    *                      ( normal xattrs excluded )
+    * @param char* buf : Buffer to be populated with xattr names
+    * @param size_t size : Size of the target buffer
+    * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
+    */
+   ssize_t (*dlistxattr) ( MDAL_DHANDLE dh, char hidden, char* buf, size_t size );
+
+   /**
     * Iterate to the next entry of an open directory handle
     * @param MDAL_DHANDLE dh : MDAL_DHANDLE to read from
     * @return struct dirent* : Reference to the next dirent struct, or NULL w/ errno unset

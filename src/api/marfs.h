@@ -367,6 +367,46 @@ int marfs_closedir(marfs_dhandle handle);
  */
 int marfs_chdir(marfs_ctxt ctxt, marfs_dhandle newdir);
 
+/**
+ * Set the specified xattr on the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to set the xattr
+ * @param const char* name : String name of the xattr to set
+ * @param const void* value : Buffer containing the value of the xattr
+ * @param size_t size : Size of the value buffer
+ * @param int flags : Zero value    - create or replace the xattr
+ *                    XATTR_CREATE  - create the xattr only (fail if xattr exists)
+ *                    XATTR_REPLACE - replace the xattr only (fail if xattr missing)
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_dsetxattr(marfs_dhandle dh, const char* name, const void* value, size_t size, int flags);
+
+/**
+ * Retrieve the specified xattr from the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to retrieve the xattr
+ * @param const char* name : String name of the xattr to retrieve
+ * @param void* value : Buffer to be populated with the xattr value
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr value, or -1 if a failure occurred
+ */
+ssize_t marfs_dgetxattr(marfs_dhandle dh, const char* name, void* value, size_t size);
+
+/**
+ * Remove the specified xattr from the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to remove the xattr
+ * @param const char* name : String name of the xattr to remove
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int marfs_dremovexattr(marfs_dhandle dh, const char* name);
+
+/**
+ * List all xattr names from the directory referenced by the given marfs_dhandle
+ * @param marfs_dhandle dh : Directory handle for which to list xattrs
+ * @param char* buf : Buffer to be populated with xattr names
+ * @param size_t size : Size of the target buffer
+ * @return ssize_t : Size of the returned xattr name list, or -1 if a failure occurred
+ */
+ssize_t marfs_dlistxattr(marfs_dhandle dh, char* buf, size_t size);
+
 
 // FILE HANDLE MGMT OPS
 

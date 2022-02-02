@@ -54,5 +54,26 @@
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
 
-SUBDIRS = hash mdal tagging recovery config datastream api fuse
+
+# automake requires '=' before '+=', even for these built-in vars
+AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CFLAGS   =
+AM_LDFLAGS  =
+
+bin_PROGRAMS = marfs-fuse
+
+marfs_fuse_SOURCES = fuse.c change_user.c
+marfs_fuse_LDADD  = ../api/libMarFS.la
+marfs_fuse_CFLAGS  = $(XML_CFLAGS) -D_FILE_OFFSET_BITS=64
+
+# ---
+
+#check_PROGRAMS = test_marfsapi
+#
+#test_marfsapi_SOURCES = testing/test_marfsapi.c
+#test_marfsapi_CFLAGS = $(XML_CFLAGS)
+#test_marfsapi_LDADD = $(MARFS_LIB)
+#
+#TESTS = test_marfsapi
+
 
