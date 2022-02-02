@@ -123,16 +123,15 @@ int enter_groups(user_ctxt ctxt, uid_t uid, gid_t gid)
     return -1;
   }
 
-#if 0
   int i;
   for (i = 0; i < group_ct; ++i)
   {
     LOG(LOG_INFO, "group = %u\n", groups[i]);
   }
-#endif
 
   if (setgroups(ngroups, groups))
   {
+    LOG( LOG_ERR, "Setgroups failure\n" );
     return -1;
   }
 
@@ -203,16 +202,15 @@ int enter_user(user_ctxt ctxt, uid_t new_euid, gid_t new_egid, int enter_group)
 
 int exit_groups(user_ctxt ctxt)
 {
-#if 0
   int i;
   for (i = 0; i < ctxt->group_ct; ++i)
   {
     LOG(LOG_INFO, "group = %u\n", ctxt->groups[i]);
   }
-#endif
 
   if (setgroups(ctxt->group_ct, ctxt->groups))
   {
+    LOG( LOG_ERR, "Setgroups failure\n" );
     return -1;
   }
 

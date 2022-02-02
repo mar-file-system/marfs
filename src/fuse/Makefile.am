@@ -10,7 +10,7 @@
 #FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
 #works, such modified software should be clearly marked, so as not to confuse it
 #with the version available from LANL.
-#
+# 
 #Additionally, redistribution and use in source and binary forms, with or without
 #modification, are permitted provided that the following conditions are met:
 #1. Redistributions of source code must retain the above copyright notice, this
@@ -54,5 +54,26 @@
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
 
-SUBDIRS = hash mdal tagging recovery config datastream api rsrc_mgr fuse
+
+# automake requires '=' before '+=', even for these built-in vars
+AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CFLAGS   =
+AM_LDFLAGS  =
+
+bin_PROGRAMS = marfs-fuse
+
+marfs_fuse_SOURCES = fuse.c change_user.c
+marfs_fuse_LDADD  = ../api/libmarfs.la
+marfs_fuse_CFLAGS  = $(XML_CFLAGS) -D_FILE_OFFSET_BITS=64
+
+# ---
+
+#check_PROGRAMS = test_marfsapi
+#
+#test_marfsapi_SOURCES = testing/test_marfsapi.c
+#test_marfsapi_CFLAGS = $(XML_CFLAGS)
+#test_marfsapi_LDADD = $(MARFS_LIB)
+#
+#TESTS = test_marfsapi
+
 

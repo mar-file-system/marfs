@@ -2595,6 +2595,18 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
             return -1;
          }
       }
+      // check for special case, targeting the rootNS directly
+      if ( *parsepath == '\0' ) {
+         parsepath = *subpath;
+         *subpath = strdup( "." );
+         if ( *subpath == NULL ) {
+            LOG( LOG_ERR, "Failed to allocate space for '.' path reference\n" );
+            *subpath = parsepath;
+            return -1;
+         }
+         free( parsepath );
+         return 0;
+      }
    }
    // NOTE -- path is now relative to the current 'pos' values
    // traverse the subpath, keeping track of depth from the current NS

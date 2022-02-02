@@ -164,7 +164,11 @@ int putftag( DATASTREAM stream, STREAMFILE* file ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // populate the ftag string format
-   size_t prres = ftag_tostr( &(file->ftag), stream->ftagstr, stream->ftagstrsize );
+   ssize_t prres = ftag_tostr( &(file->ftag), stream->ftagstr, stream->ftagstrsize );
+   if ( prres <= 0 ) {
+      LOG( LOG_ERR, "Failed to populate ftag string for stream\n" );
+      return -1;
+   }
    if ( prres >= stream->ftagstrsize ) {
       stream->ftagstrsize = 0;
       free( stream->ftagstr );
@@ -181,10 +185,6 @@ int putftag( DATASTREAM stream, STREAMFILE* file ) {
          errno = EFAULT;
          return -1;
       }
-   }
-   if ( prres <= 0 ) {
-      LOG( LOG_ERR, "Failed to populate ftag string for stream\n" );
-      return -1;
    }
    if ( ms->mdal->fsetxattr( file->metahandle, 1, FTAG_NAME, stream->ftagstr, prres, 0 ) ) {
       LOG( LOG_ERR, "Failed to attach marfs ftag value: \"%s\"\n", stream->ftagstr );
@@ -206,10 +206,19 @@ int getftag( DATASTREAM stream, STREAMFILE* file ) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // attempt to retrieve the ftag attr value ( leaving room for NULL terminator )
-   size_t getres = ms->mdal->fgetxattr( file->metahandle, 1, FTAG_NAME, stream->ftagstr, stream->ftagstrsize - 1 );
+   ssize_t getres = ms->mdal->fgetxattr( file->metahandle, 1, FTAG_NAME, stream->ftagstr, stream->ftagstrsize - 1 );
+   if ( getres <= 0 ) {
+      LOG( LOG_ERR, "Failed to retrieve ftag value for stream file\n" );
+      if ( errno == ENODATA ) {
+         LOG( LOG_INFO, "Preserving meta handle for potential direct read\n" );
+         return 1;
+      }
+      return -1;
+   }
    if ( getres >= stream->ftagstrsize ) {
       stream->ftagstrsize = 0;
       free( stream->ftagstr );
+      LOG( LOG_INFO, "Expanding FTAG-String to size of %zd\n", getres + 1 );
       stream->ftagstr = malloc( sizeof(char) * (getres + 1) );
       if ( stream->ftagstr == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for ftag string buffer\n" );
@@ -223,14 +232,6 @@ int getftag( DATASTREAM stream, STREAMFILE* file ) {
          errno = EBUSY;
          return -1;
       }
-   }
-   if ( getres <= 0 ) {
-      LOG( LOG_ERR, "Failed to retrieve ftag value for stream file\n" );
-      if ( errno == ENODATA ) {
-         LOG( LOG_INFO, "Preserving meta handle for potential direct read\n" );
-         return 1;
-      }
-      return -1;
    }
    // ensure our string is NULL terminated
    *( stream->ftagstr + getres ) = '\0';
@@ -520,13 +521,27 @@ int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
       LOG( LOG_ERR, "Cannot edit a non-complete, non-extended file\n" );
       curmdal->close( curfile->metahandle );
       curfile->metahandle = NULL;
+      free( curfile->ftag.ctag );
+      curfile->ftag.ctag = NULL;
+      free( curfile->ftag.streamid );
+      curfile->ftag.streamid = NULL;
+      errno = EINVAL;
       return -1;
    }
    if ( stream->type == READ_STREAM  &&
         !(curfile->ftag.state & FTAG_READABLE) ) {
       LOG( LOG_ERR, "Target file is not yet readable\n" );
+      free( curfile->ftag.ctag );
+      curfile->ftag.ctag = NULL;
+      free( curfile->ftag.streamid );
+      curfile->ftag.streamid = NULL;
+      if ( stream->type == READ_STREAM ) {
+         // no FTAG value exists, but preserve the meta handle for potential direct read
+         return 1;
+      }
       curmdal->close( curfile->metahandle );
       curfile->metahandle = NULL;
+      errno = EINVAL;
       return -1;
    }
 
@@ -535,6 +550,10 @@ int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
       LOG( LOG_ERR, "Failed to identify recovery info for target file: \"%s\"\n", path );
       curmdal->close( curfile->metahandle );
       curfile->metahandle = NULL;
+      free( curfile->ftag.ctag );
+      curfile->ftag.ctag = NULL;
+      free( curfile->ftag.streamid );
+      curfile->ftag.streamid = NULL;
       return -1;
    }
 
@@ -551,6 +570,10 @@ int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
       LOG( LOG_ERR, "Failed to identify length of stream recov header\n" );
       curmdal->close( curfile->metahandle );
       curfile->metahandle = NULL;
+      free( curfile->ftag.ctag );
+      curfile->ftag.ctag = NULL;
+      free( curfile->ftag.streamid );
+      curfile->ftag.streamid = NULL;
       return -1;
    }
 
@@ -988,18 +1011,26 @@ int gettargets( DATASTREAM stream, off_t offset, int whence, DATASTREAM_POSITION
       return -1;
    }
    // regardless of 'whence', we are now seeking from the min values ( beginning of file )
+
    // Check that the offset is still within file bounds
-   if ( offset > filesize ) {
-      // make sure we aren't seeking beyond the end of the file
-      LOG( LOG_ERR, "Offset value extends beyond end of file\n" );
-      errno = EINVAL;
-      return -1;
-   }
    if ( offset < 0 ) {
       // make sure we aren't seeking before the start of the file
       LOG( LOG_ERR, "Offset value extends prior to beginning of file\n" );
       errno = EINVAL;
       return -1;
+   }
+   if ( offset > filesize ) {
+      // we are seeking beyond the end of the file
+      if ( stream->type == CREATE_STREAM ) {
+         LOG( LOG_INFO, "Offset will require extending file from %zu to %zd\n",
+              filesize, offset );
+         filesize = offset;
+      }
+      else {
+         LOG( LOG_ERR, "Offset value extends beyond end of file\n" );
+         errno = EINVAL;
+         return -1;
+      }
    }
    // establish position vals, based on target offset
    size_t tgtobj = minobj;
@@ -2345,11 +2376,6 @@ off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
       return -1;
    }
    DATASTREAM tgtstream = *stream;
-   if ( tgtstream->type != READ_STREAM  &&  tgtstream->type != EDIT_STREAM ) {
-      LOG( LOG_ERR, "Provided stream does not support seeking\n" );
-      errno = EINVAL;
-      return -1;
-   }
    // identify target position info 
    STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
    DATASTREAM_POSITION streampos = {
@@ -2365,7 +2391,47 @@ off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence ) {
       LOG( LOG_ERR, "Failed to identify position vals of file %zu\n", curfile->ftag.fileno );
       return -1;
    }
-   // EDIT streams require extra restrictions
+   // CREATE streams are treated differently
+   if ( tgtstream->type == CREATE_STREAM ) {
+      // check for reverse seek
+      if ( streampos.totaloffset < curfile->ftag.bytes ) {
+         LOG( LOG_ERR, "Cannot reverse seek CREATE stream to target offset: %zu\n",
+              streampos.totaloffset );
+         errno = EINVAL;
+         return -1;
+      }
+      // check for no-op seek
+      if ( streampos.totaloffset == curfile->ftag.bytes ) {
+         LOG( LOG_INFO, "No-op seek to current offset\n" );
+         return (off_t)(curfile->ftag.bytes);
+      }
+      // forward seek actually means write out zero-bytes to reach the target
+      void* zerobuf = calloc( 1024, 1024 ); // 1MiB zero buffer
+      if ( zerobuf == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate 1MiB zero buffer to write out intermediate data\n" );
+         return -1;
+      }
+      // write out zero buffers until we reach the target offset
+      while ( curfile->ftag.bytes < streampos.totaloffset ) {
+         size_t writesize = 1024 * 1024;
+         if ( writesize > (streampos.totaloffset - curfile->ftag.bytes) ) {
+            writesize = (streampos.totaloffset - curfile->ftag.bytes);
+         }
+         LOG( LOG_INFO, "Writing out %zu zero bytes to skip ahead\n" );
+         ssize_t writeres = datastream_write( stream, zerobuf, writesize );
+         if ( writeres != writesize ) {
+            LOG( LOG_ERR, "Subsized write ( expected = %zu, actual = %zd )\n",
+                 writesize, writeres );
+            free( zerobuf );
+            return curfile->ftag.bytes;
+         }
+      }
+      // should now be at target offset
+      free( zerobuf );
+      LOG( LOG_INFO, "Post-write offset = %zu\n", curfile->ftag.bytes );
+      return curfile->ftag.bytes;
+   }
+   // EDIT streams have specific target restrictions
    if ( tgtstream->type == EDIT_STREAM  &&
         streampos.offset != tgtstream->recoveryheaderlen ) {
       LOG( LOG_ERR, "Edit streams can only seek to exact chunk bounds ( exoff = %zu )\n",

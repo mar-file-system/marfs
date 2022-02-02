@@ -546,7 +546,7 @@ size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
       LOG( LOG_ERR, "Receieved a NULL tgtstr value w/ non-zero len\n" );
       return 0;
    }
-   // sanitize the streamID, removing any '/' chars
+   // sanitize the streamID, removing any '|' chars
    char* sanstream = strdup( ftag->streamid );
    if ( sanstream == NULL ) {
       LOG( LOG_ERR, "Failed to duplicate streamID: \"%s\"\n", ftag->streamid );
@@ -563,13 +563,68 @@ size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
 }
 
 /**
- * Based on a given meta file ID, identify the fileno value of that file
- * @param const char* fileid : String containing the meta file ID
- * @return ssize_t : Fileno value, or -1 if a failure occurred
+ * Populate the given string buffer with the rebuild marker produced from the given ftag
+ * @param const FTAG* ftag : Reference to the ftag struct to pull values from
+ * @param char* tgtstr : String buffer to be populated with the rebuild marker name
+ * @param size_t len : Byte length of the target buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
  */
-ssize_t ftag_metatgt_fileno( const char* fileid ) {
-   // parse over the fileid str, waiting for the end of the string
-   const char* parse = fileid;
+size_t ftag_rebuildmarker( const FTAG* ftag, char* tgtstr, size_t len ) {
+   // check for NULL ftag
+   if ( ftag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL FTAG reference\n" );
+      return 0;
+   }
+   // check for NULL string target
+   if ( len  &&  tgtstr == NULL ) {
+      LOG( LOG_ERR, "Receieved a NULL tgtstr value w/ non-zero len\n" );
+      return 0;
+   }
+   // sanitize the streamID, removing any '|' chars
+   char* sanstream = strdup( ftag->streamid );
+   if ( sanstream == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate streamID: \"%s\"\n", ftag->streamid );
+      return 0;
+   }
+   char* parse = sanstream;
+   while ( *parse != '\0' ) {
+      if ( *parse == '|' ) { *parse = '#'; }
+      parse++;
+   }
+   size_t retval = snprintf( tgtstr, len, "%s|%s|%zur", ftag->ctag, sanstream, ftag->objno );
+   free( sanstream );
+   return retval;
+}
+
+/**
+ * Identify whether the given pathname refers to a rebuild marker or a meta file ID and 
+ * which object or file number it is associated with
+ * @param const char* metapath : String containing the meta pathname
+ * @param char* entrytype : Reference to a char value to be populated by this function
+ *                          If set to zero, the pathname is a meta file ID
+ *                           ( return value is a file number )
+ *                          If set to one, the pathname is a rebuild marker
+ *                           ( return value is an object number )
+ * @return ssize_t : File/Object number value, or -1 if a failure occurred
+ */
+ssize_t ftag_metainfo( const char* metapath, char* entrytype ) {
+   // check for valid args
+   if ( metapath == NULL ) {
+      LOG( LOG_ERR, "Received a NULL metapath\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( entrytype == NULL ) {
+      LOG( LOG_ERR, "Received a NULL entrytype pointer\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // parse over the metapath str, waiting for the end of the string
+   const char* parse = metapath;
    const char* finfield = NULL;
    while ( *parse != '\0' ) {
       // keep track of the final '|' char before EOS
@@ -578,15 +633,29 @@ ssize_t ftag_metatgt_fileno( const char* fileid ) {
    }
    // verify that we located the expected tail string
    if ( finfield == NULL  ||  *(finfield + 1) == '\0' ) {
-      LOG( LOG_ERR, "Provided string has no '|<fileno>' tail: \"%s\"\n", fileid );
+      LOG( LOG_ERR, "Provided string has no '|<file/objno>' tail: \"%s\"\n", metapath );
       errno = EINVAL;
       return -1;
    }
    // parse the fileno value
    char* endptr = NULL;
    unsigned long long parseval = strtoull( finfield + 1, &(endptr), 10 );
-   if ( endptr == NULL  ||  *endptr != '\0' ) {
-      LOG( LOG_ERR, "Encountered non-numeric char in fileno string field: '%c'\n", *endptr );
+   if ( endptr == NULL ) {
+      LOG( LOG_ERR, "Failed to parse file/objno tail: \"%s\"\n", metapath );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( *endptr == 'r' ) {
+      LOG( LOG_INFO, "Marking pathname as a rebuild marker\n" );
+      endptr++; // skip over rebuild marker
+      *entrytype = 1;
+   }
+   else {
+      LOG( LOG_INFO, "Marking pathname as a meta file ID\n" );
+      *entrytype = 0;
+   }
+   if ( *endptr != '\0' ) {
+      LOG( LOG_ERR, "Encountered trailing chars in file/objno string field: \"%s\"\n", endptr );
       errno = EINVAL;
       return -1;
    }
