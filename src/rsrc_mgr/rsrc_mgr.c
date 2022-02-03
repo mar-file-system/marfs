@@ -107,7 +107,7 @@ typedef struct work_pkg_struct {
  * @return int : Zero on success, or -1 on failure.
  */
 int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int v_ref, int head_ref, int tail_ref, int first_obj, int curr_obj, int eos, quota_data* q_data) {
-  //printf("garbage collecting refs (%d) %d:%d objs %d:%d eos(%d)\n", v_ref, head_ref, tail_ref, first_obj, curr_obj, eos);
+  // printf("garbage collecting refs (%d) %d:%d objs %d:%d eos(%d)\n", v_ref, head_ref, tail_ref, first_obj, curr_obj, eos);
 
   if (head_ref < v_ref) {
     LOG(LOG_ERR, "Rank %d: Invalid ref ranges given\n");
@@ -615,7 +615,7 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, char** r
 
     ftag.fileno += next;
 
-    // Generate path of next (existing) ref in the stream
+    // Generate path and ftag of next (existing) ref in the stream
     free(rpath);
     if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
       LOG(LOG_ERR, "Rank %d: Failed to create rpath\n", rpath);
@@ -694,14 +694,12 @@ int rebuild_obj(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
   // Attempt to rebuild the object
   ne_handle handle = ne_open(ds->nectxt, objID, loc, epat, NE_REBUILD);
   if (handle) {
-    if (ne_seed_status(handle, rtag)) {
+    if (rtag && ne_seed_status(handle, rtag)) {
       LOG(LOG_ERR, "Rank %d: Failed to seed status for object %s (%s)\n", rank, objID, strerror(errno));
     }
 
-    errno = 0;
-    int ret = ne_rebuild(handle, &epat, rtag);
-    if (ret < 0) {
-      LOG(LOG_ERR, "Rank %d: Failed to rebuild object %s(%d, %s) %d\n", rank, objID, ret, strerror(errno), rtag->versz);
+    if (ne_rebuild(handle, &epat, NULL) < 0) {
+      LOG(LOG_ERR, "Rank %d: Failed to rebuild object %s(%s)\n", rank, objID, strerror(errno));
       ne_close(handle, NULL, NULL);
       free(objID);
       return -1;
@@ -711,7 +709,25 @@ int rebuild_obj(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
       LOG(LOG_ERR, "Rank %d: Failed to close object %s (%s)\n", rank, objID, strerror(errno));
     }
   }
-  else if (errno != ENOENT) {
+  else if (errno == ENOENT) {
+    // Attempt to stat a ref corresponding to the object, in case the object
+    // still exists, but is inaccessible (e.g. the NFS mount is down)
+    char* refpath;
+    if ((refpath = datastream_genrpath(ftag, ms)) == NULL) {
+      LOG(LOG_ERR, "Rank %d: Failed to create refpath\n", rank);
+      free(objID);
+      return -1;
+    }
+
+    struct stat st;
+    if (!ms->mdal->statref(ctxt, refpath, &st) || errno != ENOENT) {
+      LOG(LOG_ERR, "Rank %d: Failed to find object \"%s\" (%s)\n", rank, objID, strerror(errno));
+      free(refpath);
+      free(objID);
+      return -1;
+    }
+  }
+  else {
     LOG(LOG_ERR, "Rank %d: Failed to open object %s for rebuild (%s)\n", rank, objID, strerror(errno));
     free(objID);
     return -1;
@@ -815,7 +831,7 @@ int stream_cons(void** state, void** work_todo) {
     tstate->q_data.del_refs += q_data.del_refs;
   }
   else { // Perform rebuild
-    if (!(work->ftag) || !(work->rtag)) {
+    if (!(work->ftag)) {
       LOG(LOG_ERR, "Rank %d: Thread %u received invalid rebuild work package\n", rank, tstate->tID);
       return -1;
     }
@@ -928,9 +944,25 @@ int stream_prod(void** state, void** work_tofill) {
             char* xattrstr = NULL;
             int xattrsz;
             if ((xattrsz = gstate->ms->mdal->fgetxattr(handle, 1, FTAG_NAME, xattrstr, 0)) <= 0) {
-              LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG value for reference path \"%s\" (%s)\n", rank, work->rpath, strerror(errno));
-              gstate->ms->mdal->close(handle);
-              return -1;
+              // Check how old the file is to make sure the missing xattr isn't
+              // in the process of being added
+              struct stat st;
+              if (gstate->ms->mdal->statref(gstate->ctxt, work->rpath, &st)) {
+                LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG value and stat reference path \"%s\" (%s)\n", rank, work->rpath, strerror(errno));
+                gstate->ms->mdal->close(handle);
+                return -1;
+              }
+
+              if (difftime(time(NULL), st.st_ctime) > RECENT_THRESH) {
+                LOG(LOG_ERR, "Rank %d: Failed to retrieve FTAG value for reference path \"%s\" (%s)\n", rank, work->rpath, strerror(errno));
+                gstate->ms->mdal->close(handle);
+                return -1;
+              }
+
+              // Ignore immature files
+              free(work->rpath);
+              work->rpath = NULL;
+              continue;
             }
 
             xattrstr = calloc(1, xattrsz + 1);
@@ -965,53 +997,53 @@ int stream_prod(void** state, void** work_tofill) {
             free(xattrstr);
 
             // Get RTAG from xattr
-            if ((xattrsz = gstate->ms->mdal->fgetxattr(handle, 1, RTAG_NAME, xattrstr, 0)) <= 0) {
+            if ((xattrsz = gstate->ms->mdal->fgetxattr(handle, 1, RTAG_NAME, xattrstr, 0)) > 0) {
+              xattrstr = calloc(1, xattrsz + 1);
+              if (xattrstr == NULL) {
+                LOG(LOG_ERR, "Rank %d: Failed to allocate space for a RTAG string value\n", rank);
+                gstate->ms->mdal->close(handle);
+                return -1;
+              }
+
+              if (gstate->ms->mdal->fgetxattr(handle, 1, RTAG_NAME, xattrstr, xattrsz) != xattrsz) {
+                LOG(LOG_ERR, "Rank %d: RTAG value for \"%s\" changed while reading \n", rank, work->rpath);
+                free(xattrstr);
+                gstate->ms->mdal->close(handle);
+                return -1;
+              }
+
+              work->rtag = calloc(1, sizeof(struct ne_state_struct));
+              if (!(work->rtag)) {
+                LOG(LOG_ERR, "Rank %d: Failed to allocate RTAG\n", rank);
+                free(xattrstr);
+                gstate->ms->mdal->close(handle);
+                return -1;
+              }
+
+              size_t stripe_width = gstate->ds->protection.N + gstate->ds->protection.E;
+
+              work->rtag->meta_status = malloc(sizeof(char) * 2 * (stripe_width + 1));
+              if (!(work->rtag->meta_status)) {
+                LOG(LOG_ERR, "Rank %d: Failed to allocate RTAG status string\n", rank);
+                free(xattrstr);
+                gstate->ms->mdal->close(handle);
+                return -1;
+              }
+              work->rtag->data_status = work->rtag->meta_status + stripe_width + 1;
+
+              if (rtag_initstr(work->rtag, stripe_width, xattrstr)) {
+                LOG(LOG_ERR, "Rank %d: Failed to parse RTAG string for \"%s\"\n", rank, work->rpath);
+                free(xattrstr);
+                gstate->ms->mdal->close(handle);
+                return -1;
+              }
+              free(xattrstr);
+            }
+            else if (errno != ENOATTR) {
               LOG(LOG_ERR, "Rank %d: Failed to retrieve RTAG value for reference path \"%s\"\n", rank, work->rpath);
               gstate->ms->mdal->close(handle);
               return -1;
             }
-
-            xattrstr = calloc(1, xattrsz + 1);
-            if (xattrstr == NULL) {
-              LOG(LOG_ERR, "Rank %d: Failed to allocate space for a RTAG string value\n", rank);
-              gstate->ms->mdal->close(handle);
-              return -1;
-            }
-
-            if (gstate->ms->mdal->fgetxattr(handle, 1, RTAG_NAME, xattrstr, xattrsz) != xattrsz) {
-              LOG(LOG_ERR, "Rank %d: RTAG value for \"%s\" changed while reading \n", rank, work->rpath);
-              free(xattrstr);
-              gstate->ms->mdal->close(handle);
-              return -1;
-            }
-
-            work->rtag = calloc(1, sizeof(struct ne_state_struct));
-            if (!(work->rtag)) {
-              LOG(LOG_ERR, "Rank %d: Failed to allocate RTAG\n", rank);
-              free(xattrstr);
-              gstate->ms->mdal->close(handle);
-              return -1;
-            }
-
-            size_t stripe_width = gstate->ds->protection.N + gstate->ds->protection.E;
-
-            work->rtag->meta_status = malloc(sizeof(char) * 2 * (stripe_width + 1));
-            if (!(work->rtag->meta_status)) {
-              LOG(LOG_ERR, "Rank %d: Failed to allocate RTAG status string\n", rank);
-              free(xattrstr);
-              gstate->ms->mdal->close(handle);
-              return -1;
-            }
-            work->rtag->data_status = work->rtag->meta_status + stripe_width + 1;
-
-            if (rtag_initstr(work->rtag, stripe_width, xattrstr)) {
-              LOG(LOG_ERR, "Rank %d: Failed to parse RTAG string for \"%s\"\n", rank, work->rpath);
-              free(xattrstr);
-              gstate->ms->mdal->close(handle);
-              return -1;
-            }
-            free(xattrstr);
-
             if (gstate->ms->mdal->close(handle)) {
               LOG(LOG_ERR, "Rank %d: Failed to close handle for reference path \"%s\"\n", rank, work->rpath);
             }
