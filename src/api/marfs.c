@@ -1841,10 +1841,9 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       }
       stream->metahandle = NULL; // don't reattempt this op
    }
-   // attempt the op, allowing a meta-only reference ONLY if directread is set for the 
-   //    target NS and we are attempting to open for read
+   // attempt the op, allowing a meta-only reference ONLY if we are opening for read
    MDAL_FHANDLE phandle = NULL;
-   if ( datastream_open( &(stream->datastream), (flags == MARFS_READ) ? READ_STREAM : EDIT_STREAM, subpath, oppos, (oppos->ns->prepo->metascheme.directread  &&  flags == MARFS_READ) ? &(phandle) : NULL ) ) {
+   if ( datastream_open( &(stream->datastream), (flags == MARFS_READ) ? READ_STREAM : EDIT_STREAM, subpath, oppos, (flags == MARFS_READ) ? &(phandle) : NULL ) ) {
       // check for a meta-only reference
       if ( phandle != NULL ) {
          LOG( LOG_INFO, "Attempting to use meta-only reference for target file\n" );
@@ -2134,8 +2133,18 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
       return retval;
    }
    // meta only reference
-   MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   ssize_t retval = curmdal->read( stream->metahandle, buf, size );
+   ssize_t retval = 0;
+   if ( stream->ns->prepo->metascheme.directread == 0 ) {
+      // direct read isn't enabled
+      LOG( LOG_ERR, "Direct read is not enabled for this target\n" );
+      errno = EPERM;
+      retval = -1;
+   }
+   else {
+      // perform the direct read
+      MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+      retval = curmdal->read( stream->metahandle, buf, size );
+   }
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -2217,9 +2226,18 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       return retval;
    }
    // meta only reference
-   LOG( LOG_INFO, "Seeking meta handle\n" );
-   MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   off_t retval = curmdal->lseek( stream->metahandle, offset, whence );
+   off_t retval = 0;
+   if ( stream->ns->prepo->metascheme.directread == 0 ) {
+      // direct read isn't enabled
+      LOG( LOG_ERR, "Direct read is not enabled for this target\n" );
+      errno = EPERM;
+      retval = -1;
+   }
+   else {
+      LOG( LOG_INFO, "Seeking meta handle\n" );
+      MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+      retval = curmdal->lseek( stream->metahandle, offset, whence );
+   }
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -2293,8 +2311,18 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
       return retval;
    }
    // meta only reference
-   MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   int retval = curmdal->ftruncate( stream->metahandle, length );
+   int retval = 0;
+   if ( stream->ns->prepo->metascheme.directread == 0 ) {
+      // direct read isn't enabled
+      LOG( LOG_ERR, "Direct read is not enabled for this target\n" );
+      errno = EPERM;
+      retval = -1;
+   }
+   else {
+      LOG( LOG_INFO, "Truncating meta-only reference\n" );
+      MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+      retval = curmdal->ftruncate( stream->metahandle, length );
+   }
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;

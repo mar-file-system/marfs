@@ -355,7 +355,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
+  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
   int cachederrno = errno; // cache orig errno
 
   // we need to use a file handle for this op
@@ -542,7 +542,7 @@ int fuse_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
+  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
   int cachederrno = errno; // cache and potentially reset errno
 
   errno = 0;
@@ -926,7 +926,6 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
   if (marfs_seek((marfs_fhandle)ffi->fh, offset, SEEK_SET))
@@ -936,16 +935,22 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
     return -err;
   }
 
-  int ret = marfs_write((marfs_fhandle)ffi->fh, buf, size);
+  ssize_t ret = marfs_write((marfs_fhandle)ffi->fh, buf, size);
 
   if (ret < 0)
   {
+    LOG( LOG_ERR, "Unexpected write res: %zd (%s)\n", ret, strerror(errno) );
+    ret = -errno;
+  }
+  else if ( ret != size )
+  {
+    LOG( LOG_ERR, "Unexpected write res: %zd (%s)\n", ret, strerror(errno) );
     ret = -errno;
   }
 
   exit_user(&u_ctxt);
 
-  return ret;
+  return (int)ret;
 }
 
 void *marfs_fuse_init(struct fuse_conn_info *conn)

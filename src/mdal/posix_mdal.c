@@ -2026,6 +2026,19 @@ MDAL_FHANDLE posixmdal_open( MDAL_CTXT ctxt, const char* path, int flags ) {
       LOG( LOG_ERR, "Failed to open target path: \"%s\"\n", path );
       return NULL;
    }
+   // ensure we're not opening a dir ( which requires opendir )
+   struct stat fdstat;
+   if ( fstat( fd, &(fdstat) ) ) {
+      LOG( LOG_ERR, "Could not verify target is a file: \"%s\" (%s)\n", path, strerror(errno) );
+      close( fd );
+      return NULL;
+   }
+   else if ( S_ISDIR(fdstat.st_mode) ) {
+      LOG( LOG_ERR, "Target is a directory: \"%s\"\n", path );
+      close( fd );
+      errno = EISDIR;
+      return NULL;
+   }
    // allocate a new FHANDLE ref
    POSIX_FHANDLE fhandle = malloc( sizeof(struct posixmdal_file_handle_struct) );
    if ( fhandle == NULL ) {
