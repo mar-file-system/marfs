@@ -1,5 +1,11 @@
 #ifndef _MARFS_H
 #define _MARFS_H
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -619,6 +625,11 @@ Note -- in the case of parallel writing the workflow can be thought of like this
 			   OR
 			marfs_creat( newpath, fhandle ... )
 */
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // _MARFS_H
 

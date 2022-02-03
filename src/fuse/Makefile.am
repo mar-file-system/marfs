@@ -63,7 +63,7 @@ AM_LDFLAGS  =
 bin_PROGRAMS = marfs-fuse
 
 marfs_fuse_SOURCES = fuse.c change_user.c
-marfs_fuse_LDADD  = ../api/libMarFS.la
+marfs_fuse_LDADD  = ../api/libmarfs.la
 marfs_fuse_CFLAGS  = $(XML_CFLAGS) -D_FILE_OFFSET_BITS=64
 
 # ---
