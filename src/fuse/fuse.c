@@ -77,20 +77,35 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define CTXT (marfs_ctxt)(fuse_get_context()->private_data)
 
-char* translate_path( const char* path ) {
+char* translate_path( marfs_ctxt ctxt, const char* path ) {
   if ( path == NULL ) {
     LOG( LOG_INFO, "NULL path value\n" );
+    return NULL;
+  }
+  // identify the length of the resulting path
+  size_t mountlen = marfs_mountpath( ctxt, NULL, 0 );
+  if ( mountlen == 0 ) {
+    LOG( LOG_ERR, "Failed to identify length of marfs mountpoint path\n" );
     return NULL;
   }
   size_t pathlen = strlen( path );
   char* newpath = NULL;
   if ( *path == '/' ) {
-    newpath = malloc( pathlen + 10 );
+    // absolute paths must be adjusted to include mountpoint prefix
+    // NOTE -- pretty sure every FUSE path is absolute; but check just in case...
+    newpath = malloc( pathlen + mountlen + 1 );
     if ( newpath == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate newpath of length %zu\n", pathlen + 10 );
+      LOG( LOG_ERR, "Failed to allocate newpath of length %zu\n", pathlen + mountlen + 1 );
       return NULL;
     }
-    if ( snprintf( newpath, pathlen + 10, "/campaign%s", path ) != pathlen + 9 ) {
+    // add in the mountpath first
+    if ( marfs_mountpath( ctxt, newpath, mountlen + 1 ) != mountlen ) {
+      LOG( LOG_ERR, "Inconsistent length of marfs mountpoint path\n" );
+      free( newpath );
+      return NULL;
+    }
+    // append the normal path
+    if ( snprintf( newpath + mountlen, pathlen + 1, "%s", path ) != pathlen ) {
       LOG( LOG_ERR, "Path has inconsistent length\n" );
       free( newpath );
       return NULL;
@@ -109,7 +124,7 @@ int fuse_access(const char *path, int mode)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   int ret = marfs_access(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW) * errno;
   free( newpath );
 
@@ -126,7 +141,7 @@ int fuse_chmod(const char *path, mode_t mode)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   int ret = marfs_chmod(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW) * errno;
   free( newpath );
 
@@ -143,7 +158,7 @@ int fuse_chown(const char *path, uid_t uid, gid_t gid)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   int ret = marfs_chown(CTXT, newpath, uid, gid, AT_SYMLINK_NOFOLLOW) * errno;
   free( newpath );
 
@@ -165,7 +180,7 @@ int fuse_create(const char *path, mode_t mode, struct fuse_file_info *ffi)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   ffi->fh = (uint64_t)marfs_creat(CTXT, NULL, newpath, mode);
   int err = errno;
   free( newpath );
@@ -251,7 +266,7 @@ int fuse_getattr(const char *path, struct stat *statbuf)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   int ret = marfs_stat(CTXT, newpath, statbuf, AT_SYMLINK_NOFOLLOW) * errno;
   free( newpath );
 
@@ -275,7 +290,7 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
   int cachederrno = errno; // store our orig errno value
 
   // we need to use a file handle for this op
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   LOG( LOG_INFO, "Attempting to open an fhandle for target path: \"%s\"\n", path );
   marfs_dhandle dh = NULL;
   marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ );
@@ -338,8 +353,8 @@ int fuse_link(const char *oldpath, const char *newpath)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newoldpath = translate_path( oldpath );
-  char* newnewpath = translate_path( newpath );
+  char* newoldpath = translate_path( CTXT, oldpath );
+  char* newnewpath = translate_path( CTXT, newpath );
   int ret = marfs_link(CTXT, newoldpath, newnewpath, 0) * errno;
   free( newoldpath );
   free( newnewpath );
@@ -359,7 +374,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
   int cachederrno = errno; // cache orig errno
 
   // we need to use a file handle for this op
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
   marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ );
   if (!fh) {
@@ -414,7 +429,7 @@ int fuse_mkdir(const char *path, mode_t mode)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   int ret = marfs_mkdir(CTXT, newpath, mode) * errno;
   free( newpath );
 
@@ -448,7 +463,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   ffi->fh = (uint64_t)marfs_open(CTXT, NULL, newpath, flags);
   int err = errno;
   free( newpath );
@@ -479,7 +494,7 @@ int fuse_opendir(const char *path, struct fuse_file_info *ffi)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   ffi->fh = (uint64_t)marfs_opendir(CTXT, newpath);
   int err = errno;
   free( newpath );
@@ -578,7 +593,7 @@ int fuse_readlink(const char *path, char *buf, size_t size)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   ssize_t ret = marfs_readlink(CTXT, newpath, buf, size);
   free( newpath );
   if ( ret < 0 ) {
@@ -652,7 +667,7 @@ int fuse_removexattr(const char *path, const char *name)
   int cachederrno = errno; // cache orig errno
 
   // we need to use a file handle for this op
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
   marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ );
   if (!fh) {
@@ -707,8 +722,8 @@ int fuse_rename(const char *oldpath, const char *newpath)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newoldpath = translate_path( oldpath );
-  char* newnewpath = translate_path( newpath );
+  char* newoldpath = translate_path( CTXT, oldpath );
+  char* newnewpath = translate_path( CTXT, newpath );
   int ret = marfs_rename(CTXT, newoldpath, newnewpath) * errno;
   free( newoldpath );
   free( newnewpath );
@@ -726,7 +741,7 @@ int fuse_rmdir(const char *path)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   int ret = marfs_rmdir(CTXT, newpath) * errno;
   free( newpath );
 
@@ -745,7 +760,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   int cachederrno = errno; // cache orig errno
 
   // we need to use a file handle for this op
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
   marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ );
   if (!fh) {
@@ -800,7 +815,7 @@ int fuse_statvfs(const char *path, struct statvfs *statbuf)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   int ret = marfs_statvfs(CTXT, newpath, statbuf) * errno;
   free( newpath );
 
@@ -817,8 +832,8 @@ int fuse_symlink(const char *target, const char *linkname)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newtarget = translate_path( target );
-  char* newname = translate_path( linkname );
+  char* newtarget = translate_path( CTXT, target );
+  char* newname = translate_path( CTXT, linkname );
   int ret = marfs_symlink(CTXT, newtarget, newname) * errno;
   free( newtarget );
   free( newname );
@@ -839,7 +854,7 @@ int fuse_truncate(const char *path, off_t length)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   if ((fh = marfs_open(CTXT, NULL, newpath, MARFS_WRITE)) == NULL)
   {
     err = errno;
@@ -871,7 +886,7 @@ int fuse_unlink(const char *path)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   int ret = marfs_unlink(CTXT, newpath) * errno;
   free( newpath );
 
@@ -891,7 +906,7 @@ int fuse_utimens(const char *path, const struct timespec tv[2])
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newpath = translate_path( path );
+  char* newpath = translate_path( CTXT, path );
   if ((fh = marfs_open(CTXT, NULL, newpath, MARFS_WRITE)) == NULL)
   {
     free( newpath );
@@ -956,7 +971,11 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 void *marfs_fuse_init(struct fuse_conn_info *conn)
 {
   LOG(LOG_INFO, "init\n");
-  return marfs_init(getenv("MARFSCONFIGRC"), MARFS_INTERACTIVE, 2);
+  marfs_ctxt ctxt = marfs_init(getenv("MARFSCONFIGRC"), MARFS_INTERACTIVE, 2);
+  if ( marfs_setctag( ctxt, "FUSE" ) ) {
+    LOG( LOG_WARNING, "Failed to set Client Tag String\n" );
+  }
+  return (void*)ctxt;
 }
 
 void marfs_fuse_destroy(void *userdata)
