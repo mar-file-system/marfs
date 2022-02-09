@@ -707,11 +707,13 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
    // check for NULL rtag
    if ( rtag == NULL ) {
       LOG( LOG_ERR, "Received a NULL ne_state reference\n" );
+      errno = EINVAL;
       return -1;
    }
    if ( rtag->meta_status == NULL  ||  rtag->data_status == NULL ) {
       LOG( LOG_ERR, "Received ne_state struct has undefined meta/data_status\n" );
-      return 0;
+      errno = EINVAL;
+      return -1;
    }
    // parse version info first
    const char* parse = rtagstr;
@@ -875,10 +877,12 @@ size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_
    // check for NULL rtag
    if ( rtag == NULL ) {
       LOG( LOG_ERR, "Received a NULL ne_state reference\n" );
+      errno = EINVAL;
       return 0;
    }
    if ( rtag->meta_status == NULL  ||  rtag->data_status == NULL ) {
       LOG( LOG_ERR, "Received ne_state struct has undefined meta/data_status\n" );
+      errno = EINVAL;
       return 0;
    }
 
