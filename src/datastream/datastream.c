@@ -832,11 +832,12 @@ int close_current_obj( DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt ) {
             return -1;
          }
       }
-      MDAL_FHANDLE rhandle = mdal->openref( mdalctxt, rpath, O_CREAT | O_EXCL, 0x700 );
+      MDAL_FHANDLE rhandle = mdal->openref( mdalctxt, rpath, O_CREAT | O_EXCL, 0700 );
       if ( rhandle == NULL ) {
          LOG( LOG_ERR, "Failed to create rebuild marker: \"%s\"\n", rpath );
          free( rpath );
          free( rtagstr );
+         if ( releasectxt ) { mdal->destroyctxt( mdalctxt ); }
          return -1;
       }
       LOG( LOG_INFO, "Created rebuild marker: \"%s\"\n", rpath );
@@ -847,19 +848,33 @@ int close_current_obj( DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt ) {
       if ( ftagstrlen < 1 ) {
          LOG( LOG_ERR, "Failed to identify string length of FTAG for file %zu\n",
               curftag->fileno );
+         mdal->close( rhandle );
          free( rtagstr );
+         if ( releasectxt ) { mdal->destroyctxt( mdalctxt ); }
          return -1;
       }
       char* ftagstr = (char *)malloc( sizeof(char) * (ftagstrlen + 1) );
       if ( ftagstr == NULL ) {
          LOG( LOG_ERR, "Failed to allocate FTAG string for file %zu\n", curftag->fileno );
+         mdal->close( rhandle );
          free( rtagstr );
+         if ( releasectxt ) { mdal->destroyctxt( mdalctxt ); }
+         return -1;
+      }
+      if ( ftag_tostr( curftag, ftagstr, ftagstrlen + 1 ) != ftagstrlen ) {
+         LOG( LOG_ERR, "FTAG string has an inconsistent length\n" );
+         free( ftagstr );
+         mdal->close( rhandle );
+         free( rtagstr );
+         if ( releasectxt ) { mdal->destroyctxt( mdalctxt ); }
          return -1;
       }
       if ( mdal->fsetxattr( rhandle, 1, FTAG_NAME, ftagstr, ftagstrlen, XATTR_CREATE ) ) {
          LOG( LOG_ERR, "Failed to attach FTAG: \"%s\"\n", ftagstr );
          free( ftagstr );
+         mdal->close( rhandle );
          free( rtagstr );
+         if ( releasectxt ) { mdal->destroyctxt( mdalctxt ); }
          return -1;
       }
       LOG( LOG_INFO, "Attached FTAG: \"%s\"\n", ftagstr );
@@ -870,6 +885,7 @@ int close_current_obj( DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt ) {
          LOG( LOG_ERR, "Failed to attach rebuild tag: \"%s\"\n", rtagstr );
          mdal->close( rhandle );
          free( rtagstr );
+         if ( releasectxt ) { mdal->destroyctxt( mdalctxt ); }
          return -1;
       }
       LOG( LOG_INFO, "Attached RTAG: \"%s\"\n", rtagstr );
