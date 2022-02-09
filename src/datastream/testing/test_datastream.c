@@ -201,14 +201,8 @@ int main(int argc, char **argv)
    }
 
    // close the data object
-   char* rtagstr = NULL;
-   size_t rtagstrlen = 0;
-   if ( close_current_obj( stream, &(rtagstr), &(rtagstrlen) ) ) {
+   if ( close_current_obj( stream, &(stream->files->ftag), pos.ctxt ) ) {
       printf( "Failed to close current stream object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   if ( rtagstr != NULL ) {
-      printf( "Received unexpected rebuild tag string: \"%s\"\n", rtagstr );
       return -1;
    }
 
