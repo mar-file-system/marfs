@@ -78,19 +78,24 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 // Show all the usage options in one place, for easy reference
 // An arrow appears next to the one you tried to use.
 //
-void usage(const char *op)
-{
+void usage(const char* op) {
 
    printf("Usage: <op> [<args> ...]\n");
    printf("  Where <op> and <args> are like one of the following:\n");
    printf("\n");
 
    const char* cmd = op;
-   if ( !strncmp(op, "help ", 5) ) {
+   if (!strncmp(op, "help ", 5)) {
       // check if the 'help' command is targetting a specific op
-      while ( *cmd != '\0'  &&  *cmd != ' ' ) { cmd++; }
-      if ( *cmd == ' '  &&  *(cmd + 1) != '\0' ) { cmd++; }
-      else { cmd = op; } // no specific command specified
+      while (*cmd != '\0' && *cmd != ' ') {
+         cmd++;
+      }
+      if (*cmd == ' ' && *(cmd + 1) != '\0') {
+         cmd++;
+      }
+      else {
+         cmd = op;
+      } // no specific command specified
    }
 
 #define USAGE(CMD, ARGS, DESC, FULLDESC) \
@@ -104,261 +109,283 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
             (CMD), (ARGS), "      " DESC "\n", FULLDESC ); \
 }
 
-   USAGE( "open",
-          "( -p userpath | -r refpath )",
-          "Begin traversing a new datastream, starting at the given file",
-          "       -p userpath  : Specifies a user path to retrieve stream info from\n"
-          "                       OR the path of the target NS, if '-r' is used\n"
-          "       -r refpath   : Specifies a reference path to retrieve stream info from\n" )
+   USAGE("open",
+      "( -p userpath | -r refpath )",
+      "Begin traversing a new datastream, starting at the given file",
+      "       -p userpath  : Specifies a user path to retrieve stream info from\n"
+      "                       OR the path of the target NS, if '-r' is used\n"
+      "       -r refpath   : Specifies a reference path to retrieve stream info from\n")
 
-   USAGE( "shift",
-          "( -@ offset | -n filenum )",
-          "Move to a new file in the current datastream",
-          "       -@ offset  : Specifies a number of files to move forward of backward\n"
-          "       -n filenum : Specifies a specific file number to move to\n" )
+      USAGE("shift",
+         "( -@ offset | -n filenum )",
+         "Move to a new file in the current datastream",
+         "       -@ offset  : Specifies a number of files to move forward of backward\n"
+         "       -n filenum : Specifies a specific file number to move to\n")
 
-   USAGE( "ftag",
-          "",
-          "Print out the FTAG info of the current file", "" )
+      USAGE("ftag",
+         "",
+         "Print out the FTAG info of the current file", "")
 
-   USAGE( "ref",
-          "",
-          "Identify the metadata reference path of the current file", "" )
+      USAGE("ref",
+         "",
+         "Identify the metadata reference path of the current file", "")
 
-   USAGE( "obj",
-          "[-n chunknum]",
-          "Print out the location of the specified object",
-          "       -n chunknum : Specifies a specific data chunk\n" )
+      USAGE("obj",
+         "[-n chunknum]",
+         "Print out the location of the specified object",
+         "       -n chunknum : Specifies a specific data chunk\n")
 
-   USAGE( "bounds",
-          "",
-          "Identify the boundaries of the current stream", "" )
+      USAGE("bounds",
+         "",
+         "Identify the boundaries of the current stream", "")
 
-   USAGE( "ns",
-          "",
-          "Print the current MarFS namespace target of this program", "" )
+      USAGE("ns",
+         "",
+         "Print the current MarFS namespace target of this program", "")
 
-   USAGE( "( exit | quit )",
-          "",
-          "Terminate", "" )
+      USAGE("( exit | quit )",
+         "",
+         "Terminate", "")
 
-   USAGE( "help", "[CMD]", "Print this usage info",
-          "       CMD : A specific command, for which to print detailed info\n" )
+      USAGE("help", "[CMD]", "Print this usage info",
+         "       CMD : A specific command, for which to print detailed info\n")
 
-   printf("\n");
+      printf("\n");
 
 #undef USAGE
 }
 
 
-int populate_ftag( marfs_config* config, marfs_position* pos, FTAG* ftag, const char* path, const char* rpath, char prout ) {
+int populate_ftag(marfs_config* config, marfs_position* pos, FTAG* ftag, const char* path, const char* rpath, char prout) {
    char* modpath = NULL;
-   if ( path != NULL ) {
+   if (path != NULL) {
       // perform path traversal to identify marfs position
-      modpath = strdup( path );
-      if ( modpath == NULL ) {
-         printf( OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", path );
+      modpath = strdup(path);
+      if (modpath == NULL) {
+         printf(OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", path);
          return -1;
       }
       marfs_ns* oldns = pos->ns;
-      if ( config_traverse( config, pos, &(modpath), 1 ) < 0 ) {
-         printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
-                 path );
-         free( modpath );
+      if (config_traverse(config, pos, &(modpath), 1) < 0) {
+         printf(OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
+            path);
+         free(modpath);
          return -1;
       }
-      if ( oldns != pos->ns ) {
-         printf( "New Namespace Target : \"%s\"\n", pos->ns->idstr );
+      if (oldns != pos->ns) {
+         printf("New Namespace Target : \"%s\"\n", pos->ns->idstr);
       }
    }
 
    // attempt to open the target file
    MDAL mdal = pos->ns->prepo->metascheme.mdal;
    MDAL_FHANDLE handle = NULL;
-   if ( rpath == NULL ) {
+   if (rpath == NULL) {
       // only actually reference the user path if no reference path was provided
-      handle = mdal->open( pos->ctxt, modpath, O_RDONLY );
+      handle = mdal->open(pos->ctxt, modpath, O_RDONLY);
    }
    else {
-      handle = mdal->openref( pos->ctxt, rpath, O_RDONLY, 0 );
+      handle = mdal->openref(pos->ctxt, rpath, O_RDONLY, 0);
    }
-   if ( modpath ) { free( modpath ); }
-   if ( handle == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to open target %s file: \"%s\" (%s)\n",
-              (rpath) ? "ref" : "user", (rpath) ? rpath : path, strerror(errno) );
+   if (modpath) {
+      free(modpath);
+   }
+   if (handle == NULL) {
+      printf(OUTPREFX "ERROR: Failed to open target %s file: \"%s\" (%s)\n",
+         (rpath) ? "ref" : "user", (rpath) ? rpath : path, strerror(errno));
       return -1;
    }
 
    // retrieve the FTAG value from the target file
    char* ftagstr = NULL;
-   size_t getres = mdal->fgetxattr( handle, 1, FTAG_NAME, ftagstr, 0 );
-   if ( getres <= 0 ) {
-      printf( OUTPREFX "ERROR: Failed to retrieve FTAG value from target %s file: \"%s\" (%s)\n", (rpath) ? "ref" : "user", (rpath) ? rpath : path, strerror(errno) );
-      mdal->close( handle );
+   size_t getres = mdal->fgetxattr(handle, 1, FTAG_NAME, ftagstr, 0);
+   if (getres <= 0) {
+      printf(OUTPREFX "ERROR: Failed to retrieve FTAG value from target %s file: \"%s\" (%s)\n", (rpath) ? "ref" : "user", (rpath) ? rpath : path, strerror(errno));
+      mdal->close(handle);
       return -1;
    }
-   ftagstr = calloc( 1, getres + 1 );
-   if ( ftagstr == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to allocate space for an FTAG string value\n" );
-      mdal->close( handle );
+   ftagstr = calloc(1, getres + 1);
+   if (ftagstr == NULL) {
+      printf(OUTPREFX "ERROR: Failed to allocate space for an FTAG string value\n");
+      mdal->close(handle);
       return -1;
    }
-   if ( mdal->fgetxattr( handle, 1, FTAG_NAME, ftagstr, getres ) != getres ) {
-      printf( OUTPREFX "ERROR: FTAG value changed while we were reading it\n" );
-      free( ftagstr );
-      mdal->close( handle );
+   if (mdal->fgetxattr(handle, 1, FTAG_NAME, ftagstr, getres) != getres) {
+      printf(OUTPREFX "ERROR: FTAG value changed while we were reading it\n");
+      free(ftagstr);
+      mdal->close(handle);
       return -1;
    }
-   if ( mdal->close( handle ) ) {
-      printf( OUTPREFX "WARNING: Failed to close handle for target file (%s)\n", strerror(errno) );
+   if (mdal->close(handle)) {
+      printf(OUTPREFX "WARNING: Failed to close handle for target file (%s)\n", strerror(errno));
    }
    // cleanup the previous FTAG, if necessary
-   if ( ftag->ctag ) { free( ftag->ctag ); ftag->ctag = NULL; }
-   if ( ftag->streamid ) { free( ftag->streamid ); ftag->streamid = NULL; }
+   if (ftag->ctag) {
+      free(ftag->ctag); ftag->ctag = NULL;
+   }
+   if (ftag->streamid) {
+      free(ftag->streamid); ftag->streamid = NULL;
+   }
    // populate FTAG values based on xattr content
-   if ( ftag_initstr( ftag, ftagstr ) ) {
-      printf( OUTPREFX "ERROR: Failed to parse FTAG string: \"%s\" (%s)\n",
-              ftagstr, strerror(errno) );
-      free( ftagstr );
+   if (ftag_initstr(ftag, ftagstr)) {
+      printf(OUTPREFX "ERROR: Failed to parse FTAG string: \"%s\" (%s)\n",
+         ftagstr, strerror(errno));
+      free(ftagstr);
       return -1;
    }
    else if (prout) {
-      printf( OUTPREFX "Successfully populated FTAG values for target %s file: \"%s\"\n",
-              (rpath) ? "ref" : "user", (rpath) ? rpath : path );
+      printf(OUTPREFX "Successfully populated FTAG values for target %s file: \"%s\"\n",
+         (rpath) ? "ref" : "user", (rpath) ? rpath : path);
    }
-   free( ftagstr );
+   free(ftagstr);
    return 0;
 }
 
 
-int open_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
-   printf( "\n" );
+int open_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+   printf("\n");
    // parse args
    char curarg = '\0';
    char* userpath = NULL;
    char* refpath = NULL;
-   char* parse = strtok( args, " " );
-   while ( parse ) {
-      if ( curarg == '\0' ) {
-         if ( strcmp( parse, "-p" ) == 0 ) {
+   char* parse = strtok(args, " ");
+   while (parse) {
+      if (curarg == '\0') {
+         if (strcmp(parse, "-p") == 0) {
             curarg = 'p';
          }
-         else if ( strcmp( parse, "-r" ) == 0 ) {
+         else if (strcmp(parse, "-r") == 0) {
             curarg = 'r';
          }
          else {
-            printf( OUTPREFX "ERROR: Unrecognized argument for 'open' command: '%s'\n", parse );
-            if ( userpath ) { free( userpath ); }
-            if ( refpath ) { free( refpath ); }
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'open' command: '%s'\n", parse);
+            if (userpath) {
+               free(userpath);
+            }
+            if (refpath) {
+               free(refpath);
+            }
             return -1;
          }
       }
       else {
          char** tgtstr = NULL;
-         if ( curarg == 'p' ) {
-            if ( userpath != NULL ) {
-               printf( OUTPREFX "ERROR: Detected duplicate '-p' arg: \"%s\"\n", parse );
-               free( userpath );
-               if ( refpath ) { free( refpath ); }
+         if (curarg == 'p') {
+            if (userpath != NULL) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-p' arg: \"%s\"\n", parse);
+               free(userpath);
+               if (refpath) {
+                  free(refpath);
+               }
                return -1;
             }
             tgtstr = &(userpath);
          }
          else { // == r
-            if ( refpath != NULL ) {
-               printf( OUTPREFX "ERROR: Detected duplicate '-r' arg: \"%s\"\n", parse );
-               free( refpath );
-               if ( userpath ) { free( userpath ); }
+            if (refpath != NULL) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-r' arg: \"%s\"\n", parse);
+               free(refpath);
+               if (userpath) {
+                  free(userpath);
+               }
                return -1;
             }
             tgtstr = &(refpath);
          }
-         *tgtstr = strdup( parse );
-         if ( *tgtstr == NULL ) {
-            printf( OUTPREFX "ERROR: Failed to duplicate string argument: \"%s\"\n",
-                    parse );
-            if ( userpath ) { free( userpath ); }
-            if ( refpath ) { free( refpath ); }
+         *tgtstr = strdup(parse);
+         if (*tgtstr == NULL) {
+            printf(OUTPREFX "ERROR: Failed to duplicate string argument: \"%s\"\n",
+               parse);
+            if (userpath) {
+               free(userpath);
+            }
+            if (refpath) {
+               free(refpath);
+            }
             return -1;
          }
          curarg = '\0';
       }
 
       // progress to the next arg
-      parse = strtok( NULL, " " );
+      parse = strtok(NULL, " ");
    }
    // check that we have at least one arg
-   if ( !(userpath)  &&  !(refpath) ) {
-      printf( OUTPREFX "ERROR: 'open' command requires at least one '-p' or '-r' arg\n" );
+   if (!(userpath) && !(refpath)) {
+      printf(OUTPREFX "ERROR: 'open' command requires at least one '-p' or '-r' arg\n");
       return -1;
    }
 
    // populate our FTAG and cleanup strings
-   int retval = populate_ftag( config, pos, ftag, userpath, refpath, 1 );
-   printf( "\n" );
-   if ( userpath ) { free( userpath ); }
-   if ( refpath ) { free( refpath ); }
+   int retval = populate_ftag(config, pos, ftag, userpath, refpath, 1);
+   printf("\n");
+   if (userpath) {
+      free(userpath);
+   }
+   if (refpath) {
+      free(refpath);
+   }
    return retval;
 }
 
-int shift_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
-   printf( "\n" );
+int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+   printf("\n");
    // verify that we have an FTAG value
-   if ( ftag->streamid == NULL ) {
-      printf( OUTPREFX "ERROR: No FTAG target to shift from\n" );
+   if (ftag->streamid == NULL) {
+      printf(OUTPREFX "ERROR: No FTAG target to shift from\n");
       return -1;
    }
 
    // parse args
    char curarg = '\0';
-   ssize_t offset  = 0;
+   ssize_t offset = 0;
    ssize_t filenum = -1;
-   char* parse = strtok( args, " " );
-   while ( parse ) {
-      if ( curarg == '\0' ) {
-         if ( strcmp( parse, "-@" ) == 0 ) {
+   char* parse = strtok(args, " ");
+   while (parse) {
+      if (curarg == '\0') {
+         if (strcmp(parse, "-@") == 0) {
             curarg = '@';
          }
-         else if ( strcmp( parse, "-n" ) == 0 ) {
+         else if (strcmp(parse, "-n") == 0) {
             curarg = 'n';
          }
          else {
-            printf( OUTPREFX "ERROR: Unrecognized argument for 'shift' command: '%s'\n", parse );
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'shift' command: '%s'\n", parse);
             return -1;
          }
       }
       else {
          // parse the numeric arg
          char* endptr = NULL;
-         long long parseval = strtoll( parse, &(endptr), 0 );
-         if ( *endptr != '\0' ) {
-            printf( OUTPREFX "ERROR: Expected pure numeric argument for '-%c': \"%s\"\n",
-                    curarg, parse );
+         long long parseval = strtoll(parse, &(endptr), 0);
+         if (*endptr != '\0') {
+            printf(OUTPREFX "ERROR: Expected pure numeric argument for '-%c': \"%s\"\n",
+               curarg, parse);
             return -1;
          }
 
-         if ( curarg == '@' ) {
-            if ( offset != 0 ) {
-               printf( OUTPREFX "ERROR: Detected duplicate '-@' arg: \"%s\"\n", parse );
+         if (curarg == '@') {
+            if (offset != 0) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-@' arg: \"%s\"\n", parse);
                return -1;
             }
-            if ( parseval == 0 ) {
-               printf( OUTPREFX "WARNING: Offset value of zero is a no-op\n" );
+            if (parseval == 0) {
+               printf(OUTPREFX "WARNING: Offset value of zero is a no-op\n");
                return -1;
             }
-            if ( parseval < 0  &&  llabs(parseval) > ftag->fileno ) {
-               printf( OUTPREFX "ERROR: Offset value extends beyond beginning of stream\n" );
+            if (parseval < 0 && llabs(parseval) > ftag->fileno) {
+               printf(OUTPREFX "ERROR: Offset value extends beyond beginning of stream\n");
                return -1;
             }
             offset = parseval;
          }
          else { // == n
-            if ( filenum != -1 ) {
-               printf( OUTPREFX "ERROR: Detected duplicate '-n' arg: \"%s\"\n", parse );
+            if (filenum != -1) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-n' arg: \"%s\"\n", parse);
                return -1;
             }
-            if ( parseval < 0 ) {
-               printf( OUTPREFX "ERROR: Negative filenum value: \"%lld\"\n", parseval );
+            if (parseval < 0) {
+               printf(OUTPREFX "ERROR: Negative filenum value: \"%lld\"\n", parseval);
                return -1;
             }
             filenum = parseval;
@@ -367,162 +394,172 @@ int shift_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
       }
 
       // progress to the next arg
-      parse = strtok( NULL, " " );
+      parse = strtok(NULL, " ");
    }
    // check that we have at least one arg
-   if ( offset == 0  &&  filenum == -1 ) {
-      printf( OUTPREFX "ERROR: 'shift' command requires either '-@' or '-n' arg\n" );
+   if (offset == 0 && filenum == -1) {
+      printf(OUTPREFX "ERROR: 'shift' command requires either '-@' or '-n' arg\n");
       return -1;
    }
 
    // process our arg
    size_t origfileno = ftag->fileno;
-   if ( offset ) {
-      if ( filenum != -1 ) {
-         printf( OUTPREFX "ERROR: 'shift' command cannot support both '-@' and '-n' args\n" );
+   if (offset) {
+      if (filenum != -1) {
+         printf(OUTPREFX "ERROR: 'shift' command cannot support both '-@' and '-n' args\n");
          return -1;
       }
       ftag->fileno += offset;
    }
-   else { ftag->fileno = filenum; }
+   else {
+      ftag->fileno = filenum;
+   }
 
    // generate a ref path for the new target file
-   char* newrpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
-   if ( newrpath == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to identify new ref path\n" );
+   char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   if (newrpath == NULL) {
+      printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
       ftag->fileno = origfileno;
       return -1;
    }
 
-   int retval = populate_ftag( config, pos, ftag, NULL, newrpath, 1 );
-   printf( "\n" );
-   if ( retval ) { ftag->fileno = origfileno; }
-   free( newrpath );
+   int retval = populate_ftag(config, pos, ftag, NULL, newrpath, 1);
+   printf("\n");
+   if (retval) {
+      ftag->fileno = origfileno;
+   }
+   free(newrpath);
 
    return retval;
 }
 
-int ftag_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
-   printf( "\n" );
+int ftag_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+   printf("\n");
    // verify that we have an FTAG value
-   if ( ftag->streamid == NULL ) {
-      printf( OUTPREFX "ERROR: No current FTAG target\n" );
+   if (ftag->streamid == NULL) {
+      printf(OUTPREFX "ERROR: No current FTAG target\n");
       return -1;
    }
    const char* datastatestr = "INIT";
-   if ( (ftag->state & FTAG_DATASTATE) == FTAG_SIZED ) {
+   if ((ftag->state & FTAG_DATASTATE) == FTAG_SIZED) {
       datastatestr = "SIZED";
    }
-   else if ( (ftag->state & FTAG_DATASTATE) == FTAG_FIN ) {
+   else if ((ftag->state & FTAG_DATASTATE) == FTAG_FIN) {
       datastatestr = "FINALIZED";
    }
-   else if ( (ftag->state & FTAG_DATASTATE) == FTAG_COMP ) {
+   else if ((ftag->state & FTAG_DATASTATE) == FTAG_COMP) {
       datastatestr = "COMPLETE";
    }
    const char* dataaccessstr = "NO-ACCESS";
-   if ( (ftag->state & FTAG_WRITEABLE) ) {
-      if ( (ftag->state & FTAG_READABLE) ) { dataaccessstr = "READ-WRITE"; }
-      else { dataaccessstr = "WRITE-ONLY"; }
+   if ((ftag->state & FTAG_WRITEABLE)) {
+      if ((ftag->state & FTAG_READABLE)) {
+         dataaccessstr = "READ-WRITE";
+      }
+      else {
+         dataaccessstr = "WRITE-ONLY";
+      }
    }
-   else if ( (ftag->state & FTAG_READABLE) ) { dataaccessstr = "READ-ONLY"; }
+   else if ((ftag->state & FTAG_READABLE)) {
+      dataaccessstr = "READ-ONLY";
+   }
    // print out all FTAG values
-   printf( "Stream Info --\n" );
-   printf( " Client Tag : %s\n", ftag->ctag );
-   printf( " Stream ID  : %s\n", ftag->streamid );
-   printf( " Max Files  : %zu\n", ftag->objfiles );
-   printf( " Max Size   : %zu\n", ftag->objsize );
-   printf( "File Position --\n" );
-   printf( " File Number   : %zu\n", ftag->fileno );
-   printf( " Object Number : %zu\n", ftag->objno );
-   printf( " Object Offset : %zu\n", ftag->offset );
-   printf( " End of Stream : %d\n", ftag->endofstream );
-   printf( "Data Structure --\n" );
-   printf( " Bytes       : %zu\n", ftag->bytes );
-   printf( " Avail Bytes : %zu\n", ftag->availbytes );
-   printf( " Recov Bytes : %zu\n", ftag->recoverybytes );
-   printf( " Data State  : %s\n", datastatestr );
-   printf( " Data Access : %s\n", dataaccessstr );
-   printf( " Protection --\n" );
-   printf( "  N   : %d\n", ftag->protection.N );
-   printf( "  E   : %d\n", ftag->protection.E );
-   printf( "  O   : %d\n", ftag->protection.O );
-   printf( "  psz : %ld\n", ftag->protection.partsz );
-   printf( "\n" );
+   printf("Stream Info --\n");
+   printf(" Client Tag : %s\n", ftag->ctag);
+   printf(" Stream ID  : %s\n", ftag->streamid);
+   printf(" Max Files  : %zu\n", ftag->objfiles);
+   printf(" Max Size   : %zu\n", ftag->objsize);
+   printf("File Position --\n");
+   printf(" File Number   : %zu\n", ftag->fileno);
+   printf(" Object Number : %zu\n", ftag->objno);
+   printf(" Object Offset : %zu\n", ftag->offset);
+   printf(" End of Stream : %d\n", ftag->endofstream);
+   printf("Data Structure --\n");
+   printf(" Bytes       : %zu\n", ftag->bytes);
+   printf(" Avail Bytes : %zu\n", ftag->availbytes);
+   printf(" Recov Bytes : %zu\n", ftag->recoverybytes);
+   printf(" Data State  : %s\n", datastatestr);
+   printf(" Data Access : %s\n", dataaccessstr);
+   printf(" Protection --\n");
+   printf("  N   : %d\n", ftag->protection.N);
+   printf("  E   : %d\n", ftag->protection.E);
+   printf("  O   : %d\n", ftag->protection.O);
+   printf("  psz : %ld\n", ftag->protection.partsz);
+   printf("\n");
    return 0;
 }
 
-int ref_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
-   printf( "\n" );
+int ref_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+   printf("\n");
    // verify that we have an FTAG value
-   if ( ftag->streamid == NULL ) {
-      printf( OUTPREFX "ERROR: No FTAG target to shift from\n" );
+   if (ftag->streamid == NULL) {
+      printf(OUTPREFX "ERROR: No FTAG target to shift from\n");
       return -1;
    }
 
    // generate a ref path for the new target file
-   char* curpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
-   if ( curpath == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to identify current ref path\n" );
+   char* curpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   if (curpath == NULL) {
+      printf(OUTPREFX "ERROR: Failed to identify current ref path\n");
       return -1;
    }
 
    // print out the generated path
-   printf( "Metadata Ref Path : %s\n", curpath );
-   printf( "Sanitized Path    :  " );
+   printf("Metadata Ref Path : %s\n", curpath);
+   printf("Sanitized Path    :  ");
    char* parsepath = curpath;
-   while ( *parsepath != '\0' ) {
-      if ( *parsepath == '*'  ||  *parsepath == '|'  ||  *parsepath == '&' ) {
+   while (*parsepath != '\0') {
+      if (*parsepath == '*' || *parsepath == '|' || *parsepath == '&') {
          // escape all problem chars
-         printf( "\\" );
+         printf("\\");
       }
-      printf( "%c", *parsepath );
+      printf("%c", *parsepath);
       parsepath++;
    }
-   printf( "\n\n" );
+   printf("\n\n");
 
-   free( curpath );
+   free(curpath);
 
    return 0;
 }
 
-int obj_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
-   printf( "\n" );
+int obj_command(marfs_config* config, char* config_path, marfs_position* pos, FTAG* ftag, char* args) {
+   printf("\n");
    // verify that we have an FTAG value
-   if ( ftag->streamid == NULL ) {
-      printf( OUTPREFX "ERROR: No current FTAG target\n" );
+   if (ftag->streamid == NULL) {
+      printf(OUTPREFX "ERROR: No current FTAG target\n");
       return -1;
    }
 
    // parse args
    char curarg = '\0';
    ssize_t chunknum = -1;
-   char* parse = strtok( args, " " );
-   while ( parse ) {
-      if ( curarg == '\0' ) {
-         if ( strcmp( parse, "-n" ) == 0 ) {
+   char* parse = strtok(args, " ");
+   while (parse) {
+      if (curarg == '\0') {
+         if (strcmp(parse, "-n") == 0) {
             curarg = 'n';
          }
          else {
-            printf( OUTPREFX "ERROR: Unrecognized argument for 'obj' command: '%s'\n", parse );
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'obj' command: '%s'\n", parse);
             return -1;
          }
       }
       else { // == 'n'
          // parse the numeric arg
          char* endptr = NULL;
-         long long parseval = strtoll( parse, &(endptr), 0 );
-         if ( *endptr != '\0' ) {
-            printf( OUTPREFX "ERROR: Expected pure numeric argument for '-%c': \"%s\"\n",
-                    curarg, parse );
+         long long parseval = strtoll(parse, &(endptr), 0);
+         if (*endptr != '\0') {
+            printf(OUTPREFX "ERROR: Expected pure numeric argument for '-%c': \"%s\"\n",
+               curarg, parse);
             return -1;
          }
 
-         if ( chunknum != -1 ) {
-            printf( OUTPREFX "ERROR: Detected duplicate '-n' arg: \"%s\"\n", parse );
+         if (chunknum != -1) {
+            printf(OUTPREFX "ERROR: Detected duplicate '-n' arg: \"%s\"\n", parse);
             return -1;
          }
-         if ( parseval < 0 ) {
-            printf( OUTPREFX "ERROR: Negative chunknum value: \"%lld\"\n", parseval );
+         if (parseval < 0) {
+            printf(OUTPREFX "ERROR: Negative chunknum value: \"%lld\"\n", parseval);
             return -1;
          }
          chunknum = parseval;
@@ -530,7 +567,7 @@ int obj_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* ar
       }
 
       // progress to the next arg
-      parse = strtok( NULL, " " );
+      parse = strtok(NULL, " ");
    }
 
 
@@ -541,87 +578,93 @@ int obj_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* ar
       .ctag = ftag->ctag,
       .streamid = ftag->streamid
    };
-   size_t headerlen = recovery_headertostr( &(header), NULL, 0 ); 
-   if ( headerlen < 1 ) {
-      printf( OUTPREFX "ERROR: Failed to identify recovery header length for file\n" );
+   size_t headerlen = recovery_headertostr(&(header), NULL, 0);
+   if (headerlen < 1) {
+      printf(OUTPREFX "ERROR: Failed to identify recovery header length for file\n");
       headerlen = 0;
    }
    size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
    ssize_t fileobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
    // special case check
-   if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&  fileobjbounds  &&
-        (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0 ) {
+   if ((ftag->state & FTAG_DATASTATE) >= FTAG_FIN && fileobjbounds &&
+      (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0) {
       // if we exactly align to object bounds AND the file is FINALIZED,
       //   we've overestimated by one object
       fileobjbounds--;
    }
 
-   if ( chunknum > fileobjbounds ) {
-      printf( OUTPREFX "WARNING: Specified object number exceeds file limits ( selecting object %zd instead )\n", fileobjbounds );
+   if (chunknum > fileobjbounds) {
+      printf(OUTPREFX "WARNING: Specified object number exceeds file limits ( selecting object %zd instead )\n", fileobjbounds);
       chunknum = fileobjbounds;
    }
 
    // iterate over appropriate objects
    size_t curobj = 0;
-   if ( chunknum >= 0 ) { curobj = chunknum; }
-   else { chunknum = fileobjbounds; }
-   for ( ; curobj <= chunknum; curobj++ ) {
+   if (chunknum >= 0) {
+      curobj = chunknum;
+   }
+   else {
+      chunknum = fileobjbounds;
+   }
+   for (; curobj <= chunknum; curobj++) {
       // identify the object target
       char* objname = NULL;
       ne_erasure erasure;
       ne_location location;
       FTAG curtag = *ftag;
       curtag.objno += curobj;
-      if ( datastream_objtarget( &(curtag), &(pos->ns->prepo->datascheme), &(objname), &(erasure), &(location) ) ) {
-         printf( OUTPREFX "ERROR: Failed to identify data info for chunk %zu\n", curobj );
+      if (datastream_objtarget(&(curtag), &(pos->ns->prepo->datascheme), &(objname), &(erasure), &(location))) {
+         printf(OUTPREFX "ERROR: Failed to identify data info for chunk %zu\n", curobj);
          continue;
       }
       // print object info
-      printf( "Obj#%-5zu\n   Pod: %d\n   Cap:%d\n   Scatter:%d\n   ObjName: %s\n   SanitizedName: ", curobj, location.pod, location.cap, location.scatter, objname );
+      printf("Obj#%-5zu\n   Pod: %d\n   Cap: %d\n   Scatter: %d\n   ObjName: %s\n   Erasure Information: N %d, E %d, O %d, partsz %lu\n   neutil Args: -c \"%s:/marfs_config/repo name=%s/data/DAL\" -P %d -C %d -S %d -O \"", curobj, location.pod, location.cap, location.scatter, objname, erasure.N, erasure.E, erasure.O, erasure.partsz, config_path, pos->ns->prepo->name, location.pod, location.cap, location.scatter);
       // print sanitized object name
       char* parsepath = objname;
-      while ( *parsepath != '\0' ) {
-         if ( *parsepath == '*'  ||  *parsepath == '|'  ||  *parsepath == '&' ) {
+      while (*parsepath != '\0') {
+         if (*parsepath == '*' || *parsepath == '|' || *parsepath == '&') {
             // escape all problem chars
-            printf( "\\" );
+            //printf("\\");
          }
-         printf( "%c", *parsepath );
+         printf("%c", *parsepath);
          parsepath++;
       }
-      printf( "\n" );
-      free( objname );
+      printf("\"\n");
+      free(objname);
    }
-   printf( "\n" );
-   
+   printf("\n");
+
    return 0;
 }
 
-int bounds_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
-   printf( "\n" );
+int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+   printf("\n");
    // verify that we have an FTAG value
-   if ( ftag->streamid == NULL ) {
-      printf( OUTPREFX "ERROR: No current FTAG target\n" );
+   if (ftag->streamid == NULL) {
+      printf(OUTPREFX "ERROR: No current FTAG target\n");
       return -1;
    }
 
    // iterate over files until we find EOS
    int retval = 0;
    size_t origfileno = ftag->fileno;
-   while ( ftag->endofstream == 0  &&  retval == 0  &&
-           (ftag->state & FTAG_DATASTATE) >= FTAG_FIN ) {
+   while (ftag->endofstream == 0 && retval == 0 &&
+      (ftag->state & FTAG_DATASTATE) >= FTAG_FIN) {
       // progress to the next file
       ftag->fileno++;
       // generate a ref path for the new target file
-      char* newrpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
-      if ( newrpath == NULL ) {
-         printf( OUTPREFX "ERROR: Failed to identify new ref path\n" );
+      char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+      if (newrpath == NULL) {
+         printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
          ftag->fileno = origfileno;
          return -1;
       }
       // retrieve the FTAG of the new target
-      retval = populate_ftag( config, pos, ftag, NULL, newrpath, 0 );
-      if ( retval ) { ftag->fileno--; } // if we couldn't retrieve this, go to previous
-      free( newrpath );
+      retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
+      if (retval) {
+         ftag->fileno--;
+      } // if we couldn't retrieve this, go to previous
+      free(newrpath);
    }
 
    // identify object bounds of final file
@@ -631,16 +674,16 @@ int bounds_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char*
       .ctag = ftag->ctag,
       .streamid = ftag->streamid
    };
-   size_t headerlen = recovery_headertostr( &(header), NULL, 0 ); 
-   if ( headerlen < 1 ) {
-      printf( OUTPREFX "ERROR: Failed to identify recovery header length for final file\n" );
+   size_t headerlen = recovery_headertostr(&(header), NULL, 0);
+   if (headerlen < 1) {
+      printf(OUTPREFX "ERROR: Failed to identify recovery header length for final file\n");
       headerlen = 0;
    }
    size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
    size_t finobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
    // special case check
-   if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&  finobjbounds  &&
-        (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0 ) {
+   if ((ftag->state & FTAG_DATASTATE) >= FTAG_FIN && finobjbounds &&
+      (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0) {
       // if we exactly align to object bounds AND the file is FINALIZED,
       //   we've overestimated by one object
       finobjbounds--;
@@ -648,59 +691,61 @@ int bounds_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char*
 
    // print out stream boundaries
    char* eosreason = "End of Stream";
-   if ( retval ) { eosreason = "Failed to Identify Subsequent File"; }
-   else if ( (ftag->state & FTAG_DATASTATE) < FTAG_FIN ) {
+   if (retval) {
+      eosreason = "Failed to Identify Subsequent File";
+   }
+   else if ((ftag->state & FTAG_DATASTATE) < FTAG_FIN) {
       eosreason = "Unfinished File";
    }
-   printf( "File Bounds:\n   0 -- Initial File\n     to\n   %zu -- %s\n",
-           ftag->fileno, eosreason );
-   printf( "Object Bounds:\n   0 -- Initial Object\n     to\n   %zu -- End of Final File\n",
-           ftag->objno + finobjbounds );
+   printf("File Bounds:\n   0 -- Initial File\n     to\n   %zu -- %s\n",
+      ftag->fileno, eosreason);
+   printf("Object Bounds:\n   0 -- Initial Object\n     to\n   %zu -- End of Final File\n",
+      ftag->objno + finobjbounds);
    // restore the original value
    ftag->fileno = origfileno;
-   char* newrpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
-   if ( newrpath == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to identify original ref path\n" );
+   char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   if (newrpath == NULL) {
+      printf(OUTPREFX "ERROR: Failed to identify original ref path\n");
       return -1;
    }
    // retrieve the FTAG of the new target
-   retval = populate_ftag( config, pos, ftag, NULL, newrpath, 0 );
-   free( newrpath );
-   printf( "\n" );
+   retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
+   free(newrpath);
+   printf("\n");
 
    return 0;
 }
 
-int refresh_command( marfs_config* config, marfs_position* pos, FTAG* ftag, char* args ) {
-   printf( "\n" );
+int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+   printf("\n");
    // verify that we have an FTAG value
-   if ( ftag->streamid == NULL ) {
-      printf( OUTPREFX "ERROR: No FTAG target to shift from\n" );
+   if (ftag->streamid == NULL) {
+      printf(OUTPREFX "ERROR: No FTAG target to shift from\n");
       return -1;
    }
 
    // check for any args
-   if ( *args != '\0' ) {
-      printf( OUTPREFX "ERROR: The 'refresh' command does not support arguments\n" );
+   if (*args != '\0') {
+      printf(OUTPREFX "ERROR: The 'refresh' command does not support arguments\n");
       return -1;
    }
 
    // generate a ref path for the current target file
-   char* newrpath = datastream_genrpath( ftag, &(pos->ns->prepo->metascheme) );
-   if ( newrpath == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to identify current ref path\n" );
+   char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   if (newrpath == NULL) {
+      printf(OUTPREFX "ERROR: Failed to identify current ref path\n");
       return -1;
    }
 
-   int retval = populate_ftag( config, pos, ftag, NULL, newrpath, 1 );
-   printf( "\n" );
-   free( newrpath );
+   int retval = populate_ftag(config, pos, ftag, NULL, newrpath, 1);
+   printf("\n");
+   free(newrpath);
 
    return retval;
 }
 
 
-int command_loop( marfs_config* config ) {
+int command_loop(marfs_config* config, char* config_path) {
    // initialize an FTAG struct
    FTAG ftag = {
       .ctag = NULL,
@@ -710,30 +755,30 @@ int command_loop( marfs_config* config ) {
    marfs_position pos = {
       .ns = config->rootns,
       .depth = 0,
-      .ctxt = config->rootns->prepo->metascheme.mdal->newctxt( "/.", config->rootns->prepo->metascheme.mdal->ctxt )
+      .ctxt = config->rootns->prepo->metascheme.mdal->newctxt("/.", config->rootns->prepo->metascheme.mdal->ctxt)
    };
-   if ( pos.ctxt == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to establish MDAL ctxt for the MarFS root\n" );
+   if (pos.ctxt == NULL) {
+      printf(OUTPREFX "ERROR: Failed to establish MDAL ctxt for the MarFS root\n");
       return -1;
    }
-   printf( "Initial Namespace Target : \"%s\"\n", pos.ns->idstr );
+   printf("Initial Namespace Target : \"%s\"\n", pos.ns->idstr);
 
    // infinite loop, processing user commands
-   printf( OUTPREFX "Ready for user commands\n" );
+   printf(OUTPREFX "Ready for user commands\n");
    int retval = 0;
-   while ( 1 ) {
-      printf( "> " );
-      fflush( stdout );
+   while (1) {
+      printf("> ");
+      fflush(stdout);
       // read in a new line from stdin ( 4096 char limit )
-      char inputline[4097] = {0}; // init to NULL bytes
-      if ( scanf( "%4096[^\n]", inputline ) < 0 ) {
-         printf( OUTPREFX "ERROR: Failed to read user input\n" );
+      char inputline[4097] = { 0 }; // init to NULL bytes
+      if (scanf("%4096[^\n]", inputline) < 0) {
+         printf(OUTPREFX "ERROR: Failed to read user input\n");
          retval = -1;
          break;
       }
-      fgetc( stdin ); // to clear newline char
-      if ( inputline[4095] != '\0' ) {
-         printf( OUTPREFX "ERROR: Input command exceeds parsing limit of 4096 chars\n" );
+      fgetc(stdin); // to clear newline char
+      if (inputline[4095] != '\0') {
+         printf(OUTPREFX "ERROR: Input command exceeds parsing limit of 4096 chars\n");
          retval = -1;
          break;
       }
@@ -741,176 +786,183 @@ int command_loop( marfs_config* config ) {
       // parse the input command
       char* parse = inputline;
       char repchar = 0;
-      while ( *parse != '\0' ) {
+      while (*parse != '\0') {
          parse++;
-         if ( *parse == ' ' ) { *parse = '\0'; repchar = 1; }
+         if (*parse == ' ') {
+            *parse = '\0'; repchar = 1;
+         }
       }
       // check for program exit right away
-      if ( strcmp( inputline, "exit" ) == 0  ||  strcmp( inputline, "quit" ) == 0 ) {
-         printf( OUTPREFX "Terminating...\n" );
+      if (strcmp(inputline, "exit") == 0 || strcmp(inputline, "quit") == 0) {
+         printf(OUTPREFX "Terminating...\n");
          break;
       }
       // check for 'help' command right away
-      if ( strcmp( inputline, "help" ) == 0 ) {
-         if ( repchar ) { *parse = ' '; } // undo input line edit
-         usage( inputline );
+      if (strcmp(inputline, "help") == 0) {
+         if (repchar) {
+            *parse = ' ';
+         } // undo input line edit
+         usage(inputline);
          continue;
       }
       // check for empty command right away
-      if ( strcmp( inputline, "") == 0 ) {
+      if (strcmp(inputline, "") == 0) {
          // no-op
          continue;
       }
-      if ( repchar ) {
+      if (repchar) {
          parse++; // proceed to the char following ' '
-         while ( *parse == ' ' ) { parse++; } // skip over all ' ' chars
+         while (*parse == ' ') {
+            parse++;
+         } // skip over all ' ' chars
       }
 
       // command execution
-      if ( strcmp( inputline, "open" ) == 0 ) {
+      if (strcmp(inputline, "open") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if ( open_command( config, &(pos), &(ftag), parse ) == 0 ) {
+         if (open_command(config, &(pos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
-      else if ( strcmp( inputline, "shift" ) == 0 ) {
+      else if (strcmp(inputline, "shift") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if ( shift_command( config, &(pos), &(ftag), parse ) == 0 ) {
+         if (shift_command(config, &(pos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
-      else if ( strcmp( inputline, "ftag" ) == 0 ) {
+      else if (strcmp(inputline, "ftag") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if ( ftag_command( config, &(pos), &(ftag), parse ) == 0 ) {
+         if (ftag_command(config, &(pos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
-      else if ( strcmp( inputline, "ref" ) == 0 ) {
+      else if (strcmp(inputline, "ref") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if ( ref_command( config, &(pos), &(ftag), parse ) == 0 ) {
+         if (ref_command(config, &(pos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
-      else if ( strcmp( inputline, "obj" ) == 0 ) {
+      else if (strcmp(inputline, "obj") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if ( obj_command( config, &(pos), &(ftag), parse ) == 0 ) {
+         if (obj_command(config, config_path, &(pos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
-      else if ( strcmp( inputline, "bounds" ) == 0 ) {
+      else if (strcmp(inputline, "bounds") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if ( bounds_command( config, &(pos), &(ftag), parse ) == 0 ) {
+         if (bounds_command(config, &(pos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
-      else if ( strcmp( inputline, "refresh" ) == 0 ) {
+      else if (strcmp(inputline, "refresh") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if ( refresh_command( config, &(pos), &(ftag), parse ) == 0 ) {
+         if (refresh_command(config, &(pos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
-      else if ( strcmp( inputline, "ns" ) == 0 ) {
-         printf( "\nCurrent Namespace Target : \"%s\"\n\n", pos.ns->idstr );
+      else if (strcmp(inputline, "ns") == 0) {
+         printf("\nCurrent Namespace Target : \"%s\"\n\n", pos.ns->idstr);
       }
       else {
-         printf( OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline );
+         printf(OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline);
       }
 
    }
 
    // cleanup
-   if ( ftag.ctag ) { free( ftag.ctag ); }
-   if ( ftag.streamid ) { free( ftag.streamid ); }
+   if (ftag.ctag) {
+      free(ftag.ctag);
+   }
+   if (ftag.streamid) {
+      free(ftag.streamid);
+   }
    MDAL mdal = pos.ns->prepo->metascheme.mdal;
-   if ( mdal->destroyctxt( pos.ctxt ) ) {
-      printf( OUTPREFX "WARNING: Failed to properly destroy MDAL CTXT\n" );
+   if (mdal->destroyctxt(pos.ctxt)) {
+      printf(OUTPREFX "WARNING: Failed to properly destroy MDAL CTXT\n");
    }
    return retval;
 }
 
 
-int main(int argc, const char **argv)
-{
+int main(int argc, const char** argv) {
    errno = 0; // init to zero (apparently not guaranteed)
-   char *config_path = NULL;
+   char* config_path = NULL;
    char config_v = 0;
 
    char pr_usage = 0;
    int c;
    // parse all position-independent arguments
-   while ((c = getopt(argc, (char *const *)argv, "c:vh")) != -1)
-   {
-      switch (c)
-      {
-         case 'c':
-            config_path = optarg;
-            break;
-         case 'v':
-            config_v = 1;
-            break;
-         case 'h':
-         case '?':
-            pr_usage = 1;
-            break;
-         default:
-            printf("Failed to parse command line options\n");
-            return -1;
+   while ((c = getopt(argc, (char* const*)argv, "c:vh")) != -1) {
+      switch (c) {
+      case 'c':
+         config_path = optarg;
+         break;
+      case 'v':
+         config_v = 1;
+         break;
+      case 'h':
+      case '?':
+         pr_usage = 1;
+         break;
+      default:
+         printf("Failed to parse command line options\n");
+         return -1;
       }
    }
 
    // check if we need to print usage info
-   if ( pr_usage ) {
-      printf( OUTPREFX "Usage info --\n" );
-      printf( OUTPREFX "%s -c configpath [-v] [-h]\n", PROGNAME );
-      printf( OUTPREFX "   -c : Path of the MarFS config file\n" );
-      printf( OUTPREFX "   -v : Verify the MarFS config\n" );
-      printf( OUTPREFX "   -h : Print this usage info\n" );
+   if (pr_usage) {
+      printf(OUTPREFX "Usage info --\n");
+      printf(OUTPREFX "%s -c configpath [-v] [-h]\n", PROGNAME);
+      printf(OUTPREFX "   -c : Path of the MarFS config file\n");
+      printf(OUTPREFX "   -v : Verify the MarFS config\n");
+      printf(OUTPREFX "   -h : Print this usage info\n");
       return -1;
    }
 
    // verify that a config was defined
-   if ( config_path == NULL ) {
-      printf( OUTPREFX "no config path defined ( '-c' arg )\n" );
+   if (config_path == NULL) {
+      printf(OUTPREFX "no config path defined ( '-c' arg )\n");
       return -1;
    }
 
    // read in the marfs config
-   marfs_config* config = config_init( config_path );
-   if ( config == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to initialize config: \"%s\" ( %s )\n",
-              config_path, strerror(errno) );
+   marfs_config* config = config_init(config_path);
+   if (config == NULL) {
+      printf(OUTPREFX "ERROR: Failed to initialize config: \"%s\" ( %s )\n",
+         config_path, strerror(errno));
       return -1;
    }
-   printf( OUTPREFX "marfs config loaded...\n" );
+   printf(OUTPREFX "marfs config loaded...\n");
 
    // verify the config, if requested
-   if ( config_v ) {
-      if ( config_verify( config, 1 ) ) {
-         printf( OUTPREFX "ERROR: Failed to verify config: \"%s\" ( %s )\n",
-                 config_path, strerror(errno) );
-         config_term( config );
+   if (config_v) {
+      if (config_verify(config, 1)) {
+         printf(OUTPREFX "ERROR: Failed to verify config: \"%s\" ( %s )\n",
+            config_path, strerror(errno));
+         config_term(config);
          return -1;
       }
-      printf( OUTPREFX "config verified...\n" );
+      printf(OUTPREFX "config verified...\n");
    }
 
    // enter the main command loop
    int retval = 0;
-   if ( command_loop( config ) ) {
+   if (command_loop(config, config_path)) {
       retval = -1;
    }
 
    // terminate the marfs config
-   if ( config_term( config ) ) {
-      printf( OUTPREFX "WARNING: Failed to properly terminate MarFS config ( %s )\n",
-              strerror(errno) );
+   if (config_term(config)) {
+      printf(OUTPREFX "WARNING: Failed to properly terminate MarFS config ( %s )\n",
+         strerror(errno));
       return -1;
    }
 

@@ -10,7 +10,7 @@
 #FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
 #works, such modified software should be clearly marked, so as not to confuse it
 #with the version available from LANL.
-# 
+#
 #Additionally, redistribution and use in source and binary forms, with or without
 #modification, are permitted provided that the following conditions are met:
 #1. Redistributions of source code must retain the above copyright notice, this
@@ -113,6 +113,7 @@ AXATTR_SET_FUNC_CHECK
 AC_CHECK_LIB([xml2], [xmlReadFile], [], [AC_MSG_ERROR(["Could not locate libxml2!"])])
 AC_CHECK_LIB([fuse], [fuse_main], [], [AC_MSG_ERROR(["Could not locate libfuse!"])])
 AC_CHECK_LIB([ne], [ne_init], [], [AC_MSG_ERROR(["Could not locate libne!"])])
+AC_CHECK_LIB([mpi], [MPI_Abort], [], [AC_MSG_ERROR(["Could not locate libmpi!"])])
 
 PKG_CHECK_MODULES( XML, libxml-2.0 )
 
@@ -122,7 +123,7 @@ PKG_CHECK_MODULES( XML, libxml-2.0 )
 #       [echo
 #        echo "WARNING:  Could not properly link 'crc32_ieee' from isa-l, defaulting to '_base' implementation"
 #        echo "          IN THIS STATE, THESE UTILITES MAY NOT FUNCTION AS EXPECTED AND WILL ALMOST CERTAINLY HAVE VERY POOR PERFORMANCE"
-#        echo], 
+#        echo],
 #       [AC_MSG_ERROR(["Could not locate Intel's Intelligent Storage Acceleration Library (isa-l) on this system!  Please verify that the proper version of the library (v2.16.0 or higher) is installed."])])])
 
 AC_DEFINE( [GTESTNEVAR], [], [Testing variable] )
@@ -137,15 +138,13 @@ AC_CHECK_LIB([logging], [printf_log], [], [AC_MSG_ERROR(["Could not locate liblo
 #librdmacm_present=true
 #AC_CHECK_LIB([rdmacm], [rdma_getaddrinfo], [], [librdmacm_present=false  &&  warnlibs="$warnlibs""librdmacm "])
 #AM_CONDITIONAL([BENCH], [test "$warnlibs" = ""  ])
-#AM_COND_IF([BENCH], [], 
+#AM_COND_IF([BENCH], [],
 #   [echo
 #    echo "WARNING: failed to properly link all necessary functions from $( echo "$warnlibs" | sed 's/ $/\./' | sed 's/ /, /g' )"
 #    echo "         These libraries may be missing, or below the required versions."
 #    echo "         The 'isal_benchmark' subdir will not be built!"
 #    echo ])
 
- 
- 
 # Allow turning on debugging flags
 # NOTE: There are currently no fast-timer (i.e. 'ft') diagnostics.
 #       If there were, we would probably only want to see them for specialized debugging.
@@ -182,6 +181,10 @@ AC_ARG_ENABLE( [debugHASH],
 AC_ARG_ENABLE( [debugCONFIG],
                AS_HELP_STRING( [--enable-debugCONFIG], [Enable 'config'-subdir debug output] ),
                AC_DEFINE( [DEBUG_CONFIG], [], [Enable 'config'-subdir debug output] ), [] )
+
+AC_ARG_ENABLE( [debugRM],
+               AS_HELP_STRING( [--enable-debugRM], [Enable 'rsrc_mgr'-subdir debug output] ),
+               AC_DEFINE( [DEBUG_RM], [], [Enable 'rsrc_mgr'-subdir debug output] ), [] )
 
 AC_ARG_ENABLE( [debugDS],
                AS_HELP_STRING( [--enable-debugDS], [Enable 'datastream'-subdir debug output] ),
@@ -221,6 +224,7 @@ AC_CONFIG_FILES([Makefile
                  src/config/Makefile
                  src/datastream/Makefile
                  src/api/Makefile
+                 src/rsrc_mgr/Makefile
                  src/fuse/Makefile
                ])
 
