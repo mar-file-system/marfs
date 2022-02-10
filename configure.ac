@@ -73,6 +73,7 @@ AC_CONFIG_SRCDIR([COPYRIGHT.h])
 AC_CONFIG_HEADERS([src/marfs_auto_config.h])
 AC_CONFIG_MACRO_DIR([m4])
 AM_INIT_AUTOMAKE([subdir-objects])
+AC_PROG_CC([mpicc mpiCC])
 AM_PROG_CC_C_O
 AC_PROG_LIBTOOL
 
