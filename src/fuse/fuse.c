@@ -142,7 +142,7 @@ int fuse_chmod(const char *path, mode_t mode)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_chmod(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW) * errno;
+  int ret = marfs_chmod(CTXT, newpath, mode, 0) * errno;
   free( newpath );
 
   exit_user(&u_ctxt);
@@ -159,7 +159,7 @@ int fuse_chown(const char *path, uid_t uid, gid_t gid)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_chown(CTXT, newpath, uid, gid, AT_SYMLINK_NOFOLLOW) * errno;
+  int ret = marfs_chown(CTXT, newpath, uid, gid, 0) * errno;
   free( newpath );
 
   exit_user(&u_ctxt);

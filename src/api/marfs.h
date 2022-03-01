@@ -122,20 +122,6 @@ marfs_ctxt marfs_init(const char* configpath, marfs_interface type, char verify)
 int marfs_setctag(marfs_ctxt ctxt, const char* ctag);
 
 /**
- * Populates the given string with the path of the MarFS mountpoint
- * ( as defined by the MarFS config file )
- * @param marfs_ctxt ctxt : marfs_ctxt to retrieve mount path from
- * @param char* mountstr : String to be populated with the mount path
- * @param size_t len : Allocated length of the target string
- * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
- *                  an error occurred.
- *                  NOTE -- if this value is >= the length of the provided buffer, this
- *                  indicates that insufficint buffer space was provided and the resulting
- *                  output string was truncated.
- */
-size_t marfs_mountpath( marfs_ctxt ctxt, char* mountstr, size_t len );
-
-/**
  * Populate the given string with the config version of the provided marfs_ctxt
  * @param marfs_ctxt ctxt : marfs_ctxt to retrieve version info from
  * @param char* verstr : String to be populated
@@ -154,6 +140,23 @@ size_t marfs_configver(marfs_ctxt ctxt, char* verstr, size_t len);
  * @return int : Zero on success, or -1 on failure
  */
 int marfs_term(marfs_ctxt ctxt);
+
+
+// MARFS INFO OPS
+
+/**
+ * Populates the given string with the path of the MarFS mountpoint
+ * ( as defined by the MarFS config file )
+ * @param marfs_ctxt ctxt : marfs_ctxt to retrieve mount path from
+ * @param char* mountstr : String to be populated with the mount path
+ * @param size_t len : Allocated length of the target string
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t marfs_mountpath( marfs_ctxt ctxt, char* mountstr, size_t len );
 
 
 // METADATA PATH OPS
