@@ -136,8 +136,9 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
          "       -n chunknum : Specifies a specific data chunk\n")
 
       USAGE("bounds",
-         "",
-         "Identify the boundaries of the current stream", "")
+         "[-f]",
+         "Identify the boundaries of the current stream",
+         "       -f : Specifies to identify the bounds of just the current file\n")
 
       USAGE("ns",
          "",
@@ -645,26 +646,44 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
       return -1;
    }
 
-   // iterate over files until we find EOS
-   int retval = 0;
-   size_t origfileno = ftag->fileno;
-   while (ftag->endofstream == 0 && retval == 0 &&
-      (ftag->state & FTAG_DATASTATE) >= FTAG_FIN) {
-      // progress to the next file
-      ftag->fileno++;
-      // generate a ref path for the new target file
-      char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
-      if (newrpath == NULL) {
-         printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
-         ftag->fileno = origfileno;
+   // parse args
+   int f_flag = 0;
+   char* parse = strtok(args, " ");
+   while (parse) {
+      if (strcmp(parse, "-f") == 0) {
+         f_flag = 1;
+      }
+      else {
+         printf(OUTPREFX "ERROR: Unrecognized argument for 'bound' command: '%s'\n", parse);
          return -1;
       }
-      // retrieve the FTAG of the new target
-      retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
-      if (retval) {
-         ftag->fileno--;
-      } // if we couldn't retrieve this, go to previous
-      free(newrpath);
+
+      // progress to the next arg
+      parse = strtok(NULL, " ");
+   }
+
+   int retval = 0;
+   size_t origfileno = ftag->fileno;
+   if (!f_flag) {
+      // iterate over files until we find EOS
+      while (ftag->endofstream == 0 && retval == 0 &&
+         (ftag->state & FTAG_DATASTATE) >= FTAG_FIN) {
+         // progress to the next file
+         ftag->fileno++;
+         // generate a ref path for the new target file
+         char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+         if (newrpath == NULL) {
+            printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
+            ftag->fileno = origfileno;
+            return -1;
+         }
+         // retrieve the FTAG of the new target
+         retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
+         if (retval) {
+            ftag->fileno--;
+         } // if we couldn't retrieve this, go to previous
+         free(newrpath);
+      }
    }
 
    // identify object bounds of final file
@@ -681,6 +700,7 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
    }
    size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
    size_t finobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
+   size_t finobjoff = ((ftag->bytes + ftag->offset - headerlen) % dataperobj) + headerlen;
    // special case check
    if ((ftag->state & FTAG_DATASTATE) >= FTAG_FIN && finobjbounds &&
       (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0) {
@@ -689,28 +709,38 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
       finobjbounds--;
    }
 
+
    // print out stream boundaries
-   char* eosreason = "End of Stream";
-   if (retval) {
-      eosreason = "Failed to Identify Subsequent File";
+   if (!f_flag) {
+      char* eosreason = "End of Stream";
+      if (retval) {
+         eosreason = "Failed to Identify Subsequent File";
+      }
+      else if ((ftag->state & FTAG_DATASTATE) < FTAG_FIN) {
+         eosreason = "Unfinished File";
+      }
+      printf("File Bounds:\n   0 -- Initial File\n     to\n   %zu -- %s\n",
+         ftag->fileno, eosreason);
+      printf("Object Bounds:\n   0 -- Initial Object\n     to\n   %zu -- End of Final File\n",
+         ftag->objno + finobjbounds);
+      // restore the original value
+      ftag->fileno = origfileno;
+      char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+      if (newrpath == NULL) {
+         printf(OUTPREFX "ERROR: Failed to identify original ref path\n");
+         return -1;
+      }
+      // retrieve the FTAG of the new target
+      retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
+      free(newrpath);
    }
-   else if ((ftag->state & FTAG_DATASTATE) < FTAG_FIN) {
-      eosreason = "Unfinished File";
+   else {
+      printf("File %zu Bounds:\n   Object %zu Offset %zu\n     to\n   Object %zu Offset %zu\n",
+         ftag->fileno, ftag->objno, ftag->offset, ftag->objno + finobjbounds, finobjoff);
+      printf("Each data object includes a %zu byte recovery header and a %zu byte recovery tail for this file.\n",
+         headerlen, ftag->recoverybytes);
    }
-   printf("File Bounds:\n   0 -- Initial File\n     to\n   %zu -- %s\n",
-      ftag->fileno, eosreason);
-   printf("Object Bounds:\n   0 -- Initial Object\n     to\n   %zu -- End of Final File\n",
-      ftag->objno + finobjbounds);
-   // restore the original value
-   ftag->fileno = origfileno;
-   char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
-   if (newrpath == NULL) {
-      printf(OUTPREFX "ERROR: Failed to identify original ref path\n");
-      return -1;
-   }
-   // retrieve the FTAG of the new target
-   retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
-   free(newrpath);
+
    printf("\n");
 
    return 0;
