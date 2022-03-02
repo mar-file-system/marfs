@@ -675,6 +675,40 @@ size_t recovery_finfotostr( const RECOVERY_FINFO* finfo, char* tgtstr, size_t si
 }
 
 /**
+ * Parse the given string representation of recovery FINFO values and populate the given RECOVERY_FINFO struct
+ * @param RECOVERY_FINFO* finfo : Reference to the FINFO to be populated
+ * @param char* srcstr : Reference to the string to be parsed
+ * @param size_t len : Length of the given string ( excluding NULL-terminator )
+ * @return int : Zero on success, or -1 on failure
+ */
+int recovery_finfofromstr( RECOVERY_FINFO* finfo, char* srcstr, size_t len ) {
+   // check for NULL references
+   if ( finfo == NULL ) {
+      LOG( LOG_ERR, "Received a NULL finfo reference\n" );
+      return -1;
+   }
+   if ( srcstr == NULL  ||  len < 1 ) {
+      LOG( LOG_ERR, "Asked to parse a NULL or empty strstr\n" );
+      return -1;
+   }
+
+   // parse the FINFO string
+   void* parseres = NULL;
+   if ( (parseres = parse_recov_finfo( (void*)srcstr, len, finfo )) == NULL ) {
+      LOG( LOG_ERR, "Failed to parse recovery finfo string\n" );
+      return -1;
+   }
+
+   // check for trailing characters in the buffer
+   if ( ((char*)parseres) - srcstr < len ) {
+      LOG( LOG_ERR, "Recovery FINFO string has trailing characters: \"%*s\"\n",
+                    len - (((char*)parseres) - srcstr), (char*)parse );
+      return -1;
+   }
+   return 0;
+}
+
+/**
  * Initialize a RECOVERY reference for a data stream, based on the given object data,
  * and populate a RECOVERY_HEADER reference with the stream info
  * @param void* objbuffer : Reference to the data content of an object to produce a

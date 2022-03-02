@@ -122,6 +122,15 @@ size_t recovery_headertostr( const RECOVERY_HEADER* header, char* tgtstr, size_t
 size_t recovery_finfotostr( const RECOVERY_FINFO* finfo, char* tgtstr, size_t size );
 
 /**
+ * Parse the given string representation of recovery FINFO values and populate the given RECOVERY_FINFO struct
+ * @param RECOVERY_FINFO* finfo : Reference to the FINFO to be populated
+ * @param char* srcstr : Reference to the string to be parsed
+ * @param size_t len : Length of the given string ( excluding NULL-terminator )
+ * @return int : Zero on success, or -1 on failure
+ */
+int recovery_finfofromstr( RECOVERY_FINFO* finfo, char* srcstr, size_t len );
+
+/**
  * Initialize a RECOVERY reference for a data stream, based on the given object data, 
  * and populate a RECOVERY_HEADER reference with the stream info
  * @param void* objbuffer : Reference to the data content of an object to produce a 
