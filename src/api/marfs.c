@@ -273,34 +273,6 @@ int marfs_setctag( marfs_ctxt ctxt, const char* ctag ) {
 }
 
 /**
- * Populates the given string with the path of the MarFS mountpoint
- * ( as defined by the MarFS config file )
- * @param marfs_ctxt ctxt : marfs_ctxt to retrieve mount path from
- * @param char* mountstr : String to be populated with the mount path
- * @param size_t len : Allocated length of the target string
- * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
- *                  an error occurred.
- *                  NOTE -- if this value is >= the length of the provided buffer, this
- *                  indicates that insufficint buffer space was provided and the resulting
- *                  output string was truncated.
- */
-size_t marfs_mountpath( marfs_ctxt ctxt, char* mountstr, size_t len ) {
-   LOG( LOG_INFO, "ENTRY\n" );
-   // check for invalid arg
-   if ( ctxt == NULL ) {
-      LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
-      errno = EINVAL;
-      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-      return 0;
-   }
-   // print out the config version string
-   size_t retval = snprintf( mountstr, len, "%s", ctxt->config->mountpoint );
-   if ( retval ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
-   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
-   return retval;
-}
-
-/**
  * Populate the given string with the config version of the provided marfs_ctxt
  * @param marfs_ctxt ctxt : marfs_ctxt to retrieve version info from
  * @param char* verstr : String to be populated
@@ -357,6 +329,37 @@ int marfs_term( marfs_ctxt ctxt ) {
    // free the ctxt struct itself
    free( ctxt );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+
+// MARFS INFO OPS
+
+/**
+ * Populates the given string with the path of the MarFS mountpoint
+ * ( as defined by the MarFS config file )
+ * @param marfs_ctxt ctxt : marfs_ctxt to retrieve mount path from
+ * @param char* mountstr : String to be populated with the mount path
+ * @param size_t len : Allocated length of the target string
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t marfs_mountpath( marfs_ctxt ctxt, char* mountstr, size_t len ) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for invalid arg
+   if ( ctxt == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return 0;
+   }
+   // print out the config version string
+   size_t retval = snprintf( mountstr, len, "%s", ctxt->config->mountpoint );
+   if ( retval ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
