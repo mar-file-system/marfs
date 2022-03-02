@@ -78,13 +78,15 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 
 typedef struct datastream_position_struct {
-   size_t totaloffset;
-   size_t dataremaining;
-   size_t excessremaining;
-   size_t objno;
-   size_t offset;
-   size_t excessoffset;
-   size_t dataperobj;
+   size_t totaloffset;      // offset from beginning of file ( SEEK_SET w/ this val would be no-op; includes 'fake' data )
+   size_t dataremaining;    // amount of actual data ( data objects, not truncated ) beyond this position
+   size_t excessremaining;  // amount of 'fake' data ( zero-fill, from truncate beyond EOF ) beyond this position
+   size_t objno;            // currently referenced data object number
+   size_t offset;           // current offset within the referenced data object
+   size_t excessoffset;     // current offset within 'fake' data ( zero-fill, from truncate ), beyond end of actual data
+   size_t dataperobj;       // maximum amount of this file's data than can be stored in each data object
+                            //   ( ftag->objsize - recovHeaderLength ) - recovFinfoLength
+                            //   Note -- this changes per-file, within the same object ( recovFinfoLength differs )
 } DATASTREAM_POSITION;
 
 
