@@ -199,6 +199,59 @@ int main(int argc, char **argv)
 
    // free cmpfinfo vals
    free( cmpfinfo.path );
+   cmpfinfo.inode = 0;
+   cmpfinfo.mode = 0;
+   cmpfinfo.owner = 0;
+   cmpfinfo.group = 0;
+   cmpfinfo.size = 0;
+   cmpfinfo.mtime.tv_sec = 0;
+   cmpfinfo.mtime.tv_nsec = 0;
+   cmpfinfo.eof = 1;
+   cmpfinfo.path = NULL;
+
+
+   // parse finfo string via finfofromstr() and compare
+   if ( recovery_finfofromstr( &(cmpfinfo), finfostr, finfostrlen ) ) {
+      printf( "Failure of recovery_finfofromstr()\n" );
+      return -1;
+   }
+   if ( cmpfinfo.inode != finfo.inode ) {
+      printf( "Parsed finfo has different inode: %lu\n", cmpfinfo.inode );
+      return -1;
+   }
+   if ( cmpfinfo.mode != finfo.mode ) {
+      printf( "Parsed finfo has different mode: %o\n", cmpfinfo.mode );
+      return -1;
+   }
+   if ( cmpfinfo.owner != finfo.owner ) {
+      printf( "Parsed finfo has different owner: %u\n", cmpfinfo.owner );
+      return -1;
+   }
+   if ( cmpfinfo.group != finfo.group ) {
+      printf( "Parsed finfo has different group: %u\n", cmpfinfo.group );
+      return -1;
+   }
+   if ( cmpfinfo.size != finfo.size ) {
+      printf( "Parsed finfo has different size: %zu\n", cmpfinfo.size );
+      return -1;
+   }
+   if ( cmpfinfo.mtime.tv_sec != finfo.mtime.tv_sec  ||
+        cmpfinfo.mtime.tv_nsec != finfo.mtime.tv_nsec ) {
+      printf( "Parsed finfo has different time: %lu.%ld\n",
+              cmpfinfo.mtime.tv_sec, cmpfinfo.mtime.tv_nsec );
+      return -1;
+   }
+   if ( cmpfinfo.eof != finfo.eof ) {
+      printf( "Parsed finfo has different eof: %d\n", (int)cmpfinfo.eof );
+      return -1;
+   }
+   if ( strcmp( cmpfinfo.path, finfo.path ) ) {
+      printf( "Parsed finfo has different path: \"%s\"\n", cmpfinfo.path );
+      return -1;
+   }
+
+   // free cmpfinfo vals
+   free( cmpfinfo.path );
 
    // allocate a fake data object
    RECOVERY_FINFO finfo2 = {

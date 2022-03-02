@@ -700,9 +700,10 @@ int recovery_finfofromstr( RECOVERY_FINFO* finfo, char* srcstr, size_t len ) {
    }
 
    // check for trailing characters in the buffer
-   if ( ((char*)parseres) - srcstr < len ) {
+   char* tailstr = (char*)parseres + 1;
+   if ( (tailstr - srcstr) < len ) {
       LOG( LOG_ERR, "Recovery FINFO string has trailing characters: \"%*s\"\n",
-                    len - (((char*)parseres) - srcstr), (char*)parse );
+                    len - (tailstr - srcstr), tailstr );
       return -1;
    }
    return 0;
