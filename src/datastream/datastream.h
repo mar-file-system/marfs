@@ -14,7 +14,7 @@ LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
 FOR THE USE OF THIS SOFTWARE.  If software is modified to produce
 derivative works, such modified software should be clearly marked, so
 as not to confuse it with the version available from LANL.
- 
+
 Additionally, redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the following
 conditions are met: 1. Redistributions of source code must retain the
@@ -62,8 +62,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "recovery/recovery.h"
 #include "tagging/tagging.h"
 
-typedef enum
-{
+typedef enum {
    CREATE_STREAM,
    EDIT_STREAM,
    READ_STREAM
@@ -81,7 +80,7 @@ typedef struct datastream_struct {
    STREAM_TYPE type;
    char* ctag;       // NOTE -- this ref is shared with files->ftag structs
    char* streamid;   // NOTE -- this ref is shared with files->ftag structs
-   marfs_ns*   ns;   // a stream can only be associated with a single NS
+   marfs_ns* ns;   // a stream can only be associated with a single NS
    size_t      recoveryheaderlen;
    // Stream Position Info
    size_t      fileno;
@@ -95,11 +94,11 @@ typedef struct datastream_struct {
    size_t      filealloc;
    RECOVERY_FINFO finfo;
    // Temporary Buffers
-   char*       ftagstr;
+   char* ftagstr;
    size_t      ftagstrsize;
    char* finfostr;
    size_t finfostrlen;
-}* DATASTREAM;
+}*DATASTREAM;
 
 /**
  * Generate a reference path for the given FTAG
@@ -108,7 +107,7 @@ typedef struct datastream_struct {
  * @return char* : Reference to the newly generated reference path, or NULL on failure
  *                 NOTE -- returned path must be freed by caller
  */
-char* datastream_genrpath( FTAG* ftag, const marfs_ms* ms );
+char* datastream_genrpath(FTAG* ftag, const marfs_ms* ms);
 
 /**
  * Generate data object target info based on the given FTAG and datascheme references
@@ -121,7 +120,7 @@ char* datastream_genrpath( FTAG* ftag, const marfs_ms* ms );
  *                                object location info
  * @return int : Zero on success, or -1 on failure
  */
-int datastream_objtarget( FTAG* ftag, const marfs_ds* ds, char** objname, ne_erasure* erasure, ne_location* location );
+int datastream_objtarget(FTAG* ftag, const marfs_ds* ds, char** objname, ne_erasure* erasure, ne_location* location);
 
 /**
  * Create a new file associated with a CREATE stream
@@ -138,7 +137,7 @@ int datastream_objtarget( FTAG* ftag, const marfs_ds* ds, char** objname, ne_era
  *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
  *            to NULL, and errno set to EBADFD.
  */
-int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos, mode_t mode, const char* ctag );
+int datastream_create(DATASTREAM* stream, const char* path, marfs_position* pos, mode_t mode, const char* ctag);
 
 /**
  * Open an existing file associated with a READ or EDIT stream
@@ -157,21 +156,21 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
  *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
  *            to NULL, and errno set to EBADFD.
  */
-int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, MDAL_FHANDLE* phandle );
+int datastream_open(DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, MDAL_FHANDLE* phandle);
 
 /**
  * Release the given DATASTREAM ( close the stream without completing the referenced file )
  * @param DATASTREAM* stream : Reference to the DATASTREAM to be released
  * @return int : Zero on success, or -1 on failure
  */
-int datastream_release( DATASTREAM* stream );
+int datastream_release(DATASTREAM* stream);
 
 /**
  * Close the given DATASTREAM ( marking the referenced file as complete, for non-READ )
  * @param DATASTREAM* stream : Reference to the DATASTREAM to be closed
  * @return int : Zero on success, or -1 on failure
  */
-int datastream_close( DATASTREAM* stream );
+int datastream_close(DATASTREAM* stream);
 
 /**
  * Read from the file currently referenced by the given READ DATASTREAM
@@ -185,7 +184,7 @@ int datastream_close( DATASTREAM* stream );
  *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
  *            to NULL, and errno set to EBADFD.
  */
-ssize_t datastream_read( DATASTREAM* stream, void* buffer, size_t count );
+ssize_t datastream_read(DATASTREAM* stream, void* buffer, size_t count);
 
 /**
  * Write to the file currently referenced by the given EDIT or CREATE DATASTREAM
@@ -199,7 +198,7 @@ ssize_t datastream_read( DATASTREAM* stream, void* buffer, size_t count );
  *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
  *            to NULL, and errno set to EBADFD.
  */
-ssize_t datastream_write( DATASTREAM* stream, const void* buff, size_t count );
+ssize_t datastream_write(DATASTREAM* stream, const void* buff, size_t count);
 
 /**
  * Change the recovery info pathname for the file referenced by the given CREATE or
@@ -208,7 +207,7 @@ ssize_t datastream_write( DATASTREAM* stream, const void* buff, size_t count );
  * @param const char* recovpath : New recovery info pathname for the file
  * @return int : Zero on success, or -1 on failure
  */
-int datastream_setrecoverypath( DATASTREAM* stream, const char* recovpath );
+int datastream_setrecoverypath(DATASTREAM* stream, const char* recovpath);
 
 /**
  * Seek to the provided offset of the file referenced by the given DATASTREAM
@@ -222,7 +221,7 @@ int datastream_setrecoverypath( DATASTREAM* stream, const char* recovpath );
  *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
  *            to NULL, and errno set to EBADFD.
  */
-off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence );
+off_t datastream_seek(DATASTREAM* stream, off_t offset, int whence);
 
 /**
  * Identify the data object boundaries of the file referenced by the given DATASTREAM
@@ -235,7 +234,7 @@ off_t datastream_seek( DATASTREAM* stream, off_t offset, int whence );
  * @param size_t* size : Reference to be populated with the size of the target data chunk
  * @return int : Zero on success, or -1 on failure
  */
-int datastream_chunkbounds( DATASTREAM* stream, int chunknum, off_t* offset, size_t* size );
+int datastream_chunkbounds(DATASTREAM* stream, int chunknum, off_t* offset, size_t* size);
 
 /**
  * Extend the file referenced by the given CREATE DATASTREAM to the specified total size
@@ -253,7 +252,7 @@ int datastream_chunkbounds( DATASTREAM* stream, int chunknum, off_t* offset, siz
  *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
  *            to NULL, and errno set to EBADFD.
  */
-int datastream_extend( DATASTREAM* stream, off_t length );
+int datastream_extend(DATASTREAM* stream, off_t length);
 
 /**
  * Truncate the file referenced by the given EDIT DATASTREAM to the specified length
@@ -262,7 +261,7 @@ int datastream_extend( DATASTREAM* stream, off_t length );
  * @param off_t length : Target total file length to truncate to
  * @return int : Zero on success, or -1 on failure
  */
-int datastream_truncate( DATASTREAM* stream, off_t length );
+int datastream_truncate(DATASTREAM* stream, off_t length);
 
 /**
  * Set time values on the file referenced by the given EDIT or CREATE DATASTREAM
@@ -271,7 +270,16 @@ int datastream_truncate( DATASTREAM* stream, off_t length );
  * @param const struct timespec times[2] : Time values ( see manpage for 'utimensat' )
  * @return int : Zero on success, or -1 on failure
  */
-int datastream_utimens( DATASTREAM* stream, const struct timespec times[2] );
+int datastream_utimens(DATASTREAM* stream, const struct timespec times[2]);
+
+/**
+ * Get the recovery info referenced by the given READ DATASTREAM
+ * @param DATASTREAM* stream : Reference to the DATASTREAM on which to get recovery
+ * info
+ * @param char** recovinfo : Reference to be populated with the recovery info
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_recoveryinfo(DATASTREAM* stream, RECOVERY_FINFO* recovinfo);
 
 #endif // _DATASTREAM_H
 

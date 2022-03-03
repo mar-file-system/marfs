@@ -64,7 +64,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 
 #include "marfs_auto_config.h"
-#include "datastream.h"
+#include "datastream.c"
 
 #include <stdio.h>
 #include <string.h>
@@ -143,6 +143,13 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
       USAGE("ns",
          "",
          "Print the current MarFS namespace target of this program", "")
+
+      USAGE("recovery",
+         "[-@ offset -f seekfrom]",
+         "Print the recovery information of the specified object",
+         "       -@ offset   : Specifies a file offset to seek to\n"
+         "       -f seekfrom : Specifies a start location for the seek\n"
+         "                    ( either 'set', 'cur', or 'end' )\n")
 
       USAGE("( exit | quit )",
          "",
@@ -774,6 +781,126 @@ int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char*
    return retval;
 }
 
+int recovery_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+   printf("\n");
+   // verify that we have an FTAG value
+   if (ftag->streamid == NULL) {
+      printf(OUTPREFX "ERROR: No current FTAG target\n");
+      return -1;
+   }
+
+   // parse args
+   char curarg = '\0';
+   ssize_t offset = -1;
+   int seekfrom = -1;
+   char* parse = strtok(args, " ");
+   while (parse) {
+      if (curarg == '\0') {
+         if (strcmp(parse, "-@") == 0) {
+            curarg = '@';
+         }
+         else if (strcmp(parse, "-f") == 0) {
+            curarg = 'f';
+         }
+         else {
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'recovery' command: '%s'\n", parse);
+            return -1;
+         }
+      }
+      else if (curarg == '@') {
+         // parse the numeric arg
+         char* endptr = NULL;
+         long long parseval = strtoull(parse, &(endptr), 0);
+         if (*endptr != '\0') {
+            printf(OUTPREFX "ERROR: Expected pure numeric argument for '-%c': \"%s\"\n",
+               curarg, parse);
+            return -1;
+         }
+
+         if (offset != -1) {
+            printf(OUTPREFX "ERROR: Detected duplicate '-@' arg: \"%s\"\n", parse);
+            return -1;
+         }
+
+         if (parseval >= INT_MAX) {
+            printf(OUTPREFX "ERROR: Negative offset value: \"%lld\"\n", parseval);
+            return -1;
+         }
+
+         offset = parseval;
+         curarg = '\0';
+      }
+      else { // == 'f'
+         if (seekfrom != -1) {
+            printf(OUTPREFX "ERROR: Detected duplicate '-f' arg: \"%s\"\n", parse);
+            return -1;
+         }
+
+         if (strcasecmp(parse, "set") == 0) {
+            seekfrom = SEEK_SET;
+         }
+         else if (strcasecmp(parse, "cur") == 0) {
+            seekfrom = SEEK_CUR;
+         }
+         else if (strcasecmp(parse, "end") == 0) {
+            seekfrom = SEEK_END;
+         }
+         else {
+            printf(OUTPREFX "ERROR: '-f' argument is unrecognized: \"%s\"\n", parse);
+            printf(OUTPREFX "ERROR: Acceptable values are 'set'/'cur'/'end'\n");
+            return -1;
+         }
+
+         curarg = '\0';
+      }
+
+      // progress to the next arg
+      parse = strtok(NULL, " ");
+   }
+
+   if ((offset < 0) != (seekfrom < 0)) {
+      printf(OUTPREFX "ERROR: Only one of '-@' and '-f is defined\n");
+      return -1;
+   }
+
+   char* rpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   if (rpath == NULL) {
+      printf(OUTPREFX "ERROR: Failed to generate reference path\n");
+      return -1;
+   }
+
+   DATASTREAM stream = genstream(READ_STREAM, rpath, 1, pos, 0, NULL, NULL);
+   if (stream == NULL) {
+      printf(OUTPREFX "ERROR: Failed to generate stream\n");
+      return -1;
+   }
+
+   if (offset >= 0 && datastream_seek(&stream, offset, seekfrom) < 0) {
+      printf(OUTPREFX "ERROR: Failed to seek\n");
+      datastream_close(&stream);
+      return -1;
+   }
+
+   // read recovery info
+   RECOVERY_FINFO info;
+   if (datastream_recoveryinfo(&stream, &(info))) {
+      printf(OUTPREFX "ERROR: Failed to fetch recovery info\n");
+      datastream_close(&stream);
+      return -1;
+   }
+
+   datastream_close(&stream);
+
+   // parse/print recovery info
+   struct tm* time = localtime(&(info.mtime.tv_sec));
+   char timestr[20];
+   strftime(timestr, 20, "%F %T", time);
+   printf("Recovery Info:\n    Inode: %zu\n    Mode: %o\n    Owner: %d\n    Group: %d\n    Size: %zu\n    Mtime: %s.%.9ld\n    EOF: %d\n    Path: %s\n",
+      info.inode, info.mode, info.owner, info.group, info.size, timestr, info.mtime.tv_nsec, info.eof, info.path);
+
+   return 0;
+
+}
 
 int command_loop(marfs_config* config, char* config_path) {
    // initialize an FTAG struct
@@ -894,6 +1021,13 @@ int command_loop(marfs_config* config, char* config_path) {
          errno = 0;
          retval = -1; // assume failure
          if (refresh_command(config, &(pos), &(ftag), parse) == 0) {
+            retval = 0; // note success
+         }
+      }
+      else if (strcmp(inputline, "recovery") == 0) {
+         errno = 0;
+         retval = -1; // assume failure
+         if (recovery_command(config, &(pos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
