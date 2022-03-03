@@ -1138,7 +1138,7 @@ off_t posixmdal_getdatausage( MDAL_CTXT ctxt ) {
    if ( fstatat( pctxt->refd, dusepath, &(dstat), 0 ) ) {
       free( dusepath ); // cleanup
       // if no file exists, assume zero usage
-      if ( errno = ENOENT ) { errno = 0; return 0; }
+      if ( errno == ENOENT ) { errno = 0; return 0; }
       LOG( LOG_ERR, "Failed to stat the data use file\n" );
       return -1;
    }
@@ -1247,7 +1247,7 @@ off_t posixmdal_getinodeusage( MDAL_CTXT ctxt ) {
    if ( fstatat( pctxt->refd, iusepath, &(istat), 0 ) ) {
       free( iusepath ); // cleanup
       // if no file exists, assume zero usage
-      if ( errno = ENOENT ) { errno = 0; return 0; }
+      if ( errno == ENOENT ) { errno = 0; return 0; }
       LOG( LOG_ERR, "Failed to stat the inode use file\n" );
       return -1;
    }
