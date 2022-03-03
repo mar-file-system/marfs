@@ -167,7 +167,7 @@ int main(int argc, char **argv)
 // INTERNAL FUNC CHECK
 
    // generate a datastream
-   DATASTREAM stream = genstream( CREATE_STREAM, "tgtfile", &(pos), S_IRWXU | S_IRGRP, config->ctag, NULL );
+   DATASTREAM stream = genstream( CREATE_STREAM, "tgtfile", 0, &(pos), S_IRWXU | S_IRGRP, config->ctag, NULL );
    if ( stream == NULL ) {
       printf( "Failed to generate a create stream\n" );
       return -1;
