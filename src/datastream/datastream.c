@@ -550,18 +550,29 @@ int create_new_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt, mode_t
  * Open the specified file at the current ( 'curfile' ) STREAMFILE reference position
  * @param DATASTREAM stream : Current DATASTREAM
  * @param const char* path : Path of the file to be opened
+ * @param char rpathflag : If zero, treat 'path' as a user path
+ *                         If non-zero AND stream is a READ_STREAM, treat 'path' as a reference path
+ *                         NOTE -- ALL datastream_*() functions should use USER PATHS ONLY
+ *                                 This flag is intended to provide options to specific 
+ *                                 administrator programs ( see streamwalker.c, for example )
  * @param MDAL_CTXT ctxt : Current MDAL_CTXT
  * @return int : Zero on success;
  *               One if no FTAG was found, but the meta handle has been preserved;
  *               or -1 on failure
  */
-int open_existing_file( DATASTREAM stream, const char* path, MDAL_CTXT ctxt ) {
+int open_existing_file( DATASTREAM stream, const char* path, char rpathflag, MDAL_CTXT ctxt ) {
 
    // open a handle for the target file
    MDAL curmdal = stream->ns->prepo->metascheme.mdal;
    STREAMFILE* curfile = stream->files + stream->curfile;
    if ( stream->type == READ_STREAM ) {
-      curfile->metahandle = curmdal->open( ctxt, path, O_RDONLY );
+      if ( rpathflag ) {
+         LOG( LOG_INFO, "Opening BY REFERENCE PATH: \"%s\"\n", path );
+         curfile->metahandle = curmdal->openref( ctxt, path, O_RDONLY, 0 );
+      }
+      else {
+         curfile->metahandle = curmdal->open( ctxt, path, O_RDONLY );
+      }
    }
    else {
       curfile->metahandle = curmdal->open( ctxt, path, O_WRONLY );
@@ -990,13 +1001,18 @@ int close_current_obj( DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt ) {
  * Generate a new DATASTREAM of the given type and the given initial target file
  * @param STREAM_TYPE type : Type of the DATASTREAM to be created
  * @param const char* path : Path of the initial file target
+ * @param char rpathflag : If zero, treat 'path' as a user path
+ *                         If non-zero, treat 'path' as a reference path
+ *                         NOTE -- ALL datastream_*() functions should use USER PATHS ONLY
+ *                                 This flag is intended to provide options to specific 
+ *                                 administrator programs ( see streamwalker.c, for example )
  * @param mode_t mode : Mode of the target file ( only used if type == CREATE_STREAM )
  * @param const char* ctag : Current MarFS ctag string ( only used if type == CREATE_STREAM )
  * @param MDAL_FHANDLE* phandle : Reference to be populated with a preserved meta handle
  *                                ( if no FTAG value exists; specific to READ streams )
  * @return DATASTREAM : Created DATASTREAM, or NULL on failure
  */
-DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, mode_t mode, const char* ctag, MDAL_FHANDLE* phandle ) {
+DATASTREAM genstream( STREAM_TYPE type, const char* path, char rpathflag, marfs_position* pos, mode_t mode, const char* ctag, MDAL_FHANDLE* phandle ) {
    // create some shorthand references
    marfs_ds* ds = &(pos->ns->prepo->datascheme);
 
@@ -1110,7 +1126,7 @@ DATASTREAM genstream( STREAM_TYPE type, const char* path, marfs_position* pos, m
    }
    else {
       // open an existing file and populate stream info
-      int openres = open_existing_file( stream, path, pos->ctxt );
+      int openres = open_existing_file( stream, path, rpathflag, pos->ctxt );
       if ( openres > 0  &&  phandle ) {
          LOG( LOG_INFO, "Preserving meta handle for target w/o FTAG: \"%s\"\n", path );
          *phandle = stream->files->metahandle;
@@ -1706,7 +1722,7 @@ int datastream_create( DATASTREAM* stream, const char* path, marfs_position* pos
    }
    if ( newstream == NULL ) { // recheck, so as to catch if the prev stream was abandoned
       // we need to generate a fresh stream structure
-      newstream = genstream( CREATE_STREAM, path, pos, mode, ctag, NULL );
+      newstream = genstream( CREATE_STREAM, path, 0, pos, mode, ctag, NULL );
    }
    // check if we need to close the previous stream
    if ( closestream ) {
@@ -1802,7 +1818,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
          newstream->curfile++; // progress to the next file
          // attempt to open the new file target
          size_t origobjno = newstream->objno; // remember original object number
-         int openres = open_existing_file( newstream, path, pos->ctxt );
+         int openres = open_existing_file( newstream, path, 0, pos->ctxt );
          if ( openres > 0  &&  phandle != NULL ) {
             LOG( LOG_INFO, "Preserving meta handle for target w/o FTAG: \"%s\"\n", path );
             *phandle = (newstream->files + newstream->curfile)->metahandle;
@@ -1870,7 +1886,7 @@ int datastream_open( DATASTREAM* stream, STREAM_TYPE type, const char* path, mar
    }
    if ( newstream == NULL ) { // NOTE -- recheck, so as to catch if the prev stream was closed
       // we need to generate a fresh stream structure
-      newstream = genstream( type, path, pos, 0, NULL, (type == READ_STREAM) ? phandle : NULL );
+      newstream = genstream( type, path, 0, pos, 0, NULL, (type == READ_STREAM) ? phandle : NULL );
    }
    // check if we need to close the previous stream
    if ( closestream ) {
