@@ -1660,12 +1660,14 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       return NULL;
    }
    LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
-   // check NS perms
+   // check NS perms ( require RWMETA and WRITEDATA for file creation )
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&
-            ( (oppos->ns->bperms & NS_RWMETA) != NS_RWMETA ) )
+            ( (oppos->ns->bperms & NS_RWMETA) != NS_RWMETA  ||
+             !(oppos->ns->bperms & NS_WRITEDATA) ) )
         ||
         ( ctxt->itype != MARFS_BATCH        &&
-            ( (oppos->ns->iperms & NS_RWMETA) != NS_RWMETA ) ) 
+            ( (oppos->ns->iperms & NS_RWMETA) != NS_RWMETA   ||
+             !(oppos->ns->iperms & NS_WRITEDATA) ) ) 
       ) {
       LOG( LOG_ERR, "NS perms do not allow a create op\n" );
       pathcleanup( subpath, oppos );
