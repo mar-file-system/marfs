@@ -129,7 +129,7 @@ int enter_groups(user_ctxt ctxt, uid_t uid, gid_t gid)
     LOG(LOG_INFO, "group = %u\n", groups[i]);
   }
 
-  if (setgroups(ngroups, groups))
+  if (syscall(SYS_setgroups, ngroups, groups))
   {
     LOG( LOG_ERR, "Setgroups failure\n" );
     return -1;
@@ -208,7 +208,7 @@ int exit_groups(user_ctxt ctxt)
     LOG(LOG_INFO, "group = %u\n", ctxt->groups[i]);
   }
 
-  if (setgroups(ctxt->group_ct, ctxt->groups))
+  if (syscall(SYS_setgroups,ctxt->group_ct, ctxt->groups))
   {
     LOG( LOG_ERR, "Setgroups failure\n" );
     return -1;

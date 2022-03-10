@@ -971,7 +971,7 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 void *marfs_fuse_init(struct fuse_conn_info *conn)
 {
   LOG(LOG_INFO, "init\n");
-  marfs_ctxt ctxt = marfs_init(getenv("MARFSCONFIGRC"), MARFS_INTERACTIVE, 2);
+  marfs_ctxt ctxt = marfs_init(getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, 2);
   if ( marfs_setctag( ctxt, "FUSE" ) ) {
     LOG( LOG_WARNING, "Failed to set Client Tag String\n" );
   }
