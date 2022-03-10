@@ -62,6 +62,13 @@ AM_LDFLAGS  =
 
 CC = mpicc
 
+noinst_LTLIBRARIES = libRsrcMgr.la
+
+libRsrcMgr_la_SOURCES = rsrc_mgr.c
+libRsrcMgr_la_LIBADD  = ../config/libConfig.la ../mdal/libMDAL.la ../tagging/libTagging.la ../datastream/libDatastream.la
+libRsrcMgr_la_CFLAGS  = $(XML_CFLAGS)
+RSRC_MGR_LIB = libRsrcMgr.la
+
 bin_PROGRAMS = marfs-rsrc_mgr
 marfs_rsrc_mgr_SOURCES = rsrc_mgr.c
 marfs_rsrc_mgr_LDADD   = ../config/libConfig.la ../mdal/libMDAL.la ../tagging/libTagging.la ../datastream/libDatastream.la
@@ -69,8 +76,12 @@ marfs_rsrc_mgr_CFLAGS  = $(XML_CFLAGS)
 
 # ---
 
-check_PROGRAMS =
+check_PROGRAMS = test_rsrc_mgr_nopack
 
-TESTS =
+test_rsrc_mgr_nopack_SOURCES = testing/test_rsrc_mgr_nopack.c
+test_rsrc_mgr_nopack_LDADD = libRsrcMgr.la
+test_rsrc_mgr_nopack_CFLAGS = $(XML_CFLAGS)
+
+TESTS = test_rsrc_mgr_nopack
 
 
