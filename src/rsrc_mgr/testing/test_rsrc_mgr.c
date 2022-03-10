@@ -68,7 +68,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "datastream/datastream.h"
 #include "tagging/tagging.h"
 
-#define MAXSIZE 256 // Must be a power of 2
+#define MAXSIZE 10240
 
 int main(int argc, char** argv) {
   // create the dirs necessary for DAL/MDAL initialization (ignore EEXIST)
@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
   }
 
   // establish a new marfs config
-  marfs_config* config = config_init("./testing/config_nopack.xml");
+  marfs_config* config = config_init("./testing/config.xml");
   if (config == NULL) {
     printf("Failed to initialize marfs config\n");
     return -1;
@@ -118,10 +118,12 @@ int main(int argc, char** argv) {
   char buf[MAXSIZE];
   bzero(buf, MAXSIZE);
   DATASTREAM stream = NULL;
-  char fname[6 + ((int)log10(MAXSIZE))];
+  char fname[6];
+  int sizes[] = { 1024, 1, 1, 1280, 1024 };
   int i;
-  for (i = 1; i <= MAXSIZE; i *= 2) {
-    snprintf(fname, 6 + ((int)log10(MAXSIZE)), "file%d", i);
+  int count = 0;
+  for (i = 0; i < 5; i++) {
+    snprintf(fname, 6, "file%d", i);
 
     if (datastream_create(&stream, fname, &pos, 0744, "")) {
       printf("failed to create %s\n", fname);
@@ -129,10 +131,12 @@ int main(int argc, char** argv) {
     }
 
     errno = 0;
-    if (datastream_write(&stream, buf, i) != i) {
+    if (datastream_write(&stream, buf, sizes[i]) != sizes[i]) {
       printf("failed to write to %s (%s)\n", fname, strerror(errno));
       return -1;
     }
+
+    count += sizes[i];
   }
 
   if (datastream_close(&stream)) {
@@ -140,7 +144,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -163,7 +167,7 @@ int main(int argc, char** argv) {
   off_t dusage = ms->mdal->getdatausage(ctxt);
   off_t iusage = ms->mdal->getinodeusage(ctxt);
 
-  if (dusage != (MAXSIZE * 2) - 1 || iusage != log2(MAXSIZE) + 1) {
+  if (dusage != count || iusage != 5) {
     printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
     return -1;
   }
@@ -208,7 +212,7 @@ int main(int argc, char** argv) {
   char* objname;
   ne_erasure epat;
   ne_location loc;
-  for (i = 0; i <= log2(MAXSIZE); i++) {
+  for (i = 0; i < 5; i++) {
     ftag.fileno = i;
     ftag.objno = i;
     if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
@@ -237,13 +241,15 @@ int main(int argc, char** argv) {
     free(objname);
   }
 
-  // remove one file in the middle of the stream
-  if (ms->mdal->unlink(ctxt, "file8")) {
-    printf("failed to delete file8\n");
+  // remove one file from the beginning of the stream
+  if (ms->mdal->unlink(ctxt, "file0")) {
+    printf("failed to delete file0\n");
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  count -= sizes[0];
+
+  if (system("./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -251,18 +257,83 @@ int main(int argc, char** argv) {
   dusage = ms->mdal->getdatausage(ctxt);
   iusage = ms->mdal->getinodeusage(ctxt);
 
-  if (dusage != (MAXSIZE * 2) - 9 || iusage != log2(MAXSIZE)) {
+  if (dusage != count || iusage != 4) {
     printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
     return -1;
   }
 
-  int del;
-  for (i = 0; i <= log2(MAXSIZE); i++) {
+  int del_ref = 0;
+  int del_obj;
+  for (i = 0; i < 5; i++) {
+    if (i == 0) {
+      del_obj = 1;
+    }
+    else {
+      del_obj = 0;
+    }
+
+    ftag.fileno = i;
+    ftag.objno = i;
+    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+      printf("failed to create rpath\n");
+      return -1;
+    }
+
+    errno = 0;
+    struct stat st;
+    if (ms->mdal->statref(ctxt, rpath, &st) != -del_ref) {
+      printf("failed to stat ref %d (%s)\n", i, strerror(errno));
+      return -1;
+    }
+
+    if (datastream_objtarget(&ftag, ds, &objname, &epat, &loc)) {
+      printf("failed to generate object name\n");
+      return -1;
+    }
+
+    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del_obj) {
+      printf("failed to stat object %i\n", i);
+      return -1;
+    }
+
+    free(rpath);
+    free(objname);
+  }
+
+  // remove one file that spans several objects
+  if (ms->mdal->unlink(ctxt, "file3")) {
+    printf("failed to delete file3\n");
+    return -1;
+  }
+
+  count -= sizes[3];
+
+  if (system("./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
+    printf("rsrc_mgr failed\n");
+    return -1;
+  }
+
+  dusage = ms->mdal->getdatausage(ctxt);
+  iusage = ms->mdal->getinodeusage(ctxt);
+
+  if (dusage != count || iusage != 3) {
+    printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
+    return -1;
+  }
+
+  for (i = 0; i < 5; i++) {
+    if (i == 0 || i == 2) {
+      del_obj = 1;
+    }
+    else {
+      del_obj = 0;
+    }
+
     if (i == 3) {
-      del = 1;
+      del_ref = 1;
     }
     else {
-      del = 0;
+      del_ref = 0;
     }
 
     ftag.fileno = i;
@@ -272,9 +343,10 @@ int main(int argc, char** argv) {
       return -1;
     }
 
+    errno = 0;
     struct stat st;
-    if (ms->mdal->statref(ctxt, rpath, &st) != -del) {
-      printf("failed to stat ref %d\n", i);
+    if (ms->mdal->statref(ctxt, rpath, &st) != -del_ref) {
+      printf("failed to stat ref %d (%s)\n", i, strerror(errno));
       return -1;
     }
 
@@ -283,7 +355,7 @@ int main(int argc, char** argv) {
       return -1;
     }
 
-    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del) {
+    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del_obj) {
       printf("failed to stat object %i\n", i);
       return -1;
     }
@@ -292,283 +364,15 @@ int main(int argc, char** argv) {
     free(objname);
   }
 
-  // remove a second file in the middle of the stream
-  if (ms->mdal->unlink(ctxt, "file16")) {
-    printf("failed to delete file16\n");
-    return -1;
-  }
-
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
-    printf("rsrc_mgr failed\n");
-    return -1;
-  }
-
-  dusage = ms->mdal->getdatausage(ctxt);
-  iusage = ms->mdal->getinodeusage(ctxt);
-
-  if (dusage != (MAXSIZE * 2) - 25 || iusage != log2(MAXSIZE) - 1) {
-    printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
-    return -1;
-  }
-
-  for (i = 0; i <= log2(MAXSIZE); i++) {
-    if (i == 3 || i == 4) {
-      del = 1;
-    }
-    else {
-      del = 0;
-    }
-
-    ftag.fileno = i;
-    ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
-      printf("failed to create rpath\n");
-      return -1;
-    }
-
-    struct stat st;
-    if (ms->mdal->statref(ctxt, rpath, &st) != -del) {
-      printf("failed to stat ref %d\n", i);
-      return -1;
-    }
-
-    if (datastream_objtarget(&ftag, ds, &objname, &epat, &loc)) {
-      printf("failed to generate object name\n");
-      return -1;
-    }
-
-    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del) {
-      printf("failed to stat object %i\n", i);
-      return -1;
-    }
-
-    free(rpath);
-    free(objname);
-  }
-
-  // remove a file at the end of the stream
-  if (ms->mdal->unlink(ctxt, "file256")) {
-    printf("failed to delete file256\n");
-    return -1;
-  }
-
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
-    printf("rsrc_mgr failed\n");
-    return -1;
-  }
-
-  dusage = ms->mdal->getdatausage(ctxt);
-  iusage = ms->mdal->getinodeusage(ctxt);
-
-  if (dusage != MAXSIZE - 25 || iusage != log2(MAXSIZE) - 2) {
-    printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
-    return -1;
-  }
-
-  for (i = 0; i <= log2(MAXSIZE); i++) {
-    if (i == 3 || i == 4 || i == log2(MAXSIZE)) {
-      del = 1;
-    }
-    else {
-      del = 0;
-    }
-
-    ftag.fileno = i;
-    ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
-      printf("failed to create rpath\n");
-      return -1;
-    }
-
-    struct stat st;
-    if (ms->mdal->statref(ctxt, rpath, &st) != -del) {
-      printf("failed to stat ref %d\n", i);
-      return -1;
-    }
-
-    if (datastream_objtarget(&ftag, ds, &objname, &epat, &loc)) {
-      printf("failed to generate object name\n");
-      return -1;
-    }
-
-    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del) {
-      printf("failed to stat object %i\n", i);
-      return -1;
-    }
-
-    free(rpath);
-    free(objname);
-  }
-
-  // remove a file immediately before the end of the stream
-  if (ms->mdal->unlink(ctxt, "file128")) {
-    printf("failed to delete file128\n");
-    return -1;
-  }
-
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
-    printf("rsrc_mgr failed\n");
-    return -1;
-  }
-
-  dusage = ms->mdal->getdatausage(ctxt);
-  iusage = ms->mdal->getinodeusage(ctxt);
-
-  if (dusage != (MAXSIZE / 2) - 25 || iusage != log2(MAXSIZE) - 3) {
-    printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
-    return -1;
-  }
-
-  for (i = 0; i <= log2(MAXSIZE); i++) {
-    if (i == 3 || i == 4 || i >= log2(MAXSIZE) - 1) {
-      del = 1;
-    }
-    else {
-      del = 0;
-    }
-
-    ftag.fileno = i;
-    ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
-      printf("failed to create rpath\n");
-      return -1;
-    }
-
-    struct stat st;
-    if (ms->mdal->statref(ctxt, rpath, &st) != -del) {
-      printf("failed to stat ref %d\n", i);
-      return -1;
-    }
-
-    if (datastream_objtarget(&ftag, ds, &objname, &epat, &loc)) {
-      printf("failed to generate object name\n");
-      return -1;
-    }
-
-    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del) {
-      printf("failed to stat object %i\n", i);
-      return -1;
-    }
-
-    free(rpath);
-    free(objname);
-  }
-
-  // remove a file at the beginning of the stream
-  if (ms->mdal->unlink(ctxt, "file1")) {
-    printf("failed to delete file1\n");
-    return -1;
-  }
-
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
-    printf("rsrc_mgr failed\n");
-    return -1;
-  }
-
-  dusage = ms->mdal->getdatausage(ctxt);
-  iusage = ms->mdal->getinodeusage(ctxt);
-
-  if (dusage != (MAXSIZE / 2) - 26 || iusage != log2(MAXSIZE) - 4) {
-    printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
-    return -1;
-  }
-
-  for (i = 0; i <= log2(MAXSIZE); i++) {
-    if (i == 0 || i == 3 || i == 4 || i >= log2(MAXSIZE) - 1) {
-      del = 1;
-    }
-    else {
-      del = 0;
-    }
-
-    ftag.fileno = i;
-    ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
-      printf("failed to create rpath\n");
-      return -1;
-    }
-
-    struct stat st;
-    if (ms->mdal->statref(ctxt, rpath, &st) != -(del && i)) {
-      printf("failed to stat ref %d\n", i);
-      return -1;
-    }
-
-    if (datastream_objtarget(&ftag, ds, &objname, &epat, &loc)) {
-      printf("failed to generate object name\n");
-      return -1;
-    }
-
-    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del) {
-      printf("failed to stat object %i\n", i);
-      return -1;
-    }
-
-    free(rpath);
-    free(objname);
-  }
-
-  // remove a file right after the beginning of the stream
-  if (ms->mdal->unlink(ctxt, "file2")) {
-    printf("failed to delete file2\n");
-    return -1;
-  }
-
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
-    printf("rsrc_mgr failed\n");
-    return -1;
-  }
-
-  dusage = ms->mdal->getdatausage(ctxt);
-  iusage = ms->mdal->getinodeusage(ctxt);
-
-  if (dusage != (MAXSIZE / 2) - 28 || iusage != log2(MAXSIZE) - 5) {
-    printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
-    return -1;
-  }
-
-  for (i = 0; i <= log2(MAXSIZE); i++) {
-    if (i <= 1 || i == 3 || i == 4 || i >= log2(MAXSIZE) - 1) {
-      del = 1;
-    }
-    else {
-      del = 0;
-    }
-
-    ftag.fileno = i;
-    ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
-      printf("failed to create rpath\n");
-      return -1;
-    }
-
-    struct stat st;
-    if (ms->mdal->statref(ctxt, rpath, &st) != -(del && i)) {
-      printf("failed to stat ref %d\n", i);
-      return -1;
-    }
-
-    if (datastream_objtarget(&ftag, ds, &objname, &epat, &loc)) {
-      printf("failed to generate object name\n");
-      return -1;
-    }
-
-    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del) {
-      printf("failed to stat object %i\n", i);
-      return -1;
-    }
-
-    free(rpath);
-    free(objname);
-  }
-
-  // remove a file bridging two previously removed files
+  // remove one file that spans from partway in an object to the end of the stream
   if (ms->mdal->unlink(ctxt, "file4")) {
     printf("failed to delete file4\n");
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  count -= sizes[4];
+
+  if (system("./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -576,17 +380,24 @@ int main(int argc, char** argv) {
   dusage = ms->mdal->getdatausage(ctxt);
   iusage = ms->mdal->getinodeusage(ctxt);
 
-  if (dusage != (MAXSIZE / 2) - 32 || iusage != log2(MAXSIZE) - 6) {
+  if (dusage != count || iusage != 2) {
     printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
     return -1;
   }
 
-  for (i = 0; i <= log2(MAXSIZE); i++) {
-    if (i <= 4 || i >= log2(MAXSIZE) - 1) {
-      del = 1;
+  for (i = 0; i < 5; i++) {
+    if (i == 0 || i >= 2) {
+      del_obj = 1;
     }
     else {
-      del = 0;
+      del_obj = 0;
+    }
+
+    if (i >= 3) {
+      del_ref = 1;
+    }
+    else {
+      del_ref = 0;
     }
 
     ftag.fileno = i;
@@ -596,9 +407,10 @@ int main(int argc, char** argv) {
       return -1;
     }
 
+    errno = 0;
     struct stat st;
-    if (ms->mdal->statref(ctxt, rpath, &st) != -(del && i)) {
-      printf("failed to stat ref %d\n", i);
+    if (ms->mdal->statref(ctxt, rpath, &st) != -del_ref) {
+      printf("failed to stat ref %d (%s)\n", i, strerror(errno));
       return -1;
     }
 
@@ -607,7 +419,7 @@ int main(int argc, char** argv) {
       return -1;
     }
 
-    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del) {
+    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del_obj) {
       printf("failed to stat object %i\n", i);
       return -1;
     }
@@ -616,17 +428,15 @@ int main(int argc, char** argv) {
     free(objname);
   }
 
-  // remove all remaining files
-  if (ms->mdal->unlink(ctxt, "file32")) {
-    printf("failed to delete file32\n");
-    return -1;
-  }
-  if (ms->mdal->unlink(ctxt, "file64")) {
-    printf("failed to delete file64\n");
+  // remove one file that exists shares an object with other files
+  if (ms->mdal->unlink(ctxt, "file2")) {
+    printf("failed to delete file2\n");
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  count -= sizes[2];
+
+  if (system("./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -634,12 +444,26 @@ int main(int argc, char** argv) {
   dusage = ms->mdal->getdatausage(ctxt);
   iusage = ms->mdal->getinodeusage(ctxt);
 
-  if (dusage != 0 || iusage != 0) {
+  if (dusage != count || iusage != 1) {
     printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
     return -1;
   }
 
-  for (i = 0; i <= log2(MAXSIZE); i++) {
+  for (i = 0; i < 5; i++) {
+    if (i == 0 || i >= 2) {
+      del_obj = 1;
+    }
+    else {
+      del_obj = 0;
+    }
+
+    if (i >= 2) {
+      del_ref = 1;
+    }
+    else {
+      del_ref = 0;
+    }
+
     ftag.fileno = i;
     ftag.objno = i;
     if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
@@ -647,9 +471,10 @@ int main(int argc, char** argv) {
       return -1;
     }
 
+    errno = 0;
     struct stat st;
-    if (ms->mdal->statref(ctxt, rpath, &st) != -1) {
-      printf("failed to stat ref %d\n", i);
+    if (ms->mdal->statref(ctxt, rpath, &st) != -del_ref) {
+      printf("failed to stat ref %d (%s)\n", i, strerror(errno));
       return -1;
     }
 
@@ -658,7 +483,59 @@ int main(int argc, char** argv) {
       return -1;
     }
 
-    if (ne_stat(ds->nectxt, objname, loc) != NULL) {
+    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del_obj) {
+      printf("failed to stat object %i\n", i);
+      return -1;
+    }
+
+    free(rpath);
+    free(objname);
+  }
+
+  // remove the last file in the stream
+  if (ms->mdal->unlink(ctxt, "file1")) {
+    printf("failed to delete file1\n");
+    return -1;
+  }
+
+  count = 0;
+
+  if (system("./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
+    printf("rsrc_mgr failed\n");
+    return -1;
+  }
+
+  dusage = ms->mdal->getdatausage(ctxt);
+  iusage = ms->mdal->getinodeusage(ctxt);
+
+  if (dusage != count || iusage != 0) {
+    printf("incorrect quota values. data: %lu B inodes: %lu\n", dusage, iusage);
+    return -1;
+  }
+
+  del_ref = 1;
+  del_obj = 1;
+  for (i = 0; i < 5; i++) {
+    ftag.fileno = i;
+    ftag.objno = i;
+    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+      printf("failed to create rpath\n");
+      return -1;
+    }
+
+    errno = 0;
+    struct stat st;
+    if (ms->mdal->statref(ctxt, rpath, &st) != -del_ref) {
+      printf("failed to stat ref %d (%s)\n", i, strerror(errno));
+      return -1;
+    }
+
+    if (datastream_objtarget(&ftag, ds, &objname, &epat, &loc)) {
+      printf("failed to generate object name\n");
+      return -1;
+    }
+
+    if ((ne_stat(ds->nectxt, objname, loc) == NULL) != del_obj) {
       printf("failed to stat object %i\n", i);
       return -1;
     }

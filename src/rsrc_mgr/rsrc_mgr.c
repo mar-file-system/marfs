@@ -100,8 +100,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define ZERO_FLAG 'z'
 
 // Default TQ values
-#define NUM_PROD 2
-#define NUM_CONS 2
+#define NUM_PROD 10
+#define NUM_CONS 10
 #define QDEPTH 100
 
 int rank = 0;
@@ -549,7 +549,6 @@ int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag,
         ms->mdal->close(handle);
         return -1;
       }
-
 
       if (skip < 0) {
         skip *= -1;
@@ -1281,12 +1280,41 @@ int ref_paths(const marfs_ns* ns, const char* name) {
     return -1;
   }
 
+  tstate = NULL;
+
+  // If any work packages are left on the TQ, dequeue and consume them
+  // NOTE: In this case, we initialize a new consumer thread state to handle
+  // remaining work
   if (tq_close(tq) > 0) {
     WorkPkg work = NULL;
     while (tq_dequeue(tq, TQ_ABORT, (void**)&work) > 0) {
-      free_work(work);
+      if (!tstate && stream_thread_init(tqopts.num_threads, (void*)&gstate, (void**)&tstate)) {
+        LOG(LOG_ERR, "Rank %d: Failed to initialize thread state for cleanup\n", rank);
+        pthread_mutex_destroy(&(gstate.lock));
+        ms->mdal->destroyctxt(ctxt);
+        free(ns_path);
+        return -1;
+      }
+
+      if (stream_cons((void**)&tstate, (void**)&work)) {
+        LOG(LOG_ERR, "Rank %d: Failed to consume work left on queue\n", rank);
+        free(tstate);
+        pthread_mutex_destroy(&(gstate.lock));
+        ms->mdal->destroyctxt(ctxt);
+        free(ns_path);
+        return -1;
+      }
     }
     tq_close(tq);
+  }
+
+  if (tstate) {
+    totals.size += tstate->q_data.size;
+    totals.count += tstate->q_data.count;
+    totals.del_objs += tstate->q_data.del_objs;
+    totals.del_refs += tstate->q_data.del_refs;
+
+    free(tstate);
   }
 
   pthread_mutex_destroy(&(gstate.lock));

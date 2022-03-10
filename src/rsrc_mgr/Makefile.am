@@ -76,12 +76,16 @@ marfs_rsrc_mgr_CFLAGS  = $(XML_CFLAGS)
 
 # ---
 
-check_PROGRAMS = test_rsrc_mgr_nopack
+check_PROGRAMS = test_rsrc_mgr test_rsrc_mgr_nopack
+
+test_rsrc_mgr_SOURCES = testing/test_rsrc_mgr.c
+test_rsrc_mgr_LDADD = libRsrcMgr.la
+test_rsrc_mgr_CFLAGS = $(XML_CFLAGS)
 
 test_rsrc_mgr_nopack_SOURCES = testing/test_rsrc_mgr_nopack.c
 test_rsrc_mgr_nopack_LDADD = libRsrcMgr.la
 test_rsrc_mgr_nopack_CFLAGS = $(XML_CFLAGS)
 
-TESTS = test_rsrc_mgr_nopack
+TESTS = test_rsrc_mgr test_rsrc_mgr_nopack
 
 
