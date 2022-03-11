@@ -140,7 +140,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -243,7 +243,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -298,7 +298,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -352,7 +352,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -406,7 +406,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -460,7 +460,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -514,7 +514,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -568,7 +568,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -626,7 +626,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
