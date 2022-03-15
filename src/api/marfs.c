@@ -73,12 +73,14 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 //   -------------   INTERNAL DEFINITIONS    -------------
 
 typedef struct marfs_ctxt_struct {
-   marfs_config* config;
-   marfs_interface itype;
-   marfs_position pos;
+   pthread_mutex_t    lock; // for serializing access to this structure (if necessary)
+   marfs_config*    config;
+   marfs_interface   itype;
+   marfs_position      pos;
 }* marfs_ctxt;
 
 typedef struct marfs_fhandle_struct {
+   pthread_mutex_t    lock; // for serializing access to this structure (if necessary)
    MDAL_FHANDLE metahandle; // for meta/direct access
    DATASTREAM   datastream; // for standard access
    marfs_ns*            ns; // reference to the containing NS
@@ -87,6 +89,7 @@ typedef struct marfs_fhandle_struct {
 }* marfs_fhandle;
 
 typedef struct marfs_dhandle_struct {
+   pthread_mutex_t    lock; // for serializing access to this structure (if necessary)
    MDAL_DHANDLE metahandle;
    marfs_ns*            ns;
    unsigned int      depth;
@@ -231,6 +234,15 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   // initialize our lock
+   if ( pthread_mutex_init( &(ctxt->lock), NULL ) ) {
+      LOG( LOG_ERR,"Failed to initialize lock for marfs_ctxt\n" );
+      rootmdal->destroyctxt( ctxt->pos.ctxt );
+      config_term( ctxt->config );
+      free( ctxt );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
    // all done
    LOG( LOG_INFO, "EXIT - Success\n" );
    return ctxt;
@@ -265,9 +277,17 @@ int marfs_setctag( marfs_ctxt ctxt, const char* ctag ) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the ctxt lock
+   if ( pthread_mutex_lock( &(ctxt->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_ctxt lock\n" );
+      free( newctag );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // replace the original client tag
    free( ctxt->config->ctag );
    ctxt->config->ctag = newctag;
+   pthread_mutex_unlock( &(ctxt->lock) );
    LOG( LOG_INFO, "EXIT - Success\n" );
    return 0;
 }
@@ -314,6 +334,12 @@ int marfs_term( marfs_ctxt ctxt ) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the ctxt lock
+   if ( pthread_mutex_lock( &(ctxt->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_ctxt lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // terminate the position MDAL_CTXT
    int retval = 0;
    MDAL curmdal = ctxt->pos.ns->prepo->metascheme.mdal;
@@ -327,6 +353,8 @@ int marfs_term( marfs_ctxt ctxt ) {
       retval = -1;
    }
    // free the ctxt struct itself
+   pthread_mutex_unlock( &(ctxt->lock) );
+   pthread_mutex_destroy( &(ctxt->lock) );
    free( ctxt );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -366,6 +394,11 @@ size_t marfs_mountpath( marfs_ctxt ctxt, char* mountstr, size_t len ) {
 
 
 // METADATA PATH OPS
+// 
+// NOTE -- these skip acquiring the ctxt lock, for efficiency, as none modify the structure
+//         However, this means that calling ctxt modification functions in parallel with these 
+//         will result in undefined behavior.
+//
 
 /**
  * Check access to the specified file
@@ -1103,6 +1136,11 @@ int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
 
 
 // METADATA FILE HANDLE OPS
+// 
+// NOTE -- these skip acquiring the handle lock, for efficiency, as none modify the structure
+//         However, this means that calling handle modification functions in parallel with these 
+//         will result in undefined behavior.
+//
 
 /**
  * Perform a stat operation on the file referenced by the given marfs_fhandle
@@ -1324,6 +1362,13 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   if ( pthread_mutex_init( &(rethandle->lock), NULL ) ) {
+      LOG( LOG_ERR, "Failed to initialize marfs_dhandle mutex lock\n" );
+      free( rethandle );
+      pathcleanup( subpath, oppos );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
    rethandle->ns = oppos->ns;
    rethandle->depth = tgtdepth;
    rethandle->itype = ctxt->itype;
@@ -1355,6 +1400,7 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
    if ( rethandle->metahandle == NULL ) {
       LOG( LOG_ERR, "Failed to open handle for NS target: \"%s\"\n", subpath );
       pathcleanup( subpath, oppos );
+      pthread_mutex_destroy( &(rethandle->lock) );
       free( rethandle );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
@@ -1380,6 +1426,12 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   // acquire directory lock
+   if ( pthread_mutex_lock( &(dh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to aqcuire marfs_dhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
    // cache our original errno value, and clear it
    int cachederrno = errno;
    errno = 0;
@@ -1391,6 +1443,7 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
       if ( config_nsinfo( tgtsubspace->idstr, NULL, &(subspacepath) ) ) {
          LOG( LOG_ERR, "Failed to identify NS path of subspace: \"%s\"\n",
               tgtsubspace->idstr );
+         pthread_mutex_unlock( &(dh->lock) );
          LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
       }
@@ -1399,18 +1452,21 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
       if ( tgtmdal->statnamespace( tgtmdal->ctxt, subspacepath, &(stval) ) ) {
          LOG( LOG_ERR, "Failed to stat subspace root: \"%s\"\n", subspacepath );
          free( subspacepath );
+         pthread_mutex_unlock( &(dh->lock) );
          LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
       }
       free( subspacepath );
       if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->subspcindex].name ) >= dh->subspcnamealloc ) {
          LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->subspcindex].name, dh->subspcnamealloc );
+         pthread_mutex_unlock( &(dh->lock) );
          errno = ENAMETOOLONG;
          LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
       }
       // increment our index and return the dirent ref
       dh->subspcindex++;
+      pthread_mutex_unlock( &(dh->lock) );
       errno = cachederrno;
       return &(dh->subspcent);
    }
@@ -1426,6 +1482,7 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
       }
       else { repeat = 0; } // break on error, or if the entry wasn't filtered
    }
+   pthread_mutex_unlock( &(dh->lock) );
    if ( retval != NULL ) { LOG( LOG_INFO, "EXIT - Success\n" ); errno = cachederrno; }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -1447,6 +1504,7 @@ int marfs_closedir(marfs_dhandle dh) {
    // close the handle and free all memory
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
    int retval = curmdal->closedir( dh->metahandle );
+   pthread_mutex_destroy( &(dh->lock) );
    free( dh );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -1488,20 +1546,44 @@ int marfs_chdir(marfs_ctxt ctxt, marfs_dhandle dh) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the dir handle lock
+   if ( pthread_mutex_lock( &(dh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_dhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // acquire the ctxt lock
+   if ( pthread_mutex_lock( &(ctxt->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_ctxt lock\n" );
+      pthread_mutex_unlock( &(dh->lock) );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // chdir to the specified dhandle
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
    if ( curmdal->chdir( ctxt->pos.ctxt, dh->metahandle ) ) {
       LOG( LOG_ERR, "Failed to chdir MDAL_CTXT\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      pthread_mutex_unlock( &(ctxt->lock) );
+      pthread_mutex_unlock( &(dh->lock) );
       return -1;
    }
    // MDAL_CTXT has been updated; now update the position
    ctxt->pos.ns = dh->ns;
    ctxt->pos.depth = dh->depth;
+   pthread_mutex_unlock( &(ctxt->lock) );
+   pthread_mutex_unlock( &(dh->lock) );
+   pthread_mutex_destroy( &(dh->lock) );
    free( dh ); // the underlying MDAL_DHANDLE is no longer valid
    LOG( LOG_INFO, "EXIT - Success\n" );
    return 0;
 }
+
+// 
+// NOTE -- these skip acquiring the dir lock, for efficiency, as none modify the structure
+//         However, this means that calling dir modification functions in parallel with these 
+//         will result in undefined behavior.
+//
 
 /**
  * Set the specified xattr on the directory referenced by the given marfs_dhandle
@@ -1660,12 +1742,14 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       return NULL;
    }
    LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
-   // check NS perms
+   // check NS perms ( require RWMETA and WRITEDATA for file creation )
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&
-            ( (oppos->ns->bperms & NS_RWMETA) != NS_RWMETA ) )
+            ( (oppos->ns->bperms & NS_RWMETA) != NS_RWMETA  ||
+             !(oppos->ns->bperms & NS_WRITEDATA) ) )
         ||
         ( ctxt->itype != MARFS_BATCH        &&
-            ( (oppos->ns->iperms & NS_RWMETA) != NS_RWMETA ) ) 
+            ( (oppos->ns->iperms & NS_RWMETA) != NS_RWMETA   ||
+             !(oppos->ns->iperms & NS_WRITEDATA) ) ) 
       ) {
       LOG( LOG_ERR, "NS perms do not allow a create op\n" );
       pathcleanup( subpath, oppos );
@@ -1732,35 +1816,56 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       stream->datastream = NULL;
       stream->metahandle = NULL;
       stream->dataremaining = 0;
-      newstream = 1;
-   }
-   else if ( stream->datastream == NULL  &&  stream->metahandle == NULL ) {
-      // a double-NULL handle has been flushed or suffered a fatal error
-      LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
-      pathcleanup( subpath, oppos );
-      errno = EINVAL;
-      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-      return NULL;
-   }
-   else if ( stream->datastream == NULL  &&  stream->metahandle != NULL ) {
-      // meta-only reference; attempt to close it
-      MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-      if ( curmdal->close( stream->metahandle ) ) {
-         LOG( LOG_ERR, "Failed to close previous MDAL_FHANDLE\n" );
-         stream->metahandle = NULL;
+      if ( pthread_mutex_init( &(stream->lock), NULL ) ) {
+         LOG( LOG_ERR, "Failed to initialize lock of new marfs_fhandle struct\n" );
+         free( stream );
          pathcleanup( subpath, oppos );
-         errno = EBADFD;
          LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
       }
-      stream->metahandle = NULL; // don't reattempt this op
+      newstream = 1;
+   }
+   else {
+      // acquire the lock for an existing stream
+      if ( pthread_mutex_lock( &(stream->lock) ) ) {
+         LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+         pathcleanup( subpath, oppos );
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      if ( stream->datastream == NULL  &&  stream->metahandle == NULL ) {
+         // a double-NULL handle has been flushed or suffered a fatal error
+         LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
+         pthread_mutex_unlock( &(stream->lock) );
+         pathcleanup( subpath, oppos );
+         errno = EINVAL;
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      else if ( stream->datastream == NULL  &&  stream->metahandle != NULL ) {
+         // meta-only reference; attempt to close it
+         MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+         if ( curmdal->close( stream->metahandle ) ) {
+            LOG( LOG_ERR, "Failed to close previous MDAL_FHANDLE\n" );
+            stream->metahandle = NULL;
+            pthread_mutex_unlock( &(stream->lock) );
+            pathcleanup( subpath, oppos );
+            errno = EBADFD;
+            LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+            return NULL;
+         }
+         stream->metahandle = NULL; // don't reattempt this op
+      }
    }
    // attempt the op
    if ( datastream_create( &(stream->datastream), subpath, oppos, mode, ctxt->config->ctag ) ) {
       LOG( LOG_ERR, "Failure of datastream_create()\n" );
       pathcleanup( subpath, oppos );
       if ( newstream ) { free( stream ); }
-      else if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+      else {
+         if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+         pthread_mutex_unlock( &(stream->lock) );
+      }
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
@@ -1769,6 +1874,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
    stream->itype = ctxt->itype;
    // cleanup and return
+   if ( !(newstream) ) { pthread_mutex_unlock( &(stream->lock) ); }
    pathcleanup( subpath, oppos ); // done with path info
    LOG( LOG_INFO, "EXIT - Success\n" );
    return stream;   
@@ -1852,28 +1958,46 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       stream->ns = NULL;
       stream->datastream = NULL;
       stream->metahandle = NULL;
-      newstream = 1;
-   }
-   else if ( stream->datastream == NULL  &&  stream->metahandle == NULL ) {
-      // a double-NULL handle has been flushed or suffered a fatal error
-      LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
-      pathcleanup( subpath, oppos );
-      errno = EINVAL;
-      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-      return NULL;
-   }
-   else if ( stream->datastream == NULL  &&  stream->metahandle != NULL ) {
-      // meta-only reference; attempt to close it
-      MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-      if ( curmdal->close( stream->metahandle ) ) {
-         LOG( LOG_ERR, "Failed to close previous MDAL_FHANDLE\n" );
-         stream->metahandle = NULL;
+      if ( pthread_mutex_init( &(stream->lock), NULL ) ) {
+         LOG( LOG_ERR, "Failed to initialize lock of new marfs_fhandle struct\n" );
+         free( stream );
          pathcleanup( subpath, oppos );
-         errno = EBADFD;
          LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
       }
-      stream->metahandle = NULL; // don't reattempt this op
+      newstream = 1;
+   }
+   else {
+      // acquire the lock for an existing stream
+      if ( pthread_mutex_lock( &(stream->lock) ) ) {
+         LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+         pathcleanup( subpath, oppos );
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      if ( stream->datastream == NULL  &&  stream->metahandle == NULL ) {
+         // a double-NULL handle has been flushed or suffered a fatal error
+         LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
+         pthread_mutex_unlock( &(stream->lock) );
+         pathcleanup( subpath, oppos );
+         errno = EINVAL;
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      else if ( stream->datastream == NULL  &&  stream->metahandle != NULL ) {
+         // meta-only reference; attempt to close it
+         MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+         if ( curmdal->close( stream->metahandle ) ) {
+            LOG( LOG_ERR, "Failed to close previous MDAL_FHANDLE\n" );
+            stream->metahandle = NULL;
+            pthread_mutex_unlock( &(stream->lock) );
+            pathcleanup( subpath, oppos );
+            errno = EBADFD;
+            LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+            return NULL;
+         }
+         stream->metahandle = NULL; // don't reattempt this op
+      }
    }
    // attempt the op, allowing a meta-only reference ONLY if we are opening for read
    MDAL_FHANDLE phandle = NULL;
@@ -1891,6 +2015,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
                LOG( LOG_WARNING, "Failed to close preserved MDAL_FHANDLE for new target\n" );
             }
             stream->metahandle = NULL;
+            // NOTE --  no need to unlock, as this is a fresh stream
             errno = EBADFD;
             LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
             return NULL;
@@ -1901,6 +2026,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
          stream->ns = oppos->ns;
          stream->itype = ctxt->itype;
          // cleanup and return
+         if ( !(newstream) ) { pthread_mutex_unlock( &(stream->lock) ); }
          pathcleanup( subpath, oppos );
          LOG( LOG_INFO, "EXIT - Success\n" );
          return stream;
@@ -1908,7 +2034,10 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       LOG( LOG_ERR, "Failure of datastream_open()\n" );
       pathcleanup( subpath, oppos );
       if ( newstream ) { free( stream ); }
-      else if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+      else {
+         if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+         pthread_mutex_unlock( &(stream->lock) );
+      }
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
@@ -1917,6 +2046,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
    stream->itype = ctxt->itype;
    // cleanup and return
+   if ( !(newstream) ) { pthread_mutex_unlock( &(stream->lock) ); }
    pathcleanup( subpath, oppos ); // done with path info
    LOG( LOG_INFO, "EXIT - Success\n" );
    return stream;
@@ -1946,9 +2076,17 @@ int marfs_close(marfs_fhandle stream) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // reject a flushed handle
    if ( stream->metahandle == NULL  &&  stream->datastream == NULL ) {
       LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
+      pthread_mutex_unlock( &(stream->lock) );
+      pthread_mutex_destroy( &(stream->lock) );
       free( stream );
       errno = EINVAL;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -1971,6 +2109,10 @@ int marfs_close(marfs_fhandle stream) {
          LOG( LOG_ERR, "Failed to close datastream\n" );
       }
    }
+   stream->metahandle = NULL;
+   stream->datastream = NULL;
+   pthread_mutex_unlock( &(stream->lock) );
+   pthread_mutex_destroy( &(stream->lock) );
    free( stream );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -1997,6 +2139,12 @@ int marfs_release(marfs_fhandle stream) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check for datastream reference
    int retval = 0;
    if ( stream->datastream ) {
@@ -2014,6 +2162,10 @@ int marfs_release(marfs_fhandle stream) {
          LOG( LOG_ERR, "Failed to close MDAL_FHANDLE\n" );
       }
    }
+   stream->metahandle = NULL;
+   stream->datastream = NULL;
+   pthread_mutex_unlock( &(stream->lock) );
+   pthread_mutex_destroy( &(stream->lock) );
    free( stream );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -2042,6 +2194,12 @@ int marfs_flush(marfs_fhandle stream) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check for datastream reference
    int retval = 0;
    if ( stream->datastream ) {
@@ -2061,6 +2219,7 @@ int marfs_flush(marfs_fhandle stream) {
    }
    stream->metahandle = NULL;
    stream->datastream = NULL;
+   pthread_mutex_unlock( &(stream->lock) );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -2093,9 +2252,16 @@ int marfs_setrecoverypath(marfs_ctxt ctxt, marfs_fhandle stream, const char* rec
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check for datastream reference
    if ( stream->datastream == NULL ) {
       LOG( LOG_ERR, "Received marfs_fhandle has no underlying datastream\n" );
+      pthread_mutex_unlock( &(stream->lock) );
       errno = EINVAL;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
@@ -2106,6 +2272,7 @@ int marfs_setrecoverypath(marfs_ctxt ctxt, marfs_fhandle stream, const char* rec
    int tgtdepth = pathshift( ctxt, recovpath, &(subpath), &(oppos) );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to identify target info for setrecoverypath op\n" );
+      pthread_mutex_unlock( &(stream->lock) );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
@@ -2113,6 +2280,7 @@ int marfs_setrecoverypath(marfs_ctxt ctxt, marfs_fhandle stream, const char* rec
    if ( oppos->ns != stream->ns ) {
       LOG( LOG_ERR, "Target NS (\"%s\") does not match stream NS (\"%s\")\n",
            oppos->ns->idstr, stream->ns->idstr );
+      pthread_mutex_unlock( &(stream->lock) );
       pathcleanup( subpath, oppos );
       errno = EINVAL;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -2120,6 +2288,7 @@ int marfs_setrecoverypath(marfs_ctxt ctxt, marfs_fhandle stream, const char* rec
    }
    // perform the op
    int retval = datastream_setrecoverypath( &(stream->datastream), subpath );
+   pthread_mutex_unlock( &(stream->lock) );
    pathcleanup( subpath, oppos );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -2150,10 +2319,17 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check NS perms
    if ( ( stream->itype != MARFS_INTERACTIVE  &&  !(stream->ns->bperms & NS_READDATA) )  ||
         ( stream->itype != MARFS_BATCH        &&  !(stream->ns->iperms & NS_READDATA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a read op\n" );
+      pthread_mutex_unlock( &(stream->lock) );
       errno = EPERM;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
@@ -2162,6 +2338,7 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
    if ( stream->datastream ) {
       // read from datastream reference
       ssize_t retval = datastream_read( &(stream->datastream), buf, size );
+      pthread_mutex_unlock( &(stream->lock) );
       if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
       return retval;
@@ -2179,6 +2356,7 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       retval = curmdal->read( stream->metahandle, buf, size );
    }
+   pthread_mutex_unlock( &(stream->lock) );
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -2205,10 +2383,17 @@ ssize_t marfs_write(marfs_fhandle stream, const void* buf, size_t size) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check NS perms
    if ( ( stream->itype != MARFS_INTERACTIVE  &&  !(stream->ns->bperms & NS_WRITEDATA) )  ||
         ( stream->itype != MARFS_BATCH        &&  !(stream->ns->iperms & NS_WRITEDATA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a write op %d\n", (int)stream->ns->bperms );
+      pthread_mutex_unlock( &(stream->lock) );
       errno = EPERM;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
@@ -2217,12 +2402,14 @@ ssize_t marfs_write(marfs_fhandle stream, const void* buf, size_t size) {
    if ( stream->datastream ) {
       // write to the datastream reference
       ssize_t retval = datastream_write( &(stream->datastream), buf, size );
+      pthread_mutex_unlock( &(stream->lock) );
       if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
       return retval;
    }
    // meta only reference ( direct write is currently unsupported )
    LOG( LOG_ERR, "Cannot write to a meta-only reference\n" );
+   pthread_mutex_unlock( &(stream->lock) );
    errno = EPERM;
    LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
    return -1;
@@ -2250,11 +2437,18 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check for datastream reference
    if ( stream->datastream ) {
       LOG( LOG_INFO, "Seeking datastream\n" );
       // seek the datastream reference
       off_t retval = datastream_seek( &(stream->datastream), offset, whence );
+      pthread_mutex_unlock( &(stream->lock) );
       if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
       return retval;
@@ -2272,6 +2466,7 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       retval = curmdal->lseek( stream->metahandle, offset, whence );
    }
+   pthread_mutex_unlock( &(stream->lock) );
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -2297,16 +2492,24 @@ int marfs_chunkbounds(marfs_fhandle stream, int chunknum, off_t* offset, size_t*
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check for datastream reference
    if ( stream->datastream ) {
       // identify datastream reference chunkbounds
       int retval = datastream_chunkbounds( &(stream->datastream), chunknum, offset, size );
+      pthread_mutex_unlock( &(stream->lock) );
       if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
       return retval;
    }
    // meta only reference ( this function does not apply )
    LOG( LOG_ERR, "Cannot identify chunk boundaries for a meta-only reference\n" );
+   pthread_mutex_unlock( &(stream->lock) );
    errno = EINVAL;
    LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
    return -1;
@@ -2328,10 +2531,17 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check NS perms
    if ( ( stream->itype != MARFS_INTERACTIVE  &&  !(stream->ns->bperms & NS_WRITEDATA) )  ||
         ( stream->itype != MARFS_BATCH        &&  !(stream->ns->iperms & NS_WRITEDATA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a truncate op\n" );
+      pthread_mutex_unlock( &(stream->lock) );
       errno = EPERM;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
@@ -2340,6 +2550,7 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
    if ( stream->datastream ) {
       // truncate the datastream reference
       int retval = datastream_truncate( &(stream->datastream), length );
+      pthread_mutex_unlock( &(stream->lock) );
       if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
       return retval;
@@ -2357,6 +2568,7 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       retval = curmdal->ftruncate( stream->metahandle, length );
    }
+   pthread_mutex_unlock( &(stream->lock) );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -2387,16 +2599,24 @@ int marfs_extend(marfs_fhandle stream, off_t length) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check for datastream reference
    if ( stream->datastream ) {
       // extend the datastream reference
       int retval = datastream_extend( &(stream->datastream), length );
+      pthread_mutex_unlock( &(stream->lock) );
       if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
       return retval;
    }
    // meta only reference ( this function does not apply )
    LOG( LOG_ERR, "Cannot extend a meta-only reference\n" );
+   pthread_mutex_unlock( &(stream->lock) );
    errno = EINVAL;
    LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
    return -1;
