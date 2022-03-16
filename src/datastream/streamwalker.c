@@ -64,7 +64,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 
 #include "marfs_auto_config.h"
-#include "datastream.h"
+#include "datastream.c"
 
 #include <stdio.h>
 #include <string.h>
@@ -136,12 +136,20 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
          "       -n chunknum : Specifies a specific data chunk\n")
 
       USAGE("bounds",
-         "",
-         "Identify the boundaries of the current stream", "")
+         "[-f]",
+         "Identify the boundaries of the current stream",
+         "       -f : Specifies to identify the bounds of just the current file\n")
 
       USAGE("ns",
          "",
          "Print the current MarFS namespace target of this program", "")
+
+      USAGE("recovery",
+         "[-@ offset -f seekfrom]",
+         "Print the recovery information of the specified object",
+         "       -@ offset   : Specifies a file offset to seek to\n"
+         "       -f seekfrom : Specifies a start location for the seek\n"
+         "                    ( either 'set', 'cur', or 'end' )\n")
 
       USAGE("( exit | quit )",
          "",
@@ -645,26 +653,44 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
       return -1;
    }
 
-   // iterate over files until we find EOS
-   int retval = 0;
-   size_t origfileno = ftag->fileno;
-   while (ftag->endofstream == 0 && retval == 0 &&
-      (ftag->state & FTAG_DATASTATE) >= FTAG_FIN) {
-      // progress to the next file
-      ftag->fileno++;
-      // generate a ref path for the new target file
-      char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
-      if (newrpath == NULL) {
-         printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
-         ftag->fileno = origfileno;
+   // parse args
+   int f_flag = 0;
+   char* parse = strtok(args, " ");
+   while (parse) {
+      if (strcmp(parse, "-f") == 0) {
+         f_flag = 1;
+      }
+      else {
+         printf(OUTPREFX "ERROR: Unrecognized argument for 'bound' command: '%s'\n", parse);
          return -1;
       }
-      // retrieve the FTAG of the new target
-      retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
-      if (retval) {
-         ftag->fileno--;
-      } // if we couldn't retrieve this, go to previous
-      free(newrpath);
+
+      // progress to the next arg
+      parse = strtok(NULL, " ");
+   }
+
+   int retval = 0;
+   size_t origfileno = ftag->fileno;
+   if (!f_flag) {
+      // iterate over files until we find EOS
+      while (ftag->endofstream == 0 && retval == 0 &&
+         (ftag->state & FTAG_DATASTATE) >= FTAG_FIN) {
+         // progress to the next file
+         ftag->fileno++;
+         // generate a ref path for the new target file
+         char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+         if (newrpath == NULL) {
+            printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
+            ftag->fileno = origfileno;
+            return -1;
+         }
+         // retrieve the FTAG of the new target
+         retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
+         if (retval) {
+            ftag->fileno--;
+         } // if we couldn't retrieve this, go to previous
+         free(newrpath);
+      }
    }
 
    // identify object bounds of final file
@@ -681,6 +707,7 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
    }
    size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
    size_t finobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
+   size_t finobjoff = ((ftag->bytes + ftag->offset - headerlen) % dataperobj) + headerlen;
    // special case check
    if ((ftag->state & FTAG_DATASTATE) >= FTAG_FIN && finobjbounds &&
       (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0) {
@@ -689,28 +716,38 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
       finobjbounds--;
    }
 
+
    // print out stream boundaries
-   char* eosreason = "End of Stream";
-   if (retval) {
-      eosreason = "Failed to Identify Subsequent File";
+   if (!f_flag) {
+      char* eosreason = "End of Stream";
+      if (retval) {
+         eosreason = "Failed to Identify Subsequent File";
+      }
+      else if ((ftag->state & FTAG_DATASTATE) < FTAG_FIN) {
+         eosreason = "Unfinished File";
+      }
+      printf("File Bounds:\n   0 -- Initial File\n     to\n   %zu -- %s\n",
+         ftag->fileno, eosreason);
+      printf("Object Bounds:\n   0 -- Initial Object\n     to\n   %zu -- End of Final File\n",
+         ftag->objno + finobjbounds);
+      // restore the original value
+      ftag->fileno = origfileno;
+      char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+      if (newrpath == NULL) {
+         printf(OUTPREFX "ERROR: Failed to identify original ref path\n");
+         return -1;
+      }
+      // retrieve the FTAG of the new target
+      retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
+      free(newrpath);
    }
-   else if ((ftag->state & FTAG_DATASTATE) < FTAG_FIN) {
-      eosreason = "Unfinished File";
+   else {
+      printf("File %zu Bounds:\n   Object %zu Offset %zu\n     to\n   Object %zu Offset %zu\n",
+         ftag->fileno, ftag->objno, ftag->offset, ftag->objno + finobjbounds, finobjoff);
+      printf("Each data object includes a %zu byte recovery header and a %zu byte recovery tail for this file.\n",
+         headerlen, ftag->recoverybytes);
    }
-   printf("File Bounds:\n   0 -- Initial File\n     to\n   %zu -- %s\n",
-      ftag->fileno, eosreason);
-   printf("Object Bounds:\n   0 -- Initial Object\n     to\n   %zu -- End of Final File\n",
-      ftag->objno + finobjbounds);
-   // restore the original value
-   ftag->fileno = origfileno;
-   char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
-   if (newrpath == NULL) {
-      printf(OUTPREFX "ERROR: Failed to identify original ref path\n");
-      return -1;
-   }
-   // retrieve the FTAG of the new target
-   retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
-   free(newrpath);
+
    printf("\n");
 
    return 0;
@@ -744,6 +781,126 @@ int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char*
    return retval;
 }
 
+int recovery_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+   printf("\n");
+   // verify that we have an FTAG value
+   if (ftag->streamid == NULL) {
+      printf(OUTPREFX "ERROR: No current FTAG target\n");
+      return -1;
+   }
+
+   // parse args
+   char curarg = '\0';
+   ssize_t offset = -1;
+   int seekfrom = -1;
+   char* parse = strtok(args, " ");
+   while (parse) {
+      if (curarg == '\0') {
+         if (strcmp(parse, "-@") == 0) {
+            curarg = '@';
+         }
+         else if (strcmp(parse, "-f") == 0) {
+            curarg = 'f';
+         }
+         else {
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'recovery' command: '%s'\n", parse);
+            return -1;
+         }
+      }
+      else if (curarg == '@') {
+         // parse the numeric arg
+         char* endptr = NULL;
+         long long parseval = strtoull(parse, &(endptr), 0);
+         if (*endptr != '\0') {
+            printf(OUTPREFX "ERROR: Expected pure numeric argument for '-%c': \"%s\"\n",
+               curarg, parse);
+            return -1;
+         }
+
+         if (offset != -1) {
+            printf(OUTPREFX "ERROR: Detected duplicate '-@' arg: \"%s\"\n", parse);
+            return -1;
+         }
+
+         if (parseval >= INT_MAX) {
+            printf(OUTPREFX "ERROR: Negative offset value: \"%lld\"\n", parseval);
+            return -1;
+         }
+
+         offset = parseval;
+         curarg = '\0';
+      }
+      else { // == 'f'
+         if (seekfrom != -1) {
+            printf(OUTPREFX "ERROR: Detected duplicate '-f' arg: \"%s\"\n", parse);
+            return -1;
+         }
+
+         if (strcasecmp(parse, "set") == 0) {
+            seekfrom = SEEK_SET;
+         }
+         else if (strcasecmp(parse, "cur") == 0) {
+            seekfrom = SEEK_CUR;
+         }
+         else if (strcasecmp(parse, "end") == 0) {
+            seekfrom = SEEK_END;
+         }
+         else {
+            printf(OUTPREFX "ERROR: '-f' argument is unrecognized: \"%s\"\n", parse);
+            printf(OUTPREFX "ERROR: Acceptable values are 'set'/'cur'/'end'\n");
+            return -1;
+         }
+
+         curarg = '\0';
+      }
+
+      // progress to the next arg
+      parse = strtok(NULL, " ");
+   }
+
+   if ((offset < 0) != (seekfrom < 0)) {
+      printf(OUTPREFX "ERROR: Only one of '-@' and '-f is defined\n");
+      return -1;
+   }
+
+   char* rpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   if (rpath == NULL) {
+      printf(OUTPREFX "ERROR: Failed to generate reference path\n");
+      return -1;
+   }
+
+   DATASTREAM stream = genstream(READ_STREAM, rpath, 1, pos, 0, NULL, NULL);
+   if (stream == NULL) {
+      printf(OUTPREFX "ERROR: Failed to generate stream\n");
+      return -1;
+   }
+
+   if (offset >= 0 && datastream_seek(&stream, offset, seekfrom) < 0) {
+      printf(OUTPREFX "ERROR: Failed to seek\n");
+      datastream_close(&stream);
+      return -1;
+   }
+
+   // read recovery info
+   RECOVERY_FINFO info;
+   if (datastream_recoveryinfo(&stream, &(info))) {
+      printf(OUTPREFX "ERROR: Failed to fetch recovery info\n");
+      datastream_close(&stream);
+      return -1;
+   }
+
+   datastream_close(&stream);
+
+   // parse/print recovery info
+   struct tm* time = localtime(&(info.mtime.tv_sec));
+   char timestr[20];
+   strftime(timestr, 20, "%F %T", time);
+   printf("Recovery Info:\n    Inode: %zu\n    Mode: %o\n    Owner: %d\n    Group: %d\n    Size: %zu\n    Mtime: %s.%.9ld\n    EOF: %d\n    Path: %s\n",
+      info.inode, info.mode, info.owner, info.group, info.size, timestr, info.mtime.tv_nsec, info.eof, info.path);
+
+   return 0;
+
+}
 
 int command_loop(marfs_config* config, char* config_path) {
    // initialize an FTAG struct
@@ -864,6 +1021,13 @@ int command_loop(marfs_config* config, char* config_path) {
          errno = 0;
          retval = -1; // assume failure
          if (refresh_command(config, &(pos), &(ftag), parse) == 0) {
+            retval = 0; // note success
+         }
+      }
+      else if (strcmp(inputline, "recovery") == 0) {
+         errno = 0;
+         retval = -1; // assume failure
+         if (recovery_command(config, &(pos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }

@@ -1,3 +1,62 @@
+/*
+Copyright (c) 2015, Los Alamos National Security, LLC
+All rights reserved.
+
+Copyright 2015.  Los Alamos National Security, LLC. This software was
+produced under U.S. Government contract DE-AC52-06NA25396 for Los
+Alamos National Laboratory (LANL), which is operated by Los Alamos
+National Security, LLC for the U.S. Department of Energy. The
+U.S. Government has rights to use, reproduce, and distribute this
+software.  NEITHER THE GOVERNMENT NOR LOS ALAMOS NATIONAL SECURITY,
+LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
+FOR THE USE OF THIS SOFTWARE.  If software is modified to produce
+derivative works, such modified software should be clearly marked, so
+as not to confuse it with the version available from LANL.
+
+Additionally, redistribution and use in source and binary forms, with
+or without modification, are permitted provided that the following
+conditions are met: 1. Redistributions of source code must retain the
+above copyright notice, this list of conditions and the following
+disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+3. Neither the name of Los Alamos National Security, LLC, Los Alamos
+National Laboratory, LANL, the U.S. Government, nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING,
+BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL LOS
+ALAMOS NATIONAL SECURITY, LLC OR CONTRIBUTORS BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
+GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+-----
+NOTE:
+-----
+MarFS is released under the BSD license.
+
+MarFS was reviewed and released by LANL under Los Alamos Computer Code
+identifier: LA-CC-15-039.
+
+MarFS uses libaws4c for Amazon S3 object communication. The original
+version is at https://aws.amazon.com/code/Amazon-S3/2601 and under the
+LGPL license.  LANL added functionality to the original work. The
+original work plus LANL contributions is found at
+https://github.com/jti-lanl/aws4c.
+
+GNU licenses can be found at http://www.gnu.org/licenses/.
+*/
+
 #include <dirent.h>
 #include <errno.h>
 #include <math.h>
@@ -7,8 +66,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <sys/xattr.h>
 #include <sys/types.h>
+#include <sys/xattr.h>
 
 #include <thread_queue.h>
 
@@ -17,7 +76,6 @@
 #include "mdal/mdal.h"
 #include "tagging/tagging.h"
 
-#define DEBUG_RM 1 // TODO: Remove
 #if defined(DEBUG_ALL)  ||  defined(DEBUG_RM)
 #define DEBUG 1
 #endif
@@ -35,15 +93,15 @@
 #endif
 
 // Files created within the threshold will be ignored
-#define RECENT_THRESH 0
+#define RECENT_THRESH -1
 
 #define N_SKIP "gc_skip"
 #define IN_PROG "IN_PROG"
 #define ZERO_FLAG 'z'
 
 // Default TQ values
-#define NUM_PROD 2
-#define NUM_CONS 2
+#define NUM_PROD 10
+#define NUM_CONS 10
 #define QDEPTH 100
 
 int rank = 0;
@@ -84,6 +142,34 @@ typedef struct work_pkg_struct {
   FTAG* ftag; // Ftag information for rebuild
   ne_state* rtag; // Rebuild tag information for rebuild
 } *WorkPkg;
+
+void free_work(WorkPkg work) {
+  if (work) {
+    if (work->rpath) {
+      free(work->rpath);
+    }
+    if (work->ftag) {
+      if (work->ftag->ctag) {
+        free(work->ftag->ctag);
+      }
+      if (work->ftag->streamid) {
+        free(work->ftag->streamid);
+      }
+      free(work->ftag);
+    }
+    if (work->rtag) {
+      if (work->rtag->meta_status) {
+        free(work->rtag->meta_status);
+      }
+      if (work->rtag->csum) {
+        free(work->rtag->csum);
+      }
+      free(work->rtag);
+    }
+    free(work);
+  }
+  work = NULL;
+}
 
 /** Garbage collect the reference files and objects of a stream inside the given
  * ranges. NOTE: refs/objects corresponding to the index parameters will not be
@@ -464,7 +550,6 @@ int get_ftag(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG* ftag,
         return -1;
       }
 
-
       if (skip < 0) {
         skip *= -1;
         eos = 1;
@@ -532,7 +617,7 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, char** r
   q_data->del_objs = 0;
   q_data->del_refs = 0;
 
-  char* rpath = *refpath;
+  char* rpath = strdup(*refpath);
 
   // Generate an ftag for the beginning of the stream
   FTAG ftag;
@@ -620,17 +705,23 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, char** r
     if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
       LOG(LOG_ERR, "Rank %d: Failed to create rpath\n", rpath);
       free(ftag.ctag);
+      ftag.ctag = NULL;
       free(ftag.streamid);
+      ftag.streamid = NULL;
       return -1;
     }
 
     if ((next = get_ftag(ms, ds, ctxt, &ftag, rpath, &st, q_data, &del_zero)) < 0) {
       LOG(LOG_ERR, "Rank %d: Failed to retrieve ftag for %s\n", rank, rpath);
       free(ftag.ctag);
+      ftag.ctag = NULL;
       free(ftag.streamid);
+      ftag.streamid = NULL;
       return -1;
     }
   }
+
+  free(rpath);
 
   // Repeat process in loop, but for last ref in stream
   if (difftime(time(NULL), st.st_ctime) > RECENT_THRESH) {
@@ -665,7 +756,9 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, char** r
   }
 
   free(ftag.ctag);
+  ftag.ctag = NULL;
   free(ftag.streamid);
+  ftag.streamid = NULL;
 
   return 0;
 }
@@ -768,32 +861,10 @@ int stream_thread_init(unsigned int tID, void* global_state, void** state) {
  * @param void** prev_work : Reference to a possibly-allocated work package
  * @param int flg : Current control flags of the thread
  */
-void stream_term(void** state, void** prev_work, int flg) {
-  WorkPkg work = ((WorkPkg)*prev_work);
-  if (work) {
-    if (work->rpath) {
-      free(work->rpath);
-    }
-    if (work->ftag) {
-      if (work->ftag->ctag) {
-        free(work->ftag->ctag);
-      }
-      if (work->ftag->streamid) {
-        free(work->ftag->streamid);
-      }
-      free(work->ftag);
-    }
-    if (work->rtag) {
-      if (work->rtag->meta_status) {
-        free(work->rtag->meta_status);
-      }
-      if (work->rtag->csum) {
-        free(work->rtag->csum);
-      }
-      free(work->rtag);
-    }
-    free(work);
-    *prev_work = NULL;
+void stream_term(void** state, void** prev_work, TQ_Control_Flags flg) {
+  if (*prev_work != NULL) {
+    LOG(LOG_INFO, "prev_work allocated!\n");
+    free_work(*prev_work);
   }
 }
 
@@ -807,6 +878,11 @@ void stream_term(void** state, void** prev_work, int flg) {
 int stream_cons(void** state, void** work_todo) {
   ThreadState tstate = ((ThreadState)*state);
   WorkPkg work = ((WorkPkg)*work_todo);
+
+  if (!work) {
+    LOG(LOG_ERR, "Rank %d: Thread %u received empty work package. Nothing to do!\n", rank, tstate->tID);
+    return 0;
+  }
 
   if (!(work->rpath)) {
     LOG(LOG_ERR, "Rank %d: Thread %u received invalid work package\n", rank, tstate->tID);
@@ -839,7 +915,7 @@ int stream_cons(void** state, void** work_todo) {
     rebuild_obj(tstate->global->ms, tstate->global->ds, tstate->global->ctxt, work->rpath, work->ftag, work->rtag);
   }
 
-  stream_term(NULL, work_todo, 0);
+  free_work(work);
 
   return 0;
 }
@@ -858,16 +934,7 @@ int stream_prod(void** state, void** work_tofill) {
   ThreadState tstate = ((ThreadState)*state);
   GlobalState gstate = tstate->global;
 
-  WorkPkg work = malloc(sizeof(struct work_pkg_struct));
-  if (!work) {
-    LOG(LOG_ERR, "Rank %d: Failed to allocate new work package\n", rank);
-    return -1;
-  }
-  work->rpath = NULL;
-  work->ftag = NULL;
-  work->rtag = NULL;
-
-  *work_tofill = (void*)work;
+  WorkPkg work = NULL;
 
   // Search for the beginning of a stream
   while (1) {
@@ -908,15 +975,26 @@ int stream_prod(void** state, void** work_tofill) {
     // Scan through the ref dir until we find the beginning of a stream
     struct dirent* dent;
     int refno;
+    char type;
     while ((dent = gstate->ms->mdal->scan(tstate->scanner))) {
       if (*dent->d_name != '.') {
-        refno = ftag_metainfo(dent->d_name, &(work->type));
+        refno = ftag_metainfo(dent->d_name, &type);
         if (refno < 0) {
           LOG(LOG_ERR, "Rank %d: Failed to retrieve metainfo\n", rank);
           return -1;
         }
-        else if (work->type == 1 || refno == 0) { // We want to submit a work
+        else if (type == 1 || refno == 0) { // We want to submit a work
         // package for this ref
+          work = malloc(sizeof(struct work_pkg_struct));
+          if (!work) {
+            LOG(LOG_ERR, "Rank %d: Failed to allocate new work package\n", rank);
+            return -1;
+          }
+          work->type = type;
+          work->rpath = NULL;
+          work->ftag = NULL;
+          work->rtag = NULL;
+
           size_t rpath_len = strlen(tstate->ref_node->name) + strlen(dent->d_name) + 1;
           if (rpath_len == 0) {
             LOG(LOG_ERR, "length of 0\n");
@@ -937,6 +1015,7 @@ int stream_prod(void** state, void** work_tofill) {
             // Get ftag from xattr
             MDAL_DHANDLE handle;
             if ((handle = gstate->ms->mdal->openref(gstate->ctxt, work->rpath, O_RDONLY, 0)) == NULL) {
+              LOG(LOG_ERR, "Rank %d: Failed to open handle for reference path \"%s\"\n", rank, work->rpath);
               LOG(LOG_ERR, "Rank %d: Failed to open handle for reference path \"%s\"\n", rank, work->rpath);
               return -1;
             }
@@ -1049,6 +1128,8 @@ int stream_prod(void** state, void** work_tofill) {
             }
           }
 
+          *work_tofill = (void*)work;
+
           return 0;
         }
       }
@@ -1058,7 +1139,6 @@ int stream_prod(void** state, void** work_tofill) {
     tstate->scanner = NULL;
     tstate->ref_node = NULL;
   }
-
   return -1;
 }
 
@@ -1200,12 +1280,41 @@ int ref_paths(const marfs_ns* ns, const char* name) {
     return -1;
   }
 
+  tstate = NULL;
+
+  // If any work packages are left on the TQ, dequeue and consume them
+  // NOTE: In this case, we initialize a new consumer thread state to handle
+  // remaining work
   if (tq_close(tq) > 0) {
     WorkPkg work = NULL;
     while (tq_dequeue(tq, TQ_ABORT, (void**)&work) > 0) {
-      free(work);
+      if (!tstate && stream_thread_init(tqopts.num_threads, (void*)&gstate, (void**)&tstate)) {
+        LOG(LOG_ERR, "Rank %d: Failed to initialize thread state for cleanup\n", rank);
+        pthread_mutex_destroy(&(gstate.lock));
+        ms->mdal->destroyctxt(ctxt);
+        free(ns_path);
+        return -1;
+      }
+
+      if (stream_cons((void**)&tstate, (void**)&work)) {
+        LOG(LOG_ERR, "Rank %d: Failed to consume work left on queue\n", rank);
+        free(tstate);
+        pthread_mutex_destroy(&(gstate.lock));
+        ms->mdal->destroyctxt(ctxt);
+        free(ns_path);
+        return -1;
+      }
     }
     tq_close(tq);
+  }
+
+  if (tstate) {
+    totals.size += tstate->q_data.size;
+    totals.count += tstate->q_data.count;
+    totals.del_objs += tstate->q_data.del_objs;
+    totals.del_refs += tstate->q_data.del_refs;
+
+    free(tstate);
   }
 
   pthread_mutex_destroy(&(gstate.lock));
