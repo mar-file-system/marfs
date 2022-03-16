@@ -71,6 +71,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include <thread_queue.h>
 
+#include "marfs_auto_config.h"
 #include "config/config.h"
 #include "datastream/datastream.h"
 #include "mdal/mdal.h"
@@ -1332,9 +1333,9 @@ int ref_paths(const marfs_ns* ns, const char* name) {
     efgc = "Deleted";
   }
 
-  char msg[1024];
+  char msg[1024] = {0};
   snprintf(msg, 1024, "Rank: %d NS: \"%s\" Count: %lu Size: %lfTiB %s: (Objs: %lu Refs: %lu)", rank, name, totals.count, totals.size / 1024.0 / 1024.0 / 1024.0 / 1024.0, efgc, totals.del_objs, totals.del_refs);
-  MPI_Send(msg, 1024, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
+  MPI_Send(msg, 1024, MPI_CHAR, n_ranks - 1, 0, MPI_COMM_WORLD);
 
   ms->mdal->destroyctxt(ctxt);
   free(ns_path);
@@ -1364,7 +1365,7 @@ int find_rank_ns(const marfs_ns* ns, int idx, const char* name, const char* ns_t
       return 0;
     }
   }
-  else if (idx % n_ranks == rank) {
+  else if (idx % (n_ranks - 1) == rank) {
     if (ref_paths(ns, name)) {
       return -1;
     }
@@ -1480,6 +1481,11 @@ int main(int argc, char** argv) {
     config_term(cfg);
     return -1;
   }
+  if (n_ranks < 2) {
+    fprintf(stderr, "Must have at least 2 ranks\n");
+    config_term(cfg);
+    return -1;
+  }
 
   if (MPI_Comm_rank(MPI_COMM_WORLD, &rank) != MPI_SUCCESS) {
     LOG(LOG_ERR, "Error in MPI_Comm_rank\n");
@@ -1501,9 +1507,9 @@ int main(int argc, char** argv) {
     total_ns = 1;
   }
 
-  // Rank 0 collects a message for each namespace from other processes
+  // Last rank collects a message for each namespace from other processes
   int i;
-  if (rank == 0) {
+  if (rank == n_ranks - 1) {
     char* msg = malloc(sizeof(char) * 1024);
     for (i = 0; i < total_ns; i++) {
       MPI_Recv(msg, 1024, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
