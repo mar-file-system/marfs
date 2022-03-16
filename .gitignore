@@ -12,6 +12,7 @@
 !scripts/*
 !README*
 !.gitignore
+!*.xml
 
 *~
 marfs_auto_config.h
