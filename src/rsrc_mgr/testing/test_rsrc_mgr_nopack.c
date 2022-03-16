@@ -63,6 +63,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/xattr.h>
+#include <limits.h>
 
 #include "config/config.h"
 #include "datastream/datastream.h"
@@ -118,10 +119,10 @@ int main(int argc, char** argv) {
   char buf[MAXSIZE];
   bzero(buf, MAXSIZE);
   DATASTREAM stream = NULL;
-  char fname[6 + ((int)log10(MAXSIZE))];
+  char fname[6 + ((int)log10(INT_MAX))];
   int i;
   for (i = 1; i <= MAXSIZE; i *= 2) {
-    snprintf(fname, 6 + ((int)log10(MAXSIZE)), "file%d", i);
+    snprintf(fname, 6 + ((int)log10(INT_MAX)), "file%d", i);
 
     if (datastream_create(&stream, fname, &pos, 0744, "")) {
       printf("failed to create %s\n", fname);
@@ -140,7 +141,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -243,7 +244,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -298,7 +299,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -352,7 +353,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -406,7 +407,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -460,7 +461,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -514,7 +515,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -568,7 +569,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -626,7 +627,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config_nopack.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }

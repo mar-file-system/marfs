@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -249,7 +249,7 @@ int main(int argc, char** argv) {
 
   count -= sizes[0];
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -308,7 +308,7 @@ int main(int argc, char** argv) {
 
   count -= sizes[3];
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -372,7 +372,7 @@ int main(int argc, char** argv) {
 
   count -= sizes[4];
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -436,7 +436,7 @@ int main(int argc, char** argv) {
 
   count -= sizes[2];
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
@@ -500,7 +500,7 @@ int main(int argc, char** argv) {
 
   count = 0;
 
-  if (system("mpirun -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
+  if (system("mpirun --oversubscribe --allow-run-as-root -np 2 ./marfs-rsrc_mgr -c ./testing/config.xml -d") < 0) {
     printf("rsrc_mgr failed\n");
     return -1;
   }
