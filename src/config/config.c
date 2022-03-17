@@ -2348,17 +2348,29 @@ int config_verify( marfs_config* config, char fix ) {
    }
    int errcount = 0;
 
-   // verify all libNE ctxts
+   // verify all libNE and MDAL ctxts
    int currepo = 0;
    for ( ; currepo < config->repocount; currepo++ ) {
-      int neres = ne_verify( (config->repolist + currepo)->datascheme.nectxt, fix );
-      if ( neres < 0 ) {
+      int verres = ne_verify( (config->repolist + currepo)->datascheme.nectxt, fix );
+      if ( verres < 0 ) {
          LOG( LOG_ERR, "Failed to verify ne_ctxt of repo: \"%s\" (%s)\n",
                        (config->repolist + currepo)->name, strerror(errno) );
          return -1;
       }
-      else if ( neres ) {
+      else if ( verres ) {
          LOG( LOG_INFO, "ne_ctxt of repo \"%s\" encountered %d errors\n",
+                        (config->repolist + currepo)->name );
+         errcount++;
+      }
+      MDAL tgtmdal = (config->repolist + currepo)->metascheme.mdal;
+      verres = tgtmdal->checksec( tgtmdal->ctxt, fix );
+      if ( verres < 0 ) {
+         LOG( LOG_ERR, "Failed to verify the MDAL security of repo: \"%s\" (%s)\n",
+                       (config->repolist + currepo)->name, strerror(errno) );
+         return -1;
+      }
+      else if ( verres ) {
+         LOG( LOG_INFO, "MDAL of repo \"%s\" has %d uncorrected security errors\n",
                         (config->repolist + currepo)->name );
          errcount++;
       }

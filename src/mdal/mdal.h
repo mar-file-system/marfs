@@ -126,11 +126,21 @@ typedef struct MDAL_struct {
    // Management Functions
 
    /**
-    * Cleanup all structes and state associated with the given posix MDAL
+    * Cleanup all structes and state associated with the given MDAL
     * @param MDAL mdal : MDAL to be freed
     * @return int : Zero on success, -1 if a failure occurred
     */
    int (*cleanup) ( MDAL mdal );
+
+   /**
+    * Verify security of the given MDAL_CTXT
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT for which to verify security
+    *                               NOTE -- this ctxt CANNOT be associated with a NS target
+    *                                       ( it must be freshly initialized )
+    * @param char fix : If non-zero, attempt to correct any problems encountered
+    * @return int : A count of uncorrected security issues, or -1 if a failure occurred
+    */
+   int (*checksec) ( const MDAL_CTXT ctxt, char fix );
 
 
    // Namespace Functions
