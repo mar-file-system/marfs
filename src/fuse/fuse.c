@@ -125,7 +125,7 @@ int fuse_access(const char *path, int mode)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_access(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW) * errno;
+  int ret = marfs_access(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW | AT_EACCESS) * errno;
   free( newpath );
 
   exit_user(&u_ctxt);
