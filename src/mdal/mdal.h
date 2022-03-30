@@ -726,6 +726,19 @@ typedef struct MDAL_struct {
     */
    int (*unlink) ( const MDAL_CTXT ctxt, const char* path );
 
+   /**
+    * Update the timestamps of the target file
+    * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const char* path : String path of the target file
+    * @param const struct timespec times[2] : Struct references for new times
+    *                                         times[0] - atime values
+    *                                         times[1] - mtime values
+    *                                         (see man utimensat for struct reference)
+    * @param int flags : A bitwise OR of the following...
+    *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
+    * @return int : Zero value on success, or -1 if a failure occurred
+    */
+   int (*utimens) ( MDAL_CTXT ctxt, const char* path, const struct timespec times[2], int flags );
 
 
 } *MDAL;

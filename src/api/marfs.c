@@ -960,6 +960,72 @@ int marfs_link( marfs_ctxt ctxt, const char* oldpath, const char* newpath, int f
    return retval;
 }
 
+
+/**
+ * Update the timestamps of the target file
+ * NOTE -- It is possible that the time values of a file will be updated at any time, while
+ *         a referencing marfs_fhandle stream exists ( has not been closed or released ).
+ *         marfs_futimens() protects against this, by caching time values and applying them
+ *         only after the file has been finalized/completed.
+ *         Thus, it is strongly recommend to use that function instead, when feasible, unless
+ *         you are certain that the target file has been completed.
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the new directory
+ * @param const struct timespec times[2] : Struct references for new times
+ *                                         times[0] - atime values
+ *                                         times[1] - mtime values
+ *                                         (see man utimensat for struct reference)
+ * @param int flags : A bitwise OR of the following...
+ *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
+ * @return int : Zero value on success, or -1 if a failure occurred
+ */
+int marfs_utimens( marfs_ctxt ctxt, const char* path, const struct timespec times[2], int flags ) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for invalid arg
+   if ( ctxt == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_ctxt\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // identify target info
+   marfs_position* oppos = NULL;
+   char* subpath = NULL;
+   int tgtdepth = pathshift( ctxt, path, &(subpath), &(oppos) );
+   if ( tgtdepth < 0 ) {
+      LOG( LOG_ERR, "Failed to identify target info for utimens op\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos->ns->idstr, subpath );
+   if ( tgtdepth == 0 ) {
+      LOG( LOG_ERR, "Cannot target a MarFS NS with a utimens op: \"%s\"\n", path );
+      pathcleanup( subpath, oppos );
+      errno = EEXIST;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // check NS perms
+   if ( ( ctxt->itype != MARFS_INTERACTIVE  &&  !(oppos->ns->bperms & NS_WRITEMETA) )  ||
+        ( ctxt->itype != MARFS_BATCH        &&  !(oppos->ns->iperms & NS_WRITEMETA) ) ) {
+      LOG( LOG_ERR, "NS perms do not allow a utimens op\n" );
+      pathcleanup( subpath, oppos );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // perform the MDAL op
+   MDAL curmdal = oppos->ns->prepo->metascheme.mdal;
+   int retval = curmdal->utimens( oppos->ctxt, subpath, times, flags );
+   // cleanup references
+   pathcleanup( subpath, oppos );
+   // return op result
+   if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+
 /**
  * Create the specified directory
  * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to

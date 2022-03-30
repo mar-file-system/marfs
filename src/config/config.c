@@ -2359,7 +2359,7 @@ int config_verify( marfs_config* config, char fix ) {
       }
       else if ( verres ) {
          LOG( LOG_INFO, "ne_ctxt of repo \"%s\" encountered %d errors\n",
-                        (config->repolist + currepo)->name );
+                        (config->repolist + currepo)->name, verres );
          errcount++;
       }
       MDAL tgtmdal = (config->repolist + currepo)->metascheme.mdal;

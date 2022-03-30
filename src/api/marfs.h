@@ -259,6 +259,26 @@ int marfs_unlink(marfs_ctxt ctxt, const char* path);
 int marfs_link(marfs_ctxt ctxt, const char* oldpath, const char* newpath, int flags);
 
 /**
+ * Update the timestamps of the target file
+ * NOTE -- It is possible that the time values of a file will be updated at any time, while
+ *         a referencing marfs_fhandle stream exists ( has not been closed or released ).
+ *         marfs_futimens() protects against this, by caching time values and applying them
+ *         only after the file has been finalized/completed.
+ *         Thus, it is strongly recommend to use that function instead, when feasible, unless
+ *         you are certain that the target file has been completed.
+ * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
+ * @param const char* path : String path of the new directory
+ * @param const struct timespec times[2] : Struct references for new times
+ *                                         times[0] - atime values
+ *                                         times[1] - mtime values
+ *                                         (see man utimensat for struct reference)
+ * @param int flags : A bitwise OR of the following...
+ *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
+ * @return int : Zero value on success, or -1 if a failure occurred
+ */
+int marfs_utimens( marfs_ctxt ctxt, const char* path, const struct timespec times[2], int flags );
+
+/**
  * Create the specified directory
  * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
  * @param const char* path : String path of the new directory

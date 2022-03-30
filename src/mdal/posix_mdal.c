@@ -2833,7 +2833,6 @@ int posixmdal_statvfs( MDAL_CTXT ctxt, struct statvfs* buf ) {
    return fstatvfs( pctxt->refd, buf );
 }
 
-
 /**
  * Create a symlink
  * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
@@ -2859,7 +2858,6 @@ int posixmdal_symlink( MDAL_CTXT ctxt, const char* target, const char* linkname 
    return symlinkat( target, pctxt->pathd, linkname );
 }
 
-
 /**
  * Unlink the specified file
  * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
@@ -2882,6 +2880,36 @@ int posixmdal_unlink( MDAL_CTXT ctxt, const char* path ) {
    }
    // issue the unlink op
    return unlinkat( pctxt->pathd, path, 0 );
+}
+
+/**
+ * Update the timestamps of the target file
+ * @param MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+ * @param const char* path : String path of the target file
+ * @param const struct timespec times[2] : Struct references for new times
+ *                                         times[0] - atime values
+ *                                         times[1] - mtime values
+ *                                         (see man utimensat for struct reference)
+ * @param int flags : A bitwise OR of the following...
+ *                    AT_SYMLINK_NOFOLLOW - do not dereference symlinks
+ * @return int : Zero value on success, or -1 if a failure occurred
+ */
+int posixmdal_utimens ( MDAL_CTXT ctxt, const char* path, const struct timespec times[2], int flags ) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   // check for a valid NS path dir
+   if ( pctxt->pathd < 0 ) {
+      LOG( LOG_ERR, "Receieved a MDAL_CTXT with no namespace target\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // issue the utime call
+   return utimensat( pctxt->pathd, path, times, flags );
 }
 
 
@@ -3003,6 +3031,7 @@ MDAL posix_mdal_init( xmlNode* root ) {
          pmdal->statvfs = posixmdal_statvfs;
          pmdal->symlink = posixmdal_symlink;
          pmdal->unlink = posixmdal_unlink;
+         pmdal->utimens = posixmdal_utimens;
          return pmdal;
       }
       else { LOG( LOG_ERR, "the \"ns_root\" node is expected to contain a path string\n" ); }

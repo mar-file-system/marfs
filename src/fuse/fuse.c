@@ -899,31 +899,13 @@ int fuse_utimens(const char *path, const struct timespec tv[2])
 {
   LOG(LOG_INFO, "%s\n", path);
 
-  marfs_fhandle fh;
-  int err;
-
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  if ((fh = marfs_open(CTXT, NULL, newpath, MARFS_WRITE)) == NULL)
-  {
-    free( newpath );
-    err = errno;
-    exit_user(&u_ctxt);
-    return -err;
-  }
+  int ret = marfs_utimens(CTXT, newpath, tv, 0) * errno;
   free( newpath );
-
-  int ret = marfs_futimens(fh, tv) * errno;
-
-  if (marfs_close(fh) && !ret)
-  {
-    err = errno;
-    exit_user(&u_ctxt);
-    return -err;
-  }
 
   exit_user(&u_ctxt);
 
@@ -971,7 +953,10 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 void *marfs_fuse_init(struct fuse_conn_info *conn)
 {
   LOG(LOG_INFO, "init\n");
-  marfs_ctxt ctxt = marfs_init(getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, 2);
+  // initialize the MarFS config
+  // NOTE -- FUSE doesn't attempt to verify the config, as it will almost always be run as root.
+  //         We want to allow the 'secure root dir' to be owned by a non-root user, if desired.
+  marfs_ctxt ctxt = marfs_init(getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, 0);
   if ( marfs_setctag( ctxt, "FUSE" ) ) {
     LOG( LOG_WARNING, "Failed to set Client Tag String\n" );
   }
