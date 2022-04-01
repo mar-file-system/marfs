@@ -957,6 +957,10 @@ void *marfs_fuse_init(struct fuse_conn_info *conn)
   // NOTE -- FUSE doesn't attempt to verify the config, as it will almost always be run as root.
   //         We want to allow the 'secure root dir' to be owned by a non-root user, if desired.
   marfs_ctxt ctxt = marfs_init(getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, 0);
+  if ( ctxt == NULL ) {
+    LOG( LOG_ERR, "Failed to initialize MarFS context!\n" );
+    exit(-1);
+  }
   if ( marfs_setctag( ctxt, "FUSE" ) ) {
     LOG( LOG_WARNING, "Failed to set Client Tag String\n" );
   }
