@@ -234,10 +234,10 @@ int marfs_symlink(marfs_ctxt ctxt, const char* target, const char* linkname);
  * @param const marfs_ctxt ctxt : marfs_ctxt to operate relative to
  * @param const char* path : String path of the target symlink
  * @param char* buf : Buffer to be populated with the link value
- * @param size_t size : Size of the target buffer
+ * @param size_t count : Size of the target buffer
  * @return ssize_t : Size of the link target string, or -1 if a failure occurred
  */
-ssize_t marfs_readlink(marfs_ctxt ctxt, const char* path, char* buf, size_t size);
+ssize_t marfs_readlink(marfs_ctxt ctxt, const char* path, char* buf, size_t count);
 
 /**
  * Unlink the specified file/symlink

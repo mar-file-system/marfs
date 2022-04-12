@@ -2389,7 +2389,7 @@ int marfs_setrecoverypath(marfs_ctxt ctxt, marfs_fhandle stream, const char* rec
  *            In such a case, errno will be set to EBADFD and any subsequent operations
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
-ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
+ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t count) {
    LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( stream == NULL ) {
@@ -2416,7 +2416,7 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
    // check for datastream reference
    if ( stream->datastream ) {
       // read from datastream reference
-      ssize_t retval = datastream_read( &(stream->datastream), buf, size );
+      ssize_t retval = datastream_read( &(stream->datastream), buf, count );
       pthread_mutex_unlock( &(stream->lock) );
       if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -2433,7 +2433,7 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t size) {
    else {
       // perform the direct read
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-      retval = curmdal->read( stream->metahandle, buf, size );
+      retval = curmdal->read( stream->metahandle, buf, count );
    }
    pthread_mutex_unlock( &(stream->lock) );
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
@@ -2611,7 +2611,7 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
       else {
          LOG( LOG_INFO, "Seeking meta handle to %zd offset\n", offset );
          MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-         offval = curmdal->lseek( stream->metahandle, offset, whence );
+         offval = curmdal->lseek( stream->metahandle, offset, SEEK_SET );
       }
    }
    if ( offval != offset ) {
@@ -2628,15 +2628,15 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
    // perform the read
    ssize_t retval;
    if ( stream->datastream ) {
-      LOG( LOG_INFO, "Reading %zu bytes from datastream\n", size );
+      LOG( LOG_INFO, "Reading %zu bytes from datastream\n", count );
       // read from datastream reference
-      retval = datastream_read( &(stream->datastream), buf, size );
+      retval = datastream_read( &(stream->datastream), buf, count );
    }
    else {
       // meta only reference
       // perform the direct read
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-      retval = curmdal->read( stream->metahandle, buf, size );
+      retval = curmdal->read( stream->metahandle, buf, count );
    }
 
    pthread_mutex_unlock( &(stream->lock) );
