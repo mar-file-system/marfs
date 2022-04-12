@@ -512,7 +512,7 @@ int fuse_opendir(const char *path, struct fuse_file_info *ffi)
 
 int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *ffi)
 {
-  LOG(LOG_INFO, "%s\n", path);
+  LOG(LOG_INFO, "%zubytes from %s at offset %zd\n", size, path, offset);
 
   if (!ffi->fh)
   {
@@ -524,6 +524,7 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
+  LOG( LOG_INFO, "seeking to offset %zd\n", offset );
   if (marfs_seek((marfs_fhandle)ffi->fh, offset, SEEK_SET) != offset)
   {
     LOG(LOG_ERR, "failed to seek to offset %zd (%s)\n", offset, strerror(errno));
@@ -532,6 +533,7 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
     return -err;
   }
 
+  LOG( LOG_INFO, "reading %zu bytes\n", size );
   int ret = marfs_read((marfs_fhandle)ffi->fh, (void *)buf, size);
 
   if (ret < 0)
@@ -541,6 +543,8 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
 
   exit_user(&u_ctxt);
 
+  if ( ret >= 0 ) { LOG( LOG_INFO, "Successfully read %d bytes\n", ret ); }
+  else { LOG( LOG_ERR, "Read of %zd bytes failed (%s)\n", size, strerror(errno) ); }
   return ret;
 }
 
