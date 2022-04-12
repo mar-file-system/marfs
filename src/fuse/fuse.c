@@ -524,17 +524,8 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
-  LOG( LOG_INFO, "seeking to offset %zd\n", offset );
-  if (marfs_seek((marfs_fhandle)ffi->fh, offset, SEEK_SET) != offset)
-  {
-    LOG(LOG_ERR, "failed to seek to offset %zd (%s)\n", offset, strerror(errno));
-    int err = errno;
-    exit_user(&u_ctxt);
-    return -err;
-  }
-
-  LOG( LOG_INFO, "reading %zu bytes\n", size );
-  int ret = marfs_read((marfs_fhandle)ffi->fh, (void *)buf, size);
+  LOG( LOG_INFO, "Performing read of %zubytes at offset %zd\n", size, offset );
+  int ret = marfs_read_at_offset((marfs_fhandle)ffi->fh, offset, (void *)buf, size);
 
   if (ret < 0)
   {

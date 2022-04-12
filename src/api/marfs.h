@@ -608,6 +608,25 @@ ssize_t marfs_write(marfs_fhandle stream, const void* buf, size_t size);
 off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence);
 
 /**
+ * Seek to the provided offset of the given marfs_fhandle AND read from that location
+ * NOTE -- This function exists for the sole purpose of supporting the FUSE interface, 
+ *         which performs reads, using this 'at-offset' format, in parallel
+ * @param marfs_fhandle stream : marfs_fhandle to seek and read
+ * @param off_t offset : Offset for the seek
+ *                       NOTE -- this is assumed to be relative to the start of the file
+ *                               ( as in, whence == SEEK_SET )
+ * @param void* buf : Reference to the buffer to be populated with read data
+ * @param size_t count : Number of bytes to be read
+ * @return ssize_t : Number of bytes read, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
+ *            preserved ( continue to reference whatever file it previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, errno will be set to EBADFD and any subsequent operations
+ *            against the provided marfs_fhandle will fail, besides marfs_release().
+ */
+ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size_t count);
+
+/**
  * Identify the data object boundaries of the file referenced by the given marfs_fhandle
  * @param marfs_fhandle stream : marfs_fhandle for which to retrieve info
  * @param int chunknum : Index of the data chunk to retrieve info for ( beginning at zero )

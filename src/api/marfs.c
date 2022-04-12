@@ -1251,21 +1251,34 @@ int marfs_futimens(marfs_fhandle fh, const struct timespec times[2]) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(fh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // check NS perms
    if ( ( fh->itype != MARFS_INTERACTIVE  &&  !(fh->ns->bperms & NS_WRITEMETA) )  ||
         ( fh->itype != MARFS_BATCH        &&  !(fh->ns->iperms & NS_WRITEMETA) ) ) {
       LOG( LOG_ERR, "NS perms do not allow a futimens op\n" );
+      pthread_mutex_unlock( &(fh->lock) );
       errno = EPERM;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
    // perform the op
+   int retval;
    if ( fh->datastream == NULL  &&  fh->ns->prepo->metascheme.directread ) {
       // only call the MDAL op directly if we both don't have a datastream AND
       // the config has enabled direct read
-      return fh->ns->prepo->metascheme.mdal->futimens( fh->metahandle, times );
+      LOG( LOG_INFO, "Performing futimens call directly on metahandle\n" );
+      retval = fh->ns->prepo->metascheme.mdal->futimens( fh->metahandle, times );
    }
-   int retval = datastream_utimens( &(fh->datastream), times );
+   else {
+      LOG( LOG_INFO, "Performing datastream_utimens call\n" );
+      retval = datastream_utimens( &(fh->datastream), times );
+   }
+   pthread_mutex_unlock( &(fh->lock) );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
@@ -2534,6 +2547,100 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
    }
    pthread_mutex_unlock( &(stream->lock) );
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+/**
+ * Seek to the provided offset of the given marfs_fhandle AND read from that location
+ * NOTE -- This function exists for the sole purpose of supporting the FUSE interface, 
+ *         which performs reads, using this 'at-offset' format, in parallel
+ * @param marfs_fhandle stream : marfs_fhandle to seek and read
+ * @param off_t offset : Offset for the seek
+ *                       NOTE -- this is assumed to be relative to the start of the file
+ *                               ( as in, whence == SEEK_SET )
+ * @param void* buf : Reference to the buffer to be populated with read data
+ * @param size_t count : Number of bytes to be read
+ * @return ssize_t : Number of bytes read, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
+ *            preserved ( continue to reference whatever file it previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, errno will be set to EBADFD and any subsequent operations
+ *            against the provided marfs_fhandle will fail, besides marfs_release().
+ */
+ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size_t count) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( stream == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_fhandle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // acquire the lock for an existing stream
+   if ( pthread_mutex_lock( &(stream->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire marfs_fhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // check NS perms
+   if ( ( stream->itype != MARFS_INTERACTIVE  &&  !(stream->ns->bperms & NS_READDATA) )  ||
+        ( stream->itype != MARFS_BATCH        &&  !(stream->ns->iperms & NS_READDATA) ) ) {
+      LOG( LOG_ERR, "NS perms do not allow a read op\n" );
+      pthread_mutex_unlock( &(stream->lock) );
+      errno = EPERM;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+
+   // seek to the requested offset
+   off_t offval;
+   // check for datastream reference
+   if ( stream->datastream ) {
+      LOG( LOG_INFO, "Seeking datastream to %zd offset\n", offset );
+      // seek the datastream reference
+      offval = datastream_seek( &(stream->datastream), offset, SEEK_SET );
+   }
+   else {
+      // meta only reference
+      if ( stream->ns->prepo->metascheme.directread == 0 ) {
+         LOG( LOG_ERR, "Direct read is not enabled for this target\n" );
+         errno = EPERM;
+         offval = -1;
+      }
+      else {
+         LOG( LOG_INFO, "Seeking meta handle to %zd offset\n", offset );
+         MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+         offval = curmdal->lseek( stream->metahandle, offset, whence );
+      }
+   }
+   if ( offval != offset ) {
+      pthread_mutex_unlock( &(stream->lock) );
+      if ( offval < offset  &&  offval >=0 ) {
+         LOG( LOG_INFO, "Reduced offset of %zd implies read beyond EOF ( returning zero bytes )\n", offval );
+         return 0;
+      }
+      LOG( LOG_ERR, "Unexpected offset returned by seek: %zd\n" offval );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+
+   // perform the read
+   ssize_t retval;
+   if ( stream->datastream ) {
+      LOG( LOG_INFO, "Reading %zu bytes from datastream\n", size );
+      // read from datastream reference
+      retval = datastream_read( &(stream->datastream), buf, size );
+   }
+   else {
+      // meta only reference
+      // perform the direct read
+      MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+      retval = curmdal->read( stream->metahandle, buf, size );
+   }
+
+   pthread_mutex_unlock( &(stream->lock) );
+   if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
