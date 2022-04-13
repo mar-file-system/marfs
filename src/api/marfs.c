@@ -2620,7 +2620,7 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
          LOG( LOG_INFO, "Reduced offset of %zd implies read beyond EOF ( returning zero bytes )\n", offval );
          return 0;
       }
-      LOG( LOG_ERR, "Unexpected offset returned by seek: %zd\n" offval );
+      LOG( LOG_ERR, "Unexpected offset returned by seek: %zd\n", offval );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
