@@ -1783,7 +1783,7 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
             size_t tmpnode = curnode;
             for ( curdepth = refdepth; curdepth; curdepth-- ) {
                refvals[curdepth-1] = tmpnode % refbreadth; // what is our index at this depth
-               tmpnode /= refdepth; // find how many groups we have already traversed at this depth
+               tmpnode /= refbreadth; // find how many groups we have already traversed at this depth
             }
             // now populate the reference pathname
             char* outputstr = rpathtmp;
