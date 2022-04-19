@@ -950,8 +950,10 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
             return -1;
          }
       }
+      int olderrno = errno;
+      errno = 0;
       MDAL_FHANDLE rhandle = mdal->openref(mdalctxt, rpath, O_CREAT | O_EXCL, 0700);
-      if (rhandle == NULL) {
+      if (rhandle == NULL  &&  errno != EEXIST) {
          LOG(LOG_ERR, "Failed to create rebuild marker: \"%s\"\n", rpath);
          free(rpath);
          free(rtagstr);
@@ -959,6 +961,17 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
             mdal->destroyctxt(mdalctxt);
          }
          return -1;
+      }
+      errno = olderrno;
+      if ( rhandle == NULL ) {
+         // failure with EEXIST
+         LOG( LOG_INFO, "Rebuild marker already exists: \"%s\"\n", rpath );
+         free( rpath );
+         free( rtagstr );
+         if (releasectxt && mdal->destroyctxt(mdalctxt)) {
+            LOG(LOG_WARNING, "Failed to destroy MDAL_CTXT\n");
+         }
+         return 0;
       }
       LOG(LOG_INFO, "Created rebuild marker: \"%s\"\n", rpath);
       free(rpath);
@@ -2290,6 +2303,7 @@ ssize_t datastream_read(DATASTREAM* stream, void* buf, size_t count) {
             LOG(LOG_ERR, "Failed to close previous data object\n");
             freestream(tgtstream);
             *stream = NULL;
+            errno = EBADFD;
             return -1;
          }
          // progress to the next data object
