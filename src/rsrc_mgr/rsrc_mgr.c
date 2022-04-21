@@ -118,6 +118,7 @@ typedef struct quota_data_struct {
   size_t count;
   size_t del_objs;
   size_t del_refs;
+  size_t rebuilds;
 } quota_data;
 
 typedef struct tq_global_struct {
@@ -617,6 +618,7 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, char** r
   q_data->count = 0;
   q_data->del_objs = 0;
   q_data->del_refs = 0;
+  q_data->rebuilds = 0;
 
   char* rpath = strdup(*refpath);
 
@@ -914,6 +916,7 @@ int stream_cons(void** state, void** work_todo) {
     }
 
     rebuild_obj(tstate->global->ms, tstate->global->ds, tstate->global->ctxt, work->rpath, work->ftag, work->rtag);
+    tstate->q_data.rebuilds++;
   }
 
   free_work(work);
@@ -1251,6 +1254,7 @@ int ref_paths(const marfs_ns* ns, const char* name) {
   totals.count = 0;
   totals.del_objs = 0;
   totals.del_refs = 0;
+  totals.rebuilds = 0;
   int tres = 0;
   ThreadState tstate = NULL;
   while ((tres = tq_next_thread_status(tq, (void**)&tstate)) > 0) {
@@ -1266,6 +1270,7 @@ int ref_paths(const marfs_ns* ns, const char* name) {
     totals.count += tstate->q_data.count;
     totals.del_objs += tstate->q_data.del_objs;
     totals.del_refs += tstate->q_data.del_refs;
+    totals.rebuilds += tstate->q_data.rebuilds;
 
     if (tstate->scanner) {
       ms->mdal->closescanner(tstate->scanner);
@@ -1314,6 +1319,7 @@ int ref_paths(const marfs_ns* ns, const char* name) {
     totals.count += tstate->q_data.count;
     totals.del_objs += tstate->q_data.del_objs;
     totals.del_refs += tstate->q_data.del_refs;
+    totals.rebuilds += tstate->q_data.rebuilds;
 
     free(tstate);
   }
@@ -1334,7 +1340,7 @@ int ref_paths(const marfs_ns* ns, const char* name) {
   }
 
   char msg[1024] = {0};
-  snprintf(msg, 1024, "Rank: %d NS: \"%s\" Count: %lu Size: %lfTiB %s: (Objs: %lu Refs: %lu)", rank, name, totals.count, totals.size / 1024.0 / 1024.0 / 1024.0 / 1024.0, efgc, totals.del_objs, totals.del_refs);
+  snprintf(msg, 1024, "Rank: %d NS: \"%s\" Count: %lu Size: %lfTiB Rebuilds: %lu %s: (Objs: %lu Refs: %lu)", rank, name, totals.count, totals.size / 1024.0 / 1024.0 / 1024.0 / 1024.0, totals.rebuilds, efgc, totals.del_objs, totals.del_refs);
   MPI_Send(msg, 1024, MPI_CHAR, n_ranks - 1, 0, MPI_COMM_WORLD);
 
   ms->mdal->destroyctxt(ctxt);
