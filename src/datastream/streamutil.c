@@ -1371,20 +1371,16 @@ int main(int argc, const char **argv)
 {
    errno = 0; // init to zero (apparently not guaranteed)
    char *config_path = NULL;
-   char config_v = 0;
 
    char pr_usage = 0;
    int c;
    // parse all position-independent arguments
-   while ((c = getopt(argc, (char *const *)argv, "c:vh")) != -1)
+   while ((c = getopt(argc, (char *const *)argv, "c:h")) != -1)
    {
       switch (c)
       {
          case 'c':
             config_path = optarg;
-            break;
-         case 'v':
-            config_v = 1;
             break;
          case 'h':
          case '?':
@@ -1399,9 +1395,8 @@ int main(int argc, const char **argv)
    // check if we need to print usage info
    if ( pr_usage ) {
       printf( OUTPREFX "Usage info --\n" );
-      printf( OUTPREFX "%s -c configpath [-v] [-h]\n", PROGNAME );
+      printf( OUTPREFX "%s -c configpath [-h]\n", PROGNAME );
       printf( OUTPREFX "   -c : Path of the MarFS config file\n" );
-      printf( OUTPREFX "   -v : Verify the MarFS config\n" );
       printf( OUTPREFX "   -h : Print this usage info\n" );
       return -1;
    }
@@ -1420,17 +1415,6 @@ int main(int argc, const char **argv)
       return -1;
    }
    printf( OUTPREFX "marfs config loaded...\n" );
-
-   // verify the config, if requested
-   if ( config_v ) {
-      if ( config_verify( config, 1 ) ) {
-         printf( OUTPREFX "ERROR: Failed to verify config: \"%s\" ( %s )\n",
-                 config_path, strerror(errno) );
-         config_term( config );
-         return -1;
-      }
-      printf( OUTPREFX "config verified...\n" );
-   }
 
    // enter the main command loop
    int retval = 0;

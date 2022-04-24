@@ -146,7 +146,7 @@ int main(int argc, char **argv)
    }
 
    // create all namespaces associated with the config
-   if ( config_verify( config, 1 ) ) {
+   if ( config_verify( config, "./.", 1, 1, 1, 1 ) ) {
       printf( "Failed to validate the marfs config\n" );
       return -1;
    }

@@ -157,10 +157,14 @@ int config_term( marfs_config* config );
  * Verifies the LibNE Ctxt of every repo, creates every namespace, creates all
  *  reference dirs in the given config, and verifies the LibNE CTXT
  * @param marfs_config* config : Reference to the config to be validated
+ * @param const char* tgtNS : Path of the NS to be verified
+ * @param char MDALcheck : If non-zero, the MDAL security of each encountered NS will be verified
+ * @param char NEcheck : If non-zero, the LibNE ctxt of each encountered NS will be verified
+ * @param char recurse : If non-zero, children of the target NS will also be verified
  * @param char fix : If non-zero, attempt to correct any problems encountered
  * @return int : A count of uncorrected errors encountered, or -1 if a failure occurred
  */
-int config_verify( marfs_config* config, char fix );
+int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char NEcheck, char recurse, char fix );
 
 /**
  * Traverse the given path, idetifying a final NS target and resulting subpath

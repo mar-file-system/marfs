@@ -177,8 +177,7 @@ void pathcleanup( char* subpath, marfs_position* oppos ) {
  * @param const char* configpath : Path of the config file to initialize based on
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
  * @param char verify : If zero, skip config verification
- *                      If one, verify the config and abort if any problems are found
- *                      If two, verify the config and attempt to correct problems
+ *                      If non-zero, verify the config and abort if any problems are found
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
 marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify ) {
@@ -214,7 +213,7 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify
    }
    // verify our config, if requested
    if ( verify ) {
-      if ( config_verify( ctxt->config, verify - 1 ) ) {
+      if ( config_verify( ctxt->config, ".", 1, 1, 1, 0 ) ) {
          LOG( LOG_ERR, "Encountered uncorrected errors with the MarFS config\n" );
          config_term( ctxt->config );
          free( ctxt );

@@ -69,6 +69,11 @@ libConfig_la_LIBADD  = ../hash/libHash.la ../mdal/libMDAL.la
 libConfig_la_CFLAGS  = $(XML_CFLAGS)
 CONFIG_LIB = libConfig.la
 
+bin_PROGRAMS = marfs-verifyconf
+marfs_verifyconf_SOURCES = verifyconf.c
+marfs_verifyconf_LDADD   = $(CONFIG_LIB)
+marfs_verifyconf_CFLAGS  = $(XML_CFLAGS)
+
 # ---
 
 check_PROGRAMS = test_config

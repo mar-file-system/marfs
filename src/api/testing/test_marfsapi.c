@@ -59,6 +59,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 
 #include "marfs.c" // include C file directly, to allow traversal of all structures
+#include "config/config.h" // for config validation, alone
 
 #include <ftw.h>
 
@@ -129,8 +130,16 @@ int main( int argc, char** argv ) {
       return -1;
    }
 
+   // verify the marfs config
+   marfs_config* verconf = config_init( "testing/config.xml" );
+   if ( config_verify( verconf, ".", 1, 1, 1, 1 ) ) {
+      printf( "failed to verify batch ctxt config\n" );
+      return -1;
+   }
+   config_term( verconf );
+
    // initialize our BATCH marfs ctxt
-   marfs_ctxt batchctxt = marfs_init( "testing/config.xml", MARFS_BATCH, 2 );
+   marfs_ctxt batchctxt = marfs_init( "testing/config.xml", MARFS_BATCH, 0 );
    if ( batchctxt == NULL ) {
       printf( "failed to initialize batch ctxt\n" );
       return -1;

@@ -2336,45 +2336,81 @@ int config_term( marfs_config* config ) {
  * Verifies the LibNE Ctxt of every repo, creates every namespace, creates all 
  *  reference dirs in the given config, and verifies the LibNE CTXT
  * @param marfs_config* config : Reference to the config to be validated
+ * @param const char* tgtNS : Path of the NS to be verified
+ * @param char MDALcheck : If non-zero, the MDAL security of each encountered NS will be verified
+ * @param char NEcheck : If non-zero, the LibNE ctxt of each encountered NS will be verified
+ * @param char recurse : If non-zero, children of the target NS will also be verified
  * @param char fix : If non-zero, attempt to correct any problems encountered
  * @return int : A count of uncorrected errors encountered, or -1 if a failure occurred
  */
-int config_verify( marfs_config* config, char fix ) {
+int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char NEcheck, char recurse, char fix ) {
+
    // check for NULL refs
    if ( config == NULL ) {
       LOG( LOG_ERR, "Received a NULL config reference\n" );
       errno = EINVAL;
       return -1;
    }
-   int errcount = 0;
+   if ( tgtNS == NULL ) {
+      LOG( LOG_ERR, "Received a NULL NS target\n" );
+      errno = EINVAL;
+      return -1;
+   }
 
-   // verify all libNE and MDAL ctxts
-   int currepo = 0;
-   for ( ; currepo < config->repocount; currepo++ ) {
-      int verres = ne_verify( (config->repolist + currepo)->datascheme.nectxt, fix );
-      if ( verres < 0 ) {
-         LOG( LOG_ERR, "Failed to verify ne_ctxt of repo: \"%s\" (%s)\n",
-                       (config->repolist + currepo)->name, strerror(errno) );
+   // establish a NS string we can manipulate
+   char* NSpath = strdup( tgtNS );
+   if ( NSpath == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate path of NS target: \"%s\"\n", tgtNS );
+      return -1;
+   }
+
+   // establish a default position value, from which we'll traverse to our targetNS
+   MDAL rootmdal = config->rootns->prepo->metascheme.mdal;
+   marfs_position pos = {
+      .ns = config->rootns,
+      .depth = 0,
+      .ctxt = rootmdal->newctxt( "/.", rootmdal->ctxt )
+   };
+   if ( pos.ctxt == NULL ) {
+      // failed to establish a root MDAL ctxt
+      if ( errno == ENOENT  &&  fix ) {
+         // very likely need to create the rootNS
+         LOG( LOG_INFO, "Attempting to create rootNS\n" );
+         if ( rootmdal->createnamespace( rootmdal->ctxt, "/." )  ) {
+            LOG( LOG_ERR, "Failed to create rootNS (%s)\n", strerror(errno) );
+            return -1;
+         }
+         if ( (pos.ctxt = rootmdal->newctxt( "/.", rootmdal->ctxt )) == NULL ) {
+            LOG( LOG_ERR, "Failed to establish a rootNS MDAL_CTXT, even after creation\n" );
+            return -1;
+         }
+      }
+      else {
+         LOG( LOG_ERR, "Failed to establish a rootNS MDAL_CTXT\n" );
          return -1;
-      }
-      else if ( verres ) {
-         LOG( LOG_INFO, "ne_ctxt of repo \"%s\" encountered %d errors\n",
-                        (config->repolist + currepo)->name, verres );
-         errcount++;
-      }
-      MDAL tgtmdal = (config->repolist + currepo)->metascheme.mdal;
-      verres = tgtmdal->checksec( tgtmdal->ctxt, fix );
-      if ( verres < 0 ) {
-         LOG( LOG_ERR, "Failed to verify the MDAL security of repo: \"%s\" (%s)\n",
-                       (config->repolist + currepo)->name, strerror(errno) );
-         return -1;
-      }
-      else if ( verres ) {
-         LOG( LOG_INFO, "MDAL of repo \"%s\" has %d uncorrected security errors\n",
-                        (config->repolist + currepo)->name );
-         errcount++;
       }
    }
+
+   // traverse the config, identifying info for our NS target
+   int tgtdepth = config_traverse( config, &(pos), &(NSpath), 0 );
+   if ( pos.ctxt ) { pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );  pos.ctxt = NULL; } // ctxt not required
+   if ( tgtdepth != 0 ) {
+      if ( tgtdepth < 0 )
+         LOG( LOG_ERR, "Failed to identify the specified target: \"%s\"\n", NSpath );
+      else
+         LOG( LOG_ERR, "The specified target is not a NS: \"%s\"\n", NSpath );
+      free( NSpath );
+      return -1;
+   }
+   free( NSpath ); // done with NS path
+
+   // track verfied repos ( by pointer value, which should be safe )
+   marfs_repo** vrepos = calloc( sizeof(marfs_repo*), config->repocount );
+   if ( vrepos == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate verified repos list\n" );
+      return -1;
+   }
+   size_t vrepocnt = 0;
 
    // create a dynamic array, holding the current NS index at each depth
    size_t curiteralloc = 1024;
@@ -2388,7 +2424,8 @@ int config_verify( marfs_config* config, char fix ) {
    mode_t oldmask = umask(0);
 
    // traverse the entire NS hierarchy, creating any missing NSs and reference dirs
-   marfs_ns* curns = config->rootns;
+   int errcount = 0;
+   marfs_ns* curns = pos.ns;
    size_t curdepth = 1;
    size_t nscount = 0;
    char createcurrent = 1;
@@ -2399,6 +2436,42 @@ int config_verify( marfs_config* config, char fix ) {
          errno = 0;
          MDAL curmdal = curns->prepo->metascheme.mdal;
          MDAL_CTXT nsctxt = NULL;
+         // potentially verify the MDAL / libNE context of this NS's parent repo
+         char checkmdalsec = MDALcheck;
+         char checklibne = NEcheck;
+         size_t repoiter = 0;
+         for ( ; ( repoiter < vrepocnt )  &&  ( checkmdalsec  ||  checklibne ); repoiter++ ) {
+            if ( curns->prepo == vrepos[repoiter] ) { // don't reverify a repo we've already seen
+               checkmdalsec = 0;
+               checklibne = 0;
+            }
+         }
+         if ( checkmdalsec ) {
+            int verres = curmdal->checksec( curmdal->ctxt, fix );
+            if ( verres < 0 ) {
+               LOG( LOG_ERR, "Failed to verify the MDAL security of repo: \"%s\" (%s)\n",
+                             curns->prepo->name, strerror(errno) );
+               return -1;
+            }
+            else if ( verres ) {
+               LOG( LOG_INFO, "MDAL of repo \"%s\" has %d uncorrected security errors\n",
+                              curns->prepo->name );
+               errcount++;
+            }
+         }
+         if ( checklibne ) {
+            int verres = ne_verify( curns->prepo->datascheme.nectxt, fix );
+            if ( verres < 0 ) {
+               LOG( LOG_ERR, "Failed to verify ne_ctxt of repo: \"%s\" (%s)\n",
+                             curns->prepo->name, strerror(errno) );
+               return -1;
+            }
+            else if ( verres ) {
+               LOG( LOG_INFO, "ne_ctxt of repo \"%s\" encountered %d errors\n",
+                              curns->prepo->name, verres );
+               errcount++;
+            }
+         }
          // get the path of this NS
          char* nspath = NULL;
          if ( config_nsinfo( curns->idstr, NULL, &(nspath) ) ) {
@@ -2507,6 +2580,9 @@ int config_verify( marfs_config* config, char fix ) {
          }
          free( nspath );
       }
+
+      // quit out here, if not recursing
+      if ( !(recurse) ) { break; }
 
       // identify next NS target
       if ( nsiterlist[curdepth - 1] < curns->subnodecount ) {
