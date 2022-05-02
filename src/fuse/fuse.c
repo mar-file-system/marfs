@@ -827,10 +827,9 @@ int fuse_symlink(const char *target, const char *linkname)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  char* newtarget = translate_path( CTXT, target );
+  // leave target path unmodified
   char* newname = translate_path( CTXT, linkname );
-  int ret = marfs_symlink(CTXT, newtarget, newname) * errno;
-  free( newtarget );
+  int ret = marfs_symlink(CTXT, target, newname) * errno;
   free( newname );
 
   exit_user(&u_ctxt);
