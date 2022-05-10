@@ -216,6 +216,16 @@ int main( int argc, char** argv ) {
       printf( "failed to create 'hpdsymlinkfromroot'\n" );
       return -1;
    }
+   // read the content of that symlink
+   ssize_t linklen = marfs_readlink( interctxt, "../../hpdsymlinkfromroot", onekstr, 1024 );
+   if ( linklen != 42 ) {
+      printf( "Unexpected length of symlink \"hpdsymlinkfromroot\": %zd (%s)\n", linklen, strerror(errno) );
+      return -1;
+   }
+   if ( strncmp( "gransom-allocation/heavily-protected-data/", onekstr, linklen + 1 ) ) {
+      printf( "Unexpected content of symlink \"hpdsymlinkfromroot\": \"%s\"\n", onekstr );
+      return -1;
+   }
    // create a couple of larger files
    marfs_fhandle bgasubfhandle = marfs_creat( batchctxt, NULL, "gransom-allocation/gasubdir/file1", 0700 );
    if ( bgasubfhandle == NULL ) {

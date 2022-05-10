@@ -2629,8 +2629,12 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
  *                         string reference
  * @param char linkchk : If zero, this function will not check for symlinks in the path.
  *                          All path componenets are assumed to be directories.
- *                       If non-zero, this function will perform a readlink() op on all
+ *                       If one, this function will perform a readlink() op on all
  *                          path components, substituting in the targets of all symlinks.
+ *                       If greater than one, this function will perform a readlink() op 
+ *                          and substitute targets ( as above ) for all path components
+ *                          EXCEPT the final target.
+ *                          This behavior allows for ops to target symlinks directly.
  * @return int : The depth of the path from the resulting NS target, 
  *               or -1 if a failure occurred
  */
@@ -2707,7 +2711,17 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
       while ( *parsepath != '\0'  &&  *parsepath != '/' ) { parsepath++; }
       // replace any '/' char with a NULL
       char replacechar = 0;
-      if ( *parsepath == '/' ) { replacechar = 1; *parsepath = '\0'; }
+      char finalpathcomp = 0;
+      if ( *parsepath == '/' ) {
+         // check if the path continues beyond this component
+         int lookahead = 1;
+         while ( *(parsepath + lookahead) == '/' ) { lookahead++; } // skip over repeated '/' chars
+         if ( *(parsepath + lookahead) == '\0' ) { finalpathcomp = 1; } // check for end of path
+         // replace '/'
+         replacechar = 1;
+         *parsepath = '\0';
+      }
+      else { finalpathcomp = 1; } // no trailing '/' means this is the end of the path
       // identify the current path element
       if ( strcmp( pathelem, ".." ) == 0 ) {
          // parent ref
@@ -2754,7 +2768,8 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
             if ( replacechar ) { *parsepath = '\0'; } // redo any previous edit
          }
          // assume all others are either dirs or links
-         if ( linkchk ) {
+         // possibly substitute in symlink target ( if requested, and not skipping final path comp )
+         if ( linkchk == 1  ||  ( linkchk > 1  &&  !(finalpathcomp) ) ) {
             // stat the current path element
             errno = 0;
             struct stat linkst = {
