@@ -60,8 +60,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define FUSE_USE_VERSION 26
 
 #include "marfs_auto_config.h"
-#if defined(DEBUG_ALL)  ||  defined(DEBUG_FUSE)
-   #define DEBUG 1
+#ifdef DEBUG_FUSE
+#define DEBUG DEBUG_FUSE
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
 #endif
 #define LOG_PREFIX "fuse"
 #include <logging.h>

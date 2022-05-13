@@ -57,6 +57,14 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#ifdef DEBUG_RM
+#define DEBUG DEBUG_RM
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
+#endif
+#define LOG_PREFIX "rsrc_mgr"
+#include <logging.h>
+
 #include <dirent.h>
 #include <errno.h>
 #include <math.h>
@@ -76,14 +84,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "datastream/datastream.h"
 #include "mdal/mdal.h"
 #include "tagging/tagging.h"
-
-#if defined(DEBUG_ALL)  ||  defined(DEBUG_RM)
-#define DEBUG 1
-#endif
-
-#define LOG_PREFIX "rsrc_mgr"
-
-#include <logging.h>
 
 #define PROGNAME "marfs-rsrc_mgr"
 #define OUTPREFX PROGNAME ": "

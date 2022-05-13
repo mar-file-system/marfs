@@ -59,8 +59,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 #include "marfs_auto_config.h"
-#if defined(DEBUG_ALL)  ||  defined(DEBUG_MDAL)
-   #define DEBUG 1
+#ifdef DEBUG_MDAL
+#define DEBUG DEBUG_MDAL
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
 #endif
 #define LOG_PREFIX "mdal"
 

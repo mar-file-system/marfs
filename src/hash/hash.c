@@ -58,11 +58,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 #include "marfs_auto_config.h"
-
-#include "hash.h"
-
-#if defined(DEBUG_ALL) || defined(DEBUG_HASH)
-#define DEBUG 1
+#ifdef DEBUG_HASH
+#define DEBUG DEBUG_HASH
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
 #endif
 #define LOG_PREFIX "hash"
 
@@ -73,6 +72,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+
+#include "hash.h"
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 

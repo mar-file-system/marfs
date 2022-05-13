@@ -160,44 +160,114 @@ AC_CHECK_LIB([logging], [printf_log], [], [AC_MSG_ERROR(["Could not locate liblo
 #             [debug_all=no; debug_ne=no; debug_io=no; debug_dal=no; debug_tq=no])
 
 AC_ARG_ENABLE( [debugALL],
-               AS_HELP_STRING( [--enable-debugALL], [Enable all debug output] ),
-               AC_DEFINE( [DEBUG_ALL], [], [Enable all debug output] ), [] )
-
-#AC_ARG_ENABLE( [debugNE],
-#               AS_HELP_STRING( [--enable-debugNE], [Enable 'ne'-subdir debug output] ),
-#               AC_DEFINE( [DEBUG_NE], [], [Enable 'ne'-subdir debug output] ), [] )
-#
-#AC_ARG_ENABLE( [debugIO],
-#               AS_HELP_STRING( [--enable-debugIO], [Enable 'io'-subdir debug output] ),
-#               AC_DEFINE( [DEBUG_IO], [], [Enable 'io'-subdir debug output] ), [] )
+               [ AS_HELP_STRING( [--enable-debugALL], [Enable all debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_ALL], [3], [Enable all debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_ALL], [2], [Enable all debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_ALL], [1], [Enable all debug output] ) ]
+                  ) ], []
+             )
 
 AC_ARG_ENABLE( [debugMDAL],
-               AS_HELP_STRING( [--enable-debugMDAL], [Enable 'mdal'-subdir debug output] ),
-               AC_DEFINE( [DEBUG_MDAL], [], [Enable 'mdal'-subdir debug output] ), [] )
+               [ AS_HELP_STRING( [--enable-debugMDAL], [Enable 'mdal'-subdir debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_MDAL], [3], [Enable 'mdal'-subdir debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_MDAL], [2], [Enable 'mdal'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_MDAL], [1], [Enable 'mdal'-subdir debug output] ) ]
+                  ) ], []
+             )
 
 AC_ARG_ENABLE( [debugHASH],
-               AS_HELP_STRING( [--enable-debugHASH], [Enable 'hash'-subdir debug output] ),
-               AC_DEFINE( [DEBUG_HASH], [], [Enable 'hash'-subdir debug output] ), [] )
+               [ AS_HELP_STRING( [--enable-debugHASH], [Enable 'hash'-subdir debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_HASH], [3], [Enable 'hash'-subdir debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_HASH], [2], [Enable 'hash'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_HASH], [1], [Enable 'hash'-subdir debug output] ) ]
+                  ) ], []
+             )
 
 AC_ARG_ENABLE( [debugCONFIG],
-               AS_HELP_STRING( [--enable-debugCONFIG], [Enable 'config'-subdir debug output] ),
-               AC_DEFINE( [DEBUG_CONFIG], [], [Enable 'config'-subdir debug output] ), [] )
+               [ AS_HELP_STRING( [--enable-debugCONFIG], [Enable 'config'-subdir debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_CONFIG], [3], [Enable 'config'-subdir debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_CONFIG], [2], [Enable 'config'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_CONFIG], [1], [Enable 'config'-subdir debug output] ) ]
+                  ) ], []
+             )
 
-AC_ARG_ENABLE( [debugRM],
-               AS_HELP_STRING( [--enable-debugRM], [Enable 'rsrc_mgr'-subdir debug output] ),
-               AC_DEFINE( [DEBUG_RM], [], [Enable 'rsrc_mgr'-subdir debug output] ), [] )
+AC_ARG_ENABLE( [debugRECOVERY],
+               [ AS_HELP_STRING( [--enable-debugRECOVERY], [Enable 'recovery'-subdir debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_RECOVERY], [3], [Enable 'recovery'-subdir debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_RECOVERY], [2], [Enable 'recovery'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_RECOVERY], [1], [Enable 'recovery'-subdir debug output] ) ]
+                  ) ], []
+             )
+
+AC_ARG_ENABLE( [debugTAGGING],
+               [ AS_HELP_STRING( [--enable-debugTAGGING], [Enable 'tagging'-subdir debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_TAGGING], [3], [Enable 'tagging'-subdir debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_TAGGING], [2], [Enable 'tagging'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_TAGGING], [1], [Enable 'tagging'-subdir debug output] ) ]
+                  ) ], []
+             )
 
 AC_ARG_ENABLE( [debugDS],
-               AS_HELP_STRING( [--enable-debugDS], [Enable 'datastream'-subdir debug output] ),
-               AC_DEFINE( [DEBUG_DS], [], [Enable 'datastream'-subdir debug output] ), [] )
+               [ AS_HELP_STRING( [--enable-debugDS], [Enable 'ds'-subdir debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_DS], [3], [Enable 'ds'-subdir debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_DS], [2], [Enable 'ds'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_DS], [1], [Enable 'ds'-subdir debug output] ) ]
+                  ) ], []
+             )
+
+AC_ARG_ENABLE( [debugRM],
+               [ AS_HELP_STRING( [--enable-debugRM], [Enable 'rsrc_mgr'-subdir debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_RM], [3], [Enable 'rsrc_mgr'-subdir debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_RM], [2], [Enable 'rsrc_mgr'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_RM], [1], [Enable 'rsrc_mgr'-subdir debug output] ) ]
+                  ) ], []
+             )
 
 AC_ARG_ENABLE( [debugAPI],
-               AS_HELP_STRING( [--enable-debugAPI], [Enable 'api'-subdir debug output] ),
-               AC_DEFINE( [DEBUG_API], [], [Enable 'api'-subdir debug output] ), [] )
+               [ AS_HELP_STRING( [--enable-debugAPI], [Enable 'api'-subdir debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_API], [3], [Enable 'api'-subdir debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_API], [2], [Enable 'api'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_API], [1], [Enable 'api'-subdir debug output] ) ]
+                  ) ], []
+             )
 
 AC_ARG_ENABLE( [debugFUSE],
-               AS_HELP_STRING( [--enable-debugFUSE], [Enable 'fuse'-subdir debug output] ),
-               AC_DEFINE( [DEBUG_FUSE], [], [Enable 'fuse'-subdir debug output] ), [] )
+               [ AS_HELP_STRING( [--enable-debugFUSE], [Enable 'fuse'-subdir debug output] ) ],
+                  [ AS_CASE( [ x"${enableval}" ],
+                           [[ x[Ee]* ]],
+                              [ AC_DEFINE( [DEBUG_FUSE], [3], [Enable 'fuse'-subdir debug output] ) ],
+                           [[ x[Ww]* ]],
+                              [ AC_DEFINE( [DEBUG_FUSE], [2], [Enable 'fuse'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_FUSE], [1], [Enable 'fuse'-subdir debug output] ) ]
+                  ) ], []
+             )
 
 # debugging-output should go to syslog, instead of stdout/stderr?
 AC_ARG_ENABLE([syslog],

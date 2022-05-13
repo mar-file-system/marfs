@@ -159,8 +159,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  */
 
 #include "marfs_auto_config.h"
-#if defined(DEBUG_ALL)  ||  defined(DEBUG_CONFIG)
-   #define DEBUG 1
+#ifdef DEBUG_CONFIG
+#define DEBUG DEBUG_CONFIG
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
 #endif
 #define LOG_PREFIX "config"
 
@@ -605,8 +607,8 @@ int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
             case 'W':
                // 'R'/'W' are only acceptable as the first character of a pair
                if ( fchar != '\0' ) {
-                  if ( fchar == eoperm ) LOG( LOG_ERR, "trailing '%c' character is unrecognized\n", *permstr );
-                  else LOG( LOG_ERR, "perm string '%c%c' is unrecognized\n", fchar, *permstr );
+                  if ( fchar == eoperm ) { LOG( LOG_ERR, "trailing '%c' character is unrecognized\n", *permstr ); }
+                  else { LOG( LOG_ERR, "perm string '%c%c' is unrecognized\n", fchar, *permstr ); }
                   return -1;
                }
                fchar = *permstr;
@@ -2395,10 +2397,12 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
    int tgtdepth = config_traverse( config, &(pos), &(NSpath), 0 );
    if ( pos.ctxt ) { pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );  pos.ctxt = NULL; } // ctxt not required
    if ( tgtdepth != 0 ) {
-      if ( tgtdepth < 0 )
+      if ( tgtdepth < 0 ) {
          LOG( LOG_ERR, "Failed to identify the specified target: \"%s\"\n", NSpath );
-      else
+      }
+      else {
          LOG( LOG_ERR, "The specified target is not a NS: \"%s\"\n", NSpath );
+      }
       free( NSpath );
       return -1;
    }

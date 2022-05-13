@@ -59,8 +59,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 
 #include "marfs_auto_config.h"
-#if defined(DEBUG_ALL)  ||  defined(DEBUG_RECOVERY)
-   #define DEBUG 1
+#ifdef DEBUG_RECOVERY
+#define DEBUG DEBUG_RECOVERY
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
 #endif
 #define LOG_PREFIX "recovery"
 
