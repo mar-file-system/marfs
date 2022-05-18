@@ -291,7 +291,7 @@ int main(int argc, char **argv)
    }
 
    // link the reference file into the user namespace
-   if ( mdal->linkref( rootctxt, "ref0/reffile", "userfile" ) ) {
+   if ( mdal->linkref( rootctxt, 0, "ref0/reffile", "userfile" ) ) {
       printf( "failed to link \"ref0/reffile\" to user path \"userfile\"\n" );
       return -1;
    }

@@ -596,13 +596,53 @@ size_t ftag_rebuildmarker( const FTAG* ftag, char* tgtstr, size_t len ) {
       if ( *parse == '|' ) { *parse = '#'; }
       parse++;
    }
-   size_t retval = snprintf( tgtstr, len, "%s|%s|%zur", ftag->ctag, sanstream, ftag->objno );
+   size_t retval = snprintf( tgtstr, len, "%s|%s|%zurebuild", ftag->ctag, sanstream, ftag->objno );
    free( sanstream );
    return retval;
 }
 
 /**
- * Identify whether the given pathname refers to a rebuild marker or a meta file ID and 
+ * Populate the given string buffer with the repack marker produced from the given ftag
+ * NOTE -- repack markers should NOT be randomly hashed to a reference location, they should 
+ *         instead be placed directly alongside their corresponding original metatgt
+ * @param const FTAG* ftag : Reference to the ftag struct to pull values from
+ * @param char* tgtstr : String buffer to be populated with the repack marker name
+ * @param size_t len : Byte length of the target buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficient buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t ftag_repackmarker( const FTAG* ftag, char* tgtstr, size_t len ) {
+   // check for NULL ftag
+   if ( ftag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL FTAG reference\n" );
+      return 0;
+   }
+   // check for NULL string target
+   if ( len  &&  tgtstr == NULL ) {
+      LOG( LOG_ERR, "Receieved a NULL tgtstr value w/ non-zero len\n" );
+      return 0;
+   }
+   // sanitize the streamID, removing any '|' chars
+   char* sanstream = strdup( ftag->streamid );
+   if ( sanstream == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate streamID: \"%s\"\n", ftag->streamid );
+      return 0;
+   }
+   char* parse = sanstream;
+   while ( *parse != '\0' ) {
+      if ( *parse == '|' ) { *parse = '#'; }
+      parse++;
+   }
+   size_t retval = snprintf( tgtstr, len, "%s|%s|%zuREPACK", ftag->ctag, sanstream, ftag->objno );
+   free( sanstream );
+   return retval;
+}
+
+/**
+ * Identify whether the given pathname refers to a rebuild marker, repack marker, or a meta file ID and 
  * which object or file number it is associated with
  * @param const char* metapath : String containing the meta pathname
  * @param char* entrytype : Reference to a char value to be populated by this function
@@ -610,6 +650,8 @@ size_t ftag_rebuildmarker( const FTAG* ftag, char* tgtstr, size_t len ) {
  *                           ( return value is a file number )
  *                          If set to one, the pathname is a rebuild marker
  *                           ( return value is an object number )
+ *                          If set to two, the pathname is a repack marker
+ *                           ( return value is a file number )
  * @return ssize_t : File/Object number value, or -1 if a failure occurred
  */
 ssize_t ftag_metainfo( const char* metapath, char* entrytype ) {
@@ -646,10 +688,15 @@ ssize_t ftag_metainfo( const char* metapath, char* entrytype ) {
       errno = EINVAL;
       return -1;
    }
-   if ( *endptr == 'r' ) {
+   if ( *endptr == 'r'  &&  strncmp( endptr, "rebuild", 7 ) == 0 ) {
       LOG( LOG_INFO, "Marking pathname as a rebuild marker\n" );
-      endptr++; // skip over rebuild marker
+      endptr += 7; // skip over rebuild marker
       *entrytype = 1;
+   }
+   else if ( *endptr == 'R'  &&  strncmp( endptr, "REPACK", 6 ) == 0 ) {
+      LOG( LOG_INFO, "Marking pathname as a repack marker\n" );
+      endptr += 6; // skip over repack marker
+      *entrytype = 2;
    }
    else {
       LOG( LOG_INFO, "Marking pathname as a meta file ID\n" );

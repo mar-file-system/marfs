@@ -1426,11 +1426,13 @@ int posixmdal_destroyrefdir ( const MDAL_CTXT ctxt, const char* refdir ) {
 /**
  * Hardlink the specified reference path to the specified user-visible path
  * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with a target namespace
+ * @param char interref : If zero, 'newpath' is interpreted as a user-visible path
+ *                        If non-zero, 'newpath' is interpreted as another reference path
  * @param const char* oldrpath : Reference path of the existing file target
  * @param const char* newpath : Path at which to create the hardlink
  * @return int : Zero on success, -1 if a failure occurred
  */
-int posixmdal_linkref ( const MDAL_CTXT ctxt, const char* oldrpath, const char* newpath ) {
+int posixmdal_linkref ( const MDAL_CTXT ctxt, char interref, const char* oldrpath, const char* newpath ) {
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -1444,12 +1446,42 @@ int posixmdal_linkref ( const MDAL_CTXT ctxt, const char* oldrpath, const char* 
       errno = EINVAL;
       return -1;
    }
+   // identify target type
+   int tgtdir = pctxt->pathd;
+   if ( interref ) {
+      tgtdir = pctxt->refd;
+   }
    // attempt hardlink creation
-   if ( linkat( pctxt->refd, oldrpath, pctxt->pathd, newpath, 0 ) ) {
-      LOG( LOG_ERR, "Failed to link rpath into the namespace\n" );
+   if ( linkat( pctxt->refd, oldrpath, tgtdir, newpath, 0 ) ) {
+      LOG( LOG_ERR, "Failed to link rpath \"%s\" to %s \"%s\"\n", oldrpath, (interref) ? "rpath" : "NS path", newpath );
       return -1;
    }
    return 0;
+}
+
+/**
+ * Rename the specified reference path to a new reference path
+ * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+ * @param const char* from : String path of the reference
+ * @param const char* to : Destination string reference path
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int posixmdal_renameref ( const MDAL_CTXT ctxt, const char* from, const char* to ) {
+   // check for NULL ctxt
+   if ( !(ctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
+   // check for a valid NS path dir
+   if ( pctxt->pathd < 0 ) {
+      LOG( LOG_ERR, "Receieved an MDAL_CTXT with no namespace target\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // issue the rename op
+   return renameat( pctxt->refd, from, pctxt->refd, to );
 }
 
 /**
@@ -2991,6 +3023,7 @@ MDAL posix_mdal_init( xmlNode* root ) {
          pmdal->createrefdir = posixmdal_createrefdir;
          pmdal->destroyrefdir = posixmdal_destroyrefdir;
          pmdal->linkref = posixmdal_linkref;
+         pmdal->renameref = posixmdal_renameref;
          pmdal->unlinkref = posixmdal_unlinkref;
          pmdal->statref = posixmdal_statref;
          pmdal->openref = posixmdal_openref;

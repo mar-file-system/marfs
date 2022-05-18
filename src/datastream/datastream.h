@@ -65,6 +65,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 typedef enum {
    CREATE_STREAM,
    EDIT_STREAM,
+   REPACK_STREAM,
    READ_STREAM
 } STREAM_TYPE;
 
@@ -157,6 +158,32 @@ int datastream_create(DATASTREAM* stream, const char* path, marfs_position* pos,
  *            to NULL, and errno set to EBADFD.
  */
 int datastream_open(DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, MDAL_FHANDLE* phandle);
+
+/**
+ * Open both a READ stream for an existing file and a REPACK stream for rewriting the file's contents
+ * @param DATASTREAM* readstream : Reference to an existing READ DATASTREAM;
+ *                                 if that ref is NULL a fresh stream will be generated to replace that ref
+ * @param DATASTREAM* writestream : Reference to an existing REPACK DATASTREAM;
+ *                                  if that ref is NULL a fresh stream will be generated to replace that ref
+ * @param const char* refpath : Reference path of the file to be repacked
+ * @param marfs_position* pos : Reference to the marfs_position value of the target file
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
+ *            to NULL, and errno set to EBADFD.
+ */
+int datastream_repack(DATASTREAM* readstream, DATASTREAM* writestream, const char* refpath, marfs_position* pos);
+
+/**
+ * Cleans up state from a previous repack operation
+ * NOTE -- This should only be necessary for a repack operation left in an incomplete state.
+ * @param const char* refpath : Reference path of the repack marker file for the previous operation
+ * @param marfs_position* pos : Reference to the marfs_position value of the target file
+ * @return int : Zero on successful cleanup, or -1 on failure
+ */
+int datastream_repack_cleanup(const char* refpath, marfs_position* pos);
 
 /**
  * Release the given DATASTREAM ( close the stream without completing the referenced file )

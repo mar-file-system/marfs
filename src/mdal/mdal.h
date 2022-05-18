@@ -296,13 +296,24 @@ typedef struct MDAL_struct {
    int (*destroyrefdir) ( const MDAL_CTXT ctxt, const char* refdir );
 
    /**
-    * Hardlink the specified reference path to the specified user-visible path
+    * Hardlink the specified reference path to the specified path ( either user-visible or another ref path )
     * @param const MDAL_CTXT ctxt : Current MDAL_CTXT, associated with a target namespace
+    * @param char interref : If zero, 'newpath' is interpreted as a user-visible path
+    *                        If non-zero, 'newpath' is interpreted as another reference path
     * @param const char* oldrpath : Reference path of the existing file target
     * @param const char* newpath : Path at which to create the hardlink
     * @return int : Zero on success, -1 if a failure occurred
     */
-   int (*linkref) ( const MDAL_CTXT, const char* oldrpath, const char* newpath );
+   int (*linkref) ( const MDAL_CTXT, char interref, const char* oldrpath, const char* newpath );
+
+   /**
+    * Rename the specified reference path to a new reference path
+    * @param const MDAL_CTXT ctxt : MDAL_CTXT to operate relative to
+    * @param const char* from : String path of the reference
+    * @param const char* to : Destination string reference path
+    * @return int : Zero on success, or -1 if a failure occurred
+    */
+   int (*renameref) ( const MDAL_CTXT ctxt, const char* from, const char* to );
 
    /**
     * Unlink the specified file reference path

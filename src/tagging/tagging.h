@@ -147,7 +147,7 @@ int ftag_cmp( const FTAG* ftag1, const FTAG* ftag2 );
  * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
  *                  an error occurred.
  *                  NOTE -- if this value is >= the length of the provided buffer, this
- *                  indicates that insufficint buffer space was provided and the resulting
+ *                  indicates that insufficient buffer space was provided and the resulting
  *                  output string was truncated.
  */
 size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t len );
@@ -160,13 +160,28 @@ size_t ftag_metatgt( const FTAG* ftag, char* tgtstr, size_t len );
  * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
  *                  an error occurred.
  *                  NOTE -- if this value is >= the length of the provided buffer, this
- *                  indicates that insufficint buffer space was provided and the resulting
+ *                  indicates that insufficient buffer space was provided and the resulting
  *                  output string was truncated.
  */
 size_t ftag_rebuildmarker( const FTAG* ftag, char* tgtstr, size_t len );
 
 /**
- * Identify whether the given pathname refers to a rebuild marker or a meta file ID and 
+ * Populate the given string buffer with the repack marker produced from the given ftag
+ * NOTE -- repack markers should NOT be randomly hashed to a reference location, they should 
+ *         instead be placed directly alongside their corresponding original metatgt
+ * @param const FTAG* ftag : Reference to the ftag struct to pull values from
+ * @param char* tgtstr : String buffer to be populated with the repack marker name
+ * @param size_t len : Byte length of the target buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficient buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t ftag_repackmarker( const FTAG* ftag, char* tgtstr, size_t len );
+
+/**
+ * Identify whether the given pathname refers to a rebuild marker, repack marker, or a meta file ID and 
  * which object or file number it is associated with
  * @param const char* metapath : String containing the meta pathname
  * @param char* entrytype : Reference to a char value to be populated by this function
@@ -174,6 +189,8 @@ size_t ftag_rebuildmarker( const FTAG* ftag, char* tgtstr, size_t len );
  *                           ( return value is a file number )
  *                          If set to one, the pathname is a rebuild marker
  *                           ( return value is an object number )
+ *                          If set to two, the pathname is a repack marker
+ *                           ( return value is a file number )
  * @return ssize_t : File/Object number value, or -1 if a failure occurred
  */
 ssize_t ftag_metainfo( const char* fileid, char* entrytype );
@@ -192,7 +209,7 @@ ssize_t ftag_metainfo( const char* fileid, char* entrytype );
 size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
 
 
-// MARFS REBUILD TAG  --  attached to damaged marfs files, providing rebuild info
+// MARFS REBUILD TAG  --  attached to rebuild marker files, providing rebuild info
 
 #define RTAG_CURRENT_MAJORVERSION 0
 #define RTAG_CURRENT_MINORVERSION 1
@@ -222,6 +239,13 @@ int rtag_initstr( ne_state* rtag, size_t stipewidth, const char* rtagstr );
  */
 size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_t len );
 
+// MARFS ORIGINAL REPACK TAG  --  attached to repacked files, storing original FTAG info
+
+#define OREPACK_TAG_NAME "ORIG-MARFS-FILE"
+
+// MARFS TARGET REPACK TAG  --  attached to files during a repack, storing target FTAG info
+
+#define TREPACK_TAG_NAME "TGT-MARFS-FILE"
 
 #endif // _TAGGING_H
 

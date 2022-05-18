@@ -853,7 +853,7 @@ int main(int argc, char **argv)
       return -1;
    }
    errno = 0;
-   if ( heavymdal->linkref( pos.ctxt, "reflink", "subdir/tgtfile" )  &&  errno != EEXIST ) {
+   if ( heavymdal->linkref( pos.ctxt, 0, "reflink", "subdir/tgtfile" )  &&  errno != EEXIST ) {
       printf( "Failed to link reference file 'reflink' to real tgt 'subdir/tgtfile'\n" );
       return -1;
    }

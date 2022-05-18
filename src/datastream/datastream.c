@@ -343,7 +343,7 @@ int linkfile(DATASTREAM stream, const char* refpath, const char* tgtpath, MDAL_C
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // attempt to link the specified file to the specified user path
-   if (ms->mdal->linkref(ctxt, refpath, tgtpath)) {
+   if (ms->mdal->linkref(ctxt, 0, refpath, tgtpath)) {
       // if we got EEXIST, attempt to unlink the existing target and retry
       if (errno != EEXIST) {
          // any non-EEXIST error is fatal
@@ -356,7 +356,7 @@ int linkfile(DATASTREAM stream, const char* refpath, const char* tgtpath, MDAL_C
          LOG(LOG_ERR, "Failed to unlink existing file: \"%s\"\n", tgtpath);
          return -1;
       }
-      else if (ms->mdal->linkref(ctxt, refpath, tgtpath)) {
+      else if (ms->mdal->linkref(ctxt, 0, refpath, tgtpath)) {
          // This indicates either we're racing with another proc, or something more unusual
          //   Just fail out with whatever errno we get from flink()
          LOG(LOG_ERR, "Failed to link reference file to final location after retry\n");
@@ -651,10 +651,6 @@ int open_existing_file(DATASTREAM stream, const char* path, char rpathflag, MDAL
       curfile->ftag.ctag = NULL;
       free(curfile->ftag.streamid);
       curfile->ftag.streamid = NULL;
-      if (stream->type == READ_STREAM) {
-         // no FTAG value exists, but preserve the meta handle for potential direct read
-         return 1;
-      }
       curmdal->close(curfile->metahandle);
       curfile->metahandle = NULL;
       errno = EINVAL;
@@ -1169,63 +1165,8 @@ DATASTREAM genstream(STREAM_TYPE type, const char* path, char rpathflag, marfs_p
       }
 
       // generate a new streamID
-      // NOTE -- This is the ONLY location in the MarFS code where streamIDs are generated.
-      //         All other funcs take the existing ID value.
-      struct timespec curtime;
-      if (clock_gettime(CLOCK_REALTIME, &curtime)) {
-         LOG(LOG_ERR, "Failed to determine the current time\n");
-         freestream(stream);
-         return NULL;
-      }
-      char* nsrepo = NULL;
-      char* nspath = NULL;
-      if (config_nsinfo(stream->ns->idstr, &(nsrepo), &(nspath))) {
-         LOG(LOG_ERR, "Failed to retrieve path/repo info for this stream's NS\n");
-         freestream(stream);
-         return NULL;
-      }
-      char* nsparse = nspath;
-      size_t nspathlen = 0;
-      for (; *nsparse != '\0'; nsparse++) {
-         // replace all '/' chars in a NS path with '#'
-         if (*nsparse == '/') {
-            *nsparse = '#';
-         }
-         nspathlen++;
-      }
-      size_t streamidlen = SIZE_DIGITS;  // to account for tv_sec (see numdigits.h)
-      streamidlen += SIZE_DIGITS; // to account for tv_nsec
-      streamidlen += strlen(nsrepo) + nspathlen; // to include NS/Repo info
-      streamidlen += 4; // for '#'/'.' seperators and null terminator
-      if ((stream->streamid = malloc(sizeof(char) * streamidlen)) == NULL) {
-         LOG(LOG_ERR, "Failed to allocate space for streamID\n");
-         free(nsrepo);
-         free(nspath);
-         freestream(stream);
-         return NULL;
-      }
-      ssize_t prres = snprintf(stream->streamid, streamidlen, "%s#%s#%zd.%ld",
-         nsrepo, nspath, curtime.tv_sec, curtime.tv_nsec);
-      if (prres <= 0 || prres >= streamidlen) {
+      if ( genstreamid( stream->ctag, stream->ns, &(stream->streamid), &(stream->recoveryheaderlen) ) ) {
          LOG(LOG_ERR, "Failed to generate streamID value\n");
-         free(nsrepo);
-         free(nspath);
-         freestream(stream);
-         return NULL;
-      }
-      free(nsrepo);
-      free(nspath);
-
-      // establish our recovery header length
-      RECOVERY_HEADER header = {
-         .majorversion = RECOVERY_CURRENT_MAJORVERSION,
-         .minorversion = RECOVERY_CURRENT_MINORVERSION,
-         .ctag = stream->ctag,
-         .streamid = stream->streamid
-      };
-      stream->recoveryheaderlen = recovery_headertostr(&(header), NULL, 0);
-      if (stream->recoveryheaderlen < 1) {
-         LOG(LOG_ERR, "Failed to identify length of create stream recov header\n");
          freestream(stream);
          return NULL;
       }
@@ -1517,16 +1458,16 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
    file->ftag.state = (FTAG_COMP | FTAG_READABLE) | (file->ftag.state & ~(FTAG_DATASTATE));
    // update the ftag availbytes to reflect the actual data bytes
    file->ftag.availbytes = file->ftag.bytes;
-   // truncate the file to an appropriate length
-   if (ms->mdal->ftruncate(file->metahandle, file->ftag.availbytes)) {
-      LOG(LOG_ERR, "Failed to truncate file %zu to proper size\n", file->ftag.fileno);
+   // set an updated ftag value
+   if (putftag(stream, file)) {
+      LOG(LOG_ERR, "Failed to update FTAG on file %zu to complete state\n", file->ftag.fileno);
       ms->mdal->close(file->metahandle);
       file->metahandle = NULL; // NULL out this handle, so that we never double close()
       return -1;
    }
-   // set an updated ftag value
-   if (putftag(stream, file)) {
-      LOG(LOG_ERR, "Failed to update FTAG on file %zu to complete state\n", file->ftag.fileno);
+   // truncate the file to an appropriate length
+   if (ms->mdal->ftruncate(file->metahandle, file->ftag.availbytes)) {
+      LOG(LOG_ERR, "Failed to truncate file %zu to proper size\n", file->ftag.fileno);
       ms->mdal->close(file->metahandle);
       file->metahandle = NULL; // NULL out this handle, so that we never double close()
       return -1;
