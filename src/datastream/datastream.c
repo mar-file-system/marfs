@@ -659,8 +659,8 @@ int open_existing_file(DATASTREAM stream, const char* path, char rpathflag, MDAL
       errno = EINVAL;
       return -1;
    }
-   if (stream->type == READ_STREAM &&
-      !(curfile->ftag.state & FTAG_READABLE)) {
+   if ( (stream->type == READ_STREAM  ||  stream->type == REPACK_STREAM) &&
+        !(curfile->ftag.state & FTAG_READABLE)) {
       LOG(LOG_ERR, "Target file is not yet readable\n");
       free(curfile->ftag.ctag);
       curfile->ftag.ctag = NULL;
