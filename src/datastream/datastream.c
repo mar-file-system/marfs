@@ -273,9 +273,17 @@ int putftag(DATASTREAM stream, STREAMFILE* file) {
          return -1;
       }
    }
-   if (ms->mdal->fsetxattr(file->metahandle, 1, FTAG_NAME, stream->ftagstr, prres, 0)) {
-      LOG(LOG_ERR, "Failed to attach marfs ftag value: \"%s\"\n", stream->ftagstr);
-      return -1;
+   if ( stream->type == REPACK_STREAM ) {
+      if (ms->mdal->fsetxattr(file->metahandle, 1, TREPACK_TAG_NAME, stream->ftagstr, prres, 0)) {
+         LOG(LOG_ERR, "Failed to attach marfs repack target ftag value: \"%s\"\n", stream->ftagstr);
+         return -1;
+      }
+   }
+   else {
+      if (ms->mdal->fsetxattr(file->metahandle, 1, FTAG_NAME, stream->ftagstr, prres, 0)) {
+         LOG(LOG_ERR, "Failed to attach marfs ftag value: \"%s\"\n", stream->ftagstr);
+         return -1;
+      }
    }
 
    return 0;
@@ -399,15 +407,22 @@ int genrecoveryinfo(DATASTREAM stream, RECOVERY_FINFO* finfo, STREAMFILE* file, 
       finfo->size = stval.st_size;
       return 0;
    }
+
+   // align our finalized file times with those we will be using in recovery info
+   file->times[0] = stval.st_atim;
+   file->times[1] = stval.st_mtim;
+
+   if ( stream->type == REPACK_STREAM ) {
+      // repack streams terminate early, as we don't yet have a recovery path
+      return 0;
+   }
+
+   // store the recovery path
    finfo->path = strdup(path);
    if (finfo->path == NULL) {
       LOG(LOG_ERR, "Failed to duplicate file path into recovery info\n");
       return -1;
    }
-
-   // align our finalized file times with those we will be using in recovery info
-   file->times[0] = stval.st_atim;
-   file->times[1] = stval.st_mtim;
 
    // calculate the length of the recovery info
    size_t recoverybytes = recovery_finfotostr(finfo, NULL, 0);
