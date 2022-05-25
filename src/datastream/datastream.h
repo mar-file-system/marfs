@@ -160,21 +160,11 @@ int datastream_create(DATASTREAM* stream, const char* path, marfs_position* pos,
 int datastream_open(DATASTREAM* stream, STREAM_TYPE type, const char* path, marfs_position* pos, MDAL_FHANDLE* phandle);
 
 /**
- * Open a REPACK stream for rewriting the file's contents as a new set of data objects
- * NOTE -- Until this stream is either closed or progressed ( via a repeated call to this func w/ the same stream arg ),
- *         any READ stream opened against the target file will be able to read the original file content.
- * NOTE -- To properly preserve all file times possible ( atime espc. ), this is the expected repacking workflow:
- *         datastream_repack( repackstream, "tgtfile", pos ) -- open a repack stream for the file
- *         datastream_open( readstream, READ_STREAM, "tgtfile", pos ) -- open a read stream for the same file
- *         datastream_read( readstream )  AND
- *           datastream_write( repackstream ) -- duplicate all file content into repackstream
- *         datastream_release( readstream )  OR
- *           datastream_open( readstream, ... ) -- terminate or progress readstream
- *         datastream_close( repackstream )  OR
- *           datastream_repack( repackstream, ... ) -- terminate or progress repackstream
- * @param DATASTREAM* stream : Reference to an existing REPACK DATASTREAM;
- *                             if that stream is NULL a fresh stream will be generated to replace it
- * @param const char* refpath : Reference path of the file to be repacked
+ * Open an existing file, by reference path, and associate it with a READ stream
+ * @param DATASTREAM* stream : Reference to an existing READ DATASTREAM;
+ *                             if that ref is NULL a fresh stream will be generated to
+ *                             replace that ref
+ * @param const char* refpath : Reference path of the file to be opened
  * @param marfs_position* pos : Reference to the marfs_position value of the target file
  * @return int : Zero on success, or -1 on failure
  *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
@@ -183,7 +173,34 @@ int datastream_open(DATASTREAM* stream, STREAM_TYPE type, const char* path, marf
  *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
  *            to NULL, and errno set to EBADFD.
  */
-int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* pos);
+int datastream_scan(DATASTREAM* stream, const char* refpath, marfs_position* pos);
+
+/**
+ * Open a REPACK stream for rewriting the file's contents as a new set of data objects
+ * NOTE -- Until this stream is either closed or progressed ( via a repeated call to this func w/ the same stream arg ),
+ *         any READ stream opened against the target file will be able to read the original file content.
+ * NOTE -- To properly preserve all file times possible ( atime espc. ), this is the expected repacking workflow:
+ *         datastream_repack( repackstream, "tgtfile", pos ) -- open a repack stream for the file
+ *         datastream_scan( readstream, "tgtfile", pos ) -- open a read stream for the same file
+ *         datastream_read( readstream )  AND
+ *           datastream_write( repackstream ) -- duplicate all file content into repackstream
+ *         datastream_release( readstream )  OR
+ *           datastream_scan( readstream, ... ) -- terminate or progress readstream
+ *         datastream_close( repackstream )  OR
+ *           datastream_repack( repackstream, ... ) -- terminate or progress repackstream
+ * @param DATASTREAM* stream : Reference to an existing REPACK DATASTREAM;
+ *                             if that stream is NULL a fresh stream will be generated to replace it
+ * @param const char* refpath : Reference path of the file to be repacked
+ * @param marfs_position* pos : Reference to the marfs_position value of the target file
+ * @param const char* ctag : Client tag to be associated with this stream
+ * @return int : Zero on success, or -1 on failure
+ *    NOTE -- In most failure conditions, any previous DATASTREAM reference will be
+ *            preserved ( continue to reference whatever file they previously referenced ).
+ *            However, it is possible for certain catastrophic error conditions to occur.
+ *            In such a case, the DATASTREAM will be destroyed, the 'stream' reference set
+ *            to NULL, and errno set to EBADFD.
+ */
+int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* pos, const char* ctag);
 
 /**
  * Cleans up state from a previous repack operation
