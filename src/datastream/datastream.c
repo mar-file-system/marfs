@@ -850,7 +850,7 @@ int open_repack_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt) {
    finfo->mode = stval.st_mode;
    finfo->owner = stval.st_uid;
    finfo->group = stval.st_gid;
-   finfo->size = 0;
+   finfo->size = stval.st_size; // repack streams keep track of expected total file size here
    finfo->mtime.tv_sec = stval.st_mtim.tv_sec;
    finfo->mtime.tv_nsec = stval.st_mtim.tv_nsec;
    finfo->eof = 0;
@@ -1588,6 +1588,7 @@ int putfinfo(DATASTREAM stream) {
       free(oldstr);
    }
    // update recovery info size values
+   size_t origfinfosize = stream->finfo.size;
    if (stream->type == EDIT_STREAM) {
       DATASTREAM_POSITION dpos = {
          .totaloffset = 0,
@@ -1612,6 +1613,7 @@ int putfinfo(DATASTREAM stream) {
    if (genbytes > recoverybytes) {
       LOG(LOG_ERR, "File recovery info has an inconsistent length ( old=%zu, new=%zu )\n",
          recoverybytes, genbytes);
+      if ( stream->type == REPACK_STREAM ) { stream->finfo.size = origfinfosize; } // restore this value for repack
       errno = ENAMETOOLONG; // this is most likely to represent the issue, as this almost
                             //  certainly is the result of the recovery path changing
       return -1;
@@ -1620,6 +1622,7 @@ int putfinfo(DATASTREAM stream) {
       // finfo string is shorter than expected, so zero out the unused tail of the string
       bzero(stream->finfostr + genbytes, (recoverybytes + 1) - genbytes);
    }
+   if ( stream->type == REPACK_STREAM ) { stream->finfo.size = origfinfosize; } // restore this value for repack
    // Note -- previous writes should have ensured we have at least 'recoverybytes' of
    //         available spaece to write out the recovery string
    if (ne_write(stream->datahandle, stream->finfostr, recoverybytes) != recoverybytes) {
@@ -1694,8 +1697,9 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
    // shorthand references
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
    // check for an extended file from a create stream
-   if ((file->ftag.state & FTAG_WRITEABLE) && stream->type == CREATE_STREAM) {
-      LOG(LOG_ERR, "Cannot complete extended file from original create stream\n");
+   if ((file->ftag.state & FTAG_WRITEABLE) && 
+       ( stream->type == CREATE_STREAM  ||  stream->type == REPACK_STREAM ) ) {
+      LOG(LOG_ERR, "Cannot complete extended file from the creating stream\n");
       ms->mdal->close(file->metahandle);
       file->metahandle = NULL; // NULL out this handle, so that we never double close()
       return -1;
@@ -1718,12 +1722,226 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
       file->metahandle = NULL; // NULL out this handle, so that we never double close()
       return -1;
    }
-   // truncate the file to an appropriate length
-   if (ms->mdal->ftruncate(file->metahandle, file->ftag.availbytes)) {
-      LOG(LOG_ERR, "Failed to truncate file %zu to proper size\n", file->ftag.fileno);
-      ms->mdal->close(file->metahandle);
-      file->metahandle = NULL; // NULL out this handle, so that we never double close()
-      return -1;
+   // repack streams require special consideration
+   if ( stream->type == REPACK_STREAM ) {
+      // check if we've hit our expected total file size
+      if ( file->ftag.bytes != stream->finfo.size ) {
+         LOG( LOG_ERR, "Cannot complete file with inappropriate byte count: %zu (expected=%zu)\n",
+                       file->ftag.bytes, stream->finfo.size );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      // pull the original FTAG string off this file
+      ssize_t getres = ms->mdal->fgetxattr(file->metahandle, 1, FTAG_NAME, NULL, 0);
+      if ( getres < 1 ) {
+         LOG( LOG_ERR, "Failed to retrieve original FTAG value from repacked file: \"%s\"\n", stream->finfo.path );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      char* origftagstr = malloc( sizeof(char) * (getres + 1) );
+      if ( origftagstr == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for orig FTAG string of repacked file: \"%s\"\n", stream->finfo.path );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      if ( ms->mdal->fgetxattr( file->metahandle, 1, FTAG_NAME, origftagstr, getres ) != getres ) {
+         LOG( LOG_ERR, "FTAG value of repacked file \"%s\" has inconsistent length\n", stream->finfo.path );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      *(origftagstr + getres) = '\0'; // make sure to NULL-terminate this value
+      // attach a copy of the original FTAG ( if not already present, as we want to preserve the TRUE original value )
+      if ( ms->mdal->fsetxattr( file->metahandle, 1, OREPACK_TAG_NAME, origftagstr, getres, XATTR_CREATE )  &&
+           errno != EEXIST ) {
+         LOG( LOG_ERR, "Failed to attach orig FTAG value to repacked file \"%s\"\n", stream->finfo.path );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      // identify the FTAG values of the retrieved string
+      FTAG origftag;
+      if ( ftag_initstr( &(origftag), origftagstr ) ) {
+         LOG( LOG_ERR, "Failed to parse orig FTAG value of repacked file \"%s\"\n", stream->finfo.path );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      // produce the original reference path of this file
+      size_t metatgtlen = ftag_metatgt( &(origftag), NULL, 0 );
+      if ( metatgtlen < 1 ) {
+         LOG( LOG_ERR, "Failed to identify original metatgt of repacked file \"%s\"\n", stream->finfo.path );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      char* metatgtstr = malloc( sizeof(char) * ( metatgtlen + 1 ) );
+      if ( metatgtstr == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for metatgt of repacked file \"%s\"\n", stream->finfo.path );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      if ( ftag_metatgt( &(origftag), metatgtstr, metatgtlen + 1 ) != metatgtlen ) {
+         LOG( LOG_ERR, "Metatgt of repacked file \"%s\" has an inconsistent length\n", stream->finfo.path );
+         free( metatgtstr );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      HASH_NODE* refnode = NULL;
+      if ( hash_lookup( ms->reftable, metatgtstr, &(refnode) ) < 0 ) {
+         LOG( LOG_ERR, "Failed to lookup ref path of \"%s\"\n", metatgtstr );
+         free( metatgtstr );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      } 
+      size_t refdirlen = strlen( refnode->name );
+      char* origrefpath = malloc( sizeof(char) * (metatgtlen + refdirlen + 1) );
+      if ( origrefpath == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for full refpath of \"%s\"\n", metatgtstr );
+         free( metatgtstr );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      snprintf( origrefpath, metatgtlen + refdirlen + 1, "%s%s", refnode->name, metatgtstr );
+      free( metatgtstr );
+      // locate our repack marker file
+      size_t rmarklen = ftag_repackmarker( &(origftag), NULL, 0 );
+      if ( rmarklen == 0 ) {
+         LOG( LOG_ERR, "Failed to identify repack marker for repacked file: \"%s\"\n", stream->finfo.path );
+         free( origrefpath );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      char* rmarkstr = malloc( sizeof(char) * (refdirlen + rmarklen + 1) );
+      if ( rmarkstr == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for a repack marker path\n" );
+         free( origrefpath );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      snprintf( rmarkstr, refdirlen + 1, "%s", refnode->name );
+      if ( ftag_repackmarker( &(file->ftag), rmarkstr + refdirlen, rmarklen + 1 ) != rmarklen ) {
+         LOG( LOG_ERR, "Repack marker of file \"%s\" has an inconsistent length\n", stream->finfo.path );
+         free( rmarkstr );
+         free( origrefpath );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      // identify the NS path of the stream and establish a ctxt for it
+      char* nspath = NULL;
+      if ( config_nsinfo( stream->ns->idstr, NULL, &(nspath) ) ) {
+         LOG( LOG_ERR, "Failed to identify the NS path of the repack stream\n" );
+         free( rmarkstr );
+         free( origrefpath );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      MDAL_CTXT ctxt = ms->mdal->newctxt( nspath, ms->mdal->ctxt );
+      if ( ctxt == NULL ) {
+         LOG( LOG_ERR, "Failed to create an MDAL_CTXT for NS \"%s\"\n", nspath );
+         free( rmarkstr );
+         free( origrefpath );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      // open a handle for the repack marker
+      MDAL_FHANDLE rmarker = ms->mdal->openref( ctxt, rmarkstr, O_WRONLY, 0 );
+      if ( rmarker == NULL ) {
+         LOG( LOG_ERR, "Failed to open rebuild marker file \"%s\"\n", rmarkstr );
+         ms->mdal->destroyctxt( ctxt );
+         free( rmarkstr );
+         free( origrefpath );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+      }
+      // attach a copy of the original FTAG ( if not already present, as we want to preserve the TRUE original value )
+      if ( ms->mdal->fsetxattr( file->metahandle, 1, OREPACK_TAG_NAME, origftagstr, getres, XATTR_CREATE )  &&
+           errno != EEXIST ) {
+         LOG( LOG_ERR, "Failed to attach orig FTAG value to repacked file \"%s\"\n", stream->finfo.path );
+         ms->mdal->close(rmarker);
+         ms->mdal->destroyctxt( ctxt );
+         free( rmarkstr );
+         free( origrefpath );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      // attach another copy of the original FTAG to the repack marker ( so the GC will pick it up, post rename )
+      if ( ms->mdal->fsetxattr( rmarker, 1, FTAG_NAME, origftagstr, getres, XATTR_CREATE ) ) {
+         LOG( LOG_ERR, "Failed to attach orig FTAG value to repack marker \"%s\"\n", rmarkstr );
+         ms->mdal->close(rmarker);
+         ms->mdal->destroyctxt( ctxt );
+         free( rmarkstr );
+         free( origrefpath );
+         free( origftagstr );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      free( origftagstr );
+      ms->mdal->close(rmarker); // done changing repack marker xattrs
+      // use putftag to update active FTAG by swapping out stream type ( this is a bit hacky )
+      stream->type = CREATE_STREAM; // switching from REPACK_STREAM causes this to update the real FTAG value
+      if( putftag( stream, file ) ) {
+         LOG( LOG_ERR, "Failed to update FTAG to final value for repacked file \"%s\"\n", stream->finfo.path );
+         stream->type = REPACK_STREAM;
+         ms->mdal->destroyctxt( ctxt );
+         free( rmarkstr );
+         free( origrefpath );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      stream->type = REPACK_STREAM;
+      // finally, rename the repack marker over the original location, causing GC to pick it up
+      if ( ms->mdal->renameref( ctxt, rmarkstr, origrefpath ) ) {
+         LOG( LOG_ERR, "Failed to rename repack marker \"%s\" over repacked file \"%s\"\n", rmarkstr, origrefpath );
+         ms->mdal->destroyctxt( ctxt );
+         free( rmarkstr );
+         free( origrefpath );
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
+      ms->mdal->destroyctxt( ctxt );
+      free( rmarkstr );
+      free( origrefpath );
+   }
+   else {
+      // truncate the file to an appropriate length
+      if (ms->mdal->ftruncate(file->metahandle, file->ftag.availbytes)) {
+         LOG(LOG_ERR, "Failed to truncate file %zu to proper size\n", file->ftag.fileno);
+         ms->mdal->close(file->metahandle);
+         file->metahandle = NULL; // NULL out this handle, so that we never double close()
+         return -1;
+      }
    }
    // set atime/mtime values
    if (ms->mdal->futimens(file->metahandle, file->times)) {
