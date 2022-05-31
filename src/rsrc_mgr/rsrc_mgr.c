@@ -1223,6 +1223,13 @@ int ref_paths(const marfs_ns* ns, const char* name) {
     free(ns_path);
     return -1;
   }
+  if ( tq_check_init(tq) ) {
+    LOG(LOG_ERR, "Rank %d: Initialization failure in tq\n", rank);
+    pthread_mutex_destroy(&(gstate.lock));
+    ms->mdal->destroyctxt(ctxt);
+    free(ns_path);
+    return -1;
+  }
 
   // Wait until all threads are done executing
   TQ_Control_Flags flags = 0;
