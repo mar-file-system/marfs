@@ -868,7 +868,7 @@ int open_repack_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt) {
 
    // calculate the length of the recovery info
    size_t recoverybytes = recovery_finfotostr(finfo, NULL, 0);
-   if (recoverybytes == 0) {
+   if (recoverybytes < 1) {
       LOG(LOG_ERR, "Failed to calculate recovery info size for \"%s\"\n", path);
       free(finfo->path);
       finfo->path = NULL;
@@ -887,8 +887,7 @@ int open_repack_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt) {
       free(finfo->path);
       finfo->path = NULL;
       curmdal->close( rmarker );
-      curfile->metahandle = tgtfh;
-      curmdal->close(curfile->metahandle);
+      curmdal->close(tgtfh);
       curfile->metahandle = NULL;
       return -1;
    }
@@ -903,13 +902,12 @@ int open_repack_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt) {
    }
 
    // link the existing file to the new reference location
-   char* newpath = NULL;
-   size_t newpathlen = ftag_metatgt( &(curfile->ftag), NULL, 0 );
-   if ( newpathlen < 1  ||
-        (newpath = malloc( sizeof(char) * (newpathlen + 1) )) == NULL  ||
-        ftag_metatgt( &(curfile->ftag), newpath, newpathlen + 1 ) != newpathlen ) {
-      LOG( LOG_ERR, "Failed to generate new stream reference location\n" );
-      if ( newpath ) { free( newpath ); }
+   char* newpath = datastream_genrpath(&(curfile->ftag), &(stream->ns->prepo->metascheme));
+   if (newrpath == NULL) {
+      LOG(LOG_ERR, "Failed to identify new reference path for repacked file: \"%s\"\n", path);
+      if (errno == EBADFD) {
+         errno = ENOMSG;
+      } // don't allow our reserved EBADFD value
       free(finfo->path);
       finfo->path = NULL;
       curmdal->close(curfile->metahandle);
@@ -925,6 +923,7 @@ int open_repack_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt) {
       curfile->metahandle = NULL;
       return -1;
    }
+   LOG( LOG_INFO, "Linked repack target (\"%s\") to new location (\"%s\")\n", path, newpath );
    free( newpath );
 
    if ( stream->recoveryheaderlen == 0 ) {
