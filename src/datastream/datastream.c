@@ -782,10 +782,25 @@ int open_existing_file(DATASTREAM stream, const char* path, char rpathflag, MDAL
 int open_repack_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt) {
 
    // populate shorthand references
-   MDAL curmdal = stream->ns->prepo->metascheme.mdal;
-   STREAMFILE* curfile = stream->files + stream->curfile;
    const marfs_ds* ds = &(stream->ns->prepo->datascheme);
    const marfs_ms* ms = &(stream->ns->prepo->metascheme);
+
+   // check if the current stream has space for this new file ref
+   if (stream->curfile >= stream->filealloc) {
+      stream->filealloc = allocfiles(&(stream->files), stream->filealloc, ds->objfiles + 1);
+      if (stream->filealloc == 0) {
+         LOG(LOG_ERR, "Failed to expand file list allocation\n");
+         stream->filealloc = stream->curfile - 1;
+         if (errno == EBADFD) {
+            errno = ENOMSG;
+         } // don't allow our reserved EBADFD value
+         return -1;
+      }
+   }
+
+   // more shorthand refs
+   MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+   STREAMFILE* curfile = stream->files + stream->curfile;
    // get file info ( need to stash times prior to any modification )
    struct stat stval;
    if (curmdal->statref(ctxt, path, &(stval))) {
@@ -916,6 +931,32 @@ int open_repack_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt) {
    }
    curfile->ftag.recoverybytes = recoverybytes;
 
+   // ensure the recovery info size is compatible with the current object size
+   if (curfile->ftag.objsize && (stream->recoveryheaderlen + curfile->ftag.recoverybytes) >= curfile->ftag.objsize) {
+      LOG(LOG_ERR, "Recovery info size of new file is incompatible with current object size\n");
+      free(finfo->path);
+      finfo->path = NULL;
+      curmdal->close( rmarker );
+      curmdal->close(curfile->metahandle);
+      curfile->metahandle = NULL;
+      errno = ENAMETOOLONG; // this is most likely an issue with path length
+      return -1;
+   }
+
+   // ensure that the current object still has space remaining for this file
+   if (curfile->ftag.objsize && (curfile->ftag.objsize - stream->offset) < curfile->ftag.recoverybytes) {
+      // we're too far into the current obj to fit any more data
+      LOG(LOG_INFO, "Shifting to new object, as current can't hold recovery info\n");
+      curfile->ftag.objno++;
+      curfile->ftag.offset = stream->recoveryheaderlen;
+   }
+   else if (curfile->ftag.objfiles && stream->curfile >= curfile->ftag.objfiles) {
+      // there are too many files in the current obj to fit this one
+      LOG(LOG_INFO, "Shifting to new object, as current can't hold another file\n");
+      curfile->ftag.objno++;
+      curfile->ftag.offset = stream->recoveryheaderlen;
+   }
+
    // Attach the new FTAG value to the marker file
    MDAL_FHANDLE tgtfh = curfile->metahandle;
    curfile->metahandle = rmarker; // swap marker FH into curfile, to allow putftag() to work on it instead
@@ -981,6 +1022,10 @@ int open_repack_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt) {
       }
       stream->recoveryheaderlen = recoveryheaderlen;
    }
+
+   // update stream values
+   stream->objno = curfile->ftag.objno;
+   stream->offset = curfile->ftag.offset;
 
    return 0;
 }
@@ -1442,7 +1487,10 @@ DATASTREAM genstream(STREAM_TYPE type, const char* path, char rpathflag, marfs_p
    // perform type-dependent initialization
    if (type == CREATE_STREAM  ||  type == REPACK_STREAM) {
       // set the ctag value
-      stream->ctag = strdup(ctag);
+      if ( ctag )
+         stream->ctag = strdup(ctag);
+      else
+         stream->ctag = strdup("UNKNOWN-CLIENT");
       if (stream->ctag == NULL) {
          LOG(LOG_ERR, "Failed to allocate space for stream Client Tag\n");
          freestream(stream);
@@ -1689,6 +1737,15 @@ int finfile(DATASTREAM stream) {
    // get a reference to the active file
    STREAMFILE* curfile = stream->files + stream->curfile;
 
+   if ( stream->type == REPACK_STREAM ) {
+      // check if we've hit our expected total file size
+      if ( curfile->ftag.bytes != stream->finfo.size ) {
+         LOG( LOG_ERR, "Cannot complete repacked file with inappropriate byte count: %zu (expected=%zu)\n",
+                       curfile->ftag.bytes, stream->finfo.size );
+         return -1;
+      }
+   }
+
    // only perform this action if the file has not yet been finalized
    if ((curfile->ftag.state & FTAG_DATASTATE) < FTAG_FIN) {
       if (curfile->ftag.bytes == 0 && stream->datahandle == NULL) {
@@ -1766,14 +1823,6 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
    }
    // repack streams require special consideration
    if ( stream->type == REPACK_STREAM ) {
-      // check if we've hit our expected total file size
-      if ( file->ftag.bytes != stream->finfo.size ) {
-         LOG( LOG_ERR, "Cannot complete repacked file with inappropriate byte count: %zu (expected=%zu)\n",
-                       file->ftag.bytes, stream->finfo.size );
-         ms->mdal->close(file->metahandle);
-         file->metahandle = NULL; // NULL out this handle, so that we never double close()
-         return -1;
-      }
       // pull the original FTAG string off this file
       STREAMFILE origfile = { .metahandle = file->metahandle };
       if ( getftag( stream, &(origfile) ) ) {
@@ -2897,7 +2946,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          return -1;
       }
       if ( ms->mdal->fgetxattr( rmarker, 1, FTAG_NAME, realftagstr, realftagstrlen ) != realftagstrlen ) {
-         LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" has inconsistent length\n", reftag );
+         LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" has inconsistent length\n", refpath );
          free( realftagstr );
          ms->mdal->close( tgtfile );
          free( tgtftagstr );
@@ -2906,7 +2955,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
       }
       FTAG realftag;
       if ( ftag_initstr( &(realftag), realftagstr ) ) {
-         LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" could not be parsed\n", reftag );
+         LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" could not be parsed\n", refpath );
          free( realftagstr );
          ms->mdal->close( tgtfile );
          free( tgtftagstr );
@@ -2916,7 +2965,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
       free( realftagstr );
       ssize_t renamestrlen = ftag_metatgt( &(realftag), NULL, 0 );
       if ( renamestrlen < 1 ) {
-         LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" could not be parsed\n", reftag );
+         LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" could not be parsed\n", refpath );
          free( realftag.ctag );
          free( realftag.streamid );
          ms->mdal->close( tgtfile );
@@ -2935,7 +2984,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          return -1;
       }
       if ( ftag_metatgt( &(realftag), renametgt, renamestrlen + 1 ) != renamestrlen ) {
-         LOG( LOG_ERR, "Rename tgt of rebuild marker \"%s\" has an inconsistent length\n", reftag );
+         LOG( LOG_ERR, "Rename tgt of rebuild marker \"%s\" has an inconsistent length\n", refpath );
          free( renametgt );
          free( realftag.ctag );
          free( realftag.streamid );
