@@ -80,12 +80,16 @@ marfs_streamwalker_CFLAGS  = $(XML_CFLAGS)
 
 # ---
 
-check_PROGRAMS = test_datastream
+check_PROGRAMS = test_datastream test_datastream_repack
 
 test_datastream_SOURCES = testing/test_datastream.c
 test_datastream_CFLAGS = $(XML_CFLAGS)
 test_datastream_LDADD = $(DATASTREAM_LIB)
 
-TESTS = test_datastream
+test_datastream_repack_SOURCES = testing/test_datastream_repack.c
+test_datastream_repack_CFLAGS = $(XML_CFLAGS)
+test_datastream_repack_LDADD = $(DATASTREAM_LIB)
+
+TESTS = test_datastream test_datastream_repack
 
 
