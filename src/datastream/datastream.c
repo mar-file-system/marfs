@@ -1869,12 +1869,14 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
       MDAL_CTXT ctxt = ms->mdal->newctxt( nspath, ms->mdal->ctxt );
       if ( ctxt == NULL ) {
          LOG( LOG_ERR, "Failed to create an MDAL_CTXT for NS \"%s\"\n", nspath );
+         free( nspath );
          free( rmarkstr );
          free( origrefpath );
          ms->mdal->close(file->metahandle);
          file->metahandle = NULL; // NULL out this handle, so that we never double close()
          return -1;
       }
+      free( nspath );
       // open a handle for the repack marker
       MDAL_FHANDLE rmarker = ms->mdal->openref( ctxt, rmarkstr, O_WRONLY, 0 );
       if ( rmarker == NULL ) {

@@ -177,6 +177,7 @@ int main(int argc, char **argv)
 
 
 // EXTERNAL FUNC TESTS
+// CHUNKED OBJECT TESTING
 
    // create a new stream
    DATASTREAM stream = NULL;
@@ -631,6 +632,313 @@ int main(int argc, char **argv)
       return -1;
    }
    free( rpckobjname4 );
+
+
+// PACKED OBJECT TESTING
+
+   // transition to a NS that supports packing
+   char* configtgt = strdup( "./gransom-allocation/nothin" );
+   if ( configtgt == NULL ) {
+      printf( "Failed to duplicate configtgt string\n" );
+      return -1;
+   }
+   if ( config_traverse( config, &(pos), &(configtgt), 0 ) != 1 ) {
+      printf( "failed to traverse config subpath: \"%s\"\n", configtgt );
+      return -1;
+   }
+   free( configtgt );
+
+
+   // create a new stream
+   if ( datastream_create( &(stream), "file1", &(pos), 0744, "PACK-CLIENT" ) ) {
+      printf( "create failure for 'file1' of pack\n" );
+      return -1;
+   }
+   if ( datastream_write( &(stream), databuf, 1024 * 2 ) != (1024 * 2) ) {
+      printf( "write failure for 'file1' of pack\n" );
+      return -1;
+   }
+
+   // keep track of this file's rpath
+   rpath = datastream_genrpath( &(stream->files->ftag), &(stream->ns->prepo->metascheme) );
+   if ( rpath == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of pack 'file1' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and the data object
+   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of pack 'file1' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // create a new file off of the same stream
+   if ( datastream_create( &(stream), "file2", &(pos), 0600, "PACK-CLIENT" ) ) {
+      printf( "create failure for 'file2' of pack\n" );
+      return -1;
+   }
+   if ( datastream_write( &(stream), databuf, 33 ) != 33 ) {
+      printf( "write failure for 'file2' of pack\n" );
+      return -1;
+   }
+   if ( stream->curfile != 1 ) {
+      printf( "unexpected curfile value for file2 of pack: %zu\n", stream->curfile );
+      return -1;
+   }
+
+   // keep track of this file's rpath
+   rpath2 = datastream_genrpath( &(stream->files[1].ftag), &(stream->ns->prepo->metascheme) );
+   if ( rpath2 == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of pack 'file2' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and identify the data object (should match previous)
+   if ( datastream_objtarget( &(stream->files[1].ftag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of pack 'file2' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // validate that the data object matches the previous
+   if ( strcmp( objname, objname2 ) ) {
+      printf( "Object mismatch between file1 and file2 of pack:\n   obj1: \"%s\"\n   obj2: \"%s\"\n", objname, objname2 );
+      return -1;
+   }
+   free( objname2 );
+   if ( objlocation.pod != objlocation2.pod  ||
+        objlocation.cap != objlocation2.cap  ||
+        objlocation.scatter != objlocation2.scatter ) {
+      printf( "Location mismatch between file1 and file2 of pack:\n   obj1.pod: %d\n   obj2.pod: %d\n   obj1.cap: %d\n   obj2.cap: %d\n   obj1.scat: %d\n   obj2.scat: %d\n", objlocation.pod, objlocation2.pod, objlocation.cap, objlocation2.cap, objlocation.scatter, objlocation2.scatter );
+      return -1;
+   }
+
+   // create a new 'multi' file off of the same stream
+   if ( datastream_create( &(stream), "file3", &(pos), 0777, "PACK-CLIENT" ) ) {
+      printf( "create failure for 'file3' of pack\n" );
+      return -1;
+   }
+   if ( stream->curfile != 2 ) {
+      printf( "unexpected curfile value after 'file3' creation: %zu\n", stream->curfile );
+      return -1;
+   }
+   if ( datastream_write( &(stream), databuf, 1024 * 3 ) != (1024 * 3) ) {
+      printf( "write failure for 'file2' of pack\n" );
+      return -1;
+   }
+   if ( stream->curfile ) {
+      printf( "unexpected curfile value after write of 'file3': %zu\n", stream->curfile );
+      return -1;
+   }
+   if ( stream->objno != 1 ) {
+      printf( "unexpected objno value after write of 'file3': %zu\n", stream->objno );
+      return -1;
+   }
+
+   // keep track of this file's rpath
+   rpath3 = datastream_genrpath( &(stream->files->ftag), &(stream->ns->prepo->metascheme) );
+   if ( rpath3 == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the rpath of pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and the data object
+   FTAG tgttag = stream->files->ftag;
+   tgttag.objno++;
+   if ( datastream_objtarget( &(tgttag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
+      LOG( LOG_ERR, "Failed to identify data object of pack 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+
+   // close the stream
+   if ( datastream_close( &(stream) ) ) {
+      printf( "Failed to close pack create stream\n" );
+      return -1;
+   }
+
+
+   // repack the second and last files
+   if ( datastream_repack( &(repackstream), rpath3, &(pos), "repack-prog2" ) ) {
+      printf( "failed to open repack stream for target \"%s\" (%s)\n", rpath3, strerror(errno) );
+      return -1;
+   }
+   // keep track of this file's rpath
+   rpckpath1 = datastream_genrpath( &(repackstream->files->ftag), &(repackstream->ns->prepo->metascheme) );
+   if ( rpckpath1 == NULL ) {
+      printf( "Failed to identify the repack path of packed 'file3' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   // ...and the data objects
+   rpckobjname1 = NULL;
+   if ( datastream_objtarget( &(repackstream->files->ftag), &(repackstream->ns->prepo->datascheme), &(rpckobjname1), &(rpckobjerasure1), &(rpckobjlocation1) ) ) {
+      printf( "Failed to identify data object 1 of repacked 'file3' of pack (%s)\n", strerror(errno) );
+      return -1;
+   }
+   if ( datastream_scan( &(stream), rpath3, &(pos) ) ) {
+      printf( "failed to open scan/read stream for target \"%s\" (%s)\n", rpath3, strerror(errno) );
+      return -1;
+   }
+   bzero( readbuf, 3 * 1024 );
+   if ( datastream_read( &(stream), readbuf, 1048576 ) != 3 * 1024 ) {
+      printf( "failed to read/repack content of target \"%s\" (%s)\n", rpath3, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( readbuf, databuf, 3 * 1024 ) ) {
+      printf( "unexpected read/repack content of file3 / target \"%s\" (%s)\n", rpath3, strerror(errno) );
+      return -1;
+   }
+   if ( datastream_write( &(repackstream), readbuf, 3 * 1024 ) != 3 * 1024 ) {
+      printf( "failed to write/repack content of file3 target \"%s\" (%s)\n", rpath3, strerror(errno) );
+      return -1;
+   }
+   if ( datastream_repack( &(repackstream), rpath2, &(pos), NULL ) ) {
+      printf( "failed to open repack stream for target \"%s\" (%s)\n", rpath2, strerror(errno) );
+      return -1;
+   }
+   // keep track of this file's rpath
+   rpckpath2 = datastream_genrpath( &(repackstream->files[1].ftag), &(repackstream->ns->prepo->metascheme) );
+   if ( rpckpath2 == NULL ) {
+      printf( "Failed to identify the repack path of packed 'file2' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   if ( datastream_scan( &(stream), rpath2, &(pos) ) ) {
+      printf( "failed to open scan/read stream for target \"%s\" (%s)\n", rpath2, strerror(errno) );
+      return -1;
+   }
+   bzero( readbuf, 1024 );
+   if ( datastream_read( &(stream), readbuf, 1048576 ) != 33 ) {
+      printf( "failed to read/repack content of target \"%s\" (%s)\n", rpath2, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( readbuf, databuf, 33 ) ) {
+      printf( "unexpected read/repack content of file2 / target \"%s\" (%s)\n", rpath2, strerror(errno) );
+      return -1;
+   }
+   if ( datastream_write( &(repackstream), readbuf, 33 ) != 33 ) {
+      printf( "failed to write/repack content of file2 target \"%s\" (%s)\n", rpath2, strerror(errno) );
+      return -1;
+   }
+   if ( repackstream->objno ) {
+      printf( "unexpected objno of repackstream after writing out \"%s\" content: %zu\n", rpath2, repackstream->objno );
+      return -1;
+   }
+   // close our streams
+   if ( datastream_release( &(stream) ) ) {
+      printf( "failed to close read/repack stream for packed files\n" );
+      return -1;
+   }
+   if ( datastream_close( &(repackstream) ) ) {
+      printf( "failed to close write/repack stream for packed files\n" );
+      return -1;
+   }
+
+
+   // cleanup original 'file2' refs ( except file itself! )
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) ) {
+      printf( "Failed to unlink rpath2: \"%s\"\n", rpath2 );
+      return -1;
+   }
+   free( rpath2 );
+   // cleanup original 'file3' refs ( except file itself! )
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath3 ) ) {
+      printf( "Failed to unlink rpath3: \"%s\"\n", rpath3 );
+      return -1;
+   }
+   free( rpath3 );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2 ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname2 );
+      return -1;
+   }
+   free( objname2 );
+
+
+   // read back the written files
+   // file1
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
+      printf( "failed to open 'file1' of pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( &(stream), readbuf, 1048576 );
+   if ( iores != 2 * 1024 ) {
+      printf( "unexpected read res for 'file1' of pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( readbuf, databuf, 2 * 1024 ) ) {
+      printf( "unexpected content of 'file1' of pack\n" );
+      return -1;
+   }
+   // file2
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
+      printf( "failed to open 'file2' of pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( &(stream), readbuf, 1048576 );
+   if ( iores != 33 ) {
+      printf( "unexpected read res for 'file2' of pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( readbuf, databuf, iores ) ) {
+      printf( "unexpected content of 'file2' of pack\n" );
+      return -1;
+   }
+   // file3
+   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos), NULL ) ) {
+      printf( "failed to open 'file3' of pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( &(stream), readbuf, 1048576 );
+   if ( iores != 3 * 1024 ) {
+      printf( "unexpected res for read from 'file3' of pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( readbuf, databuf, iores ) ) {
+      printf( "unexpected content of read for 'file3' of pack\n" );
+      return -1;
+   }
+   if ( datastream_close( &(stream) ) ) {
+      printf( "failed to close read stream of pack\n" );
+      return -1;
+   }
+
+
+   // cleanup all remaining paths
+   // cleanup 'file1' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file1" ) ) {
+      printf( "failed to unlink packed file1\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
+      return -1;
+   }
+   free( rpath );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", objname );
+      return -1;
+   }
+   free( objname );
+   // cleanup 'file2' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file2" ) ) {
+      printf( "failed to unlink packed file2\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpckpath2 ) ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpckpath2 );
+      return -1;
+   }
+   free( rpckpath2 );
+   // cleanup 'file3' refs
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file3" ) ) {
+      printf( "failed to unlink packed file3\n" );
+      return -1;
+   }
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpckpath1 ) ) {
+      printf( "Failed to unlink rpath3: \"%s\"\n", rpckpath1 );
+      return -1;
+   }
+   free( rpckpath1 );
+   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, rpckobjname1, rpckobjlocation1 ) ) {
+      printf( "Failed to delete data object: \"%s\"\n", rpckobjname2 );
+      return -1;
+   }
+   free( rpckobjname1 );
+
+
 
    // cleanup our data buffer
    free( databuf );

@@ -2421,6 +2421,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
    size_t* nsiterlist = calloc( sizeof(size_t), curiteralloc );
    if ( nsiterlist == NULL ) {
       LOG( LOG_ERR, "Failed to allocate NS iterator list\n" );
+      free( vrepos );
       return -1;
    }
 
@@ -2455,6 +2456,8 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             if ( verres < 0 ) {
                LOG( LOG_ERR, "Failed to verify the MDAL security of repo: \"%s\" (%s)\n",
                              curns->prepo->name, strerror(errno) );
+               free( vrepos );
+               free( nsiterlist );
                return -1;
             }
             else if ( verres ) {
@@ -2468,6 +2471,8 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             if ( verres < 0 ) {
                LOG( LOG_ERR, "Failed to verify ne_ctxt of repo: \"%s\" (%s)\n",
                              curns->prepo->name, strerror(errno) );
+               free( vrepos );
+               free( nsiterlist );
                return -1;
             }
             else if ( verres ) {
@@ -2599,6 +2604,8 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             if ( nsiterlist == NULL ) {
                LOG( LOG_ERR, "Failed to allocate extended NS iterator list\n" );
                umask(oldmask); // reset umask
+               free( vrepos );
+               free( nsiterlist );
                return -1;
             }
             curiteralloc += 1024;
@@ -2617,6 +2624,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
    LOG( LOG_INFO, "Traversed %zu namespaces with %zu encountered errors\n", nscount, errcount );
 
    free( nsiterlist );
+   free( vrepos );
    umask(oldmask); // reset umask
    return errcount;
 }
