@@ -106,6 +106,7 @@ typedef struct posixmdal_file_handle_struct {
 typedef struct posix_mdal_context_struct {
    int refd;   // Dir handle for NS ref tree ( or the secure root, if NS hasn't been set )
    int pathd;  // Dir handle of the user tree for the current NS ( or -1, if NS hasn't been set )
+   dev_t dev;  // Device ID value associated with this context ( try to avoid accessing a non-marfs path )
 }* POSIX_MDAL_CTXT;
    
 
@@ -314,6 +315,7 @@ MDAL_CTXT posixmdal_dupctxt ( const MDAL_CTXT ctxt ) {
       free( dupctxt );
       return NULL;
    }
+   dupctxt->dev = pctxt->dev;
    return (MDAL_CTXT) dupctxt;
 }
 
@@ -517,6 +519,14 @@ int posixmdal_setnamespace( MDAL_CTXT ctxt, const char* ns ) {
       close( newpath );
       return -1;
    }
+   // stat the reference dir to generate a new dev value
+   struct stat stval;
+   if ( fstat( newref, &(stval) ) ) {
+      LOG( LOG_ERR, "Failed to stat reference dir of NS \"%s\"\n", ns );
+      close( newref );
+      close( newpath );
+      return -1;
+   }
    // close the previous path dir, if set
    if ( pctxt->pathd >= 0  &&  close( pctxt->pathd ) ) {
       LOG( LOG_WARNING, "Failed to close the previous path dir handle\n" );
@@ -527,6 +537,7 @@ int posixmdal_setnamespace( MDAL_CTXT ctxt, const char* ns ) {
       LOG( LOG_WARNING, "Failed to close the previous ref dir handle\n" );
    }
    pctxt->refd = newref; // update the context structure
+   pctxt->dev = stval.st_dev;
    return 0;
 }
 
@@ -607,6 +618,15 @@ MDAL_CTXT posixmdal_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
       free( newctxt );
       return NULL;
    }
+   struct stat stval;
+   if ( fstat( newctxt->refd, &(stval) ) ) {
+      LOG( LOG_ERR, "Failed to stat reference dir of NS \"%s\"\n", ns );
+      close( newctxt->refd );
+      close( newctxt->pathd );
+      free( newctxt );
+      return NULL;
+   }
+   newctxt->dev = stval.st_dev;
    return (MDAL_CTXT) newctxt;
 }
 
@@ -2172,6 +2192,12 @@ MDAL_FHANDLE posixmdal_open( MDAL_CTXT ctxt, const char* path, int flags ) {
       close( fd );
       return NULL;
    }
+   else if ( fdstat.st_dev != pctxt->dev ) {
+      LOG( LOG_ERR, "Target resides on a different device ( CTXT=%zd , TGT=%zd )\n", pctxt->dev, fdstat.st_dev );
+      close( fd );
+      errno = EXDEV;
+      return NULL;
+   }
    else if ( S_ISDIR(fdstat.st_mode) ) {
       LOG( LOG_ERR, "Target is a directory: \"%s\"\n", path );
       close( fd );
@@ -2970,6 +2996,8 @@ MDAL posix_mdal_init( xmlNode* root ) {
          }
          // initialize the pathd, indicating no path set
          pctxt->pathd = -1;
+         // initialize the dev to an arbitrary value
+         pctxt->dev = 0;
 
          // open the directory specified by the node content
          char* nsrootpath = strdup( (char*) root->children->content );
