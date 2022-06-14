@@ -335,7 +335,7 @@ int posixmdal_cleanup( MDAL mdal ) {
       return -1;
    }
    // destroy the MDAL_CTXT struct
-	int retval = 0;
+   int retval = 0;
    if ( posixmdal_destroyctxt( mdal->ctxt ) ) {
       LOG( LOG_ERR, "Failed to destroy the MDAL_CTXT reference\n" );
       retval = -1;
@@ -361,92 +361,92 @@ int posixmdal_checksec( const MDAL_CTXT ctxt, char fix ) {
       return -1;
    }
    POSIX_MDAL_CTXT pctxt = (POSIX_MDAL_CTXT) ctxt;
-	// verify that this CTXT doesn't have a NS target
-	if ( pctxt->pathd >= 0 ) {
-		LOG( LOG_ERR, "Cannot verify the security of a CTXT after it has been associated with a NS target\n" );
-		errno = EINVAL;
-		return -1;
-	}
-	// stat the CTXT root dir
-	struct stat pstat;
-	if ( fstatat( pctxt->refd, ".", &pstat, 0 ) ) {
-		LOG( LOG_ERR, "Failed to stat the root dir of the given MDAL_CTXT\n" );
-		return -1;
-	}
-	// set up our parent string
-	size_t stralloc = 1024;
-	char* parentstr = calloc( 1, stralloc );
-	if ( parentstr == NULL ) {
-		LOG( LOG_ERR, "Failed to allocate space for parent dir string\n" );
-		return -1;
-	}
-	size_t pstrlen = 0;
-	// iterate up from the CTXT root dir, potentially to the FS root
-	char foundsecdir = 0;
-	dev_t prevdev = pstat.st_dev;
-	ino_t previno = pstat.st_ino;
-	uid_t uid = geteuid();
-	gid_t gid = getegid();
-	while ( !(foundsecdir) ) {
-		// if necessary, expand our string allocation
-		if ( pstrlen + 4 > stralloc ) {
-			char* newparentstr = realloc( parentstr, stralloc + 1024 );
-			if ( newparentstr == NULL ) {
-				LOG( LOG_ERR, "Failed to extend parent string to an allocation of %zu bytes\n", stralloc + 1024 );
-				free( parentstr );
-				return -1;
-			}
-			parentstr = newparentstr;
-			stralloc += 1024;
-		}
-		// extend our string to the next parent reference
-		if ( snprintf( parentstr + pstrlen, stralloc - pstrlen, "../" ) != 3 ) {
-			LOG( LOG_ERR, "Unexpected length of parent string: \"%s\"\n", parentstr );
-			free( parentstr );
-			errno = EDOM;
-			return -1;
-		}
-		pstrlen += 3;
-		// stat the next parent dir
-		if ( fstatat( pctxt->refd, parentstr, &pstat, 0 ) ) {
-			LOG( LOG_ERR, "Failed to stat parent dir: \"%s\"\n", parentstr );
-			free( parentstr );
-			return -1;
-		}
-		// check if we have hit the FS root
-		if ( pstat.st_dev == prevdev  &&  pstat.st_ino == previno ) {
-			// abort, if we've gotten this far
-			break;
-		}
+   // verify that this CTXT doesn't have a NS target
+   if ( pctxt->pathd >= 0 ) {
+      LOG( LOG_ERR, "Cannot verify the security of a CTXT after it has been associated with a NS target\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // stat the CTXT root dir
+   struct stat pstat;
+   if ( fstatat( pctxt->refd, ".", &pstat, 0 ) ) {
+      LOG( LOG_ERR, "Failed to stat the root dir of the given MDAL_CTXT\n" );
+      return -1;
+   }
+   // set up our parent string
+   size_t stralloc = 1024;
+   char* parentstr = calloc( 1, stralloc );
+   if ( parentstr == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate space for parent dir string\n" );
+      return -1;
+   }
+   size_t pstrlen = 0;
+   // iterate up from the CTXT root dir, potentially to the FS root
+   char foundsecdir = 0;
+   dev_t prevdev = pstat.st_dev;
+   ino_t previno = pstat.st_ino;
+   uid_t uid = geteuid();
+   gid_t gid = getegid();
+   while ( !(foundsecdir) ) {
+      // if necessary, expand our string allocation
+      if ( pstrlen + 4 > stralloc ) {
+         char* newparentstr = realloc( parentstr, stralloc + 1024 );
+         if ( newparentstr == NULL ) {
+            LOG( LOG_ERR, "Failed to extend parent string to an allocation of %zu bytes\n", stralloc + 1024 );
+            free( parentstr );
+            return -1;
+         }
+         parentstr = newparentstr;
+         stralloc += 1024;
+      }
+      // extend our string to the next parent reference
+      if ( snprintf( parentstr + pstrlen, stralloc - pstrlen, "../" ) != 3 ) {
+         LOG( LOG_ERR, "Unexpected length of parent string: \"%s\"\n", parentstr );
+         free( parentstr );
+         errno = EDOM;
+         return -1;
+      }
+      pstrlen += 3;
+      // stat the next parent dir
+      if ( fstatat( pctxt->refd, parentstr, &pstat, 0 ) ) {
+         LOG( LOG_ERR, "Failed to stat parent dir: \"%s\"\n", parentstr );
+         free( parentstr );
+         return -1;
+      }
+      // check if we have hit the FS root
+      if ( pstat.st_dev == prevdev  &&  pstat.st_ino == previno ) {
+         // abort, if we've gotten this far
+         break;
+      }
       prevdev = pstat.st_dev;
       previno = pstat.st_ino;
-		// check if this dir has appropriate perms
-		if ( (pstat.st_mode & (S_IRWXG | S_IRWXO)) == 0  &&  pstat.st_uid == uid ) {
-			LOG( LOG_INFO, "Detected that parent dir has appropriate perms: \"%s\"\n", parentstr );
-			foundsecdir = 1;
-		}
-	}
-	free( parentstr ); // regardless of result, done with this string
-	if ( !(foundsecdir) ) {
-		if ( fix ) {
-			// attempt to chown/chmod the direct parent to appropriate perms
-			LOG( LOG_INFO, "Chowning \"..\" to current UID/GID\n" );
-			if ( fchownat( pctxt->refd, "..", uid, gid, 0 ) ) {
-				LOG( LOG_ERR, "Failed to chown \"..\" to current UID/GID\n" );
-				return 1;
-			}
-			LOG( LOG_INFO, "Chmoding \"..\" to 0700 mode\n" );
-			if ( fchmodat( pctxt->refd, "..", 0700, 0 ) ) {
-				LOG( LOG_ERR, "Failed to chmod \"..\" to 0700 mode\n" );
-				return 1;
-			}
-		}
-		else {
-			// just complain
-			return 1;
-		}
-	}
-	return 0;
+      // check if this dir has appropriate perms
+      if ( (pstat.st_mode & (S_IRWXG | S_IRWXO)) == 0  &&  pstat.st_uid == uid ) {
+         LOG( LOG_INFO, "Detected that parent dir has appropriate perms: \"%s\"\n", parentstr );
+         foundsecdir = 1;
+      }
+   }
+   free( parentstr ); // regardless of result, done with this string
+   if ( !(foundsecdir) ) {
+      if ( fix ) {
+         // attempt to chown/chmod the direct parent to appropriate perms
+         LOG( LOG_INFO, "Chowning \"..\" to current UID/GID\n" );
+         if ( fchownat( pctxt->refd, "..", uid, gid, 0 ) ) {
+            LOG( LOG_ERR, "Failed to chown \"..\" to current UID/GID\n" );
+            return 1;
+         }
+         LOG( LOG_INFO, "Chmoding \"..\" to 0700 mode\n" );
+         if ( fchmodat( pctxt->refd, "..", 0700, 0 ) ) {
+            LOG( LOG_ERR, "Failed to chmod \"..\" to 0700 mode\n" );
+            return 1;
+         }
+      }
+      else {
+         // just complain
+         return 1;
+      }
+   }
+   return 0;
 }
 
 
