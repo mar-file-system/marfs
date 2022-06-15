@@ -828,6 +828,43 @@ int main(int argc, char **argv)
    }
 
 
+   // start, then abort, a repack of the first file
+   if ( datastream_repack( &(repackstream), rpath, &(pos), "repack-prog2" ) ) {
+      printf( "failed to open repack stream for target \"%s\" (%s)\n", rpath, strerror(errno) );
+      return -1;
+   }
+   char* rpckpath3 = datastream_genrpath( &(repackstream->files->ftag), &(repackstream->ns->prepo->metascheme) );
+   if ( rpckpath3 == NULL ) {
+      printf( "Failed to identify the repack path of packed 'file1' (%s)\n", strerror(errno) );
+      return -1;
+   }
+   if ( datastream_scan( &(stream), rpath, &(pos) ) ) {
+      printf( "failed to open scan/read stream for target \"%s\" (%s)\n", rpath, strerror(errno) );
+      return -1;
+   }
+   char* rmarkerpath = repackmarkertgt( rpath, &(stream->files->ftag), &(stream->ns->prepo->metascheme) );
+   if ( rmarkerpath == NULL ) {
+      LOG( LOG_ERR, "Failed to generate repack marker path of file \"%s\"\n", rpath );
+      return -1;
+   }
+   freestream( repackstream );
+   repackstream = NULL;
+   if ( datastream_close( &(stream) ) ) {
+      LOG( LOG_ERR, "Failed to close read stream for partially repacked file \"%s\"\n", rpath );
+      return -1;
+   }
+   if ( datastream_repack_cleanup( rmarkerpath, &(pos) ) ) {
+      LOG( LOG_ERR, "Repack cleanup failed for marker \"%s\"\n", rmarkerpath );
+      return -1;
+   }
+   free( rmarkerpath );
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpckpath3 ) ) {
+      LOG( LOG_ERR, "Failed to unlink repack tgt of packed file1: \"%s\"\n", rpckpath3 );
+      return -1;
+   }
+   free( rpckpath3 );
+
+
    // cleanup original 'file2' refs ( except file itself! )
    if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) ) {
       printf( "Failed to unlink rpath2: \"%s\"\n", rpath2 );

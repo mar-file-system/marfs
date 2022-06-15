@@ -2809,6 +2809,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
       LOG( LOG_ERR, "Failed to open repack marker target: \"%s\"\n", refpath );
       return -1;
    }
+   LOG( LOG_INFO, "Successfully opened repack marker target: \"%s\"\n", refpath );
    // retrieve the 'target' FTAG value
    FTAG tgtftag;
    ssize_t tgtftagstrlen = ms->mdal->fgetxattr( rmarker, 1, TREPACK_TAG_NAME, NULL, 0 );
@@ -2824,6 +2825,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          LOG( LOG_ERR, "Failed to unlink repack marker \"%s\"\n", refpath );
          return -1;
       }
+      LOG( LOG_INFO, "Repack marker with no attached \"%s\" value has been deleted\n", TREPACK_TAG_NAME );
       return 0; // all done
    }
    char* tgtftagstr = malloc( sizeof(char) * (tgtftagstrlen + 21) ); // leave extra space ( so we can maybe reuse )
@@ -2868,6 +2870,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
             LOG( LOG_ERR, "Failed to unlink repack marker \"%s\"\n", refpath );
             return -1;
          }
+         LOG( LOG_INFO, "Repack marker with no existing target file ( \"%s\" ) has been deleted\n", repacktgtpath );
          return 0; // all done
       }
       LOG( LOG_ERR, "Failed to open repack target path: \"%s\"\n", repacktgtpath );
@@ -2925,15 +2928,33 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          // NOTE -- this is to save us if the program dies within the next couple of operations, allowing
          //         us to pick up this value again
          if ( ms->mdal->fsetxattr( rmarker, 1, TREPACK_TAG_NAME, tgtftagstr, tgtftagstrlen, XATTR_REPLACE ) ) {
+            LOG( LOG_ERR, "Failed to set \"%s\" xattr of marker to updated value\n", TREPACK_TAG_NAME );
+            free( renametgt );
+            ms->mdal->close( tgtfile );
+            free( tgtftagstr );
+            ms->mdal->close( rmarker );
+            return -1;
          }
          // remove the tgt FTAG from the active file (if present)
          // NOTE -- this is to save us if this program dies before the actual rename, as it will trigger the 
          //         'existing FTAG' path and we don't want to replace the tgt file's active FTAG
          if ( ms->mdal->fremovexattr( tgtfile, 1, TREPACK_TAG_NAME ) ) {
+            LOG( LOG_ERR, "Failed to remove \"%s\" xattr of target file ( \"%s\" )\n", TREPACK_TAG_NAME, repacktgtpath );
+            free( renametgt );
+            ms->mdal->close( tgtfile );
+            free( tgtftagstr );
+            ms->mdal->close( rmarker );
+            return -1;
          }
       }
       // set the marker's real FTAG to the same value, or to the marker's value ( if the tgt file didn't have it )
       if ( ms->mdal->fsetxattr( rmarker, 1, FTAG_NAME, tgtftagstr, tgtftagstrlen, XATTR_CREATE ) ) {
+         LOG( LOG_ERR, "Failed to update FTAG value of marker file to the \"%s\" value of the target\n", TREPACK_TAG_NAME );
+         free( renametgt );
+         ms->mdal->close( tgtfile );
+         free( tgtftagstr );
+         ms->mdal->close( rmarker );
+         return -1;
       }
    }
    else if ( realftagstrlen > 0 ) {
@@ -3040,6 +3061,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
       free( renametgt );
       return -1;
    }
+   LOG( LOG_INFO, "Renamed \"%s\" marker over \"%s\" ref path\n", refpath, renametgt );
    free( renametgt );
    return 0;
 }
