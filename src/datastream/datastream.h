@@ -207,7 +207,9 @@ int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* p
  * NOTE -- This should only be necessary for a repack operation left in an incomplete state.
  * @param const char* refpath : Reference path of the repack marker file for the previous operation
  * @param marfs_position* pos : Reference to the marfs_position value of the target file
- * @return int : Zero on successful cleanup, or -1 on failure
+ * @return int : Zero on successful cleanup (file repack completed),
+ *               A positive value on revert of repack (file returned to original state),
+ *               or -1 on complete failure
  */
 int datastream_repack_cleanup(const char* refpath, marfs_position* pos);
 

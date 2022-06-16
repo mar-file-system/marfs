@@ -2799,7 +2799,9 @@ int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* p
  * NOTE -- This should only be necessary for a repack operation left in an incomplete state.
  * @param const char* refpath : Reference path of the repack marker file for the previous operation
  * @param marfs_position* pos : Reference to the marfs_position value of the target file
- * @return int : Zero on successful cleanup, or -1 on failure
+ * @return int : Zero on successful cleanup (file repack completed),
+ *               A positive value on revert of repack (file returned to original state),
+ *               or -1 on complete failure
  */
 int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
    // check for invalid args
@@ -2844,7 +2846,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          return -1;
       }
       LOG( LOG_INFO, "Repack marker with no attached \"%s\" value has been deleted\n", TREPACK_TAG_NAME );
-      return 0; // all done
+      return 1; // all done
    }
    char* tgtftagstr = malloc( sizeof(char) * (tgtftagstrlen + 21) ); // leave extra space ( so we can maybe reuse )
    if ( tgtftagstr == NULL ) {
@@ -2889,7 +2891,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
             return -1;
          }
          LOG( LOG_INFO, "Repack marker with no existing target file ( \"%s\" ) has been deleted\n", repacktgtpath );
-         return 0; // all done
+         return 1; // all done
       }
       LOG( LOG_ERR, "Failed to open repack target path: \"%s\"\n", repacktgtpath );
       free( repacktgtpath );
@@ -2935,12 +2937,14 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
       }
    }
    // now check for a real FTAG value
+   int retval = 0;
    char* renametgt = NULL;
    ssize_t realftagstrlen = ms->mdal->fgetxattr( rmarker, 1, FTAG_NAME, NULL, 0 );
    if ( realftagstrlen < 0  &&  errno == ENODATA ) {
       // no active FTAG value means we'll be renamed over the target postion
       renametgt = repacktgtpath;
       repacktgtpath = NULL;
+      retval = 1; // we're reverting this repack
       if ( activetgtpresent ) {
          // overwrite our marker's tgt FTAG with that of the active file (if present)
          // NOTE -- this is to save us if the program dies within the next couple of operations, allowing
@@ -2977,11 +2981,11 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
    }
    else if ( realftagstrlen > 0 ) {
       // existing FTAG value means the marker was about to be renamed, so we need to identify that target
-      free( repacktgtpath ); // shouldn't need this path any more
       char* realftagstr = malloc( sizeof(char) * (realftagstrlen + 1) );
       if ( realftagstr == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for existing marker FTAG string of length %zd\n", realftagstrlen + 1 );
          ms->mdal->close( tgtfile );
+         free( repacktgtpath );
          free( tgtftagstr );
          ms->mdal->close( rmarker );
          return -1;
@@ -2990,6 +2994,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" has inconsistent length\n", refpath );
          free( realftagstr );
          ms->mdal->close( tgtfile );
+         free( repacktgtpath );
          free( tgtftagstr );
          ms->mdal->close( rmarker );
          return -1;
@@ -2999,43 +3004,27 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" could not be parsed\n", refpath );
          free( realftagstr );
          ms->mdal->close( tgtfile );
+         free( repacktgtpath );
          free( tgtftagstr );
          ms->mdal->close( rmarker );
          return -1;
       }
       free( realftagstr );
-      ssize_t renamestrlen = ftag_metatgt( &(realftag), NULL, 0 );
-      if ( renamestrlen < 1 ) {
-         LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" could not be parsed\n", refpath );
-         free( realftag.ctag );
-         free( realftag.streamid );
-         ms->mdal->close( tgtfile );
-         free( tgtftagstr );
-         ms->mdal->close( rmarker );
-         return -1;
-      }
-      renametgt = malloc( sizeof(char) * (renamestrlen + 1) );
+      renametgt = datastream_genrpath( &(realftag), ms );
       if ( renametgt == NULL ) {
-         LOG( LOG_ERR, "Failed to allocate space for rename tgt string of length %zd\n", renamestrlen + 1 );
+         LOG( LOG_ERR, "Failed to identify FTAG tgt of repack marker \"%s\"\n", refpath );
          free( realftag.ctag );
          free( realftag.streamid );
          ms->mdal->close( tgtfile );
+         free( repacktgtpath );
          free( tgtftagstr );
          ms->mdal->close( rmarker );
          return -1;
       }
-      if ( ftag_metatgt( &(realftag), renametgt, renamestrlen + 1 ) != renamestrlen ) {
-         LOG( LOG_ERR, "Rename tgt of rebuild marker \"%s\" has an inconsistent length\n", refpath );
-         free( renametgt );
-         free( realftag.ctag );
-         free( realftag.streamid );
-         ms->mdal->close( tgtfile );
-         free( tgtftagstr );
-         ms->mdal->close( rmarker );
-         return -1;
-      }
+      if ( strcmp( repacktgtpath, renametgt ) == 0 ) { retval = 1; } // if we're renaming over the repack tgt, we're reverting this repack
       free( realftag.ctag );
       free( realftag.streamid );
+      free( repacktgtpath ); // shouldn't need this path any more
       if ( activetgtpresent ) {
          // copy the active file's tgt FTAG over the real FTAG (if present)
          if ( ms->mdal->fsetxattr( tgtfile, 1, FTAG_NAME, tgtftagstr, tgtftagstrlen, XATTR_REPLACE ) ) {
@@ -3081,7 +3070,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
    }
    LOG( LOG_INFO, "Renamed \"%s\" marker over \"%s\" ref path\n", refpath, renametgt );
    free( renametgt );
-   return 0;
+   return retval;
 }
 
 /**
