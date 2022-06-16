@@ -96,24 +96,24 @@ typedef struct marfs_namespace_struct {
 
 
 typedef struct marfs_datascheme_struct {
-   ne_erasure protection;       // erasure defintion for writing out objects
-   ne_ctxt    nectxt;           // LibNE context reference for data access
-   size_t     objfiles;         // maximum count of files per data object (zero if no limit)
-   size_t     objsize;          // maximum data object size (zero if no limit)
-   HASH_TABLE podtable;         // hash table for object POD postion
-   HASH_TABLE captable;         // hash table for object CAP position
-   HASH_TABLE scattertable;     // hash table for object SCATTER position
+   ne_erasure protection;    // erasure defintion for writing out objects
+   ne_ctxt    nectxt;        // LibNE context reference for data access
+   size_t     objfiles;      // maximum count of files per data object (zero if no limit)
+   size_t     objsize;       // maximum data object size (zero if no limit)
+   HASH_TABLE podtable;      // hash table for object POD postion
+   HASH_TABLE captable;      // hash table for object CAP position
+   HASH_TABLE scattertable;  // hash table for object SCATTER position
 } marfs_ds;
 
 
 typedef struct marfs_metadatascheme_struct {
-   MDAL       mdal;         // MDAL reference for metadata access
-   char       directread;   // flag indicating support for data read from metadata files
-   HASH_TABLE reftable;     // hash table for determining reference path
-   HASH_NODE* refnodes;     // reference node list ( shared with table ) for safe iter
-   size_t     refnodecount; // count of reference nodes
-   int        nscount;      // count of the namespaces directly referenced by this repo
-   HASH_NODE* nslist;       // array of namespaces directly referenced by this repo
+   MDAL       mdal;          // MDAL reference for metadata access
+   char       directread;    // flag indicating support for data read from metadata files
+   HASH_TABLE reftable;      // hash table for determining reference path
+   HASH_NODE* refnodes;      // reference node list ( shared with table ) for safe iter
+   size_t     refnodecount;  // count of reference nodes
+   int        nscount;       // count of the namespaces directly referenced by this repo
+   HASH_NODE* nslist;        // array of namespaces directly referenced by this repo
 } marfs_ms;
 
 

@@ -214,6 +214,7 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
 #define RTAG_CURRENT_MAJORVERSION 0
 #define RTAG_CURRENT_MINORVERSION 1
 
+// NOTE -- expected to append '-<objectNumber>' to this tag name
 #define RTAG_NAME "MARFS-REBUILD"
 
 /**

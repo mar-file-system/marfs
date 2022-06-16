@@ -138,11 +138,14 @@ typedef struct tq_thread_struct {
 } *ThreadState;
 
 typedef struct work_pkg_struct {
-  char type; // Type of operation for consumer to perform 0 = gc,
-  // 1 = rebuild
-  // 2 = repack
+  char type; // Type of operation for consumer to perform
+             // 0 = gc
+             // 1 = rebuild
+             // 2 = repack
   char* rpath; // Name of ref file at start of stream for gc/quota
-  size_t index; // For GC, number of refs to traverse
+  size_t index; // For GC, number of refs to collect, in addition to the rpath
+                // For rebuild, indicates the object number to be rebuilt
+                // For repack, indicates the index of the repack stream to use for this op
 } *WorkPkg;
 
 void free_work(WorkPkg work) {

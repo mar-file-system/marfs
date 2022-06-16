@@ -1370,16 +1370,12 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       }
       // attach the rebuild tag
       if (mdal->fsetxattr(rhandle, 1, rtagname, rtagstr, rtagstrlen, XATTR_CREATE)) {
-         LOG(LOG_ERR, "Failed to attach rebuild tag: \"%s\"\n", rtagstr);
-         free(rtagname);
-         mdal->close(rhandle);
-         free(rtagstr);
-         if (releasectxt) {
-            mdal->destroyctxt(mdalctxt);
-         }
-         return -1;
+         // don't make this a fatal error, as it is only a speedup to rebuild and not a hard requirement
+         LOG(LOG_WARNING, "Failed to attach rebuild tag: %s=\"%s\"\n", rtagname, rtagstr);
       }
-      LOG(LOG_INFO, "Attached RTAG: %s=\"%s\"\n", rtagname, rtagstr);
+      else {
+         LOG(LOG_INFO, "Attached RTAG: %s=\"%s\"\n", rtagname, rtagstr);
+      }
       free(rtagname);
       free(rtagstr);
 
