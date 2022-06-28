@@ -328,8 +328,8 @@ int hash_term( HASH_TABLE table, HASH_NODE** nodes, size_t* count ) {
    LOG( LOG_INFO, "Terminating hash table\n" );
 
    // set our node return values
-   *nodes = table->nodes;
-   *count = table->nodecount;
+   if ( nodes ) { *nodes = table->nodes; }
+   if ( count ) { *count = table->nodecount; }
    // cleanup memory structures
    free( table->vnodes );
    free( table );
