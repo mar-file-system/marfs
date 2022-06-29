@@ -73,7 +73,7 @@ typedef struct operation_summary_struct {
    size_t deletion_reference_failures;
    size_t rebuild_count;
    size_t rebuild_failures;
-   size_t repack_attempts;
+   size_t repack_count;
    size_t repack_failures;
 } operation_summary;
 
@@ -151,6 +151,13 @@ void cleanuplog( STATELOG* stlog, char destroy ) {
    if ( stlog->inprogress ) {
       hash_term( stlog->inprogress, &nodelist, &index );
       while ( index ) {
+         opinfo* opindex = (nodelist + index - 1)->content;
+         while ( opindex != NULL ) {
+            free( opindex->tgt );
+            opinfo* freeop = opindex;
+            opindex = opindex->next;
+            free( opindex );
+         }
          free( (nodelist + index - 1)->name );
          index--;
       }
@@ -172,7 +179,8 @@ opinfo* parselogline( int logfile, char* eof ) {
    char* tgtchar = buffer;
    off_t reversebytes = 0;
    // parse in our target string
-   while ( read( logfile, tgtchar, 1 ) == 1 ) {
+   ssize_t readbytes;
+   while ( (readbytes = read( logfile, tgtchar, 1 )) == 1 ) {
       reversebytes++;
       // check for terminating chars
       if ( *tgtchar == ' '  ||  *tgtchar == '\n'  ||  *tgtchar == '\0' ) {
@@ -187,6 +195,11 @@ opinfo* parselogline( int logfile, char* eof ) {
       }
    }
    // check exit condition
+   if ( readbytes == 0 ) {
+      // hit EOF
+      *eof = 1;
+      return NULL;
+   }
    if ( *tgtchar != ' ' ) {
       LOG( LOG_ERR, "Unexpected termination of TGT string: '%c'\n", *tgtchar );
       lseek( logfile, -(reversebytes), SEEK_CUR );
@@ -211,26 +224,32 @@ opinfo* parselogline( int logfile, char* eof ) {
       return NULL;
    }
    // parse the operation type
-   if ( read( logfile, buffer, 2 ) != 2 ) {
+   if ( (readbytes = read( logfile, buffer, 2 )) != 2 ) {
       LOG( LOG_ERR, "Failed to read in operation type\n" );
       free( op->tgt );
       free( op );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+      if ( readbytes > 0 ) {
+         // reached EOF
+         *eof = 1;
+      }
+      else {
+         lseek( logfile, -(reversebytes), SEEK_CUR );
+      }
       return NULL;
    }
    reversebytes+=2;
    switch( buffer[0] ) {
       case 'O':
-         op->type = DELETE_OBJECT_OP;
+         op->type = MARFS_DELETE_OBJECT_OP;
          break;
       case 'R':
-         op->type = DELETE_REFERENCE_OP;
+         op->type = MARFS_DELETE_REFERENCE_OP;
          break;
       case 'B':
-         op->type = REBUILD_OP;
+         op->type = MARFS_REBUILD_OP;
          break;
       case 'P':
-         op->type = REPACK_OP;
+         op->type = MARFS_REPACK_OP;
          break;
       default:
          LOG( LOG_ERR, "Unrecognized operation type value: '%c'\n", buffer[0] );
@@ -247,11 +266,17 @@ opinfo* parselogline( int logfile, char* eof ) {
       return NULL;
    }
    // parse the operation phase
-   if ( read( logfile, buffer, 2 ) != 2 ) {
+   if ( (readbytes = read( logfile, buffer, 2 )) != 2 ) {
       LOG( LOG_ERR, "Failed to read in operation phase\n" );
       free( op->tgt );
       free( op );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+      if ( readbytes > 0 ) {
+         // reached EOF
+         *eof = 1;
+      }
+      else {
+         lseek( logfile, -(reversebytes), SEEK_CUR );
+      }
       return NULL;
    }
    reversebytes+=2;
@@ -287,7 +312,7 @@ opinfo* parselogline( int logfile, char* eof ) {
    }
    // parse the error value
    tgtchar = buffer;
-   while ( read( logfile, tgtchar, 1 ) == 1 ) {
+   while ( (readbytes = read( logfile, tgtchar, 1 )) == 1 ) {
       reversebytes++;
       // check for terminating chars
       if ( *tgtchar == ' '  ||  *tgtchar == '\n'  ||  *tgtchar == '\0' ) {
@@ -308,7 +333,13 @@ opinfo* parselogline( int logfile, char* eof ) {
       LOG( LOG_ERR, "Unexpected termination of TGT string: '%c'\n", *tgtchar );
       free( op->tgt );
       free( op );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+      if ( readbytes == 0 ) {
+         // reached EOF
+         *eof = 1;
+      }
+      else {
+         lseek( logfile, -(reversebytes), SEEK_CUR );
+      }
       return NULL;
    }
    char* endptr = NULL;
@@ -319,6 +350,87 @@ opinfo* parselogline( int logfile, char* eof ) {
       free( op );
       lseek( logfile, -(reversebytes), SEEK_CUR );
       return NULL;
+   }
+   op->errval = (int)parsevalue;
+   return op;
+}
+
+int processopinfo( STATELOG* stlog, opinfo* newop ) {
+   // map this operation into our inprogress hash table
+   HASH_NODE* node = NULL;
+   if ( hash_lookup( stlog->inprogress, newop->tgt, &node ) < 0 ) {
+      LOG( LOG_ERR, "Failed to map operation on \"%s\" into inprogress HASH_TABLE\n", newop->tgt );
+      free( newop->tgt );
+      free( newop );
+      return -1;
+   }
+   // traverse the attached operations, looking for a match
+   opinfo* opindex = node->content;
+   opinfo* prevop = NULL;
+   while ( opindex != NULL ) {
+      if ( (strcmp( opindex->tgt, newop->tgt ) == 0)  &&
+           (opindex->type == newop->type) ) {
+         break;
+      }
+      prevop = opindex;
+      opindex = opindex->next;
+   }
+   if ( opindex != NULL ) {
+      // repeat of operation start can be ignored
+      if ( newop->start == 0 ) {
+         // otherwise, for op completion, we'll need to note it in our totals...
+         switch( newop->type ) {
+            case MARFS_DELETE_OBJECT_OP:
+               stlog->summary.delete_object_count++;
+               if ( newop->errval ) { stlog->summary.delete_object_failures++; }
+               break;
+            case MARFS_DELETE_REFERENCE_OP:
+               stlog->summary.delete_reference_count++;
+               if ( newop->errval ) { stlog->summary.delete_reference_failures++; }
+               break;
+            case MARFS_REBUILD_OP:
+               stlog->summary.rebuild_count++;
+               if ( newop->errval ) { stlog->summary.rebuild_failures++; }
+               break;
+            case MARFS_REPACK_OP:
+               stlog->summary.repack_count++;
+               if ( newop->errval ) { stlog->summary.repack_failures++; }
+               break;
+            default:
+               LOG( LOG_ERR, "Unrecognized operation type value\n" );
+               free( newop->tgt );
+               free( newop );
+               return -1;
+         }
+         // ...and remove the matching op from inprogress
+         if ( prevop ) {
+            // pull the matching op out of the list
+            prevop->next = opindex->next;
+            free( opindex->tgt );
+            free( opindex );
+         }
+         else {
+            // no previous op means the matching op is the only one; just remove it
+            node->content = NULL;
+         }
+      }
+      // a matching op means the parsed operation can be discarded
+      free( newop->tgt );
+      free( newop );
+   }
+   else {
+      // the parsed line should indicate the start of a new operation
+      if ( newop->start == 0 ) {
+         LOG( LOG_ERR, "Parsed completion of op on \"%s\" target from logfile \"%s\" with no parsed start of op\n",
+              newop->tgt, stlog->logfile );
+         free( newop->tgt );
+         free( newop );
+         cleanuplog( stlog, newstlog );
+         return -1;
+      }
+      // stitch the parsed op onto the front of our inprogress list
+      newop->next = node->content;
+      node->content = newop;
    }
 }
 
@@ -465,6 +577,22 @@ int statelog_init( STATELOG* statelog, const char* logroot, marfs_ns* ns, size_t
    stlog->logfile = open( stlog->logfilepath, O_CREAT | O_RDWR, 0700 );
    if ( stlog->logfile < 0 ) {
       LOG( LOG_ERR, "Failed to open statelog: \"%s\"\n", stlog->logfilepath );
+      cleanuplog( stlog, newstlog );
+      return -1;
+   }
+   // parse over logfile entries
+   char eof = 0;
+   opinfo* parsedop = NULL;
+   while ( (parsedop = parselogline( stlog->logfile, &eof )) != NULL ) {
+      // map this operation into our inprogress hash table
+      if ( processopinfo( stlog, parsedop ) < 0 ) {
+         LOG( LOG_ERR, "Failed to process lines from logfile: \"%s\"\n", stlog->logfilepath );
+         cleanuplog( stlog, newstlog );
+         return -1;
+      }
+   }
+   if ( eof ) {
+      LOG( LOG_ERR, "Failed to parse existing logfile: \"%s\"\n", stlog->logfilepath );
       cleanuplog( stlog, newstlog );
       return -1;
    }
