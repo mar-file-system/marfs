@@ -101,6 +101,7 @@ typedef struct opinfo_struct {
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
+#define MAX_BUFFER 4096 // maximum character buffer to be used for parsing/printing log lines ( limits length of target string, especially )
 
 
 //   -------------   INTERNAL FUNCTIONS    -------------
@@ -175,7 +176,7 @@ void cleanuplog( STATELOG* stlog, char destroy ) {
 }
 
 opinfo* parselogline( int logfile, char* eof ) {
-   char buffer[4096] = {0};
+   char buffer[MAX_BUFFER] = {0};
    char* tgtchar = buffer;
    off_t reversebytes = 0;
    // parse in our target string
@@ -188,7 +189,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       }
       tgtchar++;
       // check for excessive string length
-      if ( tgtchar - buffer >= 4095 ) {
+      if ( tgtchar - buffer >= MAX_BUFFER - 1 ) {
          LOG( LOG_ERR, "Parsed TGT String exceeds memory limits\n" );
          lseek( logfile, -(reversebytes), SEEK_CUR );
          return NULL;
@@ -320,7 +321,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       }
       tgtchar++;
       // check for excessive string length
-      if ( tgtchar - buffer >= 4095 ) {
+      if ( tgtchar - buffer >= MAX_BUFFER - 1 ) {
          LOG( LOG_ERR, "Parsed error value exceeds memory limits\n" );
          free( op->tgt );
          free( op );
@@ -353,6 +354,75 @@ opinfo* parselogline( int logfile, char* eof ) {
    }
    op->errval = (int)parsevalue;
    return op;
+}
+
+int printlogline( int logfile, opinfo* op ) {
+   // print out the tgt string
+   char buffer[MAX_BUFFER];
+   ssize_t usedbuff;
+   off_t reversebytes = 0;
+   if ( (usedbuff = snprintf( buffer, MAX_BUFFER, "%s ", op->tgt )) >= MAX_BUFFER ) {
+      LOG( LOG_ERR, "Failed to fit op target into print buffer: \"%s\"\n", op->tgt );
+      return -1;
+   }
+   ssize_t writeres = write( logfile, buffer, usedbuff );
+   if ( writeres > 0 ) { reversebytes = writeres; }
+   if ( writeres != usedbuff ) {
+      LOG( LOG_ERR, "Failed to write out target info of length %zd to logfile\n", usedbuff );
+      lseek( logfile, -(reversebytes), SEEK_CUR );
+      return -1;
+   }
+   // print out the operation type and phase
+   switch( op->type ) {
+      case MARFS_DELETE_OBJECT_OP:
+         buffer[0] = 'O';
+         break;
+      case MARFS_DELETE_REFERENCE_OP:
+         buffer[0] = 'R';
+         break;
+      case MARFS_REBUILD_OP:
+         buffer[0] = 'B';
+         break;
+      case MARFS_REPACK_OP:
+         buffer[0] = 'P';
+         break;
+      default:
+         LOG( LOG_ERR, "Unrecognized operation type value\n" );
+         lseek( logfile, -(reversebytes), SEEK_CUR );
+         return -1;
+   }
+   buffer[1] = ' ';
+   if ( op->start ) {
+      buffer[2] = 'S';
+      buffer[3] = '\n';
+   }
+   else {
+      buffer[2] = 'E';
+      buffer[3] = ' ';
+   }
+   writeres = write( logfile, buffer, 4 );
+   if ( writeres > 0 ) { reversebytes += writeres; }
+   if ( writeres != 4 ) {
+      LOG( LOG_ERR, "Failed to ouput phase info of operation\n" );
+      lseek( logfile, -(reversebytes), SEEK_CUR );
+      return -1;
+   }
+   // start of operation messages are now complete
+   if ( op->start ) { return 0; }
+   // otherwise, move on to error info
+   if ( (usedbuff = snprintf( buffer, MAX_BUFFER, "%d\n", op->errval )) >= MAX_BUFFER ) {
+      LOG( LOG_ERR, "Failed to fit op errval into print buffer: %d\n", op->errval );
+      lseek( logfile, -(reversebytes), SEEK_CUR );
+      return -1;
+   }
+   writeres = write( logfile, buffer, usedbuff );
+   if ( writeres > 0 ) { reversebytes += writeres; }
+   if ( writeres != usedbuff ) {
+      LOG( LOG_ERR, "Failed to output errval info of operation\n" );
+      lseek( logfile, -(reversebytes), SEEK_CUR );
+      return -1;
+   }
+   return 0;
 }
 
 int processopinfo( STATELOG* stlog, opinfo* newop ) {
