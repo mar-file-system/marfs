@@ -422,16 +422,16 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
       // the parsed line should indicate the start of a new operation
       if ( newop->start == 0 ) {
          LOG( LOG_ERR, "Parsed completion of op on \"%s\" target from logfile \"%s\" with no parsed start of op\n",
-              newop->tgt, stlog->logfile );
+              newop->tgt, stlog->logfilepath );
          free( newop->tgt );
          free( newop );
-         cleanuplog( stlog, newstlog );
          return -1;
       }
       // stitch the parsed op onto the front of our inprogress list
       newop->next = node->content;
       node->content = newop;
    }
+   return 0;
 }
 
 
@@ -574,7 +574,9 @@ int statelog_init( STATELOG* statelog, const char* logroot, marfs_ns* ns, size_t
       return -1;
    }
    // open our logfile
-   stlog->logfile = open( stlog->logfilepath, O_CREAT | O_RDWR, 0700 );
+   int openmode = O_CREAT | O_RDWR;
+   if ( cleanup == 0 ) { openmode |= O_EXCL; }
+   stlog->logfile = open( stlog->logfilepath, openmode, 0700 );
    if ( stlog->logfile < 0 ) {
       LOG( LOG_ERR, "Failed to open statelog: \"%s\"\n", stlog->logfilepath );
       cleanuplog( stlog, newstlog );
@@ -591,7 +593,7 @@ int statelog_init( STATELOG* statelog, const char* logroot, marfs_ns* ns, size_t
          return -1;
       }
    }
-   if ( eof ) {
+   if ( eof == 0 ) {
       LOG( LOG_ERR, "Failed to parse existing logfile: \"%s\"\n", stlog->logfilepath );
       cleanuplog( stlog, newstlog );
       return -1;
@@ -616,6 +618,16 @@ int statelog_init( STATELOG* statelog, const char* logroot, marfs_ns* ns, size_t
          LOG( LOG_ERR, "Failed to open parent dir of logfile: \"%s\"\n", stlog->logfilepath );
          cleanuplog( stlog, newstlog );
          return -1;
+      }
+      // readdir to identify all lingering logfiles
+      int olderr = errno;
+      errno = 0;
+      struct dirent* entry = NULL;
+      while ( (entry = readdir( parentdir )) != NULL ) {
+         if ( strcmp( prevent + 1, entry->name ) ) {
+            LOG( LOG_INFO, "Attempting cleanup of existing logfile: \"%s\"\n", entry->name );
+            int oldlog = openat( dirfd(parentdir), entry->name, O_RDONLY );
+         }
       }
    }
 }
