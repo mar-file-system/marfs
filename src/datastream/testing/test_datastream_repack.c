@@ -202,7 +202,7 @@ int main(int argc, char **argv)
    // keep track of this file's rpath
    char* rpath = datastream_genrpath( &(stream->files->ftag), &(stream->ns->prepo->metascheme) );
    if ( rpath == NULL ) {
-      LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file1' (%s)\n", strerror(errno) );
+      printf( "Failed to identify the rpath of no-pack 'file1' (%s)\n", strerror(errno) );
       return -1;
    }
    // ...and the data object
@@ -210,7 +210,7 @@ int main(int argc, char **argv)
    ne_erasure objerasure;
    ne_location objlocation;
    if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
-      LOG( LOG_ERR, "Failed to identify data object of 'file1' (%s)\n", strerror(errno) );
+      printf( "Failed to identify data object of 'file1' (%s)\n", strerror(errno) );
       return -1;
    }
 
@@ -241,7 +241,7 @@ int main(int argc, char **argv)
    // keep track of this file's rpath
    char* rpath2 = datastream_genrpath( &(stream->files->ftag), &(stream->ns->prepo->metascheme) );
    if ( rpath2 == NULL ) {
-      LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file2' (%s)\n", strerror(errno) );
+      printf( "Failed to identify the rpath of no-pack 'file2' (%s)\n", strerror(errno) );
       return -1;
    }
    // ...and the data object
@@ -249,7 +249,7 @@ int main(int argc, char **argv)
    ne_erasure objerasure2;
    ne_location objlocation2;
    if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
-      LOG( LOG_ERR, "Failed to identify data object of no-pack 'file2' (%s)\n", strerror(errno) );
+      printf( "Failed to identify data object of no-pack 'file2' (%s)\n", strerror(errno) );
       return -1;
    }
 
@@ -662,12 +662,12 @@ int main(int argc, char **argv)
    // keep track of this file's rpath
    rpath = datastream_genrpath( &(stream->files->ftag), &(stream->ns->prepo->metascheme) );
    if ( rpath == NULL ) {
-      LOG( LOG_ERR, "Failed to identify the rpath of pack 'file1' (%s)\n", strerror(errno) );
+      printf( "Failed to identify the rpath of pack 'file1' (%s)\n", strerror(errno) );
       return -1;
    }
    // ...and the data object
    if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
-      LOG( LOG_ERR, "Failed to identify data object of pack 'file1' (%s)\n", strerror(errno) );
+      printf( "Failed to identify data object of pack 'file1' (%s)\n", strerror(errno) );
       return -1;
    }
 
@@ -688,12 +688,12 @@ int main(int argc, char **argv)
    // keep track of this file's rpath
    rpath2 = datastream_genrpath( &(stream->files[1].ftag), &(stream->ns->prepo->metascheme) );
    if ( rpath2 == NULL ) {
-      LOG( LOG_ERR, "Failed to identify the rpath of pack 'file2' (%s)\n", strerror(errno) );
+      printf( "Failed to identify the rpath of pack 'file2' (%s)\n", strerror(errno) );
       return -1;
    }
    // ...and identify the data object (should match previous)
    if ( datastream_objtarget( &(stream->files[1].ftag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
-      LOG( LOG_ERR, "Failed to identify data object of pack 'file2' (%s)\n", strerror(errno) );
+      printf( "Failed to identify data object of pack 'file2' (%s)\n", strerror(errno) );
       return -1;
    }
    // validate that the data object matches the previous
@@ -734,14 +734,14 @@ int main(int argc, char **argv)
    // keep track of this file's rpath
    rpath3 = datastream_genrpath( &(stream->files->ftag), &(stream->ns->prepo->metascheme) );
    if ( rpath3 == NULL ) {
-      LOG( LOG_ERR, "Failed to identify the rpath of pack 'file3' (%s)\n", strerror(errno) );
+      printf( "Failed to identify the rpath of pack 'file3' (%s)\n", strerror(errno) );
       return -1;
    }
    // ...and the data object
    FTAG tgttag = stream->files->ftag;
    tgttag.objno++;
    if ( datastream_objtarget( &(tgttag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
-      LOG( LOG_ERR, "Failed to identify data object of pack 'file3' (%s)\n", strerror(errno) );
+      printf( "Failed to identify data object of pack 'file3' (%s)\n", strerror(errno) );
       return -1;
    }
 
@@ -844,22 +844,22 @@ int main(int argc, char **argv)
    }
    char* rmarkerpath = repackmarkertgt( rpath, &(stream->files->ftag), &(stream->ns->prepo->metascheme) );
    if ( rmarkerpath == NULL ) {
-      LOG( LOG_ERR, "Failed to generate repack marker path of file \"%s\"\n", rpath );
+      printf( "Failed to generate repack marker path of file \"%s\"\n", rpath );
       return -1;
    }
    freestream( repackstream );
    repackstream = NULL;
    if ( datastream_close( &(stream) ) ) {
-      LOG( LOG_ERR, "Failed to close read stream for partially repacked file \"%s\"\n", rpath );
+      printf( "Failed to close read stream for partially repacked file \"%s\"\n", rpath );
       return -1;
    }
-   if ( datastream_repack_cleanup( rmarkerpath, &(pos) ) ) {
-      LOG( LOG_ERR, "Repack cleanup failed for marker \"%s\"\n", rmarkerpath );
+   if ( datastream_repack_cleanup( rmarkerpath, &(pos) ) != 1 ) {
+      printf( "Repack cleanup failed for marker \"%s\"\n", rmarkerpath );
       return -1;
    }
    free( rmarkerpath );
    if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpckpath3 ) ) {
-      LOG( LOG_ERR, "Failed to unlink repack tgt of packed file1: \"%s\"\n", rpckpath3 );
+      printf( "Failed to unlink repack tgt of packed file1: \"%s\"\n", rpckpath3 );
       return -1;
    }
    free( rpckpath3 );

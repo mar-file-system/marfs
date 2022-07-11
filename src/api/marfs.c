@@ -2057,6 +2057,15 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
          return NULL;
       }
       newstream = 1;
+      // acquire the lock, just in case
+      if ( pthread_mutex_lock( &(stream->lock) ) ) {
+         LOG( LOG_ERR, "Failed to acquire lock on new marfs_fhandle\n" );
+         pthread_mutex_destroy( &(stream->lock) );
+         free( stream );
+         pathcleanup( subpath, oppos );
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
    }
    else {
       // acquire the lock for an existing stream
@@ -2106,7 +2115,8 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
                LOG( LOG_WARNING, "Failed to close preserved MDAL_FHANDLE for new target\n" );
             }
             stream->metahandle = NULL;
-            // NOTE --  no need to unlock, as this is a fresh stream
+            pathcleanup( subpath, oppos );
+            pthread_mutex_unlock( &(stream->lock) );
             errno = EBADFD;
             LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
             return NULL;
@@ -2117,7 +2127,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
          stream->ns = oppos->ns;
          stream->itype = ctxt->itype;
          // cleanup and return
-         if ( !(newstream) ) { pthread_mutex_unlock( &(stream->lock) ); }
+         pthread_mutex_unlock( &(stream->lock) );
          pathcleanup( subpath, oppos );
          LOG( LOG_INFO, "EXIT - Success\n" );
          return stream;
@@ -2125,10 +2135,8 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       LOG( LOG_ERR, "Failure of datastream_open()\n" );
       pathcleanup( subpath, oppos );
       if ( newstream ) { free( stream ); }
-      else {
-         if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
-         pthread_mutex_unlock( &(stream->lock) );
-      }
+      else if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+      pthread_mutex_unlock( &(stream->lock) );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
@@ -2137,7 +2145,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
    stream->itype = ctxt->itype;
    // cleanup and return
-   if ( !(newstream) ) { pthread_mutex_unlock( &(stream->lock) ); }
+   pthread_mutex_unlock( &(stream->lock) );
    pathcleanup( subpath, oppos ); // done with path info
    LOG( LOG_INFO, "EXIT - Success\n" );
    return stream;

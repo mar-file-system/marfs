@@ -695,17 +695,62 @@ int statelog_init( STATELOG* statelog, const char* logroot, marfs_ns* ns, size_t
       struct dirent* entry = NULL;
       while ( (entry = readdir( parentdir )) != NULL ) {
          if ( strcmp( prevent + 1, entry->name ) ) {
+            // open and parse all old logfiles under the same dir
             LOG( LOG_INFO, "Attempting cleanup of existing logfile: \"%s\"\n", entry->name );
             int oldlog = openat( dirfd(parentdir), entry->name, O_RDONLY );
+            if ( oldlog < 0 ) {
+               LOG( LOG_ERR, "Failed to open existing logfile for cleanup: \"%s\"\n", entry->name );
+               closedir( parentdir );
+               cleanuplog( stlog, newstlog );
+               return -1;
+            }
+            while ( (parsedop = parselogline( oldlog, &eof )) != NULL ) {
+               // duplicate this op into our initial logfile
+               if ( printlogline( stlog->logfile, parsedop ) ) {
+                  LOG( LOG_ERR, "Failed to duplicate op from old logfile \"%s\" into active log: \"%s\"\n",
+                       entry->name, stlog->logfilename );
+                  close( oldlog );
+                  closedir( parentdir );
+                  cleanuplog( stlog, newstlog );
+                  return -1;
+               }
+               // map any ops to our hash table
+               if ( processopinfo( stlog, parsedop ) < 0 ) {
+                  LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", entry->name );
+                  close( oldlog );
+                  closedir( parentdir );
+                  cleanuplog( stlog, newstlog );
+                  return -1;
+               }
+            }
+            if ( eof == 0 ) {
+               LOG( LOG_ERR, "Failed to parse old logfile: \"%s\"\n", entry->name );
+               close( oldlog );
+               closedir( parentdir );
+               cleanuplog( stlog, newstlog );
+               return -1;
+            }
+            close( oldlog );
+            // delete the old logfile
+            if ( unlinkat( dirfd(parentdir), entry->name ) ) {
+               LOG( LOG_ERR, "Failed to unlink old logfile: \"%s\"\n", entry->name );
+               closedir( parentdir );
+               cleanuplog( stlog, newstlog );
+               return -1;
+            }
          }
       }
+      closedir( parentdir );
    }
+   // finally done
+   *statelog = stlog;
+   return 0; 
 }
 
 /**
  * Record that a certain number of operations are in flight
  * @param STATELOG* statelog : Statelog to be updated
- * @param size_t numops : Number of operations now in flight
+ * @param size_t numops : Number of additional operations now in flight
  * @return int : Zero on success, or -1 on failure
  */
 int statelog_update_inflight( STATELOG* statelog, size_t numops ) {
@@ -715,6 +760,23 @@ int statelog_update_inflight( STATELOG* statelog, size_t numops ) {
       errno = EINVAL;
       return -1;
    }
+   STATELOG stlog = *statelog;
+   if ( stlog == NULL  ||  stlog->logfile < 1 ) {
+      LOG( LOG_ERR, "Received an uninitialized statelog reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // acquire statelog lock
+   if ( pthread_mutex_lock( &(stlog->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire statelog lock\n" );
+      return -1;
+   }
+   statelog->outstanding_ops += numops;
+   if ( pthread_mutex_unlock( &(stlog->lock) ) ) {
+      LOG( LOG_ERR, "Failed to release statelog lock\n" );
+      return -1;
+   }
+   return 0;
 }
 
 /**
@@ -726,11 +788,43 @@ int statelog_update_inflight( STATELOG* statelog, size_t numops ) {
  */
 int statelog_op_start( STATELOG* statelog, const char* target, operation_type type ) {
    // check for invalid args
-   if ( statelog == NULL ) {
+   if ( statelog == NULL  ||  *statelog == NULL ) {
       LOG( LOG_ERR, "Received a NULL statelog reference\n" );
       errno = EINVAL;
       return -1;
    }
+   STATELOG stlog = *statelog;
+   // acquire the statelog lock
+   if ( pthread_mutex_lock( &(stlog->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire statelog lock\n" );
+      return -1;
+   }
+   // allocate our operation node and tgt string
+   opinfo* op = malloc( sizeof( struct opinfo_struct ) );
+   if ( op == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate opinfo struct for operation start\n" );
+      pthread_mutex_unlock( &(stlog->lock) );
+      return -1;
+   }
+   op->type = type;
+   op->start = 1;
+   op->errval = 0;
+   op->next = NULL;
+   op->tgt  = strdup( target );
+   if ( op->tgt == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate tgt string for op start: \"%s\"\n", target );
+      pthread_mutex_unlock( &(stlog->lock) );
+      free( op );
+      return -1;
+   }
+   // process the new opinfo
+   if ( processopinfo( statelog, op ) ) {
+      LOG( LOG_ERR, "Failed to process operation on \"%s\" tgt\n", stlog->tgt );
+      pthread_mutex_unlock( &(stlog->lock) );
+      return -1;
+   }
+   pthread_mutex_unlock( &(stlog->lock) );
+   return 0;
 }
 
 /**
@@ -743,11 +837,51 @@ int statelog_op_start( STATELOG* statelog, const char* target, operation_type ty
  */
 int statelog_op_end( STATELOG* statelog, const char* target, operation_type type, int errval ) {
    // check for invalid args
-   if ( statelog == NULL ) {
+   if ( statelog == NULL  ||  *statelog == NULL ) {
       LOG( LOG_ERR, "Received a NULL statelog reference\n" );
       errno = EINVAL;
       return -1;
    }
+   STATELOG stlog = *statelog;
+   // acquire the statelog lock
+   if ( pthread_mutex_lock( &(stlog->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire statelog lock\n" );
+      return -1;
+   }
+   // allocate our operation node and tgt string
+   opinfo* op = malloc( sizeof( struct opinfo_struct ) );
+   if ( op == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate opinfo struct for operation start\n" );
+      pthread_mutex_unlock( &(stlog->lock) );
+      return -1;
+   }
+   op->type = type;
+   op->start = 0;
+   op->errval = errval;
+   op->next = NULL;
+   op->tgt  = strdup( target );
+   if ( op->tgt == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate tgt string for op start: \"%s\"\n", target );
+      pthread_mutex_unlock( &(stlog->lock) );
+      free( op );
+      return -1;
+   }
+   // process the new opinfo
+   if ( processopinfo( statelog, op ) ) {
+      LOG( LOG_ERR, "Failed to process operation on \"%s\" tgt\n", stlog->tgt );
+      pthread_mutex_unlock( &(stlog->lock) );
+      return -1;
+   }
+   else {
+      stlog->outstanding_ops--;
+   }
+   if ( stlog->outstanding_ops == 0  &&  pthread_cond_signal( &(stlog->nooutstandingops) ) ) {
+      LOG( LOG_ERR, "Failed to signal 'no outstanding ops' condition\n" );
+      pthread_mutex_unlock( &(stlog->lock) );
+      return -1;
+   }
+   pthread_mutex_unlock( &(stlog->lock) );
+   return 0;
 }
 
 /**
@@ -761,11 +895,29 @@ int statelog_op_end( STATELOG* statelog, const char* target, operation_type type
  */
 int statelog_fin( STATELOG* statelog, operation_summary* summary, const char* log_preservation_tgt ) {
    // check for invalid args
-   if ( statelog == NULL ) {
+   if ( statelog == NULL  ||  *statelog == NULL ) {
       LOG( LOG_ERR, "Received a NULL statelog reference\n" );
       errno = EINVAL;
       return -1;
    }
+   STATELOG stlog = *statelog;
+   // acquire the statelog lock
+   if ( pthread_mutex_lock( &(stlog->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire statelog lock\n" );
+      return -1;
+   }
+   // wait for all outstanding ops to complete
+   while ( stlog->outstanding_ops ) {
+      if ( pthread_cond_wait( &stlog->nooutstandingops, &stlog->lock ) ) {
+         LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
+         pthread_mutex_unlock( &(stlog->lock) );
+         return -1;
+      }
+   }
+   // potentially record summary info
+   if ( summary ) { *summary = stlog->summary; }
+   cleanuplog( stlog, 0 );
+   return 0;
 }
 
 /**
@@ -779,11 +931,30 @@ int statelog_fin( STATELOG* statelog, operation_summary* summary, const char* lo
  */
 int statelog_term( STATELOG* statelog, operation_summary* summary, const char* log_preservation_tgt ) {
    // check for invalid args
-   if ( statelog == NULL ) {
+   if ( statelog == NULL  ||  *statelog == NULL ) {
       LOG( LOG_ERR, "Received a NULL statelog reference\n" );
       errno = EINVAL;
       return -1;
    }
+   STATELOG stlog = *statelog;
+   // acquire the statelog lock
+   if ( pthread_mutex_lock( &(stlog->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire statelog lock\n" );
+      return -1;
+   }
+   // wait for all outstanding ops to complete
+   while ( stlog->outstanding_ops ) {
+      if ( pthread_cond_wait( &stlog->nooutstandingops, &stlog->lock ) ) {
+         LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
+         pthread_mutex_unlock( &(stlog->lock) );
+         return -1;
+      }
+   }
+   // potentially record summary info
+   if ( summary ) { *summary = stlog->summary; }
+   cleanuplog( stlog, 1 );
+   *statelog = NULL;
+   return 0;
 }
 
 
