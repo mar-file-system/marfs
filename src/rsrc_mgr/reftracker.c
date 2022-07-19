@@ -63,6 +63,8 @@ typedef struct reftracker_struct {
    pthread_mutex_t  lock;
    pthread_cond_t   complete;
    // state info
+   marfs_ns*        ns;
+   MDAL_CTXT        ctxt;
    ssize_t          refindex;
    ssize_t          refmax;
 }*REFTRACKER;
@@ -73,12 +75,20 @@ typedef struct reftracker_struct {
 /**
  * Initialize a given reftracker
  * @param REFTRACKER* reftracker : Reftracker to be initialized
+ * @param marfs_ns* ns : MarFS NS associated with the new reftracker
+ * @param MDAL_CTXT ctxt : MDAL_CTXT associated with the previous NS
+ *                         NOTE -- caller should never modify this again
  * @return int : Zero on success, or -1 on failure
  */
-int reftracker_init( REFTRACKER* reftracker ) {
+int reftracker_init( REFTRACKER* reftracker, marfs_ns* ns, MDAL_CTXT ctxt ) {
    // check for valid ref
    if ( reftracker == NULL  ||  *reftracker != NULL ) {
       LOG( LOG_ERR, "Received an invalid reftracker arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( ns == NULL  ||  ctxt == NULL ) {
+      LOG( LOG_ERR, "Received NULL NS/CTXT ref\n" );
       errno = EINVAL;
       return -1;
    }
@@ -89,16 +99,18 @@ int reftracker_init( REFTRACKER* reftracker ) {
       return -1;
    }
    // initialize reftracker values
-   reft.refmax = 0;
-   reft.refindex = 0;
-   if ( pthread_cond_init( &(reft.complete), NULL ) ) {
+   reft->ns = ns;
+   reft->ctxt = ctxt;
+   reft->refmax = 0;
+   reft->refindex = 0;
+   if ( pthread_cond_init( &(reft->complete), NULL ) ) {
       LOG( LOG_ERR, "Failed to initialize 'complete' condition for new reftracker\n" );
       free( reft );
       return -1;
    }
-   if ( pthread_mutex_init( &(reft.lock), NULL ) ) {
+   if ( pthread_mutex_init( &(reft->lock), NULL ) ) {
       LOG( LOG_ERR, "Failed to initialize lock for new reftracker\n" );
-      pthread_cond_destroy( &(reft.complete) );
+      pthread_cond_destroy( &(reft->complete) );
       free( reft );
       return -1;
    }
@@ -133,6 +145,13 @@ int reftracker_setrange( REFTRACKER* reftracker, size_t start, size_t end ) {
       errno = EINVAL;
       return -1;
    }
+   // check that range values are valid
+   if ( start > end  ||  end >= (*reftracker)->ns->prepo->metascheme.refnodecount ) {
+      LOG( LOG_ERR, "Invalid reference range values: ( start = %zu / end = %zu / max = %zu )\n", start, end, (*reftracker)->ns->prepo->metascheme.refnodecount );
+      pthread_mutex_unlock( &((*reftracker)->lock) );
+      errno = EINVAL;
+      return -1;
+   }
    // set range values
    (*reftracker)->refindex = start;
    (*reftracker)->refmax = end + 1;
@@ -143,37 +162,58 @@ int reftracker_setrange( REFTRACKER* reftracker, size_t start, size_t end ) {
 /**
  * Get the next ref index to be processed from the given reftracker
  * @param REFTRACKER* reftracker : Reftracker to get the next ref index from
- * @return ssize_t : Next ref index, or -1 if none remain
+ * @param char* eor : 'End-of-Range' flag reference, to be populated with 1 if 
+ *                    the end of the current ref range has been reached, or zero 
+ *                    otherwise
+ * @return MDAL_SCANNER : New reference scanner, or NULL if one wasn't opened
+ *                        ( on error, or if none remain in the ref range )
  */
-ssize_t reftracker_getref( REFTRACKER* reftracker ) {
+MDAL_SCANNER reftracker_getref( REFTRACKER* reftracker, char* eor ) {
+   // check for a valid char ref
+   if ( eor == NULL ) {
+      LOG( LOG_ERR, "Received a NULL eor arg\n" );
+      errno = EINVAL;
+      return NULL;
+   }
    // check for valid ref
    if ( reftracker == NULL  ||  *reftracker == NULL ) {
       LOG( LOG_ERR, "Received an invalid reftracker arg\n" );
+      *eor = 0;
       errno = EINVAL;
-      return -1;
+      return NULL;
    }
    // acquire the structure lock
    if ( pthread_mutex_lock( &((*reftracker)->lock) ) ) {
       LOG( LOG_ERR, "Failed to acquire reftracker lock\n" );
-      return -1;
+      *eor = 0;
+      return NULL;
    }
    // check if the ref range has already been traversed
    if ( (*reftracker)->refindex == (*reftracker)->refmax ) {
       LOG( LOG_INFO, "Ref range of tracker has already been fully traversed\n" );
       pthread_mutex_unlock( &((*reftracker)->lock) );
-      return -1;
+      *eor = 1;
+      return NULL;
    }
    // retrieve the next reference index value
    ssize_t res = (*reftracker)->refindex;
    (*reftracker)->refindex++;
    LOG( LOG_INFO, "Passing out reference index: %zd\n", (*reftracker)->refindex );
+   // open the corresponding reference scanner
+   MDAL nsmdal = (*reftracker)->ns->prepo->metascheme.mdal;
+   HASH_NODE* node = (*reftracker)->ns->prepo->metascheme.refnodes + res;
+   MDAL_SCANNER scanner = nsmdal->openscanner( (*reftracker)->ctxt, node->name );
+   if ( scanner == NULL ) { // just complain if we failed to open the dir
+      LOG( LOG_ERR, "Failed to open scanner for refdir: \"%s\" ( index %zd )\n", node->name, res );
+   }
    // check for ref range completion
    if ( (*reftracker)->refindex == (*reftracker)->refmax ) {
       LOG( LOG_INFO, "Ref range has been completed\n" );
       pthread_cond_signal( &((*reftracker)->complete) );
    }
    pthread_mutex_unlock( &((*reftracker)->lock) );
-   return res;
+   *eor = 0;
+   return scanner;
 }
 
 /**
@@ -235,6 +275,8 @@ int reftracker_term( REFTRACKER* reftracker ) {
    pthread_cond_destory( &((*reftracker)->complete) );
    pthread_mutex_unlock( &((*reftracker)->lock) );
    pthread_mutex_destory( &((*reftracker)->lock) );
+   MDAL nsmdal = (*reftracker)->ns->prepo->metascheme.mdal;
+   nsmdal->destroyctxt( (*reftracker)->ctxt );
    free( reft );
    return 0;
 }

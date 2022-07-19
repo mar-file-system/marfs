@@ -60,11 +60,26 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 typedef enum
 {
-   MARFS_DELETE_OBJECT_OP,
-   MARFS_DELETE_REFERENCE_OP,
+   RESOURCE_RECORD_LOG,
+   RESOURCE_MODIFY_LOG
+} rsrclog_type;
+
+typedef enum
+{
+   MARFS_DELETE_OBJ_OP,
+   MARFS_DELETE_REF_OP,
    MARFS_REBUILD_OP,
    MARFS_REPACK_OP
 } operation_type;
+
+typedef struct opinfo_struct {
+   operation_type type;  // which class of operation
+   char start;           // flag indicating the start of an op ( if zero, this entry indicates completion )
+   size_t count;         // how many subsequent targets are there
+   int errval;           // errno value of the attempted op ( always zero for operation start )
+   FTAG ftag;            // which FTAG value is the target
+   struct opinfo_struct* next; // subsequent ops in this chain
+} opinfo;
 
 typedef struct operation_summary_struct {
    size_t deletion_object_count;
@@ -78,67 +93,150 @@ typedef struct operation_summary_struct {
 } operation_summary;
 
 
+//   -------------   INTERNAL DEFINITIONS    -------------
+
+#define MAX_BUFFER 8192 // maximum character buffer to be used for parsing/printing log lines
+                        //    program will abort if limit is exceeded when reading or writing
+#define RECORD_LOG_PREFIX "RESOURCE-RECORD-LOGFILE " // prefix for a 'record'-log
+                                                     //    - only op starts, no completions
+#define MODIFY_LOG_PREFIX "RESOURCE-MODIFY-LOGFILE " // prefix for a 'modify'-log
+                                                     //    - mix of op starts and completions
+
 typedef struct statelog_struct {
    // synchronization and access control
    pthread_mutex_t   lock;
-   pthread_cond_t    nooutstanding;
-   ssize_t           outstanding_ops;
+   pthread_cond_t    nooutstanding;  // left NULL for a 'record' log
+   ssize_t           outstandingcnt; // always zero for a 'record' log
    // state info
    operation_summary summary;
-   HASH_TABLE        inprogress;
+   HASH_TABLE        inprogress;  // left NULL for a 'record' log
    int               logfile;
    char*             logfilepath;
 }*STATELOG;
 
-typedef struct opinfo_struct {
-   char* tgt;
-   operation_type type;
-   char start;
-   int errval;
-   struct opinfo_struct* next;
-} opinfo;
-
-
-//   -------------   INTERNAL DEFINITIONS    -------------
-
-#define MAX_BUFFER 4096 // maximum character buffer to be used for parsing/printing log lines ( limits length of target string, especially )
-
-
 //   -------------   INTERNAL FUNCTIONS    -------------
 
-char* genlogfilepath( const char* logroot, marfs_ns* ns, size_t ranknum ) {
-   ssize_t pathlen = snprintf( NULL, 0, "%s/%s/statelog-%zu", logroot, ns->idstr, ranknum );
+/**
+ * Internal func, generates the pathnames of logfiles and parent dirs
+ * @param char create : Create flag
+ *                      If non-zero, this func will attempt to create all intermediate directory paths
+ * @param const char* logroot : Root of the logfile tree
+ * @param const char* iteration : ID string for this program iteration ( can be left NULL to gen parent path )
+ * @param marfs_ns* ns : MarFS NS to process ( can be left NULL to gen parent path, ignored if prev is NULL )
+ * @param ssize_t ranknum : Processing rank ( can be < 0 to gen parent path, ignored if prev is NULL )
+ * @return char* : Path of the corresponding log location, or NULL if an error occurred
+ */
+char* genlogfilepath( char create, const char* logroot, const char* iteration, marfs_ns* ns, ssize_t ranknum ) {
+   // if we have a NS, identify its FS path
+   char* nspath = NULL;
+   if ( ns ) {
+      if ( config_nsinfo( ns->idstr, NULL, &nspath ) ) {
+         LOG( LOG_ERR, "Failed to identify NSpath of NS: \"%s\"\n", ns->idstr );
+         return NULL;
+      }
+   }
+   // identify length of the constructed path
+   ssize_t pathlen = 0;
+   if ( iteration  &&  nspath  &&  ranknum >= 0 ) {
+      pathlen = snprintf( NULL, 0, "%s/%s/%s/statelog-%zu", logroot, iteration, nspath, ranknum );
+   }
+   else if ( iteration  &&  nspath ) {
+      pathlen = snprintf( NULL, 0, "%s/%s/%s", logroot, iteration, nspath );
+   }
+   else if ( iteration ) {
+      pathlen = snprintf( NULL, 0, "%s/%s", logroot, iteration );
+   }
+   else {
+      pathlen = snprintf( NULL, 0, "%s", logroot );
+   }
    if ( pathlen < 1 ) {
       LOG( LOG_ERR, "Failed to identify strlen of logfile path\n" );
+      if ( nspath ) { free( nspath ); }
       return NULL;
    }
+   // allocate the path
    char* path = malloc( sizeof(char) * (pathlen + 1) );
    if ( path == NULL ) {
       LOG( LOG_ERR, "Failed to allocate %zu bytes for logfile path\n", pathlen + 1 );
+      if ( nspath ) { free( nspath ); }
       return NULL;
    }
-   ssize_t lrootlen = snprintf( path, pathlen, "%s/", logroot );
+   // populate the path root
+   ssize_t lrootlen = snprintf( path, pathlen, "%s", logroot );
    if ( lrootlen < 1  ||  lrootlen >= pathlen ) {
       LOG( LOG_ERR, "Failed to populate logfile root path\n" );
+      if ( nspath ) { free( nspath ); }
       free( path );
       return NULL;
    }
-   ssize_t nsidlen = 0;
-   char* parse = ns->idstr;
-   for ( ; *parse != '\0'; parse++ ) {
-      if ( *parse == '|'  ||  *parse == '/' ) { *(path + lrootlen + nsidlen) = '#'; }
-      else { *(path + lrootlen + nsidlen) = *parse; }
-      nsidlen++;
-   }
-   *(path + lrootlen + nsidlen) = '\0';
-   // ensure the parent dir is created
-   if ( mkdir( path, 0700 )  &&  errno != EEXIST ) {
-      LOG( LOG_ERR, "Failed to create parent dir of logfile: \"%s\"\n", path );
+   // create, if necessary
+   if ( create  &&  mkdir( path, 0700 )  &&  errno != EEXIST ) {
+      LOG( LOG_ERR, "Failed to create log root dir: \"%s\"\n", path );
+      if ( nspath ) { free( nspath ); }
       free( path );
       return NULL;
    }
-   if ( snprintf( path + lrootlen + nsidlen, (pathlen - (lrootlen + nsidlen)) + 1, "/statelog-%zu", ranknum ) !=
-         (pathlen - (lrootlen + nsidlen)) ) {
+   // potentially exit here
+   if ( iteration == NULL ) {
+      LOG( LOG_INFO, "Generated root path: \"%s\"\n", path );
+      if ( nspath ) { free( nspath ); }
+      return path;
+   }
+   // populate the path iteration
+   ssize_t iterlen = snprintf( path + lrootlen, pathlen - lrootlen, "/%s", iteration );
+   if ( iterlen < 1  ||  iterlen >= (pathlen - lrootlen) ) {
+      LOG( LOG_ERR, "Failed to populate logfile iteration path: \"%s\"\n", iteration );
+      if ( nspath ) { free( nspath ); }
+      free( path );
+      return NULL;
+   }
+   // create, if necessary
+   if ( create  &&  mkdir( path, 0700 )  &&  errno != EEXIST ) {
+      LOG( LOG_ERR, "Failed to create logfile iteration dir: \"%s\"\n", path );
+      if ( nspath ) { free( nspath ); }
+      free( path );
+      return NULL;
+   }
+   // potentially exit here
+   if ( nspath == NULL ) {
+      LOG( LOG_INFO, "Generated iteration path: \"%s\"\n", path );
+      return path;
+   }
+   // populate the path ns
+   ssize_t nslen = snprintf( path + lrootlen + iterlen, (pathlen - lrootlen) - iterlen, "/%s", nspath );
+   if ( nslen < 1  ||  nslen >= ((pathlen - lrootlen) - iterlen) ) {
+      LOG( LOG_ERR, "Failed to populate NS path value: \"%s\"\n", nspath );
+      free( nspath );
+      free( path );
+      return NULL;
+   }
+   // create, if necessary
+   if ( create ) {
+      // have to iterate over and create all intermediate dirs
+      char* parse = path + lrootlen + iterlen + 1;
+      while ( *parse != '\0' ) {
+         if ( *parse == '/' ) {
+            *parse = '\0';
+            if ( mkdir( path, 0700 )  &&  errno != EEXIST ) {
+               LOG( LOG_ERR, "Failed to create log NS subdir: \"%s\"\n", path );
+               free( nspath );
+               free( path );
+               return NULL;
+            }
+            *parse = '/';
+         }
+         parse++;
+      }
+   }
+   free( nspath ); // done with this value
+   // potentially exit here
+   if ( ranknum < 0 ) {
+      LOG( LOG_INFO, "Generated NS log path: \"%s\"\n", path );
+      return path;
+   }
+   // populate the final logfile path
+   // NOTE -- we never create this file in this func
+   if ( snprintf( path + lrootlen + iterlen + nslen, (pathlen - (lrootlen + iterlen + nslen)) + 1, "/statelog-%zu", ranknum ) !=  (pathlen - (lrootlen + iterlen + nsidlen)) ) {
       LOG( LOG_ERR, "Logfile path has inconsistent length\n" );
       free( path );
       return NULL;
@@ -146,7 +244,13 @@ char* genlogfilepath( const char* logroot, marfs_ns* ns, size_t ranknum ) {
    return path;
 }
 
-void cleanuplog( STATELOG* stlog, char destroy ) {
+/**
+ * Clean up the provided statelog
+ * @param STATELOG stlog : Reference to the statelog to be cleaned
+ * @param char destroy : If non-zero, the entire statelog structure will be freed
+ *                       If zero, all state will be purged, but the struct can be reinitialized
+ */
+void cleanuplog( STATELOG stlog, char destroy ) {
    HASH_NODE* nodelist = NULL;
    size_t index = 0;
    if ( stlog->inprogress ) {
@@ -157,7 +261,9 @@ void cleanuplog( STATELOG* stlog, char destroy ) {
             free( opindex->tgt );
             opinfo* freeop = opindex;
             opindex = opindex->next;
-            free( opindex );
+            if ( freeop->ftag.ctag ) { free( freeop->ftag.ctag ); }
+            if ( freeop->ftag.streamid ) { free( freeop->ftag.streamid ); }
+            free( freeop );
          }
          free( (nodelist + index - 1)->name );
          index--;
@@ -168,259 +274,299 @@ void cleanuplog( STATELOG* stlog, char destroy ) {
    if ( stlog->logfilepath ) { free( stlog->logfilepath ); }
    if ( stlog->logfile > 0 ) { close( stlog->logfile ); }
    if ( destroy ) {
-      pthread_cond_destroy( &(stlog->nooutstanding) );
-      pthread_mutex_destroy( &(stlog->lock) );
+      if ( stlog->nooutstanding ) { pthread_cond_destroy( &(stlog->nooutstanding) ); }
+      if ( stlog->lock ) { pthread_mutex_destroy( &(stlog->lock) ); }
       free( stlog );
    }
    return;
 }
 
+/**
+ * Parse a new operation ( or sequence of them ) from the given logfile
+ * @param int logfile : Reference to the logfile to parse a line from
+ * @param char* eof : Reference to a character to be populated with an exit flag value
+ *                    1 if we hit EOF on the file on a line division
+ *                    -1 if we hit EOF in the middle of a line
+ *                    zero otherwise
+ * @return opinfo* : Reference to a new set of operation info structs ( caller must free )
+ * NOTE -- Under most failure conditions, the logfile offset will be returned to its original value.
+ *         This is not the case if parsing reaches EOF, in which case, offset will be left there.
+ */
 opinfo* parselogline( int logfile, char* eof ) {
    char buffer[MAX_BUFFER] = {0};
    char* tgtchar = buffer;
-   off_t reversebytes = 0;
-   // parse in our target string
+   off_t origoff = lseek( logfile, 0, SEEK_CUR );
+   if ( origoff < 0 ) {
+      LOG( LOG_ERR, "Failed to identify current logfile offset\n" );
+      return NULL;
+   }
+   // read in an entire line
+   // NOTE -- Reading one char at a time isn't very efficient, but we don't expect parsing of 
+   //         logfiles to be a significant performance factor.  This approach greatly simplifies 
+   //         char buffer mgmt.
    ssize_t readbytes;
    while ( (readbytes = read( logfile, tgtchar, 1 )) == 1 ) {
-      reversebytes++;
-      // check for terminating chars
-      if ( *tgtchar == ' '  ||  *tgtchar == '\n'  ||  *tgtchar == '\0' ) {
-         break;
-      }
-      tgtchar++;
+      // check for end of line
+      if ( *tgtchar == '\n' ) { break; }
       // check for excessive string length
       if ( tgtchar - buffer >= MAX_BUFFER - 1 ) {
-         LOG( LOG_ERR, "Parsed TGT String exceeds memory limits\n" );
-         lseek( logfile, -(reversebytes), SEEK_CUR );
+         LOG( LOG_ERR, "Parsed line exceeds memory limits\n" );
+         lseek( logfile, origoff, SEEK_SET );
+         *eof = 0;
          return NULL;
       }
+      tgtchar++;
    }
-   // check exit condition
-   if ( readbytes == 0 ) {
-      // hit EOF
-      *eof = 1;
+   if ( *tgtchar != '\n' ) {
+      if ( readbytes == 0 ) {
+         if ( tgtchar == buffer ) {
+            LOG( LOG_INFO, "Hit EOF on logfile\n" );
+            *eof = 1;
+            return NULL;
+         }
+         LOG( LOG_ERR, "Hit mid-line EOF on logfile\n" );
+         *eof = -1;
+         return NULL;
+      }
+      LOG( LOG_ERR, "Encountered error while reading from logfile\n" );
+      lseek( logfile, origoff, SEEK_SET );
+      *eof = 0;
       return NULL;
    }
-   if ( *tgtchar != ' ' ) {
-      LOG( LOG_ERR, "Unexpected termination of TGT string: '%c'\n", *tgtchar );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
-      return NULL;
-   }
-   *tgtchar = '\0'; // cleanup our separating ' '
-   // allocate our operation node and tgt string
+   *eof = 0; // preemptively populate with zero
+   // allocate our operation node
    opinfo* op = malloc( sizeof( struct opinfo_struct ) );
    if ( op == NULL ) {
       LOG( LOG_ERR, "Failed to allocate opinfo struct for logfile line\n" );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+      lseek( logfile, origoff, SEEK_SET );
       return NULL;
    }
    op->start = 0;
+   op->count = 0;
    op->errval = 0;
    op->next = NULL;
-   op->tgt  = strdup( buffer );
-   if ( op->tgt == NULL ) {
-      LOG( LOG_ERR, "Failed to duplicate tgt string from logfile: \"%s\"\n", buffer );
+   // parse the op type
+   char* parseloc = buffer;
+   if ( strncmp( buffer, "DEL-OBJ ", 8 ) == 0 ) {
+      op->type = MARFS_DELETE_OBJ_OP;
+      parseloc += 8;
+   }
+   else if ( strncmp( buffer, "DEL-REF ", 8 ) == 0 ) {
+      op->type = MARFS_DELETE_REF_OP;
+      parseloc += 8;
+   }
+   else if ( strncmp( buffer, "REBUILD ", 8 ) == 0 ) {
+      op->type = MARFS_REBUILD_OP;
+      parseloc += 8;
+   }
+   else if ( strncmp( buffer, "REPACK ", 7 ) == 0 ) {
+      op->type = MARFS_REPACK_OP;
+      parseloc += 7;
+   }
+   else {
+      LOG( LOG_ERR, "Unrecognized operation type value: \"%s\"\n", buffer );
       free( op );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+      lseek( logfile, origoff, SEEK_SET );
       return NULL;
    }
-   // parse the operation type
-   if ( (readbytes = read( logfile, buffer, 2 )) != 2 ) {
-      LOG( LOG_ERR, "Failed to read in operation type\n" );
-      free( op->tgt );
+   if ( *parseloc == 'S' ) {
+      op->start == 1;
+   }
+   else if ( *parseloc != 'E' ) {
+      LOG( LOG_ERR, "Unexpected START string value: '\%c'\n", *parseloc );
       free( op );
-      if ( readbytes > 0 ) {
-         // reached EOF
-         *eof = 1;
-      }
-      else {
-         lseek( logfile, -(reversebytes), SEEK_CUR );
-      }
+      lseek( logfile, origoff, SEEK_SET );
       return NULL;
    }
-   reversebytes+=2;
-   switch( buffer[0] ) {
-      case 'O':
-         op->type = MARFS_DELETE_OBJECT_OP;
-         break;
-      case 'R':
-         op->type = MARFS_DELETE_REFERENCE_OP;
-         break;
-      case 'B':
-         op->type = MARFS_REBUILD_OP;
-         break;
-      case 'P':
-         op->type = MARFS_REPACK_OP;
-         break;
-      default:
-         LOG( LOG_ERR, "Unrecognized operation type value: '%c'\n", buffer[0] );
-         free( op->tgt );
-         free( op );
-         lseek( logfile, -(reversebytes), SEEK_CUR );
-         return NULL;
-   }
-   if ( buffer[1] != ' ' ) {
-      LOG( LOG_ERR, "Unexpected trailing char on type value: '%c'\n", buffer[1] );
-      free( op->tgt );
+   if ( *(parseloc + 1) != ' ' ) {
+      LOG( LOG_ERR, "Unexpected trailing character after START value: '%c'\n", *(parseloc + 1) );
       free( op );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+      lseek( logfile, origoff, SEEK_SET );
       return NULL;
    }
-   // parse the operation phase
-   if ( (readbytes = read( logfile, buffer, 2 )) != 2 ) {
-      LOG( LOG_ERR, "Failed to read in operation phase\n" );
-      free( op->tgt );
-      free( op );
-      if ( readbytes > 0 ) {
-         // reached EOF
-         *eof = 1;
-      }
-      else {
-         lseek( logfile, -(reversebytes), SEEK_CUR );
-      }
-      return NULL;
-   }
-   reversebytes+=2;
-   switch ( buffer[0] ) {
-      case 'S':
-         op->start = 1;
-      case 'E':
-         break;
-      default:
-         LOG( LOG_ERR, "Unexpected operation phase value: '%c'\n", buffer[0] );
-         free( op->tgt );
-         free( op );
-         lseek( logfile, -(reversebytes), SEEK_CUR );
-         return NULL;
-   }
-   if ( op->start ) {
-      // 'start' of operation lines should end here
-      if ( buffer[1] != '\n' ) {
-         LOG( LOG_ERR, "Unexpected trailing char after start of operation: '%c'\n", buffer[1] );
-         free( op->tgt );
-         free( op );
-         lseek( logfile, -(reversebytes), SEEK_CUR );
-         return NULL;
-      }
-      return op;
-   }
-   if ( buffer[1] != ' ' ) {
-      LOG( LOG_ERR, "Unexpected trailing char after phase of operation: '%c'\n", buffer[1] );
-      free( op->tgt );
-      free( op );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
-      return NULL;
-   }
-   // parse the error value
-   tgtchar = buffer;
-   while ( (readbytes = read( logfile, tgtchar, 1 )) == 1 ) {
-      reversebytes++;
-      // check for terminating chars
-      if ( *tgtchar == ' '  ||  *tgtchar == '\n'  ||  *tgtchar == '\0' ) {
-         break;
-      }
-      tgtchar++;
-      // check for excessive string length
-      if ( tgtchar - buffer >= MAX_BUFFER - 1 ) {
-         LOG( LOG_ERR, "Parsed error value exceeds memory limits\n" );
-         free( op->tgt );
-         free( op );
-         lseek( logfile, -(reversebytes), SEEK_CUR );
-         return NULL;
-      }
-   }
-   // check exit condition
-   if ( *tgtchar != '\n' ) {
-      LOG( LOG_ERR, "Unexpected termination of TGT string: '%c'\n", *tgtchar );
-      free( op->tgt );
-      free( op );
-      if ( readbytes == 0 ) {
-         // reached EOF
-         *eof = 1;
-      }
-      else {
-         lseek( logfile, -(reversebytes), SEEK_CUR );
-      }
-      return NULL;
-   }
+   parseloc += 2;
+   // parse the count value
    char* endptr = NULL;
-   long long parsevalue = strtoll( buffer, &endptr, 10 );
-   if ( endptr == NULL  ||  *endptr != '\n' ) {
-      LOG( LOG_ERR, "Unexpected termination of error value string: '%c'\n", *endptr );
-      free( op->tgt );
+   unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
+   if ( endptr == NULL  ||  *endptr != ' ' ) {
+      LOG( LOG_ERR, "Failed to parse COUNT value with unexpected char: '%c'\n", *endptr );
       free( op );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+      lseek( logfile, origoff, SEEK_SET );
       return NULL;
    }
-   op->errval = (int)parsevalue;
+   op->count = (size_t)parseval;
+   parseloc = endptr + 1;
+   // parse the errno value
+   long sparseval = strtol( parseloc, &endptr, 10 );
+   if ( endptr == NULL  ||  *endptr != ' ' ) {
+      LOG( LOG_ERR, "Failed to parse ERRNO value with unexpected char: '%c'\n", *endptr );
+      free( op );
+      lseek( logfile, origoff, SEEK_SET );
+      return NULL;
+   }
+   op->errval = (int)sparseval;
+   parseloc = endptr + 1;
+   // parse the NEXT value
+   char nextval = 0;
+   if ( *(tgtchar - 1) == '-' ) {
+      if ( *(tgtchar - 2) != ' ' ) {
+         LOG( LOG_ERR, "Unexpected char preceeds NEXT flag: '%c'\n", *(tgtchar - 2) );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      nextval = 1; // note that we need to append another op
+      tgtchar -= 2; // pull this back, so we'll trim off the NEXT value
+   }
+   // parse the FTAG value
+   *tgtchar = '\0'; // trim the string, to make FTAG parsing easy
+   if ( ftag_initstr( &(op->ftag), parseloc ) ) {
+      LOG( LOG_ERR, "Failed to parse FTAG value of log line\n" );
+      free( op );
+      lseek( logfile, origoff, SEEK_SET );
+      return NULL;
+   }
+   // finally, parse in any subsequent linked ops
+   if ( nextval ) {
+      // NOTE -- Recursive parsing isn't the most efficient approach.
+      //         Simple though, and, once again, we don't expect logfile parsing to be a 
+      //         significant performance consideration.
+      op->next = parselogline( logfile, eof );
+      if ( op->next == NULL ) {
+         LOG( LOG_ERR, "Failed to parse linked operation\n" );
+         free( op );
+         if ( *eof == 0 ) { lseek( logfile, origoff, SEEK_SET ); }
+         return NULL;
+      }
+   }
    return op;
 }
 
+/**
+ * Print the specified operation info ( or chain of them ) to the specified logfile
+ * @param int logfile : File descriptor for the target logfile
+ * @param opinfo* op : Reference to the operation to be printed
+ * @return int : Zero on success, or -1 on failure
+ */
 int printlogline( int logfile, opinfo* op ) {
-   // print out the tgt string
    char buffer[MAX_BUFFER];
    ssize_t usedbuff;
-   off_t reversebytes = 0;
-   if ( (usedbuff = snprintf( buffer, MAX_BUFFER, "%s ", op->tgt )) >= MAX_BUFFER ) {
-      LOG( LOG_ERR, "Failed to fit op target into print buffer: \"%s\"\n", op->tgt );
+   off_t origoff = lseek( logfile, 0, SEEK_CUR );
+   if ( origoff < 0 ) {
+      LOG( LOG_ERR, "Failed to identify current logfile offset\n" );
       return -1;
    }
-   ssize_t writeres = write( logfile, buffer, usedbuff );
-   if ( writeres > 0 ) { reversebytes = writeres; }
-   if ( writeres != usedbuff ) {
-      LOG( LOG_ERR, "Failed to write out target info of length %zd to logfile\n", usedbuff );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
-      return -1;
-   }
-   // print out the operation type and phase
-   switch( op->type ) {
-      case MARFS_DELETE_OBJECT_OP:
-         buffer[0] = 'O';
+   // populate the type string of the operation
+   switch ( op->type ) {
+      case MARFS_DELETE_OBJ_OP:
+         if ( snprintf( buffer, MAX_BUFFER, "%s ", "DEL-OBJ" ) != 8 ) {
+            LOG( LOG_ERR, "Failed to populate 'DEL-OBJ' type string\n" );
+            return -1;
+         }
+         usedbuff += 8;
          break;
-      case MARFS_DELETE_REFERENCE_OP:
-         buffer[0] = 'R';
+      case MARFS_DELETE_REF_OP:
+         if ( snprintf( buffer, MAX_BUFFER, "%s ", "DEL-REF" ) != 8 ) {
+            LOG( LOG_ERR, "Failed to populate 'DEL-REF' type string\n" );
+            return -1;
+         }
+         usedbuff += 8;
          break;
       case MARFS_REBUILD_OP:
-         buffer[0] = 'B';
+         if ( snprintf( buffer, MAX_BUFFER, "%s ", "REBUILD" ) != 8 ) {
+            LOG( LOG_ERR, "Failed to populate 'REBUILD' type string\n" );
+            return -1;
+         }
+         usedbuff += 8;
          break;
       case MARFS_REPACK_OP:
-         buffer[0] = 'P';
+         if ( snprintf( buffer, MAX_BUFFER, "%s ", "REPACK" ) != 7 ) {
+            LOG( LOG_ERR, "Failed to populate 'REPACK' type string\n" );
+            return -1;
+         }
+         usedbuff += 7;
          break;
       default:
-         LOG( LOG_ERR, "Unrecognized operation type value\n" );
-         lseek( logfile, -(reversebytes), SEEK_CUR );
+         LOG( LOG_ERR, "Unrecognized TYPE value of operation\n" );
          return -1;
    }
-   buffer[1] = ' ';
-   if ( op->start ) {
-      buffer[2] = 'S';
-      buffer[3] = '\n';
-   }
-   else {
-      buffer[2] = 'E';
-      buffer[3] = ' ';
-   }
-   writeres = write( logfile, buffer, 4 );
-   if ( writeres > 0 ) { reversebytes += writeres; }
-   if ( writeres != 4 ) {
-      LOG( LOG_ERR, "Failed to ouput phase info of operation\n" );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+   if ( usedbuff >= MAX_BUFFER ) {
+      LOG( LOG_ERR, "Operation string exceeds memory allocation limits\n" );
       return -1;
    }
-   // start of operation messages are now complete
-   if ( op->start ) { return 0; }
-   // otherwise, move on to error info
-   if ( (usedbuff = snprintf( buffer, MAX_BUFFER, "%d\n", op->errval )) >= MAX_BUFFER ) {
-      LOG( LOG_ERR, "Failed to fit op errval into print buffer: %d\n", op->errval );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+   // populate start flag
+   if ( op->start  &&  snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "%c ", 'S' ) != 2 ) {
+      LOG( LOG_ERR, "Failed to populate 'S' start flag string\n" );
       return -1;
    }
-   writeres = write( logfile, buffer, usedbuff );
-   if ( writeres > 0 ) { reversebytes += writeres; }
-   if ( writeres != usedbuff ) {
-      LOG( LOG_ERR, "Failed to output errval info of operation\n" );
-      lseek( logfile, -(reversebytes), SEEK_CUR );
+   else if ( snprintf( buffer + usedbuff, "%c ", 'E' ) != 2 ) {
+      LOG( LOG_ERR, "Failed to populate 'E' start flag string\n" );
       return -1;
+   }
+   usedbuff += 2;
+   if ( usedbuff >= MAX_BUFFER ) {
+      LOG( LOG_ERR, "Operation string exceeds memory allocation limits\n" );
+      return -1;
+   }
+   // populate the count string
+   ssize_t printres;
+   if ( (printres = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "%zu ", op->count )) < 2 ) {
+      LOG( LOG_ERR, "Failed to populate \"%zu\" count string\n", op->count );
+      return -1;
+   }
+   usedbuff += printres;
+   if ( usedbuff >= MAX_BUFFER ) {
+      LOG( LOG_ERR, "Operation string exceeds memory allocation limits\n" );
+      return -1;
+   }
+   // populate the errval string
+   if ( (printres = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "%d ", op->errval )) < 2 ) {
+      LOG( LOG_ERR, "Failed to populate \"%d\" errval string\n", op->errval );
+      return -1;
+   }
+   usedbuff += printres;
+   if ( usedbuff >= MAX_BUFFER ) {
+      LOG( LOG_ERR, "Operation string exceeds memory allocation limits\n" );
+      return -1;
+   }
+   // populate the FTAG string
+   if ( (printres = ftag_tostr( &(op->ftag), buffer + usedbuff, MAX_BUFFER - usedbuff )) < 1 ) {
+      LOG( LOG_ERR, "Failed to populate FTAG string\n" );
+      return -1;
+   }
+   usedbuff += printres;
+   if ( usedbuff >= MAX_BUFFER ) {
+      LOG( LOG_ERR, "Operation string exceeds memory allocation limits\n" );
+      return -1;
+   }
+   // populate the NEXT flag
+   if ( op->next ) {
+      if ( snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, " -" ) != 2 ) {
+         LOG( LOG_ERR, "Failed to populate NEXT flag string\n" );
+         return -1;
+      }
+      usedbuff += 2;
+      if ( usedbuff >= MAX_BUFFER ) {
+         LOG( LOG_ERR, "Operation string exceeds memory allocation limits\n" );
+         return -1;
+      }
+   }
+   // populate EOL
+   *(buffer + usedbuff) = '\n';
+   usedbuff++;
+   if ( usedbuff >= MAX_BUFFER ) {
+      LOG( LOG_ERR, "Operation string exceeds memory allocation limits\n" );
+      return -1;
+   }
+   *(buffer + usedbuff) = '\0'; // NULL-terminate, just in case
+   // finally, output the full op line
+   if ( write( logfile, buffer, usedbuff ) != usedbuff ) {
+      LOG( LOG_ERR, "Failed to write operation string of length %zd to logfile\n", usedbuff );
+      return -1;
+   }
+   // potentially output trailing ops recursively
+   if ( op->next ) {
+      return printlogline( logfile, op->next );
    }
    return 0;
 }
@@ -567,7 +713,7 @@ int statelog_init( STATELOG* statelog, const char* logroot, marfs_ns* ns, size_t
             pthread_mutex_destroy( &(stlog->lock) );
             free( stlog );
          }
-      stlog->outstanding_ops = 0;
+      stlog->outstandingcnt = 0;
       bzero( &(stlog->summary), sizeof( struct operation_summary_struct ) );
       stlog->inprogress = NULL;
       stlog->logfile = -1;
@@ -771,7 +917,7 @@ int statelog_update_inflight( STATELOG* statelog, size_t numops ) {
       LOG( LOG_ERR, "Failed to acquire statelog lock\n" );
       return -1;
    }
-   statelog->outstanding_ops += numops;
+   statelog->outstandingcnt += numops;
    if ( pthread_mutex_unlock( &(stlog->lock) ) ) {
       LOG( LOG_ERR, "Failed to release statelog lock\n" );
       return -1;
@@ -873,9 +1019,9 @@ int statelog_op_end( STATELOG* statelog, const char* target, operation_type type
       return -1;
    }
    else {
-      stlog->outstanding_ops--;
+      stlog->outstandingcnt--;
    }
-   if ( stlog->outstanding_ops == 0  &&  pthread_cond_signal( &(stlog->nooutstandingops) ) ) {
+   if ( stlog->outstandingcnt == 0  &&  pthread_cond_signal( &(stlog->nooutstandingops) ) ) {
       LOG( LOG_ERR, "Failed to signal 'no outstanding ops' condition\n" );
       pthread_mutex_unlock( &(stlog->lock) );
       return -1;
@@ -907,7 +1053,7 @@ int statelog_fin( STATELOG* statelog, operation_summary* summary, const char* lo
       return -1;
    }
    // wait for all outstanding ops to complete
-   while ( stlog->outstanding_ops ) {
+   while ( stlog->outstandingcnt ) {
       if ( pthread_cond_wait( &stlog->nooutstandingops, &stlog->lock ) ) {
          LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
          pthread_mutex_unlock( &(stlog->lock) );
@@ -943,7 +1089,7 @@ int statelog_term( STATELOG* statelog, operation_summary* summary, const char* l
       return -1;
    }
    // wait for all outstanding ops to complete
-   while ( stlog->outstanding_ops ) {
+   while ( stlog->outstandingcnt ) {
       if ( pthread_cond_wait( &stlog->nooutstandingops, &stlog->lock ) ) {
          LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
          pthread_mutex_unlock( &(stlog->lock) );

@@ -137,11 +137,23 @@ typedef struct tq_thread_struct {
   MDAL_SCANNER scanner;
 } *ThreadState;
 
+typedef enum {
+   GC_WORK,      // Delete objects
+   CLEANUP_WORK, // Delete refs
+   REBUILD_WORK, // Rebuild objects
+   REPACK_WORK   // Repack files
+} RSRC_WORK_TYPE;
+
 typedef struct work_pkg_struct {
+   RSRC_WORK_TYPE type;  // type of work to perform
+
+
+
   char type; // Type of operation for consumer to perform
              // 0 = gc
-             // 1 = rebuild
-             // 2 = repack
+             // 1 = refcleanup
+             // 2 = rebuild
+             // 3 = repack
   char* rpath; // Name of ref file at start of stream for gc/quota
   size_t index; // For GC, number of refs to collect, in addition to the rpath
                 // For rebuild, indicates the object number to be rebuilt
