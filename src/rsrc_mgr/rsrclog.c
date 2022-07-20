@@ -97,16 +97,17 @@ typedef struct operation_summary_struct {
 
 #define MAX_BUFFER 8192 // maximum character buffer to be used for parsing/printing log lines
                         //    program will abort if limit is exceeded when reading or writing
-#define RECORD_LOG_PREFIX "RESOURCE-RECORD-LOGFILE " // prefix for a 'record'-log
-                                                     //    - only op starts, no completions
-#define MODIFY_LOG_PREFIX "RESOURCE-MODIFY-LOGFILE " // prefix for a 'modify'-log
-                                                     //    - mix of op starts and completions
+#define RECORD_LOG_PREFIX "RESOURCE-RECORD-LOGFILE\n" // prefix for a 'record'-log
+                                                      //    - only op starts, no completions
+#define MODIFY_LOG_PREFIX "RESOURCE-MODIFY-LOGFILE\n" // prefix for a 'modify'-log
+                                                      //    - mix of op starts and completions
 
 typedef struct statelog_struct {
    // synchronization and access control
    pthread_mutex_t   lock;
    pthread_cond_t    nooutstanding;  // left NULL for a 'record' log
-   ssize_t           outstandingcnt; // always zero for a 'record' log
+   ssize_t           outstandingcnt; // count of scanners still running ( threads that could potentially submit more ops )
+                                     //  always zero for a 'record' log
    // state info
    operation_summary summary;
    HASH_TABLE        inprogress;  // left NULL for a 'record' log
@@ -245,6 +246,18 @@ char* genlogfilepath( char create, const char* logroot, const char* iteration, m
 }
 
 /**
+ * Free the given opinfo struct
+ * @param opinfo* op : Reference to the opinfo struct to be freed
+ */
+void freeopinfo( opinfo* op ) {
+   if ( op ) {
+      if ( op->ftag.ctag ) { free( op->ftag.ctag ); }
+      if ( op->ftag.streamid ) { free( op->ftag.streamid ); }
+      free( op );
+   }
+}
+
+/**
  * Clean up the provided statelog
  * @param STATELOG stlog : Reference to the statelog to be cleaned
  * @param char destroy : If non-zero, the entire statelog structure will be freed
@@ -258,12 +271,9 @@ void cleanuplog( STATELOG stlog, char destroy ) {
       while ( index ) {
          opinfo* opindex = (nodelist + index - 1)->content;
          while ( opindex != NULL ) {
-            free( opindex->tgt );
             opinfo* freeop = opindex;
             opindex = opindex->next;
-            if ( freeop->ftag.ctag ) { free( freeop->ftag.ctag ); }
-            if ( freeop->ftag.streamid ) { free( freeop->ftag.streamid ); }
-            free( freeop );
+            freeopinfo( freeop );
          }
          free( (nodelist + index - 1)->name );
          index--;
@@ -571,20 +581,47 @@ int printlogline( int logfile, opinfo* op ) {
    return 0;
 }
 
+/**
+ * Incorporate the given opinfo string into the given statelog
+ * @param STATELOG* stlog : statelog to be updated
+ * @param opinfo* newop : Operation(s) to be included
+ *                        NOTE -- For 'completion' operations, the 
+ *                                operation chain will be freed.
+ *                                This will also occur on failure.
+ * @return int : Zero on success, or -1 on failure
+ */
+// TODO : DOUBLE FREE ISSUE, AS COMPLETION AND INITIATION STRUCTS ARE IDENTICAL
 int processopinfo( STATELOG* stlog, opinfo* newop ) {
+   // identify the trailing op of the given chain
+   opinfo* finop = newop;
+   while ( finop->next ) {
+      finop = finop->next;
+      if ( finop->start != newop->start ) {
+         LOG( LOG_ERR, "Operation chain has inconsistent START value\n" );
+         while ( newop ) {
+            finop = newop->next;
+            freeopinfo( newop );
+            newop = finop;
+         }
+         return -1;
+      }
+   }
    // map this operation into our inprogress hash table
    HASH_NODE* node = NULL;
    if ( hash_lookup( stlog->inprogress, newop->tgt, &node ) < 0 ) {
       LOG( LOG_ERR, "Failed to map operation on \"%s\" into inprogress HASH_TABLE\n", newop->tgt );
-      free( newop->tgt );
-      free( newop );
+      while ( newop ) {
+         finop = newop->next;
+         freeopinfo( newop );
+         newop = finop;
+      }
       return -1;
    }
    // traverse the attached operations, looking for a match
    opinfo* opindex = node->content;
    opinfo* prevop = NULL;
    while ( opindex != NULL ) {
-      if ( (strcmp( opindex->tgt, newop->tgt ) == 0)  &&
+      if ( (ftag_cmp( &opindex->ftag, &newop->ftag ) == 0)  &&
            (opindex->type == newop->type) ) {
          break;
       }
@@ -594,57 +631,93 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
    if ( opindex != NULL ) {
       // repeat of operation start can be ignored
       if ( newop->start == 0 ) {
-         // otherwise, for op completion, we'll need to note it in our totals...
-         switch( newop->type ) {
-            case MARFS_DELETE_OBJECT_OP:
-               stlog->summary.delete_object_count++;
-               if ( newop->errval ) { stlog->summary.delete_object_failures++; }
-               break;
-            case MARFS_DELETE_REFERENCE_OP:
-               stlog->summary.delete_reference_count++;
-               if ( newop->errval ) { stlog->summary.delete_reference_failures++; }
-               break;
-            case MARFS_REBUILD_OP:
-               stlog->summary.rebuild_count++;
-               if ( newop->errval ) { stlog->summary.rebuild_failures++; }
-               break;
-            case MARFS_REPACK_OP:
-               stlog->summary.repack_count++;
-               if ( newop->errval ) { stlog->summary.repack_failures++; }
-               break;
-            default:
-               LOG( LOG_ERR, "Unrecognized operation type value\n" );
-               free( newop->tgt );
-               free( newop );
-               return -1;
+         // otherwise, for op completion, we'll need to process each operation in the chain...
+         opinfo* parseop = newop; // new op being added to totals
+         opinfo* parseindex = opindex; // old op being compared against
+         opinfo* previndex = opindex;  // end of the chain of old ops
+         while ( parseop ) {
+            // ...note each in our totals...
+            switch( parseop->type ) {
+               case MARFS_DELETE_OBJ_OP:
+                  stlog->summary.delete_object_count++;
+                  if ( parseop->errval ) { stlog->summary.delete_object_failures++; }
+                  break;
+               case MARFS_DELETE_REF_OP:
+                  stlog->summary.delete_reference_count++;
+                  if ( parseop->errval ) { stlog->summary.delete_reference_failures++; }
+                  break;
+               case MARFS_REBUILD_OP:
+                  stlog->summary.rebuild_count++;
+                  if ( parseop->errval ) { stlog->summary.rebuild_failures++; }
+                  break;
+               case MARFS_REPACK_OP:
+                  stlog->summary.repack_count++;
+                  if ( parseop->errval ) { stlog->summary.repack_failures++; }
+                  break;
+               default:
+                  LOG( LOG_ERR, "Unrecognized operation type value\n" );
+                  while ( newop ) {
+                     finop = newop->next;
+                     freeopinfo( newop );
+                     newop = finop;
+                  }
+                  return -1;
+            }
+            // progress to the next op in the chain, validating that it matches the subsequent in the opindex chain
+            parseop = parseop->next;
+            previndex = parseindex; // keep track of where the index op chain terminates
+            parseindex = parseindex->next;
+            if ( parseop ) {
+               // at this point, any variation between operation chains is a fatal error
+               if ( parseop->start == 0  ||  parseindex == NULL  ||  
+                    ftag_cmp( &parseop->ftag, &parseindex->ftag )  ||  parseop->type != parseindex->type ) {
+                  LOG( LOG_ERR, "Operation completion chain does not match outstainding operation chain\n" );
+                  while ( newop ) {
+                     finop = newop->next;
+                     freeopinfo( newop );
+                     newop = finop;
+                  }
+                  return -1;
+               }
+            }
          }
-         // ...and remove the matching op from inprogress
+         // ...and remove the matching op(s) from inprogress
          if ( prevop ) {
-            // pull the matching op out of the list
-            prevop->next = opindex->next;
-            free( opindex->tgt );
-            free( opindex );
+            // pull the matching ops out of the list
+            prevop->next = previndex->next;
          }
          else {
-            // no previous op means the matching op is the only one; just remove it
-            node->content = NULL;
+            // no previous op means the matching op is the first one; just remove it
+            node->content = previndex->next;
+         }
+         // free the now removed operation list
+         previndex->next = NULL;
+         while ( opindex ) {
+            parseindex = opindex;
+            freeopinfo( opindex );
+            opindex = parseindex;
          }
       }
       // a matching op means the parsed operation can be discarded
-      free( newop->tgt );
-      free( newop );
+      while ( newop ) {
+         finop = newop->next;
+         freeopinfo( newop );
+         newop = finop;
+      }
    }
    else {
       // the parsed line should indicate the start of a new operation
       if ( newop->start == 0 ) {
-         LOG( LOG_ERR, "Parsed completion of op on \"%s\" target from logfile \"%s\" with no parsed start of op\n",
-              newop->tgt, stlog->logfilepath );
-         free( newop->tgt );
-         free( newop );
+         LOG( LOG_ERR, "Parsed completion of op from logfile \"%s\" with no parsed start of op\n", stlog->logfilepath );
+         while ( newop ) {
+            finop = newop->next;
+            freeopinfo( newop );
+            newop = finop;
+         }
          return -1;
       }
       // stitch the parsed op onto the front of our inprogress list
-      newop->next = node->content;
+      finop->next = node->content;
       node->content = newop;
    }
    return 0;
