@@ -118,134 +118,6 @@ typedef struct statelog_struct {
 //   -------------   INTERNAL FUNCTIONS    -------------
 
 /**
- * Internal func, generates the pathnames of logfiles and parent dirs
- * @param char create : Create flag
- *                      If non-zero, this func will attempt to create all intermediate directory paths
- * @param const char* logroot : Root of the logfile tree
- * @param const char* iteration : ID string for this program iteration ( can be left NULL to gen parent path )
- * @param marfs_ns* ns : MarFS NS to process ( can be left NULL to gen parent path, ignored if prev is NULL )
- * @param ssize_t ranknum : Processing rank ( can be < 0 to gen parent path, ignored if prev is NULL )
- * @return char* : Path of the corresponding log location, or NULL if an error occurred
- */
-char* genlogfilepath( char create, const char* logroot, const char* iteration, marfs_ns* ns, ssize_t ranknum ) {
-   // if we have a NS, identify its FS path
-   char* nspath = NULL;
-   if ( ns ) {
-      if ( config_nsinfo( ns->idstr, NULL, &nspath ) ) {
-         LOG( LOG_ERR, "Failed to identify NSpath of NS: \"%s\"\n", ns->idstr );
-         return NULL;
-      }
-   }
-   // identify length of the constructed path
-   ssize_t pathlen = 0;
-   if ( iteration  &&  nspath  &&  ranknum >= 0 ) {
-      pathlen = snprintf( NULL, 0, "%s/%s/%s/statelog-%zu", logroot, iteration, nspath, ranknum );
-   }
-   else if ( iteration  &&  nspath ) {
-      pathlen = snprintf( NULL, 0, "%s/%s/%s", logroot, iteration, nspath );
-   }
-   else if ( iteration ) {
-      pathlen = snprintf( NULL, 0, "%s/%s", logroot, iteration );
-   }
-   else {
-      pathlen = snprintf( NULL, 0, "%s", logroot );
-   }
-   if ( pathlen < 1 ) {
-      LOG( LOG_ERR, "Failed to identify strlen of logfile path\n" );
-      if ( nspath ) { free( nspath ); }
-      return NULL;
-   }
-   // allocate the path
-   char* path = malloc( sizeof(char) * (pathlen + 1) );
-   if ( path == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate %zu bytes for logfile path\n", pathlen + 1 );
-      if ( nspath ) { free( nspath ); }
-      return NULL;
-   }
-   // populate the path root
-   ssize_t lrootlen = snprintf( path, pathlen, "%s", logroot );
-   if ( lrootlen < 1  ||  lrootlen >= pathlen ) {
-      LOG( LOG_ERR, "Failed to populate logfile root path\n" );
-      if ( nspath ) { free( nspath ); }
-      free( path );
-      return NULL;
-   }
-   // create, if necessary
-   if ( create  &&  mkdir( path, 0700 )  &&  errno != EEXIST ) {
-      LOG( LOG_ERR, "Failed to create log root dir: \"%s\"\n", path );
-      if ( nspath ) { free( nspath ); }
-      free( path );
-      return NULL;
-   }
-   // potentially exit here
-   if ( iteration == NULL ) {
-      LOG( LOG_INFO, "Generated root path: \"%s\"\n", path );
-      if ( nspath ) { free( nspath ); }
-      return path;
-   }
-   // populate the path iteration
-   ssize_t iterlen = snprintf( path + lrootlen, pathlen - lrootlen, "/%s", iteration );
-   if ( iterlen < 1  ||  iterlen >= (pathlen - lrootlen) ) {
-      LOG( LOG_ERR, "Failed to populate logfile iteration path: \"%s\"\n", iteration );
-      if ( nspath ) { free( nspath ); }
-      free( path );
-      return NULL;
-   }
-   // create, if necessary
-   if ( create  &&  mkdir( path, 0700 )  &&  errno != EEXIST ) {
-      LOG( LOG_ERR, "Failed to create logfile iteration dir: \"%s\"\n", path );
-      if ( nspath ) { free( nspath ); }
-      free( path );
-      return NULL;
-   }
-   // potentially exit here
-   if ( nspath == NULL ) {
-      LOG( LOG_INFO, "Generated iteration path: \"%s\"\n", path );
-      return path;
-   }
-   // populate the path ns
-   ssize_t nslen = snprintf( path + lrootlen + iterlen, (pathlen - lrootlen) - iterlen, "/%s", nspath );
-   if ( nslen < 1  ||  nslen >= ((pathlen - lrootlen) - iterlen) ) {
-      LOG( LOG_ERR, "Failed to populate NS path value: \"%s\"\n", nspath );
-      free( nspath );
-      free( path );
-      return NULL;
-   }
-   // create, if necessary
-   if ( create ) {
-      // have to iterate over and create all intermediate dirs
-      char* parse = path + lrootlen + iterlen + 1;
-      while ( *parse != '\0' ) {
-         if ( *parse == '/' ) {
-            *parse = '\0';
-            if ( mkdir( path, 0700 )  &&  errno != EEXIST ) {
-               LOG( LOG_ERR, "Failed to create log NS subdir: \"%s\"\n", path );
-               free( nspath );
-               free( path );
-               return NULL;
-            }
-            *parse = '/';
-         }
-         parse++;
-      }
-   }
-   free( nspath ); // done with this value
-   // potentially exit here
-   if ( ranknum < 0 ) {
-      LOG( LOG_INFO, "Generated NS log path: \"%s\"\n", path );
-      return path;
-   }
-   // populate the final logfile path
-   // NOTE -- we never create this file in this func
-   if ( snprintf( path + lrootlen + iterlen + nslen, (pathlen - (lrootlen + iterlen + nslen)) + 1, "/statelog-%zu", ranknum ) !=  (pathlen - (lrootlen + iterlen + nsidlen)) ) {
-      LOG( LOG_ERR, "Logfile path has inconsistent length\n" );
-      free( path );
-      return NULL;
-   }
-   return path;
-}
-
-/**
  * Free the given opinfo struct
  * @param opinfo* op : Reference to the opinfo struct to be freed
  */
@@ -585,12 +457,9 @@ int printlogline( int logfile, opinfo* op ) {
  * Incorporate the given opinfo string into the given statelog
  * @param STATELOG* stlog : statelog to be updated
  * @param opinfo* newop : Operation(s) to be included
- *                        NOTE -- For 'completion' operations, the 
- *                                operation chain will be freed.
- *                                This will also occur on failure.
+ *                        NOTE -- This func will never free opinfo structs
  * @return int : Zero on success, or -1 on failure
  */
-// TODO : DOUBLE FREE ISSUE, AS COMPLETION AND INITIATION STRUCTS ARE IDENTICAL
 int processopinfo( STATELOG* stlog, opinfo* newop ) {
    // identify the trailing op of the given chain
    opinfo* finop = newop;
@@ -598,11 +467,6 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
       finop = finop->next;
       if ( finop->start != newop->start ) {
          LOG( LOG_ERR, "Operation chain has inconsistent START value\n" );
-         while ( newop ) {
-            finop = newop->next;
-            freeopinfo( newop );
-            newop = finop;
-         }
          return -1;
       }
    }
@@ -610,11 +474,6 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
    HASH_NODE* node = NULL;
    if ( hash_lookup( stlog->inprogress, newop->tgt, &node ) < 0 ) {
       LOG( LOG_ERR, "Failed to map operation on \"%s\" into inprogress HASH_TABLE\n", newop->tgt );
-      while ( newop ) {
-         finop = newop->next;
-         freeopinfo( newop );
-         newop = finop;
-      }
       return -1;
    }
    // traverse the attached operations, looking for a match
@@ -656,11 +515,6 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
                   break;
                default:
                   LOG( LOG_ERR, "Unrecognized operation type value\n" );
-                  while ( newop ) {
-                     finop = newop->next;
-                     freeopinfo( newop );
-                     newop = finop;
-                  }
                   return -1;
             }
             // progress to the next op in the chain, validating that it matches the subsequent in the opindex chain
@@ -669,14 +523,8 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
             parseindex = parseindex->next;
             if ( parseop ) {
                // at this point, any variation between operation chains is a fatal error
-               if ( parseop->start == 0  ||  parseindex == NULL  ||  
-                    ftag_cmp( &parseop->ftag, &parseindex->ftag )  ||  parseop->type != parseindex->type ) {
+               if ( parseindex == NULL  ||  ftag_cmp( &parseop->ftag, &parseindex->ftag )  ||  parseop->type != parseindex->type ) {
                   LOG( LOG_ERR, "Operation completion chain does not match outstainding operation chain\n" );
-                  while ( newop ) {
-                     finop = newop->next;
-                     freeopinfo( newop );
-                     newop = finop;
-                  }
                   return -1;
                }
             }
@@ -690,30 +538,13 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
             // no previous op means the matching op is the first one; just remove it
             node->content = previndex->next;
          }
-         // free the now removed operation list
-         previndex->next = NULL;
-         while ( opindex ) {
-            parseindex = opindex;
-            freeopinfo( opindex );
-            opindex = parseindex;
-         }
       }
       // a matching op means the parsed operation can be discarded
-      while ( newop ) {
-         finop = newop->next;
-         freeopinfo( newop );
-         newop = finop;
-      }
    }
    else {
       // the parsed line should indicate the start of a new operation
       if ( newop->start == 0 ) {
          LOG( LOG_ERR, "Parsed completion of op from logfile \"%s\" with no parsed start of op\n", stlog->logfilepath );
-         while ( newop ) {
-            finop = newop->next;
-            freeopinfo( newop );
-            newop = finop;
-         }
          return -1;
       }
       // stitch the parsed op onto the front of our inprogress list
@@ -725,6 +556,143 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
 
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
+
+/**
+ * Generates the pathnames of logfiles and parent dirs
+ * @param char create : Create flag
+ *                      If non-zero, this func will attempt to create all intermediate directory paths ( not the final tgt )
+ * @param const char* logroot : Root of the logfile tree
+ * @param const char* iteration : ID string for this program iteration ( can be left NULL to gen parent path )
+ * @param marfs_ns* ns : MarFS NS to process ( can be left NULL to gen parent path, ignored if prev is NULL )
+ * @param ssize_t ranknum : Processing rank ( can be < 0 to gen parent path, ignored if prev is NULL )
+ * @return char* : Path of the corresponding log location, or NULL if an error occurred
+ *                 NOTE -- It is the caller's responsibility to free this string
+ */
+char* statelog_genlogpath( char create, const char* logroot, const char* iteration, marfs_ns* ns, ssize_t ranknum ) {
+   // if we have a NS, identify an appropriate FS path
+   char* nspath = NULL;
+   if ( ns ) {
+      nspath = strdup( ns->idstr );
+      char* tmpparse = nspath;
+      while ( *tmpparse != '\0' ) {
+         if ( *tmpparse == '/' ) { *tmpparse = '#'; }
+      }
+   }
+   // identify length of the constructed path
+   ssize_t pathlen = 0;
+   if ( iteration  &&  nspath  &&  ranknum >= 0 ) {
+      pathlen = snprintf( NULL, 0, "%s/%s/%s/statelog-%zu", logroot, iteration, nspath, ranknum );
+   }
+   else if ( iteration  &&  nspath ) {
+      pathlen = snprintf( NULL, 0, "%s/%s/%s", logroot, iteration, nspath );
+   }
+   else if ( iteration ) {
+      pathlen = snprintf( NULL, 0, "%s/%s", logroot, iteration );
+   }
+   else {
+      pathlen = snprintf( NULL, 0, "%s", logroot );
+   }
+   if ( pathlen < 1 ) {
+      LOG( LOG_ERR, "Failed to identify strlen of logfile path\n" );
+      if ( nspath ) { free( nspath ); }
+      return NULL;
+   }
+   // allocate the path
+   char* path = malloc( sizeof(char) * (pathlen + 1) );
+   if ( path == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate %zu bytes for logfile path\n", pathlen + 1 );
+      if ( nspath ) { free( nspath ); }
+      return NULL;
+   }
+   // populate the path root
+   ssize_t lrootlen = snprintf( path, pathlen + 1, "%s", logroot );
+   if ( lrootlen < 1  ||  lrootlen >= pathlen ) {
+      LOG( LOG_ERR, "Failed to populate logfile root path\n" );
+      if ( nspath ) { free( nspath ); }
+      free( path );
+      return NULL;
+   }
+   // potentially exit here
+   if ( iteration == NULL ) {
+      LOG( LOG_INFO, "Generated root path: \"%s\"\n", path );
+      if ( nspath ) { free( nspath ); }
+      return path;
+   }
+   // create, if necessary
+   if ( create  &&  mkdir( path, 0700 )  &&  errno != EEXIST ) {
+      LOG( LOG_ERR, "Failed to create log root dir: \"%s\"\n", path );
+      if ( nspath ) { free( nspath ); }
+      free( path );
+      return NULL;
+   }
+   // populate the path iteration
+   ssize_t iterlen = snprintf( path + lrootlen, (pathlen - lrootlen) + 1, "/%s", iteration );
+   if ( iterlen < 1  ||  iterlen >= (pathlen - lrootlen) ) {
+      LOG( LOG_ERR, "Failed to populate logfile iteration path: \"%s\"\n", iteration );
+      if ( nspath ) { free( nspath ); }
+      free( path );
+      return NULL;
+   }
+   // potentially exit here
+   if ( nspath == NULL ) {
+      LOG( LOG_INFO, "Generated iteration path: \"%s\"\n", path );
+      return path;
+   }
+   // create, if necessary
+   if ( create  &&  mkdir( path, 0700 )  &&  errno != EEXIST ) {
+      LOG( LOG_ERR, "Failed to create logfile iteration dir: \"%s\"\n", path );
+      free( nspath );
+      free( path );
+      return NULL;
+   }
+   // populate the path ns
+   ssize_t nslen = snprintf( path + lrootlen + iterlen, (pathlen - (lrootlen + iterlen)) + 1, "/%s", nspath );
+   if ( nslen < 1  ||  nslen >= ((pathlen - lrootlen) - iterlen) ) {
+      LOG( LOG_ERR, "Failed to populate NS path value: \"%s\"\n", nspath );
+      free( nspath );
+      free( path );
+      return NULL;
+   }
+   // create NS parent paths, if necessary
+   if ( create ) {
+      // have to iterate over and create all intermediate dirs
+      char* parse = path + lrootlen + iterlen + 1;
+      while ( *parse != '\0' ) {
+         if ( *parse == '/' ) {
+            *parse = '\0';
+            if ( mkdir( path, 0700 )  &&  errno != EEXIST ) {
+               LOG( LOG_ERR, "Failed to create log NS subdir: \"%s\"\n", path );
+               free( nspath );
+               free( path );
+               return NULL;
+            }
+            *parse = '/';
+         }
+         parse++;
+      }
+   }
+   free( nspath ); // done with this value
+   // potentially exit here
+   if ( ranknum < 0 ) {
+      LOG( LOG_INFO, "Generated NS log path: \"%s\"\n", path );
+      return path;
+   }
+   // create, if necessary
+   if ( create  &&  mkdir( path, 0700 )  &&  errno != EEXIST ) {
+      LOG( LOG_ERR, "Failed to create logfile NS dir: \"%s\"\n", path );
+      free( path );
+      return NULL;
+   }
+   // populate the final logfile path
+   // NOTE -- we never create this file in this func
+   if ( snprintf( path + lrootlen + iterlen + nslen, (pathlen - (lrootlen + iterlen + nslen)) + 1, "/statelog-%zu", ranknum ) !=
+         (pathlen - (lrootlen + iterlen + nsidlen)) ) {
+      LOG( LOG_ERR, "Logfile path has inconsistent length\n" );
+      free( path );
+      return NULL;
+   }
+   return path;
+}
 
 /**
  * Initialize a statelog, associated with the given logging root, namespace, and rank
@@ -967,12 +935,12 @@ int statelog_init( STATELOG* statelog, const char* logroot, marfs_ns* ns, size_t
 }
 
 /**
- * Record that a certain number of operations are in flight
+ * Record that a certain number of threads are currently processing
  * @param STATELOG* statelog : Statelog to be updated
- * @param size_t numops : Number of additional operations now in flight
+ * @param size_t numops : Number of additional processors ( can be negative to reduce cnt )
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_update_inflight( STATELOG* statelog, size_t numops ) {
+int statelog_update_inflight( STATELOG* statelog, ssize_t numops ) {
    // check for invalid args
    if ( statelog == NULL ) {
       LOG( LOG_ERR, "Received a NULL statelog reference\n" );
@@ -990,7 +958,19 @@ int statelog_update_inflight( STATELOG* statelog, size_t numops ) {
       LOG( LOG_ERR, "Failed to acquire statelog lock\n" );
       return -1;
    }
+   // check for excessive reduction
+   if ( statelog->outstandingcnt < -(numops) ) {
+      LOG( LOG_WARNING, "Value of %zd would result in negative thread count\n", numops );
+      numops = -(statelog->outstandingcnt);
+   }
+   // modify count
    statelog->outstandingcnt += numops;
+   // check for quiesced state
+   if ( stlog->outstandingcnt == 0  &&  pthread_cond_signal( &(stlog->nooutstandingops) ) ) {
+      LOG( LOG_ERR, "Failed to signal 'no outstanding ops' condition\n" );
+      pthread_mutex_unlock( &(stlog->lock) );
+      return -1;
+   }
    if ( pthread_mutex_unlock( &(stlog->lock) ) ) {
       LOG( LOG_ERR, "Failed to release statelog lock\n" );
       return -1;
