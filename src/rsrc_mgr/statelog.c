@@ -58,42 +58,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 
-typedef enum
-{
-   RESOURCE_RECORD_LOG = 0,
-   RESOURCE_MODIFY_LOG = 1,
-   RESOURCE_READING_LOG = 2 // bitflag indicating that this resource log is being read
-} statelog_type;
-
-typedef enum
-{
-   MARFS_DELETE_OBJ_OP,
-   MARFS_DELETE_REF_OP,
-   MARFS_REBUILD_OP,
-   MARFS_REPACK_OP
-} operation_type;
-
-typedef struct opinfo_struct {
-   operation_type type;  // which class of operation
-   char start;           // flag indicating the start of an op ( if zero, this entry indicates completion )
-   size_t count;         // how many subsequent targets are there
-   int errval;           // errno value of the attempted op ( always zero for operation start )
-   FTAG ftag;            // which FTAG value is the target
-   struct opinfo_struct* next; // subsequent ops in this chain
-} opinfo;
-
-typedef struct operation_summary_struct {
-   size_t deletion_object_count;
-   size_t deletion_object_failures;
-   size_t deletion_reference_count;
-   size_t deletion_reference_failures;
-   size_t rebuild_count;
-   size_t rebuild_failures;
-   size_t repack_count;
-   size_t repack_failures;
-} operation_summary;
-
-
 //   -------------   INTERNAL DEFINITIONS    -------------
 
 #define MAX_BUFFER 8192 // maximum character buffer to be used for parsing/printing log lines
@@ -956,7 +920,7 @@ int statelog_init( STATELOG* statelog, statelog_type type, const char* logpath )
                // duplicate this op into our initial logfile
                if ( printlogline( stlog->logfile, parsedop ) ) {
                   LOG( LOG_ERR, "Failed to duplicate op from old logfile \"%s\" into active log: \"%s\"\n",
-                       entry->name, stlog->logfilename );
+                       entry->name, stlog->logfilepath );
                   close( oldlog );
                   closedir( parentdir );
                   cleanuplog( stlog, newstlog );
@@ -1045,14 +1009,14 @@ int statelog_replay( STATELOG* inputlog, STATELOG* outputlog ) {
       // duplicate this op into our output logfile
       if ( printlogline( outstlog->logfile, parsedop ) ) {
          LOG( LOG_ERR, "Failed to duplicate op from input logfile \"%s\" into active log: \"%s\"\n",
-              instlog->logfilename, outstlog->logfilename );
+              instlog->logfilepath, outstlog->logfilepath );
          pthread_mutex_unlock( &(instlog->lock) );
          pthread_mutex_unlock( &(outstlog->lock) );
          return -1;
       }
       // incorporate the op into our current state
       if ( processopinfo( outstlog, parsedop ) < 0 ) {
-         LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", instlog->logfilename );
+         LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", instlog->logfilepath );
          pthread_mutex_unlock( &(instlog->lock) );
          pthread_mutex_unlock( &(outstlog->lock) );
          return -1;
@@ -1066,16 +1030,16 @@ int statelog_replay( STATELOG* inputlog, STATELOG* outputlog ) {
       }
    }
    if ( eof != 1 ) {
-      LOG( LOG_ERR, "Failed to parse input logfile: \"%s\"\n", instlog->logfilename );
+      LOG( LOG_ERR, "Failed to parse input logfile: \"%s\"\n", instlog->logfilepath );
       pthread_mutex_unlock( &(instlog->lock) );
       pthread_mutex_unlock( &(outstlog->lock) );
       return -1;
    }
    LOG( LOG_INFO, "Replayed %zu ops from input log ( \"%s\" ) into output log ( \"%s\" )\n",
-                  opcnt, instlog->logfilename, outstlog->logfilename );
+                  opcnt, instlog->logfilepath, outstlog->logfilepath );
    // cleanup the inputlog
-   if ( unlink( instlog->logfilename ) ) {
-      LOG( LOG_ERR, "Failed to unlink input logfile: \"%s\"\n", instlog->logfilename );
+   if ( unlink( instlog->logfilepath ) ) {
+      LOG( LOG_ERR, "Failed to unlink input logfile: \"%s\"\n", instlog->logfilepath );
       pthread_mutex_unlock( &(instlog->lock) );
       pthread_mutex_unlock( &(outstlog->lock) );
       return -1;
@@ -1133,7 +1097,7 @@ int statelog_update_inflight( STATELOG* statelog, ssize_t numops ) {
 
 /**
  * Process the given operation
- * @param STATELOG* statelog : Statelog to update
+ * @param STATELOG* statelog : Statelog to update ( must be writing to this statelog )
  * @param opinfo* op : Operation ( or op sequence ) to process
  * @return int : Zero on success, or -1 on failure
  */
@@ -1173,9 +1137,51 @@ int statelog_processop( STATELOG* statelog, opinfo* op ) {
    }
    // output the operation to the actual log file
    if ( printlogline( stlog->logfile, op ) ) {
-      LOG( LOG_ERR, "Failed to output operation info to logfile: \"%s\"\n", stlog->logfilename );
+      LOG( LOG_ERR, "Failed to output operation info to logfile: \"%s\"\n", stlog->logfilepath );
       return -1;
    }
+   return 0;
+}
+
+/**
+ * Parse the next operation info sequence from the given RECORD statelog
+ * @param STATELOG* statelog : Statelog to read
+ * @param opinfo** op : Reference to be populated with the parsed operation info sequence
+ * @return int : Zero on success, or -1 on failure
+ */
+int statelog_readop( STATELOG* statelog, opinfo** op ) {
+   // check for invalid args
+   if ( statelog == NULL  ||  *statelog == NULL ) {
+      LOG( LOG_ERR, "Received a NULL statelog reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( (*statelog)->type != (RESOURCE_RECORD_LOG | RESOURCE_READ_LOG) ) {
+      LOG( LOG_ERR, "Statelog is not a RECORD log, open for read\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( op == NULL ) {
+      LOG( LOG_ERR, "Receieved a NULL value instead of an opinfo* reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   STATELOG stlog = *statelog;
+   // parse a new op sequence from the logfile
+   char eof = 0;
+   opinfo* parsedop = parselogline( stlog->logfile, &eof );
+   if ( parsedop == NULL ) {
+      if ( eof < 0 ) {
+         LOG( LOG_ERR, "Hit unexpected EOF on logfile: \"%s\"\n", stlog->logfilepath );
+         return -1;
+      }
+      if ( eof == 0 ) {
+         LOG( LOG_ERR, "Failed to parse operation info from logfile: \"%s\"\n", stlog->logfilepath );
+         return -1;
+      }
+      LOG( LOG_INFO, "Hit EOF on logfile: \"%s\"\n", stlog->logfilepath );
+   }
+   *op = parsedop;
    return 0;
 }
 
@@ -1213,15 +1219,15 @@ int statelog_fin( STATELOG* statelog, operation_summary* summary, const char* lo
    if ( summary ) { *summary = stlog->summary; }
    // potentially rename the logfile to the preservation tgt
    if ( log_preservation_tgt ) { 
-      if ( rename( stlog->logfilename, log_preservation_tgt ) ) {
+      if ( rename( stlog->logfilepath, log_preservation_tgt ) ) {
          LOG( LOG_ERR, "Failed to rename log file to final location: \"%s\"\n", log_preservation_tgt );
          pthread_mutex_unlock( &(stlog->lock) );
          return -1;
       }
    }
    else {
-      if ( unlink( stlog->logfilename ) ) {
-         LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", stlog->logfilename );
+      if ( unlink( stlog->logfilepath ) ) {
+         LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", stlog->logfilepath );
          pthread_mutex_unlock( &(stlog->lock) );
          return -1;
       }
@@ -1264,15 +1270,15 @@ int statelog_term( STATELOG* statelog, operation_summary* summary, const char* l
    if ( summary ) { *summary = stlog->summary; }
    // potentially rename the logfile to the preservation tgt
    if ( log_preservation_tgt ) { 
-      if ( rename( stlog->logfilename, log_preservation_tgt ) ) {
+      if ( rename( stlog->logfilepath, log_preservation_tgt ) ) {
          LOG( LOG_ERR, "Failed to rename log file to final location: \"%s\"\n", log_preservation_tgt );
          pthread_mutex_unlock( &(stlog->lock) );
          return -1;
       }
    }
    else {
-      if ( unlink( stlog->logfilename ) ) {
-         LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", stlog->logfilename );
+      if ( unlink( stlog->logfilepath ) ) {
+         LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", stlog->logfilepath );
          pthread_mutex_unlock( &(stlog->lock) );
          return -1;
       }
