@@ -81,12 +81,27 @@ typedef enum
 
 typedef struct opinfo_struct {
    operation_type type;  // which class of operation
+   void* extendedinfo;   // extra, operation-specific, info
    char start;           // flag indicating the start of an op ( if zero, this entry indicates completion )
    size_t count;         // how many subsequent targets are there
    int errval;           // errno value of the attempted op ( always zero for operation start )
    FTAG ftag;            // which FTAG value is the target
    struct opinfo_struct* next; // subsequent ops in this chain ( or NULL, if none remain )
 } opinfo;
+
+// NOTE -- object deletions don't require any extra info
+
+typedef struct delref_info_struct {
+   size_t prev_active_index; // index of the closest active ( not to be deleted ) reference in the stream
+   char   eos; // end-of-stream flag, indicating that this delete will make prev_active_index the new EOS
+} delref_info;
+
+typedef struct rebuild_info_struct {
+   char* markerpath; // rpath of the rebuild marker associated with this operation
+   ne_state* rtag;   // rebuild tag value from the marker ( or NULL, if none present )
+} rebuild_info;
+
+// NOTE -- repacks don't require any extra info
 
 typedef struct operation_summary_struct {
    size_t deletion_object_count;

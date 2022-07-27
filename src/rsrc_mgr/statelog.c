@@ -188,23 +188,125 @@ opinfo* parselogline( int logfile, char* eof ) {
       lseek( logfile, origoff, SEEK_SET );
       return NULL;
    }
+   op->extendedinfo = NULL;
    op->start = 0;
    op->count = 0;
    op->errval = 0;
    op->next = NULL;
-   // parse the op type
+   // parse the op type and extended info
    char* parseloc = buffer;
    if ( strncmp( buffer, "DEL-OBJ ", 8 ) == 0 ) {
       op->type = MARFS_DELETE_OBJ_OP;
       parseloc += 8;
+      // no extended info to parse here
    }
    else if ( strncmp( buffer, "DEL-REF ", 8 ) == 0 ) {
       op->type = MARFS_DELETE_REF_OP;
       parseloc += 8;
+      // allocate delref_info
+      delref_info* extinfo = malloc( sizeof( struct delref_info_struct ) );
+      if ( op->extendedinfo == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      // parse in delref_info
+      if ( strncmp( parseloc, 2, "{ " ) ) {
+         LOG( LOG_ERR, "Missing '{ ' header for DEL-REF extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 2;
+      char* endptr = NULL;
+      unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
+      if ( endptr == NULL  ||  *endptr != ' ' ) {
+         LOG( LOG_ERR, "DEL-REF extended info has unexpected char in prev_active_index string: '%c'\n", *endptr );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      extinfo->prev_active_index = (size_t)parseval;
+      parseloc = endptr + 1;
+      if ( strncmp( parseloc, 3, "EOS" ) == 0 ) {
+         extinfo->eos = 1;
+      }
+      else if ( strncmp( parseloc, 3, "CNT" ) == 0 ) {
+         extinfo->eos = 0;
+      }
+      else {
+         LOG( LOG_ERR, "Encountered unrecognized EOS value in DEL-REF extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 3;
+      if ( strncmp( parseloc, 3, " } " ) ) {
+         LOG( LOG_ERR, "Missing ' } ' tail for DEL-REF extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 3;
+      // attach delref_info
+      op->extendedinfo = extinfo;
    }
    else if ( strncmp( buffer, "REBUILD ", 8 ) == 0 ) {
       op->type = MARFS_REBUILD_OP;
       parseloc += 8;
+      // allocate rebuild_info
+      rebuild_info* extinfo = malloc( sizeof( struct rebuild_info_struct ) );
+      if ( op->extendedinfo == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for REBUILD extended info\n" );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      // parse in rebuild_info
+      if ( strncmp( parseloc, 2, "{ " ) ) {
+         LOG( LOG_ERR, "Missing '{ ' header for REBUILD extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 2;
+      char* endptr = parseloc;
+      while ( *endptr != ' '  &&  *endptr != '\n' ) { endptr++; }
+      if ( *endptr != ' ' ) {
+         LOG( LOG_ERR, "Failed to parse markerpath from REBUILD extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      *endptr = '\0'; // temporarily truncate string
+      extinfo->markerpath = strdup( parseloc );
+      if ( extinfo->markerpath == NULL ) {
+         LOG( LOG_ERR, "Failed to duplicate markerpath from REBUILD extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      *endptr = ' ';
+      parseloc = endptr + 1;
+      // TODO read in rtag value
+      if ( strncmp( parseloc, 3, " } " ) ) {
+         LOG( LOG_ERR, "Missing ' } ' tail for REBUILD extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 3;
+      // attach rebuild_info
+      op->extendedinfo = extinfo;
    }
    else if ( strncmp( buffer, "REPACK ", 7 ) == 0 ) {
       op->type = MARFS_REPACK_OP;
@@ -216,6 +318,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       lseek( logfile, origoff, SEEK_SET );
       return NULL;
    }
+   // parse the start value
    if ( *parseloc == 'S' ) {
       op->start == 1;
    }

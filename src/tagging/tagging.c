@@ -894,6 +894,11 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
          if ( *parse == '-' ) { parse++; hindex++; } // progress to the next health value
       }
       if ( *parse != ')' ) {
+         if ( hindex == stripewidth ) {
+            LOG( LOG_ERR, "ne_state struct has insufficient stripewidth value\n" );
+            errno = EFBIG;
+            return -1;
+         }
          LOG( LOG_ERR, "Unexpected char in health info string: '%c'\n", *parse );
          errno = EINVAL;
          return -1;
