@@ -169,6 +169,17 @@ typedef struct MDAL_struct {
    MDAL_CTXT (*newctxt) ( const char* ns, const MDAL_CTXT basectxt );
 
    /**
+    * Create a new MDAL_CTXT reference, targeting one NS for user path operations and a different
+    *  NS for reference path creation
+    * @param const char* pathns : Namespace for the new MDAL_CTXT to target for user path ops
+    * @param const MDAL_CTXT pathctxt : The pathns will be interpreted relative to this CTXT
+    * @param const char* refns : Namespace for the new MDAL_CTXT to target for ref path ops
+    * @param const MDAL_CTXT refctxt : The refns will be interpreted relative to this CTXT
+    * @return MDAL_CTXT : Reference to the new MDAL_CTXT, or NULL if an error occurred
+    */
+   MDAL_CTXT (*newsplitctxt) ( const char* pathns, const MDAL_CTXT pathctxt, const char* refns, const MDAL_CTXT refctxt );
+
+   /**
     * Create the specified namespace root structures ( reference tree is not created by this func! )
     * @param const MDAL_CTXT ctxt : Current MDAL context
     * @param const char* ns : Name of the namespace to be created

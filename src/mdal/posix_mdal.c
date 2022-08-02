@@ -631,6 +631,182 @@ MDAL_CTXT posixmdal_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
 }
 
 /**
+ * Create a new MDAL_CTXT reference, targeting one NS for user path operations and a different
+ *  NS for reference path creation
+ * @param const char* pathns : Namespace for the new MDAL_CTXT to target for user path ops
+ * @param const MDAL_CTXT pathctxt : The pathns will be interpreted relative to this CTXT
+ * @param const char* refns : Namespace for the new MDAL_CTXT to target for ref path ops
+ * @param const MDAL_CTXT refctxt : The refns will be interpreted relative to this CTXT
+ * @return MDAL_CTXT : Reference to the new MDAL_CTXT, or NULL if an error occurred
+ */
+MDAL_CTXT posixmdal_newsplitctxt ( const char* pathns, const MDAL_CTXT pathctxt, const char* refns, const MDAL_CTXT refctxt ) {
+   // check for NULL args
+   if ( !(pathctxt)  ||  !(refctxt) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   if ( !(pathns)  ||  !(refns) ) {
+      LOG( LOG_ERR, "Received a NULL namespace path\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   POSIX_MDAL_CTXT ppathctxt = (POSIX_MDAL_CTXT) pathctxt;
+   POSIX_MDAL_CTXT prefctxt = (POSIX_MDAL_CTXT) refctxt;
+   // create the corresponding posix path for the path NS
+   size_t nspathlen = namespacepath( pathns, NULL, 0 );
+   if ( nspathlen == 0 ) {
+      LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", pathns );
+      return NULL;
+   }
+   char* nspath = malloc( sizeof(char) * (nspathlen + 1) );
+   if ( !(nspath) ) {
+      LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", pathns );
+      return NULL;
+   }
+   if ( namespacepath( pathns, nspath, nspathlen + 1 ) != nspathlen ) {
+      LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", pathns );
+      free( nspath );
+      return NULL;
+   }
+   // create a new ctxt structure
+   POSIX_MDAL_CTXT newctxt = malloc( sizeof(struct posix_mdal_context_struct) );
+   if ( !(newctxt) ) {
+      LOG( LOG_ERR, "Failed to allocate space for a new posix MDAL_CTXT\n" );
+      free( nspath );
+      return NULL;
+   }
+   // open the path dir, according to the target NS path
+   if ( *nspath == '/' ) {
+      // ensure the ppathctxt is set to the secureroot dir
+      if ( ppathctxt->pathd >= 0 ) {
+         LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
+         errno = EINVAL;
+         free( newctxt );
+         free( nspath );
+         return NULL;
+      }
+      // absoulute paths are opened via the root dir (skipping the leading '/')
+      newctxt->pathd = openat( ppathctxt->refd, (nspath + 1), O_RDONLY );
+   }
+   else {
+      // ensure the refd is set to an actual reference dir
+      if ( ppathctxt->pathd < 0 ) {
+         LOG( LOG_ERR, "Relative NS paths can only be used from a CTXT with a NS set\n" );
+         errno = EINVAL;
+         free( newctxt );
+         free( nspath );
+         return NULL;
+      }
+      // relative paths are opened via the ref dir of the pbasectxt
+      newctxt->pathd = openat( ppathctxt->refd, nspath, O_RDONLY );
+   }
+   if ( newctxt->pathd < 0 ) {
+      LOG( LOG_ERR, "Failed to open the user path dir: \"%s\"\n", nspath );
+      free( newctxt );
+      free( nspath );
+      return NULL;
+   }
+
+   // stat the opened path dir, for later comparison
+   struct stat pathstat;
+   if ( fstat( newctxt->pathd, &(pathstat) ) ) {
+      LOG( LOG_ERR, "Failed to stat opened path dir: \"%s\"\n", nspath );
+      close( newctxt->pathd );
+      free( newctxt );
+      free( nspath );
+      return NULL;
+   }
+   free( nspath ); // done with this path
+
+   // create the corresponding posix path for the ref NS
+   nspathlen = namespacepath( refns, NULL, 0 );
+   if ( nspathlen == 0 ) {
+      LOG( LOG_ERR, "Failed to identify corresponding path for NS: \"%s\"\n", refns );
+      close( newctxt->pathd );
+      free( newctxt );
+      return NULL;
+   }
+   nspath = malloc( sizeof(char) * (nspathlen + 2 + strlen(PMDAL_REF)) );
+   if ( !(nspath) ) {
+      LOG( LOG_ERR, "Failed to allocate path string for NS: \"%s\"\n", refns );
+      close( newctxt->pathd );
+      free( newctxt );
+      return NULL;
+   }
+   if ( namespacepath( refns, nspath, nspathlen + 1 ) != nspathlen ) {
+      LOG( LOG_ERR, "Inconsistent path generation for NS: \"%s\"\n", refns );
+      free( nspath );
+      close( newctxt->pathd );
+      free( newctxt );
+      return NULL;
+   }
+   if ( sprintf( nspath + nspathlen, "/%s", PMDAL_REF ) != strlen(PMDAL_REF) ) {
+      LOG( LOG_ERR, "Failed to append PMDAL_REF suffix to path of NS: \"%s\"\n", refns );
+      free( nspath );
+      close( newctxt->pathd );
+      free( newctxt );
+      return NULL;
+   }
+   // open the ref dir, according to the target NS path
+   if ( *nspath == '/' ) {
+      // ensure the prefctxt is set to the secureroot dir
+      if ( prefctxt->pathd >= 0 ) {
+         LOG( LOG_ERR, "Absolute NS paths can only be used from a CTXT with no NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         close( newctxt->pathd );
+         free( newctxt );
+         return NULL;
+      }
+      // absoulute paths are opened via the root dir (skipping the leading '/')
+      newctxt->refd = openat( prefctxt->refd, (nspath + 1), O_RDONLY );
+   }
+   else {
+      // ensure the refd is set to an actual reference dir
+      if ( prefctxt->pathd < 0 ) {
+         LOG( LOG_ERR, "Relative NS paths can only be used from a CTXT with a NS set\n" );
+         errno = EINVAL;
+         free( nspath );
+         close( newctxt->pathd );
+         free( newctxt );
+         return NULL;
+      }
+      // relative paths are opened via the ref dir of the pbasectxt
+      newctxt->refd = openat( prefctxt->refd, nspath, O_RDONLY );
+   }
+   if ( newctxt->refd < 0 ) {
+      LOG( LOG_ERR, "Failed to open the ref dir: \"%s\"\n", nspath );
+      free( nspath );
+      close( newctxt->pathd );
+      free( newctxt );
+      return NULL;
+   }
+   free( nspath ); // done with this path
+
+   // stat the opened reference dir
+   struct stat stval;
+   if ( fstat( newctxt->refd, &(stval) ) ) {
+      LOG( LOG_ERR, "Failed to stat reference dir of NS \"%s\"\n", refns );
+      close( newctxt->refd );
+      close( newctxt->pathd );
+      free( newctxt );
+      return NULL;
+   }
+   // verify that these dirs exist on the same device
+   if ( stval.st_dev != pathstat.st_dev ) {
+      LOG( LOG_ERR, "Cross-Device CTXT split detected\n" );
+      close( newctxt->refd );
+      close( newctxt->pathd );
+      free( newctxt );
+      errno = EXDEV;
+      return NULL;
+   }
+   newctxt->dev = stval.st_dev;
+   return (MDAL_CTXT) newctxt;
+}
+
+/**
  * Create the specified namespace root structures ( reference tree is not created by this func! )
  * @param MDAL_CTXT ctxt : Current MDAL context
  * @param const char* ns : Name of the namespace to be created
@@ -3037,6 +3213,7 @@ MDAL posix_mdal_init( xmlNode* root ) {
          pmdal->checksec = posixmdal_checksec;
          pmdal->setnamespace = posixmdal_setnamespace;
          pmdal->newctxt = posixmdal_newctxt;
+         pmdal->newsplitctxt = posixmdal_newsplitctxt;
          pmdal->createnamespace = posixmdal_createnamespace;
          pmdal->destroynamespace = posixmdal_destroynamespace;
          pmdal->opendirnamespace = posixmdal_opendirnamespace;
