@@ -90,6 +90,7 @@ typedef struct marfs_namespace_struct {
    HASH_TABLE  subspaces;    // subspace hash table, referencing namespaces below this one
    HASH_NODE*  subnodes;     // subnode list reference ( shared with table ) for safe iter
    size_t      subnodecount; // count of subnode references
+   marfs_ns*   ghosttgt;     // target NS of this ghost ( NULL for non-ghost NS )
 } marfs_ns;
 // NOTE -- namespaces will be wrapped in HASH_NODES for use in HASH_TABLEs
 //         the HASH_NODE struct will provide the name string of the namespace
@@ -152,6 +153,21 @@ marfs_config* config_init( const char* cpath );
  * @return int : Zero on success, or -1 on failure
  */
 int config_term( marfs_config* config );
+
+/**
+ * Create a fresh marfs_position struct, targetting the MarFS root
+ * @param marfs_config* config : Reference to the config to be used
+ * @return marfs_position* : Reference to the newly initialized position,
+ *                           or NULL on failure
+ */
+marfs_position* config_establishposition( marfs_config* config );
+
+/**
+ * Terminate a marfs_position struct
+ * @param marfs_position* pos : Position to be destroyed
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_abandonposition( marfs_position* pos );
 
 /**
  * Verifies the LibNE Ctxt of every repo, creates every namespace, creates all

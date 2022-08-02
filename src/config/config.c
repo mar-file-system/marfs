@@ -205,6 +205,18 @@ char* config_prevpathelem( char* path, char* curpath ) {
 }
 
 /**
+ * Potentially free the given NS ( only if it is an allocated ghostNS )
+ * @param marfs_ns* ns : Namespace to be freed
+ */
+void config_destroyns( marfs_ns* ns ) {
+   if ( ns ) {
+      if ( ns->ghosttgt ) {
+         free( ns );
+      }
+   }
+}
+
+/**
  * Identify if a given path enters (or reenters) the MarFS mountpoint
  * @param marfs_config* config : Config reference
  * @param marfs_ns* tgtns : Reference populated with the initial NS value
@@ -2331,6 +2343,55 @@ int config_term( marfs_config* config ) {
    free( config->version );
    // free the config itself
    free( config );
+   return retval;
+}
+
+/**
+ * Create a fresh marfs_position struct, targetting the MarFS root
+ * @param marfs_config* config : Reference to the config to be used
+ * @return marfs_position* : Reference to the newly initialized position,
+ *                           or NULL on failure
+ */
+marfs_position* config_establishposition( marfs_config* config ) {
+   // check for NULL arg
+   if ( config == NULL ) {
+      LOG( LOG_ERR, "Received a NULL config arg\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   // allocate the struct
+   marfs_position* pos = malloc( sizeof( struct marfs_position_struct ) );
+   if ( pos == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate marfs position struct\n" );
+      return NULL;
+   }
+   // populate the root position values
+   pos->ns = config->rootns;
+   pos->depth = 0;
+   pos->ctxt = config->rootns->prepo->metascheme.mdal->newctxt( "/.", config->rootns->prepo->metascheme.mdal->ctxt );
+   if ( pos->ctxt == NULL ) {
+      LOG( LOG_ERR, "Failed to create a root MDAL_CTXT\n" );
+      free( pos );
+      return NULL;
+   }
+   return pos;
+}
+
+/**
+ * Terminate a marfs_position struct
+ * @param marfs_position* pos : Position to be destroyed
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_abandonposition( marfs_position* pos ) {
+   // check for NULL arg
+   if ( pos == NULL ) {
+      LOG( LOG_ERR, "Received a NULL pos arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   int retval = pos->ns->prepo->metascheme.mdal->destroyctxt( pos->ctxt );
+   config_destroyns( pos->ns );
+   free( pos );
    return retval;
 }
 
