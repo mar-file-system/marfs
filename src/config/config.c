@@ -2348,22 +2348,26 @@ int config_term( marfs_config* config ) {
 
 /**
  * Create a fresh marfs_position struct, targetting the MarFS root
+ * @param marfs_position* pos : Reference to the position to be initialized,
  * @param marfs_config* config : Reference to the config to be used
- * @return marfs_position* : Reference to the newly initialized position,
- *                           or NULL on failure
+ * @return int : Zero on success, or -1 on failure
  */
-marfs_position* config_establishposition( marfs_config* config ) {
-   // check for NULL arg
+int config_establishposition( marfs_position* pos, marfs_config* config ) {
+   // check for NULL args
+   if ( pos == NULL ) {
+      LOG( LOG_ERR, "Received a NULL pos arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( pos->ns != NULL ) {
+      LOG( LOG_ERR, "Received an active pos arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
    if ( config == NULL ) {
       LOG( LOG_ERR, "Received a NULL config arg\n" );
       errno = EINVAL;
-      return NULL;
-   }
-   // allocate the struct
-   marfs_position* pos = malloc( sizeof( struct marfs_position_struct ) );
-   if ( pos == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate marfs position struct\n" );
-      return NULL;
+      return -1;
    }
    // populate the root position values
    pos->ns = config->rootns;
@@ -2374,7 +2378,7 @@ marfs_position* config_establishposition( marfs_config* config ) {
       free( pos );
       return NULL;
    }
-   return pos;
+   return 0;
 }
 
 /**
@@ -2389,9 +2393,13 @@ int config_abandonposition( marfs_position* pos ) {
       errno = EINVAL;
       return -1;
    }
+   if ( pos->ns == NULL ) {
+      LOG( LOG_ERR, "Received an inactive pos arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
    int retval = pos->ns->prepo->metascheme.mdal->destroyctxt( pos->ctxt );
    config_destroyns( pos->ns );
-   free( pos );
    return retval;
 }
 

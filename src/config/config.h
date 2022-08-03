@@ -156,11 +156,11 @@ int config_term( marfs_config* config );
 
 /**
  * Create a fresh marfs_position struct, targetting the MarFS root
+ * @param marfs_position* pos : Reference to the position to be initialized,
  * @param marfs_config* config : Reference to the config to be used
- * @return marfs_position* : Reference to the newly initialized position,
- *                           or NULL on failure
+ * @return int : Zero on success, or -1 on failure
  */
-marfs_position* config_establishposition( marfs_config* config );
+int config_establishposition( marfs_position* pos, marfs_config* config );
 
 /**
  * Terminate a marfs_position struct
