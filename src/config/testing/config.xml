@@ -218,6 +218,9 @@
                <!-- Remote NS : 'gransom-allocation' -->
                <rns name="gransom-allocation" repo="exampleREPO"/>
 
+               <!-- Ghost NS : Targetting the FS root -->
+               <gns name="root-ghost" repo="3+2repo" nstgt="root"/>
+
             </ns>
 
             <!-- Target of Remote NS ref from the previous repo -->

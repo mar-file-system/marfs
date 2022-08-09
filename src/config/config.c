@@ -216,6 +216,33 @@ void config_destroyns( marfs_ns* ns ) {
    }
 }
 
+
+
+
+marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, char ascending ) {
+   // simplest case first, no ghostNS involved
+   if ( curns->ghosttgt == NULL  &&  nextns->ghosttgt == NULL ) {
+      return nextns;
+   }
+   marfs_ns* tgtns = NULL;
+   // moving into a new ghost
+   if ( curns->ghosttgt == NULL  &&  nextns->ghosttgt != NULL ) {
+      if ( ascending ) {
+         // should be impossible for a standard NS to be a child of a ghost
+         LOG( LOG_ERR, "Cannot ascend from a standard NS into a GhostNS\n" );
+         return NULL;
+      }
+      // need to allocate a fresh NS struct to hold ghost state
+      tgtns = malloc( sizeof( struct marfs_namespace_struct ) );
+      if ( tgtns == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for a new GhostNS\n" );
+         return NULL;
+      }
+      // TODO
+   }
+   return NULL;
+}
+
 /**
  * Identify if a given path enters (or reenters) the MarFS mountpoint
  * @param marfs_config* config : Config reference
@@ -872,21 +899,34 @@ int free_namespace( HASH_NODE* nsnode ) {
  * @return int : Zero on success, or -1 on failure
  */
 int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNode* nsroot ) {
-   // need to check if this is a real NS or a remote one
+   // need to check if this is a real NS or a remote/ghost reference
    char rns = 0;
+   char gns = 0;
    if ( strncmp( (char*)nsroot->name, "ns", 3 ) ) {
-      if ( strncmp( (char*)nsroot->name, "rns", 4 ) ) {
-         LOG( LOG_ERR, "received an unexpected node as NSroot: \"%s\"\n", (char*)nsroot->name );
-         errno = EINVAL;
-         return -1;
+      if ( strncmp( (char*)nsroot->name, "gns", 4 ) ) {
+         if ( strncmp( (char*)nsroot->name, "rns", 4 ) ) {
+            LOG( LOG_ERR, "received an unexpected node as NSroot: \"%s\"\n", (char*)nsroot->name );
+            errno = EINVAL;
+            return -1;
+         }
+         // this is a remote namespace
+         rns = 1;
+         // do not permit remote namespaces at the root of a repo
+         if ( pnamespace == NULL ) {
+            LOG( LOG_ERR, "Detected a remote namespace at the root of the \"%s\" repo namespace defs\n", prepo->name );
+            errno = EINVAL;
+            return -1;
+         }
       }
-      // this is a remote namespace
-      rns = 1;
-      // do not permit remote namespaces at the root of a repo
-      if ( pnamespace == NULL ) {
-         LOG( LOG_ERR, "Detected a remote namespace at the root of the \"%s\" repo namespace defs\n", prepo->name );
-         errno = EINVAL;
-         return -1;
+      else {
+         // this is a ghost namespace
+         gns = 1;
+         // do not permit ghost namespaces at the root of a repo
+         if ( pnamespace == NULL ) {
+            LOG( LOG_ERR, "Detected a ghost namespace at the root of the \"%s\" repo namespace defs\n", prepo->name );
+            errno = EINVAL;
+            return -1;
+         }
       }
    }
 
@@ -934,11 +974,12 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
       return -1;
    }
 
-   // iterate over all attributes again, looking for errors and remote namespace values
+   // iterate over all attributes again, looking for errors and remote/ghost namespace values
    char* reponame = NULL;
+   char* nstgt = NULL;
    for( attr = nsroot->properties; attr; attr = attr->next ) {
       if ( attr->type == XML_ATTRIBUTE_NODE ) {
-         if ( rns  &&  strncmp( (char*)attr->name, "repo", 5 ) == 0 ) {
+         if ( ( rns  ||  gns )  &&  strncmp( (char*)attr->name, "repo", 5 ) == 0 ) {
             if ( reponame ) {
                // we already found a 'repo'
                LOG( LOG_WARNING, "encountered a duplicate 'repo' value on NS \"%s\"\n", nsname );
@@ -946,12 +987,32 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
             }
             // we've found our 'repo' attribute
             if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+               // explicitly disable remote NS links to the same repo ( no purpose, possible FS loop )
+               if ( rns  &&  strcmp( (char*)attr->children->content, prepo->name ) == 0 ) {
+                  LOG( LOG_ERR, "encountered remote namespace linked to the same repo: \"%s\"\n" );
+                  errno = EINVAL;
+                  free( nsname );
+                  return -1;
+               }
                reponame = strdup( (char*)attr->children->content );
             }
             else {
                LOG( LOG_WARNING, "encountered unrecognized 'repo' attribute value for NS \"%s\"\n", nsname );
             }
-
+         }
+         else if ( gns  &&  strncmp( (char*)attr->name, "nstgt", 6 ) == 0 ) {
+            if ( nstgt ) {
+               // we already found a 'nstgt'
+               LOG( LOG_WARNING, "encountered a duplicate 'nstgt' value on NS \"%s\"\n", nsname );
+               continue;
+            }
+            // we've found our target
+            if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+               nstgt = strdup( (char*)attr->children->content );
+            }
+            else {
+               LOG( LOG_WARNING, "encountered unrecognized 'nstgt' attribute value for NS \"%s\"\n", nsname );
+            }
          }
          else if ( strncmp( (char*)attr->name, "name", 5 ) ) {
             LOG( LOG_WARNING, "encountered unrecognized \"%s\" attribute of NS \"%s\"\n", (char*)attr->name, nsname );
@@ -962,20 +1023,21 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
       }
    }
 
-   // additional checks for remote namespaces
-   if ( rns ) {
+   // additional checks for remote/ghost namespaces
+   if ( rns  ||  gns ) {
       // make sure we actually found a 'repo' name
       if ( reponame == NULL ) {
-         LOG( LOG_ERR, "remote namespace \"%s\" is missing a 'repo' value\n", nsname );
+         LOG( LOG_ERR, "%s namespace \"%s\" is missing a 'repo' value\n", (rns) ? "remote":"ghost", nsname );
+         if ( nstgt ) { free( nstgt ); }
          free( nsname );
          errno = EINVAL;
          return -1;
       }
-      // make sure this isn't a remote namespace at the root of a repo
-      if ( pnamespace == NULL ) {
-         LOG( LOG_ERR, "remote namespace \"%s\" was found at the root of a repo\n", nsname );
-         free( nsname );
+      // and nstgt, if applicable
+      if ( gns  &&  nstgt == NULL ) {
+         LOG( LOG_ERR, "ghost namespace \"%s\" is missing a 'nstgt' value\n", nsname );
          free( reponame );
+         free( nsname );
          errno = EINVAL;
          return -1;
       }
@@ -991,6 +1053,8 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    nsnode->content = malloc( sizeof( marfs_ns ) );
    if ( nsnode->content == NULL ) {
       LOG( LOG_ERR, "failed to allocate space for namespace \"%s\"\n", nsname );
+      if ( reponame ) { free( reponame ); }
+      if ( nstgt ) { free( nstgt ); }
       free( nsname );
       if ( rns ) free( reponame );
       return -1;
@@ -1005,6 +1069,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    ns->subspaces = NULL;
    ns->subnodes = NULL;
    ns->subnodecount = 0;
+   ns->ghosttgt = NULL;
 
    // set parent values
    ns->prepo = prepo;
@@ -1021,20 +1086,35 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
       // for remote namespaces, we're done; no other values are relevant
       return 0;
    }
-
-   // populate the namespace id string
-   int idstrlen = strlen(nsname) + 2; // nsname plus '|' prefix and NULL terminator
-   if ( pnamespace ) { idstrlen += strlen( pnamespace->idstr ); } // prepend to parent name
-   else { idstrlen += strlen( prepo->name ); } // or parent repo name, if we are at the top
+   size_t idstrlen;
+   if ( gns ) {
+      // we'll indicate this is a ghost namespace via a self-referential ghosttgt ( real tgt determined later )
+      ns->ghosttgt = ns;
+      // stash the ghost target info into the id string
+      idstrlen = strlen( reponame ) + 2 + strlen( nstgt );
+   }
+   else {
+      // populate the namespace id string
+      idstrlen = strlen(nsname) + 2; // nsname plus '|' prefix and NULL terminator
+      if ( pnamespace ) { idstrlen += strlen( pnamespace->idstr ); } // prepend to parent name
+      else { idstrlen += strlen( prepo->name ); } // or parent repo name, if we are at the top
+   }
    ns->idstr = malloc( sizeof(char) * idstrlen );
    if ( ns->idstr == NULL ) {
       LOG( LOG_ERR, "failed to allocate space for the id string of NS \"%s\"\n", nsname );
+      if ( nstgt ) { free( nstgt ); }
       free( nsname );
       free( ns );
       return -1;
    }
    int prres = 0;
-   if ( pnamespace ) {
+   if ( gns ) {
+      prres = snprintf( ns->idstr, idstrlen, "%s|%s", reponame, nstgt );
+      // done with these strings
+      free( nstgt );
+      free( reponame );
+   }
+   else if ( pnamespace ) {
       prres = snprintf( ns->idstr, idstrlen, "%s|%s", pnamespace->idstr, nsname );
    }
    else {
@@ -1052,8 +1132,17 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    // real namespaces may have additional namespace defs below them
    int subspcount = count_nodes( nsroot->children, "ns" );
    subspcount += count_nodes( nsroot->children, "rns" );
+   subspcount += count_nodes( nsroot->children, "gns" );
    HASH_NODE* subspacelist = NULL;
    if ( subspcount ) {
+      // subspaces are forbidden for ghosts
+      if ( gns ) {
+         LOG( LOG_ERR, "GhostNS with forbidden child namespaces: \"%s\"\n", nsname );
+         free( ns->idstr );
+         free( nsname );
+         free( ns );
+         return -1;
+      }
       subspacelist = malloc( sizeof( HASH_NODE ) * subspcount );
       if ( subspacelist == NULL ) {
          LOG( LOG_ERR, "failed to allocate space for subspace list of NS \"%s\"\n", nsname );
@@ -1071,6 +1160,11 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    for ( ; subnode; subnode = subnode->next ) {
       if ( subnode->type == XML_ELEMENT_NODE ) {
          if ( strncmp( (char*)subnode->name, "quotas", 7 ) == 0 ) {
+            // doesn't work for ghosts
+            if ( gns ) {
+               LOG( LOG_WARNING, "Skipping non-functional quota definition for GhostNS: \"%s\"\n", nsname );
+               continue;
+            }
             // parse NS quota info
             if( parse_quotas( &(ns->fquota), &(ns->dquota), subnode->children ) ) {
                LOG( LOG_ERR, "failed to parse quota info for NS \"%s\"\n", nsname );
@@ -1087,7 +1181,8 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
             }
          }
          else if ( strncmp( (char*)subnode->name, "ns", 3 ) == 0  ||  
-                   strncmp( (char*)subnode->name, "rns", 4 ) == 0  ) {
+                   strncmp( (char*)subnode->name, "rns", 4 ) == 0  ||
+                   strncmp( (char*)subnode->name, "gns", 4 ) == 0 ) {
             // ensure we haven't encountered more nodes than expected
             if ( allocsubspaces >= subspcount ) {
                LOG( LOG_ERR, "insufficient subspace allocation for NS \"%s\"\n", nsname );
@@ -2083,6 +2178,126 @@ int establish_nsrefs( marfs_config* config ) {
       int iterres = 0;
       if ( curns->subspaces  &&  (iterres = hash_iterate( curns->subspaces, &(subnode) )) > 0 ) {
          marfs_ns* subspace = (marfs_ns*)(subnode->content);
+         if ( subspace == NULL ) { LOG( LOG_ERR, "NULL subspace ref\n" ); return -1; }
+         // check for a ghost NS
+         if ( subspace->ghosttgt ) {
+            // the ghost NS idstring should contain both the repo and NS of the target
+            char* tgtreponame;
+            char* tgtnsname;
+            if ( config_nsinfo( subspace->idstr, &tgtreponame, &tgtnsname ) < 0 ) {
+               LOG( LOG_ERR, "Failed to parse GhostNS \"%s\" target info: \"%s\"\n", subnode->name, subspace->idstr );
+               return -1;
+            }
+            // find the target repo
+            marfs_repo* tgtrepo = find_repo( config->repolist, config->repocount, tgtreponame );
+            if ( tgtrepo == NULL ) {
+               LOG( LOG_ERR, "GhostNS \"%s\" has an invalid repo target: \"%s\"\n", subnode->name, tgtreponame );
+               return -1;
+            }
+            // parse over the NS string to find the initial target
+            char* nsparse = tgtnsname;
+            char* nssegment = tgtnsname;
+            marfs_ns* tgtns = NULL;
+            char substitute = 0;
+            size_t len = 0;
+            while ( *nsparse != '\0' ) {
+               if ( *nsparse == '/' ) {
+                  if ( len == 0 ) {
+                     // skip leading '/'
+                     nsparse++;
+                     nssegment = nsparse;
+                     continue;
+                  }
+                  else {
+                     *nsparse = '\0';
+                     substitute = 1;
+                     break;
+                  }
+               }
+               nsparse++;
+               len++;
+            }
+            // special check for a root target
+            if ( strcmp( nssegment, "root" ) == 0 ) {
+               tgtns = config->rootns;
+            }
+            else {
+               // otherwise, identify the NS within the repo
+               size_t i = 0;
+               for ( ; i < tgtrepo->metascheme.nscount; i++ ) {
+                  if ( strcmp( nssegment, tgtrepo->metascheme.nslist[i].name ) == 0 ) {
+                     tgtns = (marfs_ns*)tgtrepo->metascheme.nslist[i].content;
+                     break;
+                  }
+               }
+               if ( tgtns == NULL ) {
+                  LOG( LOG_ERR, "Failed to identify tgtNS \"%s\" of repo \"%s\" for GhostNS: \"%s\"\n",
+                       nssegment, tgtreponame, subnode->name );
+                  free( tgtreponame );
+                  free( tgtnsname );
+                  errno = EINVAL;
+                  return -1;
+               }
+            }
+            free( tgtreponame ); // no need for repo name anymore
+            // continue through any NS subpaths
+            if ( substitute ) {
+               *nsparse = '/';
+               nsparse++;
+               substitute = 0;
+            }
+            nssegment = nsparse;
+            len = 0;
+            while ( *nsparse != '\0' ) {
+               // identify the next path segment
+               do {
+                  if ( *nsparse == '/' ) {
+                     if ( len == 0 ) {
+                        // skip leading '/'
+                        nsparse++;
+                        nssegment = nsparse;
+                        continue;
+                     }
+                     else {
+                        *nsparse = '\0';
+                        substitute = 1;
+                        break;
+                     }
+                  }
+                  nsparse++;
+                  len++;
+               } while ( *nsparse != '\0' );
+               // identify the NS subdir
+               HASH_NODE* tgtnode = NULL;
+               if ( hash_lookup( tgtns->subspaces, nssegment, &tgtnode ) ) {
+                  LOG( LOG_ERR, "Failed to identify tgt subspace \"%s\" of NS \"%s\" for GhostNS: \"%s\"\n",
+                       nssegment, tgtns->idstr, subnode->name );
+                  free( tgtnsname );
+                  errno = EINVAL;
+                  return -1;
+               }
+               // check if we've accidentially left the repo ( could be replaced remote NS )
+               if ( tgtns->prepo != ( (marfs_ns*)tgtnode->content )->prepo ) {
+                  LOG( LOG_ERR, "Target NS path exits target repo for GhostNS: \"%s\"\n", subnode->name );
+                  free( tgtnsname );
+                  errno = EINVAL;
+                  return -1;
+               }
+               tgtns = (marfs_ns*)tgtnode->content;
+               // possibly reverse our substitution
+               if ( substitute ) {
+                  *nsparse = '/';
+                  nsparse++;
+                  substitute = 0;
+               }
+               nssegment = nsparse;
+               len = 0;
+            }
+            // populate the ghost NS with the appropriate final target
+            LOG( LOG_INFO, "Target of GhostNS \"%s\" identified as \"%s\"\n", subnode->name, tgtns->idstr );
+            subspace->ghosttgt = tgtns;
+            free( tgtnsname );
+         }
          // check for a remote NS reference
          if ( subspace->prepo == NULL ) {
             // the remote NS idstring should contain the name of the target repo
@@ -2111,7 +2326,6 @@ int establish_nsrefs( marfs_config* config ) {
             subspace = tgtns;
             rnscount++; // we've replaced a remote NS ref
          }
-         if ( subspace == NULL ) { LOG( LOG_ERR, "NULL subspace ref\n" ); return -1; }
 
          // replace the ID string of this subspace with a complete path
          char* sprevid = subspace->idstr;
@@ -2376,7 +2590,7 @@ int config_establishposition( marfs_position* pos, marfs_config* config ) {
    if ( pos->ctxt == NULL ) {
       LOG( LOG_ERR, "Failed to create a root MDAL_CTXT\n" );
       free( pos );
-      return NULL;
+      return -1;
    }
    return 0;
 }
@@ -3070,7 +3284,10 @@ int config_nsinfo( const char* nsidstr, char** repo, char** path ) {
 
    // determine if path header is valid
    int retval = 0;
-   if ( *parse != '/' ) { retval = 1; }
+   if ( *parse != '/' ) {
+      LOG( LOG_INFO, "Received an NS path string which has not been properly linked: \"%s\"\n", parse );
+      retval = 1;
+   }
    free( idcpy );
    return retval;
 }
