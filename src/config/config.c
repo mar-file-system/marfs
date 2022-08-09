@@ -209,10 +209,11 @@ char* config_prevpathelem( char* path, char* curpath ) {
  * @param marfs_ns* ns : Namespace to be freed
  */
 void config_destroyns( marfs_ns* ns ) {
-   if ( ns ) {
-      if ( ns->ghosttgt ) {
-         free( ns );
-      }
+   if ( ns  &&  ns->ghosttgt ) {
+      if ( ns->subspaces ) { hash_term( ns->subspaces, NULL, NULL ); }
+      if ( ns->subnodes ) { free( ns->subnodes ); }
+      if ( ns->idstr ) { free( ns->idstr ); }
+      free( ns );
    }
 }
 
@@ -223,6 +224,13 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, char ascending ) {
    // simplest case first, no ghostNS involved
    if ( curns->ghosttgt == NULL  &&  nextns->ghosttgt == NULL ) {
       return nextns;
+   }
+   // sanity check : ghost to ghost transitions should be impossible
+   if ( curns->ghosttgt != NULL  &&  nextns->ghosttgt != NULL ) {
+      LOG( LOG_ERR, "Detected theoretically impossible Ghost-to-Ghost transition from \"%s\" to \"%s\"\n",
+           curns->idstr, nextns->idstr );
+      config_destroyns( curns ); // attempt to free the current NS
+      return NULL;
    }
    marfs_ns* tgtns = NULL;
    // moving into a new ghost
@@ -238,7 +246,88 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, char ascending ) {
          LOG( LOG_ERR, "Failed to allocate space for a new GhostNS\n" );
          return NULL;
       }
-      // TODO
+      // Parent of the copy should match that of the GhostNS
+      tgtns->pnamespace = nextns->pnamespace;
+      // Target of the copy should be the Ghost itself
+      tgtns->ghosttgt = nextns;
+      // Ghost copy inherits most of the GhostTgtNS values with slight modification
+      tgtns->idstr = strdup( nextns->ghosttgt->idstr );
+      if ( tgtns->idstr == NULL ) {
+         LOG( LOG_ERR, "Failed to duplicate tgtNS ID string for copy of GhostNS: \"%s\"\n", nextns->idstr );
+         free( tgtns );
+         return NULL;
+      }
+      tgtns->prepo = nextns->ghosttgt->prepo;
+      // Quotas become the 'lesser' values, between the Ghost and its target
+      //    ( with zero considered the 'greatest', unlimited, value )
+      tgtns->fquota = nextns->fquota;
+      if ( nextns->ghosttgt->fquota  &&  (nextns->ghosttgt->fquota < tgtns->fquota  ||  tgtns->fquota == 0 ) ) {
+         tgtns->fquota = nextns->ghosttgt->fquota;
+      }
+      tgtns->dquota = nextns->dquota;
+      if ( nextns->ghosttgt->dquota  &&  (nextns->ghosttgt->dquota < tgtns->dquota  ||  tgtns->dquota == 0 ) ) {
+         tgtns->dquota = nextns->ghosttgt->dquota;
+      }
+      // Permissions become the most restrictive set, between the Ghost at its target
+      tgtns->iperms = ( nextns->iperms & nextns->ghosttgt->iperms );
+      tgtns->bperms = ( nextns->bperms & nextns->ghosttgt->bperms );
+      // Subspaces become a copy of the Ghost's target NS subspaces, EXCLUDING ALL GHOSTS
+      //    ( Ghost inclusion -> possible FS loop )
+      HASH_NODE* parsenode = nextns->ghosttgt->subnodes;
+      size_t parsecount = 0;
+      tgtns->subnodecount = 0;
+      for ( ; parsecount < nextns->ghosttgt->subnodecount; parsecount++ ) {
+         if ( ( (marfs_ns*)parsenode->content )->ghosttgt == NULL ) { tgtns->subnodecount++; }
+         parsenode++;
+      }
+      tgtns->subspaces = NULL;
+      tgtns->subnodes = NULL;
+      if ( tgtns->subnodecount ) {
+         // allocate subspace list
+         tgtns->subnodes = malloc( sizeof( HASH_NODE ) * tgtns->subnodecount );
+         if ( tgtns->subnodes == NULL ) {
+            LOG( LOG_ERR, "Failed to allocate subnode list for copy of GhostNS: \"%s\"\n", nextns->idstr );
+            free( tgtns->idstr );
+            free( tgtns );
+            return NULL;
+         }
+         // copy non-GhostNS nodes
+         parsenode = nextns->ghosttgt->subnodes;
+         size_t nodeindex = 0;
+         for ( parsecount = 0; parsecount < nextns->ghosttgt->subnodecount; parsecount++ ) {
+            if ( ( (marfs_ns*)parsenode->content )->ghosttgt == NULL ) {
+               HASH_NODE* editnode = tgtns->subnodes + nodeindex;
+               nodeindex++;
+               // just directly copy hash node values, rather than duplicating
+               editnode->name = parsenode->name;
+               editnode->weight = parsenode->weight;
+               editnode->content = parsenode->content;
+               if ( nodeindex == tgtns->subnodecount ) { break; } // potentially exit early
+            }
+            parsenode++;
+         }
+         // establish the subspace table
+         tgtns->subspaces = hash_init( tgtns->subnodes, tgtns->subnodecount, 1 );
+         if ( tgtns->subspaces == NULL ) {
+            LOG( LOG_ERR, "Failed to initialize subspace table for copy of GhostNS: \"%s\"\n", nextns->idstr );
+            free( tgtns->subnodes );
+            free( tgtns->idstr );
+            free( tgtns );
+            return NULL;
+         }
+      }
+      // provide the new, dynamically allocated target
+      return tgtns;
+   }
+   // moving within a GhostNS
+   if ( curns->ghosttgt != NULL  &&  nextns->ghosttgt == NULL ) {
+      // check if we're exiting the active Ghost, by traversing up to its parent NS
+      if ( ascending  &&  curns->ghosttgt->pnamespace == nextns ) {
+         // we are exiting the ghost dimension and need to destory our dynamically allocated NS
+         config_destroyns( curns );
+         return nextns;
+      }
+      // TODO : Update the content of our Ghost copy to reflect the new target
    }
    return NULL;
 }
