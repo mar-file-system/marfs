@@ -218,39 +218,81 @@ void config_destroyns( marfs_ns* ns ) {
 }
 
 /**
- * Provide the appropraite NS structure resulting from a NS transition
- * NOTE -- This exists due to the complexity introduced by Ghost namespaces.
- *         The standard NS case is trivial.
- * @param marfs_ns* curns : Reference to the current, active NS
+ * Update the given position to reference a new NS
+ * NOTE -- This exists primarily due to the complexity of Ghost namespace transitions
+ * @param marfs_position* pos : Reference to the current position
+ *                              NOTE -- may be abandoned by this func ( see config_abandonposition() )
  * @param marfs_ns* nextns : Reference to the NS to enter
  * @param const char* relpath : Relative path component which resulted in entering this NS
- * @param char ascending : Flag value indicating direction of travel
- *                         Zero -> Descending through the NS tree ( nextns is a subspace )
- *                         Non-Zero -> Ascending through the NS tree ( nextns is a parent )
- * @return marfs_ns* : Reference to the resulting NS struct, or NULL on failure
+ * @param char updatectxt : Flag value indicating if an updated MDAL_CTXT is needed
+ *                          Zero -> Position CTXT will be destroyed
+ *                          Non-Zero -> Position CTXT will be updated to reference the new tgt NS
+ * @return int : Zero on success, or -1 on failure
  */
-marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath, char ascending ) {
+int config_enterns( marfs_pos* pos, marfs_ns* nextns, const char* relpath, char updatectxt ) {
+   // create some shorthand refs
+   marfs_ns* curns = pos->ns;
+   char ascending = ( nextns == curns->pnamespace ) ? 1 : 0; // useful for quick checks of traversal direction
    // check for expected case first - currently targetting a standard NS
    if ( curns->ghsource == NULL ) {
       // simplest case first, no ghostNS involved
       if ( nextns->ghtarget == NULL ) {
-         LOG( LOG_INFO, "Simple transition from NS \"%s\" to NS \"%s\"\n", curns->idstr, nextns->idstr );
-         return nextns;
+         // update or destroy any existing ctxt
+         if ( curns->prepo == nextns->prepo  &&  updatectxt ) {
+            // shifting NS within a repo means we can directly update
+            if ( curns->prepo->metascheme.mdal->setnamespace( pos->ctxt, relpath ) ) {
+               LOG( LOG_ERR, "Failed to update CTXT via relative path value: \"%s\"\n", relpath );
+               config_abandonposition( pos );
+               return -1;
+            }
+         }
+         else {
+            // destroy the current context
+            if ( pos->ctxt  &&  curns->prepo->metascheme.mdal->destroyctxt( pos->ctxt ) ) {
+               // nothing to do but complain
+               LOG( LOG_WARNING, "Failed to destroy MDAL_CTXT for NS \"%s\"\n", curns->idstr );
+            }
+            pos->ctxt = NULL;
+            // potentially recreate
+            if ( updatectxt ) {
+               // determine the NS path
+               char* nspath;
+               if ( config_nsinfo( nextns->idstr, NULL, &(nspath) ) ) {
+                  LOG( LOG_ERR, "Failed to identify the nspath of next NS: \"%s\"\n", nextns->idstr );
+                  config_abandonposition( pos );
+                  return -1;
+               }
+               // create a fresh ctxt
+               pos->ctxt = nextns->prepo->metascheme.mdal->newctxt( nextns->prepo->metascheme.mdal->ctxt, nspath );
+               free( nspath );
+               if ( pos->ctxt == NULL ) {
+                  LOG( LOG_ERR, "Failed to establish a fresh ctxt for next NS: \"%s\"\n", nextns->idstr );
+                  config_abandonposition( pos );
+                  return -1;
+               }
+               LOG( LOG_INFO, "Established a fresh MDAL_CTXT following cross-repo NS transition\n" );
+            }
+         }
+         pos->ns = nextns;
+         LOG( LOG_INFO, "Performed simple transition from NS \"%s\" to NS \"%s\"\n", curns->idstr, nextns->idstr );
+         return 0;
       }
 
-      // we are moving into a new ghost
+      // we are moving into a new ghost ( nextns->ghtarget != NULL )
       marfs_ns* tgtns = NULL;
 
+      // sanity check : should be impossible for a standard NS to be a child of a ghost
       if ( ascending ) {
-         // should be impossible for a standard NS to be a child of a ghost
          LOG( LOG_ERR, "Cannot ascend from a standard NS into a GhostNS\n" );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
       // need to allocate a fresh NS struct to hold ghost state
       tgtns = malloc( sizeof( struct marfs_namespace_struct ) );
       if ( tgtns == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for a new GhostNS\n" );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
       // Store the original GhostNS as our source ( will never change for this copy )
       tgtns->ghsource = nextns;
@@ -265,7 +307,8 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
       if ( tgtns->idstr == NULL ) {
          LOG( LOG_ERR, "Failed to duplicate tgtNS ID string for copy of GhostNS: \"%s\"\n", nextns->idstr );
          free( tgtns );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
       // Ghost copy inherits most of the GhostTgtNS values with slight modification
       // Quotas become the 'lesser' values, between the Ghost and its target
@@ -300,7 +343,8 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
             LOG( LOG_ERR, "Failed to allocate subnode list for copy of GhostNS: \"%s\"\n", nextns->idstr );
             free( tgtns->idstr );
             free( tgtns );
-            return NULL;
+            config_abandonposition( pos );
+            return -1;
          }
          // copy non-GhostNS nodes
          parsenode = nextns->ghtarget->subnodes;
@@ -324,12 +368,50 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
             free( tgtns->subnodes );
             free( tgtns->idstr );
             free( tgtns );
-            return NULL;
+            config_abandonposition( pos );
+            return -1;
          }
       }
-      // provide the new, dynamically allocated target
+      // Dynamically allocated NS target is ready; now we must update the ctxt
+      // GhostNS contexts must always be freshly created
+      if ( pos->ctxt  &&  curns->prepo->metascheme.mdal->destroyctxt( pos->ctxt ) ) {
+         // nothing to do but complain
+         LOG( LOG_WARNING, "Failed to destroy MDAL_CTXT for NS \"%s\"\n", curns->idstr );
+      }
+      pos->ctxt = NULL;
+      if ( updatectxt ) {
+         // identify paths for both the ghost and target NS
+         char* ghostpath;
+         if ( config_nsinfo( tgtns->idstr, NULL, &(ghostpath) ) ) {
+            LOG( LOG_ERR, "Failed to identify path of new GhostNS copy: \"%s\"\n", tgtns->idstr );
+            config_destroyns( tgtns );
+            config_abandonposition( pos );
+            return -1;
+         }
+         char* tgtpath;
+         if ( config_nsinfo( tgtns->ghtarget->idstr, NULL, &(tgtpath) ) ) {
+            LOG( LOG_ERR, "Failed to identify path of new GhostNS copy target: \"%s\"\n", tgtns->ghtarget->idstr );
+            free( ghostpath );
+            config_destroyns( tgtns );
+            config_abandonposition( pos );
+            return -1;
+         }
+         // generate a new 'split' ctxt, using the Ghost postion for user paths and the tgt postion for reference paths
+         pos->ctxt = tgtns->ghtarget->prepo->metascheme.mdal->newsplitctxt( ghostpath, tgtns->prepo->metascheme.mdal->ctxt,
+                                                                            tgtpath, tgtns->ghtarget->prepo->metascheme.mdal->ctxt );
+         free( tgtpath );
+         free( ghostpath );
+         if ( pos->ctxt == NULL ) {
+            LOG( LOG_ERR, "Failed to generate split ctxt for new GhostNS copy: \"%s\"\n", tgtns->idstr );
+            config_destroyns( tgtns );
+            config_abandonposition( pos );
+            return -1;
+         }
+      }
+      // provide the new, dynamically allocated NS target
+      pos->ns = tgtns;
       LOG( LOG_INFO, "Entered newly created copy of GhostNS \"%s\" from parent NS \"%s\"\n", tgtns->idstr, curns->idstr );
-      return tgtns;
+      return 0;
    }
 
    // we are moving within a GhostNS ( curns->ghsource != NULL )
@@ -338,14 +420,42 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
    if ( nextns->ghtarget != NULL ) {
       LOG( LOG_ERR, "Detected theoretically impossible Ghost-to-Ghost transition from \"%s\" to \"%s\"\n",
            curns->idstr, nextns->idstr );
-      return NULL;
+      config_abandonposition( pos );
+      return -1;
    }
    // check if we're exiting the active Ghost, by traversing up to its parent NS
    if ( ascending  &&  curns->ghsource->pnamespace == nextns ) {
-      // we are exiting the ghost dimension and need to destory our dynamically allocated NS
-      LOG( LOG_INFO, "Exiting GhostNS \"%s\" and entering parent: \"%s\"\n", curns->ghsource->idstr, nextns->idstr );
-      config_destroyns( curns );
-      return nextns;
+      // we are exiting the ghost dimension!
+      // GhostNS contexts must always be destroyed
+      if ( pos->ctxt  &&  curns->ghtarget->prepo->metascheme.mdal->destroyctxt( pos->ctxt ) ) {
+         // nothing to do but complain
+         LOG( LOG_WARNING, "Failed to destroy MDAL_CTXT for active copy of GhostNS \"%s\"\n", curns->idstr );
+      }
+      pos->ctxt = NULL;
+      // potentially recreate
+      if ( updatectxt ) {
+         // determine the NS path
+         char* nspath;
+         if ( config_nsinfo( nextns->idstr, NULL, &(nspath) ) ) {
+            LOG( LOG_ERR, "Failed to identify the nspath of next NS: \"%s\"\n", nextns->idstr );
+            config_abandonposition( pos );
+            return -1;
+         }
+         // create a fresh ctxt
+         pos->ctxt = nextns->prepo->metascheme.mdal->newctxt( nextns->prepo->metascheme.mdal->ctxt, nspath );
+         free( nspath );
+         if ( pos->ctxt == NULL ) {
+            LOG( LOG_ERR, "Failed to establish a fresh ctxt for next NS: \"%s\"\n", nextns->idstr );
+            config_abandonposition( pos );
+            return -1;
+         }
+         LOG( LOG_INFO, "Established a fresh MDAL_CTXT after exiting the ghost dimension\n" );
+      }
+      // update our NS ref to the standard NS target
+      config_destroyns( pos->ns );
+      pos->ns = nextns;
+      LOG( LOG_INFO, "Exited GhostNS \"%s\" and entered parent: \"%s\"\n", curns->ghsource->idstr, nextns->idstr );
+      return 0;
    }
    // Target the new NS
    curns->ghtarget = nextns;
@@ -358,7 +468,8 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
       // sanity check : this should only ever happen when ascending
       if ( !(ascending) ) {
          LOG( LOG_ERR, "Encountered original target NS \"%s\" of GhostNS \"%s\" when NOT ascending\n", nextns->idstr, curns->ghsource->idstr );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
    }
    // NOTE -- Parent repo never changes
@@ -367,7 +478,8 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
    char* nspath;
    if ( config_nsinfo( curns->idstr, &(repostr), &(nspath) ) ) {
       LOG( LOG_ERR, "Failed to identify NS path value of active Ghost copy: \"%s\"\n", curns->idstr );
-      return NULL;
+      config_abandonposition( pos );
+      return -1;
    }
    if ( ascending ) {
       // we need to strip off the last path component
@@ -385,7 +497,8 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
          LOG( LOG_ERR, "Failed to identify final path component of NS string: \"%s\"\n", nspath );
          free( repostr );
          free( nspath );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
       // just truncate the string directly
       *prevelem = '\0';
@@ -396,14 +509,16 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
          LOG( LOG_ERR, "Failed to allocate a new ID string (ascending)\n" );
          free( repostr );
          free( nspath );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
       if ( snprintf( tmpidstr, newstrlen, "%s|%s", repostr, nspath ) < 2 ) {
          LOG( LOG_ERR, "Failed to populate new ID string (ascending)\n" );
          free( tmpidstr );
          free( repostr );
          free( nspath );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
       free( curns->idstr );
       curns->idstr = tmpidstr;
@@ -416,14 +531,16 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
          LOG( LOG_ERR, "Failed to allocate a new ID string (descending)\n" );
          free( repostr );
          free( nspath );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
       if ( snprintf( tmpidstr, newstrlen, "%s|%s/%s", repostr, nspath, relpath ) < 3 ) {
          LOG( LOG_ERR, "Failed to populate new ID string (descending)\n" );
          free( tmpidstr );
          free( repostr );
          free( nspath );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
       free( curns->idstr );
       curns->idstr = tmpidstr;
@@ -462,7 +579,8 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
       curns->subnodes = malloc( sizeof( HASH_NODE ) * curns->subnodecount );
       if ( curns->subnodes == NULL ) {
          LOG( LOG_ERR, "Failed to allocate subnode list for active GhostNS copy: \"%s\"\n", curns->idstr );
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
       // copy non-GhostNS nodes
       parsenode = nextns->subnodes;
@@ -483,14 +601,46 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath
       curns->subspaces = hash_init( curns->subnodes, curns->subnodecount, 1 );
       if ( curns->subspaces == NULL ) {
          LOG( LOG_ERR, "Failed to initialize subspace table for active GhostNS copy: \"%s\"\n", curns->idstr );
-         free( curns->subnodes );
-         curns->subnodes = NULL;
-         return NULL;
+         config_abandonposition( pos );
+         return -1;
       }
    }
 
-   LOG( LOG_INFO, "Moving within GhostNS \"%s\" to new target: \"%s\"\n", curns->ghsource->idstr, curns->ghtarget->idstr );
-   return curns;
+   // GhostNS contexts must always be freshly created
+   if ( pos->ctxt  &&  curns->ghtarget->prepo->metascheme.mdal->destroyctxt( pos->ctxt ) ) {
+      // nothing to do but complain
+      LOG( LOG_WARNING, "Failed to destroy MDAL_CTXT for active Ghost NS copy \"%s\"\n", curns->idstr );
+   }
+   pos->ctxt = NULL;
+   if ( updatectxt ) {
+      // identify paths for both the ghost and target NS
+      char* ghostpath;
+      if ( config_nsinfo( curns->idstr, NULL, &(ghostpath) ) ) {
+         LOG( LOG_ERR, "Failed to identify path of active GhostNS copy: \"%s\"\n", curns->idstr );
+         config_abandonposition( pos );
+         return -1;
+      }
+      char* tgtpath;
+      if ( config_nsinfo( curns->ghtarget->idstr, NULL, &(tgtpath) ) ) {
+         LOG( LOG_ERR, "Failed to identify path of active GhostNS copy target: \"%s\"\n", curns->ghtarget->idstr );
+         free( ghostpath );
+         config_abandonposition( pos );
+         return -1;
+      }
+      // generate a new 'split' ctxt, using the Ghost postion for user paths and the tgt postion for reference paths
+      pos->ctxt = curns->ghtarget->prepo->metascheme.mdal->newsplitctxt( ghostpath, curns->prepo->metascheme.mdal->ctxt,
+                                                                         tgtpath, curns->ghtarget->prepo->metascheme.mdal->ctxt );
+      free( tgtpath );
+      free( ghostpath );
+      if ( pos->ctxt == NULL ) {
+         LOG( LOG_ERR, "Failed to generate split ctxt for active GhostNS copy: \"%s\"\n", curns->idstr );
+         config_abandonposition( pos );
+         return -1;
+      }
+   }
+   // NOTE -- No need to update NS pointer
+   LOG( LOG_INFO, "Moved within GhostNS \"%s\" to new target: \"%s\"\n", curns->ghsource->idstr, curns->ghtarget->idstr );
+   return 0;
 }
 
 /**
@@ -2474,14 +2624,8 @@ int establish_nsrefs( marfs_config* config ) {
             }
             else {
                // otherwise, identify the NS within the repo
-               size_t i = 0;
-               for ( ; i < tgtrepo->metascheme.nscount; i++ ) {
-                  if ( strcmp( nssegment, tgtrepo->metascheme.nslist[i].name ) == 0 ) {
-                     tgtns = (marfs_ns*)tgtrepo->metascheme.nslist[i].content;
-                     break;
-                  }
-               }
-               if ( tgtns == NULL ) {
+               HASH_NODE* resnode = find_namespace( tgtrepo->nslist, tgtrepo->nscount, nssegment );
+               if ( resnode == NULL ) {
                   LOG( LOG_ERR, "Failed to identify tgtNS \"%s\" of repo \"%s\" for GhostNS: \"%s\"\n",
                        nssegment, tgtreponame, subnode->name );
                   free( tgtreponame );
@@ -2489,6 +2633,7 @@ int establish_nsrefs( marfs_config* config ) {
                   errno = EINVAL;
                   return -1;
                }
+               tgtns = (marfs_ns*)resnode->content;
             }
             free( tgtreponame ); // no need for repo name anymore
             // continue through any NS subpaths
@@ -2544,10 +2689,16 @@ int establish_nsrefs( marfs_config* config ) {
                nssegment = nsparse;
                len = 0;
             }
+            free( tgtnsname ); // finally done parsing over this
+            // perform a final check for incompatible MDALs
+            if ( strcmp( tgtns->prepo->metascheme.mdal->name, subspace->prepo->metascheme.mdal->name ) ) {
+               LOG( LOG_ERR, "Target of GhostNS \"%s\" has an incompatible MDAL: \"%s\"\n", subnode->name, tgtns->idstr );
+               errno = EINVAL;
+               return -1;
+            }
             // populate the ghost NS with the appropriate final target
             LOG( LOG_INFO, "Target of GhostNS \"%s\" identified as \"%s\"\n", subnode->name, tgtns->idstr );
             subspace->ghtarget = tgtns;
-            free( tgtnsname );
          }
          // check for a remote NS reference
          if ( subspace->prepo == NULL ) {
