@@ -2361,7 +2361,7 @@ MDAL_FHANDLE posixmdal_open( MDAL_CTXT ctxt, const char* path, int flags ) {
       LOG( LOG_ERR, "Failed to open target path: \"%s\"\n", path );
       return NULL;
    }
-   // ensure we're not opening a dir ( which requires opendir )
+   // ensure we're not opening a dir ( which requires opendir ) OR exiting the expected device ( potential security issue )
    struct stat fdstat;
    if ( fstat( fd, &(fdstat) ) ) {
       LOG( LOG_ERR, "Could not verify target is a file: \"%s\" (%s)\n", path, strerror(errno) );

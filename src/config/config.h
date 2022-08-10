@@ -90,7 +90,9 @@ typedef struct marfs_namespace_struct {
    HASH_TABLE  subspaces;    // subspace hash table, referencing namespaces below this one
    HASH_NODE*  subnodes;     // subnode list reference ( shared with table ) for safe iter
    size_t      subnodecount; // count of subnode references
-   marfs_ns*   ghosttgt;     // target NS of this ghost ( NULL for non-ghost NS )
+   // GhostNS-specific info
+   marfs_ns*   ghtarget;     // target NS of this ghost ( NULL for non-ghost NS )
+   marfs_ns*   ghsource;     // reference to the original ghost NS instance ( NULL for all but active ghosts )
 } marfs_ns;
 // NOTE -- namespaces will be wrapped in HASH_NODES for use in HASH_TABLEs
 //         the HASH_NODE struct will provide the name string of the namespace

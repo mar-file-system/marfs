@@ -209,7 +209,7 @@ char* config_prevpathelem( char* path, char* curpath ) {
  * @param marfs_ns* ns : Namespace to be freed
  */
 void config_destroyns( marfs_ns* ns ) {
-   if ( ns  &&  ns->ghosttgt ) {
+   if ( ns  &&  ns->ghsource ) {
       if ( ns->subspaces ) { hash_term( ns->subspaces, NULL, NULL ); }
       if ( ns->subnodes ) { free( ns->subnodes ); }
       if ( ns->idstr ) { free( ns->idstr ); }
@@ -217,24 +217,30 @@ void config_destroyns( marfs_ns* ns ) {
    }
 }
 
+/**
+ * Provide the appropraite NS structure resulting from a NS transition
+ * NOTE -- This exists due to the complexity introduced by Ghost namespaces.
+ *         The standard NS case is trivial.
+ * @param marfs_ns* curns : Reference to the current, active NS
+ * @param marfs_ns* nextns : Reference to the NS to enter
+ * @param const char* relpath : Relative path component which resulted in entering this NS
+ * @param char ascending : Flag value indicating direction of travel
+ *                         Zero -> Descending through the NS tree ( nextns is a subspace )
+ *                         Non-Zero -> Ascending through the NS tree ( nextns is a parent )
+ * @return marfs_ns* : Reference to the resulting NS struct, or NULL on failure
+ */
+marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, const char* relpath, char ascending ) {
+   // check for expected case first - currently targetting a standard NS
+   if ( curns->ghsource == NULL ) {
+      // simplest case first, no ghostNS involved
+      if ( nextns->ghtarget == NULL ) {
+         LOG( LOG_INFO, "Simple transition from NS \"%s\" to NS \"%s\"\n", curns->idstr, nextns->idstr );
+         return nextns;
+      }
 
+      // we are moving into a new ghost
+      marfs_ns* tgtns = NULL;
 
-
-marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, char ascending ) {
-   // simplest case first, no ghostNS involved
-   if ( curns->ghosttgt == NULL  &&  nextns->ghosttgt == NULL ) {
-      return nextns;
-   }
-   // sanity check : ghost to ghost transitions should be impossible
-   if ( curns->ghosttgt != NULL  &&  nextns->ghosttgt != NULL ) {
-      LOG( LOG_ERR, "Detected theoretically impossible Ghost-to-Ghost transition from \"%s\" to \"%s\"\n",
-           curns->idstr, nextns->idstr );
-      config_destroyns( curns ); // attempt to free the current NS
-      return NULL;
-   }
-   marfs_ns* tgtns = NULL;
-   // moving into a new ghost
-   if ( curns->ghosttgt == NULL  &&  nextns->ghosttgt != NULL ) {
       if ( ascending ) {
          // should be impossible for a standard NS to be a child of a ghost
          LOG( LOG_ERR, "Cannot ascend from a standard NS into a GhostNS\n" );
@@ -246,38 +252,43 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, char ascending ) {
          LOG( LOG_ERR, "Failed to allocate space for a new GhostNS\n" );
          return NULL;
       }
-      // Parent of the copy should match that of the GhostNS
+      // Store the original GhostNS as our source ( will never change for this copy )
+      tgtns->ghsource = nextns;
+      // Target of the copy should match that of the Ghost itself
+      tgtns->ghtarget = nextns->ghtarget;
+      // Parent NS of the copy should match that of the Ghost
       tgtns->pnamespace = nextns->pnamespace;
-      // Target of the copy should be the Ghost itself
-      tgtns->ghosttgt = nextns;
-      // Ghost copy inherits most of the GhostTgtNS values with slight modification
-      tgtns->idstr = strdup( nextns->ghosttgt->idstr );
+      // Parent repo of the copy should match that of the GhostNS ( will never change for this copy )
+      tgtns->prepo = nextns->prepo;
+      // ID String becomes a copy of the GhostNS itself ( for now )
+      tgtns->idstr = strdup( nextns->idstr );
       if ( tgtns->idstr == NULL ) {
          LOG( LOG_ERR, "Failed to duplicate tgtNS ID string for copy of GhostNS: \"%s\"\n", nextns->idstr );
          free( tgtns );
          return NULL;
       }
-      tgtns->prepo = nextns->ghosttgt->prepo;
+      // Ghost copy inherits most of the GhostTgtNS values with slight modification
       // Quotas become the 'lesser' values, between the Ghost and its target
       //    ( with zero considered the 'greatest', unlimited, value )
       tgtns->fquota = nextns->fquota;
-      if ( nextns->ghosttgt->fquota  &&  (nextns->ghosttgt->fquota < tgtns->fquota  ||  tgtns->fquota == 0 ) ) {
-         tgtns->fquota = nextns->ghosttgt->fquota;
+      if ( nextns->ghtarget->fquota  &&  (nextns->ghtarget->fquota < tgtns->fquota  ||  tgtns->fquota == 0 ) ) {
+         tgtns->fquota = nextns->ghtarget->fquota;
       }
       tgtns->dquota = nextns->dquota;
-      if ( nextns->ghosttgt->dquota  &&  (nextns->ghosttgt->dquota < tgtns->dquota  ||  tgtns->dquota == 0 ) ) {
-         tgtns->dquota = nextns->ghosttgt->dquota;
+      if ( nextns->ghtarget->dquota  &&  (nextns->ghtarget->dquota < tgtns->dquota  ||  tgtns->dquota == 0 ) ) {
+         tgtns->dquota = nextns->ghtarget->dquota;
       }
       // Permissions become the most restrictive set, between the Ghost at its target
-      tgtns->iperms = ( nextns->iperms & nextns->ghosttgt->iperms );
-      tgtns->bperms = ( nextns->bperms & nextns->ghosttgt->bperms );
+      tgtns->iperms = ( nextns->iperms & nextns->ghtarget->iperms );
+      tgtns->bperms = ( nextns->bperms & nextns->ghtarget->bperms );
       // Subspaces become a copy of the Ghost's target NS subspaces, EXCLUDING ALL GHOSTS
-      //    ( Ghost inclusion -> possible FS loop )
-      HASH_NODE* parsenode = nextns->ghosttgt->subnodes;
+      //    ( Ghost inclusion implies possible FS loop )
+      HASH_NODE* parsenode = nextns->ghtarget->subnodes;
       size_t parsecount = 0;
       tgtns->subnodecount = 0;
-      for ( ; parsecount < nextns->ghosttgt->subnodecount; parsecount++ ) {
-         if ( ( (marfs_ns*)parsenode->content )->ghosttgt == NULL ) { tgtns->subnodecount++; }
+      // count up non-ghost children of the target
+      for ( ; parsecount < nextns->ghtarget->subnodecount; parsecount++ ) {
+         if ( ( (marfs_ns*)parsenode->content )->ghtarget == NULL ) { tgtns->subnodecount++; }
          parsenode++;
       }
       tgtns->subspaces = NULL;
@@ -292,10 +303,10 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, char ascending ) {
             return NULL;
          }
          // copy non-GhostNS nodes
-         parsenode = nextns->ghosttgt->subnodes;
+         parsenode = nextns->ghtarget->subnodes;
          size_t nodeindex = 0;
-         for ( parsecount = 0; parsecount < nextns->ghosttgt->subnodecount; parsecount++ ) {
-            if ( ( (marfs_ns*)parsenode->content )->ghosttgt == NULL ) {
+         for ( parsecount = 0; parsecount < nextns->ghtarget->subnodecount; parsecount++ ) {
+            if ( ( (marfs_ns*)parsenode->content )->ghtarget == NULL ) {
                HASH_NODE* editnode = tgtns->subnodes + nodeindex;
                nodeindex++;
                // just directly copy hash node values, rather than duplicating
@@ -317,19 +328,169 @@ marfs_ns* config_enterns( marfs_ns* curns, marfs_ns* nextns, char ascending ) {
          }
       }
       // provide the new, dynamically allocated target
+      LOG( LOG_INFO, "Entered newly created copy of GhostNS \"%s\" from parent NS \"%s\"\n", tgtns->idstr, curns->idstr );
       return tgtns;
    }
-   // moving within a GhostNS
-   if ( curns->ghosttgt != NULL  &&  nextns->ghosttgt == NULL ) {
-      // check if we're exiting the active Ghost, by traversing up to its parent NS
-      if ( ascending  &&  curns->ghosttgt->pnamespace == nextns ) {
-         // we are exiting the ghost dimension and need to destory our dynamically allocated NS
-         config_destroyns( curns );
-         return nextns;
-      }
-      // TODO : Update the content of our Ghost copy to reflect the new target
+
+   // we are moving within a GhostNS ( curns->ghsource != NULL )
+
+   // sanity check : ghost to ghost transitions should be impossible
+   if ( nextns->ghtarget != NULL ) {
+      LOG( LOG_ERR, "Detected theoretically impossible Ghost-to-Ghost transition from \"%s\" to \"%s\"\n",
+           curns->idstr, nextns->idstr );
+      return NULL;
    }
-   return NULL;
+   // check if we're exiting the active Ghost, by traversing up to its parent NS
+   if ( ascending  &&  curns->ghsource->pnamespace == nextns ) {
+      // we are exiting the ghost dimension and need to destory our dynamically allocated NS
+      LOG( LOG_INFO, "Exiting GhostNS \"%s\" and entering parent: \"%s\"\n", curns->ghsource->idstr, nextns->idstr );
+      config_destroyns( curns );
+      return nextns;
+   }
+   // Target the new NS
+   curns->ghtarget = nextns;
+   // Parent NS of the copy should match that of the target in most cases
+   curns->pnamespace = nextns->pnamespace;
+   if ( nextns == curns->ghsource->ghtarget ) {
+      // special case, reentering the origianl NS target means we must inherit the original Ghost's parent
+      //    We're redirecting, such that further ascent will exit the Ghost rather than continue up the tree
+      curns->pnamespace = curns->ghsource->pnamespace;
+      // sanity check : this should only ever happen when ascending
+      if ( !(ascending) ) {
+         LOG( LOG_ERR, "Encountered original target NS \"%s\" of GhostNS \"%s\" when NOT ascending\n", nextns->idstr, curns->ghsource->idstr );
+         return NULL;
+      }
+   }
+   // NOTE -- Parent repo never changes
+   // ID String manipulation depends on direction
+   char* repostr;
+   char* nspath;
+   if ( config_nsinfo( curns->idstr, &(repostr), &(nspath) ) ) {
+      LOG( LOG_ERR, "Failed to identify NS path value of active Ghost copy: \"%s\"\n", curns->idstr );
+      return NULL;
+   }
+   if ( ascending ) {
+      // we need to strip off the last path component
+      char* parsepath = nspath;
+      char* prevelem = NULL;
+      while ( *parsepath != '\0' ) {
+         if ( *parsepath == '/' ) {
+            prevelem = parsepath;
+            while ( *parsepath == '/' ) { parsepath++; } // skip any repeated slashes
+            continue;
+         }
+         parsepath++;
+      }
+      if ( prevelem == NULL ) {
+         LOG( LOG_ERR, "Failed to identify final path component of NS string: \"%s\"\n", nspath );
+         free( repostr );
+         free( nspath );
+         return NULL;
+      }
+      // just truncate the string directly
+      *prevelem = '\0';
+      // allocate a new ID string
+      size_t newstrlen = strlen(repostr) + 1 + strlen(nspath) + 1;
+      char* tmpidstr = malloc( sizeof( char ) * newstrlen );
+      if ( tmpidstr == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate a new ID string (ascending)\n" );
+         free( repostr );
+         free( nspath );
+         return NULL;
+      }
+      if ( snprintf( tmpidstr, newstrlen, "%s|%s", repostr, nspath ) < 2 ) {
+         LOG( LOG_ERR, "Failed to populate new ID string (ascending)\n" );
+         free( tmpidstr );
+         free( repostr );
+         free( nspath );
+         return NULL;
+      }
+      free( curns->idstr );
+      curns->idstr = tmpidstr;
+   }
+   else {
+      // we need to append the next relative path component
+      size_t newstrlen = strlen(repostr) + 1 + strlen(nspath) + 1 + strlen(relpath) + 1;
+      char* tmpidstr = malloc( sizeof(char) * newstrlen );
+      if ( tmpidstr == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate a new ID string (descending)\n" );
+         free( repostr );
+         free( nspath );
+         return NULL;
+      }
+      if ( snprintf( tmpidstr, newstrlen, "%s|%s/%s", repostr, nspath, relpath ) < 3 ) {
+         LOG( LOG_ERR, "Failed to populate new ID string (descending)\n" );
+         free( tmpidstr );
+         free( repostr );
+         free( nspath );
+         return NULL;
+      }
+      free( curns->idstr );
+      curns->idstr = tmpidstr;
+   }
+   // Ghost copy inherits most of the new NS values with slight modification
+   // Quotas become the 'lesser' values, between the original Ghost and new target
+   //    ( with zero considered the 'greatest', unlimited, value )
+   curns->fquota = curns->ghsource->fquota;
+   if ( nextns->fquota  &&  (nextns->fquota < curns->fquota  ||  curns->fquota == 0 ) ) {
+      curns->fquota = nextns->fquota;
+   }
+   curns->dquota = curns->ghsource->dquota;
+   if ( nextns->dquota  &&  (nextns->dquota < curns->dquota  ||  curns->dquota == 0 ) ) {
+      curns->dquota = nextns->dquota;
+   }
+   // Permissions become the most restrictive set, between the Ghost at its target
+   curns->iperms = ( curns->ghsource->iperms & nextns->iperms );
+   curns->bperms = ( curns->ghsource->bperms & nextns->bperms );
+   // clear out the subspace allocations of the copy
+   if ( curns->subspaces ) { hash_term( curns->subspaces, NULL, NULL ); }
+   if ( curns->subnodes ) { free( curns->subnodes ); }
+   // Subspaces become a copy of the target NS subspaces, EXCLUDING ALL GHOSTS
+   //    ( Ghost inclusion implies possible FS loop )
+   HASH_NODE* parsenode = nextns->subnodes;
+   size_t parsecount = 0;
+   curns->subnodecount = 0;
+   // count up non-ghost children of the target
+   for ( ; parsecount < nextns->subnodecount; parsecount++ ) {
+      if ( ( (marfs_ns*)parsenode->content )->ghtarget == NULL ) { curns->subnodecount++; }
+      parsenode++;
+   }
+   curns->subspaces = NULL;
+   curns->subnodes = NULL;
+   if ( curns->subnodecount ) {
+      // allocate subspace list
+      curns->subnodes = malloc( sizeof( HASH_NODE ) * curns->subnodecount );
+      if ( curns->subnodes == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate subnode list for active GhostNS copy: \"%s\"\n", curns->idstr );
+         return NULL;
+      }
+      // copy non-GhostNS nodes
+      parsenode = nextns->subnodes;
+      size_t nodeindex = 0;
+      for ( parsecount = 0; parsecount < nextns->subnodecount; parsecount++ ) {
+         if ( ( (marfs_ns*)parsenode->content )->ghtarget == NULL ) {
+            HASH_NODE* editnode = curns->subnodes + nodeindex;
+            nodeindex++;
+            // just directly copy hash node values, rather than duplicating
+            editnode->name = parsenode->name;
+            editnode->weight = parsenode->weight;
+            editnode->content = parsenode->content;
+            if ( nodeindex == curns->subnodecount ) { break; } // potentially exit early
+         }
+         parsenode++;
+      }
+      // establish the subspace table
+      curns->subspaces = hash_init( curns->subnodes, curns->subnodecount, 1 );
+      if ( curns->subspaces == NULL ) {
+         LOG( LOG_ERR, "Failed to initialize subspace table for active GhostNS copy: \"%s\"\n", curns->idstr );
+         free( curns->subnodes );
+         curns->subnodes = NULL;
+         return NULL;
+      }
+   }
+
+   LOG( LOG_INFO, "Moving within GhostNS \"%s\" to new target: \"%s\"\n", curns->ghsource->idstr, curns->ghtarget->idstr );
+   return curns;
 }
 
 /**
@@ -554,7 +715,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
          }
          // this is a NS path
          if ( *nextpelem != '\0' ) {
-            // update our ctxt to reflect the new NS
+            // we will be traversing within the NS; update our ctxt to reflect the new NS
             if ( pos->ns->prepo == ((marfs_ns*)(resnode->content))->prepo ) {
                // if the repo is the same, we can shift the current ctxt
                if ( mdal->setnamespace( pos->ctxt, pathelem ) ) {
@@ -1158,7 +1319,8 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    ns->subspaces = NULL;
    ns->subnodes = NULL;
    ns->subnodecount = 0;
-   ns->ghosttgt = NULL;
+   ns->ghtarget = NULL;
+   ns->ghsource = NULL;
 
    // set parent values
    ns->prepo = prepo;
@@ -1177,8 +1339,8 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    }
    size_t idstrlen;
    if ( gns ) {
-      // we'll indicate this is a ghost namespace via a self-referential ghosttgt ( real tgt determined later )
-      ns->ghosttgt = ns;
+      // we'll indicate this is a ghost namespace via a self-referential ghtarget ( real tgt determined later )
+      ns->ghtarget = ns;
       // stash the ghost target info into the id string
       idstrlen = strlen( reponame ) + 2 + strlen( nstgt );
    }
@@ -2269,7 +2431,7 @@ int establish_nsrefs( marfs_config* config ) {
          marfs_ns* subspace = (marfs_ns*)(subnode->content);
          if ( subspace == NULL ) { LOG( LOG_ERR, "NULL subspace ref\n" ); return -1; }
          // check for a ghost NS
-         if ( subspace->ghosttgt ) {
+         if ( subspace->ghtarget ) {
             // the ghost NS idstring should contain both the repo and NS of the target
             char* tgtreponame;
             char* tgtnsname;
@@ -2384,7 +2546,7 @@ int establish_nsrefs( marfs_config* config ) {
             }
             // populate the ghost NS with the appropriate final target
             LOG( LOG_INFO, "Target of GhostNS \"%s\" identified as \"%s\"\n", subnode->name, tgtns->idstr );
-            subspace->ghosttgt = tgtns;
+            subspace->ghtarget = tgtns;
             free( tgtnsname );
          }
          // check for a remote NS reference
