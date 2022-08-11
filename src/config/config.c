@@ -424,7 +424,8 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
       return -1;
    }
    // check if we're exiting the active Ghost, by traversing up to its parent NS
-   if ( ascending  &&  curns->ghsource->pnamespace == nextns ) {
+   //    NOTE -- The parent of the inital ghost may be the target of that ghost, making this check more complex
+   if ( ascending  &&  curns->ghtarget == curns->ghsource->ghtarget  &&  curns->ghsource->pnamespace == nextns ) {
       // we are exiting the ghost dimension!
       // GhostNS contexts must always be destroyed
       if ( pos->ctxt  &&  curns->ghtarget->prepo->metascheme.mdal->destroyctxt( pos->ctxt ) ) {
@@ -452,9 +453,9 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
          LOG( LOG_INFO, "Established a fresh MDAL_CTXT after exiting the ghost dimension\n" );
       }
       // update our NS ref to the standard NS target
+      LOG( LOG_INFO, "Exited GhostNS \"%s\" and entered parent: \"%s\"\n", curns->ghsource->idstr, nextns->idstr );
       config_destroyns( pos->ns );
       pos->ns = nextns;
-      LOG( LOG_INFO, "Exited GhostNS \"%s\" and entered parent: \"%s\"\n", curns->ghsource->idstr, nextns->idstr );
       return 0;
    }
    // Target the new NS
@@ -464,6 +465,8 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
    if ( nextns == curns->ghsource->ghtarget ) {
       // special case, reentering the origianl NS target means we must inherit the original Ghost's parent
       //    We're redirecting, such that further ascent will exit the Ghost rather than continue up the tree
+      LOG( LOG_INFO, "Redirecting parent of active Ghost copy \"%s\" to \"%s\"\n",
+                     curns->idstr, curns->ghsource->pnamespace->idstr );
       curns->pnamespace = curns->ghsource->pnamespace;
       // sanity check : this should only ever happen when ascending
       if ( !(ascending) ) {
@@ -520,6 +523,8 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
          config_abandonposition( pos );
          return -1;
       }
+      free( repostr );
+      free( nspath );
       free( curns->idstr );
       curns->idstr = tmpidstr;
    }
@@ -542,6 +547,8 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
          config_abandonposition( pos );
          return -1;
       }
+      free( repostr );
+      free( nspath );
       free( curns->idstr );
       curns->idstr = tmpidstr;
    }
@@ -3064,7 +3071,6 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
 
    // traverse the entire NS hierarchy, creating any missing NSs and reference dirs
    int errcount = 0;
-   marfs_ns* curns = pos.ns;
    size_t curdepth = 1;
    size_t nscount = 0;
    char createcurrent = 1;
@@ -3073,14 +3079,14 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
          nscount++;
          int olderr = errno;
          errno = 0;
-         MDAL curmdal = curns->prepo->metascheme.mdal;
+         MDAL curmdal = pos.ns->prepo->metascheme.mdal;
          MDAL_CTXT nsctxt = NULL;
          // potentially verify the MDAL / libNE context of this NS's parent repo
          char checkmdalsec = MDALcheck;
          char checklibne = NEcheck;
          size_t repoiter = 0;
          for ( ; ( repoiter < vrepocnt )  &&  ( checkmdalsec  ||  checklibne ); repoiter++ ) {
-            if ( curns->prepo == vrepos[repoiter] ) { // don't reverify a repo we've already seen
+            if ( pos.ns->prepo == vrepos[repoiter] ) { // don't reverify a repo we've already seen
                checkmdalsec = 0;
                checklibne = 0;
             }
@@ -3089,59 +3095,60 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             int verres = curmdal->checksec( curmdal->ctxt, fix );
             if ( verres < 0 ) {
                LOG( LOG_ERR, "Failed to verify the MDAL security of repo: \"%s\" (%s)\n",
-                             curns->prepo->name, strerror(errno) );
+                             pos.ns->prepo->name, strerror(errno) );
                free( vrepos );
                free( nsiterlist );
                return -1;
             }
             else if ( verres ) {
                LOG( LOG_INFO, "MDAL of repo \"%s\" has %d uncorrected security errors\n",
-                              curns->prepo->name );
+                              pos.ns->prepo->name );
                errcount++;
             }
          }
          if ( checklibne ) {
-            int verres = ne_verify( curns->prepo->datascheme.nectxt, fix );
+            int verres = ne_verify( pos.ns->prepo->datascheme.nectxt, fix );
             if ( verres < 0 ) {
                LOG( LOG_ERR, "Failed to verify ne_ctxt of repo: \"%s\" (%s)\n",
-                             curns->prepo->name, strerror(errno) );
+                             pos.ns->prepo->name, strerror(errno) );
                free( vrepos );
                free( nsiterlist );
                return -1;
             }
             else if ( verres ) {
                LOG( LOG_INFO, "ne_ctxt of repo \"%s\" encountered %d errors\n",
-                              curns->prepo->name, verres );
+                              pos.ns->prepo->name, verres );
                errcount++;
             }
          }
          // get the path of this NS
          char* nspath = NULL;
-         if ( config_nsinfo( curns->idstr, NULL, &(nspath) ) ) {
-            LOG( LOG_ERR, "Failed to retrieve path of NS: \"%s\"\n", curns->idstr );
+         if ( config_nsinfo( pos.ns->idstr, NULL, &(nspath) ) ) {
+            LOG( LOG_ERR, "Failed to retrieve path of NS: \"%s\"\n", pos.ns->idstr );
             errcount++;
          }
          // attempt to create the current NS ( if 'fix' is specified )
          else if ( fix  &&  curmdal->createnamespace( curmdal->ctxt, nspath )  &&
                    errno != EEXIST ) {
-            LOG( LOG_ERR, "Failed to create NS: \"%s\" (%s)\n", curns->idstr, strerror(errno) );
+            LOG( LOG_ERR, "Failed to create NS: \"%s\" (%s)\n", pos.ns->idstr, strerror(errno) );
             errcount++;
          }
-         // attempt to create a CTXT for that NS
-         else if ( (nsctxt = curmdal->newctxt( nspath, curmdal->ctxt )) == NULL ) {
+         // attempt to create a CTXT for that NS ( skipped for ghosts )
+         else if ( !(pos.ns->ghsource)  &&  (nsctxt = curmdal->newctxt( nspath, curmdal->ctxt )) == NULL ) {
             LOG( LOG_ERR, "Failed to create MDAL_CTXT for NS: \"%s\"\n", nspath );
             errcount++;
          }
          // verify all reference dirs of this NS
-         else {
+         //    skip this if we're in ThE gHoSt DiMeNsIoN!!!!
+         else if ( !(pos.ns->ghsource) ){
             size_t curref = 0;
             char anyerror = 0;
-            for ( ; curref < curns->prepo->metascheme.refnodecount; curref++ ) {
+            for ( ; curref < pos.ns->prepo->metascheme.refnodecount; curref++ ) {
                int mkdirres = 0;
-               char* rparse = strdup( curns->prepo->metascheme.refnodes[curref].name );
+               char* rparse = strdup( pos.ns->prepo->metascheme.refnodes[curref].name );
                char* rfullpath = rparse;
                if ( rparse == NULL ) {
-                  LOG( LOG_ERR, "Failed to duplicate reference string: \"%s\"\n", curns->prepo->metascheme.refnodes[curref].name );
+                  LOG( LOG_ERR, "Failed to duplicate reference string: \"%s\"\n", pos.ns->prepo->metascheme.refnodes[curref].name );
                   anyerror = 1;
                   continue;
                }
@@ -3217,7 +3224,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             else { errno = olderr; }
          }
          // cleanup after ourselves
-         if ( curmdal->destroyctxt( nsctxt ) ) {
+         if ( nsctxt  &&  curmdal->destroyctxt( nsctxt ) ) {
             // just warn if we can't clean this up
             LOG( LOG_WARNING, "Failed to destory MDAL_CTXT of NS \"%s\"\n", nspath );
          }
@@ -3228,9 +3235,18 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
       if ( !(recurse) ) { break; }
 
       // identify next NS target
-      if ( nsiterlist[curdepth - 1] < curns->subnodecount ) {
+      if ( nsiterlist[curdepth - 1] < pos.ns->subnodecount ) {
          // proceed to the next subspace of the current NS
-         curns = (marfs_ns*)( curns->subnodes[ nsiterlist[curdepth - 1] ].content );
+         marfs_ns* newnstgt = (marfs_ns*)( pos.ns->subnodes[ nsiterlist[curdepth - 1] ].content );
+         if ( config_enterns( &pos, newnstgt, pos.ns->subnodes[ nsiterlist[curdepth - 1] ].name, 0 ) ) {
+            LOG( LOG_ERR, "Failed to transition position into subspace: \"%s\"\n", newnstgt->idstr );
+            umask(oldmask); // reset umask
+            free( vrepos );
+            free( nsiterlist );
+            return -1;
+         }
+         LOG( LOG_INFO, "Incrementing iterator for parent ( index = %zu / iter = %zu )\n",
+                        curdepth - 1, nsiterlist[ curdepth - 1 ] + 1 );
          nsiterlist[ curdepth - 1 ]++; // increment our iterator at this depth
          curdepth++;
          if ( curdepth >= curiteralloc ) {
@@ -3239,7 +3255,6 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                LOG( LOG_ERR, "Failed to allocate extended NS iterator list\n" );
                umask(oldmask); // reset umask
                free( vrepos );
-               free( nsiterlist );
                return -1;
             }
             curiteralloc += 1024;
@@ -3249,7 +3264,13 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
       }
       else {
          // proceed back up to the parent of this space
-         curns = curns->pnamespace;
+         if ( pos.ns->pnamespace  &&  config_enterns( &pos, pos.ns->pnamespace, "..", 0 ) ) {
+            LOG( LOG_ERR, "Failed to transition to the parent of current NS\n" );
+            umask(oldmask); // reset umask
+            free( vrepos );
+            free( nsiterlist );
+            return -1;
+         }
          curdepth--;
          createcurrent = 0; // the parent space has already been verified
       }
