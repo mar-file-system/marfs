@@ -237,6 +237,9 @@ void freestream(DATASTREAM stream) {
    if (stream->streamid) {
       free(stream->streamid);
    }
+   if ( stream->ns ) {
+      config_destroynsref( stream->ns );
+   }
    if (stream->ftagstr) {
       free(stream->ftagstr);
    }
@@ -1432,7 +1435,11 @@ DATASTREAM genstream(STREAM_TYPE type, const char* path, char rpathflag, marfs_p
    stream->type = type;
    stream->ctag = NULL;
    stream->streamid = NULL;
-   stream->ns = pos->ns;
+   stream->ns = config_duplicatensref( pos->ns );
+   if ( stream->ns == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate nsref from position\n" );
+      return NULL;
+   }
    stream->recoveryheaderlen = 0; // redefined below
    stream->fileno = 0;
    stream->objno = 0;
@@ -2208,7 +2215,7 @@ int datastream_create(DATASTREAM* stream, const char* path, marfs_position* pos,
          errno = EINVAL;
          return -1;
       }
-      if (newstream->ns != pos->ns) {
+      if ( strcmp( newstream->ns->idstr, pos->ns->idstr ) ) {
          LOG(LOG_INFO, "Received datastream has different NS target: \"%s\"\n",
             newstream->ns->idstr);
          // can't continue with a stream from a previous NS
@@ -2370,7 +2377,7 @@ int datastream_open(DATASTREAM* stream, STREAM_TYPE type, const char* path, marf
          return -1;
       }
       STREAMFILE* curfile = newstream->files + newstream->curfile;
-      if (newstream->ns != pos->ns) {
+      if ( strcmp( newstream->ns->idstr, pos->ns->idstr ) ) {
          // stream MUST match in NS
          LOG(LOG_INFO, "Received datastream has different NS target: \"%s\"\n",
             newstream->ns->idstr);
@@ -2528,7 +2535,7 @@ int datastream_scan(DATASTREAM* stream, const char* refpath, marfs_position* pos
          return -1;
       }
       STREAMFILE* curfile = newstream->files + newstream->curfile;
-      if (newstream->ns != pos->ns) {
+      if ( strcmp( newstream->ns->idstr, pos->ns->idstr ) ) {
          // stream MUST match in NS
          LOG(LOG_INFO, "Received datastream has different NS target: \"%s\"\n",
             newstream->ns->idstr);
@@ -2685,7 +2692,7 @@ int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* p
          errno = EINVAL;
          return -1;
       }
-      if (newstream->ns != pos->ns) {
+      if ( strcmp( newstream->ns->idstr, pos->ns->idstr ) ) {
          LOG(LOG_INFO, "Received datastream has different NS target: \"%s\"\n",
             newstream->ns->idstr);
          // can't continue with a stream from a previous NS

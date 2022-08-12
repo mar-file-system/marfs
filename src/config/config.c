@@ -224,6 +224,8 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
    if ( curns->ghsource == NULL ) {
       // simplest case first, no ghostNS involved
       if ( nextns->ghtarget == NULL ) {
+         // update the NS
+         pos->ns = nextns;
          // update or destroy any existing ctxt
          if ( curns->prepo == nextns->prepo  &&  updatectxt ) {
             // shifting NS within a repo means we can directly update
@@ -242,17 +244,8 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
             pos->ctxt = NULL;
             // potentially recreate
             if ( updatectxt ) {
-               // determine the NS path
-               char* nspath;
-               if ( config_nsinfo( nextns->idstr, NULL, &(nspath) ) ) {
-                  LOG( LOG_ERR, "Failed to identify the nspath of next NS: \"%s\"\n", nextns->idstr );
-                  config_abandonposition( pos );
-                  return -1;
-               }
                // create a fresh ctxt
-               pos->ctxt = nextns->prepo->metascheme.mdal->newctxt( nspath, nextns->prepo->metascheme.mdal->ctxt );
-               free( nspath );
-               if ( pos->ctxt == NULL ) {
+               if ( config_fortifyposition( pos ) ) {
                   LOG( LOG_ERR, "Failed to establish a fresh ctxt for next NS: \"%s\"\n", nextns->idstr );
                   config_abandonposition( pos );
                   return -1;
@@ -260,7 +253,6 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
                LOG( LOG_INFO, "Established a fresh MDAL_CTXT following cross-repo NS transition\n" );
             }
          }
-         pos->ns = nextns;
          LOG( LOG_INFO, "Performed simple transition from NS \"%s\" to NS \"%s\"\n", curns->idstr, nextns->idstr );
          return 0;
       }
@@ -359,7 +351,8 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
             return -1;
          }
       }
-      // Dynamically allocated NS target is ready; now we must update the ctxt
+      // provide the new, dynamically allocated NS target
+      pos->ns = tgtns;
       // GhostNS contexts must always be freshly created
       if ( pos->ctxt  &&  curns->prepo->metascheme.mdal->destroyctxt( pos->ctxt ) ) {
          // nothing to do but complain
@@ -367,38 +360,13 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
       }
       pos->ctxt = NULL;
       if ( updatectxt ) {
-         // identify paths for both the ghost and target NS
-         char* ghostpath;
-         if ( config_nsinfo( tgtns->idstr, NULL, &(ghostpath) ) ) {
-            LOG( LOG_ERR, "Failed to identify path of new GhostNS copy: \"%s\"\n", tgtns->idstr );
-            config_destroynsref( tgtns );
-            config_abandonposition( pos );
-            return -1;
-         }
-         char* tgtpath;
-         if ( config_nsinfo( tgtns->ghtarget->idstr, NULL, &(tgtpath) ) ) {
-            LOG( LOG_ERR, "Failed to identify path of new GhostNS copy target: \"%s\"\n", tgtns->ghtarget->idstr );
-            free( ghostpath );
-            config_destroynsref( tgtns );
-            config_abandonposition( pos );
-            return -1;
-         }
-         // generate a new 'split' ctxt, using the Ghost postion for user paths and the tgt postion for reference paths
-         pos->ctxt = tgtns->ghtarget->prepo->metascheme.mdal->newsplitctxt( ghostpath,
-                                                                            tgtns->ghsource->prepo->metascheme.mdal->ctxt,
-                                                                            tgtpath,
-                                                                            tgtns->ghtarget->prepo->metascheme.mdal->ctxt );
-         free( tgtpath );
-         free( ghostpath );
-         if ( pos->ctxt == NULL ) {
+         // generate a new 'split' ctxt
+         if ( config_fortifyposition( pos ) ) {
             LOG( LOG_ERR, "Failed to generate split ctxt for new GhostNS copy: \"%s\"\n", tgtns->idstr );
-            config_destroynsref( tgtns );
             config_abandonposition( pos );
             return -1;
          }
       }
-      // provide the new, dynamically allocated NS target
-      pos->ns = tgtns;
       LOG( LOG_INFO, "Entered newly created copy of GhostNS \"%s\" from parent NS \"%s\"\n", tgtns->idstr, curns->idstr );
       return 0;
    }
@@ -416,6 +384,7 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
    //    NOTE -- The parent of the inital ghost may be the target of that ghost, making this check more complex
    if ( ascending  &&  curns->ghtarget == curns->ghsource->ghtarget  &&  curns->ghsource->pnamespace == nextns ) {
       // we are exiting the ghost dimension!
+      pos->ns = nextns;
       // GhostNS contexts must always be destroyed
       if ( pos->ctxt  &&  curns->ghtarget->prepo->metascheme.mdal->destroyctxt( pos->ctxt ) ) {
          // nothing to do but complain
@@ -424,27 +393,17 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
       pos->ctxt = NULL;
       // potentially recreate
       if ( updatectxt ) {
-         // determine the NS path
-         char* nspath;
-         if ( config_nsinfo( nextns->idstr, NULL, &(nspath) ) ) {
-            LOG( LOG_ERR, "Failed to identify the nspath of next NS: \"%s\"\n", nextns->idstr );
-            config_abandonposition( pos );
-            return -1;
-         }
          // create a fresh ctxt
-         pos->ctxt = nextns->prepo->metascheme.mdal->newctxt( nextns->prepo->metascheme.mdal->ctxt, nspath );
-         free( nspath );
-         if ( pos->ctxt == NULL ) {
+         if ( config_fortifyposition( pos ) ) {
             LOG( LOG_ERR, "Failed to establish a fresh ctxt for next NS: \"%s\"\n", nextns->idstr );
             config_abandonposition( pos );
+            config_destroynsref( curns );
             return -1;
          }
          LOG( LOG_INFO, "Established a fresh MDAL_CTXT after exiting the ghost dimension\n" );
       }
-      // update our NS ref to the standard NS target
       LOG( LOG_INFO, "Exited GhostNS \"%s\" and entered parent: \"%s\"\n", curns->ghsource->idstr, nextns->idstr );
-      config_destroynsref( pos->ns );
-      pos->ns = nextns;
+      config_destroynsref( curns );
       return 0;
    }
    // Target the new NS
@@ -602,6 +561,7 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
          return -1;
       }
    }
+   // NOTE -- No need to update NS pointer
 
    // GhostNS contexts must always be freshly created
    if ( pos->ctxt  &&  curns->ghtarget->prepo->metascheme.mdal->destroyctxt( pos->ctxt ) ) {
@@ -610,34 +570,13 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
    }
    pos->ctxt = NULL;
    if ( updatectxt ) {
-      // identify paths for both the ghost and target NS
-      char* ghostpath;
-      if ( config_nsinfo( curns->idstr, NULL, &(ghostpath) ) ) {
-         LOG( LOG_ERR, "Failed to identify path of active GhostNS copy: \"%s\"\n", curns->idstr );
-         config_abandonposition( pos );
-         return -1;
-      }
-      char* tgtpath;
-      if ( config_nsinfo( curns->ghtarget->idstr, NULL, &(tgtpath) ) ) {
-         LOG( LOG_ERR, "Failed to identify path of active GhostNS copy target: \"%s\"\n", curns->ghtarget->idstr );
-         free( ghostpath );
-         config_abandonposition( pos );
-         return -1;
-      }
-      // generate a new 'split' ctxt, using the Ghost postion for user paths and the tgt postion for reference paths
-      pos->ctxt = curns->ghtarget->prepo->metascheme.mdal->newsplitctxt( ghostpath,
-                                                                         curns->ghsource->prepo->metascheme.mdal->ctxt,
-                                                                         tgtpath,
-                                                                         curns->ghtarget->prepo->metascheme.mdal->ctxt );
-      free( tgtpath );
-      free( ghostpath );
-      if ( pos->ctxt == NULL ) {
+      // generate a new 'split' ctxt
+      if ( config_fortifyposition( pos ) ) {
          LOG( LOG_ERR, "Failed to generate split ctxt for active GhostNS copy: \"%s\"\n", curns->idstr );
          config_abandonposition( pos );
          return -1;
       }
    }
-   // NOTE -- No need to update NS pointer
    LOG( LOG_INFO, "Moved within GhostNS \"%s\" to new target: \"%s\"\n", curns->ghsource->idstr, curns->ghtarget->idstr );
    return 0;
 }
@@ -2976,7 +2915,7 @@ void config_destroynsref( marfs_ns* ns ) {
 }
 
 /**
- * Create a fresh marfs_position struct, targetting the MarFS root
+ * Create a fresh marfs_position struct, targeting the MarFS root
  * @param marfs_position* pos : Reference to the position to be initialized,
  * @param marfs_config* config : Reference to the config to be used
  * @return int : Zero on success, or -1 on failure
@@ -3054,6 +2993,75 @@ int config_duplicateposition( marfs_position* srcpos, marfs_position* destpos ) 
       destpos->ctxt = NULL;
    }
    LOG( LOG_INFO, "Position values successfully copied\n" );
+   return 0;
+}
+
+/**
+ * Establish a CTXT for the given position, if it is lacking one
+ * @param marfs_position* pos : Reference to the position
+ * @return int : Zero on success ( ctxt established or already present ),
+ *               or -1 on failure
+ */
+int config_fortifyposition( marfs_position* pos ) {
+   // check for NULL arg
+   if ( pos == NULL ) {
+      LOG( LOG_ERR, "Received a NULL pos arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( pos->ns == NULL ) {
+      LOG( LOG_ERR, "Received an inactive pos arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // check if the position is lacking a ctxt
+   if ( pos->ctxt ) {
+      LOG( LOG_INFO, "Position already has a MDAL_CTXT\n" );
+      return 0;
+   }
+   // generation behavior differs for ghosts
+   if ( pos->ns->ghsource ) {
+
+      // identify paths for both the ghost and target NS
+      char* ghostpath;
+      if ( config_nsinfo( pos->ns->idstr, NULL, &(ghostpath) ) ) {
+         LOG( LOG_ERR, "Failed to identify path of GhostNS copy: \"%s\"\n", pos->ns->idstr );
+         return -1;
+      }
+      char* tgtpath;
+      if ( config_nsinfo( pos->ns->ghtarget->idstr, NULL, &(tgtpath) ) ) {
+         LOG( LOG_ERR, "Failed to identify path of GhostNS copy target: \"%s\"\n", pos->ns->ghtarget->idstr );
+         free( ghostpath );
+         return -1;
+      }
+      // generate a new 'split' ctxt, using the Ghost postion for user paths and the tgt postion for reference paths
+      pos->ctxt = pos->ns->ghtarget->prepo->metascheme.mdal->newsplitctxt( ghostpath,
+                                                                           pos->ns->ghsource->prepo->metascheme.mdal->ctxt,
+                                                                           tgtpath,
+                                                                           pos->ns->ghtarget->prepo->metascheme.mdal->ctxt );
+      free( tgtpath );
+      free( ghostpath );
+      if ( pos->ctxt == NULL ) {
+         LOG( LOG_ERR, "Failed to generate split ctxt for GhostNS copy: \"%s\"\n", pos->ns->idstr );
+         return -1;
+      }
+      LOG( LOG_INFO, "Generated new split ctxt for GhostNS copy: \"%s\"\n", pos->ns->idstr );
+      return 0;
+   }
+   // determine the NS path
+   char* nspath;
+   if ( config_nsinfo( pos->ns->idstr, NULL, &(nspath) ) ) {
+      LOG( LOG_ERR, "Failed to identify the nspath of NS: \"%s\"\n", pos->ns->idstr );
+      return -1;
+   }
+   // create a fresh ctxt
+   pos->ctxt = pos->ns->prepo->metascheme.mdal->newctxt( nspath, pos->ns->prepo->metascheme.mdal->ctxt );
+   free( nspath );
+   if ( pos->ctxt == NULL ) {
+      LOG( LOG_ERR, "Failed to establish a fresh ctxt for NS: \"%s\"\n", pos->ns->idstr );
+      return -1;
+   }
+   LOG( LOG_INFO, "Generated new ctxt for NS: \"%s\"\n", pos->ns->idstr );
    return 0;
 }
 

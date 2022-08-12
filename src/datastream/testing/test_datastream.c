@@ -1294,6 +1294,18 @@ int main(int argc, char **argv)
       printf( "Failed to delete refdirs of rootNS\n" );
       return -1;
    }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/ghost-gransom/heavily-protected-data" ) ) {
+      printf( "Failed to destroy /ghost-gransom/heavily-protected-data NS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/ghost-gransom/read-only-data" ) ) {
+      printf( "Failed to destroy /ghost-gransom/read-only-data NS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/ghost-gransom" ) ) {
+      printf( "Failed to destroy /ghost-gransom NS\n" );
+      return -1;
+   }
    rootmdal->destroynamespace( rootmdal->ctxt, "/." ); // TODO : fix MDAL edge case?
 
    // cleanup out config struct

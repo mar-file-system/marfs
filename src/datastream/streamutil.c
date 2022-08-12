@@ -228,8 +228,9 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
           "Print a list of all active datastream references", "" )
 
    USAGE( "ns",
-          "",
-          "Print the current MarFS namespace target of this program", "" )
+          "[-p ns-path]",
+          "Print or update the current MarFS namespace target of this program",
+          "       -p ns-path    : Path to a new NS target" )
 
    USAGE( "( exit | quit )",
           "",
@@ -241,6 +242,52 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
    printf("\n");
 
 #undef USAGE
+}
+
+int ns_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
+   // check args
+   if ( !(opts->path ) ) {
+      // print our current NS target
+      printf( "Current Namespace Target: \"%s\"\n\n", pos->ns->idstr );
+      return 0;
+   }
+   // update our position to targe the new path
+   char* modpath = strdup( opts->pathval );
+   if ( modpath == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", opts->pathval );
+      return -1;
+   }
+   marfs_ns* origns = pos->ns;
+   int targetdepth;
+   if ( (targetdepth = config_traverse( config, pos, &(modpath), 1 )) < 0 ) {
+      printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
+              opts->pathval );
+      free( modpath );
+      return -1;
+   }
+   free( modpath );
+   if ( origns != pos->ns ) {
+      if ( targetdepth == 0 ) {
+         // the target path corresponds exactly to a MarFS NS
+         if ( pos->ctxt == NULL ) {
+            // our MDAL_CTXT was destroyed, so we must re-establish
+            if ( config_fortifyposition( pos ) ) {
+               printf( "Failed to establish new MDAL_CTXT for NS: \"%s\"\n", pos->ns->idstr );
+               config_abandonposition( pos );
+               return -1;
+            }
+         }
+      }
+      else {
+         printf( "WARNING: Target is not a MarFS NS itself\n" );
+      }
+      printf( "New Namespace Target: \"%s\"\n", pos->ns->idstr );
+   }
+   else {
+      printf( "Namespace Target Unchanged: \"%s\"\n", pos->ns->idstr );
+   }
+   return 0;
 }
 
 int create_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
@@ -262,38 +309,40 @@ int create_command( marfs_config* config, marfs_position* pos, DATASTREAM* strea
       return -1;
    }
    marfs_ns* origns = pos->ns;
+   // duplicate our position, so that traversal doesn't destroy it
+   marfs_position duppos = {
+      .ns = NULL,
+      .depth = 0,
+      .ctxt = NULL
+   };
+   if ( config_duplicateposition( pos, &duppos ) ) {
+      printf( OUTPREFX "ERROR: Failed to duplicate active MarFS position value\n" );
+      free( modpath );
+      return -1;
+   }
    int targetdepth;
-   if ( (targetdepth = config_traverse( config, pos, &(modpath), 1 )) < 0 ) {
+   if ( (targetdepth = config_traverse( config, &duppos, &(modpath), 1 )) < 0 ) {
       printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
               opts->pathval );
       free( modpath );
-      config->rootns->prepo->metascheme.mdal->destroyctxt( pos->ctxt );
       return -1;
    }
-   if ( origns != pos->ns ) {
+   if ( origns != duppos.ns ) {
       if ( targetdepth == 0 ) {
          // the target path corresponds exactly to a MarFS NS
          printf( "WARNING: Targetting a MarFS NS path directly\n" );
-         if ( pos->ctxt == NULL ) {
-            // our MDAL_CTXT was destroyed
-            MDAL nsmdal = pos->ns->prepo->metascheme.mdal;
-            char* nspath = NULL;
-            if ( config_nsinfo( pos->ns->idstr, NULL, &(nspath) ) ) {
-               printf( "Failed to identify path of new NS target: \"%s\"\n", pos->ns->idstr );
+         if ( duppos.ctxt == NULL ) {
+            // our MDAL_CTXT was destroyed and must be re-established
+            if ( config_fortifyposition( &duppos ) ) {
+               printf( "Failed to establish new MDAL_CTXT for NS: \"%s\"\n", duppos.ns->idstr );
+               config_abandonposition( &duppos );
+               free( modpath );
                return -1;
             }
-            pos->ctxt = nsmdal->newctxt( nspath, nsmdal->ctxt );
-            if ( pos->ctxt == NULL ) {
-               printf( "Failed to establish new MDAL_CTXT for NS: \"%s\"\n", nspath );
-               free( nspath );
-               return -1;
-            }
-            free( nspath );
          }
       }
-      printf( "New Namespace Target: \"%s\"\n", pos->ns->idstr );
    }
-   int retval = datastream_create( stream, modpath, pos, opts->modeval,
+   int retval = datastream_create( stream, modpath, &duppos, opts->modeval,
                                    (opts->ctag) ? opts->ctagval : config->ctag );
    if ( retval ) {
       printf( OUTPREFX "ERROR: Failure of datastream_create(): %d (%s)\n",
@@ -303,6 +352,7 @@ int create_command( marfs_config* config, marfs_position* pos, DATASTREAM* strea
       printf( OUTPREFX "Successfully created target file \"%s\"\n", opts->pathval );
    }
    printf( "\n" );
+   config_abandonposition( &duppos );
    free( modpath );
    return retval;
 }
@@ -322,38 +372,41 @@ int open_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream,
       return -1;
    }
    marfs_ns* origns = pos->ns;
-   int targetdepth;
-   if ( (targetdepth = config_traverse( config, pos, &(modpath), 1 )) < 0 ) {
-      printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
-              opts->pathval );
+   // duplicate our position, so that traversal doesn't destroy it
+   marfs_position duppos = {
+      .ns = NULL,
+      .depth = 0,
+      .ctxt = NULL
+   };
+   if ( config_duplicateposition( pos, &duppos ) ) {
+      printf( OUTPREFX "ERROR: Failed to duplicate active MarFS position value\n" );
       free( modpath );
-      config->rootns->prepo->metascheme.mdal->destroyctxt( pos->ctxt );
       return -1;
    }
-   if ( origns != pos->ns ) {
+   int targetdepth;
+   if ( (targetdepth = config_traverse( config, &duppos, &(modpath), 1 )) < 0 ) {
+      printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
+              opts->pathval );
+      config_abandonposition( &duppos );
+      free( modpath );
+      return -1;
+   }
+   if ( origns != duppos.ns ) {
       if ( targetdepth == 0 ) {
          // the target path corresponds exactly to a MarFS NS
          printf( "WARNING: Targetting a MarFS NS path directly\n" );
-         if ( pos->ctxt == NULL ) {
-            // our MDAL_CTXT was destroyed
-            MDAL nsmdal = pos->ns->prepo->metascheme.mdal;
-            char* nspath = NULL;
-            if ( config_nsinfo( pos->ns->idstr, NULL, &(nspath) ) ) {
-               printf( "Failed to identify path of new NS target: \"%s\"\n", pos->ns->idstr );
+         if ( duppos.ctxt == NULL ) {
+            // our MDAL_CTXT was destroyed and must be re-established
+            if ( config_fortifyposition( &duppos ) ) {
+               printf( "Failed to establish new MDAL_CTXT for NS: \"%s\"\n", duppos.ns->idstr );
+               config_abandonposition( &duppos );
+               free( modpath );
                return -1;
             }
-            pos->ctxt = nsmdal->newctxt( nspath, nsmdal->ctxt );
-            if ( pos->ctxt == NULL ) {
-               printf( "Failed to establish new MDAL_CTXT for NS: \"%s\"\n", nspath );
-               free( nspath );
-               return -1;
-            }
-            free( nspath );
          }
       }
-      printf( "New Namespace Target: \"%s\"\n", pos->ns->idstr );
    }
-   int retval = datastream_open( stream, opts->typeval, modpath, pos, NULL );
+   int retval = datastream_open( stream, opts->typeval, modpath, &duppos, NULL );
    if ( retval ) {
       printf( OUTPREFX "ERROR: Failure of datastream_open(): %d (%s)\n",
               retval, strerror(errno) );
@@ -362,6 +415,7 @@ int open_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream,
       printf( OUTPREFX "Successfully opened target file \"%s\"\n", opts->pathval );
    }
    printf( "\n" );
+   config_abandonposition( &duppos );
    free( modpath );
    return retval;
 }
@@ -697,12 +751,12 @@ int command_loop( marfs_config* config ) {
 
    // establish a marfs root position
    marfs_position pos = {
-      .ns = config->rootns,
+      .ns = NULL,
       .depth = 0,
-      .ctxt = config->rootns->prepo->metascheme.mdal->newctxt( "/.", config->rootns->prepo->metascheme.mdal->ctxt )
+      .ctxt = NULL
    };
-   if ( pos.ctxt == NULL ) {
-      printf( OUTPREFX "ERROR: Failed to establish a root MDAL ctxt\n" );
+   if ( config_establishposition( &pos, config ) ) {
+      printf( OUTPREFX "ERROR: Failed to establish a root NS position\n" );
       free( streamlist );
       free( streamdesc );
       return -1;
@@ -1033,7 +1087,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: Failed to allocate expanded stream list\n" );
             free( streamdesc );
             free_argopts( &(inputopts) );
-            pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );
+            config_abandonposition( &pos );
             return -1;
          }
          streamdesc = realloc( streamdesc, (tgtstream + 1) * sizeof(char*) );
@@ -1041,7 +1095,7 @@ int command_loop( marfs_config* config ) {
             printf( OUTPREFX "ERROR: Failed to allocate expanded stream description list\n" );
             free( streamlist );
             free_argopts( &(inputopts) );
-            pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt );
+            config_abandonposition( &pos );
             return -1;
          }
          // zero out any added entries
@@ -1050,7 +1104,7 @@ int command_loop( marfs_config* config ) {
          streamalloc = (tgtstream + 1);
       }
 
-      // TODO command execution
+      // command execution
       if ( strcmp( inputline, "create" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
@@ -1335,7 +1389,19 @@ int command_loop( marfs_config* config ) {
          }
       }
       else if ( strcmp( inputline, "ns" ) == 0 ) {
-         printf( "\nCurrent Namespace Target: \"%s\"\n\n", pos.ns->idstr );
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.streamnum  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum  ||  inputopts.length ) {
+            printf( OUTPREFX "ERROR: The 'ns' op supports only the '-p' arg\n" );
+            usage( "help ns" );
+         }
+         else if ( ns_command( config, &(pos), NULL, &(inputopts) ) == 0 ) {
+            retval = 0; // note success
+         }
       }
       else {
          printf( OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline );
@@ -1360,7 +1426,7 @@ int command_loop( marfs_config* config ) {
    // cleanup
    free( streamlist );
    free( streamdesc );
-   if ( pos.ns->prepo->metascheme.mdal->destroyctxt( pos.ctxt ) ) {
+   if ( config_abandonposition( &pos ) ) {
       printf( OUTPREFX "WARNING: Failed to destory MDAL CTXT\n" );
    }
    return retval;

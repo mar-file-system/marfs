@@ -554,6 +554,12 @@ MDAL_CTXT posixmdal_newctxt ( const char* ns, const MDAL_CTXT basectxt ) {
       errno = EINVAL;
       return NULL;
    }
+   // check for NULL ns path
+   if ( !(ns) ) {
+      LOG( LOG_ERR, "Received a NULL NS path arg\n" );
+      errno = EINVAL;
+      return NULL;
+   }
    POSIX_MDAL_CTXT pbasectxt = (POSIX_MDAL_CTXT) basectxt;
    // create the corresponding posix path for the target NS
    size_t nspathlen = namespacepath( ns, NULL, 0 );
@@ -741,7 +747,7 @@ MDAL_CTXT posixmdal_newsplitctxt ( const char* pathns, const MDAL_CTXT pathctxt,
       free( newctxt );
       return NULL;
    }
-   if ( sprintf( nspath + nspathlen, "/%s", PMDAL_REF ) != strlen(PMDAL_REF) ) {
+   if ( sprintf( nspath + nspathlen, "/%s", PMDAL_REF ) != strlen(PMDAL_REF) + 1 ) {
       LOG( LOG_ERR, "Failed to append PMDAL_REF suffix to path of NS: \"%s\"\n", refns );
       free( nspath );
       close( newctxt->pathd );

@@ -218,6 +218,22 @@
                <!-- Remote NS : 'gransom-allocation' -->
                <rns name="gransom-allocation" repo="exampleREPO"/>
 
+               <gns name="ghost-gransom" repo="3+2repo" nstgt="/gransom-allocation">
+                  <!-- Quota Limits for this NS -->
+                  <quotas>
+                     <files>1K</files>  <!-- 10240 file count limit -->
+                     <data>100P</data> <!-- 100 Pibibyte data size limit -->
+                  </quotas>
+
+                  <!-- Permission Settings for this NS -->
+                  <perms>
+                     <!-- read only metadata inter access -->
+                     <interactive>RM</interactive>
+                     <!-- full batch program access -->
+                     <batch>RM,WM,RD,WD</batch>
+                  </perms>
+               </gns>
+
             </ns>
 
             <!-- Target of Remote NS ref from the previous repo -->
