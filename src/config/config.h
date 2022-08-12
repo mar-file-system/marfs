@@ -157,12 +157,33 @@ marfs_config* config_init( const char* cpath );
 int config_term( marfs_config* config );
 
 /**
+ * Duplicate the reference to a given NS
+ * @param marfs_ns* ns : NS ref to duplicate
+ * @return marfs_ns* : Duplicated ref, or NULL on error
+ */
+marfs_ns* config_duplicatensref( marfs_ns* ns );
+
+/**
+ * Potentially free the given NS ( only if it is an allocated ghostNS )
+ * @param marfs_ns* ns : Namespace to be freed
+ */
+void config_destroynsref( marfs_ns* ns );
+
+/**
  * Create a fresh marfs_position struct, targetting the MarFS root
  * @param marfs_position* pos : Reference to the position to be initialized,
  * @param marfs_config* config : Reference to the config to be used
  * @return int : Zero on success, or -1 on failure
  */
 int config_establishposition( marfs_position* pos, marfs_config* config );
+
+/**
+ * Duplicate the given source position into the given destination position
+ * @param marfs_position* srcpos : Reference to the source position
+ * @param marfs_position* destpos : Reference to the destination position
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_duplicateposition( marfs_position* srcpos, marfs_position* destpos );
 
 /**
  * Terminate a marfs_position struct
