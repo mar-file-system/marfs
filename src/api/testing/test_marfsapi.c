@@ -293,6 +293,38 @@ int main( int argc, char** argv ) {
       return -1;
    }
 
+   // create a couple of files in the GhostNS
+   marfs_fhandle ghoststream = marfs_creat( batchctxt, NULL, "ghost-gransom/gfile1", 0621 );
+   if ( ghoststream == NULL ) {
+      printf( "failed to create ghost 'gfile1'\n" );
+      return -1;
+   }
+   if ( marfs_write( ghoststream, oneMBbuffer, 1024 ) != 1024 ) {
+      printf( "failed to write ghost 'gfile1'\n" );
+      return -1;
+   }
+   if ( (ghoststream = marfs_creat( batchctxt, ghoststream, "ghost-gransom/gfile2", 0744 ) ) == NULL ) {
+      printf( "failed to create ghost 'gfile2'\n" );
+      return -1;
+   }
+   if ( marfs_write( ghoststream, oneMBbuffer, 10 ) != 10 ) {
+      printf( "failed to write ghost 'gfile1'\n" );
+      return -1;
+   }
+   if ( marfs_close( ghoststream ) ) {
+      printf( "failed to close 'ghoststream'\n" );
+      return -1;
+   }
+
+   // test rename and link ( allowed between ghost and tgt )
+   if ( marfs_rename( batchctxt, "ghost-gransom/gfile2", "gransom-allocation/gasubdir/ghost-file2" ) ) {
+      printf( "failed to rename ghost 'gfile2'\n" );
+      return -1;
+   }
+   if ( marfs_link( batchctxt, "ghost-gransom/gfile1", "gransom-allocation/gfile1-link", 0 ) ) {
+      printf( "failed to link ghost 'gfile1'\n" );
+      return -1;
+   }
 
    // write out a parallel file
    marfs_fhandle phandle = marfs_creat( batchctxt, NULL, "gransom-allocation/parallelfile", 0600 );
@@ -683,6 +715,18 @@ int main( int argc, char** argv ) {
       printf( "failed to unlink 'gransom-allocation/gasubdir/file2'\n" );
       return -1;
    }
+   if ( marfs_unlink( batchctxt, "ghost-gransom/gfile1" ) ) {
+      printf( "failed to unlink 'ghost-gransom/gfile1'\n" );
+      return -1;
+   }
+   if ( marfs_unlink( batchctxt, "gransom-allocation/gfile1-link" ) ) {
+      printf( "failed to unlink 'gransom-allocation/gfile1-link'\n" );
+      return -1;
+   }
+   if ( marfs_unlink( batchctxt, "gransom-allocation/gasubdir/ghost-file2" ) ) {
+      printf( "failed to unlink 'gransom-allocation/gasubdir/ghost-file2'\n" );
+      return -1;
+   }
    if ( marfs_unlink( batchctxt, "/campaign/hpdsymlinkfromroot" ) ) {
       printf( "failed to unlink 'hpdsymlinkfromroot'\n" );
       return -1;
@@ -731,6 +775,18 @@ int main( int argc, char** argv ) {
    }
    if ( deletefstree( "./test_datastream_topdir/mdal_root/MDAL_reference" ) ) {
       printf( "Failed to delete refdirs of rootNS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/ghost-gransom/read-only-data" ) ) {
+      printf( "Failed to destroy /ghost-gransom/read-only-data NS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/ghost-gransom/heavily-protected-data" ) ) {
+      printf( "Failed to destroy /ghost-gransom/heavily-protected-data NS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/ghost-gransom" ) ) {
+      printf( "Failed to destroy /ghost-gransom NS\n" );
       return -1;
    }
    rootmdal->destroynamespace( rootmdal->ctxt, "/." ); // TODO : fix MDAL edge case?
