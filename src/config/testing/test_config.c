@@ -1038,6 +1038,22 @@ int main(int argc, char **argv)
       printf( "Failed to delete refdirs of rootNS\n" );
       return -1;
    }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/root-ghost/gransom-allocation/heavily-protected-data" ) ) {
+      printf( "Failed to destroy /root-ghost/gransom-allocation/heavily-protected-data NS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/root-ghost/gransom-allocation/read-only-data" ) ) {
+      printf( "Failed to destroy /root-ghost/gransom-allocation/read-only-data NS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/root-ghost/gransom-allocation" ) ) {
+      printf( "Failed to destroy /root-ghost/gransom-allocation NS\n" );
+      return -1;
+   }
+   if ( rootmdal->destroynamespace( rootmdal->ctxt, "/root-ghost" ) ) {
+      printf( "Failed to destroy /root-ghost NS\n" );
+      return -1;
+   }
    rootmdal->destroynamespace( rootmdal->ctxt, "/." ); // TODO : fix MDAL edge case?
 
 

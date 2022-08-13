@@ -141,8 +141,9 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
          "       -f : Specifies to identify the bounds of just the current file\n")
 
       USAGE("ns",
-         "",
-         "Print the current MarFS namespace target of this program", "")
+         "[-p nspath]",
+         "Print / change the current MarFS namespace target of this program",
+         "       -p nspath : Specifies the path of a new NS target")
 
       USAGE("recovery",
          "[-@ offset -f seekfrom]",
@@ -164,36 +165,39 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
 
-int populate_ftag(marfs_config* config, marfs_position* pos, FTAG* ftag, const char* path, const char* rpath, char prout) {
+int populate_ftag(marfs_config* config, marfs_position* pathpos, marfs_position* destpos, FTAG* ftag, const char* path, const char* rpath, char prout) {
    char* modpath = NULL;
+   marfs_position oppos = { .ns = NULL, .depth = 0, .ctxt = NULL };
+   if ( config_duplicateposition( pathpos, &oppos ) ) {
+      printf( OUTPREFX "ERROR: Failed to duplicate active position for config traversal\n" );
+      return -1;
+   }
    if (path != NULL) {
       // perform path traversal to identify marfs position
       modpath = strdup(path);
       if (modpath == NULL) {
          printf(OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", path);
+         config_abandonposition( &oppos );
          return -1;
       }
-      marfs_ns* oldns = pos->ns;
-      if (config_traverse(config, pos, &(modpath), 1) < 0) {
+      if (config_traverse(config, &oppos, &(modpath), 1) < 0) {
          printf(OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
             path);
          free(modpath);
+         config_abandonposition( &oppos );
          return -1;
-      }
-      if (oldns != pos->ns) {
-         printf("New Namespace Target : \"%s\"\n", pos->ns->idstr);
       }
    }
 
    // attempt to open the target file
-   MDAL mdal = pos->ns->prepo->metascheme.mdal;
+   MDAL mdal = oppos.ns->prepo->metascheme.mdal;
    MDAL_FHANDLE handle = NULL;
    if (rpath == NULL) {
       // only actually reference the user path if no reference path was provided
-      handle = mdal->open(pos->ctxt, modpath, O_RDONLY);
+      handle = mdal->open(oppos.ctxt, modpath, O_RDONLY);
    }
    else {
-      handle = mdal->openref(pos->ctxt, rpath, O_RDONLY, 0);
+      handle = mdal->openref(oppos.ctxt, rpath, O_RDONLY, 0);
    }
    if (modpath) {
       free(modpath);
@@ -201,6 +205,7 @@ int populate_ftag(marfs_config* config, marfs_position* pos, FTAG* ftag, const c
    if (handle == NULL) {
       printf(OUTPREFX "ERROR: Failed to open target %s file: \"%s\" (%s)\n",
          (rpath) ? "ref" : "user", (rpath) ? rpath : path, strerror(errno));
+      config_abandonposition( &oppos );
       return -1;
    }
 
@@ -210,18 +215,21 @@ int populate_ftag(marfs_config* config, marfs_position* pos, FTAG* ftag, const c
    if (getres <= 0) {
       printf(OUTPREFX "ERROR: Failed to retrieve FTAG value from target %s file: \"%s\" (%s)\n", (rpath) ? "ref" : "user", (rpath) ? rpath : path, strerror(errno));
       mdal->close(handle);
+      config_abandonposition( &oppos );
       return -1;
    }
    ftagstr = calloc(1, getres + 1);
    if (ftagstr == NULL) {
       printf(OUTPREFX "ERROR: Failed to allocate space for an FTAG string value\n");
       mdal->close(handle);
+      config_abandonposition( &oppos );
       return -1;
    }
    if (mdal->fgetxattr(handle, 1, FTAG_NAME, ftagstr, getres) != getres) {
       printf(OUTPREFX "ERROR: FTAG value changed while we were reading it\n");
       free(ftagstr);
       mdal->close(handle);
+      config_abandonposition( &oppos );
       return -1;
    }
    if (mdal->close(handle)) {
@@ -239,18 +247,25 @@ int populate_ftag(marfs_config* config, marfs_position* pos, FTAG* ftag, const c
       printf(OUTPREFX "ERROR: Failed to parse FTAG string: \"%s\" (%s)\n",
          ftagstr, strerror(errno));
       free(ftagstr);
+      config_abandonposition( &oppos );
       return -1;
    }
-   else if (prout) {
-      printf(OUTPREFX "Successfully populated FTAG values for target %s file: \"%s\"\n",
-         (rpath) ? "ref" : "user", (rpath) ? rpath : path);
+   else {
+      // actually update the passed position
+      if ( destpos->ns ) { config_abandonposition( destpos ); }
+      // do a semi-sketchy direct copy of postion values
+      *destpos = oppos; // no need to abandon oppos now
+      if (prout) {
+         printf(OUTPREFX "Successfully populated FTAG values for target %s file: \"%s\"\n",
+            (rpath) ? "ref" : "user", (rpath) ? rpath : path);
+      }
    }
    free(ftagstr);
    return 0;
 }
 
 
-int open_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+int open_command(marfs_config* config, marfs_position* pathpos, marfs_position* tgtpos, FTAG* ftag, char* args) {
    printf("\n");
    // parse args
    char curarg = '\0';
@@ -325,7 +340,7 @@ int open_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* ar
    }
 
    // populate our FTAG and cleanup strings
-   int retval = populate_ftag(config, pos, ftag, userpath, refpath, 1);
+   int retval = populate_ftag(config, pathpos, tgtpos, ftag, userpath, refpath, 1);
    printf("\n");
    if (userpath) {
       free(userpath);
@@ -431,7 +446,7 @@ int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* a
       return -1;
    }
 
-   int retval = populate_ftag(config, pos, ftag, NULL, newrpath, 1);
+   int retval = populate_ftag(config, pos, pos, ftag, NULL, newrpath, 1);
    printf("\n");
    if (retval) {
       ftag->fileno = origfileno;
@@ -685,7 +700,7 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
             return -1;
          }
          // retrieve the FTAG of the new target
-         retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
+         retval = populate_ftag(config, pos, pos, ftag, NULL, newrpath, 0);
          if (retval) {
             ftag->fileno--;
          } // if we couldn't retrieve this, go to previous
@@ -738,7 +753,7 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
          return -1;
       }
       // retrieve the FTAG of the new target
-      retval = populate_ftag(config, pos, ftag, NULL, newrpath, 0);
+      retval = populate_ftag(config, pos, pos, ftag, NULL, newrpath, 0);
       free(newrpath);
    }
    else {
@@ -774,7 +789,7 @@ int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char*
       return -1;
    }
 
-   int retval = populate_ftag(config, pos, ftag, NULL, newrpath, 1);
+   int retval = populate_ftag(config, pos, pos, ftag, NULL, newrpath, 1);
    printf("\n");
    free(newrpath);
 
@@ -902,6 +917,67 @@ int recovery_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char
 
 }
 
+int ns_command(marfs_config* config, marfs_position* pos, char* args) {
+   printf("\n");
+
+   // parse args
+   char curarg = '\0';
+   char* path = NULL;
+   char* parse = strtok(args, " ");
+   while (parse) {
+      if (curarg == '\0') {
+         if (strcmp(parse, "-p") == 0) {
+            curarg = 'p';
+         }
+         else {
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'ns' command: '%s'\n", parse);
+            return -1;
+         }
+      }
+      else {
+         // duplicate the path arg
+         path = strdup( parse );
+         curarg = '\0';
+      }
+
+      // progress to the next arg
+      parse = strtok(NULL, " ");
+   }
+
+   if (path != NULL) {
+      // Need to traverse this path and update the position
+      marfs_position oppos = { .ns = NULL, .depth = 0, .ctxt = NULL };
+      if ( config_duplicateposition( pos, &oppos ) ) {
+         printf( OUTPREFX "ERROR: Failed to duplicate active position for config traversal\n" );
+         return -1;
+      }
+      // perform path traversal to identify marfs position
+      int depth;
+      if ( (depth = config_traverse(config, &oppos, &(path), 1)) < 0) {
+         printf(OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
+            path);
+         free(path);
+         config_abandonposition( &oppos );
+         return -1;
+      }
+      free(path);
+      if ( depth ) {
+         printf(OUTPREFX "WARNING: Path tgt is not a MarFS NS ( depth = %d )\n", depth );
+      }
+      else if ( oppos.ctxt == NULL  &&  config_fortifyposition( &oppos ) ) {
+         printf(OUTPREFX "ERROR: Failed to fortify new NS position\n" );
+         config_abandonposition( &oppos );
+         return -1;
+      }
+      // update our pos arg
+      config_abandonposition( pos );
+      *pos = oppos; // just direct copy, and don't abandon this position
+   }
+   printf("\n%s Namespace Target : \"%s\"\n\n", (path == NULL) ? "Current" : "New", pos->ns->idstr);
+   return 0;
+}
+
+
 int command_loop(marfs_config* config, char* config_path) {
    // initialize an FTAG struct
    FTAG ftag = {
@@ -910,14 +986,15 @@ int command_loop(marfs_config* config, char* config_path) {
    };
    // initialize a marfs position
    marfs_position pos = {
-      .ns = config->rootns,
+      .ns = NULL,
       .depth = 0,
-      .ctxt = config->rootns->prepo->metascheme.mdal->newctxt("/.", config->rootns->prepo->metascheme.mdal->ctxt)
+      .ctxt = NULL
    };
-   if (pos.ctxt == NULL) {
-      printf(OUTPREFX "ERROR: Failed to establish MDAL ctxt for the MarFS root\n");
+   if ( config_establishposition( &pos, config ) ) {
+      printf(OUTPREFX "ERROR: Failed to establish a position for the MarFS root\n");
       return -1;
    }
+   marfs_position tgtpos = { .ns = NULL, .depth = 0, .ctxt = NULL };
    printf("Initial Namespace Target : \"%s\"\n", pos.ns->idstr);
 
    // infinite loop, processing user commands
@@ -978,61 +1055,65 @@ int command_loop(marfs_config* config, char* config_path) {
       if (strcmp(inputline, "open") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (open_command(config, &(pos), &(ftag), parse) == 0) {
+         if (open_command(config, &(pos), &(tgtpos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "shift") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (shift_command(config, &(pos), &(ftag), parse) == 0) {
+         if (shift_command(config, &(tgtpos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "ftag") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (ftag_command(config, &(pos), &(ftag), parse) == 0) {
+         if (ftag_command(config, &(tgtpos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "ref") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (ref_command(config, &(pos), &(ftag), parse) == 0) {
+         if (ref_command(config, &(tgtpos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "obj") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (obj_command(config, config_path, &(pos), &(ftag), parse) == 0) {
+         if (obj_command(config, config_path, &(tgtpos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "bounds") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (bounds_command(config, &(pos), &(ftag), parse) == 0) {
+         if (bounds_command(config, &(tgtpos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "refresh") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (refresh_command(config, &(pos), &(ftag), parse) == 0) {
+         if (refresh_command(config, &(tgtpos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "recovery") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (recovery_command(config, &(pos), &(ftag), parse) == 0) {
+         if (recovery_command(config, &(tgtpos), &(ftag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "ns") == 0) {
-         printf("\nCurrent Namespace Target : \"%s\"\n\n", pos.ns->idstr);
+         errno = 0;
+         retval = -1; // assume failure
+         if (ns_command(config, &(pos), parse) == 0) {
+            retval = 0; // note success
+         }
       }
       else {
          printf(OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline);
@@ -1047,9 +1128,11 @@ int command_loop(marfs_config* config, char* config_path) {
    if (ftag.streamid) {
       free(ftag.streamid);
    }
-   MDAL mdal = pos.ns->prepo->metascheme.mdal;
-   if (mdal->destroyctxt(pos.ctxt)) {
-      printf(OUTPREFX "WARNING: Failed to properly destroy MDAL CTXT\n");
+   if (config_abandonposition(&tgtpos)) {
+      printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
+   }
+   if (config_abandonposition(&pos)) {
+      printf(OUTPREFX "WARNING: Failed to properly destroy active marfs position\n");
    }
    return retval;
 }
