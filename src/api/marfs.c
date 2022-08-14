@@ -1463,7 +1463,14 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
-   rethandle->ns = oppos.ns;
+   rethandle->ns = config_duplicatensref( oppos.ns );
+   if ( rethandle->ns == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate op position NS\n" );
+      free( rethandle );
+      pathcleanup( subpath, &oppos );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
    rethandle->depth = tgtdepth;
    rethandle->itype = ctxt->itype;
    rethandle->config = ctxt->config;
@@ -1493,6 +1500,7 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
    // check for op success
    if ( rethandle->metahandle == NULL ) {
       LOG( LOG_ERR, "Failed to open handle for NS target: \"%s\"\n", subpath );
+      config_destroynsref( rethandle->ns );
       pathcleanup( subpath, &oppos );
       pthread_mutex_destroy( &(rethandle->lock) );
       free( rethandle );
@@ -1598,6 +1606,7 @@ int marfs_closedir(marfs_dhandle dh) {
    // close the handle and free all memory
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
    int retval = curmdal->closedir( dh->metahandle );
+   config_destroynsref( dh->ns );
    pthread_mutex_destroy( &(dh->lock) );
    free( dh );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
@@ -1951,9 +1960,19 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
          stream->metahandle = NULL; // don't reattempt this op
       }
    }
+   // duplicate the current NS ref
+   marfs_ns* dupref = config_duplicatensref( oppos.ns );
+   if ( dupref == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate op NS reference\n" );
+      pathcleanup( subpath, &oppos );
+      if ( newstream ) { free( stream ); }
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
    // attempt the op
    if ( datastream_create( &(stream->datastream), subpath, &oppos, mode, ctxt->config->ctag ) ) {
       LOG( LOG_ERR, "Failure of datastream_create()\n" );
+      config_destroynsref( dupref );
       pathcleanup( subpath, &oppos );
       if ( newstream ) { free( stream ); }
       else {
@@ -1964,7 +1983,8 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       return NULL;
    }
    // update our stream info to reflect the new target
-   stream->ns = oppos.ns;
+   if ( stream->ns ) { config_destroynsref( stream->ns ); }
+   stream->ns = dupref;
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
    stream->itype = ctxt->itype;
    // cleanup and return
@@ -2102,6 +2122,17 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
          stream->metahandle = NULL; // don't reattempt this op
       }
    }
+   // duplicate the current NS ref
+   marfs_ns* dupref = config_duplicatensref( oppos.ns );
+   if ( dupref == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate op NS reference\n" );
+      pathcleanup( subpath, &oppos );
+      if ( newstream ) { free( stream ); }
+      else if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+      pthread_mutex_unlock( &(stream->lock) );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
    // attempt the op, allowing a meta-only reference ONLY if we are opening for read
    MDAL_FHANDLE phandle = NULL;
    if ( datastream_open( &(stream->datastream), (flags == MARFS_READ) ? READ_STREAM : EDIT_STREAM, subpath, &oppos, (flags == MARFS_READ) ? &(phandle) : NULL ) ) {
@@ -2117,6 +2148,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
                // nothing to do besides complain
                LOG( LOG_WARNING, "Failed to close preserved MDAL_FHANDLE for new target\n" );
             }
+            config_destroynsref( dupref );
             stream->metahandle = NULL;
             pathcleanup( subpath, &oppos );
             pthread_mutex_unlock( &(stream->lock) );
@@ -2127,7 +2159,8 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
          // update stream info to reflect a meta-only reference
          stream->datastream = NULL;
          stream->metahandle = phandle;
-         stream->ns = oppos.ns;
+         if ( stream->ns ) { config_destroynsref( stream->ns ); }
+         stream->ns = dupref;
          stream->itype = ctxt->itype;
          // cleanup and return
          pthread_mutex_unlock( &(stream->lock) );
@@ -2144,7 +2177,8 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       return NULL;
    }
    // update our stream info to reflect the new target
-   stream->ns = oppos.ns;
+   if ( stream->ns ) { config_destroynsref( stream->ns ); }
+   stream->ns = dupref;
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
    stream->itype = ctxt->itype;
    // cleanup and return
@@ -2187,6 +2221,7 @@ int marfs_close(marfs_fhandle stream) {
    // reject a flushed handle
    if ( stream->metahandle == NULL  &&  stream->datastream == NULL ) {
       LOG( LOG_ERR, "Received a flushed marfs_fhandle\n" );
+      if ( stream->ns ) { config_destroynsref( stream->ns ); }
       pthread_mutex_unlock( &(stream->lock) );
       pthread_mutex_destroy( &(stream->lock) );
       free( stream );
@@ -2213,6 +2248,7 @@ int marfs_close(marfs_fhandle stream) {
    }
    stream->metahandle = NULL;
    stream->datastream = NULL;
+   if ( stream->ns ) { config_destroynsref( stream->ns ); }
    pthread_mutex_unlock( &(stream->lock) );
    pthread_mutex_destroy( &(stream->lock) );
    free( stream );
@@ -2266,6 +2302,7 @@ int marfs_release(marfs_fhandle stream) {
    }
    stream->metahandle = NULL;
    stream->datastream = NULL;
+   if ( stream->ns ) { config_destroynsref( stream->ns ); }
    pthread_mutex_unlock( &(stream->lock) );
    pthread_mutex_destroy( &(stream->lock) );
    free( stream );

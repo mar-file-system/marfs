@@ -282,10 +282,10 @@ int ns_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, a
       else {
          printf( "WARNING: Target is not a MarFS NS itself\n" );
       }
-      printf( "New Namespace Target: \"%s\"\n", pos->ns->idstr );
+      printf( "New Namespace Target: \"%s\"\n\n", pos->ns->idstr );
    }
    else {
-      printf( "Namespace Target Unchanged: \"%s\"\n", pos->ns->idstr );
+      printf( "Namespace Target Unchanged: \"%s\"\n\n", pos->ns->idstr );
    }
    return 0;
 }
