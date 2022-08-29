@@ -197,5 +197,12 @@ int statelog_fin( STATELOG* statelog, operation_summary* summary, const char* lo
  */
 int statelog_term( STATELOG* statelog, operation_summary* summary, const char* log_preservation_tgt );
 
+/**
+ * Deallocate and finalize a given statelog without waiting for completion
+ * @param STATELOG* statelog : Statelog to be terminated
+ * @return int : Zero on success, or -1 on failure
+ */
+int statelog_abort( STATELOG* statelog );
+
 #endif // _STATELOG_H
 

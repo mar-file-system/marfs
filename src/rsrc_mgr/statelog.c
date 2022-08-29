@@ -1529,4 +1529,21 @@ int statelog_term( STATELOG* statelog, operation_summary* summary, const char* l
    return 0;
 }
 
+/**
+ * Deallocate and finalize a given statelog without waiting for completion
+ * @param STATELOG* statelog : Statelog to be terminated
+ * @return int : Zero on success, or -1 on failure
+ */
+int statelog_abort( STATELOG* statelog ) {
+   // check for invalid args
+   if ( statelog == NULL  ||  *statelog == NULL ) {
+      LOG( LOG_ERR, "Received a NULL statelog reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   STATELOG stlog = *statelog;
+   cleanuplog( stlog, 1 ); // this will release the lock
+   *statelog = NULL;
+   return 0;
+}
 
