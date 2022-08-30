@@ -90,6 +90,7 @@ typedef struct streamwalker_struct {
    // iteration info
    size_t     fileindex;
    size_t     objindex;
+   size_t     objinitial;
    char*      reftgt;
    FTAG       ftag;
    char*      ftagstr;
@@ -429,14 +430,18 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* opchain ) {
       return -1;
    }
    // set up some initial values
-   MDAL mdal = walker->ns->prepo->metascheme.mdal;
+   marfs_ms* ms = &(walker->ns->prepo->metascheme);
+   MDAL mdal = ms->mdal;
    size_t objfiles = walker->ns->prepo->datascheme.objfiles;
    size_t objsize = walker->ns->prepo->datascheme.objsize;
+   size_t dataperobj = walker->ftag.objsize - walker->recovheaderlen;
+   size_t lastverified = walker->ftag.fileno;
    char pullxattrs = 0;
-   if ( walker->ftag.streamid == NULL ) { pullxattrs = 1; }
+   if ( walker->verifyall  ||  walker->ftag.streamid == NULL ) { pullxattrs = 1; }
    // iterate over all reference targets
    while ( walker->reftgt != NULL ) {
       // pull info for the next reference target
+      char haveftag = pullxattrs;
       char filestate = -1;
       struct stat stval;
       GCTAG gctag;
@@ -444,7 +449,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* opchain ) {
          LOG( LOG_ERR, "Failed to get info for reference target: \"%s\"\n", walker->reftgt );
          return -1;
       }
-      pullxattrs = 0; // assume we won't be pulling xattrs again
+      pullxattrs = walker->verifyall; // assume we won't be pulling xattrs again, unless we're verifying everything
       if ( filestate == 0 ) {
          // file doesn't exist ( likely that we skipped a GCTAG on the previous file )
          // decrement to the previous index and make sure to check for xattrs
@@ -458,12 +463,107 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* opchain ) {
             LOG( LOG_ERR, "Datastream break detected at file number %zu: \"%s\"\n", walker->fileno, walker->reftgt );
             return -1;
          }
+         // replace the active rpath with that of the previous file
+         char* origtgt = walker->reftgt;
+         FTAG tmptag = walker->ftag;
+         tmptag.fileno = walker->fileno - 1;
+         walker->reftgt = datastream_genrpath( &(tmptag), ms );
+         if ( walker->reftgt == NULL ) {
+            LOG( LOG_ERR, "Failed to generate reference path for previous file ( %zu )\n", walker->fileno - 1 );
+            return -1;
+         }
+         free( origtgt );
+         LOG( LOG_INFO, "Pulling xattrs from previous fileno ( %zu ) due to missing fileno %zu\n",
+              walker->fileno - 1, walker->fileno );
          walker->fileno--;
          pullxattrs = 1;
-         // TODO : Rpath generation
          continue;
+      }
+      // check for possible object transition
+      if ( !(haveftag)  &&  (stval.st_size + walker->maxoffset + walker->finfoestimate > dataperobj) ) {
+         // object transition is too likely, we need to pull the FTAG of this file
+         LOG( LOG_INFO, "Pulling xattrs from fileno %zu due to likely object transition\n", walker->fileno );
+         pullxattrs = 1;
+         continue;
+      }
+      // check for verified object transition
+      opinfo* dispatchops = NULL;
+      if ( haveftag  &&  walker->ftag.objno != walker->objno ) {
+         // this is only acceptible if we have either verified the previous file OR
+         //    BOTH the previous file referenced the previous object AND this file 
+         //    is at the head of the next object
+         if ( walker->fileno != lastverified  &&
+              ( walker->objno + 1 != walker->ftag.objno  ||  walker->ftag.offset != walker->recovheaderlen ) ) {
+            // this datastream has an unusual structure
+            // safest to return to the earliest file referencing the prev object and verify every subsequent file
+            walker->verifyall = 1;
+            walker->activeoffset -= ( walker->fileno - walker->objinitial ); // decrement offset to match new position
+            walker->fileno = walker->objinitial;  // update position
+            walker->inodecnt -= walker->activefiles;
+            walker->bytecnt -= walker->activebytes;
+            walker->activefiles = 0;
+            walker->activebytes = 0;
+            walker->minoffset = 0;
+            walker->maxoffset = 0;
+            // clear all unissued operations
+            opinfo* curop = walker->gcops;
+            if ( curop->ftag.ctag ) { free( curop->ftag.ctag ); }
+            if ( curop->ftag.streamid ) { free( curop->ftag.streamid ); }
+            while ( curop ) {
+               opinfo* prevop = curop;
+               curop = curop->next;
+               if ( prevop->extendedinfo ) { free( prevop->extendedinfo ); }
+               free( prevop );
+               if ( curop == NULL  &&  walker->gcops ) {
+                  walker->gcops = NULL;
+                  curop = walker->rpckops;
+               }
+            }
+            walker->rpckops = NULL;
+            walker->gcopstail = NULL;
+            walker->rpckopstail = NULL;
+            // generate the new reference target path
+            char* origtgt = walker->reftgt;
+            FTAG tmptag = walker.ftag;
+            tmptag.fileno = walker->fileno;
+            walker->reftgt = datastream_genrpath( &(tmptag), ms );
+            if ( walker->reftgt == NULL ) {
+               LOG( LOG_ERR, "Failed to generate ref path tgt for fileno %zu for emergency rescan\n", walker->fileno );
+               return -1;
+            }
+            free( origtgt );
+            continue;
+         }
+         // we need to dispatch any previous operations
+         if ( walker->gcops ) {
+            dispatchops = walker->gcops;
+            if ( walker->activefiles == 0 ) {
+               // need to append an object deletion operation
+               walker->gcopstail->next = malloc( sizeof( struct opinfo_struct ) );
+               if ( walker->gcopstail->next == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate object deletion op for object %zu\n" );
+                  return -1;
+               }
+               opinfo* objdelop = walker->gcopstail->next;
+               objdelop->type = MARFS_DELETE_OBJ_OP;
+               objdelop->extendedinfo = NULL;
+               objdelop->start = 1;
+               objdelop->count = 0;
+               objdelop->errval = 0;
+               objdelop->ftag = walker->gcops->ftag;
+               objdelop->ftag.objno = walker->objno;
+               objdelop->next = NULL;
+            }
+            walker->gcops = NULL; // remove the gc ops from the walker handle
+         }
+      }
+      else if ( filestate == 1 ) {
+         // file is inactive
+      }
+      else {
+         // file is active
+      }
       // generate some traversal values
-      size_t dataperobj = walker->ftag.objsize - recovheaderlen;   // track the data ( and recov ) size of each obj
    }
 }
 
