@@ -104,7 +104,7 @@ typedef struct streamwalker_struct {
    opinfo*    gcops;
    opinfo*    gcopstail;
    size_t     activefiles;
-   size_t     activeoffset;
+   size_t     activeindex;
    // repack info
    opinfo*    rpckops;
    opinfo*    rpckopstail;
@@ -422,7 +422,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, MDAL_CTXT ctxt, const char*
  * @return opinfo* : Reference to a new operation set to be performed, or NULL if a new operation was not found
  *                   NOTE -- A NULL return combined with a non-NULL reftgt indicates an error
  */
-int process_iteratestreamwalker( streamwalker walker, opinfo* opchain ) {
+int process_iteratestreamwalker( streamwalker walker, opinfo* gcops, opinfo* repackops ) {
    // validate args
    if ( walker == NULL ) {
       LOG( LOG_ERR, "Received NULL streamwalker\n" );
@@ -440,6 +440,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* opchain ) {
    if ( walker->verifyall  ||  walker->ftag.streamid == NULL ) { pullxattrs = 1; }
    // iterate over all reference targets
    while ( walker->reftgt != NULL ) {
+      // pull xattr values if we're close to the end of the current object
+      if ( walker->maxoffset + walker->finfoestimate >= dataperobj ) { pullxattrs = 1; }
       // pull info for the next reference target
       char haveftag = pullxattrs;
       char filestate = -1;
@@ -480,7 +482,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* opchain ) {
          continue;
       }
       // check for possible object transition
-      if ( !(haveftag)  &&  (stval.st_size + walker->maxoffset + walker->finfoestimate > dataperobj) ) {
+      if ( !(haveftag)  &&  (stval.st_size + walker->maxoffset + walker->finfoestimate >= dataperobj) ) {
          // object transition is too likely, we need to pull the FTAG of this file
          LOG( LOG_INFO, "Pulling xattrs from fileno %zu due to likely object transition\n", walker->fileno );
          pullxattrs = 1;
@@ -495,9 +497,14 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* opchain ) {
          if ( walker->fileno != lastverified  &&
               ( walker->objno + 1 != walker->ftag.objno  ||  walker->ftag.offset != walker->recovheaderlen ) ) {
             // this datastream has an unusual structure
-            // safest to return to the earliest file referencing the prev object and verify every subsequent file
+            // safest to return to the most recently verified file and to verify every subsequent file
             walker->verifyall = 1;
-            walker->activeoffset -= ( walker->fileno - walker->objinitial ); // decrement offset to match new position
+            if ( walker->activeindex > ( walker->fileno - walker->objinitial ) ) {
+               walker->activeindex -= ( walker->fileno - walker->objinitial ); // decrement offset to match new position
+            }
+            else if ( walker->gcops ) {
+               walker->activeindex = 
+            }
             walker->fileno = walker->objinitial;  // update position
             walker->inodecnt -= walker->activefiles;
             walker->bytecnt -= walker->activebytes;
@@ -506,21 +513,11 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* opchain ) {
             walker->minoffset = 0;
             walker->maxoffset = 0;
             // clear all unissued operations
-            opinfo* curop = walker->gcops;
-            if ( curop->ftag.ctag ) { free( curop->ftag.ctag ); }
-            if ( curop->ftag.streamid ) { free( curop->ftag.streamid ); }
-            while ( curop ) {
-               opinfo* prevop = curop;
-               curop = curop->next;
-               if ( prevop->extendedinfo ) { free( prevop->extendedinfo ); }
-               free( prevop );
-               if ( curop == NULL  &&  walker->gcops ) {
-                  walker->gcops = NULL;
-                  curop = walker->rpckops;
-               }
-            }
-            walker->rpckops = NULL;
+            statelog_freeopinfo( walker->gcops );
+            statelog_freeopinfo( walker->rpckops );
+            walker->gcops = NULL;
             walker->gcopstail = NULL;
+            walker->rpckops = NULL;
             walker->rpckopstail = NULL;
             // generate the new reference target path
             char* origtgt = walker->reftgt;

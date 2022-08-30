@@ -698,11 +698,13 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
 /**
- * Free the given opinfo struct
+ * Free the given opinfo struct chain
  * @param opinfo* op : Reference to the opinfo struct to be freed
  */
 void statelog_freeopinfo( opinfo* op ) {
-   if ( op ) {
+   char* prevctag = NULL;
+   char* prevstreamid = NULL;
+   while ( op ) {
       if ( op->next ) { statelog_freeopinfo( op->next ); } // recursively free op chain
       if ( op->extendedinfo ) {
          switch ( op->type ) { // only REBUILD and DEL-REF ops should have extended info at all
@@ -717,9 +719,14 @@ void statelog_freeopinfo( opinfo* op ) {
          }
          free( op->extendedinfo );
       }
-      if ( op->ftag.ctag ) { free( op->ftag.ctag ); }
-      if ( op->ftag.streamid ) { free( op->ftag.streamid ); }
+      // free ctag+streamid only if they are not simply duplicated references throughout the op chain
+      // NOTE -- This won't catch if non-neighbor ops have the same string values, but I am considering that a degenerate case.
+      //         Behavior would be a double free by this func.
+      if ( op->ftag.ctag  &&  op->ftag.ctag != prevctag ) { prevctag = op->ftag.ctag; free( op->ftag.ctag ); }
+      if ( op->ftag.streamid  &&  op->ftag.streamid != prevstreamid ) { prevstreamid = op->ftag.streamid; free( op->ftag.streamid ); }
+      opinfo* nextop = op->next;
       free( op );
+      op = nextop;
    }
 }
 

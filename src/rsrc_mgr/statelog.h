@@ -118,6 +118,12 @@ typedef struct statelog_struct* STATELOG;
 
 
 /**
+ * Free the given opinfo struct chain
+ * @param opinfo* op : Reference to the opinfo struct to be freed
+ */
+void statelog_freeopinfo( opinfo* op );
+
+/**
  * Generates the pathnames of logfiles and parent dirs
  * @param char create : Create flag
  *                      If non-zero, this func will attempt to create all intermediate directory paths ( not the final tgt )
