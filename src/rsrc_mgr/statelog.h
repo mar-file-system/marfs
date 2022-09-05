@@ -83,13 +83,16 @@ typedef struct opinfo_struct {
    operation_type type;  // which class of operation
    void* extendedinfo;   // extra, operation-specific, info
    char start;           // flag indicating the start of an op ( if zero, this entry indicates completion )
-   size_t count;         // how many subsequent targets are there
+   size_t count;         // how many targets are there
    int errval;           // errno value of the attempted op ( always zero for operation start )
    FTAG ftag;            // which FTAG value is the target
+   char* ftagstr;        // string representation of the FTAG
    struct opinfo_struct* next; // subsequent ops in this chain ( or NULL, if none remain )
 } opinfo;
 
-// NOTE -- object deletions don't require any extra info
+typedef struct delobj_info_struct {
+   size_t offset; // offset at which to perform deletion of a specific subset of the object set
+}
 
 typedef struct delref_info_struct {
    size_t prev_active_index; // index of the closest active ( not to be deleted ) reference in the stream

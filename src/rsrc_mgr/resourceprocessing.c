@@ -69,14 +69,30 @@ typedef struct threshold_struct {
    //         processing behavior ( i.e. trying to cleanup ongoing repacks )
 } thresholds;
 
-
 typedef struct gctag_struct {
-   size_t skipcnt;
+   size_t refcnt;
    char eos;
    char inprog;
 } GCTAG;
 
 #define GCTAG_NAME "GC-MODIFIED"
+
+typedef struct streamwalker_report_struct {
+   // quota info
+   size_t fileusage;  // count of active files
+   size_t byteusage;  // count of active bytes
+   // stream info
+   size_t filecount;  // count of files in the datastream
+   size_t objcount;   // count of objects in the datastream
+   // GC info
+   size_t delobjs;    // count of deleted objects
+   size_t delfiles;   // count of deleted files
+   size_t volfiles;   // count of 'volatile' files ( those deleted to recently for gc )
+   // repack info
+   size_t rpkfiles;   // count of files repacked
+   size_t rpkbytes;   // count of bytes repacked
+   size_t freedobjs;  // count of objects now elligible for deletion
+} streamwalker_report;
 
 typedef struct streamwalker_struct {
    // initialization info
@@ -84,27 +100,26 @@ typedef struct streamwalker_struct {
    MDAL_CTXT  ctxt;
    time_t     gcthresh;      // time threshold for GCing a file ( none performed if zero )
    time_t     repackthresh;  // time threshold for repacking a file ( none performed if zero )
-   // quota info
-   size_t     inodecnt;
-   size_t     bytecnt;
+   // report info
+   streamwalker_report report;
    // iteration info
-   size_t     fileindex;
-   size_t     objindex;
-   char*      reftgt;
-   FTAG       ftag;
+   size_t      fileindex;
+   size_t      objindex;
+   struct stat stval;
+   FTAG        ftag;
+   GCTAG       gctag;
    // cached info
-   size_t     headerlen;
-   char*      ftagstr;
-   size_t     ftagstralloc;
+   size_t      headerlen;
+   char*       ftagstr;
+   size_t      ftagstralloc;
    // GC info
-   opinfo*    gcops;
-   opinfo*    gcopstail;
-   size_t     activefiles;
-   size_t     activeindex;
+   opinfo*     gcops;
+   size_t      activefiles;
+   size_t      activeindex;
    // repack info
-   opinfo*    rpckops;
-   opinfo*    rpckopstail;
-   size_t     activebytes;
+   opinfo*     rpckops;
+   opinfo*     rpckopstail;
+   size_t      activebytes;
 }* streamwalker;
 
 
@@ -114,30 +129,20 @@ typedef struct streamwalker_struct {
 
 //   -------------   INTERNAL FUNCTIONS    -------------
 
-int process_getfileinfo( streamwalker walker, char getxattrs, char* filestate, struct stat* stval, GCTAG* gctag ) {
+int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker, char* filestate ) {
    MDAL mdal = walker->ns->prepo->metascheme.mdal;
-   // potentially populate the reference path
-   if ( walker->reftgt == NULL ) {
-      FTAG tmptag = walker->ftag;
-      tmptag.fileno = walker->fileindex;
-      walker->reftgt = datastream_genrpath( &(tmptag), &(walker->ns->prepo->metascheme) );
-      if ( walker->reftgt == NULL ) {
-         LOG( LOG_ERR, "Failed to generate reference path of fileno %zu\n", walker->fileindex );
-         return -1;
-      }
-   }
    if ( getxattrs ) {
       // open the target file
       int olderrno = errno;
       errno = 0;
-      MDAL_FHANDLE handle = mdal->openref( ctxt, walker->reftgt, O_RDONLY, 0 );
+      MDAL_FHANDLE handle = mdal->openref( ctxt, reftgt, O_RDONLY, 0 );
       if ( handle == NULL ) {
          if ( errno = ENOENT ) {
-            LOG( LOG_INFO, "Reference file does not exist: \"%s\"\n", walker->reftgt );
+            LOG( LOG_INFO, "Reference file does not exist: \"%s\"\n", reftgt );
             *filestate = 0;
             return 0;
          }
-         LOG( LOG_ERR, "Failed to open current reference file target: \"%s\"\n", walker->reftgt );
+         LOG( LOG_ERR, "Failed to open current reference file target: \"%s\"\n", reftgt );
          return -1;
       }
       // retrieve FTAG of the current file
@@ -157,22 +162,21 @@ int process_getfileinfo( streamwalker walker, char getxattrs, char* filestate, s
          walker->ftagstralloc = getres + 1;
          // pull the xattr again
          if ( mdal->fgetxattr( handle, 1, FTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 ) != getres ) {
-            LOG( LOG_ERR, "Inconsistent length for ftag of reference file target: \"%s\"\n", walker->reftgt );
+            LOG( LOG_ERR, "Inconsistent length for ftag of reference file target: \"%s\"\n", reftgt );
             mdal->close( handle );
             return -1;
          }
       }
       // check for error
       if ( getres <= 0 ) {
-         LOG( LOG_ERR, "Failed to retrieve ftag of reference file target: \"%s\"\n", walker->reftgt );
+         LOG( LOG_ERR, "Failed to retrieve ftag of reference file target: \"%s\"\n", reftgt );
          mdal->close( handle );
          return -1;
       }
       *(ftagstr + getres) = '\0'; // ensure our string is NULL terminated
       // parse the ftag
-      FTAG ftag;
       if ( ftag_initstr( &(walker->ftag), walker->ftagstr ) ) {
-         LOG( LOG_ERR, "Failed to parse ftag value of reference file target: \"%s\"\n", walker->reftgt );
+         LOG( LOG_ERR, "Failed to parse ftag value of reference file target: \"%s\"\n", reftgt );
          mdal->close( handle );
          return -1;
       }
@@ -194,14 +198,14 @@ int process_getfileinfo( streamwalker walker, char getxattrs, char* filestate, s
          walker->ftagstralloc = getres + 1;
          // pull the xattr again
          if ( mdal->fgetxattr( handle, 1, GCTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 ) != getres ) {
-            LOG( LOG_ERR, "Inconsistent length for gctag of reference file target: \"%s\"\n", walker->reftgt );
+            LOG( LOG_ERR, "Inconsistent length for gctag of reference file target: \"%s\"\n", reftgt );
             mdal->close( handle );
             return -1;
          }
       }
       // check for error
       if ( getres <= 0  &&  errno != ENODATA ) {
-         LOG( LOG_ERR, "Failed to retrieve gctag of reference file target: \"%s\"\n", walker->reftgt );
+         LOG( LOG_ERR, "Failed to retrieve gctag of reference file target: \"%s\"\n", reftgt );
          mdal->close( handle );
          return -1;
       }
@@ -211,75 +215,81 @@ int process_getfileinfo( streamwalker walker, char getxattrs, char* filestate, s
          char* parse = NULL;
          unsigned long long parseval = strtoull( walker->ftagstr, &(parse), 10 );
          if ( parse == NULL  ||  *parse != ' '  ||  parseval == ULONG_MAX ) {
-            LOG( LOG_ERR, "Failed to parse skip value of GCTAG for reference file target: \"%s\"\n", walker->reftgt );
+            LOG( LOG_ERR, "Failed to parse skip value of GCTAG for reference file target: \"%s\"\n", reftgt );
             mdal->close( handle );
             return -1;
          }
-         gctag->skipcnt = (size_t) parseval;
+         walker->gctag->refcnt = (size_t) parseval;
          parse++;
          if ( *parse == 'E' ) {
-            gctag->eos = 1;
+            walker->gctag->eos = 1;
          }
          else if ( *parse == 'C' ) {
-            gctag->eos = 0;
+            walker->gctag->eos = 0;
          }
          else {
-            LOG( LOG_ERR, "GCTAG with innappriate EOS value for reference file target: \"%s\"\n", walker->reftgt );
+            LOG( LOG_ERR, "GCTAG with innappriate EOS value for reference file target: \"%s\"\n", reftgt );
             mdal->close( handle );
             return -1;
          }
          parse++;
          if ( *parse != '\0' ) {
             if ( *parse != ' ' ) {
-               LOG( LOG_ERR, "Failed to parse 'in prog' in GCTAG of reference file target: \"%s\"\n", walker->reftgt );
+               LOG( LOG_ERR, "Failed to parse 'in prog' in GCTAG of reference file target: \"%s\"\n", reftgt );
                mdal->close( handle );
                return -1;
             }
             parse++;
             if ( *parse != 'P' ) {
-               LOG( LOG_ERR, "Failed to parse 'in prog' in GCTAG of reference file target: \"%s\"\n", walker->reftgt );
+               LOG( LOG_ERR, "Failed to parse 'in prog' in GCTAG of reference file target: \"%s\"\n", reftgt );
                mdal->close( handle );
                return -1;
             }
-            gctag->inprog = 1;
+            walker->gctag->inprog = 1;
          }
          else {
-            gctag->inprog = 0;
+            walker->gctag->inprog = 0;
          }
       }
+      else {
+         // no GCTAG, so zero out values
+         walker->gctag.refcnt = 0;
+         walker->gctag.eos = 0;
+         walker->gctag.inprogress = 0;
+      }
       // stat the file
-      if ( mdal->fstat( handle, stval ) ) {
-         LOG( LOG_ERR, "Failed to stat reference file target via handle: \"%s\"\n", walker->reftgt );
+      if ( mdal->fstat( handle, walker->stval ) ) {
+         LOG( LOG_ERR, "Failed to stat reference file target via handle: \"%s\"\n", reftgt );
          mdal->close( handle );
          return -1;
       }
       // finally, close the file
       if ( mdal->close( handle ) ) {
          // just complain
-         LOG( LOG_WARNING, "Failed to close handle for reference target: \"%s\"\n", walker->reftgt );
+         LOG( LOG_WARNING, "Failed to close handle for reference target: \"%s\"\n", reftgt );
       }
       // restore old values
       errno = olderrno;
       // populate state value based on link count
-      *filestate = ( stval->st_nlink > 1 ) ? 2 : 1;
+      *filestate = ( walker->stval->st_nlink > 1 ) ? 2 : 1;
       return 0;
    }
    int olderrno = errno;
    errno = 0;
    // stat the file by path
-   if ( mdal->statref( walker->ctxt, walker->reftgt, stval ) ) {
+   if ( mdal->statref( walker->ctxt, reftgt, walker->stval ) ) {
       if ( errno = ENOENT ) {
-         LOG( LOG_INFO, "Reference file does not exist: \"%s\"\n", walker->reftgt );
+         LOG( LOG_INFO, "Reference file does not exist: \"%s\"\n", reftgt );
          *filestate = 0;
          return 0;
       }
-      LOG( LOG_ERR, "Failed to stat reference file target via handle: \"%s\"\n", walker->reftgt );
+      LOG( LOG_ERR, "Failed to stat reference file target via handle: \"%s\"\n", reftgt );
       return -1;
    }
    // restore old values
    errno = olderrno;
    // populate state value based on link count
-   *filestate = ( stval->st_nlink > 1 ) ? 2 : 1;
+   *filestate = ( walker->stval->st_nlink > 1 ) ? 2 : 1;
    return 0;
 }
 
@@ -440,22 +450,103 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* gcops, opinfo* rep
    MDAL mdal = ms->mdal;
    size_t objfiles = walker->ns->prepo->datascheme.objfiles;
    size_t objsize = walker->ns->prepo->datascheme.objsize;
-   size_t dataperobj = walker->ftag.objsize - walker->recovheaderlen;
+   size_t dataperobj = ( objsize ) ? walker->ftag.objsize - walker->recovheaderlen : 0;
+   size_t repackbytethresh = dataperobj / 2;
    char pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0 ) ? 0 : 1;
    // iterate over all reference targets
-   while ( walker->reftgt != NULL ) {
-      // keep some state for this loop iteration
-      char opspopulated = 0;
+   while ( ftag.endofstream == 0  &&  (ftag.state & FTAG_DATASTATE) >= FTAG_FIN ) {
+      // calculate offset of next file tgt
+      size_t tgtoffset = 1;
+      if ( walker->gctag.refcnt ) {
+         // handle any existing gctag value
+         tgtoffset += walker->gctag.refcnt; // skip over count indicated by the tag
+         if ( walker->gctag.inprogress  &&  walker->gcthresh != 0 ) {
+            LOG( LOG_INFO, "Cleaning up in-progress deletion of %zu reference files from previous instance\n", gctag.refcnt );
+            // need to try to clean up from a previous GC instance
+            opinfo** parseops = &(walker->gcops);
+            // attempt to find any existing reference deletion op
+            while ( (*parseops)  &&  (*parseops)->type != MARFS_DELETE_REF_OP ) { parseop = &((*parseops)->next); }
+            // sanity check
+            if ( (*parseops)  &&  (*parseops)->ftag.fileno + (*parseops)->count != walker->fileno + 1 ) {
+               LOG( LOG_ERR, "Failed sanity check: Active ref del op (%zu) does not reach walker fileno (%zu)\n",
+                             (*parseops)->ftag.fileno + (*parseops)->count - 1, walker->fileno );
+               return -1;
+            }
+            if ( (*parseops) ) {
+               // add the reference deletions to our existing operation
+               (*parseops)->count += gctag.refcnt;
+               delref_info* extinf = &((*parseops)->extendedinfo);
+               if ( gctag.eos ) { extinf->eos = 1; }
+            }
+            else {
+               // create a new ref deletion op
+               *parseops = malloc( sizeof( struct opinfo_struct ) );
+               if ( *parseops == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate new reference deletion op for cleanup of previous GC instance\n" );
+                  return -1;
+               }
+               opinfo* refdel = *parseops;
+               refdel->type = MARFS_DELETE_REF_OP;
+               refdel->count = gctag.refcnt;
+               refdel->errval = 0;
+               refdel->ftag = walker->ftag;
+               refdel->ftag.ctag = strdup ( walker->ftag.ctag );
+               if ( refdel->ftag.ctag == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate new ref del ctag for cleanup of previous GC instance\n" );
+                  free( refdel );
+                  *parseops = NULL;
+                  return -1;
+               }
+               refdel->ftag.streamid = strdup ( walker->ftag.streamid );
+               if ( refdel->ftag.streamid == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate new ref del streamid for cleanup of previous GC instance\n" );
+                  free( refdel->ftag.ctag );
+                  free( refdel );
+                  *parseops = NULL;
+                  return -1;
+               }
+               refdel->ftagstr
+               refdel->extendedinfo = malloc( sizeof( struct delref_info_struct ) );
+               if ( refdel->extendedinfo == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate new ref del extended info for cleanup of previous GC instance\n" );
+                  free( refdel->ftag.streamid );
+                  free( refdel->ftag.ctag );
+                  free( refdel );
+                  *parseops = NULL;
+                  return -1;
+               }
+               delref_info* extinf = &(refdel->extendedinfo);
+               extinf->prev_active_index = walker->activeindex;
+               extinf->eos = gctag.eos;
+            }
+            // clear the 'inprogress' state, just to make sure we never repeat this process
+            gctag.inprogress = 0;
+         }
+         // this could potentially indicate a premature EOS
+         if ( gctag.eos ) {
+            LOG( LOG_INFO, "GC tag indicates EOS at fileno %zu\n", walker->fileno );
+            break;
+         }
+      }
+      // generate next target info
+      FTAG tmptag = walker->ftag;
+      tmptag.fileno += tgtoffset;
+      char* reftgt = datastream_genrpath( &(tmptag), ms );
+      if ( reftgt == NULL ) {
+         LOG( LOG_ERR, "Failed to generate reference path for corrected tgt ( %zu )\n", walker->fileno );
+         return -1;
+      }
       // pull info for the next reference target
       char filestate = -1;
       struct stat stval;
       GCTAG gctag;
       char haveftag = pullxattrs;
-      if ( process_getfileinfo( walker, pullxattrs, &(filestate), &(stval), &(gctag) ) ) {
+      if ( process_getfileinfo( reftgt, pullxattrs, walker, &(filestate) ) ) {
          LOG( LOG_ERR, "Failed to get info for reference target: \"%s\"\n", walker->reftgt );
          return -1;
       }
       pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0 ) ? 0 : 1; // return to default behavior
+      char dispatchedops = 0;
       if ( filestate == 0 ) {
          // file doesn't exist ( likely that we skipped a GCTAG on the previous file )
          // decrement to the previous index and make sure to check for xattrs
@@ -464,72 +555,135 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* gcops, opinfo* rep
             LOG( LOG_ERR, "Initial reference target does not exist: \"%s\"\n", walker->reftgt );
             return -1;
          }
-         if ( (walker->fileno - 1) == walker->ftag.fileno ) {
+         if ( walker->fileno == walker->ftag.fileno ) {
             // looks like we already pulled xattrs from the previous file, and must not have found a GCTAG
             LOG( LOG_ERR, "Datastream break detected at file number %zu: \"%s\"\n", walker->fileno, walker->reftgt );
             return -1;
          }
-         // replace the active rpath with that of the previous file
-         char* origtgt = walker->reftgt;
-         FTAG tmptag = walker->ftag;
-         tmptag.fileno = walker->fileno - 1;
-         walker->reftgt = datastream_genrpath( &(tmptag), ms );
-         if ( walker->reftgt == NULL ) {
-            LOG( LOG_ERR, "Failed to generate reference path for previous file ( %zu )\n", walker->fileno - 1 );
+         // generate the rpath of the previous file
+         reftgt = datastream_genrpath( &(walker->ftag), ms );
+         if ( reftgt == NULL ) {
+            LOG( LOG_ERR, "Failed to generate reference path for previous file ( %zu )\n", walker->fileno );
             return -1;
          }
-         free( origtgt );
          LOG( LOG_INFO, "Pulling xattrs from previous fileno ( %zu ) due to missing fileno %zu\n",
-              walker->fileno - 1, walker->fileno );
-         walker->fileno--;
-         pullxattrs = 1;
-         continue;
+              walker->fileno, walker->fileno + 1 );
+         if ( process_getfileinfo( reftgt, 1, walker, &(filestate) )  ||  filestate == 0 ) {
+            LOG( LOG_ERR, "Failed to get info for previous ref tgt: \"%s\"\n", reftgt );
+            free( reftgt );
+            return -1;
+         }
+         // MUST find a gctag for the previous file
+         if ( walker->gctag.refcnt == 0 ) {
+            LOG( LOG_ERR, "Previous ref tgt did not have a GCTAG: \"%s\"\n", reftgt );
+            free( reftgt );
+            return -1;
+         }
+         // identify the actual target
+         tgtoffset = 1 + walker->gctag.refcnt;
+         tmptag = walker->ftag;
+         tmptag.fileno += tgtoffset;
+         free( reftgt );
+         reftgt = datastream_genrpath( &(tmptag), ms );
+         if ( reftgt == NULL ) {
+            LOG( LOG_ERR, "Failed to generate reference path for corrected tgt ( %zu )\n", walker->fileno );
+            return -1;
+         }
+         // pull info for the actual target
+         LOG( LOG_INFO, "Pulling info from corrected fileno ( %zu ) due to missing fileno %zu\n",
+              tmptag.fileno, walker->fileno + 1 );
+         if ( process_getfileinfo( reftgt, pullxattrs, walker, &(filestate) )  ||  filestate == 0 ) {
+            LOG( LOG_ERR, "Failed to get info for corrected ref tgt: \"%s\"\n", reftgt );
+            free( reftgt );
+            return -1;
+         }
+         free( reftgt );
       }
       // many checks are only appropriate if we're pulling xattrs
+      size_t endobj = walker->objno;
       if ( haveftag ) {
          // check for innapropriate FTAG value
-         if ( walker->ftag.fileno != walker->fileno ) {
-            LOG( LOG_ERR, "Invalid FTAG filenumber (%zu) on file %zu\n", walker->ftag.fileno, walker->fileno );
+         if ( walker->ftag.fileno != walker->fileno + tgtoffest ) {
+            LOG( LOG_ERR, "Invalid FTAG filenumber (%zu) on file %zu\n", walker->ftag.fileno, walker->fileno + 1 );
             return -1;
          }
          // check for object transition
          if ( walker->ftag.objno != walker->objno ) {
-            // we need to dispatch any previous operations
-            if ( walker->gcops ) {
-               if ( walker->activefiles == 0 ) {
-                  // need to prepend one or more object deletion operations
-                  opinfo* objdelop = malloc( sizeof( struct opinfo_struct ) );
-                  if ( objdelop == NULL ) {
-                     LOG( LOG_ERR, "Failed to allocate object deletion op for object %zu\n" );
-                     return -1;
-                  }
-                  objdelop->type = MARFS_DELETE_OBJ_OP;
-                  objdelop->extendedinfo = NULL;
-                  objdelop->start = 1;
-                  objdelop->count = 0;
-                  objdelop->errval = 0;
-                  objdelop->ftag = walker->gcopstail->ftag;
-                  objdelop->ftag.objno = walker->objno;
-                  objdelop->next = walker->gcops;
-                  *gcops = objdelop;
+            // we may need to delete the previous object
+            if ( walker->gcops  &&  walker->activefiles == 0 ) {
+               // need to prepend an object deletion operation
+               opinfo* objdelop = malloc( sizeof( struct opinfo_struct ) );
+               if ( objdelop == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate object deletion op for object %zu\n" );
+                  return -1;
+               }
+               objdelop->type = MARFS_DELETE_OBJ_OP;
+               objdelop->extendedinfo = malloc( sizeof( struct delobj_info ) );
+               if ( objdelop->extendedinfo == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate extended info for object deletion op\n" );
+                  free( objdelop );
+                  return -1;
+               }
+               objdelop->start = 1;
+               objdelop->count = 0;
+               objdelop->errval = 0;
+               objdelop->ftag = walker->gcopstail->ftag;
+               objdelop->ftag.objno = walker->objno;
+               objdelop->next = walker->gcops;
+               walker->gcops = objdelop;
+            }
+            // need to handle repack ops
+            if ( walker->rpckops ) {
+               if ( walker->activebytes >= repackbytethresh ) {
+                  // discard all ops
+                  LOG( LOG_INFO, "Discarding repack ops due to excessive active bytes: %zu\n", walker->activebytes );
+                  statelog_freeopinfo( walker->rpckops );
                }
                else {
-                  *gcops = walker->gcops;
+                  // dispatch all ops
+                  *repackops = walker->rpckops;
                }
-               walker->gcops = NULL; // remove the gc ops from the walker handle
-               opspopulated = 1;
+               walker->rpckops = NULL;
             }
+            endobj = walker->ftag.objno; // update ending object index
+            walker->activefiles = 0; // update active file count for new obj
+            walker->activebytes = 0; // update active byte count for new obj
+         }
+         if ( dataperobj ) {
+            // calculate the final object referenced by this file
+            size_t finobjbounds = (walker->ftag->bytes + walker->ftag->offset - walker->recovheaderlen) / dataperobj;
+            if ( (walker->ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+                  finobjbounds  &&
+                  (walker->ftag->bytes + walker->ftag->offset - headerlen) % dataperobj == 0 ) {
+               finobjbounds--;
+            }
+            endobj += finobjbounds;
          }
       }
-      else if ( filestate == 1 ) {
+      char assumeactive = 0;
+      if ( filestate == 1 ) {
          // file is inactive
+         if ( walker->gcthresh  &&  walker->stval.st_ctime < walker->gcthresh  &&  haveftag ) {
+            // this file is elligible for GC
+         }
+         else if ( walker->stval.st_ctime >= walker->gcthresh ) {
+            walker->report.volfiles++;
+            assumeactive = 1;
+         }
       }
-      else {
+      if ( filestate > 1 ) {
          // file is active
+         walker->report.fileusage++;
+         walker->report.byteusage += walker->ftag.bytes;
+      }
+      if ( filestate > 1  ||  assumeactive ) {
+         // handle GC state
       }
       // generate some traversal values
    }
 }
+
+int process_prepareoperations( MDAL_CTXT ctxt, opinfo* op )
 
 /**
  * Perform the given operation
@@ -540,7 +694,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo* gcops, opinfo* rep
  *               NOTE -- This func will not return 'failure' unless a critical internal error occurs.
  *                       'Standard' operation errors will simply be reflected in the op struct itself.
  */
-int process_operation( MDAL_CTXT ctxt, opinfo* op ) {
+int process_executeoperations( MDAL_CTXT ctxt, opinfo* op ) {
 }
 
 

@@ -187,7 +187,44 @@ opinfo* parselogline( int logfile, char* eof ) {
    if ( strncmp( buffer, "DEL-OBJ ", 8 ) == 0 ) {
       op->type = MARFS_DELETE_OBJ_OP;
       parseloc += 8;
-      // no extended info to parse here
+      // allocate delobj_info
+      delobj_info* extinfo = malloc( sizeof( struct delobj_info_struct ) );
+      if ( op->extendedinfo == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      // parse in delobj_info
+      if ( strncmp( parseloc, 2, "{ " ) ) {
+         LOG( LOG_ERR, "Missing '{ ' header for DEL-REF extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 2;
+      char* endptr = NULL;
+      unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
+      if ( endptr == NULL  ||  *endptr != ' ' ) {
+         LOG( LOG_ERR, "DEL-REF extended info has unexpected char in prev_active_index string: '%c'\n", *endptr );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      extinfo->offset = (size_t)parseval;
+      parseloc = endptr + 1;
+      if ( strncmp( parseloc, 2, "} " ) ) {
+         LOG( LOG_ERR, "Missing '} ' tail for DEL-OBJ extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 2;
+      // attach delobj_info
+      op->extendedinfo = extinfo;
    }
    else if ( strncmp( buffer, "DEL-REF ", 8 ) == 0 ) {
       op->type = MARFS_DELETE_REF_OP;
@@ -400,8 +437,14 @@ opinfo* parselogline( int logfile, char* eof ) {
       nextval = 1; // note that we need to append another op
       tgtchar -= 2; // pull this back, so we'll trim off the NEXT value
    }
-   // parse the FTAG value
+   // duplicate and parse the FTAG value
    *tgtchar = '\0'; // trim the string, to make FTAG parsing easy
+   if ( (op->ftagstr = strdup( parseloc )) == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate FTAG string from logfile\n" );
+      statelog_freeopinfo( op );
+      lseek( logfile, origoff, SEEK_SET );
+      return NULL;
+   }
    if ( ftag_initstr( &(op->ftag), parseloc ) ) {
       LOG( LOG_ERR, "Failed to parse FTAG value of log line\n" );
       statelog_freeopinfo( op );
@@ -446,7 +489,16 @@ int printlogline( int logfile, opinfo* op ) {
             return -1;
          }
          usedbuff += 8;
-         // no extended info for this op
+         if ( op->extendedinfo ) {
+            delobj_info* delobj = (delobj_info*)&(op->extendedinfo);
+            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
+                                             delobj->offset );
+            if ( extinfoprint < 6 ) {
+               LOG( LOG_ERR, "Failed to populate DEL-OBJ extended info string\n" );
+               return -1;
+            }
+            usedbuff += extinfoprint;
+         }
          break;
       case MARFS_DELETE_REF_OP:
          if ( snprintf( buffer, MAX_BUFFER, "%s ", "DEL-REF" ) != 8 ) {
@@ -454,15 +506,17 @@ int printlogline( int logfile, opinfo* op ) {
             return -1;
          }
          usedbuff += 8;
-         delref_info* delref = (delref_info*)&(op->extendedinfo);
-         ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu %s } ",
-                                          delref->prev_active_index,
-                                          (delref->eos == 0) ? "CNT" : "EOS" );
-         if ( extinfoprint < 10 ) {
-            LOG( LOG_ERR, "Failed to populate DEL-REF extended info string\n" );
-            return -1;
+         if ( op->extendedinfo ) {
+            delref_info* delref = (delref_info*)&(op->extendedinfo);
+            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu %s } ",
+                                             delref->prev_active_index,
+                                             (delref->eos == 0) ? "CNT" : "EOS" );
+            if ( extinfoprint < 10 ) {
+               LOG( LOG_ERR, "Failed to populate DEL-REF extended info string\n" );
+               return -1;
+            }
+            usedbuff += extinfoprint;
          }
-         usedbuff += extinfoprint;
          break;
       case MARFS_REBUILD_OP:
          if ( snprintf( buffer, MAX_BUFFER, "%s ", "REBUILD" ) != 8 ) {
@@ -470,31 +524,33 @@ int printlogline( int logfile, opinfo* op ) {
             return -1;
          }
          usedbuff += 8;
-         rebuild_info* rebuild = (rebuild_info*)&(op->extendedinfo);
-         ssize_t extinfoprint = snprintf( buffer + usedbuffer, MAX_BUFFER - usedbuff, "{ %s %zu ",
-                                          rebuild->markerpath,
-                                          op->ftag.protection.N + op->ftag.protection.E );
-         if ( extinfoprint < 6 ) {
-            LOG( LOG_ERR, "Failed to populate first portion of REBUILD extended info string\n" );
-            return -1;
+         if ( op->extendedinfo ) {
+            rebuild_info* rebuild = (rebuild_info*)&(op->extendedinfo);
+            ssize_t extinfoprint = snprintf( buffer + usedbuffer, MAX_BUFFER - usedbuff, "{ %s %zu ",
+                                             rebuild->markerpath,
+                                             op->ftag.protection.N + op->ftag.protection.E );
+            if ( extinfoprint < 6 ) {
+               LOG( LOG_ERR, "Failed to populate first portion of REBUILD extended info string\n" );
+               return -1;
+            }
+            usedbuff += extinfoprint;
+            if ( usedbuff >= MAX_BUFFER ) {
+               LOG( LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n" );
+               return -1;
+            }
+            size_t rtagprint = rtag_tostr( &(rebuild->rtag), op->ftag.protection.N + op->ftag.protection.E,
+                                           buffer + usedbuffer, MAX_BUFFER - usedbuff );
+            if ( rtagprint < 1 ) {
+               LOG( LOG_ERR, "Failed to populate REBUILD extended info rtag string\n" );
+               return -1;
+            }
+            usedbuff += rtagprint;
+            if ( snprintf( buffer + usedbuffer, MAX_BUFFER - usedbuff, " } " ) != 3 ) {
+               LOG( LOG_ERR, "Failed to print tail string of REBUILD extended info\n" );
+               return -1;
+            }
+            usedbuff += 3;
          }
-         usedbuff += extinfoprint;
-         if ( usedbuff >= MAX_BUFFER ) {
-            LOG( LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n" );
-            return -1;
-         }
-         size_t rtagprint = rtag_tostr( &(rebuild->rtag), op->ftag.protection.N + op->ftag.protection.E,
-                                        buffer + usedbuffer, MAX_BUFFER - usedbuff );
-         if ( rtagprint < 1 ) {
-            LOG( LOG_ERR, "Failed to populate REBUILD extended info rtag string\n" );
-            return -1;
-         }
-         usedbuff += rtagprint;
-         if ( snprintf( buffer + usedbuffer, MAX_BUFFER - usedbuff, " } " ) != 3 ) {
-            LOG( LOG_ERR, "Failed to print tail string of REBUILD extended info\n" );
-            return -1;
-         }
-         usedbuff += 3;
          break;
       case MARFS_REPACK_OP:
          if ( snprintf( buffer, MAX_BUFFER, "%s ", "REPACK" ) != 7 ) {
@@ -596,10 +652,12 @@ int printlogline( int logfile, opinfo* op ) {
  *                        NOTE -- This func will never free opinfo structs
  * @return int : Zero on success, or -1 on failure
  */
-int processopinfo( STATELOG* stlog, opinfo* newop ) {
+int processopinfo( STATELOG* stlog, opinfo* newop, char* progressop ) {
    // identify the trailing op of the given chain
    opinfo* finop = newop;
+   size_t oplength = 1;
    while ( finop->next ) {
+      oplength++;
       finop = finop->next;
       if ( finop->start != newop->start ) {
          LOG( LOG_ERR, "Operation chain has inconsistent START value\n" );
@@ -608,7 +666,7 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
    }
    // map this operation into our inprogress hash table
    HASH_NODE* node = NULL;
-   if ( hash_lookup( stlog->inprogress, newop->tgt, &node ) < 0 ) {
+   if ( hash_lookup( stlog->inprogress, newop->ftagstr, &node ) < 0 ) {
       LOG( LOG_ERR, "Failed to map operation on \"%s\" into inprogress HASH_TABLE\n", newop->tgt );
       return -1;
    }
@@ -616,7 +674,7 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
    opinfo* opindex = node->content;
    opinfo* prevop = NULL;
    while ( opindex != NULL ) {
-      if ( (ftag_cmp( &opindex->ftag, &newop->ftag ) == 0)  &&
+      if ( (strcmp( opindex->ftagstr, newop->ftagstr ) == 0)  &&
            (opindex->type == newop->type) ) {
          break;
       }
@@ -631,27 +689,39 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
          opinfo* parseindex = opindex; // old op being compared against
          opinfo* previndex = opindex;  // end of the chain of old ops
          while ( parseop ) {
+            // check for excessive count
+            if ( parseop->count > parseindex->count ) {
+               LOG( LOG_ERR, "Processed op count ( %zu ) exceeds expected count ( %zu )\n", parseop->count, parseindex->count );
+               return -1;
+            }
             // ...note each in our totals...
             switch( parseop->type ) {
                case MARFS_DELETE_OBJ_OP:
-                  stlog->summary.delete_object_count++;
-                  if ( parseop->errval ) { stlog->summary.delete_object_failures++; }
+                  stlog->summary.delete_object_count += parseop->count;
+                  if ( parseop->errval ) { stlog->summary.delete_object_failures += parseop->count; }
                   break;
                case MARFS_DELETE_REF_OP:
-                  stlog->summary.delete_reference_count++;
-                  if ( parseop->errval ) { stlog->summary.delete_reference_failures++; }
+                  stlog->summary.delete_reference_count += parseop->count;
+                  if ( parseop->errval ) { stlog->summary.delete_reference_failures += parseop->count; }
                   break;
                case MARFS_REBUILD_OP:
-                  stlog->summary.rebuild_count++;
-                  if ( parseop->errval ) { stlog->summary.rebuild_failures++; }
+                  stlog->summary.rebuild_count += parseop->count;
+                  if ( parseop->errval ) { stlog->summary.rebuild_failures += parseop->count; }
                   break;
                case MARFS_REPACK_OP:
-                  stlog->summary.repack_count++;
-                  if ( parseop->errval ) { stlog->summary.repack_failures++; }
+                  stlog->summary.repack_count += parseop->count;
+                  if ( parseop->errval ) { stlog->summary.repack_failures += parseop->count; }
                   break;
                default:
                   LOG( LOG_ERR, "Unrecognized operation type value\n" );
                   return -1;
+            }
+            // check for completion of the specified op
+            if ( parseindex->count != parseop->count ) {
+               // first operation is not complete, so cannot progress op chain
+               parseindex->count -= parseop->count; // decrement count
+               if ( progressop ) { *progressop = 0; }
+               return 0;
             }
             // progress to the next op in the chain, validating that it matches the subsequent in the opindex chain
             parseop = parseop->next;
@@ -664,6 +734,9 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
                   return -1;
                }
             }
+            else if ( progressop ) { *progressop = 1; } // note that the corresponding ops were all completed
+            // decrement in-progress cnt
+            stlog->outstanding--;
          }
          // ...and remove the matching op(s) from inprogress
          if ( prevop ) {
@@ -674,22 +747,20 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
             // no previous op means the matching op is the first one; just remove it
             node->content = previndex->next;
          }
-         // decrement in-progress cnt
-         stlog->outstanding--;
       }
       // a matching op means the parsed operation can be discarded
    }
    else {
-      // the parsed line should indicate the start of a new operation
+      // should indicate the start of a new operation
       if ( newop->start == 0 ) {
          LOG( LOG_ERR, "Parsed completion of op from logfile \"%s\" with no parsed start of op\n", stlog->logfilepath );
          return -1;
       }
-      // stitch the parsed op onto the front of our inprogress list
+      // stitch the new op onto the front of our inprogress list
       finop->next = node->content;
       node->content = newop;
       // note that we have another op in flight ( if this is not a RECORD log )
-      if ( stlog->type != RESOURCE_RECORD_LOG ) { stlog->outstanding++; }
+      if ( stlog->type != RESOURCE_RECORD_LOG ) { stlog->outstanding += oplength; }
    }
    return 0;
 }
@@ -704,6 +775,7 @@ int processopinfo( STATELOG* stlog, opinfo* newop ) {
 void statelog_freeopinfo( opinfo* op ) {
    char* prevctag = NULL;
    char* prevstreamid = NULL;
+   char* prevftagstr = NULL;
    while ( op ) {
       if ( op->next ) { statelog_freeopinfo( op->next ); } // recursively free op chain
       if ( op->extendedinfo ) {
@@ -724,6 +796,7 @@ void statelog_freeopinfo( opinfo* op ) {
       //         Behavior would be a double free by this func.
       if ( op->ftag.ctag  &&  op->ftag.ctag != prevctag ) { prevctag = op->ftag.ctag; free( op->ftag.ctag ); }
       if ( op->ftag.streamid  &&  op->ftag.streamid != prevstreamid ) { prevstreamid = op->ftag.streamid; free( op->ftag.streamid ); }
+      if ( op->ftag.ftagstr  &&  op->ftag.ftagstr != prevftagstr ) { prevftagstr = op->ftag.ftagstr; free( op->ftag.ftagstr ); }
       opinfo* nextop = op->next;
       free( op );
       op = nextop;
@@ -1236,7 +1309,7 @@ int statelog_replay( STATELOG* inputlog, STATELOG* outputlog ) {
          return -1;
       }
       // incorporate the op into our current state
-      if ( processopinfo( outstlog, parsedop ) < 0 ) {
+      if ( processopinfo( outstlog, parsedop, NULL ) < 0 ) {
          LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", instlog->logfilepath );
          pthread_mutex_unlock( &(instlog->lock) );
          pthread_mutex_unlock( &(outstlog->lock) );
@@ -1320,7 +1393,7 @@ int statelog_update_inflight( STATELOG* statelog, ssize_t numops ) {
  * @param opinfo* op : Operation ( or op sequence ) to process
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_processop( STATELOG* statelog, opinfo* op ) {
+int statelog_processop( STATELOG* statelog, opinfo* op, char* progress ) {
    // check for invalid args
    if ( statelog == NULL  ||  *statelog == NULL ) {
       LOG( LOG_ERR, "Received a NULL statelog reference\n" );
@@ -1345,7 +1418,7 @@ int statelog_processop( STATELOG* statelog, opinfo* op ) {
    }
    // potentially incorporate operation info
    if ( stlog->type == RESOURCE_MODIFY_LOG ) {
-      if ( processopinfo( stlog, op ) ) {
+      if ( processopinfo( stlog, op, progress ) ) {
          LOG( LOG_ERR, "Failed to incorportate op info into MODIFY log\n" );
          return -1;
       }
