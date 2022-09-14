@@ -104,7 +104,9 @@ typedef struct rebuild_info_struct {
    ne_state* rtag;   // rebuild tag value from the marker ( or NULL, if none present )
 } rebuild_info;
 
-// NOTE -- repacks don't require any extra info
+typedef struct repack_info_struct {
+   size_t totalbytes; // total count of bytes to be repacked
+}
 
 typedef struct operation_summary_struct {
    size_t deletion_object_count;

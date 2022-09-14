@@ -73,6 +73,7 @@ typedef struct gctag_struct {
    size_t refcnt;
    char eos;
    char inprog;
+   char delzero;
 } GCTAG;
 
 #define GCTAG_NAME "GC-MODIFIED"
@@ -191,6 +192,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
          }
          walker->gctag->refcnt = (size_t) parseval;
          parse++;
+         // get EOS flag
          if ( *parse == 'E' ) {
             walker->gctag->eos = 1;
          }
@@ -198,11 +200,12 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
             walker->gctag->eos = 0;
          }
          else {
-            LOG( LOG_ERR, "GCTAG with innappriate EOS value for reference file target: \"%s\"\n", reftgt );
+            LOG( LOG_ERR, "GCTAG with inappriate EOS value for reference file target: \"%s\"\n", reftgt );
             mdal->close( handle );
             return -1;
          }
          parse++;
+         // check for inprog
          if ( *parse != '\0' ) {
             if ( *parse != ' ' ) {
                LOG( LOG_ERR, "Failed to parse 'in prog' in GCTAG of reference file target: \"%s\"\n", reftgt );
@@ -210,15 +213,38 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
                return -1;
             }
             parse++;
-            if ( *parse != 'P' ) {
+            if ( *parse != 'P'  &&  *parse != 'D' ) {
                LOG( LOG_ERR, "Failed to parse 'in prog' in GCTAG of reference file target: \"%s\"\n", reftgt );
                mdal->close( handle );
                return -1;
             }
-            walker->gctag->inprog = 1;
+            if ( *parse == 'P' ) 
+               walker->gctag->inprog = 1;
+            else
+               walker->gctag->inprog = 0;
+            parse++;
+            // check for delzero
+            if ( *parse != '\0' ) {
+               if ( *parse != ' ' ) {
+                  LOG( LOG_ERR, "Failed to parse 'del zero' in GCTAG of reference file target: \"%s\"\n", reftgt );
+                  mdal->close( handle );
+                  return -1;
+               }
+               parse++;
+               if ( *parse != 'D' ) {
+                  LOG( LOG_ERR, "Failed to parse 'del zero' in GCTAG of reference file target: \"%s\"\n", reftgt );
+                  mdal->close( handle );
+                  return -1;
+               }
+               walker->gctag->delzero = 1;
+            }
+            else {
+               walker->gctag->delzero = 0;
+            }
          }
          else {
             walker->gctag->inprog = 0;
+            walker->gctag->delzero = 0;
          }
       }
       else {
@@ -226,6 +252,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
          walker->gctag.refcnt = 0;
          walker->gctag.eos = 0;
          walker->gctag.inprogress = 0;
+         walker->gctag.delzero = 0;
       }
       // retrieve FTAG of the current file
       ssize_t getres = mdal->fgetxattr( handle, 1, FTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 );
@@ -324,7 +351,7 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
    newop->type = type;
    newop->extendedinfo = NULL;
    newop->start = 0;
-   newop->count = 1;
+   newop->count = 0;
    newop->errval = 0;
    newop->ftag = *ftag;
    if ( prevop  &&  strcmp( prevop->ftag.ctag, ftag->ctag ) == 0 ) {
@@ -352,7 +379,7 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
    }
    newop->ftagstr = strdup( ftagstr );
    if ( newop->ftagstr == NULL ) {
-      LOG( LOG_ERR, "Failed to duplicate ftagstr into new operation: \"%s\"\n", ftagstr );
+      LOG( LOG_ERR, "Failed to duplicate FTAG string: \"%s\"\n", ftagstr );
       free( newop->ftag.streamid );
       free( newop->ftag.ctag );
       free( newop );
@@ -539,13 +566,16 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          if ( walker->gctag.inprogress  &&  walker->gcthresh != 0 ) {
             LOG( LOG_INFO, "Cleaning up in-progress deletion of %zu reference files from previous instance\n", gctag.refcnt );
             opinfo* optgt = NULL;
-            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
+            walker->ftag.fileno++; // temporarily increase fileno, to match that of the subsequent ref deletion tgt
+            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), walker->ftagstr, &(optgt) ) ) {
                LOG( LOG_ERR, "Failed to identify operation target for GCTAG recovery\n" );
+               walker->ftag.fileno--;
                return -1;
             }
-            if ( optgt->ftagstr ) {
+            walker->ftag.fileno--;
+            if ( optgt->count ) {
                // sanity check
-               if ( optgt->ftag.fileno + optgt->count != walker->fileno + 1 ) {
+               if ( optgt->ftag.fileno + optgt->count - 1 != walker->fileno ) {
                   LOG( LOG_ERR, "Failed sanity check: Active ref del op (%zu) does not reach walker fileno (%zu)\n",
                                 optgt->ftag.fileno + optgt->count - 1, walker->fileno );
                   return -1;
@@ -558,54 +588,20 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             else {
                // populate newly created op
                tgtop->count = gctag.refcnt;
-               tgtop->ftagstr = strdup( walker->ftagstr );
                tgtop->extendedinfo = malloc( sizeof( struct delref_info_struct ) );
-               if ( refdel->extendedinfo == NULL ) {
+               if ( tgtop->extendedinfo == NULL ) {
                   LOG( LOG_ERR, "Failed to allocate new ref del extended info for cleanup of previous GC instance\n" );
+                  // rip the newly created op out of our list entirely
+                  walker->gcops = tgtop->next;
+                  free( tgtop->ftagstr );
                   free( tgtop->ftag.streamid );
-                  free( refdel->ftag.ctag );
-                  free( refdel );
-                  *parseops = NULL;
+                  free( tgtop->ftag.ctag );
+                  free( tgtop );
                   return -1;
                }
-               delref_info* extinf = &(refdel->extendedinfo);
+               delref_info* extinf = &(tgtop->extendedinfo);
                extinf->prev_active_index = walker->activeindex;
                extinf->eos = gctag.eos;
-            }
-            // need to try to clean up from a previous GC instance
-            opinfo** parseops = &(walker->gcops);
-            // attempt to find any existing reference deletion op
-            while ( (*parseops)  &&  (*parseops)->type != MARFS_DELETE_REF_OP ) { parseop = &((*parseops)->next); }
-            if ( (*parseops) ) {
-            }
-            else {
-               // create a new ref deletion op
-               *parseops = malloc( sizeof( struct opinfo_struct ) );
-               if ( *parseops == NULL ) {
-                  LOG( LOG_ERR, "Failed to allocate new reference deletion op for cleanup of previous GC instance\n" );
-                  return -1;
-               }
-               opinfo* refdel = *parseops;
-               refdel->type = MARFS_DELETE_REF_OP;
-               refdel->errval = 0;
-               refdel->ftag = walker->ftag;
-               refdel->ftag.ctag = strdup ( walker->ftag.ctag );
-               if ( refdel->ftag.ctag == NULL ) {
-                  LOG( LOG_ERR, "Failed to allocate new ref del ctag for cleanup of previous GC instance\n" );
-                  free( refdel );
-                  *parseops = NULL;
-                  return -1;
-               }
-               refdel->ftag.streamid = strdup ( walker->ftag.streamid );
-               if ( refdel->ftag.streamid == NULL ) {
-                  LOG( LOG_ERR, "Failed to allocate new ref del streamid for cleanup of previous GC instance\n" );
-                  free( refdel->ftag.ctag );
-                  free( refdel );
-                  *parseops = NULL;
-                  return -1;
-               }
-               refdel->ftagstr
-
             }
             // clear the 'inprogress' state, just to make sure we never repeat this process
             gctag.inprogress = 0;
@@ -626,8 +622,6 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       }
       // pull info for the next reference target
       char filestate = -1;
-      struct stat stval;
-      GCTAG gctag;
       char haveftag = pullxattrs;
       if ( process_getfileinfo( reftgt, pullxattrs, walker, &(filestate) ) ) {
          LOG( LOG_ERR, "Failed to get info for reference target: \"%s\"\n", walker->reftgt );
@@ -640,15 +634,16 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          // decrement to the previous index and make sure to check for xattrs
          if ( walker->fileno == 0 ) {
             // can't decrement beyond the beginning of the datastream
-            LOG( LOG_ERR, "Initial reference target does not exist: \"%s\"\n", walker->reftgt );
+            LOG( LOG_ERR, "Initial reference target does not exist: \"%s\"\n", reftgt );
             return -1;
          }
          if ( walker->fileno == walker->ftag.fileno ) {
             // looks like we already pulled xattrs from the previous file, and must not have found a GCTAG
-            LOG( LOG_ERR, "Datastream break detected at file number %zu: \"%s\"\n", walker->fileno, walker->reftgt );
+            LOG( LOG_ERR, "Datastream break detected at file number %zu: \"%s\"\n", walker->fileno, reftgt );
             return -1;
          }
          // generate the rpath of the previous file
+         free( reftgt );
          reftgt = datastream_genrpath( &(walker->ftag), ms );
          if ( reftgt == NULL ) {
             LOG( LOG_ERR, "Failed to generate reference path for previous file ( %zu )\n", walker->fileno );
@@ -685,21 +680,24 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             free( reftgt );
             return -1;
          }
-         free( reftgt );
       }
+      free( reftgt );
       // many checks are only appropriate if we're pulling xattrs
       size_t endobj = walker->objno;
       if ( haveftag ) {
          // check for innapropriate FTAG value
          if ( walker->ftag.fileno != walker->fileno + tgtoffest ) {
-            LOG( LOG_ERR, "Invalid FTAG filenumber (%zu) on file %zu\n", walker->ftag.fileno, walker->fileno + 1 );
+            LOG( LOG_ERR, "Invalid FTAG filenumber (%zu) on file %zu\n", walker->ftag.fileno, walker->fileno + tgtoffset );
             return -1;
          }
          // check for object transition
          if ( walker->ftag.objno != walker->objno ) {
-            // we may need to delete the previous object
-            if ( walker->gcops  &&  walker->activefiles == 0 ) {
+            // we may need to delete the previous object IF we are GCing AND no active refs existed for that obj
+            //    AND it is not an already deleted object0
+            if ( walker->gcthresh  &&  walker->activefiles == 0  &&  ( walker->objno != 0  ||  walker->gctag->delzero == 0 ) ) {
                // need to prepend an object deletion operation
+               opinfo* optgt = NULL;
+               if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
                opinfo* objdelop = malloc( sizeof( struct opinfo_struct ) );
                if ( objdelop == NULL ) {
                   LOG( LOG_ERR, "Failed to allocate object deletion op for object %zu\n" );
@@ -730,6 +728,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                else {
                   // dispatch all ops
                   *repackops = walker->rpckops;
+                  dispatchedops = 1; // note to exit after this file
                }
                walker->rpckops = NULL;
             }
