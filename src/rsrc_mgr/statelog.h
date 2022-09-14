@@ -100,7 +100,7 @@ typedef struct delref_info_struct {
 } delref_info;
 
 typedef struct rebuild_info_struct {
-   char* markerpath; // rpath of the rebuild marker associated with this operation
+   char* markerpath; // rpath of the rebuild marker associated with this operation ( or NULL, if none present )
    ne_state* rtag;   // rebuild tag value from the marker ( or NULL, if none present )
 } rebuild_info;
 
