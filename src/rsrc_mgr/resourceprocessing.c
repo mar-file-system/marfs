@@ -328,7 +328,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
    return 0;
 }
 
-int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag, const char* ftagstr, opinfo** optgt ) {
+int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag, opinfo** optgt ) {
    if ( opchain  &&  *opchain ) {
       // check for any existing ops of this type in the chain
       opinfo* prevop = NULL;
@@ -350,7 +350,7 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
    } 
    newop->type = type;
    newop->extendedinfo = NULL;
-   newop->start = 0;
+   newop->start = 1;
    newop->count = 0;
    newop->errval = 0;
    newop->ftag = *ftag;
@@ -377,9 +377,25 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
          return -1;
       }
    }
-   newop->ftagstr = strdup( ftagstr );
+   size_t ftagstrlen = ftag_tostr( &(newop->ftag), NULL, 0 );
+   if ( ftagstrlen < 1 ) {
+      LOG( LOG_ERR, "Failed to identify length of FTAG string for operation info\n" );
+      free( newop->ftag.streamid );
+      free( newop->ftag.ctag );
+      free( newop );
+      return -1;
+   }
+   newop->ftagstr = malloc( sizeof(char) * (ftagstrlen + 1) );
    if ( newop->ftagstr == NULL ) {
-      LOG( LOG_ERR, "Failed to duplicate FTAG string: \"%s\"\n", ftagstr );
+      LOG( LOG_ERR, "Failed to allocate FTAG string for operation info\n" );
+      free( newop->ftag.streamid );
+      free( newop->ftag.ctag );
+      free( newop );
+      return -1;
+   }
+   if ( ftag_tostr( &(newop->ftag), newop->ftagstr, ftagstrlen + 1 ) != ftagstrlen ) {
+      LOG( LOG_ERR, "Inconsistent length of FTAG string for operation info\n" );
+      free( newop->ftagstr );
       free( newop->ftag.streamid );
       free( newop->ftag.ctag );
       free( newop );
@@ -567,7 +583,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             LOG( LOG_INFO, "Cleaning up in-progress deletion of %zu reference files from previous instance\n", gctag.refcnt );
             opinfo* optgt = NULL;
             walker->ftag.fileno++; // temporarily increase fileno, to match that of the subsequent ref deletion tgt
-            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), walker->ftagstr, &(optgt) ) ) {
+            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
                LOG( LOG_ERR, "Failed to identify operation target for GCTAG recovery\n" );
                walker->ftag.fileno--;
                return -1;
@@ -694,29 +710,36 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          if ( walker->ftag.objno != walker->objno ) {
             // we may need to delete the previous object IF we are GCing AND no active refs existed for that obj
             //    AND it is not an already deleted object0
-            if ( walker->gcthresh  &&  walker->activefiles == 0  &&  ( walker->objno != 0  ||  walker->gctag->delzero == 0 ) ) {
+            if ( walker->gcthresh  &&  walker->activefiles == 0  &&
+                 ( walker->objno != 0  ||  walker->gctag->delzero == 0 ) ) {
                // need to prepend an object deletion operation
                opinfo* optgt = NULL;
                if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
-               opinfo* objdelop = malloc( sizeof( struct opinfo_struct ) );
-               if ( objdelop == NULL ) {
-                  LOG( LOG_ERR, "Failed to allocate object deletion op for object %zu\n" );
+                  LOG( LOG_ERR, "Failed to identify operation target for deletion of object %zu\n", walker->objno );
                   return -1;
                }
-               objdelop->type = MARFS_DELETE_OBJ_OP;
-               objdelop->extendedinfo = malloc( sizeof( struct delobj_info ) );
-               if ( objdelop->extendedinfo == NULL ) {
-                  LOG( LOG_ERR, "Failed to allocate extended info for object deletion op\n" );
-                  free( objdelop );
-                  return -1;
+               if ( optgt->count ) {
+                  // sanity check
+                  if ( optgt->count + optgt->ftag.objno != walker->objno ) {
+                     LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n", walker->objno );
+                     return -1;
+                  }
+                  // update existing operation
+                  optgt->count++;
                }
-               objdelop->start = 1;
-               objdelop->count = 0;
-               objdelop->errval = 0;
-               objdelop->ftag = walker->gcopstail->ftag;
-               objdelop->ftag.objno = walker->objno;
-               objdelop->next = walker->gcops;
-               walker->gcops = objdelop;
+               else {
+                  // populate newly created op
+                  // TODO - necessary?
+                  optgt->extendedinfo = malloc( sizeof( struct delobj_info ) );
+                  if ( optgt->extendedinfo == NULL ) {
+                     LOG( LOG_ERR, "Failed to allocate extended info for new object deletion op\n" );
+                     free( tgtop->ftagstr );
+                     free( tgtop->ftag.streamid );
+                     free( tgtop->ftag.ctag );
+                     free( tgtop );
+                     return -1;
+                  }
+               }
             }
             // need to handle repack ops
             if ( walker->rpckops ) {
@@ -766,7 +789,6 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       if ( filestate > 1  ||  assumeactive ) {
          // handle GC state
       }
-      // generate some traversal values
    }
 }
 
