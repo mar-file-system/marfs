@@ -329,9 +329,9 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
 }
 
 int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag, opinfo** optgt ) {
+   opinfo* prevop = NULL;
    if ( opchain  &&  *opchain ) {
       // check for any existing ops of this type in the chain
-      opinfo* prevop = NULL;
       opinfo* parseop = *opchain;
       while ( parseop ) {
          if ( parseop->type == type ) {
@@ -401,12 +401,46 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
       free( newop );
       return -1;
    }
+   // potentially allocate extended info
+   char needext = 0;
+   switch( type ) {
+      case MARFS_DELETE_OBJ_OP:
+         break; // nothing to be done
+      case MARFS_DELETE_REF_OP:
+         newop->extendedinfo = malloc( sizeof( struct delref_info_struct ) );
+         needext = 1;
+         break;
+      case MARFS_REBUILD_OP:
+         newop->extendedinfo = malloc( sizeof( struct rebuild_info_struct ) );
+         needext = 1;
+         break;
+      case MARFS_REPACK_OP:
+         newop->extendedinfo = malloc( sizeof( struct repack_info_struct ) );
+         needext = 1;
+         break;
+   }
+   // check for allocation failure
+   if ( needext &&  newop->extendedinfo == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate operation extended info\n" );
+      free( newop->ftagstr );
+      free( newop->ftag.streamid );
+      free( newop->ftag.ctag );
+      free( newop );
+      return -1;
+   }
    newop->next = NULL;
    // insert the new op into the chain and return its reference
    if ( opchain ) {
-      opinfo* prevhead = *opchain;
-      *opchain = newop;
-      newop->next = prevhead;
+      if ( type == MARFS_DELETE_REF_OP  &&  prevop ) {
+         // special case, reference deletion should always be inserted at the tail
+         prevop->next = newop;
+      }
+      else {
+         // default to inserting at the head
+         opinfo* prevhead = *opchain;
+         *opchain = newop;
+         newop->next = prevhead;
+      }
    }
    *optgt = newop;
    return 0;
@@ -579,7 +613,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       if ( walker->gctag.refcnt ) {
          // handle any existing gctag value
          tgtoffset += walker->gctag.refcnt; // skip over count indicated by the tag
-         if ( walker->gctag.inprogress  &&  walker->gcthresh != 0 ) {
+         if ( walker->gctag.inprogress  &&  walker->gcthresh ) {
             LOG( LOG_INFO, "Cleaning up in-progress deletion of %zu reference files from previous instance\n", gctag.refcnt );
             opinfo* optgt = NULL;
             walker->ftag.fileno++; // temporarily increase fileno, to match that of the subsequent ref deletion tgt
@@ -604,17 +638,6 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             else {
                // populate newly created op
                tgtop->count = gctag.refcnt;
-               tgtop->extendedinfo = malloc( sizeof( struct delref_info_struct ) );
-               if ( tgtop->extendedinfo == NULL ) {
-                  LOG( LOG_ERR, "Failed to allocate new ref del extended info for cleanup of previous GC instance\n" );
-                  // rip the newly created op out of our list entirely
-                  walker->gcops = tgtop->next;
-                  free( tgtop->ftagstr );
-                  free( tgtop->ftag.streamid );
-                  free( tgtop->ftag.ctag );
-                  free( tgtop );
-                  return -1;
-               }
                delref_info* extinf = &(tgtop->extendedinfo);
                extinf->prev_active_index = walker->activeindex;
                extinf->eos = gctag.eos;
@@ -672,39 +695,31 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             free( reftgt );
             return -1;
          }
-         // MUST find a gctag for the previous file
-         if ( walker->gctag.refcnt == 0 ) {
-            LOG( LOG_ERR, "Previous ref tgt did not have a GCTAG: \"%s\"\n", reftgt );
-            free( reftgt );
-            return -1;
-         }
-         // identify the actual target
-         tgtoffset = 1 + walker->gctag.refcnt;
-         tmptag = walker->ftag;
-         tmptag.fileno += tgtoffset;
-         free( reftgt );
-         reftgt = datastream_genrpath( &(tmptag), ms );
-         if ( reftgt == NULL ) {
-            LOG( LOG_ERR, "Failed to generate reference path for corrected tgt ( %zu )\n", walker->fileno );
-            return -1;
-         }
-         // pull info for the actual target
-         LOG( LOG_INFO, "Pulling info from corrected fileno ( %zu ) due to missing fileno %zu\n",
-              tmptag.fileno, walker->fileno + 1 );
-         if ( process_getfileinfo( reftgt, pullxattrs, walker, &(filestate) )  ||  filestate == 0 ) {
-            LOG( LOG_ERR, "Failed to get info for corrected ref tgt: \"%s\"\n", reftgt );
-            free( reftgt );
-            return -1;
-         }
+         continue; // restart this iteration, now with all info available
       }
       free( reftgt );
       // many checks are only appropriate if we're pulling xattrs
       size_t endobj = walker->objno;
+      char eos = 0;
       if ( haveftag ) {
          // check for innapropriate FTAG value
          if ( walker->ftag.fileno != walker->fileno + tgtoffest ) {
             LOG( LOG_ERR, "Invalid FTAG filenumber (%zu) on file %zu\n", walker->ftag.fileno, walker->fileno + tgtoffset );
             return -1;
+         }
+         endobj = walker->ftag.objno; // update ending object index
+         eos = walker->ftag.endofstream;
+         if ( (walker->ftag.state & FTAG_DATASTATE) < FTAG_FIN ) { eos = 1; }
+         // calculate final object referenced by this file
+         if ( dataperobj ) {
+            // calculate the final object referenced by this file
+            size_t finobjbounds = (walker->ftag->bytes + walker->ftag->offset - walker->recovheaderlen) / dataperobj;
+            if ( (walker->ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+                  finobjbounds  &&
+                  (walker->ftag->bytes + walker->ftag->offset - headerlen) % dataperobj == 0 ) {
+               finobjbounds--;
+            }
+            endobj += finobjbounds;
          }
          // check for object transition
          if ( walker->ftag.objno != walker->objno ) {
@@ -718,28 +733,15 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                   LOG( LOG_ERR, "Failed to identify operation target for deletion of object %zu\n", walker->objno );
                   return -1;
                }
-               if ( optgt->count ) {
-                  // sanity check
-                  if ( optgt->count + optgt->ftag.objno != walker->objno ) {
-                     LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n", walker->objno );
-                     return -1;
-                  }
-                  // update existing operation
-                  optgt->count++;
+               // sanity check
+               if ( optgt->count + optgt->ftag.objno != walker->objno ) {
+                  LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n", walker->objno );
+                  return -1;
                }
-               else {
-                  // populate newly created op
-                  // TODO - necessary?
-                  optgt->extendedinfo = malloc( sizeof( struct delobj_info ) );
-                  if ( optgt->extendedinfo == NULL ) {
-                     LOG( LOG_ERR, "Failed to allocate extended info for new object deletion op\n" );
-                     free( tgtop->ftagstr );
-                     free( tgtop->ftag.streamid );
-                     free( tgtop->ftag.ctag );
-                     free( tgtop );
-                     return -1;
-                  }
-               }
+               // update operation
+               optgt->count++;
+               // update our record
+               walker->record.delobjs++;
             }
             // need to handle repack ops
             if ( walker->rpckops ) {
@@ -750,49 +752,117 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                }
                else {
                   // dispatch all ops
+                  walker->report.rpckfiles += walker->rpckops->count;
+                  walker->report.rpckbytes += ( (struct repack_info_struct*) walker->rpckops->extendedinfo )->totalbytes;
                   *repackops = walker->rpckops;
                   dispatchedops = 1; // note to exit after this file
                }
                walker->rpckops = NULL;
             }
-            endobj = walker->ftag.objno; // update ending object index
+            // update state
             walker->activefiles = 0; // update active file count for new obj
             walker->activebytes = 0; // update active byte count for new obj
-         }
-         if ( dataperobj ) {
-            // calculate the final object referenced by this file
-            size_t finobjbounds = (walker->ftag->bytes + walker->ftag->offset - walker->recovheaderlen) / dataperobj;
-            if ( (walker->ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
-                  finobjbounds  &&
-                  (walker->ftag->bytes + walker->ftag->offset - headerlen) % dataperobj == 0 ) {
-               finobjbounds--;
-            }
-            endobj += finobjbounds;
+            walker->objno = walker->ftag.objno; // progress to the new obj
          }
       }
+      walker->fileno += tgtoffest; // progress to the new file
       char assumeactive = 0;
       if ( filestate == 1 ) {
          // file is inactive
          if ( walker->gcthresh  &&  walker->stval.st_ctime < walker->gcthresh  &&  haveftag ) {
             // this file is elligible for GC
+            opinfo* optgt = NULL;
+            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
+               LOG( LOG_ERR, "Failed to identify operation target for deletion of file %zu\n", walker->ftag.fileno );
+               return -1;
+            }
+            if ( optgt->count ) {
+               // update existing op
+               optgt->count++;
+               struct delref_info_struct* delrefinf = &(optgt->extendedinfo);
+               // sanity check
+               if ( delrefinf->prev_active_index != walker->prevactive ) {
+                  LOG( LOG_ERR, "Active delref op active index (%zu) does not match current val (%zu)\n",
+                                delrefinf->prev_active_index, walker->prevactive );
+                  return -1;
+               }
+               if ( delrefinf->eos == 0 ) { delrefinf->eos = eos; }
+            }
+            else {
+               // populate new op
+               struct delref_info_struct* delrefinf = &(optgt->extendedinfo);
+               delrefinf->prev_active_index = walker->prevactive;
+               delrefinf->eos = eos;
+            }
+            if ( endobj != walker->objno ) {
+               // potentially generate a GC op for the first obj referenced by this file
+               FTAG tmptag = walker->ftag;
+               tmptag.objno = walker->objno;
+               if ( walker->activefiles == 0 ) {
+                  optgt = NULL;
+                  if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
+                     LOG( LOG_ERR, "Failed to identify operation target for deletion of initial spanned obj %zu\n", curobj );
+                     return -1;
+                  }
+                  // sanity check
+                  if ( optgt->count + optgt->ftag.objno != walker->objno ) {
+                     LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
+                                   optgt->count + optgt->ftag.objno, walker->objno );
+                     return -1;
+                  }
+                  // update operation
+                  optgt->count++;
+                  // update our record
+                  walker->record.delobjs++;
+               }
+               // potentially generate GC ops for objects spanned by this file
+               tmptag.objno++;
+               while ( tmptag.objno < endobj ) {
+                  // generate ops for all but the last referenced object
+                  optgt = NULL;
+                  if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
+                     LOG( LOG_ERR, "Failed to identify operation target for deletion of spanned obj %zu\n", tmptag.objno );
+                     return -1;
+                  }
+                  // sanity check
+                  if ( optgt->count + optgt->ftag.objno != curobj ) {
+                     LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
+                                   optgt->count + optgt->ftag.objno, tmptag.objno );
+                     return -1;
+                  }
+                  // update operation
+                  optgt->count++;
+                  // update our record
+                  walker->record.delobjs++;
+                  // iterate to the next obj
+                  tmptag.objno++;
+               }
+            }
          }
          else if ( walker->stval.st_ctime >= walker->gcthresh ) {
+            // this file was too recently deactivated to gc
             walker->report.volfiles++;
             assumeactive = 1;
          }
+         // potentially dispatch repack ops
       }
       if ( filestate > 1 ) {
          // file is active
          walker->report.fileusage++;
          walker->report.byteusage += walker->ftag.bytes;
+         // generate a repack op
+         // potentially generate a rebuild op
       }
       if ( filestate > 1  ||  assumeactive ) {
          // handle GC state
+         walker->activeindex = walker->ftag.fileno;
+         walker->activefiles++;
+         // handle repack state
+         walker->activebytes += walker->ftag.bytes;
+         // dispatch any GC ops
       }
    }
 }
-
-int process_prepareoperations( MDAL_CTXT ctxt, opinfo* op )
 
 /**
  * Perform the given operation
