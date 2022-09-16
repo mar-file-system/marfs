@@ -650,6 +650,10 @@ int printlogline( int logfile, opinfo* op ) {
  * @param STATELOG* stlog : statelog to be updated
  * @param opinfo* newop : Operation(s) to be included
  *                        NOTE -- This func will never free opinfo structs
+ * @param char* progressop : Flag to be populated with the completion status of an operation set
+ *                           If set to zero, the updated operation is still ongoing
+ *                           If set to one, the updated operation has sucessfully completed
+ *                           If set to negative one, the updated operation completed with errors
  * @return int : Zero on success, or -1 on failure
  */
 int processopinfo( STATELOG* stlog, opinfo* newop, char* progressop ) {
@@ -716,6 +720,7 @@ int processopinfo( STATELOG* stlog, opinfo* newop, char* progressop ) {
                   LOG( LOG_ERR, "Unrecognized operation type value\n" );
                   return -1;
             }
+            if ( parseop->errval ) { parseindex->errval = parseop->errval; } // potentially note an error
             // check for completion of the specified op
             if ( parseindex->count != parseop->count ) {
                // first operation is not complete, so cannot progress op chain
@@ -734,7 +739,10 @@ int processopinfo( STATELOG* stlog, opinfo* newop, char* progressop ) {
                   return -1;
                }
             }
-            else if ( progressop ) { *progressop = 1; } // note that the corresponding ops were all completed
+            else if ( progressop ) {
+               if ( previndex->errval == 0 ) { *progressop = 1; } // note that the corresponding ops were all completed without error
+               else { *progressop = -1; } // note that the corresponding ops were completed with errors
+            }
             // decrement in-progress cnt
             stlog->outstanding--;
          }
