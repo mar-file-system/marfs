@@ -1,5 +1,5 @@
-#ifndef _STATELOG_H
-#define _STATELOG_H
+#ifndef _RESOURCELOG_H
+#define _RESOURCELOG_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -61,7 +61,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "config/config.h"
 #include "tagging/tagging.h"
 
-typedef struct statelog_struct* STATELOG;
+typedef struct resourcelog_struct* RESOURCELOG;
 
 typedef enum
 {
@@ -69,11 +69,11 @@ typedef enum
    RESOURCE_MODIFY_LOG = 1,
    RESOURCE_READ_LOG = 2
    // NOTE -- The caller should treat each of these type values as exclusive ( one of the three values ), when 
-   //         providing them as arguments to statelog_init().
-   //         However, the underlying statelog code treats 'RESOURCE_READ_LOG' as a bitflag for internal typing.
-   //         As in, it will store internal type values for read statelogs as a bitwise OR between this value and  
+   //         providing them as arguments to resourcelog_init().
+   //         However, the underlying resourcelog code treats 'RESOURCE_READ_LOG' as a bitflag for internal typing.
+   //         As in, it will store internal type values for read resourcelogs as a bitwise OR between this value and  
    //         one of the other two.  This allows it to track both that it is reading and from what type of log.
-} statelog_type;
+} resourcelog_type;
 
 typedef enum
 {
@@ -121,14 +121,14 @@ typedef struct operation_summary_struct {
    size_t repack_failures;
 } operation_summary;
 
-typedef struct statelog_struct* STATELOG;
+typedef struct resourcelog_struct* RESOURCELOG;
 
 
 /**
  * Free the given opinfo struct chain
  * @param opinfo* op : Reference to the opinfo struct to be freed
  */
-void statelog_freeopinfo( opinfo* op );
+void resourcelog_freeopinfo( opinfo* op );
 
 /**
  * Generates the pathnames of logfiles and parent dirs
@@ -141,81 +141,81 @@ void statelog_freeopinfo( opinfo* op );
  * @return char* : Path of the corresponding log location, or NULL if an error occurred
  *                 NOTE -- It is the caller's responsibility to free this string
  */
-char* statelog_genlogpath( char create, const char* logroot, const char* iteration, marfs_ns* ns, ssize_t ranknum );
+char* resourcelog_genlogpath( char create, const char* logroot, const char* iteration, marfs_ns* ns, ssize_t ranknum );
 
 /**
- * Initialize a statelog, associated with the given logging root, namespace, and rank
- * @param STATELOG* statelog : Statelog to be initialized
- *                             NOTE -- This can either be a NULL value, or a statelog which was 
+ * Initialize a resourcelog, associated with the given logging root, namespace, and rank
+ * @param RESOURCELOG* resourcelog : Statelog to be initialized
+ *                             NOTE -- This can either be a NULL value, or a resourcelog which was 
  *                                     previously terminated / finalized
- * @param statelog_type type : Type of statelog to open
- * @param const char* logpath : Location of the statelog file
+ * @param resourcelog_type type : Type of resourcelog to open
+ * @param const char* logpath : Location of the resourcelog file
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_init( STATELOG* statelog, const char* logpath, statelog_type type, marfs_ns* ns );
+int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog_type type, marfs_ns* ns );
 
 /**
  * Replay all operations from a given inputlog ( reading from a MODIFY log ) into a given 
  *  outputlog ( writing to a MODIFY log ), then delete and terminate the inputlog
  * NOTE -- This function is intended for picking up state from a previously aborted run.
- * @param STATELOG* inputlog : Source inputlog to be read from
- * @param STATELOG* outputlog : Destination outputlog to be written to
+ * @param RESOURCELOG* inputlog : Source inputlog to be read from
+ * @param RESOURCELOG* outputlog : Destination outputlog to be written to
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_replay( STATELOG* inputlog, STATELOG* outputlog );
+int resourcelog_replay( RESOURCELOG* inputlog, RESOURCELOG* outputlog );
 
 /**
  * Record that a certain number of threads are currently processing
- * @param STATELOG* statelog : Statelog to be updated
+ * @param RESOURCELOG* resourcelog : Statelog to be updated
  * @param size_t numops : Number of additional processors ( can be negative to reduce cnt )
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_update_inflight( STATELOG* statelog, ssize_t numops );
+int resourcelog_update_inflight( RESOURCELOG* resourcelog, ssize_t numops );
 
 /**
  * Process the given operation
- * @param STATELOG* statelog : Statelog to update ( must be writing to this statelog )
+ * @param RESOURCELOG* resourcelog : Statelog to update ( must be writing to this resourcelog )
  * @param opinfo* op : Operation ( or op sequence ) to process
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_processop( STATELOG* statelog, opinfo* op, char* progress );
+int resourcelog_processop( RESOURCELOG* resourcelog, opinfo* op, char* progress );
 
 /**
- * Parse the next operation info sequence from the given RECORD statelog
- * @param STATELOG* statelog : Statelog to read
+ * Parse the next operation info sequence from the given RECORD resourcelog
+ * @param RESOURCELOG* resourcelog : Statelog to read
  * @param opinfo** op : Reference to be populated with the parsed operation info sequence
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_readop( STATELOG* statelog, opinfo** op );
+int resourcelog_readop( RESOURCELOG* resourcelog, opinfo** op );
 
 /**
- * Finalize a given statelog, but leave allocated ( saves time on future initializations )
+ * Finalize a given resourcelog, but leave allocated ( saves time on future initializations )
  * NOTE -- this will wait until there are currently no ops in flight
- * @param STATELOG* statelog : Statelog to be finalized
+ * @param RESOURCELOG* resourcelog : Statelog to be finalized
  * @param operation_summary* summary : Reference to be populated with summary values ( ignored if NULL )
  * @param const char* log_preservation_tgt : FS location where the state logfile should be relocated to
  *                                           If NULL, the file is deleted
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_fin( STATELOG* statelog, operation_summary* summary, const char* log_preservation_tgt );
+int resourcelog_fin( RESOURCELOG* resourcelog, operation_summary* summary, const char* log_preservation_tgt );
 
 /**
- * Deallocate and finalize a given statelog
+ * Deallocate and finalize a given resourcelog
  * NOTE -- this will wait until there are currently no ops in flight
- * @param STATELOG* statelog : Statelog to be terminated
+ * @param RESOURCELOG* resourcelog : Statelog to be terminated
  * @param operation_summary* summary : Reference to be populated with summary values ( ignored if NULL )
  * @param const char* log_preservation_tgt : FS location where the state logfile should be relocated to
  *                                           If NULL, the file is deleted
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_term( STATELOG* statelog, operation_summary* summary, const char* log_preservation_tgt );
+int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, const char* log_preservation_tgt );
 
 /**
- * Deallocate and finalize a given statelog without waiting for completion
- * @param STATELOG* statelog : Statelog to be terminated
+ * Deallocate and finalize a given resourcelog without waiting for completion
+ * @param RESOURCELOG* resourcelog : Statelog to be terminated
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_abort( STATELOG* statelog );
+int resourcelog_abort( RESOURCELOG* resourcelog );
 
-#endif // _STATELOG_H
+#endif // _RESOURCELOG_H
 
