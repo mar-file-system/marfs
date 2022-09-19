@@ -58,6 +58,10 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#include "config/config.h"
+#include "tagging/tagging.h"
+
+typedef struct statelog_struct* STATELOG;
 
 typedef enum
 {
@@ -90,9 +94,7 @@ typedef struct opinfo_struct {
    struct opinfo_struct* next; // subsequent ops in this chain ( or NULL, if none remain )
 } opinfo;
 
-typedef struct delobj_info_struct {
-   size_t offset; // offset at which to perform deletion of a specific subset of the object set
-}
+// NOTE -- object deletions do not require extended info
 
 typedef struct delref_info_struct {
    size_t prev_active_index; // index of the closest active ( not to be deleted ) reference in the stream
@@ -101,12 +103,12 @@ typedef struct delref_info_struct {
 
 typedef struct rebuild_info_struct {
    char* markerpath; // rpath of the rebuild marker associated with this operation ( or NULL, if none present )
-   ne_state* rtag;   // rebuild tag value from the marker ( or NULL, if none present )
+   ne_state rtag;    // rebuild tag value from the marker ( or NULL, if none present )
 } rebuild_info;
 
 typedef struct repack_info_struct {
    size_t totalbytes; // total count of bytes to be repacked
-}
+} repack_info;
 
 typedef struct operation_summary_struct {
    size_t deletion_object_count;
@@ -150,7 +152,7 @@ char* statelog_genlogpath( char create, const char* logroot, const char* iterati
  * @param const char* logpath : Location of the statelog file
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_init( STATELOG* statelog, statelog_type type, const char* logpath );
+int statelog_init( STATELOG* statelog, const char* logpath, statelog_type type, marfs_ns* ns );
 
 /**
  * Replay all operations from a given inputlog ( reading from a MODIFY log ) into a given 
@@ -176,7 +178,7 @@ int statelog_update_inflight( STATELOG* statelog, ssize_t numops );
  * @param opinfo* op : Operation ( or op sequence ) to process
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_processop( STATELOG* statelog, opinfo* op );
+int statelog_processop( STATELOG* statelog, opinfo* op, char* progress );
 
 /**
  * Parse the next operation info sequence from the given RECORD statelog

@@ -57,6 +57,18 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#include "marfs_auto_config.h"
+#ifdef DEBUG_RM
+#define DEBUG DEBUG_RM
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
+#endif
+#define LOG_PREFIX "statelog"
+#include <logging.h>
+
+#include "statelog.h"
+
+#include <pthread.h>
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
@@ -74,6 +86,7 @@ typedef struct statelog_struct {
    ssize_t           outstandingcnt; // count of scanners still running ( threads that could potentially submit more ops )
                                      //  always zero for a 'record' log
    // state info
+   statelog_type     type;
    operation_summary summary;
    HASH_TABLE        inprogress;  // left NULL for a 'record' log
    int               logfile;
@@ -105,8 +118,9 @@ void cleanuplog( STATELOG stlog, char destroy ) {
    if ( stlog->logfilepath ) { free( stlog->logfilepath ); }
    if ( stlog->logfile > 0 ) { close( stlog->logfile ); }
    if ( destroy ) {
-      if ( stlog->nooutstanding ) { pthread_cond_destroy( &(stlog->nooutstanding) ); }
-      if ( stlog->lock ) { pthread_mutex_unlock( &(stlog->lock) ); pthread_mutex_destroy( &(stlog->lock) ); }
+      pthread_cond_destroy( &(stlog->nooutstanding) );
+      pthread_mutex_unlock( &(stlog->lock) );
+      pthread_mutex_destroy( &(stlog->lock) );
       free( stlog );
    }
    else {
@@ -187,44 +201,44 @@ opinfo* parselogline( int logfile, char* eof ) {
    if ( strncmp( buffer, "DEL-OBJ ", 8 ) == 0 ) {
       op->type = MARFS_DELETE_OBJ_OP;
       parseloc += 8;
-      // allocate delobj_info
-      delobj_info* extinfo = malloc( sizeof( struct delobj_info_struct ) );
-      if ( op->extendedinfo == NULL ) {
-         LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
-         free( op );
-         lseek( logfile, origoff, SEEK_SET );
-         return NULL;
-      }
-      // parse in delobj_info
-      if ( strncmp( parseloc, 2, "{ " ) ) {
-         LOG( LOG_ERR, "Missing '{ ' header for DEL-REF extended info\n" );
-         free( extinfo );
-         free( op );
-         lseek( logfile, origoff, SEEK_SET );
-         return NULL;
-      }
-      parseloc += 2;
-      char* endptr = NULL;
-      unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
-      if ( endptr == NULL  ||  *endptr != ' ' ) {
-         LOG( LOG_ERR, "DEL-REF extended info has unexpected char in prev_active_index string: '%c'\n", *endptr );
-         free( extinfo );
-         free( op );
-         lseek( logfile, origoff, SEEK_SET );
-         return NULL;
-      }
-      extinfo->offset = (size_t)parseval;
-      parseloc = endptr + 1;
-      if ( strncmp( parseloc, 2, "} " ) ) {
-         LOG( LOG_ERR, "Missing '} ' tail for DEL-OBJ extended info\n" );
-         free( extinfo );
-         free( op );
-         lseek( logfile, origoff, SEEK_SET );
-         return NULL;
-      }
-      parseloc += 2;
-      // attach delobj_info
-      op->extendedinfo = extinfo;
+//      // allocate delobj_info
+//      delobj_info* extinfo = malloc( sizeof( struct delobj_info_struct ) );
+//      if ( op->extendedinfo == NULL ) {
+//         LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
+//         free( op );
+//         lseek( logfile, origoff, SEEK_SET );
+//         return NULL;
+//      }
+//      // parse in delobj_info
+//      if ( strncmp( parseloc, 2, "{ " ) ) {
+//         LOG( LOG_ERR, "Missing '{ ' header for DEL-REF extended info\n" );
+//         free( extinfo );
+//         free( op );
+//         lseek( logfile, origoff, SEEK_SET );
+//         return NULL;
+//      }
+//      parseloc += 2;
+//      char* endptr = NULL;
+//      unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
+//      if ( endptr == NULL  ||  *endptr != ' ' ) {
+//         LOG( LOG_ERR, "DEL-REF extended info has unexpected char in prev_active_index string: '%c'\n", *endptr );
+//         free( extinfo );
+//         free( op );
+//         lseek( logfile, origoff, SEEK_SET );
+//         return NULL;
+//      }
+//      extinfo->offset = (size_t)parseval;
+//      parseloc = endptr + 1;
+//      if ( strncmp( parseloc, 2, "} " ) ) {
+//         LOG( LOG_ERR, "Missing '} ' tail for DEL-OBJ extended info\n" );
+//         free( extinfo );
+//         free( op );
+//         lseek( logfile, origoff, SEEK_SET );
+//         return NULL;
+//      }
+//      parseloc += 2;
+//      // attach delobj_info
+//      op->extendedinfo = extinfo;
    }
    else if ( strncmp( buffer, "DEL-REF ", 8 ) == 0 ) {
       op->type = MARFS_DELETE_REF_OP;
@@ -238,7 +252,7 @@ opinfo* parselogline( int logfile, char* eof ) {
          return NULL;
       }
       // parse in delref_info
-      if ( strncmp( parseloc, 2, "{ " ) ) {
+      if ( strncmp( parseloc, "{ ", 2 ) ) {
          LOG( LOG_ERR, "Missing '{ ' header for DEL-REF extended info\n" );
          free( extinfo );
          free( op );
@@ -257,10 +271,10 @@ opinfo* parselogline( int logfile, char* eof ) {
       }
       extinfo->prev_active_index = (size_t)parseval;
       parseloc = endptr + 1;
-      if ( strncmp( parseloc, 3, "EOS" ) == 0 ) {
+      if ( strncmp( parseloc, "EOS", 3 ) == 0 ) {
          extinfo->eos = 1;
       }
-      else if ( strncmp( parseloc, 3, "CNT" ) == 0 ) {
+      else if ( strncmp( parseloc, "CNT", 3 ) == 0 ) {
          extinfo->eos = 0;
       }
       else {
@@ -271,7 +285,7 @@ opinfo* parselogline( int logfile, char* eof ) {
          return NULL;
       }
       parseloc += 3;
-      if ( strncmp( parseloc, 3, " } " ) ) {
+      if ( strncmp( parseloc, " } ", 3 ) ) {
          LOG( LOG_ERR, "Missing ' } ' tail for DEL-REF extended info\n" );
          free( extinfo );
          free( op );
@@ -294,7 +308,7 @@ opinfo* parselogline( int logfile, char* eof ) {
          return NULL;
       }
       // parse in rebuild_info
-      if ( strncmp( parseloc, 2, "{ " ) ) {
+      if ( strncmp( parseloc, "{ ", 2 ) ) {
          LOG( LOG_ERR, "Missing '{ ' header for REBUILD extended info\n" );
          free( extinfo );
          free( op );
@@ -322,7 +336,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       }
       *endptr = ' ';
       parseloc = endptr + 1;
-      char* endptr = NULL;
+      endptr = NULL;
       unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
       if ( endptr == NULL  ||  *endptr != ' ' ) {
          LOG( LOG_ERR, "REBUILD extended info has unexpected char in stripewidth string: '%c'\n", *endptr );
@@ -340,8 +354,8 @@ opinfo* parselogline( int logfile, char* eof ) {
          lseek( logfile, origoff, SEEK_SET );
          return NULL;
       }
-      extinfo->rtag.meta_status = calloc( sizeof(char) * parseval );
-      extinfo->rtag.data_status = calloc( sizeof(char) * parseval );
+      extinfo->rtag.meta_status = calloc( 1, sizeof(char) * parseval );
+      extinfo->rtag.data_status = calloc( 1, sizeof(char) * parseval );
       if ( extinfo->rtag.meta_status == NULL  ||  extinfo->rtag.data_status == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for REBUILD extended info meta/data_status arrays\n" );
          if ( extinfo->rtag.meta_status ) { free( extinfo->rtag.meta_status ); }
@@ -363,7 +377,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       }
       *endptr = ' ';
       parseloc = endptr;
-      if ( strncmp( parseloc, 3, " } " ) ) {
+      if ( strncmp( parseloc, " } ", 3 ) ) {
          LOG( LOG_ERR, "Missing ' } ' tail for REBUILD extended info\n" );
          free( extinfo->rtag.meta_status );
          free( extinfo->rtag.data_status );
@@ -389,7 +403,7 @@ opinfo* parselogline( int logfile, char* eof ) {
    }
    // parse the start value
    if ( *parseloc == 'S' ) {
-      op->start == 1;
+      op->start = 1;
    }
    else if ( *parseloc != 'E' ) {
       LOG( LOG_ERR, "Unexpected START string value: '\%c'\n", *parseloc );
@@ -475,7 +489,7 @@ opinfo* parselogline( int logfile, char* eof ) {
  */
 int printlogline( int logfile, opinfo* op ) {
    char buffer[MAX_BUFFER];
-   ssize_t usedbuff;
+   ssize_t usedbuff = 0;
    off_t origoff = lseek( logfile, 0, SEEK_CUR );
    if ( origoff < 0 ) {
       LOG( LOG_ERR, "Failed to identify current logfile offset\n" );
@@ -489,16 +503,16 @@ int printlogline( int logfile, opinfo* op ) {
             return -1;
          }
          usedbuff += 8;
-         if ( op->extendedinfo ) {
-            delobj_info* delobj = (delobj_info*)&(op->extendedinfo);
-            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
-                                             delobj->offset );
-            if ( extinfoprint < 6 ) {
-               LOG( LOG_ERR, "Failed to populate DEL-OBJ extended info string\n" );
-               return -1;
-            }
-            usedbuff += extinfoprint;
-         }
+//         if ( op->extendedinfo ) {
+//            delobj_info* delobj = (delobj_info*)&(op->extendedinfo);
+//            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
+//                                             delobj->offset );
+//            if ( extinfoprint < 6 ) {
+//               LOG( LOG_ERR, "Failed to populate DEL-OBJ extended info string\n" );
+//               return -1;
+//            }
+//            usedbuff += extinfoprint;
+//         }
          break;
       case MARFS_DELETE_REF_OP:
          if ( snprintf( buffer, MAX_BUFFER, "%s ", "DEL-REF" ) != 8 ) {
@@ -526,7 +540,7 @@ int printlogline( int logfile, opinfo* op ) {
          usedbuff += 8;
          if ( op->extendedinfo ) {
             rebuild_info* rebuild = (rebuild_info*)&(op->extendedinfo);
-            ssize_t extinfoprint = snprintf( buffer + usedbuffer, MAX_BUFFER - usedbuff, "{ %s %zu ",
+            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %s %u ",
                                              rebuild->markerpath,
                                              op->ftag.protection.N + op->ftag.protection.E );
             if ( extinfoprint < 6 ) {
@@ -539,13 +553,13 @@ int printlogline( int logfile, opinfo* op ) {
                return -1;
             }
             size_t rtagprint = rtag_tostr( &(rebuild->rtag), op->ftag.protection.N + op->ftag.protection.E,
-                                           buffer + usedbuffer, MAX_BUFFER - usedbuff );
+                                           buffer + usedbuff, MAX_BUFFER - usedbuff );
             if ( rtagprint < 1 ) {
                LOG( LOG_ERR, "Failed to populate REBUILD extended info rtag string\n" );
                return -1;
             }
             usedbuff += rtagprint;
-            if ( snprintf( buffer + usedbuffer, MAX_BUFFER - usedbuff, " } " ) != 3 ) {
+            if ( snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, " } " ) != 3 ) {
                LOG( LOG_ERR, "Failed to print tail string of REBUILD extended info\n" );
                return -1;
             }
@@ -573,7 +587,7 @@ int printlogline( int logfile, opinfo* op ) {
       LOG( LOG_ERR, "Failed to populate 'S' start flag string\n" );
       return -1;
    }
-   else if ( snprintf( buffer + usedbuff, "%c ", 'E' ) != 2 ) {
+   else if ( snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "%c ", 'E' ) != 2 ) {
       LOG( LOG_ERR, "Failed to populate 'E' start flag string\n" );
       return -1;
    }
@@ -647,7 +661,7 @@ int printlogline( int logfile, opinfo* op ) {
 
 /**
  * Incorporate the given opinfo string into the given statelog
- * @param STATELOG* stlog : statelog to be updated
+ * @param STATELOG stlog : statelog to be updated
  * @param opinfo* newop : Operation(s) to be included
  *                        NOTE -- This func will never free opinfo structs
  * @param char* progressop : Flag to be populated with the completion status of an operation set
@@ -656,7 +670,7 @@ int printlogline( int logfile, opinfo* op ) {
  *                           If set to negative one, the updated operation completed with errors
  * @return int : Zero on success, or -1 on failure
  */
-int processopinfo( STATELOG* stlog, opinfo* newop, char* progressop ) {
+int processopinfo( STATELOG stlog, opinfo* newop, char* progressop ) {
    // identify the trailing op of the given chain
    opinfo* finop = newop;
    size_t oplength = 1;
@@ -701,12 +715,12 @@ int processopinfo( STATELOG* stlog, opinfo* newop, char* progressop ) {
             // ...note each in our totals...
             switch( parseop->type ) {
                case MARFS_DELETE_OBJ_OP:
-                  stlog->summary.delete_object_count += parseop->count;
-                  if ( parseop->errval ) { stlog->summary.delete_object_failures += parseop->count; }
+                  stlog->summary.deletion_object_count += parseop->count;
+                  if ( parseop->errval ) { stlog->summary.deletion_object_failures += parseop->count; }
                   break;
                case MARFS_DELETE_REF_OP:
-                  stlog->summary.delete_reference_count += parseop->count;
-                  if ( parseop->errval ) { stlog->summary.delete_reference_failures += parseop->count; }
+                  stlog->summary.deletion_reference_count += parseop->count;
+                  if ( parseop->errval ) { stlog->summary.deletion_reference_failures += parseop->count; }
                   break;
                case MARFS_REBUILD_OP:
                   stlog->summary.rebuild_count += parseop->count;
@@ -744,7 +758,7 @@ int processopinfo( STATELOG* stlog, opinfo* newop, char* progressop ) {
                else { *progressop = -1; } // note that the corresponding ops were completed with errors
             }
             // decrement in-progress cnt
-            stlog->outstanding--;
+            stlog->outstandingcnt--;
          }
          // ...and remove the matching op(s) from inprogress
          if ( prevop ) {
@@ -768,7 +782,7 @@ int processopinfo( STATELOG* stlog, opinfo* newop, char* progressop ) {
       finop->next = node->content;
       node->content = newop;
       // note that we have another op in flight ( if this is not a RECORD log )
-      if ( stlog->type != RESOURCE_RECORD_LOG ) { stlog->outstanding += oplength; }
+      if ( stlog->type != RESOURCE_RECORD_LOG ) { stlog->outstandingcnt += oplength; }
    }
    return 0;
 }
@@ -789,12 +803,14 @@ void statelog_freeopinfo( opinfo* op ) {
       if ( op->extendedinfo ) {
          switch ( op->type ) { // only REBUILD and DEL-REF ops should have extended info at all
             case MARFS_REBUILD_OP:
+               {
                rebuild_info* extinfo = (rebuild_info*)op->extendedinfo;
                if ( extinfo->markerpath ) { free( extinfo->markerpath ); }
                if ( extinfo->rtag.meta_status ) { free( extinfo->rtag.meta_status ); }
                if ( extinfo->rtag.data_status ) { free( extinfo->rtag.data_status ); }
                break;
-            case MARFS_DELETE_REF_OP: // nothing extra to be done for DEL-REF
+               }
+            default: // nothing extra to be done for other ops
                break;
          }
          free( op->extendedinfo );
@@ -804,7 +820,7 @@ void statelog_freeopinfo( opinfo* op ) {
       //         Behavior would be a double free by this func.
       if ( op->ftag.ctag  &&  op->ftag.ctag != prevctag ) { prevctag = op->ftag.ctag; free( op->ftag.ctag ); }
       if ( op->ftag.streamid  &&  op->ftag.streamid != prevstreamid ) { prevstreamid = op->ftag.streamid; free( op->ftag.streamid ); }
-      if ( op->ftag.ftagstr  &&  op->ftag.ftagstr != prevftagstr ) { prevftagstr = op->ftag.ftagstr; free( op->ftag.ftagstr ); }
+      if ( op->ftagstr  &&  op->ftagstr != prevftagstr ) { prevftagstr = op->ftagstr; free( op->ftagstr ); }
       opinfo* nextop = op->next;
       free( op );
       op = nextop;
@@ -945,8 +961,7 @@ char* statelog_genlogpath( char create, const char* logroot, const char* iterati
    }
    // populate the final logfile path
    // NOTE -- we never create this file in this func
-   if ( snprintf( path + lrootlen + iterlen + nslen, (pathlen - (lrootlen + iterlen + nslen)) + 1, "/statelog-%zu", ranknum ) !=
-         (pathlen - (lrootlen + iterlen + nsidlen)) ) {
+   if ( snprintf( path + lrootlen + iterlen + nslen, (pathlen - (lrootlen + iterlen + nslen)) + 1, "/statelog-%zu", ranknum ) !=  (pathlen - (lrootlen + iterlen + nslen)) ) {
       LOG( LOG_ERR, "Logfile path has inconsistent length\n" );
       free( path );
       return NULL;
@@ -959,11 +974,12 @@ char* statelog_genlogpath( char create, const char* logroot, const char* iterati
  * @param STATELOG* statelog : Statelog to be initialized
  *                             NOTE -- This can either be a NULL value, or a statelog which was 
  *                                     previously terminated / finalized
- * @param statelog_type type : Type of statelog to open
  * @param const char* logpath : Location of the statelog file
+ * @param statelog_type type : Type of statelog to open
+ * @param marfs_ns* ns : MarFS NS being operated upon
  * @return int : Zero on success, or -1 on failure
  */
-int statelog_init( STATELOG* statelog, statelog_type type, const char* logpath ) {
+int statelog_init( STATELOG* statelog, const char* logpath, statelog_type type, marfs_ns* ns ) {
    // check for invalid args
    if ( statelog == NULL ) {
       LOG( LOG_ERR, "Received a NULL statelog reference\n" );
@@ -1139,8 +1155,8 @@ int statelog_init( STATELOG* statelog, statelog_type type, const char* logpath )
    for ( ; index < ns->prepo->metascheme.refnodecount; index++ ) {
       // initialize node list to mirror the reference nodes
       (nodelist + index)->content = NULL;
-      (nodelist + index)->weight = (ns->prepo->metascheme.refnodelist + index)->weight;
-      (nodelist + index)->name = strdup( (ns->prepo->metascheme.refnodelist + index)->name );
+      (nodelist + index)->weight = (ns->prepo->metascheme.refnodes + index)->weight;
+      (nodelist + index)->name = strdup( (ns->prepo->metascheme.refnodes + index)->name );
       if ( (nodelist + index)->name == NULL ) {
          LOG( LOG_ERR, "Failed to allocate name of node %zu\n", index );
          while ( index ) {
@@ -1164,98 +1180,98 @@ int statelog_init( STATELOG* statelog, statelog_type type, const char* logpath )
       return -1;
    }
 
-
-   // TODO : This code no longer belongs here, but might be useful elsewhere
-   // parse over logfile entries
-   char eof = 0;
-   opinfo* parsedop = NULL;
-   while ( (parsedop = parselogline( stlog->logfile, &eof )) != NULL ) {
-      // map this operation into our inprogress hash table
-      if ( processopinfo( stlog, parsedop ) < 0 ) {
-         LOG( LOG_ERR, "Failed to process lines from logfile: \"%s\"\n", stlog->logfilepath );
-         cleanuplog( stlog, newstlog );
-         return -1;
-      }
-   }
-   if ( eof == 0 ) {
-      LOG( LOG_ERR, "Failed to parse existing logfile: \"%s\"\n", stlog->logfilepath );
-      cleanuplog( stlog, newstlog );
-      return -1;
-   }
-   // potentially integrate info from any pre-existing logfiles
-   if ( cleanup ) {
-      // identify and open our parent dir
-      char* parentparse = stlog->logfilepath;
-      char* prevent = NULL;
-      for ( ; *parentparse != '\0'; parentparse++ ) {
-         if ( *parentparse == '/' ) { prevent = parentparse; } // update previous dir sep
-      }
-      if ( prevent == NULL ) {
-         LOG( LOG_ERR, "Failed to identify parent dir of logfile path: \"%s\"\n", stlog->logfilepath );
-         cleanuplog( stlog, newstlog );
-         return -1;
-      }
-      *prevent = '\0'; // insert a NULL, to allow us to open the parent dir
-      DIR* parentdir = opendir( stlog->logfilepath );
-      *prevent = '/';
-      if ( parentdir == NULL ) {
-         LOG( LOG_ERR, "Failed to open parent dir of logfile: \"%s\"\n", stlog->logfilepath );
-         cleanuplog( stlog, newstlog );
-         return -1;
-      }
-      // readdir to identify all lingering logfiles
-      int olderr = errno;
-      errno = 0;
-      struct dirent* entry = NULL;
-      while ( (entry = readdir( parentdir )) != NULL ) {
-         if ( strcmp( prevent + 1, entry->name ) ) {
-            // open and parse all old logfiles under the same dir
-            LOG( LOG_INFO, "Attempting cleanup of existing logfile: \"%s\"\n", entry->name );
-            int oldlog = openat( dirfd(parentdir), entry->name, O_RDONLY );
-            if ( oldlog < 0 ) {
-               LOG( LOG_ERR, "Failed to open existing logfile for cleanup: \"%s\"\n", entry->name );
-               closedir( parentdir );
-               cleanuplog( stlog, newstlog );
-               return -1;
-            }
-            while ( (parsedop = parselogline( oldlog, &eof )) != NULL ) {
-               // duplicate this op into our initial logfile
-               if ( printlogline( stlog->logfile, parsedop ) ) {
-                  LOG( LOG_ERR, "Failed to duplicate op from old logfile \"%s\" into active log: \"%s\"\n",
-                       entry->name, stlog->logfilepath );
-                  close( oldlog );
-                  closedir( parentdir );
-                  cleanuplog( stlog, newstlog );
-                  return -1;
-               }
-               // map any ops to our hash table
-               if ( processopinfo( stlog, parsedop ) < 0 ) {
-                  LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", entry->name );
-                  close( oldlog );
-                  closedir( parentdir );
-                  cleanuplog( stlog, newstlog );
-                  return -1;
-               }
-            }
-            if ( eof == 0 ) {
-               LOG( LOG_ERR, "Failed to parse old logfile: \"%s\"\n", entry->name );
-               close( oldlog );
-               closedir( parentdir );
-               cleanuplog( stlog, newstlog );
-               return -1;
-            }
-            close( oldlog );
-            // delete the old logfile
-            if ( unlinkat( dirfd(parentdir), entry->name ) ) {
-               LOG( LOG_ERR, "Failed to unlink old logfile: \"%s\"\n", entry->name );
-               closedir( parentdir );
-               cleanuplog( stlog, newstlog );
-               return -1;
-            }
-         }
-      }
-      closedir( parentdir );
-   }
+//
+//   // TODO : This code no longer belongs here, but might be useful elsewhere
+//   // parse over logfile entries
+//   char eof = 0;
+//   opinfo* parsedop = NULL;
+//   while ( (parsedop = parselogline( stlog->logfile, &eof )) != NULL ) {
+//      // map this operation into our inprogress hash table
+//      if ( processopinfo( stlog, parsedop ) < 0 ) {
+//         LOG( LOG_ERR, "Failed to process lines from logfile: \"%s\"\n", stlog->logfilepath );
+//         cleanuplog( stlog, newstlog );
+//         return -1;
+//      }
+//   }
+//   if ( eof == 0 ) {
+//      LOG( LOG_ERR, "Failed to parse existing logfile: \"%s\"\n", stlog->logfilepath );
+//      cleanuplog( stlog, newstlog );
+//      return -1;
+//   }
+//   // potentially integrate info from any pre-existing logfiles
+//   if ( cleanup ) {
+//      // identify and open our parent dir
+//      char* parentparse = stlog->logfilepath;
+//      char* prevent = NULL;
+//      for ( ; *parentparse != '\0'; parentparse++ ) {
+//         if ( *parentparse == '/' ) { prevent = parentparse; } // update previous dir sep
+//      }
+//      if ( prevent == NULL ) {
+//         LOG( LOG_ERR, "Failed to identify parent dir of logfile path: \"%s\"\n", stlog->logfilepath );
+//         cleanuplog( stlog, newstlog );
+//         return -1;
+//      }
+//      *prevent = '\0'; // insert a NULL, to allow us to open the parent dir
+//      DIR* parentdir = opendir( stlog->logfilepath );
+//      *prevent = '/';
+//      if ( parentdir == NULL ) {
+//         LOG( LOG_ERR, "Failed to open parent dir of logfile: \"%s\"\n", stlog->logfilepath );
+//         cleanuplog( stlog, newstlog );
+//         return -1;
+//      }
+//      // readdir to identify all lingering logfiles
+//      int olderr = errno;
+//      errno = 0;
+//      struct dirent* entry = NULL;
+//      while ( (entry = readdir( parentdir )) != NULL ) {
+//         if ( strcmp( prevent + 1, entry->name ) ) {
+//            // open and parse all old logfiles under the same dir
+//            LOG( LOG_INFO, "Attempting cleanup of existing logfile: \"%s\"\n", entry->name );
+//            int oldlog = openat( dirfd(parentdir), entry->name, O_RDONLY );
+//            if ( oldlog < 0 ) {
+//               LOG( LOG_ERR, "Failed to open existing logfile for cleanup: \"%s\"\n", entry->name );
+//               closedir( parentdir );
+//               cleanuplog( stlog, newstlog );
+//               return -1;
+//            }
+//            while ( (parsedop = parselogline( oldlog, &eof )) != NULL ) {
+//               // duplicate this op into our initial logfile
+//               if ( printlogline( stlog->logfile, parsedop ) ) {
+//                  LOG( LOG_ERR, "Failed to duplicate op from old logfile \"%s\" into active log: \"%s\"\n",
+//                       entry->name, stlog->logfilepath );
+//                  close( oldlog );
+//                  closedir( parentdir );
+//                  cleanuplog( stlog, newstlog );
+//                  return -1;
+//               }
+//               // map any ops to our hash table
+//               if ( processopinfo( stlog, parsedop ) < 0 ) {
+//                  LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", entry->name );
+//                  close( oldlog );
+//                  closedir( parentdir );
+//                  cleanuplog( stlog, newstlog );
+//                  return -1;
+//               }
+//            }
+//            if ( eof == 0 ) {
+//               LOG( LOG_ERR, "Failed to parse old logfile: \"%s\"\n", entry->name );
+//               close( oldlog );
+//               closedir( parentdir );
+//               cleanuplog( stlog, newstlog );
+//               return -1;
+//            }
+//            close( oldlog );
+//            // delete the old logfile
+//            if ( unlinkat( dirfd(parentdir), entry->name ) ) {
+//               LOG( LOG_ERR, "Failed to unlink old logfile: \"%s\"\n", entry->name );
+//               closedir( parentdir );
+//               cleanuplog( stlog, newstlog );
+//               return -1;
+//            }
+//         }
+//      }
+//      closedir( parentdir );
+//   }
 
 
 
@@ -1324,6 +1340,7 @@ int statelog_replay( STATELOG* inputlog, STATELOG* outputlog ) {
          return -1;
       }
       statelog_freeopinfo( parsedop );
+      opcnt++;
    }
    if ( eof != 1 ) {
       LOG( LOG_ERR, "Failed to parse input logfile: \"%s\"\n", instlog->logfilepath );
@@ -1341,7 +1358,7 @@ int statelog_replay( STATELOG* inputlog, STATELOG* outputlog ) {
       return -1;
    }
    pthread_mutex_unlock( &(instlog->lock) );
-   if ( outstlog->outstanding == 0 ) {
+   if ( outstlog->outstandingcnt == 0 ) {
       // potentially signal that the output log has quiesced
       pthread_cond_signal( &(outstlog->nooutstanding) );
    }
@@ -1376,14 +1393,14 @@ int statelog_update_inflight( STATELOG* statelog, ssize_t numops ) {
       return -1;
    }
    // check for excessive reduction
-   if ( statelog->outstandingcnt < -(numops) ) {
+   if ( stlog->outstandingcnt < -(numops) ) {
       LOG( LOG_WARNING, "Value of %zd would result in negative thread count\n", numops );
-      numops = -(statelog->outstandingcnt);
+      numops = -(stlog->outstandingcnt);
    }
    // modify count
-   statelog->outstandingcnt += numops;
+   stlog->outstandingcnt += numops;
    // check for quiesced state
-   if ( stlog->outstandingcnt == 0  &&  pthread_cond_signal( &(stlog->nooutstandingops) ) ) {
+   if ( stlog->outstandingcnt == 0  &&  pthread_cond_signal( &(stlog->nooutstanding) ) ) {
       LOG( LOG_ERR, "Failed to signal 'no outstanding ops' condition\n" );
       pthread_mutex_unlock( &(stlog->lock) );
       return -1;
@@ -1450,7 +1467,7 @@ int statelog_processop( STATELOG* statelog, opinfo* op, char* progress ) {
    }
    // check for quiesced state
    if ( stlog->type == RESOURCE_MODIFY_LOG  &&
-        stlog->outstandingcnt == 0  &&  pthread_cond_signal( &(stlog->nooutstandingops) ) ) {
+        stlog->outstandingcnt == 0  &&  pthread_cond_signal( &(stlog->nooutstanding) ) ) {
       LOG( LOG_ERR, "Failed to signal 'no outstanding ops' condition\n" );
       pthread_mutex_unlock( &(stlog->lock) );
       return -1;
@@ -1538,7 +1555,7 @@ int statelog_fin( STATELOG* statelog, operation_summary* summary, const char* lo
    }
    // wait for all outstanding ops to complete
    while ( stlog->outstandingcnt ) {
-      if ( pthread_cond_wait( &stlog->nooutstandingops, &stlog->lock ) ) {
+      if ( pthread_cond_wait( &stlog->nooutstanding, &stlog->lock ) ) {
          LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
          pthread_mutex_unlock( &(stlog->lock) );
          return -1;
@@ -1589,7 +1606,7 @@ int statelog_term( STATELOG* statelog, operation_summary* summary, const char* l
    }
    // wait for all outstanding ops to complete
    while ( stlog->outstandingcnt ) {
-      if ( pthread_cond_wait( &stlog->nooutstandingops, &stlog->lock ) ) {
+      if ( pthread_cond_wait( &stlog->nooutstanding, &stlog->lock ) ) {
          LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
          pthread_mutex_unlock( &(stlog->lock) );
          return -1;
