@@ -62,6 +62,13 @@ AM_LDFLAGS  =
 
 CC = mpicc
 
+lib_LTLIBRARIES = libResourceLog.la
+
+libResourceLog_la_SOURCES = resourcelog.c
+libResourceLog_la_LIBADD = ../config/libConfig.la ../tagging/libTagging.la
+libResourceLog_la_CFLAGS = $(XML_CFLAGS)
+RSRC_LOG_LIB = libResourceLog.la
+
 noinst_LTLIBRARIES = libRsrcMgr.la
 
 libRsrcMgr_la_SOURCES = rsrc_mgr.c
@@ -76,7 +83,7 @@ marfs_rsrc_mgr_CFLAGS  = $(XML_CFLAGS)
 
 # ---
 
-check_PROGRAMS = test_rsrc_mgr test_rsrc_mgr_nopack
+check_PROGRAMS = test_rsrc_mgr test_rsrc_mgr_nopack test_resourcelog
 
 test_rsrc_mgr_SOURCES = testing/test_rsrc_mgr.c
 test_rsrc_mgr_LDADD = libRsrcMgr.la
@@ -86,6 +93,10 @@ test_rsrc_mgr_nopack_SOURCES = testing/test_rsrc_mgr_nopack.c
 test_rsrc_mgr_nopack_LDADD = libRsrcMgr.la
 test_rsrc_mgr_nopack_CFLAGS = $(XML_CFLAGS)
 
-TESTS = test_rsrc_mgr test_rsrc_mgr_nopack
+test_resourcelog_SOURCES = testing/test_resourcelog.c
+test_resourcelog_LDADD = libResourceLog.la
+test_resourcelog_CFLAGS = $(XML_CFLAGS)
+
+TESTS = test_rsrc_mgr test_rsrc_mgr_nopack test_resourcelog
 
 
