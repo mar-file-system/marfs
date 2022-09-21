@@ -141,6 +141,130 @@ int main(int argc, char **argv)
    }
 
 
+   // generate all parent paths of a new logfile
+   char* logpath = resourcelog_genlogpath( 1, "./test_rmgr_topdir", "test-resourcelog-iteration123456", config->rootns, 0 );
+   if ( logpath == NULL ) {
+      printf( "failed to generate inital logpath\n" );
+      return -1;
+   }
+   // initaialize that new logfile
+   RESOURCELOG rlog = NULL;
+   if ( resourcelog_init( &(rlog), logpath, RESOURCE_RECORD_LOG, config->rootns ) ) {
+      printf( "failed to initialize first logfile: \"%s\"\n", logpath );
+      return -1;
+   }
+
+   // create a set of operations
+   opinfo* opset = malloc( sizeof( struct opinfo_struct ) * 4 );
+   opinfo* opparse = opset;
+   // start of an object deletion op
+   opparse->type = MARFS_DELETE_OBJ_OP;
+   opparse->extendedinfo = NULL;
+   opparse->start = 1;
+   opparse->count = 4;
+   opparse->errval = 0;
+   opparse->ftag.ctag = strdup( "someclient" );
+   opparse->ftag.streamid = strdup( "initstreamID123forme" );
+   if ( opparse->ftag.ctag == NULL  ||  opparse->ftag.streamid == NULL ) {
+      printf( "failed to allocate ctag / streamid for inital operation\n" );
+      return -1;
+   }
+   opparse->ftag.majorversion = FTAG_CURRENT_MAJORVERSION;
+   opparse->ftag.minorversion = FTAG_CURRENT_MINORVERSION;
+   opparse->ftag.objfiles = 4;
+   opparse->ftag.objsize = 1024;
+   opparse->ftag.fileno = 0;
+   opparse->ftag.objno = 0;
+   opparse->ftag.offset = 12;
+   opparse->ftag.endofstream = 0;
+   opparse->ftag.protection.N = 5;
+   opparse->ftag.protection.E = 1;
+   opparse->ftag.protection.O = 0;
+   opparse->ftag.protection.partsz = 123;
+   opparse->ftag.bytes = 4096;
+   opparse->ftag.availbytes = 4096;
+   opparse->ftag.recoverybytes = 23;
+   opparse->ftag.state = FTAG_COMP | FTAG_READABLE;
+   opparse->next = opparse + 1;
+   opparse++;
+   // start of a ref deletion op
+   opparse->type = MARFS_DELETE_REF_OP;
+   opparse->extendedinfo = malloc( sizeof( struct delref_info_struct ) );
+   if ( opparse->extendedinfo == NULL ) {
+      printf( "failed to allocate delref extended info\n" );
+      return -1;
+   }
+   delref_info* delrefinf = (delref_info*)(opparse->extendedinfo);
+   delrefinf->prev_active_index = 0;
+   delrefinf->eos = 0;
+   opparse->start = 1;
+   opparse->count = 1;
+   opparse->errval = 0;
+   opparse->ftag = (opparse-1)->ftag; // just inherit the same FTAG
+   opparse->next = NULL;
+   opparse++;
+   // start of a rebuild op
+   opparse->type = MARFS_REBUILD_OP;
+   opparse->extendedinfo = malloc( sizeof( struct rebuild_info_struct ) );
+   if ( opparse->extendedinfo == NULL ) {
+      printf( "failed to allocate rebuild extended info\n" );
+      return -1;
+   }
+   rebuild_info* rebuildinf = (rebuild_info*)(opparse->extendedinfo);
+   rebuildinf->markerpath = strdup( "nothinmarker" );
+   if( rebuildinf->markerpath == NULL ) {
+      printf( "failed to allocate rebuild info markerpath\n" );
+      return -1;
+   }
+   rebuildinf->rtag.versz = 0;
+   rebuildinf->rtag.blocksz = 0;
+   rebuildinf->rtag.totsz = 0;
+   rebuildinf->rtag.meta_status = calloc( sizeof(char), 7 );
+   rebuildinf->rtag.data_status = calloc( sizeof(char), 7 );
+   rebuildinf->rtag.csum = NULL;
+   opparse->start = 1;
+   opparse->count = 1;
+   opparse->errval = 0;
+   opparse->ftag = (opparse-1)->ftag; // just inherit the same FTAG
+   opparse->next = NULL;
+   opparse++;
+   // start of a repack op
+   opparse->type = MARFS_REPACK_OP;
+   opparse->extendedinfo = malloc( sizeof( struct repack_info_struct ) );
+   if ( opparse->extendedinfo == NULL ) {
+      printf( "failed to allocate repack extended info\n" );
+      return -1;
+   }
+   repack_info* repackinf = (repack_info*)(opparse->extendedinfo);
+   repackinf->totalbytes = 4096;
+   opparse->start = 1;
+   opparse->count = 1;
+   opparse->errval = 0;
+   opparse->ftag = (opparse-1)->ftag; // just inherit the same FTAG
+   opparse->next = NULL;
+
+   // free all operations
+   opparse = opset;
+   free( opparse->ftag.ctag );
+   free( opparse->ftag.streamid );
+   opparse++;
+   free( opparse->extendedinfo );
+   opparse++;
+   rebuildinf = (rebuild_info*)(opparse->extendedinfo);
+   free( rebuildinf->markerpath );
+   free( rebuildinf->rtag.meta_status );
+   free( rebuildinf->rtag.data_status );
+   free( opparse->extendedinfo );
+   opparse++;
+   free( opparse->extendedinfo );
+   free( opset );
+   // terminate the logfile
+   if ( resourcelog_term( &(rlog), NULL, NULL ) ) {
+      printf( "failed to terminate resourcelog\n" );
+      return -1;
+   }
+   // free logpath
+   free( logpath );
    // terminate our config
    if ( config_term( config ) ) {
       printf( "failed to terminate config\n" );

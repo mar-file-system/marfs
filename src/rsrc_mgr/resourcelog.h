@@ -90,7 +90,6 @@ typedef struct opinfo_struct {
    size_t count;         // how many targets are there
    int errval;           // errno value of the attempted op ( always zero for operation start )
    FTAG ftag;            // which FTAG value is the target
-   char* ftagstr;        // string representation of the FTAG
    struct opinfo_struct* next; // subsequent ops in this chain ( or NULL, if none remain )
 } opinfo;
 

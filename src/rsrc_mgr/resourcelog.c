@@ -451,14 +451,8 @@ opinfo* parselogline( int logfile, char* eof ) {
       nextval = 1; // note that we need to append another op
       tgtchar -= 2; // pull this back, so we'll trim off the NEXT value
    }
-   // duplicate and parse the FTAG value
+   // parse the FTAG value
    *tgtchar = '\0'; // trim the string, to make FTAG parsing easy
-   if ( (op->ftagstr = strdup( parseloc )) == NULL ) {
-      LOG( LOG_ERR, "Failed to duplicate FTAG string from logfile\n" );
-      resourcelog_freeopinfo( op );
-      lseek( logfile, origoff, SEEK_SET );
-      return NULL;
-   }
    if ( ftag_initstr( &(op->ftag), parseloc ) ) {
       LOG( LOG_ERR, "Failed to parse FTAG value of log line\n" );
       resourcelog_freeopinfo( op );
@@ -684,7 +678,7 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop ) {
    }
    // map this operation into our inprogress hash table
    HASH_NODE* node = NULL;
-   if ( hash_lookup( rsrclog->inprogress, newop->ftagstr, &node ) < 0 ) {
+   if ( hash_lookup( rsrclog->inprogress, newop->ftag.streamid, &node ) < 0 ) {
       LOG( LOG_ERR, "Failed to map operation on \"%s\" into inprogress HASH_TABLE\n", newop->tgt );
       return -1;
    }
@@ -692,7 +686,9 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop ) {
    opinfo* opindex = node->content;
    opinfo* prevop = NULL;
    while ( opindex != NULL ) {
-      if ( (strcmp( opindex->ftagstr, newop->ftagstr ) == 0)  &&
+      if ( (strcmp( opindex->ftag.streamid, newop->ftag.streamid ) == 0)  &&
+           (opindex->ftag.objno == newop->ftag.objno)  &&
+           (opindex->ftag.fileno == newop->ftag.fileno)  &&
            (opindex->type == newop->type) ) {
          break;
       }
@@ -797,7 +793,6 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop ) {
 void resourcelog_freeopinfo( opinfo* op ) {
    char* prevctag = NULL;
    char* prevstreamid = NULL;
-   char* prevftagstr = NULL;
    while ( op ) {
       if ( op->next ) { resourcelog_freeopinfo( op->next ); } // recursively free op chain
       if ( op->extendedinfo ) {
@@ -820,7 +815,6 @@ void resourcelog_freeopinfo( opinfo* op ) {
       //         Behavior would be a double free by this func.
       if ( op->ftag.ctag  &&  op->ftag.ctag != prevctag ) { prevctag = op->ftag.ctag; free( op->ftag.ctag ); }
       if ( op->ftag.streamid  &&  op->ftag.streamid != prevstreamid ) { prevstreamid = op->ftag.streamid; free( op->ftag.streamid ); }
-      if ( op->ftagstr  &&  op->ftagstr != prevftagstr ) { prevftagstr = op->ftagstr; free( op->ftagstr ); }
       opinfo* nextop = op->next;
       free( op );
       op = nextop;
@@ -852,6 +846,7 @@ char* resourcelog_genlogpath( char create, const char* logroot, const char* iter
       char* tmpparse = nspath;
       while ( *tmpparse != '\0' ) {
          if ( *tmpparse == '/' ) { *tmpparse = '#'; }
+         tmpparse++;
       }
    }
    // identify length of the constructed path
@@ -1059,7 +1054,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
    // open our logfile
    int openmode = O_CREAT | O_EXCL | O_WRONLY;
    if ( type == RESOURCE_READ_LOG ) { openmode = O_RDONLY; }
-   rsrclog->logfile = open( rsrclog->logfilepath, openmode, 0700 );
+   rsrclog->logfile = open( rsrclog->logfilepath, openmode, 0600 );
    if ( rsrclog->logfile < 0 ) {
       LOG( LOG_ERR, "Failed to open resourcelog: \"%s\"\n", rsrclog->logfilepath );
       cleanuplog( rsrclog, newrsrclog );
@@ -1277,6 +1272,11 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
 
 
    // finally done
+   if ( pthread_mutex_unlock( &(rsrclog->lock) ) ) {
+      LOG( LOG_ERR, "Failed to relinquish resourcelog lock\n" );
+      cleanuplog( rsrclog, newrsrclog );
+      return -1;
+   }
    *resourcelog = rsrclog;
    return 0; 
 }
@@ -1554,7 +1554,7 @@ int resourcelog_fin( RESOURCELOG* resourcelog, operation_summary* summary, const
       return -1;
    }
    // wait for all outstanding ops to complete
-   while ( rsrclog->outstandingcnt ) {
+   while ( rsrclog->outstandingcnt != 0 ) {
       if ( pthread_cond_wait( &rsrclog->nooutstanding, &rsrclog->lock ) ) {
          LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
          pthread_mutex_unlock( &(rsrclog->lock) );
@@ -1605,7 +1605,7 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, cons
       return -1;
    }
    // wait for all outstanding ops to complete
-   while ( rsrclog->outstandingcnt ) {
+   while ( rsrclog->outstandingcnt != 0 ) {
       if ( pthread_cond_wait( &rsrclog->nooutstanding, &rsrclog->lock ) ) {
          LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
          pthread_mutex_unlock( &(rsrclog->lock) );
