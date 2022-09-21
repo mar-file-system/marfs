@@ -77,6 +77,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "change_user.h"
 #include "api/marfs.h"
 
+#define CONFIGVER_FNAME "/.configver"
+
 #define CTXT (marfs_ctxt)(fuse_get_context()->private_data)
 
 char* translate_path( marfs_ctxt ctxt, const char* path ) {
@@ -178,6 +180,10 @@ int fuse_create(const char *path, mode_t mode, struct fuse_file_info *ffi)
     return -EBADF;
   }
 
+  if (!strcmp(path, CONFIGVER_FNAME)) {
+    return -EPERM;
+  }
+
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
@@ -204,6 +210,9 @@ int fuse_flush(const char *path, struct fuse_file_info *ffi)
 
   if (!ffi->fh)
   {
+    if (!strcmp(path, CONFIGVER_FNAME)) {
+      return 0;
+    }
     LOG(LOG_ERR, "missing file descriptor\n");
     return -EBADF;
   }
@@ -263,6 +272,17 @@ int fuse_ftruncate(const char *path, off_t length, struct fuse_file_info *ffi)
 int fuse_getattr(const char *path, struct stat *statbuf)
 {
   LOG(LOG_INFO, "%s\n", path);
+
+  if (!strcmp(path, CONFIGVER_FNAME)) {
+    statbuf->st_uid = getuid();
+    statbuf->st_gid = getgid();
+    statbuf->st_atime = time( NULL );
+    statbuf->st_mtime = time( NULL );
+		statbuf->st_mode = S_IFREG | 0444;
+		statbuf->st_nlink = 1;
+		statbuf->st_size = marfs_configver(CTXT, NULL, 0) + 1;
+    return 0;
+  }
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
@@ -350,6 +370,10 @@ int fuse_ioctl(const char *path, int cmd, void *arg, struct fuse_file_info *ffi,
 int fuse_link(const char *oldpath, const char *newpath)
 {
   LOG(LOG_INFO, "%s %s\n", oldpath, newpath);
+
+  if (!strcmp(newpath, CONFIGVER_FNAME)) {
+    return -EPERM;
+  }
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
@@ -461,6 +485,14 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
     flags = MARFS_WRITE;
   }
 
+  if (!strcmp(path, CONFIGVER_FNAME)) {
+    if (flags == MARFS_WRITE) {
+      return -EPERM;
+    }
+    ffi->fh = 0;
+    return 0;
+  }
+
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
@@ -478,7 +510,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
     return -err;
   }
 
-  LOG( LOG_INFO, "New MarFS %s Handle: %p\n", (flags == MARFS_READ) ? "Read" : "Write", 
+  LOG( LOG_INFO, "New MarFS %s Handle: %p\n", (flags == MARFS_READ) ? "Read" : "Write",
        (void*)ffi->fh );
   return 0;
 }
@@ -515,26 +547,59 @@ int fuse_opendir(const char *path, struct fuse_file_info *ffi)
 int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *ffi)
 {
   LOG(LOG_INFO, "%zubytes from %s at offset %zd\n", size, path, offset);
-
+  int ret;
+  struct user_ctxt_struct u_ctxt;
+  
   if (!ffi->fh)
   {
-    LOG(LOG_ERR, "missing file descriptor\n");
-    return -EBADF;
+    // Read the MarFS config version
+    if (!strcmp(path, CONFIGVER_FNAME)) {
+      if (offset == 0) {
+        ret = marfs_configver(CTXT, buf, size);
+      }
+      else {
+        ret = marfs_configver(CTXT, NULL, 0);
+        if (ret > 0) {
+          char tmpBuf[ret];
+
+          ret = marfs_configver(CTXT, tmpBuf, ret);
+
+          if (offset < ret) {
+            ret = (ret - offset) < size ? (ret - offset) : size;
+            memcpy(buf, tmpBuf + offset, ret);
+          }
+        }
+      }
+      if (ret == 0) {
+        ret = -1;
+        errno = 1;
+      }
+      else if (ret < size) {
+        buf[ret] = '\n';
+        ret++;
+      }
+    }
+    else {
+      LOG(LOG_ERR, "missing file descriptor\n");
+      return -EBADF;
+    }
   }
+  else {
+    memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
+    enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
-  struct user_ctxt_struct u_ctxt;
-  memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
-
-  LOG( LOG_INFO, "Performing read of %zubytes at offset %zd\n", size, offset );
-  int ret = marfs_read_at_offset((marfs_fhandle)ffi->fh, offset, (void *)buf, size);
+    LOG( LOG_INFO, "Performing read of %zubytes at offset %zd\n", size, offset );
+    ret = marfs_read_at_offset((marfs_fhandle)ffi->fh, offset, (void *)buf, size);
+  }
 
   if (ret < 0)
   {
     ret = -errno;
   }
 
-  exit_user(&u_ctxt);
+  if (ffi->fh) {
+    exit_user(&u_ctxt);
+  }
 
   if ( ret >= 0 ) { LOG( LOG_INFO, "Successfully read %d bytes\n", ret ); }
   else { LOG( LOG_ERR, "Read of %zd bytes failed (%s)\n", size, strerror(errno) ); }
@@ -600,7 +665,7 @@ int fuse_readlink(const char *path, char *buf, size_t size)
 
   exit_user(&u_ctxt);
 
-  return (int)ret;
+  return 0;
 }
 
 int fuse_release(const char *path, struct fuse_file_info *ffi)
@@ -609,6 +674,9 @@ int fuse_release(const char *path, struct fuse_file_info *ffi)
 
   if (!ffi->fh)
   {
+    if (!strcmp(path, CONFIGVER_FNAME)) {
+      return 0;
+    }
     LOG(LOG_ERR, "missing file descriptor\n");
     return -EBADF;
   }
@@ -714,6 +782,10 @@ int fuse_removexattr(const char *path, const char *name)
 int fuse_rename(const char *oldpath, const char *newpath)
 {
   LOG(LOG_INFO, "%s %s\n", oldpath, newpath);
+
+  if (!strcmp(newpath, CONFIGVER_FNAME)) {
+    return -EPERM;
+  }
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
@@ -824,6 +896,10 @@ int fuse_statvfs(const char *path, struct statvfs *statbuf)
 int fuse_symlink(const char *target, const char *linkname)
 {
   LOG(LOG_INFO, "%s %s\n", target, linkname);
+
+  if (!strcmp(linkname, CONFIGVER_FNAME)) {
+    return -EPERM;
+  }
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
