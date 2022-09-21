@@ -61,12 +61,15 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 typedef struct threshold_struct {
    time_t gcthreshold;      // files newer than this will not be GCd
                             //    Recommendation -- this should be fairly old ( # of days ago )
-   time_t rrthreshold;      // files newer than this will not be repacked or rebuilt
+   time_t repackthreshold;  // files newer than this will not be repacked
+                            //    Recommendation -- this should be quite recent ( # of minutes ago )
+   time_t rebuildthreshold; // files newer than this will not be rebuilt ( have data errors repaired )
                             //    Recommendation -- this should be quite recent ( # of minutes ago )
    time_t cleanupthreshold; // files newer than this will not be cleaned up ( i.e. repack marker files )
                             //    Recommendation -- this should be semi-recent ( # of hours ago )
    // NOTE -- setting any of these values too close to the current time risks undefined resource 
    //         processing behavior ( i.e. trying to cleanup ongoing repacks )
+   // NOTE -- setting any of these values to zero will cause the corresponding operations to be skipped
 } thresholds;
 
 typedef struct gctag_struct {
@@ -104,6 +107,7 @@ typedef struct streamwalker_struct {
    MDAL_CTXT   ctxt;
    time_t      gcthresh;      // time threshold for GCing a file ( none performed if zero )
    time_t      repackthresh;  // time threshold for repacking a file ( none performed if zero )
+   time_t      rebuildthresh; // time threshold for rebuilding a file ( none performed, if zero )
    ne_location rebuildloc;
    // report info
    streamwalker_report report;
@@ -131,7 +135,6 @@ typedef struct streamwalker_struct {
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
-#define ASSUMED_RECOV_PATHLEN 4096
 
 //   -------------   INTERNAL FUNCTIONS    -------------
 
@@ -554,7 +557,7 @@ int process_refdir( marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, c
    return ( (int)type + 1 );
 }
 
-streamwalker process_openstreamwalker( marfs_ns* ns, MDAL_CTXT ctxt, const char* reftgt, time_t gcthresh, time_t rpckthresh, ne_location rebuildloc ) {
+streamwalker process_openstreamwalker( marfs_ns* ns, MDAL_CTXT ctxt, const char* reftgt, thresholds thresh, ne_location* rebuildloc ) {
 	// validate args
 	if ( ns == NULL ) {
       LOG( LOG_ERR, "Received a NULL NS ref\n" );
@@ -568,6 +571,11 @@ streamwalker process_openstreamwalker( marfs_ns* ns, MDAL_CTXT ctxt, const char*
    }
    if ( reftgt == NULL ) {
       LOG( LOG_ERR, "Received a NULL reference tgt path\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   if ( thresh.rebuildthresh  &&  rebuildloc == NULL ) {
+      LOG( LOG_ERR, "Rebuild threshold is set, but no rebuild location was specified\n" );
       errno = EINVAL;
       return NULL;
    }
@@ -895,10 +903,14 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          statelog_freeopinfo( walker->rpckops );
       }
       else {
+         // record repack counts
+         opinfo* repackparse = walker->rpckops;
+         while ( repackparse ) {
+            walker->report.rpckfiles += repackparse->count;
+            walker->report.rpckbytes += ( (struct repack_info_struct*) repackparse->extendedinfo )->totalbytes;
+            repackparse = repackparse->next;
+         }
          // dispatch all ops
-         // TODO proper accounting
-         walker->report.rpckfiles += walker->rpckops->count;
-         walker->report.rpckbytes += ( (struct repack_info_struct*) walker->rpckops->extendedinfo )->totalbytes;
          *repackops = walker->rpckops;
          dispatchedops = 1;
       }

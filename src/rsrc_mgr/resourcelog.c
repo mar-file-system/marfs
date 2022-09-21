@@ -170,10 +170,11 @@ opinfo* parselogline( int logfile, char* eof ) {
          if ( tgtchar == buffer ) {
             LOG( LOG_INFO, "Hit EOF on logfile\n" );
             *eof = 1;
-            return NULL;
          }
-         LOG( LOG_ERR, "Hit mid-line EOF on logfile\n" );
-         *eof = -1;
+         else {
+            LOG( LOG_ERR, "Hit mid-line EOF on logfile\n" );
+            *eof = -1;
+         }
          return NULL;
       }
       LOG( LOG_ERR, "Encountered error while reading from logfile\n" );
@@ -393,7 +394,44 @@ opinfo* parselogline( int logfile, char* eof ) {
    else if ( strncmp( buffer, "REPACK ", 7 ) == 0 ) {
       op->type = MARFS_REPACK_OP;
       parseloc += 7;
-      // no extended info to parse here
+      // allocate repack_info
+      repack_info* extinfo = malloc( sizeof( struct repack_info_struct ) );
+      if ( op->extendedinfo == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for REPACK extended info\n" );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      // parse in delref_info
+      if ( strncmp( parseloc, "{ ", 2 ) ) {
+         LOG( LOG_ERR, "Missing '{ ' header for REPACK extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 2;
+      char* endptr = NULL;
+      unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
+      if ( endptr == NULL  ||  *endptr != ' ' ) {
+         LOG( LOG_ERR, "REPACK extended info has unexpected char in totalbytes string: '%c'\n", *endptr );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      extinfo->totalbytes = (size_t)parseval;
+      parseloc = endptr;
+      if ( strncmp( parseloc, " } ", 3 ) ) {
+         LOG( LOG_ERR, "Missing ' } ' tail for REPACK extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 3;
+      // attach repack_info
+      op->extendedinfo = extinfo;
    }
    else {
       LOG( LOG_ERR, "Unrecognized operation type value: \"%s\"\n", buffer );
@@ -566,7 +604,16 @@ int printlogline( int logfile, opinfo* op ) {
             return -1;
          }
          usedbuff += 7;
-         // no extended info for this op
+         if ( op->extendedinfo ) {
+            repack_info* repack = (repack_info*)&(op->extendedinfo);
+            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
+                                             repack->totalbytes );
+            if ( extinfoprint < 6 ) {
+               LOG( LOG_ERR, "Failed to populate REPACK extended info string\n" );
+               return -1;
+            }
+            usedbuff += extinfoprint;
+         }
          break;
       default:
          LOG( LOG_ERR, "Unrecognized TYPE value of operation\n" );
