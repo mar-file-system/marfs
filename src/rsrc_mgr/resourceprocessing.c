@@ -613,6 +613,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
    }
    // set up some initial values
    marfs_ms* ms = &(walker->ns->prepo->metascheme);
+   marfs_ds* ds = &(walker->ns->prepo->datascheme);
    MDAL mdal = ms->mdal;
    size_t objfiles = walker->ns->prepo->datascheme.objfiles; // current repo-defined packing limit
    size_t objsize = walker->ns->prepo->datascheme.objsize;   // current repo-defined chunking limit
@@ -773,7 +774,24 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                }
                walker->rpckops = NULL;
             }
-            // TODO rebuild op update
+            // possibly update rebuild ops
+            if ( walker->rebuildthresh  &&  walker->stval.st_ctime < walker->rbldthresh ) {
+               // check if object targets our rebuild location
+               char* objname = NULL;
+               ne_erasure erasure;
+               ne_location location;
+               if ( datastream_objtarget( &(walker->ftag), ds, &objname, &erasure, &location) ) {
+                  LOG( LOG_ERR, "Failed to populate object target info for object %zu of stream \"%s\"\n", walker->ftag.objno, walker->ftag.streamid );
+                  return -1;
+               }
+               // check for location match
+               if ( (walker->rbldloc.pod < 0  ||  walker->rbldloc.pod == location.pod )  &&
+                    (walker->rbldloc.cap < 0  ||  walker->rbldloc.cap == location.cap )  &&
+                    (walker->rbldloc.scatter < 0  ||  walker->rbldloc.scatter == location.scatter ) ) {
+                  // TODO generate a rebuild op for this object
+               }
+               free( objname );
+            }
             // update state
             walker->activefiles = 0; // update active file count for new obj
             walker->activebytes = 0; // update active byte count for new obj
