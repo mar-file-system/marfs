@@ -204,7 +204,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       parseloc += 8;
 //      // allocate delobj_info
 //      delobj_info* extinfo = malloc( sizeof( struct delobj_info_struct ) );
-//      if ( op->extendedinfo == NULL ) {
+//      if ( extinfo == NULL ) {
 //         LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
 //         free( op );
 //         lseek( logfile, origoff, SEEK_SET );
@@ -246,7 +246,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       parseloc += 8;
       // allocate delref_info
       delref_info* extinfo = malloc( sizeof( struct delref_info_struct ) );
-      if ( op->extendedinfo == NULL ) {
+      if ( extinfo == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
          free( op );
          lseek( logfile, origoff, SEEK_SET );
@@ -302,7 +302,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       parseloc += 8;
       // allocate rebuild_info
       rebuild_info* extinfo = malloc( sizeof( struct rebuild_info_struct ) );
-      if ( op->extendedinfo == NULL ) {
+      if ( extinfo == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for REBUILD extended info\n" );
          free( op );
          lseek( logfile, origoff, SEEK_SET );
@@ -396,7 +396,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       parseloc += 7;
       // allocate repack_info
       repack_info* extinfo = malloc( sizeof( struct repack_info_struct ) );
-      if ( op->extendedinfo == NULL ) {
+      if ( extinfo == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for REPACK extended info\n" );
          free( op );
          lseek( logfile, origoff, SEEK_SET );
@@ -553,7 +553,7 @@ int printlogline( int logfile, opinfo* op ) {
          }
          usedbuff += 8;
          if ( op->extendedinfo ) {
-            delref_info* delref = (delref_info*)&(op->extendedinfo);
+            delref_info* delref = (delref_info*)op->extendedinfo;
             ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu %s } ",
                                              delref->prev_active_index,
                                              (delref->eos == 0) ? "CNT" : "EOS" );
@@ -571,7 +571,7 @@ int printlogline( int logfile, opinfo* op ) {
          }
          usedbuff += 8;
          if ( op->extendedinfo ) {
-            rebuild_info* rebuild = (rebuild_info*)&(op->extendedinfo);
+            rebuild_info* rebuild = (rebuild_info*)op->extendedinfo;
             ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %s %u ",
                                              rebuild->markerpath,
                                              op->ftag.protection.N + op->ftag.protection.E );
@@ -605,7 +605,7 @@ int printlogline( int logfile, opinfo* op ) {
          }
          usedbuff += 7;
          if ( op->extendedinfo ) {
-            repack_info* repack = (repack_info*)&(op->extendedinfo);
+            repack_info* repack = (repack_info*)op->extendedinfo;
             ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
                                              repack->totalbytes );
             if ( extinfoprint < 6 ) {
@@ -624,9 +624,11 @@ int printlogline( int logfile, opinfo* op ) {
       return -1;
    }
    // populate start flag
-   if ( op->start  &&  snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "%c ", 'S' ) != 2 ) {
-      LOG( LOG_ERR, "Failed to populate 'S' start flag string\n" );
-      return -1;
+   if ( op->start ) {
+      if ( snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "%c ", 'S' ) != 2 ) {
+         LOG( LOG_ERR, "Failed to populate 'S' start flag string\n" );
+         return -1;
+      }
    }
    else if ( snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "%c ", 'E' ) != 2 ) {
       LOG( LOG_ERR, "Failed to populate 'E' start flag string\n" );
@@ -726,7 +728,7 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop ) {
    // map this operation into our inprogress hash table
    HASH_NODE* node = NULL;
    if ( hash_lookup( rsrclog->inprogress, newop->ftag.streamid, &node ) < 0 ) {
-      LOG( LOG_ERR, "Failed to map operation on \"%s\" into inprogress HASH_TABLE\n", newop->tgt );
+      LOG( LOG_ERR, "Failed to map operation on \"%s\" into inprogress HASH_TABLE\n", newop->ftag.streamid );
       return -1;
    }
    // traverse the attached operations, looking for a match
@@ -841,7 +843,6 @@ void resourcelog_freeopinfo( opinfo* op ) {
    char* prevctag = NULL;
    char* prevstreamid = NULL;
    while ( op ) {
-      if ( op->next ) { resourcelog_freeopinfo( op->next ); } // recursively free op chain
       if ( op->extendedinfo ) {
          switch ( op->type ) { // only REBUILD and DEL-REF ops should have extended info at all
             case MARFS_REBUILD_OP:
@@ -1033,69 +1034,55 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
       errno = EINVAL;
       return -1;
    }
+   if ( type != RESOURCE_READ_LOG  &&  ns == NULL ) {
+      LOG( LOG_ERR, "Recieved a NULL 'ns' arg for a non-read log\n" );
+      errno = EINVAL;
+      return -1;
+   }
    if ( logpath == NULL ) {
       LOG( LOG_ERR, "Received a NULL logpath value\n" );
       errno = EINVAL;
       return -1;
    }
    // identify our actual resourcelog
-   char newrsrclog = 0;
    RESOURCELOG rsrclog = *resourcelog;
+   // allocate a new resourcelog
+   rsrclog = malloc( sizeof( struct resourcelog_struct ) );
    if ( rsrclog == NULL ) {
-      // allocate a new resourcelog
-      rsrclog = malloc( sizeof( struct resourcelog_struct ) );
-      if ( rsrclog == NULL ) {
-         LOG( LOG_ERR, "Failed to allocate space for a new resourcelog\n" );
-         return -1;
-      }
-      if ( pthread_mutex_init( &(rsrclog->lock), NULL ) ) {
-         LOG( LOG_ERR, "Failed to initialize lock on new resourcelog struct\n" );
-         free( rsrclog );
-         return -1;
-      }
-      if ( pthread_cond_init( &(rsrclog->nooutstanding), NULL ) ) {
-         LOG( LOG_ERR, "Failed to initialize condition on new resourcelog struct\n" );
-         pthread_mutex_destroy( &(rsrclog->lock) );
-         free( rsrclog );
-         return -1;
-      }
-      if ( pthread_mutex_lock( &(rsrclog->lock) ) ) {
-         LOG( LOG_ERR, "Failed to acquire new resourcelog lock\n" );
-         pthread_cond_destroy( &(rsrclog->nooutstanding) );
-         pthread_mutex_destroy( &(rsrclog->lock) );
-         free( rsrclog );
-         return -1;
-      }
-      rsrclog->outstandingcnt = 0;
-      bzero( &(rsrclog->summary), sizeof( struct operation_summary_struct ) );
-      rsrclog->inprogress = NULL;
-      rsrclog->logfile = -1;
-      rsrclog->logfilepath = NULL;
-      newrsrclog = 1;
+      LOG( LOG_ERR, "Failed to allocate space for a new resourcelog\n" );
+      return -1;
    }
-   else {
-      // attempt to reuse the existing resourcelog
-      if ( rsrclog->logfilepath ) {
-         LOG( LOG_ERR, "The passed resourcelog reference has not been finalized\n" );
-         errno = EINVAL;
-         return -1;
-      }
-      // acquire rsrclog lock
-      if ( pthread_mutex_lock( &(rsrclog->lock) ) ) {
-         LOG( LOG_ERR, "Failed to acquire resourcelog lock\n" );
-         return -1;
-      }
+   if ( pthread_mutex_init( &(rsrclog->lock), NULL ) ) {
+      LOG( LOG_ERR, "Failed to initialize lock on new resourcelog struct\n" );
+      free( rsrclog );
+      return -1;
    }
+   if ( pthread_cond_init( &(rsrclog->nooutstanding), NULL ) ) {
+      LOG( LOG_ERR, "Failed to initialize condition on new resourcelog struct\n" );
+      pthread_mutex_destroy( &(rsrclog->lock) );
+      free( rsrclog );
+      return -1;
+   }
+   if ( pthread_mutex_lock( &(rsrclog->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire new resourcelog lock\n" );
+      pthread_cond_destroy( &(rsrclog->nooutstanding) );
+      pthread_mutex_destroy( &(rsrclog->lock) );
+      free( rsrclog );
+      return -1;
+   }
+   rsrclog->outstandingcnt = 0;
+   bzero( &(rsrclog->summary), sizeof( struct operation_summary_struct ) );
+   rsrclog->inprogress = NULL;
+   rsrclog->logfile = -1;
+   rsrclog->logfilepath = NULL;
    // initialize our logging path
    rsrclog->logfilepath = strdup( logpath );
    if ( rsrclog->logfilepath == NULL ) {
       LOG( LOG_ERR, "Failed to duplicate logfile path: \"%s\"\n", logpath );
       pthread_mutex_unlock( &(rsrclog->lock) );
-      if ( newrsrclog ) {
-         pthread_cond_destroy( &(rsrclog->nooutstanding) );
-         pthread_mutex_destroy( &(rsrclog->lock) );
-         free( rsrclog );
-      }
+      pthread_cond_destroy( &(rsrclog->nooutstanding) );
+      pthread_mutex_destroy( &(rsrclog->lock) );
+      free( rsrclog );
       return -1;
    }
    // open our logfile
@@ -1104,7 +1091,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
    rsrclog->logfile = open( rsrclog->logfilepath, openmode, 0600 );
    if ( rsrclog->logfile < 0 ) {
       LOG( LOG_ERR, "Failed to open resourcelog: \"%s\"\n", rsrclog->logfilepath );
-      cleanuplog( rsrclog, newrsrclog );
+      cleanuplog( rsrclog, 1 );
       return -1;
    }
    // when reading an existing logfile, behavior is significantly different
@@ -1126,13 +1113,13 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
       }
       if ( shortestprefx + extraread >= 128 ) {
          LOG( LOG_ERR, "Logfile header strings exceed memory allocation!\n" );
-         cleanuplog( rsrclog, newrsrclog );
+         cleanuplog( rsrclog, 1 );
          return -1;
       }
       if ( read( rsrclog->logfile, buffer, shortestprefx ) != shortestprefx ) {
          LOG( LOG_ERR, "Failed to read prefix string of length %zd from logfile: \"%s\"\n",
                        shortestprefx, rsrclog->logfilepath );
-         cleanuplog( rsrclog, newrsrclog );
+         cleanuplog( rsrclog, 1 );
          return -1;
       }
       // string comparison, accounting for possible variety of header length, is a bit complex
@@ -1142,22 +1129,24 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
             // not a RECORD log, so read in extra MODIFY prefix chars, if necessary
             if ( extraread > 0  &&  read( rsrclog->logfile, buffer + shortestprefx, extraread ) != extraread ) {
                LOG( LOG_ERR, "Failed to read in trailing chars of MODIFY prefix\n" );
-               cleanuplog( rsrclog, newrsrclog );
+               cleanuplog( rsrclog, 1 );
                return -1;
             }
             // check for MODIFY prefix
             if ( strncmp( buffer, MODIFY_LOG_PREFIX, shortestprefx + extraread ) ) {
                LOG( LOG_ERR, "Failed to identify header prefix of logfile: \"%s\"\n", rsrclog->logfilepath );
-               cleanuplog( rsrclog, newrsrclog );
+               cleanuplog( rsrclog, 1 );
                return -1;
             }
             // we are reading a MODIFY log
             LOG( LOG_INFO, "Identified as a MODIFY log source: \"%s\"\n", rsrclog->logfilepath );
             rsrclog->type = RESOURCE_MODIFY_LOG | RESOURCE_READ_LOG;
          }
-         // we are reading a RECORD log
-         LOG( LOG_INFO, "Identified as a RECORD log source: \"%s\"\n", rsrclog->logfilepath );
-         rsrclog->type = RESOURCE_RECORD_LOG | RESOURCE_READ_LOG;
+         else {
+            // we are reading a RECORD log
+            LOG( LOG_INFO, "Identified as a RECORD log source: \"%s\"\n", rsrclog->logfilepath );
+            rsrclog->type = RESOURCE_RECORD_LOG | RESOURCE_READ_LOG;
+         }
       }
       else {
          // check if this is a MODIFY log first
@@ -1165,32 +1154,56 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
             // not a MODIFY log, so read in extra RECORD prefix chars, if necessary
             if ( extraread > 0  &&  read( rsrclog->logfile, buffer + shortestprefx, extraread ) != extraread ) {
                LOG( LOG_ERR, "Failed to read in trailing chars of RECORD prefix\n" );
-               cleanuplog( rsrclog, newrsrclog );
+               cleanuplog( rsrclog, 1 );
                return -1;
             }
             // check for RECORD prefix
             if ( strncmp( buffer, RECORD_LOG_PREFIX, shortestprefx + extraread ) ) {
                LOG( LOG_ERR, "Failed to identify header prefix of logfile: \"%s\"\n", rsrclog->logfilepath );
-               cleanuplog( rsrclog, newrsrclog );
+               cleanuplog( rsrclog, 1 );
                return -1;
             }
             // we are reading a RECORD log
             LOG( LOG_INFO, "Identified as a RECORD log source: \"%s\"\n", rsrclog->logfilepath );
             rsrclog->type = RESOURCE_RECORD_LOG | RESOURCE_READ_LOG;
          }
-         // we are reading a MODIFY log
-         LOG( LOG_INFO, "Identified as a MODIFY log source: \"%s\"\n", rsrclog->logfilepath );
-         rsrclog->type = RESOURCE_MODIFY_LOG | RESOURCE_READ_LOG;
+         else {
+            // we are reading a MODIFY log
+            LOG( LOG_INFO, "Identified as a MODIFY log source: \"%s\"\n", rsrclog->logfilepath );
+            rsrclog->type = RESOURCE_MODIFY_LOG | RESOURCE_READ_LOG;
+         }
       }
       // when reading a log, we can exit early
+      if ( pthread_mutex_unlock( &(rsrclog->lock) ) ) {
+         LOG( LOG_ERR, "Failed to relinquish resourcelog lock\n" );
+         cleanuplog( rsrclog, 1 );
+         return -1;
+      }
       *resourcelog = rsrclog;
       return 0;
+   }
+   // write out our log prefix
+   if ( rsrclog->type == RESOURCE_MODIFY_LOG ) {
+      if ( write( rsrclog->logfile, MODIFY_LOG_PREFIX, strlen( MODIFY_LOG_PREFIX ) ) !=
+            strlen( MODIFY_LOG_PREFIX ) ) {
+         LOG( LOG_ERR, "Failed to write out MODIFY log header to new logfile\n" );
+         cleanuplog( rsrclog, 1 );
+         return -1;
+      }
+   }
+   else {
+      if ( write( rsrclog->logfile, RECORD_LOG_PREFIX, strlen( RECORD_LOG_PREFIX ) ) !=
+            strlen( RECORD_LOG_PREFIX ) ) {
+         LOG( LOG_ERR, "Failed to write out RECORD log header to new logfile\n" );
+         cleanuplog( rsrclog, 1 );
+         return -1;
+      }
    }
    // initialize our HASH_TABLE
    HASH_NODE* nodelist = malloc( sizeof(HASH_NODE) * ns->prepo->metascheme.refnodecount );
    if ( nodelist == NULL ) {
       LOG( LOG_ERR, "Failed to allocate nodelist for in progress hash table\n" );
-      cleanuplog( rsrclog, newrsrclog );
+      cleanuplog( rsrclog, 1 );
       return -1;
    }
    size_t index = 0;
@@ -1206,7 +1219,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
             index--;
          }
          free( nodelist );
-         cleanuplog( rsrclog, newrsrclog );
+         cleanuplog( rsrclog, 1 );
          return -1;
       }
    }
@@ -1218,7 +1231,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
          index--;
       }
       free( nodelist );
-      cleanuplog( rsrclog, newrsrclog );
+      cleanuplog( rsrclog, 1 );
       return -1;
    }
 
@@ -1231,13 +1244,13 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
 //      // map this operation into our inprogress hash table
 //      if ( processopinfo( rsrclog, parsedop ) < 0 ) {
 //         LOG( LOG_ERR, "Failed to process lines from logfile: \"%s\"\n", rsrclog->logfilepath );
-//         cleanuplog( rsrclog, newrsrclog );
+//         cleanuplog( rsrclog, 1 );
 //         return -1;
 //      }
 //   }
 //   if ( eof == 0 ) {
 //      LOG( LOG_ERR, "Failed to parse existing logfile: \"%s\"\n", rsrclog->logfilepath );
-//      cleanuplog( rsrclog, newrsrclog );
+//      cleanuplog( rsrclog, 1 );
 //      return -1;
 //   }
 //   // potentially integrate info from any pre-existing logfiles
@@ -1250,7 +1263,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
 //      }
 //      if ( prevent == NULL ) {
 //         LOG( LOG_ERR, "Failed to identify parent dir of logfile path: \"%s\"\n", rsrclog->logfilepath );
-//         cleanuplog( rsrclog, newrsrclog );
+//         cleanuplog( rsrclog, 1 );
 //         return -1;
 //      }
 //      *prevent = '\0'; // insert a NULL, to allow us to open the parent dir
@@ -1258,7 +1271,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
 //      *prevent = '/';
 //      if ( parentdir == NULL ) {
 //         LOG( LOG_ERR, "Failed to open parent dir of logfile: \"%s\"\n", rsrclog->logfilepath );
-//         cleanuplog( rsrclog, newrsrclog );
+//         cleanuplog( rsrclog, 1 );
 //         return -1;
 //      }
 //      // readdir to identify all lingering logfiles
@@ -1273,7 +1286,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
 //            if ( oldlog < 0 ) {
 //               LOG( LOG_ERR, "Failed to open existing logfile for cleanup: \"%s\"\n", entry->name );
 //               closedir( parentdir );
-//               cleanuplog( rsrclog, newrsrclog );
+//               cleanuplog( rsrclog, 1 );
 //               return -1;
 //            }
 //            while ( (parsedop = parselogline( oldlog, &eof )) != NULL ) {
@@ -1283,7 +1296,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
 //                       entry->name, rsrclog->logfilepath );
 //                  close( oldlog );
 //                  closedir( parentdir );
-//                  cleanuplog( rsrclog, newrsrclog );
+//                  cleanuplog( rsrclog, 1 );
 //                  return -1;
 //               }
 //               // map any ops to our hash table
@@ -1291,7 +1304,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
 //                  LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", entry->name );
 //                  close( oldlog );
 //                  closedir( parentdir );
-//                  cleanuplog( rsrclog, newrsrclog );
+//                  cleanuplog( rsrclog, 1 );
 //                  return -1;
 //               }
 //            }
@@ -1299,7 +1312,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
 //               LOG( LOG_ERR, "Failed to parse old logfile: \"%s\"\n", entry->name );
 //               close( oldlog );
 //               closedir( parentdir );
-//               cleanuplog( rsrclog, newrsrclog );
+//               cleanuplog( rsrclog, 1 );
 //               return -1;
 //            }
 //            close( oldlog );
@@ -1307,7 +1320,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
 //            if ( unlinkat( dirfd(parentdir), entry->name ) ) {
 //               LOG( LOG_ERR, "Failed to unlink old logfile: \"%s\"\n", entry->name );
 //               closedir( parentdir );
-//               cleanuplog( rsrclog, newrsrclog );
+//               cleanuplog( rsrclog, 1 );
 //               return -1;
 //            }
 //         }
@@ -1321,7 +1334,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
    // finally done
    if ( pthread_mutex_unlock( &(rsrclog->lock) ) ) {
       LOG( LOG_ERR, "Failed to relinquish resourcelog lock\n" );
-      cleanuplog( rsrclog, newrsrclog );
+      cleanuplog( rsrclog, 1 );
       return -1;
    }
    *resourcelog = rsrclog;
@@ -1492,6 +1505,7 @@ int resourcelog_processop( RESOURCELOG* resourcelog, opinfo* op, char* progress 
    if ( rsrclog->type == RESOURCE_MODIFY_LOG ) {
       if ( processopinfo( rsrclog, op, progress ) ) {
          LOG( LOG_ERR, "Failed to incorportate op info into MODIFY log\n" );
+         pthread_mutex_unlock( &(rsrclog->lock) );
          return -1;
       }
    }
@@ -1502,6 +1516,7 @@ int resourcelog_processop( RESOURCELOG* resourcelog, opinfo* op, char* progress 
          if ( parseop->start == 0 ) {
             LOG( LOG_ERR, "Detected op completion struct in chain for RECORD log\n" );
             errno = EINVAL;
+            pthread_mutex_unlock( &(rsrclog->lock) );
             return -1;
          }
          parseop = parseop->next;
@@ -1510,6 +1525,7 @@ int resourcelog_processop( RESOURCELOG* resourcelog, opinfo* op, char* progress 
    // output the operation to the actual log file
    if ( printlogline( rsrclog->logfile, op ) ) {
       LOG( LOG_ERR, "Failed to output operation info to logfile: \"%s\"\n", rsrclog->logfilepath );
+      pthread_mutex_unlock( &(rsrclog->lock) );
       return -1;
    }
    // check for quiesced state
@@ -1561,10 +1577,12 @@ int resourcelog_readop( RESOURCELOG* resourcelog, opinfo** op ) {
    if ( parsedop == NULL ) {
       if ( eof < 0 ) {
          LOG( LOG_ERR, "Hit unexpected EOF on logfile: \"%s\"\n", rsrclog->logfilepath );
+         pthread_mutex_unlock( &(rsrclog->lock) );
          return -1;
       }
       if ( eof == 0 ) {
          LOG( LOG_ERR, "Failed to parse operation info from logfile: \"%s\"\n", rsrclog->logfilepath );
+         pthread_mutex_unlock( &(rsrclog->lock) );
          return -1;
       }
       LOG( LOG_INFO, "Hit EOF on logfile: \"%s\"\n", rsrclog->logfilepath );

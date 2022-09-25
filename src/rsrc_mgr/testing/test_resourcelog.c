@@ -243,6 +243,101 @@ int main(int argc, char **argv)
    opparse->ftag = (opparse-1)->ftag; // just inherit the same FTAG
    opparse->next = NULL;
 
+
+   // insert deletion op chain
+   char progress = 0;
+   if ( resourcelog_processop( &(rlog), opset, &(progress) ) ) {
+      printf( "failed to insert initial deletion op chain\n" );
+      return -1;
+   }
+   if ( progress ) {
+      printf( "insertion of inital deletion chain incorrectly set 'progress' flag\n" );
+      return -1;
+   }
+   // insert rebuild op
+   if ( resourcelog_processop( &(rlog), opset + 2, &(progress) ) ) {
+      printf( "failed to insert initial rebuild op\n" );
+      return -1;
+   }
+   if ( progress ) {
+      printf( "insertion of inital rebuild op incorrectly set 'progress' flag\n" );
+      return -1;
+   }
+   // insert repack op
+   if ( resourcelog_processop( &(rlog), opset + 3, &(progress) ) ) {
+      printf( "failed to insert initial repack op\n" );
+      return -1;
+   }
+   if ( progress ) {
+      printf( "insertion of inital repack op incorrectly set 'progress' flag\n" );
+      return -1;
+   }
+
+   // attempt to insert completion of an op ( expected to fail )
+   opset->start = 0;
+   if ( resourcelog_processop( &(rlog), opset, &(progress) ) == 0 ) {
+      printf( "unexpected success for insert of op completion into a RECORD log\n" );
+      return -1;
+   }
+   opset->start = 1; //revert change
+
+
+   // terminate the log, keeping the copy
+   operation_summary summary;
+   if ( resourcelog_term( &(rlog), &(summary), logpath ) ) {
+      printf( "failed to terminate initial logfile\n" );
+      return -1;
+   }
+
+
+   // read and validate the content of our original log
+   printf("initing\n" );
+   if ( resourcelog_init( &(rlog), logpath, RESOURCE_READ_LOG, NULL ) ) {
+      printf( "failed to initialize first read log\n" );
+      return -1;
+   }
+   opparse = NULL;
+   printf( "reading\n" );
+   if ( resourcelog_readop( &(rlog), &(opparse) ) ) {
+      printf( "failed to read first operation set from first read log\n" );
+      return -1;
+   }
+   printf( "comparing\n" );
+   if ( opparse->type != opset->type  ||
+        opparse->extendedinfo != opset->extendedinfo  ||
+        opparse->start != opset->start  ||
+        opparse->count != opset->count  ||
+        opparse->errval != opset->errval  ||
+        opparse->ftag.majorversion != opset->ftag.majorversion  ||
+        opparse->ftag.minorversion != opset->ftag.minorversion  ||
+        strcmp( opparse->ftag.ctag, opset->ftag.ctag )  ||
+        strcmp( opparse->ftag.streamid, opset->ftag.streamid )  ||
+        opparse->ftag.objfiles != opset->ftag.objfiles  ||
+        opparse->ftag.objsize != opset->ftag.objsize  ||
+        opparse->ftag.fileno != opset->ftag.fileno  ||
+        opparse->ftag.objno != opset->ftag.objno  ||
+        opparse->ftag.offset != opset->ftag.offset  ||
+        opparse->ftag.endofstream != opset->ftag.endofstream  ||
+        opparse->ftag.protection.N != opset->ftag.protection.N  ||
+        opparse->ftag.protection.E != opset->ftag.protection.E  ||
+        opparse->ftag.protection.O != opset->ftag.protection.O  ||
+        opparse->ftag.protection.partsz != opset->ftag.protection.partsz  ||
+        opparse->ftag.bytes != opset->ftag.bytes  ||
+        opparse->ftag.availbytes != opset->ftag.availbytes  ||
+        opparse->ftag.recoverybytes != opset->ftag.recoverybytes  ||
+        opparse->ftag.state != opset->ftag.state ) {
+      printf( "read op 1 differs from original\n" );
+      if ( opparse->type != opset->type ) { printf( "type\n" ); }
+      if ( opparse->extendedinfo != opset->extendedinfo ) { printf( "extendedinfo\n" ); }
+      if ( opparse->start != opset->start ) { printf( "start\n" ); }
+      if ( opparse->count != opset->count ) { printf( "count\n" ); }
+      if ( opparse->errval != opset->errval ) { printf( "errval\n" ); }
+      return -1;
+   }
+   printf( "freeing\n" );
+   resourcelog_freeopinfo( opparse );
+
+
    // free all operations
    opparse = opset;
    free( opparse->ftag.ctag );
@@ -259,10 +354,12 @@ int main(int argc, char **argv)
    free( opparse->extendedinfo );
    free( opset );
    // terminate the logfile
-   if ( resourcelog_term( &(rlog), NULL, NULL ) ) {
+   printf( "terminating\n" );
+   if ( resourcelog_term( &(rlog), &(summary), NULL ) ) {
       printf( "failed to terminate resourcelog\n" );
       return -1;
    }
+
    // free logpath
    free( logpath );
    // terminate our config
