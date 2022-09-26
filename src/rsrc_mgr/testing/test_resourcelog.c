@@ -220,7 +220,10 @@ int main(int argc, char **argv)
    rebuildinf->rtag.blocksz = 0;
    rebuildinf->rtag.totsz = 0;
    rebuildinf->rtag.meta_status = calloc( sizeof(char), 7 );
+   rebuildinf->rtag.meta_status[2] = 1;
    rebuildinf->rtag.data_status = calloc( sizeof(char), 7 );
+   rebuildinf->rtag.data_status[0] = 1;
+   rebuildinf->rtag.data_status[5] = 1;
    rebuildinf->rtag.csum = NULL;
    opparse->start = 1;
    opparse->count = 1;
@@ -291,18 +294,18 @@ int main(int argc, char **argv)
 
 
    // read and validate the content of our original log
-   printf("initing\n" );
    if ( resourcelog_init( &(rlog), logpath, RESOURCE_READ_LOG, NULL ) ) {
       printf( "failed to initialize first read log\n" );
       return -1;
    }
    opparse = NULL;
-   printf( "reading\n" );
+   printf( "readingopset1\n" );
    if ( resourcelog_readop( &(rlog), &(opparse) ) ) {
       printf( "failed to read first operation set from first read log\n" );
       return -1;
    }
-   printf( "comparing\n" );
+   opinfo* readops = opparse;
+   printf( "valop1\n" );
    if ( opparse->type != opset->type  ||
         opparse->extendedinfo != opset->extendedinfo  ||
         opparse->start != opset->start  ||
@@ -334,7 +337,129 @@ int main(int argc, char **argv)
       if ( opparse->errval != opset->errval ) { printf( "errval\n" ); }
       return -1;
    }
-   printf( "freeing\n" );
+   opparse = opparse->next;
+   printf( "valop2\n" );
+   delref_info* delrefparse = (delref_info*)opparse->extendedinfo;
+   if ( opparse->type != (opset+1)->type  ||
+        delrefparse->prev_active_index != delrefinf->prev_active_index  ||
+        delrefparse->eos != delrefinf->eos  ||
+        opparse->start != (opset+1)->start  ||
+        opparse->count != (opset+1)->count  ||
+        opparse->errval != (opset+1)->errval  ||
+        opparse->next   != (opset+1)->next  ||
+        opparse->ftag.majorversion != (opset+1)->ftag.majorversion  ||
+        opparse->ftag.minorversion != (opset+1)->ftag.minorversion  ||
+        strcmp( opparse->ftag.ctag, (opset+1)->ftag.ctag )  ||
+        strcmp( opparse->ftag.streamid, (opset+1)->ftag.streamid )  ||
+        opparse->ftag.objfiles != (opset+1)->ftag.objfiles  ||
+        opparse->ftag.objsize != (opset+1)->ftag.objsize  ||
+        opparse->ftag.fileno != (opset+1)->ftag.fileno  ||
+        opparse->ftag.objno != (opset+1)->ftag.objno  ||
+        opparse->ftag.offset != (opset+1)->ftag.offset  ||
+        opparse->ftag.endofstream != (opset+1)->ftag.endofstream  ||
+        opparse->ftag.protection.N != (opset+1)->ftag.protection.N  ||
+        opparse->ftag.protection.E != (opset+1)->ftag.protection.E  ||
+        opparse->ftag.protection.O != (opset+1)->ftag.protection.O  ||
+        opparse->ftag.protection.partsz != (opset+1)->ftag.protection.partsz  ||
+        opparse->ftag.bytes != (opset+1)->ftag.bytes  ||
+        opparse->ftag.availbytes != (opset+1)->ftag.availbytes  ||
+        opparse->ftag.recoverybytes != (opset+1)->ftag.recoverybytes  ||
+        opparse->ftag.state != (opset+1)->ftag.state ) {
+      printf( "read op 2 differs from original\n" );
+      if ( opparse->type != (opset+1)->type ) { printf( "type\n" ); }
+      if ( delrefparse->prev_active_index != delrefinf->prev_active_index ) { printf( "prevactive\n" ); }
+      if ( delrefparse->eos != delrefinf->eos ) { printf( "eos\n" ); }
+      if ( opparse->start != (opset+1)->start ) { printf( "start\n" ); }
+      if ( opparse->count != (opset+1)->count ) { printf( "count\n" ); }
+      if ( opparse->errval != (opset+1)->errval ) { printf( "errval\n" ); }
+      return -1;
+   }
+   resourcelog_freeopinfo( readops );
+   // validate the next operation
+   if ( resourcelog_readop( &(rlog), &(opparse) ) ) {
+      printf( "failed to read second operation set from first read log\n" );
+      return -1;
+   }
+   rebuild_info* rebuildparse = (rebuild_info*)opparse->extendedinfo;
+   if ( opparse->type != (opset+2)->type  ||
+        strcmp( rebuildparse->markerpath, rebuildinf->markerpath )  ||
+        rebuildparse->rtag.versz != rebuildinf->rtag.versz  ||
+        rebuildparse->rtag.blocksz != rebuildinf->rtag.blocksz  ||
+        rebuildparse->rtag.totsz != rebuildinf->rtag.totsz  ||
+        rebuildparse->rtag.meta_status[0] != rebuildinf->rtag.meta_status[0]  ||
+        rebuildparse->rtag.meta_status[1] != rebuildinf->rtag.meta_status[1]  ||
+        rebuildparse->rtag.meta_status[2] != rebuildinf->rtag.meta_status[2]  ||
+        rebuildparse->rtag.meta_status[3] != rebuildinf->rtag.meta_status[3]  ||
+        rebuildparse->rtag.meta_status[4] != rebuildinf->rtag.meta_status[4]  ||
+        rebuildparse->rtag.meta_status[5] != rebuildinf->rtag.meta_status[5]  ||
+        rebuildparse->rtag.meta_status[6] != rebuildinf->rtag.meta_status[6]  ||
+        rebuildparse->rtag.data_status[0] != rebuildinf->rtag.data_status[0]  ||
+        rebuildparse->rtag.data_status[1] != rebuildinf->rtag.data_status[1]  ||
+        rebuildparse->rtag.data_status[2] != rebuildinf->rtag.data_status[2]  ||
+        rebuildparse->rtag.data_status[3] != rebuildinf->rtag.data_status[3]  ||
+        rebuildparse->rtag.data_status[4] != rebuildinf->rtag.data_status[4]  ||
+        rebuildparse->rtag.data_status[5] != rebuildinf->rtag.data_status[5]  ||
+        rebuildparse->rtag.data_status[6] != rebuildinf->rtag.data_status[6]  ||
+        rebuildparse->rtag.csum != rebuildinf->rtag.csum  ||
+        opparse->start != (opset+2)->start  ||
+        opparse->count != (opset+2)->count  ||
+        opparse->errval != (opset+2)->errval  ||
+        opparse->next   != (opset+2)->next  ||
+        opparse->ftag.majorversion != (opset+2)->ftag.majorversion  ||
+        opparse->ftag.minorversion != (opset+2)->ftag.minorversion  ||
+        strcmp( opparse->ftag.ctag, (opset+2)->ftag.ctag )  ||
+        strcmp( opparse->ftag.streamid, (opset+2)->ftag.streamid )  ||
+        opparse->ftag.objfiles != (opset+2)->ftag.objfiles  ||
+        opparse->ftag.objsize != (opset+2)->ftag.objsize  ||
+        opparse->ftag.fileno != (opset+2)->ftag.fileno  ||
+        opparse->ftag.objno != (opset+2)->ftag.objno  ||
+        opparse->ftag.offset != (opset+2)->ftag.offset  ||
+        opparse->ftag.endofstream != (opset+2)->ftag.endofstream  ||
+        opparse->ftag.protection.N != (opset+2)->ftag.protection.N  ||
+        opparse->ftag.protection.E != (opset+2)->ftag.protection.E  ||
+        opparse->ftag.protection.O != (opset+2)->ftag.protection.O  ||
+        opparse->ftag.protection.partsz != (opset+2)->ftag.protection.partsz  ||
+        opparse->ftag.bytes != (opset+2)->ftag.bytes  ||
+        opparse->ftag.availbytes != (opset+2)->ftag.availbytes  ||
+        opparse->ftag.recoverybytes != (opset+2)->ftag.recoverybytes  ||
+        opparse->ftag.state != (opset+2)->ftag.state ) {
+      printf( "read op 3 differs from original\n" );
+      return -1;
+   }
+   resourcelog_freeopinfo( opparse );
+   // validate the next operation
+   if ( resourcelog_readop( &(rlog), &(opparse) ) ) {
+      printf( "failed to read third operation set from first read log\n" );
+      return -1;
+   }
+   repack_info* repackparse = (repack_info*)opparse->extendedinfo;
+   if ( opparse->type != (opset+3)->type  ||
+        repackparse->totalbytes != repackinf->totalbytes  ||
+        opparse->start != (opset+3)->start  ||
+        opparse->count != (opset+3)->count  ||
+        opparse->errval != (opset+3)->errval  ||
+        opparse->next   != (opset+3)->next  ||
+        opparse->ftag.majorversion != (opset+3)->ftag.majorversion  ||
+        opparse->ftag.minorversion != (opset+3)->ftag.minorversion  ||
+        strcmp( opparse->ftag.ctag, (opset+3)->ftag.ctag )  ||
+        strcmp( opparse->ftag.streamid, (opset+3)->ftag.streamid )  ||
+        opparse->ftag.objfiles != (opset+3)->ftag.objfiles  ||
+        opparse->ftag.objsize != (opset+3)->ftag.objsize  ||
+        opparse->ftag.fileno != (opset+3)->ftag.fileno  ||
+        opparse->ftag.objno != (opset+3)->ftag.objno  ||
+        opparse->ftag.offset != (opset+3)->ftag.offset  ||
+        opparse->ftag.endofstream != (opset+3)->ftag.endofstream  ||
+        opparse->ftag.protection.N != (opset+3)->ftag.protection.N  ||
+        opparse->ftag.protection.E != (opset+3)->ftag.protection.E  ||
+        opparse->ftag.protection.O != (opset+3)->ftag.protection.O  ||
+        opparse->ftag.protection.partsz != (opset+3)->ftag.protection.partsz  ||
+        opparse->ftag.bytes != (opset+3)->ftag.bytes  ||
+        opparse->ftag.availbytes != (opset+3)->ftag.availbytes  ||
+        opparse->ftag.recoverybytes != (opset+3)->ftag.recoverybytes  ||
+        opparse->ftag.state != (opset+3)->ftag.state ) {
+      printf( "read op 4 differs from original\n" );
+      return -1;
+   }
    resourcelog_freeopinfo( opparse );
 
 

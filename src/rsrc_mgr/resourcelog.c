@@ -200,6 +200,7 @@ opinfo* parselogline( int logfile, char* eof ) {
    // parse the op type and extended info
    char* parseloc = buffer;
    if ( strncmp( buffer, "DEL-OBJ ", 8 ) == 0 ) {
+      LOG( LOG_INFO, "Parsing a MARFS_DELETE_OBJ operation\n" );
       op->type = MARFS_DELETE_OBJ_OP;
       parseloc += 8;
 //      // allocate delobj_info
@@ -242,6 +243,7 @@ opinfo* parselogline( int logfile, char* eof ) {
 //      op->extendedinfo = extinfo;
    }
    else if ( strncmp( buffer, "DEL-REF ", 8 ) == 0 ) {
+      LOG( LOG_INFO, "Parsing a MARFS_DELETE_REF operation\n" );
       op->type = MARFS_DELETE_REF_OP;
       parseloc += 8;
       // allocate delref_info
@@ -298,6 +300,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       op->extendedinfo = extinfo;
    }
    else if ( strncmp( buffer, "REBUILD ", 8 ) == 0 ) {
+      LOG( LOG_INFO, "Parsing a MARFS_REBUILD operation\n" );
       op->type = MARFS_REBUILD_OP;
       parseloc += 8;
       // allocate rebuild_info
@@ -347,6 +350,7 @@ opinfo* parselogline( int logfile, char* eof ) {
          return NULL;
       }
       endptr++;
+      parseloc = endptr;
       while ( *endptr != '\0'  &&  *endptr != '\n'  &&  *endptr != ' ' ) { endptr++; }
       if ( *endptr != ' ' ) {
          LOG( LOG_ERR, "Failed to identify end of rtag marker in REBUILD extended info string\n" );
@@ -355,8 +359,9 @@ opinfo* parselogline( int logfile, char* eof ) {
          lseek( logfile, origoff, SEEK_SET );
          return NULL;
       }
-      extinfo->rtag.meta_status = calloc( 1, sizeof(char) * parseval );
-      extinfo->rtag.data_status = calloc( 1, sizeof(char) * parseval );
+      extinfo->rtag.meta_status = calloc( (size_t)parseval, sizeof(char) );
+      extinfo->rtag.data_status = calloc( (size_t)parseval, sizeof(char) );
+      extinfo->rtag.csum = NULL;
       if ( extinfo->rtag.meta_status == NULL  ||  extinfo->rtag.data_status == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for REBUILD extended info meta/data_status arrays\n" );
          if ( extinfo->rtag.meta_status ) { free( extinfo->rtag.meta_status ); }
@@ -368,7 +373,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       }
       *endptr = '\0'; // truncate string to make rtag parsing easier
       if ( rtag_initstr( &(extinfo->rtag), (size_t)parseval, parseloc ) ) {
-         LOG( LOG_ERR, "Failed to parse rtag value of REBUILD extended info\n" );
+         LOG( LOG_ERR, "Failed to parse rtag value of REBUILD extended info: \"%s\"\n", parseloc );
          free( extinfo->rtag.meta_status );
          free( extinfo->rtag.data_status );
          free( extinfo );
@@ -392,6 +397,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       op->extendedinfo = extinfo;
    }
    else if ( strncmp( buffer, "REPACK ", 7 ) == 0 ) {
+      LOG( LOG_INFO, "Parsing a MARFS_REPACK operation\n" );
       op->type = MARFS_REPACK_OP;
       parseloc += 7;
       // allocate repack_info
@@ -502,6 +508,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       // NOTE -- Recursive parsing isn't the most efficient approach.
       //         Simple though, and, once again, we don't expect logfile parsing to be a 
       //         significant performance consideration.
+      LOG( LOG_INFO, "Recursively parsing subsequent operation\n" );
       op->next = parselogline( logfile, eof );
       if ( op->next == NULL ) {
          LOG( LOG_ERR, "Failed to parse linked operation\n" );
@@ -1071,6 +1078,7 @@ int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog
       return -1;
    }
    rsrclog->outstandingcnt = 0;
+   rsrclog->type = type; // may be updated later
    bzero( &(rsrclog->summary), sizeof( struct operation_summary_struct ) );
    rsrclog->inprogress = NULL;
    rsrclog->logfile = -1;
