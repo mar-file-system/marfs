@@ -1697,7 +1697,7 @@ int resourcelog_processop( RESOURCELOG* resourcelog, opinfo* op, char* progress 
       return -1;
    }
    // special check for RECORD log
-   if ( rsrclog->type == MARFS_RECORD_LOG ) {
+   if ( rsrclog->type == RESOURCE_RECORD_LOG ) {
       // traverse the op chain to ensure we don't have any completions slipping into this RECORD log
       opinfo* parseop = dupop;
       while ( parseop ) {
