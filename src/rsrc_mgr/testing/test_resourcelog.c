@@ -292,8 +292,21 @@ int main(int argc, char **argv)
       return -1;
    }
 
+//   // generate a new logfile path
+//   char* wlogpath = resourcelog_genlogpath( 1, "./test_rmgr_topdir", "test-resourcelog-iteration654321", config->rootns, 10 );
+//   if ( wlogpath == NULL ) {
+//      printf( "failed to generate write logpath\n" );
+//      return -1;
+//   }
+//   // initaialize that new MODIFY logfile
+//   RESOURCELOG wlog = NULL;
+//   if ( resourcelog_init( &(wlog), wlogpath, RESOURCE_MODIFY_LOG, config->rootns ) ) {
+//      printf( "failed to initialize write logfile: \"%s\"\n", wlogpath );
+//      return -1;
+//   }
 
-   // read and validate the content of our original log
+
+   // read and validate the content of our original log, adding each op to our MODIFY log
    if ( resourcelog_init( &(rlog), logpath, RESOURCE_READ_LOG, NULL ) ) {
       printf( "failed to initialize first read log\n" );
       return -1;
@@ -392,14 +405,12 @@ int main(int argc, char **argv)
         rebuildparse->rtag.meta_status[3] != rebuildinf->rtag.meta_status[3]  ||
         rebuildparse->rtag.meta_status[4] != rebuildinf->rtag.meta_status[4]  ||
         rebuildparse->rtag.meta_status[5] != rebuildinf->rtag.meta_status[5]  ||
-        rebuildparse->rtag.meta_status[6] != rebuildinf->rtag.meta_status[6]  ||
         rebuildparse->rtag.data_status[0] != rebuildinf->rtag.data_status[0]  ||
         rebuildparse->rtag.data_status[1] != rebuildinf->rtag.data_status[1]  ||
         rebuildparse->rtag.data_status[2] != rebuildinf->rtag.data_status[2]  ||
         rebuildparse->rtag.data_status[3] != rebuildinf->rtag.data_status[3]  ||
         rebuildparse->rtag.data_status[4] != rebuildinf->rtag.data_status[4]  ||
         rebuildparse->rtag.data_status[5] != rebuildinf->rtag.data_status[5]  ||
-        rebuildparse->rtag.data_status[6] != rebuildinf->rtag.data_status[6]  ||
         rebuildparse->rtag.csum != rebuildinf->rtag.csum  ||
         opparse->start != (opset+2)->start  ||
         opparse->count != (opset+2)->count  ||
@@ -461,6 +472,26 @@ int main(int argc, char **argv)
       return -1;
    }
    resourcelog_freeopinfo( opparse );
+
+//   // terminate our reading log
+//   if ( resourcelog_term( &(rlog), NULL, NULL ) ) {
+//      printf( "failed to terminate inital read log\n" );
+//      return -1;
+//   }
+//
+//
+//   // open another readlog for this same file
+//   if ( resourcelog_init( &(rlog), logpath, RESOURCE_READ_LOG, NULL ) ) {
+//      printf( "failed to initialize first read log\n" );
+//      return -1;
+//   }
+
+
+   // replay our record log into the new modify log
+//   if ( resourcelog_replay( &(rlog), &(wlog) ) ) {
+//      printf( "failed to replay source log \"%s\" into dest log \"%s\"\n", logpath, wlogpath );
+//      return -1;
+//   }
 
 
    // free all operations

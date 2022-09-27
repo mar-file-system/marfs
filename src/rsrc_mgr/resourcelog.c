@@ -835,6 +835,29 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop ) {
       node->content = newop;
       // note that we have another op in flight ( if this is not a RECORD log )
       if ( rsrclog->type != RESOURCE_RECORD_LOG ) { rsrclog->outstandingcnt += oplength; }
+      else { // for RECORD logs, note all ops in our totals
+         opinfo* parseop = newop; // new op being added to totals
+         while ( parseop ) {
+            // ...note each in our totals...
+            switch( parseop->type ) {
+               case MARFS_DELETE_OBJ_OP:
+                  rsrclog->summary.deletion_object_count += parseop->count;
+                  break;
+               case MARFS_DELETE_REF_OP:
+                  rsrclog->summary.deletion_reference_count += parseop->count;
+                  break;
+               case MARFS_REBUILD_OP:
+                  rsrclog->summary.rebuild_count += parseop->count;
+                  break;
+               case MARFS_REPACK_OP:
+                  rsrclog->summary.repack_count += parseop->count;
+                  break;
+               default:
+                  LOG( LOG_ERR, "Unrecognized operation type value\n" );
+                  return -1;
+            }
+         }
+      }
    }
    return 0;
 }
@@ -874,6 +897,86 @@ void resourcelog_freeopinfo( opinfo* op ) {
       free( op );
       op = nextop;
    }
+}
+
+//TODO
+opinfo* resourcelog_dupopinfo( opinfo* op ) {
+   // validate arg
+   if ( op == NULL ) {
+      LOG( LOG_ERR, "Received a NULL opinfo reference\n" );
+      return NULL;
+   }
+   // parse over the op chain
+   char* prevctag = NULL;
+   char* prevstreamid = NULL;
+   opinfo* genchain = NULL;
+   opinfo** newop = &(genchain);
+   while ( op ) {
+      // allocate a new op struct
+      *newop = malloc( sizeof( struct opinfo_struct ) );
+      if ( *newop == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate new operation info struct\n" );
+         resourcelog_freeopinfo( genchain );
+         return NULL;
+      }
+      **newop = *op; // just duplicate op values, to start
+      (*newop)->extendedinfo = NULL; // always NULL this out, just in case
+      // extended info requires more
+      if ( op->extendedinfo ) {
+         switch ( op->type ) { // only REBUILD and DEL-REF ops should have extended info at all
+            case MARFS_REBUILD_OP:
+               {
+               rebuild_info* extinfo = (rebuild_info*)op->extendedinfo;
+               rebuild_info* newinfo = malloc( sizeof( struct rebuild_info_struct ) );
+               if ( newinfo == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate rebuild extended info\n" );
+                  resourcelog_freeopinfo( genchain );
+                  return NULL;
+               }
+               newinfo->markerpath = strdup( extinfo->markerpath );
+               if ( newinfo->markerpath == NULL ) {
+                  LOG( LOG_ERR, "Failed to duplicate rebuild marker path\n" );
+                  free( newinfo );
+                  resourcelog_freeopinfo( genchain );
+                  return NULL;
+               }
+               size_t stripewidth = op->ftag.protection.N + op->ftag.protection.E;
+               newinfo->rtag.meta_status = calloc( stripewidth, sizeof(char) );
+               if ( newinfo->rtag.meta_status == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate meta_status array of length %zu\n", stripewidth );
+                  free( newinfo->markerpath );
+                  free( newinfo );
+                  resourcelog_freeopinfo( genchain );
+                  return NULL;
+               }
+               newinfo->rtag.data_status = calloc( stripewidth, sizeof(char) );
+               if ( newinfo->rtag.data_status == NULL ) {
+                  LOG( LOG_ERR, "Failed to allocate data_status array of length %zu\n", stripewidth );
+                  free( newinfo->rtag.meta_status );
+                  free( newinfo->markerpath );
+                  free( newinfo );
+                  resourcelog_freeopinfo( genchain );
+                  return NULL;
+               }
+               break;
+               }
+            default: // nothing extra to be done for other ops
+               LOG( LOG_ERR, "Unrecognized operation type with extended info value\n" );
+               resourcelog_freeopinfo( genchain );
+               return NULL;
+         }
+         free( op->extendedinfo );
+      }
+      // free ctag+streamid only if they are not simply duplicated references throughout the op chain
+      // NOTE -- This won't catch if non-neighbor ops have the same string values, but I am considering that a degenerate case.
+      //         Behavior would be a double free by this func.
+      if ( op->ftag.ctag  &&  op->ftag.ctag != prevctag ) { prevctag = op->ftag.ctag; free( op->ftag.ctag ); }
+      if ( op->ftag.streamid  &&  op->ftag.streamid != prevstreamid ) { prevstreamid = op->ftag.streamid; free( op->ftag.streamid ); }
+      opinfo* nextop = op->next;
+      free( op );
+      op = nextop;
+   }
+   return NULL;
 }
 
 /**

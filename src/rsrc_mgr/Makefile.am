@@ -97,6 +97,6 @@ test_resourcelog_SOURCES = testing/test_resourcelog.c
 test_resourcelog_LDADD = libResourceLog.la
 test_resourcelog_CFLAGS = $(XML_CFLAGS)
 
-TESTS = test_rsrc_mgr test_rsrc_mgr_nopack test_resourcelog
+TESTS = test_resourcelog #test_rsrc_mgr test_rsrc_mgr_nopack
 
 
