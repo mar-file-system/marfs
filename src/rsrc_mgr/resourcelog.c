@@ -720,7 +720,7 @@ int printlogline( int logfile, opinfo* op ) {
  *                           If set to negative one, the updated operation completed with errors
  * @return int : Zero on success, or -1 on failure
  */
-int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop ) {
+int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* dofree ) {
    // identify the trailing op of the given chain
    opinfo* finop = newop;
    size_t oplength = 1;
@@ -821,8 +821,13 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop ) {
             // no previous op means the matching op is the first one; just remove it
             node->content = previndex->next;
          }
+         // free the removed operation chain
+         previndex->next = NULL; // so we don't end up freeing any predecessors
+         resourcelog_freeopinfo( opindex );
       }
       // a matching op means the parsed operation can be discarded
+      // tell the caller to free their own op chain
+      *dofree = 1;
    }
    else {
       // should indicate the start of a new operation
@@ -830,11 +835,15 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop ) {
          LOG( LOG_ERR, "Parsed completion of op from logfile \"%s\" with no parsed start of op\n", rsrclog->logfilepath );
          return -1;
       }
-      // stitch the new op onto the front of our inprogress list
-      finop->next = node->content;
-      node->content = newop;
-      // note that we have another op in flight ( if this is not a RECORD log )
-      if ( rsrclog->type != RESOURCE_RECORD_LOG ) { rsrclog->outstandingcnt += oplength; }
+      if ( rsrclog->type == RESOURCE_MODIFY_LOG ) {
+         // stitch the new op onto the front of our inprogress list
+         finop->next = node->content;
+         node->content = newop;
+         // note that we have another op in flight
+         rsrclog->outstandingcnt += oplength;
+         // tell the caller NOT to free this chain
+         *dofree = 0;
+      }
       else { // for RECORD logs, note all ops in our totals
          opinfo* parseop = newop; // new op being added to totals
          while ( parseop ) {
@@ -857,6 +866,8 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop ) {
                   return -1;
             }
          }
+         // tell the caller to free their own op chain
+         *dofree = 1;
       }
    }
    return 0;
@@ -1559,6 +1570,14 @@ int resourcelog_replay( RESOURCELOG* inputlog, RESOURCELOG* outputlog ) {
    opinfo* parsedop = NULL;
    char eof = 0;
    while ( (parsedop = parselogline( inrsrclog->logfile, &eof )) != NULL ) {
+      // incorporate the op into our current state
+      char dofree = 0;
+      if ( processopinfo( outrsrclog, parsedop, NULL, &(dofree) ) < 0 ) {
+         LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", inrsrclog->logfilepath );
+         pthread_mutex_unlock( &(inrsrclog->lock) );
+         pthread_mutex_unlock( &(outrsrclog->lock) );
+         return -1;
+      }
       // duplicate this op into our output logfile
       if ( printlogline( outrsrclog->logfile, parsedop ) ) {
          LOG( LOG_ERR, "Failed to duplicate op from input logfile \"%s\" into active log: \"%s\"\n",
@@ -1567,14 +1586,8 @@ int resourcelog_replay( RESOURCELOG* inputlog, RESOURCELOG* outputlog ) {
          pthread_mutex_unlock( &(outrsrclog->lock) );
          return -1;
       }
-      // incorporate the op into our current state
-      if ( processopinfo( outrsrclog, parsedop, NULL ) < 0 ) {
-         LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", inrsrclog->logfilepath );
-         pthread_mutex_unlock( &(inrsrclog->lock) );
-         pthread_mutex_unlock( &(outrsrclog->lock) );
-         return -1;
-      }
-      resourcelog_freeopinfo( parsedop );
+      if ( dofree )
+         resourcelog_freeopinfo( parsedop );
       opcnt++;
    }
    if ( eof != 1 ) {
@@ -1670,37 +1683,48 @@ int resourcelog_processop( RESOURCELOG* resourcelog, opinfo* op, char* progress 
       errno = EINVAL;
       return -1;
    }
+   // produce a duplicate of the given op chain
+   opinfo* dupop = resourcelog_dupopinfo( op );
+   if ( dupop == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate operation chain\n" );
+      return -1;
+   }
    RESOURCELOG rsrclog = *resourcelog;
    // acquire resourcelog lock
    if ( pthread_mutex_lock( &(rsrclog->lock) ) ) {
       LOG( LOG_ERR, "Failed to acquire resourcelog lock\n" );
+      resourcelog_freeopinfo( dupop );
       return -1;
    }
-   // potentially incorporate operation info
-   if ( rsrclog->type == RESOURCE_MODIFY_LOG ) {
-      if ( processopinfo( rsrclog, op, progress ) ) {
-         LOG( LOG_ERR, "Failed to incorportate op info into MODIFY log\n" );
-         pthread_mutex_unlock( &(rsrclog->lock) );
-         return -1;
-      }
-   }
-   else {
+   // special check for RECORD log
+   if ( rsrclog->type == MARFS_RECORD_LOG ) {
       // traverse the op chain to ensure we don't have any completions slipping into this RECORD log
-      opinfo* parseop = op;
+      opinfo* parseop = dupop;
       while ( parseop ) {
          if ( parseop->start == 0 ) {
             LOG( LOG_ERR, "Detected op completion struct in chain for RECORD log\n" );
             errno = EINVAL;
             pthread_mutex_unlock( &(rsrclog->lock) );
+            resourcelog_freeopinfo( dupop );
             return -1;
          }
          parseop = parseop->next;
       }
    }
+   // incorporate operation info
+   char dofree = 0;
+   if ( processopinfo( rsrclog, dupop, progress, &(dofree) ) ) {
+      LOG( LOG_ERR, "Failed to incorportate op info into MODIFY log\n" );
+      pthread_mutex_unlock( &(rsrclog->lock) );
+      resourcelog_freeopinfo( dupop );
+      return -1;
+   }
    // output the operation to the actual log file
-   if ( printlogline( rsrclog->logfile, op ) ) {
+   if ( printlogline( rsrclog->logfile, dupop ) ) {
       LOG( LOG_ERR, "Failed to output operation info to logfile: \"%s\"\n", rsrclog->logfilepath );
       pthread_mutex_unlock( &(rsrclog->lock) );
+      if ( dofree )
+         resourcelog_freeopinfo( dupop );
       return -1;
    }
    // check for quiesced state
@@ -1708,12 +1732,18 @@ int resourcelog_processop( RESOURCELOG* resourcelog, opinfo* op, char* progress 
         rsrclog->outstandingcnt == 0  &&  pthread_cond_signal( &(rsrclog->nooutstanding) ) ) {
       LOG( LOG_ERR, "Failed to signal 'no outstanding ops' condition\n" );
       pthread_mutex_unlock( &(rsrclog->lock) );
+      if ( dofree )
+         resourcelog_freeopinfo( dupop );
       return -1;
    }
    if ( pthread_mutex_unlock( &(rsrclog->lock) ) ) {
       LOG( LOG_ERR, "Failed to release resourcelog lock\n" );
+      if ( dofree )
+         resourcelog_freeopinfo( dupop );
       return -1;
    }
+   if ( dofree )
+      resourcelog_freeopinfo( dupop );
    return 0;
 }
 
