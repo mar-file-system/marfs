@@ -97,8 +97,8 @@ typedef struct streamwalker_report_struct {
    size_t rpkbytes;   // count of bytes repacked
    size_t freedobjs;  // count of objects now elligible for deletion
    // rebuild info
-   size_t rbldobjs;
-   size_t rbldbytes;
+   size_t rbldobjs;   // count of rebuilt objects
+   size_t rbldbytes;  // count of rebuilt bytes
 } streamwalker_report;
 
 typedef struct streamwalker_struct {
@@ -775,7 +775,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                walker->rpckops = NULL;
             }
             // possibly update rebuild ops
-            if ( walker->rebuildthresh  &&  walker->stval.st_ctime < walker->rbldthresh ) {
+            if ( walker->rebuildthresh  &&  walker->activefiles  &&  walker->stval.st_ctime < walker->rbldthresh ) {
                // check if object targets our rebuild location
                char* objname = NULL;
                ne_erasure erasure;
