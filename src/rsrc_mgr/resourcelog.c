@@ -767,18 +767,22 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
             // ...note each in our totals...
             switch( parseop->type ) {
                case MARFS_DELETE_OBJ_OP:
+                  LOG( LOG_INFO, "Noted completion of a MARFS_DELETE_OBJ operation\n" );
                   rsrclog->summary.deletion_object_count += parseop->count;
                   if ( parseop->errval ) { rsrclog->summary.deletion_object_failures += parseop->count; }
                   break;
                case MARFS_DELETE_REF_OP:
+                  LOG( LOG_INFO, "Noted completion of a MARFS_DELETE_REF operation\n" );
                   rsrclog->summary.deletion_reference_count += parseop->count;
                   if ( parseop->errval ) { rsrclog->summary.deletion_reference_failures += parseop->count; }
                   break;
                case MARFS_REBUILD_OP:
+                  LOG( LOG_INFO, "Noted completion of a MARFS_REBUILD operation\n" );
                   rsrclog->summary.rebuild_count += parseop->count;
                   if ( parseop->errval ) { rsrclog->summary.rebuild_failures += parseop->count; }
                   break;
                case MARFS_REPACK_OP:
+                  LOG( LOG_INFO, "Noted completion of a MARFS_REPACK operation\n" );
                   rsrclog->summary.repack_count += parseop->count;
                   if ( parseop->errval ) { rsrclog->summary.repack_failures += parseop->count; }
                   break;
@@ -851,20 +855,25 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
             switch( parseop->type ) {
                case MARFS_DELETE_OBJ_OP:
                   rsrclog->summary.deletion_object_count += parseop->count;
+                  LOG( LOG_INFO, "Recorded MARFS_DELETE_OBJ operation\n" );
                   break;
                case MARFS_DELETE_REF_OP:
                   rsrclog->summary.deletion_reference_count += parseop->count;
+                  LOG( LOG_INFO, "Recorded MARFS_DELETE_REF operation\n" );
                   break;
                case MARFS_REBUILD_OP:
                   rsrclog->summary.rebuild_count += parseop->count;
+                  LOG( LOG_INFO, "Recorded MARFS_REBUILD operation\n" );
                   break;
                case MARFS_REPACK_OP:
                   rsrclog->summary.repack_count += parseop->count;
+                  LOG( LOG_INFO, "Recorded MARFS_REPACK operation\n" );
                   break;
                default:
                   LOG( LOG_ERR, "Unrecognized operation type value\n" );
                   return -1;
             }
+            parseop = parseop->next;
          }
          // tell the caller to free their own op chain
          *dofree = 1;

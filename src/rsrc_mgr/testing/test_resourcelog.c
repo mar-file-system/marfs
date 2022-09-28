@@ -292,18 +292,19 @@ int main(int argc, char **argv)
       return -1;
    }
 
-//   // generate a new logfile path
-//   char* wlogpath = resourcelog_genlogpath( 1, "./test_rmgr_topdir", "test-resourcelog-iteration654321", config->rootns, 10 );
-//   if ( wlogpath == NULL ) {
-//      printf( "failed to generate write logpath\n" );
-//      return -1;
-//   }
-//   // initaialize that new MODIFY logfile
-//   RESOURCELOG wlog = NULL;
-//   if ( resourcelog_init( &(wlog), wlogpath, RESOURCE_MODIFY_LOG, config->rootns ) ) {
-//      printf( "failed to initialize write logfile: \"%s\"\n", wlogpath );
-//      return -1;
-//   }
+   // generate a new logfile path
+   char* wlogpath = resourcelog_genlogpath( 1, "./test_rmgr_topdir", "test-resourcelog-iteration654321", config->rootns, 10 );
+   if ( wlogpath == NULL ) {
+      printf( "failed to generate write logpath\n" );
+      return -1;
+   }
+   // initaialize that new MODIFY logfile
+   RESOURCELOG wlog = NULL;
+   if ( resourcelog_init( &(wlog), wlogpath, RESOURCE_MODIFY_LOG, config->rootns ) ) {
+      printf( "failed to initialize write logfile: \"%s\"\n", wlogpath );
+      return -1;
+   }
+   free( wlogpath );
 
 
    // read and validate the content of our original log, adding each op to our MODIFY log
@@ -387,6 +388,11 @@ int main(int argc, char **argv)
       if ( opparse->errval != (opset+1)->errval ) { printf( "errval\n" ); }
       return -1;
    }
+   // output the same ops to our modify log
+   if ( resourcelog_processop( &(wlog), readops, NULL ) ) {
+      printf( "failed to output first read op set to MODIFY log\n" );
+      return -1;
+   }
    resourcelog_freeopinfo( readops );
    // validate the next operation
    if ( resourcelog_readop( &(rlog), &(opparse) ) ) {
@@ -437,6 +443,11 @@ int main(int argc, char **argv)
       printf( "read op 3 differs from original\n" );
       return -1;
    }
+   // output the same ops to our modify log
+   if ( resourcelog_processop( &(wlog), opparse, NULL ) ) {
+      printf( "failed to output first read op set to MODIFY log\n" );
+      return -1;
+   }
    resourcelog_freeopinfo( opparse );
    // validate the next operation
    if ( resourcelog_readop( &(rlog), &(opparse) ) ) {
@@ -471,15 +482,20 @@ int main(int argc, char **argv)
       printf( "read op 4 differs from original\n" );
       return -1;
    }
+   // output the same ops to our modify log
+   if ( resourcelog_processop( &(wlog), opparse, NULL ) ) {
+      printf( "failed to output first read op set to MODIFY log\n" );
+      return -1;
+   }
    resourcelog_freeopinfo( opparse );
 
-//   // terminate our reading log
-//   if ( resourcelog_term( &(rlog), NULL, NULL ) ) {
-//      printf( "failed to terminate inital read log\n" );
-//      return -1;
-//   }
-//
-//
+   // terminate our reading log
+   if ( resourcelog_abort( &(wlog) ) ) {
+      printf( "failed to abort inital modify log\n" );
+      return -1;
+   }
+
+
 //   // open another readlog for this same file
 //   if ( resourcelog_init( &(rlog), logpath, RESOURCE_READ_LOG, NULL ) ) {
 //      printf( "failed to initialize first read log\n" );
