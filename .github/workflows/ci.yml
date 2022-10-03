@@ -36,7 +36,7 @@ jobs:
     - name: Checkout erasureUtils
       uses: actions/checkout@v3
       with:
-        repository: dmp265/erasureUtils
+        repository: gransom/erasureUtils
         path: erasureUtils
 
     - name: Install erasureUtils build dependencies
