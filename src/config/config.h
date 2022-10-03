@@ -205,7 +205,7 @@ int config_abandonposition( marfs_position* pos );
  *  reference dirs in the given config, and verifies the LibNE CTXT
  * @param marfs_config* config : Reference to the config to be validated
  * @param const char* tgtNS : Path of the NS to be verified
- * @param char MDALcheck : If non-zero, the MDAL security of each encountered NS will be verified
+ * @param char MDALcheck : If non-zero, the MDAL security and reference dirs of each encountered NS will be verified
  * @param char NEcheck : If non-zero, the LibNE ctxt of each encountered NS will be verified
  * @param char recurse : If non-zero, children of the target NS will also be verified
  * @param char fix : If non-zero, attempt to correct any problems encountered

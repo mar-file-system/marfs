@@ -3095,7 +3095,7 @@ int config_abandonposition( marfs_position* pos ) {
  *  reference dirs in the given config, and verifies the LibNE CTXT
  * @param marfs_config* config : Reference to the config to be validated
  * @param const char* tgtNS : Path of the NS to be verified
- * @param char MDALcheck : If non-zero, the MDAL security of each encountered NS will be verified
+ * @param char MDALcheck : If non-zero, the MDAL security and reference dirs of each encountered NS will be verified
  * @param char NEcheck : If non-zero, the LibNE ctxt of each encountered NS will be verified
  * @param char recurse : If non-zero, children of the target NS will also be verified
  * @param char fix : If non-zero, attempt to correct any problems encountered
@@ -3236,6 +3236,11 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                errcount++;
             }
          }
+         if ( checkmdalsec  ||  checklibne ) {
+            // mark this repo as verified
+            vrepos[vrepocnt] = pos.ns->prepo;
+            vrepocnt++;
+         }
          // get the path of this NS
          char* nspath = NULL;
          if ( config_nsinfo( pos.ns->idstr, NULL, &(nspath) ) ) {
@@ -3255,7 +3260,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
          }
          // verify all reference dirs of this NS
          //    skip this if we're in ThE gHoSt DiMeNsIoN!!!!
-         else if ( !(pos.ns->ghsource) ){
+         else if ( !(pos.ns->ghsource)  &&  checkmdalsec ){
             size_t curref = 0;
             char anyerror = 0;
             for ( ; curref < pos.ns->prepo->metascheme.refnodecount; curref++ ) {
