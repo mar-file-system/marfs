@@ -212,7 +212,7 @@ int main(int argc, char** argv) {
   for (i = 0; i <= log2(MAXSIZE); i++) {
     ftag.fileno = i;
     ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       printf("failed to create rpath\n");
       return -1;
     }
@@ -268,7 +268,7 @@ int main(int argc, char** argv) {
 
     ftag.fileno = i;
     ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       printf("failed to create rpath\n");
       return -1;
     }
@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
 
     ftag.fileno = i;
     ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       printf("failed to create rpath\n");
       return -1;
     }
@@ -376,7 +376,7 @@ int main(int argc, char** argv) {
 
     ftag.fileno = i;
     ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       printf("failed to create rpath\n");
       return -1;
     }
@@ -430,7 +430,7 @@ int main(int argc, char** argv) {
 
     ftag.fileno = i;
     ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       printf("failed to create rpath\n");
       return -1;
     }
@@ -484,7 +484,7 @@ int main(int argc, char** argv) {
 
     ftag.fileno = i;
     ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       printf("failed to create rpath\n");
       return -1;
     }
@@ -538,7 +538,7 @@ int main(int argc, char** argv) {
 
     ftag.fileno = i;
     ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       printf("failed to create rpath\n");
       return -1;
     }
@@ -592,7 +592,7 @@ int main(int argc, char** argv) {
 
     ftag.fileno = i;
     ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       printf("failed to create rpath\n");
       return -1;
     }
@@ -643,7 +643,7 @@ int main(int argc, char** argv) {
   for (i = 0; i <= log2(MAXSIZE); i++) {
     ftag.fileno = i;
     ftag.objno = i;
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       printf("failed to create rpath\n");
       return -1;
     }

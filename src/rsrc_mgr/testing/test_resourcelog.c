@@ -173,6 +173,9 @@ int main(int argc, char **argv)
    opparse->ftag.minorversion = FTAG_CURRENT_MINORVERSION;
    opparse->ftag.objfiles = 4;
    opparse->ftag.objsize = 1024;
+   opparse->ftag.refbreadth = 10;
+   opparse->ftag.refdepth = 9;
+   opparse->ftag.refdigits = 32;
    opparse->ftag.fileno = 0;
    opparse->ftag.objno = 0;
    opparse->ftag.offset = 12;
@@ -330,6 +333,9 @@ int main(int argc, char **argv)
         strcmp( opparse->ftag.streamid, opset->ftag.streamid )  ||
         opparse->ftag.objfiles != opset->ftag.objfiles  ||
         opparse->ftag.objsize != opset->ftag.objsize  ||
+        opparse->ftag.refbreadth != opset->ftag.refbreadth  ||
+        opparse->ftag.refdepth != opset->ftag.refdepth  ||
+        opparse->ftag.refdigits != opset->ftag.refdigits  ||
         opparse->ftag.fileno != opset->ftag.fileno  ||
         opparse->ftag.objno != opset->ftag.objno  ||
         opparse->ftag.offset != opset->ftag.offset  ||
@@ -366,6 +372,9 @@ int main(int argc, char **argv)
         strcmp( opparse->ftag.streamid, (opset+1)->ftag.streamid )  ||
         opparse->ftag.objfiles != (opset+1)->ftag.objfiles  ||
         opparse->ftag.objsize != (opset+1)->ftag.objsize  ||
+        opparse->ftag.refbreadth != (opset+1)->ftag.refbreadth  ||
+        opparse->ftag.refdepth != (opset+1)->ftag.refdepth  ||
+        opparse->ftag.refdigits != (opset+1)->ftag.refdigits  ||
         opparse->ftag.fileno != (opset+1)->ftag.fileno  ||
         opparse->ftag.objno != (opset+1)->ftag.objno  ||
         opparse->ftag.offset != (opset+1)->ftag.offset  ||
@@ -427,6 +436,9 @@ int main(int argc, char **argv)
         strcmp( opparse->ftag.streamid, (opset+2)->ftag.streamid )  ||
         opparse->ftag.objfiles != (opset+2)->ftag.objfiles  ||
         opparse->ftag.objsize != (opset+2)->ftag.objsize  ||
+        opparse->ftag.refbreadth != (opset+2)->ftag.refbreadth  ||
+        opparse->ftag.refdepth != (opset+2)->ftag.refdepth  ||
+        opparse->ftag.refdigits != (opset+2)->ftag.refdigits  ||
         opparse->ftag.fileno != (opset+2)->ftag.fileno  ||
         opparse->ftag.objno != (opset+2)->ftag.objno  ||
         opparse->ftag.offset != (opset+2)->ftag.offset  ||
@@ -466,6 +478,9 @@ int main(int argc, char **argv)
         strcmp( opparse->ftag.streamid, (opset+3)->ftag.streamid )  ||
         opparse->ftag.objfiles != (opset+3)->ftag.objfiles  ||
         opparse->ftag.objsize != (opset+3)->ftag.objsize  ||
+        opparse->ftag.refbreadth != (opset+3)->ftag.refbreadth  ||
+        opparse->ftag.refdepth != (opset+3)->ftag.refdepth  ||
+        opparse->ftag.refdigits != (opset+3)->ftag.refdigits  ||
         opparse->ftag.fileno != (opset+3)->ftag.fileno  ||
         opparse->ftag.objno != (opset+3)->ftag.objno  ||
         opparse->ftag.offset != (opset+3)->ftag.offset  ||

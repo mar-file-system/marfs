@@ -2144,82 +2144,15 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
             LOG( LOG_ERR, "failed to locate required 'rbreadth' and/or 'rdepth' values for a 'namespaces' node\n" );
             return -1;
          }
-         // create a string to hold temporary reference paths
-         int breadthdigits = numdigits_unsigned( (unsigned long long) refbreadth );
-         if ( refdigits > breadthdigits ) { breadthdigits = refdigits; }
-         size_t rpathlen = ( refdepth * (breadthdigits + 1) ) + 1;
-         char* rpathtmp = malloc( sizeof(char) * rpathlen ); // used to populate node name strings
-         if ( rpathtmp == NULL ) {
-            LOG( LOG_ERR, "failed to allocate space for namespace refpaths\n" );
-            return -1;
-         }
-         // create an array of integers to hold reference indexes
-         int* refvals = malloc( sizeof(int) * refdepth );
-         if ( refvals == NULL ) {
-            LOG( LOG_ERR, "failed to allocate space for namespace reference indexes\n" );
-            free( rpathtmp );
-            return -1;
-         }
-         // create an array of hash nodes
-         size_t rnodecount = 1;
-         int curdepth = refdepth;
-         while ( curdepth ) { rnodecount *= refbreadth; curdepth--; } // equiv of breadth to the depth power
-         HASH_NODE* rnodelist = malloc( sizeof(struct hash_node_struct) * rnodecount );
-         if ( rnodelist == NULL ) {
-            LOG( LOG_ERR, "failed to allocate space for namespace reference hash nodes\n" );
-            free( rpathtmp );
-            free( refvals );
-            return -1;
-         }
-         // populate all hash nodes
-         size_t curnode;
-         for ( curnode = 0; curnode < rnodecount; curnode++ ) {
-            // populate the index for each rnode, starting at the depest level
-            size_t tmpnode = curnode;
-            for ( curdepth = refdepth; curdepth; curdepth-- ) {
-               refvals[curdepth-1] = tmpnode % refbreadth; // what is our index at this depth
-               tmpnode /= refbreadth; // find how many groups we have already traversed at this depth
-            }
-            // now populate the reference pathname
-            char* outputstr = rpathtmp;
-            int pathlenremaining = rpathlen;
-            for ( curdepth = 0; curdepth < refdepth; curdepth++ ) {
-               int prlen = snprintf( outputstr, pathlenremaining, "%.*d/", breadthdigits, refvals[curdepth] );
-               if ( prlen <= 0  ||  prlen >= pathlenremaining ) {
-                  LOG( LOG_ERR, "failed to generate reference path string\n" );
-                  free( rpathtmp );
-                  free( refvals );
-                  free( rnodelist );
-                  return -1;
-               }
-               pathlenremaining -= prlen;
-               outputstr += prlen;
-            }
-            // copy the reference pathname into the hash node
-            rnodelist[curnode].name = strndup( rpathtmp, rpathlen );
-            if ( rnodelist[curnode].name == NULL ) {
-               LOG( LOG_ERR, "failed to allocate reference path hash node name\n" );
-               free( rpathtmp );
-               free( refvals );
-               free( rnodelist );
-               return -1;
-            }
-            rnodelist[curnode].weight = 1;
-            rnodelist[curnode].content = NULL;
-            LOG( LOG_INFO, "created ref node: \"%s\"\n", rnodelist[curnode].name );
-         }
-         // free data structures which we no longer need
-         free( rpathtmp );
-         free( refvals );
+         ms->refbreadth = refbreadth;
+         ms->refdepth = refdepth;
+         ms->refdigits = refdigits;
          // create the reference tree hash table
-         ms->reftable = hash_init( rnodelist, rnodecount, 0 );
+         ms->reftable = config_genreftable( &(ms->refnodes), &(ms->refnodecount), refbreadth, refdepth, refdigits );
          if ( ms->reftable == NULL ) {
             LOG( LOG_ERR, "failed to create reference path table\n" );
-            free( rnodelist );
             return -1;
-         } // can't free the node list now, as it is in use by the hash table
-         ms->refnodes = rnodelist;
-         ms->refnodecount = rnodecount;
+         }
          // count all subnodes
          ms->nscount = 0;
          int subspaces = 0;
@@ -2367,6 +2300,9 @@ int create_repo( marfs_repo* repo, xmlNode* reporoot ) {
    repo->datascheme.scattertable = NULL;
    repo->metascheme.mdal = NULL;
    repo->metascheme.directread = 0;
+   repo->metascheme.refbreadth = 0;
+   repo->metascheme.refdepth = 0;
+   repo->metascheme.refdigits = 0;
    repo->metascheme.reftable = NULL;
    repo->metascheme.refnodes = NULL;
    repo->metascheme.refnodecount = 0;
@@ -3091,6 +3027,95 @@ int config_abandonposition( marfs_position* pos ) {
 }
 
 /**
+ * Generate a new NS reference HASH_TABLE, used to identify the reference location of MarFS metadata files
+ * @param HASH_NODE** refnodes : Reference to be populated with the HASH_NODE list of the produced table
+ * @param size_t* refnodecount : Reference to be populated with the length of the above HASH_NODE list
+ * @param size_t refbreadth : Breadth value of the NS reference tree
+ * @param size_t refdepdth : Depth value of the NS reference tree
+ * @param size_t refdigits : Included digits value of the NS reference tree
+ * @return HASH_TABLE : The produced reference HASH_TABLE
+ */
+HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_t refbreadth, size_t refdepth, size_t refdigits ) {
+   // create a string to hold temporary reference paths
+   int breadthdigits = numdigits_unsigned( (unsigned long long) refbreadth );
+   if ( refdigits > breadthdigits ) { breadthdigits = refdigits; }
+   size_t rpathlen = ( refdepth * (breadthdigits + 1) ) + 1;
+   char* rpathtmp = malloc( sizeof(char) * rpathlen ); // used to populate node name strings
+   if ( rpathtmp == NULL ) {
+      LOG( LOG_ERR, "failed to allocate space for namespace refpaths\n" );
+      return NULL;
+   }
+   // create an array of integers to hold reference indexes
+   int* refvals = malloc( sizeof(int) * refdepth );
+   if ( refvals == NULL ) {
+      LOG( LOG_ERR, "failed to allocate space for namespace reference indexes\n" );
+      free( rpathtmp );
+      return NULL;
+   }
+   // create an array of hash nodes
+   size_t rnodecount = 1;
+   int curdepth = refdepth;
+   while ( curdepth ) { rnodecount *= refbreadth; curdepth--; } // equiv of breadth to the depth power
+   HASH_NODE* rnodelist = malloc( sizeof(struct hash_node_struct) * rnodecount );
+   if ( rnodelist == NULL ) {
+      LOG( LOG_ERR, "failed to allocate space for namespace reference hash nodes\n" );
+      free( rpathtmp );
+      free( refvals );
+      return NULL;
+   }
+   // populate all hash nodes
+   size_t curnode;
+   for ( curnode = 0; curnode < rnodecount; curnode++ ) {
+      // populate the index for each rnode, starting at the depest level
+      size_t tmpnode = curnode;
+      for ( curdepth = refdepth; curdepth; curdepth-- ) {
+         refvals[curdepth-1] = tmpnode % refbreadth; // what is our index at this depth
+         tmpnode /= refbreadth; // find how many groups we have already traversed at this depth
+      }
+      // now populate the reference pathname
+      char* outputstr = rpathtmp;
+      int pathlenremaining = rpathlen;
+      for ( curdepth = 0; curdepth < refdepth; curdepth++ ) {
+         int prlen = snprintf( outputstr, pathlenremaining, "%.*d/", breadthdigits, refvals[curdepth] );
+         if ( prlen <= 0  ||  prlen >= pathlenremaining ) {
+            LOG( LOG_ERR, "failed to generate reference path string\n" );
+            free( rpathtmp );
+            free( refvals );
+            free( rnodelist );
+            return NULL;
+         }
+         pathlenremaining -= prlen;
+         outputstr += prlen;
+      }
+      // copy the reference pathname into the hash node
+      rnodelist[curnode].name = strndup( rpathtmp, rpathlen );
+      if ( rnodelist[curnode].name == NULL ) {
+         LOG( LOG_ERR, "failed to allocate reference path hash node name\n" );
+         free( rpathtmp );
+         free( refvals );
+         free( rnodelist );
+         return NULL;
+      }
+      rnodelist[curnode].weight = 1;
+      rnodelist[curnode].content = NULL;
+      LOG( LOG_INFO, "created ref node: \"%s\"\n", rnodelist[curnode].name );
+   }
+   // free data structures which we no longer need
+   free( rpathtmp );
+   free( refvals );
+   // create the reference tree hash table
+   HASH_TABLE reftable = hash_init( rnodelist, rnodecount, 0 );
+   if ( reftable == NULL ) {
+      LOG( LOG_ERR, "failed to create reference path table\n" );
+      free( rnodelist );
+      return NULL;
+   } // can't free the node list now, as it is in use by the hash table
+   if ( refnodes ) { *refnodes = rnodelist; }
+   if ( refnodecount ) { *refnodecount = rnodecount; }
+   return reftable;
+}
+
+/**
  * Verifies the LibNE Ctxt of every repo, creates every namespace, creates all 
  *  reference dirs in the given config, and verifies the LibNE CTXT
  * @param marfs_config* config : Reference to the config to be validated
@@ -3298,8 +3323,35 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                         // create the final dir with full global access
                         mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IWOTH | S_IXOTH );
                      }
-                     // ignore any EEXIST errors, at this point
-                     if ( mkdirres  &&  errno == EEXIST ) { mkdirres = 0; errno = 0; }
+                     // ignore any EEXIST errors, and stat the target instead
+                     if ( mkdirres  &&  errno == EEXIST ) {
+                        mkdirres = 0;
+                        errno = 0;
+                        // stat the reference dir
+                        struct stat stval;
+                        mkdirres = curmdal->statref( nsctxt, rfullpath, &(stval) );
+                        if ( mkdirres == 0 ) {
+                           if ( rparse ) {
+                              // check for any group/other perms besides global execute
+                              if ( stval.st_mode & S_IRWXG  ||
+                                   stval.st_mode & S_IROTH  ||
+                                   stval.st_mode & S_IWOTH  ||
+                                   !(stval.st_mode & S_IXOTH) ) {
+                                 LOG( LOG_ERR, "Intermediate dir has unexpected perms: \"%s\"\n", rfullpath );
+                                 mkdirres = -1;
+                              }
+                           }
+                           else {
+                              // check for write/execute global perms
+                              if ( stval.st_mode & S_IROTH  ||
+                                   !(stval.st_mode & S_IWOTH)  ||
+                                   !(stval.st_mode & S_IXOTH) ) {
+                                 LOG( LOG_ERR, "Terminating dir has unexpected perms: \"%s\"\n", rfullpath );
+                                 mkdirres = -1;
+                              }
+                           }
+                        }
+                     }
                   }
                   else {
                      // stat the reference dir

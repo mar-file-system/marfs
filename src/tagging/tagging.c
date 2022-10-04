@@ -75,6 +75,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define FTAG_VERSION_HEADER "VER"
 #define FTAG_STREAMINFO_HEADER "STM"
+#define FTAG_REFTREE_HEADER "REF"
 #define FTAG_FILEPOSITION_HEADER "POS"
 #define FTAG_DATACONTENT_HEADER "DAT"
 
@@ -223,6 +224,37 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
    }
    if ( foundvals != 2 ) {
       LOG( LOG_ERR, "Expected two stream object values (objfiles/objsize), but found %d\n", (int)foundvals );
+      return -1;
+   }
+   // parse reference tree info
+   if ( strncmp( parse, FTAG_REFTREE_HEADER"(", strlen(FTAG_REFTREE_HEADER"(") ) ) {
+      LOG( LOG_ERR, "Failed to locate reference tree info header\n" );
+      return -1;
+   }
+   parse += strlen( FTAG_REFTREE_HEADER"(" );
+   foundvals = 0;
+   while ( *parse != '\0' ) {
+      int* tgtval = NULL;
+      if ( *parse == 'B' ) { tgtval = &(ftag->refbreadth); }
+      else if ( *parse == 'D' ) { tgtval = &(ftag->refdepth); }
+      else if ( *parse == 'd' ) { tgtval = &(ftag->refdigits); }
+      else { LOG( LOG_ERR, "Unrecognized ref tree value tag: \"%c\"\n", *parse ); return -1; }
+      parseval = strtoull( parse + 1, &(endptr), 10 );
+      if ( parseval > INT_MAX ) {
+         LOG( LOG_ERR, "Parsed ref tree value exceeds size limits: %llu\n", parseval );
+         return -1;
+      }
+      *tgtval = (int)parseval;
+      foundvals++;
+      if ( *endptr != '-'  &&  *endptr != ')' ) {
+         LOG( LOG_ERR, "Unrecognized stream value format\n" );
+         return -1;
+      }
+      parse = endptr + 1; // skip over the separator char
+      if ( *endptr == ')' ) { break; }
+   }
+   if ( foundvals != 3 ) {
+      LOG( LOG_ERR, "Expected three reference tree values (breadth/depth/digits), but found %d\n", (int)foundvals );
       return -1;
    }
    // parse file position info
@@ -427,6 +459,20 @@ size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len ) {
    else { len = 0; }
    totsz += prres;
 
+   // output reference tree info
+   prres = snprintf( tgtstr, len, "%s(B%d-D%d-d%d)",
+                     FTAG_REFTREE_HEADER,
+                     ftag->refbreadth,
+                     ftag->refdepth,
+                     ftag->refdigits );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output reference tree info string\n" );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+
    // output file position info
    prres = snprintf( tgtstr, len, "%s(f%zu-o%zu-@%zu-e%d)", FTAG_FILEPOSITION_HEADER, ftag->fileno, ftag->objno, ftag->offset, (int)(ftag->endofstream) );
    if ( prres < 1 ) {
@@ -501,6 +547,9 @@ int ftag_cmp( const FTAG* ftag1, const FTAG* ftag2 ) {
         ftag1->minorversion != ftag2->minorversion            ||
         ftag1->objfiles != ftag2->objfiles                    ||
         ftag1->objsize != ftag2->objsize                      ||
+        ftag1->refbreadth != ftag2->refbreadth                ||
+        ftag1->refdepth != ftag2->refdepth                    ||
+        ftag1->refdigits != ftag2->refdigits                  ||
         ftag1->fileno != ftag2->fileno                        ||
         ftag1->objno != ftag2->objno                          ||
         ftag1->offset != ftag2->offset                        ||
@@ -1034,6 +1083,36 @@ size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_
    totsz += prres;
 
    return totsz;
+}
+
+
+// MARFS Garbage Collection TAG  -- attached to files when subsequent datastream references have been deleted
+
+/**
+ * Initialize a GCTAG based on the provided string value
+ * @param GCTAG* gctag : Reference to the GCTAG structure to be populated
+ * @param const char* gctagstr : Reference to the string to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
+int gctag_initstr( GCTAG* gctag, const char* gctagstr ) {
+   // TODO
+   return -1;
+}
+
+/**
+ * Populate a string based on the provided GCTAG
+ * @param const GCTAG* gctag : Reference to the GCTAG structure to pull values from
+ * @param char* tgtstr : Reference to the string to be populated
+ * @param size_t len : Allocated length of the target length
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t gctag_tostr( GCTAG* gctag, char*tgtstr, size_t len ) {
+   // TODO
+   return -1;
 }
 
 

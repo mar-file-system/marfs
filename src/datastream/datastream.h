@@ -104,11 +104,11 @@ typedef struct datastream_struct {
 /**
  * Generate a reference path for the given FTAG
  * @param FTAG* ftag : Reference to the FTAG value to generate an rpath for
- * @param const marfs_ms* ms : Reference to the current MarFS metadata scheme
+ * @param HASH_TABLE reftable : Reference position hash table to be used
  * @return char* : Reference to the newly generated reference path, or NULL on failure
  *                 NOTE -- returned path must be freed by caller
  */
-char* datastream_genrpath(FTAG* ftag, const marfs_ms* ms);
+char* datastream_genrpath(FTAG* ftag, HASH_TABLE reftable);
 
 /**
  * Generate data object target info based on the given FTAG and datascheme references

@@ -112,6 +112,9 @@ typedef struct marfs_datascheme_struct {
 typedef struct marfs_metadatascheme_struct {
    MDAL       mdal;          // MDAL reference for metadata access
    char       directread;    // flag indicating support for data read from metadata files
+   int        refbreadth;    // breadth of reference trees
+   int        refdepth;      // depth of reference trees
+   int        refdigits;     // digits of reference trees
    HASH_TABLE reftable;      // hash table for determining reference path
    HASH_NODE* refnodes;      // reference node list ( shared with table ) for safe iter
    size_t     refnodecount;  // count of reference nodes
@@ -199,6 +202,17 @@ int config_fortifyposition( marfs_position* pos );
  * @return int : Zero on success, or -1 on failure
  */
 int config_abandonposition( marfs_position* pos );
+
+/**
+ * Generate a new NS reference HASH_TABLE, used to identify the reference location of MarFS metadata files
+ * @param HASH_NODE** refnodes : Reference to be populated with the HASH_NODE list of the produced table
+ * @param size_t* refnodecount : Reference to be populated with the length of the above HASH_NODE list
+ * @param size_t refbreadth : Breadth value of the NS reference tree
+ * @param size_t refdepdth : Depth value of the NS reference tree
+ * @param size_t refdigits : Included digits value of the NS reference tree
+ * @return HASH_TABLE : The produced reference HASH_TABLE
+ */
+HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_t refbreadth, size_t refdepth, size_t refdigits );
 
 /**
  * Verifies the LibNE Ctxt of every repo, creates every namespace, creates all

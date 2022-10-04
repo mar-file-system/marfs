@@ -236,7 +236,7 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int v_
     ftag.fileno = 0;
   }
 
-  if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+  if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
     LOG(LOG_ERR, "Rank %d: Failed to create rpath\n", rank);
     return -1;
   }
@@ -374,7 +374,7 @@ int gc(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, FTAG ftag, int v_
     char* dpath;
     for (i = head_ref + 1; i < tail_ref; i++) {
       ftag.fileno = i;
-      if ((dpath = datastream_genrpath(&ftag, ms)) == NULL) {
+      if ((dpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
         LOG(LOG_ERR, "Rank %d: Failed to create dpath\n", rank);
         free(xattr);
         free(rpath);
@@ -705,7 +705,7 @@ int walk_stream(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, char** r
 
     // Generate path and ftag of next (existing) ref in the stream
     free(rpath);
-    if ((rpath = datastream_genrpath(&ftag, ms)) == NULL) {
+    if ((rpath = datastream_genrpath(&ftag, ms->reftable)) == NULL) {
       LOG(LOG_ERR, "Rank %d: Failed to create rpath\n", rpath);
       free(ftag.ctag);
       ftag.ctag = NULL;
@@ -809,7 +809,7 @@ int rebuild_obj(const marfs_ms* ms, const marfs_ds* ds, MDAL_CTXT ctxt, const ch
     // Attempt to stat a ref corresponding to the object, in case the object
     // still exists, but is inaccessible (e.g. the NFS mount is down)
     char* refpath;
-    if ((refpath = datastream_genrpath(ftag, ms)) == NULL) {
+    if ((refpath = datastream_genrpath(ftag, ms->reftable)) == NULL) {
       LOG(LOG_ERR, "Rank %d: Failed to create refpath\n", rank);
       free(objID);
       return -1;

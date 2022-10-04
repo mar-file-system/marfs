@@ -76,6 +76,9 @@ int main(int argc, char **argv)
    ftag.streamid = "teststreamidvalue";
    ftag.objfiles = 1024;
    ftag.objsize = 1073741824; // 1GiB
+   ftag.refbreadth = 24;
+   ftag.refdepth = 123;
+   ftag.refdigits = 1;
    ftag.fileno = 0;
    ftag.objno = 0;
    ftag.offset = 234;
@@ -110,6 +113,9 @@ int main(int argc, char **argv)
    oftag.streamid = "testostreamid";
    oftag.objfiles = 10;
    oftag.objsize = 10737;
+   oftag.refbreadth = 43;
+   oftag.refdepth = 1;
+   oftag.refdigits = 543;
    oftag.fileno = 1234;
    oftag.objno = 42;
    oftag.offset = 432;

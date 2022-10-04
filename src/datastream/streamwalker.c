@@ -439,7 +439,7 @@ int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* a
    }
 
    // generate a ref path for the new target file
-   char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   char* newrpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
    if (newrpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
       ftag->fileno = origfileno;
@@ -520,7 +520,7 @@ int ref_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* arg
    }
 
    // generate a ref path for the new target file
-   char* curpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   char* curpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
    if (curpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to identify current ref path\n");
       return -1;
@@ -693,7 +693,7 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
          // progress to the next file
          ftag->fileno++;
          // generate a ref path for the new target file
-         char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+         char* newrpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
          if (newrpath == NULL) {
             printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
             ftag->fileno = origfileno;
@@ -747,7 +747,7 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
          ftag->objno + finobjbounds);
       // restore the original value
       ftag->fileno = origfileno;
-      char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+      char* newrpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
       if (newrpath == NULL) {
          printf(OUTPREFX "ERROR: Failed to identify original ref path\n");
          return -1;
@@ -783,7 +783,7 @@ int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char*
    }
 
    // generate a ref path for the current target file
-   char* newrpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   char* newrpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
    if (newrpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to identify current ref path\n");
       return -1;
@@ -878,7 +878,7 @@ int recovery_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char
       return -1;
    }
 
-   char* rpath = datastream_genrpath(ftag, &(pos->ns->prepo->metascheme));
+   char* rpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
    if (rpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to generate reference path\n");
       return -1;

@@ -401,6 +401,9 @@ int main(int argc, char **argv)
    newrepo.datascheme.scattertable = NULL;
    newrepo.metascheme.mdal = NULL;
    newrepo.metascheme.directread = 0;
+   newrepo.metascheme.refbreadth = 0;
+   newrepo.metascheme.refdepth = 0;
+   newrepo.metascheme.refdigits = 0;
    newrepo.metascheme.reftable = NULL;
    newrepo.metascheme.nscount = 0;
    newrepo.metascheme.nslist = NULL;

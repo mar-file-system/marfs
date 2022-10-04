@@ -668,7 +668,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       // generate next target info
       FTAG tmptag = walker->ftag;
       tmptag.fileno += tgtoffset;
-      char* reftgt = datastream_genrpath( &(tmptag), ms );
+      char* reftgt = datastream_genrpath( &(tmptag), ms->reftable );
       if ( reftgt == NULL ) {
          LOG( LOG_ERR, "Failed to generate reference path for corrected tgt ( %zu )\n", walker->fileno );
          return -1;
@@ -697,7 +697,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          }
          // generate the rpath of the previous file
          free( reftgt );
-         reftgt = datastream_genrpath( &(walker->ftag), ms );
+         reftgt = datastream_genrpath( &(walker->ftag), ms->reftable );
          if ( reftgt == NULL ) {
             LOG( LOG_ERR, "Failed to generate reference path for previous file ( %zu )\n", walker->fileno );
             return -1;
