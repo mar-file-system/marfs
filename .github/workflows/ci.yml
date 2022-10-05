@@ -66,7 +66,7 @@ jobs:
         cd marfs
         mkdir install
         autoreconf -i
-        ./configure --prefix=$PWD/install LDFLAGS="-L$GITHUB_WORKSPACE/erasureUtils/install/lib" CPPFLAGS="-I$GITHUB_WORKSPACE/erasureUtils/install/include"
+        ./configure --prefix=$PWD/install --enable-debugALL LDFLAGS="-L$GITHUB_WORKSPACE/erasureUtils/install/lib" CPPFLAGS="-I$GITHUB_WORKSPACE/erasureUtils/install/include"
         make install
         make check
         

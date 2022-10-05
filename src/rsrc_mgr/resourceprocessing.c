@@ -103,24 +103,24 @@ typedef struct streamwalker_report_struct {
 
 typedef struct streamwalker_struct {
    // initialization info
-   marfs_ns*   ns;
-   MDAL_CTXT   ctxt;
-   time_t      gcthresh;      // time threshold for GCing a file ( none performed if zero )
-   time_t      repackthresh;  // time threshold for repacking a file ( none performed if zero )
-   time_t      rebuildthresh; // time threshold for rebuilding a file ( none performed, if zero )
-   ne_location rebuildloc;
+   marfs_position pos;
+   time_t      gcthresh;       // time threshold for GCing a file ( none performed if zero )
+   time_t      repackthresh;   // time threshold for repacking a file ( none performed if zero )
+   time_t      rebuildthresh;  // time threshold for rebuilding a file ( none performed, if zero )
+   ne_location rebuildloc;     // location value of objects to be rebuilt
    // report info
-   streamwalker_report report;
+   streamwalker_report report; // running totals for encountered stream elements
    // iteration info
-   size_t      fileindex;
-   size_t      objindex;
-   struct stat stval;
-   FTAG        ftag;
-   GCTAG       gctag;
+   size_t      fileindex; // current file position in the datastream
+   size_t      objindex;  // current object position in the datastream
+   HASH_TABLE  reftable;  // NS reference position table to be used for stream iteration
+   struct stat stval;     // stat value of the most recently encountered file
+   FTAG        ftag;      // FTAG value of the most recently checked file ( not necessarily previous )
+   GCTAG       gctag;     // GCTAG value of the most recently checked file ( not necessarily previous )
    // cached info
-   size_t      headerlen;
-   char*       ftagstr;
-   size_t      ftagstralloc;
+   size_t      headerlen;    // recovery header length for the active datastream
+   char*       ftagstr;      // FTAG string buffer
+   size_t      ftagstralloc; // allocated length of the FTAG string buffer
    // GC info
    opinfo*     gcops;
    size_t      activefiles;
@@ -309,6 +309,11 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       }
       // restore old values
       errno = olderrno;
+      // NOTE -- The resource manager will skip pulling RTAG xattrs, in this specific case.
+      //         The 'location-based' rebuild, performed by this code, is intended for worst-case data damage situations.  It is
+      //         intended to rebuild all objects tied to a specific location, without the need for a client to read and tag those
+      //         objects in advance.  As such, the expectation is that no RTAG values will exist.  If they do, they will be rebuilt
+      //         seperately, via their rebuild marker file.
       // populate state value based on link count
       *filestate = ( walker->stval->st_nlink > 1 ) ? 2 : 1;
       return 0;
@@ -646,13 +651,13 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                }
                // add the reference deletions to our existing operation
                tgtop->count += gctag.refcnt;
-               delref_info* extinf = &(tgtop->extendedinfo);
+               delref_info* extinf = tgtop->extendedinfo;
                if ( gctag.eos ) { extinf->eos = 1; }
             }
             else {
                // populate newly created op
                tgtop->count = gctag.refcnt;
-               delref_info* extinf = &(tgtop->extendedinfo);
+               delref_info* extinf = tgtop->extendedinfo;
                extinf->prev_active_index = walker->activeindex;
                extinf->eos = gctag.eos;
             }
@@ -668,7 +673,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       // generate next target info
       FTAG tmptag = walker->ftag;
       tmptag.fileno += tgtoffset;
-      char* reftgt = datastream_genrpath( &(tmptag), ms->reftable );
+      char* reftgt = datastream_genrpath( &(tmptag), walker->reftable );
       if ( reftgt == NULL ) {
          LOG( LOG_ERR, "Failed to generate reference path for corrected tgt ( %zu )\n", walker->fileno );
          return -1;
@@ -697,7 +702,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          }
          // generate the rpath of the previous file
          free( reftgt );
-         reftgt = datastream_genrpath( &(walker->ftag), ms->reftable );
+         reftgt = datastream_genrpath( &(walker->ftag), walker->reftable );
          if ( reftgt == NULL ) {
             LOG( LOG_ERR, "Failed to generate reference path for previous file ( %zu )\n", walker->fileno );
             return -1;
@@ -811,7 +816,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             if ( optgt->count ) {
                // update existing op
                optgt->count++;
-               struct delref_info_struct* delrefinf = &(optgt->extendedinfo);
+               delref_info* delrefinf = optgt->extendedinfo;
                // sanity check
                if ( delrefinf->prev_active_index != walker->prevactive ) {
                   LOG( LOG_ERR, "Active delref op active index (%zu) does not match current val (%zu)\n",
@@ -822,7 +827,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             }
             else {
                // populate new op
-               struct delref_info_struct* delrefinf = &(optgt->extendedinfo);
+               delref_info* delrefinf = optgt->extendedinfo;
                delrefinf->prev_active_index = walker->prevactive;
                delrefinf->eos = eos;
             }

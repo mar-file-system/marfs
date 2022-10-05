@@ -1301,7 +1301,6 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       int olderrno = errno;
       errno = 0;
       if ( mdal->linkref( mdalctxt, 1, filerpath, rpath ) ) {
-         errno = olderrno;
          if ( errno == EEXIST ) {
             // note existance, but just continue ( we can still attach an xattr )
             LOG( LOG_INFO, "Rebuild marker already exists: \"%s\"\n", rpath );
@@ -1317,6 +1316,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
             return -1;
          }
       }
+      errno = olderrno;
       free(filerpath);
       MDAL_FHANDLE rhandle = mdal->openref(mdalctxt, rpath, O_WRONLY, 0);
       if (rhandle == NULL) {

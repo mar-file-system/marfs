@@ -325,7 +325,7 @@ int main(int argc, char **argv)
    // repack the third file
    DATASTREAM repackstream = NULL;
    if ( datastream_repack( &(repackstream), rpath3, &(pos), NULL ) ) {
-      printf( "failed to open repack stream for target \"%s\" (%s)\n", rpath3, strerror(errno) );
+      printf( "failed to open repack stream for target1 \"%s\" (%s)\n", rpath3, strerror(errno) );
       return -1;
    }
    // keep track of this file's rpath
@@ -409,7 +409,7 @@ int main(int argc, char **argv)
    }
    // repack the first file
    if ( datastream_repack( &(repackstream), rpath, &(pos), NULL ) ) {
-      printf( "failed to open repack stream for target \"%s\" (%s)\n", rpath, strerror(errno) );
+      printf( "failed to open repack stream for target2 \"%s\" (%s)\n", rpath, strerror(errno) );
       return -1;
    }
    if ( datastream_scan( &(stream), rpath, &(pos) ) ) {
@@ -754,7 +754,7 @@ int main(int argc, char **argv)
 
    // repack the second and last files
    if ( datastream_repack( &(repackstream), rpath3, &(pos), "repack-prog2" ) ) {
-      printf( "failed to open repack stream for target \"%s\" (%s)\n", rpath3, strerror(errno) );
+      printf( "failed to open repack stream for target3 \"%s\" (%s)\n", rpath3, strerror(errno) );
       return -1;
    }
    // keep track of this file's rpath
@@ -787,7 +787,7 @@ int main(int argc, char **argv)
       return -1;
    }
    if ( datastream_repack( &(repackstream), rpath2, &(pos), NULL ) ) {
-      printf( "failed to open repack stream for target \"%s\" (%s)\n", rpath2, strerror(errno) );
+      printf( "failed to open repack stream for target4 \"%s\" (%s)\n", rpath2, strerror(errno) );
       return -1;
    }
    // keep track of this file's rpath
@@ -830,7 +830,7 @@ int main(int argc, char **argv)
 
    // start, then abort, a repack of the first file
    if ( datastream_repack( &(repackstream), rpath, &(pos), "repack-prog2" ) ) {
-      printf( "failed to open repack stream for target \"%s\" (%s)\n", rpath, strerror(errno) );
+      printf( "failed to open repack stream for target5 \"%s\" (%s)\n", rpath, strerror(errno) );
       return -1;
    }
    char* rpckpath3 = datastream_genrpath( &(repackstream->files->ftag), repackstream->ns->prepo->metascheme.reftable );
