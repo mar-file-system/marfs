@@ -515,7 +515,6 @@ int main(int argc, char **argv)
       return -1;
    }
 
-
    // open our writen modify log for read
    if ( resourcelog_init( &(rlog), wlogpath, RESOURCE_READ_LOG, NULL ) ) {
       printf( "failed to initialize first read log\n" );
@@ -528,6 +527,7 @@ int main(int argc, char **argv)
       printf( "failed to generate second modify logfile path\n" );
       return -1;
    }
+   wlog = NULL;
    if ( resourcelog_init( &(wlog), wlogpath, RESOURCE_MODIFY_LOG, config->rootns ) ) {
       printf( "failed to initialize write logfile: \"%s\"\n", wlogpath );
       return -1;
@@ -539,6 +539,63 @@ int main(int argc, char **argv)
       printf( "failed to replay old logfile\n" );
       return -1;
    }
+
+   // insert first deletion op completion with decreased count
+   progress = 0;
+   opset->next = NULL;
+   opset->count -= 2;
+   opset->start = 0;
+   if ( resourcelog_processop( &(wlog), opset, &(progress) ) ) {
+      printf( "failed to insert initial deletion op completion\n" );
+      return -1;
+   }
+   if ( progress ) {
+      printf( "insertion of inital deletion completion incorrectly set 'progress' flag\n" );
+      return -1;
+   }
+   // reinsert the same op, indicating completion
+   if ( resourcelog_processop( &(wlog), opset, &(progress) ) ) {
+      printf( "failed to insert full deletion op completion\n" );
+      return -1;
+   }
+   if ( !(progress) ) {
+      printf( "insertion of full deletion completion failed to set 'progress' flag\n" );
+      return -1;
+   }
+   // insert rebuild op completion
+   (opset + 2)->start = 0;
+   progress = 0;
+   if ( resourcelog_processop( &(wlog), opset + 2, &(progress) ) ) {
+      printf( "failed to insert rebuild op completion\n" );
+      return -1;
+   }
+   if ( !(progress) ) {
+      printf( "insertion of rebuild op completion failed to set 'progress' flag\n" );
+      return -1;
+   }
+   // insert repack op completion
+   (opset + 3)->start = 0;
+   progress = 0;
+   if ( resourcelog_processop( &(wlog), opset + 3, &(progress) ) ) {
+      printf( "failed to insert repack op completion\n" );
+      return -1;
+   }
+   if ( !(progress) ) {
+      printf( "insertion of repack op completion failed to set 'progress' flag\n" );
+      return -1;
+   }
+   // insert final completion of inital deletion op
+   (opset + 1)->start = 0;
+   progress = 0;
+   if ( resourcelog_processop( &(wlog), opset + 1, &(progress) ) ) {
+      printf( "failed to insert final deletion op completion\n" );
+      return -1;
+   }
+   if ( !(progress) ) {
+      printf( "insertion of final deletion completion failed to set 'progress' flag\n" );
+      return -1;
+   }
+
 
 
 //   // open another readlog for this same file
@@ -573,7 +630,7 @@ int main(int argc, char **argv)
    free( opset );
    // terminate the logfile
    printf( "terminating\n" );
-   if ( resourcelog_abort( &(wlog) ) ) {
+   if ( resourcelog_term( &(wlog), &(summary), NULL ) ) {
       printf( "failed to terminate resourcelog\n" );
       return -1;
    }

@@ -796,6 +796,7 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
                // first operation is not complete, so cannot progress op chain
                parseindex->count -= parseop->count; // decrement count
                if ( progressop ) { *progressop = 0; }
+               *dofree = 1; // not incorporating these ops, so the caller should free
                return 0;
             }
             // progress to the next op in the chain, validating that it matches the subsequent in the opindex chain
@@ -1579,22 +1580,37 @@ int resourcelog_replay( RESOURCELOG* inputlog, RESOURCELOG* outputlog ) {
    opinfo* parsedop = NULL;
    char eof = 0;
    while ( (parsedop = parselogline( inrsrclog->logfile, &eof )) != NULL ) {
+      // duplicate the parsed op ( for printing )
+      opinfo* dupop = resourcelog_dupopinfo( parsedop );
+      if ( dupop == NULL ) {
+         LOG( LOG_ERR, "Failed to duplicate parsed operation chain\n" );
+         pthread_mutex_unlock( &(inrsrclog->lock) );
+         pthread_mutex_unlock( &(outrsrclog->lock) );
+         resourcelog_freeopinfo( parsedop );
+         return -1;
+      }
       // incorporate the op into our current state
       char dofree = 0;
       if ( processopinfo( outrsrclog, parsedop, NULL, &(dofree) ) < 0 ) {
          LOG( LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", inrsrclog->logfilepath );
          pthread_mutex_unlock( &(inrsrclog->lock) );
          pthread_mutex_unlock( &(outrsrclog->lock) );
+         resourcelog_freeopinfo( dupop );
+         resourcelog_freeopinfo( parsedop );
          return -1;
       }
-      // duplicate this op into our output logfile
-      if ( printlogline( outrsrclog->logfile, parsedop ) ) {
+      // duplicate this op into our output logfile ( must use duplicate, as parsedop->next may be modified )
+      if ( printlogline( outrsrclog->logfile, dupop ) ) {
          LOG( LOG_ERR, "Failed to duplicate op from input logfile \"%s\" into active log: \"%s\"\n",
               inrsrclog->logfilepath, outrsrclog->logfilepath );
          pthread_mutex_unlock( &(inrsrclog->lock) );
          pthread_mutex_unlock( &(outrsrclog->lock) );
+         resourcelog_freeopinfo( dupop );
+         if ( dofree )
+            resourcelog_freeopinfo( parsedop );
          return -1;
       }
+      resourcelog_freeopinfo( dupop );
       if ( dofree )
          resourcelog_freeopinfo( parsedop );
       opcnt++;
@@ -1728,8 +1744,8 @@ int resourcelog_processop( RESOURCELOG* resourcelog, opinfo* op, char* progress 
       resourcelog_freeopinfo( dupop );
       return -1;
    }
-   // output the operation to the actual log file
-   if ( printlogline( rsrclog->logfile, dupop ) ) {
+   // output the operation to the actual log file ( must use the initial, unmodified op )
+   if ( printlogline( rsrclog->logfile, op ) ) {
       LOG( LOG_ERR, "Failed to output operation info to logfile: \"%s\"\n", rsrclog->logfilepath );
       pthread_mutex_unlock( &(rsrclog->lock) );
       if ( dofree )
