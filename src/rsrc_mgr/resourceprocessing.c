@@ -91,7 +91,8 @@ typedef struct streamwalker_report_struct {
    // GC info
    size_t delobjs;    // count of deleted objects
    size_t delfiles;   // count of deleted files
-   size_t volfiles;   // count of 'volatile' files ( those deleted to recently for gc )
+   size_t delstreams; // count of completely deleted datastreams
+   size_t volfiles;   // count of 'volatile' files ( those deleted too recently for gc )
    // repack info
    size_t rpkfiles;   // count of files repacked
    size_t rpkbytes;   // count of bytes repacked
@@ -122,18 +123,31 @@ typedef struct streamwalker_struct {
    char*       ftagstr;      // FTAG string buffer
    size_t      ftagstralloc; // allocated length of the FTAG string buffer
    // GC info
-   opinfo*     gcops;
-   size_t      activefiles;
-   size_t      activeindex;
+   opinfo*     gcops;        // garbage collection operation list
+   size_t      activefiles;  // count of active files referencing the current object
+   size_t      activeindex;  // index of the most recently encountered active file
    // repack info
-   opinfo*     rpckops;
-   size_t      activebytes;
+   opinfo*     rpckops;      // repack operation list
+   size_t      activebytes;  // active bytes in the current object
    // rebuild info
-   opinfo*     rbldops;
+   opinfo*     rbldops;      // rebuild operation list
 }* streamwalker;
 
 
 //   -------------   INTERNAL DEFINITIONS    -------------
+
+
+void process_delobj( MDAL_CTXT ctxt, opinfo* op ) {
+}
+
+void process_delref( MDAL_CTXT ctxt, opinfo* op ) {
+}
+
+void process_rebuild( MDAL_CTXT ctxt, opinfo* op ) {
+}
+
+void process_repack( MDAL_CTXT ctxt, opinfo* op, REPACKSTREAMER rpckstr ) {
+}
 
 
 //   -------------   INTERNAL FUNCTIONS    -------------
@@ -186,7 +200,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       }
       else if ( getres > 0 ) {
          // we must parse the GC tag value
-         *(ftagstr + getres) = '\0'; // ensure our string is NULL terminated
+         *(walker->ftagstr + getres) = '\0'; // ensure our string is NULL terminated
          char* parse = NULL;
          unsigned long long parseval = strtoull( walker->ftagstr, &(parse), 10 );
          if ( parse == NULL  ||  *parse != ' '  ||  parseval == ULONG_MAX ) {
@@ -297,7 +311,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
          return -1;
       }
       // stat the file
-      if ( mdal->fstat( handle, walker->stval ) ) {
+      if ( mdal->fstat( handle, &(walker->stval) ) ) {
          LOG( LOG_ERR, "Failed to stat reference file target via handle: \"%s\"\n", reftgt );
          mdal->close( handle );
          return -1;
@@ -310,10 +324,10 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       // restore old values
       errno = olderrno;
       // NOTE -- The resource manager will skip pulling RTAG xattrs, in this specific case.
-      //         The 'location-based' rebuild, performed by this code, is intended for worst-case data damage situations.  It is
-      //         intended to rebuild all objects tied to a specific location, without the need for a client to read and tag those
-      //         objects in advance.  As such, the expectation is that no RTAG values will exist.  If they do, they will be rebuilt
-      //         seperately, via their rebuild marker file.
+      //         The 'location-based' rebuild, performed by this code, is intended for worst-case data damage situations.
+      //         It is intended to rebuild all objects tied to a specific location, without the need for a client to read 
+      //         and tag those objects in advance.  As such, the expectation is that no RTAG values will exist.  
+      //         If they do, they will be rebuilt seperately, via their rebuild marker file.
       // populate state value based on link count
       *filestate = ( walker->stval->st_nlink > 1 ) ? 2 : 1;
       return 0;
@@ -562,7 +576,7 @@ int process_refdir( marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, c
    return ( (int)type + 1 );
 }
 
-streamwalker process_openstreamwalker( marfs_ns* ns, MDAL_CTXT ctxt, const char* reftgt, thresholds thresh, ne_location* rebuildloc ) {
+streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresholds thresh, ne_location* rebuildloc ) {
 	// validate args
 	if ( ns == NULL ) {
       LOG( LOG_ERR, "Received a NULL NS ref\n" );
@@ -584,7 +598,193 @@ streamwalker process_openstreamwalker( marfs_ns* ns, MDAL_CTXT ctxt, const char*
       errno = EINVAL;
       return NULL;
    }
-
+   // allocate a new streamwalker struct
+   streamwalker walker = malloc( sizeof( struct streamwalker_struct ) );
+   if ( walker == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate streamwalker\n" );
+      return NULL;
+   }
+   // establish a new position
+   walker->pos.ns = ns;
+   walker->pos.depth = 0;
+   walker->pos.ctxt = NULL;
+   if ( config_fortifyposition( &(walker->pos) ) ) {
+      LOG( LOG_ERR, "Failed to fortify marfs position for NS \"%s\"\n", ns->nsidstr );
+      free( walker );
+      return NULL;
+   }
+   // populate initialization elements
+   walker->gcthresh = thresh.gcthreshold;
+   walker->repackthresh = thresh.repackthreshold;
+   walker->rebuildthresh = thresh.rebuildthreshold;
+   walker->rebuildloc = *rebuildloc;
+   // zero out report info
+   bzero( &(walker->report), sizeof( streamwalker_report ) );
+   // initialize iteration info
+   walker->fileindex = 0;
+   walker->objindex = 0;
+   // populate a bunch of placeholder info for the remainder
+   walker->reftable = NULL;
+   bzero( &(walker->stval), sizeof( struct stat ) );
+   bzero( &(walker->ftag), sizeof( FTAG ) );
+   bzero( &(walker->gctag), sizeof( GCTAG ) );
+   walker->headerlen = 0;
+   walker->ftagstr = malloc( sizeof(char) * 1024 );
+   if ( walker->ftagstr == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate initial ftag string buffer\n" );
+      config_abandonposition( &(walker->pos) );
+      free( walker );
+      return NULL;
+   }
+   walker->ftagstralloc = 1024;
+   walker->gcops = NULL;
+   walker->activefiles = 0;
+   walker->activeindex = 0;
+   walker->rpckops = NULL;
+   walker->activebytes = 0;
+   walker->rbldops = NULL;
+   // retrieve xattrs from the inital stream file
+   char filestate = 0;
+   if ( process_getfileinfo( reftgt, 1, walker, &(filestate) )  ||  !(filestate) ) {
+      LOG( LOG_ERR, "Failed to get info from initial reference target: \"%s\"\n", reftgt );
+      free( walker->ftagstr );
+      config_abandonposition( &(walker->pos) );
+      free( walker );
+      return NULL;
+   }
+   // calculate our header length
+   RECOVERY_HEADER header = {
+      .majorversion = walker->ftag.majorversion,
+      .minorversion = walker->ftag.minorversion,
+      .ctag = walker->ftag.ctag,
+      .streamid = walker->ftag.streamid
+   };
+   walker->headerlen = recovery_headertostr(&(header), NULL, 0);
+   // calculate the ending position of this file
+   size_t dataperobj = ( walker->ftag.objsize ) ?
+                           walker->ftag.objsize - walker->recovheaderlen : 0; // data chunk size for this stream
+   size_t endobj = walker->ftag.objno; // update ending object index
+   if ( dataperobj ) {
+      // calculate the final object referenced by this file
+      size_t finobjbounds = (walker->ftag->bytes + walker->ftag->offset - walker->headerlen) / dataperobj;
+      if ( (walker->ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+            finobjbounds  &&
+            (walker->ftag->bytes + walker->ftag->offset - headerlen) % dataperobj == 0 ) {
+         finobjbounds--;
+      }
+      endobj += finobjbounds;
+   }
+   // TODO sanity checks
+   // perform state checking for this first file
+   char assumeactive = 0;
+   char eos = walker->ftag.endofstream;
+   if ( (walker->ftag.state & FTAG_DATASTATE) < FTAG_FIN ) { eos = 1; }
+   if ( walker->gctag.eos ) { eos = 1; }
+   if ( filestate == 1 ) {
+      // file is inactive
+      if ( walker->gcthresh  &&  walker->stval.st_ctime < walker->gcthresh  &&  haveftag ) {
+         // this file is elligible for GC
+         if ( eos ) {
+            // only GC this initial ref if it is the last one remaining
+            opinfo* optgt = NULL;
+            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
+               LOG( LOG_ERR, "Failed to identify operation target for deletion of file %zu\n", walker->ftag.fileno );
+               destroystreamwalker( walker );
+               return NULL;
+            }
+            // impossible to have an existing op; populate new op
+            delref_info* delrefinf = optgt->extendedinfo;
+            delrefinf->prev_active_index = walker->prevactive;
+            delrefinf->eos = 1;
+         }
+         // potentially generate object GC ops, only if we haven't already
+         if ( endobj != walker->objno  &&  !(walker->gctag.delzero) ) {
+            // generate a GC op for the first obj referenced by this file
+            FTAG tmptag = walker->ftag;
+            tmptag.objno = walker->objno;
+            optgt = NULL;
+            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
+               LOG( LOG_ERR, "Failed to identify operation target for deletion of initial spanned obj %zu\n", tmptag.objno );
+               destroystreamwalker( walker );
+               return NULL;
+            }
+            // sanity check
+            if ( optgt->count + optgt->ftag.objno != walker->objno ) {
+               LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
+                             optgt->count + optgt->ftag.objno, walker->objno );
+               destroystreamwalker( walker );
+               return NULL;
+            }
+            // update operation
+            optgt->count++;
+            // update our record
+            walker->record.delobjs++;
+            // potentially generate GC ops for objects spanned by this file
+            tmptag.objno++;
+            while ( tmptag.objno < endobj ) {
+               // generate ops for all but the last referenced object
+               optgt = NULL;
+               if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
+                  LOG( LOG_ERR, "Failed to identify operation target for deletion of spanned obj %zu\n", tmptag.objno );
+                  destroystreamwalker( walker );
+                  return NULL;
+               }
+               // sanity check
+               if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
+                  LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
+                                optgt->count + optgt->ftag.objno, tmptag.objno );
+                  destroystreamwalker( walker );
+                  return NULL;
+               }
+               // update operation
+               optgt->count++;
+               // update our record
+               walker->record.delobjs++;
+               // iterate to the next obj
+               tmptag.objno++;
+            }
+            // TODO we need to generate a 'dummy' refdel op, specifically to drop a GCTAG on file zero
+         }
+      }
+      else if ( walker->stval.st_ctime >= walker->gcthresh ) {
+         // this file was too recently deactivated to gc
+         walker->report.volfiles++;
+         assumeactive = 1;
+      }
+   }
+   if ( filestate > 1 ) {
+      // file is active
+      walker->report.fileusage++;
+      walker->report.byteusage += walker->ftag.bytes;
+      // TODO potentially generate repack op
+      // TODO potentially generate rebuild ops
+   }
+   if ( filestate > 1  ||  assumeactive ) {
+      // update state to reflect active initial file
+      walker->activefiles++;
+      walker->activebytes += walker->ftag.bytes;
+   }
+   // update walker state to reflect new target
+   walker->objindex = endobj;
+   // identify the appropriate reference table for stream iteration
+   if ( walker->ftag.refbreadth == ns->prepo->metascheme.refbreadth  &&
+        walker->ftag.refdepth == ns->prepo->metascheme.refdepth  &&
+        walker->ftag.refdigits == ns->prepo->metascheme.refdigits ) {
+      // we can safely use the default reference table
+      walker->reftable = ns->prepo->metascheme.reftable;
+   }
+   else {
+      // we must generate a fresh ref table, based on FTAG values
+      walker->reftable = config_genreftable( NULL, NULL, walker->ftag.refbreadth, walker->ftag.refdepth, walker->ftag.refdigits );
+      if ( walker->reftable == NULL ) {
+         LOG( LOG_ERR, "Failed to generate reference table with values ( breadth=%d, depth=%d, digits=%d )\n",
+              walker->ftag.refbreadth, walker->ftag.refdepth, walker->ftag.refdigits );
+         destroystreamwalker( walker );
+         return NULL;
+      }
+   }
+   // return the initialized walker
+   return walker;
 }
 
 /**
@@ -838,7 +1038,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                if ( walker->activefiles == 0 ) {
                   optgt = NULL;
                   if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
-                     LOG( LOG_ERR, "Failed to identify operation target for deletion of initial spanned obj %zu\n", curobj );
+                     LOG( LOG_ERR, "Failed to identify operation target for deletion of initial spanned obj %zu\n", tmptag.objno );
                      return -1;
                   }
                   // sanity check
@@ -862,7 +1062,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                      return -1;
                   }
                   // sanity check
-                  if ( optgt->count + optgt->ftag.objno != curobj ) {
+                  if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
                      LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
                                    optgt->count + optgt->ftag.objno, tmptag.objno );
                      return -1;
@@ -962,7 +1162,81 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
  *               NOTE -- This func will not return 'failure' unless a critical internal error occurs.
  *                       'Standard' operation errors will simply be reflected in the op struct itself.
  */
-int process_executeoperation( MDAL_CTXT ctxt, opinfo* op ) {
+int process_executeoperation( MDAL_CTXT ctxt, opinfo* op, RESOURCELOG* rlog, REPACKSTREAMER rpkstr ) {
+   // check arguments
+   if ( op == NULL ) {
+      LOG( LOG_ERR, "Received a NULL operation value\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( ctxt == NULL ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_CTXT value\n" );
+      resourcelog_freeopinfo( op );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( !(op->start) ) {
+      LOG( LOG_ERR, "Received a non-start operation value\n" );
+      resourcelog_freeopinfo( op );
+      errno = EINVAL;
+      return -1;
+   }
+   while ( op ) {
+      // break off the first op of the chain
+      opinfo* nextop = op->next;
+      op->next = NULL;
+      // log operation start
+      LOG( LOG_INFO, "Logging start of operation stream \"%s\"\n", op->ftag.streamid );
+      if ( resourcelog_processop( rlog, op, NULL ) ) {
+         LOG( LOG_ERR, "Failed to log start of operation on stream \"%s\"\n", op->ftag.streamid );
+         resourcelog_freeopinfo( op );
+         if ( nextop ) { resourcelog_freeopinfo( nextop ); }
+         return -1;
+      }
+      // execute the operation
+      switch ( op->type ) {
+         case MARFS_DELETE_OBJ_OP:
+            LOG( LOG_INFO, "Performing object deletion op on stream \"%s\"\n", op->ftag.streamid );
+            process_deleteobj( ctxt, op );
+            break;
+         case MARFS_DELETE_REF_OP:
+            LOG( LOG_INFO, "Performing reference deletion op on stream \"%s\"\n", op->ftag.streamid );
+            process_deleteref( ctxt, op );
+            break;
+         case MARFS_REBUILD_OP:
+            LOG( LOG_INFO, "Performing rebuild op on stream \"%s\"\n", op->ftag.streamid );
+            process_rebuild( ctxt, op );
+            break;
+         case MARFS_REPACK_OP:
+            LOG( LOG_INFO, "Performing repack op on stream \"%s\"\n", op->ftag.streamid );
+            process_repack( ctxt, op, rpkstr );
+            break;
+         default:
+            LOG( LOG_ERR, "Unrecognized operation type value\n" );
+            resourcelog_freeopinfo( op );
+            if ( nextop ) { resourcelog_freeopinfo( nextop ); }
+            return -1;
+      }
+      // log operation end, and check if we can progress
+      char progress = 0;
+      op->start = 0;
+      LOG( LOG_INFO, "Logging end of operation stream \"%s\"\n", op->ftag.streamid );
+      if ( resourcelog_processop( rlog, op, &(progress) ) ) {
+         LOG( LOG_ERR, "Failed to log end of operation on stream \"%s\"\n", op->ftag.streamid );
+         resourcelog_freeopinfo( op );
+         if ( nextop ) { resourcelog_freeopinfo( nextop ); }
+         return -1;
+      }
+      resourcelog_freeopinfo( op );
+      if ( progress < 1 ) {
+         LOG( LOG_INFO, "Terminating execution, as portions of this op have not yet been completed\n" );
+         if ( nextop ) { resourcelog_freeopinfo( nextop ); }
+         return 0;
+      }
+      op = nextop;
+   }
+   LOG( LOG_INFO, "Terminating execution, as all operations were completed\n" );
+   return 0;
 }
 
 
