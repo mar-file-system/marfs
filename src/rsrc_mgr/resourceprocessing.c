@@ -152,6 +152,32 @@ void process_repack( MDAL_CTXT ctxt, opinfo* op, REPACKSTREAMER rpckstr ) {
 
 //   -------------   INTERNAL FUNCTIONS    -------------
 
+void destroystreamwalker( streamwalker walker ) {
+   if ( walker ) {
+      marfs_ms* ms = &(walker->pos.ns->prepo->metascheme);
+      if ( walker->reftable  &&  walker->reftable != ms->reftable ) {
+         // destroy the custom hash table
+         HASH_NODE* nodelist = NULL;
+         size_t count = 0;
+         if ( hash_term( walker->reftable, &(nodelist), &(count) ) ) {
+            LOG( LOG_WARNING, "Failed to delete non-NS reference table\n" );
+         }
+         else {
+            while ( count ) {
+               count--;
+               free( nodelist[count].name );
+            }
+            free( nodelist );
+         }
+      }
+      if ( walker->ftagstr ) { free( walker->ftagstr ); }
+      if ( walker->gcops ) { resourcelog_freeopinfo( walker->gcops ); }
+      if ( walker->rpckops ) { resourcelog_freeopinfo( walker->rpckops ); }
+      if ( walker->rbldops ) { resourcelog_freeopinfo( walker->rbldops ); }
+      free( walker );
+   }
+}
+
 int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker, char* filestate ) {
    MDAL mdal = walker->ns->prepo->metascheme.mdal;
    if ( getxattrs ) {
@@ -440,15 +466,15 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
       case MARFS_DELETE_OBJ_OP:
          break; // nothing to be done
       case MARFS_DELETE_REF_OP:
-         newop->extendedinfo = malloc( sizeof( struct delref_info_struct ) );
+         newop->extendedinfo = calloc( 1, sizeof( struct delref_info_struct ) );
          needext = 1;
          break;
       case MARFS_REBUILD_OP:
-         newop->extendedinfo = malloc( sizeof( struct rebuild_info_struct ) );
+         newop->extendedinfo = calloc( 1, sizeof( struct rebuild_info_struct ) );
          needext = 1;
          break;
       case MARFS_REPACK_OP:
-         newop->extendedinfo = malloc( sizeof( struct repack_info_struct ) );
+         newop->extendedinfo = calloc( 1, sizeof( struct repack_info_struct ) );
          needext = 1;
          break;
    }
@@ -743,7 +769,16 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
                // iterate to the next obj
                tmptag.objno++;
             }
-            // TODO we need to generate a 'dummy' refdel op, specifically to drop a GCTAG on file zero
+            // need to generate a 'dummy' refdel op, specifically to drop a GCTAG on file zero
+            optgt = NULL;
+            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
+               LOG( LOG_ERR, "Failed to identify operation target for attachment of delzero tag\n" );
+               destroystreamwalker( walker );
+               return NULL;
+            }
+            delref_info* delrefinf = (delref_info*)optgt->extendedinfo;
+            delrefinf->delzero = 1;
+            delrefinf->eos = eos;
          }
       }
       else if ( walker->stval.st_ctime >= walker->gcthresh ) {
@@ -962,6 +997,17 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                optgt->count++;
                // update our record
                walker->record.delobjs++;
+               if ( walker->objno == 0 ) {
+                  // need to ensure we specifically note deletion of initial object
+                  optgt = NULL;
+                  if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
+                     LOG( LOG_ERR, "Failed to identify operation target for noting deletion of obj zero\n" );
+                     return -1;
+                  }
+                  // NOTE -- don't increment count, as we aren't actually deleting another ref
+                  delref_info* delrefinf = (delref_info*)optgt->extendedinfo;
+                  delrefinf->delzero = 1;
+               }
             }
             // need to handle repack ops
             if ( walker->rpckops ) {
@@ -1149,6 +1195,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       return 1;
    }
    LOG( LOG_INFO, "Stream traversal complete: \"%s\"\n", walker->ftag.streamid );
+   destroystreamwalker( walker );
    return 0;
 }
 

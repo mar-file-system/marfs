@@ -97,6 +97,7 @@ typedef struct opinfo_struct {
 
 typedef struct delref_info_struct {
    size_t prev_active_index; // index of the closest active ( not to be deleted ) reference in the stream
+   char   delzero; // deleted zero flag, indicating that the data object(s) referenced by fileno zero have been deleted
    char   eos; // end-of-stream flag, indicating that this delete will make prev_active_index the new EOS
 } delref_info;
 

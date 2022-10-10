@@ -3081,6 +3081,10 @@ HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_
             LOG( LOG_ERR, "failed to generate reference path string\n" );
             free( rpathtmp );
             free( refvals );
+            while ( curnode > 0 ) {
+               curnode--;
+               free( rnodelist[curnode].name );
+            }
             free( rnodelist );
             return NULL;
          }
@@ -3093,6 +3097,10 @@ HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_
          LOG( LOG_ERR, "failed to allocate reference path hash node name\n" );
          free( rpathtmp );
          free( refvals );
+         while ( curnode > 0 ) {
+            curnode--;
+            free( rnodelist[curnode].name );
+         }
          free( rnodelist );
          return NULL;
       }
@@ -3107,6 +3115,10 @@ HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_
    HASH_TABLE reftable = hash_init( rnodelist, rnodecount, 0 );
    if ( reftable == NULL ) {
       LOG( LOG_ERR, "failed to create reference path table\n" );
+      while ( curnode > 0 ) {
+         curnode--;
+         free( rnodelist[curnode].name );
+      }
       free( rnodelist );
       return NULL;
    } // can't free the node list now, as it is in use by the hash table
