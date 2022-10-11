@@ -274,6 +274,20 @@ opinfo* parselogline( int logfile, char* eof ) {
       }
       extinfo->prev_active_index = (size_t)parseval;
       parseloc = endptr + 1;
+      if ( strncmp( parseloc, "DZ ", 3 ) == 0 ) {
+         extinfo->delzero = 1;
+      }
+      else if ( strncmp( parseloc, "-- ", 3 ) == 0 ) {
+         extinfo->delzero = 0;
+      }
+      else {
+         LOG( LOG_ERR, "Encountered unrecognized DEL-ZERO value in DEL-REF extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 3;
       if ( strncmp( parseloc, "EOS", 3 ) == 0 ) {
          extinfo->eos = 1;
       }
@@ -407,7 +421,7 @@ opinfo* parselogline( int logfile, char* eof ) {
          lseek( logfile, origoff, SEEK_SET );
          return NULL;
       }
-      // parse in delref_info
+      // parse in repack_info
       if ( strncmp( parseloc, "{ ", 2 ) ) {
          LOG( LOG_ERR, "Missing '{ ' header for REPACK extended info\n" );
          free( extinfo );
@@ -560,8 +574,9 @@ int printlogline( int logfile, opinfo* op ) {
          usedbuff += 8;
          if ( op->extendedinfo ) {
             delref_info* delref = (delref_info*)op->extendedinfo;
-            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu %s } ",
+            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu %s %s } ",
                                              delref->prev_active_index,
+                                             (delref->delzero == 0 ) ? "--" : "DZ",
                                              (delref->eos == 0) ? "CNT" : "EOS" );
             if ( extinfoprint < 10 ) {
                LOG( LOG_ERR, "Failed to populate DEL-REF extended info string\n" );

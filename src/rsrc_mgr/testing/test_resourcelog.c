@@ -199,6 +199,7 @@ int main(int argc, char **argv)
    }
    delref_info* delrefinf = (delref_info*)(opparse->extendedinfo);
    delrefinf->prev_active_index = 0;
+   delrefinf->delzero = 1;
    delrefinf->eos = 0;
    opparse->start = 1;
    opparse->count = 1;
@@ -361,6 +362,7 @@ int main(int argc, char **argv)
    delref_info* delrefparse = (delref_info*)opparse->extendedinfo;
    if ( opparse->type != (opset+1)->type  ||
         delrefparse->prev_active_index != delrefinf->prev_active_index  ||
+        delrefparse->delzero != delrefinf->delzero  ||
         delrefparse->eos != delrefinf->eos  ||
         opparse->start != (opset+1)->start  ||
         opparse->count != (opset+1)->count  ||
@@ -390,6 +392,7 @@ int main(int argc, char **argv)
       printf( "read op 2 differs from original\n" );
       if ( opparse->type != (opset+1)->type ) { printf( "type\n" ); }
       if ( delrefparse->prev_active_index != delrefinf->prev_active_index ) { printf( "prevactive\n" ); }
+      if ( delrefparse->delzero != delrefinf->delzero ) { printf( "delzero\n" ); }
       if ( delrefparse->eos != delrefinf->eos ) { printf( "eos\n" ); }
       if ( opparse->start != (opset+1)->start ) { printf( "start\n" ); }
       if ( opparse->count != (opset+1)->count ) { printf( "count\n" ); }
