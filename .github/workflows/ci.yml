@@ -10,8 +10,8 @@ jobs:
   Build:
     env:
       Isal_assembler: nasm
-      Ne_deps: "autoconf libxml2-dev"
-      Marfs_deps: "openmpi-bin openmpi-common libopenmpi-dev libfuse-dev"
+      Ne_deps: "autoconf libxml2-dev openmpi-bin openmpi-common libopenmpi-dev"
+      Marfs_deps: "libfuse-dev"
     runs-on: ubuntu-latest
     steps:
     - name: Checkout ISA-L
