@@ -79,6 +79,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define FTAG_FILEPOSITION_HEADER "POS"
 #define FTAG_DATACONTENT_HEADER "DAT"
 
+#define RTAG_NAME "MARFS-REBUILD" // definied here, due to variability ( see rtag_getname() )
 #define RTAG_VERSION_HEADER "VER"
 #define RTAG_STRIPEINFO_HEADER "STP"
 #define RTAG_DATAHEALTH_HEADER "DHLTH"
@@ -792,6 +793,32 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
 }
 
 // MARFS REBUILD TAG  --  attached to damaged marfs files, providing rebuild info
+
+/**
+ * Generate the appropraite RTAG name value for a specific data object
+ * @param size_t objno : Object number associated with the RTAG
+ * @return char* : String name of the RTAG value, or NULL on failure
+ *                 NOTE -- it is the caller's responsibility to free this
+ */
+char* rtag_getname( size_t objno ) {
+   // identify the rebuild tag name
+   ssize_t rtagnamelen = snprintf( NULL, 0, "%s-%zu", RTAG_NAME, objno );
+   if ( rtagnamelen < 1 ) {
+      LOG( LOG_ERR, "Failed to identify the length of rebuild tag for object %zu\n", objno );
+      return NULL;
+   }
+   char* rtagname = malloc( sizeof(char) * (rtagnamelen + 1) );
+   if ( rtagname == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate space for rebuild tag of length %zd\n", rtagnamelen );
+      return NULL;
+   }
+   if ( snprintf( rtagname, rtagnamelen + 1, "%s-%zu", RTAG_NAME, objno ) != rtagnamelen ) {
+      LOG( LOG_ERR, "Rebuild tag name has inconsistent length\n" );
+      free(rtagname);
+      return NULL;
+   }
+   return rtagname;
+}
 
 /**
  * Initialize a ne_state value based on the provided string value

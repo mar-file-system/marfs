@@ -57,6 +57,9 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+// TMP DEF
+#define RTAG_NAME "tmp-junk"
+
 #ifdef DEBUG_RM
 #define DEBUG DEBUG_RM
 #elif (defined DEBUG_ALL)

@@ -133,6 +133,11 @@ typedef struct streamwalker_struct {
    opinfo*     rbldops;      // rebuild operation list
 }* streamwalker;
 
+// ENOATTR is not always defined, so define a convenience val
+#ifndef ENOATTR
+#define ENOATTR ENODATA
+#endif
+
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
@@ -323,6 +328,124 @@ void process_deleteref( const marfs_postion* pos, opinfo* op, HASH_TABLE reftabl
 
 
 void process_rebuild( const marfs_postion* pos, opinfo* op ) {
+   // quick refs
+   rebuild_info* rebinf = (rebuild_info*)op->extendedinfo;
+   marfs_ds* ds = &(pos->ns->prepo->datascheme);
+   marfs_ms* ms = &(pos->ns->prepo->metascheme);
+   size_t countval = 0;
+   while ( countval < op->count ) {
+      // identify the object target of the op
+      FTAG tmptag = op->ftag;
+      tmptag.objno += countval;
+      char* objname = NULL;
+      ne_erasure erasure;
+      ne_location location;
+      if ( datastream_objtarget( &(tmptag), ds, &(objname), &(erasure), &(location) ) ) {
+         LOG( LOG_ERR, "Failed to identify object target %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         return;
+      }
+      // open an object handle
+      ne_handle obj = ne_open( ds->nectxt, objname, location, op->ftag.erasure, NE_REBUILD );
+      if ( obj == NULL ) {
+         LOG( LOG_ERR, "Failed to open rebuild handle for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         free( objname );
+         return;
+      }
+      free( objname );
+      // if we have an rtag value, seed it in prior to rebuilding
+      if ( rebinf  &&  rebinf->rtag ) {
+         if ( ne_seed_status( obj, &(rebinf->rtag) ) ) {
+            LOG( LOG_WARNING, "Failed to seed rtag status into handle for object %zu of stream \"%s\"\n",
+                              tmptag.objno, tmptag.streamid );
+         }
+      }
+      // rebuild the object, performing up to 2 attempts
+      char iteration = 0;
+      while ( iteration < 2 ) {
+         LOG( LOG_INFO, "Rebuilding object %zu of stream \"%s\" (attempt %d)\n",
+                        tmptag.objno, tmptag.streamid, (int)attempt + 1 );
+         if ( ne_rebuild( obj, NULL, NULL ) < 0 ) {
+            LOG( LOG_ERR, "Failed to rebuild object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+            op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            if ( ne_abort( obj ) ) {
+               LOG( LOG_ERR, "Failed to properly abort rebuild handle for object %zu of stream \"%s\"\n",
+                             tmptag.objno, tmptag.streamid );
+            }
+            return;
+         }
+         iteration++;
+      }
+      // check for excessive rebuild reattempts
+      if ( iteration >= 2 ) {
+         LOG( LOG_ERR, "Excessive reattempts for rebuild of object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         if ( ne_abort( obj ) ) {
+            LOG( LOG_ERR, "Failed to properly abort rebuild handle for object %zu of stream \"%s\"\n",
+                          tmptag.objno, tmptag.streamid );
+         }
+         return;
+      }
+      // close the object reference
+      if ( ne_close( obj, NULL, NULL ) ) {
+         LOG( LOG_ERR, "Failed to finalize rebuild of object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         return;
+      }
+      countval++;
+   }
+   // potentially cleanup the rtag
+   if ( rebinf  &&  rebinf->rtag ) {
+      // generate the RTAG name
+      char* rtagstr = rtag_getname( op->ftag.objno );
+      if ( rtagstr == NULL ) {
+         LOG( LOG_ERR, "Failed to identify the name of object %zu RTAG in stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         return;
+      }
+      // open a file handle for the marker
+      if ( rebinf->markerpath == NULL ) {
+         LOG( LOG_ERR, "No marker path available by which to remove RTAG of object %zu in stream \"%s\"\n",
+                       tmptag.objno, tmptag.streamid );
+         op->errval = EINVAL;
+         free( rtagstr );
+         return;
+      }
+      MDAL_FHANDLE mhandle = ms->mdal->openref( pos->ctxt, rebinf->markerpath, O_RDONLY, 0 );
+      if ( mhandle == NULL ) {
+         LOG( LOG_ERR, "Failed to open handle for marker path \"%s\"\n", rebinf->markerpath );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         free( rtagstr );
+         return;
+      }
+      // remove the RTAG
+      if ( ms->mdal->fremovexattr( mhandle, 1, rtagstr ) ) {
+         LOG( LOG_ERR, "Failed to remove \"%s\" xattr from marker file \"%s\"\n", rtagstr, rebinf->markerpath );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         ms->mdal->close( mhandle );
+         free( rtagstr );
+         return;
+      }
+      free( rtagstr );
+      // close our handle
+      if ( ms->mdal->close( mhandle ) ) {
+         LOG( LOG_ERR, "Failed to close handle for marker file \"%s\"\n", rebinf->markerpath );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         return;
+      }
+   }
+   // potentially cleanup the rebuild marker
+   if ( rebinf  &&  rebinf->markerpath ) {
+      // unlink the rebuild marker
+      if ( ms->mdal->unlinkref( rebinf->markerpath ) ) {
+         LOG( LOG_ERR, "Failed to unlink marker file \"%s\"\n", rebinf->markerpath );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         return;
+      }
+   }
+   // rebuild complete
+   return;
 }
 
 
@@ -790,6 +913,114 @@ int process_refdir( marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, c
    return ( (int)type + 1 );
 }
 
+/**
+ * Generate a rebuild opinfo element corresponding to the given marker and object
+ * @param char* markerpath : Reference path of the rebuild marker ( will be bundled into the opinfo ref )
+ * @param size_t objno : Index of the object corresponding to the marker
+ * @return opinfo* : Reference to the newly generated op, or NULL on failure
+ */
+opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, size_t objno ) {
+   // check args
+   if ( pos == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_position reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   if ( markerpath == NULL ) {
+      LOG( LOG_ERR, "Received a NULL markerpath reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   // convenience refs
+   marfs_ms* ms = &(pos->ns->prepo->metascheme);
+   // open a file handle for the marker
+   MDAL_FHANDLE mhandle = ms->mdal->openref( pos->ctxt, markerpath, O_RDONLY, 0 );
+   if ( mhandle == NULL ) {
+      LOG( LOG_ERR, "Failed to open handle for marker path \"%s\"\n", markerpath );
+      return NULL;
+   }
+   // retrieve the FTAG value
+   ssize_t ftagstrlen = ms->mdal->fgetxattr( mhandle, 1, FTAG_NAME, NULL, 0 );
+   if ( ftagstrlen < 2 ) {
+      LOG( LOG_ERR, "Failed to retrieve FTAG from marker file \"%s\"\n", markerpath );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   char* ftagstr = malloc( sizeof(char) * (ftagstrlen + 1) );
+   if ( ftagstr == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate FTAG string of length %zu\n", ftagstrlen + 1 );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   if ( ms->mdal->fgetxattr( mhandle, 1, FTAG_NAME, ftagstr, ftagstrlen ) != ftagstrlen ) {
+      LOG( LOG_ERR, "FTAG of marker file \"%s\" has an inconsistent length\n", markerpath );
+      free( ftagstr );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   *(ftagstr + ftagstrlen) = '\0'; // ensure a NULL-terminated string
+   // allocate a new operation struct
+   opinfo* op = calloc( 1, sizeof( struct opinfo_struct ) );
+   if ( op == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate opinfo struct\n" );
+      free( ftagstr );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   rebuild_info* rinfo = calloc( 1, sizeof( struct rebuild_info_struct ) );
+   if ( rinfo == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate rebuild extended info struct\n" );
+      free( op );
+      free( ftagstr );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   op->type = MARFS_REBUILD_OP;
+   op->extendedinfo = (void*)rinfo;
+   op->start = 1;
+   op->count = 1;
+   // parse in the FTAG
+   if ( ftag_initstr( &(op->ftag), ftagstr ) ) {
+      LOG( LOG_ERR, "Failed to parse FTAG value from marker file \"%s\"\n", markerpath );
+      free( rinfo );
+      free( op );
+      free( ftagstr );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   free( ftagstr );
+   // generate the RTAG name
+   char* rtagname = rtag_getname( objno );
+   if ( rtagname == NULL ) {
+      LOG( LOG_ERR, "Failed to identify the name of object %zu RTAG name\n", objno );
+      free( rinfo );
+      free( op );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   // retrieve the RTAG from the marker file
+   ssize_t rtaglen = ms->mdal->fgetxattr( mhandle, 1, rtagname, NULL, 0 );
+   if ( rtaglen < 1  &&  errno != ENOATTR ) {
+      LOG( LOG_ERR, "Failed to retrieve \"%s\" value from marker file \"%s\"\n", rtagname, rebinf->markerpath );
+      free( rinfo );
+      free( op );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   if ( rtaglen > 0 ) {
+      // populate RTAG entry
+      // TODO
+   }
+   // close our handle
+   if ( ms->mdal->close( mhandle ) ) {
+      LOG( LOG_ERR, "Failed to close handle for marker file \"%s\"\n", rebinf->markerpath );
+      free( rinfo );
+      free( op );
+      return NULL;
+   }
+   return op;
+}
+
 streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresholds thresh, ne_location* rebuildloc ) {
 	// validate args
 	if ( ns == NULL ) {
@@ -980,7 +1211,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
       walker->report.fileusage++;
       walker->report.byteusage += walker->ftag.bytes;
       // TODO potentially generate repack op
-      // TODO potentially generate rebuild ops
+      // TODO potentially generate rebuild op
    }
    if ( filestate > 1  ||  assumeactive ) {
       // update state to reflect active initial file
@@ -1422,6 +1653,7 @@ int process_executeoperation( const marfs_position* pos, opinfo* op, RESOURCELOG
       errno = EINVAL;
       return -1;
    }
+   char abortops = 0;
    while ( op ) {
       // break off the first op of the chain
       opinfo* nextop = op->next;
@@ -1434,29 +1666,40 @@ int process_executeoperation( const marfs_position* pos, opinfo* op, RESOURCELOG
          if ( nextop ) { resourcelog_freeopinfo( nextop ); }
          return -1;
       }
-      // execute the operation
-      switch ( op->type ) {
-         case MARFS_DELETE_OBJ_OP:
-            LOG( LOG_INFO, "Performing object deletion op on stream \"%s\"\n", op->ftag.streamid );
-            process_deleteobj( pos, op );
-            break;
-         case MARFS_DELETE_REF_OP:
-            LOG( LOG_INFO, "Performing reference deletion op on stream \"%s\"\n", op->ftag.streamid );
-            process_deleteref( pos, op );
-            break;
-         case MARFS_REBUILD_OP:
-            LOG( LOG_INFO, "Performing rebuild op on stream \"%s\"\n", op->ftag.streamid );
-            process_rebuild( pos, op );
-            break;
-         case MARFS_REPACK_OP:
-            LOG( LOG_INFO, "Performing repack op on stream \"%s\"\n", op->ftag.streamid );
-            process_repack( pos, op, rpkstr );
-            break;
-         default:
-            LOG( LOG_ERR, "Unrecognized operation type value\n" );
-            resourcelog_freeopinfo( op );
-            if ( nextop ) { resourcelog_freeopinfo( nextop ); }
-            return -1;
+      if ( abortops ) {
+         LOG( LOG_ERR, "Skipping %s operation due to previous op errors\n",
+                       (op->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
+                       (op->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
+                       (op->type == MARFS_REBUILD_OP)    ? "REBUILD" :
+                       (op->type == MARFS_REPACK_OP)     ? "REPACK"  :
+                       "UNKNOWN" );
+         op->errval = EAGAIN;
+      }
+      else {
+         // execute the operation
+         switch ( op->type ) {
+            case MARFS_DELETE_OBJ_OP:
+               LOG( LOG_INFO, "Performing object deletion op on stream \"%s\"\n", op->ftag.streamid );
+               process_deleteobj( pos, op );
+               break;
+            case MARFS_DELETE_REF_OP:
+               LOG( LOG_INFO, "Performing reference deletion op on stream \"%s\"\n", op->ftag.streamid );
+               process_deleteref( pos, op );
+               break;
+            case MARFS_REBUILD_OP:
+               LOG( LOG_INFO, "Performing rebuild op on stream \"%s\"\n", op->ftag.streamid );
+               process_rebuild( pos, op );
+               break;
+            case MARFS_REPACK_OP:
+               LOG( LOG_INFO, "Performing repack op on stream \"%s\"\n", op->ftag.streamid );
+               process_repack( pos, op, rpkstr );
+               break;
+            default:
+               LOG( LOG_ERR, "Unrecognized operation type value\n" );
+               resourcelog_freeopinfo( op );
+               if ( nextop ) { resourcelog_freeopinfo( nextop ); }
+               return -1;
+         }
       }
       // log operation end, and check if we can progress
       char progress = 0;
@@ -1469,10 +1712,14 @@ int process_executeoperation( const marfs_position* pos, opinfo* op, RESOURCELOG
          return -1;
       }
       resourcelog_freeopinfo( op );
-      if ( progress < 1 ) {
+      if ( progress == 0 ) {
          LOG( LOG_INFO, "Terminating execution, as portions of this op have not yet been completed\n" );
          if ( nextop ) { resourcelog_freeopinfo( nextop ); }
          return 0;
+      }
+      if ( progress < 0 ) {
+         LOG( LOG_ERR, "Previous operation failures will prevent execution of remaining op chain\n" );
+         abortops = 1;
       }
       op = nextop;
    }

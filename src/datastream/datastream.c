@@ -1332,29 +1332,9 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       free(rpath);
 
       // identify the rebuild tag name
-      ssize_t rtagnamelen = snprintf( NULL, 0, "%s-%zu", RTAG_NAME, curftag->objno );
-      if ( rtagnamelen < 1 ) {
-         LOG( LOG_ERR, "Failed to identify the length of rebuild tag for object %zu\n", curftag->objno );
-         mdal->close(rhandle);
-         free(rtagstr);
-         if (releasectxt) {
-            mdal->destroyctxt(mdalctxt);
-         }
-         return -1;
-      }
-      char* rtagname = malloc( sizeof(char) * (rtagnamelen + 1) );
+      char* rtagname = rtag_getname( curftag->objno );
       if ( rtagname == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for rebuild tag of length %zd\n", rtagnamelen );
-         mdal->close(rhandle);
-         free(rtagstr);
-         if (releasectxt) {
-            mdal->destroyctxt(mdalctxt);
-         }
-         return -1;
-      }
-      if ( snprintf( rtagname, rtagnamelen + 1, "%s-%zu", RTAG_NAME, curftag->objno ) != rtagnamelen ) {
-         LOG( LOG_ERR, "Rebuild tag name has inconsistent length\n" );
-         free(rtagname);
          mdal->close(rhandle);
          free(rtagstr);
          if (releasectxt) {
@@ -2938,6 +2918,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          ms->mdal->close( rmarker );
          return -1;
       }
+      *(tgtftagstr + tgtftagstrlen) = '\0'; // ensure a NULL-terminated string
    }
    // now check for a real FTAG value
    int retval = 0;
@@ -3002,6 +2983,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          ms->mdal->close( rmarker );
          return -1;
       }
+      *(realftagstr + realftagstrlen) = '\0'; // ensure a NULL-terminated string
       FTAG realftag;
       if ( ftag_initstr( &(realftag), realftagstr ) ) {
          LOG( LOG_ERR, "FTAG of rebuild marker \"%s\" could not be parsed\n", refpath );
