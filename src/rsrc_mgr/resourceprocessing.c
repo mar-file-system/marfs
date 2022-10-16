@@ -528,68 +528,10 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       else if ( getres > 0 ) {
          // we must parse the GC tag value
          *(walker->ftagstr + getres) = '\0'; // ensure our string is NULL terminated
-         char* parse = NULL;
-         unsigned long long parseval = strtoull( walker->ftagstr, &(parse), 10 );
-         if ( parse == NULL  ||  *parse != ' '  ||  parseval == ULONG_MAX ) {
-            LOG( LOG_ERR, "Failed to parse skip value of GCTAG for reference file target: \"%s\"\n", reftgt );
+         if ( gctag_initstr( &(walker->gctag), walker->ftagstr ) ) {
+            LOG( LOG_ERR, "Failed to parse GCTAG for reference file target: \"%s\"\n", reftgt );
             mdal->close( handle );
             return -1;
-         }
-         walker->gctag->refcnt = (size_t) parseval;
-         parse++;
-         // get EOS flag
-         if ( *parse == 'E' ) {
-            walker->gctag->eos = 1;
-         }
-         else if ( *parse == 'C' ) {
-            walker->gctag->eos = 0;
-         }
-         else {
-            LOG( LOG_ERR, "GCTAG with inappriate EOS value for reference file target: \"%s\"\n", reftgt );
-            mdal->close( handle );
-            return -1;
-         }
-         parse++;
-         // check for inprog
-         if ( *parse != '\0' ) {
-            if ( *parse != ' ' ) {
-               LOG( LOG_ERR, "Failed to parse 'in prog' in GCTAG of reference file target: \"%s\"\n", reftgt );
-               mdal->close( handle );
-               return -1;
-            }
-            parse++;
-            if ( *parse != 'P'  &&  *parse != 'D' ) {
-               LOG( LOG_ERR, "Failed to parse 'in prog' in GCTAG of reference file target: \"%s\"\n", reftgt );
-               mdal->close( handle );
-               return -1;
-            }
-            if ( *parse == 'P' ) 
-               walker->gctag->inprog = 1;
-            else
-               walker->gctag->inprog = 0;
-            parse++;
-            // check for delzero
-            if ( *parse != '\0' ) {
-               if ( *parse != ' ' ) {
-                  LOG( LOG_ERR, "Failed to parse 'del zero' in GCTAG of reference file target: \"%s\"\n", reftgt );
-                  mdal->close( handle );
-                  return -1;
-               }
-               parse++;
-               if ( *parse != 'D' ) {
-                  LOG( LOG_ERR, "Failed to parse 'del zero' in GCTAG of reference file target: \"%s\"\n", reftgt );
-                  mdal->close( handle );
-                  return -1;
-               }
-               walker->gctag->delzero = 1;
-            }
-            else {
-               walker->gctag->delzero = 0;
-            }
-         }
-         else {
-            walker->gctag->inprog = 0;
-            walker->gctag->delzero = 0;
          }
       }
       else {
@@ -999,18 +941,52 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, size_t obj
       return NULL;
    }
    // retrieve the RTAG from the marker file
+   // NOTE -- RTAG is just a rebuild speedup.  A missing value doesn't prevent rebuild completion.
+   //         Therefore, ENOATTR is acceptable.  Anything else, however, is unusual enough to abort for.
    ssize_t rtaglen = ms->mdal->fgetxattr( mhandle, 1, rtagname, NULL, 0 );
    if ( rtaglen < 1  &&  errno != ENOATTR ) {
-      LOG( LOG_ERR, "Failed to retrieve \"%s\" value from marker file \"%s\"\n", rtagname, rebinf->markerpath );
+      LOG( LOG_ERR, "Failed to retrieve \"%s\" value from marker file \"%s\"\n", rtagname, markerpath );
+      free( rtagname );
       free( rinfo );
       free( op );
       ms->mdal->close( mhandle );
       return NULL;
    }
    if ( rtaglen > 0 ) {
+      // allocate RTAG string
+      char* rtagstr = malloc( sizeof(char) * (1 + rtaglen) );
+      if ( rtagstr == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate an RTAG string\n" );
+         free( rtagname );
+         free( rinfo );
+         free( op );
+         ms->mdal->close( mhandle );
+         return NULL;
+      }
+      // retrieve the RTAG value, for real
+      if ( ms->mdal->fgetxattr( mhandle, 1, rtagname, rtagstr, rtaglen + 1 ) != rtaglen ) {
+         LOG( LOG_ERR, "\"%s\" value of \"%s\" marker file has an inconsistent length\n", rtagname, markerpath );
+         free( rtagstr );
+         free( rtagname );
+         free( rinfo );
+         free( op );
+         ms->mdal->close( mhandle );
+         return NULL;
+      }
+      *(rtagstr + rtaglen) = '\0'; // ensure a NULL-terminated value
       // populate RTAG entry
-      // TODO
+      if ( rtag_initstr( &(rinfo->rtag), op->ftag.erasure.N + op->ftag.erasure.E, rtagstr ) ) {
+         LOG( LOG_ERR, "Failed to parse \"%s\" value of marker file \"%s\"\n", rtagname, markerpath );
+         free( rtagstr );
+         free( rtagname );
+         free( rinfo );
+         free( op );
+         ms->mdal->close( mhandle );
+         return NULL;
+      }
+      free( rtagstr );
    }
+   free( rtagname );
    // close our handle
    if ( ms->mdal->close( mhandle ) ) {
       LOG( LOG_ERR, "Failed to close handle for marker file \"%s\"\n", rebinf->markerpath );

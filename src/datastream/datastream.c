@@ -1334,7 +1334,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       // identify the rebuild tag name
       char* rtagname = rtag_getname( curftag->objno );
       if ( rtagname == NULL ) {
-         LOG( LOG_ERR, "Failed to allocate space for rebuild tag of length %zd\n", rtagnamelen );
+         LOG( LOG_ERR, "Failed to identify RTAG name for object %zu\n", curftag->objno );
          mdal->close(rhandle);
          free(rtagstr);
          if (releasectxt) {

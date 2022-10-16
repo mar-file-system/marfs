@@ -1121,9 +1121,77 @@ size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_
  * @param const char* gctagstr : Reference to the string to be parsed
  * @return int : Zero on success, or -1 on failure
  */
-int gctag_initstr( GCTAG* gctag, const char* gctagstr ) {
-   // TODO
-   return -1;
+int gctag_initstr( GCTAG* gctag, char* gctagstr ) {
+   // check args
+   if ( gctag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL gctag arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( gctagstr == NULL ) {
+      LOG( LOG_ERR, "Received a NULL gctagstr arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   char* parse = NULL;
+   unsigned long long parseval = strtoull( gctagstr, &(parse), 10 );
+   if ( parse == NULL  ||  *parse != ' '  ||  parseval == ULONG_MAX ) {
+      LOG( LOG_ERR, "Failed to parse skip value of GCTAG\n" );
+      errno = EINVAL;
+      return -1;
+   } // tag populated later
+   parse++;
+   // get EOS flag
+   char eos = 0;
+   if ( *parse == 'E' ) {
+      eos = 1;
+   }
+   else if ( *parse != 'C' ) {
+      LOG( LOG_ERR, "GCTAG has inappriate EOS value\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   parse++;
+   // check for inprog + delzero
+   char inprog = 0;
+   char delzero = 0;
+   if ( *parse != '\0' ) {
+      if ( *parse != ' ' ) {
+         LOG( LOG_ERR, "Failed to parse 'in prog' separator of GCTAG\n" );
+         errno = EINVAL;
+         return -1;
+      }
+      parse++;
+      if ( *parse == 'P' ) {
+         inprog = 1;
+      }
+      else if ( *parse != 'P'  &&  *parse != 'D' ) {
+         LOG( LOG_ERR, "Failed to parse 'in prog' value GCTAG\n" );
+         errno = EINVAL;
+         return -1;
+      }
+      parse++;
+      // check for delzero
+      if ( *parse != '\0' ) {
+         if ( *parse != ' ' ) {
+            LOG( LOG_ERR, "Failed to parse 'del zero' separator of GCTAG\n" );
+            errno = EINVAL;
+            return -1;
+         }
+         parse++;
+         if ( *parse != 'D' ) {
+            LOG( LOG_ERR, "Failed to parse 'del zero' value of GCTAG\n" );
+            errno = EINVAL;
+            return -1;
+         }
+         delzero = 1;
+      }
+   }
+   gctag->refcnt = (size_t) parseval;
+   gctag->eos = eos;
+   gctag->inprog = inprog;
+   gctag->delzero = delzero;
+   return 0;
 }
 
 /**

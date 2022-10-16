@@ -281,7 +281,7 @@ typedef struct gctag_struct {
  * @param const char* gctagstr : Reference to the string to be parsed
  * @return int : Zero on success, or -1 on failure
  */
-int gctag_initstr( GCTAG* gctag, const char* gctagstr );
+int gctag_initstr( GCTAG* gctag, char* gctagstr );
 
 /**
  * Populate a string based on the provided GCTAG
