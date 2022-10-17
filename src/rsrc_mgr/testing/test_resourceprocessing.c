@@ -68,6 +68,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <unistd.h>
 #include <stdio.h>
 #include <ftw.h>
+#include <sys/time.h>
 
 
 // WARNING: error-prone and ugly method of deleting dir trees, written for simplicity only
@@ -166,10 +167,15 @@ int main(int argc, char **argv)
    }
 
    // establish a data buffer to hold all data content
-   void* databuf = malloc( 1024 * 1024 * 10 ); // 10MiB
+   void* databuf = malloc( 1024 * 1024 * 10 * sizeof(char) ); // 10MiB
    if ( databuf == NULL ) {
       printf( "Failed to allocate 10MiB data buffer\n" );
       return -1;
+   }
+   int tmpcnt = 0;
+   for ( ; tmpcnt < (1024 * 1024 * 10); tmpcnt++ ) {
+      // populate databuf
+      *((char*)databuf + tmpcnt) = (char)tmpcnt;
    }
 
    // create a new stream
@@ -178,7 +184,6 @@ int main(int argc, char **argv)
       printf( "create failure for 'file1' of no-pack\n" );
       return -1;
    }
-   bzero( databuf, 1024 );
    if ( datastream_write( &(stream), databuf, 1024 ) != 1024 ) {
       printf( "write failure for 'file1' of no-pack\n" );
       return -1;
@@ -260,7 +265,6 @@ int main(int argc, char **argv)
       printf( "unexpected curfile for 'file3' of no-pack: %zu\n", stream->curfile );
       return -1;
    }
-   bzero( databuf, 1024 * 1024 * 2 ); // zero out 2MiB
    if ( datastream_write( &(stream), databuf, 1024 * 1024 * 2 ) != (1024 * 1024 * 2) ) {
       printf( "write failure for 'file3' of no-pack\n" );
       return -1;
@@ -309,6 +313,33 @@ int main(int argc, char **argv)
       return -1;
    }
 
+
+   // walk the produced datastream
+   struct timeval currenttime;
+   if ( gettimeofday( &currenttime, NULL ) ) {
+      printf( "failed to get current time for first walk\n" );
+      return -1;
+   }
+   thresholds thresh = { // set all thresholds to 2min in the future
+      .gcthreshold = currenttime.tv_sec + 120,
+      .repackthreshold = currenttime.tv_sec + 120,
+      .rebuildthreshold = currenttime.tv_sec + 120,
+      .cleanupthreshold = currenttime.tv_sec + 120
+   };
+   streamwalker walker = process_openstreamwalker( pos.ns, rpath, thresh, NULL );
+   if ( walker == NULL ) {
+      printf( "failed to open streamwalker for \"%s\"\n", rpath );
+      return -1;
+   }
+   opinfo* gcops = NULL;
+   opinfo* repackops = NULL;
+   opinfo* rebuildops = NULL;
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+      printf( "unexpected result of first iteration from \"%s\"\n", rpath );
+      return -1;
+   }
+
+
    // read back the written files
    // file1
    if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
@@ -316,7 +347,7 @@ int main(int argc, char **argv)
       return -1;
    }
    char zeroarray[1048576] = {0}; // all zero 1MiB buffer
-   ssize_t iores = datastream_read( &(stream), databuf, 1048576 );
+   ssize_t iores = datastream_read( &(stream), &(zeroarray), 1048576 );
    if ( iores != 1024 ) {
       printf( "unexpected read res for 'file1' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -330,7 +361,7 @@ int main(int argc, char **argv)
       printf( "failed to open 'file2' of no-pack for read\n" );
       return -1;
    }
-   iores = datastream_read( &(stream), databuf, 1048576 );
+   iores = datastream_read( &(stream), &(zeroarray), 1048576 );
    if ( iores != 100 ) {
       printf( "unexpected read res for 'file2' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -348,7 +379,7 @@ int main(int argc, char **argv)
       printf( "failed to open 'file3' of no-pack for read\n" );
       return -1;
    }
-   iores = datastream_read( &(stream), databuf, 1048576 );
+   iores = datastream_read( &(stream), &(zeroarray), 1048576 );
    if ( iores != 1048576 ) {
       printf( "unexpected res for read1 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -357,7 +388,7 @@ int main(int argc, char **argv)
       printf( "unexpected content of read1 for 'file3' of no-pack\n" );
       return -1;
    }
-   iores = datastream_read( &(stream), databuf, 1048576 );
+   iores = datastream_read( &(stream), &(zeroarray), 1048576 );
    if ( iores != 1048576 ) {
       printf( "unexpected res for read2 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
@@ -366,7 +397,7 @@ int main(int argc, char **argv)
       printf( "unexpected content of read2 from 'file3' of no-pack\n" );
       return -1;
    }
-   iores = datastream_read( &(stream), databuf, 1048576 );
+   iores = datastream_read( &(stream), &(zeroarray), 1048576 );
    if ( iores ) {
       printf( "unexpected res for read3 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;

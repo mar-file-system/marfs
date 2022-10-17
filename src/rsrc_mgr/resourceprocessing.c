@@ -102,7 +102,6 @@ typedef struct streamwalker_report_struct {
    // repack info
    size_t rpckfiles;  // count of files repacked
    size_t rpckbytes;  // count of bytes repacked
-   size_t freedobjs;  // count of objects now elligible for deletion
    // rebuild info
    size_t rbldobjs;   // count of rebuilt objects
    size_t rbldbytes;  // count of rebuilt bytes
@@ -1119,9 +1118,12 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
                return NULL;
             }
             // impossible to have an existing op; populate new op
+            optgt->count = 1;
             delref_info* delrefinf = optgt->extendedinfo;
             delrefinf->prev_active_index = walker->activeindex;
             delrefinf->eos = 1;
+            walker->report.delfiles++;
+            walker->report.delstreams++;
          }
          // potentially generate object GC ops, only if we haven't already
          if ( endobj != walker->objno  &&  !(walker->gctag.delzero) ) {
@@ -1294,6 +1296,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                extinf->prev_active_index = walker->activeindex;
                extinf->eos = walker->gctag.eos;
             }
+            walker->report.delfiles += walker->gctag.refcnt;
             // clear the 'inprogress' state, just to make sure we never repeat this process
             walker->gctag.inprog = 0;
          }
@@ -1470,10 +1473,12 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             }
             else {
                // populate new op
+               optgt->count = 1;
                delref_info* delrefinf = optgt->extendedinfo;
                delrefinf->prev_active_index = walker->activeindex;
                delrefinf->eos = eos;
             }
+            walker->report.delfiles++;
             if ( endobj != walker->objno ) {
                // potentially generate a GC op for the first obj referenced by this file
                FTAG tmptag = walker->ftag;
