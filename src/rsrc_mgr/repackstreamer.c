@@ -58,7 +58,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 
+#include "datastream/datastream.h"
 
+#include <stdlib.h>
+#include <errno.h>
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
@@ -116,7 +119,7 @@ DATASTREAM* repackstreamer_getstream( REPACKSTREAMER repackst ) {
    if ( repackst == NULL ) {
       LOG( LOG_ERR, "Received a NULL repackstreamer ref\n" );
       errno = EINVAL;
-      return NULL
+      return NULL;
    }
    // acquire struct lock
    if ( pthread_mutex_lock( &(repackst->lock) ) ) {
@@ -168,7 +171,7 @@ int repackstreamer_returnstream( REPACKSTREAMER repackst, DATASTREAM* stream ) {
    if ( repackst == NULL ) {
       LOG( LOG_ERR, "Received a NULL repackstreamer ref\n" );
       errno = EINVAL;
-      return -1
+      return -1;
    }
    if ( stream == NULL ) {
       LOG( LOG_ERR, "Received a NULL stream ref\n" );
@@ -206,7 +209,7 @@ int repackstreamer_complete( REPACKSTREAMER repackst ) {
    if ( repackst == NULL ) {
       LOG( LOG_ERR, "Received a NULL repackstreamer ref\n" );
       errno = EINVAL;
-      return -1
+      return -1;
    }
    // acquire struct lock
    if ( pthread_mutex_lock( &(repackst->lock) ) ) {
@@ -246,7 +249,7 @@ int repackstreamer_abort( REPACKSTREAMER repackst ) {
    if ( repackst == NULL ) {
       LOG( LOG_ERR, "Received a NULL repackstreamer ref\n" );
       errno = EINVAL;
-      return -1
+      return -1;
    }
    // don't bother acquiring the lock
    // iterate over all streams

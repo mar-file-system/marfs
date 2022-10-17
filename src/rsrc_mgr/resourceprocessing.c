@@ -58,6 +58,21 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
 
+#include "marfs_auto_config.h"
+#ifdef DEBUG_RM
+#define DEBUG DEBUG_RM
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
+#endif
+#define LOG_PREFIX "resourceprocessing"
+#include <logging.h>
+
+#include "repackstreamer.c"
+#include "resourcelog.h"
+
+#include <dirent.h>
+#include <string.h>
+
 typedef struct threshold_struct {
    time_t gcthreshold;      // files newer than this will not be GCd
                             //    Recommendation -- this should be fairly old ( # of days ago )
@@ -72,15 +87,6 @@ typedef struct threshold_struct {
    // NOTE -- setting any of these values to zero will cause the corresponding operations to be skipped
 } thresholds;
 
-typedef struct gctag_struct {
-   size_t refcnt;
-   char eos;
-   char inprog;
-   char delzero;
-} GCTAG;
-
-#define GCTAG_NAME "GC-MODIFIED"
-
 typedef struct streamwalker_report_struct {
    // quota info
    size_t fileusage;  // count of active files
@@ -94,8 +100,8 @@ typedef struct streamwalker_report_struct {
    size_t delstreams; // count of completely deleted datastreams
    size_t volfiles;   // count of 'volatile' files ( those deleted too recently for gc )
    // repack info
-   size_t rpkfiles;   // count of files repacked
-   size_t rpkbytes;   // count of bytes repacked
+   size_t rpckfiles;  // count of files repacked
+   size_t rpckbytes;  // count of bytes repacked
    size_t freedobjs;  // count of objects now elligible for deletion
    // rebuild info
    size_t rbldobjs;   // count of rebuilt objects
@@ -112,8 +118,8 @@ typedef struct streamwalker_struct {
    // report info
    streamwalker_report report; // running totals for encountered stream elements
    // iteration info
-   size_t      fileindex; // current file position in the datastream
-   size_t      objindex;  // current object position in the datastream
+   size_t      fileno;    // current file position in the datastream
+   size_t      objno;     // current object position in the datastream
    HASH_TABLE  reftable;  // NS reference position table to be used for stream iteration
    struct stat stval;     // stat value of the most recently encountered file
    FTAG        ftag;      // FTAG value of the most recently checked file ( not necessarily previous )
@@ -146,7 +152,7 @@ typedef struct streamwalker_struct {
 //   -------------   INTERNAL FUNCTIONS    -------------
 
 
-void process_deleteobj( marfs_postion* pos, opinfo* op ) {
+void process_deleteobj( marfs_position* pos, opinfo* op ) {
    marfs_ds* ds = &(pos->ns->prepo->datascheme);
    size_t countval = 0;
    while ( countval < op->count ) {
@@ -183,7 +189,7 @@ void process_deleteobj( marfs_postion* pos, opinfo* op ) {
 }
 
 
-void process_deleteref( const marfs_postion* pos, opinfo* op, HASH_TABLE reftable ) {
+void process_deleteref( const marfs_position* pos, opinfo* op ) {
    // verify we have extendedinfo
    delref_info* delrefinf = (delref_info*)op->extendedinfo;
    if ( delrefinf == NULL ) {
@@ -215,12 +221,32 @@ void process_deleteref( const marfs_postion* pos, opinfo* op, HASH_TABLE reftabl
    }
    if ( gctag_tostr( &(gctag), gctagstr, gctaglen+1 ) != gctaglen ) {
       LOG( LOG_ERR, "GCTAG has an inconsistent length for stream \"%s\"\n", op->ftag.streamid );
-      op->errval = (errno) ? errno : ENOTRECOVERABLE;
       free( gctagstr );
+      op->errval = (errno) ? errno : ENOTRECOVERABLE;
       return;
    }
+   // identify the appropriate reference table to be used for path determination
+   HASH_TABLE reftable = NULL;
+   if ( op->ftag.refbreadth == pos->ns->prepo->metascheme.refbreadth  &&
+        op->ftag.refdepth == pos->ns->prepo->metascheme.refdepth  &&
+        op->ftag.refdigits == pos->ns->prepo->metascheme.refdigits ) {
+      // we can safely use the default reference table
+      reftable = pos->ns->prepo->metascheme.reftable;
+   }
+   else {
+      // we must generate a fresh ref table, based on FTAG values
+      reftable = config_genreftable( NULL, NULL, op->ftag.refbreadth, op->ftag.refdepth, op->ftag.refdigits );
+      if ( reftable == NULL ) {
+         LOG( LOG_ERR, "Failed to generate reference table with values ( breadth=%d, depth=%d, digits=%d )\n",
+              op->ftag.refbreadth, op->ftag.refdepth, op->ftag.refdigits );
+         free( gctagstr );
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         return;
+      }
+   }
+   // identify the reference path of our initial target
    FTAG tmptag = op->ftag;
-   tmptag.fileno = delrefinf->active_index;
+   tmptag.fileno = delrefinf->prev_active_index;
    char* reftgt = datastream_genrpath( &(tmptag), reftable );
    if ( reftgt == NULL ) {
       LOG( LOG_ERR, "Failed to identify reference path of active fileno %zu of stream \"%s\"\n", tmptag.fileno, op->ftag.streamid );
@@ -289,7 +315,7 @@ void process_deleteref( const marfs_postion* pos, opinfo* op, HASH_TABLE reftabl
       free( reftgt );
       return;
    }
-   char* gctagstr = malloc( sizeof(char) * (gctaglen + 1) );
+   gctagstr = malloc( sizeof(char) * (gctaglen + 1) );
    if ( gctagstr == NULL ) {
       LOG( LOG_ERR, "Failed to allocate a GCTAG string for stream \"%s\"\n", op->ftag.streamid );
       op->errval = (errno) ? errno : ENOTRECOVERABLE;
@@ -327,7 +353,7 @@ void process_deleteref( const marfs_postion* pos, opinfo* op, HASH_TABLE reftabl
 }
 
 
-void process_rebuild( const marfs_postion* pos, opinfo* op ) {
+void process_rebuild( const marfs_position* pos, opinfo* op ) {
    // quick refs
    rebuild_info* rebinf = (rebuild_info*)op->extendedinfo;
    marfs_ds* ds = &(pos->ns->prepo->datascheme);
@@ -346,7 +372,7 @@ void process_rebuild( const marfs_postion* pos, opinfo* op ) {
          return;
       }
       // open an object handle
-      ne_handle obj = ne_open( ds->nectxt, objname, location, op->ftag.erasure, NE_REBUILD );
+      ne_handle obj = ne_open( ds->nectxt, objname, location, op->ftag.protection, NE_REBUILD );
       if ( obj == NULL ) {
          LOG( LOG_ERR, "Failed to open rebuild handle for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
@@ -355,7 +381,7 @@ void process_rebuild( const marfs_postion* pos, opinfo* op ) {
       }
       free( objname );
       // if we have an rtag value, seed it in prior to rebuilding
-      if ( rebinf  &&  rebinf->rtag ) {
+      if ( rebinf  &&  rebinf->rtag.meta_status  &&  rebinf->rtag.data_status ) {
          if ( ne_seed_status( obj, &(rebinf->rtag) ) ) {
             LOG( LOG_WARNING, "Failed to seed rtag status into handle for object %zu of stream \"%s\"\n",
                               tmptag.objno, tmptag.streamid );
@@ -365,7 +391,7 @@ void process_rebuild( const marfs_postion* pos, opinfo* op ) {
       char iteration = 0;
       while ( iteration < 2 ) {
          LOG( LOG_INFO, "Rebuilding object %zu of stream \"%s\" (attempt %d)\n",
-                        tmptag.objno, tmptag.streamid, (int)attempt + 1 );
+                        tmptag.objno, tmptag.streamid, (int)iteration + 1 );
          if ( ne_rebuild( obj, NULL, NULL ) < 0 ) {
             LOG( LOG_ERR, "Failed to rebuild object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
@@ -396,18 +422,18 @@ void process_rebuild( const marfs_postion* pos, opinfo* op ) {
       countval++;
    }
    // potentially cleanup the rtag
-   if ( rebinf  &&  rebinf->rtag ) {
+   if ( rebinf  &&  rebinf->rtag.meta_status  &&  rebinf->rtag.data_status ) {
       // generate the RTAG name
       char* rtagstr = rtag_getname( op->ftag.objno );
       if ( rtagstr == NULL ) {
-         LOG( LOG_ERR, "Failed to identify the name of object %zu RTAG in stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+         LOG( LOG_ERR, "Failed to identify the name of object %zu RTAG in stream \"%s\"\n", op->ftag.objno, op->ftag.streamid );
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
          return;
       }
       // open a file handle for the marker
       if ( rebinf->markerpath == NULL ) {
          LOG( LOG_ERR, "No marker path available by which to remove RTAG of object %zu in stream \"%s\"\n",
-                       tmptag.objno, tmptag.streamid );
+                       op->ftag.objno, op->ftag.streamid );
          op->errval = EINVAL;
          free( rtagstr );
          return;
@@ -438,7 +464,7 @@ void process_rebuild( const marfs_postion* pos, opinfo* op ) {
    // potentially cleanup the rebuild marker
    if ( rebinf  &&  rebinf->markerpath ) {
       // unlink the rebuild marker
-      if ( ms->mdal->unlinkref( rebinf->markerpath ) ) {
+      if ( ms->mdal->unlinkref( pos->ctxt, rebinf->markerpath ) ) {
          LOG( LOG_ERR, "Failed to unlink marker file \"%s\"\n", rebinf->markerpath );
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
          return;
@@ -449,7 +475,7 @@ void process_rebuild( const marfs_postion* pos, opinfo* op ) {
 }
 
 
-void process_repack( const marfs_postion* pos, opinfo* op, REPACKSTREAMER rpckstr ) {
+void process_repack( const marfs_position* pos, opinfo* op, REPACKSTREAMER rpckstr ) {
 }
 
 
@@ -480,12 +506,12 @@ void destroystreamwalker( streamwalker walker ) {
 }
 
 int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker, char* filestate ) {
-   MDAL mdal = walker->ns->prepo->metascheme.mdal;
+   MDAL mdal = walker->pos.ns->prepo->metascheme.mdal;
    if ( getxattrs ) {
       // open the target file
       int olderrno = errno;
       errno = 0;
-      MDAL_FHANDLE handle = mdal->openref( ctxt, reftgt, O_RDONLY, 0 );
+      MDAL_FHANDLE handle = mdal->openref( walker->pos.ctxt, reftgt, O_RDONLY, 0 );
       if ( handle == NULL ) {
          if ( errno = ENOENT ) {
             LOG( LOG_INFO, "Reference file does not exist: \"%s\"\n", reftgt );
@@ -498,7 +524,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       // attempt to retrieve the GC tag
       // NOTE -- it is ESSENTIAL to do this prior to the FTAG, so that ftagstr always contains the actual FTAG string
       errno = 0;
-      getres = mdal->fgetxattr( handle, 1, GCTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 );
+      ssize_t getres = mdal->fgetxattr( handle, 1, GCTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 );
       // check for overflow
       if ( getres >= walker->ftagstralloc ) {
          // increase our allocated string length
@@ -538,11 +564,11 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
          // no GCTAG, so zero out values
          walker->gctag.refcnt = 0;
          walker->gctag.eos = 0;
-         walker->gctag.inprogress = 0;
+         walker->gctag.inprog = 0;
          walker->gctag.delzero = 0;
       }
       // retrieve FTAG of the current file
-      ssize_t getres = mdal->fgetxattr( handle, 1, FTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 );
+      getres = mdal->fgetxattr( handle, 1, FTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 );
       // check for overflow
       if ( getres >= walker->ftagstralloc ) {
          // double our allocated string length
@@ -569,7 +595,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
          mdal->close( handle );
          return -1;
       }
-      *(ftagstr + getres) = '\0'; // ensure our string is NULL terminated
+      *(walker->ftagstr + getres) = '\0'; // ensure our string is NULL terminated
       // potentially clear old ftag values
       if ( walker->ftag.ctag ) { free( walker->ftag.ctag ); }
       if ( walker->ftag.streamid ) { free( walker->ftag.streamid ); }
@@ -598,13 +624,13 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       //         and tag those objects in advance.  As such, the expectation is that no RTAG values will exist.  
       //         If they do, they will be rebuilt seperately, via their rebuild marker file.
       // populate state value based on link count
-      *filestate = ( walker->stval->st_nlink > 1 ) ? 2 : 1;
+      *filestate = ( walker->stval.st_nlink > 1 ) ? 2 : 1;
       return 0;
    }
    int olderrno = errno;
    errno = 0;
    // stat the file by path
-   if ( mdal->statref( walker->ctxt, reftgt, walker->stval ) ) {
+   if ( mdal->statref( walker->pos.ctxt, reftgt, &(walker->stval) ) ) {
       if ( errno = ENOENT ) {
          LOG( LOG_INFO, "Reference file does not exist: \"%s\"\n", reftgt );
          *filestate = 0;
@@ -621,7 +647,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
    walker->gctag.delzero = 0;
    walker->gctag.inprog = 0;
    // populate state value based on link count
-   *filestate = ( walker->stval->st_nlink > 1 ) ? 2 : 1;
+   *filestate = ( walker->stval.st_nlink > 1 ) ? 2 : 1;
    return 0;
 }
 
@@ -679,30 +705,6 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
          return -1;
       }
    }
-   size_t ftagstrlen = ftag_tostr( &(newop->ftag), NULL, 0 );
-   if ( ftagstrlen < 1 ) {
-      LOG( LOG_ERR, "Failed to identify length of FTAG string for operation info\n" );
-      free( newop->ftag.streamid );
-      free( newop->ftag.ctag );
-      free( newop );
-      return -1;
-   }
-   newop->ftagstr = malloc( sizeof(char) * (ftagstrlen + 1) );
-   if ( newop->ftagstr == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate FTAG string for operation info\n" );
-      free( newop->ftag.streamid );
-      free( newop->ftag.ctag );
-      free( newop );
-      return -1;
-   }
-   if ( ftag_tostr( &(newop->ftag), newop->ftagstr, ftagstrlen + 1 ) != ftagstrlen ) {
-      LOG( LOG_ERR, "Inconsistent length of FTAG string for operation info\n" );
-      free( newop->ftagstr );
-      free( newop->ftag.streamid );
-      free( newop->ftag.ctag );
-      free( newop );
-      return -1;
-   }
    // potentially allocate extended info
    char needext = 0;
    switch( type ) {
@@ -724,7 +726,6 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
    // check for allocation failure
    if ( needext &&  newop->extendedinfo == NULL ) {
       LOG( LOG_ERR, "Failed to allocate operation extended info\n" );
-      free( newop->ftagstr );
       free( newop->ftag.streamid );
       free( newop->ftag.ctag );
       free( newop );
@@ -799,13 +800,13 @@ int process_refdir( marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, c
    struct dirent* dent;
    int olderrno = errno;
    errno = 0;
+   char type = 9;
    while ( (dent = mdal->scan( refdir )) != NULL ) {
       // skip any 'hidden' files or default ( '.'/'..' ) entries
       if ( *(dent->d_name) == '.' ) {
          continue;
       }
       // identify the entry type
-      char type;
       ssize_t parseval = ftag_metainfo( dent->d_name, &type );
       if ( parseval < 0 ) {
          LOG( LOG_WARNING, "Failed to identify entry type: \"%s\"\n", dent->d_name );
@@ -834,17 +835,17 @@ int process_refdir( marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, c
       return 0;
    }
    // populate the reftgt string
-   int strlen = snprintf( NULL, 0, "%s/%s", refdirpath, dent->d_name );
-   if ( strlen < 1 ) {
+   int rpathlen = snprintf( NULL, 0, "%s/%s", refdirpath, dent->d_name );
+   if ( rpathlen < 1 ) {
       LOG( LOG_ERR, "Failed to identify length of ref path for \"%s\"\n", dent->d_name );
       return -1;
    }
-   *reftgt = malloc( sizeof(char) * (strlen + 1) );
+   *reftgt = malloc( sizeof(char) * (rpathlen + 1) );
    if ( reftgt == NULL ) {
       LOG( LOG_ERR, "Failed to allocate space for ref path of \"%s\"\n", dent->d_name );
       return -1;
    }
-   if ( snprintf( *reftgt, strlen + 1, "%s/%s", refdirpath, dent->d_name ) != strlen ) {
+   if ( snprintf( *reftgt, rpathlen + 1, "%s/%s", refdirpath, dent->d_name ) != rpathlen ) {
       LOG( LOG_ERR, "Inconsistent length for ref path of \"%s\"\n", dent->d_name );
       free( *reftgt );
       *reftgt = NULL;
@@ -975,7 +976,7 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, size_t obj
       }
       *(rtagstr + rtaglen) = '\0'; // ensure a NULL-terminated value
       // populate RTAG entry
-      if ( rtag_initstr( &(rinfo->rtag), op->ftag.erasure.N + op->ftag.erasure.E, rtagstr ) ) {
+      if ( rtag_initstr( &(rinfo->rtag), op->ftag.protection.N + op->ftag.protection.E, rtagstr ) ) {
          LOG( LOG_ERR, "Failed to parse \"%s\" value of marker file \"%s\"\n", rtagname, markerpath );
          free( rtagstr );
          free( rtagname );
@@ -987,9 +988,18 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, size_t obj
       free( rtagstr );
    }
    free( rtagname );
+   // duplicate marker path
+   rinfo->markerpath = strdup( markerpath );
+   if ( rinfo->markerpath == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate rebuild marker path \"%s\"\n", markerpath );
+      free( rinfo );
+      free( op );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
    // close our handle
    if ( ms->mdal->close( mhandle ) ) {
-      LOG( LOG_ERR, "Failed to close handle for marker file \"%s\"\n", rebinf->markerpath );
+      LOG( LOG_ERR, "Failed to close handle for marker file \"%s\"\n", markerpath );
       free( rinfo );
       free( op );
       return NULL;
@@ -1004,17 +1014,12 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
       errno = EINVAL;
       return NULL;
    }
-   if ( ctxt == NULL ) {
-      LOG( LOG_ERR, "Received a NULL ctxt\n" );
-      errno = EINVAL;
-      return NULL;
-   }
    if ( reftgt == NULL ) {
       LOG( LOG_ERR, "Received a NULL reference tgt path\n" );
       errno = EINVAL;
       return NULL;
    }
-   if ( thresh.rebuildthresh  &&  rebuildloc == NULL ) {
+   if ( thresh.rebuildthreshold  &&  rebuildloc == NULL ) {
       LOG( LOG_ERR, "Rebuild threshold is set, but no rebuild location was specified\n" );
       errno = EINVAL;
       return NULL;
@@ -1030,7 +1035,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
    walker->pos.depth = 0;
    walker->pos.ctxt = NULL;
    if ( config_fortifyposition( &(walker->pos) ) ) {
-      LOG( LOG_ERR, "Failed to fortify marfs position for NS \"%s\"\n", ns->nsidstr );
+      LOG( LOG_ERR, "Failed to fortify marfs position for NS \"%s\"\n", ns->idstr );
       free( walker );
       return NULL;
    }
@@ -1042,8 +1047,8 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
    // zero out report info
    bzero( &(walker->report), sizeof( streamwalker_report ) );
    // initialize iteration info
-   walker->fileindex = 0;
-   walker->objindex = 0;
+   walker->fileno = 0;
+   walker->objno = 0;
    // populate a bunch of placeholder info for the remainder
    walker->reftable = NULL;
    bzero( &(walker->stval), sizeof( struct stat ) );
@@ -1083,14 +1088,14 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
    walker->headerlen = recovery_headertostr(&(header), NULL, 0);
    // calculate the ending position of this file
    size_t dataperobj = ( walker->ftag.objsize ) ?
-                           walker->ftag.objsize - walker->recovheaderlen : 0; // data chunk size for this stream
+                           walker->ftag.objsize - walker->headerlen : 0; // data chunk size for this stream
    size_t endobj = walker->ftag.objno; // update ending object index
    if ( dataperobj ) {
       // calculate the final object referenced by this file
-      size_t finobjbounds = (walker->ftag->bytes + walker->ftag->offset - walker->headerlen) / dataperobj;
-      if ( (walker->ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+      size_t finobjbounds = (walker->ftag.bytes + walker->ftag.offset - walker->headerlen) / dataperobj;
+      if ( (walker->ftag.state & FTAG_DATASTATE) >= FTAG_FIN  &&
             finobjbounds  &&
-            (walker->ftag->bytes + walker->ftag->offset - headerlen) % dataperobj == 0 ) {
+            (walker->ftag.bytes + walker->ftag.offset - walker->headerlen) % dataperobj == 0 ) {
          finobjbounds--;
       }
       endobj += finobjbounds;
@@ -1103,7 +1108,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
    if ( walker->gctag.eos ) { eos = 1; }
    if ( filestate == 1 ) {
       // file is inactive
-      if ( walker->gcthresh  &&  walker->stval.st_ctime < walker->gcthresh  &&  haveftag ) {
+      if ( walker->gcthresh  &&  walker->stval.st_ctime < walker->gcthresh ) {
          // this file is elligible for GC
          if ( eos ) {
             // only GC this initial ref if it is the last one remaining
@@ -1115,7 +1120,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
             }
             // impossible to have an existing op; populate new op
             delref_info* delrefinf = optgt->extendedinfo;
-            delrefinf->prev_active_index = walker->prevactive;
+            delrefinf->prev_active_index = walker->activeindex;
             delrefinf->eos = 1;
          }
          // potentially generate object GC ops, only if we haven't already
@@ -1123,7 +1128,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
             // generate a GC op for the first obj referenced by this file
             FTAG tmptag = walker->ftag;
             tmptag.objno = walker->objno;
-            optgt = NULL;
+            opinfo* optgt = NULL;
             if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
                LOG( LOG_ERR, "Failed to identify operation target for deletion of initial spanned obj %zu\n", tmptag.objno );
                destroystreamwalker( walker );
@@ -1139,7 +1144,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
             // update operation
             optgt->count++;
             // update our record
-            walker->record.delobjs++;
+            walker->report.delobjs++;
             // potentially generate GC ops for objects spanned by this file
             tmptag.objno++;
             while ( tmptag.objno < endobj ) {
@@ -1160,7 +1165,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
                // update operation
                optgt->count++;
                // update our record
-               walker->record.delobjs++;
+               walker->report.delobjs++;
                // iterate to the next obj
                tmptag.objno++;
             }
@@ -1195,7 +1200,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
       walker->activebytes += walker->ftag.bytes;
    }
    // update walker state to reflect new target
-   walker->objindex = endobj;
+   walker->objno = endobj;
    // identify the appropriate reference table for stream iteration
    if ( walker->ftag.refbreadth == ns->prepo->metascheme.refbreadth  &&
         walker->ftag.refdepth == ns->prepo->metascheme.refdepth  &&
@@ -1247,23 +1252,21 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       return -1;
    }
    // set up some initial values
-   marfs_ms* ms = &(walker->ns->prepo->metascheme);
-   marfs_ds* ds = &(walker->ns->prepo->datascheme);
-   MDAL mdal = ms->mdal;
-   size_t objfiles = walker->ns->prepo->datascheme.objfiles; // current repo-defined packing limit
-   size_t objsize = walker->ns->prepo->datascheme.objsize;   // current repo-defined chunking limit
-   size_t dataperobj = ( walker->ftag.objsize ) ? walker->ftag.objsize - walker->recovheaderlen : 0; // data chunk size for this stream
-   size_t repackbytethresh = (objsize - walker->recovheaderlen) / 2;
+   marfs_ds* ds = &(walker->pos.ns->prepo->datascheme);
+   size_t objsize = walker->pos.ns->prepo->datascheme.objsize;   // current repo-defined chunking limit
+   size_t dataperobj = ( walker->ftag.objsize ) ? walker->ftag.objsize - walker->headerlen : 0; // data chunk size for this stream
+   size_t repackbytethresh = (objsize - walker->headerlen) / 2;
    char pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0 ) ? 0 : 1;
+   char dispatchedops = 0;
    // iterate over all reference targets
-   while ( ftag.endofstream == 0  &&  (ftag.state & FTAG_DATASTATE) >= FTAG_FIN ) {
+   while ( walker->ftag.endofstream == 0  &&  (walker->ftag.state & FTAG_DATASTATE) >= FTAG_FIN ) {
       // calculate offset of next file tgt
       size_t tgtoffset = 1;
       if ( walker->gctag.refcnt ) {
          // handle any existing gctag value
          tgtoffset += walker->gctag.refcnt; // skip over count indicated by the tag
-         if ( walker->gctag.inprogress  &&  walker->gcthresh ) {
-            LOG( LOG_INFO, "Cleaning up in-progress deletion of %zu reference files from previous instance\n", gctag.refcnt );
+         if ( walker->gctag.inprog  &&  walker->gcthresh ) {
+            LOG( LOG_INFO, "Cleaning up in-progress deletion of %zu reference files from previous instance\n", walker->gctag.refcnt );
             opinfo* optgt = NULL;
             walker->ftag.fileno++; // temporarily increase fileno, to match that of the subsequent ref deletion tgt
             if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
@@ -1280,22 +1283,22 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                   return -1;
                }
                // add the reference deletions to our existing operation
-               tgtop->count += gctag.refcnt;
-               delref_info* extinf = tgtop->extendedinfo;
-               if ( gctag.eos ) { extinf->eos = 1; }
+               optgt->count += walker->gctag.refcnt;
+               delref_info* extinf = optgt->extendedinfo;
+               if ( walker->gctag.eos ) { extinf->eos = 1; }
             }
             else {
                // populate newly created op
-               tgtop->count = gctag.refcnt;
-               delref_info* extinf = tgtop->extendedinfo;
+               optgt->count = walker->gctag.refcnt;
+               delref_info* extinf = optgt->extendedinfo;
                extinf->prev_active_index = walker->activeindex;
-               extinf->eos = gctag.eos;
+               extinf->eos = walker->gctag.eos;
             }
             // clear the 'inprogress' state, just to make sure we never repeat this process
-            gctag.inprogress = 0;
+            walker->gctag.inprog = 0;
          }
          // this could potentially indicate a premature EOS
-         if ( gctag.eos ) {
+         if ( walker->gctag.eos ) {
             LOG( LOG_INFO, "GC tag indicates EOS at fileno %zu\n", walker->fileno );
             break;
          }
@@ -1312,11 +1315,10 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       char filestate = -1;
       char haveftag = pullxattrs;
       if ( process_getfileinfo( reftgt, pullxattrs, walker, &(filestate) ) ) {
-         LOG( LOG_ERR, "Failed to get info for reference target: \"%s\"\n", walker->reftgt );
+         LOG( LOG_ERR, "Failed to get info for reference target: \"%s\"\n", reftgt );
          return -1;
       }
       pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0 ) ? 0 : 1; // return to default behavior
-      char dispatchedops = 0;
       if ( filestate == 0 ) {
          // file doesn't exist ( likely that we skipped a GCTAG on the previous file )
          // decrement to the previous index and make sure to check for xattrs
@@ -1353,7 +1355,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       char eos = 0;
       if ( haveftag ) {
          // check for innapropriate FTAG value
-         if ( walker->ftag.fileno != walker->fileno + tgtoffest ) {
+         if ( walker->ftag.fileno != walker->fileno + tgtoffset ) {
             LOG( LOG_ERR, "Invalid FTAG filenumber (%zu) on file %zu\n", walker->ftag.fileno, walker->fileno + tgtoffset );
             return -1;
          }
@@ -1363,10 +1365,10 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          // calculate final object referenced by this file
          if ( dataperobj ) {
             // calculate the final object referenced by this file
-            size_t finobjbounds = (walker->ftag->bytes + walker->ftag->offset - walker->recovheaderlen) / dataperobj;
-            if ( (walker->ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+            size_t finobjbounds = (walker->ftag.bytes + walker->ftag.offset - walker->headerlen) / dataperobj;
+            if ( (walker->ftag.state & FTAG_DATASTATE) >= FTAG_FIN  &&
                   finobjbounds  &&
-                  (walker->ftag->bytes + walker->ftag->offset - headerlen) % dataperobj == 0 ) {
+                  (walker->ftag.bytes + walker->ftag.offset - walker->headerlen) % dataperobj == 0 ) {
                finobjbounds--;
             }
             endobj += finobjbounds;
@@ -1376,7 +1378,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             // we may need to delete the previous object IF we are GCing AND no active refs existed for that obj
             //    AND it is not an already a deleted object0
             if ( walker->gcthresh  &&  walker->activefiles == 0  &&
-                 ( walker->objno != 0  ||  walker->gctag->delzero == 0 ) ) {
+                 ( walker->objno != 0  ||  walker->gctag.delzero == 0 ) ) {
                // need to prepend an object deletion operation
                opinfo* optgt = NULL;
                if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
@@ -1391,7 +1393,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                // update operation
                optgt->count++;
                // update our record
-               walker->record.delobjs++;
+               walker->report.delobjs++;
                if ( walker->objno == 0 ) {
                   // need to ensure we specifically note deletion of initial object
                   optgt = NULL;
@@ -1409,7 +1411,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                if ( walker->activebytes >= repackbytethresh ) {
                   // discard all ops
                   LOG( LOG_INFO, "Discarding repack ops due to excessive active bytes: %zu\n", walker->activebytes );
-                  statelog_freeopinfo( walker->rpckops );
+                  resourcelog_freeopinfo( walker->rpckops );
                }
                else {
                   // dispatch all ops
@@ -1421,7 +1423,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                walker->rpckops = NULL;
             }
             // possibly update rebuild ops
-            if ( walker->rebuildthresh  &&  walker->activefiles  &&  walker->stval.st_ctime < walker->rbldthresh ) {
+            if ( walker->rebuildthresh  &&  walker->activefiles  &&  walker->stval.st_ctime < walker->rebuildthresh ) {
                // check if object targets our rebuild location
                char* objname = NULL;
                ne_erasure erasure;
@@ -1431,9 +1433,9 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                   return -1;
                }
                // check for location match
-               if ( (walker->rbldloc.pod < 0  ||  walker->rbldloc.pod == location.pod )  &&
-                    (walker->rbldloc.cap < 0  ||  walker->rbldloc.cap == location.cap )  &&
-                    (walker->rbldloc.scatter < 0  ||  walker->rbldloc.scatter == location.scatter ) ) {
+               if ( (walker->rebuildloc.pod < 0  ||  walker->rebuildloc.pod == location.pod )  &&
+                    (walker->rebuildloc.cap < 0  ||  walker->rebuildloc.cap == location.cap )  &&
+                    (walker->rebuildloc.scatter < 0  ||  walker->rebuildloc.scatter == location.scatter ) ) {
                   // TODO generate a rebuild op for this object
                }
                free( objname );
@@ -1459,9 +1461,9 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                optgt->count++;
                delref_info* delrefinf = optgt->extendedinfo;
                // sanity check
-               if ( delrefinf->prev_active_index != walker->prevactive ) {
+               if ( delrefinf->prev_active_index != walker->activeindex ) {
                   LOG( LOG_ERR, "Active delref op active index (%zu) does not match current val (%zu)\n",
-                                delrefinf->prev_active_index, walker->prevactive );
+                                delrefinf->prev_active_index, walker->activeindex );
                   return -1;
                }
                if ( delrefinf->eos == 0 ) { delrefinf->eos = eos; }
@@ -1469,7 +1471,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             else {
                // populate new op
                delref_info* delrefinf = optgt->extendedinfo;
-               delrefinf->prev_active_index = walker->prevactive;
+               delrefinf->prev_active_index = walker->activeindex;
                delrefinf->eos = eos;
             }
             if ( endobj != walker->objno ) {
@@ -1491,7 +1493,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                   // update operation
                   optgt->count++;
                   // update our record
-                  walker->record.delobjs++;
+                  walker->report.delobjs++;
                }
                // potentially generate GC ops for objects spanned by this file
                tmptag.objno++;
@@ -1511,7 +1513,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                   // update operation
                   optgt->count++;
                   // update our record
-                  walker->record.delobjs++;
+                  walker->report.delobjs++;
                   // iterate to the next obj
                   tmptag.objno++;
                }
@@ -1546,7 +1548,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          }
       }
       // update walker state to reflect new target
-      walker->fileno += tgtoffest;
+      walker->fileno += tgtoffset;
       walker->objno = endobj;
       // check for termination due to operation dispatch
       if ( dispatchedops ) {
@@ -1564,7 +1566,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       if ( walker->activebytes >= repackbytethresh ) {
          // discard all ops
          LOG( LOG_INFO, "Discarding repack ops due to excessive active bytes: %zu\n", walker->activebytes );
-         statelog_freeopinfo( walker->rpckops );
+         resourcelog_freeopinfo( walker->rpckops );
       }
       else {
          // record repack counts
@@ -1604,7 +1606,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
  *               NOTE -- This func will not return 'failure' unless a critical internal error occurs.
  *                       'Standard' operation errors will simply be reflected in the op struct itself.
  */
-int process_executeoperation( const marfs_position* pos, opinfo* op, RESOURCELOG* rlog, REPACKSTREAMER rpkstr ) {
+int process_executeoperation( marfs_position* pos, opinfo* op, RESOURCELOG* rlog, REPACKSTREAMER rpkstr ) {
    // check arguments
    if ( op == NULL ) {
       LOG( LOG_ERR, "Received a NULL operation value\n" );

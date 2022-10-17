@@ -115,18 +115,18 @@ int main(int argc, char **argv)
 
    // create required config root dirs
    errno = 0;
-   if ( mkdir( "./test_rmgr_topdir", S_IRWXU )  &&  errno != EEXIST ) {
-      printf( "failed to create \"./test_rmgr_topdir\"\n" );
+   if ( mkdir( "./test_rman_topdir", S_IRWXU )  &&  errno != EEXIST ) {
+      printf( "failed to create \"./test_rman_topdir\"\n" );
       return -1;
    }
    errno = 0;
-   if ( mkdir( "./test_rmgr_topdir/dal_root", S_IRWXU )  &&  errno != EEXIST ) {
-      printf( "failed to create \"./test_rmgr_topdir/dal_root\"\n" );
+   if ( mkdir( "./test_rman_topdir/dal_root", S_IRWXU )  &&  errno != EEXIST ) {
+      printf( "failed to create \"./test_rman_topdir/dal_root\"\n" );
       return -1;
    }
    errno = 0;
-   if ( mkdir( "./test_rmgr_topdir/mdal_root", S_IRWXU )  &&  errno != EEXIST ) {
-      printf( "failed to create \"./test_rmgr_topdir/mdal_root\"\n" );
+   if ( mkdir( "./test_rman_topdir/mdal_root", S_IRWXU )  &&  errno != EEXIST ) {
+      printf( "failed to create \"./test_rman_topdir/mdal_root\"\n" );
       return -1;
    }
    // initialize a fresh marfs config
@@ -142,7 +142,7 @@ int main(int argc, char **argv)
 
 
    // generate all parent paths of a new logfile
-   char* logpath = resourcelog_genlogpath( 1, "./test_rmgr_topdir", "test-resourcelog-iteration123456", config->rootns, 0 );
+   char* logpath = resourcelog_genlogpath( 1, "./test_rman_topdir", "test-resourcelog-iteration123456", config->rootns, 0 );
    if ( logpath == NULL ) {
       printf( "failed to generate inital logpath\n" );
       return -1;
@@ -297,7 +297,7 @@ int main(int argc, char **argv)
    }
 
    // generate a new logfile path
-   char* wlogpath = resourcelog_genlogpath( 1, "./test_rmgr_topdir", "test-resourcelog-iteration654321", config->rootns, 10 );
+   char* wlogpath = resourcelog_genlogpath( 1, "./test_rman_topdir", "test-resourcelog-iteration654321", config->rootns, 10 );
    if ( wlogpath == NULL ) {
       printf( "failed to generate write logpath\n" );
       return -1;
@@ -525,7 +525,7 @@ int main(int argc, char **argv)
    }
    free( wlogpath );
    // open a new output modify log
-   wlogpath = resourcelog_genlogpath( 1, "./test_rmgr_topdir", "test-resourcelog-iteration654321", config->rootns, 1 );
+   wlogpath = resourcelog_genlogpath( 1, "./test_rman_topdir", "test-resourcelog-iteration654321", config->rootns, 1 );
    if ( wlogpath == NULL ) {
       printf( "failed to generate second modify logfile path\n" );
       return -1;
@@ -647,11 +647,11 @@ int main(int argc, char **argv)
    }
 
    // cleanup test trees
-   if ( deletefstree( "./test_rmgr_topdir" ) ) {
+   if ( deletefstree( "./test_rman_topdir" ) ) {
       printf( "Failed to delete contents of test tree\n" );
       return -1;
    }
-   rmdir( "./test_rmgr_topdir" );
+   rmdir( "./test_rman_topdir" );
 
    return 0;
 }

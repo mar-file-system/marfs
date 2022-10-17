@@ -99,7 +99,7 @@
          <!-- DAL Definition -->
          <DAL type="posix">
             <dir_template>pod{p}/cap{c}/scat{s}/block{b}/</dir_template>
-            <sec_root>./test_rmgr_topdir/dal_root</sec_root>
+            <sec_root>./test_rman_topdir/dal_root</sec_root>
          </DAL>
 
       </data>
@@ -130,7 +130,7 @@
 
          <!-- MDAL Definition -->
          <MDAL type="posix">
-            <ns_root>./test_rmgr_topdir/mdal_root</ns_root>
+            <ns_root>./test_rman_topdir/mdal_root</ns_root>
          </MDAL>
 
       </meta>
