@@ -382,9 +382,9 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
    }
    // check if we're exiting the active Ghost, by traversing up to its parent NS
    //    NOTE -- The parent of the inital ghost may be the target of that ghost, making this check more complex
-   if ( ascending  &&  curns->ghtarget == curns->ghsource->ghtarget  &&  curns->ghsource->pnamespace == nextns ) {
+   if ( ascending  &&  nextns == curns->ghsource->ghtarget->pnamespace ) {
       // we are exiting the ghost dimension!
-      pos->ns = nextns;
+      pos->ns = curns->ghsource->pnamespace;
       // GhostNS contexts must always be destroyed
       if ( pos->ctxt  &&  curns->ghtarget->prepo->metascheme.mdal->destroyctxt( pos->ctxt ) ) {
          // nothing to do but complain
@@ -408,21 +408,21 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
    }
    // Target the new NS
    curns->ghtarget = nextns;
-   // Parent NS of the copy should match that of the target in most cases
+   // Parent NS of the copy should match that of the target
    curns->pnamespace = nextns->pnamespace;
-   if ( nextns == curns->ghsource->ghtarget ) {
-      // special case, reentering the origianl NS target means we must inherit the original Ghost's parent
-      //    We're redirecting, such that further ascent will exit the Ghost rather than continue up the tree
-      LOG( LOG_INFO, "Redirecting parent of active Ghost copy \"%s\" to \"%s\"\n",
-                     curns->idstr, curns->ghsource->pnamespace->idstr );
-      curns->pnamespace = curns->ghsource->pnamespace;
-      // sanity check : this should only ever happen when ascending
-      if ( !(ascending) ) {
-         LOG( LOG_ERR, "Encountered original target NS \"%s\" of GhostNS \"%s\" when NOT ascending\n", nextns->idstr, curns->ghsource->idstr );
-         config_abandonposition( pos );
-         return -1;
-      }
-   }
+//   if ( nextns == curns->ghsource->ghtarget ) {
+//      // special case, reentering the origianl NS target means we must inherit the original Ghost's parent
+//      //    We're redirecting, such that further ascent will exit the Ghost rather than continue up the tree
+//      LOG( LOG_INFO, "Redirecting parent of active Ghost copy \"%s\" to \"%s\"\n",
+//                     curns->idstr, curns->ghsource->pnamespace->idstr );
+//      curns->pnamespace = curns->ghsource->pnamespace;
+//      // sanity check : this should only ever happen when ascending
+//      if ( !(ascending) ) {
+//         LOG( LOG_ERR, "Encountered original target NS \"%s\" of GhostNS \"%s\" when NOT ascending\n", nextns->idstr, curns->ghsource->idstr );
+//         config_abandonposition( pos );
+//         return -1;
+//      }
+//   }
    // Parent repo always matches the target
    curns->prepo = nextns->prepo;
    // ID String manipulation depends on direction

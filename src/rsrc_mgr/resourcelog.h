@@ -93,7 +93,9 @@ typedef struct opinfo_struct {
    struct opinfo_struct* next; // subsequent ops in this chain ( or NULL, if none remain )
 } opinfo;
 
-// NOTE -- object deletions do not require extended info
+typedef struct delobj_info_struct {
+   size_t offset; // offset of the objects to begin deletion at ( used for spliting del ops across threads )
+} delobj_info;
 
 typedef struct delref_info_struct {
    size_t prev_active_index; // index of the closest active ( not to be deleted ) reference in the stream

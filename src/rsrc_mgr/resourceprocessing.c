@@ -154,6 +154,11 @@ typedef struct streamwalker_struct {
 void process_deleteobj( marfs_position* pos, opinfo* op ) {
    marfs_ds* ds = &(pos->ns->prepo->datascheme);
    size_t countval = 0;
+   // check for extendedinfo
+   delobj_info* delobjinf = (delobj_info*)op->extendedinfo;
+   if ( delobjinf != NULL ) {
+      countval = delobjinf->offset; // skip ahead by some offset, if specified
+   }
    while ( countval < op->count ) {
       // identify the object target of the op
       FTAG tmptag = op->ftag;
@@ -705,26 +710,24 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
       free( newop );
       return -1;
    }
-   // potentially allocate extended info
+   // allocate extended info
    char needext = 0;
    switch( type ) {
       case MARFS_DELETE_OBJ_OP:
-         break; // nothing to be done
+         newop->extendedinfo = calloc( 1, sizeof( struct delobj_info_struct ) );
+         break;
       case MARFS_DELETE_REF_OP:
          newop->extendedinfo = calloc( 1, sizeof( struct delref_info_struct ) );
-         needext = 1;
          break;
       case MARFS_REBUILD_OP:
          newop->extendedinfo = calloc( 1, sizeof( struct rebuild_info_struct ) );
-         needext = 1;
          break;
       case MARFS_REPACK_OP:
          newop->extendedinfo = calloc( 1, sizeof( struct repack_info_struct ) );
-         needext = 1;
          break;
    }
    // check for allocation failure
-   if ( needext &&  newop->extendedinfo == NULL ) {
+   if ( newop->extendedinfo == NULL ) {
       LOG( LOG_ERR, "Failed to allocate operation extended info\n" );
       free( newop->ftag.streamid );
       free( newop->ftag.ctag );

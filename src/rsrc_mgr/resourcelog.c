@@ -203,44 +203,44 @@ opinfo* parselogline( int logfile, char* eof ) {
       LOG( LOG_INFO, "Parsing a MARFS_DELETE_OBJ operation\n" );
       op->type = MARFS_DELETE_OBJ_OP;
       parseloc += 8;
-//      // allocate delobj_info
-//      delobj_info* extinfo = malloc( sizeof( struct delobj_info_struct ) );
-//      if ( extinfo == NULL ) {
-//         LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
-//         free( op );
-//         lseek( logfile, origoff, SEEK_SET );
-//         return NULL;
-//      }
-//      // parse in delobj_info
-//      if ( strncmp( parseloc, 2, "{ " ) ) {
-//         LOG( LOG_ERR, "Missing '{ ' header for DEL-REF extended info\n" );
-//         free( extinfo );
-//         free( op );
-//         lseek( logfile, origoff, SEEK_SET );
-//         return NULL;
-//      }
-//      parseloc += 2;
-//      char* endptr = NULL;
-//      unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
-//      if ( endptr == NULL  ||  *endptr != ' ' ) {
-//         LOG( LOG_ERR, "DEL-REF extended info has unexpected char in prev_active_index string: '%c'\n", *endptr );
-//         free( extinfo );
-//         free( op );
-//         lseek( logfile, origoff, SEEK_SET );
-//         return NULL;
-//      }
-//      extinfo->offset = (size_t)parseval;
-//      parseloc = endptr + 1;
-//      if ( strncmp( parseloc, 2, "} " ) ) {
-//         LOG( LOG_ERR, "Missing '} ' tail for DEL-OBJ extended info\n" );
-//         free( extinfo );
-//         free( op );
-//         lseek( logfile, origoff, SEEK_SET );
-//         return NULL;
-//      }
-//      parseloc += 2;
-//      // attach delobj_info
-//      op->extendedinfo = extinfo;
+      // allocate delobj_info
+      delobj_info* extinfo = malloc( sizeof( struct delobj_info_struct ) );
+      if ( extinfo == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      // parse in delobj_info
+      if ( strncmp( parseloc, 2, "{ " ) ) {
+         LOG( LOG_ERR, "Missing '{ ' header for DEL-REF extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 2;
+      char* endptr = NULL;
+      unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
+      if ( endptr == NULL  ||  *endptr != ' ' ) {
+         LOG( LOG_ERR, "DEL-REF extended info has unexpected char in prev_active_index string: '%c'\n", *endptr );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      extinfo->offset = (size_t)parseval;
+      parseloc = endptr + 1;
+      if ( strncmp( parseloc, 2, "} " ) ) {
+         LOG( LOG_ERR, "Missing '} ' tail for DEL-OBJ extended info\n" );
+         free( extinfo );
+         free( op );
+         lseek( logfile, origoff, SEEK_SET );
+         return NULL;
+      }
+      parseloc += 2;
+      // attach delobj_info
+      op->extendedinfo = extinfo;
    }
    else if ( strncmp( buffer, "DEL-REF ", 8 ) == 0 ) {
       LOG( LOG_INFO, "Parsing a MARFS_DELETE_REF operation\n" );
@@ -555,16 +555,16 @@ int printlogline( int logfile, opinfo* op ) {
             return -1;
          }
          usedbuff += 8;
-//         if ( op->extendedinfo ) {
-//            delobj_info* delobj = (delobj_info*)&(op->extendedinfo);
-//            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
-//                                             delobj->offset );
-//            if ( extinfoprint < 6 ) {
-//               LOG( LOG_ERR, "Failed to populate DEL-OBJ extended info string\n" );
-//               return -1;
-//            }
-//            usedbuff += extinfoprint;
-//         }
+         if ( op->extendedinfo ) {
+            delobj_info* delobj = (delobj_info*)&(op->extendedinfo);
+            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
+                                             delobj->offset );
+            if ( extinfoprint < 6 ) {
+               LOG( LOG_ERR, "Failed to populate DEL-OBJ extended info string\n" );
+               return -1;
+            }
+            usedbuff += extinfoprint;
+         }
          break;
       case MARFS_DELETE_REF_OP:
          if ( snprintf( buffer, MAX_BUFFER, "%s ", "DEL-REF" ) != 8 ) {
@@ -992,6 +992,19 @@ opinfo* resourcelog_dupopinfo( opinfo* op ) {
       // potentially populate extended info
       if ( op->extendedinfo ) {
          switch ( op->type ) { // only REBUILD and DEL-REF ops should have extended info at all
+            case MARFS_DELETE_OBJ_OP:
+               {
+                  delobj_info* extinfo = (delobj_info*)op->extendedinfo;
+                  delobj_info* newinfo = malloc( sizeof( struct delobj_info_struct ) );
+                  if ( newinfo == NULL ) {
+                     LOG( LOG_ERR, "Failed to allocate delobj extended info\n" );
+                     resourcelog_freeopinfo( genchain );
+                     return NULL;
+                  }
+                  *newinfo = *extinfo;
+                  (*newop)->extendedinfo = newinfo;
+                  break;
+               }
             case MARFS_DELETE_REF_OP:
                {
                   delref_info* extinfo = (delref_info*)op->extendedinfo;
