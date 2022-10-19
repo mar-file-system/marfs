@@ -293,7 +293,9 @@ void process_deleteref( const marfs_position* pos, opinfo* op ) {
          return;
       }
       // perform the deletion
-      if ( mdal->unlinkref( pos->ctxt, rpath ) ) {
+      int olderrno = errno;
+      errno = 0;
+      if ( mdal->unlinkref( pos->ctxt, rpath )  &&  errno != ENOENT ) {
          LOG( LOG_ERR, "Failed to unlink reference path \"%s\"\n", rpath );
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
          free( rpath );
@@ -301,8 +303,10 @@ void process_deleteref( const marfs_position* pos, opinfo* op ) {
          free( reftgt );
          return;
       }
+      errno = olderrno;
       LOG( LOG_INFO, "Deleted reference path \"%s\"\n", rpath );
       free( rpath );
+      countval++;
    }
    // update GCTAG to reflect completion
    gctag.inprog = 0;
@@ -500,6 +504,9 @@ void destroystreamwalker( streamwalker walker ) {
       if ( walker->gcops ) { resourcelog_freeopinfo( walker->gcops ); }
       if ( walker->rpckops ) { resourcelog_freeopinfo( walker->rpckops ); }
       if ( walker->rbldops ) { resourcelog_freeopinfo( walker->rbldops ); }
+      if ( walker->ftag.ctag ) { free( walker->ftag.ctag ); }
+      if ( walker->ftag.streamid ) { free( walker->ftag.streamid ); }
+      if ( walker->pos.ns ) { config_abandonposition( &(walker->pos) ); }
       free( walker );
    }
 }
@@ -525,7 +532,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       errno = 0;
       ssize_t getres = mdal->fgetxattr( handle, 1, GCTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 );
       // check for overflow
-      if ( getres >= walker->ftagstralloc ) {
+      if ( getres > 0  &&  getres >= walker->ftagstralloc ) {
          // increase our allocated string length
          char* newstr = malloc( sizeof(char) * (getres + 1) );
          if ( newstr == NULL ) {
@@ -681,28 +688,22 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
    newop->count = 0;
    newop->errval = 0;
    newop->ftag = *ftag;
-   if ( prevop  &&  strcmp( prevop->ftag.ctag, ftag->ctag ) == 0 ) {
-      newop->ftag.ctag = prevop->ftag.ctag;
+//      if ( prevop  &&  strcmp( prevop->ftag.ctag, ftag->ctag ) == 0 ) {
+//         newop->ftag.ctag = prevop->ftag.ctag;
+//      }
+   // create new strings, so we don't have a potential double-free in the future
+   newop->ftag.ctag = strdup( ftag->ctag );
+   if ( newop->ftag.ctag == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate FTAG ctag string: \"%s\"\n", ftag->ctag );
+      free( newop );
+      return -1;
    }
-   else {
-      newop->ftag.ctag = strdup( ftag->ctag );
-      if ( newop->ftag.ctag == NULL ) {
-         LOG( LOG_ERR, "Failed to duplicate FTAG ctag string: \"%s\"\n", ftag->ctag );
-         free( newop );
-         return -1;
-      }
-   }
-   if ( prevop  &&  strcmp( prevop->ftag.streamid, ftag->streamid ) == 0 ) {
-      newop->ftag.streamid = prevop->ftag.streamid;
-   }
-   else {
-      newop->ftag.streamid = strdup( ftag->streamid );
-      if ( newop->ftag.streamid == NULL ) {
-         LOG( LOG_ERR, "Failed to duplicate FTAG streamid string: \"%s\"\n", ftag->streamid );
-         free( newop->ftag.ctag );
-         free( newop );
-         return -1;
-      }
+   newop->ftag.streamid = strdup( ftag->streamid );
+   if ( newop->ftag.streamid == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate FTAG streamid string: \"%s\"\n", ftag->streamid );
+      free( newop->ftag.ctag );
+      free( newop );
+      return -1;
    }
    // potentially allocate extended info
    char needext = 0;
@@ -1042,7 +1043,12 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
    walker->gcthresh = thresh.gcthreshold;
    walker->repackthresh = thresh.repackthreshold;
    walker->rebuildthresh = thresh.rebuildthreshold;
-   walker->rebuildloc = *rebuildloc;
+   if ( rebuildloc ) {
+      walker->rebuildloc = *rebuildloc;
+   }
+   else {
+      bzero( &(walker->rebuildloc), sizeof( ne_location ) );
+   }
    // zero out report info
    bzero( &(walker->report), sizeof( streamwalker_report ) );
    // initialize iteration info
@@ -1365,6 +1371,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          endobj = walker->ftag.objno; // update ending object index
          eos = walker->ftag.endofstream;
          if ( (walker->ftag.state & FTAG_DATASTATE) < FTAG_FIN ) { eos = 1; }
+         if ( walker->gctag.refcnt  &&  walker->gctag.eos ) { eos = 1; }
          // calculate final object referenced by this file
          if ( dataperobj ) {
             // calculate the final object referenced by this file
@@ -1382,15 +1389,18 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             //    AND it is not an already a deleted object0
             if ( walker->gcthresh  &&  walker->activefiles == 0  &&
                  ( walker->objno != 0  ||  walker->gctag.delzero == 0 ) ) {
-               // need to prepend an object deletion operation
+               // need to prepend an object deletion operation for the previous objno
                opinfo* optgt = NULL;
-               if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
+               FTAG tmptag = walker->ftag;
+               tmptag.objno = walker->objno;
+               if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
                   LOG( LOG_ERR, "Failed to identify operation target for deletion of object %zu\n", walker->objno );
                   return -1;
                }
                // sanity check
                if ( optgt->count + optgt->ftag.objno != walker->objno ) {
-                  LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n", walker->objno );
+                  LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
+                                optgt->count + optgt->ftag.objno, walker->objno );
                   return -1;
                }
                // update operation
@@ -1459,10 +1469,11 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                LOG( LOG_ERR, "Failed to identify operation target for deletion of file %zu\n", walker->ftag.fileno );
                return -1;
             }
+            delref_info* delrefinf = NULL;
             if ( optgt->count ) {
                // update existing op
                optgt->count++;
-               delref_info* delrefinf = optgt->extendedinfo;
+               delrefinf = optgt->extendedinfo;
                // sanity check
                if ( delrefinf->prev_active_index != walker->activeindex ) {
                   LOG( LOG_ERR, "Active delref op active index (%zu) does not match current val (%zu)\n",
@@ -1474,7 +1485,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             else {
                // populate new op
                optgt->count = 1;
-               delref_info* delrefinf = optgt->extendedinfo;
+               delrefinf = optgt->extendedinfo;
                delrefinf->prev_active_index = walker->activeindex;
                delrefinf->eos = eos;
             }
@@ -1482,10 +1493,9 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             if ( endobj != walker->objno ) {
                // potentially generate a GC op for the first obj referenced by this file
                FTAG tmptag = walker->ftag;
-               tmptag.objno = walker->objno;
                if ( walker->activefiles == 0 ) {
                   optgt = NULL;
-                  if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
+                  if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
                      LOG( LOG_ERR, "Failed to identify operation target for deletion of initial spanned obj %zu\n", tmptag.objno );
                      return -1;
                   }
@@ -1522,6 +1532,26 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                   // iterate to the next obj
                   tmptag.objno++;
                }
+            }
+            // potentially generate a GC op for the final object of the stream
+            if ( eos  &&  (endobj != walker->objno  ||  walker->activefiles == 0) ) {
+               FTAG tmptag = walker->ftag;
+               tmptag.objno = endobj;
+               optgt = NULL;
+               if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
+                  LOG( LOG_ERR, "Failed to identify operation target for deletion of final stream obj %zu\n", tmptag.objno );
+                  return -1;
+               }
+               // sanity check
+               if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
+                  LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
+                                optgt->count + optgt->ftag.objno, walker->objno );
+                  return -1;
+               }
+               // update operation
+               optgt->count++;
+               // update our record
+               walker->report.delobjs++;
             }
          }
          else if ( walker->stval.st_ctime >= walker->gcthresh ) {

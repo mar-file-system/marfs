@@ -1206,8 +1206,72 @@ int gctag_initstr( GCTAG* gctag, char* gctagstr ) {
  *                  output string was truncated.
  */
 size_t gctag_tostr( GCTAG* gctag, char*tgtstr, size_t len ) {
-   // TODO
-   return -1;
+   // check for NULL args
+   if ( gctag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL ne_state reference\n" );
+      errno = EINVAL;
+      return 0;
+   }
+
+   // keep track of total string length, even if we can't output that much
+   size_t totsz = 0;
+
+   // TODO output version info first
+   // output refcnt
+   int prres = snprintf( tgtstr, len, "%zu ", gctag->refcnt );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output refcnt value %zu\n", gctag->refcnt );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+
+   // output EOS flag
+   if ( gctag->eos ) {
+      prres = snprintf( tgtstr, len, "E" );
+   }
+   else {
+      prres = snprintf( tgtstr, len, "C" );
+   }
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output EOS value\n", gctag->refcnt );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+
+   // potentially output inprog and delzero flag
+   if ( gctag->inprog  ||  gctag->delzero ) {
+      // ouptut inprog flag
+      if ( gctag->inprog ) {
+         prres = snprintf( tgtstr, len, " P" );
+      }
+      else {
+         prres = snprintf( tgtstr, len, " D" );
+      }
+      if ( prres < 1 ) {
+         LOG( LOG_ERR, "Failed to output EOS value\n", gctag->refcnt );
+         return 0;
+      }
+      if ( len > prres ) { len -= prres; tgtstr += prres; }
+      else { len = 0; }
+      totsz += prres;
+      // potentially output  delzero flag
+      if ( gctag->delzero ) {
+         prres = snprintf( tgtstr, len, " D" );
+         if ( prres < 1 ) {
+            LOG( LOG_ERR, "Failed to output EOS value\n", gctag->refcnt );
+            return 0;
+         }
+         if ( len > prres ) { len -= prres; tgtstr += prres; }
+         else { len = 0; }
+         totsz += prres;
+      }
+   }
+
+   return totsz;
 }
 
 

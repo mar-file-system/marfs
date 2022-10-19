@@ -3018,7 +3018,13 @@ int config_abandonposition( marfs_position* pos ) {
       errno = EINVAL;
       return -1;
    }
-   int retval = pos->ns->prepo->metascheme.mdal->destroyctxt( pos->ctxt );
+   int retval = 0;
+   if ( pos->ctxt ) {
+      retval = pos->ns->prepo->metascheme.mdal->destroyctxt( pos->ctxt );
+      if ( retval ) {
+         LOG( LOG_WARNING, "Failed to destroy position ctxt\n" );
+      }
+   }
    config_destroynsref( pos->ns );
    pos->ns = NULL;
    pos->depth = 0;
@@ -3297,7 +3303,8 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
          }
          // verify all reference dirs of this NS
          //    skip this if we're in ThE gHoSt DiMeNsIoN!!!!
-         else if ( !(pos.ns->ghsource)  &&  checkmdalsec ){
+         //    OR if MDAL checks were entirely skipped
+         else if ( !(pos.ns->ghsource)  &&  MDALcheck ){
             size_t curref = 0;
             char anyerror = 0;
             for ( ; curref < pos.ns->prepo->metascheme.refnodecount; curref++ ) {
@@ -3728,7 +3735,7 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
                   pos->depth = 0;
                   if ( pos->ns != config->rootns ) {
                      // we need to create a fresh MDAL_CTXT, referencing the rootNS
-                     if ( mdal->destroyctxt( pos->ctxt ) ) {
+                     if ( pos->ctxt  &&  mdal->destroyctxt( pos->ctxt ) ) {
                         // nothing to do, besides complain
                         LOG( LOG_WARNING, "Failed to destory MDAL_CTXT of NS \"%s\"\n", pos->ns->idstr );
                      }

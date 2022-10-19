@@ -86,7 +86,7 @@
 
          <!-- Chunking -->
          <chunking enabled="yes">
-            <max_size>1024</max_size>
+            <max_size>4096</max_size>
          </chunking>
 
          <!-- Object Distribution -->
@@ -108,20 +108,112 @@
       <meta>
 
          <!-- Namespace Definitions -->
-         <namespaces rbreadth="2" rdepth="1">
+         <namespaces rbreadth="100" rdepth="1" rdigits="3">
 
             <!-- Root NS Definition -->
             <ns name="root">
                <!-- Ridiculous quota setting : A single file, up to 100PiB in size -->
                <quotas>
-                  <files>100P</files>
-                  <data>1</data>
+                  <files>1</files>
+                  <data>100P</data>
                </quotas>
 
                <!-- No metadata manipulation, and no data access -->
                <perms>
-                  <interactive>RM</interactive>
-                  <batch>RM</batch>
+                  <interactive>RM,RD</interactive>
+                  <batch>RM,WM,RD,WD</batch>
+               </perms>
+
+
+               <!-- Non-Packing Subspace -->
+               <rns name="nopack" repo="3+2-nopack-repo"/>
+
+
+               <!-- Packing Subspace -->
+               <ns name="pack">
+                  <quotas>
+                     <files>100K</files>
+                     <data>10T</data>
+                  </quotas>
+                  <perms>
+                     <interactive>RM,WM,RD,WD</interactive>
+                     <batch>RM,WM,RD,WD</batch>
+                  </perms>
+               </ns>
+
+               <!-- Ghost of Packing Subspace -->
+               <gns name="pack-ghost" repo="3+2repo" nstgt="/pack">
+                  <perms>
+                     <interactive>RM,WM,RD,WD</interactive>
+                     <batch>RM,WM,RD,WD</batch>
+                  </perms>
+               </gns>
+
+            </ns>
+         </namespaces>
+
+         <!-- No Direct Data -->
+
+         <!-- MDAL Definition -->
+         <MDAL type="posix">
+            <ns_root>./test_rman_topdir/mdal_root</ns_root>
+         </MDAL>
+
+      </meta>
+
+   </repo>
+
+   <repo name="3+2-nopack-repo">
+
+      <!-- Per-Repo Data Scheme -->
+      <data>
+
+         <!-- Erasure Protection -->
+         <protection>
+            <N>3</N>
+            <E>2</E>
+            <PSZ>1024</PSZ>
+         </protection>
+
+         <!-- Packing -->
+         <packing enabled="no"/>
+
+         <!-- Chunking -->
+         <chunking enabled="yes">
+            <max_size>100K</max_size>
+         </chunking>
+
+         <!-- Object Distribution -->
+         <distribution>
+            <pods dweight="2" cnt="2">1=1</pods>
+            <caps dweight="4" cnt="5"/>
+            <scatters cnt="16" dweight="100">12=10</scatters>
+         </distribution>
+
+         <!-- DAL Definition -->
+         <DAL type="posix">
+            <dir_template>pod{p}/cap{c}/scat{s}/block{b}/</dir_template>
+            <sec_root>./test_rman_topdir/dal_root</sec_root>
+         </DAL>
+
+      </data>
+
+      <!-- Per-Repo Metadata Scheme -->
+      <meta>
+
+         <!-- Namespace Definitions -->
+         <namespaces rbreadth="2" rdepth="1">
+
+            <!-- Root NS Definition -->
+            <ns name="nopack">
+               <quotas>
+                  <files>100</files>
+                  <data>100T</data>
+               </quotas>
+
+               <perms>
+                  <interactive>RM,WM,RD,WD</interactive>
+                  <batch>RM,WM,RD,WD</batch>
                </perms>
             </ns>
          </namespaces>
