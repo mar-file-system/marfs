@@ -159,7 +159,13 @@ int main(int argc, char **argv)
    opinfo* opparse = opset;
    // start of an object deletion op
    opparse->type = MARFS_DELETE_OBJ_OP;
-   opparse->extendedinfo = NULL;
+   opparse->extendedinfo = calloc( 1, sizeof( struct delobj_info_struct ) );
+   if ( opparse->extendedinfo == NULL ) {
+      printf( "failed to allocate delobj extended info\n" );
+      return -1;
+   }
+   delobj_info* delobjinf = (delobj_info*)opparse->extendedinfo;
+   delobjinf->offset = 3;
    opparse->start = 1;
    opparse->count = 4;
    opparse->errval = 0;
@@ -323,8 +329,9 @@ int main(int argc, char **argv)
    }
    opinfo* readops = opparse;
    printf( "valop1\n" );
+   delobj_info* delobjparse = (delobj_info*)opparse->extendedinfo;
    if ( opparse->type != opset->type  ||
-        opparse->extendedinfo != opset->extendedinfo  ||
+        delobjparse->offset != delobjinf->offset  ||
         opparse->start != opset->start  ||
         opparse->count != opset->count  ||
         opparse->errval != opset->errval  ||
@@ -351,7 +358,7 @@ int main(int argc, char **argv)
         opparse->ftag.state != opset->ftag.state ) {
       printf( "read op 1 differs from original\n" );
       if ( opparse->type != opset->type ) { printf( "type\n" ); }
-      if ( opparse->extendedinfo != opset->extendedinfo ) { printf( "extendedinfo\n" ); }
+      if ( delobjparse->offset != delobjinf->offset ) { printf( "extendedinfo\n" ); }
       if ( opparse->start != opset->start ) { printf( "start\n" ); }
       if ( opparse->count != opset->count ) { printf( "count\n" ); }
       if ( opparse->errval != opset->errval ) { printf( "errval\n" ); }
@@ -547,6 +554,7 @@ int main(int argc, char **argv)
    progress = 0;
    opset->next = NULL;
    opset->count -= 2;
+   delobjinf->offset = 2;
    opset->start = 0;
    if ( resourcelog_processop( &(wlog), opset, &(progress) ) ) {
       printf( "failed to insert initial deletion op completion\n" );
@@ -620,6 +628,7 @@ int main(int argc, char **argv)
    opparse = opset;
    free( opparse->ftag.ctag );
    free( opparse->ftag.streamid );
+   free( opparse->extendedinfo );
    opparse++;
    free( opparse->extendedinfo );
    opparse++;

@@ -573,22 +573,65 @@ int main(int argc, char **argv)
 //      }
    free( objname5 );
 
-   // cleanup 'file1' refs
+   // delete and cleanup file1
    if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file1" ) ) {
       printf( "Failed to unlink \"file1\"\n" );
       return -1;
    }
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
-      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
+   if ( gettimeofday( &currenttime, NULL ) ) {
+      printf( "failed to get current time for third walk\n" );
+      return -1;
+   }
+   thresh.gcthreshold = currenttime.tv_sec + 120;
+   thresh.repackthreshold = currenttime.tv_sec + 120;
+   thresh.rebuildthreshold = 0; // no rebuilds for now
+   thresh.cleanupthreshold = currenttime.tv_sec + 120;
+   walker = process_openstreamwalker( pos.ns, rpath, thresh, NULL );
+   if ( walker == NULL ) {
+      printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
+      return -1;
+   }
+   gcops = NULL;
+   repackops = NULL;
+   rebuildops = NULL;
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+      printf( "unexpected result of third iteration from \"%s\"\n", rpath );
+      return -1;
+   }
+   // we should have some gcops, and nothing else
+   if ( gcops == NULL ) {
+      printf( "no gcops following deletion of file1 in nopack\n" );
+      return -1;
+   }
+   if ( repackops ) {
+      printf( "unexpected REPACKOPS following traversal3 of no-pack stream\n" );
+      return -1;
+   }
+   if ( rebuildops ) {
+      printf( "unexpected REBUILDOPS following traversal3 of no-pack stream\n" );
+      return -1;
+   }
+   // continue iteration, which should produce no further ops
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+      printf( "unexpected walker iteration after third gc from nopack\n" );
+      return -1;
+   }
+   // process the gcops
+   // TODO repackstreamer
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+      printf( "failed to process third gc op of nopack\n" );
+      return -1;
+   }
+
+
+   // verify absence of 'file1' refs
+   errno = 0;
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) == 0  ||  errno != ENOENT ) {
+      printf( "DID unlink rpath: \"%s\"\n", rpath );
       return -1;
    }
    free( rpath );
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname );
-      return -1;
-   }
    free( objname );
-
 
 
    // shift to a new NS, which has packing enabled

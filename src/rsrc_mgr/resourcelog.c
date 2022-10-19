@@ -206,14 +206,14 @@ opinfo* parselogline( int logfile, char* eof ) {
       // allocate delobj_info
       delobj_info* extinfo = malloc( sizeof( struct delobj_info_struct ) );
       if ( extinfo == NULL ) {
-         LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
+         LOG( LOG_ERR, "Failed to allocate space for DEL-OBJ extended info\n" );
          free( op );
          lseek( logfile, origoff, SEEK_SET );
          return NULL;
       }
       // parse in delobj_info
-      if ( strncmp( parseloc, 2, "{ " ) ) {
-         LOG( LOG_ERR, "Missing '{ ' header for DEL-REF extended info\n" );
+      if ( strncmp( parseloc, "{ ", 2 ) ) {
+         LOG( LOG_ERR, "Missing '{ ' header for DEL-OBJ extended info\n" );
          free( extinfo );
          free( op );
          lseek( logfile, origoff, SEEK_SET );
@@ -223,7 +223,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       char* endptr = NULL;
       unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
       if ( endptr == NULL  ||  *endptr != ' ' ) {
-         LOG( LOG_ERR, "DEL-REF extended info has unexpected char in prev_active_index string: '%c'\n", *endptr );
+         LOG( LOG_ERR, "DEL-OBJ extended info has unexpected char in prev_active_index string: '%c'\n", *endptr );
          free( extinfo );
          free( op );
          lseek( logfile, origoff, SEEK_SET );
@@ -231,7 +231,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       }
       extinfo->offset = (size_t)parseval;
       parseloc = endptr + 1;
-      if ( strncmp( parseloc, 2, "} " ) ) {
+      if ( strncmp( parseloc, "} ", 2 ) ) {
          LOG( LOG_ERR, "Missing '} ' tail for DEL-OBJ extended info\n" );
          free( extinfo );
          free( op );
@@ -556,13 +556,14 @@ int printlogline( int logfile, opinfo* op ) {
          }
          usedbuff += 8;
          if ( op->extendedinfo ) {
-            delobj_info* delobj = (delobj_info*)&(op->extendedinfo);
+            delobj_info* delobj = (delobj_info*)op->extendedinfo;
             ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
                                              delobj->offset );
             if ( extinfoprint < 6 ) {
                LOG( LOG_ERR, "Failed to populate DEL-OBJ extended info string\n" );
                return -1;
             }
+            printf( "PRINT : %zu\n", delobj->offset );
             usedbuff += extinfoprint;
          }
          break;
@@ -1003,6 +1004,7 @@ opinfo* resourcelog_dupopinfo( opinfo* op ) {
                   }
                   *newinfo = *extinfo;
                   (*newop)->extendedinfo = newinfo;
+                  printf ( "DUP : %zu\n", newinfo->offset );
                   break;
                }
             case MARFS_DELETE_REF_OP:

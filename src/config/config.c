@@ -214,7 +214,7 @@ char* config_prevpathelem( char* path, char* curpath ) {
  * @param char updatectxt : Flag value indicating if an updated MDAL_CTXT is needed
  *                          Zero -> Position CTXT will be destroyed
  *                          Non-Zero -> Position CTXT will be updated to reference the new tgt NS
- * @return int : Zero on success, or -1 on failure
+ * @return int : Zero on success, 1 if the transition will exit the MarFS mountpoint, or -1 on failure
  */
 int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, char updatectxt ) {
    // create some shorthand refs
@@ -223,6 +223,10 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
    // check for expected case first - currently targetting a standard NS
    if ( curns->ghsource == NULL ) {
       // simplest case first, no ghostNS involved
+      if ( nextns == NULL ) {
+         // special case check for exit of the mountpoint
+         return 1;
+      }
       if ( nextns->ghtarget == NULL ) {
          // update the NS
          pos->ns = nextns;
@@ -373,13 +377,6 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
 
    // we are moving within a GhostNS ( curns->ghsource != NULL )
 
-   // sanity check : ghost to ghost transitions should be impossible
-   if ( nextns->ghtarget != NULL ) {
-      LOG( LOG_ERR, "Detected theoretically impossible Ghost-to-Ghost transition from \"%s\" to \"%s\"\n",
-           curns->idstr, nextns->idstr );
-      config_abandonposition( pos );
-      return -1;
-   }
    // check if we're exiting the active Ghost, by traversing up to its parent NS
    //    NOTE -- The parent of the inital ghost may be the target of that ghost, making this check more complex
    if ( ascending  &&  nextns == curns->ghsource->ghtarget->pnamespace ) {
@@ -395,16 +392,23 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
       if ( updatectxt ) {
          // create a fresh ctxt
          if ( config_fortifyposition( pos ) ) {
-            LOG( LOG_ERR, "Failed to establish a fresh ctxt for next NS: \"%s\"\n", nextns->idstr );
+            LOG( LOG_ERR, "Failed to establish a fresh ctxt for ghost parent NS: \"%s\"\n", pos->ns->idstr );
             config_abandonposition( pos );
             config_destroynsref( curns );
             return -1;
          }
          LOG( LOG_INFO, "Established a fresh MDAL_CTXT after exiting the ghost dimension\n" );
       }
-      LOG( LOG_INFO, "Exited GhostNS \"%s\" and entered parent: \"%s\"\n", curns->ghsource->idstr, nextns->idstr );
+      LOG( LOG_INFO, "Exited GhostNS \"%s\" and entered parent: \"%s\"\n", curns->ghsource->idstr, pos->ns->idstr );
       config_destroynsref( curns );
       return 0;
+   }
+   // sanity check : ghost to ghost transitions should be impossible
+   if ( nextns->ghtarget != NULL ) {
+      LOG( LOG_ERR, "Detected theoretically impossible Ghost-to-Ghost transition from \"%s\" to \"%s\"\n",
+           curns->idstr, nextns->idstr );
+      config_abandonposition( pos );
+      return -1;
    }
    // Target the new NS
    curns->ghtarget = nextns;
@@ -735,7 +739,9 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
          // undo any previous path edit
          if ( replacechar ) { *parsepath = '/'; }
          replacechar = 0;
-         if ( pos->ns->pnamespace == NULL ) {
+         // update our position to the new NS
+         int nsentres = config_enterns( pos, pos->ns->pnamespace, "..", 1 );
+         if ( nsentres > 0 ) {
             // we can't move up any further
             // check if this relative path reenters the MarFS mountpoint
             parsepath = config_validatemnt( config, pos->ns, nextpelem );
@@ -750,12 +756,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
             // back to the rootNS at this point, so no need to adjust position vals
          }
          else {
-            // update our position to the new NS
-            if ( config_enterns( pos, pos->ns->pnamespace, "..", 1 ) ) {
-               LOG( LOG_ERR, "Failed to enter parent NS\n" );
-               return NULL;
-            }
-            // update our MDAL quick ref
+            // update our MDAL quick ref to reflect the new NS
             mdal = pos->ns->prepo->metascheme.mdal;
          }
       }
@@ -783,7 +784,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
                LOG( LOG_ERR, "Failed to enter subspace \"%s\"\n", pathelem );
                return NULL;
             }
-          }
+         }
          else {
             // the path is targetting the NS itself
             // NOTE -- We need to explicitly note this special case.  We don't want to 
@@ -3455,7 +3456,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
       }
       else {
          // proceed back up to the parent of this space
-         if ( pos.ns->pnamespace  &&  config_enterns( &pos, pos.ns->pnamespace, "..", 0 ) ) {
+         if ( config_enterns( &pos, pos.ns->pnamespace, "..", 0 ) < 0 ) {
             LOG( LOG_ERR, "Failed to transition to the parent of current NS\n" );
             umask(oldmask); // reset umask
             free( vrepos );

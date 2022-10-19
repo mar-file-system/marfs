@@ -210,6 +210,12 @@ void process_deleteref( const marfs_position* pos, opinfo* op ) {
       .eos = delrefinf->eos,
       .inprog = 0
    };
+   // note any previously deleted refs between us and prev_active_index
+   if ( (op->ftag.fileno - 1) > delrefinf->prev_active_index ) {
+      gctag.refcnt += (op->ftag.fileno - 1) - delrefinf->prev_active_index;
+      LOG( LOG_INFO, "Including previous gap of %zu files ( %zu resultant gap )\n",
+                     (op->ftag.fileno - 1) - delrefinf->prev_active_index, gctag.refcnt );
+   }
    if ( op->count ) { gctag.inprog = 1; } // set inprog, if we're actually doing any reference deletions
    size_t gctaglen = gctag_tostr( &(gctag), NULL, 0 );
    if ( gctaglen < 1 ) {
@@ -711,7 +717,6 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
       return -1;
    }
    // allocate extended info
-   char needext = 0;
    switch( type ) {
       case MARFS_DELETE_OBJ_OP:
          newop->extendedinfo = calloc( 1, sizeof( struct delobj_info_struct ) );
@@ -1096,7 +1101,7 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
    walker->headerlen = recovery_headertostr(&(header), NULL, 0);
    // calculate the ending position of this file
    size_t dataperobj = ( walker->ftag.objsize ) ?
-                           walker->ftag.objsize - walker->headerlen : 0; // data chunk size for this stream
+                         walker->ftag.objsize - (walker->headerlen + walker->ftag.recoverybytes) : 0;
    size_t endobj = walker->ftag.objno; // update ending object index
    if ( dataperobj ) {
       // calculate the final object referenced by this file
@@ -1135,29 +1140,11 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
             walker->report.delstreams++;
          }
          // potentially generate object GC ops, only if we haven't already
-         if ( endobj != walker->objno  &&  !(walker->gctag.delzero) ) {
-            // generate a GC op for the first obj referenced by this file
-            FTAG tmptag = walker->ftag;
-            tmptag.objno = walker->objno;
-            opinfo* optgt = NULL;
-            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(walker->ftag), &(optgt) ) ) {
-               LOG( LOG_ERR, "Failed to identify operation target for deletion of initial spanned obj %zu\n", tmptag.objno );
-               destroystreamwalker( walker );
-               return NULL;
-            }
-            // sanity check
-            if ( optgt->count + optgt->ftag.objno != walker->objno ) {
-               LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
-                             optgt->count + optgt->ftag.objno, walker->objno );
-               destroystreamwalker( walker );
-               return NULL;
-            }
-            // update operation
-            optgt->count++;
-            // update our record
-            walker->report.delobjs++;
+         if ( (endobj != walker->objno  ||  eos)  &&  !(walker->gctag.delzero) ) {
             // potentially generate GC ops for objects spanned by this file
-            tmptag.objno++;
+            FTAG tmptag = walker->ftag;
+            opinfo* optgt;
+            if ( eos ) { endobj++; } // include the final obj referenced by this file, specifically if no files follow
             while ( tmptag.objno < endobj ) {
                // generate ops for all but the last referenced object
                optgt = NULL;
@@ -1265,7 +1252,6 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
    // set up some initial values
    marfs_ds* ds = &(walker->pos.ns->prepo->datascheme);
    size_t objsize = walker->pos.ns->prepo->datascheme.objsize;   // current repo-defined chunking limit
-   size_t dataperobj = ( walker->ftag.objsize ) ? walker->ftag.objsize - walker->headerlen : 0; // data chunk size for this stream
    size_t repackbytethresh = (objsize - walker->headerlen) / 2;
    char pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0 ) ? 0 : 1;
    char dispatchedops = 0;
@@ -1371,6 +1357,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             LOG( LOG_ERR, "Invalid FTAG filenumber (%zu) on file %zu\n", walker->ftag.fileno, walker->fileno + tgtoffset );
             return -1;
          }
+         size_t dataperobj = ( walker->ftag.objsize ) ?
+           walker->ftag.objsize - (walker->headerlen + walker->ftag.recoverybytes) : 0; // data chunk size for this stream
          endobj = walker->ftag.objno; // update ending object index
          eos = walker->ftag.endofstream;
          if ( (walker->ftag.state & FTAG_DATASTATE) < FTAG_FIN ) { eos = 1; }
