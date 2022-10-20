@@ -1185,6 +1185,9 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
          assumeactive = 1;
       }
    }
+   walker->report.filecount++;
+   if ( !(walker->gctag.delzero) ) { walker->report.objcount += endobj + 1; } // note first obj set, if not already deleted
+   // NOTE -- technically, objcount will run one object 'ahead' until iteration completion ( we don't count final obj )
    if ( filestate > 1 ) {
       // file is active
       walker->report.fileusage++;
@@ -1303,6 +1306,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       }
       // generate next target info
       FTAG tmptag = walker->ftag;
+      tmptag.fileno = walker->fileno;
       tmptag.fileno += tgtoffset;
       char* reftgt = datastream_genrpath( &(tmptag), walker->reftable );
       if ( reftgt == NULL ) {
@@ -1332,7 +1336,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          }
          // generate the rpath of the previous file
          free( reftgt );
-         reftgt = datastream_genrpath( &(walker->ftag), walker->reftable );
+         tmptag.fileno = walker->fileno;
+         reftgt = datastream_genrpath( &(tmptag), walker->reftable );
          if ( reftgt == NULL ) {
             LOG( LOG_ERR, "Failed to generate reference path for previous file ( %zu )\n", walker->fileno );
             return -1;
@@ -1345,6 +1350,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             free( reftgt );
             return -1;
          }
+         free( reftgt );
          continue; // restart this iteration, now with all info available
       }
       free( reftgt );
@@ -1376,6 +1382,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          }
          // check for object transition
          if ( walker->ftag.objno != walker->objno ) {
+            // note the previous obj in counts (EXCEPT those referenced by file zero)
+            if ( walker->fileno ) { walker->report.objcount++; }
             // we may need to delete the previous object IF we are GCing AND no active refs existed for that obj
             //    AND it is not an already a deleted object0
             if ( walker->gcthresh  &&  walker->activefiles == 0  &&
@@ -1551,6 +1559,9 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             assumeactive = 1;
          }
       }
+      walker->report.filecount++;
+      // potentially count any spanned objects
+      if ( walker->objno != endobj ) { walker->report.objcount += endobj - walker->objno; }
       if ( filestate > 1 ) {
          // file is active
          walker->report.fileusage++;
@@ -1618,8 +1629,39 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       return 1;
    }
    LOG( LOG_INFO, "Stream traversal complete: \"%s\"\n", walker->ftag.streamid );
-   destroystreamwalker( walker );
    return 0;
+}
+
+/**
+ * Close the given streamwalker
+ * @param streamwalker walker : Streamwalker to be closed
+ * @param streamwalker_report* report : Reference to a report to be populated with final counts
+ * @return int : Zero on success, 1 if the walker was closed prior to iteration completion, or -1 on failure
+ */
+int process_closestreamwalker( streamwalker walker, streamwalker_report* report ) {
+   // check args
+   if ( walker == NULL ) {
+      LOG( LOG_ERR, "Received a NULL streamwalker reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // populate final report
+   if ( report )  {
+      *report = walker->report;
+   }
+   // check for incomplete walker
+   int retval = 0;
+   if ( walker->gcops  ||  walker->rpckops  ||  walker->rbldops  ||
+        (
+            walker->ftag.endofstream == 0  &&
+            (walker->gctag.refcnt == 0  ||  walker->gctag.eos == 0)  &&
+            (walker->ftag.state & FTAG_DATASTATE) >= FTAG_FIN
+        ) ) {
+      LOG( LOG_WARNING, "Streamwalker closed prior to iteration completion\n" );
+      retval = 1;
+   }
+   destroystreamwalker( walker );
+   return retval;
 }
 
 /**

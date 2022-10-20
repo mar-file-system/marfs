@@ -370,6 +370,108 @@ int main(int argc, char **argv)
       printf( "unexpected REBUILDOPS following first traversal of no-pack stream\n" );
       return -1;
    }
+   streamwalker_report walkreport;
+   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+      printf( "failed to close first streamwalker\n" );
+      return -1;
+   }
+
+   // validate count values
+   if ( walkreport.fileusage != 3 ) {
+      printf( "improper first walk fileusage: %zu\n", walkreport.fileusage );
+      return -1;
+   }
+   if ( walkreport.byteusage != 2098276 ) {
+      printf( "improper first walk byteusage: %zu\n", walkreport.byteusage );
+      return -1;
+   }
+   if ( walkreport.filecount != 3 ) {
+      printf( "improper first walk filecount: %zu\n", walkreport.filecount );
+      return -1;
+   }
+   if ( walkreport.objcount != 22 ) {
+      printf( "improper first walk objcount: %zu\n", walkreport.objcount );
+      return -1;
+   }
+   if ( walkreport.delobjs ) {
+      printf( "improper first walk delobjs: %zu\n", walkreport.delobjs );
+      return -1;
+   }
+   if ( walkreport.delfiles ) {
+      printf( "improper first walk delfiles: %zu\n", walkreport.delfiles );
+      return -1;
+   }
+   if ( walkreport.delstreams ) {
+      printf( "improper first walk delstreams: %zu\n", walkreport.delstreams );
+      return -1;
+   }
+   if ( walkreport.volfiles ) {
+      printf( "improper first walk volfiles: %zu\n", walkreport.volfiles );
+      return -1;
+   }
+   if ( walkreport.rpckfiles ) {
+      printf( "improper first walk rpckfiles: %zu\n", walkreport.rpckfiles );
+      return -1;
+   }
+   if ( walkreport.rpckbytes ) {
+      printf( "improper first walk rpckbytes: %zu\n", walkreport.rpckbytes );
+      return -1;
+   }
+   if ( walkreport.rbldobjs ) {
+      printf( "improper first walk rbldobjs: %zu\n", walkreport.rbldobjs );
+      return -1;
+   }
+   if ( walkreport.rbldbytes ) {
+      printf( "improper first walk rbldbytes: %zu\n", walkreport.rbldbytes );
+      return -1;
+   }
+
+
+   // perform a minimal-impact, quota-only walk
+   thresh.gcthreshold = 0;
+   thresh.repackthreshold = 0;
+   thresh.rebuildthreshold = 0;
+   thresh.cleanupthreshold = 0;
+   walker = process_openstreamwalker( pos.ns, rpath, thresh, NULL );
+   if ( walker == NULL ) {
+      printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
+      return -1;
+   }
+   gcops = NULL;
+   repackops = NULL;
+   rebuildops = NULL;
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+      printf( "unexpected result of first quota-only iteration from \"%s\"\n", rpath );
+      return -1;
+   }
+   // we should have no ops at all
+   if ( gcops ) {
+      printf( "unexpcted gcops following first quota-only iteration of no-pack stream\n" );
+      return -1;
+   }
+   if ( repackops ) {
+      printf( "unexpected REPACKOPS following traversal3 of no-pack stream\n" );
+      return -1;
+   }
+   if ( rebuildops ) {
+      printf( "unexpected REBUILDOPS following traversal3 of no-pack stream\n" );
+      return -1;
+   }
+   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+      printf( "failed to close walker after second gc iteration\n" );
+      return -1;
+   }
+   // validate count values
+   if ( walkreport.fileusage != 3 ) {
+      printf( "improper first walk fileusage: %zu\n", walkreport.fileusage );
+      return -1;
+   }
+   if ( walkreport.byteusage != 2098276 ) {
+      printf( "improper first walk byteusage: %zu\n", walkreport.byteusage );
+      return -1;
+   }
+
+
 
    // start up a resourcelog
    RESOURCELOG logfile = NULL;
@@ -427,6 +529,10 @@ int main(int argc, char **argv)
    // continue iteration, which should produce no further ops
    if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after first gc from nopack\n" );
+      return -1;
+   }
+   if ( process_closestreamwalker( walker, NULL ) ) {
+      printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
 
@@ -545,6 +651,10 @@ int main(int argc, char **argv)
       printf( "failed to process second gc op of nopack\n" );
       return -1;
    }
+   if ( process_closestreamwalker( walker, NULL ) ) {
+      printf( "failed to close walker after second gc iteration\n" );
+      return -1;
+   }
 
 
    // verify absence of file3 components
@@ -614,6 +724,10 @@ int main(int argc, char **argv)
    // continue iteration, which should produce no further ops
    if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after third gc from nopack\n" );
+      return -1;
+   }
+   if ( process_closestreamwalker( walker, NULL ) ) {
+      printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
    // process the gcops
