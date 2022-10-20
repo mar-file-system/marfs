@@ -246,6 +246,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
          return -1;
       }
       *tgtval = (int)parseval;
+      LOG( LOG_INFO, "Parsed REFTREE '%c' value of %d\n", *parse, *tgtval );
       foundvals++;
       if ( *endptr != '-'  &&  *endptr != ')' ) {
          LOG( LOG_ERR, "Unrecognized stream value format\n" );
@@ -278,15 +279,19 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       }
       switch ( *parse ) {
          case 'f':
+            LOG( LOG_INFO, "Parsed FileNo value of %llu\n", parseval );
             ftag->fileno = parseval;
             break;
          case 'o':
+            LOG( LOG_INFO, "Parsed ObjNo value of %llu\n", parseval );
             ftag->objno = parseval;
             break;
          case '@':
+            LOG( LOG_INFO, "Parsed Offset value of %llu\n", parseval );
             ftag->offset = parseval;
             break;
          case 'e':
+            LOG( LOG_INFO, "Parsed EOS value of %llu\n", parseval );
             if ( parseval == 1 ) {
                ftag->endofstream = 1;
             }
@@ -320,34 +325,42 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
    while ( *parse != '\0' ) {
       // check for string values
       if ( strncmp( parse, "INIT", 4 ) == 0 ) {
+         LOG( LOG_INFO, "Parsed 'INIT' datastate\n" );
          ftag->state = FTAG_INIT | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 4;
       }
       else if ( strncmp( parse, "SIZED", 5 ) == 0 ) {
+         LOG( LOG_INFO, "Parsed 'SIZED' datastate\n" );
          ftag->state = FTAG_SIZED | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 5;
       }
       else if ( strncmp( parse, "FIN", 3 ) == 0 ) {
+         LOG( LOG_INFO, "Parsed 'FIN' datastate\n" );
          ftag->state = FTAG_FIN | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 3;
       }
       else if ( strncmp( parse, "COMP", 4 ) == 0 ) {
+         LOG( LOG_INFO, "Parsed 'COMP' datastate\n" );
          ftag->state = FTAG_COMP | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 4;
       }
       else if ( strncmp( parse, "RO", 2 ) == 0 ) {
+         LOG( LOG_INFO, "Parsed 'READ-ONLY' dataperms\n" );
          ftag->state = FTAG_READABLE | ( ftag->state & FTAG_DATASTATE );
          endptr = parse + 2;
       }
       else if ( strncmp( parse, "WO", 2 ) == 0 ) {
+         LOG( LOG_INFO, "Parsed 'WRITE-ONLY' dataperms\n" );
          ftag->state = FTAG_WRITEABLE | ( ftag->state & FTAG_DATASTATE );
          endptr = parse + 2;
       }
       else if ( strncmp( parse, "RW", 2 ) == 0 ) {
+         LOG( LOG_INFO, "Parsed 'READ-WRITE' dataperms\n" );
          ftag->state = (FTAG_WRITEABLE | FTAG_READABLE) | ( ftag->state & FTAG_DATASTATE );
          endptr = parse + 2;
       }
       else if ( strncmp( parse, "NO", 2 ) == 0 ) {
+         LOG( LOG_INFO, "Parsed 'NO-ACCESS' dataperms\n" );
          ftag->state = ( ftag->state & FTAG_DATASTATE );
          endptr = parse + 2;
       }
@@ -358,7 +371,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
             LOG( LOG_ERR, "File position value \'%c\' exceeds size limits\n", *parse );
             return -1;
          }
-         LOG( LOG_INFO, "Parsed \'%c\' value of %llu\n", *parse, parseval );
+         LOG( LOG_INFO, "Parsed DATACON \'%c\' value of %llu\n", *parse, parseval );
          switch ( *parse ) {
             case 'n':
                ftag->protection.N = parseval;
@@ -686,7 +699,7 @@ size_t ftag_repackmarker( const FTAG* ftag, char* tgtstr, size_t len ) {
       if ( *parse == '|' ) { *parse = '#'; }
       parse++;
    }
-   size_t retval = snprintf( tgtstr, len, "%s|%s|%zuREPACK", ftag->ctag, sanstream, ftag->objno );
+   size_t retval = snprintf( tgtstr, len, "%s|%s|%zuREPACK", ftag->ctag, sanstream, ftag->fileno );
    free( sanstream );
    return retval;
 }
