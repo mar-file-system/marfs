@@ -62,6 +62,16 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
+#define GC_THRESH 518400  // Age of deleted files before they are Garbage Collected
+                          // Default to 6 days ago
+#define RB_L_THRESH 1200  // Age of files before they are rebuilt ( based on location )
+                          // Default to 20 minutes ago
+#define RB_M_THRESH 120   // Age of files before they are rebuilt ( based on marker )
+                          // Default to 2 minutes ago
+#define RP_THRESH 259200  // Age of files before they are repacked
+                          // Default to 3 days ago
+
+
 typedef struct rmanprogress_struct {
    // per-NS Progress Tracking
    size_t     nscount;
@@ -92,5 +102,65 @@ typedef struct rmanprogress_struct {
 
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
+
+
+int main(int argc, const char** argv) {
+   errno = 0; // init to zero (apparently not guaranteed)
+   char* config_path = getenv( "MARFS_CONFIG_PATH" ); // check for config env var
+   char* ns_path = ".";
+   char recurse = 0;
+   rmanprogress rmanprog = {0};
+
+   // get the initialization time of the program, to identify thresholds
+   struct timeval currenttime;
+   if ( gettimeofday( &currenttime, NULL ) ) {
+      printf( "failed to get current time for first walk\n" );
+      return -1;
+   }
+   time_t defgcthresh = currenttime.tv_nsec - GC_THRESH;
+   time_t defrblthresh = currenttime.tv_nsec - RB_L_THRESH;
+   time_t defrbmthresh = currenttime.tv_nsec - RB_M_THRESH;
+   time_t defrpthresh = currenttime.tv_nsec - RP_THRESH;
+
+   // parse all position-independent arguments
+   char pr_usage = 0;
+   int c;
+   while ((c = getopt(argc, (char* const*)argv, "c:n:rilpqgrRdT:L:h")) != -1) {
+      switch (c) {
+      case 'c':
+         config_path = optarg;
+         break;
+      case 'n':
+         ns_path = optarg;
+         break;
+      case 'r':
+         recurse = 1;
+         break;
+      case 'i':
+         rmanprog.iteration = optarg;
+         break;
+      case 'l':
+         rmanprog.logroot = optarg;
+         break;
+      case 'p':
+         rmanprog.preservelogtgt = optarg;
+         break;
+      case 'q':
+         rmanprog.quotas = optarg;
+         break;
+      case 'g':
+         rmanprog.thresh.gcthreshold = optarg;
+         break;
+      case '?':
+         printf( OUTPREFX "ERROR: Unrecognized cmdline argument: \'%c\'\n", optopt );
+      case 'h':
+         pr_usage = 1;
+         break;
+      default:
+         printf("ERROR: Failed to parse command line options\n");
+         return -1;
+      }
+   }
+
 
 
