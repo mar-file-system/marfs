@@ -389,7 +389,7 @@ int main(int argc, char **argv)
       printf( "improper first walk filecount: %zu\n", walkreport.filecount );
       return -1;
    }
-   if ( walkreport.objcount != 22 ) {
+   if ( walkreport.objcount != 23 ) {
       printf( "improper first walk objcount: %zu\n", walkreport.objcount );
       return -1;
    }
@@ -520,6 +520,11 @@ int main(int argc, char **argv)
       printf( "unexpected REBUILDOPS following first traversal of no-pack stream\n" );
       return -1;
    }
+   // log gcops
+   if ( resourcelog_processop( &(logfile), gcops, NULL ) ) {
+      printf( "failed to log GCops for nopack1\n" );
+      return -1;
+   }
    // process the gcops
    // TODO repackstreamer
    if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
@@ -645,6 +650,11 @@ int main(int argc, char **argv)
       printf( "unexpected walker iteration after second gc from nopack\n" );
       return -1;
    }
+   // log gcops
+   if ( resourcelog_processop( &(logfile), gcops, NULL ) ) {
+      printf( "failed to log GCops for nopack2\n" );
+      return -1;
+   }
    // process the gcops
    // TODO repackstreamer
    if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
@@ -728,6 +738,11 @@ int main(int argc, char **argv)
    }
    if ( process_closestreamwalker( walker, NULL ) ) {
       printf( "failed to close walker after second gc iteration\n" );
+      return -1;
+   }
+   // log gcops
+   if ( resourcelog_processop( &(logfile), gcops, NULL ) ) {
+      printf( "failed to log GCops for nopack3\n" );
       return -1;
    }
    // process the gcops
@@ -956,10 +971,186 @@ int main(int argc, char **argv)
       printf( "unexpected content of 'file3' of pack\n" );
       return -1;
    }
-   char* packctag = strdup( stream->ctag );
-   char* packstreamid = strdup( stream->streamid );
-   if ( packctag == NULL  ||  packstreamid == NULL ) {
-      printf( "failed to duplicate stream ctag/id\n" );
+   if ( datastream_close( &(stream) ) ) {
+      printf( "failed to close pack read stream2\n" );
+      return -1;
+   }
+
+
+   // delete file1
+   if ( curmdal->unlink( pos.ctxt, "file1" ) ) {
+      printf( "failed to delete file1 of nopack\n" );
+      return -1;
+   }
+
+   // do a quick walk of the stream, verifying expected values
+   thresh.gcthreshold = 0;
+   thresh.repackthreshold = 0;
+   thresh.rebuildthreshold = 0;
+   thresh.cleanupthreshold = 0;
+   walker = process_openstreamwalker( pos.ns, rpath, thresh, NULL );
+   if ( walker == NULL ) {
+      printf( "failed to open quick-streamwalker1 for \"%s\"\n", rpath );
+      return -1;
+   }
+   gcops = NULL;
+   repackops = NULL;
+   rebuildops = NULL;
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+      printf( "unexpected result of first quota-only iteration from \"%s\"\n", rpath );
+      return -1;
+   }
+   // we should have no ops at all
+   if ( gcops ) {
+      printf( "unexpcted gcops following first quota-only iteration of pack stream\n" );
+      return -1;
+   }
+   if ( repackops ) {
+      printf( "unexpected REPACKOPS following first quota-only iteration of pack stream\n" );
+      return -1;
+   }
+   if ( rebuildops ) {
+      printf( "unexpected REBUILDOPS following first quota-only iteration of pack stream\n" );
+      return -1;
+   }
+   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+      printf( "failed to close walker after first quick iteration of pack\n" );
+      return -1;
+   }
+   // validate count values
+   if ( walkreport.fileusage != 2 ) {
+      printf( "improper first pack walk fileusage: %zu\n", walkreport.fileusage );
+      return -1;
+   }
+   if ( walkreport.byteusage != 4096 ) {
+      printf( "improper first pack walk byteusage: %zu\n", walkreport.byteusage );
+      return -1;
+   }
+
+   // walk the stream again, actually executing the GC
+   if ( gettimeofday( &currenttime, NULL ) ) {
+      printf( "failed to get current time for first walk of pack\n" );
+      return -1;
+   }
+   thresh.gcthreshold = currenttime.tv_sec + 120;
+   thresh.repackthreshold = currenttime.tv_sec + 120;
+   thresh.rebuildthreshold = 0; // no rebuilds for now
+   thresh.cleanupthreshold = currenttime.tv_sec + 120;
+   walker = process_openstreamwalker( pos.ns, rpath, thresh, NULL );
+   if ( walker == NULL ) {
+      printf( "failed to open streamwalker2 for \"%s\"\n", rpath );
+      return -1;
+   }
+   gcops = NULL;
+   repackops = NULL;
+   rebuildops = NULL;
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+      printf( "unexpected result of second iteration from \"%s\"\n", rpath );
+      return -1;
+   }
+   // we should have some gcops, and nothing else
+   if ( gcops ) {
+      printf( "no gcops following deletion of file1 in pack\n" );
+      return -1;
+   }
+   if ( repackops ) {
+      printf( "unexpected REPACKOPS following first gc traversal of pack stream\n" );
+      return -1;
+   }
+   if ( rebuildops ) {
+      printf( "unexpected REBUILDOPS following first gc traversal of pack stream\n" );
+      return -1;
+   }
+   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+      printf( "failed to close walker after second gc iteration\n" );
+      return -1;
+   }
+   // validate count values
+   if ( walkreport.fileusage != 2 ) {
+      printf( "improper second pack walk fileusage: %zu\n", walkreport.fileusage );
+      return -1;
+   }
+   if ( walkreport.byteusage != 4206 ) {
+      printf( "improper second pack walk byteusage: %zu\n", walkreport.byteusage );
+      return -1;
+   }
+   if ( walkreport.filecount != 3 ) {
+      printf( "improper second pack walk filecount: %zu\n", walkreport.filecount );
+      return -1;
+   }
+   if ( walkreport.objcount != 2 ) {
+      printf( "improper second pack walk objcount: %zu\n", walkreport.objcount );
+      return -1;
+   }
+   if ( walkreport.delobjs ) {
+      printf( "improper second pack walk delobjs: %zu\n", walkreport.delobjs );
+      return -1;
+   }
+   if ( walkreport.delfiles ) {
+      printf( "improper second pack walk delfiles: %zu\n", walkreport.delfiles );
+      return -1;
+   }
+   if ( walkreport.delstreams ) {
+      printf( "improper second pack walk delstreams: %zu\n", walkreport.delstreams );
+      return -1;
+   }
+   if ( walkreport.volfiles ) {
+      printf( "improper second pack walk volfiles: %zu\n", walkreport.volfiles );
+      return -1;
+   }
+   if ( walkreport.rpckfiles ) {
+      printf( "improper second pack walk rpckfiles: %zu\n", walkreport.rpckfiles );
+      return -1;
+   }
+   if ( walkreport.rpckbytes ) {
+      printf( "improper second pack walk rpckbytes: %zu\n", walkreport.rpckbytes );
+      return -1;
+   }
+   if ( walkreport.rbldobjs ) {
+      printf( "improper second pack walk rbldobjs: %zu\n", walkreport.rbldobjs );
+      return -1;
+   }
+   if ( walkreport.rbldbytes ) {
+      printf( "improper second pack walk rbldbytes: %zu\n", walkreport.rbldbytes );
+      return -1;
+   }
+
+
+   // read back the written PACK files
+   // file2
+   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
+      printf( "failed to open 'file2' of pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( &(stream), &(readarray), 1048576 );
+   if ( iores != 1024 ) {
+      printf( "unexpected read res for 'file2' of pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( readarray, databuf, 110 ) ) {
+      printf( "unexpected content ( check 1 ) of 'file2' of pack\n" );
+      return -1;
+   }
+   if ( memcmp( readarray + 110, zerobuf, iores - 110 ) ) {
+      printf( "unexpected content ( check 2 ) of 'file2' of pack\n" );
+      return -1;
+   }
+   if ( datastream_release( &(stream) ) ) {
+      printf( "failed to close pack read stream1\n" );
+      return -1;
+   }
+   // file3
+   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos), NULL ) ) {
+      printf( "failed to open 'file3' of pack for read\n" );
+      return -1;
+   }
+   iores = datastream_read( &(stream), &(readarray), 1048576 );
+   if ( iores != (1024 * 3) ) {
+      printf( "unexpected read res for 'file3' of pack: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( readarray, databuf, iores ) ) {
+      printf( "unexpected content of 'file3' of pack\n" );
       return -1;
    }
    if ( datastream_close( &(stream) ) ) {
@@ -968,167 +1159,240 @@ int main(int argc, char **argv)
    }
 
 
-   // validate recovery info in the first obj
-   ne_handle datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname, objlocation, objerasure, NE_RDALL );
-   if ( datahandle == NULL ) {
-      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   size_t datasize = ne_read( datahandle, &(readarray), 1024 * 1024 * 10 );
-   if ( datasize < 1 ) {
-      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
-   if ( ne_close( datahandle, NULL, NULL ) ) {
-      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
-      return -1;
-   }
-   RECOVERY_HEADER rheader = {
-      .majorversion = 0,
-      .minorversion = 0,
-      .ctag = NULL,
-      .streamid = NULL
-   };
-   RECOVERY recov = recovery_init( &(readarray), datasize, &(rheader) );
-   if ( recov == NULL ) {
-      printf( "Failed to initialize recovery stream for data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   if ( strcmp( rheader.ctag, packctag )  ||  strcmp( rheader.streamid, packstreamid ) ) {
-      printf( "Recovery header has unexpcted stream values: ctag=%s, sid=%s\n",
-              rheader.ctag, rheader.streamid );
-      return -1;
-   }
-   free( packctag );
-   free( packstreamid );
-   free( rheader.ctag );
-   free( rheader.streamid );
-   RECOVERY_FINFO rfinfo;
-   size_t bufsize;
-   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
-      printf( "Failed to retrieve recov info for file1 of pack\n" );
-      return -1;
-   }
-   if ( strcmp( rfinfo.path, "file1" )  ||
-         rfinfo.size != 1024 * 2  ||
-         rfinfo.size != bufsize  ||
-         rfinfo.eof != 1 ) {
-      printf( "Unexpected recov info for file1 of pack\n" );
-      return -1;
-   }
-   free( rfinfo.path );
-   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
-      printf( "Failed to retrieve recov info for file2 of pack\n" );
-      return -1;
-   }
-   if ( strcmp( rfinfo.path, "file2" )  ||
-         rfinfo.size != 110  ||
-         rfinfo.size != bufsize  ||
-         rfinfo.eof != 1 ) {
-      printf( "Unexpected recov info for file2 of pack\n" );
-      return -1;
-   }
-   free( rfinfo.path );
-   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
-      printf( "Failed to retrieve recov info for file3 of pack\n" );
-      return -1;
-   }
-   if ( strcmp( rfinfo.path, "file3" )  ||
-         rfinfo.size >= 1024 * 4  ||
-         rfinfo.size != bufsize  ||
-         rfinfo.eof ) {
-      printf( "Unexpected recov info for file3 of pack\n" );
-      return -1;
-   }
-   size_t origrfinfosize = rfinfo.size; // stash this for later check
-   free( rfinfo.path );
-   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
-      printf( "Unexpected trailing file in obj0 of pack\n" );
-      return -1;
-   }
-   // continue to object2
-   datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2, objerasure2, NE_RDALL );
-   if ( datahandle == NULL ) {
-      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   datasize = ne_read( datahandle, &(readarray), 1024 * 1024 * 10 );
-   if ( datasize < 1 ) {
-      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
-   if ( ne_close( datahandle, NULL, NULL ) ) {
-      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
-      return -1;
-   }
-   if ( recovery_cont( recov, &(readarray), datasize ) ) {
-      printf( "Failed to continue pack recovery process into object1 data\n" );
-      return -1;
-   }
-   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
-      printf( "Failed to retrieve recov info for file3 of pack object2\n" );
-      return -1;
-   }
-   if ( strcmp( rfinfo.path, "file3" )  ||
-         rfinfo.size != 1024 * 4  ||
-         bufsize != (1024 * 4) - origrfinfosize  ||
-         rfinfo.eof != 1 ) {
-      printf( "Unexpected recov info for file3 of pack object1\n" );
-      return -1;
-   }
-   free( rfinfo.path );
-   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
-      printf( "Unexpected trailing file in obj1 of pack\n" );
-      return -1;
-   }
-   if ( recovery_close( recov ) ) {
-      printf( "Failed to close recovery stream of pack\n" );
-      return -1;
-   }
-
-
-   // cleanup 'file1' refs
-   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file1" ) ) {
-      printf( "Failed to unlink pack \"file1\"\n" );
-      return -1;
-   }
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
-      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
-      return -1;
-   }
-   free( rpath );
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname );
-      return -1;
-   }
-   free( objname );
-   // cleanup 'file2' refs
+   // delete and cleanup file2 and 3
    if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file2" ) ) {
-      printf( "Failed to unlink pack \"file2\"\n" );
+      printf( "Failed to unlink \"file2\"\n" );
       return -1;
    }
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) ) {
-      printf( "Failed to unlink rpath: \"%s\"\n", rpath2 );
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file3" ) ) {
+      printf( "Failed to unlink \"file3\"\n" );
+      return -1;
+   }
+   if ( gettimeofday( &currenttime, NULL ) ) {
+      printf( "failed to get current time for third walk\n" );
+      return -1;
+   }
+   thresh.gcthreshold = currenttime.tv_sec + 120;
+   thresh.repackthreshold = currenttime.tv_sec + 120;
+   thresh.rebuildthreshold = 0; // no rebuilds for now
+   thresh.cleanupthreshold = currenttime.tv_sec + 120;
+   walker = process_openstreamwalker( pos.ns, rpath, thresh, NULL );
+   if ( walker == NULL ) {
+      printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
+      return -1;
+   }
+   gcops = NULL;
+   repackops = NULL;
+   rebuildops = NULL;
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+      printf( "unexpected result of third iteration from \"%s\"\n", rpath );
+      return -1;
+   }
+   // we should have some gcops, and nothing else
+   if ( gcops == NULL ) {
+      printf( "no gcops following deletion of file2 and 3 in pack\n" );
+      return -1;
+   }
+   if ( repackops ) {
+      printf( "unexpected REPACKOPS following traversal3 of pack stream\n" );
+      return -1;
+   }
+   if ( rebuildops ) {
+      printf( "unexpected REBUILDOPS following traversal3 of pack stream\n" );
+      return -1;
+   }
+   // continue iteration, which should produce no further ops
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+      printf( "unexpected walker iteration after third gc from pack\n" );
+      return -1;
+   }
+   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+      printf( "failed to close walker after third pack gc iteration\n" );
+      return -1;
+   }
+   // validate count values
+   if ( walkreport.fileusage ) {
+      printf( "improper third pack walk fileusage: %zu\n", walkreport.fileusage );
+      return -1;
+   }
+   if ( walkreport.byteusage ) {
+      printf( "improper third pack walk byteusage: %zu\n", walkreport.byteusage );
+      return -1;
+   }
+   if ( walkreport.filecount != 3 ) {
+      printf( "improper third pack walk filecount: %zu\n", walkreport.filecount );
+      return -1;
+   }
+   if ( walkreport.objcount != 2 ) {
+      printf( "improper third pack walk objcount: %zu\n", walkreport.objcount );
+      return -1;
+   }
+   if ( walkreport.delobjs != 2 ) {
+      printf( "improper third pack walk delobjs: %zu\n", walkreport.delobjs );
+      return -1;
+   }
+   if ( walkreport.delfiles != 2 ) {
+      printf( "improper third pack walk delfiles: %zu\n", walkreport.delfiles );
+      return -1;
+   }
+   if ( walkreport.delstreams ) {
+      printf( "improper third pack walk delstreams: %zu\n", walkreport.delstreams );
+      return -1;
+   }
+   if ( walkreport.volfiles ) {
+      printf( "improper third pack walk volfiles: %zu\n", walkreport.volfiles );
+      return -1;
+   }
+   if ( walkreport.rpckfiles ) {
+      printf( "improper third pack walk rpckfiles: %zu\n", walkreport.rpckfiles );
+      return -1;
+   }
+   if ( walkreport.rpckbytes ) {
+      printf( "improper third pack walk rpckbytes: %zu\n", walkreport.rpckbytes );
+      return -1;
+   }
+   if ( walkreport.rbldobjs ) {
+      printf( "improper third pack walk rbldobjs: %zu\n", walkreport.rbldobjs );
+      return -1;
+   }
+   if ( walkreport.rbldbytes ) {
+      printf( "improper third pack walk rbldbytes: %zu\n", walkreport.rbldbytes );
+      return -1;
+   }
+   // log gcops
+   if ( resourcelog_processop( &(logfile), gcops, NULL ) ) {
+      printf( "failed to log GCops for pack3\n" );
+      return -1;
+   }
+   // process the gcops
+   // TODO repackstreamer
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+      printf( "failed to process third gc op of pack\n" );
+      return -1;
+   }
+
+   // verify absence of 'file2' refs
+   errno = 0;
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) == 0  ||  errno != ENOENT ) {
+      printf( "DID unlink rpath: \"%s\"\n", rpath2 );
       return -1;
    }
    free( rpath2 );
-   // cleanup 'file3' refs
-   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file3" ) ) {
-      printf( "Failed to unlink pack \"file3\"\n" );
-      return -1;
-   }
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath3 ) ) {
+   // verify absence 'file3' refs
+   errno = 0;
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath3 ) == 0  ||  errno != ENOENT ) {
       printf( "Failed to unlink rpath: \"%s\"\n", rpath3 );
       return -1;
    }
    free( rpath3 );
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2 ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname2 );
+   free( objname2 );
+
+
+   // walk a final time, to delete the entire stream
+   walker = process_openstreamwalker( pos.ns, rpath, thresh, NULL );
+   if ( walker == NULL ) {
+      printf( "failed to open streamwalker4 for \"%s\"\n", rpath );
       return -1;
    }
-   free( objname2 );
+   gcops = NULL;
+   repackops = NULL;
+   rebuildops = NULL;
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+      printf( "unexpected result of fourth iteration from \"%s\"\n", rpath );
+      return -1;
+   }
+   // we should have some gcops, and nothing else
+   if ( gcops == NULL ) {
+      printf( "no gcops for final walk of pack\n" );
+      return -1;
+   }
+   if ( repackops ) {
+      printf( "unexpected REPACKOPS following traversal4 of pack stream\n" );
+      return -1;
+   }
+   if ( rebuildops ) {
+      printf( "unexpected REBUILDOPS following traversal4 of pack stream\n" );
+      return -1;
+   }
+   // continue iteration, which should produce no further ops
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+      printf( "unexpected walker iteration after fourth gc from pack\n" );
+      return -1;
+   }
+   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+      printf( "failed to close walker after fourth pack gc iteration\n" );
+      return -1;
+   }
+   // validate count values
+   if ( walkreport.fileusage ) {
+      printf( "improper fourth pack walk fileusage: %zu\n", walkreport.fileusage );
+      return -1;
+   }
+   if ( walkreport.byteusage ) {
+      printf( "improper fourth pack walk byteusage: %zu\n", walkreport.byteusage );
+      return -1;
+   }
+   if ( walkreport.filecount != 1 ) {
+      printf( "improper fourth pack walk filecount: %zu\n", walkreport.filecount );
+      return -1;
+   }
+   if ( walkreport.objcount ) {
+      printf( "improper fourth pack walk objcount: %zu\n", walkreport.objcount );
+      return -1;
+   }
+   if ( walkreport.delobjs ) {
+      printf( "improper fourth pack walk delobjs: %zu\n", walkreport.delobjs );
+      return -1;
+   }
+   if ( walkreport.delfiles != 1 ) {
+      printf( "improper fourth pack walk delfiles: %zu\n", walkreport.delfiles );
+      return -1;
+   }
+   if ( walkreport.delstreams != 1 ) {
+      printf( "improper fourth pack walk delstreams: %zu\n", walkreport.delstreams );
+      return -1;
+   }
+   if ( walkreport.volfiles ) {
+      printf( "improper fourth pack walk volfiles: %zu\n", walkreport.volfiles );
+      return -1;
+   }
+   if ( walkreport.rpckfiles ) {
+      printf( "improper fourth pack walk rpckfiles: %zu\n", walkreport.rpckfiles );
+      return -1;
+   }
+   if ( walkreport.rpckbytes ) {
+      printf( "improper fourth pack walk rpckbytes: %zu\n", walkreport.rpckbytes );
+      return -1;
+   }
+   if ( walkreport.rbldobjs ) {
+      printf( "improper fourth pack walk rbldobjs: %zu\n", walkreport.rbldobjs );
+      return -1;
+   }
+   if ( walkreport.rbldbytes ) {
+      printf( "improper fourth pack walk rbldbytes: %zu\n", walkreport.rbldbytes );
+      return -1;
+   }
+   // log gcops
+   if ( resourcelog_processop( &(logfile), gcops, NULL ) ) {
+      printf( "failed to log GCops for pack4\n" );
+      return -1;
+   }
+   // process the gcops
+   // TODO repackstreamer
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+      printf( "failed to process fourth gc op of pack\n" );
+      return -1;
+   }
+
+   // verify absence of 'file1' refs
+   errno = 0;
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) == 0  ||  errno != ENOENT ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
+      return -1;
+   }
+   free( rpath );
+   free( objname );
+
 
 
 // PARALLEL WRITE TEST
@@ -1303,41 +1567,267 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   // cleanup 'file1' refs
-   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file1" ) ) {
-      printf( "Failed to unlink pwrite \"file1\"\n" );
-      return -1;
-   }
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
-      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
-      return -1;
-   }
-   free( rpath );
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname );
-      return -1;
-   }
-   free( objname );
-   // cleanup 'file2' refs
+   // delete file2
    if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file2" ) ) {
       printf( "Failed to unlink pwrite \"file2\"\n" );
       return -1;
    }
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) ) {
+
+   // walk the stream and process deletions
+   if ( gettimeofday( &currenttime, NULL ) ) {
+      printf( "failed to get current time for third walk\n" );
+      return -1;
+   }
+   thresh.gcthreshold = currenttime.tv_sec + 120;
+   thresh.repackthreshold = currenttime.tv_sec + 120;
+   thresh.rebuildthreshold = 0; // no rebuilds for now
+   thresh.cleanupthreshold = currenttime.tv_sec + 120;
+   walker = process_openstreamwalker( pos.ns, rpath, thresh, NULL );
+   if ( walker == NULL ) {
+      printf( "failed to open streamwalker1 for \"%s\"\n", rpath );
+      return -1;
+   }
+   gcops = NULL;
+   repackops = NULL;
+   rebuildops = NULL;
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+      printf( "unexpected result of first iteration from \"%s\"\n", rpath );
+      return -1;
+   }
+   // we should have some gcops, and nothing else
+   if ( gcops == NULL ) {
+      printf( "no gcops for final walk of pack\n" );
+      return -1;
+   }
+   if ( repackops ) {
+      printf( "unexpected REPACKOPS following traversal4 of pack stream\n" );
+      return -1;
+   }
+   if ( rebuildops ) {
+      printf( "unexpected REBUILDOPS following traversal4 of pack stream\n" );
+      return -1;
+   }
+   // continue iteration, which should produce no further ops
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+      printf( "unexpected walker iteration after first gc from parallel-write\n" );
+      return -1;
+   }
+   // log gcops
+   if ( resourcelog_processop( &(logfile), gcops, NULL ) ) {
+      printf( "failed to log GCops for parallel1\n" );
+      return -1;
+   }
+   // process the gcops
+   // TODO reparallel-writestreamer
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+      printf( "failed to process first gc op of parallel-write\n" );
+      return -1;
+   }
+   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+      printf( "failed to close walker after first parallel-write gc iteration\n" );
+      return -1;
+   }
+   // validate count values
+   if ( walkreport.fileusage != 1 ) {
+      printf( "improper first parallel-write walk fileusage: %zu\n", walkreport.fileusage );
+      return -1;
+   }
+   if ( walkreport.byteusage != 1234 ) {
+      printf( "improper first parallel-write walk byteusage: %zu\n", walkreport.byteusage );
+      return -1;
+   }
+   if ( walkreport.filecount != 2 ) {
+      printf( "improper first parallel-write walk filecount: %zu\n", walkreport.filecount );
+      return -1;
+   }
+   if ( walkreport.objcount != 3 ) {
+      printf( "improper first parallel-write walk objcount: %zu\n", walkreport.objcount );
+      return -1;
+   }
+   if ( walkreport.delobjs != 2 ) {
+      printf( "improper first parallel-write walk delobjs: %zu\n", walkreport.delobjs );
+      return -1;
+   }
+   if ( walkreport.delfiles != 1 ) {
+      printf( "improper first parallel-write walk delfiles: %zu\n", walkreport.delfiles );
+      return -1;
+   }
+   if ( walkreport.delstreams ) {
+      printf( "improper first parallel-write walk delstreams: %zu\n", walkreport.delstreams );
+      return -1;
+   }
+   if ( walkreport.volfiles ) {
+      printf( "improper first parallel-write walk volfiles: %zu\n", walkreport.volfiles );
+      return -1;
+   }
+   if ( walkreport.rpckfiles ) {
+      printf( "improper first parallel-write walk rpckfiles: %zu\n", walkreport.rpckfiles );
+      return -1;
+   }
+   if ( walkreport.rpckbytes ) {
+      printf( "improper first parallel-write walk rpckbytes: %zu\n", walkreport.rpckbytes );
+      return -1;
+   }
+   if ( walkreport.rbldobjs ) {
+      printf( "improper first parallel-write walk rbldobjs: %zu\n", walkreport.rbldobjs );
+      return -1;
+   }
+   if ( walkreport.rbldbytes ) {
+      printf( "improper first parallel-write walk rbldbytes: %zu\n", walkreport.rbldbytes );
+      return -1;
+   }
+
+   // verify absence of 'file2' refs
+   errno = 0;
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) == 0  ||  errno != ENOENT ) {
       printf( "Failed to unlink rpath: \"%s\"\n", rpath2 );
       return -1;
    }
    free( rpath2 );
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2 ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname2 );
-      return -1;
-   }
    free( objname2 );
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname3, objlocation3 ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname3 );
+   free( objname3 );
+
+
+   // reread file1
+   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
+      printf( "failed to open 'file1' of pwrite for read\n" );
       return -1;
    }
-   free( objname3 );
+   iores = datastream_read( &(stream), &(readarray), 12345 );
+   if ( iores != 1234 ) {
+      printf( "unexpected read res for 'file1' of pwrite: %zd (%s)\n", iores, strerror(errno) );
+      return -1;
+   }
+   if ( memcmp( readarray, databuf, 1234 ) ) {
+      printf( "unexpected content of 'file1' of pwrite\n" );
+      return -1;
+   }
+   if ( datastream_release( &(stream) ) ) {
+      printf( "failed to close pwrite read stream1\n" );
+      return -1;
+   }
+
+
+   // delete file1
+   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file1" ) ) {
+      printf( "Failed to unlink pwrite \"file1\"\n" );
+      return -1;
+   }
+
+   // walk the stream and process deletions
+   if ( gettimeofday( &currenttime, NULL ) ) {
+      printf( "failed to get current time for final walk\n" );
+      return -1;
+   }
+   thresh.gcthreshold = currenttime.tv_sec + 120;
+   thresh.repackthreshold = currenttime.tv_sec + 120;
+   thresh.rebuildthreshold = 0; // no rebuilds for now
+   thresh.cleanupthreshold = currenttime.tv_sec + 120;
+   walker = process_openstreamwalker( pos.ns, rpath, thresh, NULL );
+   if ( walker == NULL ) {
+      printf( "failed to open streamwalker1 for \"%s\"\n", rpath );
+      return -1;
+   }
+   gcops = NULL;
+   repackops = NULL;
+   rebuildops = NULL;
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+      printf( "unexpected result of final iteration from \"%s\"\n", rpath );
+      return -1;
+   }
+   // we should have some gcops, and nothing else
+   if ( gcops == NULL ) {
+      printf( "no gcops for final walk of pack\n" );
+      return -1;
+   }
+   if ( repackops ) {
+      printf( "unexpected REPACKOPS following traversal4 of pack stream\n" );
+      return -1;
+   }
+   if ( rebuildops ) {
+      printf( "unexpected REBUILDOPS following traversal4 of pack stream\n" );
+      return -1;
+   }
+   // continue iteration, which should produce no further ops
+   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+      printf( "unexpected walker iteration after final gc from parallel-write\n" );
+      return -1;
+   }
+   // log gcops
+   if ( resourcelog_processop( &(logfile), gcops, NULL ) ) {
+      printf( "failed to log GCops for parallel final\n" );
+      return -1;
+   }
+   // process the gcops
+   // TODO reparallel-writestreamer
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+      printf( "failed to process final gc op of parallel-write\n" );
+      return -1;
+   }
+   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+      printf( "failed to close walker after final parallel-write gc iteration\n" );
+      return -1;
+   }
+   // validate count values
+   if ( walkreport.fileusage ) {
+      printf( "improper final parallel-write walk fileusage: %zu\n", walkreport.fileusage );
+      return -1;
+   }
+   if ( walkreport.byteusage ) {
+      printf( "improper final parallel-write walk byteusage: %zu\n", walkreport.byteusage );
+      return -1;
+   }
+   if ( walkreport.filecount != 1 ) {
+      printf( "improper final parallel-write walk filecount: %zu\n", walkreport.filecount );
+      return -1;
+   }
+   if ( walkreport.objcount != 1 ) {
+      printf( "improper final parallel-write walk objcount: %zu\n", walkreport.objcount );
+      return -1;
+   }
+   if ( walkreport.delobjs != 1 ) {
+      printf( "improper final parallel-write walk delobjs: %zu\n", walkreport.delobjs );
+      return -1;
+   }
+   if ( walkreport.delfiles != 1 ) {
+      printf( "improper final parallel-write walk delfiles: %zu\n", walkreport.delfiles );
+      return -1;
+   }
+   if ( walkreport.delstreams != 1 ) {
+      printf( "improper final parallel-write walk delstreams: %zu\n", walkreport.delstreams );
+      return -1;
+   }
+   if ( walkreport.volfiles ) {
+      printf( "improper final parallel-write walk volfiles: %zu\n", walkreport.volfiles );
+      return -1;
+   }
+   if ( walkreport.rpckfiles ) {
+      printf( "improper final parallel-write walk rpckfiles: %zu\n", walkreport.rpckfiles );
+      return -1;
+   }
+   if ( walkreport.rpckbytes ) {
+      printf( "improper final parallel-write walk rpckbytes: %zu\n", walkreport.rpckbytes );
+      return -1;
+   }
+   if ( walkreport.rbldobjs ) {
+      printf( "improper final parallel-write walk rbldobjs: %zu\n", walkreport.rbldobjs );
+      return -1;
+   }
+   if ( walkreport.rbldbytes ) {
+      printf( "improper final parallel-write walk rbldbytes: %zu\n", walkreport.rbldbytes );
+      return -1;
+   }
+
+
+   // verify absence of 'file1' refs
+   errno = 0;
+   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) == 0  ||  errno != ENOENT ) {
+      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
+      return -1;
+   }
+   free( rpath );
+   free( objname );
+
 
    // cleanup our resourcelog
    if ( resourcelog_term( &(logfile), NULL, NULL ) ) {

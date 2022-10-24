@@ -563,7 +563,6 @@ int printlogline( int logfile, opinfo* op ) {
                LOG( LOG_ERR, "Failed to populate DEL-OBJ extended info string\n" );
                return -1;
             }
-            printf( "PRINT : %zu\n", delobj->offset );
             usedbuff += extinfoprint;
          }
          break;
@@ -947,8 +946,6 @@ opinfo* resourcelog_dupopinfo( opinfo* op ) {
       return NULL;
    }
    // parse over the op chain
-   char* prevctag = NULL;
-   char* prevstreamid = NULL;
    opinfo* genchain = NULL;
    opinfo** newop = &(genchain);
    while ( op ) {
@@ -963,32 +960,18 @@ opinfo* resourcelog_dupopinfo( opinfo* op ) {
       (*newop)->ftag.ctag = NULL;
       (*newop)->ftag.streamid = NULL;
       (*newop)->extendedinfo = NULL; // always NULL these out, just in case
-      // allocate new ctag/streamid only if necessary
-      if ( prevctag  &&  strcmp( prevctag, op->ftag.ctag ) == 0 ) {
-         // just duplicate our previous ref
-         (*newop)->ftag.ctag = prevctag;
+      // allocate new ctag/streamid
+      (*newop)->ftag.ctag = strdup( op->ftag.ctag );
+      if ( (*newop)->ftag.ctag == NULL ) {
+         LOG( LOG_ERR, "Failed to duplicate CTAG string\n" );
+         resourcelog_freeopinfo( genchain );
+         return NULL;
       }
-      else {
-         (*newop)->ftag.ctag = strdup( op->ftag.ctag );
-         if ( (*newop)->ftag.ctag == NULL ) {
-            LOG( LOG_ERR, "Failed to duplicate CTAG string\n" );
-            resourcelog_freeopinfo( genchain );
-            return NULL;
-         }
-         prevctag = (*newop)->ftag.ctag;
-      }
-      if ( prevstreamid  &&  strcmp( prevstreamid, op->ftag.streamid ) == 0 ) {
-         // just duplicate our previous ref
-         (*newop)->ftag.streamid = prevstreamid;
-      }
-      else {
-         (*newop)->ftag.streamid = strdup( op->ftag.streamid );
-         if ( (*newop)->ftag.streamid == NULL ) {
-            LOG( LOG_ERR, "Failed to duplicate StreamID string\n" );
-            resourcelog_freeopinfo( genchain );
-            return NULL;
-         }
-         prevstreamid = (*newop)->ftag.streamid;
+      (*newop)->ftag.streamid = strdup( op->ftag.streamid );
+      if ( (*newop)->ftag.streamid == NULL ) {
+         LOG( LOG_ERR, "Failed to duplicate StreamID string\n" );
+         resourcelog_freeopinfo( genchain );
+         return NULL;
       }
       // potentially populate extended info
       if ( op->extendedinfo ) {
@@ -1004,7 +987,6 @@ opinfo* resourcelog_dupopinfo( opinfo* op ) {
                   }
                   *newinfo = *extinfo;
                   (*newop)->extendedinfo = newinfo;
-                  printf ( "DUP : %zu\n", newinfo->offset );
                   break;
                }
             case MARFS_DELETE_REF_OP:
@@ -1918,7 +1900,7 @@ int resourcelog_fin( RESOURCELOG* resourcelog, operation_summary* summary, const
  * @param operation_summary* summary : Reference to be populated with summary values ( ignored if NULL )
  * @param const char* log_preservation_tgt : FS location where the state logfile should be relocated to
  *                                           If NULL, the file is deleted
- * @return int : Zero on success, or -1 on failure
+ * @return int : Zero on success, 1 if the log was preserved due to errors, or -1 on failure
  */
 int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, const char* log_preservation_tgt ) {
    // check for invalid args
@@ -1941,6 +1923,10 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, cons
          return -1;
       }
    }
+   // check for any recorded errors
+   char errpresent = 0;
+   if ( rsrclog->summary.deletion_object_failures  ||  rsrclog->summary.deletion_reference_failures  ||
+        rsrclog->summary.rebuild_failures  ||  rsrclog->summary.repack_failures ) { errpresent = 1; }
    // potentially record summary info
    if ( summary ) { *summary = rsrclog->summary; }
    // potentially rename the logfile to the preservation tgt
@@ -1951,7 +1937,7 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, cons
          return -1;
       }
    }
-   else {
+   else if ( !(errpresent) ) {
       if ( unlink( rsrclog->logfilepath ) ) {
          LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", rsrclog->logfilepath );
          pthread_mutex_unlock( &(rsrclog->lock) );
@@ -1960,7 +1946,7 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, cons
    }
    cleanuplog( rsrclog, 1 ); // this will release the lock
    *resourcelog = NULL;
-   return 0;
+   return (errpresent) ? 1 : 0;
 }
 
 /**

@@ -1144,8 +1144,9 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
             // potentially generate GC ops for objects spanned by this file
             FTAG tmptag = walker->ftag;
             opinfo* optgt;
-            if ( eos ) { endobj++; } // include the final obj referenced by this file, specifically if no files follow
-            while ( tmptag.objno < endobj ) {
+            size_t finobj = endobj;
+            if ( eos ) { finobj++; } // include the final obj referenced by this file, specifically if no files follow
+            while ( tmptag.objno < finobj ) {
                // generate ops for all but the last referenced object
                optgt = NULL;
                if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
@@ -1186,8 +1187,10 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
       }
    }
    walker->report.filecount++;
-   if ( !(walker->gctag.delzero) ) { walker->report.objcount += endobj + 1; } // note first obj set, if not already deleted
    // NOTE -- technically, objcount will run one object 'ahead' until iteration completion ( we don't count final obj )
+   if ( !(walker->gctag.delzero) ) { walker->report.objcount += endobj + 1; } // note first obj set, if not already deleted
+   else if ( !(eos) ) { walker->report.objcount += 1; } // only count ahead if this is the sole file remaining
+   LOG( LOG_INFO, "Noting %zu active objects ( one ahead ) from file zero\n", walker->report.objcount );
    if ( filestate > 1 ) {
       // file is active
       walker->report.fileusage++;
@@ -1382,13 +1385,14 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          }
          // check for object transition
          if ( walker->ftag.objno != walker->objno ) {
-            // note the previous obj in counts (EXCEPT those referenced by file zero)
-            if ( walker->fileno ) { walker->report.objcount++; }
+            // note the previous obj in counts
+            walker->report.objcount++;
             // we may need to delete the previous object IF we are GCing AND no active refs existed for that obj
             //    AND it is not an already a deleted object0
             if ( walker->gcthresh  &&  walker->activefiles == 0  &&
                  ( walker->objno != 0  ||  walker->gctag.delzero == 0 ) ) {
                // need to prepend an object deletion operation for the previous objno
+               LOG( LOG_INFO, "Adding deletion op for object %zu\n", walker->objno );
                opinfo* optgt = NULL;
                FTAG tmptag = walker->ftag;
                tmptag.objno = walker->objno;
@@ -1407,6 +1411,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                // update our record
                walker->report.delobjs++;
                if ( walker->objno == 0 ) {
+                  LOG( LOG_INFO, "Updating DEL-REF op to note deletion of object zero\n" );
                   // need to ensure we specifically note deletion of initial object
                   optgt = NULL;
                   if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
@@ -1492,7 +1497,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             if ( endobj != walker->objno ) {
                // potentially generate a GC op for the first obj referenced by this file
                FTAG tmptag = walker->ftag;
-               if ( walker->activefiles == 0 ) {
+               if ( walker->activefiles == 0  &&  (walker->ftag.objno != 0  ||  walker->gctag.delzero == 0) ) {
+                  LOG( LOG_INFO, "Adding deletion op for inactive file initial object %zu\n", walker->ftag.objno );
                   optgt = NULL;
                   if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
                      LOG( LOG_ERR, "Failed to identify operation target for deletion of initial spanned obj %zu\n", tmptag.objno );
@@ -1506,6 +1512,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                   }
                   // update operation
                   optgt->count++;
+                  // potentially note deletion of object zero
+                  if ( walker->ftag.objno == 0 ) { delrefinf->delzero = 1; }
                   // update our record
                   walker->report.delobjs++;
                }
@@ -1513,6 +1521,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                tmptag.objno++;
                while ( tmptag.objno < endobj ) {
                   // generate ops for all but the last referenced object
+                  LOG( LOG_INFO, "Adding deletion op for inactive spanned object %zu\n", walker->ftag.objno );
                   optgt = NULL;
                   if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
                      LOG( LOG_ERR, "Failed to identify operation target for deletion of spanned obj %zu\n", tmptag.objno );
@@ -1669,7 +1678,8 @@ int process_closestreamwalker( streamwalker walker, streamwalker_report* report 
  * @param MDAL_CTXT ctxt : MDAL_CTXT associated with the current NS
  * @param opinfo* op : Reference to the operation to be performed
  *                     NOTE -- this will be updated to reflect operation completion / error
- *                     NOTE -- this function WILL NOT execute the entire op chain, only the head op
+ * @param RESOURCELOG* log : Resource log to be updated with op completion / error
+ * @param REPACKSTREAMER rpckstr : Repack streamer to be used for repack operations
  * @return int : Zero on success, or -1 on failure
  *               NOTE -- This func will not return 'failure' unless a critical internal error occurs.
  *                       'Standard' operation errors will simply be reflected in the op struct itself.
@@ -1704,14 +1714,6 @@ int process_executeoperation( marfs_position* pos, opinfo* op, RESOURCELOG* rlog
       // break off the first op of the chain
       opinfo* nextop = op->next;
       op->next = NULL;
-      // log operation start
-      LOG( LOG_INFO, "Logging start of operation stream \"%s\"\n", op->ftag.streamid );
-      if ( resourcelog_processop( rlog, op, NULL ) ) {
-         LOG( LOG_ERR, "Failed to log start of operation on stream \"%s\"\n", op->ftag.streamid );
-         resourcelog_freeopinfo( op );
-         if ( nextop ) { resourcelog_freeopinfo( nextop ); }
-         return -1;
-      }
       if ( abortops ) {
          LOG( LOG_ERR, "Skipping %s operation due to previous op errors\n",
                        (op->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
