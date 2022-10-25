@@ -270,8 +270,8 @@ size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_
 
 typedef struct gctag_struct {
    size_t refcnt;
-   char   delzero;
    char   eos;
+   char   delzero;
    char   inprog;
 } GCTAG;
 

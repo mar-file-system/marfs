@@ -85,6 +85,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define RTAG_DATAHEALTH_HEADER "DHLTH"
 #define RTAG_METAHEALTH_HEADER "MHLTH"
 
+#define GCTAG_VERSION_HEADER "VER"
+#define GCTAG_SKIP_HEADER "SKIP"
+#define GCTAG_PROGRESS_HEADER "PROG"
+
 
 //   -------------   INTERNAL FUNCTIONS    -------------
 
@@ -1146,64 +1150,118 @@ int gctag_initstr( GCTAG* gctag, char* gctagstr ) {
       errno = EINVAL;
       return -1;
    }
-   char* parse = NULL;
-   unsigned long long parseval = strtoull( gctagstr, &(parse), 10 );
-   if ( parse == NULL  ||  *parse != ' '  ||  parseval == ULONG_MAX ) {
-      LOG( LOG_ERR, "Failed to parse skip value of GCTAG\n" );
+   // parse version info first
+   const char* parse = gctagstr;
+   if ( strncmp( parse, GCTAG_VERSION_HEADER "(", strlen(GCTAG_VERSION_HEADER) + 1 ) ) {
+      LOG( LOG_ERR, "Unexpected version header for GCTAG string\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   parse += strlen(GCTAG_VERSION_HEADER) + 1;
+   char* endptr = NULL;
+   unsigned long long parseval = strtoull( parse, &(endptr), 10 );
+   if ( endptr == NULL  ||  *endptr != '.'  ||  parseval == ULONG_MAX ) {
+      LOG( LOG_ERR, "Failed to parse major version value of GCTAG\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( parseval != GCTAG_CURRENT_MAJORVERSION ) {
+      LOG( LOG_ERR, "Unexpected GCTAG major version: %llu\n", parseval );
+      errno = EINVAL;
+      return -1;
+   }
+   parse = endptr + 1;
+   parseval = strtoull( parse, &(endptr), 10 );
+   if ( *endptr != ')' ) {
+      LOG( LOG_ERR, "GCTAG version string has unexpected format\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( parseval != GCTAG_CURRENT_MINORVERSION ) {
+      LOG( LOG_ERR, "Unexpected GCTAG minor version: %llu\n", parseval );
+      errno = EINVAL;
+      return -1;
+   }
+   parse = endptr + 1;
+   // parse skip info
+   if ( strncmp( parse, GCTAG_SKIP_HEADER "(", strlen(GCTAG_SKIP_HEADER) + 1 ) ) {
+      LOG( LOG_ERR, "Unexpected SKIP header for GCTAG string\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   parse += strlen(GCTAG_SKIP_HEADER) + 1;
+   endptr = NULL;
+   parseval = strtoull( parse, &(endptr), 10 );
+   if ( endptr == NULL  ||  *endptr != '|'  ||  parseval == ULONG_MAX ) {
+      LOG( LOG_ERR, "Failed to parse refcnt value of GCTAG\n" );
       errno = EINVAL;
       return -1;
    } // tag populated later
-   parse++;
-   // get EOS flag
+   parse = endptr + 1;
    char eos = 0;
    if ( *parse == 'E' ) {
       eos = 1;
    }
-   else if ( *parse != 'C' ) {
+   else if ( *parse != '-' ) {
       LOG( LOG_ERR, "GCTAG has inappriate EOS value\n" );
       errno = EINVAL;
       return -1;
    }
    parse++;
-   // check for inprog + delzero
-   char inprog = 0;
+   if ( *parse != ')' ) {
+      LOG( LOG_ERR, "Unexpected tail string of SKIP stanza\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   parse++;
+   // potentially parse PROGRESS stanza
    char delzero = 0;
+   char inprog = 0;
    if ( *parse != '\0' ) {
-      if ( *parse != ' ' ) {
-         LOG( LOG_ERR, "Failed to parse 'in prog' separator of GCTAG\n" );
+      // parse stanza header
+      if ( strncmp( parse, GCTAG_PROGRESS_HEADER "(", strlen(GCTAG_PROGRESS_HEADER) + 1 ) ) {
+         LOG( LOG_ERR, "Unexpected PROGRESS header for GCTAG string\n" );
          errno = EINVAL;
          return -1;
       }
-      parse++;
-      if ( *parse == 'P' ) {
-         inprog = 1;
-      }
-      else if ( *parse != 'P'  &&  *parse != 'D' ) {
-         LOG( LOG_ERR, "Failed to parse 'in prog' value GCTAG\n" );
-         errno = EINVAL;
-         return -1;
-      }
-      parse++;
-      // check for delzero
-      if ( *parse != '\0' ) {
-         if ( *parse != ' ' ) {
-            LOG( LOG_ERR, "Failed to parse 'del zero' separator of GCTAG\n" );
-            errno = EINVAL;
-            return -1;
-         }
-         parse++;
-         if ( *parse != 'D' ) {
-            LOG( LOG_ERR, "Failed to parse 'del zero' value of GCTAG\n" );
-            errno = EINVAL;
-            return -1;
-         }
+      parse += strlen(GCTAG_PROGRESS_HEADER) + 1;
+      // parse delzero value
+      if ( *parse == 'D' ) {
          delzero = 1;
       }
+      else if ( *parse != '-' ) {
+         LOG( LOG_ERR, "GCTAG has inappriate DEL-ZERO value\n" );
+         errno = EINVAL;
+         return -1;
+      }
+      parse++;
+      if ( *parse != '|' ) {
+         LOG( LOG_ERR, "GCTAG has inappriate PROGRESS stanza format\n" );
+         errno = EINVAL;
+         return -1;
+      }
+      parse++;
+      // parse inprog value
+      if ( *parse == 'I' ) {
+         inprog = 1;
+      }
+      else if ( *parse != '-' ) {
+         LOG( LOG_ERR, "GCTAG has inappriate INPROG value\n" );
+         errno = EINVAL;
+         return -1;
+      }
+      parse++;
+      if ( *parse != ')' ) {
+         LOG( LOG_ERR, "GCTAG has inappriate PROGRESS stanza tail\n" );
+         errno = EINVAL;
+         return -1;
+      }
+      parse++;
    }
    gctag->refcnt = (size_t) parseval;
    gctag->eos = eos;
-   gctag->inprog = inprog;
    gctag->delzero = delzero;
+   gctag->inprog = inprog;
    return 0;
 }
 
@@ -1229,9 +1287,17 @@ size_t gctag_tostr( GCTAG* gctag, char*tgtstr, size_t len ) {
    // keep track of total string length, even if we can't output that much
    size_t totsz = 0;
 
-   // TODO output version info first
-   // output refcnt
-   int prres = snprintf( tgtstr, len, "%zu ", gctag->refcnt );
+   // output version info first
+   int prres = snprintf( tgtstr, len, "%s(%u.%.3u)", GCTAG_VERSION_HEADER, GCTAG_CURRENT_MAJORVERSION, GCTAG_CURRENT_MINORVERSION );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output version info string\n" );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+   // output skip info
+   prres = snprintf( tgtstr, len, "%s(%zu|%c)", GCTAG_SKIP_HEADER, gctag->refcnt, (gctag->eos) ? 'E' : '-' );
    if ( prres < 1 ) {
       LOG( LOG_ERR, "Failed to output refcnt value %zu\n", gctag->refcnt );
       return 0;
@@ -1239,49 +1305,18 @@ size_t gctag_tostr( GCTAG* gctag, char*tgtstr, size_t len ) {
    if ( len > prres ) { len -= prres; tgtstr += prres; }
    else { len = 0; }
    totsz += prres;
-
-   // output EOS flag
-   if ( gctag->eos ) {
-      prres = snprintf( tgtstr, len, "E" );
-   }
-   else {
-      prres = snprintf( tgtstr, len, "C" );
-   }
-   if ( prres < 1 ) {
-      LOG( LOG_ERR, "Failed to output EOS value\n", gctag->refcnt );
-      return 0;
-   }
-   if ( len > prres ) { len -= prres; tgtstr += prres; }
-   else { len = 0; }
-   totsz += prres;
-
    // potentially output inprog and delzero flag
    if ( gctag->inprog  ||  gctag->delzero ) {
-      // ouptut inprog flag
-      if ( gctag->inprog ) {
-         prres = snprintf( tgtstr, len, " P" );
-      }
-      else {
-         prres = snprintf( tgtstr, len, " D" );
-      }
+      prres = snprintf( tgtstr, len, "%s(%c|%c)", GCTAG_PROGRESS_HEADER,
+                                                   (gctag->delzero) ? 'D' : '-',
+                                                   (gctag->inprog) ? 'I' : '-' );
       if ( prres < 1 ) {
-         LOG( LOG_ERR, "Failed to output EOS value\n", gctag->refcnt );
+         LOG( LOG_ERR, "Failed to output refcnt value %zu\n", gctag->refcnt );
          return 0;
       }
       if ( len > prres ) { len -= prres; tgtstr += prres; }
       else { len = 0; }
       totsz += prres;
-      // potentially output  delzero flag
-      if ( gctag->delzero ) {
-         prres = snprintf( tgtstr, len, " D" );
-         if ( prres < 1 ) {
-            LOG( LOG_ERR, "Failed to output EOS value\n", gctag->refcnt );
-            return 0;
-         }
-         if ( len > prres ) { len -= prres; tgtstr += prres; }
-         else { len = 0; }
-         totsz += prres;
-      }
    }
 
    return totsz;
