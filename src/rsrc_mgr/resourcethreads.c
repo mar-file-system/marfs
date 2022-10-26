@@ -57,13 +57,14 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "statelog.h"
+#include "resourceprocessing.h"
 
 typedef struct resourceinput_struct {
    // synchronization and access control
    pthread_mutex_t  lock;     // no simultaneous access
    pthread_cond_t   complete; // signaled when all work is handed out
    pthread_cond_t   updated;  // signaled when new work is added
+   char             prepterm; // flag value set when clients should prepare for termination
    // previous log info
    STATELOG         statelog;
    // state info
@@ -74,8 +75,27 @@ typedef struct resourceinput_struct {
    ssize_t          refmax;
 }*RESOURCEINPUT;
 
+typedef struct rthread_global_state_struct {
+   marfs_position  pos;
+   RESOURCEINPUT   rinput;
+   RESOURCELOG     rlog;
+   REPACKSTREAMER  rpst;
+   unsigned int    numprodthreads;
+   unsigned int    numconsthreads;
+} rthread_global_state;
 
-//   -------------   EXTERNAL FUNCTIONS    -------------
+typedef struct rthread_state_struct {
+   // universal thread state
+   unsigned int             tID;  // thread ID
+   rthread_global_state* gstate;  // global state reference
+   // producer thread state
+   MDAL_SCANNER  scanner;  // MDAL reference scanner ( if open )
+   char*         rdirpath;
+   streamwalker  walker;
+} rthread_state;
+
+
+//   -------------   RESOURCE INPUT FUNCTIONS    -------------
 
 /**
  * Initialize a given resourceinput
@@ -85,15 +105,15 @@ typedef struct resourceinput_struct {
  *                         NOTE -- caller should never modify this again
  * @return int : Zero on success, or -1 on failure
  */
-int resourceinput_init( RESOURCEINPUT* resourceinput, marfs_ns* ns, MDAL_CTXT ctxt ) {
+int resourceinput_init( RESOURCEINPUT* resourceinput, marfs_position* pos ) {
    // check for valid ref
    if ( resourceinput == NULL  ||  *resourceinput != NULL ) {
       LOG( LOG_ERR, "Received an invalid resourceinput arg\n" );
       errno = EINVAL;
       return -1;
    }
-   if ( ns == NULL  ||  ctxt == NULL ) {
-      LOG( LOG_ERR, "Received NULL NS/CTXT ref\n" );
+   if ( pos == NULL  ||  pos->ns == NULL  ||  pos->ctxt == NULL ) {
+      LOG( LOG_ERR, "Received NULL position/NS/CTXT ref\n" );
       errno = EINVAL;
       return -1;
    }
@@ -104,11 +124,12 @@ int resourceinput_init( RESOURCEINPUT* resourceinput, marfs_ns* ns, MDAL_CTXT ct
       return -1;
    }
    // initialize resourceinput values
-   rin->ns = ns;
-   rin->ctxt = ctxt;
+   rin->ns = pos->ns;
+   rin->ctxt = pos->ctxt;
    rin->statelog = NULL;
    rin->refmax = 0;
    rin->refindex = 0;
+   rin->prepterm = 0;
    if ( pthread_cond_init( &(rin->complete), NULL ) ) {
       LOG( LOG_ERR, "Failed to initialize 'complete' condition for new resourceinput\n" );
       free( rin );
@@ -144,11 +165,17 @@ int resourceinput_setlogpath( RESOURCEINPUT* resourceinput, const char* logpath 
       errno = EINVAL;
       return -1;
    }
-   // initialize the new statelog
-   if ( statelog_init( &(rin->statelog), RESOURCE_READ_LOG, logpath ) ) {
-      LOG( LOG_ERR, "Failed to initialize statelog input: \"%s\"\n", logpath );
-      pthread_mutex_unlock( &(rin->lock) );
-      return -1;
+   // NULL logpath indicates to prepare for termination
+   if ( logpath == NULL ) {
+      rin->prepterm = 1;
+   }
+   else {
+      // initialize the new statelog
+      if ( statelog_init( &(rin->statelog), RESOURCE_READ_LOG, logpath ) ) {
+         LOG( LOG_ERR, "Failed to initialize statelog input: \"%s\"\n", logpath );
+         pthread_mutex_unlock( &(rin->lock) );
+         return -1;
+      }
    }
    pthread_cond_signal( &(rin->updated) ); // note that new inputs are available
    pthread_mutex_unlock( &(rin->lock) );
@@ -161,7 +188,7 @@ int resourceinput_setlogpath( RESOURCEINPUT* resourceinput, const char* logpath 
  * NOTE -- this will fail if the range has not been fully traversed
  * @param RESOURCEINPUT* resourceinput : Resourceinput to have its range set
  * @param ssize_t start : Starting index of the reference dir range
- * @param ssize_t end : Ending index of the reference dir range
+ * @param ssize_t end : Ending index of the reference dir range ( non-inclusive )
  * @return int : Zero on success, or -1 on failure
  */
 int resourceinput_setrange( RESOURCEINPUT* resourceinput, size_t start, size_t end ) {
@@ -184,16 +211,22 @@ int resourceinput_setrange( RESOURCEINPUT* resourceinput, size_t start, size_t e
       errno = EINVAL;
       return -1;
    }
-   // check that range values are valid
-   if ( start > end  ||  end >= rin->ns->prepo->metascheme.refnodecount ) {
-      LOG( LOG_ERR, "Invalid reference range values: ( start = %zu / end = %zu / max = %zu )\n", start, end, rin->ns->prepo->metascheme.refnodecount );
-      pthread_mutex_unlock( &(rin->lock) );
-      errno = EINVAL;
-      return -1;
+   // setting start == end indicates to prepare for termination
+   if ( start == end ) {
+      rin->prepterm = 1;
    }
-   // set range values
-   rin->refindex = start;
-   rin->refmax = end + 1;
+   else {
+      // check that range values are valid
+      if ( start > end  ||  end >= rin->ns->prepo->metascheme.refnodecount ) {
+         LOG( LOG_ERR, "Invalid reference range values: ( start = %zu / end = %zu / max = %zu )\n", start, end, rin->ns->prepo->metascheme.refnodecount );
+         pthread_mutex_unlock( &(rin->lock) );
+         errno = EINVAL;
+         return -1;
+      }
+      // set range values
+      rin->refindex = start;
+      rin->refmax = end + 1;
+   }
    pthread_cond_signal( &(rin->updated) ); // note that new inputs are available
    pthread_mutex_unlock( &(rin->lock) );
    return 0;
@@ -202,10 +235,14 @@ int resourceinput_setrange( RESOURCEINPUT* resourceinput, size_t start, size_t e
 /**
  * Get the next ref index to be processed from the given resourceinput
  * @param RESOURCEINPUT* resourceinput : Resourceinput to get the next ref index from
- * @return MDAL_SCANNER : New reference scanner, or NULL if one wasn't opened
- *                        ( on error, or if none remain in the ref range )
+ * @param opinfo* nextop : Reference to be populated with a new op from an input logfile
+ * @param MDAL_SCANNER* scanner : Reference to be populated with a new reference scanner
+ * @param char** rdirpath : Reference to be populated with the path of a newly opened reference dir
+ * @return int : Zero, if no inputs are currently available;
+ *               One, if an input was produced;
+ *               Ten, if the caller should prepare for termination ( resourceinput is preparing to be closed )
  */
-int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo* nextop, MDAL_SCANNER scanner ) {
+int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo* nextop, MDAL_SCANNER* scanner, char** rdirpath ) {
    // check for valid ref
    if ( resourceinput == NULL  ||  *resourceinput == NULL ) {
       LOG( LOG_ERR, "Received an invalid resourceinput arg\n" );
@@ -244,9 +281,13 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo* nextop, MDAL_SC
    // check if the ref range has already been traversed
    if ( rin->refindex == rin->refmax ) {
       LOG( LOG_INFO, "Resource inputs have been fully traversed\n" );
-      pthread_cond_signal( &(rin->complete) );
+      int retval = 0;
+      if ( rin->prepterm ) {
+         LOG( LOG_INFO, "Caller should prepare for termination\n" );
+         retval = 10;
+      }
       pthread_mutex_unlock( &(rin->lock) );
-      return 0;
+      return retval;
    }
    // retrieve the next reference index value
    ssize_t res = rin->refindex;
@@ -268,6 +309,8 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo* nextop, MDAL_SC
       pthread_cond_signal( &(rin->complete) );
    }
    pthread_mutex_unlock( &(rin->lock) );
+   *scanner = scanres;
+   *rdirpath = node->name;
    return 1;
 }
 
@@ -290,7 +333,7 @@ int resourceinput_waitforupdate( RESOURCEINPUT* resourceinput ) {
       return -1;
    }
    // wait for the ref range to be traversed
-   while ( rin->statelog == NULL  &&  rin->refindex == rin->refmax ) {
+   while ( rin->statelog == NULL  &&  rin->refindex == rin->refmax  &&  rin->prepterm == 0 ) {
       if ( pthread_cond_wait( &(rin->updated), &(rin->lock) ) ) {
          LOG( LOG_ERR, "Failed to wait on 'updated' condition value\n" );
          pthread_mutex_unlock( &(rin->lock) );
@@ -400,4 +443,96 @@ int resourceinput_abort( RESOURCEINPUT* resourceinput ) {
    free( rin );
    return 0;
 }
+
+
+
+//   -------------   THREAD BEHAVIOR FUNCTIONS    -------------
+
+
+int rthread_init( unsigned int tID, void* global_state, void** state ) {
+   // cast values to appropriate types
+   rthread_global_state* gstate = (rthread_global_state*)global_state;
+   // allocate thread state
+   rthread_state tstate = malloc( sizeof( struct rthread_state_struct ) );
+   if ( tstate == NULL ) {
+      LOG( LOG_ERR, "Thread %u failed to allocate state structure\n", tID );
+      return -1;
+   }
+   // populate thread state
+   tstate->tID = tID;
+   tstate->gstate = gstate;
+   tstate->scanner = NULL;
+   tstate->rdirpath = NULL;
+   tstate->walker = NULL;
+   return 0;
+}
+
+
+int rthread_consumer_func( void** state, void** work_todo ) {
+   // cast values to appropriate types
+   rthread_state* tstate = (rthread_state*)(*state);
+   opinfo* op = (opinfo*)(*work_todo);
+   // execute operation
+   if ( op ) {
+      if ( process_executeoperation( &(tstate->gstate->pos), op, &(tstate->gstate->rlog), tstate->gstate->rpst ) ) {
+         LOG( LOG_ERR, "Thread %u has encountered critical error during operation execution\n", tstate->tID );
+         resourcelog_freeopinfo( op );
+         *work_todo = NULL;
+         return -1;
+      }
+      resourcelog_freeopinfo( op );
+      *work_todo = NULL;
+   }
+   return 0;
+}
+
+
+int rthread_producer_func( void** state, void** work_tofill ) {
+   // cast values to appropriate types
+   rthread_state* tstate = (rthread_state*)(*state);
+   // loop until we have an op to enqueue
+   opinfo* op = NULL;
+   while ( op == NULL ) {
+      if ( tstate->walker ) {
+         // walk our current datastream
+         // TODO
+      }
+      else if ( tstate->scanner ) {
+         // iterate through the scanner, looking for new operations to dispatch
+         char* reftgt = NULL;
+         ssize_t tgtval = 0;
+         int scanres = process_refdir( tstate->gstate->pos.ns, tstate->scanner, tstate->rdirpath, &(reftgt), &(tgtval) );
+         if ( scanres == 0 ) {
+            LOG( LOG_INFO, "Thread %u has finished scan of reference dir \"%s\"\n", tstate->rdirpath );
+            // NULL out our dir references, just in case
+            tstate->scanner = NULL;
+            tstate->rdirpath = NULL;
+         }
+         // TODO
+      }
+      else {
+         // pull from our resource input reference
+         int inputres = 0;
+         while ( (inputres = resourceinput_getnext( &(tstate->gstate->rinput), &(op), &(tstate->scanner) )) == 0 ) {
+            // wait until inputs are available
+            LOG( LOG_INFO, "Thread %u is waiting for inputs\n", tstate->tID );
+            if ( resourceinput_waitforupdate( &(tstate->gstate->rinput) ) ) {
+               LOG( LOG_ERR, "Thread %u failed to wait for resourceinput update\n", tstate->tID );
+               return -1;
+            }
+         }
+         // check for termination condition
+         if ( inputres == 10 ) {
+            LOG( LOG_INFO, "Thread %u is signaling FINISHED state\n", tstate->tID );
+            return 1;
+         }
+         // check for failure
+         if ( inputres < 0 ) {
+            LOG( LOG_INFO, "Thread %u failed to retrieve next input\n", tstate->tID );
+            return -1;
+         }
+      }
+   }
+}
+
 

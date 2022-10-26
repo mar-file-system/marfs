@@ -71,34 +71,95 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define RP_THRESH 259200  // Age of files before they are repacked
                           // Default to 3 days ago
 
+#define MODIFY_ITERATION_PREFIX "MODIFY-RUN-"
+#define RECORD_ITERATION_PREFIX "RECORD-RUN-"
+#define ARGS_ITERATION_FILE "PROGRAM-ARGUMENTS"
+#define ITERATION_STRING_LEN 1024
 
-typedef struct rmanprogress_struct {
-   // per-NS Progress Tracking
-   size_t     nscount;
-   marfs_ns** nslist;
-   size_t*    distributed;
-   // per-NS Work Tracking
-   streamwalker_report* walkreport;
-   operation_summary*   logsummary;
-   // rank state tracking
-   size_t     activeworkers;
+typedef struct rmanstate_struct {
+   // Per-Run Rank State
+   size_t        ranknum;
+   size_t        totalranks;
+
    // Per-Run MarFS State
-   marfs_config*  config;
+   marfs_config* config;
+
    // Per-NS MarFS State
    marfs_position pos;
+
+   // Per-NS Progress Tracking
+   size_t        nscount;
+   marfs_ns**    nslist;
+   size_t*       distributed;
+   size_t*       activeworkers;
+   streamwalker_report* walkreport;
+   operation_summary*   logsummary;
+
+   // Thread State
+   size_t      prodthreads;
+   size_t      consthreads;
+   ThreadQueue TQ;
+
    // arg reference vals
-   char*       iteration;
+   char        iteration[ITERATION_STRING_LEN];
    char*       logroot;
    char*       errorlogtgt;
    char*       preservelogtgt;
-   thresholds  thresh;
    char        dryrun;
-} rmanprogress;
+   thresholds  thresh;
+   char        lbrebuild;
+   ne_location rebuildloc;
 
+} rmanstate;
+
+typedef enum {
+   RLOG_WORK,
+   NS_WORK,
+   ABORT_WORK
+} worktype;
+
+typedef struct workrequest_struct {
+   worktype  type;
+   // NS target info
+   size_t    nsindex;
+   size_t    refdist;
+   // Log target info
+   char      iteration[ITERATION_STRING_LEN];
+   size_t    ranknum;
+} workrequest;
+
+typedef struct workresponse_struct {
+   workrequest request;
+   // Work results
+   char                 havereport;
+   streamwalker_report  report;
+   char                 havesummary;
+   operation_summary    summary;
+   char                 fatalerror;
+} workresponse;
 
 //   -------------   INTERNAL FUNCTIONS    -------------
 
+int handlerequest( rmanstate* rman, workrequest* request, workresponse* response ) {
+   // pre-populate response with a 'fatal error' condition, just in case
+   response->request = *(request);
+   response->havereport = 0;
+   bzero( &(response->report), sizeof( struct streamwalker_report_struct ) );
+   response->havesummary = 0;
+   bzero( &(response->summary), sizeof( struct operation_summary_struct ) );
+   response->fatalerror = 1;
+}
 
+/**
+ * TODO
+ * @param rmanstate* rman : 
+ * @param workresponse* response : 
+ * @param workrequest*  request : 
+ * @return int : On success, positive count of exited workers ( may be zero );
+ *               -1 if a fatal error has occurred
+ */
+int handleresponse( rmanstate* rman, workresponse* response, workrequest* request ) {
+}
 
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
@@ -109,7 +170,7 @@ int main(int argc, const char** argv) {
    char* config_path = getenv( "MARFS_CONFIG_PATH" ); // check for config env var
    char* ns_path = ".";
    char recurse = 0;
-   rmanprogress rmanprog = {0};
+   rmanstate state = {0};
 
    // get the initialization time of the program, to identify thresholds
    struct timeval currenttime;
@@ -117,15 +178,15 @@ int main(int argc, const char** argv) {
       printf( "failed to get current time for first walk\n" );
       return -1;
    }
-   time_t defgcthresh = currenttime.tv_nsec - GC_THRESH;
-   time_t defrblthresh = currenttime.tv_nsec - RB_L_THRESH;
-   time_t defrbmthresh = currenttime.tv_nsec - RB_M_THRESH;
-   time_t defrpthresh = currenttime.tv_nsec - RP_THRESH;
+   time_t gcthresh = currenttime.tv_nsec - GC_THRESH;
+   time_t rblthresh = currenttime.tv_nsec - RB_L_THRESH;
+   time_t rbmthresh = currenttime.tv_nsec - RB_M_THRESH;
+   time_t rpthresh = currenttime.tv_nsec - RP_THRESH;
 
    // parse all position-independent arguments
    char pr_usage = 0;
    int c;
-   while ((c = getopt(argc, (char* const*)argv, "c:n:rilpqgrRdT:L:h")) != -1) {
+   while ((c = getopt(argc, (char* const*)argv, "c:n:rilpdQGRPT:L:h")) != -1) {
       switch (c) {
       case 'c':
          config_path = optarg;
@@ -137,19 +198,28 @@ int main(int argc, const char** argv) {
          recurse = 1;
          break;
       case 'i':
-         rmanprog.iteration = optarg;
+         state.iteration = optarg;
          break;
       case 'l':
-         rmanprog.logroot = optarg;
+         state.logroot = optarg;
          break;
       case 'p':
-         rmanprog.preservelogtgt = optarg;
+         state.preservelogtgt = optarg;
          break;
-      case 'q':
-         rmanprog.quotas = optarg;
+      case 'd':
+         state.dryrun = 1;
          break;
-      case 'g':
-         rmanprog.thresh.gcthreshold = optarg;
+      case 'Q':
+         state.quotas = 1;
+         break;
+      case 'G':
+         state.thresh.gcthreshold = 1;
+         break;
+      case 'R':
+         state.thresh.rebuildthreshold = 1;
+         break;
+      case 'P':
+         state.thresh.repackthreshold = 1;
          break;
       case '?':
          printf( OUTPREFX "ERROR: Unrecognized cmdline argument: \'%c\'\n", optopt );
@@ -162,5 +232,6 @@ int main(int argc, const char** argv) {
       }
    }
 
+}
 
 

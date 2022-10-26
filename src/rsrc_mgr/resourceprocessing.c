@@ -67,8 +67,9 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define LOG_PREFIX "resourceprocessing"
 #include <logging.h>
 
-#include "repackstreamer.c"
 #include "resourcelog.h"
+
+#include "datastream/datastream.h"
 
 #include <dirent.h>
 #include <string.h>
@@ -86,6 +87,15 @@ typedef struct threshold_struct {
    //         processing behavior ( i.e. trying to cleanup ongoing repacks )
    // NOTE -- setting any of these values to zero will cause the corresponding operations to be skipped
 } thresholds;
+
+typedef struct repackstreamer_struct {
+   // synchronization and access control
+   pthread_mutex_t lock;
+   // state info
+   size_t streamcount;
+   DATASTREAM* streamlist;
+   char* streamstatus;
+}* REPACKSTREAMER;
 
 typedef struct streamwalker_report_struct {
    // quota info
@@ -146,6 +156,205 @@ typedef struct streamwalker_struct {
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
+
+//   -------------   REPACKSTREAMER FUNCTIONS    -------------
+
+REPACKSTREAMER repackstreamer_init( ) {
+   // allocate a new struct
+   REPACKSTREAMER repackst = malloc( sizeof( struct repackstreamer_struct ) );
+   if ( repackst == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate new repackstreamer\n" );
+      return NULL;
+   }
+   // populate all struct elements
+   if ( pthread_mutex_init( &(repackst->lock), NULL ) ) {
+      LOG( LOG_ERR, "Failed to initialize lock\n" );
+      free( repackst );
+      return NULL;
+   }
+   repackst->streamcount = 10;
+   repackst->streamlist = calloc( 10, sizeof( DATASTREAM ) );
+   if ( repackst->streamlist == NULL ) {
+      LOG( LOG_ERR, "Failed to initialize streamlist\n" );
+      pthread_mutex_destroy( &(repackst->lock) );
+      free( repackst );
+      return NULL;
+   }
+   repackst->streamstatus = calloc( 10, sizeof(char) );
+   if ( repackst->streamstatus == NULL ) {
+      LOG( LOG_ERR, "Failed to initialize streamstatus\n" );
+      free( repackst->streamlist );
+      pthread_mutex_destroy( &(repackst->lock) );
+      free( repackst );
+      return NULL;
+   }
+   return repackst;
+}
+
+DATASTREAM* repackstreamer_getstream( REPACKSTREAMER repackst ) {
+   // check for NULL arg
+   if ( repackst == NULL ) {
+      LOG( LOG_ERR, "Received a NULL repackstreamer ref\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   // acquire struct lock
+   if ( pthread_mutex_lock( &(repackst->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire repackstreamer lock\n" );
+      return NULL;
+   }
+   // check for available datastreams
+   size_t index = 0;
+   for ( ; index < repackst->streamcount; index++ ) {
+      if ( repackst->streamstatus[index] == 0 ) {
+         repackst->streamstatus[index] = 1;
+         pthread_mutex_unlock( &(repackst->lock) );
+         LOG( LOG_INFO, "Handing out available stream at position %zu\n", index );
+         return repackst->streamlist + index;
+      }
+   }
+   // no avaialable datastreams, so we must expand our allocation ( double the current count )
+   LOG( LOG_INFO, "Expanding allocation to %zu streams\n", repackst->streamcount * 2 );
+   DATASTREAM* newstlist = realloc( repackst->streamlist, sizeof( DATASTREAM ) * ( repackst->streamcount * 2 ) );
+   if ( newstlist == NULL ) {
+      LOG( LOG_ERR, "Failed to reallocate streamlist to a length of %zu entries\n", repackst->streamcount * 2 );
+      pthread_mutex_unlock( &(repackst->lock) );
+      return NULL;
+   }
+   repackst->streamlist = newstlist; // might end up leaving this expanded, but that's fine
+   char* newststatus = realloc( repackst->streamstatus, sizeof( char ) * ( repackst->streamcount * 2 ) );
+   if ( newststatus == NULL ) {
+      LOG( LOG_ERR, "Failed to reallocate streamstatus to a length of %zu entries\n", repackst->streamcount * 2 );
+      pthread_mutex_unlock( &(repackst->lock) );
+      return NULL;
+   }
+   repackst->streamstatus = newststatus;
+   repackst->streamcount *= 2;
+   // zero out new allocation
+   size_t newpos = index; // cache the lowest, newly-allocated index
+   for ( ; index < repackst->streamcount; index++ ) {
+      repackst->streamlist[index] = NULL;
+      repackst->streamstatus[index] = 0;
+   }
+   // hand out a newly-allocated stream
+   repackst->streamstatus[newpos] = 1;
+   pthread_mutex_unlock( &(repackst->lock) );
+   LOG( LOG_INFO, "Handing out newly-allocated position %zu\n", newpos );
+   return repackst->streamlist + newpos;
+}
+
+int repackstreamer_returnstream( REPACKSTREAMER repackst, DATASTREAM* stream ) {
+   // check for NULL args
+   if ( repackst == NULL ) {
+      LOG( LOG_ERR, "Received a NULL repackstreamer ref\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( stream == NULL ) {
+      LOG( LOG_ERR, "Received a NULL stream ref\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // acquire struct lock
+   if ( pthread_mutex_lock( &(repackst->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire repackstreamer lock\n" );
+      return -1;
+   }
+   // calculate the corresponding index of this stream
+   size_t index = (size_t)(stream - repackst->streamlist);
+   // sanity check the result
+   if ( index >= repackst->streamcount  ||  stream < repackst->streamlist ) {
+      LOG( LOG_ERR, "Returned stream is not a member of allocated list\n" );
+      pthread_mutex_unlock( &(repackst->lock) );
+      return -1;
+   }
+   // ensure the stream was indeed passed out
+   if ( repackst->streamstatus[index] != 1 ) {
+      LOG( LOG_ERR, "Returned stream %zu was not currently active\n", index );
+      pthread_mutex_unlock( &(repackst->lock) );
+      return -1;
+   }
+   // update status and return
+   repackst->streamstatus[index] = 0;
+   pthread_mutex_unlock( &(repackst->lock) );
+   LOG( LOG_INFO, "Stream %zu has been returned\n", index );
+   return 0;
+}
+
+int repackstreamer_complete( REPACKSTREAMER repackst ) {
+   // check for NULL arg
+   if ( repackst == NULL ) {
+      LOG( LOG_ERR, "Received a NULL repackstreamer ref\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // acquire struct lock
+   if ( pthread_mutex_lock( &(repackst->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire repackstreamer lock\n" );
+      return -1;
+   }
+   // iterate over all streams
+   int retval = 0;
+   char prevactive = 1;
+   size_t index = 0;
+   for ( ; index < repackst->streamcount; index++ ) {
+      if ( *(repackst->streamlist + index ) != NULL ) {
+         // minor sanity check, not even certain that this is a true failure
+         if ( prevactive == 0 ) {
+            LOG( LOG_WARNING, "Encountered active stream at index %zu with previous stream being NULL\n" );
+         }
+         // close the active stream
+         int closeres = datastream_close( repackst->streamlist + index );
+         if ( closeres ) {
+            LOG( LOG_ERR, "Failed to close repack stream %zu\n", index );
+            if ( retval == 0 ) { retval = closeres; }
+         }
+      }
+      else { prevactive = 0; }
+   }
+   // free all allocations
+   free( repackst->streamstatus );
+   free( repackst->streamlist );
+   pthread_mutex_unlock( &(repackst->lock) );
+   pthread_mutex_destroy( &(repackst->lock) );
+   free( repackst );
+   return retval;
+}
+
+int repackstreamer_abort( REPACKSTREAMER repackst ) {
+   // check for NULL arg
+   if ( repackst == NULL ) {
+      LOG( LOG_ERR, "Received a NULL repackstreamer ref\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // don't bother acquiring the lock
+   // iterate over all streams
+   int retval = 0;
+   char prevactive = 1;
+   size_t index = 0;
+   for ( ; index < repackst->streamcount; index++ ) {
+      if ( *(repackst->streamlist + index ) != NULL ) {
+         // minor sanity check, not even certain that this is a true failure
+         if ( prevactive == 0 ) {
+            LOG( LOG_WARNING, "Encountered active stream at index %zu with previous stream being NULL\n" );
+         }
+         // release the active stream
+         int closeres = datastream_release( repackst->streamlist + index );
+         if ( closeres ) {
+            LOG( LOG_ERR, "Failed to release repack stream %zu\n", index );
+            if ( retval == 0 ) { retval = closeres; }
+         }
+      }
+      else { prevactive = 0; }
+   }
+   // free all allocations
+   free( repackst->streamstatus );
+   free( repackst->streamlist );
+   pthread_mutex_destroy( &(repackst->lock) );
+   free( repackst );
+   return retval;
+}
 
 
 //   -------------   INTERNAL FUNCTIONS    -------------
@@ -488,7 +697,7 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
    return;
 }
 
-
+// TODO
 void process_repack( const marfs_position* pos, opinfo* op, REPACKSTREAMER rpckstr ) {
 }
 
@@ -517,7 +726,6 @@ void destroystreamwalker( streamwalker walker ) {
       if ( walker->rbldops ) { resourcelog_freeopinfo( walker->rbldops ); }
       if ( walker->ftag.ctag ) { free( walker->ftag.ctag ); }
       if ( walker->ftag.streamid ) { free( walker->ftag.streamid ); }
-      if ( walker->pos.ns ) { config_abandonposition( &(walker->pos) ); }
       free( walker );
    }
 }
@@ -803,7 +1011,6 @@ int process_refdir( marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, c
       return -1;
    }
    // scan through the dir until we find something of interest
-   // scan through the dir until we find something of interest
    MDAL mdal = ns->prepo->metascheme.mdal;
    struct dirent* dent;
    int olderrno = errno;
@@ -1015,10 +1222,15 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, size_t obj
    return op;
 }
 
-streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresholds thresh, ne_location* rebuildloc ) {
+streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, thresholds thresh, ne_location* rebuildloc ) {
 	// validate args
-	if ( ns == NULL ) {
-      LOG( LOG_ERR, "Received a NULL NS ref\n" );
+	if ( pos == NULL ) {
+      LOG( LOG_ERR, "Received a NULL position ref\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   if ( pos->ns == NULL ) {
+      LOG( LOG_ERR, "Received a position ref with no defined NS\n" );
       errno = EINVAL;
       return NULL;
    }
@@ -1038,13 +1250,12 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
       LOG( LOG_ERR, "Failed to allocate streamwalker\n" );
       return NULL;
    }
-   // establish a new position
-   walker->pos.ns = ns;
-   walker->pos.depth = 0;
-   walker->pos.ctxt = NULL;
-   if ( config_fortifyposition( &(walker->pos) ) ) {
-      LOG( LOG_ERR, "Failed to fortify marfs position for NS \"%s\"\n", ns->idstr );
+   // establish position
+   walker->pos = *pos;
+   if ( walker->pos.ctxt == NULL ) {
+      LOG( LOG_ERR, "Received a marfs position for NS \"%s\" with no associated CTXT\n", pos->ns->idstr );
       free( walker );
+      errno = EINVAL;
       return NULL;
    }
    // populate initialization elements
@@ -1071,7 +1282,6 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
    walker->ftagstr = malloc( sizeof(char) * 1024 );
    if ( walker->ftagstr == NULL ) {
       LOG( LOG_ERR, "Failed to allocate initial ftag string buffer\n" );
-      config_abandonposition( &(walker->pos) );
       free( walker );
       return NULL;
    }
@@ -1087,7 +1297,6 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
    if ( process_getfileinfo( reftgt, 1, walker, &(filestate) )  ||  !(filestate) ) {
       LOG( LOG_ERR, "Failed to get info from initial reference target: \"%s\"\n", reftgt );
       free( walker->ftagstr );
-      config_abandonposition( &(walker->pos) );
       free( walker );
       return NULL;
    }
@@ -1206,11 +1415,11 @@ streamwalker process_openstreamwalker( marfs_ns* ns, const char* reftgt, thresho
    // update walker state to reflect new target
    walker->objno = endobj;
    // identify the appropriate reference table for stream iteration
-   if ( walker->ftag.refbreadth == ns->prepo->metascheme.refbreadth  &&
-        walker->ftag.refdepth == ns->prepo->metascheme.refdepth  &&
-        walker->ftag.refdigits == ns->prepo->metascheme.refdigits ) {
+   if ( walker->ftag.refbreadth == walker->pos.ns->prepo->metascheme.refbreadth  &&
+        walker->ftag.refdepth == walker->pos.ns->prepo->metascheme.refdepth  &&
+        walker->ftag.refdigits == walker->pos.ns->prepo->metascheme.refdigits ) {
       // we can safely use the default reference table
-      walker->reftable = ns->prepo->metascheme.reftable;
+      walker->reftable = walker->pos.ns->prepo->metascheme.reftable;
    }
    else {
       // we must generate a fresh ref table, based on FTAG values
