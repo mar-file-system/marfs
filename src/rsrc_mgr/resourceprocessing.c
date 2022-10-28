@@ -1713,15 +1713,15 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                      return -1;
                   }
                   // sanity check
-                  if ( optgt->count + optgt->ftag.objno != walker->objno ) {
-                     LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
-                                   optgt->count + optgt->ftag.objno, walker->objno );
+                  if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
+                     LOG( LOG_ERR, "Existing obj deletion count (%zu = Count%zu+Tag%zu) does not match current obj (%zu)\n",
+                                   optgt->count + optgt->ftag.objno, optgt->count, optgt->ftag.objno, tmptag.objno );
                      return -1;
                   }
                   // update operation
                   optgt->count++;
                   // potentially note deletion of object zero
-                  if ( walker->ftag.objno == 0 ) { delrefinf->delzero = 1; }
+                  if ( tmptag.objno == 0 ) { delrefinf->delzero = 1; }
                   // update our record
                   walker->report.delobjs++;
                }
@@ -1729,7 +1729,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                tmptag.objno++;
                while ( tmptag.objno < endobj ) {
                   // generate ops for all but the last referenced object
-                  LOG( LOG_INFO, "Adding deletion op for inactive spanned object %zu\n", walker->ftag.objno );
+                  LOG( LOG_INFO, "Adding deletion op for inactive spanned object %zu\n", tmptag.objno );
                   optgt = NULL;
                   if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
                      LOG( LOG_ERR, "Failed to identify operation target for deletion of spanned obj %zu\n", tmptag.objno );
@@ -1737,8 +1737,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                   }
                   // sanity check
                   if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
-                     LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
-                                   optgt->count + optgt->ftag.objno, tmptag.objno );
+                     LOG( LOG_ERR, "Existing obj deletion count (%zu = Count%zu+Tag%zu) does not match current obj (%zu)\n",
+                                   optgt->count + optgt->ftag.objno, optgt->count, optgt->ftag.objno, tmptag.objno );
                      return -1;
                   }
                   // update operation
@@ -1776,9 +1776,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             assumeactive = 1;
          }
       }
+      // note newly encountered file
       walker->report.filecount++;
-      // potentially count any spanned objects
-      if ( walker->objno != endobj ) { walker->report.objcount += endobj - walker->objno; }
       if ( filestate > 1 ) {
          // file is active
          walker->report.fileusage++;
@@ -1786,6 +1785,12 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          else { walker->report.byteusage += walker->stval.st_size; }
          // TODO manage repack ops
          // TODO potentially generate rebuild ops
+      }
+      // potentially update values based on spanned objects
+      if ( walker->objno != endobj ) {
+         walker->activefiles = 0; // update active file count for new obj
+         walker->activebytes = 0; // update active byte count for new obj
+         walker->report.objcount += endobj - walker->objno;
       }
       if ( filestate > 1  ||  assumeactive ) {
          // handle GC state

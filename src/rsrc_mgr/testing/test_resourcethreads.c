@@ -223,6 +223,7 @@ int main(int argc, char **argv)
       }
       // create all files for the stream
       DATASTREAM stream = NULL;
+      DATASTREAM editstream = NULL;
       int filenum = 0;
       size_t filecount = (rand() % 10) + 1;
       for ( ; filenum < filecount; filenum++ ) {
@@ -230,14 +231,40 @@ int main(int argc, char **argv)
             printf( "subsized filepath for file %d\n", filenum );
             return -1;
          }
-         size_t filebytes = (rand() % 20480); // sizes range from 0 to 20K
          if ( datastream_create( &(stream), filepath, &(pos), 0744, "Thread-Client-1" ) ) {
             printf( "failed to create marfs file \"%s\"\n", filepath );
             return -1;
          }
-         if ( datastream_write( &(stream), databuf, filebytes ) != filebytes ) {
-            printf( "failed to write %zu bytes to file \"%s\"\n", filebytes, filepath );
-            return -1;
+         size_t filebytes = (rand() % 20480); // sizes range from 0 to 20K
+         // randomly extend some portion of files
+         if ( rand() % 10 == 0 ) {
+            printf( "extending file \"%s\"\n", filepath );
+            if ( datastream_extend( &(stream), filebytes ) ) {
+               printf( "failed to extend file \"%s\"\n", filepath );
+               return -1;
+            }
+            if ( datastream_release( &(stream) ) ) {
+               printf( "failed to realease stream for extended file \"%s\"\n", filepath );
+               return -1;
+            }
+            if ( datastream_open( &(editstream), EDIT_STREAM, filepath, &(pos), NULL ) ) {
+               printf( "failed to open edit stream for extend file \"%s\"\n", filepath );
+               return -1;
+            }
+            if ( datastream_write( &(editstream), databuf, filebytes ) != filebytes ) {
+               printf( "failed to write %zu bytes to extended file \"%s\"\n", filebytes, filepath );
+               return -1;
+            }
+            if ( datastream_close( &(editstream) ) ) {
+               printf( "failed to close edit stream for extended file \"%s\"\n", filepath );
+               return -1;
+            }
+         }
+         else {
+            if ( datastream_write( &(stream), databuf, filebytes ) != filebytes ) {
+               printf( "failed to write %zu bytes to file \"%s\"\n", filebytes, filepath );
+               return -1;
+            }
          }
          totalfiles++;
          totalbytes+=filebytes;
@@ -316,10 +343,10 @@ int main(int argc, char **argv)
       return -1;
    }
    thresholds thresh = {
-      .gcthreshold = currenttime.tv_sec,
+      .gcthreshold = currenttime.tv_sec + 10,
       .repackthreshold = 0, // no repacks for now
       .rebuildthreshold = 0, // no rebuilds for now
-      .cleanupthreshold = currenttime.tv_sec
+      .cleanupthreshold = currenttime.tv_sec + 10
    };
 
    // set up resource threads
@@ -374,6 +401,37 @@ int main(int argc, char **argv)
    printf( "waiting for first walk, first input completion\n" );
    if ( resourceinput_waitforcomp( &(gstate.rinput) ) ) {
       printf( "failed to wait for first walk, first input completion\n" );
+      return -1;
+   }
+   // set input to second ref range
+   printf( "setting second walk input to %zu - %zu\n", refcnt, pos.ns->prepo->metascheme.refnodecount );
+   if ( resourceinput_setrange( &(gstate.rinput), refcnt, pos.ns->prepo->metascheme.refnodecount ) ) {
+      printf( "failed to set first walk input 2\n" );
+      return -1;
+   }
+   printf( "waiting for first walk, second input completion\n" );
+   if ( resourceinput_waitforcomp( &(gstate.rinput) ) ) {
+      printf( "failed to wait for first walk, first input completion\n" );
+      return -1;
+   }
+   // prepare threads for termination
+   if ( resourceinput_setrange( &(gstate.rinput), pos.ns->prepo->metascheme.refnodecount, pos.ns->prepo->metascheme.refnodecount ) ) {
+      printf( "failed to set first walk input term\n" );
+      return -1;
+   }
+   // wait for the queue to be marked as FINISHED
+   TQ_Control_Flags setflags = 0;
+   if ( tq_wait_for_flags( tq, 0, &(setflags) ) ) {
+      printf( "failed to wait for TQ flags on first walk\n" );
+      return -1;
+   }
+   if ( setflags != TQ_FINISHED ) {
+      printf( "unexpected flags following first walk\n" );
+      return -1;
+   }
+   // wait for TQ completion
+   if ( tq_wait_for_completion( tq ) ) {
+      printf( "failed to wait for completion of first walk TQ\n" );
       return -1;
    }
 

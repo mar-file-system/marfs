@@ -217,7 +217,10 @@ int resourceinput_setlogpath( RESOURCEINPUT* resourceinput, const char* logpath 
          return -1;
       }
    }
-   pthread_cond_signal( &(rin->updated) ); // note that new inputs are available
+   if ( rin->prepterm )
+      pthread_cond_broadcast( &(rin->updated) ); // notify all waiting threads to terminate
+   else
+      pthread_cond_signal( &(rin->updated) ); // note that new inputs are available
    pthread_mutex_unlock( &(rin->lock) );
    LOG( LOG_INFO, "Successfully initialized input resourcelog \"%s\"\n", logpath );
    return 0;
@@ -257,7 +260,7 @@ int resourceinput_setrange( RESOURCEINPUT* resourceinput, size_t start, size_t e
    }
    else {
       // check that range values are valid
-      if ( start > end  ||  end >= rin->ns->prepo->metascheme.refnodecount ) {
+      if ( start > end  ||  end > rin->ns->prepo->metascheme.refnodecount ) {
          LOG( LOG_ERR, "Invalid reference range values: ( start = %zu / end = %zu / max = %zu )\n", start, end, rin->ns->prepo->metascheme.refnodecount );
          pthread_mutex_unlock( &(rin->lock) );
          errno = EINVAL;
@@ -265,9 +268,12 @@ int resourceinput_setrange( RESOURCEINPUT* resourceinput, size_t start, size_t e
       }
       // set range values
       rin->refindex = start;
-      rin->refmax = end + 1;
+      rin->refmax = end;
    }
-   pthread_cond_signal( &(rin->updated) ); // note that new inputs are available
+   if ( rin->prepterm )
+      pthread_cond_broadcast( &(rin->updated) ); // notify all waiting threads to terminate
+   else
+      pthread_cond_signal( &(rin->updated) ); // note that new inputs are available
    pthread_mutex_unlock( &(rin->lock) );
    return 0;
 }
@@ -333,7 +339,7 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_S
    // retrieve the next reference index value
    ssize_t res = rin->refindex;
    rin->refindex++;
-   LOG( LOG_INFO, "Passing out reference index: %zd\n", rin->refindex );
+   LOG( LOG_INFO, "Passing out reference index: %zd\n", res );
    // open the corresponding reference scanner
    MDAL nsmdal = rin->ns->prepo->metascheme.mdal;
    HASH_NODE* node = rin->ns->prepo->metascheme.refnodes + res;
@@ -506,6 +512,7 @@ int rthread_init_func( unsigned int tID, void* global_state, void** state ) {
    tstate->tID = tID;
    tstate->gstate = gstate;
    *state = tstate;
+   LOG( LOG_INFO, "Thread %u has initialized\n", tstate->tID );
    return 0;
 }
 
@@ -519,14 +526,18 @@ int rthread_consumer_func( void** state, void** work_todo ) {
    opinfo* op = (opinfo*)(*work_todo);
    // execute operation
    if ( op ) {
+      LOG( LOG_INFO, "Thread %u is executing a %s operation on StreamID \"%s\"\n", tstate->tID,
+           (op->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
+           (op->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
+           (op->type == MARFS_REBUILD_OP)    ? "REBUILD" :
+           (op->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN", op->ftag.streamid );
       if ( process_executeoperation( &(tstate->gstate->pos), op, &(tstate->gstate->rlog), tstate->gstate->rpst ) ) {
          LOG( LOG_ERR, "Thread %u has encountered critical error during operation execution\n", tstate->tID );
-         resourcelog_freeopinfo( op );
          *work_todo = NULL;
          tstate->fatalerror = 1;
+         // TODO -- fatal errors will also require resourceinput modification
          return -1;
       }
-      resourcelog_freeopinfo( op );
       *work_todo = NULL;
    }
    return 0;
@@ -613,6 +624,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
             // only copy relevant threshold values for this walk
             thresholds tmpthresh = tstate->gstate->thresh;
             if ( !(tstate->gstate->lbrebuild) ) { tmpthresh.rebuildthreshold = 0; }
+            LOG( LOG_INFO, "Thread %u beginning streamwalk from reference file \"%s\"\n", tstate->tID, reftgt );
             tstate->walker = process_openstreamwalker( &(tstate->gstate->pos), reftgt, tmpthresh, &(tstate->gstate->rebuildloc) );
             if ( tstate->walker == NULL ) {
                LOG( LOG_ERR, "Thread %u failed to open streamwalker for \"%s\" of NS \"%s\"\n",
@@ -694,6 +706,21 @@ int rthread_producer_func( void** state, void** work_tofill ) {
          }
       }
    }
+   // log operation start
+   if ( resourcelog_processop( &(tstate->gstate->rlog), newop, NULL ) ) {
+      LOG( LOG_ERR, "Thread %u failed to log start of a %s operation\n", tstate->tID,
+           (newop->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
+           (newop->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
+           (newop->type == MARFS_REBUILD_OP)    ? "REBUILD" :
+           (newop->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN" );
+      resourcelog_freeopinfo( newop );
+      return -1;
+   }
+   LOG( LOG_INFO, "Thread %u logged start of a %s operation on StreamID \"%s\"\n", tstate->tID,
+        (newop->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
+        (newop->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
+        (newop->type == MARFS_REBUILD_OP)    ? "REBUILD" :
+        (newop->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN", newop->ftag.streamid );
    // actually populate our work package
    *work_tofill = (void*)newop;
    return 0;
@@ -704,5 +731,9 @@ int rthread_producer_func( void** state, void** work_tofill ) {
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
 void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg ) {
+   // cast values to appropriate types
+   rthread_state* tstate = (rthread_state*)(*state);
+   // free all allocated values
+   LOG( LOG_INFO, "Thread %u is terminating\n", tstate->tID );
 }
 
