@@ -59,7 +59,7 @@
    GNU licenses can be found at http://www.gnu.org/licenses/.
 -->
 
-<marfs_config version="0.0001-beta-notarealversion">
+<marfs_config version="resourceMan.fakeversion=0.111">
    <!-- Mount Point -->
    <mnt_top>/campaign</mnt_top>
 

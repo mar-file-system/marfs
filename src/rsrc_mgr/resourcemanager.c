@@ -136,6 +136,7 @@ typedef struct workresponse_struct {
    char                 havesummary;
    operation_summary    summary;
    char                 fatalerror;
+   char                 errorstr[MAX_STR_BUFFER];
 } workresponse;
 
 //   -------------   INTERNAL FUNCTIONS    -------------

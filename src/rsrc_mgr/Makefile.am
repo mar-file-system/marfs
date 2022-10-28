@@ -83,7 +83,7 @@ marfs_rsrc_mgr_CFLAGS  = $(XML_CFLAGS)
 
 # ---
 
-check_PROGRAMS = test_rsrc_mgr test_rsrc_mgr_nopack test_resourcelog test_resourceprocessing
+check_PROGRAMS = test_rsrc_mgr test_rsrc_mgr_nopack test_resourcelog test_resourceprocessing test_resourcethreads
 
 test_rsrc_mgr_SOURCES = testing/test_rsrc_mgr.c
 test_rsrc_mgr_LDADD = libRsrcMgr.la
@@ -101,6 +101,10 @@ test_resourceprocessing_SOURCES = testing/test_resourceprocessing.c
 test_resourceprocessing_LDADD = libResourceLog.la ../datastream/libDatastream.la
 test_resourceprocessing_CFLAGS = $(XML_CFLAGS)
 
-TESTS = test_resourcelog test_resourceprocessing #test_rsrc_mgr test_rsrc_mgr_nopack
+test_resourcethreads_SOURCES = testing/test_resourcethreads.c resourceprocessing.c
+test_resourcethreads_LDADD = libResourceLog.la ../datastream/libDatastream.la
+test_resourcethreads_CFLAGS = $(XML_CFLAGS)
+
+TESTS = test_resourcelog test_resourceprocessing #test_resourcethreads test_rsrc_mgr test_rsrc_mgr_nopack
 
 

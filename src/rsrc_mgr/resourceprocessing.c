@@ -67,26 +67,20 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define LOG_PREFIX "resourceprocessing"
 #include <logging.h>
 
-#include "resourcelog.h"
+#include "resourceprocessing.h"
 
 #include "datastream/datastream.h"
 
 #include <dirent.h>
 #include <string.h>
 
-typedef struct threshold_struct {
-   time_t gcthreshold;      // files newer than this will not be GCd
-                            //    Recommendation -- this should be fairly old ( # of days ago )
-   time_t repackthreshold;  // files newer than this will not be repacked
-                            //    Recommendation -- this should be quite recent ( # of minutes ago )
-   time_t rebuildthreshold; // files newer than this will not be rebuilt ( have data errors repaired )
-                            //    Recommendation -- this should be quite recent ( # of minutes ago )
-   time_t cleanupthreshold; // files newer than this will not be cleaned up ( i.e. repack marker files )
-                            //    Recommendation -- this should be semi-recent ( # of hours ago )
-   // NOTE -- setting any of these values too close to the current time risks undefined resource 
-   //         processing behavior ( i.e. trying to cleanup ongoing repacks )
-   // NOTE -- setting any of these values to zero will cause the corresponding operations to be skipped
-} thresholds;
+
+//   -------------   INTERNAL DEFINITIONS    -------------
+
+// ENOATTR is not always defined, so define a convenience val
+#ifndef ENOATTR
+#define ENOATTR ENODATA
+#endif
 
 typedef struct repackstreamer_struct {
    // synchronization and access control
@@ -96,26 +90,6 @@ typedef struct repackstreamer_struct {
    DATASTREAM* streamlist;
    char* streamstatus;
 }* REPACKSTREAMER;
-
-typedef struct streamwalker_report_struct {
-   // quota info
-   size_t fileusage;  // count of active files
-   size_t byteusage;  // count of active bytes
-   // stream info
-   size_t filecount;  // count of files in the datastream
-   size_t objcount;   // count of objects in the datastream
-   // GC info
-   size_t delobjs;    // count of deleted objects
-   size_t delfiles;   // count of deleted files
-   size_t delstreams; // count of completely deleted datastreams
-   size_t volfiles;   // count of 'volatile' files ( those deleted too recently for gc )
-   // repack info
-   size_t rpckfiles;  // count of files repacked
-   size_t rpckbytes;  // count of bytes repacked
-   // rebuild info
-   size_t rbldobjs;   // count of rebuilt objects
-   size_t rbldbytes;  // count of rebuilt bytes
-} streamwalker_report;
 
 typedef struct streamwalker_struct {
    // initialization info
@@ -148,18 +122,14 @@ typedef struct streamwalker_struct {
    opinfo*     rbldops;      // rebuild operation list
 }* streamwalker;
 
-// ENOATTR is not always defined, so define a convenience val
-#ifndef ENOATTR
-#define ENOATTR ENODATA
-#endif
-
-
-//   -------------   INTERNAL DEFINITIONS    -------------
-
 
 //   -------------   REPACKSTREAMER FUNCTIONS    -------------
 
-REPACKSTREAMER repackstreamer_init( ) {
+/**
+ * Initialize a new repackstreamer
+ * @return REPACKSTREAMER : New repackstreamer, or NULL on failure
+ */
+REPACKSTREAMER repackstreamer_init(void) {
    // allocate a new struct
    REPACKSTREAMER repackst = malloc( sizeof( struct repackstreamer_struct ) );
    if ( repackst == NULL ) {
@@ -191,6 +161,11 @@ REPACKSTREAMER repackstreamer_init( ) {
    return repackst;
 }
 
+/**
+ * Checkout a repack datastream
+ * @param REPACKSTREAMER repackst : Repackstreamer to checkout from
+ * @return DATASTREAM* : Checked out datastream, or NULL on failure
+ */
 DATASTREAM* repackstreamer_getstream( REPACKSTREAMER repackst ) {
    // check for NULL arg
    if ( repackst == NULL ) {
@@ -243,6 +218,12 @@ DATASTREAM* repackstreamer_getstream( REPACKSTREAMER repackst ) {
    return repackst->streamlist + newpos;
 }
 
+/**
+ * Return a previously checked out repack datastream
+ * @param REPACKSTREAMER repackst : Repackstreamer to return to
+ * @param DATASTREAM* stream : Repack datastream to return
+ * @return int : Zero on success, or -1 on failure
+ */
 int repackstreamer_returnstream( REPACKSTREAMER repackst, DATASTREAM* stream ) {
    // check for NULL args
    if ( repackst == NULL ) {
@@ -281,6 +262,11 @@ int repackstreamer_returnstream( REPACKSTREAMER repackst, DATASTREAM* stream ) {
    return 0;
 }
 
+/**
+ * Terminate the given repackstreamer and close all associated datastreams
+ * @param REPACKSTREAMER repackst : Repackstreamer to close
+ * @return int : Zero on success, or -1 on failure
+ */
 int repackstreamer_complete( REPACKSTREAMER repackst ) {
    // check for NULL arg
    if ( repackst == NULL ) {
@@ -321,6 +307,11 @@ int repackstreamer_complete( REPACKSTREAMER repackst ) {
    return retval;
 }
 
+/**
+ * Abort the given repackstreamer, bypassing all locks and releasing all datastreams
+ * @param REPACKSTREAMER repackst : Repackstreamer to abort
+ * @return int : Zero on success, or -1 on failure
+ */
 int repackstreamer_abort( REPACKSTREAMER repackst ) {
    // check for NULL arg
    if ( repackst == NULL ) {
@@ -966,7 +957,7 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
 } 
 
 
-//   -------------   EXTERNAL FUNCTIONS    -------------
+//   -------------   RESOURCE PROCESSING FUNCTIONS    -------------
 
 /**
  * Process the next entry from the given refdir scanner
@@ -1222,6 +1213,14 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, size_t obj
    return op;
 }
 
+/**
+ * Open a streamwalker based on the given fileno zero reference target
+ * @param marfs_position* pos : MarFS position to be used by this walker
+ * @param const char* reftgt : Reference path of the first ( fileno zero ) file of the datastream
+ * @param thresholds thresh : Threshold values to be used for determining operation targets
+ * @param ne_location* rebuildloc : Location-based rebuild target
+ * @return streamwalker : Newly generated streamwalker, or NULL on failure
+ */
 streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, thresholds thresh, ne_location* rebuildloc ) {
 	// validate args
 	if ( pos == NULL ) {
