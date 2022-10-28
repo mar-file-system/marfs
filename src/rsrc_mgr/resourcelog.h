@@ -133,6 +133,13 @@ typedef struct resourcelog_struct* RESOURCELOG;
 void resourcelog_freeopinfo( opinfo* op );
 
 /**
+ * Duplicate the given opinfo struct chain
+ * @param opinfo* op : Reference to the opinfo chain to be duplicated
+ * @return opinfo* : Reference to the newly created duplicate chain
+ */
+opinfo* resourcelog_dupopinfo( opinfo* op );
+
+/**
  * Generates the pathnames of logfiles and parent dirs
  * @param char create : Create flag
  *                      If non-zero, this func will attempt to create all intermediate directory paths ( not the final tgt )

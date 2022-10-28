@@ -206,6 +206,7 @@ int main(int argc, char **argv)
    // create a randomized, but deterministic, set of marfs files
    size_t totalfiles = 0;
    size_t totalbytes = 0;
+   size_t totalstreams = 0;
    char filepath[1024] = {0};
    srand( 42 );
    size_t streamcount = (rand() % 10) + 3;
@@ -247,6 +248,7 @@ int main(int argc, char **argv)
                printf( "failed to realease stream for extended file \"%s\"\n", filepath );
                return -1;
             }
+            totalstreams++;
             if ( datastream_open( &(editstream), EDIT_STREAM, filepath, &(pos), NULL ) ) {
                printf( "failed to open edit stream for extend file \"%s\"\n", filepath );
                return -1;
@@ -274,6 +276,7 @@ int main(int argc, char **argv)
          printf( "close failure after file \"%s\"\n", filepath );
          return -1;
       }
+      totalstreams++;
    }
 
    // read back all written files, and perform random deletions
@@ -343,10 +346,10 @@ int main(int argc, char **argv)
       return -1;
    }
    thresholds thresh = {
-      .gcthreshold = currenttime.tv_sec + 10,
+      .gcthreshold = currenttime.tv_sec + 1, // +1, to ensure we actually get *all* deleted files
       .repackthreshold = 0, // no repacks for now
       .rebuildthreshold = 0, // no rebuilds for now
-      .cleanupthreshold = currenttime.tv_sec + 10
+      .cleanupthreshold = currenttime.tv_sec + 1
    };
 
    // set up resource threads
@@ -354,7 +357,7 @@ int main(int argc, char **argv)
    bzero( &(gstate), sizeof( struct rthread_global_state_struct ) );
    gstate.pos = pos;
    gstate.thresh = thresh;
-   if ( resourceinput_init( &(gstate.rinput), &(gstate.pos) ) ) {
+   if ( resourceinput_init( &(gstate.rinput), &(gstate.pos), 2 ) ) {
       printf( "failed to initialize resourceinput for first run\n" );
       return -1;
    }
@@ -414,9 +417,9 @@ int main(int argc, char **argv)
       printf( "failed to wait for first walk, first input completion\n" );
       return -1;
    }
-   // prepare threads for termination
-   if ( resourceinput_setrange( &(gstate.rinput), pos.ns->prepo->metascheme.refnodecount, pos.ns->prepo->metascheme.refnodecount ) ) {
-      printf( "failed to set first walk input term\n" );
+   // terminate thread input
+   if ( resourceinput_term( &(gstate.rinput) ) ) {
+      printf( "failed to term first walk input\n" );
       return -1;
    }
    // wait for the queue to be marked as FINISHED
@@ -434,6 +437,298 @@ int main(int argc, char **argv)
       printf( "failed to wait for completion of first walk TQ\n" );
       return -1;
    }
+   // gather all thread status values
+   rthread_state* tstate = NULL;
+   int retval;
+   streamwalker_report report = {0};
+   size_t reportedstreams = 0;
+   while ( (retval = tq_next_thread_status( tq, (void**)&(tstate) )) > 0 ) {
+      if ( tstate == NULL ) {
+         printf( "received a NULL thread status\n" );
+         return -1;
+      }
+      if ( tstate->fatalerror ) {
+         printf( "thread %u indicates a fatal error\n", tstate->tID );
+         return -1;
+      }
+      if ( tstate->scanner  ||  tstate->rdirpath  ||  tstate->walker  ||  tstate->gcops  ||  tstate->repackops ) {
+         printf( "thread %u has remaining state values\n", tstate->tID );
+         return -1;
+      }
+      // note all thread report values
+      reportedstreams   += tstate->streamcount;
+      report.fileusage  += tstate->report.fileusage;
+      report.byteusage  += tstate->report.byteusage;
+      report.filecount  += tstate->report.filecount;
+      report.objcount   += tstate->report.objcount;
+      report.bytecount  += tstate->report.bytecount;
+      report.streamcount+= tstate->report.streamcount;
+      report.delobjs    += tstate->report.delobjs;
+      report.delfiles   += tstate->report.delfiles;
+      report.delstreams += tstate->report.delstreams;
+      report.volfiles   += tstate->report.volfiles;
+      report.rpckfiles  += tstate->report.rpckfiles;
+      report.rpckbytes  += tstate->report.rpckbytes;
+      report.rbldobjs   += tstate->report.rbldobjs;
+      report.rbldbytes  += tstate->report.rbldbytes;
+   }
+   if ( retval ) {
+      printf( "failed to collect all thread status values\n" );
+      return -1;
+   }
+   // close our the thread queue, logs, etc.
+   if ( tq_close( tq ) ) {
+      printf( "failed to close first thread queue\n" );
+      return -1;
+   }
+   operation_summary summary = {0};
+   if ( resourcelog_term( &(gstate.rlog), &(summary), NULL ) ) {
+      printf( "failed to terminate resource log following first walk\n" );
+      return -1;
+   }
+   if ( repackstreamer_complete( gstate.rpst ) ) {
+      printf( "failed to complete repack streamer  following first walk\n" );
+      return -1;
+   }
+   gstate.rpst = NULL;
+
+
+   // check report totals against expected values
+   if ( reportedstreams != totalstreams ) {
+      printf( "First walk reported streams (%zu) does not match expected total (%zu)\n", reportedstreams, totalstreams );
+      return -1;
+   }
+   if ( report.filecount != totalfiles ) {
+      printf( "First walk reported files (%zu) does not match expected total (%zu)\n", report.filecount, totalfiles );
+      return -1;
+   }
+   if ( report.byteusage + delbytes != totalbytes ) {
+      printf( "First walk reported bytes ( %zu used + %zu deleted ) does not match expected total (%zu)\n",
+              report.byteusage, delbytes, totalbytes );
+      return -1;
+   }
+   if ( report.bytecount != totalbytes ) {
+      printf( "First walk reported bytes ( %zu ) does not match expected total (%zu)\n", report.bytecount, totalbytes );
+      return -1;
+   }
+   // note deleteion values
+   size_t gcfiles = report.delfiles;
+
+
+   // re-read all files, and delete more
+   for ( streamnum = 0; streamnum < streamcount; streamnum++ ) {
+      int printres = snprintf( filepath, 1024, "stream%.2d", streamnum );
+      if ( printres >= 1024 ) {
+         printf( "subsized filepath for dir %d\n", streamnum );
+         return -1;
+      }
+      MDAL_DHANDLE dir = curmdal->opendir( pos.ctxt, filepath );
+      if ( dir == NULL ) {
+         printf( "failed to open dir \"%s\"\n", filepath );
+         return -1;
+      }
+      struct dirent* dirent;
+      DATASTREAM stream = NULL;
+      errno = 0;
+      while ( (dirent = curmdal->readdir( dir )) ) {
+         if ( strncmp( dirent->d_name, ".", 1 ) == 0 ) { continue; }
+         if ( snprintf( filepath + printres, 1024 - printres, "/%s", dirent->d_name ) >= 1024 ) {
+            printf( "subsized filepath for file %s\n", dirent->d_name );
+            return -1;
+         }
+         if ( datastream_open( &(stream), READ_STREAM, filepath, &(pos), NULL ) ) {
+            printf( "failed to open marfs file \"%s\" for read\n", filepath );
+            return -1;
+         }
+         ssize_t readbytes = datastream_read( &(stream), readarray, 1048576 );
+         if ( readbytes < 0 ) {
+            printf( "failed to read from file \"%s\"\n", filepath );
+            return -1;
+         }
+         if ( readbytes > 0  &&  memcmp( readarray, databuf, readbytes ) ) {
+            printf( "invalid content of file \"%s\"\n", filepath );
+            return -1;
+         }
+         // potentially delete this file (50% chance)
+         if ( (rand() % 2) == 0 ) {
+            printf( "deleting \"%s\"\n", filepath );
+            if ( curmdal->unlink( pos.ctxt, filepath ) ) {
+               printf( "failed to delete \"%s\"\n", filepath );
+               return -1;
+            }
+            delfiles++;
+            delbytes+=readbytes;
+         }
+         errno = 0;
+      }
+      if ( errno ) {
+         *(filepath + printres) = '\0';
+         printf( "failed readdir for \"%s\"\n", filepath );
+         return -1;
+      }
+      // close the stream
+      if ( datastream_close( &(stream) ) ) {
+         printf( "close failure of read stream after file \"%s\"\n", filepath );
+         return -1;
+      }
+   }
+
+
+   // rewalk, cleaning up new objs/files
+   if ( gettimeofday( &currenttime, NULL ) ) {
+      printf( "failed to get current time for second walk\n" );
+      return -1;
+   }
+   thresh.gcthreshold = currenttime.tv_sec + 1; // +1, to ensure we actually get *all* deleted files
+   // no repacks for now
+   // no rebuilds for now
+   thresh.cleanupthreshold = currenttime.tv_sec + 1;
+
+   // set up resource threads
+   if ( resourceinput_init( &(gstate.rinput), &(gstate.pos), 3 ) ) {
+      printf( "failed to initialize resourceinput for second run\n" );
+      return -1;
+   }
+   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/logfile2", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+      printf( "failed to initialize resourcelog for second run\n" );
+      return -1;
+   }
+   gstate.rpst = repackstreamer_init();
+   if ( gstate.rpst == NULL ) {
+      printf( "failed to initalize repackstreamer for second run\n" );
+      return -1;
+   }
+   gstate.numprodthreads = 3;
+   gstate.numconsthreads = 6;
+   tqopts.log_prefix = "Run2";
+   tqopts.num_threads = gstate.numprodthreads + gstate.numconsthreads;
+   tqopts.num_prod_threads = gstate.numprodthreads;
+   printf( "starting up threads for second walk\n" );
+
+   tq = tq_init( &(tqopts) );
+   if ( tq == NULL ) {
+      printf( "failed to start up threads for second walk\n" );
+      return -1;
+   }
+
+   // set input to the first ref range
+   refcnt = (rand() % (pos.ns->prepo->metascheme.refnodecount)) + 1;
+   printf( "setting second walk input to 0 - %zu\n", refcnt );
+   if ( resourceinput_setrange( &(gstate.rinput), 0, refcnt ) ) {
+      printf( "failed to set second walk input 1\n" );
+      return -1;
+   }
+   printf( "waiting for second walk, first input completion\n" );
+   if ( resourceinput_waitforcomp( &(gstate.rinput) ) ) {
+      printf( "failed to wait for second walk, first input completion\n" );
+      return -1;
+   }
+   // set input to second ref range
+   printf( "setting second walk input to %zu - %zu\n", refcnt, pos.ns->prepo->metascheme.refnodecount );
+   if ( resourceinput_setrange( &(gstate.rinput), refcnt, pos.ns->prepo->metascheme.refnodecount ) ) {
+      printf( "failed to set second walk input 2\n" );
+      return -1;
+   }
+   printf( "waiting for second walk, second input completion\n" );
+   if ( resourceinput_waitforcomp( &(gstate.rinput) ) ) {
+      printf( "failed to wait for second walk, second input completion\n" );
+      return -1;
+   }
+   // terminate our input
+   if ( resourceinput_term( &(gstate.rinput) ) ) {
+      printf( "failed to terminate second walk input\n" );
+      return -1;
+   }
+   // wait for the queue to be marked as FINISHED
+   setflags = 0;
+   if ( tq_wait_for_flags( tq, 0, &(setflags) ) ) {
+      printf( "failed to wait for TQ flags on second walk\n" );
+      return -1;
+   }
+   if ( setflags != TQ_FINISHED ) {
+      printf( "unexpected flags following second walk\n" );
+      return -1;
+   }
+   // wait for TQ completion
+   if ( tq_wait_for_completion( tq ) ) {
+      printf( "failed to wait for completion of second walk TQ\n" );
+      return -1;
+   }
+   // gather all thread status values
+   tstate = NULL;
+   reportedstreams = report.delstreams; // include any previously deleted streams
+   bzero( &(report), sizeof( struct streamwalker_report_struct ) );
+   while ( (retval = tq_next_thread_status( tq, (void**)&(tstate) )) > 0 ) {
+      if ( tstate == NULL ) {
+         printf( "received a NULL thread status for second walk\n" );
+         return -1;
+      }
+      if ( tstate->fatalerror ) {
+         printf( "second walk thread %u indicates a fatal error\n", tstate->tID );
+         return -1;
+      }
+      if ( tstate->scanner  ||  tstate->rdirpath  ||  tstate->walker  ||  tstate->gcops  ||  tstate->repackops ) {
+         printf( "second walk thread %u has remaining state values\n", tstate->tID );
+         return -1;
+      }
+      // note all thread report values
+      reportedstreams   += tstate->streamcount;
+      report.fileusage  += tstate->report.fileusage;
+      report.byteusage  += tstate->report.byteusage;
+      report.filecount  += tstate->report.filecount;
+      report.objcount   += tstate->report.objcount;
+      report.bytecount  += tstate->report.bytecount;
+      report.streamcount+= tstate->report.streamcount;
+      report.delobjs    += tstate->report.delobjs;
+      report.delfiles   += tstate->report.delfiles;
+      report.delstreams += tstate->report.delstreams;
+      report.volfiles   += tstate->report.volfiles;
+      report.rpckfiles  += tstate->report.rpckfiles;
+      report.rpckbytes  += tstate->report.rpckbytes;
+      report.rbldobjs   += tstate->report.rbldobjs;
+      report.rbldbytes  += tstate->report.rbldbytes;
+   }
+   if ( retval ) {
+      printf( "failed to collect all second walk thread status values\n" );
+      return -1;
+   }
+   // close our the thread queue, logs, etc.
+   if ( tq_close( tq ) ) {
+      printf( "failed to close second thread queue\n" );
+      return -1;
+   }
+   bzero( &(summary), sizeof( struct operation_summary_struct ) );
+   if ( resourcelog_term( &(gstate.rlog), &(summary), NULL ) ) {
+      printf( "failed to terminate resource log following second walk\n" );
+      return -1;
+   }
+   if ( repackstreamer_complete( gstate.rpst ) ) {
+      printf( "failed to complete repack streamer  following second walk\n" );
+      return -1;
+   }
+   gstate.rpst = NULL;
+
+
+   // check report totals against expected values
+   if ( reportedstreams != totalstreams ) {
+      printf( "second walk reported streams (%zu) does not match expected total (%zu)\n", reportedstreams, totalstreams );
+      return -1;
+   }
+   if ( report.filecount + gcfiles != totalfiles ) {
+      printf( "second walk reported files (%zu) does not match expected total (%zu)\n", report.filecount, totalfiles );
+      return -1;
+   }
+   if ( report.byteusage + delbytes != totalbytes ) {
+      printf( "second walk reported bytes ( %zu used + %zu deleted ) does not match expected total (%zu)\n",
+              report.byteusage, delbytes, totalbytes );
+      return -1;
+   }
+   if ( report.bytecount + delbytes < totalbytes ) {
+      printf( "second walk reported bytes ( %zu ) does not match/exceed expected total (%zu)\n",
+              report.bytecount + delbytes, totalbytes );
+      return -1;
+   }
+
 
    return 0;
 

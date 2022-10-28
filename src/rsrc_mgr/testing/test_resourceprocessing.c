@@ -393,6 +393,9 @@ int main(int argc, char **argv)
       printf( "improper first walk objcount: %zu\n", walkreport.objcount );
       return -1;
    }
+   if ( walkreport.bytecount != walkreport.byteusage ) {
+      printf( "improper first walk bytecount: %zu\n", walkreport.bytecount );
+   }
    if ( walkreport.delobjs ) {
       printf( "improper first walk delobjs: %zu\n", walkreport.delobjs );
       return -1;

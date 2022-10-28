@@ -77,8 +77,9 @@ typedef struct resourceinput_struct {
    // synchronization and access control
    pthread_mutex_t  lock;     // no simultaneous access
    pthread_cond_t   complete; // signaled when all work is handed out
-   pthread_cond_t   updated;  // signaled when new work is added
+   pthread_cond_t   updated;  // signaled when new work is added, or input state is otherwise changed
    char             prepterm; // flag value set when clients should prepare for termination
+   size_t           clientcount; // count of clients still running
    // previous log info
    RESOURCELOG      rlog;
    // state info
@@ -134,7 +135,7 @@ typedef struct rthread_state_struct {
  *                         NOTE -- caller should never modify this again
  * @return int : Zero on success, or -1 on failure
  */
-int resourceinput_init( RESOURCEINPUT* resourceinput, marfs_position* pos ) {
+int resourceinput_init( RESOURCEINPUT* resourceinput, marfs_position* pos, size_t clientcount ) {
    // check for valid ref
    if ( resourceinput == NULL  ||  *resourceinput != NULL ) {
       LOG( LOG_ERR, "Received an invalid resourceinput arg\n" );
@@ -159,6 +160,7 @@ int resourceinput_init( RESOURCEINPUT* resourceinput, marfs_position* pos ) {
    rin->refmax = 0;
    rin->refindex = 0;
    rin->prepterm = 0;
+   rin->clientcount = clientcount;
    if ( pthread_cond_init( &(rin->complete), NULL ) ) {
       LOG( LOG_ERR, "Failed to initialize 'complete' condition for new resourceinput\n" );
       free( rin );
@@ -217,10 +219,7 @@ int resourceinput_setlogpath( RESOURCEINPUT* resourceinput, const char* logpath 
          return -1;
       }
    }
-   if ( rin->prepterm )
-      pthread_cond_broadcast( &(rin->updated) ); // notify all waiting threads to terminate
-   else
-      pthread_cond_signal( &(rin->updated) ); // note that new inputs are available
+   pthread_cond_broadcast( &(rin->updated) ); // notify all waiting threads
    pthread_mutex_unlock( &(rin->lock) );
    LOG( LOG_INFO, "Successfully initialized input resourcelog \"%s\"\n", logpath );
    return 0;
@@ -254,26 +253,17 @@ int resourceinput_setrange( RESOURCEINPUT* resourceinput, size_t start, size_t e
       errno = EINVAL;
       return -1;
    }
-   // setting start == end indicates to prepare for termination
-   if ( start == end ) {
-      rin->prepterm = 1;
+   // check that range values are valid
+   if ( start >= end  ||  end > rin->ns->prepo->metascheme.refnodecount ) {
+      LOG( LOG_ERR, "Invalid reference range values: ( start = %zu / end = %zu / max = %zu )\n", start, end, rin->ns->prepo->metascheme.refnodecount );
+      pthread_mutex_unlock( &(rin->lock) );
+      errno = EINVAL;
+      return -1;
    }
-   else {
-      // check that range values are valid
-      if ( start > end  ||  end > rin->ns->prepo->metascheme.refnodecount ) {
-         LOG( LOG_ERR, "Invalid reference range values: ( start = %zu / end = %zu / max = %zu )\n", start, end, rin->ns->prepo->metascheme.refnodecount );
-         pthread_mutex_unlock( &(rin->lock) );
-         errno = EINVAL;
-         return -1;
-      }
-      // set range values
-      rin->refindex = start;
-      rin->refmax = end;
-   }
-   if ( rin->prepterm )
-      pthread_cond_broadcast( &(rin->updated) ); // notify all waiting threads to terminate
-   else
-      pthread_cond_signal( &(rin->updated) ); // note that new inputs are available
+   // set range values
+   rin->refindex = start;
+   rin->refmax = end;
+   pthread_cond_broadcast( &(rin->updated) ); // notify all waiting threads
    pthread_mutex_unlock( &(rin->lock) );
    return 0;
 }
@@ -362,7 +352,7 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_S
 }
 
 /**
- * Wait for the given resourceinput to have available inputs
+ * Wait for the given resourceinput to have available inputs, or for immenent termination
  * @param RESOURCEINPUT* resourceinput : Resourceinput to wait on
  * @param int : Zero on success, or -1 on failure
  */
@@ -389,6 +379,41 @@ int resourceinput_waitforupdate( RESOURCEINPUT* resourceinput ) {
    }
    pthread_mutex_unlock( &(rin->lock) );
    LOG( LOG_INFO, "Detected available inputs\n" );
+   return 0;
+}
+
+/**
+ * Wait for the given resourceinput to be terminated ( synchronizing like this ensures ALL work gets enqueued )
+ * @param RESOURCEINPUT* resourceinput : Resourceinput to wait on
+ * @param int : Zero on success, or -1 on failure
+ */
+int resourceinput_waitforterm( RESOURCEINPUT* resourceinput ) {
+   // check for valid ref
+   if ( resourceinput == NULL  ||  *resourceinput == NULL ) {
+      LOG( LOG_ERR, "Received an invalid resourceinput arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   RESOURCEINPUT rin = *resourceinput;
+   // acquire the structure lock
+   if ( pthread_mutex_lock( &(rin->lock) ) ) {
+      LOG( LOG_ERR, "Failed to acquire resourceinput lock\n" );
+      return -1;
+   }
+   rin->clientcount--; // show that we are waiting
+   pthread_cond_signal( &(rin->complete) ); // signal the master proc to check status
+   // wait for the master proc to signal us
+   while ( rin->prepterm < 2 ) {
+      if ( pthread_cond_wait( &(rin->updated), &(rin->lock) ) ) {
+         LOG( LOG_ERR, "Failed to wait on 'updated' condition value\n" );
+         pthread_mutex_unlock( &(rin->lock) );
+         return -1;
+      }
+   }
+   rin->clientcount++; // show that we are exiting
+   pthread_cond_signal( &(rin->complete) );
+   pthread_mutex_unlock( &(rin->lock) );
+   LOG( LOG_INFO, "Ready for input termination\n" );
    return 0;
 }
 
@@ -454,6 +479,27 @@ int resourceinput_term( RESOURCEINPUT* resourceinput ) {
       pthread_mutex_unlock( &(rin->lock) );
       errno = EINVAL;
       return -1;
+   }
+   size_t origclientcount = rin->clientcount; // remember the total number of clients
+   // signal clients to prepare for termination
+   rin->prepterm = 1;
+   pthread_cond_broadcast( &(rin->updated) );
+   while ( rin->clientcount ) {
+      if ( pthread_cond_wait( &(rin->complete), &(rin->lock) ) ) {
+         LOG( LOG_ERR, "Failed to wait on 'complete' condition value for clients to synchronize\n" );
+         pthread_mutex_unlock( &(rin->lock) );
+         return -1;
+      }
+   }
+   // signal clients to exit
+   rin->prepterm = 2;
+   pthread_cond_broadcast( &(rin->updated) );
+   while ( rin->clientcount < origclientcount ) {
+      if ( pthread_cond_wait( &(rin->complete), &(rin->lock) ) ) {
+         LOG( LOG_ERR, "Failed to wait on 'complete' condition value for clients to exit\n" );
+         pthread_mutex_unlock( &(rin->lock) );
+         return -1;
+      }
    }
    // begin destroying the structure
    *resourceinput = NULL;
@@ -553,20 +599,30 @@ int rthread_producer_func( void** state, void** work_tofill ) {
    // loop until we have an op to enqueue
    opinfo* newop = NULL;
    while ( newop == NULL ) {
-      printf( "thread %u!!!!\n", tstate->tID );
       if ( tstate->repackops ) {
          // enqueue previously produced rebuild op(s)
-         LOG( LOG_INFO, "Thread %u is preparing to enqueue a rebuild op on StreamID \"%s\"\n",
-                        tstate->tID, tstate->repackops->ftag.streamid );
          newop = tstate->repackops;
          tstate->repackops = NULL; // remove state reference, so we don't repeat
       }
       else if ( tstate->gcops ) {
          // enqueue previously produced GC op(s)
-         LOG( LOG_INFO, "Thread %u is preparing to enqueue a GC op on StreamID \"%s\"\n",
-                        tstate->tID, tstate->gcops->ftag.streamid );
-         newop = tstate->gcops;
-         tstate->gcops = NULL; // remove state reference, so we don't repeat
+         // NOTE -- object deletions always preceed reference deletions, so it should be safe to just check the first
+         if ( tstate->gcops->type == MARFS_DELETE_OBJ_OP  &&  tstate->gcops->count > 1 ) {
+            // split the object deletion op apart into multiple work packages
+            newop = resourcelog_dupopinfo( tstate->gcops );
+            if ( newop == NULL ) {
+               LOG( LOG_WARNING, "Failed to duplicate GC op prior to distribution!\n" );
+               // can't split this op apart, so just pass out the whole thing anyway
+               newop = tstate->gcops;
+               tstate->gcops = NULL; // remove state reference, so we don't repeat
+            }
+            newop->count = 1; // set to a single object deletion
+            tstate->gcops->count--; // note one less op to distribute
+         }
+         else {
+            newop = tstate->gcops;
+            tstate->gcops = NULL; // remove state reference, so we don't repeat
+         }
       }
       else if ( tstate->walker ) {
          // walk our current datastream
@@ -580,9 +636,35 @@ int rthread_producer_func( void** state, void** work_tofill ) {
             tstate->fatalerror = 1;
             return -1;
          }
-         if ( walkres > 0  &&  newop != NULL ) {  // check for new rebuild op ( other op enqueues noted above )
-            LOG( LOG_INFO, "Thread %u is preparing to enqueue a rebuild op on StreamID \"%s\"\n",
-                           tstate->tID, newop->ftag.streamid );
+         if ( walkres > 0 ) {
+            // log every operation prior to distributing them
+            if ( newop != NULL ) {
+               if ( resourcelog_processop( &(tstate->gstate->rlog), newop, NULL ) ) {
+                  LOG( LOG_ERR, "Thread %u failed to log start of a REBUILD operation\n", tstate->tID );
+                  snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                            "Thread %u failed to log start of a REBUILD operation\n", tstate->tID );
+                  resourcelog_freeopinfo( newop );
+                  return -1;
+               }
+            }
+            if ( tstate->repackops ) {
+               if ( resourcelog_processop( &(tstate->gstate->rlog), tstate->repackops, NULL ) ) {
+                  LOG( LOG_ERR, "Thread %u failed to log start of a REPACK operation\n", tstate->tID );
+                  snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                            "Thread %u failed to log start of a REPACK operation\n", tstate->tID );
+                  resourcelog_freeopinfo( newop );
+                  return -1;
+               }
+            }
+            if ( tstate->gcops ) {
+               if ( resourcelog_processop( &(tstate->gstate->rlog), tstate->gcops, NULL ) ) {
+                  LOG( LOG_ERR, "Thread %u failed to log start of a GC operation\n", tstate->tID );
+                  snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                            "Thread %u failed to log start of a GC operation\n", tstate->tID );
+                  resourcelog_freeopinfo( newop );
+                  return -1;
+               }
+            }
          }
          if ( walkres == 0 ) { // check for end of stream
             LOG( LOG_INFO, "Thread %u has reached the end of a datastream\n", tstate->tID );
@@ -595,18 +677,20 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                return -1;
             }
             tstate->walker = NULL;
-            tstate->report.fileusage  += tmpreport.fileusage;
-            tstate->report.byteusage  += tmpreport.byteusage;
-            tstate->report.filecount  += tmpreport.filecount;
-            tstate->report.objcount   += tmpreport.objcount;
-            tstate->report.delobjs    += tmpreport.delobjs;
-            tstate->report.delfiles   += tmpreport.delfiles;
-            tstate->report.delstreams += tmpreport.delstreams;
-            tstate->report.volfiles   += tmpreport.volfiles;
-            tstate->report.rpckfiles  += tmpreport.rpckfiles;
-            tstate->report.rpckbytes  += tmpreport.rpckbytes;
-            tstate->report.rbldobjs   += tmpreport.rbldobjs;
-            tstate->report.rbldbytes  += tmpreport.rbldbytes;
+            tstate->report.fileusage   += tmpreport.fileusage;
+            tstate->report.byteusage   += tmpreport.byteusage;
+            tstate->report.filecount   += tmpreport.filecount;
+            tstate->report.objcount    += tmpreport.objcount;
+            tstate->report.bytecount   += tmpreport.bytecount;
+            tstate->report.streamcount += tmpreport.streamcount;
+            tstate->report.delobjs     += tmpreport.delobjs;
+            tstate->report.delfiles    += tmpreport.delfiles;
+            tstate->report.delstreams  += tmpreport.delstreams;
+            tstate->report.volfiles    += tmpreport.volfiles;
+            tstate->report.rpckfiles   += tmpreport.rpckfiles;
+            tstate->report.rpckbytes   += tmpreport.rpckbytes;
+            tstate->report.rbldobjs    += tmpreport.rbldobjs;
+            tstate->report.rbldbytes   += tmpreport.rbldbytes;
          }
       }
       else if ( tstate->scanner ) {
@@ -691,6 +775,14 @@ int rthread_producer_func( void** state, void** work_tofill ) {
          }
          // check for termination condition
          if ( inputres == 10 ) {
+            LOG( LOG_INFO, "Thread %u is waiting for termination\n", tstate->tID );
+            if ( resourceinput_waitforterm( &(tstate->gstate->rinput) ) ) {
+               LOG( LOG_ERR, "Thread %u failed to wait for input termination\n", tstate->tID );
+               snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                         "Thread %u failed to wait for input termination\n", tstate->tID );
+               tstate->fatalerror = 1;
+               return -1;
+            }
             LOG( LOG_INFO, "Thread %u is signaling FINISHED state\n", tstate->tID );
             return 1;
          }
@@ -706,21 +798,16 @@ int rthread_producer_func( void** state, void** work_tofill ) {
          }
       }
    }
-   // log operation start
-   if ( resourcelog_processop( &(tstate->gstate->rlog), newop, NULL ) ) {
-      LOG( LOG_ERR, "Thread %u failed to log start of a %s operation\n", tstate->tID,
-           (newop->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
-           (newop->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
-           (newop->type == MARFS_REBUILD_OP)    ? "REBUILD" :
-           (newop->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN" );
-      resourcelog_freeopinfo( newop );
-      return -1;
-   }
-   LOG( LOG_INFO, "Thread %u logged start of a %s operation on StreamID \"%s\"\n", tstate->tID,
+   LOG( LOG_INFO, "Thread %u dispatching a %s%s operation on StreamID \"%s\"\n", tstate->tID,
         (newop->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
         (newop->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
         (newop->type == MARFS_REBUILD_OP)    ? "REBUILD" :
-        (newop->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN", newop->ftag.streamid );
+        (newop->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN",
+        (newop->next == NULL) ? "" :
+        (newop->next->type == MARFS_DELETE_OBJ_OP) ? " + DEL-OBJ" :
+        (newop->next->type == MARFS_DELETE_REF_OP) ? " + DEL-REF" :
+        (newop->next->type == MARFS_REBUILD_OP)    ? " + REBUILD" :
+        (newop->next->type == MARFS_REPACK_OP)     ? " + REPACK"  : " + UNKNOWN", newop->ftag.streamid );
    // actually populate our work package
    *work_tofill = (void*)newop;
    return 0;
@@ -733,7 +820,16 @@ int rthread_producer_func( void** state, void** work_tofill ) {
 void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg ) {
    // cast values to appropriate types
    rthread_state* tstate = (rthread_state*)(*state);
-   // free all allocated values
+   // producers may need to handle remaining operations themselves
+//   if ( tstate->repackops ) {
+//      LOG( LOG_INFO, "Thread %u is executing remaining REPACK op itself\n" );
+//      rthread_consumer_func( state, (void**)&(tstate->repackops) );
+//   }
+//   if ( tstate->gcops ) {
+//      LOG( LOG_INFO, "Thread %u is executing remaining GC op itself\n" );
+//      rthread_consumer_func( state, (void**)&(tstate->gcops) );
+//   }
+   // merely note termination ( state will be freed by master proc )
    LOG( LOG_INFO, "Thread %u is terminating\n", tstate->tID );
 }
 

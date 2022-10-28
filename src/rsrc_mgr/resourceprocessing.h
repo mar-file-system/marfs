@@ -79,11 +79,13 @@ typedef struct threshold_struct {
 
 typedef struct streamwalker_report_struct {
    // quota info
-   size_t fileusage;  // count of active files
-   size_t byteusage;  // count of active bytes
+   size_t fileusage;   // count of active files
+   size_t byteusage;   // count of active bytes
    // stream info
-   size_t filecount;  // count of files in the datastream
-   size_t objcount;   // count of objects in the datastream
+   size_t filecount;   // count of files in the datastream
+   size_t objcount;    // count of objects in the datastream
+   size_t bytecount;   // count of all bytes in the datastream
+   size_t streamcount; // count of all streams ( always one, here, but having this value in the struct helps elsewhere )
    // GC info
    size_t delobjs;    // count of deleted objects
    size_t delfiles;   // count of deleted files

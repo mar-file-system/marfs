@@ -411,7 +411,7 @@ void process_deleteref( const marfs_position* pos, opinfo* op ) {
       .inprog = 0
    };
    // note any previously deleted refs between us and prev_active_index
-   if ( (op->ftag.fileno - 1) > delrefinf->prev_active_index ) {
+   if ( op->ftag.fileno > delrefinf->prev_active_index + 1 ) {
       gctag.refcnt += (op->ftag.fileno - 1) - delrefinf->prev_active_index;
       LOG( LOG_INFO, "Including previous gap of %zu files ( %zu resultant gap )\n",
                      (op->ftag.fileno - 1) - delrefinf->prev_active_index, gctag.refcnt );
@@ -1395,6 +1395,8 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
       }
    }
    walker->report.filecount++;
+   walker->report.bytecount += walker->ftag.bytes;
+   walker->report.streamcount++;
    // NOTE -- technically, objcount will run one object 'ahead' until iteration completion ( we don't count final obj )
    if ( !(walker->gctag.delzero) ) { walker->report.objcount += endobj + 1; } // note first obj set, if not already deleted
    else if ( !(eos) ) { walker->report.objcount += 1; } // only count ahead if this is the sole file remaining
@@ -1778,6 +1780,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       }
       // note newly encountered file
       walker->report.filecount++;
+      if ( haveftag ) { walker->report.bytecount += walker->ftag.bytes; }
+      else { walker->report.bytecount += walker->stval.st_size; }
       if ( filestate > 1 ) {
          // file is active
          walker->report.fileusage++;
