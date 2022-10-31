@@ -723,17 +723,22 @@ int rthread_producer_func( void** state, void** work_tofill ) {
             tstate->streamcount++;
          }
          else if ( scanres == 2 ) { // rebuild marker file
-            // TODO check threshold value
-            newop = process_rebuildmarker( &(tstate->gstate->pos), reftgt, tgtval );
-            if ( newop == NULL ) {
-               LOG( LOG_ERR, "Thread %u failed to process rebuild marker \"%s\" of NS \"%s\"\n",
-                             tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr );
-               snprintf( tstate->errorstr, MAX_STR_BUFFER,
-                         "Thread %u failed to process rebuild marker \"%s\" of NS \"%s\"\n",
-                         tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr );
-               tstate->fatalerror = 1;
-               if ( reftgt ) { free( reftgt ); }
-               return -1;
+            if ( tstate->gstate->lbrebuild ) { //skip marker files, if we're rebuilding based on object location
+               LOG( LOG_INFO, "Skipping rebuild marker file, as we are doing location-based rebuild: \"%s\"\n", reftgt );
+            }
+            else {
+               errno = 0;
+               newop = process_rebuildmarker( &(tstate->gstate->pos), reftgt, tstate->gstate->thresh.rebuildthreshold, tgtval );
+               if ( newop == NULL  &&  errno != ETIME ) { // only ignore failure due to recently created marker file
+                  LOG( LOG_ERR, "Thread %u failed to process rebuild marker \"%s\" of NS \"%s\"\n",
+                                tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr );
+                  snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                            "Thread %u failed to process rebuild marker \"%s\" of NS \"%s\"\n",
+                            tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr );
+                  tstate->fatalerror = 1;
+                  if ( reftgt ) { free( reftgt ); }
+                  return -1;
+               }
             }
          }
          else if ( scanres == 3 ) { // repack marker file

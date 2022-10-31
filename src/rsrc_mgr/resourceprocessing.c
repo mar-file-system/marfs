@@ -874,8 +874,9 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
       opinfo* parseop = *opchain;
       while ( parseop ) {
          // for most ops, matching on type is sufficent to reuse the same op tgt
-         // For repacks & rebuilds, we need to check that the new tgt is in the same 'chain' as the existing one
+         // For object deletions, repacks, and rebuilds, we need to check that the new tgt is in the same 'chain'
          if ( parseop->type == type  &&
+              ( type != MARFS_DELETE_OBJ_OP  ||  ftag->objno == (parseop->ftag.objno + parseop->count) )  &&
               ( type != MARFS_REPACK_OP  ||  ftag->fileno == (parseop->ftag.fileno + parseop->count) )  &&
               ( type != MARFS_REBUILD_OP  ||  ftag->objno == (parseop->ftag.objno + parseop->count) )
             ) {
@@ -1065,10 +1066,13 @@ int process_refdir( marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, c
 /**
  * Generate a rebuild opinfo element corresponding to the given marker and object
  * @param char* markerpath : Reference path of the rebuild marker ( will be bundled into the opinfo ref )
+ * @param time_t rebuildthresh : Rebuild threshold value ( files more recent than this will be ignored )
  * @param size_t objno : Index of the object corresponding to the marker
  * @return opinfo* : Reference to the newly generated op, or NULL on failure
+ *                   NOTE -- errno will be set to ETIME, specifically in the case of the marker being too recent
+ *                           ( ctime >= rebuildthresh )
  */
-opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, size_t objno ) {
+opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t rebuildthresh, size_t objno ) {
    // check args
    if ( pos == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_position reference\n" );
@@ -1086,6 +1090,18 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, size_t obj
    MDAL_FHANDLE mhandle = ms->mdal->openref( pos->ctxt, markerpath, O_RDONLY, 0 );
    if ( mhandle == NULL ) {
       LOG( LOG_ERR, "Failed to open handle for marker path \"%s\"\n", markerpath );
+      return NULL;
+   }
+   // stat the marker
+   struct stat stval;
+   if ( ms->mdal->fstat( mhandle, &(stval) ) ) {
+      LOG( LOG_ERR, "Failed to stat via handle for marker path \"%s\"\n", markerpath );
+      return NULL;
+   }
+   if ( stval.st_ctime >= rebuildthresh ) {
+      LOG( LOG_INFO, "Marker path \"%s\" ctime is too recent to rebuild\n", markerpath );
+      ms->mdal->close( mhandle );
+      errno = ETIME;
       return NULL;
    }
    // retrieve the FTAG value
@@ -1628,7 +1644,8 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                      LOG( LOG_ERR, "Failed to identify operation target for noting deletion of obj zero\n" );
                      return -1;
                   }
-                  // NOTE -- don't increment count, as we aren't actually deleting another ref
+                  // NOTE -- don't increment count ( as we normally would ), as we aren't actually deleting another ref
+                  optgt->count += walker->gctag.refcnt;
                   delref_info* delrefinf = (delref_info*)optgt->extendedinfo;
                   delrefinf->delzero = 1;
                }
@@ -1687,6 +1704,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             if ( optgt->count ) {
                // update existing op
                optgt->count++;
+               optgt->count += walker->gctag.refcnt;
                delrefinf = optgt->extendedinfo;
                // sanity check
                if ( delrefinf->prev_active_index != walker->activeindex ) {
@@ -1699,6 +1717,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             else {
                // populate new op
                optgt->count = 1;
+               optgt->count += walker->gctag.refcnt;
                delrefinf = optgt->extendedinfo;
                delrefinf->prev_active_index = walker->activeindex;
                delrefinf->eos = eos;

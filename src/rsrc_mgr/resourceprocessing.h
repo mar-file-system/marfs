@@ -163,10 +163,11 @@ int process_refdir( marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, c
 /**
  * Generate a rebuild opinfo element corresponding to the given marker and object
  * @param char* markerpath : Reference path of the rebuild marker ( will be bundled into the opinfo ref )
+ * @param time_t rebuildthresh : Rebuild threshold value ( files more recent than this will be ignored )
  * @param size_t objno : Index of the object corresponding to the marker
  * @return opinfo* : Reference to the newly generated op, or NULL on failure
  */
-opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, size_t objno );
+opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t rebuildthresh, size_t objno );
 
 /**
  * Open a streamwalker based on the given fileno zero reference target
