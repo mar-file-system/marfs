@@ -359,7 +359,7 @@ void process_deleteobj( marfs_position* pos, opinfo* op ) {
    if ( delobjinf != NULL ) {
       countval = delobjinf->offset; // skip ahead by some offset, if specified
    }
-   while ( countval < op->count ) {
+   while ( countval < op->count + delobjinf->offset ) {
       // identify the object target of the op
       FTAG tmptag = op->ftag;
       tmptag.objno += countval;
@@ -1519,6 +1519,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             else {
                // populate newly created op
                optgt->count = walker->gctag.refcnt;
+               optgt->ftag.fileno = walker->ftag.fileno; // be SURE that this is not a dummy op, targeting fileno zero
                delref_info* extinf = optgt->extendedinfo;
                extinf->prev_active_index = walker->activeindex;
                extinf->eos = walker->gctag.eos;
@@ -1716,6 +1717,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             }
             else {
                // populate new op
+               optgt->ftag.fileno = walker->ftag.fileno; // be SURE that this is not a dummy op, targeting fileno zero
                optgt->count = 1;
                optgt->count += walker->gctag.refcnt;
                delrefinf = optgt->extendedinfo;

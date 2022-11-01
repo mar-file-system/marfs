@@ -348,10 +348,10 @@ int main(int argc, char **argv)
       return -1;
    }
    thresholds thresh = {
-      .gcthreshold = currenttime.tv_sec + 1, // +1, to ensure we actually get *all* deleted files
+      .gcthreshold = currenttime.tv_sec + 120, // +1, to ensure we actually get *all* deleted files
       .repackthreshold = 0, // no repacks for now
       .rebuildthreshold = 0, // no rebuilds for now
-      .cleanupthreshold = currenttime.tv_sec + 1
+      .cleanupthreshold = currenttime.tv_sec + 120
    };
 
    // set up resource threads
@@ -444,6 +444,7 @@ int main(int argc, char **argv)
    int retval;
    streamwalker_report report = {0};
    size_t reportedstreams = 0;
+   size_t origdelstreams = report.delstreams;
    while ( (retval = tq_next_thread_status( tq, (void**)&(tstate) )) > 0 ) {
       if ( tstate == NULL ) {
          printf( "received a NULL thread status\n" );
@@ -584,10 +585,10 @@ int main(int argc, char **argv)
       printf( "failed to get current time for second walk\n" );
       return -1;
    }
-   thresh.gcthreshold = currenttime.tv_sec + 1; // +1, to ensure we actually get *all* deleted files
+   thresh.gcthreshold = currenttime.tv_sec + 120; // +1, to ensure we actually get *all* deleted files
    // no repacks for now
    // no rebuilds for now
-   thresh.cleanupthreshold = currenttime.tv_sec + 1;
+   thresh.cleanupthreshold = currenttime.tv_sec + 120;
 
    // set up resource threads
    if ( resourceinput_init( &(gstate.rinput), &(gstate.pos), 3 ) ) {
@@ -661,7 +662,9 @@ int main(int argc, char **argv)
    }
    // gather all thread status values
    tstate = NULL;
-   reportedstreams = report.delstreams; // include any previously deleted streams
+   origdelstreams += report.delstreams;
+   printf( "ODELSTREAMS = %zu\n", origdelstreams );
+   reportedstreams = origdelstreams; // include any previously deleted streams
    bzero( &(report), sizeof( struct streamwalker_report_struct ) );
    while ( (retval = tq_next_thread_status( tq, (void**)&(tstate) )) > 0 ) {
       if ( tstate == NULL ) {
@@ -715,6 +718,7 @@ int main(int argc, char **argv)
 
 
    // check report totals against expected values
+   printf( "second walk delstreams = %zu\n", report.delstreams );
    if ( reportedstreams != totalstreams ) {
       printf( "second walk reported streams (%zu) does not match expected total (%zu)\n", reportedstreams, totalstreams );
       return -1;
@@ -733,6 +737,8 @@ int main(int argc, char **argv)
               report.bytecount + delbytes, totalbytes );
       return -1;
    }
+   // note deleteion values
+   gcfiles += report.delfiles;
 
 
    // re-read and delete all remaining files
@@ -792,31 +798,36 @@ int main(int argc, char **argv)
             return -1;
          }
       }
+      // should be safe to remove the parent dir as well
+      snprintf( filepath, 1024, "stream%.2d", streamnum );
+      if ( curmdal->rmdir( pos.ctxt, filepath ) ) {
+         printf( "failed to rmdir \"%s\"\n", filepath );
+         return -1;
+      }
    }
 
-
-   // walk for a final time, cleaning up all objs/files
+   // walk for a third time, cleaning up all objs/files
    if ( gettimeofday( &currenttime, NULL ) ) {
-      printf( "failed to get current time for third+final walk\n" );
+      printf( "failed to get current time for third walk\n" );
       return -1;
    }
-   thresh.gcthreshold = currenttime.tv_sec + 1; // +1, to ensure we actually get *all* deleted files
+   thresh.gcthreshold = currenttime.tv_sec + 120; // +1, to ensure we actually get *all* deleted files
    // no repacks for now
    // no rebuilds for now
-   thresh.cleanupthreshold = currenttime.tv_sec + 1;
+   thresh.cleanupthreshold = currenttime.tv_sec + 120;
 
    // set up resource threads
    if ( resourceinput_init( &(gstate.rinput), &(gstate.pos), 3 ) ) {
-      printf( "failed to initialize resourceinput for third+final run\n" );
+      printf( "failed to initialize resourceinput for third run\n" );
       return -1;
    }
    if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/logfile3", RESOURCE_MODIFY_LOG, pos.ns ) ) {
-      printf( "failed to initialize resourcelog for third+final run\n" );
+      printf( "failed to initialize resourcelog for third run\n" );
       return -1;
    }
    gstate.rpst = repackstreamer_init();
    if ( gstate.rpst == NULL ) {
-      printf( "failed to initalize repackstreamer for third+final run\n" );
+      printf( "failed to initalize repackstreamer for third run\n" );
       return -1;
    }
    gstate.numprodthreads = 3;
@@ -824,72 +835,74 @@ int main(int argc, char **argv)
    tqopts.log_prefix = "Run3+F";
    tqopts.num_threads = gstate.numprodthreads + gstate.numconsthreads;
    tqopts.num_prod_threads = gstate.numprodthreads;
-   printf( "starting up threads for third+final walk\n" );
+   printf( "starting up threads for third walk\n" );
 
    tq = tq_init( &(tqopts) );
    if ( tq == NULL ) {
-      printf( "failed to start up threads for third+final walk\n" );
+      printf( "failed to start up threads for third walk\n" );
       return -1;
    }
 
    // set input to the first ref range
    refcnt = (rand() % (pos.ns->prepo->metascheme.refnodecount)) + 1;
-   printf( "setting third+final walk input to 0 - %zu\n", refcnt );
+   printf( "setting third walk input to 0 - %zu\n", refcnt );
    if ( resourceinput_setrange( &(gstate.rinput), 0, refcnt ) ) {
-      printf( "failed to set third+final walk input 1\n" );
+      printf( "failed to set third walk input 1\n" );
       return -1;
    }
-   printf( "waiting for third+final walk, first input completion\n" );
+   printf( "waiting for third walk, first input completion\n" );
    if ( resourceinput_waitforcomp( &(gstate.rinput) ) ) {
-      printf( "failed to wait for third+final walk, first input completion\n" );
+      printf( "failed to wait for third walk, first input completion\n" );
       return -1;
    }
    // set input to second ref range
-   printf( "setting third+final walk input to %zu - %zu\n", refcnt, pos.ns->prepo->metascheme.refnodecount );
+   printf( "setting third walk input to %zu - %zu\n", refcnt, pos.ns->prepo->metascheme.refnodecount );
    if ( resourceinput_setrange( &(gstate.rinput), refcnt, pos.ns->prepo->metascheme.refnodecount ) ) {
-      printf( "failed to set third+final walk input 2\n" );
+      printf( "failed to set third walk input 2\n" );
       return -1;
    }
-   printf( "waiting for third+final walk, second input completion\n" );
+   printf( "waiting for third walk, second input completion\n" );
    if ( resourceinput_waitforcomp( &(gstate.rinput) ) ) {
-      printf( "failed to wait for third+final walk, second input completion\n" );
+      printf( "failed to wait for third walk, second input completion\n" );
       return -1;
    }
    // terminate our input
    if ( resourceinput_term( &(gstate.rinput) ) ) {
-      printf( "failed to terminate third+final walk input\n" );
+      printf( "failed to terminate third walk input\n" );
       return -1;
    }
    // wait for the queue to be marked as FINISHED
    setflags = 0;
    if ( tq_wait_for_flags( tq, 0, &(setflags) ) ) {
-      printf( "failed to wait for TQ flags on third+final walk\n" );
+      printf( "failed to wait for TQ flags on third walk\n" );
       return -1;
    }
    if ( setflags != TQ_FINISHED ) {
-      printf( "unexpected flags following third+final walk\n" );
+      printf( "unexpected flags following third walk\n" );
       return -1;
    }
    // wait for TQ completion
    if ( tq_wait_for_completion( tq ) ) {
-      printf( "failed to wait for completion of third+final walk TQ\n" );
+      printf( "failed to wait for completion of third walk TQ\n" );
       return -1;
    }
    // gather all thread status values
    tstate = NULL;
-   reportedstreams = report.delstreams; // include any previously deleted streams
+   origdelstreams += report.delstreams;
+   printf( "ODELSTREAMS = %zu\n", origdelstreams );
+   reportedstreams = origdelstreams; // include any previously deleted streams
    bzero( &(report), sizeof( struct streamwalker_report_struct ) );
    while ( (retval = tq_next_thread_status( tq, (void**)&(tstate) )) > 0 ) {
       if ( tstate == NULL ) {
-         printf( "received a NULL thread status for third+final walk\n" );
+         printf( "received a NULL thread status for third walk\n" );
          return -1;
       }
       if ( tstate->fatalerror ) {
-         printf( "third+final walk thread %u indicates a fatal error\n", tstate->tID );
+         printf( "third walk thread %u indicates a fatal error\n", tstate->tID );
          return -1;
       }
       if ( tstate->scanner  ||  tstate->rdirpath  ||  tstate->walker  ||  tstate->gcops  ||  tstate->repackops ) {
-         printf( "third+final walk thread %u has remaining state values\n", tstate->tID );
+         printf( "third walk thread %u has remaining state values\n", tstate->tID );
          return -1;
       }
       // note all thread report values
@@ -910,45 +923,209 @@ int main(int argc, char **argv)
       report.rbldbytes  += tstate->report.rbldbytes;
    }
    if ( retval ) {
-      printf( "failed to collect all third+final walk thread status values\n" );
+      printf( "failed to collect all third walk thread status values\n" );
       return -1;
    }
    // close our the thread queue, logs, etc.
    if ( tq_close( tq ) ) {
-      printf( "failed to close third+final thread queue\n" );
+      printf( "failed to close third thread queue\n" );
       return -1;
    }
    bzero( &(summary), sizeof( struct operation_summary_struct ) );
    if ( resourcelog_term( &(gstate.rlog), &(summary), NULL ) ) {
-      printf( "failed to terminate resource log following third+final walk\n" );
+      printf( "failed to terminate resource log following third walk\n" );
       return -1;
    }
    if ( repackstreamer_complete( gstate.rpst ) ) {
-      printf( "failed to complete repack streamer  following third+final walk\n" );
+      printf( "failed to complete repack streamer  following third walk\n" );
       return -1;
    }
    gstate.rpst = NULL;
 
 
    // check report totals against expected values
+   printf( "third walk delstreams = %zu\n", report.delstreams );
    if ( reportedstreams != totalstreams ) {
-      printf( "third+final walk reported streams (%zu) does not match expected total (%zu)\n", reportedstreams, totalstreams );
+      printf( "third walk reported streams (Cnt%zu + Del%zu) does not match expected total (%zu)\n", reportedstreams - origdelstreams, origdelstreams, totalstreams );
       return -1;
    }
    if ( report.filecount + gcfiles != totalfiles ) {
-      printf( "third+final walk reported files (%zu) does not match expected total (%zu)\n", report.filecount, totalfiles );
+      printf( "third walk reported files (%zu) does not match expected total (%zu)\n", report.filecount, totalfiles );
       return -1;
    }
    if ( report.byteusage + delbytes != totalbytes ) {
-      printf( "third+final walk reported bytes ( %zu used + %zu deleted ) does not match expected total (%zu)\n",
+      printf( "third walk reported bytes ( %zu used + %zu deleted ) does not match expected total (%zu)\n",
               report.byteusage, delbytes, totalbytes );
       return -1;
    }
    if ( report.bytecount + delbytes < totalbytes ) {
-      printf( "third+final walk reported bytes ( %zu ) does not match/exceed expected total (%zu)\n",
+      printf( "third walk reported bytes ( %zu ) does not match/exceed expected total (%zu)\n",
               report.bytecount + delbytes, totalbytes );
       return -1;
    }
+   // note deleteion values
+   gcfiles += report.delfiles;
+
+
+
+   // walk for a final time, cleaning up all objs/files
+   if ( gettimeofday( &currenttime, NULL ) ) {
+      printf( "failed to get current time for final walk\n" );
+      return -1;
+   }
+   thresh.gcthreshold = currenttime.tv_sec + 120; // +1, to ensure we actually get *all* deleted files
+   // no repacks for now
+   // no rebuilds for now
+   thresh.cleanupthreshold = currenttime.tv_sec + 120;
+
+   // set up resource threads
+   if ( resourceinput_init( &(gstate.rinput), &(gstate.pos), 5 ) ) {
+      printf( "failed to initialize resourceinput for final run\n" );
+      return -1;
+   }
+   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/logfileF", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+      printf( "failed to initialize resourcelog for final run\n" );
+      return -1;
+   }
+   gstate.rpst = repackstreamer_init();
+   if ( gstate.rpst == NULL ) {
+      printf( "failed to initalize repackstreamer for final run\n" );
+      return -1;
+   }
+   gstate.numprodthreads = 5;
+   gstate.numconsthreads = 1;
+   tqopts.log_prefix = "RunF";
+   tqopts.num_threads = gstate.numprodthreads + gstate.numconsthreads;
+   tqopts.num_prod_threads = gstate.numprodthreads;
+   printf( "starting up threads for final walk\n" );
+
+   tq = tq_init( &(tqopts) );
+   if ( tq == NULL ) {
+      printf( "failed to start up threads for final walk\n" );
+      return -1;
+   }
+
+   // set input to the first ref range
+   refcnt = (rand() % (pos.ns->prepo->metascheme.refnodecount)) + 1;
+   printf( "setting final walk input to 0 - %zu\n", refcnt );
+   if ( resourceinput_setrange( &(gstate.rinput), 0, refcnt ) ) {
+      printf( "failed to set final walk input 1\n" );
+      return -1;
+   }
+   printf( "waiting for final walk, first input completion\n" );
+   if ( resourceinput_waitforcomp( &(gstate.rinput) ) ) {
+      printf( "failed to wait for final walk, first input completion\n" );
+      return -1;
+   }
+   // set input to second ref range
+   printf( "setting final walk input to %zu - %zu\n", refcnt, pos.ns->prepo->metascheme.refnodecount );
+   if ( resourceinput_setrange( &(gstate.rinput), refcnt, pos.ns->prepo->metascheme.refnodecount ) ) {
+      printf( "failed to set final walk input 2\n" );
+      return -1;
+   }
+   printf( "waiting for final walk, second input completion\n" );
+   if ( resourceinput_waitforcomp( &(gstate.rinput) ) ) {
+      printf( "failed to wait for final walk, second input completion\n" );
+      return -1;
+   }
+   // terminate our input
+   if ( resourceinput_term( &(gstate.rinput) ) ) {
+      printf( "failed to terminate final walk input\n" );
+      return -1;
+   }
+   // wait for the queue to be marked as FINISHED
+   setflags = 0;
+   if ( tq_wait_for_flags( tq, 0, &(setflags) ) ) {
+      printf( "failed to wait for TQ flags on final walk\n" );
+      return -1;
+   }
+   if ( setflags != TQ_FINISHED ) {
+      printf( "unexpected flags following final walk\n" );
+      return -1;
+   }
+   // wait for TQ completion
+   if ( tq_wait_for_completion( tq ) ) {
+      printf( "failed to wait for completion of final walk TQ\n" );
+      return -1;
+   }
+   // gather all thread status values
+   tstate = NULL;
+   origdelstreams += report.delstreams;
+   printf( "ODELSTREAMS = %zu\n", origdelstreams );
+   reportedstreams = origdelstreams; // include any previously deleted streams
+   bzero( &(report), sizeof( struct streamwalker_report_struct ) );
+   while ( (retval = tq_next_thread_status( tq, (void**)&(tstate) )) > 0 ) {
+      if ( tstate == NULL ) {
+         printf( "received a NULL thread status for final walk\n" );
+         return -1;
+      }
+      if ( tstate->fatalerror ) {
+         printf( "final walk thread %u indicates a fatal error\n", tstate->tID );
+         return -1;
+      }
+      if ( tstate->scanner  ||  tstate->rdirpath  ||  tstate->walker  ||  tstate->gcops  ||  tstate->repackops ) {
+         printf( "final walk thread %u has remaining state values\n", tstate->tID );
+         return -1;
+      }
+      // note all thread report values
+      reportedstreams   += tstate->streamcount;
+      report.fileusage  += tstate->report.fileusage;
+      report.byteusage  += tstate->report.byteusage;
+      report.filecount  += tstate->report.filecount;
+      report.objcount   += tstate->report.objcount;
+      report.bytecount  += tstate->report.bytecount;
+      report.streamcount+= tstate->report.streamcount;
+      report.delobjs    += tstate->report.delobjs;
+      report.delfiles   += tstate->report.delfiles;
+      report.delstreams += tstate->report.delstreams;
+      report.volfiles   += tstate->report.volfiles;
+      report.rpckfiles  += tstate->report.rpckfiles;
+      report.rpckbytes  += tstate->report.rpckbytes;
+      report.rbldobjs   += tstate->report.rbldobjs;
+      report.rbldbytes  += tstate->report.rbldbytes;
+   }
+   if ( retval ) {
+      printf( "failed to collect all final walk thread status values\n" );
+      return -1;
+   }
+   // close our the thread queue, logs, etc.
+   if ( tq_close( tq ) ) {
+      printf( "failed to close final thread queue\n" );
+      return -1;
+   }
+   bzero( &(summary), sizeof( struct operation_summary_struct ) );
+   if ( resourcelog_term( &(gstate.rlog), &(summary), NULL ) ) {
+      printf( "failed to terminate resource log following final walk\n" );
+      return -1;
+   }
+   if ( repackstreamer_complete( gstate.rpst ) ) {
+      printf( "failed to complete repack streamer  following final walk\n" );
+      return -1;
+   }
+   gstate.rpst = NULL;
+
+
+   // check report totals against expected values
+   printf( "final walk delstreams = %zu\n", report.delstreams );
+   if ( reportedstreams != totalstreams ) {
+      printf( "final walk reported streams (Cnt%zu + Del%zu) does not match expected total (%zu)\n", reportedstreams - origdelstreams, origdelstreams, totalstreams );
+      return -1;
+   }
+   if ( report.filecount + gcfiles != totalfiles ) {
+      printf( "final walk reported files (%zu) does not match expected total (%zu)\n", report.filecount, totalfiles );
+      return -1;
+   }
+   if ( report.byteusage  ||  delbytes != totalbytes ) {
+      printf( "final walk reported bytes ( %zu used + %zu deleted ) does not match expected total (%zu)\n",
+              report.byteusage, delbytes, totalbytes );
+      return -1;
+   }
+   if ( report.bytecount + delbytes < totalbytes ) {
+      printf( "final walk reported bytes ( %zu ) does not match/exceed expected total (%zu)\n",
+              report.bytecount + delbytes, totalbytes );
+      return -1;
+   }
+
 
 
 

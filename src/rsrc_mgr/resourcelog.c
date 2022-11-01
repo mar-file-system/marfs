@@ -753,14 +753,26 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
       return -1;
    }
    // traverse the attached operations, looking for a match
+   char activealike = 0; // track if we have active ops of the same type in the same 'segment'
    opinfo* opindex = node->content;
    opinfo* prevop = NULL;
    while ( opindex != NULL ) {
-      if ( (strcmp( opindex->ftag.streamid, newop->ftag.streamid ) == 0)  &&
-           (opindex->ftag.objno == newop->ftag.objno)  &&
-           (opindex->ftag.fileno == newop->ftag.fileno)  &&
-           (opindex->type == newop->type) ) {
-         break;
+      if ( strcmp( opindex->ftag.streamid, newop->ftag.streamid ) == 0 ) {
+         // check for exact match ( type, fileno, objno )
+         if ( (opindex->ftag.objno == newop->ftag.objno)  &&
+              (opindex->ftag.fileno == newop->ftag.fileno)  &&
+              (opindex->type == newop->type) ) {
+            break;
+         }
+         else if ( opindex->type == newop->type ) {
+            activealike = 1; // found an active op of the same type
+         }
+         else {
+            activealike = 0; // op 'segement' is broken, reset
+         }
+      }
+      else {
+         activealike = 0; // op 'segement' is broken, reset
       }
       prevop = opindex;
       opindex = opindex->next;
@@ -813,6 +825,10 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
                *dofree = 1; // not incorporating these ops, so the caller should free
                return 0;
             }
+            // potentially check for subsequent active op in the same segment
+            if ( parseop->next == NULL  &&  parseindex->next  &&
+                 strcmp( parseop->ftag.streamid, parseindex->next->ftag.streamid ) == 0  &&
+                 parseop->type == parseindex->next->type ) { activealike = 1; }
             // progress to the next op in the chain, validating that it matches the subsequent in the opindex chain
             parseop = parseop->next;
             previndex = parseindex; // keep track of where the index op chain terminates
@@ -825,7 +841,8 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
                }
             }
             else if ( progressop ) {
-               if ( previndex->errval == 0 ) { *progressop = 1; } // note that the corresponding ops were all completed without error
+               if ( activealike ) { *progressop = 0; } // do not progress if alike ops remain in a single 'segment'
+               else if ( previndex->errval == 0 ) { *progressop = 1; } // corresponding ops were completed without error
                else { *progressop = -1; } // note that the corresponding ops were completed with errors
             }
             // decrement in-progress cnt
@@ -1843,59 +1860,8 @@ int resourcelog_readop( RESOURCELOG* resourcelog, opinfo** op ) {
 }
 
 /**
- * Finalize a given resourcelog, but leave allocated ( saves time on future initializations )
- * NOTE -- this will wait until there are currently no ops in flight
- * @param RESOURCELOG* resourcelog : Statelog to be finalized
- * @param operation_summary* summary : Reference to be populated with summary values ( ignored if NULL )
- * @param const char* log_preservation_tgt : FS location where the state logfile should be relocated to
- *                                           If NULL, the file is deleted
- * @return int : Zero on success, or -1 on failure
- */
-int resourcelog_fin( RESOURCELOG* resourcelog, operation_summary* summary, const char* log_preservation_tgt ) {
-   // check for invalid args
-   if ( resourcelog == NULL  ||  *resourcelog == NULL ) {
-      LOG( LOG_ERR, "Received a NULL resourcelog reference\n" );
-      errno = EINVAL;
-      return -1;
-   }
-   RESOURCELOG rsrclog = *resourcelog;
-   // acquire the resourcelog lock
-   if ( pthread_mutex_lock( &(rsrclog->lock) ) ) {
-      LOG( LOG_ERR, "Failed to acquire resourcelog lock\n" );
-      return -1;
-   }
-   // wait for all outstanding ops to complete
-   while ( rsrclog->outstandingcnt != 0 ) {
-      if ( pthread_cond_wait( &rsrclog->nooutstanding, &rsrclog->lock ) ) {
-         LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
-         pthread_mutex_unlock( &(rsrclog->lock) );
-         return -1;
-      }
-   }
-   // potentially record summary info
-   if ( summary ) { *summary = rsrclog->summary; }
-   // potentially rename the logfile to the preservation tgt
-   if ( log_preservation_tgt ) { 
-      if ( rename( rsrclog->logfilepath, log_preservation_tgt ) ) {
-         LOG( LOG_ERR, "Failed to rename log file to final location: \"%s\"\n", log_preservation_tgt );
-         pthread_mutex_unlock( &(rsrclog->lock) );
-         return -1;
-      }
-   }
-   else {
-      if ( unlink( rsrclog->logfilepath ) ) {
-         LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", rsrclog->logfilepath );
-         pthread_mutex_unlock( &(rsrclog->lock) );
-         return -1;
-      }
-   }
-   cleanuplog( rsrclog, 0 ); // this will release the lock
-   return 0;
-}
-
-/**
  * Deallocate and finalize a given resourcelog
- * NOTE -- this will wait until there are currently no ops in flight
+ * NOTE -- this will fail if there are currently any ops in flight
  * @param RESOURCELOG* resourcelog : Statelog to be terminated
  * @param operation_summary* summary : Reference to be populated with summary values ( ignored if NULL )
  * @param const char* log_preservation_tgt : FS location where the state logfile should be relocated to
@@ -1915,13 +1881,12 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, cons
       LOG( LOG_ERR, "Failed to acquire resourcelog lock\n" );
       return -1;
    }
-   // wait for all outstanding ops to complete
-   while ( rsrclog->outstandingcnt != 0 ) {
-      if ( pthread_cond_wait( &rsrclog->nooutstanding, &rsrclog->lock ) ) {
-         LOG( LOG_ERR, "Failed to wait for 'no outstanding ops' condition\n" );
-         pthread_mutex_unlock( &(rsrclog->lock) );
-         return -1;
-      }
+   // abort if any outstanding ops remain
+   if ( rsrclog->outstandingcnt != 0 ) {
+      LOG( LOG_ERR, "Resourcelog still has outstanding operations\n" );
+      pthread_mutex_unlock( &(rsrclog->lock) );
+      errno = EAGAIN;
+      return -1;
    }
    // check for any recorded errors
    char errpresent = 0;

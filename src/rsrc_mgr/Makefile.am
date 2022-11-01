@@ -105,6 +105,6 @@ test_resourcethreads_SOURCES = testing/test_resourcethreads.c resourceprocessing
 test_resourcethreads_LDADD = libResourceLog.la ../datastream/libDatastream.la
 test_resourcethreads_CFLAGS = $(XML_CFLAGS)
 
-TESTS = test_resourcelog test_resourceprocessing #test_resourcethreads test_rsrc_mgr test_rsrc_mgr_nopack
+TESTS = test_resourcelog test_resourceprocessing test_resourcethreads #test_rsrc_mgr test_rsrc_mgr_nopack
 
 

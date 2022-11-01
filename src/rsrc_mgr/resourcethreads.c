@@ -606,20 +606,56 @@ int rthread_producer_func( void** state, void** work_tofill ) {
       }
       else if ( tstate->gcops ) {
          // enqueue previously produced GC op(s)
-         // NOTE -- object deletions always preceed reference deletions, so it should be safe to just check the first
-         if ( tstate->gcops->type == MARFS_DELETE_OBJ_OP  &&  tstate->gcops->count > 1 ) {
-            // split the object deletion op apart into multiple work packages
-            newop = resourcelog_dupopinfo( tstate->gcops );
-            if ( newop == NULL ) {
-               LOG( LOG_WARNING, "Failed to duplicate GC op prior to distribution!\n" );
-               // can't split this op apart, so just pass out the whole thing anyway
-               newop = tstate->gcops;
-               tstate->gcops = NULL; // remove state reference, so we don't repeat
-            }
-            newop->count = 1; // set to a single object deletion
-            tstate->gcops->count--; // note one less op to distribute
+         // first, we must identify where the op chain transitions from obj to ref deletions
+         opinfo* refdel = NULL;
+         opinfo* gcparse = tstate->gcops;
+         while ( gcparse ) {
+            if ( gcparse->type == MARFS_DELETE_REF_OP ) { refdel = gcparse; break; }
+            gcparse = gcparse->next;
          }
-         else {
+         // NOTE -- object deletions always preceed reference deletions, so it should be safe to just check the first
+         if ( tstate->gcops->type == MARFS_DELETE_OBJ_OP ) {
+            if ( tstate->gcops->count > 1 ) {
+               // temporarily strip our op chain down to a single DEL-OBJ op, followed by all reference deletions
+               opinfo* orignext = tstate->gcops->next;
+               tstate->gcops->next = refdel;
+               // split the object deletion op apart into multiple work packages
+               newop = resourcelog_dupopinfo( tstate->gcops );
+               // restore original op chain structure
+               tstate->gcops->next = orignext;
+               // check for duplicated op chain
+               if ( newop == NULL ) {
+                  LOG( LOG_WARNING, "Failed to duplicate GC op prior to distribution!\n" );
+                  // can't split this op apart, so just pass out the whole thing anyway
+                  newop = tstate->gcops;
+                  tstate->gcops = NULL; // remove state reference, so we don't repeat
+               }
+               newop->count = 1; // set to a single object deletion
+               tstate->gcops->count--; // note one less op to distribute
+               delobj_info* delobjinf = (delobj_info*) tstate->gcops->extendedinfo;
+               delobjinf->offset++; // note to skip over one additional leading object
+            }
+            else {
+               // check if we have additional ops between the lead op and the first ref del op
+               if ( tstate->gcops->next != refdel ) {
+                  // duplicate the REF-DEL portion of the op chain
+                  opinfo* refdup = resourcelog_dupopinfo( refdel );
+                  if ( refdup == NULL ) {
+                     LOG( LOG_WARNING, "Failed to duplicate GC REF-DEL op prior to distribution!\n" );
+                     // can't split this op apart, so just pass out the whole thing anyway
+                     newop = tstate->gcops;
+                     tstate->gcops = NULL; // remove state reference, so we don't repeat
+                  }
+                  // need to strip off our leading op, and attach it to a new chain
+                  opinfo* orignext = tstate->gcops->next;
+                  tstate->gcops->next = refdup;
+                  newop = tstate->gcops;
+                  tstate->gcops = orignext;
+               }
+            }
+         }
+         if ( newop == NULL ) {
+            // just pass our whatever ops remain
             newop = tstate->gcops;
             tstate->gcops = NULL; // remove state reference, so we don't repeat
          }

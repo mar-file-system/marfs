@@ -198,24 +198,13 @@ int resourcelog_processop( RESOURCELOG* resourcelog, opinfo* op, char* progress 
 int resourcelog_readop( RESOURCELOG* resourcelog, opinfo** op );
 
 /**
- * Finalize a given resourcelog, but leave allocated ( saves time on future initializations )
- * NOTE -- this will wait until there are currently no ops in flight
- * @param RESOURCELOG* resourcelog : Statelog to be finalized
- * @param operation_summary* summary : Reference to be populated with summary values ( ignored if NULL )
- * @param const char* log_preservation_tgt : FS location where the state logfile should be relocated to
- *                                           If NULL, the file is deleted
- * @return int : Zero on success, or -1 on failure
- */
-int resourcelog_fin( RESOURCELOG* resourcelog, operation_summary* summary, const char* log_preservation_tgt );
-
-/**
  * Deallocate and finalize a given resourcelog
- * NOTE -- this will wait until there are currently no ops in flight
+ * NOTE -- this will fail if there are currently any ops in flight
  * @param RESOURCELOG* resourcelog : Statelog to be terminated
  * @param operation_summary* summary : Reference to be populated with summary values ( ignored if NULL )
  * @param const char* log_preservation_tgt : FS location where the state logfile should be relocated to
  *                                           If NULL, the file is deleted
- * @return int : Zero on success, or -1 on failure
+ * @return int : Zero on success, 1 if the log was preserved due to errors, or -1 on failure
  */
 int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, const char* log_preservation_tgt );
 
