@@ -96,6 +96,7 @@ typedef struct rmanstate_struct {
    operation_summary*   logsummary;
 
    // Thread State
+   rthread_gstate gstate;
    size_t      prodthreads;
    size_t      consthreads;
    ThreadQueue TQ;

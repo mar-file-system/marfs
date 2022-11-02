@@ -96,7 +96,7 @@ typedef struct rthread_global_state_struct {
 
    // Operation Values
    thresholds      thresh;
-   char            lbrebuild;
+   char            lbrebuild;  // TODO dry run behavior
    ne_location     rebuildloc;
 
    // Thread Values
@@ -688,7 +688,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   LOG( LOG_ERR, "Thread %u failed to log start of a REPACK operation\n", tstate->tID );
                   snprintf( tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a REPACK operation\n", tstate->tID );
-                  resourcelog_freeopinfo( newop );
+                  if ( newop ) { resourcelog_freeopinfo( newop ); }
                   return -1;
                }
             }
@@ -697,7 +697,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   LOG( LOG_ERR, "Thread %u failed to log start of a GC operation\n", tstate->tID );
                   snprintf( tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a GC operation\n", tstate->tID );
-                  resourcelog_freeopinfo( newop );
+                  if ( newop ) { resourcelog_freeopinfo( newop ); }
                   return -1;
                }
             }
@@ -861,16 +861,34 @@ int rthread_producer_func( void** state, void** work_tofill ) {
 void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg ) {
    // cast values to appropriate types
    rthread_state* tstate = (rthread_state*)(*state);
-   // producers may need to handle remaining operations themselves
-//   if ( tstate->repackops ) {
-//      LOG( LOG_INFO, "Thread %u is executing remaining REPACK op itself\n" );
-//      rthread_consumer_func( state, (void**)&(tstate->repackops) );
-//   }
-//   if ( tstate->gcops ) {
-//      LOG( LOG_INFO, "Thread %u is executing remaining GC op itself\n" );
-//      rthread_consumer_func( state, (void**)&(tstate->gcops) );
-//   }
-   // merely note termination ( state will be freed by master proc )
+   // producers may need to cleanup remaining state
+   if ( tstate->repackops ) {
+      LOG( LOG_INFO, "Thread %u is destroying non-issued REPACK ops\n" );
+      resourcelog_freeopinfo( tstate->repackops );
+      tstate->repackops = NULL;
+   }
+   if ( tstate->gcops ) {
+      LOG( LOG_ERR, "Thread %u is destroying remaining GC ops\n" );
+      resourcelog_freeopinfo( tstate->gcops );
+      tstate->gcops = NULL;
+      // this is non-standard, so ensure we note an error
+      if ( !(tstate->fatalerror) ) {
+         snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                   "Thread %u held non-issued GC ops at termination\n", tstate->tID );
+         tstate->fatalerror = 1;
+      }
+   }
+   if ( tstate->scanner ) {
+      LOG( LOG_ERR, "Thread %u is destroying remaining scanner handle\n" );
+      tstate->gstate->ns->prepo->metascheme.mdal->closescanner( tstate->scanner );
+      // this is non-standard, so ensure we note an error
+      if ( !(tstate->fatalerror) ) {
+         snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                   "Thread %u held an open MDAL_SCANNER at termination\n", tstate->tID );
+         tstate->fatalerror = 1;
+      }
+   }
+   // merely note termination ( state struct itself will be freed by master proc )
    LOG( LOG_INFO, "Thread %u is terminating\n", tstate->tID );
 }
 
