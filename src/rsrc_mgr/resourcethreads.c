@@ -880,7 +880,7 @@ void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg ) {
    }
    if ( tstate->scanner ) {
       LOG( LOG_ERR, "Thread %u is destroying remaining scanner handle\n" );
-      tstate->gstate->ns->prepo->metascheme.mdal->closescanner( tstate->scanner );
+      tstate->gstate->pos.ns->prepo->metascheme.mdal->closescanner( tstate->scanner );
       // this is non-standard, so ensure we note an error
       if ( !(tstate->fatalerror) ) {
          snprintf( tstate->errorstr, MAX_STR_BUFFER,

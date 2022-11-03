@@ -1603,10 +1603,17 @@ int marfs_closedir(marfs_dhandle dh) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   // acquire directory lock
+   if ( pthread_mutex_lock( &(dh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to aqcuire marfs_dhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
    // close the handle and free all memory
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
    int retval = curmdal->closedir( dh->metahandle );
    config_destroynsref( dh->ns );
+   pthread_mutex_unlock( &(dh->lock) );
    pthread_mutex_destroy( &(dh->lock) );
    free( dh );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
