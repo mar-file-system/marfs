@@ -84,9 +84,6 @@ typedef struct rmanstate_struct {
    // Per-Run MarFS State
    marfs_config* config;
 
-   // Per-NS MarFS State
-   marfs_position pos;
-
    // Per-NS Progress Tracking
    size_t        nscount;
    marfs_ns**    nslist;
@@ -97,8 +94,6 @@ typedef struct rmanstate_struct {
 
    // Thread State
    rthread_gstate gstate;
-   size_t      prodthreads;
-   size_t      consthreads;
    ThreadQueue TQ;
 
    // arg reference vals
@@ -106,17 +101,13 @@ typedef struct rmanstate_struct {
    char*       logroot;
    char*       errorlogtgt;
    char*       preservelogtgt;
-   char        dryrun;
-   thresholds  thresh;
-   char        lbrebuild;
-   ne_location rebuildloc;
-
 } rmanstate;
 
 typedef enum {
-   RLOG_WORK,
-   NS_WORK,
-   ABORT_WORK
+   RLOG_WORK,     // request to process an existing resource log ( either previous dry-run or dead run pickup )
+   NS_WORK,       // request to process a portion of a NS
+   COMPLETE_WORK, // request to complete outstanding work ( quiesce all threads and close all streams )
+   ABORT_WORK     // request to abort all processing and terminate
 } worktype;
 
 typedef struct workrequest_struct {
@@ -132,9 +123,8 @@ typedef struct workrequest_struct {
 typedef struct workresponse_struct {
    workrequest request;
    // Work results
-   char                 havereport;
+   char                 haveinfo;
    streamwalker_report  report;
-   char                 havesummary;
    operation_summary    summary;
    char                 fatalerror;
    char                 errorstr[MAX_STR_BUFFER];
@@ -145,11 +135,12 @@ typedef struct workresponse_struct {
 int handlerequest( rmanstate* rman, workrequest* request, workresponse* response ) {
    // pre-populate response with a 'fatal error' condition, just in case
    response->request = *(request);
-   response->havereport = 0;
+   response->haveinfo = 0;
    bzero( &(response->report), sizeof( struct streamwalker_report_struct ) );
-   response->havesummary = 0;
    bzero( &(response->summary), sizeof( struct operation_summary_struct ) );
    response->fatalerror = 1;
+   snprintf( response->errorstr, MAX_STR_BUFFER, "UNKNOWN-ERROR!\n" );
+   // identify and process the request
 }
 
 /**
