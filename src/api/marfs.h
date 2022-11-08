@@ -106,8 +106,7 @@ typedef enum
  * @param const char* configpath : Path of the config file to initialize based on
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
  * @param char verify : If zero, skip config verification
- *                      If one, verify the config and abort if any problems are found
- *                      If two, verify the config and attempt to correct problems
+ *                      If non-zero, verify the config and abort if any problems are found
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
 marfs_ctxt marfs_init(const char* configpath, marfs_interface type, char verify);
