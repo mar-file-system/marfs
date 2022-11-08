@@ -2134,9 +2134,9 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
    if ( dupref == NULL ) {
       LOG( LOG_ERR, "Failed to duplicate op NS reference\n" );
       pathcleanup( subpath, &oppos );
-      if ( newstream ) { free( stream ); }
-      else if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+      if ( !(newstream)  &&  stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
       pthread_mutex_unlock( &(stream->lock) );
+      if ( newstream ) { free( stream ); }
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
@@ -2177,9 +2177,9 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       }
       LOG( LOG_ERR, "Failure of datastream_open()\n" );
       pathcleanup( subpath, &oppos );
-      if ( newstream ) { free( stream ); }
-      else if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
+      if ( !(newstream)  &&  stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
       pthread_mutex_unlock( &(stream->lock) );
+      if ( newstream ) { free( stream ); }
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
