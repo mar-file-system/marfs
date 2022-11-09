@@ -130,6 +130,11 @@ int fuse_access(const char *path, int mode)
 
   char* newpath = translate_path( CTXT, path );
   int ret = marfs_access(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW | AT_EACCESS) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newpath );
 
   exit_user(&u_ctxt);
@@ -164,6 +169,11 @@ int fuse_chown(const char *path, uid_t uid, gid_t gid)
 
   char* newpath = translate_path( CTXT, path );
   int ret = marfs_chown(CTXT, newpath, uid, gid, 0) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newpath );
 
   exit_user(&u_ctxt);
@@ -263,6 +273,11 @@ int fuse_ftruncate(const char *path, off_t length, struct fuse_file_info *ffi)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   int ret = marfs_ftruncate((marfs_fhandle)ffi->fh, length) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
 
   exit_user(&u_ctxt);
 
@@ -290,12 +305,12 @@ int fuse_getattr(const char *path, struct stat *statbuf)
 
   char* newpath = translate_path( CTXT, path );
   int ret = marfs_stat(CTXT, newpath, statbuf, AT_SYMLINK_NOFOLLOW) * errno;
-  free( newpath );
-
-  if (ret)
+  if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
   }
+  free( newpath );
 
   exit_user(&u_ctxt);
 
@@ -382,6 +397,11 @@ int fuse_link(const char *oldpath, const char *newpath)
   char* newoldpath = translate_path( CTXT, oldpath );
   char* newnewpath = translate_path( CTXT, newpath );
   int ret = marfs_link(CTXT, newoldpath, newnewpath, 0) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newoldpath );
   free( newnewpath );
 
@@ -457,6 +477,11 @@ int fuse_mkdir(const char *path, mode_t mode)
 
   char* newpath = translate_path( CTXT, path );
   int ret = marfs_mkdir(CTXT, newpath, mode) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newpath );
 
   exit_user(&u_ctxt);
@@ -686,6 +711,11 @@ int fuse_release(const char *path, struct fuse_file_info *ffi)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
   int ret = marfs_close((marfs_fhandle)ffi->fh) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
 
   exit_user(&u_ctxt);
 
@@ -706,18 +736,17 @@ int fuse_releasedir(const char *path, struct fuse_file_info *ffi)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
   int ret = marfs_closedir((marfs_dhandle)ffi->fh) * errno;
-
-  if (ret)
+  if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
   }
-
-  exit_user(&u_ctxt);
-
-  if (!ret)
+  else
   {
     ffi->fh = (uint64_t)NULL;
   }
+
+  exit_user(&u_ctxt);
 
   return ret;
 }
@@ -794,6 +823,11 @@ int fuse_rename(const char *oldpath, const char *newpath)
   char* newoldpath = translate_path( CTXT, oldpath );
   char* newnewpath = translate_path( CTXT, newpath );
   int ret = marfs_rename(CTXT, newoldpath, newnewpath) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newoldpath );
   free( newnewpath );
 
@@ -812,6 +846,11 @@ int fuse_rmdir(const char *path)
 
   char* newpath = translate_path( CTXT, path );
   int ret = marfs_rmdir(CTXT, newpath) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newpath );
 
   exit_user(&u_ctxt);
@@ -886,6 +925,11 @@ int fuse_statvfs(const char *path, struct statvfs *statbuf)
 
   char* newpath = translate_path( CTXT, path );
   int ret = marfs_statvfs(CTXT, newpath, statbuf) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newpath );
 
   exit_user(&u_ctxt);
@@ -908,6 +952,11 @@ int fuse_symlink(const char *target, const char *linkname)
   // leave target path unmodified
   char* newname = translate_path( CTXT, linkname );
   int ret = marfs_symlink(CTXT, target, newname) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newname );
 
   exit_user(&u_ctxt);
@@ -960,6 +1009,11 @@ int fuse_unlink(const char *path)
 
   char* newpath = translate_path( CTXT, path );
   int ret = marfs_unlink(CTXT, newpath) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newpath );
 
   exit_user(&u_ctxt);
@@ -977,6 +1031,11 @@ int fuse_utimens(const char *path, const struct timespec tv[2])
 
   char* newpath = translate_path( CTXT, path );
   int ret = marfs_utimens(CTXT, newpath, tv, 0) * errno;
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = -errno;
+  }
   free( newpath );
 
   exit_user(&u_ctxt);

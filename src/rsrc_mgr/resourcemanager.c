@@ -131,6 +131,7 @@ typedef struct workresponse_struct {
    char                 haveinfo;
    streamwalker_report  report;
    operation_summary    summary;
+   char                 errorlog;
    char                 fatalerror;
    char                 errorstr[MAX_STR_BUFFER];
 } workresponse;
@@ -165,6 +166,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
    response->haveinfo = 0;
    bzero( &(response->report), sizeof( struct streamwalker_report_struct ) );
    bzero( &(response->summary), sizeof( struct operation_summary_struct ) );
+   response->errorlog = 0;
    response->fatalerror = 1;
    snprintf( response->errorstr, MAX_STR_BUFFER, "UNKNOWN-ERROR!\n" );
    // identify and process the request
@@ -257,7 +259,102 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       }
    }
    else if ( request->type == COMPLETE_WORK ) {
-      // TODO
+      // TODO complete any outstanding work within the current NS
+      if ( rman->gstate.rlog == NULL ) {
+         LOG( LOG_ERR, "Rank %zu was asked to complete work, but has none\n", rman->ranknum );
+         snprintf( response->errorstr, MAX_STR_BUFFER,
+                   "Rank %zu was asked to complete work, but has none\n", rman->ranknum );
+         return -1;
+      }
+      // terminate the resource input
+      if ( resourceinput_term( &(rman->gstate.rinput) ) ) {
+         LOG( LOG_ERR, "Failed to terminate resourceinput\n" );
+         snprintf( response->errorstr, MAX_STR_BUFFER, "Failed to terminate resourceinput\n" );
+         return -1;
+      }
+      // wait for the queue to be marked as FINISHED
+      TQ_Control_Flags setflags = 0;
+      if ( tq_wait_for_flags( rman->tq, 0, &(setflags) ) ) {
+         LOG( LOG_ERR, "Failed to wait on ThreadQueue state flags\n" );
+         snprintf( response->errorstr, MAX_STR_BUFFER, "Failed to wait on ThreadQueue state flags\n" );
+         return -1;
+      }
+      char threaderror = 0;
+      if ( setflags != TQ_FINISHED ) {
+         LOG( LOG_WARNING, "Unexpected ( NON-FINISHED ) ThreadQueue state flags: %u\n", setflags );
+         threaderror = 1;
+      }
+      else {
+         // wait for TQ completion
+         if ( tq_wait_for_completion( rman->tq ) ) {
+            LOG( LOG_ERR, "Failed to wait for ThreadQueue completion\n" );
+            snprintf( response->errorstr, MAX_STR_BUFFER, "Failed to wait for ThreadQueue completion\n" );
+            return -1;
+         }
+      }
+      // gather all thread status values
+      rthread_state* tstate = NULL;
+      int retval;
+      while ( (retval = tq_next_thread_status( rman->tq, (void**)&(tstate) )) > 0 ) {
+         // verify thread status
+         if ( tstate == NULL ) {
+            LOG( LOG_ERR, "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
+                 rman->ranknum, rman->gstate.pos.ns->idstr );
+            snprintf( response->errorstr, MAX_STR_BUFFER,
+                      "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
+                      rman->ranknum, rman->gstate.pos.ns->idstr );
+            return -1;
+         }
+         if ( tstate->fatalerror ) {
+            LOG( LOG_ERR, "Fatal Error in NS \"%s\": \"%s\"\n",
+                 rman->gstate.pos.ns->idstr, tstate->errorstr );
+            snprintf( response->errorstr, MAX_STR_BUFFER, "Fatal Error in NS \"%s\": \"%s\"\n",
+                      rman->gstate.pos.ns->idstr, tstate->errorstr );
+            return -1;
+         }
+         response->report.fileusage   += tstate->report.fileusage;
+         response->report.byteusage   += tstate->report.byteusage;
+         response->report.filecount   += tstate->report.filecount;
+         response->report.objcount    += tstate->report.objcount;
+         response->report.bytecount   += tstate->report.bytecount;
+         response->report.streamcount += tstate->report.streamcount;
+         response->report.delobjs     += tstate->report.delobjs;
+         response->report.delfiles    += tstate->report.delfiles;
+         response->report.delstreams  += tstate->report.delstreams;
+         response->report.volfiles    += tstate->report.volfiles;
+         response->report.rpckfiles   += tstate->report.rpckfiles;
+         response->report.rpckbytes   += tstate->report.rpckbytes;
+         response->report.rbldobjs    += tstate->report.rbldobjs;
+         response->report.rbldbytes   += tstate->report.rbldbytes;
+      }
+      if ( retval ) {
+         LOG( LOG_ERR, "Failed to collect thread states during completion of work on NS \"%s\"\n",
+              rman->gstate.pos.ns->idstr );
+         snprintf( response->errorstr, MAX_STR_BUFFER,
+                   "Failed to collect thread status during completion of work on NS \"%s\"\n",
+                   rman->gstate.pos.ns->idstr );
+         return -1;
+      }
+      // close our the thread queue, repack streamer, and logs
+      if ( tq_close( rman->tq ) ) {
+         LOG( LOG_ERR, "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
+              rman->gstate.pos.ns->idstr );
+         snprintf( response->errorstr, MAX_STR_BUFFER,
+                   "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
+                   rman->gstate.pos.ns->idstr );
+         return -1;
+      }
+      int rlogret; // TODO
+      if ( (rlogret = resourcelog_term( &(rman->gstate.rlog), &(response->summary), rman->preservelogtgt )) < 0 ) {
+         printf( "failed to terminate resource log following first walk\n" );
+         return -1;
+      }
+      if (rlogret) { response->errorlog = 1; } // note if our log was preserved due to errors being present
+      if ( repackstreamer_complete( gstate.rpst ) ) {
+         printf( "failed to complete repack streamer  following first walk\n" );
+         return -1;
+      }
+      rman->gstate.rpst = NULL;
    }
    else if ( request->type == TERMINATE_WORK ) {
       // TODO
