@@ -390,6 +390,7 @@ int getftag(DATASTREAM stream, STREAMFILE* file) {
    // attempt to set struct values based on the ftag string
    if (ftag_initstr(&(file->ftag), stream->ftagstr)) {
       LOG(LOG_ERR, "Failed to initialize ftag values for file\n");
+      errno = ENOSTR; // cheeky error code to indicate invalid datastream
       return -1;
    }
    return 0;
@@ -2848,6 +2849,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
       LOG( LOG_ERR, "Failed to parse \"%s\" value of repack marker \"%s\"\n", TREPACK_TAG_NAME, refpath );
       free( tgtftagstr );
       ms->mdal->close( rmarker );
+      errno = ENOSTR; // cheeky error code to indicate invalid datastream
       return -1;
    }
    // identify and open the repack target file
@@ -2992,6 +2994,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          free( repacktgtpath );
          free( tgtftagstr );
          ms->mdal->close( rmarker );
+         errno = ENOSTR; // cheeky error code to indicate invalid datastream
          return -1;
       }
       free( realftagstr );
