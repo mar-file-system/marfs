@@ -129,11 +129,11 @@ int fuse_access(const char *path, int mode)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_access(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW | AT_EACCESS) * errno;
+  int ret = marfs_access(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW | AT_EACCESS);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
 
@@ -151,7 +151,12 @@ int fuse_chmod(const char *path, mode_t mode)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_chmod(CTXT, newpath, mode, 0) * errno;
+  int ret = marfs_chmod(CTXT, newpath, mode, 0);
+  if ( ret )
+  {
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = (errno) ? -errno : -ENOMSG;
+  }
   free( newpath );
 
   exit_user(&u_ctxt);
@@ -168,11 +173,11 @@ int fuse_chown(const char *path, uid_t uid, gid_t gid)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_chown(CTXT, newpath, uid, gid, 0) * errno;
+  int ret = marfs_chown(CTXT, newpath, uid, gid, 0);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
 
@@ -187,10 +192,12 @@ int fuse_create(const char *path, mode_t mode, struct fuse_file_info *ffi)
 
   if (ffi->fh)
   {
+    LOG( LOG_ERR, "File handle is still open\n" );
     return -EBADF;
   }
 
   if (!strcmp(path, CONFIGVER_FNAME)) {
+    LOG( LOG_ERR, "Cannot create reserved config version file \"%s\"\n", CONFIGVER_FNAME );
     return -EPERM;
   }
 
@@ -207,7 +214,7 @@ int fuse_create(const char *path, mode_t mode, struct fuse_file_info *ffi)
 
   if (!ffi->fh)
   {
-    return -err;
+    return (err) ? -err : -ENOMSG;
   }
 
   LOG( LOG_INFO, "New MarFS Create Handle: %p\n", (void*)ffi->fh );
@@ -218,21 +225,18 @@ int fuse_flush(const char *path, struct fuse_file_info *ffi)
 {
   LOG(LOG_INFO, "%s\n", path);
 
-  if (!ffi->fh)
+  if (!ffi->fh  &&  strcmp(path, CONFIGVER_FNAME))
   {
-    if (!strcmp(path, CONFIGVER_FNAME)) {
-      return 0;
-    }
     LOG(LOG_ERR, "missing file descriptor\n");
     return -EBADF;
   }
 
-  struct user_ctxt_struct u_ctxt;
-  memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
-
+//  struct user_ctxt_struct u_ctxt;
+//  memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
+//  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
+//
 //  LOG( LOG_INFO, "Flushing marfs_fhandle %p\n", (void*)ffi->fh );
-//  int ret = marfs_flush((marfs_fhandle)ffi->fh) * errno;
+//  int ret = marfs_flush((marfs_fhandle)ffi->fh);
 //
 //  if (ret)
 //  {
@@ -240,7 +244,7 @@ int fuse_flush(const char *path, struct fuse_file_info *ffi)
 //  }
   LOG( LOG_INFO, "NO-OP for fuse_flush()\n" );
 
-  exit_user(&u_ctxt);
+//  exit_user(&u_ctxt);
 
   return 0;
 }
@@ -265,6 +269,7 @@ int fuse_ftruncate(const char *path, off_t length, struct fuse_file_info *ffi)
 
   if (!ffi->fh)
   {
+    LOG( LOG_ERR, "Cannot truncate a NULL file handle\n" );
     return -EBADF;
   }
 
@@ -272,11 +277,11 @@ int fuse_ftruncate(const char *path, off_t length, struct fuse_file_info *ffi)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
-  int ret = marfs_ftruncate((marfs_fhandle)ffi->fh, length) * errno;
+  int ret = marfs_ftruncate((marfs_fhandle)ffi->fh, length);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
 
   exit_user(&u_ctxt);
@@ -304,11 +309,11 @@ int fuse_getattr(const char *path, struct stat *statbuf)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_stat(CTXT, newpath, statbuf, AT_SYMLINK_NOFOLLOW) * errno;
+  int ret = marfs_stat(CTXT, newpath, statbuf, AT_SYMLINK_NOFOLLOW);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
 
@@ -346,20 +351,22 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
            path, strerror(errno) );
       free( newpath );
       exit_user(&u_ctxt);
-      return -err;
+      return (err) ? -err : -ENOMSG;
     }
   }
   free( newpath );
 
   // perform the op
+  ssize_t xres = 0;
   int ret = 0;
-  if ( fh ) { ret = marfs_fgetxattr(fh, name, value, size); }
-  else { ret = marfs_dgetxattr(dh, name, value, size); }
-  if (ret < 0)
+  if ( fh ) { xres = marfs_fgetxattr(fh, name, value, size); }
+  else { xres = marfs_dgetxattr(dh, name, value, size); }
+  if (xres < 0)
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
+  else { ret = (int)xres; }
 
   // cleanup our handle
   if ( fh ) {
@@ -396,11 +403,11 @@ int fuse_link(const char *oldpath, const char *newpath)
 
   char* newoldpath = translate_path( CTXT, oldpath );
   char* newnewpath = translate_path( CTXT, newpath );
-  int ret = marfs_link(CTXT, newoldpath, newnewpath, 0) * errno;
+  int ret = marfs_link(CTXT, newoldpath, newnewpath, 0);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newoldpath );
   free( newnewpath );
@@ -438,20 +445,22 @@ int fuse_listxattr(const char *path, char *list, size_t size)
            path, strerror(errno) );
       free( newpath );
       exit_user(&u_ctxt);
-      return -err;
+      return (err) ? -err : -ENOMSG;
     }
   }
   free( newpath );
 
   // perform the op
+  ssize_t xres = 0;
   int ret = 0;
-  if ( fh ) { ret = marfs_flistxattr(fh, list, size); }
-  else { ret = marfs_dlistxattr(dh, list, size); }
-  if (ret < 0)
+  if ( fh ) { xres = marfs_flistxattr(fh, list, size); }
+  else { xres = marfs_dlistxattr(dh, list, size); }
+  if (xres < 0)
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
+  else { ret = (int)xres; }
 
   // cleanup our handle
   if ( fh ) {
@@ -476,11 +485,11 @@ int fuse_mkdir(const char *path, mode_t mode)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_mkdir(CTXT, newpath, mode) * errno;
+  int ret = marfs_mkdir(CTXT, newpath, mode);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
 
@@ -512,9 +521,10 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
 
   if (!strcmp(path, CONFIGVER_FNAME)) {
     if (flags == MARFS_WRITE) {
+      LOG( LOG_ERR, "Cannot open config version file \"%s\" for write\n", CONFIGVER_FNAME );
       return -EPERM;
     }
-    ffi->fh = 0;
+    ffi->fh = (uint64_t)0;
     return 0;
   }
 
@@ -532,7 +542,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
   if (!ffi->fh)
   {
     LOG(LOG_ERR, "%s\n", strerror(err));
-    return -err;
+    return (err) ? -err : -ENOMSG;
   }
 
   LOG( LOG_INFO, "New MarFS %s Handle: %p\n", (flags == MARFS_READ) ? "Read" : "Write",
@@ -546,6 +556,7 @@ int fuse_opendir(const char *path, struct fuse_file_info *ffi)
 
   if (ffi->fh)
   {
+    LOG(LOG_ERR, "previously open file descriptor\n");
     return -EBADF;
   }
 
@@ -563,22 +574,22 @@ int fuse_opendir(const char *path, struct fuse_file_info *ffi)
   if (!ffi->fh)
   {
     LOG(LOG_ERR, "%s\n", strerror(err));
-    return -err;
+    return (err) ? -err : -ENOMSG;
   }
 
+  LOG( LOG_INFO, "New MarFS Directory Handle: %p\n", (void*)ffi->fh );
   return 0;
 }
 
 int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *ffi)
 {
-  LOG(LOG_INFO, "%zubytes from %s at offset %zd\n", size, path, offset);
-  int ret;
-  struct user_ctxt_struct u_ctxt;
+  int ret = 0;
   
   if (!ffi->fh)
   {
-    // Read the MarFS config version
     if (!strcmp(path, CONFIGVER_FNAME)) {
+      // Read the MarFS config version
+      LOG(LOG_INFO, "CONFIG-VER-READ of %zubytes from %s at offset %zd\n", size, path, offset);
       if (offset == 0) {
         ret = marfs_configver(CTXT, buf, size);
       }
@@ -596,35 +607,35 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
         }
       }
       if (ret == 0) {
-        ret = -1;
-        errno = 1;
+        ret = (errno) ? -errno : -ENOMSG;
       }
       else if (ret < size) {
         buf[ret] = '\n';
         ret++;
       }
+      return ret;
     }
     else {
       LOG(LOG_ERR, "missing file descriptor\n");
       return -EBADF;
     }
   }
-  else {
-    memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-    enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
-    LOG( LOG_INFO, "Performing read of %zubytes at offset %zd\n", size, offset );
-    ret = marfs_read_at_offset((marfs_fhandle)ffi->fh, offset, (void *)buf, size);
-  }
+  struct user_ctxt_struct u_ctxt;
+  memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
+  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
-  if (ret < 0)
+  LOG( LOG_INFO, "Performing read of %zubytes at offset %zd\n", size, offset );
+  ssize_t rres = marfs_read_at_offset((marfs_fhandle)ffi->fh, offset, (void *)buf, size);
+
+  if (rres < 0)
   {
-    ret = -errno;
+    LOG(LOG_ERR, "%s\n", strerror(err));
+    ret = (errno) ? -errno : -ENOMSG;
   }
+  else { ret = (int)rres; }
 
-  if (ffi->fh) {
-    exit_user(&u_ctxt);
-  }
+  exit_user(&u_ctxt);
 
   if ( ret >= 0 ) { LOG( LOG_INFO, "Successfully read %d bytes\n", ret ); }
   else { LOG( LOG_ERR, "Read of %zd bytes failed (%s)\n", size, strerror(errno) ); }
@@ -637,6 +648,7 @@ int fuse_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
 
   if (!ffi->fh)
   {
+    LOG(LOG_ERR, "missing file descriptor\n");
     return -EBADF;
   }
 
@@ -685,7 +697,7 @@ int fuse_readlink(const char *path, char *buf, size_t size)
   free( newpath );
   if ( ret < 0 ) {
     LOG( LOG_ERR, "%s\n", strerror(errno) );
-    return -errno;
+    return (errno) ? -errno : -ENOMSG;
   }
 
   exit_user(&u_ctxt);
@@ -700,6 +712,7 @@ int fuse_release(const char *path, struct fuse_file_info *ffi)
   if (!ffi->fh)
   {
     if (!strcmp(path, CONFIGVER_FNAME)) {
+      LOG(LOG_INFO, "No-Op for config version file \"%s\"\n", CONFIGVER_FNAME);
       return 0;
     }
     LOG(LOG_ERR, "missing file descriptor\n");
@@ -710,11 +723,11 @@ int fuse_release(const char *path, struct fuse_file_info *ffi)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
-  int ret = marfs_close((marfs_fhandle)ffi->fh) * errno;
+  int ret = marfs_close((marfs_fhandle)ffi->fh);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
 
   exit_user(&u_ctxt);
@@ -728,6 +741,7 @@ int fuse_releasedir(const char *path, struct fuse_file_info *ffi)
 
   if (!ffi->fh)
   {
+    LOG(LOG_ERR, "missing file descriptor\n");
     return -EBADF;
   }
 
@@ -735,11 +749,11 @@ int fuse_releasedir(const char *path, struct fuse_file_info *ffi)
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
-  int ret = marfs_closedir((marfs_dhandle)ffi->fh) * errno;
+  int ret = marfs_closedir((marfs_dhandle)ffi->fh);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   else
   {
@@ -779,7 +793,7 @@ int fuse_removexattr(const char *path, const char *name)
            path, strerror(errno) );
       free( newpath );
       exit_user(&u_ctxt);
-      return -err;
+      return (err) ? -err : -ENOMSG;
     }
   }
   free( newpath );
@@ -788,10 +802,10 @@ int fuse_removexattr(const char *path, const char *name)
   int ret = 0;
   if ( fh ) { ret = marfs_fremovexattr(fh, name); }
   else { ret = marfs_dremovexattr(dh, name); }
-  if (ret < 0)
+  if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
 
   // cleanup our handle
@@ -822,11 +836,11 @@ int fuse_rename(const char *oldpath, const char *newpath)
 
   char* newoldpath = translate_path( CTXT, oldpath );
   char* newnewpath = translate_path( CTXT, newpath );
-  int ret = marfs_rename(CTXT, newoldpath, newnewpath) * errno;
+  int ret = marfs_rename(CTXT, newoldpath, newnewpath);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newoldpath );
   free( newnewpath );
@@ -845,11 +859,11 @@ int fuse_rmdir(const char *path)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_rmdir(CTXT, newpath) * errno;
+  int ret = marfs_rmdir(CTXT, newpath);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
 
@@ -886,7 +900,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
            path, strerror(errno) );
       free( newpath );
       exit_user(&u_ctxt);
-      return -err;
+      return (err) ? -err : -ENOMSG;
     }
   }
   free( newpath );
@@ -895,10 +909,10 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   int ret = 0;
   if ( fh ) { ret = marfs_fsetxattr(fh, name, value, size, flags); }
   else { ret = marfs_dsetxattr(dh, name, value, size, flags); }
-  if (ret < 0)
+  if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
 
   // cleanup our handle
@@ -924,11 +938,11 @@ int fuse_statvfs(const char *path, struct statvfs *statbuf)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_statvfs(CTXT, newpath, statbuf) * errno;
+  int ret = marfs_statvfs(CTXT, newpath, statbuf);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
 
@@ -951,11 +965,11 @@ int fuse_symlink(const char *target, const char *linkname)
 
   // leave target path unmodified
   char* newname = translate_path( CTXT, linkname );
-  int ret = marfs_symlink(CTXT, target, newname) * errno;
+  int ret = marfs_symlink(CTXT, target, newname);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newname );
 
@@ -981,17 +995,15 @@ int fuse_truncate(const char *path, off_t length)
     err = errno;
     free( newpath );
     exit_user(&u_ctxt);
-    return -err;
+    return (err) ? -err : -ENOMSG;
   }
   free( newpath );
 
-  int ret = marfs_ftruncate(fh, length) * errno;
-
-  if (marfs_close(fh) && !ret)
+  int ret = marfs_ftruncate(fh, length);
+  if ( ret  ||  marfs_close(fh) )
   {
-    err = errno;
-    exit_user(&u_ctxt);
-    return -err;
+    LOG(LOG_ERR, "%s\n", strerror(errno));
+    ret = (errno) ? -errno : -ENOMSG;
   }
 
   exit_user(&u_ctxt);
@@ -1008,11 +1020,11 @@ int fuse_unlink(const char *path)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_unlink(CTXT, newpath) * errno;
+  int ret = marfs_unlink(CTXT, newpath);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
 
@@ -1030,11 +1042,11 @@ int fuse_utimens(const char *path, const struct timespec tv[2])
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_utimens(CTXT, newpath, tv, 0) * errno;
+  int ret = marfs_utimens(CTXT, newpath, tv, 0);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
 
@@ -1049,6 +1061,7 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 
   if (!ffi->fh)
   {
+    LOG( LOG_ERR, "Cannot write no a NULL file handle\n" );
     return -EBADF;
   }
 
@@ -1060,7 +1073,7 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
   {
     int err = errno;
     exit_user(&u_ctxt);
-    return -err;
+    return (err) ? -err : -ENOMSG;
   }
 
   ssize_t ret = marfs_write((marfs_fhandle)ffi->fh, buf, size);
@@ -1068,12 +1081,12 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
   if (ret < 0)
   {
     LOG( LOG_ERR, "Unexpected write res: %zd (%s)\n", ret, strerror(errno) );
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
   else if ( ret != size )
   {
     LOG( LOG_ERR, "Unexpected write res: %zd (%s)\n", ret, strerror(errno) );
-    ret = -errno;
+    ret = (errno) ? -errno : -ENOMSG;
   }
 
   exit_user(&u_ctxt);
