@@ -87,10 +87,16 @@ typedef struct rmanstate_struct {
    // Per-Run MarFS State
    marfs_config* config;
 
-   // Per-NS Progress Tracking
+   // Old Logfile Progress Tracking
+   HASH_TABLE    oldlogs;
+
+   // NS Progress Tracking
    size_t        nscount;
    marfs_ns**    nslist;
+   char*         inprogress;
    size_t*       distributed;
+
+   // Global Progress Tracking
    size_t*       activeworkers;
    streamwalker_report* walkreport;
    operation_summary*   logsummary;
@@ -159,7 +165,122 @@ int setranktgt( rmanstate* rman, marfs_ns* ns ) {
 int getNSrange( marfs_ns* ns, size_t totalranks, size_t refdist ) {
 }
 
+// TODO
+int findoldlogs( rmanstate* rman, const char* scanroot ) {
+   size_t logdepth = 1;
+   DIR**  dirlist = calloc( sizeof( DIR* ), 3 );
+   workrequest* request = calloc( sizeof( struct workrequest_struct ), 1 );
+   // open the 'scanroot'
+   dirlist[0] = opendir( scanroot );
+   if ( dirlist[0] == NULL ) {
+      LOG( LOG_ERR, "Failed to open loging root \"%s\" for scanning\n", rman->scanroot );
+      return -1;
+   }
+   while ( logdepth ) {
+      if ( logdepth == 1 ) { // identify the iteration to tgt
+         if ( rman->execprev ) {
+            // check for potential exit
+            if ( dirlist[0] == NULL ) {
+               LOG( LOG_INFO, "Preparing to exit, after completing scan of prevexec iteration: \"%s\"\n", rman->iteration );
+               logdepth--;
+               continue;
+            }
+            // NULL out our scanroot dir, so we never repeat this
+            closedir( dirlist[0] );
+            dirlist[0] = NULL;
+            // only targeting a matching iteration
+            if ( snprintf( request->iteration, ITERATION_STRING_LEN, rman->iteration ) < 1 ) {
+               LOG( LOG_ERR, "Failed to populate request with running iteration \"%s\"\n", rman->iteration );
+               return -1;
+            }
+         }
+         else {
+            // scan through the root dir, looking for other iterations
+            int olderr = errno;
+            errno = 0;
+            struct dirent* entry;
+            while ( (entry = readdir( dirlist[0] )) ) {
+               // ignore '.'-prefixed entries
+               if ( strncmp( entry->d_name, ".", 1 ) == 0 ) { continue; }
+               // ignore the running iteration name, as that will cause all kinds of problems
+               if ( strncmp( entry->d_name, rman->iteration, ITERATION_STRING_LEN ) == 0 ) {
+                  LOG( LOG_INFO, "Skipping active iteration path: \"%s\"\n", rman->iteration );
+                  continue;
+               }
+               // all other entries are assumed to be valid iteration targets
+               if ( snprintf( request->iteration, ITERATION_STRING_LEN, entry->d_name ) >= ITERATION_STRING_LEN ) {
+                  LOG( LOG_ERR, "Failed to populate request string for old iteration: \"%s\"\n", entry->d_name );
+                  return -1;
+               }
+               break;
+            }
+            if ( errno ) {
+               LOG( LOG_ERR, "Failed to read log root dir: \"%s\" (%s)\n", rman->scanroot );
+               return -1;
+            }
+            errno = olderr;
+            if ( entry == NULL ) {
+               // no iterations remain, we are done
+               closedir( dirlist[0] );
+               logdepth--;
+               continue;
+            }
+         }
+         // open the dir of the matching iteration
+         int newfd = openat( dirfd( dirlist[0] ), request->iteration, O_DIRECTORY | O_RDWR, 0 );
+         if ( newfd < 0 ) {
+            LOG( LOG_ERR, "Failed to open log root for iteration: \"%s\" (%s)\n", request->iteration, strerror(errno) );
+            return -1;
+         }
+         dirlist[1] = fdopendir( iterstr );
+         if ( dirlist[1] == NULL ) {
+            LOG( LOG_ERR, "Failed to open DIR reference for previous iteration log root: \"%s\" (%s)\n",
+                 request->iteration, strerror(errno) );
+            close( newfd );
+            return -1;
+         }
+         logdepth++;
+      }
+      else if ( logdepth == 2 ) { // identify the NS subdirs
+         // scan through the iteration dir, looking for namespaces
+         int olderr = errno;
+         errno = 0;
+         struct dirent* entry;
+         while ( (entry = readdir( dirlist[1] )) ) {
+            // ignore '.'-prefixed entries
+            if ( strncmp( entry->d_name, ".", 1 ) == 0 ) { continue; }
+            // all other entries are assumed to be namespaces
+            break;
+         }
+         if ( errno ) {
+            LOG( LOG_ERR, "Failed to read iteration dir: \"%s\" (%s)\n", request->iteration, strerror(errno) );
+            return -1;
+         }
+         errno = olderr;
+         if ( entry == NULL ) {
+            // no iterations remain, we are done
+            closedir( dirlist[1] );
+            logdepth--;
+            continue;
+         }
+         // check what index this NS corresponds to TODO
+      }
+      else { // identify the rank to tgt
+      }
+   }
+   LOG( LOG_INFO, "No resource logs remain\n" );
+   return 0;
+}
 
+/**
+ * Process the given request
+ * @param rmanstate* rman : Current resource manager rank state
+ * @param workrequest* request : Request to process
+ * @param workresponse* response : Response to populate
+ * @return int : Zero if the rank should terminate without sending a response
+ *               One if the rank should send the populated response
+ *               -1 if the rank should send the populated response, then abort
+ */
 int handlerequest( rmanstate* rman, workrequest* request, workresponse* response ) {
    // pre-populate response with a 'fatal error' condition, just in case
    response->request = *(request);
@@ -218,7 +339,18 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
             free( rlogpath );
             return -1;
          }
+         // attempt to delete all parent paths of the logfile TODO
+         char* prevsep = rlogpath;
+         while ( prevsep ) {
+            prevsep = NULL;
+            char* lparse = rlogpath;
+            while ( *lparse != '\0' ) {
+               if ( *lparse == '/' ) { prevsep = lparse; }
+               lparse++;
+            }
+         }
       }
+      free( rlogpath );
    }
    else if ( request->type == NS_WORK ) {
       // potentially update our state to target the NS
@@ -259,7 +391,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       }
    }
    else if ( request->type == COMPLETE_WORK ) {
-      // TODO complete any outstanding work within the current NS
+      // complete any outstanding work within the current NS
       if ( rman->gstate.rlog == NULL ) {
          LOG( LOG_ERR, "Rank %zu was asked to complete work, but has none\n", rman->ranknum );
          snprintf( response->errorstr, MAX_STR_BUFFER,
@@ -344,23 +476,32 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
                    rman->gstate.pos.ns->idstr );
          return -1;
       }
-      int rlogret; // TODO
+      int rlogret;
       if ( (rlogret = resourcelog_term( &(rman->gstate.rlog), &(response->summary), rman->preservelogtgt )) < 0 ) {
-         printf( "failed to terminate resource log following first walk\n" );
+         LOG( LOG_ERR, "Failed to terminate resource log following completion of work on NS \"%s\"\n",
+              rman->gstate.pos.ns->idstr );
+         snprintf( response->errorstr, MAX_STR_BUFFER,
+                   "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
+                   rman->gstate.pos.ns->idstr );
          return -1;
       }
       if (rlogret) { response->errorlog = 1; } // note if our log was preserved due to errors being present
-      if ( repackstreamer_complete( gstate.rpst ) ) {
-         printf( "failed to complete repack streamer  following first walk\n" );
+      if ( repackstreamer_complete( rman->gstate.rpst ) ) {
+         LOG( LOG_ERR, "Failed to complete repack streamer during completion of NS \"%s\"\n", rman->gstate.pos.ns->idstr );
+         snprintf( response->errorstr, MAX_STR_BUFFER,
+                   "Failed to complete repack streamer during completion of NS \"%s\"\n", rman->gstate.pos.ns->idstr );
          return -1;
       }
       rman->gstate.rpst = NULL;
    }
    else if ( request->type == TERMINATE_WORK ) {
-      // TODO
+      // simply note and terminate without generating a response
+      return 0;
    }
    else { // assume ABORT_WORK
-      // TODO
+      // clear our fatal error state, but indicate to abort after sending the response
+      response->fatalerror = 0;
+      return -1;
    }
    // clear our fatal error state
    response->fatalerror = 0;
