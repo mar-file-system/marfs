@@ -1669,7 +1669,6 @@ int resourcelog_replay( RESOURCELOG* inputlog, RESOURCELOG* outputlog ) {
       pthread_cond_signal( &(outrsrclog->nooutstanding) );
    }
    pthread_mutex_unlock( &(outrsrclog->lock) );
-   cleanuplog( inrsrclog, 1 );
    return 0;
 }
 

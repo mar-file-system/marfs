@@ -363,7 +363,7 @@ int main(int argc, char **argv)
       printf( "failed to initialize resourceinput for first run\n" );
       return -1;
    }
-   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/logfile1", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/junkiteration/someNS/logfile1", RESOURCE_MODIFY_LOG, pos.ns ) ) {
       printf( "failed to initialize resourcelog for first run\n" );
       return -1;
    }
@@ -595,7 +595,7 @@ int main(int argc, char **argv)
       printf( "failed to initialize resourceinput for second run\n" );
       return -1;
    }
-   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/logfile2", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/another-junk-iteration/myfakeNS/logfile2", RESOURCE_MODIFY_LOG, pos.ns ) ) {
       printf( "failed to initialize resourcelog for second run\n" );
       return -1;
    }
@@ -821,7 +821,7 @@ int main(int argc, char **argv)
       printf( "failed to initialize resourceinput for third run\n" );
       return -1;
    }
-   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/logfile3", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/another-junk-iteration/anotherNSgarbage/logfile3", RESOURCE_MODIFY_LOG, pos.ns ) ) {
       printf( "failed to initialize resourcelog for third run\n" );
       return -1;
    }
@@ -983,7 +983,7 @@ int main(int argc, char **argv)
       printf( "failed to initialize resourceinput for final run\n" );
       return -1;
    }
-   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/logfileF", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/another-junk-iteration/anotherNSgarbage/logfileF", RESOURCE_MODIFY_LOG, pos.ns ) ) {
       printf( "failed to initialize resourcelog for final run\n" );
       return -1;
    }
