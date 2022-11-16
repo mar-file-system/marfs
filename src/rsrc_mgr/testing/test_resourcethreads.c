@@ -363,10 +363,13 @@ int main(int argc, char **argv)
       printf( "failed to initialize resourceinput for first run\n" );
       return -1;
    }
-   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/junkiteration/someNS/logfile1", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+   char* rlogpath = resourcelog_genlogpath( 1, "./test_rman_topdir", "junkiteration", gstate.pos.ns, 1 );
+   if ( rlogpath == NULL ) { printf( "failed to generate rlogpath for logfile 1\n" ); return -1; }
+   if ( resourcelog_init( &(gstate.rlog), rlogpath, RESOURCE_MODIFY_LOG, pos.ns ) ) {
       printf( "failed to initialize resourcelog for first run\n" );
       return -1;
    }
+   free( rlogpath );
    gstate.rpst = repackstreamer_init();
    if ( gstate.rpst == NULL ) {
       printf( "failed to initalize repackstreamer for first run\n" );
@@ -595,10 +598,13 @@ int main(int argc, char **argv)
       printf( "failed to initialize resourceinput for second run\n" );
       return -1;
    }
-   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/another-junk-iteration/myfakeNS/logfile2", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+   rlogpath = resourcelog_genlogpath( 1, "./test_rman_topdir", "another-junk-iteration", gstate.pos.ns, 2 );
+   if ( rlogpath == NULL ) { printf( "failed to generate rlogpath for logfile 2\n" ); return -1; }
+   if ( resourcelog_init( &(gstate.rlog), rlogpath, RESOURCE_MODIFY_LOG, pos.ns ) ) {
       printf( "failed to initialize resourcelog for second run\n" );
       return -1;
    }
+   free( rlogpath );
    gstate.rpst = repackstreamer_init();
    if ( gstate.rpst == NULL ) {
       printf( "failed to initalize repackstreamer for second run\n" );
@@ -821,10 +827,13 @@ int main(int argc, char **argv)
       printf( "failed to initialize resourceinput for third run\n" );
       return -1;
    }
-   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/another-junk-iteration/anotherNSgarbage/logfile3", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+   rlogpath = resourcelog_genlogpath( 1, "./test_rman_topdir", "another-junk-iteration", gstate.pos.ns, 3 );
+   if ( rlogpath == NULL ) { printf( "failed to generate rlogpath for logfile 3\n" ); return -1; }
+   if ( resourcelog_init( &(gstate.rlog), rlogpath, RESOURCE_MODIFY_LOG, pos.ns ) ) {
       printf( "failed to initialize resourcelog for third run\n" );
       return -1;
    }
+   free( rlogpath );
    gstate.rpst = repackstreamer_init();
    if ( gstate.rpst == NULL ) {
       printf( "failed to initalize repackstreamer for third run\n" );
@@ -983,10 +992,13 @@ int main(int argc, char **argv)
       printf( "failed to initialize resourceinput for final run\n" );
       return -1;
    }
-   if ( resourcelog_init( &(gstate.rlog), "./test_rman_topdir/another-junk-iteration/anotherNSgarbage/logfileF", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+   rlogpath = resourcelog_genlogpath( 1, "./test_rman_topdir", "yetAgain!", gstate.pos.ns, 17 );
+   if ( rlogpath == NULL ) { printf( "failed to generate rlogpath for logfile 4\n" ); return -1; }
+   if ( resourcelog_init( &(gstate.rlog), rlogpath, RESOURCE_MODIFY_LOG, pos.ns ) ) {
       printf( "failed to initialize resourcelog for final run\n" );
       return -1;
    }
+   free( rlogpath );
    gstate.rpst = repackstreamer_init();
    if ( gstate.rpst == NULL ) {
       printf( "failed to initalize repackstreamer for final run\n" );
