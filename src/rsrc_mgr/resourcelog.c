@@ -1657,20 +1657,19 @@ int resourcelog_replay( RESOURCELOG* inputlog, RESOURCELOG* outputlog ) {
    LOG( LOG_INFO, "Replayed %zu ops from input log ( \"%s\" ) into output log ( \"%s\" )\n",
                   opcnt, inrsrclog->logfilepath, outrsrclog->logfilepath );
    // cleanup the inputlog
-   if ( unlink( inrsrclog->logfilepath ) ) {
-      LOG( LOG_ERR, "Failed to unlink input logfile: \"%s\"\n", inrsrclog->logfilepath );
-      pthread_mutex_unlock( &(inrsrclog->lock) );
+   *inputlog = NULL;
+   pthread_mutex_unlock( &(inrsrclog->lock) );
+   if ( resourcelog_term( &(inrsrclog), NULL, NULL ) ) {
+      LOG( LOG_ERR, "Failed to cleanup input logfile\n" );
       pthread_mutex_unlock( &(outrsrclog->lock) );
       return -1;
    }
-   pthread_mutex_unlock( &(inrsrclog->lock) );
    if ( outrsrclog->outstandingcnt == 0 ) {
       // potentially signal that the output log has quiesced
       pthread_cond_signal( &(outrsrclog->nooutstanding) );
    }
    pthread_mutex_unlock( &(outrsrclog->lock) );
    cleanuplog( inrsrclog, 1 );
-   *inputlog = NULL;
    return 0;
 }
 
@@ -1903,10 +1902,32 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, cons
       }
    }
    else if ( !(errpresent) ) {
+      // if there were no errors recorded, just delete the logfile
       if ( unlink( rsrclog->logfilepath ) ) {
          LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", rsrclog->logfilepath );
          pthread_mutex_unlock( &(rsrclog->lock) );
          return -1;
+      }
+      // also, attempt to remove the next two parent dirs ( NS and iteration ) of this logfile, skipping on error
+      char pdel = 0;
+      while ( pdel < 2 ) {
+         // trim logpath at the last '/' char, to get the parent dir path
+         char* prevsep = NULL;
+         char* pparse = rsrclog->logfilepath;
+         while ( *pparse != '\0' ) {
+            if ( *pparse == '/' ) {
+               prevsep = pparse;
+               while ( *pparse == '/' ) { pparse++; } // ignore repeated '/' chars
+            }
+            else { pparse++; }
+         }
+         if ( prevsep == NULL ) { LOG( LOG_WARNING, "Skipping deletion of parent path %d, as we failed to find a separator\n", (int)pdel ); break; }
+         *prevsep = '\0';
+         pdel++;
+         if ( rmdir( rsrclog->logfilepath ) ) {
+            LOG( LOG_WARNING, "Failed to rmdir parent path %d: \"%s\" (%s)\n", (int)pdel, rsrclog->logfilepath, strerror(errno) );
+            break;
+         }
       }
    }
    cleanuplog( rsrclog, 1 ); // this will release the lock
