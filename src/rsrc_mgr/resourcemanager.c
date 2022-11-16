@@ -77,7 +77,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define RECORD_ITERATION_PARENT "RMAN-RECORD-RUNS"
 #define ERROR_LOG_PARENT "RMAN-ERROR-LOGS"
 #define ITERATION_ARGS_FILE "PROGRAM-ARGUMENTS"
-#define ITERATION_STRING_LEN 1024
+#define ITERATION_STRING_LEN 128
+#define OLDLOG_PREALLOC 16  // pre-allocate space for 16 logfiles in the oldlogs hash table ( double from there, as needed )
 
 typedef struct rmanstate_struct {
    // Per-Run Rank State
@@ -142,8 +143,14 @@ typedef struct workresponse_struct {
    char                 errorstr[MAX_STR_BUFFER];
 } workresponse;
 
-//   -------------   INTERNAL FUNCTIONS    -------------
+typedef struct loginfo_struct {
+   size_t nsindex;
+   size_t logcount;
+   workrequest* requests;
+} loginfo;
 
+
+//   -------------   INTERNAL FUNCTIONS    -------------
 
 // TODO
 int setranktgt( rmanstate* rman, marfs_ns* ns ) {
@@ -160,28 +167,71 @@ int setranktgt( rmanstate* rman, marfs_ns* ns ) {
    }
 }
 
-
 // TODO
 int getNSrange( marfs_ns* ns, size_t totalranks, size_t refdist ) {
 }
 
 // TODO
 int findoldlogs( rmanstate* rman, const char* scanroot ) {
-   size_t logdepth = 1;
-   DIR**  dirlist = calloc( sizeof( DIR* ), 3 );
-   workrequest* request = calloc( sizeof( struct workrequest_struct ), 1 );
+   // construct a HASH_TABLE to hold old logfile references
+   HASH_NODE* lognodelist = calloc( rman->nscount, sizeof( struct hash_node_struct ) );
+   if ( lognodelist == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate a log node list of length %zu\n", rman->nscount );
+      return -1;
+   }
+   HASH_NODE* nodeparse = lognodelist;
+   size_t pindex = 0;
+   while ( pindex < rman->nscount ) {
+      (lognodelist + pindex)->name = strdup( (rman->nslist + pindex)->idstr );
+      if ( (lognodelist + pindex)->name == NULL ) {
+         LOG( LOG_ERR, "Failed to duplicate NS ID String: \"%s\"\n", (rman->nslist + pindex)->idstr );
+         while ( pindex > 0 ) { pindex--; free( (lognodelist + pindex)->name ); free( (lognodelist + pindex)->content ); }
+         free( lognodelist );
+         return -1;
+      }
+      // node weight should be pre-zeroed by calloc()
+      (lognodelist + pindex)->content = calloc( 1, sizeof( struct loginfo_struct ) );
+      if ( (lognodelist + pindex)->content == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate a loginfo struct (%s)\n", strerror(errno) );
+         free( (lognodelist + pindex)->name );
+         while ( pindex > 0 ) { pindex--; free( (lognodelist + pindex)->name ); free( (lognodelist + pindex)->content ); }
+         free( lognodelist );
+         return -1;
+      }
+      loginfo* newinfo = (loginfo*)( (lognodelist + pindex)->content );
+      newinfo->nsindex = pindex;
+      // logcount and requests are pre-zeroed by calloc()
+      pindex++;
+   }
+   if ( (rman->oldlogs = hash_init( lognodelist, rman->nscount, 1 )) == NULL ) {
+      LOG( LOG_ERR, "Failed to initialize old logfile hash table\n" );
+      while ( pindex > 0 ) { pindex--; free( (lognodelist + pindex)->name ); free( (lognodelist + pindex)->content ); }
+      free( lognodelist );
+      return -1;
+   }
+   // NOTE -- Once the table is initialized, this func won't bother to free it on error.  That is now the caller's responsibility.
+   DIR**  dirlist[3] = {0};
+   workrequest request = {
+      .type = RLOG_WORK,
+      .nsindex = 0,
+      .refdist = 0,
+      .iteration = {0},
+      .ranknum = 0
+   };
    // open the 'scanroot'
    dirlist[0] = opendir( scanroot );
    if ( dirlist[0] == NULL ) {
       LOG( LOG_ERR, "Failed to open loging root \"%s\" for scanning\n", rman->scanroot );
       return -1;
    }
+   size_t logdepth = 1;
+   loginfo* linfo = NULL; // for caching a target location for new log request info
    while ( logdepth ) {
       if ( logdepth == 1 ) { // identify the iteration to tgt
          if ( rman->execprev ) {
             // check for potential exit
             if ( dirlist[0] == NULL ) {
-               LOG( LOG_INFO, "Preparing to exit, after completing scan of prevexec iteration: \"%s\"\n", rman->iteration );
+               LOG( LOG_INFO, "Preparing to exit, after completing scan of prevexec iteration: \"%s/%s\"\n", scanroot, rman->iteration );
                logdepth--;
                continue;
             }
@@ -189,7 +239,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             closedir( dirlist[0] );
             dirlist[0] = NULL;
             // only targeting a matching iteration
-            if ( snprintf( request->iteration, ITERATION_STRING_LEN, rman->iteration ) < 1 ) {
+            if ( snprintf( request.iteration, ITERATION_STRING_LEN, rman->iteration ) < 1 ) {
                LOG( LOG_ERR, "Failed to populate request with running iteration \"%s\"\n", rman->iteration );
                return -1;
             }
@@ -208,7 +258,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
                   continue;
                }
                // all other entries are assumed to be valid iteration targets
-               if ( snprintf( request->iteration, ITERATION_STRING_LEN, entry->d_name ) >= ITERATION_STRING_LEN ) {
+               if ( snprintf( request.iteration, ITERATION_STRING_LEN, entry->d_name ) >= ITERATION_STRING_LEN ) {
                   LOG( LOG_ERR, "Failed to populate request string for old iteration: \"%s\"\n", entry->d_name );
                   return -1;
                }
@@ -222,20 +272,22 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             if ( entry == NULL ) {
                // no iterations remain, we are done
                closedir( dirlist[0] );
+               dirlist[0] = NULL; // just to be explicit about clearing this value
                logdepth--;
+               LOG( LOG_INFO, "Preparing to exit, after completing scan of previous iterations under \"%s\"\n", scanroot );
                continue;
             }
          }
          // open the dir of the matching iteration
-         int newfd = openat( dirfd( dirlist[0] ), request->iteration, O_DIRECTORY | O_RDWR, 0 );
+         int newfd = openat( dirfd( dirlist[0] ), request.iteration, O_DIRECTORY | O_RDWR, 0 );
          if ( newfd < 0 ) {
-            LOG( LOG_ERR, "Failed to open log root for iteration: \"%s\" (%s)\n", request->iteration, strerror(errno) );
+            LOG( LOG_ERR, "Failed to open log root for iteration: \"%s\" (%s)\n", request.iteration, strerror(errno) );
             return -1;
          }
          dirlist[1] = fdopendir( iterstr );
          if ( dirlist[1] == NULL ) {
             LOG( LOG_ERR, "Failed to open DIR reference for previous iteration log root: \"%s\" (%s)\n",
-                 request->iteration, strerror(errno) );
+                 request.iteration, strerror(errno) );
             close( newfd );
             return -1;
          }
@@ -253,22 +305,101 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             break;
          }
          if ( errno ) {
-            LOG( LOG_ERR, "Failed to read iteration dir: \"%s\" (%s)\n", request->iteration, strerror(errno) );
+            LOG( LOG_ERR, "Failed to read iteration dir: \"%s\" (%s)\n", request.iteration, strerror(errno) );
             return -1;
          }
          errno = olderr;
          if ( entry == NULL ) {
             // no iterations remain, we are done
             closedir( dirlist[1] );
+            dirlist[1] = NULL; // just to be explicit about clearing this value
             logdepth--;
             continue;
          }
-         // check what index this NS corresponds to TODO
+         // check what index this NS corresponds to
+         HASH_NODE* lnode = NULL;
+         if ( hash_lookup( rman->oldlogs, entry->d_name, &(lnode) ) ) {
+            // if we can't map this to a NS entry, just ignore it
+            fprintf( stderr, "WARNING: Encountered resource logs from a previoius iteration ( \"%s\" )\n"
+                             "         associated with an unrecognized namespace ( \"%s\" ).\n"
+                             "         These logfiles will be ignored by the current run.\n"
+                             "         See \"%s/%s/%s\"\n", request.iteration, entry->d_name, scanroot, request.iteration, entry->d_name );
+         }
+         else {
+            // pull the NS index value from the corresponding hash node
+            linfo = (loginfo*)( lnode->content );
+            request.nsindex = linfo->nsindex;
+            // open the corresponding subdir and traverse into it
+            int newfd = openat( dirfd( dirlist[1] ), entry->d_name, O_DIRECTORY | O_RDWR, 0 );
+            if ( newfd < 0 ) {
+               LOG( LOG_ERR, "Failed to open log NS subdir: \"%s/%s/%s\" (%s)\n", scanroot, request.iteration, entry->d_name, strerror(errno) );
+               return -1;
+            }
+            dirlist[2] = fdopendir( iterstr );
+            if ( dirlist[2] == NULL ) {
+               LOG( LOG_ERR, "Failed to open DIR reference for previous iteration log root: \"%s\" (%s)\n",
+                    request.iteration, strerror(errno) );
+               close( newfd );
+               return -1;
+            }
+            logdepth++;
+            continue;
+         }
       }
       else { // identify the rank to tgt
+         // scan through the NS dir, looking for individual logfiles
+         int olderr = errno;
+         errno = 0;
+         struct dirent* entry;
+         while ( (entry = readdir( dirlist[2] )) ) {
+            // ignore '.'-prefixed entries
+            if ( strncmp( entry->d_name, ".", 1 ) == 0 ) { continue; }
+            // all other entries are assumed to be logfiles
+            break;
+         }
+         if ( errno ) {
+            LOG( LOG_ERR, "Failed to read NS dir: \"%s/%s/%s\" (%s)\n", scanroot, request.iteration,
+                 (rman->nslist + request.nsindex)->idstr, strerror(errno) );
+            return -1;
+         }
+         errno = olderr;
+         if ( entry == NULL ) {
+            // no iterations remain, we are done
+            closedir( dirlist[2] );
+            dirlist[2] = NULL; // just to be explicit about clearing this value
+            logdepth--;
+            continue;
+         }
+         // identify the rank number associated with this logfile
+         char* fparse = entry->d_name;
+         while ( *fparse != '\0' ) {
+            if ( *fparse == '-' ) { fparse++; break; }
+            fparse++;
+         }
+         char* endptr = NULL;
+         unsigned long long parseval = strtoull( fparse, &(endptr), 10 );
+         if ( endptr == NULL  ||  *endptr != '\0'  ||  *fparse == '\0'  ||  parseval >= SIZE_MAX  ||  parseval >= ULLONG_MAX ) {
+            fprintf( stderr, "WARNING: Failed to identify rank number associated with logfile \"%s/%s/%s/%s\"\n"
+                             "         The logfile will be skipped\n",
+                             scanroot, request.iteration, (rman->nslist + request.nsindex)->idstr, entry->d_name );
+            continue;
+         }
+         request.ranknum = (size_t)parseval;
+         // populate the HASH_TABLE entry with the newly completed request
+         if ( linfo->logcount % OLDLOG_PREALLOC == 0 ) {
+            // logs are allocated in groups of OLDLOG_PREALLOC, so we can use modulo to check for overflow
+            workrequest* newrequests = realloc( linfo->requests, (linfo->logcount + OLDLOG_PREALLOC) * sizeof( struct workrequest_struct ) );
+            if ( newrequests == NULL ) {
+               LOG( LOG_ERR, "Failed to allocate a list of old log requests with length %zu\n", linfo->logcount + OLDLOG_PREALLOC );
+               return -1;
+            }
+            linfo->requests = newrequests;
+         }
+         *(linfo->requests + linfo->logcount) = request; // NOTE -- I believe this assignment is safe, because .iteration is a static char array
+         linfo->logcount++;
       }
    }
-   LOG( LOG_INFO, "No resource logs remain\n" );
+   LOG( LOG_INFO, "Finished scan of old resource logs below \"%s\"\n", scanroot );
    return 0;
 }
 
@@ -338,16 +469,6 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
             resourcelog_abort( &(newlog) );
             free( rlogpath );
             return -1;
-         }
-         // attempt to delete all parent paths of the logfile TODO
-         char* prevsep = rlogpath;
-         while ( prevsep ) {
-            prevsep = NULL;
-            char* lparse = rlogpath;
-            while ( *lparse != '\0' ) {
-               if ( *lparse == '/' ) { prevsep = lparse; }
-               lparse++;
-            }
          }
       }
       free( rlogpath );
