@@ -3261,7 +3261,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             }
             else if ( verres ) {
                LOG( LOG_INFO, "MDAL of repo \"%s\" has %d uncorrected security errors\n",
-                              pos.ns->prepo->name );
+                              pos.ns->prepo->name, verres );
                errcount++;
             }
          }

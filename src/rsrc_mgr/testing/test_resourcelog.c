@@ -545,7 +545,7 @@ int main(int argc, char **argv)
 
 
    // replay previous info from previous modify log into the new one
-   if ( resourcelog_replay( &(rlog), &(wlog) ) ) {
+   if ( resourcelog_replay( &(rlog), &(wlog), NULL ) ) {
       printf( "failed to replay old logfile\n" );
       return -1;
    }

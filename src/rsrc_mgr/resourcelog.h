@@ -164,14 +164,17 @@ char* resourcelog_genlogpath( char create, const char* logroot, const char* iter
 int resourcelog_init( RESOURCELOG* resourcelog, const char* logpath, resourcelog_type type, marfs_ns* ns );
 
 /**
- * Replay all operations from a given inputlog ( reading from a MODIFY log ) into a given 
+ * Replay all operations from a given inputlog ( reading from a MODIFY log ) into a given
  *  outputlog ( writing to a MODIFY log ), then delete and terminate the inputlog
  * NOTE -- This function is intended for picking up state from a previously aborted run.
  * @param RESOURCELOG* inputlog : Source inputlog to be read from
  * @param RESOURCELOG* outputlog : Destination outputlog to be written to
+ * @param int (*filter)( const opinfo* op ) : Function pointer defining an operation filter ( ignored if NULL )
+ *                                            *param const opinfo* : Reference to the op to potentially include
+ *                                            *return int : Zero if the op should be included, non-zero if not
  * @return int : Zero on success, or -1 on failure
  */
-int resourcelog_replay( RESOURCELOG* inputlog, RESOURCELOG* outputlog );
+int resourcelog_replay( RESOURCELOG* inputlog, RESOURCELOG* outputlog, int (*filter)( const opinfo* op ) );
 
 /**
  * Record that a certain number of threads are currently processing

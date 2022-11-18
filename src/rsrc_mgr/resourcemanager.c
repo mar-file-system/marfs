@@ -84,6 +84,7 @@ typedef struct rmanstate_struct {
    // Per-Run Rank State
    size_t        ranknum;
    size_t        totalranks;
+   size_t        workingranks;
 
    // Per-Run MarFS State
    marfs_config* config;
@@ -94,7 +95,6 @@ typedef struct rmanstate_struct {
    // NS Progress Tracking
    size_t        nscount;
    marfs_ns**    nslist;
-   char*         inprogress;
    size_t*       distributed;
 
    // Global Progress Tracking
@@ -151,9 +151,15 @@ typedef struct loginfo_struct {
 } loginfo;
 
 
-//   -------------   INTERNAL FUNCTIONS    -------------
+//   -------------   HELPER FUNCTIONS    -------------
 
-// TODO
+/**
+ * Configure the current rank to target the given NS ( configures state and launches worker threads )
+ * @param rmanstate* rman : State struct for the current rank
+ * @param marfs_ns* ns : New NS to target
+ * @param workresponse* response : Response to populate with error description, on failure
+ * @return int : Zero on success, -1 on failure
+ */
 int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    // update position value
    char* nspath = NULL;
@@ -164,10 +170,27 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       return -1;
    }
    if ( config_traverse( rman->config, &(rman->gstate.pos), &(nspath), 0 ) ) {
+      LOG( LOG_ERR, "Failed to traverse config to new NS path: \"%s\"\n", nspath );
+      snprintf( response->errorstr, MAX_STR_BUFFER,
+                "Failed to traverse config to new NS path: \"%s\"\n", nspath );
+      free( nspath );
+      return -1;
    }
    free( nspath );
+   if ( rman->gstate.pos.ctxt == NULL  &&  config_fortifyposition( &(rman->gstate.pos) ) ) {
+      LOG( LOG_ERR, "Failed to fortify position for new NS: \"%s\"\n", ns->idstr );
+      snprintf( response->errorstr, MAX_STR_BUFFER,
+                "Failed to fortify position for new NS: \"%s\"\n", ns->idstr );
+      config_abandonposition( &(rman->gstate.pos) );
+      return -1;
+   }
    // update our resource input struct
    if ( resourceinput_init( &(rman->gstate.rinput), &(rman->gstate.pos), rman->gstate.numprodthreads ) ) {
+      LOG( LOG_ERR, "Failed to initialize resourceinput for new NS target: \"%s\"\n", ns->idstr );
+      snprintf( response->errorstr, MAX_STR_BUFFER,
+                "Failed to initialize resourceinput for new NS target: \"%s\"\n", ns->idstr );
+      config_abandonposition( &(rman->gstate.pos) );
+      return -1;
    }
    // update our output resource log
    char* outlogpath = resourcelog_genlogpath( 1, rman->logroot, rman->iteration, ns, rman->ranknum );
@@ -177,17 +200,35 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       snprintf( response->errorstr, MAX_STR_BUFFER,
                 "Failed to identify output logfile path of rank %zu for NS \"%s\"\n",
                 rman->ranknum, ns->idstr );
+      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_term( &(rman->gstate.rinput) );
+      config_abandonposition( &(rman->gstate.pos) );
       return -1;
    }
    if ( resourcelog_init( &(rman->gstate.rlog), outlogpath,
                           (rman->gstate.dryrun) ? RESOURCE_RECORD_LOG : RESOURCE_MODIFY_LOG, ns ) ) {
+      LOG( LOG_ERR, "Failed to initialize output logfile: \"%s\"\n", outlogpath );
+      snprintf( response->errorstr, MAX_STR_BUFFER, "Failed to initialize output logfile: \"%s\"\n", outlogpath );
+      free( outlogpath );
+      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_term( &(rman->gstate.rinput) );
+      config_abandonposition( &(rman->gstate.pos) );
+      return -1;
    }
+   free( outlogpath );
    // update our repack streamer
    if ( (rman->gstate.rpst = repackstreamer_init()) == NULL ) {
+      LOG( LOG_ERR, "Failed to initialize repack streamer\n" );
+      snprintf( response->errorstr, MAX_STR_BUFFER, "Failed to initialize repack streamer\n" );
+      resourcelog_term( &(rman->gstate.rlog), NULL, NULL );
+      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_term( &(rman->gstate.rinput) );
+      config_abandonposition( &(rman->gstate.pos) );
+      return -1;
    }
    // kick off our worker threads
    TQ_Init_Opts tqopts = {
-      .log_prefix = "Run1",
+      .log_prefix = "RManWorker",
       .init_flags = 0,
       .max_qdepth = rman->gstate.numprodthreads + rman->gstate.numconsthreads,
       .global_state = &(rman->gstate),
@@ -201,15 +242,43 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       .thread_term_func = rthread_term_func
    };
    if ( (rman->tq = tq_init( &(tqopts) )) == NULL ) {
+      LOG( LOG_ERR, "Failed to start ThreadQueue for NS \"%s\"\n", ns->idstr );
+      snprintf( response->errorstr, MAX_STR_BUFFER, "Failed to start ThreadQueue for NS \"%s\"\n", ns->idstr );
+      repackstreamer_abort( rman->gstate.rpst );
+      rman->gstate.rpst = NULL;
+      resourcelog_term( &(rman->gstate.rlog), NULL, NULL );
+      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_term( &(rman->gstate.rinput) );
+      config_abandonposition( &(rman->gstate.pos) );
+      return -1;
    }
+   LOG( LOG_INFO, "Rank %zu is now targetting NS \"%s\"\n", rman->ranknum, ns->idstr );
    return 0;
 }
 
-// TODO
-int getNSrange( marfs_ns* ns, size_t totalranks, size_t refdist ) {
+/**
+ * Calculate the min and max values for the given ref distribution of the NS
+ * @param marfs_ns* ns : Namespace to split ref ranges across
+ * @param size_t workingranks : Total number of operating ranks
+ * @param size_t refdist : Reference distribution index
+ * @param size_t* refmin : Reference to be populated with the minimum range value
+ * @param size_t* refmin : Reference to be populated with the maximum range value
+ */
+void getNSrange( marfs_ns* ns, size_t workingranks, size_t refdist, size_t* refmin, size_t* refmax ) {
+   size_t refperrank = ns->prepo->metascheme.refnodecount / workingranks;
+   size_t remainder = ns->prepo->metascheme.refnodecount % workingranks;
+   *refmin = (refdist * refperrank);
+   *refmax = (*refmin + refperrank) - ( (refdist >= remainder) ? 1 : 0 );
+   LOG( LOG_INFO, "Using Min=%zu / Max=%zu for ref distribution %zu on NS \"%s\"\n", *refmin, *refmax, refdist, ns->idstr );
+   return;
 }
 
-// TODO
+/**
+ * Populate the current rank's oldlogs HASH_TABLE
+ * @param rmanstate* rman : State of this rank
+ * @param const char* scanroot : Logroot, below which to scan
+ * @return int : Zero on success, or -1 on failure
+ */
 int findoldlogs( rmanstate* rman, const char* scanroot ) {
    // construct a HASH_TABLE to hold old logfile references
    HASH_NODE* lognodelist = calloc( rman->nscount, sizeof( struct hash_node_struct ) );
@@ -528,9 +597,10 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          }
       }
       // calculate the start and end reference indices for this request
-      int refmin = -1;
-      int refmax = -1;
-      if ( getNSrange( rman->nslist[request->nsindex], rman->totalranks, request->refdist ) ) {
+      size_t refmin = -1;
+      size_t refmax = -1;
+      if ( getNSrange( rman->nslist[request->nsindex], rman->workingranks,
+                       request->refdist, &(refmin), &(refmax) ) ) {
          LOG( LOG_ERR, "Failed to identify NS reference range values for distribution %zu\n", request->refdist );
          snprintf( response->errorstr, MAX_STR_BUFFER,
                    "Failed to identify NS reference range values for distribution %zu\n", request->refdist );
@@ -632,6 +702,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
                    rman->gstate.pos.ns->idstr );
          return -1;
       }
+      response->haveinfo = 1; // note that we have info for the manager to process
       // close our the thread queue, repack streamer, and logs
       if ( tq_close( rman->tq ) ) {
          LOG( LOG_ERR, "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
@@ -676,9 +747,11 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
 }
 
 /**
- * TODO
- * @param rmanstate* rman : 
- * @param workresponse* response : 
+ * Process the given response
+ * @param rmanstate* rman : Rank state
+ * @param size_t ranknum : Responding rank number
+ * @param workresponse* response : Response to process
+ * @param workrequest* request : New request to populate
  * @return int : A positive value if a new request has been populated;
  *               0 if no request should be sent ( rank has exited, or hit a fatal error );
  *               -1 if a fatal error has occurred in this function itself ( invalid processing )
@@ -720,6 +793,47 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
       return 0;
    }
    else if ( response->request.type == COMPLETE_WORK ) {
+      // possibly process info from the rank
+      if ( response->haveinfo ) {
+         // incorporate walk report
+         rman->walkreport[response->request.nsindex].fileusage   += response->report.fileusage;
+         rman->walkreport[response->request.nsindex].byteusage   += response->report.byteusage;
+         rman->walkreport[response->request.nsindex].filecount   += response->report.filecount;
+         rman->walkreport[response->request.nsindex].objcount    += response->report.objcount;
+         rman->walkreport[response->request.nsindex].bytecount   += response->report.bytecount;
+         rman->walkreport[response->request.nsindex].streamcount += response->report.streamcount;
+         rman->walkreport[response->request.nsindex].delobjs     += response->report.delobjs;
+         rman->walkreport[response->request.nsindex].delfiles    += response->report.delfiles;
+         rman->walkreport[response->request.nsindex].delstreams  += response->report.delstreams;
+         rman->walkreport[response->request.nsindex].volfiles    += response->report.volfiles;
+         rman->walkreport[response->request.nsindex].rpckfiles   += response->report.rpckfiles;
+         rman->walkreport[response->request.nsindex].rpckbytes   += response->report.rpckbytes;
+         rman->walkreport[response->request.nsindex].rbldobjs    += response->report.rbldobjs;
+         rman->walkreport[response->request.nsindex].rbldbytes   += response->report.rbldbytes;
+         // incorporate log summary
+         rman->logsummary[response->request.nsindex].deletion_object_count += response->summary.deletion_object_count;
+         rman->logsummary[response->request.nsindex].deletion_object_failures += response->summary.deletion_object_failures;
+         rman->logsummary[response->request.nsindex].deletion_reference_count += response->summary.deletion_reference_count;
+         rman->logsummary[response->request.nsindex].deletion_reference_failures += response->summary.deletion_reference_failures;
+         rman->logsummary[response->request.nsindex].rebuild_count += response->summary.rebuild_count;
+         rman->logsummary[response->request.nsindex].rebuild_failures += response->summary.rebuild_failures;
+         rman->logsummary[response->request.nsindex].repack_count += response->summary.repack_count;
+         rman->logsummary[response->request.nsindex].repack_failures += response->summary.repack_failures;
+      }
+      // possibly process an error log from the rank TODO
+      if ( response->errorlog ) {
+         // identify the output log of the transmitting rank
+         char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration,
+                                                    rman->nslist[response->request.nsindex], ranknum );
+         if ( outlogpath == NULL ) {
+            fprintf( stderr, "ERROR: Failed to identify the output log path of Rank %zu for NS \"%s\"\n",
+                     ranknum, rman->nslist[response->request.nsindex]->idstr );
+            rman->fatalerror = 1;
+            return -1;
+         }
+         // open the logfile for read
+         RESOURCELOG* ranklog
+      }
       // this rank needs work to process, with no preference for NS
       if ( rman->oldlogs ) {
          // start by checking for old resource logs to process
@@ -794,7 +908,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
       // next, check for NSs with ANY remaining work to distribute
       size_t nsindex = 0;
       for ( ; nsindex < rman->nscount; nsindex++ ) {
-         if ( rman->distributed[nsindex] < rman->totalranks ) {
+         if ( rman->distributed[nsindex] < rman->workingranks ) {
             // this NS still has reference ranges to be scanned
             request->type = NS_WORK;
             request->nsindex = nsindex;
@@ -845,7 +959,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          return 1;
       }
       // check for any remaining work in the rank's active NS
-      if ( rman->distributed[response->request.nsindex] < rman->totalranks ) {
+      if ( rman->distributed[response->request.nsindex] < rman->workingranks ) {
          request->type = NS_WORK;
          request->nsindex = response->request.nsindex;
          request->refdist = rman->distributed[response->request.nsindex];
@@ -865,7 +979,51 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
 }
 
 
-//   -------------   EXTERNAL FUNCTIONS    -------------
+//   -------------   CORE BEHAVIOR LOOPS   -------------
+
+
+int managerbehavior( rmanstate* rman ) {
+   // setup out response and request structs
+   workresponse response;
+   bzero( &(response), sizeof( struct workresponse_struct ) );
+   size_t respondingrank = 0;
+   workrequest  request;
+   bzero( &(request), sizeof( struct workrequest_struct ) );
+   if ( rman->totalranks == 1 ) {
+      // we need to fake our own 'startup' response
+      response.request.type = COMPLETE_WORK;
+   }
+   // loop until all work has been processed
+   char nsworkremains = 1;
+   while ( rman->oldlogs  ||  ( !(rman->execprev)  &&  nsworkremains ) ) {
+      // begin by getting a response from a worker via MPI
+      if ( rman->totalranks > 1 ) {
+      }
+      // generate an appropriate request, based on response
+      int handleres = handleresponse( rman, respondingrank, &(response), &(request) );
+      if ( handleres < 0 ) {
+      }
+      // send out a new request, if appropriate
+      if ( handleres ) {
+         if ( rman->totalranks > 1 ) {
+            // send out the request via MPI to the responding rank
+         }
+         else {
+            // just process the new request ourself
+         }
+      }
+      // check for NS work completion
+      size_t nsindex = 0;
+      nsworkremains = 0; // preemptively assume no work remains
+      for ( ; nsindex < rman->nscount; nsindex++ ) {
+         if ( rman->distributed[nsindex] < rman->workingranks ) { nsworkremains = 1; break; }
+      }
+   }
+   // all work should now be complete
+   return 0;
+}
+
+//   -------------    STARTUP BEHAVIOR     -------------
 
 
 int main(int argc, const char** argv) {
