@@ -98,7 +98,8 @@ typedef struct rmanstate_struct {
    size_t*       distributed;
 
    // Global Progress Tracking
-   size_t*       activeworkers;
+   char          fatalerror;
+   size_t*       terminatedworkers;
    streamwalker_report* walkreport;
    operation_summary*   logsummary;
 
@@ -153,18 +154,55 @@ typedef struct loginfo_struct {
 //   -------------   INTERNAL FUNCTIONS    -------------
 
 // TODO
-int setranktgt( rmanstate* rman, marfs_ns* ns ) {
+int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
+   // update position value
+   char* nspath = NULL;
+   if ( config_nsinfo( ns->idstr, NULL, &(nspath) ) ) {
+      LOG( LOG_ERR, "Failed to identify NS path of NS \"%s\"\n", ns->idstr );
+      snprintf( response->errorstr, MAX_STR_BUFFER,
+                "Failed to identify NS path of NS \"%s\"\n", ns->idstr );
+      return -1;
+   }
+   if ( config_traverse( rman->config, &(rman->gstate.pos), &(nspath), 0 ) ) {
+   }
+   free( nspath );
+   // update our resource input struct
+   if ( resourceinput_init( &(rman->gstate.rinput), &(rman->gstate.pos), rman->gstate.numprodthreads ) ) {
+   }
+   // update our output resource log
    char* outlogpath = resourcelog_genlogpath( 1, rman->logroot, rman->iteration, ns, rman->ranknum );
    if ( outlogpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify output logfile path of rank %zu for NS \"%s\"\n",
-                    rman->ranknum, rman->nslist[request->nsindex]->idstr );
+                    rman->ranknum, ns->idstr );
       snprintf( response->errorstr, MAX_STR_BUFFER,
                 "Failed to identify output logfile path of rank %zu for NS \"%s\"\n",
-                rman->ranknum, rman->nslist[request->nsindex]->idstr );
-      resourcelog_abort( &(newlog) );
-      free( rlogpath );
+                rman->ranknum, ns->idstr );
       return -1;
    }
+   if ( resourcelog_init( &(rman->gstate.rlog), outlogpath,
+                          (rman->gstate.dryrun) ? RESOURCE_RECORD_LOG : RESOURCE_MODIFY_LOG, ns ) ) {
+   }
+   // update our repack streamer
+   if ( (rman->gstate.rpst = repackstreamer_init()) == NULL ) {
+   }
+   // kick off our worker threads
+   TQ_Init_Opts tqopts = {
+      .log_prefix = "Run1",
+      .init_flags = 0,
+      .max_qdepth = rman->gstate.numprodthreads + rman->gstate.numconsthreads,
+      .global_state = &(rman->gstate),
+      .num_threads = rman->gstate.numprodthreads + rman->gstate.numconsthreads,
+      .num_prod_threads = rman->gstate.numprodthreads,
+      .thread_init_func = rthread_init_func,
+      .thread_consumer_func = rthread_consumer_func,
+      .thread_producer_func = rthread_producer_func,
+      .thread_pause_func = NULL,
+      .thread_resume_func = NULL,
+      .thread_term_func = rthread_term_func
+   };
+   if ( (rman->tq = tq_init( &(tqopts) )) == NULL ) {
+   }
+   return 0;
 }
 
 // TODO
@@ -209,7 +247,8 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
       free( lognodelist );
       return -1;
    }
-   // NOTE -- Once the table is initialized, this func won't bother to free it on error.  That is now the caller's responsibility.
+   // NOTE -- Once the table is initialized, this func won't bother to free it on error.
+   //         That is now the caller's responsibility.
    DIR**  dirlist[3] = {0};
    workrequest request = {
       .type = RLOG_WORK,
@@ -232,6 +271,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             // check for potential exit
             if ( dirlist[0] == NULL ) {
                LOG( LOG_INFO, "Preparing to exit, after completing scan of prevexec iteration: \"%s/%s\"\n", scanroot, rman->iteration );
+               request.iteration[0] = '\0';
                logdepth--;
                continue;
             }
@@ -273,6 +313,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
                // no iterations remain, we are done
                closedir( dirlist[0] );
                dirlist[0] = NULL; // just to be explicit about clearing this value
+               request.iteration[0] = '\0';
                logdepth--;
                LOG( LOG_INFO, "Preparing to exit, after completing scan of previous iterations under \"%s\"\n", scanroot );
                continue;
@@ -313,6 +354,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             // no iterations remain, we are done
             closedir( dirlist[1] );
             dirlist[1] = NULL; // just to be explicit about clearing this value
+            request.nsindex = 0;
             logdepth--;
             continue;
          }
@@ -367,6 +409,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             // no iterations remain, we are done
             closedir( dirlist[2] );
             dirlist[2] = NULL; // just to be explicit about clearing this value
+            request.ranknum = 0;
             logdepth--;
             continue;
          }
@@ -395,7 +438,8 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             }
             linfo->requests = newrequests;
          }
-         *(linfo->requests + linfo->logcount) = request; // NOTE -- I believe this assignment is safe, because .iteration is a static char array
+         *(linfo->requests + linfo->logcount) = request; // NOTE -- I believe this assignment is safe,
+                                                         //         because .iteration is a static char array
          linfo->logcount++;
       }
    }
@@ -408,8 +452,8 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
  * @param rmanstate* rman : Current resource manager rank state
  * @param workrequest* request : Request to process
  * @param workresponse* response : Response to populate
- * @return int : Zero if the rank should terminate without sending a response
- *               One if the rank should send the populated response
+ * @return int : Zero if the rank should send the populated response and terminate
+ *               One if the rank should send the populated response and continue processing
  *               -1 if the rank should send the populated response, then abort
  */
 int handlerequest( rmanstate* rman, workrequest* request, workresponse* response ) {
@@ -616,7 +660,8 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       rman->gstate.rpst = NULL;
    }
    else if ( request->type == TERMINATE_WORK ) {
-      // simply note and terminate without generating a response
+      // simply note and terminate
+      response->fatalerror = 0;
       return 0;
    }
    else { // assume ABORT_WORK
@@ -634,10 +679,189 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
  * TODO
  * @param rmanstate* rman : 
  * @param workresponse* response : 
- * @return int : On success, positive count of exited workers ( may be zero );
- *               -1 if a fatal error has occurred
+ * @return int : A positive value if a new request has been populated;
+ *               0 if no request should be sent ( rank has exited, or hit a fatal error );
+ *               -1 if a fatal error has occurred in this function itself ( invalid processing )
  */
-int handleresponse( rmanstate* rman, workresponse* response ) {
+int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, workrequest* request ) {
+   // check for a fatal error condition, as this overrides all other behaviors
+   if ( response->fatalerror ) {
+      // note a fatalerror, and don't generate a request
+      fprintf( stderr, "ERROR: Rank %zu%s hit a fatal error condition\n"
+                       "       All ranks will now attempt to terminate\n"
+                       "       Work Type --\n"
+                       "         %s\n"
+                       "       Error Description --\n"
+                       "         \"%s\"\n",
+                       ranknum, (ranknum == rman->ranknum) ? " ( this rank )" : "",
+                       ( response->request.type == RLOG_WORK )      ? "Resource Log Processing" :
+                       ( response->request.type == NS_WORK )        ? "Namespace Processing"    :
+                       ( response->request.type == COMPLETE_WORK )  ? "Namespace Finalization"  :
+                       ( response->request.type == TERMINATE_WORK ) ? "Termination"             :
+                       ( response->request.type == ABORT_WORK )     ? "Abort Condition"         :
+                       "UNKNOWN WORK TYPE" );
+      rman->terminatedworkers[ranknum] = 1;
+      return 0;
+   }
+   if ( rman->fatalerror  &&  (response->request.type != ABORT_WORK) ) {
+      // if we are in an error state, all ranks should be signaled to abort
+      LOG( LOG_INFO, "Signaling Rank %zu to Abort\n", ranknum );
+      request->type == ABORT_WORK;
+      request->nsindex = 0;
+      request->refdist = 0;
+      request->iteration[0] = '\0';
+      request->ranknum = 0;
+      return 1;
+   }
+   // handle the response based on type
+   if ( response->request.type == TERMINATE_WORK  ||  response->request.type == ABORT_WORK ) {
+      // these simply indicate that the rank has terminated
+      rman->terminatedworkers[ranknum] = 1;
+      return 0;
+   }
+   else if ( response->request.type == COMPLETE_WORK ) {
+      // this rank needs work to process, with no preference for NS
+      if ( rman->oldlogs ) {
+         // start by checking for old resource logs to process
+         HASH_NODE* resnode = NULL;
+         if ( hash_lookup( rman->oldlogs, "irrelevant, as we just need a point to iterate from", &(resnode) ) < 0 ) {
+            fprintf( stderr, "ERROR: Failure of hash_lookup() when trying to identify logfiles for rank %zu to process\n",
+                             ranknum );
+            rman->fatalerror = 1;
+            return -1;
+         }
+         while ( resnode ) {
+            // check for any nodes with log processing requests remaining
+            loginfo* linfo = (loginfo*)( resnode->content );
+            if ( linfo->logcount ) {
+               // use the request at the tail of our list
+               LOG( LOG_INFO, "Passing out log %zu for NS \"%s\" from iteration \"%s\"\n",
+                    linfo->logcount,
+                    rman->nslist[linfo->nsindex]->idstr,
+                    (linfo->requests + (linfo->logcount - 1))->iteration );
+               request = *(linfo->requests + (linfo->logcount - 1));
+               linfo->logcount--;
+               return 1;
+            }
+            if ( hash_iterate( rman->oldlogs, &(resnode) ) < 0 ) {
+               fprintf( stderr,
+                        "ERROR: Failure of hash_iterate() when trying to identify logfiles for rank %zu to process\n",
+                        ranknum );
+               rman->fatalerror = 1;
+               return -1;
+            }
+         }
+         // it seems we've iterated over our entire oldlogs table, with no requests remaining
+         // need to free our table
+         size_t ncount = 0;
+         if ( hash_term( rman->oldlogs, &(resnode), &(ncount) ) ) {
+            fprintf( stderr, "ERROR: Failure of hash_term() after passing out all logfiles for processing\n" );
+            rman->fatalerror = 1;
+            return -1;
+         }
+         rman->oldlogs = NULL;
+         // free all subnodes and requests
+         size_t nindex = 0;
+         for ( ; nindex < ncount; nindex++ ) {
+            loginfo* linfo = (loginfo*)( resnode->content );
+            free( linfo->requests );
+         }
+         free( resnode ); // these were allocated in one block, and thus require only one free()
+      }
+      // no resource logs remain to process
+      if ( rman->prevexec ) {
+         // if we are picking up a previous run, this means no more work remains at all
+         LOG( LOG_INFO, "Signaling Rank %zu to terminate, as no resource logs remain\n", ranknum );
+         request->type = TERMINATE_WORK;
+         return 1;
+      }
+      // first, check specifically for NSs that have yet to be processed at all
+      size_t nsindex = 0;
+      for ( ; nsindex < rman->nscount; nsindex++ ) {
+         if ( rman->distributed[nsindex] == 0 ) {
+            // this NS still has yet to be worked on at all
+            request->type = NS_WORK;
+            request->nsindex = nsindex;
+            request->refdist = rman->distributed[nsindex];
+            request->iteration[0] = '\0';
+            request->ranknum = ranknum;
+            rman->distributed[nsindex]++; // note newly distributed range
+            LOG( LOG_INFO, "Passing out reference range %zu of NS \"%s\" to Rank %zu\n",
+                 rman->distributed[nsindex], rman->nslist[nsindex]->idstr, ranknum );
+            return 1;
+         }
+      }
+      // next, check for NSs with ANY remaining work to distribute
+      size_t nsindex = 0;
+      for ( ; nsindex < rman->nscount; nsindex++ ) {
+         if ( rman->distributed[nsindex] < rman->totalranks ) {
+            // this NS still has reference ranges to be scanned
+            request->type = NS_WORK;
+            request->nsindex = nsindex;
+            request->refdist = rman->distributed[nsindex];
+            request->iteration[0] = '\0';
+            request->ranknum = ranknum;
+            rman->distributed[nsindex]++; // note newly distributed range
+            LOG( LOG_INFO, "Passing out reference range %zu of NS \"%s\" to Rank %zu\n",
+                 rman->distributed[nsindex], rman->nslist[nsindex]->idstr, ranknum );
+            return 1;
+         }
+      }
+      // no NS reference ranges remain to process, so we now need to signal termination
+      LOG( LOG_INFO, "Signaling Rank %zu to terminate, as no NS reference ranges remain\n", ranknum );
+      request->type = TERMINATE_WORK;
+      return 1;
+   }
+   else if ( response->request.type == NS_WORK  ||  response->request.type == RLOG_WORK ) {
+      // this rank needs work to process, specifically in the same NS
+      if ( rman->oldlogs ) {
+         // start by checking for old resource logs to process
+         HASH_NODE* resnode = NULL;
+         if ( hash_lookup( rman->oldlogs, rman->nslist[response->request.nsindex]->idstr, &(resnode) ) < 1 ) {
+            fprintf( stderr, "ERROR: Failure of hash_lookup() when looking for logfiles in NS \"%s\" for rank %zu\n",
+                             rman->nslist[response->request.nsindex]->idstr, ranknum );
+            rman->fatalerror = 1;
+            return -1;
+         }
+         // check for any nodes with log processing requests remaining
+         loginfo* linfo = (loginfo*)( resnode->content );
+         if ( linfo->logcount ) {
+            // use the request at the tail of our list
+            LOG( LOG_INFO, "Passing out log %zu for NS \"%s\" from iteration \"%s\"\n",
+                 linfo->logcount,
+                 rman->nslist[linfo->nsindex]->idstr,
+                 (linfo->requests + (linfo->logcount - 1))->iteration );
+            request = *(linfo->requests + (linfo->logcount - 1));
+            linfo->logcount--;
+            return 1;
+         }
+      }
+      // no resource logs remain to process in the active NS of this rank
+      if ( rman->prevexec ) {
+         // if we are picking up a previous run, this means no more work remains for the active NS at all
+         LOG( LOG_INFO, "Signaling Rank %zu to complete and quiesce, as no resource logs remain in NS \"%s\"\n",
+              ranknum, rman->nslist[response->request.nsindex]->idstr );
+         request->type = COMPLETE_WORK;
+         return 1;
+      }
+      // check for any remaining work in the rank's active NS
+      if ( rman->distributed[response->request.nsindex] < rman->totalranks ) {
+         request->type = NS_WORK;
+         request->nsindex = response->request.nsindex;
+         request->refdist = rman->distributed[response->request.nsindex];
+         request->iteration[0] = '\0';
+         request->ranknum = ranknum;
+         rman->distributed[response->request.nsindex]++; // note newly distributed range
+         LOG( LOG_INFO, "Passing out reference range %zu of NS \"%s\" to Rank %zu\n",
+              rman->distributed[response->request.nsindex], rman->nslist[response->request.nsindex]->idstr, ranknum );
+         return 1;
+      }
+      // all work in the active NS has been completed
+      LOG( LOG_INFO, "Signaling Rank %zu to complete and quiesce, as no reference ranges remain in NS \"%s\"\n",
+           ranknum, rman->nslist[response->request.nsindex]->idstr );
+      request->type = COMPLETE_WORK;
+      return 1;
+   }
 }
 
 

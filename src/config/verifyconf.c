@@ -172,6 +172,24 @@ int main(int argc, const char** argv) {
    if (config == NULL) {
       printf(OUTPREFX "ERROR: Failed to initialize config: \"%s\" ( %s )\n",
          config_path, strerror(errno));
+      if ( errno == ENOENT  ||  errno == EACCES ) {
+         if ( errno == ENOENT ) {
+            printf(OUTPREFX "       Recommendation -- It is very likely that this is caused by missing MDAL and/or DAL \n"
+                   OUTPREFX "                         root paths ( or by an entirely missing config file ).\n" );
+         }
+         else {
+            printf(OUTPREFX "       Recommendation -- It is very likely that this is caused by MDAL and/or DAL root \n"
+                   OUTPREFX "                         paths ( or their parent paths ) with restrictive permissions.\n" );
+         }
+         printf(OUTPREFX "                         Look for the '<ns_root>' and '<sec_root>' paths in your MarFS \n"
+                OUTPREFX "                         Config file.  Those paths must exist and be accessible to the \n"
+                OUTPREFX "                         running user.\n" );
+      }
+      else {
+         printf(OUTPREFX "       Recommendation -- Try building with 'config' debugging enabled ( '--enable-debugCONFIG' \n"
+                OUTPREFX "                         argument to the autoconf 'configure' binary at the root of this repo )\n"
+                OUTPREFX "                         to get a more explicit indication of why this has failed\n" );
+      }
       return -1;
    }
 
