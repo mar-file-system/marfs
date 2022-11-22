@@ -254,7 +254,7 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_S
       // check for completion of log
       if ( *nextop == NULL ) {
          LOG( LOG_INFO, "Statelog has been completely read\n" );
-         if ( resourcelog_term( &(rin->rlog), NULL, NULL ) ) {
+         if ( resourcelog_term( &(rin->rlog), NULL, 1 ) ) {
             // nothing to do but complain
             LOG( LOG_WARNING, "Failed to properly terminate input resourcelog\n" );
          }

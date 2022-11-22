@@ -1667,7 +1667,7 @@ int resourcelog_replay( RESOURCELOG* inputlog, RESOURCELOG* outputlog, int (*fil
    // cleanup the inputlog
    *inputlog = NULL;
    pthread_mutex_unlock( &(inrsrclog->lock) );
-   if ( resourcelog_term( &(inrsrclog), NULL, NULL ) ) {
+   if ( resourcelog_term( &(inrsrclog), NULL, 1 ) ) {
       LOG( LOG_ERR, "Failed to cleanup input logfile\n" );
       pthread_mutex_unlock( &(outrsrclog->lock) );
       return -1;
@@ -1870,11 +1870,11 @@ int resourcelog_readop( RESOURCELOG* resourcelog, opinfo** op ) {
  * NOTE -- this will fail if there are currently any ops in flight
  * @param RESOURCELOG* resourcelog : Statelog to be terminated
  * @param operation_summary* summary : Reference to be populated with summary values ( ignored if NULL )
- * @param const char* log_preservation_tgt : FS location where the state logfile should be relocated to
- *                                           If NULL, the file is deleted
+ * @param char delete : Flag indicating whether the logfile should be deleted on termination
+ *                      If non-zero, the file is deleted
  * @return int : Zero on success, 1 if the log was preserved due to errors, or -1 on failure
  */
-int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, const char* log_preservation_tgt ) {
+int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, char delete ) {
    // check for invalid args
    if ( resourcelog == NULL  ||  *resourcelog == NULL ) {
       LOG( LOG_ERR, "Received a NULL resourcelog reference\n" );
@@ -1900,15 +1900,7 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, cons
         rsrclog->summary.rebuild_failures  ||  rsrclog->summary.repack_failures ) { errpresent = 1; }
    // potentially record summary info
    if ( summary ) { *summary = rsrclog->summary; }
-   // potentially rename the logfile to the preservation tgt
-   if ( log_preservation_tgt ) { 
-      if ( rename( rsrclog->logfilepath, log_preservation_tgt ) ) {
-         LOG( LOG_ERR, "Failed to rename log file to final location: \"%s\"\n", log_preservation_tgt );
-         pthread_mutex_unlock( &(rsrclog->lock) );
-         return -1;
-      }
-   }
-   else if ( !(errpresent) ) {
+   if ( !(errpresent)  &&  delete ) {
       // if there were no errors recorded, just delete the logfile
       if ( unlink( rsrclog->logfilepath ) ) {
          LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", rsrclog->logfilepath );

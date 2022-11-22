@@ -205,11 +205,11 @@ int resourcelog_readop( RESOURCELOG* resourcelog, opinfo** op );
  * NOTE -- this will fail if there are currently any ops in flight
  * @param RESOURCELOG* resourcelog : Statelog to be terminated
  * @param operation_summary* summary : Reference to be populated with summary values ( ignored if NULL )
- * @param const char* log_preservation_tgt : FS location where the state logfile should be relocated to
- *                                           If NULL, the file is deleted
+ * @param char delete : Flag indicating whether the logfile should be deleted on termination
+ *                      If non-zero, the file is deleted
  * @return int : Zero on success, 1 if the log was preserved due to errors, or -1 on failure
  */
-int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, const char* log_preservation_tgt );
+int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, char delete );
 
 /**
  * Deallocate and finalize a given resourcelog without waiting for completion

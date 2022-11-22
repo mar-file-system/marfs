@@ -75,7 +75,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define MODIFY_ITERATION_PARENT "RMAN-MODIFY-RUNS"
 #define RECORD_ITERATION_PARENT "RMAN-RECORD-RUNS"
-#define ERROR_LOG_PARENT "RMAN-ERROR-LOGS"
+#define SUMMARY_ITERATION_PARENT "RMAN-SUMMARY-LOGS"
 #define ITERATION_ARGS_FILE "PROGRAM-ARGUMENTS"
 #define ITERATION_STRING_LEN 128
 #define OLDLOG_PREALLOC 16  // pre-allocate space for 16 logfiles in the oldlogs hash table ( double from there, as needed )
@@ -99,7 +99,7 @@ typedef struct rmanstate_struct {
 
    // Global Progress Tracking
    char          fatalerror;
-   size_t*       terminatedworkers;
+   char*         terminatedworkers;
    streamwalker_report* walkreport;
    operation_summary*   logsummary;
 
@@ -107,11 +107,13 @@ typedef struct rmanstate_struct {
    rthread_gstate gstate;
    ThreadQueue TQ;
 
+   // Output Logging
+   FILE* summarylog;
+
    // arg reference vals
    char        execprev;
    char        iteration[ITERATION_STRING_LEN];
    char*       logroot;
-   char*       errorlogtgt;
    char*       preservelogtgt;
 } rmanstate;
 
@@ -152,6 +154,46 @@ typedef struct loginfo_struct {
 
 
 //   -------------   HELPER FUNCTIONS    -------------
+
+void outputinfo( FILE* output, marfs_ns* ns, streamwalker_report* report , operation_summary* summary ) {
+   char userout = 0;
+   if ( output == stdout ) { userout = 1; } // limit info output directly to the user
+   fprintf( output, "\nNamespace \"%s\"%s --\n", ns->idstr, (userout) ? " Totals" : " Incremental Values" );
+   fprintf( output, "   Walk Report --\n" );
+   if ( !(userout) || report.fileusage )   { fprintf( output, "      File Usage = %zu\n", report.fileusage ); }
+   if ( !(userout) || report.byteusage )   { fprintf( output, "      Byte Usage = %zu\n", report.byteusage ); }
+   if ( !(userout) || report.filecount )   { fprintf( output, "      File Count = %zu\n", report.filecount ); }
+   if ( !(userout) || report.objcount )    { fprintf( output, "      Object Count = %zu\n", report.objcount ); }
+   if ( !(userout) || report.bytecount )   { fprintf( output, "      Byte Count = %zu\n", report.bytecount ); }
+   if ( !(userout) || report.streamcount ) { fprintf( output, "      Stream Count = %zu\n", report.streamcount ); }
+   if ( !(userout) || report.delobjs )     { fprintf( output, "      Object Deletion Candidates = %zu\n", report.delobjs ); }
+   if ( !(userout) || report.delfiles )    { fprintf( output, "      File Deletion Candidates = %zu\n", report.delfiles ); }
+   if ( !(userout) || report.delstreams )  { fprintf( output, "      Stream Deletion Candidates = %zu\n", report.delstreams ); }
+   if ( !(userout) || report.volfiles )    { fprintf( output, "      Volatile File Count = %zu\n", report.volfiles ); }
+   if ( !(userout) || report.rpckfiles )   { fprintf( output, "      File Repack Candidates = %zu\n", report.rpckfiles ); }
+   if ( !(userout) || report.rpckbytes )   { fprintf( output, "      Repack Candidate Bytes = %zu\n", report.rpckbytes ); }
+   if ( !(userout) || report.rbldobjs )    { fprintf( output, "      Object Rebuild Candidates = %zu\n", report.rbldobjs ); }
+   if ( !(userout) || report.rbldbytes )   { fprintf( output, "      Rebuild Candidate Bytes = %zu\n", report.rbldbytes ); }
+   fprintf( output, "   Operation Summary --\n" );
+   if ( !(userout) || summary->deletion_object_count ) {
+      fprintf( output, "      Object Deletion Count = %zu ( %zu Failures )\n",
+               summary->deletion_object_count, summary->deletion_object_failures );
+   }
+   if ( !(userout) || summary->deletion_reference_count ) {
+      fprintf( output, "      Reference Deletion Count = %zu ( %zu Failures )\n",
+               summary->deletion_reference_count, summary->deletion_reference_failures );
+   }
+   if ( !(userout) || summary->rebuild_count ) {
+      fprintf( output, "      Object Rebuild Count = %zu ( %zu Failures )\n",
+               summary->rebuild_count, summary->rebuild_failures );
+   }
+   if ( !(userout) || summary->repack_count ) {
+      fprintf( output, "      File Repack Count = %zu ( %zu Failures )\n",
+               summary->repack_count, summary->repack_failures );
+   }
+   fflush( output );
+   return;
+}
 
 /**
  * Configure the current rank to target the given NS ( configures state and launches worker threads )
@@ -712,15 +754,19 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
                    rman->gstate.pos.ns->idstr );
          return -1;
       }
+      // need to preserve our logfile, allowing the manager to remove it
+      char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration, rman->gstate.pos.ns, rman->ranknum );
       int rlogret;
-      if ( (rlogret = resourcelog_term( &(rman->gstate.rlog), &(response->summary), rman->preservelogtgt )) < 0 ) {
-         LOG( LOG_ERR, "Failed to terminate resource log following completion of work on NS \"%s\"\n",
-              rman->gstate.pos.ns->idstr );
+      if ( (rlogret = resourcelog_term( &(rman->gstate.rlog), &(response->summary), outlogpath )) < 0 ) {
+         LOG( LOG_ERR, "Failed to terminate log \"%s\" following completion of work on NS \"%s\"\n",
+              outlogpath, rman->gstate.pos.ns->idstr );
          snprintf( response->errorstr, MAX_STR_BUFFER,
-                   "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
-                   rman->gstate.pos.ns->idstr );
+                   "Failed to terminate log \"%s\" following completion of work on NS \"%s\"\n",
+                   outlogpath, rman->gstate.pos.ns->idstr );
+         free( outlogpath );
          return -1;
       }
+      free( outlogpath );
       if (rlogret) { response->errorlog = 1; } // note if our log was preserved due to errors being present
       if ( repackstreamer_complete( rman->gstate.rpst ) ) {
          LOG( LOG_ERR, "Failed to complete repack streamer during completion of NS \"%s\"\n", rman->gstate.pos.ns->idstr );
@@ -790,9 +836,11 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
    if ( response->request.type == TERMINATE_WORK  ||  response->request.type == ABORT_WORK ) {
       // these simply indicate that the rank has terminated
       rman->terminatedworkers[ranknum] = 1;
+      printf( "  Rank %zu is terminating\n", ranknum );
       return 0;
    }
    else if ( response->request.type == COMPLETE_WORK ) {
+      printf( "  Rank %zu completed work on NS \"%s\"\n", ranknum, rman->nslist[nsindex]->idstr );
       // possibly process info from the rank
       if ( response->haveinfo ) {
          // incorporate walk report
@@ -819,9 +867,11 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          rman->logsummary[response->request.nsindex].rebuild_failures += response->summary.rebuild_failures;
          rman->logsummary[response->request.nsindex].repack_count += response->summary.repack_count;
          rman->logsummary[response->request.nsindex].repack_failures += response->summary.repack_failures;
+         // output all gathered info, prior to possible log deletion
+         outputinfo( rman->summarylog, rman->nslist[response->request.nsindex], &(response->report) , &(response->summary) );
       }
-      // possibly process an error log from the rank TODO
-      if ( response->errorlog ) {
+      // check if the manager needs to do any log cleanup
+      if ( response->errorlog  ||  !(rman->execprev) ) {
          // identify the output log of the transmitting rank
          char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration,
                                                     rman->nslist[response->request.nsindex], ranknum );
@@ -831,8 +881,90 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
             rman->fatalerror = 1;
             return -1;
          }
-         // open the logfile for read
-         RESOURCELOG* ranklog
+         // potentially duplicate the logfile to a final location
+         if ( rman->preservelogtgt ) {
+            char* preslogpath = resourcelog_genlogpath( 1, rman->preservelogtgt, rman->iteration,
+                                                        rman->nslist[response->request.nsindex], ranknum );
+            if ( preslogpath == NULL ) {
+               fprintf( stderr, "ERROR: Failed to identify the preserve log path of Rank %zu for NS \"%s\"\n",
+                        ranknum, rman->nslist[response->request.nsindex]->idstr );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+            // simply use a hardlink for this purpose, no need to make a 'real' duplicate
+            if ( link( outlogpath, preslogpath ) ) {
+               fprintf( stderr, "ERROR: Failed to link logfile \"%s\" to new target path: \"%s\"\n",
+                        outlogpath, preslogpath );
+               free( preslogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+            free( preslogpath );
+         }
+         // process the work log
+         if ( response->errorlog ) {
+            // identify the errorlog output location
+            char* errlogpath = resourcelog_genlogpath( 1, rman->logroot, rman->iteration,
+                                                        rman->nslist[response->request.nsindex], ranknum );
+            if ( errlogpath == NULL ) {
+               fprintf( stderr, "ERROR: Failed to identify the error log path of Rank %zu for NS \"%s\"\n",
+                        ranknum, rman->nslist[response->request.nsindex]->idstr );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+            // open the logfile for read
+            RESOURCELOG ranklog = NULL;
+            if ( resourcelog_init( &(ranklog), outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex] ) ) {
+               fprintf( stderr, "ERROR: Failed to open the output log of Rank %zu for NS \"%s\": \"%s\"\n",
+                        ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
+               free( errlogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+            // open the error log for write
+            RESOURCELOG errlog = NULL;
+            if ( resourcelog_init( &(errlog), errlogpath, RESOURCE_RECORD_LOG, rman->nslist[response->request.nsindex] ) ) {
+               fprintf( stderr, "ERROR: Failed to open the error log of Rank %zu: \"%s\"\n", ranknum, errlogpath );
+               resourcelog_term( &(ranklog), NULL, 0 );
+               free( errlogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+            // replay the logfile into the error log location
+            if ( resourcelog_replay( &(ranklog), &(errlog), error_only_filter ) ) {
+               fprintf( stderr, "ERROR: Failed to replay errors from logfile \"%s\" into \"%s\"\n", outlogpath, errlogpath );
+               resourcelog_term( &(errlog), NULL, 1 );
+               resourcelog_term( &(ranklog), NULL, 0 );
+               free( errlogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+            if ( resourcelog_term( &(errlog), NULL, 0 ) ) {
+               fprintf( stderr, "ERROR: Failed to finalize error logfile: \"%s\"\n", errlogpath );
+               free( errlogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+            free( errlogpath );
+         }
+         else {
+            // simply delete the output logfile of this rank
+            if ( unlink( outlogpath ) ) {
+               fprintf( stderr, "ERROR: Failed to delete the output log of Rank %zu for NS \"%s\": \"%s\"\n",
+                        ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+         }
+         free( outlogpath );
       }
       // this rank needs work to process, with no preference for NS
       if ( rman->oldlogs ) {
@@ -865,6 +997,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
                return -1;
             }
          }
+         printf( "   All old logfiles have been handed out for processing\n" );
          // it seems we've iterated over our entire oldlogs table, with no requests remaining
          // need to free our table
          size_t ncount = 0;
@@ -902,6 +1035,8 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
             rman->distributed[nsindex]++; // note newly distributed range
             LOG( LOG_INFO, "Passing out reference range %zu of NS \"%s\" to Rank %zu\n",
                  rman->distributed[nsindex], rman->nslist[nsindex]->idstr, ranknum );
+            printf( "  Rank %zu is beginning work on NS \"%s\" ( ref range %zu )\n",
+                    ranknum, rman->nslist[nsindex]->idstr, rman->distributed[nsindex] );
             return 1;
          }
       }
@@ -921,6 +1056,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
             return 1;
          }
       }
+      printf( "   All NS reference ranges have been handed out for processing\n" );
       // no NS reference ranges remain to process, so we now need to signal termination
       LOG( LOG_INFO, "Signaling Rank %zu to terminate, as no NS reference ranges remain\n", ranknum );
       request->type = TERMINATE_WORK;
@@ -981,7 +1117,11 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
 
 //   -------------   CORE BEHAVIOR LOOPS   -------------
 
-
+/**
+ * Manager rank behavior ( sending out requests, potentially processing them as well )
+ * @param rmanstate* rman : Resource manager state
+ * @return int : Zero on success, or -1 on failure
+ */
 int managerbehavior( rmanstate* rman ) {
    // setup out response and request structs
    workresponse response;
@@ -993,45 +1133,91 @@ int managerbehavior( rmanstate* rman ) {
       // we need to fake our own 'startup' response
       response.request.type = COMPLETE_WORK;
    }
-   // loop until all work has been processed
-   char nsworkremains = 1;
-   while ( rman->oldlogs  ||  ( !(rman->execprev)  &&  nsworkremains ) ) {
-      // begin by getting a response from a worker via MPI
+   // loop until all workers have terminated
+   char workersrunning = 1;
+   while ( workersrunning ) {
+      // TODO begin by getting a response from a worker via MPI
       if ( rman->totalranks > 1 ) {
       }
       // generate an appropriate request, based on response
       int handleres = handleresponse( rman, respondingrank, &(response), &(request) );
       if ( handleres < 0 ) {
+         fprintf( stderr, "Fatal error detected during response handling.  Program will terminate.\n" );
+         return -1;
       }
       // send out a new request, if appropriate
       if ( handleres ) {
          if ( rman->totalranks > 1 ) {
-            // send out the request via MPI to the responding rank
+            // TODO send out the request via MPI to the responding rank
          }
          else {
             // just process the new request ourself
+            if ( handlerequest( rman, &(request), &(response) ) < 0 ) {
+               fprintf( stderr, "ERROR: %s\nFatal error detected during local request processing.  Program will terminate.\n",
+                        response->errorstr );
+               return -1;
+            }
          }
       }
-      // check for NS work completion
-      size_t nsindex = 0;
-      nsworkremains = 0; // preemptively assume no work remains
-      for ( ; nsindex < rman->nscount; nsindex++ ) {
-         if ( rman->distributed[nsindex] < rman->workingranks ) { nsworkremains = 1; break; }
+      // check worker states
+      workersrunning = 0; // assume none, until found
+      size_t windex = ( rman->totalranks > 1 ) ? 1 : 0;
+      for ( ; windex < rman->totalranks; windex++ ) {
+         if ( rman->terminatedworkers[windex] == 0 ) { workersrunning = 1; break; }
       }
    }
    // all work should now be complete
    return 0;
 }
 
+/**
+ * Worker rank behavior ( processing requests and sending responses )
+ * @param rmanstate* rman : Resource manager state
+ * @return int : Zero on success, or -1 on failure
+ */
+int workerbehavior( rmanstate* rman ) {
+   // setup out response and request structs
+   workresponse response;
+   bzero( &(response), sizeof( struct workresponse_struct ) );
+   workrequest  request;
+   bzero( &(request), sizeof( struct workrequest_struct ) );
+   // we need to fake a 'startup' response
+   response.request.type = COMPLETE_WORK;
+   // TODO begin by sending a response
+   // loop until we process a TERMINATE request
+   int handleres = 1;
+   while ( handleres ) {
+      // TODO wait for a new request
+      // generate an appropriate response
+      if ( (handleres = handlerequest( rman, &(request), &(response) )) < 0 ) {
+         LOG( LOG_ERR, "Fatal error detected during request processing\n",
+                  response->errorstr );
+         // TODO send out our response anyway, so the manger prints our error message
+         return -1;
+      }
+      // TODO send out our response
+   }
+   // all work should now be complete
+   return 0;
+}
+
+
 //   -------------    STARTUP BEHAVIOR     -------------
 
 
 int main(int argc, const char** argv) {
+   // Initialize MPI
+   if ( MPI_Init(&argc,&argv) ) {
+      fprintf( stderr, "ERROR: Failed to initialize MPI\n" );
+      return -1;
+   }
+
    errno = 0; // init to zero (apparently not guaranteed)
    char* config_path = getenv( "MARFS_CONFIG_PATH" ); // check for config env var
    char* ns_path = ".";
    char recurse = 0;
-   rmanstate state = {0};
+   rmanstate rman;
+   bzero( &(rman), sizeof( struct rmanstate_struct ) );
 
    // get the initialization time of the program, to identify thresholds
    struct timeval currenttime;
@@ -1043,11 +1229,12 @@ int main(int argc, const char** argv) {
    time_t rblthresh = currenttime.tv_nsec - RB_L_THRESH;
    time_t rbmthresh = currenttime.tv_nsec - RB_M_THRESH;
    time_t rpthresh = currenttime.tv_nsec - RP_THRESH;
+   time_t clthresh = currenttive.tv_nsec - CL_THRESH;
 
    // parse all position-independent arguments
    char pr_usage = 0;
    int c;
-   while ((c = getopt(argc, (char* const*)argv, "c:n:rilpdQGRPT:L:h")) != -1) {
+   while ((c = getopt(argc, (char* const*)argv, "c:n:rilpdXQGRPCT:L:h")) != -1) {
       switch (c) {
       case 'c':
          config_path = optarg;
@@ -1059,38 +1246,175 @@ int main(int argc, const char** argv) {
          recurse = 1;
          break;
       case 'i':
-         state.iteration = optarg;
+         rman.iteration = optarg;
          break;
       case 'l':
-         state.logroot = optarg;
+         rman.logroot = optarg;
          break;
       case 'p':
-         state.preservelogtgt = optarg;
+         rman.preservelogtgt = optarg;
          break;
       case 'd':
-         state.dryrun = 1;
+         rman.gstate.dryrun = 1;
+         break;
+      case 'X':
+         rman.gstate.execprev = 1;
          break;
       case 'Q':
-         state.quotas = 1;
+         rman.quotas = 1;
          break;
       case 'G':
-         state.thresh.gcthreshold = 1;
+         rman.gstate.thresh.gcthreshold = 1;
          break;
       case 'R':
-         state.thresh.rebuildthreshold = 1;
+         rman.gstate.thresh.rebuildthreshold = 1;
          break;
       case 'P':
-         state.thresh.repackthreshold = 1;
+         rman.gstate.thresh.repackthreshold = 1;
+         break;
+      case 'C':
+         rman.gstate.thresh.cleanupthreshold = 1;
          break;
       case '?':
          printf( OUTPREFX "ERROR: Unrecognized cmdline argument: \'%c\'\n", optopt );
-      case 'h':
+      case 'h': // note fallthrough from above
          pr_usage = 1;
          break;
       default:
          printf("ERROR: Failed to parse command line options\n");
          return -1;
       }
+   }
+   if ( pr_usage ) {
+      print_usage_info();
+      return 0;
+   }
+
+   // substitute in appropriate threshold values, if specified
+   if ( rman.gstate.thresh.gcthreshold ) { rman.gstate.thresh.gcthreshold = gcthresh; }
+   if ( rman.gstate.thresh.rebuildthreshold ) {
+      if ( rman.gstate.lbrebuild ) { rman.gstate.thresh.rebuildthreshold = rblthresh; }
+      else { rman.gstate.thresh.rebuildthreshold = rbmthresh; }
+   }
+   if ( rman.gstate.thresh.repackthreshold ) { rman.gstate.thresh.repackthreshold = rpthresh; }
+   if ( rman.gstate.thresh.cleanupthreshold ) { rman.gstate.thresh.cleanupthreshold = clthresh; }
+
+   // check how many ranks we have
+   int rankcount = 0;
+   int rank = 0;
+   if ( MPI_Comm_size( MPI_COMM_WORLD, &(rankcount) ) ) {
+      fprintf( stderr, "ERROR: Failed to identify rank count\n" );
+      return -1;
+   }
+   if ( MPI_Comm_rank( MPI_COMM_WORLD, &(rank) ) ) {
+      fprintf( stderr, "ERROR: Failed to identify process rank\n" );
+      return -1;
+   }
+   rman->ranknum = (size_t)rank;
+   rman->totalranks = (size_t)rankcount;
+   rman->workingranks = 1;
+   if ( rankcount > 1 ) { rman->workingranks = rman->totalranks - 1; }
+
+   // Initialize the MarFS Config
+   if ( (rman->config = config_init( config_path )) == NULL ) {
+      fprintf( stderr, "ERROR: Failed to initialize MarFS config: \"%s\"\n", config_path );
+      reutrn -1;
+   }
+
+   // Identify our target NS
+   marfs_position pos;
+   if ( config_establishposition( &(pos), rman->config ) ) {
+      fprintf( stderr, "ERROR: Failed to establish a MarFS root NS position\n" );
+      config_term( rman->config );
+      return -1;
+   }
+   char* nspathdup = strdup( ns_path );
+   if ( nspathdup == NULL ) {
+      fprintf( stderr, "ERROR: Failed to duplicate NS path string: \"%s\"\n", ns_path );
+      config_term( rman->config );
+      return -1;
+   }
+   int travret = config_traverse( rman->config, &(pos), &(nspathdup), 1 );
+   if ( travret < 0 ) {
+      fprintf( stderr, "ERROR: Failed to identify NS path target: \"%s\"\n", ns_path );
+      free( nspathdup );
+      config_term( rman->config );
+      return -1;
+   }
+   if ( travret ) {
+      fprintf( stderr, "ERROR: Path target is not a NS, but a subpath of depth %d: \"%s\"\n", travret, ns_path );
+      free( nspathdup );
+      config_term( rman->config );
+      return -1;
+   }
+   free( nspathdup );
+   // Generate our NS list
+   marfs_ns* curns = pos.ns;
+   rman->nscount = 1;
+   rman->nslist = malloc( sizeof( marfs_ns* ) );
+   if ( rman->nslist == NULL ) {
+      fprintf( stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman->nscount );
+      config_term( rman->config );
+      return -1;
+   }
+   *(rman->nslist) = pos.ns;
+   while ( curns ) {
+      // we can use hash_iterate, as this is guaranteed to be the only proc using this config struct
+      HASH_NODE* subnode = NULL;
+      int iterres = 0;
+      if ( curns->subspaces  &&  recurse ) {
+         iterres = hash_iterate( curns->subspaces, &(subnode) );
+         if ( iterres < 0 ) {
+            fprintf( stderr, "ERROR: Failed to iterate through subspaces of \"%s\"\n", curns->idstr );
+            config_term( rman->config );
+            return -1;
+         }
+         else if ( iterres ) {
+            marfs_ns* subspace = (marfs_ns*)(subnode->content);
+            // only process non-ghost subspaces
+            if ( subspace->ghtarget == NULL ) {
+               // note and enter the subspace
+               rman->nscount++;
+               // yeah, this is very inefficient; but we're only expecting 10s to 1000s of elements
+               marfs_ns** newlist = realloc( rman.nslist, sizeof( marfs_ns* ) * rman->nscount );
+               if ( newlist == NULL ) {
+                  fprintf( stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman->nscount );
+                  free( rman.nslist );
+                  config_term( rman->config );
+                  return -1;
+               }
+               rman.nslist = newlist;
+               &(rman.nslist + rman->nscount - 1) = subspace;
+               curns = subspace;
+               continue;
+            }
+         }
+      }
+      if ( iterres == 0 ) {
+         // check for completion condition
+         if ( curns == pos.ns ) {
+            // iteration over the original NS target means we're done
+            curns = NULL;
+         }
+         else {
+            curns = curns->pnamespace;
+         }
+      }
+   }
+   // abandon our current position
+   if ( config_abandonposition( &(pos) ) ) {
+      fprintf( stderr, "WARNING: Failed to abandon MarFS traversal position\n" );
+      free( rman.nslist );
+      config_term( rman->config );
+      return -1;
+   }
+   // TODO complete allocation of required state elements
+
+
+   // potentially output run info
+   if ( rman.ranknum == 0 ) {
+      printf( "Processing %zu Total Namespaces ( %sTarget NS \"%s\" )\n",
+              rman.nscount, (recurse) ? "Recursing Below " : "", *(rman.nslist)->idstr );
    }
 
 }

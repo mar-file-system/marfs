@@ -332,6 +332,7 @@ int main(int argc, char **argv)
          printf( "failed readdir for \"%s\"\n", filepath );
          return -1;
       }
+      curmdal->closedir( dir );
       // close the stream
       if ( stream ) {
          if ( datastream_close( &(stream) ) ) {
@@ -477,6 +478,7 @@ int main(int argc, char **argv)
       report.rpckbytes  += tstate->report.rpckbytes;
       report.rbldobjs   += tstate->report.rbldobjs;
       report.rbldbytes  += tstate->report.rbldbytes;
+      free( tstate );
    }
    if ( retval ) {
       printf( "failed to collect all thread status values\n" );
@@ -488,7 +490,7 @@ int main(int argc, char **argv)
       return -1;
    }
    operation_summary summary = {0};
-   if ( resourcelog_term( &(gstate.rlog), &(summary), NULL ) ) {
+   if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following first walk\n" );
       return -1;
    }
@@ -573,6 +575,7 @@ int main(int argc, char **argv)
          printf( "failed readdir for \"%s\"\n", filepath );
          return -1;
       }
+      curmdal->closedir( dir );
       // close the stream
       if ( stream ) {
          if ( datastream_close( &(stream) ) ) {
@@ -701,6 +704,7 @@ int main(int argc, char **argv)
       report.rpckbytes  += tstate->report.rpckbytes;
       report.rbldobjs   += tstate->report.rbldobjs;
       report.rbldbytes  += tstate->report.rbldbytes;
+      free( tstate );
    }
    if ( retval ) {
       printf( "failed to collect all second walk thread status values\n" );
@@ -712,7 +716,7 @@ int main(int argc, char **argv)
       return -1;
    }
    bzero( &(summary), sizeof( struct operation_summary_struct ) );
-   if ( resourcelog_term( &(gstate.rlog), &(summary), NULL ) ) {
+   if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following second walk\n" );
       return -1;
    }
@@ -804,6 +808,7 @@ int main(int argc, char **argv)
             return -1;
          }
       }
+      curmdal->closedir( dir );
       // should be safe to remove the parent dir as well
       snprintf( filepath, 1024, "stream%.2d", streamnum );
       if ( curmdal->rmdir( pos.ctxt, filepath ) ) {
@@ -930,6 +935,7 @@ int main(int argc, char **argv)
       report.rpckbytes  += tstate->report.rpckbytes;
       report.rbldobjs   += tstate->report.rbldobjs;
       report.rbldbytes  += tstate->report.rbldbytes;
+      free( tstate );
    }
    if ( retval ) {
       printf( "failed to collect all third walk thread status values\n" );
@@ -941,7 +947,7 @@ int main(int argc, char **argv)
       return -1;
    }
    bzero( &(summary), sizeof( struct operation_summary_struct ) );
-   if ( resourcelog_term( &(gstate.rlog), &(summary), NULL ) ) {
+   if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following third walk\n" );
       return -1;
    }
@@ -1095,6 +1101,7 @@ int main(int argc, char **argv)
       report.rpckbytes  += tstate->report.rpckbytes;
       report.rbldobjs   += tstate->report.rbldobjs;
       report.rbldbytes  += tstate->report.rbldbytes;
+      free( tstate );
    }
    if ( retval ) {
       printf( "failed to collect all final walk thread status values\n" );
@@ -1106,7 +1113,7 @@ int main(int argc, char **argv)
       return -1;
    }
    bzero( &(summary), sizeof( struct operation_summary_struct ) );
-   if ( resourcelog_term( &(gstate.rlog), &(summary), NULL ) ) {
+   if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following final walk\n" );
       return -1;
    }

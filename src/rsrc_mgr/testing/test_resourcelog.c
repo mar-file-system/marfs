@@ -297,7 +297,7 @@ int main(int argc, char **argv)
 
    // terminate the log, keeping the copy
    operation_summary summary;
-   if ( resourcelog_term( &(rlog), &(summary), logpath ) ) {
+   if ( resourcelog_term( &(rlog), &(summary), 0 ) ) {
       printf( "failed to terminate initial logfile\n" );
       return -1;
    }
@@ -515,7 +515,7 @@ int main(int argc, char **argv)
 
 
    // terminate our reading log
-   if ( resourcelog_term( &(rlog), &(summary), NULL ) ) {
+   if ( resourcelog_term( &(rlog), &(summary), 1 ) ) {
       printf( "failed to terminate inital reading resourcelog\n" );
       return -1;
    }
@@ -642,7 +642,7 @@ int main(int argc, char **argv)
    free( opset );
    // terminate the logfile
    printf( "terminating\n" );
-   if ( resourcelog_term( &(wlog), &(summary), NULL ) ) {
+   if ( resourcelog_term( &(wlog), &(summary), 1 ) ) {
       printf( "failed to terminate resourcelog\n" );
       return -1;
    }
