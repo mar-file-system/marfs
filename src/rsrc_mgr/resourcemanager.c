@@ -73,9 +73,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up ( failed repacks, old logs, etc. )
                           // Default to 1 day ago
 
+#define DEFAULT_LOG_ROOT "/var/log/marfs-rman"
 #define MODIFY_ITERATION_PARENT "RMAN-MODIFY-RUNS"
 #define RECORD_ITERATION_PARENT "RMAN-RECORD-RUNS"
-#define SUMMARY_ITERATION_PARENT "RMAN-SUMMARY-LOGS"
+#define SUMMARY_FILENAME "summary.log"
 #define ITERATION_ARGS_FILE "PROGRAM-ARGUMENTS"
 #define ITERATION_STRING_LEN 128
 #define OLDLOG_PREALLOC 16  // pre-allocate space for 16 logfiles in the oldlogs hash table ( double from there, as needed )
@@ -111,8 +112,9 @@ typedef struct rmanstate_struct {
    FILE* summarylog;
 
    // arg reference vals
-   char        execprev;
+   char        quotas;
    char        iteration[ITERATION_STRING_LEN];
+   char*       execprevroot;
    char*       logroot;
    char*       preservelogtgt;
 } rmanstate;
@@ -193,6 +195,103 @@ void outputinfo( FILE* output, marfs_ns* ns, streamwalker_report* report , opera
    }
    fflush( output );
    return;
+}
+
+int output_program_args( rmanstate* rman ) {
+   // start with marfs config version ( config changes could seriously break an attempt to re-execute this later )
+   if ( fprintf( rman->summarylog, "%s\n", rman->config->version ) < 1 ) {
+      fprintf( stderr, "ERROR: Failed to output config version to summary log\n" );
+      return -1;
+   }
+   // output operation types and threshold values
+   if ( rman->quotas  &&  fprintf( rman->summarylog, "QUOTAS\n" ) < 1 ) {
+      fprintf( stderr, "ERROR: Failed to output quota flag to summary log\n" );
+      return -1;
+   }
+   if ( rman->gstate.gcthreshold  &&
+        fprintf( rman->summarylog, "GC=%llu\n", (unsigned long long) rman->gstate.gcthreshold ) < 1 ) {
+      fprintf( stderr, "ERROR: Failed to output GC threshold to summary log\n" );
+      return -1;
+   }
+   if ( rman->gstate.repackthreshold  &&
+        fprintf( rman->summarylog, "REPACK=%llu\n", (unsigned long long) rman->gstate.repackthreshold ) < 1 ) {
+      fprintf( stderr, "ERROR: Failed to output REPACK threshold to summary log\n" );
+      return -1;
+   }
+   if ( rman->gstate.rebuildthreshold  &&
+        fprintf( rman->summarylog, "REBUILD=%llu\n", (unsigned long long) rman->gstate.rebuildthreshold ) < 1 ) {
+      fprintf( stderr, "ERROR: Failed to output REBUILD threshold to summary log\n" );
+      return -1;
+   }
+   if ( fprintf( rman->summarylog, "\n" ) < 1 ) {
+      fprintf( stderr, "ERROR: Failed to output header separator summary log\n" );
+      return -1;
+   }
+   return 0;
+}
+
+int parse_program_args( rmanstate* rman, FILE* inputsummary ) {
+   // parse in a verify the config version
+   char* readline = NULL;
+   size_t linelen = 0;
+   ssize_t strlen = getline( &(readline), &(linelen), inputsummary );
+   if ( strlen < 1 ) {
+      fprintf( stderr, "ERROR: Failed to read MarFS config version string from previous run's summary log\n" );
+      return -1;
+   }
+   if ( strncmp( readline, rman->config->version, strlen - 1 ) ) {
+      fprintf( stderr, "ERROR: Previous run is associated with a different MarFS config version: \"%s\"\n", readline );
+      free( readline );
+      return -1;
+   }
+   // parse in operation threshold values and set our state to match
+   while ( (strlen = getline( &(readline), &(linelen), inputsummary )) > 1 ) {
+      if ( strncmp( readline, "QUOTAS", strlen ) == 0 ) {
+         fprintf( stderr, "WARNING: Ignoring quota processing for execution of previous run\n" );
+      }
+      else {
+         // look for an '=' char
+         char* parse = readline;
+         while ( *parse != '=' ) {
+            if ( *parse == '\0' ) {
+               fprintf( stderr, "ERROR: Failed to parse previous run's operation info ( \"%s\" )\n", readline );
+               free( readline );
+               return -1;
+            }
+         }
+         *parse = '\0';
+         parse++;
+         // parse in the numeric value
+         char* endptr = NULL;
+         unsigned long long parseval = strtoull( parse, &(endptr), 10 );
+         if ( endptr == NULL  ||  *endptr != '\n'  ||  parseval == ULLONG_MAX ) {
+            fprintf( stderr, "ERROR: Failed to parse previous run's \"%s\" operation threshold: \"%s\"\n", readline, parse );
+            free( readline );
+            return -1;
+         }
+         // populate the appropriate value, based on string header
+         if ( strcmp( readline, "GC" ) == 0 ) {
+            rman->gstate.gcthreshold = (time_t)parseval;
+         }
+         else if ( strcmp( readline, "REPACK" ) == 0 ) {
+            rman->gstate.repackthreshold = (time_t)parseval;
+         }
+         else if ( strcmp( readline, "REBUILD" ) == 0 ) {
+            rman->gstate.rebuildthreshold = (time_t)parseval;
+         }
+         else {
+            fprintf( stderr, "ERROR: Encountered unrecognized operation type in log of previous run: \"%s\"\n", readline );
+            free( readline );
+            return -1;
+         }
+      }
+   }
+   if ( strlen < 1 ) {
+      fprintf( stderr, "ERROR: Failed to read operation info from previous run's logfile\n" );
+      return -1;
+   }
+   free( readline ); // done with this string allocation
+   return 0;
 }
 
 /**
@@ -378,7 +477,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
    loginfo* linfo = NULL; // for caching a target location for new log request info
    while ( logdepth ) {
       if ( logdepth == 1 ) { // identify the iteration to tgt
-         if ( rman->execprev ) {
+         if ( rman->execprevroot ) {
             // check for potential exit
             if ( dirlist[0] == NULL ) {
                LOG( LOG_INFO, "Preparing to exit, after completing scan of prevexec iteration: \"%s/%s\"\n", scanroot, rman->iteration );
@@ -588,7 +687,9 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          }
       }
       // identify the path of the rlog
-      char* rlogpath = resourcelog_genlogpath( 0, rman->logroot, request->iteration,
+      const char* tmplogroot = rman->logroot;
+      if ( rman->execprevroot ) { tmplogroot = rman->execprevroot; }
+      char* rlogpath = resourcelog_genlogpath( 0, tmplogroot, request->iteration,
                                                   rman->nslist[request->nsindex], request->ranknum );
       if ( rlogpath == NULL ) {
          LOG( LOG_ERR, "Failed to generate logpath for iteration \"%s\" ranknum \"%s\"\n",
@@ -598,7 +699,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          return -1;
       }
       // determine what we're actually doing with this logfile
-      if ( rman->execprev ) {
+      if ( rman->execprevroot ) {
          // we are using the rlog as an input
          if ( resourceinput_setlog( &(rman->gstate.rinput), rlogpath ) ) {
             LOG( LOG_ERR, "Failed to update rank %zu input to logfile \"%s\"\n", rman->ranknum, rlogpath );
@@ -735,6 +836,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          response->report.rpckbytes   += tstate->report.rpckbytes;
          response->report.rbldobjs    += tstate->report.rbldobjs;
          response->report.rbldbytes   += tstate->report.rbldbytes;
+         free( tstate );
       }
       if ( retval ) {
          LOG( LOG_ERR, "Failed to collect thread states during completion of work on NS \"%s\"\n",
@@ -870,39 +972,39 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          // output all gathered info, prior to possible log deletion
          outputinfo( rman->summarylog, rman->nslist[response->request.nsindex], &(response->report) , &(response->summary) );
       }
-      // check if the manager needs to do any log cleanup
-      if ( response->errorlog  ||  !(rman->execprev) ) {
-         // identify the output log of the transmitting rank
-         char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration,
-                                                    rman->nslist[response->request.nsindex], ranknum );
-         if ( outlogpath == NULL ) {
-            fprintf( stderr, "ERROR: Failed to identify the output log path of Rank %zu for NS \"%s\"\n",
+      // identify the output log of the transmitting rank
+      char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration,
+                                                 rman->nslist[response->request.nsindex], ranknum );
+      if ( outlogpath == NULL ) {
+         fprintf( stderr, "ERROR: Failed to identify the output log path of Rank %zu for NS \"%s\"\n",
+                  ranknum, rman->nslist[response->request.nsindex]->idstr );
+         rman->fatalerror = 1;
+         return -1;
+      }
+      // potentially duplicate the logfile to a final location
+      if ( rman->preservelogtgt ) {
+         char* preslogpath = resourcelog_genlogpath( 1, rman->preservelogtgt, rman->iteration,
+                                                     rman->nslist[response->request.nsindex], ranknum );
+         if ( preslogpath == NULL ) {
+            fprintf( stderr, "ERROR: Failed to identify the preserve log path of Rank %zu for NS \"%s\"\n",
                      ranknum, rman->nslist[response->request.nsindex]->idstr );
+            free( outlogpath );
             rman->fatalerror = 1;
             return -1;
          }
-         // potentially duplicate the logfile to a final location
-         if ( rman->preservelogtgt ) {
-            char* preslogpath = resourcelog_genlogpath( 1, rman->preservelogtgt, rman->iteration,
-                                                        rman->nslist[response->request.nsindex], ranknum );
-            if ( preslogpath == NULL ) {
-               fprintf( stderr, "ERROR: Failed to identify the preserve log path of Rank %zu for NS \"%s\"\n",
-                        ranknum, rman->nslist[response->request.nsindex]->idstr );
-               free( outlogpath );
-               rman->fatalerror = 1;
-               return -1;
-            }
-            // simply use a hardlink for this purpose, no need to make a 'real' duplicate
-            if ( link( outlogpath, preslogpath ) ) {
-               fprintf( stderr, "ERROR: Failed to link logfile \"%s\" to new target path: \"%s\"\n",
-                        outlogpath, preslogpath );
-               free( preslogpath );
-               free( outlogpath );
-               rman->fatalerror = 1;
-               return -1;
-            }
+         // simply use a hardlink for this purpose, no need to make a 'real' duplicate
+         if ( link( outlogpath, preslogpath ) ) {
+            fprintf( stderr, "ERROR: Failed to link logfile \"%s\" to new target path: \"%s\"\n",
+                     outlogpath, preslogpath );
             free( preslogpath );
+            free( outlogpath );
+            rman->fatalerror = 1;
+            return -1;
          }
+         free( preslogpath );
+      }
+      // check if the manager needs to do any log cleanup
+      if ( response->errorlog  ||  !(rman->gstate.dryrun) ) {
          // process the work log
          if ( response->errorlog ) {
             // identify the errorlog output location
@@ -964,8 +1066,8 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
                return -1;
             }
          }
-         free( outlogpath );
       }
+      free( outlogpath );
       // this rank needs work to process, with no preference for NS
       if ( rman->oldlogs ) {
          // start by checking for old resource logs to process
@@ -1232,9 +1334,10 @@ int main(int argc, const char** argv) {
    time_t clthresh = currenttive.tv_nsec - CL_THRESH;
 
    // parse all position-independent arguments
+   char execprev = 0;
    char pr_usage = 0;
    int c;
-   while ((c = getopt(argc, (char* const*)argv, "c:n:rilpdXQGRPCT:L:h")) != -1) {
+   while ((c = getopt(argc, (char* const*)argv, "c:n:ri:lpdXQGRPCT:L:h")) != -1) {
       switch (c) {
       case 'c':
          config_path = optarg;
@@ -1246,7 +1349,12 @@ int main(int argc, const char** argv) {
          recurse = 1;
          break;
       case 'i':
-         rman.iteration = optarg;
+         if ( strlen(optarg) >= ITERATION_STRING_LEN ) {
+            fprintf( stderr, "ERROR: Iteration string exceeds allocated length %u: \"%s\"\n", ITERATION_STRING_LEN, optarg );
+            errno = ENAMETOOLONG;
+            return -1;
+         }
+         snprintf( rman.iteration, ITERATION_STRING_LEN, "%s", optarg );
          break;
       case 'l':
          rman.logroot = optarg;
@@ -1258,7 +1366,7 @@ int main(int argc, const char** argv) {
          rman.gstate.dryrun = 1;
          break;
       case 'X':
-         rman.gstate.execprev = 1;
+         execprev = 1;
          break;
       case 'Q':
          rman.quotas = 1;
@@ -1288,6 +1396,106 @@ int main(int argc, const char** argv) {
    if ( pr_usage ) {
       print_usage_info();
       return 0;
+   }
+
+   // validate arguments
+   if ( execprev ) {
+      // check if we were incorrectly passed any args
+      if ( rman.iteration[0] == '\0' ) {
+         fprintf( stderr, "ERROR: Cannot pick up a previous dry run iteration ( '-X' ) without also being given that iteration string ( '-i' )\n" );
+         return -1;
+      }
+      if ( rman.gstate.thresh.gcthreshold  ||  rman.gstate.thresh.rebuildthreshold  ||
+           rman.gstate.thresh.repackthreshold  ||  rman.gstate.thresh.cleanupthreshold ) {
+      }
+      // identify the log root we will be pulling from
+      char* baseroot = rman.logroot;
+      if ( baseroot == NULL ) { baseroot = DEFAULT_LOG_ROOT; }
+      rman.execprevroot = malloc( sizeof(char) * ( strlen(baseroot) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1 +
+                                                   strlen( rman.iteration ) + 1 + strlen( ITERATION_ARGS_FILE ) ) );
+      if ( rman.execprevroot ) {
+         fprintf( stderr, "ERROR: Failed to allocate execprev root path\n" );
+         return -1;
+      }
+      // read in original run args
+      // TODO
+      return -1;
+   }
+   char* newroot = NULL;
+   if ( rman.logroot ) {
+      if ( rman.dryrun ) {
+         newroot = malloc( sizeof(char) * ( strlen(rman.logroot) + 1 + strlen( RECORD_ITERATION_PARENT ) ) );
+         if ( newroot == NULL ) {
+            fprintf( stderr, "ERROR: Failed to allocate log root path string\n" );
+            return -1;
+         }
+         snprintf( newroot, strlen(rman.logroot) + 1 + strlen( RECORD_ITERATION_PARENT ), "%s/%s",
+                   rman.logroot, RECORD_ITERATION_PARENT );
+      }
+      else {
+         newroot = malloc( sizeof(char) * ( strlen(rman.logroot) + 1 + strlen( MODIFY_ITERATION_PARENT ) ) );
+         if ( newroot == NULL ) {
+            fprintf( stderr, "ERROR: Failed to allocate log root path string\n" );
+            return -1;
+         }
+         snprintf( newroot, strlen(rman.logroot) + 1 + strlen( MODIFY_ITERATION_PARENT ), "%s/%s",
+                   rman.logroot, MODIFY_ITERATION_PARENT );
+      }
+   }
+   else {
+      if ( rman.dryrun ) {
+         newroot = malloc( sizeof(char) * ( strlen(DEFAULT_LOG_ROOT) + 1 + strlen( RECORD_ITERATION_PARENT ) ) );
+         if ( newroot == NULL ) {
+            fprintf( stderr, "ERROR: Failed to allocate log root path string\n" );
+            return -1;
+         }
+         snprintf( newroot, strlen(DEFAULT_LOG_ROOT) + 1 + strlen( RECORD_ITERATION_PARENT ), "%s/%s",
+                   DEFAULT_LOG_ROOT, RECORD_ITERATION_PARENT );
+      }
+      else {
+         newroot = malloc( sizeof(char) * ( strlen(DEFAULT_LOG_ROOT) + 1 + strlen( MODIFY_ITERATION_PARENT ) ) );
+         if ( newroot == NULL ) {
+            fprintf( stderr, "ERROR: Failed to allocate log root path string\n" );
+            return -1;
+         }
+         snprintf( newroot, strlen(DEFAULT_LOG_ROOT) + 1 + strlen( MODIFY_ITERATION_PARENT ), "%s/%s",
+                   DEFAULT_LOG_ROOT, MODIFY_ITERATION_PARENT );
+      }
+   }
+   errno = 0;
+   if ( mkdir( newroot, 0700 )  &&  errno != EEXIST ) {
+      fprintf( stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", newroot );
+      free( newroot );
+      return -1;
+   }
+   rman.logroot = newroot;
+   if ( rman.preservelogtgt ) {
+      if ( rman.dryrun ) {
+         newpresroot = malloc( sizeof(char) * ( strlen(rman.preservelogtgt) + 1 + strlen( RECORD_ITERATION_PARENT ) ) );
+         if ( newpresroot == NULL ) {
+            fprintf( stderr, "ERROR: Failed to allocate log preservation path string\n" );
+            return -1;
+         }
+         snprintf( newpresroot, strlen(rman.preservelogtgt) + 1 + strlen( RECORD_ITERATION_PARENT ), "%s/%s",
+                   rman.preservelogtgt, RECORD_ITERATION_PARENT );
+      }
+      else {
+         newpresroot = malloc( sizeof(char) * ( strlen(rman.preservelogtgt) + 1 + strlen( MODIFY_ITERATION_PARENT ) ) );
+         if ( newpresroot == NULL ) {
+            fprintf( stderr, "ERROR: Failed to allocate log preservation path string\n" );
+            return -1;
+         }
+         snprintf( newpresroot, strlen(rman.preservelogtgt) + 1 + strlen( MODIFY_ITERATION_PARENT ), "%s/%s",
+                   rman.preservelogtgt, MODIFY_ITERATION_PARENT );
+      }
+      errno = 0;
+      if ( mkdir( newpresroot, 0700 )  &&  errno != EEXIST ) {
+         fprintf( stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", newpresroot );
+         free( newpresroot );
+         return -1;
+      }
+      rman.preservelogtgt = newpresroot;
+      free( newpresroot );
    }
 
    // substitute in appropriate threshold values, if specified
@@ -1408,11 +1616,122 @@ int main(int argc, const char** argv) {
       config_term( rman->config );
       return -1;
    }
-   // TODO complete allocation of required state elements
+   // complete allocation of required state elements
+   rman.distributed = calloc( sizeof(size_t), rman.nscount );
+   if ( rman.distributed == NULL ) {
+      fprintf( stderr, "ERROR: Failed to allocate a 'distributed' list of length %zu\n", rman.nscount );
+      free( rman.nslist );
+      config_term( rman->config );
+      return -1;
+   }
+   rman.terminatedworkers = calloc( sizeof(char), rman.totalranks );
+   if ( rman.terminatedworkers == NULL ) {
+      fprintf( stderr, "ERROR: Failed to allocate a 'terminatedworkers' list of length %zu\n", rman.totalranks );
+      free( rman.distributed );
+      free( rman.nslist );
+      config_term( rman->config );
+      return -1;
+   }
+   rman.walkreport = calloc( sizeof( struct streamwalker_report_struct ), rman.nscount );
+   if ( rman.walkreport == NULL ) {
+      fprintf( stderr, "ERROR: Failed to allocate a 'walkreport' list of length %zu\n", rman.nscount );
+      free( rman.terminatedworkers );
+      free( rman.distributed );
+      free( rman.nslist );
+      config_term( rman->config );
+      return -1;
+   }
+   rman.logsummary = calloc( sizeof( struct operation_summary_struct ), rman.nscount );
+   if ( rman.logsummary == NULL ) {
+      fprintf( stderr, "ERROR: Failed to allocate a 'logsummary' list of length %zu\n", rman.nscount );
+      free( rman.walkreport );
+      free( rman.terminatedworkers );
+      free( rman.distributed );
+      free( rman.nslist );
+      config_term( rman->config );
+      return -1;
+   }
 
-
-   // potentially output run info
    if ( rman.ranknum == 0 ) {
+      // open our summary log
+      size_t alloclen = strlen( rman.logroot ) + 1 + strlen( rman.iteration ) + 1 + strlen( "summary.log" ) + 1;
+      char* sumlogpath = malloc( sizeof(char) * strlen );
+      if ( sumlogpath == NULL ) {
+         fprintf( stderr, "ERROR: Failed to allocate summary logfile path\n" );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman->config );
+         return -1;
+      }
+      size_t printres = snprintf( sumlogpath, alloclen, "%s/%s", rman.logroot, SUMMARY_ITERATION_PARENT );
+      errno = 0;
+      if ( mkdir( sumlogpath, 0700 )  &&  errno != EEXIST ) {
+         fprintf( stderr, "ERROR: Failed to create summary log parent dir: \"%s\"\n", sumlogpath );
+         free( sumlogpath );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman->config );
+         return -1;
+      }
+      errno = 0;
+      printres += snprintf( sumlogpath + printres, alloclen - printres, "/%s", rman.iteration );
+      if ( mkdir( sumlogpath, 0700 )  &&  errno != EEXIST ) {
+         fprintf( stderr, "ERROR: Failed to create summary log parent dir: \"%s\"\n", sumlogpath );
+         free( sumlogpath );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman->config );
+         return -1;
+      }
+      printres += snprintf( sumlogpath + printres, alloclen - printres, "/summary.log" );
+      int sumlog = open( sumlogpath, O_WRONLY | O_CREAT | O_EXCL, 0700 );
+      if ( sumlog < 0 ) {
+         fprintf( stderr, "ERROR: Failed to open summary logfile: \"%s\"\n", sumlogpath );
+         free( sumlogpath );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman->config );
+         return -1;
+      }
+      rman.summarylog = fdopen( sumlog, "w" );
+      if ( rman.summarylog == NULL ) {
+         fprintf( stderr, "ERROR: Failed to convert summary logfile to file stream: \"%s\"\n", sumlogpath );
+         free( sumlogpath );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman->config );
+         return -1;
+      }
+      // output our program arguments to the summary file
+      if ( output_program_args( rman ) ) {
+         fprintf( stderr, "ERROR: Failed to output program arguments to summary log: \"%s\"\n", sumlogpath );
+         free( sumlogpath );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman->config );
+         return -1;
+      }
+      free( sumlogpath );
+
+      // print out run info
       printf( "Processing %zu Total Namespaces ( %sTarget NS \"%s\" )\n",
               rman.nscount, (recurse) ? "Recursing Below " : "", *(rman.nslist)->idstr );
    }

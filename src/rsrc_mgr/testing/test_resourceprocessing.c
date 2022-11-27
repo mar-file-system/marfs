@@ -1833,7 +1833,7 @@ int main(int argc, char **argv)
 
 
    // cleanup our resourcelog
-   if ( resourcelog_term( &(logfile), NULL, NULL ) ) {
+   if ( resourcelog_term( &(logfile), NULL, 1 ) ) {
       printf( "failed to terminate resourcelog\n" );
       return -1;
    }
