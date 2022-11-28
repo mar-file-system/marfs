@@ -1238,8 +1238,15 @@ int managerbehavior( rmanstate* rman ) {
    // loop until all workers have terminated
    char workersrunning = 1;
    while ( workersrunning ) {
-      // TODO begin by getting a response from a worker via MPI
+      // begin by getting a response from a worker via MPI
       if ( rman->totalranks > 1 ) {
+         MPI_Status msgstatus;
+         if ( MPI_Recv( &(response), sizeof( struct workresponse_struct), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &(msgstatus) ) ) {
+            LOG( LOG_ERR, "Failed to recieve a response\n" );
+            fprintf( stderr, "ERROR: Failed to receive an MPI response message\n" );
+            return -1;
+         }
+         respondingrank = msgstatus.MPI_SOURCE;
       }
       // generate an appropriate request, based on response
       int handleres = handleresponse( rman, respondingrank, &(response), &(request) );
@@ -1250,7 +1257,12 @@ int managerbehavior( rmanstate* rman ) {
       // send out a new request, if appropriate
       if ( handleres ) {
          if ( rman->totalranks > 1 ) {
-            // TODO send out the request via MPI to the responding rank
+            // send out the request via MPI to the responding rank
+            if ( MPI_Send( &(request), sizeof(struct workrequest_struct), MPI_BYTE, respondingrank, 0, MPI_COMM_WORLD ) ) {
+               LOG( LOG_ERR, "Failed to send a request\n" );
+               fprintf( stderr, "ERROR: Failed to send an MPI request message\n" );
+               return -1;
+            }
          }
          else {
             // just process the new request ourself
@@ -1267,6 +1279,46 @@ int managerbehavior( rmanstate* rman ) {
       for ( ; windex < rman->totalranks; windex++ ) {
          if ( rman->terminatedworkers[windex] == 0 ) { workersrunning = 1; break; }
       }
+   }
+   // loop over all namespaces
+   size_t nsindex = 0;
+   for ( ; nsindex < rman->nscount; nsindex++ ) {
+      marfs_ns* curns = rman->nslist[nsindex];
+      // potentially set NS quota values
+      if ( rman->quotas ) {
+         // update position value
+         char* nspath = NULL;
+         if ( config_nsinfo( curns->idstr, NULL, &(nspath) ) ) {
+            LOG( LOG_ERR, "Failed to identify NS path of NS \"%s\"\n", curns->idstr );
+            fprintf( stderr, "ERROR: Failed to identify NS path of NS \"%s\"\n", curns->idstr );
+            return -1;
+         }
+         if ( config_traverse( rman->config, &(rman->gstate.pos), &(nspath), 0 ) ) {
+            LOG( LOG_ERR, "Failed to traverse config to new NS path: \"%s\"\n", nspath );
+            fprintf( stderr, "ERROR: Failed to traverse config to new NS path: \"%s\"\n", nspath );
+            free( nspath );
+            return -1;
+         }
+         free( nspath );
+         if ( rman->gstate.pos.ctxt == NULL  &&  config_fortifyposition( &(rman->gstate.pos) ) ) {
+            LOG( LOG_ERR, "Failed to fortify position for new NS: \"%s\"\n", curns->idstr );
+            fprintf( stderr, "ERROR: Failed to fortify position for new NS: \"%s\"\n", curns->idstr );
+            config_abandonposition( &(rman->gstate.pos) );
+            return -1;
+         }
+         // update quota values based on report totals
+         MDAL nsmdal = curns->prepo->metascheme.mdal;
+         if ( nsmdal->setinodeusage( rman->gstate.pos.ctxt, rman->walkreport[nsindex].fileusage ) ) {
+            fprintf( stderr, "WARNING: Failed to set inode usage for NS \"%s\"\n", curns->idstr );
+         }
+         if ( nsmdal->setdatausage( rman->gstate.pos.ctxt, rman->walkreport[nsindex].byteusage ) ) {
+            fprintf( stderr, "WARNING: Failed to set data usage for NS \"%s\"\n", curns->idstr );
+         }
+         config_abandonposition( &(rman->gstate.pos) );
+      }
+      // print out NS info
+      outputinfo( rman->summarylog, curns, rman->walkreport + nsindex, rman->logsummary + nsindex );
+      outputinfo( stdout, curns, rman->walkreport + nsindex, rman->logsummary + nsindex );
    }
    // all work should now be complete
    return 0;
@@ -1285,19 +1337,35 @@ int workerbehavior( rmanstate* rman ) {
    bzero( &(request), sizeof( struct workrequest_struct ) );
    // we need to fake a 'startup' response
    response.request.type = COMPLETE_WORK;
-   // TODO begin by sending a response
+   // begin by sending a response
+   if ( MPI_Send( &(response), sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD ) ) {
+      LOG( LOG_ERR, "Failed to send initial 'dummy' response\n" );
+      fprintf( stderr, "ERROR: Failed to send an initial MPI response message\n" );
+      return -1;
+   }
    // loop until we process a TERMINATE request
    int handleres = 1;
    while ( handleres ) {
-      // TODO wait for a new request
+      // wait for a new request
+      if ( MPI_Recv( &(request), sizeof( struct workrequest_struct), MPI_BYTE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE ) ) {
+         LOG( LOG_ERR, "Failed to recieve a new request\n" );
+         fprintf( stderr, "ERROR: Failed to receive an MPI request message\n" );
+         return -1;
+      }
       // generate an appropriate response
       if ( (handleres = handlerequest( rman, &(request), &(response) )) < 0 ) {
          LOG( LOG_ERR, "Fatal error detected during request processing\n",
                   response->errorstr );
-         // TODO send out our response anyway, so the manger prints our error message
+         // send out our response anyway, so the manger prints our error message
+         MPI_Send( &(response), sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD );
          return -1;
       }
-      // TODO send out our response
+      // send out our response
+      if ( MPI_Send( &(response), sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD ) ) {
+         LOG( LOG_ERR, "Failed to send a response\n" );
+         fprintf( stderr, "ERROR: Failed to send an MPI response message\n" );
+         return -1;
+      }
    }
    // all work should now be complete
    return 0;
@@ -1411,15 +1479,13 @@ int main(int argc, const char** argv) {
       // identify the log root we will be pulling from
       char* baseroot = rman.logroot;
       if ( baseroot == NULL ) { baseroot = DEFAULT_LOG_ROOT; }
-      rman.execprevroot = malloc( sizeof(char) * ( strlen(baseroot) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1 +
-                                                   strlen( rman.iteration ) + 1 + strlen( ITERATION_ARGS_FILE ) ) );
-      if ( rman.execprevroot ) {
+      size_t alloclen = strlen(baseroot) + 1 + strlen( RECORD_ITERATION_PARENT );
+      rman.execprevroot = malloc( sizeof(char) * alloclen );
+      if ( rman.execprevroot == NULL ) {
          fprintf( stderr, "ERROR: Failed to allocate execprev root path\n" );
          return -1;
       }
-      // read in original run args
-      // TODO
-      return -1;
+      snprintf( rman.execprevroot, alloclen, "%s/%s", baseroot, RECORD_ITERATION_PARENT );
    }
    char* newroot = NULL;
    if ( rman.logroot ) {
@@ -1652,6 +1718,51 @@ int main(int argc, const char** argv) {
       return -1;
    }
 
+   // check for previous run execution
+   if ( rman.execprevroot ) {
+      // open the summary log of that run
+      size_t alloclen = strlen(rman.execprevroot) + 1 + strlen( rman.iteration ) + 1 + strlen( "summary.log" ) + 1;
+      char* sumlogpath = malloc( sizeof(char) * strlen );
+      if ( sumlogpath == NULL ) {
+         fprintf( stderr, "ERROR: Failed to allocate summary logfile path\n" );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman->config );
+         return -1;
+      }
+      snprintf( sumlogpath, alloclen, "%s/%s/%s", rman.execprevroot, rman.iteration, "summary.log" );
+      FILE* sumlog = fopen( sumlogpath, "r" );
+      if ( sumlog == NULL ) {
+         fprintf( stderr, "ERROR: Failed to open previous run's summary log: \"%s\" ( %s )\n", sumlogpath, strerror(errno) );
+         free( sumlogpath );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman->config );
+         return -1;
+      }
+      if ( parse_program_args( &(rman), sumlog ) ) {
+         fprintf( stderr, "ERROR: Failed to parse previous run info from summary log: \"%s\"\n", sumlogpath );
+         fclose( sumlog );
+         free( sumlogpath );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman->config );
+         return -1;
+      }
+      fclose( sumlog );
+      free( sumlogpath );
+   }
+
+   // rank zero needs to output our summary header
    if ( rman.ranknum == 0 ) {
       // open our summary log
       size_t alloclen = strlen( rman.logroot ) + 1 + strlen( rman.iteration ) + 1 + strlen( "summary.log" ) + 1;
@@ -1736,6 +1847,25 @@ int main(int argc, const char** argv) {
               rman.nscount, (recurse) ? "Recursing Below " : "", *(rman.nslist)->idstr );
    }
 
+   // actually perform core behavior loops
+   int bres;
+   if ( rman.ranknum == 0 ) {
+      bres = managerbehavior( &(rman) );
+   }
+   else {
+      bres = workerbehavior( &(rman) );
+   }
+   if ( bres ) {
+      cleanupstate( &(rman), 1 );
+   }
+   else {
+      bres = (int)rman.fatalerror;
+      cleanupstate( &(rman), 0 );
+   }
+
+   // final cleanup and termination
+   MPI_Finalize();
+   return bres;
 }
 
 
