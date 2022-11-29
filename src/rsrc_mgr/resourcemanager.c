@@ -88,6 +88,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up ( failed repacks, old logs, etc. )
                           // Default to 1 day ago
 
+#define DEFAULT_PRODUCER_COUNT 16
+#define DEFAULT_CONSUMER_COUNT 32
 #define DEFAULT_LOG_ROOT "/var/log/marfs-rman"
 #define MODIFY_ITERATION_PARENT "RMAN-MODIFY-RUNS"
 #define RECORD_ITERATION_PARENT "RMAN-RECORD-RUNS"
@@ -188,7 +190,7 @@ int error_only_filter( const opinfo* op ) {
 void outputinfo( FILE* output, marfs_ns* ns, streamwalker_report* report , operation_summary* summary ) {
    char userout = 0;
    if ( output == stdout ) { userout = 1; } // limit info output directly to the user
-   fprintf( output, "\nNamespace \"%s\"%s --\n", ns->idstr, (userout) ? " Totals" : " Incremental Values" );
+   fprintf( output, "Namespace \"%s\"%s --\n", ns->idstr, (userout) ? " Totals" : " Incremental Values" );
    fprintf( output, "   Walk Report --\n" );
    if ( !(userout) || report->fileusage )   { fprintf( output, "      File Usage = %zu\n", report->fileusage ); }
    if ( !(userout) || report->byteusage )   { fprintf( output, "      Byte Usage = %zu\n", report->byteusage ); }
@@ -221,6 +223,7 @@ void outputinfo( FILE* output, marfs_ns* ns, streamwalker_report* report , opera
       fprintf( output, "      File Repack Count = %zu ( %zu Failures )\n",
                summary->repack_count, summary->repack_failures );
    }
+   fprintf( output, "\n" );
    fflush( output );
    return;
 }
@@ -331,13 +334,20 @@ int parse_program_args( rmanstate* rman, FILE* inputsummary ) {
  */
 int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    // update position value
-   char* nspath = NULL;
-   if ( config_nsinfo( ns->idstr, NULL, &(nspath) ) ) {
+   if ( config_establishposition( &(rman->gstate.pos), rman->config ) ) {
+      LOG( LOG_ERR, "Failed to establish a root NS position\n" );
+      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to establish a root NS position\n" );
+      return -1;
+   }
+   char* tmpnspath = NULL;
+   if ( config_nsinfo( ns->idstr, NULL, &(tmpnspath) ) ) {
       LOG( LOG_ERR, "Failed to identify NS path of NS \"%s\"\n", ns->idstr );
       snprintf( response->errorstr, MAX_ERROR_BUFFER,
                 "Failed to identify NS path of NS \"%s\"\n", ns->idstr );
       return -1;
    }
+   char* nspath = strdup( tmpnspath+1 ); // strip off leading '/', to get a relative NS path
+   free( tmpnspath );
    if ( config_traverse( rman->config, &(rman->gstate.pos), &(nspath), 0 ) ) {
       LOG( LOG_ERR, "Failed to traverse config to new NS path: \"%s\"\n", nspath );
       snprintf( response->errorstr, MAX_ERROR_BUFFER,
@@ -413,6 +423,19 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    if ( (rman->tq = tq_init( &(tqopts) )) == NULL ) {
       LOG( LOG_ERR, "Failed to start ThreadQueue for NS \"%s\"\n", ns->idstr );
       snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to start ThreadQueue for NS \"%s\"\n", ns->idstr );
+      repackstreamer_abort( rman->gstate.rpst );
+      rman->gstate.rpst = NULL;
+      resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
+      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_term( &(rman->gstate.rinput) );
+      config_abandonposition( &(rman->gstate.pos) );
+      return -1;
+   }
+   // ensure all threads have initialized
+   if ( tq_check_init( rman->tq ) ) {
+      LOG( LOG_ERR, "Some threads failed to initialize for NS \"%s\"\n", ns->idstr );
+      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Some threads failed to initialize for NS \"%s\"\n", ns->idstr );
+      tq_set_flags( rman->tq, TQ_ABORT );
       repackstreamer_abort( rman->gstate.rpst );
       rman->gstate.rpst = NULL;
       resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
@@ -500,6 +523,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
       LOG( LOG_ERR, "Failed to open loging root \"%s\" for scanning\n", scanroot );
       return -1;
    }
+   size_t logcount = 0; // per iteration log count
    size_t logdepth = 1;
    loginfo* linfo = NULL; // for caching a target location for new log request info
    while ( logdepth ) {
@@ -557,7 +581,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             }
          }
          // open the dir of the matching iteration
-         int newfd = openat( dirfd( dirlist[0] ), request.iteration, O_DIRECTORY | O_RDWR, 0 );
+         int newfd = openat( dirfd( dirlist[0] ), request.iteration, O_DIRECTORY | O_RDONLY, 0 );
          if ( newfd < 0 ) {
             LOG( LOG_ERR, "Failed to open log root for iteration: \"%s\" (%s)\n", request.iteration, strerror(errno) );
             return -1;
@@ -571,7 +595,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
          }
          logdepth++;
          LOG( LOG_INFO, "Entered iteration dir: \"%s\"\n", request.iteration );
-         printf( "This run will incorporate logfiles from: \"%s/%s\"\n", scanroot, request.iteration );
+         logcount = 0;
       }
       else if ( logdepth == 2 ) { // identify the NS subdirs
          // scan through the iteration dir, looking for namespaces
@@ -581,6 +605,8 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
          while ( (entry = readdir( dirlist[1] )) ) {
             // ignore '.'-prefixed entries
             if ( strncmp( entry->d_name, ".", 1 ) == 0 ) { continue; }
+            // ignore the summary log
+            if ( strcmp( entry->d_name, "summary.log" ) == 0 ) { continue; }
             // all other entries are assumed to be namespaces
             break;
          }
@@ -596,23 +622,35 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             request.nsindex = 0;
             logdepth--;
             LOG( LOG_INFO, "Finished processing iteration dir: \"%s\"\n", request.iteration );
+            if ( logcount ) {
+               printf( "This run will incorporate %zu logfiles from: \"%s/%s\"\n", logcount, scanroot, request.iteration );
+            }
             continue;
          }
          // check what index this NS corresponds to
+         char* oldnsid = strdup( entry->d_name );
+         if ( oldnsid == NULL ) {
+            LOG( LOG_ERR, "Failed to duplicate dirent name: \"%s\"\n", entry->d_name );
+            return -1;
+         }
+         char* tmpparse = oldnsid;
+         while ( *tmpparse != '\0' ) { if ( *tmpparse == '#' ) { *tmpparse = '/'; } tmpparse++; }
          HASH_NODE* lnode = NULL;
-         if ( hash_lookup( rman->oldlogs, entry->d_name, &(lnode) ) ) {
+         if ( hash_lookup( rman->oldlogs, oldnsid, &(lnode) ) ) {
             // if we can't map this to a NS entry, just ignore it
             fprintf( stderr, "WARNING: Encountered resource logs from a previoius iteration ( \"%s\" )\n"
                              "         associated with an unrecognized namespace ( \"%s\" ).\n"
                              "         These logfiles will be ignored by the current run.\n"
                              "         See \"%s/%s/%s\"\n", request.iteration, entry->d_name, scanroot, request.iteration, entry->d_name );
+            free( oldnsid );
          }
          else {
+            free( oldnsid );
             // pull the NS index value from the corresponding hash node
             linfo = (loginfo*)( lnode->content );
             request.nsindex = linfo->nsindex;
             // open the corresponding subdir and traverse into it
-            int newfd = openat( dirfd( dirlist[1] ), entry->d_name, O_DIRECTORY | O_RDWR, 0 );
+            int newfd = openat( dirfd( dirlist[1] ), entry->d_name, O_DIRECTORY | O_RDONLY, 0 );
             if ( newfd < 0 ) {
                LOG( LOG_ERR, "Failed to open log NS subdir: \"%s/%s/%s\" (%s)\n", scanroot, request.iteration, entry->d_name, strerror(errno) );
                return -1;
@@ -678,9 +716,12 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             }
             linfo->requests = newrequests;
          }
+         LOG( LOG_INFO, "Detected old logfile for iteration \"%s\", NS \"%s\", Rank %zu\n",
+              request.iteration, (rman->nslist[request.nsindex])->idstr, request.ranknum );
          *(linfo->requests + linfo->logcount) = request; // NOTE -- I believe this assignment is safe,
                                                          //         because .iteration is a static char array
          linfo->logcount++;
+         logcount++;
       }
    }
    LOG( LOG_INFO, "Finished scan of old resource logs below \"%s\"\n", scanroot );
@@ -901,6 +942,13 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          return -1;
       }
       rman->gstate.rpst = NULL;
+      const char* nsidstr = rman->gstate.pos.ns->idstr;
+      if ( config_abandonposition( &(rman->gstate.pos) ) ) {
+         LOG( LOG_ERR, "Failed to abandon marfs position during completion of NS \"%s\"\n", nsidstr );
+         snprintf( response->errorstr, MAX_ERROR_BUFFER,
+                   "Failed to abandon marfs position during completion of NS \"%s\"\n", nsidstr );
+         return -1;
+      }
       if ( threaderror ) {
          snprintf( response->errorstr, MAX_ERROR_BUFFER, "ThreadQueue had unexpected termination flags\n" );
          return -1;
@@ -971,7 +1019,9 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
       return 0;
    }
    else if ( response->request.type == COMPLETE_WORK ) {
-      printf( "  Rank %zu completed work on NS \"%s\"\n", ranknum, rman->nslist[response->request.nsindex]->idstr );
+      if ( rman->distributed[response->request.nsindex] ) {
+         printf( "  Rank %zu completed work on NS \"%s\"\n", ranknum, rman->nslist[response->request.nsindex]->idstr );
+      }
       // possibly process info from the rank
       if ( response->haveinfo ) {
          // incorporate walk report
@@ -1033,7 +1083,16 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          free( preslogpath );
       }
       // check if the manager needs to do any log cleanup
-      if ( response->errorlog  ||  !(rman->gstate.dryrun) ) {
+      if ( response->errorlog  ||  ( !(rman->gstate.dryrun)  &&  rman->distributed[response->request.nsindex] ) ) {
+         // open the logfile for read
+         RESOURCELOG ranklog = NULL;
+         if ( resourcelog_init( &(ranklog), outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex] ) ) {
+            fprintf( stderr, "ERROR: Failed to open the output log of Rank %zu for NS \"%s\": \"%s\"\n",
+                     ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
+            free( outlogpath );
+            rman->fatalerror = 1;
+            return -1;
+         }
          // process the work log
          if ( response->errorlog ) {
             // identify the errorlog output location
@@ -1042,20 +1101,12 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
             if ( errlogpath == NULL ) {
                fprintf( stderr, "ERROR: Failed to identify the error log path of Rank %zu for NS \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr );
+               resourcelog_term( &(ranklog), NULL, 0 );
                free( outlogpath );
                rman->fatalerror = 1;
                return -1;
             }
-            // open the logfile for read
-            RESOURCELOG ranklog = NULL;
-            if ( resourcelog_init( &(ranklog), outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex] ) ) {
-               fprintf( stderr, "ERROR: Failed to open the output log of Rank %zu for NS \"%s\": \"%s\"\n",
-                        ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
-               free( errlogpath );
-               free( outlogpath );
-               rman->fatalerror = 1;
-               return -1;
-            }
+
             // open the error log for write
             RESOURCELOG errlog = NULL;
             if ( resourcelog_init( &(errlog), errlogpath, RESOURCE_RECORD_LOG, rman->nslist[response->request.nsindex] ) ) {
@@ -1087,7 +1138,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          }
          else {
             // simply delete the output logfile of this rank
-            if ( unlink( outlogpath ) ) {
+            if ( resourcelog_term( &(ranklog), NULL, 1 ) ) {
                fprintf( stderr, "ERROR: Failed to delete the output log of Rank %zu for NS \"%s\": \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
                free( outlogpath );
@@ -1142,7 +1193,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          size_t nindex = 0;
          for ( ; nindex < ncount; nindex++ ) {
             loginfo* linfo = (loginfo*)( resnode->content );
-            free( linfo->requests );
+            if ( linfo->requests ) { free( linfo->requests ); }
          }
          free( resnode ); // these were allocated in one block, and thus require only one free()
       }
@@ -1198,7 +1249,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
       if ( rman->oldlogs ) {
          // start by checking for old resource logs to process
          HASH_NODE* resnode = NULL;
-         if ( hash_lookup( rman->oldlogs, rman->nslist[response->request.nsindex]->idstr, &(resnode) ) < 1 ) {
+         if ( hash_lookup( rman->oldlogs, rman->nslist[response->request.nsindex]->idstr, &(resnode) ) ) {
             fprintf( stderr, "ERROR: Failure of hash_lookup() when looking for logfiles in NS \"%s\" for rank %zu\n",
                              rman->nslist[response->request.nsindex]->idstr, ranknum );
             rman->fatalerror = 1;
@@ -1321,12 +1372,14 @@ int managerbehavior( rmanstate* rman ) {
       // potentially set NS quota values
       if ( rman->quotas ) {
          // update position value
-         char* nspath = NULL;
-         if ( config_nsinfo( curns->idstr, NULL, &(nspath) ) ) {
+         char* tmpnspath = NULL;
+         if ( config_nsinfo( curns->idstr, NULL, &(tmpnspath) ) ) {
             LOG( LOG_ERR, "Failed to identify NS path of NS \"%s\"\n", curns->idstr );
             fprintf( stderr, "ERROR: Failed to identify NS path of NS \"%s\"\n", curns->idstr );
             return -1;
          }
+         char* nspath = strdup( tmpnspath+1 ); // strip off leading '/', to get a relative NS path
+         free( tmpnspath );
          if ( config_traverse( rman->config, &(rman->gstate.pos), &(nspath), 0 ) ) {
             LOG( LOG_ERR, "Failed to traverse config to new NS path: \"%s\"\n", nspath );
             fprintf( stderr, "ERROR: Failed to traverse config to new NS path: \"%s\"\n", nspath );
@@ -1351,7 +1404,6 @@ int managerbehavior( rmanstate* rman ) {
          config_abandonposition( &(rman->gstate.pos) );
       }
       // print out NS info
-      outputinfo( rman->summarylog, curns, rman->walkreport + nsindex, rman->logsummary + nsindex );
       outputinfo( stdout, curns, rman->walkreport + nsindex, rman->logsummary + nsindex );
    }
    // all work should now be complete
@@ -1421,6 +1473,8 @@ int main(int argc, char** argv) {
    char recurse = 0;
    rmanstate rman;
    bzero( &(rman), sizeof( struct rmanstate_struct ) );
+   rman.gstate.numprodthreads = DEFAULT_PRODUCER_COUNT;
+   rman.gstate.numconsthreads = DEFAULT_CONSUMER_COUNT;
 
    // get the initialization time of the program, to identify thresholds
    struct timeval currenttime;
@@ -1598,6 +1652,12 @@ int main(int argc, char** argv) {
       free( newpresroot );
    }
 
+   // populate an iteration string, if missing
+   if ( rman.iteration[0] == '\0' ) {
+      struct tm* timeinfo = localtime( &(currenttime.tv_sec) );
+      strftime( rman.iteration, ITERATION_STRING_LEN, "%Y-%m-%d-%H:%M:%S", timeinfo );
+   }
+
    // substitute in appropriate threshold values, if specified
    if ( rman.gstate.thresh.gcthreshold ) { rman.gstate.thresh.gcthreshold = gcthresh; }
    if ( rman.gstate.thresh.rebuildthreshold ) {
@@ -1630,7 +1690,11 @@ int main(int argc, char** argv) {
    }
 
    // Identify our target NS
-   marfs_position pos;
+   marfs_position pos = {
+      .ns = NULL,
+      .depth = 0,
+      .ctxt = NULL
+   };
    if ( config_establishposition( &(pos), rman.config ) ) {
       fprintf( stderr, "ERROR: Failed to establish a MarFS root NS position\n" );
       config_term( rman.config );
@@ -1681,6 +1745,7 @@ int main(int argc, char** argv) {
             marfs_ns* subspace = (marfs_ns*)(subnode->content);
             // only process non-ghost subspaces
             if ( subspace->ghtarget == NULL ) {
+               LOG( LOG_INFO, "Adding subspace \"%s\" to our NS list\n", subspace->idstr );
                // note and enter the subspace
                rman.nscount++;
                // yeah, this is very inefficient; but we're only expecting 10s to 1000s of elements

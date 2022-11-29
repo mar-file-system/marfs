@@ -2585,6 +2585,7 @@ int establish_nsrefs( marfs_config* config ) {
          return -1;
       }
       // we've iterated over all subspaces of this NS and can progress back up to the parent
+      if ( curns->subspaces ) { hash_reset( curns->subspaces ); } // reset iteration values of the subspace table
       curns = curns->pnamespace;
       nscount++; // we've traversed this NS completely
    }

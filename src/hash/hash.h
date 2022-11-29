@@ -149,5 +149,12 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node );
  */
 int hash_iterate( HASH_TABLE table, HASH_NODE** node );
 
+/**
+ * Reset the iteration values of the given table, allowing a subsequent iteration to fully traverse it
+ * @param HASH_TABLE table : Table to be reset
+ * @return int : 0 on success, or -1 on failure
+ */
+int hash_reset( HASH_TABLE table );
+
 #endif // _HASH_H
 

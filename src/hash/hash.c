@@ -301,7 +301,7 @@ HASH_TABLE hash_init( HASH_NODE* nodes, size_t count, char directlookup ) {
    LOG( LOG_INFO, "Sorting virtual nodes\n" );
    qsort(table->vnodes, table->vnodecount, sizeof( struct virtual_node_struct ), compare_nodes);
 
-   // initialize iterator values (probably unnecessary)
+   // initialize iterator values
    table->curnode = 0;
    table->iterated = 0;
 
@@ -506,6 +506,24 @@ int hash_iterate( HASH_TABLE table, HASH_NODE** node ) {
    table->curnode++;
    if ( table->curnode >= table->nodecount ) { table->curnode = 0; }
    return 1; 
+}
+
+/**
+ * Reset the iteration values of the given table, allowing a subsequent iteration to fully traverse it
+ * @param HASH_TABLE table : Table to be reset
+ * @return int : 0 on success, or -1 on failure
+ */
+int hash_reset( HASH_TABLE table ) {
+   // check for a NULL table
+   if ( table == NULL ) {
+      LOG( LOG_ERR, "Received a NULL HASH_TABLE reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // reset iteration values to what they were at table creation
+   table->curnode = 0;
+   table->iterated = 0;
+   return 0;
 }
 
 

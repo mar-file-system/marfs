@@ -1159,12 +1159,12 @@ int main(int argc, char *argv[])
 
   };
 
-  if ((getuid() != 0) || (geteuid() != 0))
-  {
-    LOG( LOG_ERR, "Cannot be run by non-root user\n" );
-    errno = EPERM;
-    return -1;
-  }
+//  if ((getuid() != 0) || (geteuid() != 0))
+//  {
+//    LOG( LOG_ERR, "Cannot be run by non-root user\n" );
+//    errno = EPERM;
+//    return -1;
+//  }
 
   return fuse_main(argc, argv, &marfs_oper, NULL);
 }
