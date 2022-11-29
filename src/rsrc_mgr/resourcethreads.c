@@ -722,6 +722,11 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   snprintf( tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a REBUILD operation\n", tstate->tID );
                   resourcelog_freeopinfo( newop );
+                  tstate->fatalerror = 1;
+                  // ensure termination of all other threads ( avoids possible deadlock )
+                  if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                     LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
+                  }
                   return -1;
                }
             }
@@ -731,6 +736,11 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   snprintf( tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a REPACK operation\n", tstate->tID );
                   if ( newop ) { resourcelog_freeopinfo( newop ); }
+                  tstate->fatalerror = 1;
+                  // ensure termination of all other threads ( avoids possible deadlock )
+                  if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                     LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
+                  }
                   return -1;
                }
             }
@@ -740,6 +750,11 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   snprintf( tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a GC operation\n", tstate->tID );
                   if ( newop ) { resourcelog_freeopinfo( newop ); }
+                  tstate->fatalerror = 1;
+                  // ensure termination of all other threads ( avoids possible deadlock )
+                  if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                     LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
+                  }
                   return -1;
                }
             }
@@ -821,6 +836,20 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   snprintf( tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to process rebuild marker \"%s\" of NS \"%s\"\n",
                             tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr );
+                  tstate->fatalerror = 1;
+                  if ( reftgt ) { free( reftgt ); }
+                  // ensure termination of all other threads ( avoids possible deadlock )
+                  if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                     LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
+                  }
+                  return -1;
+               }
+               // log the new operation, before we distribute it
+               if ( resourcelog_processop( &(tstate->gstate->rlog), newop, NULL ) ) {
+                  LOG( LOG_ERR, "Thread %u failed to log start of a marker REBUILD operation\n", tstate->tID );
+                  snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                            "Thread %u failed to log start of a marker REBUILD operation\n", tstate->tID );
+                  resourcelog_freeopinfo( newop );
                   tstate->fatalerror = 1;
                   if ( reftgt ) { free( reftgt ); }
                   // ensure termination of all other threads ( avoids possible deadlock )

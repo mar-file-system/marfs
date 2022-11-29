@@ -586,9 +586,9 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
          return;
       }
       // open an object handle
-      ne_handle obj = ne_open( ds->nectxt, objname, location, op->ftag.protection, NE_REBUILD );
+      ne_handle obj = ne_open( ds->nectxt, objname, location, erasure, NE_REBUILD );
       if ( obj == NULL ) {
-         LOG( LOG_ERR, "Failed to open rebuild handle for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+         LOG( LOG_ERR, "Failed to open rebuild handle for object \"%s\"\n", objname );
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
          free( objname );
          return;
@@ -606,7 +606,8 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
       while ( iteration < 2 ) {
          LOG( LOG_INFO, "Rebuilding object %zu of stream \"%s\" (attempt %d)\n",
                         tmptag.objno, tmptag.streamid, (int)iteration + 1 );
-         if ( ne_rebuild( obj, NULL, NULL ) < 0 ) {
+         int rebuildres = ne_rebuild( obj, NULL, NULL );
+         if ( rebuildres < 0 ) {
             LOG( LOG_ERR, "Failed to rebuild object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
             if ( ne_abort( obj ) ) {
@@ -615,6 +616,7 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
             }
             return;
          }
+         else { break; }
          iteration++;
       }
       // check for excessive rebuild reattempts
@@ -1154,6 +1156,24 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
       return NULL;
    }
    free( ftagstr );
+   // allocate health arrays for the rebuild info RTAG
+   rinfo->rtag.meta_status = calloc( sizeof(char), op->ftag.protection.N + op->ftag.protection.E );
+   if ( rinfo->rtag.meta_status == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate rebuild info meta_status array\n" );
+      free( rinfo );
+      free( op );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   rinfo->rtag.data_status = calloc( sizeof(char), op->ftag.protection.N + op->ftag.protection.E );
+   if ( rinfo->rtag.data_status == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate rebuild info data_status array\n" );
+      free( rinfo->rtag.meta_status );
+      free( rinfo );
+      free( op );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
    // generate the RTAG name
    char* rtagname = rtag_getname( objno );
    if ( rtagname == NULL ) {

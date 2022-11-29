@@ -83,6 +83,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define RB_L_THRESH 1200  // Age of files before they are rebuilt ( based on location )
                           // Default to 20 minutes ago
 #define RB_M_THRESH  600  // Age of files before they are rebuilt ( based on marker )
+//#define RB_M_THRESH  6  // TMP CHANGE of files before they are rebuilt ( based on marker )
                           // Default to 10 minutes ago
 #define RP_THRESH 259200  // Age of files before they are repacked
                           // Default to 3 days ago
