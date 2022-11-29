@@ -78,6 +78,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 //   -------------   INTERNAL DEFINITIONS    -------------
 
 #define GC_THRESH 518400  // Age of deleted files before they are Garbage Collected
+//#define GC_THRESH 10  // TMP CHANGEAge of deleted files before they are Garbage Collected
                           // Default to 6 days ago
 #define RB_L_THRESH 1200  // Age of files before they are rebuilt ( based on location )
                           // Default to 20 minutes ago
@@ -1019,135 +1020,135 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
       return 0;
    }
    else if ( response->request.type == COMPLETE_WORK ) {
-      if ( rman->distributed[response->request.nsindex] ) {
+      if ( response->request.nsindex != rman->nscount ) { // only perform processing / cleanup for real completions
          printf( "  Rank %zu completed work on NS \"%s\"\n", ranknum, rman->nslist[response->request.nsindex]->idstr );
-      }
-      // possibly process info from the rank
-      if ( response->haveinfo ) {
-         // incorporate walk report
-         rman->walkreport[response->request.nsindex].fileusage   += response->report.fileusage;
-         rman->walkreport[response->request.nsindex].byteusage   += response->report.byteusage;
-         rman->walkreport[response->request.nsindex].filecount   += response->report.filecount;
-         rman->walkreport[response->request.nsindex].objcount    += response->report.objcount;
-         rman->walkreport[response->request.nsindex].bytecount   += response->report.bytecount;
-         rman->walkreport[response->request.nsindex].streamcount += response->report.streamcount;
-         rman->walkreport[response->request.nsindex].delobjs     += response->report.delobjs;
-         rman->walkreport[response->request.nsindex].delfiles    += response->report.delfiles;
-         rman->walkreport[response->request.nsindex].delstreams  += response->report.delstreams;
-         rman->walkreport[response->request.nsindex].volfiles    += response->report.volfiles;
-         rman->walkreport[response->request.nsindex].rpckfiles   += response->report.rpckfiles;
-         rman->walkreport[response->request.nsindex].rpckbytes   += response->report.rpckbytes;
-         rman->walkreport[response->request.nsindex].rbldobjs    += response->report.rbldobjs;
-         rman->walkreport[response->request.nsindex].rbldbytes   += response->report.rbldbytes;
-         // incorporate log summary
-         rman->logsummary[response->request.nsindex].deletion_object_count += response->summary.deletion_object_count;
-         rman->logsummary[response->request.nsindex].deletion_object_failures += response->summary.deletion_object_failures;
-         rman->logsummary[response->request.nsindex].deletion_reference_count += response->summary.deletion_reference_count;
-         rman->logsummary[response->request.nsindex].deletion_reference_failures += response->summary.deletion_reference_failures;
-         rman->logsummary[response->request.nsindex].rebuild_count += response->summary.rebuild_count;
-         rman->logsummary[response->request.nsindex].rebuild_failures += response->summary.rebuild_failures;
-         rman->logsummary[response->request.nsindex].repack_count += response->summary.repack_count;
-         rman->logsummary[response->request.nsindex].repack_failures += response->summary.repack_failures;
-         // output all gathered info, prior to possible log deletion
-         outputinfo( rman->summarylog, rman->nslist[response->request.nsindex], &(response->report) , &(response->summary) );
-      }
-      // identify the output log of the transmitting rank
-      char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration,
-                                                 rman->nslist[response->request.nsindex], ranknum );
-      if ( outlogpath == NULL ) {
-         fprintf( stderr, "ERROR: Failed to identify the output log path of Rank %zu for NS \"%s\"\n",
-                  ranknum, rman->nslist[response->request.nsindex]->idstr );
-         rman->fatalerror = 1;
-         return -1;
-      }
-      // potentially duplicate the logfile to a final location
-      if ( rman->preservelogtgt ) {
-         char* preslogpath = resourcelog_genlogpath( 1, rman->preservelogtgt, rman->iteration,
-                                                     rman->nslist[response->request.nsindex], ranknum );
-         if ( preslogpath == NULL ) {
-            fprintf( stderr, "ERROR: Failed to identify the preserve log path of Rank %zu for NS \"%s\"\n",
+         // possibly process info from the rank
+         if ( response->haveinfo ) {
+            // incorporate walk report
+            rman->walkreport[response->request.nsindex].fileusage   += response->report.fileusage;
+            rman->walkreport[response->request.nsindex].byteusage   += response->report.byteusage;
+            rman->walkreport[response->request.nsindex].filecount   += response->report.filecount;
+            rman->walkreport[response->request.nsindex].objcount    += response->report.objcount;
+            rman->walkreport[response->request.nsindex].bytecount   += response->report.bytecount;
+            rman->walkreport[response->request.nsindex].streamcount += response->report.streamcount;
+            rman->walkreport[response->request.nsindex].delobjs     += response->report.delobjs;
+            rman->walkreport[response->request.nsindex].delfiles    += response->report.delfiles;
+            rman->walkreport[response->request.nsindex].delstreams  += response->report.delstreams;
+            rman->walkreport[response->request.nsindex].volfiles    += response->report.volfiles;
+            rman->walkreport[response->request.nsindex].rpckfiles   += response->report.rpckfiles;
+            rman->walkreport[response->request.nsindex].rpckbytes   += response->report.rpckbytes;
+            rman->walkreport[response->request.nsindex].rbldobjs    += response->report.rbldobjs;
+            rman->walkreport[response->request.nsindex].rbldbytes   += response->report.rbldbytes;
+            // incorporate log summary
+            rman->logsummary[response->request.nsindex].deletion_object_count += response->summary.deletion_object_count;
+            rman->logsummary[response->request.nsindex].deletion_object_failures += response->summary.deletion_object_failures;
+            rman->logsummary[response->request.nsindex].deletion_reference_count += response->summary.deletion_reference_count;
+            rman->logsummary[response->request.nsindex].deletion_reference_failures += response->summary.deletion_reference_failures;
+            rman->logsummary[response->request.nsindex].rebuild_count += response->summary.rebuild_count;
+            rman->logsummary[response->request.nsindex].rebuild_failures += response->summary.rebuild_failures;
+            rman->logsummary[response->request.nsindex].repack_count += response->summary.repack_count;
+            rman->logsummary[response->request.nsindex].repack_failures += response->summary.repack_failures;
+            // output all gathered info, prior to possible log deletion
+            outputinfo( rman->summarylog, rman->nslist[response->request.nsindex], &(response->report) , &(response->summary) );
+         }
+         // identify the output log of the transmitting rank
+         char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration,
+                                                    rman->nslist[response->request.nsindex], ranknum );
+         if ( outlogpath == NULL ) {
+            fprintf( stderr, "ERROR: Failed to identify the output log path of Rank %zu for NS \"%s\"\n",
                      ranknum, rman->nslist[response->request.nsindex]->idstr );
-            free( outlogpath );
             rman->fatalerror = 1;
             return -1;
          }
-         // simply use a hardlink for this purpose, no need to make a 'real' duplicate
-         if ( link( outlogpath, preslogpath ) ) {
-            fprintf( stderr, "ERROR: Failed to link logfile \"%s\" to new target path: \"%s\"\n",
-                     outlogpath, preslogpath );
-            free( preslogpath );
-            free( outlogpath );
-            rman->fatalerror = 1;
-            return -1;
-         }
-         free( preslogpath );
-      }
-      // check if the manager needs to do any log cleanup
-      if ( response->errorlog  ||  ( !(rman->gstate.dryrun)  &&  rman->distributed[response->request.nsindex] ) ) {
-         // open the logfile for read
-         RESOURCELOG ranklog = NULL;
-         if ( resourcelog_init( &(ranklog), outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex] ) ) {
-            fprintf( stderr, "ERROR: Failed to open the output log of Rank %zu for NS \"%s\": \"%s\"\n",
-                     ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
-            free( outlogpath );
-            rman->fatalerror = 1;
-            return -1;
-         }
-         // process the work log
-         if ( response->errorlog ) {
-            // identify the errorlog output location
-            char* errlogpath = resourcelog_genlogpath( 1, rman->logroot, rman->iteration,
+         // potentially duplicate the logfile to a final location
+         if ( rman->preservelogtgt ) {
+            char* preslogpath = resourcelog_genlogpath( 1, rman->preservelogtgt, rman->iteration,
                                                         rman->nslist[response->request.nsindex], ranknum );
-            if ( errlogpath == NULL ) {
-               fprintf( stderr, "ERROR: Failed to identify the error log path of Rank %zu for NS \"%s\"\n",
+            if ( preslogpath == NULL ) {
+               fprintf( stderr, "ERROR: Failed to identify the preserve log path of Rank %zu for NS \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr );
-               resourcelog_term( &(ranklog), NULL, 0 );
                free( outlogpath );
                rman->fatalerror = 1;
                return -1;
             }
-
-            // open the error log for write
-            RESOURCELOG errlog = NULL;
-            if ( resourcelog_init( &(errlog), errlogpath, RESOURCE_RECORD_LOG, rman->nslist[response->request.nsindex] ) ) {
-               fprintf( stderr, "ERROR: Failed to open the error log of Rank %zu: \"%s\"\n", ranknum, errlogpath );
-               resourcelog_term( &(ranklog), NULL, 0 );
-               free( errlogpath );
+            // simply use a hardlink for this purpose, no need to make a 'real' duplicate
+            if ( link( outlogpath, preslogpath ) ) {
+               fprintf( stderr, "ERROR: Failed to link logfile \"%s\" to new target path: \"%s\"\n",
+                        outlogpath, preslogpath );
+               free( preslogpath );
                free( outlogpath );
                rman->fatalerror = 1;
                return -1;
             }
-            // replay the logfile into the error log location
-            if ( resourcelog_replay( &(ranklog), &(errlog), error_only_filter ) ) {
-               fprintf( stderr, "ERROR: Failed to replay errors from logfile \"%s\" into \"%s\"\n", outlogpath, errlogpath );
-               resourcelog_term( &(errlog), NULL, 1 );
-               resourcelog_term( &(ranklog), NULL, 0 );
-               free( errlogpath );
-               free( outlogpath );
-               rman->fatalerror = 1;
-               return -1;
-            }
-            if ( resourcelog_term( &(errlog), NULL, 0 ) ) {
-               fprintf( stderr, "ERROR: Failed to finalize error logfile: \"%s\"\n", errlogpath );
-               free( errlogpath );
-               free( outlogpath );
-               rman->fatalerror = 1;
-               return -1;
-            }
-            free( errlogpath );
+            free( preslogpath );
          }
-         else {
-            // simply delete the output logfile of this rank
-            if ( resourcelog_term( &(ranklog), NULL, 1 ) ) {
-               fprintf( stderr, "ERROR: Failed to delete the output log of Rank %zu for NS \"%s\": \"%s\"\n",
+         // check if the manager needs to do any log cleanup
+         if ( response->errorlog  ||  ( !(rman->gstate.dryrun)  &&  rman->distributed[response->request.nsindex] ) ) {
+            // open the logfile for read
+            RESOURCELOG ranklog = NULL;
+            if ( resourcelog_init( &(ranklog), outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex] ) ) {
+               fprintf( stderr, "ERROR: Failed to open the output log of Rank %zu for NS \"%s\": \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
                free( outlogpath );
                rman->fatalerror = 1;
                return -1;
             }
+            // process the work log
+            if ( response->errorlog ) {
+               // identify the errorlog output location
+               char* errlogpath = resourcelog_genlogpath( 1, rman->logroot, rman->iteration,
+                                                           rman->nslist[response->request.nsindex], ranknum );
+               if ( errlogpath == NULL ) {
+                  fprintf( stderr, "ERROR: Failed to identify the error log path of Rank %zu for NS \"%s\"\n",
+                           ranknum, rman->nslist[response->request.nsindex]->idstr );
+                  resourcelog_term( &(ranklog), NULL, 0 );
+                  free( outlogpath );
+                  rman->fatalerror = 1;
+                  return -1;
+               }
+
+               // open the error log for write
+               RESOURCELOG errlog = NULL;
+               if ( resourcelog_init( &(errlog), errlogpath, RESOURCE_RECORD_LOG, rman->nslist[response->request.nsindex] ) ) {
+                  fprintf( stderr, "ERROR: Failed to open the error log of Rank %zu: \"%s\"\n", ranknum, errlogpath );
+                  resourcelog_term( &(ranklog), NULL, 0 );
+                  free( errlogpath );
+                  free( outlogpath );
+                  rman->fatalerror = 1;
+                  return -1;
+               }
+               // replay the logfile into the error log location
+               if ( resourcelog_replay( &(ranklog), &(errlog), error_only_filter ) ) {
+                  fprintf( stderr, "ERROR: Failed to replay errors from logfile \"%s\" into \"%s\"\n", outlogpath, errlogpath );
+                  resourcelog_term( &(errlog), NULL, 1 );
+                  resourcelog_term( &(ranklog), NULL, 0 );
+                  free( errlogpath );
+                  free( outlogpath );
+                  rman->fatalerror = 1;
+                  return -1;
+               }
+               if ( resourcelog_term( &(errlog), NULL, 0 ) ) {
+                  fprintf( stderr, "ERROR: Failed to finalize error logfile: \"%s\"\n", errlogpath );
+                  free( errlogpath );
+                  free( outlogpath );
+                  rman->fatalerror = 1;
+                  return -1;
+               }
+               free( errlogpath );
+            }
+            else {
+               // simply delete the output logfile of this rank
+               if ( resourcelog_term( &(ranklog), NULL, 1 ) ) {
+                  fprintf( stderr, "ERROR: Failed to delete the output log of Rank %zu for NS \"%s\": \"%s\"\n",
+                           ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
+                  free( outlogpath );
+                  rman->fatalerror = 1;
+                  return -1;
+               }
+            }
          }
-      }
-      free( outlogpath );
+         free( outlogpath );
+      } // end of response content processing
       // this rank needs work to process, with no preference for NS
       if ( rman->oldlogs ) {
          // start by checking for old resource logs to process
@@ -1192,7 +1193,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          // free all subnodes and requests
          size_t nindex = 0;
          for ( ; nindex < ncount; nindex++ ) {
-            loginfo* linfo = (loginfo*)( resnode->content );
+            loginfo* linfo = (loginfo*)( (resnode+nindex)->content );
             if ( linfo->requests ) { free( linfo->requests ); }
          }
          free( resnode ); // these were allocated in one block, and thus require only one free()
@@ -1319,6 +1320,7 @@ int managerbehavior( rmanstate* rman ) {
    if ( rman->totalranks == 1 ) {
       // we need to fake our own 'startup' response
       response.request.type = COMPLETE_WORK;
+      response.request.nsindex = rman->nscount;
    }
    // loop until all workers have terminated
    char workersrunning = 1;
@@ -1372,6 +1374,11 @@ int managerbehavior( rmanstate* rman ) {
       // potentially set NS quota values
       if ( rman->quotas ) {
          // update position value
+         if ( config_establishposition( &(rman->gstate.pos), rman->config ) ) {
+            LOG( LOG_ERR, "Failed to establish a rootNS position\n" );
+            fprintf( stderr, "ERROR: Failed to establish a rootNS position\n" );
+            return -1;
+         }
          char* tmpnspath = NULL;
          if ( config_nsinfo( curns->idstr, NULL, &(tmpnspath) ) ) {
             LOG( LOG_ERR, "Failed to identify NS path of NS \"%s\"\n", curns->idstr );
@@ -1423,6 +1430,7 @@ int workerbehavior( rmanstate* rman ) {
    bzero( &(request), sizeof( struct workrequest_struct ) );
    // we need to fake a 'startup' response
    response.request.type = COMPLETE_WORK;
+   response.request.nsindex = rman->nscount;
    // begin by sending a response
    if ( MPI_Send( &(response), sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD ) ) {
       LOG( LOG_ERR, "Failed to send initial 'dummy' response\n" );
@@ -1860,7 +1868,7 @@ int main(int argc, char** argv) {
       fclose( sumlog );
       free( sumlogpath );
       // incorporate logfiles from the previous run
-      if ( findoldlogs( &(rman), rman.execprevroot ) ) {
+      if ( rman.ranknum == 0  &&  findoldlogs( &(rman), rman.execprevroot ) ) {
          fprintf( stderr, "ERROR: Failed to identify previous run's logfiles: \"%s\"\n", rman.execprevroot );
          free( rman.logsummary );
          free( rman.walkreport );
@@ -1871,7 +1879,7 @@ int main(int argc, char** argv) {
          return -1;
       }
    }
-   else if ( rman.gstate.dryrun == 0 ) {
+   else if ( rman.gstate.dryrun == 0  &&  rman.ranknum == 0 ) {
       // otherwise, scan for and incorporate logs from previous modification runs
       if ( findoldlogs( &(rman), rman.logroot ) ) {
          fprintf( stderr, "ERROR: Failed to scan for previous iteration logs under \"%s\"\n", rman.logroot );
