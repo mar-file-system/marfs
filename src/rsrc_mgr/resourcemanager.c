@@ -182,6 +182,55 @@ void print_usage_info() {
 }
 
 void cleanupstate( rmanstate* rman, char abort ) {
+   if ( rman ) {
+      if ( rman->preservelogtgt ) { free( rman->preservelogtgt ); }
+      if ( rman->logroot )        { free( rman->logroot ); }
+      if ( rman->execprevroot )   { free( rman->execprevroot ); }
+      if ( rman->summarylog )     { fclose( rman->summarylog ); }
+      if ( rman->tq ) {
+         if ( !(abort) ) {
+            LOG( LOG_ERR, "Encountered active TQ with no abort condition specified\n" );
+            fprintf( stderr, "Encountered active TQ with no abort condition specified\n" );
+            rman->fatalerror = 1;
+         }
+         tq_set_flags( rman->tq, TQ_ABORT );
+         if ( rman->gstate.rinput ) {
+            resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+            resourceinput_term( &(rman->gstate.rinput) );
+         }
+         // gather all thread status values
+         rthread_state* tstate = NULL;
+         while ( tq_next_thread_status( rman->tq, (void**)&(tstate) ) > 0 ) {
+            // verify thread status
+            if ( tstate ) { free( tstate ); }
+         }
+         tq_close( rman->tq );
+      }
+      if ( rman->gstate.rpst ) { repackstreamer_abort( rman->gstate.rpst ); }
+      if ( rman->gstate.rlog ) { resourcelog_abort( &(rman->gstate.rlog) ); }
+      if ( rman->gstate.rinput ) { resourceinput_abort( &(rman->gstate.rinput) ); }
+      if ( rman->gstate.pos.ns ) { config_abandonposition( &(rman->gstate.pos) ); }
+      if ( rman->logsummary ) { free( rman->logsummary ); }
+      if ( rman->walkreport ) { free( rman->walkreport ); }
+      if ( rman->terminatedworkers ) { free( rman->terminatedworkers ); }
+      if ( rman->distributed ) { free( rman->distributed ); }
+      if ( rman->nslist ) { free( rman->nslist ); }
+      if ( rman->oldlogs ) {
+         HASH_NODE* resnode = NULL;
+         size_t ncount = 0;
+         if ( hash_term( rman->oldlogs, &(resnode), &(ncount) ) == 0 ) {
+            // free all subnodes and requests
+            size_t nindex = 0;
+            for ( ; nindex < ncount; nindex++ ) {
+               loginfo* linfo = (loginfo*)( (resnode+nindex)->content );
+               if ( linfo->requests ) { free( linfo->requests ); }
+            }
+            free( resnode ); // these were allocated in one block, and thus require only one free()
+         }
+      }
+      if ( rman->config ) { config_term( rman->config ); }
+   }
+   MPI_Finalize();
 }
 
 int error_only_filter( const opinfo* op ) {
@@ -195,10 +244,46 @@ void outputinfo( FILE* output, marfs_ns* ns, streamwalker_report* report , opera
    fprintf( output, "Namespace \"%s\"%s --\n", ns->idstr, (userout) ? " Totals" : " Incremental Values" );
    fprintf( output, "   Walk Report --\n" );
    if ( !(userout) || report->fileusage )   { fprintf( output, "      File Usage = %zu\n", report->fileusage ); }
-   if ( !(userout) || report->byteusage )   { fprintf( output, "      Byte Usage = %zu\n", report->byteusage ); }
+   size_t bytetrans = report->byteusage;
+   char remainder[6] = {0};
+   char* unit = "B";
+   while ( bytetrans > 1024 ) {
+      if ( *unit == 'B' ) { unit = "KiB"; }
+      else if ( *unit == 'K' ) { unit = "MiB"; }
+      else if ( *unit == 'M' ) { unit = "GiB"; }
+      else if ( *unit == 'G' ) { unit = "TiB"; }
+      else if ( *unit == 'T' ) { unit = "PiB"; }
+      else { break; }
+      if ( bytetrans % 1024 ) {
+         snprintf( remainder, 6, ".%.3zu", (((bytetrans % 1024) * 1000) + 512) / 1024 );
+      } else { *remainder = '\0'; }
+      bytetrans /= 1024;
+   }
+   if ( !(userout) )   { fprintf( output, "      Byte Usage = %zu\n", report->byteusage ); }
+   else if ( report->byteusage ) {
+      fprintf( output, "      Byte Usage = %zu%s%s\n", bytetrans, remainder, unit );
+   }
    if ( !(userout) || report->filecount )   { fprintf( output, "      File Count = %zu\n", report->filecount ); }
    if ( !(userout) || report->objcount )    { fprintf( output, "      Object Count = %zu\n", report->objcount ); }
-   if ( !(userout) || report->bytecount )   { fprintf( output, "      Byte Count = %zu\n", report->bytecount ); }
+   bytetrans = report->bytecount;
+   *remainder = '\0';
+   unit = "B";
+   while ( bytetrans > 1024 ) {
+      if ( *unit == 'B' ) { unit = "KiB"; }
+      else if ( *unit == 'K' ) { unit = "MiB"; }
+      else if ( *unit == 'M' ) { unit = "GiB"; }
+      else if ( *unit == 'G' ) { unit = "TiB"; }
+      else if ( *unit == 'T' ) { unit = "PiB"; }
+      else { break; }
+      if ( bytetrans % 1024 ) {
+         snprintf( remainder, 6, ".%.3zu", (((bytetrans % 1024) * 1000) + 512) / 1024 );
+      } else { *remainder = '\0'; }
+      bytetrans /= 1024;
+   }
+   if ( !(userout) )   { fprintf( output, "      Byte Count = %zu\n", report->bytecount ); }
+   else if ( report->bytecount ) {
+      fprintf( output, "      Byte Usage = %zu%s%s\n", bytetrans, remainder, unit );
+   }
    if ( !(userout) || report->streamcount ) { fprintf( output, "      Stream Count = %zu\n", report->streamcount ); }
    if ( !(userout) || report->delobjs )     { fprintf( output, "      Object Deletion Candidates = %zu\n", report->delobjs ); }
    if ( !(userout) || report->delfiles )    { fprintf( output, "      File Deletion Candidates = %zu\n", report->delfiles ); }
@@ -923,6 +1008,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
                    rman->gstate.pos.ns->idstr );
          return -1;
       }
+      rman->tq = NULL;
       // need to preserve our logfile, allowing the manager to remove it
       char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration, rman->gstate.pos.ns, rman->ranknum );
       int rlogret;
@@ -1194,6 +1280,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          // free all subnodes and requests
          size_t nindex = 0;
          for ( ; nindex < ncount; nindex++ ) {
+            if ( (resnode+nindex)->name ) { free( (resnode+nindex)->name ); }
             loginfo* linfo = (loginfo*)( (resnode+nindex)->content );
             if ( linfo->requests ) { free( linfo->requests ); }
          }
@@ -1982,8 +2069,6 @@ int main(int argc, char** argv) {
       cleanupstate( &(rman), 0 );
    }
 
-   // final cleanup and termination
-   MPI_Finalize();
    return bres;
 }
 
