@@ -70,6 +70,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <string.h>
 #include <errno.h>
 
+// ENOATTR is not always defined, so define a convenience val
+#ifndef ENOATTR
+#define ENOATTR ENODATA
+#endif
 
 #define PROGNAME "marfs-streamwalker"
 #define OUTPREFX PROGNAME ": "
@@ -122,7 +126,7 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
          "       -@ offset  : Specifies a number of files to move forward of backward\n"
          "       -n filenum : Specifies a specific file number to move to\n")
 
-      USAGE("ftag",
+      USAGE("tags",
          "",
          "Print out the FTAG info of the current file", "")
 
@@ -165,7 +169,7 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
 
-int populate_ftag(marfs_config* config, marfs_position* pathpos, marfs_position* destpos, FTAG* ftag, const char* path, const char* rpath, char prout) {
+int populate_tags(marfs_config* config, marfs_position* pathpos, marfs_position* destpos, FTAG* ftag, GCTAG* gctag, const char* path, const char* rpath, char prout) {
    char* modpath = NULL;
    marfs_position oppos = { .ns = NULL, .depth = 0, .ctxt = NULL };
    if ( config_duplicateposition( pathpos, &oppos ) ) {
@@ -211,7 +215,7 @@ int populate_ftag(marfs_config* config, marfs_position* pathpos, marfs_position*
 
    // retrieve the FTAG value from the target file
    char* ftagstr = NULL;
-   size_t getres = mdal->fgetxattr(handle, 1, FTAG_NAME, ftagstr, 0);
+   ssize_t getres = mdal->fgetxattr(handle, 1, FTAG_NAME, ftagstr, 0);
    if (getres <= 0) {
       printf(OUTPREFX "ERROR: Failed to retrieve FTAG value from target %s file: \"%s\" (%s)\n", (rpath) ? "ref" : "user", (rpath) ? rpath : path, strerror(errno));
       mdal->close(handle);
@@ -231,6 +235,51 @@ int populate_ftag(marfs_config* config, marfs_position* pathpos, marfs_position*
       mdal->close(handle);
       config_abandonposition( &oppos );
       return -1;
+   }
+   // retrieve the GCTAG value from the target file, if present
+   getres = mdal->fgetxattr(handle, 1, GCTAG_NAME, NULL, 0);
+   if ( getres <= 0 ) {
+      if ( errno == ENOATTR ) {
+         bzero( gctag, sizeof( struct gctag_struct ) );
+      }
+      else {
+         printf(OUTPREFX "ERROR: Failed to retrieve GCTAG value\n");
+         free(ftagstr);
+         mdal->close(handle);
+         config_abandonposition( &oppos );
+         return -1;
+      }
+   }
+   else {
+      char* gctagstr = calloc(1, getres + 1);
+      if ( gctagstr == NULL ) {
+         printf(OUTPREFX "ERROR: Failed to allocate space for a GCTAG string value\n");
+         free( ftagstr );
+         mdal->close(handle);
+         config_abandonposition( &oppos );
+         return -1;
+      }
+      if ( mdal->fgetxattr(handle, 1, GCTAG_NAME, gctagstr, getres) != getres ) {
+         printf(OUTPREFX "ERROR: GCTAG value changed while we were reading it\n");
+         free(gctagstr);
+         free(ftagstr);
+         mdal->close(handle);
+         config_abandonposition( &oppos );
+         return -1;
+      }
+      if ( gctag_initstr( gctag, gctagstr ) ) {
+         printf(OUTPREFX "ERROR: Failed to parse GCTAG value: \"%s\" (%zd)\n", gctagstr, getres);
+         free(gctagstr);
+         free(ftagstr);
+         mdal->close(handle);
+         config_abandonposition( &oppos );
+         return -1;
+      }
+      if ( prout ) {
+         printf(OUTPREFX "Found GCTAG value for target %s file: \"%s\"\n",
+            (rpath) ? "ref" : "user", (rpath) ? rpath : path);
+      }
+      free( gctagstr );
    }
    if (mdal->close(handle)) {
       printf(OUTPREFX "WARNING: Failed to close handle for target file (%s)\n", strerror(errno));
@@ -265,7 +314,7 @@ int populate_ftag(marfs_config* config, marfs_position* pathpos, marfs_position*
 }
 
 
-int open_command(marfs_config* config, marfs_position* pathpos, marfs_position* tgtpos, FTAG* ftag, char* args) {
+int open_command(marfs_config* config, marfs_position* pathpos, marfs_position* tgtpos, FTAG* ftag, GCTAG* gctag, char* args) {
    printf("\n");
    // parse args
    char curarg = '\0';
@@ -340,7 +389,7 @@ int open_command(marfs_config* config, marfs_position* pathpos, marfs_position* 
    }
 
    // populate our FTAG and cleanup strings
-   int retval = populate_ftag(config, pathpos, tgtpos, ftag, userpath, refpath, 1);
+   int retval = populate_tags(config, pathpos, tgtpos, ftag, gctag, userpath, refpath, 1);
    printf("\n");
    if (userpath) {
       free(userpath);
@@ -351,7 +400,7 @@ int open_command(marfs_config* config, marfs_position* pathpos, marfs_position* 
    return retval;
 }
 
-int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
    printf("\n");
    // verify that we have an FTAG value
    if (ftag->streamid == NULL) {
@@ -446,7 +495,7 @@ int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* a
       return -1;
    }
 
-   int retval = populate_ftag(config, pos, pos, ftag, NULL, newrpath, 1);
+   int retval = populate_tags(config, pos, pos, ftag, gctag, NULL, newrpath, 1);
    printf("\n");
    if (retval) {
       ftag->fileno = origfileno;
@@ -456,7 +505,7 @@ int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* a
    return retval;
 }
 
-int ftag_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+int tags_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
    printf("\n");
    // verify that we have an FTAG value
    if (ftag->streamid == NULL) {
@@ -507,11 +556,18 @@ int ftag_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* ar
    printf("  E   : %d\n", ftag->protection.E);
    printf("  O   : %d\n", ftag->protection.O);
    printf("  psz : %ld\n", ftag->protection.partsz);
+   if ( gctag->refcnt  ||  gctag->eos  ||  gctag->delzero ) {
+      printf("GC Info --\n");
+      printf(" Reference Count : %zu\n", gctag->refcnt );
+      printf(" End Of Stream : %d\n", (int)gctag->eos );
+      printf(" Deleted Zero : %d\n", (int)gctag->delzero );
+      printf(" In Progress : %d\n", (int)gctag->inprog );
+   }
    printf("\n");
    return 0;
 }
 
-int ref_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+int ref_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
    printf("\n");
    // verify that we have an FTAG value
    if (ftag->streamid == NULL) {
@@ -545,7 +601,7 @@ int ref_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* arg
    return 0;
 }
 
-int obj_command(marfs_config* config, char* config_path, marfs_position* pos, FTAG* ftag, char* args) {
+int obj_command(marfs_config* config, char* config_path, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
    printf("\n");
    // verify that we have an FTAG value
    if (ftag->streamid == NULL) {
@@ -660,7 +716,7 @@ int obj_command(marfs_config* config, char* config_path, marfs_position* pos, FT
    return 0;
 }
 
-int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
    printf("\n");
    // verify that we have an FTAG value
    if (ftag->streamid == NULL) {
@@ -684,14 +740,14 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
       parse = strtok(NULL, " ");
    }
 
+   char gcgaps = 0;
    int retval = 0;
    size_t origfileno = ftag->fileno;
+   ftag->fileno = 0; // start with file zero
    if (!f_flag) {
       // iterate over files until we find EOS
-      while (ftag->endofstream == 0 && retval == 0 &&
+      while (ftag->endofstream == 0 && retval == 0 && gctag->eos == 0  &&
          (ftag->state & FTAG_DATASTATE) >= FTAG_FIN) {
-         // progress to the next file
-         ftag->fileno++;
          // generate a ref path for the new target file
          char* newrpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
          if (newrpath == NULL) {
@@ -700,13 +756,21 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
             return -1;
          }
          // retrieve the FTAG of the new target
-         retval = populate_ftag(config, pos, pos, ftag, NULL, newrpath, 0);
+         retval = populate_tags(config, pos, pos, ftag, gctag, NULL, newrpath, 0);
          if (retval) {
             ftag->fileno--;
          } // if we couldn't retrieve this, go to previous
+         else if ( gctag->refcnt ) {
+            gcgaps = 1;
+            printf( "GC Gap: %zu Files Starting at File %zu\n", gctag->refcnt, ftag->fileno );
+         }
          free(newrpath);
+         // progress to the next file
+         ftag->fileno += 1;
+         if ( gctag->refcnt ) { ftag->fileno += gctag->refcnt; }
       }
    }
+   if ( gcgaps ) { printf( "\n" ); }
 
    // identify object bounds of final file
    RECOVERY_HEADER header = {
@@ -741,6 +805,9 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
       else if ((ftag->state & FTAG_DATASTATE) < FTAG_FIN) {
          eosreason = "Unfinished File";
       }
+      else if ( gctag->eos ) {
+         eosreason = "End of Stream ( GCTAG )";
+      }
       printf("File Bounds:\n   0 -- Initial File\n     to\n   %zu -- %s\n",
          ftag->fileno, eosreason);
       printf("Object Bounds:\n   0 -- Initial Object\n     to\n   %zu -- End of Final File\n",
@@ -753,7 +820,7 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
          return -1;
       }
       // retrieve the FTAG of the new target
-      retval = populate_ftag(config, pos, pos, ftag, NULL, newrpath, 0);
+      retval = populate_tags(config, pos, pos, ftag, gctag, NULL, newrpath, 0);
       free(newrpath);
    }
    else {
@@ -768,7 +835,7 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* 
    return 0;
 }
 
-int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
    printf("\n");
    // verify that we have an FTAG value
    if (ftag->streamid == NULL) {
@@ -789,14 +856,14 @@ int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char*
       return -1;
    }
 
-   int retval = populate_ftag(config, pos, pos, ftag, NULL, newrpath, 1);
+   int retval = populate_tags(config, pos, pos, ftag, gctag, NULL, newrpath, 1);
    printf("\n");
    free(newrpath);
 
    return retval;
 }
 
-int recovery_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char* args) {
+int recovery_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
    printf("\n");
    // verify that we have an FTAG value
    if (ftag->streamid == NULL) {
@@ -910,7 +977,7 @@ int recovery_command(marfs_config* config, marfs_position* pos, FTAG* ftag, char
    struct tm* time = localtime(&(info.mtime.tv_sec));
    char timestr[20];
    strftime(timestr, 20, "%F %T", time);
-   printf("Recovery Info:\n    Inode: %zu\n    Mode: %o\n    Owner: %d\n    Group: %d\n    Size: %zu\n    Mtime: %s.%.9ld\n    EOF: %d\n    Path: %s\n",
+   printf("Recovery Info:\n    Inode: %zu\n    Mode: %o\n    Owner: %d\n    Group: %d\n    Size: %zu\n    Mtime: %s.%.9ld\n    EOF: %d\n    Path: %s\n\n",
       info.inode, info.mode, info.owner, info.group, info.size, timestr, info.mtime.tv_nsec, info.eof, info.path);
 
    return 0;
@@ -984,6 +1051,12 @@ int command_loop(marfs_config* config, char* config_path) {
       .ctag = NULL,
       .streamid = NULL
    };
+   GCTAG gctag = {
+      .refcnt = 0,
+      .eos = 0,
+      .delzero = 0,
+      .inprog = 0
+   };
    // initialize a marfs position
    marfs_position pos = {
       .ns = NULL,
@@ -1055,56 +1128,56 @@ int command_loop(marfs_config* config, char* config_path) {
       if (strcmp(inputline, "open") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (open_command(config, &(pos), &(tgtpos), &(ftag), parse) == 0) {
+         if (open_command(config, &(pos), &(tgtpos), &(ftag), &(gctag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "shift") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (shift_command(config, &(tgtpos), &(ftag), parse) == 0) {
+         if (shift_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
             retval = 0; // note success
          }
       }
-      else if (strcmp(inputline, "ftag") == 0) {
+      else if (strcmp(inputline, "tags") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (ftag_command(config, &(tgtpos), &(ftag), parse) == 0) {
+         if (tags_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "ref") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (ref_command(config, &(tgtpos), &(ftag), parse) == 0) {
+         if (ref_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "obj") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (obj_command(config, config_path, &(tgtpos), &(ftag), parse) == 0) {
+         if (obj_command(config, config_path, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "bounds") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (bounds_command(config, &(tgtpos), &(ftag), parse) == 0) {
+         if (bounds_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "refresh") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (refresh_command(config, &(tgtpos), &(ftag), parse) == 0) {
+         if (refresh_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "recovery") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (recovery_command(config, &(tgtpos), &(ftag), parse) == 0) {
+         if (recovery_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
             retval = 0; // note success
          }
       }

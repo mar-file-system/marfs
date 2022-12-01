@@ -828,7 +828,9 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                LOG( LOG_INFO, "Skipping rebuild marker file, as we are doing location-based rebuild: \"%s\"\n", reftgt );
             }
             else {
+               // note the rebuild candidate regardless, to give an indication of remaining count
                errno = 0;
+               tstate->report.rbldobjs++;
                newop = process_rebuildmarker( &(tstate->gstate->pos), reftgt, tstate->gstate->thresh.rebuildthreshold, tgtval );
                if ( newop == NULL  &&  errno != ETIME ) { // only ignore failure due to recently created marker file
                   LOG( LOG_ERR, "Thread %u failed to process rebuild marker \"%s\" of NS \"%s\"\n",
@@ -844,19 +846,21 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   }
                   return -1;
                }
-               // log the new operation, before we distribute it
-               if ( resourcelog_processop( &(tstate->gstate->rlog), newop, NULL ) ) {
-                  LOG( LOG_ERR, "Thread %u failed to log start of a marker REBUILD operation\n", tstate->tID );
-                  snprintf( tstate->errorstr, MAX_STR_BUFFER,
-                            "Thread %u failed to log start of a marker REBUILD operation\n", tstate->tID );
-                  resourcelog_freeopinfo( newop );
-                  tstate->fatalerror = 1;
-                  if ( reftgt ) { free( reftgt ); }
-                  // ensure termination of all other threads ( avoids possible deadlock )
-                  if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
-                     LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
+               else if ( newop ) {
+                  // log the new operation, before we distribute it
+                  if ( resourcelog_processop( &(tstate->gstate->rlog), newop, NULL ) ) {
+                     LOG( LOG_ERR, "Thread %u failed to log start of a marker REBUILD operation\n", tstate->tID );
+                     snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                               "Thread %u failed to log start of a marker REBUILD operation\n", tstate->tID );
+                     resourcelog_freeopinfo( newop );
+                     tstate->fatalerror = 1;
+                     if ( reftgt ) { free( reftgt ); }
+                     // ensure termination of all other threads ( avoids possible deadlock )
+                     if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                        LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
+                     }
+                     return -1;
                   }
-                  return -1;
                }
             }
          }
