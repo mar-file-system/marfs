@@ -100,6 +100,7 @@ typedef struct argopts_struct {
    size_t chunknumval;
    char length;
    off_t lengthval;
+   char abort;
 } argopts; 
 
 
@@ -155,6 +156,13 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
           "       -p path       : Path of the file to be created\n"
           "       -t type       : Specifies the type of the new stream ( 'read'/'edit )\n" )
 
+   USAGE( "repack",
+          "[-s stream-num] -p refpath [-c ctag]",
+          "Create a new file, associated with the given datastream",
+          "       -s stream-num : Specifies a new stream target for this operation\n"
+          "       -p refpath    : REFERENCE path of the file to be repacked\n"
+          "       -c ctag       : Specified a Client Tag string for a new datastream\n" )
+
    USAGE( "release",
           "[-s stream-num]",
           "Release the given datastream",
@@ -185,7 +193,7 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
           "       -f seekfrom     : Specifies a start location for the input file seek\n"
           "                        ( either 'set', 'cur', or 'end' )\n" )
 
-   USAGE( "setrpath",
+   USAGE( "setrecovpath",
           "[-s stream-num] -p path",
           "Set the recovery path of the given datastream",
           "       -s stream-num : Specifies a new stream target for this operation\n"
@@ -420,6 +428,54 @@ int open_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream,
    return retval;
 }
 
+int repack_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+   printf( "\n" );
+   // check for required args
+   if ( !(opts->path) ) {
+      printf( OUTPREFX "ERROR: 'repack' command is missing required '-p' arg\n" );
+      usage( "help repack" );
+      return -1;
+   }
+   int retval;
+   if ( !(opts->abort) ) {
+      // startup the repack stream
+      retval = datastream_repack( stream, opts->pathval, pos, (opts->ctag) ? opts->ctagval : config->ctag );
+      if ( retval ) {
+         printf( OUTPREFX "ERROR: Failure of datastream_repack(): %d (%s)\n",
+                 retval, strerror(errno) );
+      }
+      else {
+         printf( OUTPREFX "Successfully started repack of target file \"%s\"\n", opts->pathval );
+      }
+   }
+   else {
+      // verify that the specified path is actually a repack marker
+      char entrytype = 0;
+      ssize_t fileno = ftag_metainfo( opts->pathval, &(entrytype) );
+      if ( fileno < 0 ) {
+         printf( OUTPREFX "ERROR: The specified reference path does not appear to be a repack marker: \"%s\"\n",
+                 opts->pathval );
+         return -1;
+      }
+      // cleanup the specified repack marker
+      retval = datastream_repack_cleanup( opts->pathval, pos );
+      if ( retval < 0 ) {
+         printf( OUTPREFX "ERROR: Failure of datastream_repack_cleanup(): %d (%s)\n",
+                 retval, strerror(errno) );
+      }
+      else if ( retval ) {
+         printf( OUTPREFX "Successfully cleaned up repack marker \"%s\" ( repack was reverted )\n", opts->pathval );
+      }
+      else {
+         printf( OUTPREFX "Successfully cleaned up repack marker \"%s\" ( repack was completed )\n", opts->pathval );
+         retval = 1; // set this to one and zero out errno to avoid having the main loop assume we have a new datastream
+         errno = 0;
+      }
+   }
+   printf( "\n" );
+   return retval;
+}
+
 int release_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
    printf( "\n" );
    int retval = datastream_release( stream );
@@ -591,12 +647,12 @@ int write_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream
    return 0;
 }
 
-int setrpath_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
+int setrecovpath_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, argopts* opts ) {
    printf( "\n" );
    // check for required args
    if ( !(opts->path) ) {
-      printf( OUTPREFX "ERROR: 'setrpath' command is missing required '-p' arg\n" );
-      usage( "help setrpath" );
+      printf( OUTPREFX "ERROR: 'setrecovpath' command is missing required '-p' arg\n" );
+      usage( "help setrecovpath" );
       return -1;
    }
    // perform the setrecoverypath op
@@ -834,7 +890,8 @@ int command_loop( marfs_config* config ) {
          .chunknum = 0,
          .chunknumval = 0,
          .length = 0,
-         .lengthval = 0
+         .lengthval = 0,
+         .abort = 0
       };
       char argerror = 0;
       char* argparse = strtok( parse, " " );
@@ -1054,6 +1111,14 @@ int command_loop( marfs_config* config ) {
                inputopts.length = 1;
                inputopts.lengthval = (size_t)parseval;
                break;
+            case 'A':
+               if ( inputopts.abort ) {
+                  printf( OUTPREFX "ERROR: Duplicate '-A' argument detected\n" );
+                  argerror = 1;
+                  break;
+               }
+               inputopts.abort = 1;
+               break;
             default:
                printf( OUTPREFX "ERROR: Unrecognized argument: \"-%c\"\n", argchar );
                argerror = 1;
@@ -1111,7 +1176,7 @@ int command_loop( marfs_config* config ) {
          // validate arguments
          if ( inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
                    inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-                   inputopts.chunknum  ||  inputopts.length ) {
+                   inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: Specified args are not supported for a 'create' op\n" );
             usage( "help create" );
          }
@@ -1142,7 +1207,7 @@ int command_loop( marfs_config* config ) {
          // validate arguments
          if ( inputopts.mode  ||  inputopts.bytes  ||  inputopts.ifile ||
                    inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-                   inputopts.chunknum  ||  inputopts.length  ||  inputopts.ctag ) {
+                   inputopts.chunknum  ||  inputopts.length  ||  inputopts.ctag  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: Specified args are not supported for an 'open' op\n" );
             usage( "help open" );
          }
@@ -1179,6 +1244,37 @@ int command_loop( marfs_config* config ) {
             *(streamdesc + tgtstream) = NULL;
          }
       }
+      else if ( strcmp( inputline, "repack" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||  inputopts.mode  ||
+                   inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+                   inputopts.chunknum  ||  inputopts.length ) {
+            printf( OUTPREFX "ERROR: Specified args are not supported for a 'repack' op\n" );
+            usage( "help repack" );
+         }
+         else if ( repack_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
+            // repack success, update stream description
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+            int strlen = snprintf( NULL, 0, "REPACK: \"%s\"", inputopts.pathval );
+            *(streamdesc + tgtstream) = malloc( sizeof(char) * (strlen + 1) );
+            if ( *(streamdesc + tgtstream) == NULL ) {
+               printf( OUTPREFX "ERROR: Failed to allocate stream description string\n" );
+            }
+            else {
+               snprintf( *(streamdesc + tgtstream), strlen + 1, "REPACK: \"%s\"",
+                         inputopts.pathval );
+               retval = 0; // note success
+            }
+         }
+         else if ( errno == EBADFD  &&  *(streamlist + tgtstream) == NULL ) {
+            printf( OUTPREFX "ERROR: Stream %d has been rendered unusable\n", tgtstream );
+            if ( *(streamdesc + tgtstream) ) { free( *(streamdesc + tgtstream) ); }
+            *(streamdesc + tgtstream) = NULL;
+         }
+      }
       else if ( strcmp( inputline, "release" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
@@ -1186,7 +1282,7 @@ int command_loop( marfs_config* config ) {
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
               inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-              inputopts.chunknum  ||  inputopts.length ) {
+              inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'release' op supports only the '-s' arg\n" );
             usage( "help release" );
          }
@@ -1204,7 +1300,7 @@ int command_loop( marfs_config* config ) {
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
               inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-              inputopts.chunknum  ||  inputopts.length ) {
+              inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'close' op supports only the '-s' arg\n" );
             usage( "help close" );
          }
@@ -1221,7 +1317,7 @@ int command_loop( marfs_config* config ) {
          // validate arguments
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.ifile  ||  inputopts.type  ||  inputopts.chunknum  ||
-              inputopts.length ) {
+              inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'read' op does not support all provided args\n" );
             usage( "help read" );
          }
@@ -1246,7 +1342,7 @@ int command_loop( marfs_config* config ) {
          // validate arguments
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.ofile  ||  inputopts.type  ||  inputopts.chunknum  ||
-              inputopts.length ) {
+              inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'write' op does not support all provided args\n" );
             usage( "help write" );
          }
@@ -1265,18 +1361,18 @@ int command_loop( marfs_config* config ) {
             *(streamdesc + tgtstream) = NULL;
          }
       }
-      else if ( strcmp( inputline, "setrpath" ) == 0 ) {
+      else if ( strcmp( inputline, "setrecovpath" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
          // validate arguments
          if ( inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
               inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-              inputopts.chunknum  ||  inputopts.length ) {
-            printf( OUTPREFX "ERROR: The 'setrpath' op supports only the '-s'/'-p' args\n" );
-            usage( "help setrpath" );
+              inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
+            printf( OUTPREFX "ERROR: The 'setrecovpath' op supports only the '-s'/'-p' args\n" );
+            usage( "help setrecovpath" );
          }
-         else if ( setrpath_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
+         else if ( setrecovpath_command( config, &(pos), streamlist + tgtstream, &(inputopts) ) == 0 ) {
             retval = 0; // note success
          }
       }
@@ -1286,7 +1382,7 @@ int command_loop( marfs_config* config ) {
          // validate arguments
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
-              inputopts.ofile  || inputopts.chunknum  ||  inputopts.length ) {
+              inputopts.ofile  || inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'seek' op supports only '-s'/'-@'/'-f' args\n" );
             usage( "help seek" );
          }
@@ -1306,7 +1402,7 @@ int command_loop( marfs_config* config ) {
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
               inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-              inputopts.length ) {
+              inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'chunkbounds' op supports only '-s'/'-c' args\n" );
             usage( "help chunkbounds" );
          }
@@ -1321,7 +1417,7 @@ int command_loop( marfs_config* config ) {
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
               inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-              inputopts.chunknum ) {
+              inputopts.chunknum  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'extend' op supports only the '-s'/'-l' args\n" );
             usage( "help extend" );
          }
@@ -1341,7 +1437,7 @@ int command_loop( marfs_config* config ) {
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
               inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-              inputopts.chunknum ) {
+              inputopts.chunknum  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'truncate' op supports only the '-s'/'-l' args\n" );
             usage( "help truncate" );
          }
@@ -1356,7 +1452,7 @@ int command_loop( marfs_config* config ) {
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||
               inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-              inputopts.chunknum  ||  inputopts.length ) {
+              inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'utime' op supports only the '-s'/'-i' args\n" );
             usage( "help utime" );
          }
@@ -1369,20 +1465,74 @@ int command_loop( marfs_config* config ) {
          if ( inputopts.path  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
               inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-              inputopts.chunknum  ||  inputopts.length ) {
+              inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'streamlist' op supports only the '-s' arg\n" );
             usage( "help streamlist" );
          }
          else {
             int ibreadth = numdigits_unsigned( streamalloc - 1 );
             printf( "\n%d Stream Postions Allocated -- \n", streamalloc );
-            int streamindex;
-            for( streamindex = 0; streamindex < streamalloc; streamindex++ ) {
+            int streamindex = 0;
+            int streammax = streamalloc;
+            if ( inputopts.streamnum ) { streamindex = tgtstream; streammax = tgtstream + 1; } // just print the requested stream
+            for( streamindex = 0; streamindex < streammax; streamindex++ ) {
                if ( streamindex == tgtstream ) {
                   printf( " -> %*d -- %s\n", -(ibreadth), streamindex, *(streamdesc + streamindex) );
                }
                else if ( *(streamlist + streamindex)  ||  *(streamdesc + streamindex) ) {
                   printf( "    %*d -- %s\n", -(ibreadth), streamindex, *(streamdesc + streamindex) );
+               }
+            }
+            if ( inputopts.streamnum  &&  ( *(streamlist + tgtstream) ) != NULL ) {
+               // print out extra info, if a stream was explicitly specified
+               printf( "      -- Client   : \"%s\"\n", ( *(streamlist + tgtstream) )->ctag );
+               printf( "      -- StreamID : \"%s\"\n", ( *(streamlist + tgtstream) )->streamid );
+               marfs_ns* curns = ( *(streamlist + tgtstream) )->ns;
+               printf( "      -- Namespace : \"%s\"\n", curns->idstr );
+               printf( "      -- FileNo : %zu\n", ( *(streamlist + tgtstream) )->fileno );
+               printf( "      -- ObjNo  : %zu\n", ( *(streamlist + tgtstream) )->objno );
+               printf( "      -- Offset : %zu\n", ( *(streamlist + tgtstream) )->offset );
+               printf( "      -- Excess Offset : %zu\n", ( *(streamlist + tgtstream) )->excessoffset );
+               size_t curfile = ( *(streamlist + tgtstream) )->curfile;
+               printf( "      -- Active File Index : %zu\n", curfile );
+               HASH_TABLE reftable = curns->prepo->metascheme.reftable;
+               if ( ( *(streamlist + tgtstream) )->files[curfile].ftag.refbreadth != curns->prepo->metascheme.refbreadth  ||
+                    ( *(streamlist + tgtstream) )->files[curfile].ftag.refdepth != curns->prepo->metascheme.refdepth  ||
+                    ( *(streamlist + tgtstream) )->files[curfile].ftag.refdigits != curns->prepo->metascheme.refdigits ) {
+                  printf( "      -- NOTE -- Active stream has non-standard reference structure\n" );
+                  reftable = config_genreftable( NULL, NULL,
+                                                 ( *(streamlist + tgtstream) )->files[curfile].ftag.refbreadth,
+                                                 ( *(streamlist + tgtstream) )->files[curfile].ftag.refdepth,
+                                                 ( *(streamlist + tgtstream) )->files[curfile].ftag.refdigits );
+                  if ( reftable == NULL ) {
+                     printf( OUTPREFX "ERROR: Failed to generate a temporary reference table\n" );
+                     free_argopts( &(inputopts) );
+                     continue;
+                  }
+               }
+               char* actrpath = datastream_genrpath( &( ( *(streamlist + tgtstream) )->files[curfile].ftag ), reftable );
+               if ( actrpath ) {
+                  printf( "      -- Active Reference Path : %s\n", actrpath );
+                  free( actrpath );
+               }
+               else {
+                   printf( OUTPREFX "ERROR: Failed to generate a reference path for the active file\n" );
+               }
+               // potentially free our tmp hash table
+               if ( reftable != curns->prepo->metascheme.reftable ) {
+                  HASH_NODE* nodelist = NULL;
+                  size_t nodecount = 0;
+                  if ( hash_term( reftable, &(nodelist), &(nodecount) ) ) {
+                     printf( OUTPREFX "ERROR: Failed to terminate temporary reference table\n" );
+                  }
+                  else {
+                     size_t index = 0;
+                     for ( ; index < nodecount; index++ ) {
+                        if ( (nodelist + index)->name ) { free( (nodelist + index)->name ); }
+                        if ( (nodelist + index)->content ) { free( (nodelist + index)->content ); }
+                     }
+                     free( nodelist );
+                  }
                }
             }
             printf( "\n" );
@@ -1395,7 +1545,7 @@ int command_loop( marfs_config* config ) {
          if ( inputopts.streamnum  ||  inputopts.mode  ||  inputopts.ctag  ||
               inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
               inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
-              inputopts.chunknum  ||  inputopts.length ) {
+              inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
             printf( OUTPREFX "ERROR: The 'ns' op supports only the '-p' arg\n" );
             usage( "help ns" );
          }
