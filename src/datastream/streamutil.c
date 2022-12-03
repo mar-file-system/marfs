@@ -70,7 +70,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
-
+#include <dirent.h>
 
 #define PROGNAME "marfs-streamutil"
 #define OUTPREFX PROGNAME ": "
@@ -240,6 +240,18 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
           "Print or update the current MarFS namespace target of this program",
           "       -p ns-path    : Path to a new NS target" )
 
+   USAGE( "ls",
+          "[-p dirpath]",
+          "Output contents of the current NS or target subdirectory",
+          "       -p dirpath    : Path to list contents of" )
+
+   USAGE( "mkdir",
+          "-p dirpath [-m modeval]",
+          "Create a new subdirectory of the current NS",
+          "       -p dirpath    : Path of the directory to be created"
+          "       -m mode       : Mode value of the dir to be created ( octal )\n"
+          "                        If omitted, a value of 0700 will be used\n" )
+
    USAGE( "( exit | quit )",
           "",
           "Terminate ( active streams will be released )", "" )
@@ -260,7 +272,7 @@ int ns_command( marfs_config* config, marfs_position* pos, DATASTREAM* stream, a
       printf( "Current Namespace Target: \"%s\"\n\n", pos->ns->idstr );
       return 0;
    }
-   // update our position to targe the new path
+   // update our position to target the new path
    char* modpath = strdup( opts->pathval );
    if ( modpath == NULL ) {
       printf( OUTPREFX "ERROR: Failed to create duplicate \"%s\" path for config traversal\n", opts->pathval );
@@ -1551,6 +1563,155 @@ int command_loop( marfs_config* config ) {
          }
          else if ( ns_command( config, &(pos), NULL, &(inputopts) ) == 0 ) {
             retval = 0; // note success
+         }
+      }
+      else if ( strcmp( inputline, "ls" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.streamnum  ||  inputopts.mode  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
+            printf( OUTPREFX "ERROR: The 'ls' op supports only the '-p' arg\n" );
+            usage( "help ls" );
+         }
+         else {
+            // identify a target path
+            char* lstgt = (inputopts.path) ? strdup(inputopts.pathval) : strdup(".");
+            if ( lstgt == NULL ) {
+               printf( OUTPREFX "ERROR: Failed to duplicate path value\n" );
+               free_argopts( &(inputopts) );
+               continue;
+            }
+            marfs_position tmppos = {0};
+            if ( config_duplicateposition( &(pos), &(tmppos) ) ) {
+               printf( OUTPREFX "ERROR: Failed to duplicate MarFS position prior to 'ls' path traversal\n" );
+               free( lstgt );
+               free_argopts( &(inputopts) );
+               continue;
+            }
+            int targetdepth;
+            if ( (targetdepth = config_traverse( config, &(tmppos), &(lstgt), 1 )) < 0 ) {
+               printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n", lstgt );
+               config_abandonposition( &(tmppos) );
+               free( lstgt );
+               free_argopts( &(inputopts) );
+               continue;
+            }
+            // attempt to open a dir handle for the target path
+            MDAL curmdal = tmppos.ns->prepo->metascheme.mdal;
+            MDAL_DHANDLE lsdir = NULL;
+            if ( targetdepth == 0 ) {
+               if ( tmppos.ctxt == NULL ) {
+                  // ignore our current path
+                  if ( lstgt ) { free( lstgt ); }
+                  // identify the full path of the NS target
+                  if ( config_nsinfo( tmppos.ns->idstr, NULL, &(lstgt) ) ) {
+                     printf( OUTPREFX "ERROR: Failed to identify path of NS target: \"%s\" ( %s )\n",
+                             tmppos.ns->idstr, strerror( errno ) );
+                     config_abandonposition( &(tmppos) );
+                     free_argopts( &(inputopts) );
+                     continue;
+                  }
+                  lsdir = curmdal->opendirnamespace( curmdal->ctxt, lstgt );
+               }
+               else {
+                  lsdir = curmdal->opendirnamespace( tmppos.ctxt, lstgt );
+               }
+            }
+            else { lsdir = curmdal->opendir( tmppos.ctxt, lstgt ); }
+            if ( lsdir == NULL ) {
+               printf( OUTPREFX "ERROR: Failed to open a dir handle for tgt path: \"%s\" ( %s )\n",
+                       lstgt, strerror( errno ) );
+               config_abandonposition( &(tmppos) );
+               free( lstgt );
+               free_argopts( &(inputopts) );
+               continue;
+            }
+            // dump subspaces first, if appropriate
+            if ( targetdepth == 0 ) {
+               size_t index = 0;
+               for ( ; index < tmppos.ns->subnodecount; index++ ) {
+                  printf( "   %s\n", tmppos.ns->subnodes[index].name );
+               }
+            }
+            // readdir contents
+            errno = 0;
+            struct dirent* dirret = NULL;
+            while ( errno == 0 ) {
+               dirret = curmdal->readdir( lsdir );
+               if ( dirret  &&  ( ( targetdepth == 0  &&  curmdal->pathfilter( dirret->d_name ) == 0 )  ||  targetdepth ) ) {
+                  printf( "   %s\n", dirret->d_name );
+               }
+               else if ( dirret == NULL ) { break; }
+            }
+            if ( errno ) {
+               printf( OUTPREFX "ERROR: Readdir failure on tgt path: \"%s\" ( %s )\n", lstgt, strerror( errno ) );
+            }
+            if ( curmdal->closedir( lsdir ) ) {
+               printf( OUTPREFX "ERROR: Closedir failure on tgt path: \"%s\" ( %s )\n", lstgt, strerror( errno ) );
+            }
+            if ( config_abandonposition( &(tmppos) ) ) {
+               printf( OUTPREFX "ERROR: Failed to abandon temporary MarFS position ( %s )\n", strerror( errno ) );
+            }
+            free( lstgt );
+            printf( "\n" );
+            retval = 0; // note success
+         }
+      }
+      else if ( strcmp( inputline, "mkdir" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         // validate arguments
+         if ( inputopts.streamnum  ||  inputopts.ctag  ||
+              inputopts.type  ||  inputopts.bytes  ||  inputopts.ifile ||
+              inputopts.ofile  ||  inputopts.offset  ||  inputopts.seekfrom  ||
+              inputopts.chunknum  ||  inputopts.length  ||  inputopts.abort ) {
+            printf( OUTPREFX "ERROR: The 'mkdir' op supports only the '-p' and '-m' args\n" );
+            usage( "help mkdir" );
+         }
+         else if ( !(inputopts.path) ) {
+            printf( OUTPREFX "ERROR: The 'mkdir' op requires a '-p' arg\n" );
+            usage( "help mkdir" );
+         }
+         else {
+            // identify target path
+            char* mkdirtgt = strdup(inputopts.pathval);
+            if ( mkdirtgt == NULL ) {
+               printf( OUTPREFX "ERROR: Failed to duplicate path value\n" );
+               free_argopts( &(inputopts) );
+               continue;
+            }
+            marfs_position tmppos = {0};
+            if ( config_duplicateposition( &(pos), &(tmppos) ) ) {
+               printf( OUTPREFX "ERROR: Failed to duplicate MarFS position prior to 'ls' path traversal\n" );
+               free( mkdirtgt );
+               free_argopts( &(inputopts) );
+               continue;
+            }
+            int targetdepth;
+            if ( (targetdepth = config_traverse( config, &(tmppos), &(mkdirtgt), 1 )) < 0 ) {
+               printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n", mkdirtgt );
+               config_abandonposition( &(tmppos) );
+               free( mkdirtgt );
+               free_argopts( &(inputopts) );
+               continue;
+            }
+            // identify a mode value
+            mode_t mkdirmode = (inputopts.mode) ? inputopts.modeval : 0700;
+            // attempt dir creation
+            MDAL curmdal = tmppos.ns->prepo->metascheme.mdal;
+            if ( curmdal->mkdir( tmppos.ctxt, mkdirtgt, mkdirmode ) ) {
+               printf( OUTPREFX "ERROR: Failed to create directory: \"%s\" ( %s )\n", inputopts.pathval, strerror(errno) );
+            }
+            else {
+               retval = 0; // note success
+            }
+            if ( config_abandonposition( &(tmppos) ) ) {
+               printf( OUTPREFX "ERROR: Failed to abandon temporary MarFS position ( %s )\n", strerror( errno ) );
+            }
+            free( mkdirtgt );
          }
       }
       else {

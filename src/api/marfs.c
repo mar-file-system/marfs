@@ -503,7 +503,17 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
    }
    // adjust stat values, if necessary
    if ( tgtdepth == 0  &&  retval == 0 ) {
+      // note subspaces in link count
       buf->st_nlink += oppos.ns->subnodecount;
+   }
+   else if ( tgtdepth != 0  &&  S_ISREG( buf->st_mode ) ) {
+      // regular files may need link count adjusted to ignore ref path
+      if ( buf->st_nlink > 1 ) { buf->st_nlink--; }
+      if ( buf->st_blocks == 0  &&  buf->st_size ) {
+         // assume allocated blocks, based on logical file size ( saves us having to pull an FTAG xattr )
+         if ( buf->st_blksize == 0 ) { buf->st_blksize = 1; } // avoid div by zero, if the blksize is odd
+         buf->st_blocks = ( buf->st_size / buf->st_blksize ) + (buf->st_size % buf->st_blksize) ? 1 : 0;
+      }
    }
    // cleanup references
    pathcleanup( subpath, &oppos );
@@ -1489,9 +1499,15 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
    rethandle->subspcnamealloc = sizeof( rethandle->subspcent.d_name);
    bzero( &(rethandle->subspcent.d_name[0]), rethandle->subspcnamealloc );
    MDAL curmdal = oppos.ns->prepo->metascheme.mdal;
-   if ( tgtdepth == 0  &&  oppos.ctxt == NULL ) {
-      // open the namespace without shifting our MDAL_CTXT
-      rethandle->metahandle = curmdal->opendirnamespace( curmdal->ctxt, subpath );
+   if ( tgtdepth == 0 ) {
+      if ( oppos.ctxt == NULL ) {
+         // open the namespace without shifting our MDAL_CTXT
+         rethandle->metahandle = curmdal->opendirnamespace( curmdal->ctxt, subpath );
+      }
+      else {
+         // open the namespace relative to our MDAL_CTXT
+         rethandle->metahandle = curmdal->opendirnamespace( oppos.ctxt, subpath );
+      }
    }
    else {
       // open the dir via the standard call

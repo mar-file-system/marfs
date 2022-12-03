@@ -69,6 +69,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <dirent.h>
 
 // ENOATTR is not always defined, so define a convenience val
 #ifndef ENOATTR
@@ -78,6 +79,13 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define PROGNAME "marfs-streamwalker"
 #define OUTPREFX PROGNAME ": "
 
+typedef struct walkerstate_struct {
+   marfs_position pos;
+   HASH_TABLE     reftable;
+   FTAG           ftag;
+   GCTAG          gctag;
+   char*          oftagstr;
+} walkerstate;
 
 // Show all the usage options in one place, for easy reference
 // An arrow appears next to the one you tried to use.
@@ -169,7 +177,7 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
 
-int populate_tags(marfs_config* config, marfs_position* pathpos, marfs_position* destpos, FTAG* ftag, GCTAG* gctag, const char* path, const char* rpath, char prout) {
+int populate_tags(marfs_config* config, marfs_position* pathpos, walkerstate* state, const char* path, const char* rpath, char prout) {
    char* modpath = NULL;
    marfs_position oppos = { .ns = NULL, .depth = 0, .ctxt = NULL };
    if ( config_duplicateposition( pathpos, &oppos ) ) {
@@ -237,12 +245,10 @@ int populate_tags(marfs_config* config, marfs_position* pathpos, marfs_position*
       return -1;
    }
    // retrieve the GCTAG value from the target file, if present
+   GCTAG tmpgctag = {0};
    getres = mdal->fgetxattr(handle, 1, GCTAG_NAME, NULL, 0);
    if ( getres <= 0 ) {
-      if ( errno == ENOATTR ) {
-         bzero( gctag, sizeof( struct gctag_struct ) );
-      }
-      else {
+      if ( errno != ENOATTR ) {
          printf(OUTPREFX "ERROR: Failed to retrieve GCTAG value\n");
          free(ftagstr);
          mdal->close(handle);
@@ -267,7 +273,7 @@ int populate_tags(marfs_config* config, marfs_position* pathpos, marfs_position*
          config_abandonposition( &oppos );
          return -1;
       }
-      if ( gctag_initstr( gctag, gctagstr ) ) {
+      if ( gctag_initstr( &(tmpgctag), gctagstr ) ) {
          printf(OUTPREFX "ERROR: Failed to parse GCTAG value: \"%s\" (%zd)\n", gctagstr, getres);
          free(gctagstr);
          free(ftagstr);
@@ -281,40 +287,119 @@ int populate_tags(marfs_config* config, marfs_position* pathpos, marfs_position*
       }
       free( gctagstr );
    }
+   // retrieve the ORIG FTAG value from the target file, if present
+   char* tmpoftagstr = NULL;
+   getres = mdal->fgetxattr(handle, 1, OREPACK_TAG_NAME, NULL, 0 );
+   if ( getres <= 0 ) {
+      if ( errno != ENOATTR ) {
+         printf(OUTPREFX "ERROR: Failed to retrieve OREPACK value\n");
+         free(ftagstr);
+         mdal->close(handle);
+         config_abandonposition( &oppos );
+         return -1;
+      }
+   }
+   else {
+      tmpoftagstr = calloc( 1, getres + 1 );
+      if ( tmpoftagstr == NULL ) {
+         printf(OUTPREFX "ERROR: Failed to allocate space for a OREPACK string value\n");
+         free( ftagstr );
+         mdal->close(handle);
+         config_abandonposition( &oppos );
+         return -1;
+      }
+      if ( mdal->fgetxattr(handle, 1, OREPACK_TAG_NAME, tmpoftagstr, getres) != getres ) {
+         printf(OUTPREFX "ERROR: OREPACK value changed while we were reading it\n");
+         free(tmpoftagstr);
+         free(ftagstr);
+         mdal->close(handle);
+         config_abandonposition( &oppos );
+         return -1;
+      }
+   }
    if (mdal->close(handle)) {
       printf(OUTPREFX "WARNING: Failed to close handle for target file (%s)\n", strerror(errno));
    }
-   // cleanup the previous FTAG, if necessary
-   if (ftag->ctag) {
-      free(ftag->ctag); ftag->ctag = NULL;
+   // cleanup previous state, if necessary
+   if (state->ftag.ctag) {
+      free(state->ftag.ctag);
+      state->ftag.ctag = NULL;
    }
-   if (ftag->streamid) {
-      free(ftag->streamid); ftag->streamid = NULL;
+   if (state->ftag.streamid) {
+      free(state->ftag.streamid);
+      state->ftag.streamid = NULL;
+   }
+   if ( state->reftable  &&  state->reftable != state->pos.ns->prepo->metascheme.reftable ) {
+      HASH_NODE* nodelist = NULL;
+      size_t nodecount = 0;
+      if ( hash_term( state->reftable, &(nodelist), &(nodecount) ) ){
+         printf(OUTPREFX "WARNING: Failed to properly destroy custom reference HASH_TABLE\n");
+      }
+      else {
+         size_t nodeindex = 0;
+         for ( ; nodeindex < nodecount; nodeindex++ ) {
+            if ( (nodelist + nodeindex)->name ) { free( (nodelist + nodeindex)->name ); }
+         }
+         free( nodelist );
+      }
+      state->reftable = NULL;
+   }
+   if ( state->oftagstr ) { free( state->oftagstr ); state->oftagstr = NULL; }
+   if ( state->pos.ns  &&  config_abandonposition( &(state->pos) )) {
+      printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
    }
    // populate FTAG values based on xattr content
-   if (ftag_initstr(ftag, ftagstr)) {
+   if (ftag_initstr(&(state->ftag), ftagstr)) {
       printf(OUTPREFX "ERROR: Failed to parse FTAG string: \"%s\" (%s)\n",
          ftagstr, strerror(errno));
+      if ( tmpoftagstr ) { free(tmpoftagstr); }
       free(ftagstr);
       config_abandonposition( &oppos );
       return -1;
    }
-   else {
-      // actually update the passed position
-      if ( destpos->ns ) { config_abandonposition( destpos ); }
-      // do a semi-sketchy direct copy of postion values
-      *destpos = oppos; // no need to abandon oppos now
-      if (prout) {
-         printf(OUTPREFX "Successfully populated FTAG values for target %s file: \"%s\"\n",
-            (rpath) ? "ref" : "user", (rpath) ? rpath : path);
+   // check if we need a custom reference table
+   if ( state->ftag.refbreadth != oppos.ns->prepo->metascheme.refbreadth  ||
+        state->ftag.refdepth != oppos.ns->prepo->metascheme.refdepth  ||
+        state->ftag.refdigits != oppos.ns->prepo->metascheme.refdigits ) {
+      state->reftable = config_genreftable( NULL, NULL, state->ftag.refbreadth,
+                                            state->ftag.refdepth, state->ftag.refdigits );
+      if ( state->reftable == NULL ) {
+         printf(OUTPREFX "ERROR: Failed to instantiate a custom reference table ( %s )\n", strerror(errno));
+         if ( state->ftag.ctag ) { free( state->ftag.ctag ); }
+         if ( state->ftag.streamid ) { free( state->ftag.streamid ); }
+         bzero( &(state->ftag), sizeof( FTAG ) );
+         if ( tmpoftagstr ) { free(tmpoftagstr); }
+         free(ftagstr);
+         config_abandonposition( &oppos );
+         return -1;
       }
+   }
+   else { state->reftable = oppos.ns->prepo->metascheme.reftable; } // can just use the standard ref table
+   // actually update the passed state now
+   state->gctag = tmpgctag;
+   state->oftagstr = tmpoftagstr;
+   // do a semi-sketchy direct copy of postion values
+   state->pos = oppos; // no need to abandon oppos now
+   if (prout) {
+      printf(OUTPREFX "Successfully populated FTAG values for target %s file: \"%s\"\n",
+         (rpath) ? "ref" : "user", (rpath) ? rpath : path);
+      if ( state->gctag.refcnt ) {
+         printf(OUTPREFX "   NOTE -- This file has a GCTAG attached\n" );
+      }
+      if ( state->oftagstr ) {
+         printf(OUTPREFX "   NOTE -- This file has previously been repacked\n" );
+      }
+      if ( state->reftable != oppos.ns->prepo->metascheme.reftable ) {
+         printf(OUTPREFX "   NOTE -- File has a non-standard reference structure\n" );
+      }
+      printf("\n");
    }
    free(ftagstr);
    return 0;
 }
 
 
-int open_command(marfs_config* config, marfs_position* pathpos, marfs_position* tgtpos, FTAG* ftag, GCTAG* gctag, char* args) {
+int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* state, char* args) {
    printf("\n");
    // parse args
    char curarg = '\0';
@@ -389,8 +474,7 @@ int open_command(marfs_config* config, marfs_position* pathpos, marfs_position* 
    }
 
    // populate our FTAG and cleanup strings
-   int retval = populate_tags(config, pathpos, tgtpos, ftag, gctag, userpath, refpath, 1);
-   printf("\n");
+   int retval = populate_tags(config, pathpos, state, userpath, refpath, 1);
    if (userpath) {
       free(userpath);
    }
@@ -400,10 +484,10 @@ int open_command(marfs_config* config, marfs_position* pathpos, marfs_position* 
    return retval;
 }
 
-int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
+int shift_command(marfs_config* config, walkerstate* state, char* args) {
    printf("\n");
    // verify that we have an FTAG value
-   if (ftag->streamid == NULL) {
+   if (state->ftag.streamid == NULL) {
       printf(OUTPREFX "ERROR: No FTAG target to shift from\n");
       return -1;
    }
@@ -445,7 +529,7 @@ int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* 
                printf(OUTPREFX "WARNING: Offset value of zero is a no-op\n");
                return -1;
             }
-            if (parseval < 0 && llabs(parseval) > ftag->fileno) {
+            if (parseval < 0 && llabs(parseval) > state->ftag.fileno) {
                printf(OUTPREFX "ERROR: Offset value extends beyond beginning of stream\n");
                return -1;
             }
@@ -475,108 +559,110 @@ int shift_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* 
    }
 
    // process our arg
-   size_t origfileno = ftag->fileno;
+   size_t origfileno = state->ftag.fileno;
    if (offset) {
       if (filenum != -1) {
          printf(OUTPREFX "ERROR: 'shift' command cannot support both '-@' and '-n' args\n");
          return -1;
       }
-      ftag->fileno += offset;
+      state->ftag.fileno += offset;
    }
    else {
-      ftag->fileno = filenum;
+      state->ftag.fileno = filenum;
    }
 
    // generate a ref path for the new target file
-   char* newrpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
+   char* newrpath = datastream_genrpath(&(state->ftag), state->reftable);
    if (newrpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
-      ftag->fileno = origfileno;
+      state->ftag.fileno = origfileno;
       return -1;
    }
 
-   int retval = populate_tags(config, pos, pos, ftag, gctag, NULL, newrpath, 1);
-   printf("\n");
+   int retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 1);
    if (retval) {
-      ftag->fileno = origfileno;
+      state->ftag.fileno = origfileno;
    }
    free(newrpath);
 
    return retval;
 }
 
-int tags_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
+int tags_command(marfs_config* config, walkerstate* state, char* args) {
    printf("\n");
    // verify that we have an FTAG value
-   if (ftag->streamid == NULL) {
+   if (state->ftag.streamid == NULL) {
       printf(OUTPREFX "ERROR: No current FTAG target\n");
       return -1;
    }
    const char* datastatestr = "INIT";
-   if ((ftag->state & FTAG_DATASTATE) == FTAG_SIZED) {
+   if ((state->ftag.state & FTAG_DATASTATE) == FTAG_SIZED) {
       datastatestr = "SIZED";
    }
-   else if ((ftag->state & FTAG_DATASTATE) == FTAG_FIN) {
+   else if ((state->ftag.state & FTAG_DATASTATE) == FTAG_FIN) {
       datastatestr = "FINALIZED";
    }
-   else if ((ftag->state & FTAG_DATASTATE) == FTAG_COMP) {
+   else if ((state->ftag.state & FTAG_DATASTATE) == FTAG_COMP) {
       datastatestr = "COMPLETE";
    }
    const char* dataaccessstr = "NO-ACCESS";
-   if ((ftag->state & FTAG_WRITEABLE)) {
-      if ((ftag->state & FTAG_READABLE)) {
+   if ((state->ftag.state & FTAG_WRITEABLE)) {
+      if ((state->ftag.state & FTAG_READABLE)) {
          dataaccessstr = "READ-WRITE";
       }
       else {
          dataaccessstr = "WRITE-ONLY";
       }
    }
-   else if ((ftag->state & FTAG_READABLE)) {
+   else if ((state->ftag.state & FTAG_READABLE)) {
       dataaccessstr = "READ-ONLY";
    }
    // print out all FTAG values
    printf("Stream Info --\n");
-   printf(" Client Tag : %s\n", ftag->ctag);
-   printf(" Stream ID  : %s\n", ftag->streamid);
-   printf(" Max Files  : %zu\n", ftag->objfiles);
-   printf(" Max Size   : %zu\n", ftag->objsize);
+   printf(" Client Tag : %s\n", state->ftag.ctag);
+   printf(" Stream ID  : %s\n", state->ftag.streamid);
+   printf(" Max Files  : %zu\n", state->ftag.objfiles);
+   printf(" Max Size   : %zu\n", state->ftag.objsize);
    printf("File Position --\n");
-   printf(" File Number   : %zu\n", ftag->fileno);
-   printf(" Object Number : %zu\n", ftag->objno);
-   printf(" Object Offset : %zu\n", ftag->offset);
-   printf(" End of Stream : %d\n", ftag->endofstream);
+   printf(" File Number   : %zu\n", state->ftag.fileno);
+   printf(" Object Number : %zu\n", state->ftag.objno);
+   printf(" Object Offset : %zu\n", state->ftag.offset);
+   printf(" End of Stream : %d\n", state->ftag.endofstream);
    printf("Data Structure --\n");
-   printf(" Bytes       : %zu\n", ftag->bytes);
-   printf(" Avail Bytes : %zu\n", ftag->availbytes);
-   printf(" Recov Bytes : %zu\n", ftag->recoverybytes);
+   printf(" Bytes       : %zu\n", state->ftag.bytes);
+   printf(" Avail Bytes : %zu\n", state->ftag.availbytes);
+   printf(" Recov Bytes : %zu\n", state->ftag.recoverybytes);
    printf(" Data State  : %s\n", datastatestr);
    printf(" Data Access : %s\n", dataaccessstr);
    printf(" Protection --\n");
-   printf("  N   : %d\n", ftag->protection.N);
-   printf("  E   : %d\n", ftag->protection.E);
-   printf("  O   : %d\n", ftag->protection.O);
-   printf("  psz : %ld\n", ftag->protection.partsz);
-   if ( gctag->refcnt  ||  gctag->eos  ||  gctag->delzero ) {
+   printf("  N   : %d\n", state->ftag.protection.N);
+   printf("  E   : %d\n", state->ftag.protection.E);
+   printf("  O   : %d\n", state->ftag.protection.O);
+   printf("  psz : %ld\n", state->ftag.protection.partsz);
+   if ( state->gctag.refcnt  ||  state->gctag.eos  ||  state->gctag.delzero ) {
       printf("GC Info --\n");
-      printf(" Reference Count : %zu\n", gctag->refcnt );
-      printf(" End Of Stream : %d\n", (int)gctag->eos );
-      printf(" Deleted Zero : %d\n", (int)gctag->delzero );
-      printf(" In Progress : %d\n", (int)gctag->inprog );
+      printf(" Reference Count : %zu\n", state->gctag.refcnt );
+      printf(" End Of Stream : %d\n", (int)state->gctag.eos );
+      printf(" Deleted Zero : %d\n", (int)state->gctag.delzero );
+      printf(" In Progress : %d\n", (int)state->gctag.inprog );
+   }
+   if ( state->oftagstr ) {
+      printf("Repacked From -- \"%s\"\n", state->oftagstr);
    }
    printf("\n");
    return 0;
 }
 
-int ref_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
+int ref_command(marfs_config* config, walkerstate* state, char* args) {
    printf("\n");
    // verify that we have an FTAG value
-   if (ftag->streamid == NULL) {
+   if (state->ftag.streamid == NULL) {
       printf(OUTPREFX "ERROR: No FTAG target to shift from\n");
       return -1;
    }
 
    // generate a ref path for the new target file
-   char* curpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
+   char* curpath = datastream_genrpath(&(state->ftag), state->reftable);
    if (curpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to identify current ref path\n");
       return -1;
@@ -601,10 +687,10 @@ int ref_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gc
    return 0;
 }
 
-int obj_command(marfs_config* config, char* config_path, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
+int obj_command(marfs_config* config, char* config_path, walkerstate* state, char* args) {
    printf("\n");
    // verify that we have an FTAG value
-   if (ftag->streamid == NULL) {
+   if (state->ftag.streamid == NULL) {
       printf(OUTPREFX "ERROR: No current FTAG target\n");
       return -1;
    }
@@ -654,19 +740,19 @@ int obj_command(marfs_config* config, char* config_path, marfs_position* pos, FT
    RECOVERY_HEADER header = {
       .majorversion = RECOVERY_CURRENT_MAJORVERSION,
       .minorversion = RECOVERY_CURRENT_MINORVERSION,
-      .ctag = ftag->ctag,
-      .streamid = ftag->streamid
+      .ctag = state->ftag.ctag,
+      .streamid = state->ftag.streamid
    };
    size_t headerlen = recovery_headertostr(&(header), NULL, 0);
    if (headerlen < 1) {
       printf(OUTPREFX "ERROR: Failed to identify recovery header length for file\n");
       headerlen = 0;
    }
-   size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
-   ssize_t fileobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
+   size_t dataperobj = state->ftag.objsize - (headerlen + state->ftag.recoverybytes);
+   ssize_t fileobjbounds = (state->ftag.bytes + state->ftag.offset - headerlen) / dataperobj;
    // special case check
-   if ((ftag->state & FTAG_DATASTATE) >= FTAG_FIN && fileobjbounds &&
-      (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0) {
+   if ((state->ftag.state & FTAG_DATASTATE) >= FTAG_FIN && fileobjbounds &&
+      (state->ftag.bytes + state->ftag.offset - headerlen) % dataperobj == 0) {
       // if we exactly align to object bounds AND the file is FINALIZED,
       //   we've overestimated by one object
       fileobjbounds--;
@@ -690,14 +776,14 @@ int obj_command(marfs_config* config, char* config_path, marfs_position* pos, FT
       char* objname = NULL;
       ne_erasure erasure;
       ne_location location;
-      FTAG curtag = *ftag;
+      FTAG curtag = state->ftag;
       curtag.objno += curobj;
-      if (datastream_objtarget(&(curtag), &(pos->ns->prepo->datascheme), &(objname), &(erasure), &(location))) {
+      if (datastream_objtarget(&(curtag), &(state->pos.ns->prepo->datascheme), &(objname), &(erasure), &(location))) {
          printf(OUTPREFX "ERROR: Failed to identify data info for chunk %zu\n", curobj);
          continue;
       }
       // print object info
-      printf("Obj#%-5zu\n   Pod: %d\n   Cap: %d\n   Scatter: %d\n   ObjName: %s\n   Erasure Information: N %d, E %d, O %d, partsz %lu\n   neutil Args: -c \"%s:/marfs_config/repo name=%s/data/DAL\" -P %d -C %d -S %d -O \"", curobj, location.pod, location.cap, location.scatter, objname, erasure.N, erasure.E, erasure.O, erasure.partsz, config_path, pos->ns->prepo->name, location.pod, location.cap, location.scatter);
+      printf("Obj#%-5zu\n   Pod: %d\n   Cap: %d\n   Scatter: %d\n   ObjName: %s\n   Erasure Information: N %d, E %d, O %d, partsz %lu\n   neutil Args: -c \"%s:/marfs_config/repo name=%s/data/DAL\" -P %d -C %d -S %d -O \"", curobj, location.pod, location.cap, location.scatter, objname, erasure.N, erasure.E, erasure.O, erasure.partsz, config_path, state->pos.ns->prepo->name, location.pod, location.cap, location.scatter);
       // print sanitized object name
       char* parsepath = objname;
       while (*parsepath != '\0') {
@@ -716,10 +802,10 @@ int obj_command(marfs_config* config, char* config_path, marfs_position* pos, FT
    return 0;
 }
 
-int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
+int bounds_command(marfs_config* config, walkerstate* state, char* args) {
    printf("\n");
    // verify that we have an FTAG value
-   if (ftag->streamid == NULL) {
+   if (state->ftag.streamid == NULL) {
       printf(OUTPREFX "ERROR: No current FTAG target\n");
       return -1;
    }
@@ -742,33 +828,54 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG*
 
    char gcgaps = 0;
    int retval = 0;
-   size_t origfileno = ftag->fileno;
-   ftag->fileno = 0; // start with file zero
+   size_t origfileno = state->ftag.fileno;
+   state->ftag.fileno = 0; // start with file zero
+   FTAG finftag = state->ftag;
+   finftag.ctag = NULL; // unsafe to reference values we intend to free at any time
+   finftag.streamid = NULL;
+   char fineos = 0;
    if (!f_flag) {
       // iterate over files until we find EOS
-      while (ftag->endofstream == 0 && retval == 0 && gctag->eos == 0  &&
-         (ftag->state & FTAG_DATASTATE) >= FTAG_FIN) {
+      char errorflag = 0;
+      while (state->ftag.endofstream == 0 && retval == 0 && state->gctag.eos == 0  &&
+         (state->ftag.state & FTAG_DATASTATE) >= FTAG_FIN) {
          // generate a ref path for the new target file
-         char* newrpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
+         char* newrpath = datastream_genrpath(&(state->ftag), state->reftable);
          if (newrpath == NULL) {
             printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
-            ftag->fileno = origfileno;
-            return -1;
+            state->ftag.fileno = origfileno;
+            errorflag = 1;
+            break;
          }
          // retrieve the FTAG of the new target
-         retval = populate_tags(config, pos, pos, ftag, gctag, NULL, newrpath, 0);
+         retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 0);
          if (retval) {
-            ftag->fileno--;
+            state->ftag.fileno--;
          } // if we couldn't retrieve this, go to previous
-         else if ( gctag->refcnt ) {
+         else if ( state->gctag.refcnt ) {
             gcgaps = 1;
-            printf( "GC Gap: %zu Files Starting at File %zu\n", gctag->refcnt, ftag->fileno );
+            printf( "GC Gap: %zu Files Starting at File %zu\n", state->gctag.refcnt, state->ftag.fileno );
          }
          free(newrpath);
          // progress to the next file
-         ftag->fileno += 1;
-         if ( gctag->refcnt ) { ftag->fileno += gctag->refcnt; }
+         state->ftag.fileno += 1;
+         if ( state->gctag.refcnt ) { state->ftag.fileno += state->gctag.refcnt; }
       }
+      finftag = state->ftag;
+      finftag.ctag = NULL; // unsafe to reference values we intend to free at any time
+      finftag.streamid = NULL;
+      fineos = state->gctag.eos;
+      // restore the original value
+      state->ftag.fileno = origfileno;
+      char* newrpath = datastream_genrpath(&(state->ftag), state->reftable);
+      if (newrpath == NULL) {
+         printf(OUTPREFX "ERROR: Failed to identify original ref path\n");
+         return -1;
+      }
+      // retrieve the FTAG of the new target
+      retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 0);
+      free(newrpath);
+      if ( errorflag ) { return -1; }
    }
    if ( gcgaps ) { printf( "\n" ); }
 
@@ -776,20 +883,20 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG*
    RECOVERY_HEADER header = {
       .majorversion = RECOVERY_CURRENT_MAJORVERSION,
       .minorversion = RECOVERY_CURRENT_MINORVERSION,
-      .ctag = ftag->ctag,
-      .streamid = ftag->streamid
+      .ctag = state->ftag.ctag,
+      .streamid = state->ftag.streamid
    };
    size_t headerlen = recovery_headertostr(&(header), NULL, 0);
    if (headerlen < 1) {
       printf(OUTPREFX "ERROR: Failed to identify recovery header length for final file\n");
       headerlen = 0;
    }
-   size_t dataperobj = ftag->objsize - (headerlen + ftag->recoverybytes);
-   size_t finobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
-   size_t finobjoff = ((ftag->bytes + ftag->offset - headerlen) % dataperobj) + headerlen;
+   size_t dataperobj = finftag.objsize - (headerlen + finftag.recoverybytes);
+   size_t finobjbounds = (finftag.bytes + finftag.offset - headerlen) / dataperobj;
+   size_t finobjoff = ((finftag.bytes + finftag.offset - headerlen) % dataperobj) + headerlen;
    // special case check
-   if ((ftag->state & FTAG_DATASTATE) >= FTAG_FIN && finobjbounds &&
-      (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0) {
+   if ((finftag.state & FTAG_DATASTATE) >= FTAG_FIN && finobjbounds &&
+      (finftag.bytes + finftag.offset - headerlen) % dataperobj == 0) {
       // if we exactly align to object bounds AND the file is FINALIZED,
       //   we've overestimated by one object
       finobjbounds--;
@@ -802,32 +909,22 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG*
       if (retval) {
          eosreason = "Failed to Identify Subsequent File";
       }
-      else if ((ftag->state & FTAG_DATASTATE) < FTAG_FIN) {
+      else if ((finftag.state & FTAG_DATASTATE) < FTAG_FIN) {
          eosreason = "Unfinished File";
       }
-      else if ( gctag->eos ) {
+      else if ( fineos ) {
          eosreason = "End of Stream ( GCTAG )";
       }
       printf("File Bounds:\n   0 -- Initial File\n     to\n   %zu -- %s\n",
-         ftag->fileno, eosreason);
+         finftag.fileno, eosreason);
       printf("Object Bounds:\n   0 -- Initial Object\n     to\n   %zu -- End of Final File\n",
-         ftag->objno + finobjbounds);
-      // restore the original value
-      ftag->fileno = origfileno;
-      char* newrpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
-      if (newrpath == NULL) {
-         printf(OUTPREFX "ERROR: Failed to identify original ref path\n");
-         return -1;
-      }
-      // retrieve the FTAG of the new target
-      retval = populate_tags(config, pos, pos, ftag, gctag, NULL, newrpath, 0);
-      free(newrpath);
+         finftag.objno + finobjbounds);
    }
    else {
       printf("File %zu Bounds:\n   Object %zu Offset %zu\n     to\n   Object %zu Offset %zu\n",
-         ftag->fileno, ftag->objno, ftag->offset, ftag->objno + finobjbounds, finobjoff);
+         finftag.fileno, finftag.objno, finftag.offset, finftag.objno + finobjbounds, finobjoff);
       printf("Each data object includes a %zu byte recovery header and a %zu byte recovery tail for this file.\n",
-         headerlen, ftag->recoverybytes);
+         headerlen, finftag.recoverybytes);
    }
 
    printf("\n");
@@ -835,10 +932,10 @@ int bounds_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG*
    return 0;
 }
 
-int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
+int refresh_command(marfs_config* config, walkerstate* state, char* args) {
    printf("\n");
    // verify that we have an FTAG value
-   if (ftag->streamid == NULL) {
+   if (state->ftag.streamid == NULL) {
       printf(OUTPREFX "ERROR: No FTAG target to shift from\n");
       return -1;
    }
@@ -850,23 +947,23 @@ int refresh_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG
    }
 
    // generate a ref path for the current target file
-   char* newrpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
+   char* newrpath = datastream_genrpath(&(state->ftag), state->reftable);
    if (newrpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to identify current ref path\n");
       return -1;
    }
 
-   int retval = populate_tags(config, pos, pos, ftag, gctag, NULL, newrpath, 1);
+   int retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 1);
    printf("\n");
    free(newrpath);
 
    return retval;
 }
 
-int recovery_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTAG* gctag, char* args) {
+int recovery_command(marfs_config* config, walkerstate* state, char* args) {
    printf("\n");
    // verify that we have an FTAG value
-   if (ftag->streamid == NULL) {
+   if (state->ftag.streamid == NULL) {
       printf(OUTPREFX "ERROR: No current FTAG target\n");
       return -1;
    }
@@ -945,13 +1042,13 @@ int recovery_command(marfs_config* config, marfs_position* pos, FTAG* ftag, GCTA
       return -1;
    }
 
-   char* rpath = datastream_genrpath(ftag, pos->ns->prepo->metascheme.reftable);
+   char* rpath = datastream_genrpath(&(state->ftag), state->reftable);
    if (rpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to generate reference path\n");
       return -1;
    }
 
-   DATASTREAM stream = genstream(READ_STREAM, rpath, 1, pos, 0, NULL, NULL);
+   DATASTREAM stream = genstream(READ_STREAM, rpath, 1, &(state->pos), 0, NULL, NULL);
    if (stream == NULL) {
       printf(OUTPREFX "ERROR: Failed to generate stream\n");
       return -1;
@@ -1040,23 +1137,116 @@ int ns_command(marfs_config* config, marfs_position* pos, char* args) {
       config_abandonposition( pos );
       *pos = oppos; // just direct copy, and don't abandon this position
    }
-   printf("\n%s Namespace Target : \"%s\"\n\n", (path == NULL) ? "Current" : "New", pos->ns->idstr);
+   printf("%s Namespace Target : \"%s\"\n\n", (path == NULL) ? "Current" : "New", pos->ns->idstr);
    return 0;
 }
 
+int ls_command(marfs_config* config, marfs_position* pos, char* args) {
+
+   // parse args
+   char curarg = '\0';
+   char* path = NULL;
+   char* parse = strtok(args, " ");
+   while (parse) {
+      if (curarg == '\0') {
+         if (strcmp(parse, "-p") == 0) {
+            curarg = 'p';
+         }
+         else {
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'ls' command: '%s'\n", parse);
+            return -1;
+         }
+      }
+      else {
+         // duplicate the path arg
+         path = strdup( parse );
+         curarg = '\0';
+      }
+
+      // progress to the next arg
+      parse = strtok(NULL, " ");
+   }
+
+   // identify a target path
+   char* lstgt = (path) ? path : strdup(".");
+   if ( lstgt == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to duplicate path value\n" );
+      return -1;
+   }
+   marfs_position tmppos = {0};
+   if ( config_duplicateposition( pos, &(tmppos) ) ) {
+      printf( OUTPREFX "ERROR: Failed to duplicate MarFS position prior to 'ls' path traversal\n" );
+      free( lstgt );
+      return -1;
+   }
+   int targetdepth;
+   if ( (targetdepth = config_traverse( config, &(tmppos), &(lstgt), 1 )) < 0 ) {
+      printf( OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n", lstgt );
+      config_abandonposition( &(tmppos) );
+      free( lstgt );
+      return -1;
+   }
+   // attempt to open a dir handle for the target path
+   MDAL curmdal = tmppos.ns->prepo->metascheme.mdal;
+   MDAL_DHANDLE lsdir = NULL;
+   if ( targetdepth == 0 ) {
+      if ( tmppos.ctxt == NULL ) {
+         // ignore our current path
+         if ( lstgt ) { free( lstgt ); }
+         // identify the full path of the NS target
+         if ( config_nsinfo( tmppos.ns->idstr, NULL, &(lstgt) ) ) {
+            printf( OUTPREFX "ERROR: Failed to identify path of NS target: \"%s\" ( %s )\n",
+                    tmppos.ns->idstr, strerror( errno ) );
+            config_abandonposition( &(tmppos) );
+            return -1;
+         }
+         lsdir = curmdal->opendirnamespace( curmdal->ctxt, lstgt );
+      }
+      else {
+         lsdir = curmdal->opendirnamespace( tmppos.ctxt, lstgt );
+      }
+   }
+   else { lsdir = curmdal->opendir( tmppos.ctxt, lstgt ); }
+   if ( lsdir == NULL ) {
+      printf( OUTPREFX "ERROR: Failed to open a dir handle for tgt path: \"%s\" ( %s )\n",
+              lstgt, strerror( errno ) );
+      config_abandonposition( &(tmppos) );
+      free( lstgt );
+      return -1;
+   }
+   // dump subspaces first, if appropriate
+   if ( targetdepth == 0 ) {
+      size_t index = 0;
+      for ( ; index < tmppos.ns->subnodecount; index++ ) {
+         printf( "   %s\n", tmppos.ns->subnodes[index].name );
+      }
+   }
+   // readdir contents
+   errno = 0;
+   struct dirent* retval = NULL;
+   while ( errno == 0 ) {
+      retval = curmdal->readdir( lsdir );
+      if ( retval  &&  ( ( targetdepth == 0  &&  curmdal->pathfilter( retval->d_name ) == 0 )  ||  targetdepth ) ) {
+         printf( "   %s\n", retval->d_name );
+      }
+      else if ( retval == NULL ) { break; }
+   }
+   if ( errno ) {
+      printf( OUTPREFX "ERROR: Readdir failure on tgt path: \"%s\" ( %s )\n", lstgt, strerror( errno ) );
+   }
+   if ( curmdal->closedir( lsdir ) ) {
+      printf( OUTPREFX "ERROR: Closedir failure on tgt path: \"%s\" ( %s )\n", lstgt, strerror( errno ) );
+   }
+   if ( config_abandonposition( &(tmppos) ) ) {
+      printf( OUTPREFX "ERROR: Failed to abandon temporary MarFS position ( %s )\n", strerror( errno ) );
+   }
+   free( lstgt );
+   printf("\n");
+
+   return 0;
+}
 
 int command_loop(marfs_config* config, char* config_path) {
-   // initialize an FTAG struct
-   FTAG ftag = {
-      .ctag = NULL,
-      .streamid = NULL
-   };
-   GCTAG gctag = {
-      .refcnt = 0,
-      .eos = 0,
-      .delzero = 0,
-      .inprog = 0
-   };
    // initialize a marfs position
    marfs_position pos = {
       .ns = NULL,
@@ -1067,7 +1257,9 @@ int command_loop(marfs_config* config, char* config_path) {
       printf(OUTPREFX "ERROR: Failed to establish a position for the MarFS root\n");
       return -1;
    }
-   marfs_position tgtpos = { .ns = NULL, .depth = 0, .ctxt = NULL };
+   // initialize walk state
+   walkerstate state;
+   bzero( &(state), sizeof( struct walkerstate_struct ) );
    printf("Initial Namespace Target : \"%s\"\n", pos.ns->idstr);
 
    // infinite loop, processing user commands
@@ -1128,56 +1320,56 @@ int command_loop(marfs_config* config, char* config_path) {
       if (strcmp(inputline, "open") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (open_command(config, &(pos), &(tgtpos), &(ftag), &(gctag), parse) == 0) {
+         if (open_command(config, &(pos), &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "shift") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (shift_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
+         if (shift_command(config, &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "tags") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (tags_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
+         if (tags_command(config, &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "ref") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (ref_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
+         if (ref_command(config, &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "obj") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (obj_command(config, config_path, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
+         if (obj_command(config, config_path, &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "bounds") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (bounds_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
+         if (bounds_command(config, &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "refresh") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (refresh_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
+         if (refresh_command(config, &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if (strcmp(inputline, "recovery") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (recovery_command(config, &(tgtpos), &(ftag), &(gctag), parse) == 0) {
+         if (recovery_command(config, &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
@@ -1188,6 +1380,13 @@ int command_loop(marfs_config* config, char* config_path) {
             retval = 0; // note success
          }
       }
+      else if ( strcmp( inputline, "ls" ) == 0 ) {
+         errno = 0;
+         retval = -1; // assume failure
+         if (ls_command(config, &(pos), parse) == 0) {
+            retval = 0; // note success
+         }
+      }
       else {
          printf(OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline);
       }
@@ -1195,13 +1394,28 @@ int command_loop(marfs_config* config, char* config_path) {
    }
 
    // cleanup
-   if (ftag.ctag) {
-      free(ftag.ctag);
+   if (state.ftag.ctag) {
+      free(state.ftag.ctag);
    }
-   if (ftag.streamid) {
-      free(ftag.streamid);
+   if (state.ftag.streamid) {
+      free(state.ftag.streamid);
    }
-   if (config_abandonposition(&tgtpos)) {
+   if ( state.reftable  &&  state.reftable != state.pos.ns->prepo->metascheme.reftable ) {
+      HASH_NODE* nodelist = NULL;
+      size_t nodecount = 0;
+      if ( hash_term( state.reftable, &(nodelist), &(nodecount) ) ){
+         printf(OUTPREFX "WARNING: Failed to properly destroy custom reference HASH_TABLE\n");
+      }
+      else {
+         size_t nodeindex = 0;
+         for ( ; nodeindex < nodecount; nodeindex++ ) {
+            if ( (nodelist + nodeindex)->name ) { free( (nodelist + nodeindex)->name ); }
+         }
+         free( nodelist );
+      }
+   }
+   if ( state.oftagstr ) { free( state.oftagstr ); }
+   if ( state.pos.ns  &&  config_abandonposition(&state.pos)) {
       printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
    }
    if (config_abandonposition(&pos)) {

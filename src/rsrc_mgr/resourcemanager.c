@@ -1455,6 +1455,7 @@ int managerbehavior( rmanstate* rman ) {
          if ( rman->terminatedworkers[windex] == 0 ) { workersrunning = 1; break; }
       }
    }
+   printf( "\n" );
    // loop over all namespaces
    size_t nsindex = 0;
    for ( ; nsindex < rman->nscount; nsindex++ ) {
