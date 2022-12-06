@@ -1153,7 +1153,7 @@ char* resourcelog_genlogpath( char create, const char* logroot, const char* iter
    }
    // populate the path root
    ssize_t lrootlen = snprintf( path, pathlen + 1, "%s", logroot );
-   if ( lrootlen < 1  ||  lrootlen >= pathlen ) {
+   if ( lrootlen < 1  ||  lrootlen > pathlen ) {
       LOG( LOG_ERR, "Failed to populate logfile root path\n" );
       if ( nspath ) { free( nspath ); }
       free( path );
@@ -1174,7 +1174,7 @@ char* resourcelog_genlogpath( char create, const char* logroot, const char* iter
    }
    // populate the path iteration
    ssize_t iterlen = snprintf( path + lrootlen, (pathlen - lrootlen) + 1, "/%s", iteration );
-   if ( iterlen < 1  ||  iterlen >= (pathlen - lrootlen) ) {
+   if ( iterlen < 1  ||  iterlen > (pathlen - lrootlen) ) {
       LOG( LOG_ERR, "Failed to populate logfile iteration path: \"%s\"\n", iteration );
       if ( nspath ) { free( nspath ); }
       free( path );
@@ -1194,7 +1194,7 @@ char* resourcelog_genlogpath( char create, const char* logroot, const char* iter
    }
    // populate the path ns
    ssize_t nslen = snprintf( path + lrootlen + iterlen, (pathlen - (lrootlen + iterlen)) + 1, "/%s", nspath );
-   if ( nslen < 1  ||  nslen >= ((pathlen - lrootlen) - iterlen) ) {
+   if ( nslen < 1  ||  nslen > ((pathlen - lrootlen) - iterlen) ) {
       LOG( LOG_ERR, "Failed to populate NS path value: \"%s\"\n", nspath );
       free( nspath );
       free( path );

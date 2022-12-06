@@ -282,7 +282,7 @@ void outputinfo( FILE* output, marfs_ns* ns, streamwalker_report* report , opera
    }
    if ( !(userout) )   { fprintf( output, "      Byte Count = %zu\n", report->bytecount ); }
    else if ( report->bytecount ) {
-      fprintf( output, "      Byte Usage = %zu%s%s\n", bytetrans, remainder, unit );
+      fprintf( output, "      Byte Count = %zu%s%s\n", bytetrans, remainder, unit );
    }
    if ( !(userout) || report->streamcount ) { fprintf( output, "      Stream Count = %zu\n", report->streamcount ); }
    if ( !(userout) || report->delobjs )     { fprintf( output, "      Object Deletion Candidates = %zu\n", report->delobjs ); }
@@ -673,6 +673,9 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             LOG( LOG_ERR, "Failed to open log root for iteration: \"%s\" (%s)\n", request.iteration, strerror(errno) );
             return -1;
          }
+         // TODO check if program args are compatible with this run
+         if ( !(rman->execprevroot) ) {
+         }
          dirlist[1] = fdopendir( newfd );
          if ( dirlist[1] == NULL ) {
             LOG( LOG_ERR, "Failed to open DIR reference for previous iteration log root: \"%s\" (%s)\n",
@@ -703,7 +706,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
          }
          errno = olderr;
          if ( entry == NULL ) {
-            // no iterations remain, we are done
+            // no Namespaces remain, we are done
             closedir( dirlist[1] );
             dirlist[1] = NULL; // just to be explicit about clearing this value
             request.nsindex = 0;
@@ -711,6 +714,10 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             LOG( LOG_INFO, "Finished processing iteration dir: \"%s\"\n", request.iteration );
             if ( logcount ) {
                printf( "This run will incorporate %zu logfiles from: \"%s/%s\"\n", logcount, scanroot, request.iteration );
+            }
+            else {
+               // TODO if this is a dead iteration, with no logs remaining, just delete it
+               
             }
             continue;
          }
@@ -1170,7 +1177,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
             free( preslogpath );
          }
          // check if the manager needs to do any log cleanup
-         if ( response->errorlog  ||  ( !(rman->gstate.dryrun)  &&  rman->distributed[response->request.nsindex] ) ) {
+         if ( response->errorlog  ||  rman->distributed[response->request.nsindex] ) {
             // open the logfile for read
             RESOURCELOG ranklog = NULL;
             if ( resourcelog_init( &(ranklog), outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex] ) ) {
@@ -1502,6 +1509,90 @@ int managerbehavior( rmanstate* rman ) {
       // print out NS info
       outputinfo( stdout, curns, rman->walkreport + nsindex, rman->logsummary + nsindex );
    }
+   if ( rman->fatalerror ) { return -1; } // skip final log cleanup if we hit some crucial error
+   // final cleanup
+   char* iterationroot = resourcelog_genlogpath( 0, rman->logroot, rman->iteration, NULL, -1 );
+   if ( iterationroot == NULL ) {
+      fprintf( stderr, "ERROR: Failed to identify iteration path of this run for final cleanup\n" );
+      return -1;
+   }
+   size_t sumstrlen = strlen( iterationroot ) + 1 + strlen( "summary.log" );
+   char* sumlogpath = calloc( sizeof(char), sumstrlen + 1 );
+   if ( sumlogpath == NULL ) {
+      fprintf( stderr, "ERROR: Failed to identify summary log path of this run for final cleanup\n" );
+      free( iterationroot );
+      return -1;
+   }
+   snprintf( sumlogpath, sumstrlen + 1, "%s/%s", iterationroot, "summary.log" );
+   // potentially duplicate our summary log to a final location
+   if ( rman->preservelogtgt ) {
+      char* presiterroot = resourcelog_genlogpath( 0, rman->preservelogtgt, rman->iteration, NULL, -1 );
+      if ( presiterroot == NULL ) {
+         fprintf( stderr, "ERROR: Failed to identify iteration preservation path of this run for final cleanup\n" );
+         free( sumlogpath );
+         free( iterationroot );
+         return -1;
+      }
+      size_t presstrlen = strlen( presiterroot ) + 1 + strlen( "summary.log" );
+      char* preslogpath = calloc( sizeof(char), presstrlen + 1 );
+      if ( preslogpath == NULL ) {
+         fprintf( stderr, "ERROR: Failed to identify summary log path of this run for final cleanup\n" );
+         free( presiterroot );
+         free( sumlogpath );
+         free( iterationroot );
+         return -1;
+      }
+      snprintf( preslogpath, presstrlen + 1, "%s/%s", presiterroot, "summary.log" );
+      free( presiterroot );
+      // simply use a hardlink for this purpose, no need to make a 'real' duplicate
+      if ( link( sumlogpath, preslogpath ) ) {
+         fprintf( stderr, "ERROR: Failed to link summary logfile \"%s\" to new target path: \"%s\"\n",
+                  sumlogpath, preslogpath );
+         free( preslogpath );
+         free( sumlogpath );
+         free( iterationroot );
+         return -1;
+      }
+      free( preslogpath );
+   }
+   // unlink our summary logfile
+   if ( unlink( sumlogpath ) ) {
+      // just complain
+      fprintf( stderr, "WARNING: Failed to unlink summary log path during final cleanup\n" );
+   }
+   free( sumlogpath );
+   // attempt to unlink our iteration dir
+   if ( rmdir( iterationroot ) ) {
+      // just complain
+      fprintf( stderr, "WARNING: Failed to unlink iteration root: \"%s\" (%s)\n", iterationroot, strerror(errno) );
+   }
+   free( iterationroot );
+   // potentially cleanup the previous run's summary log and iteration dir
+   if ( rman->execprevroot ) {
+      iterationroot = resourcelog_genlogpath( 0, rman->execprevroot, rman->iteration, NULL, -1 );
+      if ( iterationroot == NULL ) {
+         fprintf( stderr, "ERROR: Failed to identify iteration path of the previous run for final cleanup\n" );
+         return -1;
+      }
+      sumstrlen = strlen( iterationroot ) + 1 + strlen( "summary.log" );
+      sumlogpath = calloc( sizeof(char), sumstrlen + 1 );
+      if ( sumlogpath == NULL ) {
+         fprintf( stderr, "ERROR: Failed to identify summary log path of the previous run for final cleanup\n" );
+         free( iterationroot );
+         return -1;
+      }
+      snprintf( sumlogpath, sumstrlen + 1, "%s/%s", iterationroot, "summary.log" );
+      if ( unlink( sumlogpath ) ) {
+         // just complain
+         fprintf( stderr, "WARNING: Failed to unlink summary log path of previous run during final cleanup\n" );
+      }
+      free( sumlogpath );
+      if ( rmdir( iterationroot ) ) {
+         // just complain
+         fprintf( stderr, "WARNING: Failed to unlink iteration root of previous run: \"%s\" (%s)\n", iterationroot, strerror(errno) );
+      }
+      free( iterationroot );
+   }
    // all work should now be complete
    return 0;
 }
@@ -1586,10 +1677,9 @@ int main(int argc, char** argv) {
    time_t clthresh = currenttime.tv_sec - CL_THRESH;
 
    // parse all position-independent arguments
-   char execprev = 0;
    char pr_usage = 0;
    int c;
-   while ((c = getopt(argc, (char* const*)argv, "c:n:ri:lpdXQGRPCT:L:h")) != -1) {
+   while ((c = getopt(argc, (char* const*)argv, "c:n:ri:l:p:dX:QGRPCT:L:h")) != -1) {
       switch (c) {
       case 'c':
          config_path = optarg;
@@ -1618,7 +1708,7 @@ int main(int argc, char** argv) {
          rman.gstate.dryrun = 1;
          break;
       case 'X':
-         execprev = 1;
+         rman.execprevroot = optarg;
          break;
       case 'Q':
          rman.quotas = 1;
@@ -1651,25 +1741,49 @@ int main(int argc, char** argv) {
    }
 
    // validate arguments
-   if ( execprev ) {
+   if ( rman.execprevroot ) {
       // check if we were incorrectly passed any args
-      if ( rman.iteration[0] == '\0' ) {
-         fprintf( stderr, "ERROR: Cannot pick up a previous dry run iteration ( '-X' ) without also being given that iteration string ( '-i' )\n" );
+      if ( rman.gstate.thresh.gcthreshold  ||  rman.gstate.thresh.rebuildthreshold  ||
+           rman.gstate.thresh.repackthreshold  ||  rman.gstate.thresh.cleanupthreshold  ||
+           rman.iteration[0] != '\0' ) {
+         fprintf( stderr, "ERROR: The '-G', '-R', '-P', and '-i' args are incompatible with '-X'\n" );
          return -1;
       }
-      if ( rman.gstate.thresh.gcthreshold  ||  rman.gstate.thresh.rebuildthreshold  ||
-           rman.gstate.thresh.repackthreshold  ||  rman.gstate.thresh.cleanupthreshold ) {
+      // parse over the specified path, looking for RECORD_ITERATION_PARENT
+      char* prevdup = strdup( rman.execprevroot );
+      char* pathelem = strtok( prevdup, "/" );
+      while ( pathelem ) {
+         if ( strcmp( RECORD_ITERATION_PARENT, pathelem ) == 0 ) { break; }
+         pathelem = strtok( NULL, "/" );
       }
+      if ( pathelem == NULL ) {
+         fprintf( stderr, "ERROR: The specified previous run path is missing the expected '%s' path component: \"%s\"\n",
+                  RECORD_ITERATION_PARENT, rman.execprevroot );
+         free( prevdup );
+         return -1;
+      }
+      size_t keepbytes = strlen(pathelem) + (pathelem - prevdup); // identify the strlen of the path up to this elem
+      // get our iteration name from the subsequent path element
+      pathelem = strtok( NULL, "/" );
+      if ( pathelem == NULL ) {
+         fprintf( stderr, "ERROR: Failed to identify iteration string from previous run path: \"%s\"\n", rman.execprevroot );
+         free( prevdup );
+         return -1;
+      }
+      if ( snprintf( rman.iteration, ITERATION_STRING_LEN, "%s", pathelem ) >= ITERATION_STRING_LEN ) {
+         fprintf( stderr, "ERROR: Parsed invalid iteration string from previous run path: \"%s\"\n", rman.execprevroot );
+         free( prevdup );
+         return -1;
+      }
+      free( prevdup );
       // identify the log root we will be pulling from
-      char* baseroot = rman.logroot;
-      if ( baseroot == NULL ) { baseroot = DEFAULT_LOG_ROOT; }
-      size_t alloclen = strlen(baseroot) + 1 + strlen( RECORD_ITERATION_PARENT );
-      rman.execprevroot = malloc( sizeof(char) * alloclen );
+      char* baseroot = rman.execprevroot;
+      rman.execprevroot = malloc( sizeof(char) * ( keepbytes + 1 ) );
       if ( rman.execprevroot == NULL ) {
          fprintf( stderr, "ERROR: Failed to allocate execprev root path\n" );
          return -1;
       }
-      snprintf( rman.execprevroot, alloclen, "%s/%s", baseroot, RECORD_ITERATION_PARENT );
+      snprintf( rman.execprevroot, keepbytes + 1, "%s", baseroot ); // use snprintf to truncate to appropriate length
    }
    char* newroot = NULL;
    if ( rman.logroot ) {
