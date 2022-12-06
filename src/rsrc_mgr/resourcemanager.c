@@ -322,6 +322,10 @@ int output_program_args( rmanstate* rman ) {
       return -1;
    }
    // output operation types and threshold values
+   if ( rman->gstate.dryrun  &&  fprintf( rman->summarylog, "DRY-RUN\n" ) < 1 ) {
+      fprintf( stderr, "ERROR: Failed to output dry-run flag to summary log\n" );
+      return -1;
+   }
    if ( rman->quotas  &&  fprintf( rman->summarylog, "QUOTAS\n" ) < 1 ) {
       fprintf( stderr, "ERROR: Failed to output quota flag to summary log\n" );
       return -1;
@@ -341,6 +345,9 @@ int output_program_args( rmanstate* rman ) {
       fprintf( stderr, "ERROR: Failed to output REBUILD threshold to summary log\n" );
       return -1;
    }
+   if ( rman->gstate.lbrebuild ) {
+      // TODO
+   }
    if ( fprintf( rman->summarylog, "\n" ) < 1 ) {
       fprintf( stderr, "ERROR: Failed to output header separator summary log\n" );
       return -1;
@@ -351,21 +358,26 @@ int output_program_args( rmanstate* rman ) {
 int parse_program_args( rmanstate* rman, FILE* inputsummary ) {
    // parse in a verify the config version
    char* readline = NULL;
-   size_t linelen = 0;
-   ssize_t strlen = getline( &(readline), &(linelen), inputsummary );
-   if ( strlen < 1 ) {
-      fprintf( stderr, "ERROR: Failed to read MarFS config version string from previous run's summary log\n" );
-      return -1;
+   size_t linealloc = 0;
+   ssize_t linelen = getline( &(readline), &(linealloc), inputsummary );
+   if ( linelen < 2 ) {
+      fprintf( stderr, "WARNING: Failed to read MarFS config version string from previous run's summary log\n" );
+      return 1;
    }
-   if ( strncmp( readline, rman->config->version, strlen - 1 ) ) {
-      fprintf( stderr, "ERROR: Previous run is associated with a different MarFS config version: \"%s\"\n", readline );
+   linelen--; // decrement length, to exclude newline
+   if ( strncmp( readline, rman->config->version, linelen ) ) {
+      fprintf( stderr, "WARNING: Previous run is associated with a different MarFS config version: \"%s\"\n", readline );
       free( readline );
-      return -1;
+      return 1;
    }
    // parse in operation threshold values and set our state to match
-   while ( (strlen = getline( &(readline), &(linelen), inputsummary )) > 1 ) {
-      if ( strncmp( readline, "QUOTAS", strlen ) == 0 ) {
-         fprintf( stderr, "WARNING: Ignoring quota processing for execution of previous run\n" );
+   while ( (linelen = getline( &(readline), &(linealloc), inputsummary )) > 1 ) {
+      linelen--; // decrement length, to exclude newline
+      if ( strncmp( readline, "QUOTAS", linelen ) == 0 ) {
+         rman->quotas = 1;
+      }
+      else if ( strncmp( readline, "DRY-RUN", linelen ) == 0 ) {
+         rman->gstate.dryrun = 1;
       }
       else {
          // look for an '=' char
@@ -376,6 +388,7 @@ int parse_program_args( rmanstate* rman, FILE* inputsummary ) {
                free( readline );
                return -1;
             }
+            parse++;
          }
          *parse = '\0';
          parse++;
@@ -404,11 +417,11 @@ int parse_program_args( rmanstate* rman, FILE* inputsummary ) {
          }
       }
    }
-   if ( strlen < 1 ) {
+   if ( linelen < 1 ) {
       fprintf( stderr, "ERROR: Failed to read operation info from previous run's logfile\n" );
       return -1;
    }
-   free( readline ); // done with this string allocation
+   if ( readline ) { free( readline ); } // done with this string allocation
    return 0;
 }
 
@@ -673,8 +686,48 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             LOG( LOG_ERR, "Failed to open log root for iteration: \"%s\" (%s)\n", request.iteration, strerror(errno) );
             return -1;
          }
-         // TODO check if program args are compatible with this run
+         // check if program args are compatible with this run
          if ( !(rman->execprevroot) ) {
+            int sumfd = openat( newfd, "summary.log", O_RDONLY, 0 );
+            if ( sumfd < 0 ) {
+               LOG( LOG_ERR, "Failed to open summary log for old iteration: \"%s\" (%s)\n",
+                    request.iteration, strerror(errno) );
+               close( newfd );
+               return -1;
+            }
+            FILE* summaryfile = fdopen( sumfd, "r" );
+            if ( summaryfile == NULL ) {
+               LOG( LOG_ERR, "Failed to open a file stream for summary log for old iteration: \"%s\" (%s)\n",
+                    request.iteration, strerror(errno) );
+               close( sumfd );
+               close( newfd );
+               return -1;
+            }
+            // parse args into a temporary state struct, for comparison
+            rmanstate tmpstate;
+            bzero( &(tmpstate), sizeof( struct rmanstate_struct ) );
+            tmpstate.config = rman->config;
+            int parseargres = parse_program_args( &(tmpstate), summaryfile );
+            fclose( summaryfile );
+            if ( parseargres > 0 ) {
+               printf( "Skipping over previous iteration with incompatible config: \"%s\"\n", request.iteration );
+               continue;
+            }
+            if ( parseargres ) {
+               LOG( LOG_ERR, "Failed to parse arguments from summary log of old iteration: \"%s\" (%s)\n",
+                    request.iteration, strerror(errno) );
+               close( newfd );
+               return -1;
+            }
+            // check if previous run args are a superset if this run's
+            if ( tmpstate.gstate.thresh.gcthreshold > rman->gstate.thresh.gcthreshold  ||
+                 tmpstate.gstate.thresh.repackthreshold > rman->gstate.thresh.repackthreshold  ||
+                 tmpstate.gstate.thresh.rebuildthreshold > rman->gstate.thresh.rebuildthreshold  ||
+                 tmpstate.gstate.thresh.cleanupthreshold > rman->gstate.thresh.cleanupthreshold  ||
+                 tmpstate.gstate.dryrun != rman->gstate.dryrun ) {
+               printf( "Skipping over previous iteration with incompatible arguments: \"%s\"\n", request.iteration );
+               continue;
+            }
          }
          dirlist[1] = fdopendir( newfd );
          if ( dirlist[1] == NULL ) {
@@ -707,6 +760,15 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
          errno = olderr;
          if ( entry == NULL ) {
             // no Namespaces remain, we are done
+            if ( logcount == 0  &&  rman->execprevroot == NULL ) {
+               // if this is a dead iteration, with no logs remaining, just delete it
+               if ( unlinkat( dirfd( dirlist[1] ), "summary.log", 0 ) ) {
+                  fprintf( stderr, "WARNING: Failed to remove summary log of previous iteration: \"%s\"\n", request.iteration );
+               }
+               else if ( unlinkat( dirfd( dirlist[0] ), request.iteration, AT_REMOVEDIR ) ) {
+                  fprintf( stderr, "WARNING: Failed to remove previous iteration log root: \"%s\"\n", request.iteration );
+               }
+            }
             closedir( dirlist[1] );
             dirlist[1] = NULL; // just to be explicit about clearing this value
             request.nsindex = 0;
@@ -714,10 +776,6 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             LOG( LOG_INFO, "Finished processing iteration dir: \"%s\"\n", request.iteration );
             if ( logcount ) {
                printf( "This run will incorporate %zu logfiles from: \"%s/%s\"\n", logcount, scanroot, request.iteration );
-            }
-            else {
-               // TODO if this is a dead iteration, with no logs remaining, just delete it
-               
             }
             continue;
          }
@@ -2068,8 +2126,22 @@ int main(int argc, char** argv) {
          config_term( rman.config );
          return -1;
       }
+      if ( rman.quotas ) {
+         fprintf( stderr, "WARNING: Ignoring quota processing for execution of previous run\n" );
+         rman.quotas = 0;
+      }
       fclose( sumlog );
       free( sumlogpath );
+      if ( rman.gstate.dryrun == 0 ) {
+         fprintf( stderr, "ERROR: Cannot pick up execution of a non-'dry-run'\n" );
+         free( rman.logsummary );
+         free( rman.walkreport );
+         free( rman.terminatedworkers );
+         free( rman.distributed );
+         free( rman.nslist );
+         config_term( rman.config );
+         return -1;
+      }
       // incorporate logfiles from the previous run
       if ( rman.ranknum == 0  &&  findoldlogs( &(rman), rman.execprevroot ) ) {
          fprintf( stderr, "ERROR: Failed to identify previous run's logfiles: \"%s\"\n", rman.execprevroot );
