@@ -10,7 +10,7 @@
 #FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
 #works, such modified software should be clearly marked, so as not to confuse it
 #with the version available from LANL.
-#
+# 
 #Additionally, redistribution and use in source and binary forms, with or without
 #modification, are permitted provided that the following conditions are met:
 #1. Redistributions of source code must retain the above copyright notice, this
@@ -53,63 +53,7 @@
 #LANL contributions is found at https://github.com/jti-lanl/aws4c.
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
-
-
-# automake requires '=' before '+=', even for these built-in vars
-AM_CPPFLAGS = -I ${top_srcdir}/src
-AM_CFLAGS   =
-AM_LDFLAGS  =
-
-CC = mpicc
-
-lib_LTLIBRARIES = libResourceLog.la
-
-libResourceLog_la_SOURCES = resourcelog.c
-libResourceLog_la_LIBADD = ../config/libConfig.la ../tagging/libTagging.la
-libResourceLog_la_CFLAGS = $(XML_CFLAGS)
-RSRC_LOG_LIB = libResourceLog.la
-
-#noinst_LTLIBRARIES = libRsrcMgr.la
 #
-#libRsrcMgr_la_SOURCES = rsrc_mgr.c
-#libRsrcMgr_la_LIBADD  = ../config/libConfig.la ../mdal/libMDAL.la ../tagging/libTagging.la ../datastream/libDatastream.la
-#libRsrcMgr_la_CFLAGS  = $(XML_CFLAGS)
-#RSRC_MGR_LIB = libRsrcMgr.la
-#
-#bin_PROGRAMS = marfs-rsrc_mgr
-#marfs_rsrc_mgr_SOURCES = rsrc_mgr.c
-#marfs_rsrc_mgr_LDADD   = ../config/libConfig.la ../mdal/libMDAL.la ../tagging/libTagging.la ../datastream/libDatastream.la
-#marfs_rsrc_mgr_CFLAGS  = $(XML_CFLAGS)
 
-bin_PROGRAMS = marfs-rman
-marfs_rman_SOURCES = resourcemanager.c resourcethreads.c resourceprocessing.c
-marfs_rman_LDADD = libResourceLog.la ../datastream/libDatastream.la
-marfs_rman_CFLAGS = $(XML_CFLAGS)
-
-# ---
-
-check_PROGRAMS = test_resourcelog test_resourceprocessing test_resourcethreads
-
-#test_rsrc_mgr_SOURCES = testing/test_rsrc_mgr.c
-#test_rsrc_mgr_LDADD = libRsrcMgr.la
-#test_rsrc_mgr_CFLAGS = $(XML_CFLAGS)
-#
-#test_rsrc_mgr_nopack_SOURCES = testing/test_rsrc_mgr_nopack.c
-#test_rsrc_mgr_nopack_LDADD = libRsrcMgr.la
-#test_rsrc_mgr_nopack_CFLAGS = $(XML_CFLAGS)
-
-test_resourcelog_SOURCES = testing/test_resourcelog.c
-test_resourcelog_LDADD = libResourceLog.la
-test_resourcelog_CFLAGS = $(XML_CFLAGS)
-
-test_resourceprocessing_SOURCES = testing/test_resourceprocessing.c
-test_resourceprocessing_LDADD = libResourceLog.la ../datastream/libDatastream.la
-test_resourceprocessing_CFLAGS = $(XML_CFLAGS)
-
-test_resourcethreads_SOURCES = testing/test_resourcethreads.c resourceprocessing.c
-test_resourcethreads_LDADD = libResourceLog.la ../datastream/libDatastream.la
-test_resourcethreads_CFLAGS = $(XML_CFLAGS)
-
-TESTS = test_resourcelog test_resourceprocessing test_resourcethreads #test_rsrc_mgr test_rsrc_mgr_nopack
-
+sysconf_DATA = example-marfs-config.xml
 
