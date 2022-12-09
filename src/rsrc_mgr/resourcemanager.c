@@ -625,20 +625,20 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
    }
    size_t logcount = 0; // per iteration log count
    size_t logdepth = 1;
+   char itercheck = 0;
    loginfo* linfo = NULL; // for caching a target location for new log request info
    while ( logdepth ) {
       if ( logdepth == 1 ) { // identify the iteration to tgt
          if ( rman->execprevroot ) {
             // check for potential exit
-            if ( dirlist[0] == NULL ) {
+            if ( itercheck ) {
                LOG( LOG_INFO, "Preparing to exit, after completing scan of prevexec iteration: \"%s/%s\"\n", scanroot, rman->iteration );
                request.iteration[0] = '\0';
                logdepth--;
                continue;
             }
-            // NULL out our scanroot dir, so we never repeat this
-            closedir( dirlist[0] );
-            dirlist[0] = NULL;
+            // note a pass over this section, so we never repeat
+            itercheck = 1;
             // only targeting a matching iteration
             if ( snprintf( request.iteration, ITERATION_STRING_LEN, rman->iteration ) < 1 ) {
                LOG( LOG_ERR, "Failed to populate request with running iteration \"%s\"\n", rman->iteration );
@@ -930,6 +930,12 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
                       rman->ranknum, rlogpath );
             return -1;
          }
+         // wait for our input to be exhausted ( don't respond until we are ready for more work )
+         if ( resourceinput_waitforcomp( &(rman->gstate.rinput) ) ) {
+            LOG( LOG_ERR, "Failed to wait for completion of logfile \"%s\"\n", request->refdist );
+            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait for completion of logfile \"%s\"\n", rlogpath );
+            return -1;
+         }
       }
       else {
          // we are just cleaning up this old logfile by replaying it into our current one
@@ -994,86 +1000,88 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          return -1;
       }
       // terminate the resource input
-      if ( resourceinput_term( &(rman->gstate.rinput) ) ) {
+      if ( rman->gstate.rinput  &&  resourceinput_term( &(rman->gstate.rinput) ) ) {
          LOG( LOG_ERR, "Failed to terminate resourceinput\n" );
          snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to terminate resourceinput\n" );
          return -1;
       }
-      // wait for the queue to be marked as FINISHED
-      TQ_Control_Flags setflags = 0;
-      if ( tq_wait_for_flags( rman->tq, 0, &(setflags) ) ) {
-         LOG( LOG_ERR, "Failed to wait on ThreadQueue state flags\n" );
-         snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait on ThreadQueue state flags\n" );
-         return -1;
-      }
       char threaderror = 0;
-      if ( setflags != TQ_FINISHED ) {
-         LOG( LOG_WARNING, "Unexpected ( NON-FINISHED ) ThreadQueue state flags: %u\n", setflags );
-         threaderror = 1;
-      }
-      else {
-         // wait for TQ completion
-         if ( tq_wait_for_completion( rman->tq ) ) {
-            LOG( LOG_ERR, "Failed to wait for ThreadQueue completion\n" );
-            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait for ThreadQueue completion\n" );
+      if ( rman->tq ) {
+         // wait for the queue to be marked as FINISHED
+         TQ_Control_Flags setflags = 0;
+         if ( tq_wait_for_flags( rman->tq, 0, &(setflags) ) ) {
+            LOG( LOG_ERR, "Failed to wait on ThreadQueue state flags\n" );
+            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait on ThreadQueue state flags\n" );
             return -1;
          }
-      }
-      // gather all thread status values
-      rthread_state* tstate = NULL;
-      int retval;
-      while ( (retval = tq_next_thread_status( rman->tq, (void**)&(tstate) )) > 0 ) {
-         // verify thread status
-         if ( tstate == NULL ) {
-            LOG( LOG_ERR, "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
-                 rman->ranknum, rman->gstate.pos.ns->idstr );
+         if ( setflags != TQ_FINISHED ) {
+            LOG( LOG_WARNING, "Unexpected ( NON-FINISHED ) ThreadQueue state flags: %u\n", setflags );
+            threaderror = 1;
+         }
+         else {
+            // wait for TQ completion
+            if ( tq_wait_for_completion( rman->tq ) ) {
+               LOG( LOG_ERR, "Failed to wait for ThreadQueue completion\n" );
+               snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait for ThreadQueue completion\n" );
+               return -1;
+            }
+         }
+         // gather all thread status values
+         rthread_state* tstate = NULL;
+         int retval;
+         while ( (retval = tq_next_thread_status( rman->tq, (void**)&(tstate) )) > 0 ) {
+            // verify thread status
+            if ( tstate == NULL ) {
+               LOG( LOG_ERR, "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
+                    rman->ranknum, rman->gstate.pos.ns->idstr );
+               snprintf( response->errorstr, MAX_ERROR_BUFFER,
+                         "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
+                         rman->ranknum, rman->gstate.pos.ns->idstr );
+               return -1;
+            }
+            if ( tstate->fatalerror ) {
+               LOG( LOG_ERR, "Fatal Error in NS \"%s\": \"%s\"\n",
+                    rman->gstate.pos.ns->idstr, tstate->errorstr );
+               snprintf( response->errorstr, MAX_ERROR_BUFFER, "Fatal Error in NS \"%s\": \"%s\"\n",
+                         rman->gstate.pos.ns->idstr, tstate->errorstr );
+               return -1;
+            }
+            response->report.fileusage   += tstate->report.fileusage;
+            response->report.byteusage   += tstate->report.byteusage;
+            response->report.filecount   += tstate->report.filecount;
+            response->report.objcount    += tstate->report.objcount;
+            response->report.bytecount   += tstate->report.bytecount;
+            response->report.streamcount += tstate->report.streamcount;
+            response->report.delobjs     += tstate->report.delobjs;
+            response->report.delfiles    += tstate->report.delfiles;
+            response->report.delstreams  += tstate->report.delstreams;
+            response->report.volfiles    += tstate->report.volfiles;
+            response->report.rpckfiles   += tstate->report.rpckfiles;
+            response->report.rpckbytes   += tstate->report.rpckbytes;
+            response->report.rbldobjs    += tstate->report.rbldobjs;
+            response->report.rbldbytes   += tstate->report.rbldbytes;
+            free( tstate );
+         }
+         if ( retval ) {
+            LOG( LOG_ERR, "Failed to collect thread states during completion of work on NS \"%s\"\n",
+                 rman->gstate.pos.ns->idstr );
             snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                      "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
-                      rman->ranknum, rman->gstate.pos.ns->idstr );
+                      "Failed to collect thread status during completion of work on NS \"%s\"\n",
+                      rman->gstate.pos.ns->idstr );
             return -1;
          }
-         if ( tstate->fatalerror ) {
-            LOG( LOG_ERR, "Fatal Error in NS \"%s\": \"%s\"\n",
-                 rman->gstate.pos.ns->idstr, tstate->errorstr );
-            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Fatal Error in NS \"%s\": \"%s\"\n",
-                      rman->gstate.pos.ns->idstr, tstate->errorstr );
+         response->haveinfo = 1; // note that we have info for the manager to process
+         // close our the thread queue, repack streamer, and logs
+         if ( tq_close( rman->tq ) ) {
+            LOG( LOG_ERR, "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
+                 rman->gstate.pos.ns->idstr );
+            snprintf( response->errorstr, MAX_ERROR_BUFFER,
+                      "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
+                      rman->gstate.pos.ns->idstr );
             return -1;
          }
-         response->report.fileusage   += tstate->report.fileusage;
-         response->report.byteusage   += tstate->report.byteusage;
-         response->report.filecount   += tstate->report.filecount;
-         response->report.objcount    += tstate->report.objcount;
-         response->report.bytecount   += tstate->report.bytecount;
-         response->report.streamcount += tstate->report.streamcount;
-         response->report.delobjs     += tstate->report.delobjs;
-         response->report.delfiles    += tstate->report.delfiles;
-         response->report.delstreams  += tstate->report.delstreams;
-         response->report.volfiles    += tstate->report.volfiles;
-         response->report.rpckfiles   += tstate->report.rpckfiles;
-         response->report.rpckbytes   += tstate->report.rpckbytes;
-         response->report.rbldobjs    += tstate->report.rbldobjs;
-         response->report.rbldbytes   += tstate->report.rbldbytes;
-         free( tstate );
+         rman->tq = NULL;
       }
-      if ( retval ) {
-         LOG( LOG_ERR, "Failed to collect thread states during completion of work on NS \"%s\"\n",
-              rman->gstate.pos.ns->idstr );
-         snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                   "Failed to collect thread status during completion of work on NS \"%s\"\n",
-                   rman->gstate.pos.ns->idstr );
-         return -1;
-      }
-      response->haveinfo = 1; // note that we have info for the manager to process
-      // close our the thread queue, repack streamer, and logs
-      if ( tq_close( rman->tq ) ) {
-         LOG( LOG_ERR, "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
-              rman->gstate.pos.ns->idstr );
-         snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                   "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
-                   rman->gstate.pos.ns->idstr );
-         return -1;
-      }
-      rman->tq = NULL;
       // need to preserve our logfile, allowing the manager to remove it
       char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration, rman->gstate.pos.ns, rman->ranknum );
       int rlogret;
@@ -1088,13 +1096,15 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       }
       free( outlogpath );
       if (rlogret) { response->errorlog = 1; } // note if our log was preserved due to errors being present
-      if ( repackstreamer_complete( rman->gstate.rpst ) ) {
-         LOG( LOG_ERR, "Failed to complete repack streamer during completion of NS \"%s\"\n", rman->gstate.pos.ns->idstr );
-         snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                   "Failed to complete repack streamer during completion of NS \"%s\"\n", rman->gstate.pos.ns->idstr );
-         return -1;
+      if ( rman->gstate.rpst ) {
+         if ( repackstreamer_complete( rman->gstate.rpst ) ) {
+            LOG( LOG_ERR, "Failed to complete repack streamer during completion of NS \"%s\"\n", rman->gstate.pos.ns->idstr );
+            snprintf( response->errorstr, MAX_ERROR_BUFFER,
+                      "Failed to complete repack streamer during completion of NS \"%s\"\n", rman->gstate.pos.ns->idstr );
+            return -1;
+         }
+         rman->gstate.rpst = NULL;
       }
-      rman->gstate.rpst = NULL;
       const char* nsidstr = rman->gstate.pos.ns->idstr;
       if ( config_abandonposition( &(rman->gstate.pos) ) ) {
          LOG( LOG_ERR, "Failed to abandon marfs position during completion of NS \"%s\"\n", nsidstr );
@@ -1234,69 +1244,66 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
             }
             free( preslogpath );
          }
-         // check if the manager needs to do any log cleanup
-         if ( response->errorlog  ||  rman->distributed[response->request.nsindex] ) {
-            // open the logfile for read
-            RESOURCELOG ranklog = NULL;
-            if ( resourcelog_init( &(ranklog), outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex] ) ) {
-               fprintf( stderr, "ERROR: Failed to open the output log of Rank %zu for NS \"%s\": \"%s\"\n",
-                        ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
+         // open the logfile for read
+         RESOURCELOG ranklog = NULL;
+         if ( resourcelog_init( &(ranklog), outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex] ) ) {
+            fprintf( stderr, "ERROR: Failed to open the output log of Rank %zu for NS \"%s\": \"%s\"\n",
+                     ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
+            free( outlogpath );
+            rman->fatalerror = 1;
+            return -1;
+         }
+         // process the work log
+         if ( response->errorlog ) {
+            // identify the errorlog output location
+            char* errlogpath = resourcelog_genlogpath( 1, rman->logroot, rman->iteration,
+                                                        rman->nslist[response->request.nsindex], ranknum );
+            if ( errlogpath == NULL ) {
+               fprintf( stderr, "ERROR: Failed to identify the error log path of Rank %zu for NS \"%s\"\n",
+                        ranknum, rman->nslist[response->request.nsindex]->idstr );
+               resourcelog_term( &(ranklog), NULL, 0 );
                free( outlogpath );
                rman->fatalerror = 1;
                return -1;
             }
-            // process the work log
-            if ( response->errorlog ) {
-               // identify the errorlog output location
-               char* errlogpath = resourcelog_genlogpath( 1, rman->logroot, rman->iteration,
-                                                           rman->nslist[response->request.nsindex], ranknum );
-               if ( errlogpath == NULL ) {
-                  fprintf( stderr, "ERROR: Failed to identify the error log path of Rank %zu for NS \"%s\"\n",
-                           ranknum, rman->nslist[response->request.nsindex]->idstr );
-                  resourcelog_term( &(ranklog), NULL, 0 );
-                  free( outlogpath );
-                  rman->fatalerror = 1;
-                  return -1;
-               }
 
-               // open the error log for write
-               RESOURCELOG errlog = NULL;
-               if ( resourcelog_init( &(errlog), errlogpath, RESOURCE_RECORD_LOG, rman->nslist[response->request.nsindex] ) ) {
-                  fprintf( stderr, "ERROR: Failed to open the error log of Rank %zu: \"%s\"\n", ranknum, errlogpath );
-                  resourcelog_term( &(ranklog), NULL, 0 );
-                  free( errlogpath );
-                  free( outlogpath );
-                  rman->fatalerror = 1;
-                  return -1;
-               }
-               // replay the logfile into the error log location
-               if ( resourcelog_replay( &(ranklog), &(errlog), error_only_filter ) ) {
-                  fprintf( stderr, "ERROR: Failed to replay errors from logfile \"%s\" into \"%s\"\n", outlogpath, errlogpath );
-                  resourcelog_term( &(errlog), NULL, 1 );
-                  resourcelog_term( &(ranklog), NULL, 0 );
-                  free( errlogpath );
-                  free( outlogpath );
-                  rman->fatalerror = 1;
-                  return -1;
-               }
-               if ( resourcelog_term( &(errlog), NULL, 0 ) ) {
-                  fprintf( stderr, "ERROR: Failed to finalize error logfile: \"%s\"\n", errlogpath );
-                  free( errlogpath );
-                  free( outlogpath );
-                  rman->fatalerror = 1;
-                  return -1;
-               }
+            // open the error log for write
+            RESOURCELOG errlog = NULL;
+            if ( resourcelog_init( &(errlog), errlogpath, RESOURCE_RECORD_LOG, rman->nslist[response->request.nsindex] ) ) {
+               fprintf( stderr, "ERROR: Failed to open the error log of Rank %zu: \"%s\"\n", ranknum, errlogpath );
+               resourcelog_term( &(ranklog), NULL, 0 );
                free( errlogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
             }
-            else {
-               // simply delete the output logfile of this rank
-               if ( resourcelog_term( &(ranklog), NULL, 1 ) ) {
-                  fprintf( stderr, "ERROR: Failed to delete the output log of Rank %zu for NS \"%s\": \"%s\"\n",
-                           ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
-                  free( outlogpath );
-                  rman->fatalerror = 1;
-                  return -1;
-               }
+            // replay the logfile into the error log location
+            if ( resourcelog_replay( &(ranklog), &(errlog), error_only_filter ) ) {
+               fprintf( stderr, "ERROR: Failed to replay errors from logfile \"%s\" into \"%s\"\n", outlogpath, errlogpath );
+               resourcelog_term( &(errlog), NULL, 1 );
+               resourcelog_term( &(ranklog), NULL, 0 );
+               free( errlogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+            if ( resourcelog_term( &(errlog), NULL, 0 ) ) {
+               fprintf( stderr, "ERROR: Failed to finalize error logfile: \"%s\"\n", errlogpath );
+               free( errlogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
+            free( errlogpath );
+         }
+         else {
+            // simply delete the output logfile of this rank
+            if ( resourcelog_term( &(ranklog), NULL, 1 ) ) {
+               fprintf( stderr, "ERROR: Failed to delete the output log of Rank %zu for NS \"%s\": \"%s\"\n",
+                        ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
             }
          }
          free( outlogpath );
@@ -1894,21 +1901,21 @@ int main(int argc, char** argv) {
    if ( rman.preservelogtgt ) {
       char* newpresroot;
       if ( rman.gstate.dryrun ) {
-         newpresroot = malloc( sizeof(char) * ( strlen(rman.preservelogtgt) + 1 + strlen( RECORD_ITERATION_PARENT ) ) );
+         newpresroot = malloc( sizeof(char) * ( strlen(rman.preservelogtgt) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1 ) );
          if ( newpresroot == NULL ) {
             fprintf( stderr, "ERROR: Failed to allocate log preservation path string\n" );
             return -1;
          }
-         snprintf( newpresroot, strlen(rman.preservelogtgt) + 1 + strlen( RECORD_ITERATION_PARENT ), "%s/%s",
+         snprintf( newpresroot, strlen(rman.preservelogtgt) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1, "%s/%s",
                    rman.preservelogtgt, RECORD_ITERATION_PARENT );
       }
       else {
-         newpresroot = malloc( sizeof(char) * ( strlen(rman.preservelogtgt) + 1 + strlen( MODIFY_ITERATION_PARENT ) ) );
+         newpresroot = malloc( sizeof(char) * ( strlen(rman.preservelogtgt) + 1 + strlen( MODIFY_ITERATION_PARENT ) + 1 ) );
          if ( newpresroot == NULL ) {
             fprintf( stderr, "ERROR: Failed to allocate log preservation path string\n" );
             return -1;
          }
-         snprintf( newpresroot, strlen(rman.preservelogtgt) + 1 + strlen( MODIFY_ITERATION_PARENT ), "%s/%s",
+         snprintf( newpresroot, strlen(rman.preservelogtgt) + 1 + strlen( MODIFY_ITERATION_PARENT ) + 1, "%s/%s",
                    rman.preservelogtgt, MODIFY_ITERATION_PARENT );
       }
       errno = 0;
@@ -1918,7 +1925,6 @@ int main(int argc, char** argv) {
          return -1;
       }
       rman.preservelogtgt = newpresroot;
-      free( newpresroot );
    }
 
    // populate an iteration string, if missing

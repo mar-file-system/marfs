@@ -259,6 +259,7 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_S
             LOG( LOG_WARNING, "Failed to properly terminate input resourcelog\n" );
          }
          rin->rlog = NULL; // be certain this is NULLed out
+         pthread_cond_signal( &(rin->complete) );
       }
       else {
          // provide the read value
