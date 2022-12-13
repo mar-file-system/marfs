@@ -10,7 +10,7 @@
 #FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
 #works, such modified software should be clearly marked, so as not to confuse it
 #with the version available from LANL.
-# 
+#
 #Additionally, redistribution and use in source and binary forms, with or without
 #modification, are permitted provided that the following conditions are met:
 #1. Redistributions of source code must retain the above copyright notice, this
@@ -53,11 +53,6 @@
 #LANL contributions is found at https://github.com/jti-lanl/aws4c.
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
-#
 
-ACLOCAL_AMFLAGS = -I m4
-AUTOMAKE_OPTIONS = foreign
-
-
-SUBDIRS = src etc
+SUBDIRS = hash mdal tagging recovery config datastream api rsrc_mgr fuse
 

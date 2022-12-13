@@ -55,9 +55,5 @@
 #GNU licenses can be found at http://www.gnu.org/licenses/.
 #
 
-ACLOCAL_AMFLAGS = -I m4
-AUTOMAKE_OPTIONS = foreign
-
-
-SUBDIRS = src etc
+sysconf_DATA = example-marfs-config.xml
 

@@ -53,11 +53,32 @@
 #LANL contributions is found at https://github.com/jti-lanl/aws4c.
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
-#
-
-ACLOCAL_AMFLAGS = -I m4
-AUTOMAKE_OPTIONS = foreign
 
 
-SUBDIRS = src etc
+# automake requires '=' before '+=', even for these built-in vars
+AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CFLAGS   =
+AM_LDFLAGS  =
+
+
+include_HEADERS = hash.h
+
+# define sources used by many programs as noinst libraries, to avoid multiple compilations
+noinst_LTLIBRARIES = libHash.la
+
+libHash_la_SOURCES = hash.c
+Hash_LIB = libHash.la
+
+# ---
+
+check_PROGRAMS = test_hash_lookup test_hash_distribution
+
+test_hash_lookup_SOURCES = testing/test_hash_lookup.c
+test_hash_lookup_LDADD = $(Hash_LIB)
+
+test_hash_distribution_SOURCES = testing/test_hash_distribution.c
+test_hash_distribution_LDADD = $(Hash_LIB)
+
+TESTS = test_hash_lookup test_hash_distribution
+
 

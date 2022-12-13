@@ -1,0 +1,13 @@
+
+# reference vars
+INSTALL="/opt/campaign/install"
+
+# may be a good idea to cleanup some external state
+unset LD_LIBRARY_PATH
+
+# Buildtime definitions
+export PATH="$PATH:/usr/lib64/openmpi/bin"
+export LDFLAGS="-L$INSTALL/lib"
+export CFLAGS="-I$INSTALL/include"
+export MARFS_CONFIG_PATH="$INSTALL/etc/marfs-config.xml"
+

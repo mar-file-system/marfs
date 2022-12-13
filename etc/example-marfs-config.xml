@@ -1,0 +1,455 @@
+
+<!--
+   Copyright (c) 2015, Los Alamos National Security, LLC
+   All rights reserved.
+
+   Copyright 2015.  Los Alamos National Security, LLC. This software was produced
+   under U.S. Government contract DE-AC52-06NA25396 for Los Alamos National
+   Laboratory (LANL), which is operated by Los Alamos National Security, LLC for
+   the U.S. Department of Energy. The U.S. Government has rights to use, reproduce,
+   and distribute this software.  NEITHER THE GOVERNMENT NOR LOS ALAMOS NATIONAL
+   SECURITY, LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
+   FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
+   works, such modified software should be clearly marked, so as not to confuse it
+   with the version available from LANL.
+
+   Additionally, redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are met:
+   1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+   3. Neither the name of Los Alamos National Security, LLC, Los Alamos National
+   Laboratory, LANL, the U.S. Government, nor the names of its contributors may be
+   used to endorse or promote products derived from this software without specific
+   prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND CONTRIBUTORS
+   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+   THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+   ARE DISCLAIMED. IN NO EVENT SHALL LOS ALAMOS NATIONAL SECURITY, LLC OR
+   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
+   OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+   SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+   INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+   OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+   NOTE:
+
+   Although these files reside in a seperate repository, they fall under the MarFS copyright and license.
+
+   MarFS is released under the BSD license.
+
+   MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier:
+   LA-CC-15-039.
+
+   These erasure utilites make use of the Intel Intelligent Storage
+   Acceleration Library (Intel ISA-L), which can be found at
+   https://github.com/01org/isa-l and is under its own license.
+
+   MarFS uses libaws4c for Amazon S3 object communication. The original version
+   is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
+   LANL added functionality to the original work. The original work plus
+   LANL contributions is found at https://github.com/jti-lanl/aws4c.
+
+   GNU licenses can be found at http://www.gnu.org/licenses/.
+-->
+
+<!-- Start MarFS Configuration Info -->
+<marfs_config version="0.0001beta-ExampleVersion">
+   <!-- Mount Point 
+         * This is the absolute path to a directory at which MarFS expects to be mounted.
+         * Tools which interpret absolute paths ( FUSE ) will only function if they operate below this location.
+         * -->
+   <mnt_top>/marfs</mnt_top>
+
+   <!-- Host Definitions ( CURRENTLY IGNORED )
+        * This is a placeholder for future implementation.
+        * The idea is to facilitate configuration of an entire MarFS cluster via 
+        * host definitions within this config.
+        * -->
+   <hosts> ... </hosts>
+
+   <!-- Repo Definition
+        * A MarFS 'repo' is a definition of data and metadata structure.  It is the uppermost conceptual abstraction of
+        * MarFS.
+        * All files written to MarFS must be uniquely and permanently associated with a repo, which defines where file
+        * information is placed and how that information is formatted.
+        * -->
+   <repo name="5+2_Repo">
+
+      <!-- Per-Repo Data Scheme
+           * Defines where data objects are placed, how they are formatted, and through what interface they are accessed
+           * -->
+      <data>
+
+         <!-- Erasure Protection
+              * Protection scheme for data objects of this repo.
+              * Defines a count of data blocks ( 'N' ), parity blocks ( 'E' ), and erasure stripe width ( 'PSZ' ) for
+              * each object.
+              * -->
+         <protection>
+            <N>5</N>
+            <E>2</E>
+            <PSZ>1024</PSZ>
+         </protection>
+
+         <!-- Packing
+              * This feature allows for the data content of multiple files to be 'packed' into a single data object.
+              * When enabled, groups of files written to a single client 'stream' may be packed together.
+              * Files may also be packed afterwards by the Resource Manager ( 'marfs-rman' ) in a process known as
+              * 'repacking'.  Data from up to 'max_files' individual files may be packed into a single data object.
+              * It is *highly* recommened to enable this feature, as it should greatly increase the efficiency of
+              * reading+writing large numbers of small files while having no significant performance penalty for large
+              * files.
+              * -->
+         <packing enabled="yes">
+            <max_files>4096</max_files>
+         </packing>
+
+         <!-- Chunking
+              * WARNING : At present, running with 'chunking' DISABLED is considered EXPERIMENTAL ONLY.  UNDEFINED
+              * BEHAVIOR MAY RESULT!
+              *
+              * This feature allows for the data content of files to be divided over multiple data objects.
+              * When enabled, only up to 'max_size' data bytes will be written to a single MarFS object.  Any overflow
+              * will be stored to the subsequent data object in the same datastream.  The 'max_size' value DOES include
+              * MarFS recovery info.
+              * It is *highly* recommended to enable this feature, as it should allow MarFS to avoid creating individual
+              * objects which exceed size limitations of the underlying data storage medium.  Additionally, this feature
+              * provides an opportuntiy for client programs, such as pftool, to parallelize read/write of very large
+              * files.
+              * -->
+         <chunking enabled="yes">
+            <max_size>1G</max_size>
+         </chunking>
+
+         <!-- Object Distribution
+              * WARNING: NEVER ADJUST THESE VALUES FOR AN EXISTING REPO, as doing so will render all previously written
+              * data objects inaccessible!
+              *
+              * Defines how objects are hashed across available storage targets.
+              * Actual implementation of pod / cap / scatter divisions will depend upon DAL definition used.  However,
+              * the general defs are:
+              *   POD = Refers to the broadest set of data storage infrastructure; generally, a group of N+E storage servers
+              *   CAP = Refers to the smallest set of data storage infrastructure; generally, a ZFS pool of disks
+              *   SCATTER = Refers to a purely logical division of storage; generally, a single target directory or bucket
+              * For each distribution element, the following attributes can be defined:
+              *   cnt = Total number of elements of that type ( i.e. pods cnt="10" indicates to use pod indices 0-9 )
+              *   dweight = Default 'weight' value of each index ( assumed to be '1', if omitted )
+              * Particular distribution indices can be 'weighted' to increase or decrease the number of data objects hashed
+              * to those locations.
+              * The weight value represents a multiplicative increase in the likelihood of that index being selected as a
+              * storage target for a particular data object.  Custom weight values can be defined for each index within the
+              * body of the respective element.
+              * The format for these custom weight strings is:
+              *   '{IndexNum}={CustomWeightValue}[,{IndexNum}={CustomWeightValue}]*'
+              * If no custom value is specified, the default weight value is assumed ( see 'dweight', above ).
+              * Examples:
+              *   <pods cnt="3" dweight="3">0=1,2=6</pods>
+              *     = This defines pod values ranging from 0-2 such that
+              *            Pod 0 will receive roughly 10% of data objects from this repo
+              *               ( IndexWeight / TotalWeight = 1/(1+3+6) = 1/10 -> 10% )
+              *            Pod 1 will receive roughly 30% of data objects from this repo
+              *            Pod 2 will receive roughly 60% of data objects from this repo
+              *   <caps cnt="4" dweight="100">1=200,0=0</caps>
+              *     = This defines cap values ranging from 0-3 such that
+              *            Cap 0 will never receive any data objects from this repo
+              *               ( IndexWeight of zero results in removal as a storage tgt )
+              *            Cap 1 will recieve rouhgly 50% of data objects from this repo
+              *               ( IndexWeight / TotalWeight = 200/400 -> 50% )
+              *            Cap 2 will recieve roughly 25% of data objects from this repo
+              *            Cap 3 will recieve roughly 25% of data objects from this repo
+              * -->
+         <distribution>
+            <pods cnt="2" dweight="10">0=5</pods>
+            <caps cnt="3" dweight="3">0=1,1=2</caps>
+            <scatters cnt="4"/>
+         </distribution>
+
+         <!-- DAL Definition ( ignored by the MarFS code, parsed by LibNE )
+              * This defines the configuration for the Data Abstraction Layer ( DAL ), which provides the interface
+              * though which MarFS interacts with data objects.  Please see the erasureUtils repo ( LibNE ) for
+              * implementation details.
+              * In most contexts, use of the 'posix' DAL is recommended, which will translate MarFS objects into
+              * posix-style files, stored at paths defined by 'dir_template' below a root location defined by 'sec_root'.
+              * -->
+         <DAL type="posix">
+            <dir_template>pod{p}/block{b}/cap{c}/scat{s}/</dir_template>
+            <sec_root>/marfs-internal/dal-root</sec_root>
+         </DAL>
+
+      </data>
+
+      <!-- Per-Repo Metadata Scheme
+           * Defines where file metadata is placed, how it is formatted, through what interface it is accessed, and what
+           * operations are permitted
+           * -->
+      <meta>
+
+         <!-- Namespace Definitions
+              * These define logical groupings of MarFS metadata, known as namespaces.  They can be thought of as MarFS
+              * 'allocations' or 'datasets', each with tunable access permissions and quota values.
+              * Namespaces follow a posix tree strcutre, appearing as the uppermost directories of the filesystem,
+              * beginning with the 'root' NS.
+              * Namespaces can be children of other namespaces, but never children of a standard directory.  Thus, every
+              * file and directory within the system is a child of a specific MarFS NS.
+              * Every MarFS file is uniquely and permanetly associated with the NS to which it was originally written.
+              * Files cannot be linked or renamed between namespaces ( with the exception of Ghost Namespaces ).
+              *
+              * This node also defines the reference tree structure for all included namespaces.
+              *   rbreadth = breadth of the reference tree
+              *   rdepth = depth of the reference tree
+              *   rdigits = minimum number of numeric digits per reference dir entry
+              * Example:
+              *   rbreadth="3" rdepth="2" rdigits="4"
+              *     = This would result in use of reference directories...
+              *        "0000/0000", "0000/0001", "0000/0002"
+              *        "0001/0000", "0001/0001", "0001/0002"
+              *        "0002/0000", "0002/0001", "0002/0002"
+              *
+              * WARNING: Be VERY CAREFUL when adjusting the reference structure of an existing repo.  As a rule of thumb,
+              *          it should be avoided.  However, it is theoretically safe to adjust, so long as the new reference
+              *          paths are a superset of the old ( all old reference paths are still included as valid targets ).
+              *          Note that, because reference files are only placed at the leaves of the reference tree, this
+              *          means that increasing 'rbreadth' is the only adjustment which can safely be made to an active repo.
+              * -->
+         <namespaces rbreadth="100" rdepth="2" rdigits="3">
+
+            <!-- Namespace
+                 * Definition of a standard MarFS Namespace.  Each such NS can have subspaces defined by contained XML 'ns'
+                 * subnodes.  Every NS, with the exception of the single 'root' NS, must have a unique parent NS.  In the
+                 * case of this def, that parent is defined by a remote reference in the subsequent repo
+                 * ( see 'Remote Subspace Definition's below ).
+                 * -->
+            <ns name="restricted-write-allocation">
+
+               <!-- Quota Limits for this NS
+                    * Quota limits can be defined in terms of number of files and quantity of data.
+                    * A missing quota definition is interpreted as no quota limit on that value.
+                    * -->
+               <quotas>
+                  <files>10K</files>  <!-- 10240 file count limit -->
+                  <data>10T</data> <!-- 10 Tibibyte data size limit -->
+               </quotas>
+
+               <!-- Permission Settings for this NS
+                    * Permissions are defined independently for 'interactive' and 'batch' programs.
+                    * Program type is determined by the client during MarFS initialization ( see marfs_init() API function ).
+                    * Permissions are defined as: '{PermissionCode}[,{PermissionCode}]*'
+                    * Permission codes are:
+                    *   RM = Read Metadata
+                    *      = Allows the client to perform ops which read, but do not modify, metadata content.
+                    *      = This confers the ability to perform ops such as 'readdir', 'stat', 'getxattr', 'open', etc.
+                    *      = NOTE : It could easily be argued that no useful operation can be performed without some kind of
+                    *               underlying metadata read ( such as directory traversal ).
+                    *               Additionally, operations such as 'rmdir' can provide information on metadata structure
+                    *               through brute force guessing of path names.  For example, failure of 'rmdir' with
+                    *               ENOTDIR indicates existence of a non-directory filesystem entry at a guessed location.
+                    *               However, for the sake of understandability and "least-surprise", only 'WM' permission
+                    *               is needed for that operation.
+                    *               If you truly desire that a client remain completely ignorant of NS contents, disable ALL
+                    *               permissions and/or completely block access via posix permission sets.
+                    *   WM = Write Metadata
+                    *      = Allows the client to perform ops which modify, but do not explicitly read, metadata content.
+                    *      = This confers the ability to perform ops such as 'mkdir', 'chmod', 'setxattr', 'unlink', etc.
+                    *      = NOTE : Take care to note the inclusion of 'unlink' under this permission code.  Only 'WM' is
+                    *               necessary to delete files / dirs.
+                    *   RD = Read Data
+                    *      = Allows the client to read the data content of MarFS files
+                    *      = This confers the ability, specifically, to read from a MarFS file handle.
+                    *      = NOTE : As 'open' access is controlled by 'RM', this permission code is rendered useless without it.
+                    *   WD = Write Data
+                    *      = Allows the client to create new MarFS files and write data content to them
+                    *      = This confers the ability to perform the 'creat' and 'write' operations.
+                    * -->
+               <perms>
+                  <!-- no data write for interactive programs -->
+                  <interactive>RM,WM,RD</interactive>
+                  <!-- full batch program access -->
+                  <batch>RM,WM,RD,WD</batch>
+               </perms>
+
+               <!-- Subspace Definition -->
+               <ns name="full-access-subspace">
+                  <!-- no quota definition implies no limits -->
+
+                  <!-- full permissions for all clients -->
+                  <perms>
+                     <interactive>RM,WM,RD,WD</interactive>
+                     <batch>RM,WM,RD,WD</batch>
+                  </perms>
+               </ns>
+
+               <!-- Remote Subspace Definition
+                    * This defines a 'remote' NS, which is simply a way to include a subspace which is associated with a
+                    * different MarFS Repo.
+                    * Via 'rns' tags, it should be possible to achieve the desired logical NS tree strcutre, independent of
+                    * associated repos.
+                    * Remote NS definitions cannot include 'quota' or 'perms' elements.  Those are defined in the true NS
+                    * entry, reference by this.
+                    * -->
+               <rns name="heavily-protected-remote-subspace" repo="3+4_Repo"/>
+
+               <!-- Ghost Subspace Definition
+                    * This defines a Ghost Namespace.
+                    * Ghost Namespaces act as sort of 'soft copy' of another existing, 'real' Namespace.  The contents of a
+                    * ghost NS appear distinct from a filesystem user perspective ( independent paths+perms ).
+                    * However, they inherit most of their properties from their 'real' NS target.  A GhostNS cannot violate
+                    * the permission or quota settings of its target NS.  Additionally, files written to either space will
+                    * count against the quota limits of both.  If packing is enabled, files from a GhostNS may be packed
+                    * together with those of the target NS.
+                    * Finally, files/dirs can be freely renamed between a GhostNS and the target NS of that ghost.
+                    * -->
+               <gns name="ghost-of-marfs-root" repo="3+4_Repo" nstgt="/">
+                  <!-- No Quota Limits for this NS -->
+                  <quotas>
+                     <files>1K</files>  <!-- 10240 file count limit
+                                             * ( more restrictive root NS limit will take precedence ) -->
+                     <data>100P</data> <!-- 100 Pibibyte data size limit -->
+                  </quotas>
+
+                  <!-- Permission Settings for this NS -->
+                  <perms>
+                     <!-- read only metadata inter access -->
+                     <interactive>RM</interactive>
+                     <!-- full batch program access
+                          * ( but not really, as the more restrictive root NS perms will still block most ops ) -->
+                     <batch>RM,WM,RD,WD</batch>
+                  </perms>
+               </gns>
+
+            </ns>
+
+
+         </namespaces>
+
+         <!-- Direct Data
+              * Enables the reading of files stored directly to the MDAL storage location, with no associated MarFS data
+              * objects.
+              * This is useful if an admin wants to drop in a small, temporary file without actually writing out a full
+              * data object.
+              * NOTE : At present, direct write of files is unimplemented and may remain that way.
+              * -->
+         <direct read="yes"/>
+
+         <!-- MDAL Definition
+              * Defines the interface for interacting with repo metadata.
+              * In most contexts, the use of the 'posix' MDAL is recommended, which will store MarFS metadata in the form
+              * of posix files + xattrs.
+              * -->
+         <MDAL type="posix">
+            <ns_root>/marfs-internal/mdal-root</ns_root>
+         </MDAL>
+
+      </meta>
+
+   </repo>
+
+   <!-- Second Repo Definition -->
+   <repo name="3+4_Repo">
+
+      <!-- Per-Repo Data Scheme -->
+      <data>
+
+         <!-- Erasure Protection -->
+         <protection>
+            <N>3</N>
+            <E>4</E>
+            <PSZ>1024</PSZ>
+         </protection>
+
+         <!-- Packing -->
+         <packing enabled="yes">
+            <max_files>1024</max_files>
+         </packing>
+
+         <!-- Chunking -->
+         <chunking enabled="yes">
+            <max_size>10M</max_size>
+         </chunking>
+
+         <!-- Object Distribution -->
+         <distribution>
+            <pods cnt="2"/>
+            <caps dweight="4" cnt="3">2=2,0=1</caps>
+            <scatters cnt="4"/>
+         </distribution>
+
+         <!-- DAL Definition -->
+         <DAL type="posix">
+            <dir_template>pod{p}/block{b}/cap{c}/scat{s}/</dir_template>
+            <sec_root>/marfs-internal/dal-root</sec_root>
+         </DAL>
+
+      </data>
+
+      <!-- Per-Repo Metadata Scheme -->
+      <meta>
+
+         <!-- Namespace Definitions -->
+         <namespaces rbreadth="20" rdepth="3">
+
+            <!-- Root NS Definition
+                 * Every MarFS config MUST include a single 'root' NS, which represents the uppermost NS of the filesystem.
+                 * -->
+            <ns name="root">
+               <!-- Ridiculous quota setting : A single file, up to 100PiB in size -->
+               <quotas>
+                  <files>1</files>
+                  <data>100P</data>
+               </quotas>
+
+               <!-- No metadata manipulation, and no data access -->
+               <perms>
+                  <interactive>RM</interactive>
+                  <batch>RM</batch>
+               </perms>
+
+               <!-- Remote Subspace Definition -->
+               <rns name="restricted-write-allocation" repo="5+2_Repo"/>
+
+               <!-- Standard Subspace -->
+               <ns name="full-access-allocation">
+                  <!-- No Quota Limits for this NS -->
+
+                  <!-- Full Permissions for this NS -->
+                  <perms>
+                     <interactive>RM,WM,RD,WD</interactive>
+                     <batch>RM,WM,RD,WD</batch>
+                  </perms>
+               </ns>
+
+            </ns>
+
+            <!-- Target of Remote NS ref from the previous repo -->
+            <ns name="heavily-protected-remote-subspace">
+               <!-- No Quota Limits -->
+
+               <!-- Permission Settings for this NS -->
+               <perms>
+                  <!-- full interactive access -->
+                  <interactive>RM,WM,RD,WD</interactive>
+                  <!-- no batch program access -->
+               </perms>
+            </ns>
+
+         </namespaces>
+
+         <!-- No Direct Data -->
+
+         <!-- MDAL Definition -->
+         <MDAL type="posix">
+            <ns_root>/marfs-internal/mdal-root</ns_root>
+         </MDAL>
+
+      </meta>
+
+   </repo>
+
+</marfs_config>
+

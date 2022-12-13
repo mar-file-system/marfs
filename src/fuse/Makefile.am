@@ -53,11 +53,27 @@
 #LANL contributions is found at https://github.com/jti-lanl/aws4c.
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
+
+
+# automake requires '=' before '+=', even for these built-in vars
+AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CFLAGS   =
+AM_LDFLAGS  =
+
+bin_PROGRAMS = marfs-fuse
+
+marfs_fuse_SOURCES = fuse.c change_user.c
+marfs_fuse_LDADD  = ../api/libmarfs.la
+marfs_fuse_CFLAGS  = $(XML_CFLAGS) -D_FILE_OFFSET_BITS=64
+
+# ---
+
+#check_PROGRAMS = test_marfsapi
 #
+#test_marfsapi_SOURCES = testing/test_marfsapi.c
+#test_marfsapi_CFLAGS = $(XML_CFLAGS)
+#test_marfsapi_LDADD = $(MARFS_LIB)
+#
+#TESTS = test_marfsapi
 
-ACLOCAL_AMFLAGS = -I m4
-AUTOMAKE_OPTIONS = foreign
-
-
-SUBDIRS = src etc
 

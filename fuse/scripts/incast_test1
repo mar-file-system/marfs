@@ -1,8 +1,0 @@
-#!/bin/bash
-
-# 10.10.0.$i sends each request to a different server
-time (for i in `seq 1 8`; do URL=`getfattr -d /gpfs/gpfs_test/atorrez/mdfs/jti/dest/128x1G/f00$i | tr '"' ' ' | grep objid | awk '{print $NF}'`; curl -s http://10.10.0.$i:81/$URL > /dev/null& done; wait)
-
-
-# 10.10.0.1 sends all requests to the same server
-time (for i in `seq 1 8`; do URL=`getfattr -d /gpfs/gpfs_test/atorrez/mdfs/jti/dest/128x1G/f00$i | tr '"' ' ' | grep objid | awk '{print $NF}'`; curl -s http://10.10.0.1:81/$URL > /dev/null& done; wait)

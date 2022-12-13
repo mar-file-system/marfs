@@ -53,11 +53,29 @@
 #LANL contributions is found at https://github.com/jti-lanl/aws4c.
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
-#
-
-ACLOCAL_AMFLAGS = -I m4
-AUTOMAKE_OPTIONS = foreign
 
 
-SUBDIRS = src etc
+# automake requires '=' before '+=', even for these built-in vars
+AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CFLAGS   =
+AM_LDFLAGS  =
+
+
+# define sources used by many programs as noinst libraries, to avoid multiple compilations
+noinst_LTLIBRARIES = libMDAL.la
+
+libMDAL_la_SOURCES = mdal.c posix_mdal.c
+libMDAL_la_CFLAGS = $(XML_CFLAGS)
+MDAL_LIB = libMDAL.la
+
+# ---
+
+check_PROGRAMS = test_posix_mdal
+
+test_posix_mdal_SOURCES = testing/test_posix_mdal.c
+test_posix_mdal_CFLAGS = $(XML_CFLAGS)
+test_posix_mdal_LDADD = $(MDAL_LIB)
+
+TESTS = test_posix_mdal
+
 
