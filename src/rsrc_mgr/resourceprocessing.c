@@ -731,7 +731,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       errno = 0;
       MDAL_FHANDLE handle = mdal->openref( walker->pos.ctxt, reftgt, O_RDONLY, 0 );
       if ( handle == NULL ) {
-         if ( errno = ENOENT ) {
+         if ( errno == ENOENT ) {
             LOG( LOG_INFO, "Reference file does not exist: \"%s\"\n", reftgt );
             *filestate = 0;
             return 0;
@@ -849,7 +849,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
    errno = 0;
    // stat the file by path
    if ( mdal->statref( walker->pos.ctxt, reftgt, &(walker->stval) ) ) {
-      if ( errno = ENOENT ) {
+      if ( errno == ENOENT ) {
          LOG( LOG_INFO, "Reference file does not exist: \"%s\"\n", reftgt );
          *filestate = 0;
          return 0;
