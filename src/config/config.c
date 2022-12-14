@@ -211,15 +211,17 @@ char* config_prevpathelem( char* path, char* curpath ) {
  *                              NOTE -- may be abandoned by this func ( see config_abandonposition() )
  * @param marfs_ns* nextns : Reference to the NS to enter
  * @param const char* relpath : Relative path component which resulted in entering this NS
+ * @param char ascending : Flag indicating traversal direction
+ *                         Zero -> descending ( nextns is a child of the position NS )
+ *                         Non-Zero -> ascending ( nextns is a parent of the position NS )
  * @param char updatectxt : Flag value indicating if an updated MDAL_CTXT is needed
  *                          Zero -> Position CTXT will be destroyed
  *                          Non-Zero -> Position CTXT will be updated to reference the new tgt NS
  * @return int : Zero on success, 1 if the transition will exit the MarFS mountpoint, or -1 on failure
  */
-int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, char updatectxt ) {
+int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, char ascending, char updatectxt ) {
    // create some shorthand refs
    marfs_ns* curns = pos->ns;
-   char ascending = ( nextns == curns->pnamespace ) ? 1 : 0; // useful for quick checks of traversal direction
    // check for expected case first - currently targetting a standard NS
    if ( curns->ghsource == NULL ) {
       // simplest case first, no ghostNS involved
@@ -456,6 +458,14 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
          config_abandonposition( pos );
          return -1;
       }
+      if ( prevelem == nspath ) {
+         // sanity check for truncation of the entire nspath string
+         LOG( LOG_ERR, "Ascent from \"%s\" to \"%s\" would result in fully-truncated nspath\n", curns->idstr, nextns->idstr );
+         free( repostr );
+         free( nspath );
+         config_abandonposition( pos );
+         return -1;
+      }
       // just truncate the string directly
       *prevelem = '\0';
       // allocate a new ID string
@@ -581,7 +591,7 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
          return -1;
       }
    }
-   LOG( LOG_INFO, "Moved within GhostNS \"%s\" to new target: \"%s\"\n", curns->ghsource->idstr, curns->ghtarget->idstr );
+   LOG( LOG_INFO, "Moved within GhostNS \"%s\" to new target \"%s\"  --> \"%s\"\n", curns->ghsource->idstr, curns->ghtarget->idstr, curns->idstr );
    return 0;
 }
 
@@ -740,7 +750,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
          if ( replacechar ) { *parsepath = '/'; }
          replacechar = 0;
          // update our position to the new NS
-         int nsentres = config_enterns( pos, pos->ns->pnamespace, "..", 1 );
+         int nsentres = config_enterns( pos, pos->ns->pnamespace, "..", 1, 1 );
          if ( nsentres > 0 ) {
             // we can't move up any further
             // check if this relative path reenters the MarFS mountpoint
@@ -780,7 +790,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
          // this is a NS path
          if ( *nextpelem != '\0' ) {
             // we will be traversing within the NS; update our position and ctxt
-            if ( config_enterns( pos, (marfs_ns*)(resnode->content), pathelem, 1 ) ) {
+            if ( config_enterns( pos, (marfs_ns*)(resnode->content), pathelem, 0, 1 ) ) {
                LOG( LOG_ERR, "Failed to enter subspace \"%s\"\n", pathelem );
                return NULL;
             }
@@ -793,7 +803,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
             //         Additionally, under some circumstances ( no execute perms ), it 
             //         may not be possible to set our ctxt to the NS, but still possible 
             //         to perform the required op ( stat(), for example ).
-            if ( config_enterns( pos, (marfs_ns*)(resnode->content), pathelem, 0 ) ) {
+            if ( config_enterns( pos, (marfs_ns*)(resnode->content), pathelem, 0, 0 ) ) {
                LOG( LOG_ERR, "Failed to enter subspace (without ctxt) \"%s\"\n", pathelem );
                return NULL;
             }
@@ -3431,7 +3441,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
       if ( nsiterlist[curdepth - 1] < pos.ns->subnodecount ) {
          // proceed to the next subspace of the current NS
          marfs_ns* newnstgt = (marfs_ns*)( pos.ns->subnodes[ nsiterlist[curdepth - 1] ].content );
-         if ( config_enterns( &pos, newnstgt, pos.ns->subnodes[ nsiterlist[curdepth - 1] ].name, 0 ) ) {
+         if ( config_enterns( &pos, newnstgt, pos.ns->subnodes[ nsiterlist[curdepth - 1] ].name, 0, 0 ) ) {
             LOG( LOG_ERR, "Failed to transition position into subspace: \"%s\"\n", newnstgt->idstr );
             umask(oldmask); // reset umask
             free( vrepos );
@@ -3457,7 +3467,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
       }
       else {
          // proceed back up to the parent of this space
-         if ( config_enterns( &pos, pos.ns->pnamespace, "..", 0 ) < 0 ) {
+         if ( config_enterns( &pos, pos.ns->pnamespace, "..", 1, 0 ) < 0 ) {
             LOG( LOG_ERR, "Failed to transition to the parent of current NS\n" );
             umask(oldmask); // reset umask
             free( vrepos );
