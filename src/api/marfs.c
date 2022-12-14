@@ -509,10 +509,10 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
    else if ( tgtdepth != 0  &&  S_ISREG( buf->st_mode ) ) {
       // regular files may need link count adjusted to ignore ref path
       if ( buf->st_nlink > 1 ) { buf->st_nlink--; }
-      if ( buf->st_blocks == 0  &&  buf->st_size ) {
+      if ( buf->st_size ) {
          // assume allocated blocks, based on logical file size ( saves us having to pull an FTAG xattr )
-         if ( buf->st_blksize == 0 ) { buf->st_blksize = 1; } // avoid div by zero, if the blksize is odd
-         buf->st_blocks = ( buf->st_size / buf->st_blksize ) + (buf->st_size % buf->st_blksize) ? 1 : 0;
+         blkcnt_t estblocks = ( buf->st_size / 512 ) + ( (buf->st_size % 512) ? 1 : 0 );
+         if ( estblocks > buf->st_blocks ) { buf->st_blocks = estblocks; }
       }
    }
    // cleanup references

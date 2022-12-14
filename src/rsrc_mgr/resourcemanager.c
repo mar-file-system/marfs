@@ -1434,6 +1434,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          // if we are picking up a previous run, this means no more work remains for the active NS at all
          LOG( LOG_INFO, "Signaling Rank %zu to complete and quiesce, as no resource logs remain in NS \"%s\"\n",
               ranknum, rman->nslist[response->request.nsindex]->idstr );
+         *request = response->request; // populate request with active NS values
          request->type = COMPLETE_WORK;
          return 1;
       }
@@ -1452,6 +1453,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
       // all work in the active NS has been completed
       LOG( LOG_INFO, "Signaling Rank %zu to complete and quiesce, as no reference ranges remain in NS \"%s\"\n",
            ranknum, rman->nslist[response->request.nsindex]->idstr );
+      *request = response->request; // populate request with active NS values
       request->type = COMPLETE_WORK;
       return 1;
    }
