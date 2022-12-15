@@ -77,6 +77,11 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "change_user.h"
 #include "api/marfs.h"
 
+// ENOATTR is not always defined, so define a convenience val
+#ifndef ENOATTR
+#define ENOATTR ENODATA
+#endif
+
 #define CONFIGVER_FNAME "/.configver"
 
 #define CTXT (marfs_ctxt)(fuse_get_context()->private_data)
@@ -326,6 +331,11 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
 {
   LOG(LOG_INFO, "%s -- %s\n", path, name);
 
+  if (!strcmp(path, CONFIGVER_FNAME)) {
+    LOG( LOG_INFO, "Faking absent \"%s\" xattr for reserved config ver file\n", name );
+    return -ENOATTR;
+  }
+
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
@@ -386,7 +396,7 @@ int fuse_ioctl(const char *path, int cmd, void *arg, struct fuse_file_info *ffi,
 {
   LOG(LOG_INFO, "%s\n", path);
 
-  return 0;
+  return -EOPNOTSUPP;
 }
 
 int fuse_link(const char *oldpath, const char *newpath)
@@ -394,6 +404,7 @@ int fuse_link(const char *oldpath, const char *newpath)
   LOG(LOG_INFO, "%s %s\n", oldpath, newpath);
 
   if (!strcmp(newpath, CONFIGVER_FNAME)) {
+    LOG(LOG_ERR, "cannot link over reserved config version file\n");
     return -EPERM;
   }
 
@@ -420,6 +431,11 @@ int fuse_link(const char *oldpath, const char *newpath)
 int fuse_listxattr(const char *path, char *list, size_t size)
 {
   LOG(LOG_INFO, "%s\n", path);
+
+  if (!strcmp(path, CONFIGVER_FNAME)) {
+    LOG( LOG_INFO, "Faking lack of all xattrs for reserved config ver file\n" );
+    return 0;
+  }
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
@@ -826,7 +842,8 @@ int fuse_rename(const char *oldpath, const char *newpath)
 {
   LOG(LOG_INFO, "%s %s\n", oldpath, newpath);
 
-  if (!strcmp(newpath, CONFIGVER_FNAME)) {
+  if (!strcmp(newpath, CONFIGVER_FNAME)  ||  !strcmp(oldpath, CONFIGVER_FNAME)) {
+    LOG( LOG_ERR, "Cannot target reserved config version path with a rename op\n" );
     return -EPERM;
   }
 
