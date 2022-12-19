@@ -283,8 +283,8 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
       tgtns->ghsource = nextns;
       // Target of the copy should match that of the Ghost itself
       tgtns->ghtarget = nextns->ghtarget;
-      // Parent NS of the copy should match that of the Ghost
-      tgtns->pnamespace = nextns->pnamespace;
+      // Parent NS of the copy should match that of the Ghost Target ( this parent can never appear as a child )
+      tgtns->pnamespace = nextns->ghtarget->pnamespace;
       // Parent repo of the copy should match that of the target
       tgtns->prepo = nextns->ghtarget->prepo;
       // ID String becomes a copy of the GhostNS itself ( for now )
@@ -379,7 +379,7 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
 
    // we are moving within a GhostNS ( curns->ghsource != NULL )
 
-   // check if we're exiting the active Ghost, by traversing up to its parent NS
+   // check if we're exiting the active Ghost, by traversing up past the original target NS
    //    NOTE -- The parent of the inital ghost may be the target of that ghost, making this check more complex
    if ( ascending  &&  nextns == curns->ghsource->ghtarget->pnamespace ) {
       // we are exiting the ghost dimension!
@@ -3124,7 +3124,7 @@ HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_
       }
       rnodelist[curnode].weight = 1;
       rnodelist[curnode].content = NULL;
-      LOG( LOG_INFO, "created ref node: \"%s\"\n", rnodelist[curnode].name );
+      //LOG( LOG_INFO, "created ref node: \"%s\"\n", rnodelist[curnode].name );
    }
    // free data structures which we no longer need
    free( rpathtmp );
@@ -3328,7 +3328,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                   anyerror = 1;
                   continue;
                }
-               LOG( LOG_INFO, "Verifying refdir: \"%s\"\n", rfullpath );
+               //LOG( LOG_INFO, "Verifying refdir: \"%s\"\n", rfullpath );
                errno = 0;
                while ( mkdirres == 0  &&  rparse != NULL ) {
                   // iterate ahead in the stream, tokenizing into intermediate path components
