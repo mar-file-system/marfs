@@ -24,19 +24,21 @@ jobs:
         mkdir install
 
     - name: Checkout ISA-L
-      uses: actions/checkout@v2.30.0
+      uses: actions/checkout@v3
       with:
         repository: intel/isa-l
+        ref: v2.30.0
         path: isa-l
 
     - name: Checkout erasureUtils
-      uses: actions/checkout@main
+      uses: actions/checkout@v3
       with:
         repository: gransom/erasureUtils
+        ref: main
         path: erasureUtils
 
     - name: Checkout MarFS
-      uses: actions/checkout
+      uses: actions/checkout@v3
       with:
         path: marfs
 
