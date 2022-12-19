@@ -18,8 +18,6 @@ jobs:
       run: |
         sudo apt-get install $Isal_assembler $Ne_deps $Marfs_deps
         mkdir install
-        export CFLAGS="-I$GITHUB_WORKSPACE/install/include"
-        export LDFLAGS="-L$GITHUB_WORKSPACE/install/lib"
 
     - name: Checkout ISA-L
       uses: actions/checkout@v3
@@ -52,7 +50,7 @@ jobs:
       run: |
         cd erasureUtils
         ./autogen.sh
-        ./configure --prefix="$GITHUB_WORKSPACE/install"
+        ./configure CFLAGS="-I$GITHUB_WORKSPACE/install/include" LDFLAGS="-L$GITHUB_WORKSPACE/install/lib" --prefix="$GITHUB_WORKSPACE/install"
         make install
         cd $GITHUB_WORKSPACE
 
@@ -60,7 +58,7 @@ jobs:
       run: |
         cd marfs
         ./autogen.sh
-        ./configure --prefix="$GITHUB_WORKSPACE/install" --enable-debugALL
+        ./configure CFLAGS="-I$GITHUB_WORKSPACE/install/include" LDFLAGS="-L$GITHUB_WORKSPACE/install/lib" --prefix="$GITHUB_WORKSPACE/install" --enable-debugALL
         make
         make check
         make install
