@@ -640,7 +640,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             // note a pass over this section, so we never repeat
             itercheck = 1;
             // only targeting a matching iteration
-            if ( snprintf( request.iteration, ITERATION_STRING_LEN, rman->iteration ) < 1 ) {
+            if ( snprintf( request.iteration, ITERATION_STRING_LEN, "%s", rman->iteration ) < 1 ) {
                LOG( LOG_ERR, "Failed to populate request with running iteration \"%s\"\n", rman->iteration );
                return -1;
             }
@@ -659,7 +659,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
                   continue;
                }
                // all other entries are assumed to be valid iteration targets
-               if ( snprintf( request.iteration, ITERATION_STRING_LEN, entry->d_name ) >= ITERATION_STRING_LEN ) {
+               if ( snprintf( request.iteration, ITERATION_STRING_LEN, "%s", entry->d_name ) >= ITERATION_STRING_LEN ) {
                   LOG( LOG_ERR, "Failed to populate request string for old iteration: \"%s\"\n", entry->d_name );
                   return -1;
                }
