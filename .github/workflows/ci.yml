@@ -11,7 +11,7 @@ jobs:
     env:
       Isal_assembler: "nasm"
       Ne_deps: "autoconf libxml2-dev openmpi-bin openmpi-common libopenmpi-dev"
-      Marfs_deps: "libfuse libfuse-dev"
+      Marfs_deps: "fuse libfuse-dev"
       CFLAGS: "-I$GITHUB_WORKSPACE/install/include"
       LDFLAGS: "-L$GITHUB_WORKSPACE/install/lib"
     runs-on: ubuntu-22.04
