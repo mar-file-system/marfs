@@ -1086,8 +1086,10 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
-  if (marfs_seek((marfs_fhandle)ffi->fh, offset, SEEK_SET))
+  off_t sret = marfs_seek((marfs_fhandle)ffi->fh, offset, SEEK_SET);
+  if ( sret != offset)
   {
+    LOG( LOG_ERR, "Unexpected seek res: %zd (%s)\n", sret, strerror(errno) );
     int err = errno;
     exit_user(&u_ctxt);
     return (err) ? -err : -ENOMSG;
