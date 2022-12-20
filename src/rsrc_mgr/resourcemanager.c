@@ -1339,7 +1339,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
                return -1;
             }
          }
-         printf( "   All old logfiles have been handed out for processing\n" );
+         printf( "  -- All old logfiles have been handed out for processing --\n" );
          // it seems we've iterated over our entire oldlogs table, with no requests remaining
          // need to free our table
          size_t ncount = 0;
@@ -1396,10 +1396,19 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
             rman->distributed[nsindex]++; // note newly distributed range
             LOG( LOG_INFO, "Passing out reference range %zu of NS \"%s\" to Rank %zu\n",
                  rman->distributed[nsindex], rman->nslist[nsindex]->idstr, ranknum );
+            printf( "  Rank %zu is picking up work on NS \"%s\" ( ref range %zu )\n",
+                    ranknum, rman->nslist[nsindex]->idstr, rman->distributed[nsindex] );
+            // check through remaining namespaces for any undistributed work
+            for ( ; nsindex < rman->nscount; nsindex++ ) {
+               if ( rman->distributed[nsindex] < rman->workingranks ) { break; }
+            }
+            if ( nsindex == rman->nscount ) {
+               // just handed out the last NS ref range for processing
+               printf( "  -- All NS reference ranges have been handed out for processing --\n" );
+            }
             return 1;
          }
       }
-      printf( "   All NS reference ranges have been handed out for processing\n" );
       // no NS reference ranges remain to process, so we now need to signal termination
       LOG( LOG_INFO, "Signaling Rank %zu to terminate, as no NS reference ranges remain\n", ranknum );
       request->type = TERMINATE_WORK;
