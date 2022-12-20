@@ -345,7 +345,7 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
   char* newpath = translate_path( CTXT, path );
   LOG( LOG_INFO, "Attempting to open an fhandle for target path: \"%s\"\n", path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -445,7 +445,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -793,7 +793,7 @@ int fuse_removexattr(const char *path, const char *name)
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -901,7 +901,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {

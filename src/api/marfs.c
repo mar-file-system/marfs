@@ -83,6 +83,7 @@ typedef struct marfs_ctxt_struct {
 
 typedef struct marfs_fhandle_struct {
    pthread_mutex_t    lock; // for serializing access to this structure (if necessary)
+   marfs_flags       flags; // open flags for this file handle
    MDAL_FHANDLE metahandle; // for meta/direct access
    DATASTREAM   datastream; // for standard access
    marfs_ns*            ns; // reference to the containing NS
@@ -1293,9 +1294,10 @@ int marfs_futimens(marfs_fhandle fh, const struct timespec times[2]) {
    }
    // perform the op
    int retval;
-   if ( fh->datastream == NULL  &&  fh->ns->prepo->metascheme.directread ) {
+   if ( fh->datastream == NULL  &&
+        ( fh->ns->prepo->metascheme.directread  ||  (fh->flags & MARFS_META) ) ) {
       // only call the MDAL op directly if we both don't have a datastream AND
-      // the config has enabled direct read
+      // either the config has enabled direct read OR the file handle is explicitly metadata only
       LOG( LOG_INFO, "Performing futimens call directly on metahandle\n" );
       retval = fh->ns->prepo->metascheme.mdal->futimens( fh->metahandle, times );
    }
@@ -2007,6 +2009,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
    }
    // update our stream info to reflect the new target
    if ( stream->ns ) { config_destroynsref( stream->ns ); }
+   stream->flags = O_WRONLY | O_CREAT;
    stream->ns = dupref;
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
    stream->itype = ctxt->itype;
@@ -2049,7 +2052,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       return NULL;
    }
    // check for invalid flags
-   if ( flags != MARFS_READ  &&  flags != MARFS_WRITE ) {
+   if ( (flags & ~(MARFS_META)) != MARFS_READ  &&  (flags & ~(MARFS_META)) != MARFS_WRITE ) {
       LOG( LOG_ERR, "Unrecognized flags value\n" );
       errno = EINVAL;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -2156,6 +2159,33 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   // check for MARFS_META flag
+   if ( flags & MARFS_META ) {
+      // open a meta-only reference for this file
+      stream->flags = flags;
+      flags = flags & ~(MARFS_META);
+      stream->datastream = NULL;
+      if ( stream->ns ) { config_destroynsref( stream->ns ); }
+      stream->ns = dupref;
+      stream->itype = ctxt->itype;
+      MDAL curmdal = oppos.ns->prepo->metascheme.mdal;
+      stream->metahandle = curmdal->open( oppos.ctxt, subpath, (flags == MARFS_READ) ? O_RDONLY : O_WRONLY );
+      if ( stream->metahandle == NULL ) {
+         LOG( LOG_ERR, "Failed to open meta-only reference for the target file: \"%s\" ( %s )\n", path, strerror(errno) );
+         config_destroynsref( dupref );
+         pathcleanup( subpath, &oppos );
+         pthread_mutex_unlock( &(stream->lock) );
+         if ( !(newstream) ) { errno = EBADFD; }
+         else { free( stream ); }
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      // cleanup and return
+      pthread_mutex_unlock( &(stream->lock) );
+      pathcleanup( subpath, &oppos );
+      LOG( LOG_INFO, "EXIT - Success\n" );
+      return stream;
+   }
    // attempt the op, allowing a meta-only reference ONLY if we are opening for read
    MDAL_FHANDLE phandle = NULL;
    if ( datastream_open( &(stream->datastream), (flags == MARFS_READ) ? READ_STREAM : EDIT_STREAM, subpath, &oppos, (flags == MARFS_READ) ? &(phandle) : NULL ) ) {
@@ -2180,6 +2210,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
             return NULL;
          }
          // update stream info to reflect a meta-only reference
+         stream->flags = flags;
          stream->datastream = NULL;
          stream->metahandle = phandle;
          if ( stream->ns ) { config_destroynsref( stream->ns ); }
@@ -2200,6 +2231,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       return NULL;
    }
    // update our stream info to reflect the new target
+   stream->flags = flags;
    if ( stream->ns ) { config_destroynsref( stream->ns ); }
    stream->ns = dupref;
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
@@ -2513,6 +2545,12 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t count) {
       errno = EPERM;
       retval = -1;
    }
+   else if ( stream->flags & MARFS_META ) {
+      // never allow data access via a PATH file handle
+      LOG( LOG_ERR, "Cannot read from an MARFS_META file handle\n" );
+      errno = EPERM;
+      retval = -1;
+   }
    else {
       // perform the direct read
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
@@ -2623,6 +2661,12 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       errno = EPERM;
       retval = -1;
    }
+   else if ( stream->flags & MARFS_META ) {
+      // never allow data access via a PATH file handle
+      LOG( LOG_ERR, "Cannot seek an MARFS_META file handle\n" );
+      errno = EPERM;
+      retval = -1;
+   }
    else {
       LOG( LOG_INFO, "Seeking meta handle\n" );
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
@@ -2691,13 +2735,19 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
          errno = EPERM;
          offval = -1;
       }
+      else if ( stream->flags & MARFS_META ) {
+         // never allow data access via a PATH file handle
+         LOG( LOG_ERR, "Cannot read from an MARFS_META file handle\n" );
+         errno = EPERM;
+         offval = -1;
+      }
       else {
          LOG( LOG_INFO, "Seeking meta handle to %zd offset\n", offset );
          MDAL curmdal = stream->ns->prepo->metascheme.mdal;
          offval = curmdal->lseek( stream->metahandle, offset, SEEK_SET );
       }
    }
-   if ( offval != offset ) {
+   if ( offval != offset  ||  offval < 0 ) {
       pthread_mutex_unlock( &(stream->lock) );
       if ( offval < offset  &&  offval >=0 ) {
          LOG( LOG_INFO, "Reduced offset of %zd implies read beyond EOF ( returning zero bytes )\n", offval );
@@ -2816,6 +2866,12 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
    if ( stream->ns->prepo->metascheme.directread == 0 ) {
       // direct read isn't enabled
       LOG( LOG_ERR, "Direct read is not enabled for this target\n" );
+      errno = EPERM;
+      retval = -1;
+   }
+   else if ( stream->flags & MARFS_META ) {
+      // never allow data access via a PATH file handle
+      LOG( LOG_ERR, "Cannot truncate an MARFS_META file handle\n" );
       errno = EPERM;
       retval = -1;
    }
