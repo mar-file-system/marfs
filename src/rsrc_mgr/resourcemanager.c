@@ -77,14 +77,12 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
-#define GC_THRESH 518400  // Age of deleted files before they are Garbage Collected
-//#define GC_THRESH 10  // TMP CHANGEAge of deleted files before they are Garbage Collected
-                          // Default to 6 days ago
-#define RB_L_THRESH 1200  // Age of files before they are rebuilt ( based on location )
-                          // Default to 20 minutes ago
-#define RB_M_THRESH  600  // Age of files before they are rebuilt ( based on marker )
-//#define RB_M_THRESH  6  // TMP CHANGE of files before they are rebuilt ( based on marker )
+#define GC_THRESH 604800  // Age of deleted files before they are Garbage Collected
+                          // Default to 7 days ago
+#define RB_L_THRESH  600  // Age of files before they are rebuilt ( based on location )
                           // Default to 10 minutes ago
+#define RB_M_THRESH  120  // Age of files before they are rebuilt ( based on marker )
+                          // Default to 2 minutes ago
 #define RP_THRESH 259200  // Age of files before they are repacked
                           // Default to 3 days ago
 #define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up ( failed repacks, old logs, etc. )
@@ -178,7 +176,50 @@ typedef struct loginfo_struct {
 //   -------------   HELPER FUNCTIONS    -------------
 
 void print_usage_info() {
-   printf( "NO_USAGE_INFO\n" );
+   printf( "\n"
+           "marfs-rman [-c MarFS-Config-File] [-n MarFS-NS-Target] [-r] [-i Iteraion-Name] [-l Log-Root]\n"
+           "           [-p Log-Pres-Root] [-d] [-X Execution-Target] [-Q] [-G] [-R] [-P] [-C]\n"
+           "           [-T Threshold-Values] [-L Rebuild-Location] [-h]\n"
+           "\n"
+           " Arguments --\n"
+           "  -c MarFS-Config-File : Specifies the path of the MarFS config file to use\n"
+           "                         (uses the MARFS_CONFIG_PATH env val, if unspecified)\n"
+           "  -n MarFS-NS-Target   : Path of the MarFS Namespace to target for processing\n"
+           "                         (defaults to the root NS, if unspecified)\n"
+           "  -r                   : Specifies to operate recursively on MarFS Subspaces\n"
+           "  -i Iteration-Name    : Specifies the name of this marfs-rman instance\n"
+           "                         (defaults to a date string, if unspecified)\n"
+           "  -l Log-Root          : Specifies the dir to be used for resource log storage\n"
+           "                         (defaults to \"%s\", if unspecified)\n"
+           "  -p Log-Pres-Root     : Specifies a location to store resource logs to, post-run\n"
+           "                         (logfiles will be deleted, if unspecified)\n"
+           "  -d                   : Specifies a 'dry-run', logging but skipping execution of all ops\n"
+           "  -X Execution-Target  : Specifies the loging path of a previous 'dry-run' iteration to\n"
+           "                         be processed by this run.  The program will NOT scan reference\n"
+           "                         paths to identify operations.  Instead, it will exclusively\n"
+           "                         perform the operations logged by the targetted iteration.\n"
+           "                         This argument is incompatible with any of the below args.\n"
+           "  -Q                   : The resource manager will set NS usage values ( files / bytes )\n"
+           "  -G                   : The resource manager will perform garbage collection\n"
+           "  -R                   : The resource manager will perform rebuilds\n"
+           "  -P                   : The resource manager will perform repacks\n"
+           "                         (!!!CURRENTLY UNIMPLEMENTED!!!)\n"
+           "  -C                   : The resource manager will perform cleanup of failed operations\n"
+           "  -T Threshold-Values  : Specifies time threshold values for resource manager ops.\n"
+           "                         Value Format = <OpFlag><TimeThresh>[<Unit>]\n"
+           "                                           [-<OpFlag><TimeThresh>[<Unit>]]*\n"
+           "                         Where, <OpFlag>     = 'G', 'R', 'P', or 'C' ( see prev args )\n"
+           "                                <TimeThresh> = A numeric time value\n"
+           "                                               ( only files older than this threshold\n"
+           "                                                 will be targeted for the specified op )\n"
+           "                                <Unit>       = 's' ( seconds ), 'm' ( minutes ),\n"
+           "                                               'h' ( hours ), 'd' ( days )\n"
+           "                                               ( assumed to be 's', if omitted )\n"
+           "  -L Rebuild-Location  : Specifies NE object location to target for rebuilds\n"
+           "                         (!!!CURRENTLY UNIMPLEMENTED!!!)\n"
+           "  -h                   : Prints this usage info\n"
+           "\n",
+           DEFAULT_LOG_ROOT );
 }
 
 void cleanupstate( rmanstate* rman, char abort ) {
@@ -1801,6 +1842,68 @@ int main(int argc, char** argv) {
       case 'C':
          rman.gstate.thresh.cleanupthreshold = 1;
          break;
+      case 'T':
+         {
+         char* threshparse = optarg;
+         char foundtval = 0;
+         char tflag = '\0';
+         while ( threshparse  &&  *threshparse != ' '  &&  *threshparse != '\0' ) {
+            if ( tflag == '\0' ) {
+               // check for a Threshold type flag
+               if ( *threshparse == 'G'  ||  *threshparse == 'R'  ||  *threshparse == 'P'  ||  *threshparse == 'C' ) {
+                  tflag = *threshparse;
+               }
+               else if ( *threshparse != '-' ) { // ignore '-' chars
+                  printf( "ERROR: Failed to parse '-T' argument value: \"%s\"\n", optarg );
+                  pr_usage = 1;
+                  break;
+               }
+            }
+            else {
+               // parse the expected numeric value trailing the type flag
+               char* endptr = NULL;
+               unsigned long long parseval = strtoull( threshparse, &(endptr), 10 );
+               if ( parseval == ULLONG_MAX  ||  endptr == NULL  ||
+                    ( *endptr != 's'  &&  *endptr != 'm'  &&  *endptr != 'h'  &&  *endptr != 'd'  &&
+                      *endptr != '-'  &&  *endptr != '\0' ) ) {
+                  printf( "ERROR: Failed to parse '%c' threshold from '-T' argument value: \"%s\"\n", tflag, optarg );
+                  pr_usage = 1;
+                  break;
+               }
+               if ( *endptr == 'm' ) { parseval *= 60; }
+               else if ( *endptr == 'h' ) { parseval *= 60 * 60; }
+               else if ( *endptr == 'd' ) { parseval *= 60 * 60 * 24; }
+               // actually asign the parsed value to the appropriate threshold
+               if ( tflag == 'G' ) {
+                  gcthresh = currenttime.tv_sec - parseval;
+               }
+               else if ( tflag == 'R' ) {
+                  rblthresh = currenttime.tv_sec - parseval;
+                  rbmthresh = currenttime.tv_sec - parseval;
+               }
+               else if ( tflag == 'P' ) {
+                  rpthresh = currenttime.tv_sec - parseval;
+               }
+               else if ( tflag == 'C' ) {
+                  clthresh = currenttime.tv_sec - parseval;
+               }
+               foundtval = 1;
+               tflag = '\0';
+               // check for early termination
+               if ( *endptr == '\0'  ||  *endptr == ' ' ) {
+                  break;
+               }
+               threshparse = endptr;
+            }
+            threshparse++;
+         }
+         if ( pr_usage == 0  &&  (threshparse == NULL  ||  foundtval == 0) ) {
+            printf( "ERROR: Failed to parse '-T' argument value: \"%s\"\n", optarg );
+            pr_usage = 1;
+            break;
+         }
+         break;
+         }
       case '?':
          printf( "ERROR: Unrecognized cmdline argument: \'%c\'\n", optopt );
       case 'h': // note fallthrough from above
@@ -1813,7 +1916,7 @@ int main(int argc, char** argv) {
    }
    if ( pr_usage ) {
       print_usage_info();
-      return 0;
+      return -1;
    }
 
    // validate arguments
