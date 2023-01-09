@@ -1565,6 +1565,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       }
       // pull info for the next reference target
       char filestate = -1;
+      char prevdelzero = walker->gctag.delzero;
       char haveftag = pullxattrs;
       if ( process_getfileinfo( reftgt, pullxattrs, walker, &(filestate) ) ) {
          LOG( LOG_ERR, "Failed to get info for reference target: \"%s\"\n", reftgt );
@@ -1637,7 +1638,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             // we may need to delete the previous object IF we are GCing AND no active refs existed for that obj
             //    AND it is not an already a deleted object0
             if ( walker->gcthresh  &&  walker->activefiles == 0  &&
-                 ( walker->objno != 0  ||  walker->gctag.delzero == 0 ) ) {
+                 ( walker->objno != 0  ||  prevdelzero == 0 ) ) {
                // need to prepend an object deletion operation for the previous objno
                LOG( LOG_INFO, "Adding deletion op for object %zu\n", walker->objno );
                opinfo* optgt = NULL;
@@ -1666,7 +1667,6 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
                      return -1;
                   }
                   // NOTE -- don't increment count ( as we normally would ), as we aren't actually deleting another ref
-                  optgt->count += walker->gctag.refcnt;
                   delref_info* delrefinf = (delref_info*)optgt->extendedinfo;
                   delrefinf->delzero = 1;
                }
