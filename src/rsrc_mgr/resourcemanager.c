@@ -1071,6 +1071,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          rthread_state* tstate = NULL;
          int retval;
          while ( (retval = tq_next_thread_status( rman->tq, (void**)&(tstate) )) > 0 ) {
+            LOG( LOG_INFO, "Got state for Thread %zu\n", tstate->tID );
             // verify thread status
             if ( tstate == NULL ) {
                LOG( LOG_ERR, "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
@@ -1078,6 +1079,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
                snprintf( response->errorstr, MAX_ERROR_BUFFER,
                          "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
                          rman->ranknum, rman->gstate.pos.ns->idstr );
+               free( tstate );
                return -1;
             }
             if ( tstate->fatalerror ) {
@@ -1085,6 +1087,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
                     rman->gstate.pos.ns->idstr, tstate->errorstr );
                snprintf( response->errorstr, MAX_ERROR_BUFFER, "Fatal Error in NS \"%s\": \"%s\"\n",
                          rman->gstate.pos.ns->idstr, tstate->errorstr );
+               free( tstate );
                return -1;
             }
             response->report.fileusage   += tstate->report.fileusage;

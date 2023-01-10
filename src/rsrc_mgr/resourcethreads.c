@@ -333,10 +333,11 @@ int resourceinput_purge( RESOURCEINPUT* resourceinput, size_t removeclients ) {
    rin->rlog = NULL; // be certain this is NULLed out
    // set ref range values to indicate completion
    rin->refindex = rin->refmax;
-   // set flag to indicate threads should prepare for termination
-   if ( rin->prepterm < 1 ) { rin->prepterm = 1; }
-   // decrement client counts
-   rin->clientcount -= removeclients;
+   // decrement client counts ( caller may not be using resourceinput_waitforterm() )
+   if ( removeclients ) {
+      LOG( LOG_INFO, "Removing %zu clients from the count ( %zu -> %zu )\n", removeclients, rin->clientcount, rin->clientcount - removeclients );
+      rin->clientcount -= removeclients;
+   }
    // make sure all threads wake up
    pthread_cond_broadcast( &(rin->updated) );
    pthread_cond_broadcast( &(rin->complete) );
@@ -394,6 +395,7 @@ int resourceinput_waitforterm( RESOURCEINPUT* resourceinput ) {
       return -1;
    }
    if ( rin->clientcount ) {
+      LOG( LOG_INFO, "Decrementing active client count from %zu to %zu\n", rin->clientcount, rin->clientcount - 1 );
       rin->clientcount--; // show that we are waiting
    }
    else {
@@ -408,6 +410,7 @@ int resourceinput_waitforterm( RESOURCEINPUT* resourceinput ) {
          return -1;
       }
    }
+   LOG( LOG_INFO, "Incrementing active client count from %zu to %zu\n", rin->clientcount, rin->clientcount + 1 );
    rin->clientcount++; // show that we are exiting
    pthread_cond_signal( &(rin->complete) );
    pthread_mutex_unlock( &(rin->lock) );
