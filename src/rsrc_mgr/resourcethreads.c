@@ -393,7 +393,12 @@ int resourceinput_waitforterm( RESOURCEINPUT* resourceinput ) {
       LOG( LOG_ERR, "Failed to acquire resourceinput lock\n" );
       return -1;
    }
-   rin->clientcount--; // show that we are waiting
+   if ( rin->clientcount ) {
+      rin->clientcount--; // show that we are waiting
+   }
+   else {
+      LOG( LOG_ERR, "ClientCount is already zeroed out, but this client is only now waiting!\n" );
+   }
    pthread_cond_signal( &(rin->complete) ); // signal the master proc to check status
    // wait for the master proc to signal us
    while ( rin->prepterm < 2 ) {
