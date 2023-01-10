@@ -831,6 +831,10 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
    size_t origfileno = state->ftag.fileno;
    state->ftag.fileno = 0; // start with file zero
    FTAG finftag = state->ftag;
+   // clear any 'EOS' relevant state
+   state->ftag.endofstream = 0;
+   state->gctag.eos = 0;
+   state->ftag.state = FTAG_FIN;
    finftag.ctag = NULL; // unsafe to reference values we intend to free at any time
    finftag.streamid = NULL;
    char fineos = 0;
@@ -850,7 +854,10 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
          // retrieve the FTAG of the new target
          retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 0);
          if (retval) {
-            state->ftag.fileno--;
+            printf(OUTPREFX "ERROR: Failed to retrieve FTAG value from fileno 0\n");
+            state->ftag.fileno = origfileno;
+            errorflag = 1;
+            break;
          } // if we couldn't retrieve this, go to previous
          else if ( state->gctag.refcnt ) {
             gcgaps = 1;
