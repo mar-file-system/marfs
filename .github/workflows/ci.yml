@@ -12,7 +12,7 @@ jobs:
       Isal_assembler: "nasm"
       Ne_deps: "autoconf libxml2-dev openmpi-bin openmpi-common libopenmpi-dev"
       Marfs_deps: "fuse libfuse-dev"
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - name: Setup Build Dependencies + Environment
       run: |
