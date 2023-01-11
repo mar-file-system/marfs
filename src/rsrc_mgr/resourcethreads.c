@@ -482,6 +482,7 @@ int resourceinput_term( RESOURCEINPUT* resourceinput ) {
       return -1;
    }
    size_t origclientcount = rin->clientcount; // remember the total number of clients
+   LOG( LOG_INFO, "Synchronizing with %zu clients for termination\n", origclientcount );
    // signal clients to prepare for termination
    rin->prepterm = 1;
    pthread_cond_broadcast( &(rin->updated) );
@@ -492,6 +493,7 @@ int resourceinput_term( RESOURCEINPUT* resourceinput ) {
          return -1;
       }
    }
+   LOG( LOG_INFO, "All %zu clients are ready for termination\n", origclientcount );
    // signal clients to exit
    rin->prepterm = 2;
    pthread_cond_broadcast( &(rin->updated) );
@@ -502,9 +504,11 @@ int resourceinput_term( RESOURCEINPUT* resourceinput ) {
          return -1;
       }
    }
+   LOG( LOG_INFO, "All %zu clients have terminated\n", origclientcount );
    // begin destroying the structure
    *resourceinput = NULL;
    pthread_cond_destroy( &(rin->complete) );
+   pthread_cond_destroy( &(rin->updated) );
    pthread_mutex_unlock( &(rin->lock) );
    pthread_mutex_destroy( &(rin->lock) );
    // DO NOT free ctxt or NS
