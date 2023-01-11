@@ -112,11 +112,13 @@ int resourceinput_init( RESOURCEINPUT* resourceinput, marfs_position* pos, size_
    }
    if ( pthread_cond_init( &(rin->updated), NULL ) ) {
       LOG( LOG_ERR, "Failed to initialize 'complete' condition for new resourceinput\n" );
+      pthread_cond_destroy( &(rin->complete) );
       free( rin );
       return -1;
    }
    if ( pthread_mutex_init( &(rin->lock), NULL ) ) {
       LOG( LOG_ERR, "Failed to initialize lock for new resourceinput\n" );
+      pthread_cond_destroy( &(rin->updated) );
       pthread_cond_destroy( &(rin->complete) );
       free( rin );
       return -1;
@@ -568,6 +570,7 @@ int resourceinput_abort( RESOURCEINPUT* resourceinput ) {
       LOG( LOG_WARNING, "Failed to abort input resourcelog\n" );
    }
    pthread_cond_destroy( &(rin->complete) );
+   pthread_cond_destroy( &(rin->updated) );
    if ( havelock ) { pthread_mutex_unlock( &(rin->lock) ); }
    pthread_mutex_destroy( &(rin->lock) );
    // DO NOT free ctxt or NS
@@ -629,7 +632,7 @@ int rthread_consumer_func( void** state, void** work_todo ) {
             *work_todo = NULL;
             tstate->fatalerror = 1;
             // ensure termination of all other threads ( avoids possible deadlock )
-            if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+            if ( resourceinput_purge( &(tstate->gstate->rinput), 0 ) ) {
                LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
             }
             return -1;
