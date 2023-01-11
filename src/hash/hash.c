@@ -467,16 +467,13 @@ int hash_lookup( HASH_TABLE table, const char* target, HASH_NODE** node ) {
    }
    // map the resulting virtual node to the actual node
    *node = table->nodes + table->vnodes[curnode].nodenum;
-   // set new iterator values
-   table->curnode = table->vnodes[curnode].nodenum + 1;
-   if ( table->curnode >= table->nodecount ) { table->curnode = 0; }
-   table->iterated = 1;
    return retval;
 }
 
 /**
  * From the most recently accessed HASH_NODE, iterate over all remaining HASH_NODE 
  * entries in the given table
+ * WARNING : This function is NOT thread safe
  * @param HASH_TABLE table : Table on which to iterate
  * @param HASH_NODE** node : Reference to a HASH_NODE* to be populated with the 
  *                           corresponding HASH_NODE reference
@@ -510,6 +507,7 @@ int hash_iterate( HASH_TABLE table, HASH_NODE** node ) {
 
 /**
  * Reset the iteration values of the given table, allowing a subsequent iteration to fully traverse it
+ * WARNING : This function is NOT thread safe
  * @param HASH_TABLE table : Table to be reset
  * @return int : 0 on success, or -1 on failure
  */

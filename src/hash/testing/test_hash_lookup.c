@@ -119,12 +119,12 @@ int main(int argc, char **argv)
 
    // we should have just performed a lookup of node zero
    // iterate from this position, confirming all other nodes
-   for ( i = 1; i < (nodecount + 2); i++ ) {
+   for ( i = 0; i < (nodecount + 2); i++ ) {
       snprintf( nodename, 60, "node%d", i );
       int ires = hash_iterate( lookuptable, &(noderef) );
       if ( i >= nodecount ) {
          if ( ires ) {
-            printf( "unexpected return of iteration completion: %d\n", ires );
+            printf( "expected return of iteration completion: %d\n", ires );
             return -1;
          }
       }

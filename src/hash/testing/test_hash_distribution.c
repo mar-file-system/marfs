@@ -139,7 +139,7 @@ int main(int argc, char **argv)
          return -1;
       }
       int ires = hash_iterate( disttable, &(noderef) );
-      if ( i >= nodecount - 1 ) {
+      if ( i >= nodecount ) {
          if ( ires ) {
             printf( "expected return of iteration completion: %d\n", ires );
             return -1;
@@ -149,6 +149,7 @@ int main(int argc, char **argv)
          printf( "expected to iterate, but recieved %d\n", ires );
          return -1;
       }
+      nc = noderef->content;
    }
 
    // terminate the hash table
