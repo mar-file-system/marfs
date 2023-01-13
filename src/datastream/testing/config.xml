@@ -200,6 +200,17 @@
 
          <!-- Namespace Definitions -->
          <namespaces rbreadth="2" rdepth="1">
+            <!-- Default Permission Settings -->
+            <perms>
+               <!-- read only metadata inter access -->
+               <interactive>RM</interactive>
+               <!-- no batch program access -->
+            </perms>
+            <!-- Default Quota Limits -->
+            <quotas>
+               <!-- unlimited file count -->
+               <data>100P</data> <!-- 100 Pibibyte data size limit -->
+            </quotas>
 
             <!-- Root NS Definition -->
             <ns name="root">
@@ -211,8 +222,7 @@
 
                <!-- No metadata manipulation, and no data access -->
                <perms>
-                  <interactive>RM</interactive>
-                  <batch>RM</batch>
+                  <batch>RM</batch> <!-- allow batch program metadata read -->
                </perms>
 
                <!-- Remote NS : 'gransom-allocation' -->
@@ -222,13 +232,11 @@
                   <!-- Quota Limits for this NS -->
                   <quotas>
                      <files>1K</files>  <!-- 10240 file count limit -->
-                     <data>100P</data> <!-- 100 Pibibyte data size limit -->
+                     <data>100P</data> <!-- 100 Pibibyte data limit ( must be restated, as parent overwrote default ) -->
                   </quotas>
 
                   <!-- Permission Settings for this NS -->
                   <perms>
-                     <!-- read only metadata inter access -->
-                     <interactive>RM</interactive>
                      <!-- full batch program access -->
                      <batch>RM,WM,RD,WD</batch>
                   </perms>

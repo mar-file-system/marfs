@@ -78,7 +78,7 @@
         * A MarFS 'repo' is a definition of data and metadata structure.  It is the uppermost conceptual abstraction of
         * MarFS.
         * All files written to MarFS must be uniquely and permanently associated with a repo, which defines where file
-        * information is placed and how that information is formatted.
+        * information is placed, how that information is formatted, and what forms of access are supported.
         * -->
    <repo name="5+2_Repo">
 
@@ -89,8 +89,10 @@
 
          <!-- Erasure Protection
               * Protection scheme for data objects of this repo.
-              * Defines a count of data blocks ( 'N' ), parity blocks ( 'E' ), and erasure stripe width ( 'PSZ' ) for
+              * Defines a count of data blocks ( 'N' ), parity blocks ( 'E' ), and erasure 'part' size ( 'PSZ' ) for
               * each object.
+              * Example: Values of N=5, E=2, and PSZ=1024 will result in 5+2 erasure stripes of 7KiB in size
+              *          ( Note that a data object may itself consist of arbitrarily many erasure stripes )
               * -->
          <protection>
             <N>5</N>
@@ -229,6 +231,9 @@
             <ns name="restricted-write-allocation">
 
                <!-- Quota Limits for this NS
+                    * Quota definitions are inherited by any subspaces and can also be defined as children of the 
+                    * 'namespaces' element, in parallel with the top level 'ns' defs, to be inherited by all namespaces
+                    * of the repo.
                     * Quota limits can be defined in terms of number of files and quantity of data.
                     * A missing quota definition is interpreted as no quota limit on that value.
                     * -->
@@ -238,6 +243,9 @@
                </quotas>
 
                <!-- Permission Settings for this NS
+                    * Like quotas, permission definitions are inherited by any subspaces and can also be defined as
+                    * children of the 'namespaces' element, in parallel with the top level 'ns' defs, to be inherited
+                    * by all namespaces of the repo.
                     * Permissions are defined independently for 'interactive' and 'batch' programs.
                     * Program type is determined by the client during MarFS initialization ( see marfs_init() API function ).
                     * Permissions are defined as: '{PermissionCode}[,{PermissionCode}]*'
@@ -394,6 +402,13 @@
          <!-- Namespace Definitions -->
          <namespaces rbreadth="20" rdepth="3">
 
+            <!-- Default Perms for Namespaces of this Repo
+                 No metadata manipulation, and no data access -->
+            <perms>
+               <interactive>RM</interactive>
+               <batch>RM</batch>
+            </perms>
+
             <!-- Root NS Definition
                  * Every MarFS config MUST include a single 'root' NS, which represents the uppermost NS of the filesystem.
                  * -->
@@ -403,12 +418,6 @@
                   <files>1</files>
                   <data>100P</data>
                </quotas>
-
-               <!-- No metadata manipulation, and no data access -->
-               <perms>
-                  <interactive>RM</interactive>
-                  <batch>RM</batch>
-               </perms>
 
                <!-- Remote Subspace Definition -->
                <rns name="restricted-write-allocation" repo="5+2_Repo"/>
@@ -434,7 +443,7 @@
                <perms>
                   <!-- full interactive access -->
                   <interactive>RM,WM,RD,WD</interactive>
-                  <!-- no batch program access -->
+                  <!-- default batch program access ( RM, from above ) -->
                </perms>
             </ns>
 
