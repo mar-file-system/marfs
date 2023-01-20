@@ -1293,6 +1293,8 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
       errno = EINVAL;
       return NULL;
    }
+   // keep a datascheme quick reference var
+   marfs_ds* ds = &(walker->pos.ns->prepo->datascheme);
    // populate initialization elements
    walker->gcthresh = thresh.gcthreshold;
    walker->repackthresh = thresh.repackthreshold;
