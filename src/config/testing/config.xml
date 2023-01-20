@@ -110,25 +110,34 @@
          <!-- Namespace Definitions -->
          <namespaces rbreadth="3" rdepth="3" rdigits="3">
 
-            <ns name="gransom-allocation">
+            <!-- Default Quota Limits for subspaces -->
+            <quotas>
+               <files>10K</files>  <!-- 10240 file count limit -->
+               <data>10P</data> <!-- 10 Pibibyte data size limit -->
+            </quotas>
 
-               <!-- Quota Limits for this NS -->
-               <quotas>
-                  <files>10K</files>  <!-- 10240 file count limit -->
-                  <data>10P</data> <!-- 10 Pibibyte data size limit -->
-               </quotas>
+            <!-- Default Perm Values for subspaces -->
+            <perms>
+               <interactive>RM,RD,WM</interactive>
+               <batch>RM,WM,RD,WD</batch>
+            </perms>
+
+            <ns name="gransom-allocation">
+               <!-- inherit default limits -->
 
                <!-- Permission Settings for this NS -->
                <perms>
                   <!-- metadata only inter access -->
                   <interactive>RM,WM</interactive>
-                  <!-- full batch program access -->
-                  <batch>RM,WM,RD,WD</batch>
+                  <!-- full batch program access (inherited) -->
                </perms>
 
                <!-- Subspace Definition -->
                <ns name="read-only-data">
-                  <!-- no quota definition implies no limits -->
+                  <!-- zero out file limit, but use the data value of the parent -->
+                  <quotas>
+                     <files>0</files>
+                  </quotas>
 
                   <!-- perms for read only -->
                   <perms>

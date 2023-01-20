@@ -889,6 +889,9 @@ marfs_repo* find_repo( marfs_repo* repolist, int repocount, const char* reponame
 int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
    // define an unused character value and use as an indicator of a completed perm string
    char eoperm = 'x';
+   // define chars for tracking duplicate values
+   char haveiperms = 0;
+   char havebperms = 0;
 
    // iterate over nodes at this level
    for ( ; permroot; permroot = permroot->next ) {
@@ -904,20 +907,22 @@ int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
       // determine if we're parsing iteractive or batch perms
       char ptype = '\0';
       if ( strncmp( (char*)permroot->name, "interactive", 12 ) == 0 ) {
-         if ( *iperms != NS_NOACCESS ) {
+         if ( haveiperms ) {
             // this is a duplicate 'interactive' def
             LOG( LOG_ERR, "encountered duplicate 'interactive' perm set\n" );
             return -1;
          }
          ptype = 'i';
+         haveiperms = 1;
       }
       else if ( strncmp( (char*)permroot->name, "batch", 6 ) == 0 ) {
-         if ( *bperms != NS_NOACCESS ) {
+         if ( havebperms ) {
             // this is a duplicate 'batch' def
             LOG( LOG_ERR, "encountered duplicate 'batch' perm set\n" );
             return -1;
          }
          ptype = 'b';
+         havebperms = 1;
       }
       else {
          LOG( LOG_ERR, "encountered unexpected perm node: \"%s\"\n", (char*)permroot->name );
@@ -1088,6 +1093,9 @@ int parse_int_node( int* target, xmlNode* node ) {
  * @return int : Zero on success, or -1 on failure
  */
 int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
+   // define chars for tracking duplicate values
+   char havefquota = 0;
+   char havedquota = 0;
    // iterate over nodes at this level
    for ( ; quotaroot; quotaroot = quotaroot->next ) {
       // check for unknown node type
@@ -1101,7 +1109,7 @@ int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
 
       // determine if we're parsing file or data quotas
       if ( strncmp( (char*)quotaroot->name, "files", 6 ) == 0 ) {
-         if ( *fquota != 0 ) {
+         if ( havefquota ) {
             // this is a duplicate 'files' def
             LOG( LOG_ERR, "encountered duplicate 'files' quota set\n" );
             return -1;
@@ -1111,9 +1119,10 @@ int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
             LOG( LOG_ERR, "failed to parse 'files' quota value\n" );
             return -1;
          }
+         havefquota = 1;
       }
       else if ( strncmp( (char*)quotaroot->name, "data", 5 ) == 0 ) {
-         if ( *dquota != 0 ) {
+         if ( havedquota ) {
             // this is a duplicate 'data' def
             LOG( LOG_ERR, "encountered duplicate 'data' quota set\n" );
             return -1;
@@ -1123,6 +1132,7 @@ int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
             LOG( LOG_ERR, "failed to parse 'data' quota value\n" );
             return -1;
          }
+         havedquota = 1;
       }
       else {
          LOG( LOG_ERR, "encountered unexpected quota sub-node: \"%s\"\n", (char*)quotaroot->name );
@@ -1192,9 +1202,14 @@ int free_namespace( HASH_NODE* nsnode ) {
  * @param marfs_ns* pnamespace : Parent namespace reference of the new namespace
  * @param marfs_repo* prepo : Parent repo reference of the new namespace
  * @param xmlNode* nsroot : Xml node defining the new namespace
+ * @param size_t dfquota : Default file quota value for the new NS
+ * @param size_t ddquota : Default data quota value for the new NS
+ * @param ns_perms diperms : Default interactive perms value for the new NS
+ * @param ns_perms dbperms : Default interactive perms value for the new NS
  * @return int : Zero on success, or -1 on failure
  */
-int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNode* nsroot ) {
+int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNode* nsroot,
+                      size_t dfquota, size_t ddquota, ns_perms diperms, ns_perms dbperms ) {
    // need to check if this is a real NS or a remote/ghost reference
    char rns = 0;
    char gns = 0;
@@ -1358,10 +1373,10 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    marfs_ns* ns = (marfs_ns*)nsnode->content; //shorthand ref
 
    // set some default namespace values
-   ns->fquota = 0;
-   ns->dquota = 0;
-   ns->iperms = NS_NOACCESS;
-   ns->bperms = NS_NOACCESS;
+   ns->fquota = dfquota;
+   ns->dquota = ddquota;
+   ns->iperms = diperms;
+   ns->bperms = dbperms;
    ns->subspaces = NULL;
    ns->subnodes = NULL;
    ns->subnodecount = 0;
@@ -1489,7 +1504,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
             }
             // allocate a subspace
             HASH_NODE* subnsnode = subspacelist + allocsubspaces;
-            if ( create_namespace( subnsnode, ns, prepo, subnode ) ) {
+            if ( create_namespace( subnsnode, ns, prepo, subnode, ns->fquota, ns->dquota, ns->iperms, ns->bperms ) ) {
                LOG( LOG_ERR, "failed to initialize subspace of NS \"%s\"\n", nsname );
                retval = -1;
                break;
@@ -2164,24 +2179,67 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
             LOG( LOG_ERR, "failed to create reference path table\n" );
             return -1;
          }
-         // count all subnodes
+         // count all subnodes and establish default values
          ms->nscount = 0;
+         size_t dfquota = 0;
+         size_t ddquota = 0;
+         ns_perms diperms = NS_NOACCESS;
+         ns_perms dbperms = NS_NOACCESS;
          int subspaces = 0;
          for( ; subnode; subnode = subnode->next ) {
+            // expecting only element and comment nodes here
             if ( subnode->type != XML_ELEMENT_NODE ) {
-               // skip comment nodes
-               if ( subnode->type == XML_COMMENT_NODE ) { continue; }
-               LOG( LOG_ERR, "encountered unknown node within a 'namespaces' definition\n" );
+               if ( subnode->type != XML_COMMENT_NODE ) {
+                  LOG( LOG_ERR, "encountered unknown node within a 'namespaces' definition\n" );
+                  return -1;
+               }
+               continue; // skip comments
+            }
+            if ( strncmp( (char*)(subnode->name), "ns", 3 ) == 0 ) {
+               // note every NS def
+               subspaces++;
+            }
+            else if ( strncmp( (char*)(subnode->name), "perms", 6 ) == 0 ) {
+               if ( diperms != NS_NOACCESS  ||  dbperms != NS_NOACCESS ) {
+                  LOG( LOG_ERR, "detected duplicate default perm info in 'namespaces' definition\n" );
+                  return -1;
+               }
+               // parse default perm info
+               if ( parse_perms( &(diperms), &(dbperms), subnode->children ) ) {
+                  LOG( LOG_ERR, "failed to parse default perm info in 'namespaces' definition\n" );
+                  return -1;
+               }
+               LOG( LOG_INFO, "Detected default perm defs\n" );
+            }
+            else if ( strncmp( (char*)(subnode->name), "quotas", 7 ) == 0 ) {
+               if ( dfquota  ||  ddquota ) {
+                  LOG( LOG_ERR, "detected duplicate default quota info in 'namespaces' definition\n" );
+                  return -1;
+               }
+               // parse default quota info
+               if( parse_quotas( &(dfquota), &(ddquota), subnode->children ) ) {
+                  LOG( LOG_ERR, "failed to parse default quota info in 'namespaces' definition\n" );
+                  return -1;
+               }
+               LOG( LOG_INFO, "Detected default quota values ( fquota = %zu, dquota = %zu )\n", dfquota, ddquota );
+            }
+            else { // unexpected subnode
+               if ( strncmp( (char*)(subnode->name), "rns", 4 ) == 0 ) {
+                  LOG( LOG_ERR, "Remote NS def found at the root of a 'namespaces' definition\n" );
+               }
+               else {
+                  LOG( LOG_ERR, "Encountered unrecognized element in a 'namespaces' definition: \"%s\"\n",
+                                (char*)(subnode->name) );
+               }
                return -1;
             }
-            // only 'ns' nodes are acceptible; for now, just assume every node is a NS def
-            subspaces++;
          }
          // if we have no subspaces at all, just warn and continue on
          if ( !(subspaces) ) {
             LOG( LOG_WARNING, "metascheme has no namespaces defined\n" );
             continue;
          }
+         LOG( LOG_INFO, "Found %d direct subspaces of repo %s\n", subspaces, repo->name );
          // allocate an array of namespace nodes
          ms->nslist = malloc( sizeof(HASH_NODE) * subspaces );
          if ( ms->nslist == NULL ) {
@@ -2192,20 +2250,15 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
          for( subnode = metaroot->children; subnode; subnode = subnode->next ) {
             if ( subnode->type == XML_ELEMENT_NODE ) {
                if ( strncmp( (char*)(subnode->name), "ns", 3 ) ) {
-                  if ( strncmp( (char*)(subnode->name), "rns", 4 ) == 0 ) {
-                     LOG( LOG_ERR, "Remote NS def found at the root of a 'namespaces' definition\n" );
-                  }
-                  else {
-                     LOG( LOG_ERR, "Encountered unrecognized element in a 'namespaces' definition: \"%s\"\n", (char*)(subnode->name) );
-                  }
-                  return -1;
+                  // just skip non-ns elements
+                  continue;
                }
                // set default namespace values
                HASH_NODE* subspace = ms->nslist + ms->nscount;
                subspace->name = NULL;
                subspace->weight = 0;
                subspace->content = NULL;
-               if ( create_namespace( subspace, NULL, repo, subnode ) ) {
+               if ( create_namespace( subspace, NULL, repo, subnode, dfquota, ddquota, diperms, dbperms ) ) {
                   LOG( LOG_ERR, "failed to create subspace %d\n", ms->nscount );
                   return -1;
                }

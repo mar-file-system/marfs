@@ -255,7 +255,7 @@ int main(int argc, char **argv)
    marfs_repo parentrepo;
    parentrepo.name = "parentrepo"; // need a parent repo reference for every NS
    HASH_NODE nsnode;
-   if ( create_namespace( &(nsnode), NULL, &(parentrepo), nsroot ) ) {
+   if ( create_namespace( &(nsnode), NULL, &(parentrepo), nsroot, 10240U, 11258999068426240ULL, NS_FULLACCESS, NS_FULLACCESS ) ) {
       printf( "failed to parse NS xml node\n" );
       return -1;
    }
@@ -288,8 +288,8 @@ int main(int argc, char **argv)
       return -1;
    }
    marfs_ns* subspace = (marfs_ns*)(subnode->content);
-   if ( subspace->fquota  ||  subspace->dquota ) {
-      printf( "detected non-zero quota values for \"%s\"\n", subnode->name );
+   if ( subspace->fquota  ||  subspace->dquota != 11258999068426240ULL ) {
+      printf( "detected unexpected quota values for \"%s\"\n", subnode->name );
       return -1;
    }
    if ( subspace->iperms != (NS_READMETA | NS_READDATA)  ||  subspace->bperms != (NS_READMETA | NS_READDATA) ) {
