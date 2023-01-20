@@ -1442,7 +1442,50 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
       walker->report.fileusage++;
       walker->report.byteusage += walker->ftag.bytes;
       // TODO potentially generate repack op
-      // TODO potentially generate rebuild op
+      // potentially generate rebuild ops
+      if ( walker->rebuildthresh  &&  walker->stval.st_ctime < walker->rebuildthresh ) {
+         // iterate over all objects spanned by this file
+         FTAG tmptag = walker->ftag;
+         size_t finobj = endobj;
+         if ( eos ) { finobj++; } // include the final obj referenced by this file, specifically if no files follow
+         while ( tmptag.objno < finobj ) {
+            // check if object targets our rebuild location
+            char* objname = NULL;
+            ne_erasure erasure;
+            ne_location location;
+            if ( datastream_objtarget( &(tmptag), ds, &objname, &erasure, &location) ) {
+               LOG( LOG_ERR, "Failed to populate object target info for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+               destroystreamwalker( walker );
+               return NULL;
+            }
+            free( objname ); // don't actually need object name, so just destroy it immediately
+            // check for location match
+            if ( (walker->rebuildloc.pod < 0  ||  walker->rebuildloc.pod == location.pod )  &&
+                 (walker->rebuildloc.cap < 0  ||  walker->rebuildloc.cap == location.cap )  &&
+                 (walker->rebuildloc.scatter < 0  ||  walker->rebuildloc.scatter == location.scatter ) ) {
+               // generate a rebuild op for this object
+               opinfo* optgt = NULL;
+               if ( process_identifyoperation( &(walker->rbldops), MARFS_REBUILD_OP, &(tmptag), &(optgt) ) ) {
+                  LOG( LOG_ERR, "Failed to identify operation target for rebuild of spanned obj %zu\n", tmptag.objno );
+                  destroystreamwalker( walker );
+                  return NULL;
+               }
+               // sanity check
+               if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
+                  LOG( LOG_ERR, "Existing obj rebuild count (%zu) does not match current obj (%zu)\n",
+                                optgt->count + optgt->ftag.objno, tmptag.objno );
+                  destroystreamwalker( walker );
+                  return NULL;
+               }
+               // update operation
+               optgt->count++;
+               // update our record
+               walker->report.rbldobjs++;
+            }
+            // iterate to the next obj
+            tmptag.objno++;
+         }
+      }
    }
    if ( filestate > 1  ||  assumeactive ) {
       // update state to reflect active initial file
@@ -1505,7 +1548,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
    marfs_ds* ds = &(walker->pos.ns->prepo->datascheme);
    size_t objsize = walker->pos.ns->prepo->datascheme.objsize;   // current repo-defined chunking limit
    size_t repackbytethresh = (objsize - walker->headerlen) / 2;
-   char pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0 ) ? 0 : 1;
+   char pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0  &&  walker->rebuildthresh == 0 ) ? 0 : 1;
    char dispatchedops = 0;
    // iterate over all reference targets
    while ( walker->ftag.endofstream == 0  &&  (walker->ftag.state & FTAG_DATASTATE) >= FTAG_FIN ) {
@@ -1689,21 +1732,38 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
             }
             // possibly update rebuild ops
             if ( walker->rebuildthresh  &&  walker->activefiles  &&  walker->stval.st_ctime < walker->rebuildthresh ) {
-               // check if object targets our rebuild location
+               // check if previous object targets our rebuild location
                char* objname = NULL;
                ne_erasure erasure;
                ne_location location;
-               if ( datastream_objtarget( &(walker->ftag), ds, &objname, &erasure, &location) ) {
-                  LOG( LOG_ERR, "Failed to populate object target info for object %zu of stream \"%s\"\n", walker->ftag.objno, walker->ftag.streamid );
+               FTAG tmptag = walker->ftag;
+               tmptag.objno = walker->objno;
+               if ( datastream_objtarget( &(tmptag), ds, &objname, &erasure, &location) ) {
+                  LOG( LOG_ERR, "Failed to populate object target info for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
                   return -1;
                }
+               free( objname ); // don't actually need object name, so just destroy it immediately
                // check for location match
                if ( (walker->rebuildloc.pod < 0  ||  walker->rebuildloc.pod == location.pod )  &&
                     (walker->rebuildloc.cap < 0  ||  walker->rebuildloc.cap == location.cap )  &&
                     (walker->rebuildloc.scatter < 0  ||  walker->rebuildloc.scatter == location.scatter ) ) {
-                  // TODO generate a rebuild op for this object
+                  // generate a rebuild op for this object
+                  opinfo* optgt = NULL;
+                  if ( process_identifyoperation( &(walker->rbldops), MARFS_REBUILD_OP, &(tmptag), &(optgt) ) ) {
+                     LOG( LOG_ERR, "Failed to identify operation target for rebuild of spanned obj %zu\n", tmptag.objno );
+                     return -1;
+                  }
+                  // sanity check
+                  if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
+                     LOG( LOG_ERR, "Existing obj rebuild count (%zu) does not match current obj (%zu)\n",
+                                   optgt->count + optgt->ftag.objno, tmptag.objno );
+                     return -1;
+                  }
+                  // update operation
+                  optgt->count++;
+                  // update our record
+                  walker->report.rbldobjs++;
                }
-               free( objname );
             }
             // update state
             walker->activefiles = 0; // update active file count for new obj
@@ -1829,7 +1889,47 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          if ( haveftag ) { walker->report.byteusage += walker->ftag.bytes; }
          else { walker->report.byteusage += walker->stval.st_size; }
          // TODO manage repack ops
-         // TODO potentially generate rebuild ops
+         // potentially generate rebuild ops
+         if ( walker->rebuildthresh  &&  walker->stval.st_ctime < walker->rebuildthresh ) {
+            // iterate over all objects spanned by this file
+            FTAG tmptag = walker->ftag;
+            size_t finobj = endobj;
+            if ( eos ) { finobj++; } // include the final obj referenced by this file, specifically if no files follow
+            while ( tmptag.objno < finobj ) {
+               // check if object targets our rebuild location
+               char* objname = NULL;
+               ne_erasure erasure;
+               ne_location location;
+               if ( datastream_objtarget( &(tmptag), ds, &objname, &erasure, &location) ) {
+                  LOG( LOG_ERR, "Failed to populate object target info for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+                  return -1;
+               }
+               free( objname ); // don't actually need object name, so just destroy it immediately
+               // check for location match
+               if ( (walker->rebuildloc.pod < 0  ||  walker->rebuildloc.pod == location.pod )  &&
+                    (walker->rebuildloc.cap < 0  ||  walker->rebuildloc.cap == location.cap )  &&
+                    (walker->rebuildloc.scatter < 0  ||  walker->rebuildloc.scatter == location.scatter ) ) {
+                  // generate a rebuild op for this object
+                  opinfo* optgt = NULL;
+                  if ( process_identifyoperation( &(walker->rbldops), MARFS_REBUILD_OP, &(tmptag), &(optgt) ) ) {
+                     LOG( LOG_ERR, "Failed to identify operation target for rebuild of spanned obj %zu\n", tmptag.objno );
+                     return -1;
+                  }
+                  // sanity check
+                  if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
+                     LOG( LOG_ERR, "Existing obj rebuild count (%zu) does not match current obj (%zu)\n",
+                                   optgt->count + optgt->ftag.objno, tmptag.objno );
+                     return -1;
+                  }
+                  // update operation
+                  optgt->count++;
+                  // update our record
+                  walker->report.rbldobjs++;
+               }
+               // iterate to the next obj
+               tmptag.objno++;
+            }
+         }
       }
       // potentially update values based on spanned objects
       if ( walker->objno != endobj ) {
