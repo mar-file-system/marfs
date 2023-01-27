@@ -1032,18 +1032,21 @@ opinfo* resourcelog_dupopinfo( opinfo* op ) {
                         resourcelog_freeopinfo( genchain );
                         return NULL;
                      }
-                     newinfo->markerpath = strdup( extinfo->markerpath );
-                     if ( newinfo->markerpath == NULL ) {
-                        LOG( LOG_ERR, "Failed to duplicate rebuild marker path\n" );
-                        free( newinfo );
-                        resourcelog_freeopinfo( genchain );
-                        return NULL;
-                     }
+                     newinfo->markerpath = NULL;
                      newinfo->rtag = extinfo->rtag;
                      newinfo->rtag.meta_status = NULL;
                      newinfo->rtag.data_status = NULL;
                      newinfo->rtag.csum = NULL;
                      size_t stripewidth = op->ftag.protection.N + op->ftag.protection.E;
+                     if ( extinfo->markerpath ) {
+                        newinfo->markerpath = strdup( extinfo->markerpath );
+                        if ( newinfo->markerpath == NULL ) {
+                           LOG( LOG_ERR, "Failed to duplicate rebuild marker path\n" );
+                           free( newinfo );
+                           resourcelog_freeopinfo( genchain );
+                           return NULL;
+                        }
+                     }
                      if ( extinfo->rtag.meta_status ) {
                         newinfo->rtag.meta_status = calloc( stripewidth, sizeof(char) );
                         if ( newinfo->rtag.meta_status == NULL ) {

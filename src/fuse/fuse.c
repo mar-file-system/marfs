@@ -232,9 +232,6 @@ int fuse_flush(const char *path, struct fuse_file_info *ffi)
 
   if (!ffi->fh  &&  strcmp(path, CONFIGVER_FNAME))
   {
-    if (!strcmp(path, CONFIGVER_FNAME)) {
-      return 0;
-    }
     LOG(LOG_ERR, "missing file descriptor\n");
     return -EBADF;
   }

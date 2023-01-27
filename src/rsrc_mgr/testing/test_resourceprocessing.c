@@ -332,6 +332,13 @@ int main(int argc, char **argv)
       return -1;
    }
 
+   // start up a resourcelog
+   RESOURCELOG logfile = NULL;
+   if ( resourcelog_init( &(logfile), "./test_rman_topdir/logfile", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+      printf( "failed to initialize resourcelog\n" );
+      return -1;
+   }
+
 
    // walk the produced datastream
    struct timeval currenttime;
@@ -342,10 +349,15 @@ int main(int argc, char **argv)
    thresholds thresh = { // set thresholds to 2min in the future
       .gcthreshold = currenttime.tv_sec + 120,
       .repackthreshold = currenttime.tv_sec + 120,
-      .rebuildthreshold = 0, // no rebuilds for now
+      .rebuildthreshold = currenttime.tv_sec + 120,
       .cleanupthreshold = currenttime.tv_sec + 120
    };
-   streamwalker walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
+   ne_location rebuildloc = { // rebuild all objects
+      .pod = -1,
+      .cap = -1,
+      .scatter = -1
+   };
+   streamwalker walker = process_openstreamwalker( &pos, rpath, thresh, &(rebuildloc) );
    if ( walker == NULL ) {
       printf( "failed to open streamwalker for \"%s\"\n", rpath );
       return -1;
@@ -353,21 +365,37 @@ int main(int argc, char **argv)
    opinfo* gcops = NULL;
    opinfo* repackops = NULL;
    opinfo* rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   ssize_t rebuildcount = 0;
+   int iterres = 1;
+   while( (iterres = process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) )) > 0 ) {
+      // not expecting any gc or repack ops, at present
+      if ( gcops ) {
+         printf( "unexpected GCOPS following first traversal of no-pack stream\n" );
+         return -1;
+      }
+      if ( repackops ) {
+         printf( "unexpected REPACKOPS following first traversal of no-pack stream\n" );
+         return -1;
+      }
+      // count up number of encountered rebuild ops
+      if ( rebuildops ) {
+         rebuildcount += rebuildops->count;
+         if ( resourcelog_processop( &(logfile), rebuildops, NULL ) ) {
+            printf( "failed to log rebuildops for first traversal\n" );
+            return -1;
+         }
+         if ( process_executeoperation( &pos, rebuildops, &(logfile), NULL ) ) {
+            printf( "failed to execute rebuild ops ( %zu ) of first iteration\n", rebuildcount );
+            return -1;
+         }
+      }
+   }
+   if ( iterres ) {
       printf( "unexpected result of first iteration from \"%s\"\n", rpath );
       return -1;
    }
-   // not expecting any ops, at present
-   if ( gcops ) {
-      printf( "unexpected GCOPS following first traversal of no-pack stream\n" );
-      return -1;
-   }
-   if ( repackops ) {
-      printf( "unexpected REPACKOPS following first traversal of no-pack stream\n" );
-      return -1;
-   }
-   if ( rebuildops ) {
-      printf( "unexpected REBUILDOPS following first traversal of no-pack stream\n" );
+   if ( rebuildcount != 23 ) {
+      printf( "unexpected rebuild op count from first iteration \"%s\": %zu\n", rpath, rebuildcount );
       return -1;
    }
    streamwalker_report walkreport;
@@ -420,7 +448,7 @@ int main(int argc, char **argv)
       printf( "improper first walk rpckbytes: %zu\n", walkreport.rpckbytes );
       return -1;
    }
-   if ( walkreport.rbldobjs ) {
+   if ( walkreport.rbldobjs != 23 ) {
       printf( "improper first walk rbldobjs: %zu\n", walkreport.rbldobjs );
       return -1;
    }
@@ -474,14 +502,6 @@ int main(int argc, char **argv)
       return -1;
    }
 
-
-
-   // start up a resourcelog
-   RESOURCELOG logfile = NULL;
-   if ( resourcelog_init( &(logfile), "./test_rman_topdir/logfile", RESOURCE_MODIFY_LOG, pos.ns ) ) {
-      printf( "failed to initialize resourcelog\n" );
-      return -1;
-   }
 
    // delete file2
    if ( curmdal->unlink( pos.ctxt, "file2" ) ) {
@@ -1594,7 +1614,7 @@ int main(int argc, char **argv)
    repackops = NULL;
    rebuildops = NULL;
    if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
-      printf( "unexpected result of first iteration from \"%s\"\n", rpath );
+      printf( "unexpected result of fifth iteration from \"%s\"\n", rpath );
       return -1;
    }
    // we should have some gcops, and nothing else

@@ -927,14 +927,14 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
          newop->extendedinfo = calloc( 1, sizeof( struct delref_info_struct ) );
          break;
       case MARFS_REBUILD_OP:
-         newop->extendedinfo = calloc( 1, sizeof( struct rebuild_info_struct ) );
+         newop->extendedinfo = NULL; // do NOT allocate extended info for location-based rebuilds calloc( 1, sizeof( struct rebuild_info_struct ) );
          break;
       case MARFS_REPACK_OP:
          newop->extendedinfo = calloc( 1, sizeof( struct repack_info_struct ) );
          break;
    }
    // check for allocation failure
-   if ( newop->extendedinfo == NULL ) {
+   if ( newop->extendedinfo == NULL  &&  type != MARFS_REBUILD_OP ) {
       LOG( LOG_ERR, "Failed to allocate operation extended info\n" );
       free( newop->ftag.streamid );
       free( newop->ftag.ctag );
