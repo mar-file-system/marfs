@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Installing &mdash; MarFS 1.13 documentation</title>
+      <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+      <link rel="stylesheet" href="_static/css/theme.css" type="text/css" />
+  <!--[if lt IE 9]>
+    <script src="_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+        <script src="_static/jquery.js"></script>
+        <script src="_static/underscore.js"></script>
+        <script src="_static/_sphinx_javascript_frameworks_compat.js"></script>
+        <script src="_static/doctools.js"></script>
+        <script src="_static/sphinx_highlight.js"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Developers" href="developers.html" />
+    <link rel="prev" title="Welcome to MarFS’s documentation!" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+            <a href="index.html" class="icon icon-home"> MarFS
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Installing</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#overview">Overview</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#storage">Storage</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#data-access">Data Access</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#data-movement">Data Movement</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#production-cluster-summary">Production Cluster Summary</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#storage-nodes">Storage Nodes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#metadata-nodes">Metadata Nodes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#file-transfer-nodes">File Transfer Nodes</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#marfs-abstractions">MarFS abstractions</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#the-repository">The Repository</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#data-abstraction-layer">Data Abstraction Layer</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#metadata-abstraction-layer">Metadata Abstraction Layer</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#the-namespace">The Namespace</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#pods">Pods</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#blocks">Blocks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#capacity-units">Capacity Units</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#create-base-directory-structure">Create Base Directory Structure</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#marfs-config-file">MarFS Config File</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#dependencies">Dependencies</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#isa-l">ISA-L</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#erasureutils">ErasureUtils</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#marfs">MarFS</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id1">PFTool</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#starting-marfs">Starting MarFS</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#verifying-the-configuration">Verifying the Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#launching-fuse">Launching FUSE</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#see-if-it-works">See if it works!</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#build-and-run-pftool">Build and run PFTool</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="developers.html">Developers</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">MarFS</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home"></a></li>
+      <li class="breadcrumb-item active">Installing</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/new_install.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <div class="section" id="installing">
+<h1>Installing<a class="headerlink" href="#installing" title="Permalink to this heading"></a></h1>
+<p>This section describes the install process for MarFS.</p>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview" id="id2">Overview</a></p>
+<ul>
+<li><p><a class="reference internal" href="#storage" id="id3">Storage</a></p></li>
+<li><p><a class="reference internal" href="#data-access" id="id4">Data Access</a></p></li>
+<li><p><a class="reference internal" href="#data-movement" id="id5">Data Movement</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#production-cluster-summary" id="id6">Production Cluster Summary</a></p>
+<ul>
+<li><p><a class="reference internal" href="#storage-nodes" id="id7">Storage Nodes</a></p></li>
+<li><p><a class="reference internal" href="#metadata-nodes" id="id8">Metadata Nodes</a></p></li>
+<li><p><a class="reference internal" href="#file-transfer-nodes" id="id9">File Transfer Nodes</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#marfs-abstractions" id="id10">MarFS abstractions</a></p>
+<ul>
+<li><p><a class="reference internal" href="#the-repository" id="id11">The Repository</a></p></li>
+<li><p><a class="reference internal" href="#data-abstraction-layer" id="id12">Data Abstraction Layer</a></p></li>
+<li><p><a class="reference internal" href="#metadata-abstraction-layer" id="id13">Metadata Abstraction Layer</a></p></li>
+<li><p><a class="reference internal" href="#the-namespace" id="id14">The Namespace</a></p></li>
+<li><p><a class="reference internal" href="#pods" id="id15">Pods</a></p></li>
+<li><p><a class="reference internal" href="#blocks" id="id16">Blocks</a></p></li>
+<li><p><a class="reference internal" href="#capacity-units" id="id17">Capacity Units</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#create-base-directory-structure" id="id18">Create Base Directory Structure</a></p>
+<ul>
+<li><p><a class="reference internal" href="#marfs-config-file" id="id19">MarFS Config File</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#dependencies" id="id20">Dependencies</a></p>
+<ul>
+<li><p><a class="reference internal" href="#isa-l" id="id21">ISA-L</a></p></li>
+<li><p><a class="reference internal" href="#erasureutils" id="id22">ErasureUtils</a></p></li>
+<li><p><a class="reference internal" href="#marfs" id="id23">MarFS</a></p></li>
+<li><p><a class="reference internal" href="#id1" id="id24">PFTool</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#starting-marfs" id="id25">Starting MarFS</a></p>
+<ul>
+<li><p><a class="reference internal" href="#verifying-the-configuration" id="id26">Verifying the Configuration</a></p></li>
+<li><p><a class="reference internal" href="#launching-fuse" id="id27">Launching FUSE</a></p></li>
+<li><p><a class="reference internal" href="#see-if-it-works" id="id28">See if it works!</a></p></li>
+<li><p><a class="reference internal" href="#build-and-run-pftool" id="id29">Build and run PFTool</a></p></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="overview">
+<h2><a class="toc-backref" href="#id2">Overview</a><a class="headerlink" href="#overview" title="Permalink to this heading"></a></h2>
+<p>MarFS is a distributed parallel filesystem, thusly setup is complicated and
+relies on a number of different technologies and systems. In this guide we
+will go over the setup of an example system on one node. This guide assumes
+knowledge of ZFS, MPI, and general Linux operations.</p>
+<div class="section" id="storage">
+<h3><a class="toc-backref" href="#id3">Storage</a><a class="headerlink" href="#storage" title="Permalink to this heading"></a></h3>
+<p>MarFS stores data and metadata differently. Data is stored as erasure-coded
+objects. When data is written it is broken up into N number of pieces. Erasure
+data is calculated on our N objects to create E number of erasure objects.
+N+E number of objects are then mapped onto N+E identical filesystems. We refer
+to these N+E filesystems as a “pod”. In our example cluster we will have four
+filesystems in a single pod giving us a 3+1 erasure coding scheme. You can have
+multiple pods in a cluster. When you have multiple pods the pod is selected with
+a hash, and data is written to that pod. Data will never be written across
+multiple pods. So if you have 4 pods each matching our single pod with a 3+1
+scheme those four objects will always be in the same pod.</p>
+<p>Metadata can be stored on any filesystem that supports extended attributes and
+sparse-files. For scalability purposes a distributed filesystem is highly
+recommended. In our example system we will just use a directory, but our
+production clusters typically run General Parallel Filesystem (GPFS).</p>
+</div>
+<div class="section" id="data-access">
+<h3><a class="toc-backref" href="#id4">Data Access</a><a class="headerlink" href="#data-access" title="Permalink to this heading"></a></h3>
+<p>With object data being stored across a number of pods it is reasonable to
+provide a way to interact with the filesystem in a unified matter. Most users
+would expect a single mount point they can look through for various tasks. This
+is provided through FUSE, allowing users to look at their data. In production
+systems, this FUSE mount is read only, and is there for users to locate their
+files for parallel movement, although MarFS allows FUSE to be configured to
+allow read/write.</p>
+</div>
+<div class="section" id="data-movement">
+<h3><a class="toc-backref" href="#id5">Data Movement</a><a class="headerlink" href="#data-movement" title="Permalink to this heading"></a></h3>
+<p>Data is moved in parallel using PFTool. In our production systems, nodes running
+PFTool are called “File Transfer Agent” nodes, or FTAs.</p>
+</div>
+</div>
+<div class="section" id="production-cluster-summary">
+<h2><a class="toc-backref" href="#id6">Production Cluster Summary</a><a class="headerlink" href="#production-cluster-summary" title="Permalink to this heading"></a></h2>
+<p>In a typical production system, we have three types of nodes, each handling a
+different role. For the purpose of our example system, one node will handle all
+three roles.</p>
+<div class="section" id="storage-nodes">
+<h3><a class="toc-backref" href="#id7">Storage Nodes</a><a class="headerlink" href="#storage-nodes" title="Permalink to this heading"></a></h3>
+<p>Each storage node uses ZFS for MarFS block storage. Each node will have four
+zpools in a RAIDZ3(17+3) configuration. We have multiple pods configured to use
+10+2 erasure coding. Must have a high performance network such as Infiniband.</p>
+</div>
+<div class="section" id="metadata-nodes">
+<h3><a class="toc-backref" href="#id8">Metadata Nodes</a><a class="headerlink" href="#metadata-nodes" title="Permalink to this heading"></a></h3>
+<p>We use GPFS as metadata storage in production systems. Your GPFS cluster should
+already be setup and ready to create filesets. You should have a high
+performance network such as Infiniband when using GPFS.</p>
+</div>
+<div class="section" id="file-transfer-nodes">
+<h3><a class="toc-backref" href="#id9">File Transfer Nodes</a><a class="headerlink" href="#file-transfer-nodes" title="Permalink to this heading"></a></h3>
+<p>These nodes will be used to move data in parallel from one place to another. We
+will use <a class="reference external" href="https://github.com/pftool/pftool">PFtool</a> for this. You must have
+high performance network such as Infiniband. They will also be used to present
+MarFS to users through a FUSE mount.</p>
+</div>
+</div>
+<div class="section" id="marfs-abstractions">
+<h2><a class="toc-backref" href="#id10">MarFS abstractions</a><a class="headerlink" href="#marfs-abstractions" title="Permalink to this heading"></a></h2>
+<p>Remember how earlier we talked about the pod? There are more things to
+understand about the pod. There are logical data abstractions we will see later
+when understanding the configuration file. We will talk about them briefly here
+first.</p>
+<div class="section" id="the-repository">
+<h3><a class="toc-backref" href="#id11">The Repository</a><a class="headerlink" href="#the-repository" title="Permalink to this heading"></a></h3>
+<p>A repo is where all the object data for a MarFS Filesystem lives; it’s a logical
+description of a MarFS object-store, with details on the number of storage
+servers, etc.</p>
+</div>
+<div class="section" id="data-abstraction-layer">
+<h3><a class="toc-backref" href="#id12">Data Abstraction Layer</a><a class="headerlink" href="#data-abstraction-layer" title="Permalink to this heading"></a></h3>
+<p>Multi component stuff here maybe?</p>
+</div>
+<div class="section" id="metadata-abstraction-layer">
+<h3><a class="toc-backref" href="#id13">Metadata Abstraction Layer</a><a class="headerlink" href="#metadata-abstraction-layer" title="Permalink to this heading"></a></h3>
+</div>
+<div class="section" id="the-namespace">
+<h3><a class="toc-backref" href="#id14">The Namespace</a><a class="headerlink" href="#the-namespace" title="Permalink to this heading"></a></h3>
+<p>A namespace in MarFS is a logical partition of the MarFS filesystem with a
+unique (virtual) mount point and attributes like permissions, similar to ZFS
+datasets. It also includes configuration details regarding MarFS metadata
+storage for that namespace. Each namespace in MarFS must be associated with a
+repo, and you can have multiple namespaces per repo. Both repos and namespaces
+are arbitrarily named.</p>
+</div>
+<div class="section" id="pods">
+<h3><a class="toc-backref" href="#id15">Pods</a><a class="headerlink" href="#pods" title="Permalink to this heading"></a></h3>
+<p>A collection of storage nodes.</p>
+</div>
+<div class="section" id="blocks">
+<h3><a class="toc-backref" href="#id16">Blocks</a><a class="headerlink" href="#blocks" title="Permalink to this heading"></a></h3>
+<p>A storage node in a pod.</p>
+</div>
+<div class="section" id="capacity-units">
+<h3><a class="toc-backref" href="#id17">Capacity Units</a><a class="headerlink" href="#capacity-units" title="Permalink to this heading"></a></h3>
+<p>Each capacity unit (cap) is a datastore on a ZFS zpool on a block in a pod.</p>
+</div>
+</div>
+<div class="section" id="create-base-directory-structure">
+<h2><a class="toc-backref" href="#id18">Create Base Directory Structure</a><a class="headerlink" href="#create-base-directory-structure" title="Permalink to this heading"></a></h2>
+<p>In the case we are building MarFS on a multi-node system, it is helpful to have
+a shared filesystem among all the nodes in the cluster, such as a NFS share
+mounted on all nodes. We will keep all our source code and other files that must
+be shared here. In our example we will use <code class="code docutils literal notranslate"><span class="pre">/opt/campaign</span></code>. Before we
+start installing, let’s create this directory and a subdirectory to function as
+an install target, and add it to our PATH environment variable.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir -p /opt/campaign/install/bin
+<span class="nb">cd</span> /opt/campaign
+<span class="nb">export</span> <span class="nv">PATH</span><span class="o">=</span><span class="nv">$PATH</span>:/opt/campaign/install/bin
+</pre></div>
+</div>
+<p>We will also need a root directory for our metadata store</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir -p /marfs/mdal-root
+</pre></div>
+</div>
+<p>and one for our data store</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /marfs/dal-root
+</pre></div>
+</div>
+<p>The last directory we need to create will be for our filesystem mount point.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir /campaign
+</pre></div>
+</div>
+<div class="section" id="marfs-config-file">
+<h3><a class="toc-backref" href="#id19">MarFS Config File</a><a class="headerlink" href="#marfs-config-file" title="Permalink to this heading"></a></h3>
+<p>MarFS uses a config file to set up repositories and namespaces. We will use this
+example config file which we will create at
+<code class="code docutils literal notranslate"><span class="pre">/opt/campaign/install/etc/marfs-config.xml</span></code>:</p>
+<div class="highlight-xml notranslate"><div class="highlight"><pre><span></span><span class="cm">&lt;!--</span>
+<span class="cm">   Copyright (c) 2015, Los Alamos National Security, LLC</span>
+<span class="cm">   All rights reserved.</span>
+
+<span class="cm">   Copyright 2015.  Los Alamos National Security, LLC. This software was produced</span>
+<span class="cm">   under U.S. Government contract DE-AC52-06NA25396 for Los Alamos National</span>
+<span class="cm">   Laboratory (LANL), which is operated by Los Alamos National Security, LLC for</span>
+<span class="cm">   the U.S. Department of Energy. The U.S. Government has rights to use, reproduce,</span>
+<span class="cm">   and distribute this software.  NEITHER THE GOVERNMENT NOR LOS ALAMOS NATIONAL</span>
+<span class="cm">   SECURITY, LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY</span>
+<span class="cm">   FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative</span>
+<span class="cm">   works, such modified software should be clearly marked, so as not to confuse it</span>
+<span class="cm">   with the version available from LANL.</span>
+
+<span class="cm">   Additionally, redistribution and use in source and binary forms, with or without</span>
+<span class="cm">   modification, are permitted provided that the following conditions are met:</span>
+<span class="cm">   1. Redistributions of source code must retain the above copyright notice, this</span>
+<span class="cm">   list of conditions and the following disclaimer.</span>
+
+<span class="cm">   2. Redistributions in binary form must reproduce the above copyright notice,</span>
+<span class="cm">   this list of conditions and the following disclaimer in the documentation</span>
+<span class="cm">   and/or other materials provided with the distribution.</span>
+<span class="cm">   3. Neither the name of Los Alamos National Security, LLC, Los Alamos National</span>
+<span class="cm">   Laboratory, LANL, the U.S. Government, nor the names of its contributors may be</span>
+<span class="cm">   used to endorse or promote products derived from this software without specific</span>
+<span class="cm">   prior written permission.</span>
+
+<span class="cm">   THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND CONTRIBUTORS</span>
+<span class="cm">   &quot;AS IS&quot; AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,</span>
+<span class="cm">   THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE</span>
+<span class="cm">   ARE DISCLAIMED. IN NO EVENT SHALL LOS ALAMOS NATIONAL SECURITY, LLC OR</span>
+<span class="cm">   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,</span>
+<span class="cm">   OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF</span>
+<span class="cm">   SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS</span>
+<span class="cm">   INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,</span>
+<span class="cm">   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY</span>
+<span class="cm">   OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</span>
+
+
+<span class="cm">   NOTE:</span>
+
+<span class="cm">   Although these files reside in a seperate repository, they fall under the MarFS copyright and license.</span>
+
+<span class="cm">   MarFS is released under the BSD license.</span>
+
+<span class="cm">   MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier:</span>
+<span class="cm">   LA-CC-15-039.</span>
+
+<span class="cm">   These erasure utilites make use of the Intel Intelligent Storage</span>
+<span class="cm">   Acceleration Library (Intel ISA-L), which can be found at</span>
+<span class="cm">   https://github.com/01org/isa-l and is under its own license.</span>
+
+<span class="cm">   MarFS uses libaws4c for Amazon S3 object communication. The original version</span>
+<span class="cm">   is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.</span>
+<span class="cm">   LANL added functionality to the original work. The original work plus</span>
+<span class="cm">   LANL contributions is found at https://github.com/jti-lanl/aws4c.</span>
+
+<span class="cm">   GNU licenses can be found at http://www.gnu.org/licenses/.</span>
+<span class="cm">--&gt;</span>
+
+<span class="cm">&lt;!-- Start MarFS Configuration Info --&gt;</span>
+<span class="nt">&lt;marfs_config</span> <span class="na">version=</span><span class="s">&quot;0.0001beta-ExampleVersion&quot;</span><span class="nt">&gt;</span>
+   <span class="cm">&lt;!-- Mount Point </span>
+<span class="cm">         * This is the absolute path to a directory at which MarFS expects to be mounted.</span>
+<span class="cm">         * Tools which interpret absolute paths ( FUSE ) will only function if they operate below this location.</span>
+<span class="cm">         * --&gt;</span>
+   <span class="nt">&lt;mnt_top&gt;</span>/campaign<span class="nt">&lt;/mnt_top&gt;</span>
+
+   <span class="cm">&lt;!-- Host Definitions ( CURRENTLY IGNORED )</span>
+<span class="cm">        * This is a placeholder for future implementation.</span>
+<span class="cm">        * The idea is to facilitate configuration of an entire MarFS cluster via </span>
+<span class="cm">        * host definitions within this config.</span>
+<span class="cm">        * --&gt;</span>
+   <span class="nt">&lt;hosts&gt;</span> ... <span class="nt">&lt;/hosts&gt;</span>
+
+   <span class="cm">&lt;!-- Repo Definition</span>
+<span class="cm">        * A MarFS &#39;repo&#39; is a definition of data and metadata structure.  It is the uppermost conceptual abstraction of</span>
+<span class="cm">        * MarFS.</span>
+<span class="cm">        * All files written to MarFS must be uniquely and permanently associated with a repo, which defines where file</span>
+<span class="cm">        * information is placed and how that information is formatted.</span>
+<span class="cm">        * --&gt;</span>
+   <span class="nt">&lt;repo</span> <span class="na">name=</span><span class="s">&quot;4+1_Repo&quot;</span><span class="nt">&gt;</span>
+
+      <span class="cm">&lt;!-- Per-Repo Data Scheme</span>
+<span class="cm">           * Defines where data objects are placed, how they are formatted, and through what interface they are accessed</span>
+<span class="cm">           * --&gt;</span>
+      <span class="nt">&lt;data&gt;</span>
+
+         <span class="cm">&lt;!-- Erasure Protection</span>
+<span class="cm">              * Protection scheme for data objects of this repo.</span>
+<span class="cm">              * Defines a count of data blocks ( &#39;N&#39; ), parity blocks ( &#39;E&#39; ), and erasure stripe width ( &#39;PSZ&#39; ) for</span>
+<span class="cm">              * each object.</span>
+<span class="cm">              * --&gt;</span>
+         <span class="nt">&lt;protection&gt;</span>
+            <span class="nt">&lt;N&gt;</span>4<span class="nt">&lt;/N&gt;</span>
+            <span class="nt">&lt;E&gt;</span>1<span class="nt">&lt;/E&gt;</span>
+            <span class="nt">&lt;PSZ&gt;</span>1024<span class="nt">&lt;/PSZ&gt;</span>
+         <span class="nt">&lt;/protection&gt;</span>
+
+         <span class="cm">&lt;!-- Packing</span>
+<span class="cm">              * This feature allows for the data content of multiple files to be &#39;packed&#39; into a single data object.</span>
+<span class="cm">              * When enabled, groups of files written to a single client &#39;stream&#39; may be packed together.</span>
+<span class="cm">              * Files may also be packed afterwards by the Resource Manager ( &#39;marfs-rman&#39; ) in a process known as</span>
+<span class="cm">              * &#39;repacking&#39;.  Data from up to &#39;max_files&#39; individual files may be packed into a single data object.</span>
+<span class="cm">              * It is *highly* recommened to enable this feature, as it should greatly increase the efficiency of</span>
+<span class="cm">              * reading+writing large numbers of small files while having no significant performance penalty for large</span>
+<span class="cm">              * files.</span>
+<span class="cm">              * --&gt;</span>
+         <span class="nt">&lt;packing</span> <span class="na">enabled=</span><span class="s">&quot;yes&quot;</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;max_files&gt;</span>4096<span class="nt">&lt;/max_files&gt;</span>
+         <span class="nt">&lt;/packing&gt;</span>
+
+         <span class="cm">&lt;!-- Chunking</span>
+<span class="cm">              * WARNING : At present, running with &#39;chunking&#39; DISABLED is considered EXPERIMENTAL ONLY.  UNDEFINED</span>
+<span class="cm">              * BEHAVIOR MAY RESULT!</span>
+<span class="cm">              *</span>
+<span class="cm">              * This feature allows for the data content of files to be divided over multiple data objects.</span>
+<span class="cm">              * When enabled, only up to &#39;max_size&#39; data bytes will be written to a single MarFS object.  Any overflow</span>
+<span class="cm">              * will be stored to the subsequent data object in the same datastream.  The &#39;max_size&#39; value DOES include</span>
+<span class="cm">              * MarFS recovery info.</span>
+<span class="cm">              * It is *highly* recommended to enable this feature, as it should allow MarFS to avoid creating individual</span>
+<span class="cm">              * objects which exceed size limitations of the underlying data storage medium.  Additionally, this feature</span>
+<span class="cm">              * provides an opportuntiy for client programs, such as pftool, to parallelize read/write of very large</span>
+<span class="cm">              * files.</span>
+<span class="cm">              * --&gt;</span>
+         <span class="nt">&lt;chunking</span> <span class="na">enabled=</span><span class="s">&quot;yes&quot;</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;max_size&gt;</span>1G<span class="nt">&lt;/max_size&gt;</span>
+         <span class="nt">&lt;/chunking&gt;</span>
+
+         <span class="cm">&lt;!-- Object Distribution</span>
+<span class="cm">              * WARNING: NEVER ADJUST THESE VALUES FOR AN EXISTING REPO, as doing so will render all previously written</span>
+<span class="cm">              * data objects inaccessible!</span>
+<span class="cm">              *</span>
+<span class="cm">              * Defines how objects are hashed across available storage targets.</span>
+<span class="cm">              * Actual implementation of pod / cap / scatter divisions will depend upon DAL definition used.  However,</span>
+<span class="cm">              * the general defs are:</span>
+<span class="cm">              *   POD = Refers to the broadest set of data storage infrastructure; generally, a group of N+E storage servers</span>
+<span class="cm">              *   CAP = Refers to the smallest set of data storage infrastructure; generally, a ZFS pool of disks</span>
+<span class="cm">              *   SCATTER = Refers to a purely logical division of storage; generally, a single target directory or bucket</span>
+<span class="cm">              * For each distribution element, the following attributes can be defined:</span>
+<span class="cm">              *   cnt = Total number of elements of that type ( i.e. pods cnt=&quot;10&quot; indicates to use pod indices 0-9 )</span>
+<span class="cm">              *   dweight = Default &#39;weight&#39; value of each index ( assumed to be &#39;1&#39;, if omitted )</span>
+<span class="cm">              * Particular distribution indices can be &#39;weighted&#39; to increase or decrease the number of data objects hashed</span>
+<span class="cm">              * to those locations.</span>
+<span class="cm">              * The weight value represents a multiplicative increase in the likelihood of that index being selected as a</span>
+<span class="cm">              * storage target for a particular data object.  Custom weight values can be defined for each index within the</span>
+<span class="cm">              * body of the respective element.</span>
+<span class="cm">              * The format for these custom weight strings is:</span>
+<span class="cm">              *   &#39;{IndexNum}={CustomWeightValue}[,{IndexNum}={CustomWeightValue}]*&#39;</span>
+<span class="cm">              * If no custom value is specified, the default weight value is assumed ( see &#39;dweight&#39;, above ).</span>
+<span class="cm">              * Examples:</span>
+<span class="cm">              *   &lt;pods cnt=&quot;3&quot; dweight=&quot;3&quot;&gt;0=1,2=6&lt;/pods&gt;</span>
+<span class="cm">              *     = This defines pod values ranging from 0-2 such that</span>
+<span class="cm">              *            Pod 0 will receive roughly 10% of data objects from this repo</span>
+<span class="cm">              *               ( IndexWeight / TotalWeight = 1/(1+3+6) = 1/10 -&gt; 10% )</span>
+<span class="cm">              *            Pod 1 will receive roughly 30% of data objects from this repo</span>
+<span class="cm">              *            Pod 2 will receive roughly 60% of data objects from this repo</span>
+<span class="cm">              *   &lt;caps cnt=&quot;4&quot; dweight=&quot;100&quot;&gt;1=200,0=0&lt;/caps&gt;</span>
+<span class="cm">              *     = This defines cap values ranging from 0-3 such that</span>
+<span class="cm">              *            Cap 0 will never receive any data objects from this repo</span>
+<span class="cm">              *               ( IndexWeight of zero results in removal as a storage tgt )</span>
+<span class="cm">              *            Cap 1 will recieve rouhgly 50% of data objects from this repo</span>
+<span class="cm">              *               ( IndexWeight / TotalWeight = 200/400 -&gt; 50% )</span>
+<span class="cm">              *            Cap 2 will recieve roughly 25% of data objects from this repo</span>
+<span class="cm">              *            Cap 3 will recieve roughly 25% of data objects from this repo</span>
+<span class="cm">              * --&gt;</span>
+         <span class="nt">&lt;distribution&gt;</span>
+            <span class="nt">&lt;pods</span> <span class="na">cnt=</span><span class="s">&quot;1&quot;</span><span class="nt">&gt;&lt;/pods&gt;</span>
+            <span class="nt">&lt;caps</span> <span class="na">cnt=</span><span class="s">&quot;4&quot;</span><span class="nt">&gt;&lt;/caps&gt;</span>
+            <span class="nt">&lt;scatters</span> <span class="na">cnt=</span><span class="s">&quot;4&quot;</span><span class="nt">/&gt;</span>
+         <span class="nt">&lt;/distribution&gt;</span>
+
+         <span class="cm">&lt;!-- DAL Definition ( ignored by the MarFS code, parsed by LibNE )</span>
+<span class="cm">              * This defines the configuration for the Data Abstraction Layer ( DAL ), which provides the interface</span>
+<span class="cm">              * though which MarFS interacts with data objects.  Please see the erasureUtils repo ( LibNE ) for</span>
+<span class="cm">              * implementation details.</span>
+<span class="cm">              * In most contexts, use of the &#39;posix&#39; DAL is recommended, which will translate MarFS objects into</span>
+<span class="cm">              * posix-style files, stored at paths defined by &#39;dir_template&#39; below a root location defined by &#39;sec_root&#39;.</span>
+<span class="cm">              * --&gt;</span>
+         <span class="nt">&lt;DAL</span> <span class="na">type=</span><span class="s">&quot;posix&quot;</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;dir_template&gt;</span>pod{p}/block{b}/cap{c}/scat{s}/<span class="nt">&lt;/dir_template&gt;</span>
+            <span class="nt">&lt;sec_root&gt;</span>/marfs/dal-root<span class="nt">&lt;/sec_root&gt;</span>
+         <span class="nt">&lt;/DAL&gt;</span>
+
+      <span class="nt">&lt;/data&gt;</span>
+
+      <span class="cm">&lt;!-- Per-Repo Metadata Scheme</span>
+<span class="cm">           * Defines where file metadata is placed, how it is formatted, through what interface it is accessed, and what</span>
+<span class="cm">           * operations are permitted</span>
+<span class="cm">           * --&gt;</span>
+      <span class="nt">&lt;meta&gt;</span>
+
+         <span class="cm">&lt;!-- Namespace Definitions</span>
+<span class="cm">              * These define logical groupings of MarFS metadata, known as namespaces.  They can be thought of as MarFS</span>
+<span class="cm">              * &#39;allocations&#39; or &#39;datasets&#39;, each with tunable access permissions and quota values.</span>
+<span class="cm">              * Namespaces follow a posix tree strcutre, appearing as the uppermost directories of the filesystem,</span>
+<span class="cm">              * beginning with the &#39;root&#39; NS.</span>
+<span class="cm">              * Namespaces can be children of other namespaces, but never children of a standard directory.  Thus, every</span>
+<span class="cm">              * file and directory within the system is a child of a specific MarFS NS.</span>
+<span class="cm">              * Every MarFS file is uniquely and permanetly associated with the NS to which it was originally written.</span>
+<span class="cm">              * Files cannot be linked or renamed between namespaces ( with the exception of Ghost Namespaces ).</span>
+<span class="cm">              *</span>
+<span class="cm">              * This node also defines the reference tree structure for all included namespaces.</span>
+<span class="cm">              *   rbreadth = breadth of the reference tree</span>
+<span class="cm">              *   rdepth = depth of the reference tree</span>
+<span class="cm">              *   rdigits = minimum number of numeric digits per reference dir entry</span>
+<span class="cm">              * Example:</span>
+<span class="cm">              *   rbreadth=&quot;3&quot; rdepth=&quot;2&quot; rdigits=&quot;4&quot;</span>
+<span class="cm">              *     = This would result in use of reference directories...</span>
+<span class="cm">              *        &quot;0000/0000&quot;, &quot;0000/0001&quot;, &quot;0000/0002&quot;</span>
+<span class="cm">              *        &quot;0001/0000&quot;, &quot;0001/0001&quot;, &quot;0001/0002&quot;</span>
+<span class="cm">              *        &quot;0002/0000&quot;, &quot;0002/0001&quot;, &quot;0002/0002&quot;</span>
+<span class="cm">              *</span>
+<span class="cm">              * WARNING: Be VERY CAREFUL when adjusting the reference structure of an existing repo.  As a rule of thumb,</span>
+<span class="cm">              *          it should be avoided.  However, it is theoretically safe to adjust, so long as the new reference</span>
+<span class="cm">              *          paths are a superset of the old ( all old reference paths are still included as valid targets ).</span>
+<span class="cm">              *          Note that, because reference files are only placed at the leaves of the reference tree, this</span>
+<span class="cm">              *          means that increasing &#39;rbreadth&#39; is the only adjustment which can safely be made to an active repo.</span>
+<span class="cm">              * --&gt;</span>
+         <span class="nt">&lt;namespaces</span> <span class="na">rbreadth=</span><span class="s">&quot;1&quot;</span> <span class="na">rdepth=</span><span class="s">&quot;2&quot;</span> <span class="na">rdigits=</span><span class="s">&quot;2&quot;</span><span class="nt">&gt;</span>
+
+            <span class="cm">&lt;!-- Namespace</span>
+<span class="cm">                 * Definition of a standard MarFS Namespace.  Each such NS can have subspaces defined by contained XML &#39;ns&#39;</span>
+<span class="cm">                 * subnodes.  Every NS, with the exception of the single &#39;root&#39; NS, must have a unique parent NS.</span>
+<span class="cm">                 * --&gt;</span>
+            <span class="nt">&lt;ns</span> <span class="na">name=</span><span class="s">&quot;root&quot;</span><span class="nt">&gt;</span>
+
+               <span class="cm">&lt;!-- Quota Limits for this NS</span>
+<span class="cm">                    * Quota limits can be defined in terms of number of files and quantity of data.</span>
+<span class="cm">                    * A missing quota definition is interpreted as no quota limit on that value.</span>
+<span class="cm">                    * --&gt;</span>
+               <span class="nt">&lt;quotas&gt;</span>
+                  <span class="nt">&lt;files&gt;</span>10K<span class="nt">&lt;/files&gt;</span>  <span class="cm">&lt;!-- 10240 file count limit --&gt;</span>
+                  <span class="nt">&lt;data&gt;</span>10T<span class="nt">&lt;/data&gt;</span> <span class="cm">&lt;!-- 10 Tibibyte data size limit --&gt;</span>
+               <span class="nt">&lt;/quotas&gt;</span>
+
+               <span class="cm">&lt;!-- Permission Settings for this NS</span>
+<span class="cm">                    * Permissions are defined independently for &#39;interactive&#39; and &#39;batch&#39; programs.</span>
+<span class="cm">                    * Program type is determined by the client during MarFS initialization ( see marfs_init() API function ).</span>
+<span class="cm">                    * Permissions are defined as: &#39;{PermissionCode}[,{PermissionCode}]*&#39;</span>
+<span class="cm">                    * Permission codes are:</span>
+<span class="cm">                    *   RM = Read Metadata</span>
+<span class="cm">                    *      = Allows the client to perform ops which read, but do not modify, metadata content.</span>
+<span class="cm">                    *      = This confers the ability to perform ops such as &#39;readdir&#39;, &#39;stat&#39;, &#39;getxattr&#39;, &#39;open&#39;, etc.</span>
+<span class="cm">                    *      = NOTE : It could easily be argued that no useful operation can be performed without some kind of</span>
+<span class="cm">                    *               underlying metadata read ( such as directory traversal ).</span>
+<span class="cm">                    *               Additionally, operations such as &#39;rmdir&#39; can provide information on metadata structure</span>
+<span class="cm">                    *               through brute force guessing of path names.  For example, failure of &#39;rmdir&#39; with</span>
+<span class="cm">                    *               ENOTDIR indicates existence of a non-directory filesystem entry at a guessed location.</span>
+<span class="cm">                    *               However, for the sake of understandability and &quot;least-surprise&quot;, only &#39;WM&#39; permission</span>
+<span class="cm">                    *               is needed for that operation.</span>
+<span class="cm">                    *               If you truly desire that a client remain completely ignorant of NS contents, disable ALL</span>
+<span class="cm">                    *               permissions and/or completely block access via posix permission sets.</span>
+<span class="cm">                    *   WM = Write Metadata</span>
+<span class="cm">                    *      = Allows the client to perform ops which modify, but do not explicitly read, metadata content.</span>
+<span class="cm">                    *      = This confers the ability to perform ops such as &#39;mkdir&#39;, &#39;chmod&#39;, &#39;setxattr&#39;, &#39;unlink&#39;, etc.</span>
+<span class="cm">                    *      = NOTE : Take care to note the inclusion of &#39;unlink&#39; under this permission code.  Only &#39;WM&#39; is</span>
+<span class="cm">                    *               necessary to delete files / dirs.</span>
+<span class="cm">                    *   RD = Read Data</span>
+<span class="cm">                    *      = Allows the client to read the data content of MarFS files</span>
+<span class="cm">                    *      = This confers the ability, specifically, to read from a MarFS file handle.</span>
+<span class="cm">                    *      = NOTE : As &#39;open&#39; access is controlled by &#39;RM&#39;, this permission code is rendered useless without it.</span>
+<span class="cm">                    *   WD = Write Data</span>
+<span class="cm">                    *      = Allows the client to create new MarFS files and write data content to them</span>
+<span class="cm">                    *      = This confers the ability to perform the &#39;creat&#39; and &#39;write&#39; operations.</span>
+<span class="cm">                    * --&gt;</span>
+               <span class="nt">&lt;perms&gt;</span>
+                  <span class="cm">&lt;!-- no data write for interactive programs --&gt;</span>
+                  <span class="nt">&lt;interactive&gt;</span>RM,WM,RD<span class="nt">&lt;/interactive&gt;</span>
+                  <span class="cm">&lt;!-- full batch program access --&gt;</span>
+                  <span class="nt">&lt;batch&gt;</span>RM,WM,RD,WD<span class="nt">&lt;/batch&gt;</span>
+               <span class="nt">&lt;/perms&gt;</span>
+
+               <span class="cm">&lt;!-- Subspace Definition --&gt;</span>
+               <span class="nt">&lt;ns</span> <span class="na">name=</span><span class="s">&quot;full-access-subspace&quot;</span><span class="nt">&gt;</span>
+                  <span class="cm">&lt;!-- no quota definition implies no limits --&gt;</span>
+
+                  <span class="cm">&lt;!-- full permissions for all clients --&gt;</span>
+                  <span class="nt">&lt;perms&gt;</span>
+                     <span class="nt">&lt;interactive&gt;</span>RM,WM,RD,WD<span class="nt">&lt;/interactive&gt;</span>
+                     <span class="nt">&lt;batch&gt;</span>RM,WM,RD,WD<span class="nt">&lt;/batch&gt;</span>
+                  <span class="nt">&lt;/perms&gt;</span>
+               <span class="nt">&lt;/ns&gt;</span>
+
+            <span class="nt">&lt;/ns&gt;</span>
+
+
+         <span class="nt">&lt;/namespaces&gt;</span>
+
+         <span class="cm">&lt;!-- Direct Data</span>
+<span class="cm">              * Enables the reading of files stored directly to the MDAL storage location, with no associated MarFS data</span>
+<span class="cm">              * objects.</span>
+<span class="cm">              * This is useful if an admin wants to drop in a small, temporary file without actually writing out a full</span>
+<span class="cm">              * data object.</span>
+<span class="cm">              * NOTE : At present, direct write of files is unimplemented and may remain that way.</span>
+<span class="cm">              * --&gt;</span>
+         <span class="nt">&lt;direct</span> <span class="na">read=</span><span class="s">&quot;yes&quot;</span><span class="nt">/&gt;</span>
+
+         <span class="cm">&lt;!-- MDAL Definition</span>
+<span class="cm">              * Defines the interface for interacting with repo metadata.</span>
+<span class="cm">              * In most contexts, the use of the &#39;posix&#39; MDAL is recommended, which will store MarFS metadata in the form</span>
+<span class="cm">              * of posix files + xattrs.</span>
+<span class="cm">              * --&gt;</span>
+         <span class="nt">&lt;MDAL</span> <span class="na">type=</span><span class="s">&quot;posix&quot;</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;ns_root&gt;</span>/marfs/mdal-root<span class="nt">&lt;/ns_root&gt;</span>
+         <span class="nt">&lt;/MDAL&gt;</span>
+
+      <span class="nt">&lt;/meta&gt;</span>
+
+   <span class="nt">&lt;/repo&gt;</span>
+
+<span class="nt">&lt;/marfs_config&gt;</span>
+</pre></div>
+</div>
+<p>We now need to export the config path as an environment variable so it can be
+found by the MarFS binaries:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span> <span class="nv">MARFS_CONFIG_PATH</span><span class="o">=</span>/opt/campaign/install/etc/marfs-config.xml
+</pre></div>
+</div>
+</div>
+</div>
+<div class="section" id="dependencies">
+<h2><a class="toc-backref" href="#id20">Dependencies</a><a class="headerlink" href="#dependencies" title="Permalink to this heading"></a></h2>
+<p>Depending on your environment you may need different things. To install and make
+use of MarFS you will need the following tools.</p>
+<p>Fortunately many dependencies can be acquired through a package manager.
+* FUSE (and development packages)
+* G++
+* Git
+* Libattr (and development packages)
+* Libtool
+* Libxml2 (and development packages)
+* Make
+* Nasm
+* Open MPI (and development packages)
+* Open SSL (and development packages)</p>
+<p>Others can be obtained from source.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git clone https://github.com/01org/isa-l.git
+git clone https://github.com/mar-file-system/erasureUtils.git
+git clone https://github.com/mar-file-system/marfs.git
+git clone https://github.com/pftool/pftool.git
+</pre></div>
+</div>
+<p>A quick description of tools acquired from source:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>ISA-L: Intel’s Intelligent Storage Acceleration Library
+ErasureUtils: The erasure coding layer used for Multi-Component storage
+MarFS: The core MarFS libraries
+PfTool: A tool for parallel data movement
+</pre></div>
+</div>
+<p>You will need yasm 1.2.0 or later for ISA-L.</p>
+<p>You may also need to ensure that MPI is in your <code class="code docutils literal notranslate"><span class="pre">$PATH</span></code> environment
+averiable and OpenMPI’s library directory is in your <code class="code docutils literal notranslate"><span class="pre">$LD_LIBRARY_PATH</span></code>
+environment variable.</p>
+<div class="section" id="isa-l">
+<h3><a class="toc-backref" href="#id21">ISA-L</a><a class="headerlink" href="#isa-l" title="Permalink to this heading"></a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> isa-l
+./autogen.sh
+./configure --prefix<span class="o">=</span>/opt/campaign/install
+make
+make install
+</pre></div>
+</div>
+</div>
+<div class="section" id="erasureutils">
+<h3><a class="toc-backref" href="#id22">ErasureUtils</a><a class="headerlink" href="#erasureutils" title="Permalink to this heading"></a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> ../erasureUtils
+autoreconf -i
+./configure --prefix<span class="o">=</span>/opt/campaign/install/ <span class="nv">CFLAGS</span><span class="o">=</span><span class="s2">&quot;-I/opt/campaign/install/include&quot;</span> <span class="nv">LDFLAGS</span><span class="o">=</span><span class="s2">&quot;-L/opt/campaign/install/lib&quot;</span>
+make
+make install
+</pre></div>
+</div>
+</div>
+<div class="section" id="marfs">
+<h3><a class="toc-backref" href="#id23">MarFS</a><a class="headerlink" href="#marfs" title="Permalink to this heading"></a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> ../marfs
+autoreconf -i
+./configure --prefix<span class="o">=</span>/opt/campaign/install/ <span class="nv">CFLAGS</span><span class="o">=</span><span class="s2">&quot;-I/opt/campaign/install/include&quot;</span> <span class="nv">LDFLAGS</span><span class="o">=</span><span class="s2">&quot;-L/opt/campaign/install/lib&quot;</span>
+make
+make install
+</pre></div>
+</div>
+</div>
+<div class="section" id="id1">
+<h3><a class="toc-backref" href="#id24">PFTool</a><a class="headerlink" href="#id1" title="Permalink to this heading"></a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> ../pftool
+./autogen
+./configure --prefix<span class="o">=</span>/opt/campaign/install/ <span class="nv">CFLAGS</span><span class="o">=</span><span class="s2">&quot;-I/opt/campaign/install/include&quot;</span> <span class="nv">CXXFLAGS</span><span class="o">=</span><span class="s2">&quot;-I/opt/campaign/install/include&quot;</span> <span class="nv">LDFLAGS</span><span class="o">=</span><span class="s2">&quot;-L/opt/campaign/install/lib&quot;</span> --enable-marfs
+make
+make install
+</pre></div>
+</div>
+</div>
+</div>
+<div class="section" id="starting-marfs">
+<h2><a class="toc-backref" href="#id25">Starting MarFS</a><a class="headerlink" href="#starting-marfs" title="Permalink to this heading"></a></h2>
+<p>We now have all our utilites built and are almost ready to boot the filesystem.
+On a simple one node system not leveraging GPFS or ZFS like this one, the
+process is as simple as launching the FUSE mount. On more complex systems, you
+will have to initialize the meta and data stores and any network mounts. These
+tasks can be automated using tools such as Ansible, but that is beyond the scope
+of this document.</p>
+<div class="section" id="verifying-the-configuration">
+<h3><a class="toc-backref" href="#id26">Verifying the Configuration</a><a class="headerlink" href="#verifying-the-configuration" title="Permalink to this heading"></a></h3>
+<p>Before we start the filesystem, we need to first verify that our configuration
+file is valid, and the meta and data spaces match the structure specified in the
+config file. We do this by running</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>marfs-verifyconf -a
+</pre></div>
+</div>
+<p>which will print “<code class="code docutils literal notranslate"><span class="pre">Config</span> <span class="pre">Verified</span></code>” to the console if the system is ready
+to boot.</p>
+</div>
+<div class="section" id="launching-fuse">
+<h3><a class="toc-backref" href="#id27">Launching FUSE</a><a class="headerlink" href="#launching-fuse" title="Permalink to this heading"></a></h3>
+<p>To launch FUSE (and our filesystem), we execute:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>marfs-fuse -o allow_other,use_ino,intr /campaign
+</pre></div>
+</div>
+<p>If everything goes according to plan, marfs-fuse will start in the background.
+You should now be able to access our MarFS filesystem through the
+mount at <code class="code docutils literal notranslate"><span class="pre">/campaign</span></code>. If the <code class="code docutils literal notranslate"><span class="pre">marfs-fuse</span></code> call returned a nonzero
+value, something went wrong. In case this happens, reconfigure MarFS with the
+<code class="code docutils literal notranslate"><span class="pre">--enable-debugALL</span></code> flag.</p>
+</div>
+<div class="section" id="see-if-it-works">
+<h3><a class="toc-backref" href="#id28">See if it works!</a><a class="headerlink" href="#see-if-it-works" title="Permalink to this heading"></a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ ls /campaign
+full-access-subspace
+
+$ <span class="nb">echo</span> <span class="nb">test</span> &gt; /campaign/full-access-subspace/test
+$ cat /campaign/full-access-subspace/test
+<span class="nb">test</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="build-and-run-pftool">
+<h3><a class="toc-backref" href="#id29">Build and run PFTool</a><a class="headerlink" href="#build-and-run-pftool" title="Permalink to this heading"></a></h3>
+<p>In the previous section we mounted MarFS through FUSE. It is possible to use
+this FUSE mount for all accesses to MarFS, but performance is limited by going
+through a single host (and through FUSE), even though in multi-node systems,
+writes to the underlying storage-servers are performed in parallel. Therefore,
+for a large datacenter, it may make more sense to use FUSE solely for metadata
+access (rename, delete, stat, ls etc). This could be achieved by changing the
+“perms” for every namespace in the config file.</p>
+<p>We recommend using pftool for the “heavy lifting” of transferring big datasets.
+PFTool provides fast, parallel MarFS data movement, and is preferred over using
+the FUSE mount.</p>
+<p>The PFTool binary can be invoked directly, but the preferred method is through
+provided helper scripts (<code class="code docutils literal notranslate"><span class="pre">pfls</span></code>, <code class="code docutils literal notranslate"><span class="pre">pfcm</span></code>, <code class="code docutils literal notranslate"><span class="pre">pfcp</span></code>).</p>
+</div>
+</div>
+</div>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="Welcome to MarFS’s documentation!" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="developers.html" class="btn btn-neutral float-right" title="Developers" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2020 Triad National Security, LLC.</p>
+  </div>
+
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

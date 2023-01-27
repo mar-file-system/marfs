@@ -232,6 +232,9 @@ int fuse_flush(const char *path, struct fuse_file_info *ffi)
 
   if (!ffi->fh  &&  strcmp(path, CONFIGVER_FNAME))
   {
+    if (!strcmp(path, CONFIGVER_FNAME)) {
+      return 0;
+    }
     LOG(LOG_ERR, "missing file descriptor\n");
     return -EBADF;
   }
@@ -600,7 +603,7 @@ int fuse_opendir(const char *path, struct fuse_file_info *ffi)
 int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *ffi)
 {
   int ret = 0;
-  
+
   if (!ffi->fh)
   {
     if (!strcmp(path, CONFIGVER_FNAME)) {

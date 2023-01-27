@@ -12,5 +12,5 @@ being in Alpha. Thank you for your patience!
    :maxdepth: 2
    :caption: Contents:
 
-   install
+   new_install
    developers
