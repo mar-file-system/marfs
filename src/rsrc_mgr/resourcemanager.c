@@ -386,8 +386,14 @@ int output_program_args( rmanstate* rman ) {
       fprintf( stderr, "ERROR: Failed to output REBUILD threshold to summary log\n" );
       return -1;
    }
-   if ( rman->gstate.lbrebuild ) {
-      // TODO
+   if ( rman->gstate.lbrebuild  &&
+        (
+         fprintf( rman->summarylog, "REBUILD-LOCATION-POD=%d\n", rman->gstate.rebuildloc.pod ) < 1  ||
+         fprintf( rman->summarylog, "REBUILD-LOCATION-CAP=%d\n", rman->gstate.rebuildloc.cap ) < 1  ||
+         fprintf( rman->summarylog, "REBUILD-LOCATION-SCATTER=%d\n", rman->gstate.rebuildloc.scatter ) < 1
+        ) ) {
+      fprintf( stderr, "ERROR: Failed to output REBUILD location to summary log\n" );
+      return -1;
    }
    if ( fprintf( rman->summarylog, "\n" ) < 1 ) {
       fprintf( stderr, "ERROR: Failed to output header separator summary log\n" );
@@ -450,6 +456,18 @@ int parse_program_args( rmanstate* rman, FILE* inputsummary ) {
          }
          else if ( strcmp( readline, "REBUILD" ) == 0 ) {
             rman->gstate.thresh.rebuildthreshold = (time_t)parseval;
+         }
+         else if ( strcmp( readline, "REBUILD-LOCATION-POD" ) == 0 ) {
+            rman->gstate.rebuildloc.pod = (int)parseval;
+            rman->gstate.lbrebuild = 1;
+         }
+         else if ( strcmp( readline, "REBUILD-LOCATION-CAP" ) == 0 ) {
+            rman->gstate.rebuildloc.cap = (int)parseval;
+            rman->gstate.lbrebuild = 1;
+         }
+         else if ( strcmp( readline, "REBUILD-LOCATION-SCATTER" ) == 0 ) {
+            rman->gstate.rebuildloc.scatter = (int)parseval;
+            rman->gstate.lbrebuild = 1;
          }
          else {
             fprintf( stderr, "ERROR: Encountered unrecognized operation type in log of previous run: \"%s\"\n", readline );
