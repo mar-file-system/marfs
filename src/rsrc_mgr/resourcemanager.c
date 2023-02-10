@@ -179,7 +179,7 @@ void print_usage_info() {
    printf( "\n"
            "marfs-rman [-c MarFS-Config-File] [-n MarFS-NS-Target] [-r] [-i Iteraion-Name] [-l Log-Root]\n"
            "           [-p Log-Pres-Root] [-d] [-X Execution-Target] [-Q] [-G] [-R] [-P] [-C]\n"
-           "           [-T Threshold-Values] [-L Rebuild-Location] [-h]\n"
+           "           [-T Threshold-Values] [-L [NE-Location]] [-h]\n"
            "\n"
            " Arguments --\n"
            "  -c MarFS-Config-File : Specifies the path of the MarFS config file to use\n"
@@ -215,8 +215,12 @@ void print_usage_info() {
            "                                <Unit>       = 's' ( seconds ), 'm' ( minutes ),\n"
            "                                               'h' ( hours ), 'd' ( days )\n"
            "                                               ( assumed to be 's', if omitted )\n"
-           "  -L Rebuild-Location  : Specifies NE object location to target for rebuilds\n"
-           "                         (!!!CURRENTLY UNIMPLEMENTED!!!)\n"
+           "  -L [NE-Location]     : Specifies NE object location to target for rebuilds\n"
+           "                         Value Format = <LocType><LocValue>\n"
+           "                                           [-<LocType><LocValue>]*\n"
+           "                         Where, <LocType>  = 'p' ( pod ), 'c' ( cap ), or 's' ( scatter )\n"
+           "                                <LocValue> = A numeric value for the specified p/c/s location\n"
+           "                         NOTE -- Missing 'NE-Location' value implies rebuild of ALL objects!\n"
            "  -h                   : Prints this usage info\n"
            "\n",
            DEFAULT_LOG_ROOT );
@@ -1801,6 +1805,9 @@ int main(int argc, char** argv) {
    bzero( &(rman), sizeof( struct rmanstate_struct ) );
    rman.gstate.numprodthreads = DEFAULT_PRODUCER_COUNT;
    rman.gstate.numconsthreads = DEFAULT_CONSUMER_COUNT;
+   rman.gstate.rebuildloc.pod = -1;
+   rman.gstate.rebuildloc.cap = -1;
+   rman.gstate.rebuildloc.scatter = -1;
 
    // get the initialization time of the program, to identify thresholds
    struct timeval currenttime;
@@ -1864,7 +1871,7 @@ int main(int argc, char** argv) {
          rman.gstate.thresh.cleanupthreshold = 1;
          break;
       case 'T':
-         {
+      {
          char* threshparse = optarg;
          char foundtval = 0;
          char tflag = '\0';
@@ -1876,6 +1883,7 @@ int main(int argc, char** argv) {
                }
                else if ( *threshparse != '-' ) { // ignore '-' chars
                   printf( "ERROR: Failed to parse '-T' argument value: \"%s\"\n", optarg );
+                  foundtval = 1; // don't double print this error
                   pr_usage = 1;
                   break;
                }
@@ -1888,6 +1896,7 @@ int main(int argc, char** argv) {
                     ( *endptr != 's'  &&  *endptr != 'm'  &&  *endptr != 'h'  &&  *endptr != 'd'  &&
                       *endptr != '-'  &&  *endptr != '\0' ) ) {
                   printf( "ERROR: Failed to parse '%c' threshold from '-T' argument value: \"%s\"\n", tflag, optarg );
+                  foundtval = 1; // don't double print this error
                   pr_usage = 1;
                   break;
                }
@@ -1918,13 +1927,69 @@ int main(int argc, char** argv) {
             }
             threshparse++;
          }
-         if ( pr_usage == 0  &&  (threshparse == NULL  ||  foundtval == 0) ) {
+         if ( threshparse == NULL  ||  foundtval == 0 ) {
             printf( "ERROR: Failed to parse '-T' argument value: \"%s\"\n", optarg );
             pr_usage = 1;
             break;
          }
          break;
+      }
+      case 'L':
+      {
+         rman.gstate.lbrebuild = 1;
+         char* locparse = optarg;
+         char foundlval = 0;
+         char tflag = '\0';
+         while ( locparse  &&  *locparse != ' '  &&  *locparse != '\0' ) {
+            if ( tflag == '\0' ) {
+               // check for a location value type flag
+               if ( *locparse == 'p'  ||  *locparse == 'c'  ||  *locparse == 's' ) {
+                  tflag = *locparse;
+               }
+               else if ( *locparse != '-' ) { // ignore '-' chars
+                  printf( "ERROR: Failed to parse '-L' argument value: \"%s\"\n", optarg );
+                  foundlval = 1; // don't double print this error
+                  pr_usage = 1;
+                  break;
+               }
+            }
+            else {
+               // parse the expected numeric value trailing the type flag
+               char* endptr = NULL;
+               unsigned long long parseval = strtoull( locparse, &(endptr), 10 );
+               if ( parseval == ULLONG_MAX  ||  endptr == NULL  ||
+                    ( *endptr != '-'  &&  *endptr != '\0' ) ) {
+                  printf( "ERROR: Failed to parse '%c' location from '-L' argument value: \"%s\"\n", tflag, optarg );
+                  pr_usage = 1;
+                  break;
+               }
+               // actually asign the parsed value to the appropriate location value
+               if ( tflag == 'p' ) {
+                  rman.gstate.rebuildloc.pod = parseval;
+               }
+               else if ( tflag == 'c' ) {
+                  rman.gstate.rebuildloc.cap = parseval;
+               }
+               else if ( tflag == 's' ) {
+                  rman.gstate.rebuildloc.scatter = parseval;
+               }
+               foundlval = 1;
+               tflag = '\0';
+               // check for early termination
+               if ( *endptr == '\0'  ||  *endptr == ' ' ) {
+                  break;
+               }
+               locparse = endptr;
+            }
+            locparse++;
          }
+         if ( locparse  &&  foundlval == 0 ) {
+            printf( "ERROR: Failed to parse '-L' argument value: \"%s\"\n", optarg );
+            pr_usage = 1;
+            break;
+         }
+         break;
+      }
       case '?':
          printf( "ERROR: Unrecognized cmdline argument: \'%c\'\n", optopt );
       case 'h': // note fallthrough from above
@@ -2379,6 +2444,12 @@ int main(int argc, char** argv) {
       // print out run info
       printf( "Processing %zu Total Namespaces ( %sTarget NS \"%s\" )\n",
               rman.nscount, (recurse) ? "Recursing Below " : "", (rman.nslist[0])->idstr );
+      printf( "   Operation Summary:%s%s%s%s%s\n",
+              (rman.gstate.dryrun) ? " DRY-RUN" : "", (rman.quotas) ? " QUOTAS" : "",
+              (rman.gstate.thresh.gcthreshold) ? " GC" : "",
+              (rman.gstate.thresh.repackthreshold) ? " REPACK" : "",
+              (rman.gstate.thresh.rebuildthreshold) ?
+               ( (rman.gstate.lbrebuild) ? " REBUILD(LOCATION)" : " REBUILD(MARKER)" ) : "" );
    }
 
    // actually perform core behavior loops
