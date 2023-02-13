@@ -1546,6 +1546,11 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       errno = EINVAL;
       return -1;
    }
+   if ( walker->rebuildthresh != 0  &&  rebuildops == NULL ) {
+      LOG( LOG_ERR, "Received NULL rebuildops reference when the walker is set to produce those operations\n" );
+      errno = EINVAL;
+      return -1;
+   }
    // set up some initial values
    marfs_ds* ds = &(walker->pos.ns->prepo->datascheme);
    size_t objsize = walker->pos.ns->prepo->datascheme.objsize;   // current repo-defined chunking limit
@@ -1938,6 +1943,13 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          walker->activefiles = 0; // update active file count for new obj
          walker->activebytes = 0; // update active byte count for new obj
          walker->report.objcount += endobj - walker->objno;
+         // need to handle existing rebuild ops
+         if ( walker->rbldops ) {
+            // dispatch all ops
+            *rebuildops = walker->rbldops;
+            walker->rbldops = NULL;
+            dispatchedops = 1; // note to exit after this file
+         }
       }
       if ( filestate > 1  ||  assumeactive ) {
          // handle GC state

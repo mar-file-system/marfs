@@ -653,8 +653,13 @@ int rthread_producer_func( void** state, void** work_tofill ) {
    // loop until we have an op to enqueue
    opinfo* newop = NULL;
    while ( newop == NULL ) {
-      if ( tstate->repackops ) {
+      if ( tstate->rebuildops ) {
          // enqueue previously produced rebuild op(s)
+         newop = tstate->rebuildops; // hand out the next rebuild op
+         tstate->rebuildops = tstate->rebuildops->next; // progress to the subsequent op
+      }
+      else if ( tstate->repackops ) {
+         // enqueue previously produced repack op(s)
          newop = tstate->repackops;
          tstate->repackops = NULL; // remove state reference, so we don't repeat
       }
@@ -716,7 +721,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
       }
       else if ( tstate->walker ) {
          // walk our current datastream
-         int walkres = process_iteratestreamwalker( tstate->walker, &(tstate->gcops), &(tstate->repackops), &(newop) );
+         int walkres = process_iteratestreamwalker( tstate->walker, &(tstate->gcops), &(tstate->repackops), &(tstate->rebuildops) );
          if ( walkres < 0 ) { // check for failure
             LOG( LOG_ERR, "Thread %u failed to walk a stream beginning in refdir \"%s\" of NS \"%s\"\n",
                  tstate->tID, tstate->rdirpath, tstate->gstate->pos.ns->idstr );
@@ -732,12 +737,11 @@ int rthread_producer_func( void** state, void** work_tofill ) {
          }
          if ( walkres > 0 ) {
             // log every operation prior to distributing them
-            if ( newop != NULL ) {
-               if ( resourcelog_processop( &(tstate->gstate->rlog), newop, NULL ) ) {
+            if ( tstate->rebuildops ) {
+               if ( resourcelog_processop( &(tstate->gstate->rlog), tstate->rebuildops, NULL ) ) {
                   LOG( LOG_ERR, "Thread %u failed to log start of a REBUILD operation\n", tstate->tID );
                   snprintf( tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a REBUILD operation\n", tstate->tID );
-                  resourcelog_freeopinfo( newop );
                   tstate->fatalerror = 1;
                   // ensure termination of all other threads ( avoids possible deadlock )
                   if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
@@ -751,7 +755,6 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   LOG( LOG_ERR, "Thread %u failed to log start of a REPACK operation\n", tstate->tID );
                   snprintf( tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a REPACK operation\n", tstate->tID );
-                  if ( newop ) { resourcelog_freeopinfo( newop ); }
                   tstate->fatalerror = 1;
                   // ensure termination of all other threads ( avoids possible deadlock )
                   if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
@@ -765,7 +768,6 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   LOG( LOG_ERR, "Thread %u failed to log start of a GC operation\n", tstate->tID );
                   snprintf( tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a GC operation\n", tstate->tID );
-                  if ( newop ) { resourcelog_freeopinfo( newop ); }
                   tstate->fatalerror = 1;
                   // ensure termination of all other threads ( avoids possible deadlock )
                   if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
@@ -956,6 +958,47 @@ int rthread_producer_func( void** state, void** work_tofill ) {
             }
             return -1;
          }
+         // if we got an op directly, we'll need to process it
+         if ( newop ) {
+            // log the operation
+            if ( resourcelog_processop( &(tstate->gstate->rlog), newop, NULL ) ) {
+               LOG( LOG_ERR, "Thread %u failed to log start of a resourceinput provided %s operation\n", tstate->tID,
+                    (newop->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
+                    (newop->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
+                    (newop->type == MARFS_REBUILD_OP)    ? "REBUILD" :
+                    (newop->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN" );
+               snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                         "Thread %u failed to log start of a resourceinput provided %s operation\n", tstate->tID,
+                         (newop->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
+                         (newop->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
+                         (newop->type == MARFS_REBUILD_OP)    ? "REBUILD" :
+                         (newop->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN" );
+               resourcelog_freeopinfo( newop );
+               tstate->fatalerror = 1;
+               // ensure termination of all other threads ( avoids possible deadlock )
+               if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                  LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
+               }
+               return -1;
+            }
+            // filter the op to our appropriate 'queue'
+            switch ( newop->type ) {
+               case MARFS_DELETE_OBJ_OP:
+               case MARFS_DELETE_REF_OP:
+                  tstate->gcops = newop;
+                  newop = NULL;
+                  break;
+               case MARFS_REPACK_OP:
+                  tstate->repackops = newop;
+                  newop = NULL;
+                  break;
+               case MARFS_REBUILD_OP:
+                  tstate->rebuildops = newop;
+                  newop = NULL;
+                  break;
+               // unrecognized ops will just be passed out immediately
+            }
+         }
       }
    }
    LOG( LOG_INFO, "Thread %u dispatching a %s%s operation on StreamID \"%s\"\n", tstate->tID,
@@ -981,6 +1024,11 @@ void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg ) {
    // cast values to appropriate types
    rthread_state* tstate = (rthread_state*)(*state);
    // producers may need to cleanup remaining state
+   if ( tstate->rebuildops ) {
+      LOG( LOG_INFO, "Thread %u is destroying non-issued REBUILD ops\n" );
+      resourcelog_freeopinfo( tstate->rebuildops );
+      tstate->rebuildops = NULL;
+   }
    if ( tstate->repackops ) {
       LOG( LOG_INFO, "Thread %u is destroying non-issued REPACK ops\n" );
       resourcelog_freeopinfo( tstate->repackops );

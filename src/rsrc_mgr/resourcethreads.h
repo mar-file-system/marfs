@@ -111,6 +111,7 @@ typedef struct rthread_state_struct {
    streamwalker  walker;
    opinfo*       gcops;
    opinfo*       repackops;
+   opinfo*       rebuildops;
    // producer thread totals
    size_t        streamcount;
    streamwalker_report report;

@@ -623,7 +623,7 @@ void getNSrange( marfs_ns* ns, size_t workingranks, size_t refdist, size_t* refm
    size_t refperrank = ns->prepo->metascheme.refnodecount / workingranks;
    size_t remainder = ns->prepo->metascheme.refnodecount % workingranks;
    *refmin = (refdist * refperrank);
-   *refmax = (*refmin + refperrank) - ( (refdist >= remainder) ? 1 : 0 );
+   *refmax = (*refmin + refperrank) + ( (refdist >= remainder) ? 0 : 1 );
    LOG( LOG_INFO, "Using Min=%zu / Max=%zu for ref distribution %zu on NS \"%s\"\n", *refmin, *refmax, refdist, ns->idstr );
    return;
 }
