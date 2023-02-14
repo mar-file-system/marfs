@@ -657,6 +657,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
          // enqueue previously produced rebuild op(s)
          newop = tstate->rebuildops; // hand out the next rebuild op
          tstate->rebuildops = tstate->rebuildops->next; // progress to the subsequent op
+         newop->next = NULL; // break the op chain, handing out all ops independently
       }
       else if ( tstate->repackops ) {
          // enqueue previously produced repack op(s)
