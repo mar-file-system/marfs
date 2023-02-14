@@ -268,7 +268,10 @@ void cleanupstate( rmanstate* rman, char abort ) {
             size_t nindex = 0;
             for ( ; nindex < ncount; nindex++ ) {
                loginfo* linfo = (loginfo*)( (resnode+nindex)->content );
-               if ( linfo->requests ) { free( linfo->requests ); }
+               if ( linfo ) {
+                  if ( linfo->requests ) { free( linfo->requests ); }
+                  free( linfo );
+               }
             }
             free( resnode ); // these were allocated in one block, and thus require only one free()
          }
@@ -1420,7 +1423,10 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          for ( ; nindex < ncount; nindex++ ) {
             if ( (resnode+nindex)->name ) { free( (resnode+nindex)->name ); }
             loginfo* linfo = (loginfo*)( (resnode+nindex)->content );
-            if ( linfo->requests ) { free( linfo->requests ); }
+            if ( linfo ) {
+               if ( linfo->requests ) { free( linfo->requests ); }
+               free( linfo );
+            }
          }
          free( resnode ); // these were allocated in one block, and thus require only one free()
       }

@@ -1621,7 +1621,7 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          LOG( LOG_ERR, "Failed to get info for reference target: \"%s\"\n", reftgt );
          return -1;
       }
-      pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0 ) ? 0 : 1; // return to default behavior
+      pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0  &&  walker->rebuildthresh == 0 ) ? 0 : 1; // return to default behavior
       if ( filestate == 0 ) {
          // file doesn't exist ( likely that we skipped a GCTAG on the previous file )
          // decrement to the previous index and make sure to check for xattrs
