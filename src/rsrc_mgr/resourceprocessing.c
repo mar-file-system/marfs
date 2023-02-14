@@ -1435,10 +1435,13 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
    walker->report.filecount++;
    walker->report.bytecount += walker->ftag.bytes;
    walker->report.streamcount++;
-   // NOTE -- technically, objcount will run one object 'ahead' until iteration completion ( we don't count final obj )
-   if ( !(walker->gctag.delzero) ) { walker->report.objcount += endobj + 1; } // note first obj set, if not already deleted
-   else if ( !(eos) ) { walker->report.objcount += 1; } // only count ahead if this is the sole file remaining
-   LOG( LOG_INFO, "Noting %zu active objects ( one ahead ) from file zero\n", walker->report.objcount );
+   // only update object count if we are doing a 'full' walk
+   if ( walker->gcthresh  ||  walker->repackthresh  ||  walker->rebuildthresh ) {
+      // NOTE -- technically, objcount will run one object 'ahead' until iteration completion ( we don't count final obj )
+      if ( !(walker->gctag.delzero) ) { walker->report.objcount += endobj + 1; } // note first obj set, if not already deleted
+      else if ( !(eos) ) { walker->report.objcount += 1; } // only count ahead if this is the sole file remaining
+      LOG( LOG_INFO, "Noting %zu active objects ( one ahead ) from file zero\n", walker->report.objcount );
+   }
    if ( filestate > 1 ) {
       // file is active
       walker->report.fileusage++;
@@ -1683,8 +1686,11 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          }
          // check for object transition
          if ( walker->ftag.objno != walker->objno ) {
-            // note the previous obj in counts
-            walker->report.objcount++;
+            // only update object count if we are doing a 'full' walk
+            if ( walker->gcthresh  ||  walker->repackthresh  ||  walker->rebuildthresh ) {
+               // note the previous obj in counts
+               walker->report.objcount++;
+            }
             // we may need to delete the previous object IF we are GCing AND no active refs existed for that obj
             //    AND it is not an already a deleted object0
             if ( walker->gcthresh  &&  walker->activefiles == 0  &&
@@ -1942,7 +1948,10 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
       if ( walker->objno != endobj ) {
          walker->activefiles = 0; // update active file count for new obj
          walker->activebytes = 0; // update active byte count for new obj
-         walker->report.objcount += endobj - walker->objno;
+         // only update object count if we are doing a 'full' walk
+         if ( walker->gcthresh  ||  walker->repackthresh  ||  walker->rebuildthresh ) {
+            walker->report.objcount += endobj - walker->objno;
+         }
          // need to handle existing rebuild ops
          if ( walker->rbldops ) {
             // dispatch all ops
