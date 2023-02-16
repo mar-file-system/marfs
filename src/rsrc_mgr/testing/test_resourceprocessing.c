@@ -384,7 +384,7 @@ int main(int argc, char **argv)
             printf( "failed to log rebuildops for first traversal\n" );
             return -1;
          }
-         if ( process_executeoperation( &pos, rebuildops, &(logfile), NULL ) ) {
+         if ( process_executeoperation( &pos, rebuildops, &(logfile), NULL, "TestClient" ) ) {
             printf( "failed to execute rebuild ops ( %zu ) of first iteration\n", rebuildcount );
             return -1;
          }
@@ -550,7 +550,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process first gc op of nopack\n" );
       return -1;
    }
@@ -680,7 +680,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process second gc op of nopack\n" );
       return -1;
    }
@@ -770,7 +770,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process third gc op of nopack\n" );
       return -1;
    }
@@ -1289,7 +1289,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process third gc op of pack\n" );
       return -1;
    }
@@ -1402,7 +1402,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process fourth gc op of pack\n" );
       return -1;
    }
@@ -1642,7 +1642,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO reparallel-writestreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process first gc op of parallel-write\n" );
       return -1;
    }
@@ -1783,7 +1783,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO reparallel-writestreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process final gc op of parallel-write\n" );
       return -1;
    }

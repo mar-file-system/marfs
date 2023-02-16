@@ -627,7 +627,7 @@ int rthread_consumer_func( void** state, void** work_todo ) {
               (op->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
               (op->type == MARFS_REBUILD_OP)    ? "REBUILD" :
               (op->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN", op->ftag.streamid );
-         if ( process_executeoperation( &(tstate->gstate->pos), op, &(tstate->gstate->rlog), tstate->gstate->rpst ) ) {
+         if ( process_executeoperation( &(tstate->gstate->pos), op, &(tstate->gstate->rlog), tstate->gstate->rpst, NULL ) ) {
             LOG( LOG_ERR, "Thread %u has encountered critical error during operation execution\n", tstate->tID );
             *work_todo = NULL;
             tstate->fatalerror = 1;

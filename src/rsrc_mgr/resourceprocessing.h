@@ -208,11 +208,12 @@ int process_closestreamwalker( streamwalker walker, streamwalker_report* report 
  *                     NOTE -- this will be updated to reflect operation completion / error
  * @param RESOURCELOG* log : Resource log to be updated with op completion / error
  * @param REPACKSTREAMER rpckstr : Repack streamer to be used for repack operations
+ * @param const char* ctag : Optional client tag for repacking
  * @return int : Zero on success, or -1 on failure
  *               NOTE -- This func will not return 'failure' unless a critical internal error occurs.
  *                       'Standard' operation errors will simply be reflected in the op struct itself.
  */
-int process_executeoperation( marfs_position* pos, opinfo* op, RESOURCELOG* rlog, REPACKSTREAMER rpkstr );
+int process_executeoperation( marfs_position* pos, opinfo* op, RESOURCELOG* rlog, REPACKSTREAMER rpkstr, const char* ctag );
 
 
 #endif // _RESOURCEPROCESSING_H
