@@ -94,8 +94,8 @@ typedef struct repackstreamer_struct {
 typedef struct streamwalker_struct {
    // initialization info
    marfs_position pos;
-   time_t      gcthresh;       // time threshold for GCing a file ( none performed if zero )
-   time_t      repackthresh;   // time threshold for repacking a file ( none performed if zero )
+   time_t      gcthresh;       // time threshold for GCing a file ( none performed, if zero )
+   time_t      repackthresh;   // time threshold for repacking a file ( none performed, if zero )
    time_t      rebuildthresh;  // time threshold for rebuilding a file ( none performed, if zero )
    ne_location rebuildloc;     // location value of objects to be rebuilt
    // report info
@@ -988,21 +988,23 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
             return -1;
          }
       }
-      // check for error
-      if ( getres <= 0 ) {
+      // check for error ( missing xattr is acceptable here though )
+      if ( getres <= 0  &&  errno != ENODATA ) {
          LOG( LOG_ERR, "Failed to retrieve ftag of reference file target: \"%s\"\n", reftgt );
          mdal->close( handle );
          return -1;
       }
-      *(walker->ftagstr + getres) = '\0'; // ensure our string is NULL terminated
       // potentially clear old ftag values
-      if ( walker->ftag.ctag ) { free( walker->ftag.ctag ); }
-      if ( walker->ftag.streamid ) { free( walker->ftag.streamid ); }
-      // parse the ftag
-      if ( ftag_initstr( &(walker->ftag), walker->ftagstr ) ) {
-         LOG( LOG_ERR, "Failed to parse ftag value of reference file target: \"%s\"\n", reftgt );
-         mdal->close( handle );
-         return -1;
+      if ( walker->ftag.ctag ) { free( walker->ftag.ctag ); walker->ftag.ctag = NULL; }
+      if ( walker->ftag.streamid ) { free( walker->ftag.streamid ); walker->ftag.streamid = NULL; }
+      // potentially parse the ftag
+      if ( getres > 0 ) {
+         *(walker->ftagstr + getres) = '\0'; // ensure our string is NULL terminated
+         if ( ftag_initstr( &(walker->ftag), walker->ftagstr ) ) {
+            LOG( LOG_ERR, "Failed to parse ftag value of reference file target: \"%s\"\n", reftgt );
+            mdal->close( handle );
+            return -1;
+         }
       }
       // stat the file
       if ( mdal->fstat( handle, &(walker->stval) ) ) {
@@ -1518,6 +1520,14 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
       free( walker );
       return NULL;
    }
+   if ( walker->ftag.streamid == NULL ) {
+      // missing FTAG value means we can't walk the stream
+      // TODO not necessarily fatal
+      LOG( LOG_ERR, "Failed to get info from initial reference target: \"%s\"\n", reftgt );
+      free( walker->ftagstr );
+      free( walker );
+      return NULL;
+   }
    // calculate our header length
    RECOVERY_HEADER header = {
       .majorversion = walker->ftag.majorversion,
@@ -1805,6 +1815,12 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          LOG( LOG_ERR, "Failed to get info for reference target: \"%s\"\n", reftgt );
          return -1;
       }
+      if ( walker->ftag.streamid == NULL ) {
+         // missing FTAG value means we can't walk the stream
+         // TODO not necessarily fatal
+         LOG( LOG_ERR, "Failed to get FTAG of reference target: \"%s\"\n", reftgt );
+         return -1;
+      }
       pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0  &&  walker->rebuildthresh == 0 ) ? 0 : 1; // return to default behavior
       if ( filestate == 0 ) {
          // file doesn't exist ( likely that we skipped a GCTAG on the previous file )
@@ -1832,6 +1848,13 @@ int process_iteratestreamwalker( streamwalker walker, opinfo** gcops, opinfo** r
          // failure or missing file is unacceptable here
          if ( process_getfileinfo( reftgt, 1, walker, &(filestate) )  ||  filestate == 0 ) {
             LOG( LOG_ERR, "Failed to get info for previous ref tgt: \"%s\"\n", reftgt );
+            free( reftgt );
+            return -1;
+         }
+         if ( walker->ftag.streamid == NULL ) {
+            // missing FTAG value means we can't walk the stream
+            // TODO not necessarily fatal
+            LOG( LOG_ERR, "Failed to get FTAG of previous ref tgt: \"%s\"\n", reftgt );
             free( reftgt );
             return -1;
          }
