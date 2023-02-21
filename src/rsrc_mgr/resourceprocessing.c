@@ -720,7 +720,6 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
    return;
 }
 
-// TODO
 void process_repack( marfs_position* pos, opinfo* op, REPACKSTREAMER rpckstr, const char* ctagsuf ) {
    // check out a repack stream reference
    DATASTREAM* rpckstream = repackstreamer_getstream( rpckstr );
@@ -744,11 +743,17 @@ void process_repack( marfs_position* pos, opinfo* op, REPACKSTREAMER rpckstr, co
       if ( reftable == NULL ) {
          LOG( LOG_ERR, "Failed to generate reference table with values ( breadth=%d, depth=%d, digits=%d )\n",
               op->ftag.refbreadth, op->ftag.refdepth, op->ftag.refdigits );
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          rpckerror = 1;
-         return;
       }
    }
+   // allocate a 1MiB buffer to use for data migration
+   void* iobuf = malloc( 1024 * 1024 );
+   if ( iobuf == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate an IOBuffer for repack\n" );
+      rpckerror = 1;
+   }
+   DATASTREAM readstream = NULL;
+   opinfo* prevop = op;
 
    for ( ; op; op = op->next ) {
       op->start = 0;
@@ -765,10 +770,10 @@ void process_repack( marfs_position* pos, opinfo* op, REPACKSTREAMER rpckstr, co
       // establish our client tag
       ssize_t ctaglen;
       if ( ctagsuf ) {
-         ctaglen = snprintf( NULL, 0, "RMAN-%s\n", ctagsuf );
+         ctaglen = snprintf( NULL, 0, "RMAN-%s-Repack\n", ctagsuf );
       }
       else {
-         ctaglen = snprintf( NULL, 0, "RMAN-Unknown-Repack\n" );
+         ctaglen = snprintf( NULL, 0, "RMAN-Repack\n" );
       }
       char* ctag = calloc( sizeof(char), ctaglen + 1 );
       if ( ctag == NULL ) {
@@ -778,10 +783,10 @@ void process_repack( marfs_position* pos, opinfo* op, REPACKSTREAMER rpckstr, co
          continue;
       }
       if ( ctagsuf ) {
-         snprintf( ctag, ctaglen + 1, "RMAN-%s\n", ctagsuf );
+         snprintf( ctag, ctaglen + 1, "RMAN-%s-Repack\n", ctagsuf );
       }
       else {
-         snprintf( ctag, ctaglen + 1, "RMAN-Unknown-Repack\n" );
+         snprintf( ctag, ctaglen + 1, "RMAN-Repack\n" );
       }
       // open a repack datastream for the target file
       if ( datastream_repack( rpckstream, reftgt, pos, ctag ) ) {
@@ -794,18 +799,56 @@ void process_repack( marfs_position* pos, opinfo* op, REPACKSTREAMER rpckstr, co
       }
       free( ctag );
       // open a read datastream for the target file
+      if ( datastream_open( &(readstream), READ_STREAM, reftgt, pos, NULL ) ) {
+         LOG( LOG_ERR, "Failed to open read stream for reference target: \"%s\"\n", reftgt );
+         if ( datastream_release( rpckstream ) ) {
+            LOG( LOG_WARNING, "Failed to abort repack stream after previous failure\n" );
+         }
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         free( reftgt );
+         rpckerror = 1;
+         continue;
+      }
       // read all data from the file, writing it out to the repack stream
-      // close our read stream
+      ssize_t iores = 1024 * 1024;
+      while ( iores ) {
+         iores = datastream_read( &(readstream), iobuf, 1024 * 1024 );
+         if ( iores < 0 ) {
+            LOG( LOG_ERR, "Failed to read from reference target: \"%s\"\n", reftgt );
+            break;
+         }
+         if ( iores != datastream_write( rpckstream, iobuf, (size_t)iores ) ) {
+            LOG( LOG_ERR, "Failed to write to repack stream of reference target: \"%s\"\n", reftgt );
+            break;
+         }
+      }
+      if ( iores ) {
+         // cleanup from previous errors
+         if ( datastream_release( rpckstream ) ) {
+            LOG( LOG_WARNING, "Failed to abort repack stream after previous failure\n" );
+         }
+         if ( datastream_release( &(readstream) ) ) {
+            LOG( LOG_WARNING, "Failed to abort read stream after previous failure\n" );
+         }
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         free( reftgt );
+         rpckerror = 1;
+         continue;
+      }
 
       free( reftgt );
-      op = op->next;
+      prevop = op;
    }
+
+   // cleanup our iobuffer
+   if ( iobuf ) { free( iobuf ); }
 
    // potentially destroy our custom hash table
    if ( reftable != pos->ns->prepo->metascheme.reftable ) {
       HASH_NODE* nodelist = NULL;
       size_t count = 0;
       if ( hash_term( reftable, &(nodelist), &(count) ) ) {
+         // just complain
          LOG( LOG_WARNING, "Failed to delete non-NS reference table\n" );
       }
       else {
@@ -817,7 +860,17 @@ void process_repack( marfs_position* pos, opinfo* op, REPACKSTREAMER rpckstr, co
       }
    }
 
-   // check in our repack stream reference
+   // close our read stream
+   if ( readstream  &&  datastream_close( &(readstream) ) ) {
+      // this isn't worth aborting over, it's just... odd
+      LOG( LOG_WARNING, "Failed to close read stream\n" );
+   }
+   // check in our repack stream reference ( will only be closed when the repackstreamer is terminated )
+   if ( rpckstr  &&  repackstreamer_returnstream( rpckstr, rpckstream ) ) {
+      // this is a problem, so at least mark our final op as being in error
+      LOG( LOG_ERR, "Failed to return our repack stream\n" );
+      if ( prevop ) { prevop->errval = ENOTRECOVERABLE; }
+   }
    // repack complete
    return;
 }
