@@ -97,6 +97,7 @@ typedef struct streamwalker_struct {
    time_t      gcthresh;       // time threshold for GCing a file ( none performed, if zero )
    time_t      repackthresh;   // time threshold for repacking a file ( none performed, if zero )
    time_t      rebuildthresh;  // time threshold for rebuilding a file ( none performed, if zero )
+   time_t      cleanupthresh;  // time threshold for cleaning up incomplete datastreams ( none performed, if zero )
    ne_location rebuildloc;     // location value of objects to be rebuilt
    // report info
    streamwalker_report report; // running totals for encountered stream elements
@@ -1434,39 +1435,54 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
 
 /**
  * Open a streamwalker based on the given fileno zero reference target
+ * @param streamwalker* swalker : Reference to be populated with the produced streamwalker
  * @param marfs_position* pos : MarFS position to be used by this walker
  * @param const char* reftgt : Reference path of the first ( fileno zero ) file of the datastream
  * @param thresholds thresh : Threshold values to be used for determining operation targets
  * @param ne_location* rebuildloc : Location-based rebuild target
- * @return streamwalker : Newly generated streamwalker, or NULL on failure
+ * @return int : Zero on success, or -1 on failure
+ *               NOTE -- It is possible for success to be indicated without any streamwalker being produced,
+ *                       such as, if the stream is incomplete ( missing FTAG values ).
+ *                       Failure will only be indicated if an unexpected condition occurred, such as, if the
+ *                       datastream is improperly formatted.
  */
-streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, thresholds thresh, ne_location* rebuildloc ) {
+int process_openstreamwalker( streamwalker* swalker, marfs_position* pos, const char* reftgt, thresholds thresh, ne_location* rebuildloc ) {
 	// validate args
+	if ( swalker == NULL ) {
+      LOG( LOG_ERR, "Received a NULL streamwalker* arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( *swalker != NULL ) {
+      LOG( LOG_ERR, "Received a reference to an active streamwalker\n" );
+      errno = EINVAL;
+      return -1;
+   }
 	if ( pos == NULL ) {
       LOG( LOG_ERR, "Received a NULL position ref\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    if ( pos->ns == NULL ) {
       LOG( LOG_ERR, "Received a position ref with no defined NS\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    if ( reftgt == NULL ) {
       LOG( LOG_ERR, "Received a NULL reference tgt path\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    if ( thresh.rebuildthreshold  &&  rebuildloc == NULL ) {
       LOG( LOG_ERR, "Rebuild threshold is set, but no rebuild location was specified\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    // allocate a new streamwalker struct
    streamwalker walker = malloc( sizeof( struct streamwalker_struct ) );
    if ( walker == NULL ) {
       LOG( LOG_ERR, "Failed to allocate streamwalker\n" );
-      return NULL;
+      return -1;
    }
    // establish position
    walker->pos = *pos;
@@ -1474,7 +1490,7 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
       LOG( LOG_ERR, "Received a marfs position for NS \"%s\" with no associated CTXT\n", pos->ns->idstr );
       free( walker );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    // keep a datascheme quick reference var
    marfs_ds* ds = &(walker->pos.ns->prepo->datascheme);
@@ -1482,6 +1498,7 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
    walker->gcthresh = thresh.gcthreshold;
    walker->repackthresh = thresh.repackthreshold;
    walker->rebuildthresh = thresh.rebuildthreshold;
+   walker->cleanupthresh = thresh.cleanupthreshold;
    if ( rebuildloc ) {
       walker->rebuildloc = *rebuildloc;
    }
@@ -1503,7 +1520,7 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
    if ( walker->ftagstr == NULL ) {
       LOG( LOG_ERR, "Failed to allocate initial ftag string buffer\n" );
       free( walker );
-      return NULL;
+      return -1;
    }
    walker->ftagstralloc = 1024;
    walker->gcops = NULL;
@@ -1518,15 +1535,19 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
       LOG( LOG_ERR, "Failed to get info from initial reference target: \"%s\"\n", reftgt );
       free( walker->ftagstr );
       free( walker );
-      return NULL;
+      return -1;
    }
+   // missing FTAG value means we can't walk the stream
    if ( walker->ftag.streamid == NULL ) {
-      // missing FTAG value means we can't walk the stream
-      // TODO not necessarily fatal
-      LOG( LOG_ERR, "Failed to get info from initial reference target: \"%s\"\n", reftgt );
+      LOG( LOG_INFO, "Initial reference target lacks an FTAG: \"%s\"\n", reftgt );
+      // check for possible cleanup of this incomplete stream
+      if ( filestate == 1  &&  walker->cleanupthresh  &&  walker->stval.st_ctime < walker->cleanupthresh ) {
+         // TODO unlink this file and record it
+      }
       free( walker->ftagstr );
       free( walker );
-      return NULL;
+      // this is not a fatal condition
+      return 0;
    }
    // calculate our header length
    RECOVERY_HEADER header = {
@@ -1566,7 +1587,7 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
             if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
                LOG( LOG_ERR, "Failed to identify operation target for deletion of file %zu\n", walker->ftag.fileno );
                destroystreamwalker( walker );
-               return NULL;
+               return -1;
             }
             // impossible to have an existing op; populate new op
             optgt->count = 1;
@@ -1589,14 +1610,14 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
                if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_OBJ_OP, &(tmptag), &(optgt) ) ) {
                   LOG( LOG_ERR, "Failed to identify operation target for deletion of spanned obj %zu\n", tmptag.objno );
                   destroystreamwalker( walker );
-                  return NULL;
+                  return -1;
                }
                // sanity check
                if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
                   LOG( LOG_ERR, "Existing obj deletion count (%zu) does not match current obj (%zu)\n",
                                 optgt->count + optgt->ftag.objno, tmptag.objno );
                   destroystreamwalker( walker );
-                  return NULL;
+                  return -1;
                }
                // update operation
                optgt->count++;
@@ -1610,7 +1631,7 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
             if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(walker->ftag), &(optgt) ) ) {
                LOG( LOG_ERR, "Failed to identify operation target for attachment of delzero tag\n" );
                destroystreamwalker( walker );
-               return NULL;
+               return -1;
             }
             delref_info* delrefinf = (delref_info*)optgt->extendedinfo;
             delrefinf->delzero = 1;
@@ -1652,7 +1673,7 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
             if ( datastream_objtarget( &(tmptag), ds, &objname, &erasure, &location) ) {
                LOG( LOG_ERR, "Failed to populate object target info for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
                destroystreamwalker( walker );
-               return NULL;
+               return -1;
             }
             free( objname ); // don't actually need object name, so just destroy it immediately
             // check for location match
@@ -1664,14 +1685,14 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
                if ( process_identifyoperation( &(walker->rbldops), MARFS_REBUILD_OP, &(tmptag), &(optgt) ) ) {
                   LOG( LOG_ERR, "Failed to identify operation target for rebuild of spanned obj %zu\n", tmptag.objno );
                   destroystreamwalker( walker );
-                  return NULL;
+                  return -1;
                }
                // sanity check
                if ( optgt->count + optgt->ftag.objno != tmptag.objno ) {
                   LOG( LOG_ERR, "Existing obj rebuild count (%zu) does not match current obj (%zu)\n",
                                 optgt->count + optgt->ftag.objno, tmptag.objno );
                   destroystreamwalker( walker );
-                  return NULL;
+                  return -1;
                }
                // update operation
                optgt->count++;
@@ -1704,11 +1725,12 @@ streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, 
          LOG( LOG_ERR, "Failed to generate reference table with values ( breadth=%d, depth=%d, digits=%d )\n",
               walker->ftag.refbreadth, walker->ftag.refdepth, walker->ftag.refdigits );
          destroystreamwalker( walker );
-         return NULL;
+         return -1;
       }
    }
    // return the initialized walker
-   return walker;
+   *swalker = walker;
+   return 0;
 }
 
 /**

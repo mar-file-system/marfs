@@ -171,13 +171,18 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
 
 /**
  * Open a streamwalker based on the given fileno zero reference target
+ * @param streamwalker* swalker : Reference to be populated with the produced streamwalker
  * @param marfs_position* pos : MarFS position to be used by this walker
  * @param const char* reftgt : Reference path of the first ( fileno zero ) file of the datastream
  * @param thresholds thresh : Threshold values to be used for determining operation targets
  * @param ne_location* rebuildloc : Location-based rebuild target
- * @return streamwalker : Newly generated streamwalker, or NULL on failure
+ * @return int : Zero on success, or -1 on failure
+ *               NOTE -- It is possible for success to be indicated without any streamwalker being produced,
+ *                       such as, if the stream is incomplete ( missing FTAG values ).
+ *                       Failure will only be indicated if an unexpected condition occurred, such as, if the
+ *                       datastream is improperly formatted.
  */
-streamwalker process_openstreamwalker( marfs_position* pos, const char* reftgt, thresholds thresh, ne_location* rebuildloc );
+int process_openstreamwalker( streamwalker* swalker, marfs_position* pos, const char* reftgt, thresholds thresh, ne_location* rebuildloc );
 
 /**
  * Iterate over a datastream, accumulating quota values and identifying operation targets

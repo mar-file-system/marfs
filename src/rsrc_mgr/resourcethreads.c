@@ -825,8 +825,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
             thresholds tmpthresh = tstate->gstate->thresh;
             if ( !(tstate->gstate->lbrebuild) ) { tmpthresh.rebuildthreshold = 0; }
             LOG( LOG_INFO, "Thread %u beginning streamwalk from reference file \"%s\"\n", tstate->tID, reftgt );
-            tstate->walker = process_openstreamwalker( &(tstate->gstate->pos), reftgt, tmpthresh, &(tstate->gstate->rebuildloc) );
-            if ( tstate->walker == NULL ) {
+            if ( process_openstreamwalker( &(tstate->walker), &(tstate->gstate->pos), reftgt, tmpthresh, &(tstate->gstate->rebuildloc) ) ) {
                LOG( LOG_ERR, "Thread %u failed to open streamwalker for \"%s\" of NS \"%s\"\n",
                              tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr );
                snprintf( tstate->errorstr, MAX_STR_BUFFER,

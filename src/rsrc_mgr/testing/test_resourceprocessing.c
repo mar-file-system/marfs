@@ -357,8 +357,8 @@ int main(int argc, char **argv)
       .cap = -1,
       .scatter = -1
    };
-   streamwalker walker = process_openstreamwalker( &pos, rpath, thresh, &(rebuildloc) );
-   if ( walker == NULL ) {
+   streamwalker walker = NULL;
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, &(rebuildloc) ) ) {
       printf( "failed to open streamwalker for \"%s\"\n", rpath );
       return -1;
    }
@@ -463,8 +463,7 @@ int main(int argc, char **argv)
    thresh.repackthreshold = 0;
    thresh.rebuildthreshold = 0;
    thresh.cleanupthreshold = 0;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
       return -1;
    }
@@ -518,8 +517,7 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker2 for \"%s\"\n", rpath );
       return -1;
    }
@@ -643,8 +641,7 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
       return -1;
    }
@@ -729,8 +726,7 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
       return -1;
    }
@@ -1011,8 +1007,7 @@ int main(int argc, char **argv)
    thresh.repackthreshold = 0;
    thresh.rebuildthreshold = 0;
    thresh.cleanupthreshold = 0;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open quick-streamwalker1 for \"%s\"\n", rpath );
       return -1;
    }
@@ -1059,8 +1054,7 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker2 for \"%s\"\n", rpath );
       return -1;
    }
@@ -1199,8 +1193,7 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
       return -1;
    }
@@ -1312,8 +1305,7 @@ int main(int argc, char **argv)
 
 
    // walk a final time, to delete the entire stream
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker4 for \"%s\"\n", rpath );
       return -1;
    }
@@ -1605,8 +1597,7 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker1 for \"%s\"\n", rpath );
       return -1;
    }
@@ -1746,8 +1737,7 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker1 for \"%s\"\n", rpath );
       return -1;
    }
