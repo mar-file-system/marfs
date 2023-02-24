@@ -722,7 +722,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
       }
       else if ( tstate->walker ) {
          // walk our current datastream
-         int walkres = process_iteratestreamwalker( tstate->walker, &(tstate->gcops), &(tstate->repackops), &(tstate->rebuildops) );
+         int walkres = process_iteratestreamwalker( &(tstate->walker), &(tstate->gcops), &(tstate->repackops), &(tstate->rebuildops) );
          if ( walkres < 0 ) { // check for failure
             LOG( LOG_ERR, "Thread %u failed to walk a stream beginning in refdir \"%s\" of NS \"%s\"\n",
                  tstate->tID, tstate->rdirpath, tstate->gstate->pos.ns->idstr );
@@ -781,7 +781,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
          if ( walkres == 0 ) { // check for end of stream
             LOG( LOG_INFO, "Thread %u has reached the end of a datastream\n", tstate->tID );
             streamwalker_report tmpreport = {0};
-            if ( process_closestreamwalker( tstate->walker, &(tmpreport) ) ) {
+            if ( process_closestreamwalker( &(tstate->walker), &(tmpreport) ) ) {
                LOG( LOG_ERR, "Thread %u failed to close a streamwalker\n", tstate->tID );
                snprintf( tstate->errorstr, MAX_STR_BUFFER, "Thread %u failed to close a streamwalker\n", tstate->tID );
                tstate->fatalerror = 1;
@@ -792,7 +792,6 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                }
                return -1;
             }
-            tstate->walker = NULL;
             tstate->report.fileusage   += tmpreport.fileusage;
             tstate->report.byteusage   += tmpreport.byteusage;
             tstate->report.filecount   += tmpreport.filecount;

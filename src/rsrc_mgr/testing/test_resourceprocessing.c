@@ -367,7 +367,7 @@ int main(int argc, char **argv)
    opinfo* rebuildops = NULL;
    ssize_t rebuildcount = 0;
    int iterres = 1;
-   while( (iterres = process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) )) > 0 ) {
+   while( (iterres = process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) )) > 0 ) {
       // not expecting any gc or repack ops, at present
       if ( gcops ) {
          printf( "unexpected GCOPS following first traversal of no-pack stream\n" );
@@ -399,7 +399,7 @@ int main(int argc, char **argv)
       return -1;
    }
    streamwalker_report walkreport;
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close first streamwalker\n" );
       return -1;
    }
@@ -470,7 +470,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected result of first quota-only iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -487,7 +487,7 @@ int main(int argc, char **argv)
       printf( "unexpected REBUILDOPS following traversal3 of no-pack stream\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -524,7 +524,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of second iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -553,11 +553,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after first gc from nopack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, NULL ) ) {
+   if ( process_closestreamwalker( &walker, NULL ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -648,7 +648,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of third iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -666,7 +666,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after second gc from nopack\n" );
       return -1;
    }
@@ -681,7 +681,7 @@ int main(int argc, char **argv)
       printf( "failed to process second gc op of nopack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, NULL ) ) {
+   if ( process_closestreamwalker( &walker, NULL ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -733,7 +733,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of third iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -751,11 +751,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after third gc from nopack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, NULL ) ) {
+   if ( process_closestreamwalker( &walker, NULL ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -1014,7 +1014,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected result of first quota-only iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1031,7 +1031,7 @@ int main(int argc, char **argv)
       printf( "unexpected REBUILDOPS following first quota-only iteration of pack stream\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after first quick iteration of pack\n" );
       return -1;
    }
@@ -1061,7 +1061,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected result of second iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1078,7 +1078,7 @@ int main(int argc, char **argv)
       printf( "unexpected REBUILDOPS following first gc traversal of pack stream\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -1200,7 +1200,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of third iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1218,11 +1218,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after third gc from pack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after third pack gc iteration\n" );
       return -1;
    }
@@ -1312,7 +1312,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of fourth iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1330,11 +1330,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after fourth gc from pack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after fourth pack gc iteration\n" );
       return -1;
    }
@@ -1604,7 +1604,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of fifth iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1622,7 +1622,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after first gc from parallel-write\n" );
       return -1;
    }
@@ -1637,7 +1637,7 @@ int main(int argc, char **argv)
       printf( "failed to process first gc op of parallel-write\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after first parallel-write gc iteration\n" );
       return -1;
    }
@@ -1744,7 +1744,7 @@ int main(int argc, char **argv)
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of final iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1762,7 +1762,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after final gc from parallel-write\n" );
       return -1;
    }
@@ -1777,7 +1777,7 @@ int main(int argc, char **argv)
       printf( "failed to process final gc op of parallel-write\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after final parallel-write gc iteration\n" );
       return -1;
    }
