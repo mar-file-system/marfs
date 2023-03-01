@@ -1038,23 +1038,27 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       size_t refmin = -1;
       size_t refmax = -1;
       getNSrange( rman->nslist[request->nsindex], rman->workingranks, request->refdist, &(refmin), &(refmax) );
-      // update our input to reference the new target range
-      if ( resourceinput_setrange( &(rman->gstate.rinput), refmin, refmax ) ) {
-         LOG( LOG_ERR, "Failed to set NS \"%s\" reference range values for distribution %zu\n",
-              rman->nslist[request->nsindex]->idstr, request->refdist );
-         snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                   "Failed to set NS \"%s\" reference range values for distribution %zu\n",
-                   rman->nslist[request->nsindex]->idstr, request->refdist );
-         return -1;
-      }
-      // wait for our input to be exhausted ( don't respond until we are ready for more work )
-      if ( resourceinput_waitforcomp( &(rman->gstate.rinput) ) ) {
-         LOG( LOG_ERR, "Failed to wait for completion of NS \"%s\" reference distribution %zu\n",
-              rman->nslist[request->nsindex]->idstr, request->refdist );
-         snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                   "Failed to wait for completion of NS \"%s\" reference distribution %zu\n",
-                   rman->nslist[request->nsindex]->idstr, request->refdist );
-         return -1;
+      // only actually perform the work if it is a valid reference range
+      // NOTE -- This is to handle a case where the number of NS ref dirs < the number of resource manager worker ranks
+      if ( refmax  ||  refmin ) {
+         // update our input to reference the new target range
+         if ( resourceinput_setrange( &(rman->gstate.rinput), refmin, refmax ) ) {
+            LOG( LOG_ERR, "Failed to set NS \"%s\" reference range values for distribution %zu\n",
+                 rman->nslist[request->nsindex]->idstr, request->refdist );
+            snprintf( response->errorstr, MAX_ERROR_BUFFER,
+                      "Failed to set NS \"%s\" reference range values for distribution %zu\n",
+                      rman->nslist[request->nsindex]->idstr, request->refdist );
+            return -1;
+         }
+         // wait for our input to be exhausted ( don't respond until we are ready for more work )
+         if ( resourceinput_waitforcomp( &(rman->gstate.rinput) ) ) {
+            LOG( LOG_ERR, "Failed to wait for completion of NS \"%s\" reference distribution %zu\n",
+                 rman->nslist[request->nsindex]->idstr, request->refdist );
+            snprintf( response->errorstr, MAX_ERROR_BUFFER,
+                      "Failed to wait for completion of NS \"%s\" reference distribution %zu\n",
+                      rman->nslist[request->nsindex]->idstr, request->refdist );
+            return -1;
+         }
       }
    }
    else if ( request->type == COMPLETE_WORK ) {
@@ -1449,9 +1453,9 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
             request->ranknum = ranknum;
             rman->distributed[nsindex]++; // note newly distributed range
             LOG( LOG_INFO, "Passing out reference range %zu of NS \"%s\" to Rank %zu\n",
-                 rman->distributed[nsindex], rman->nslist[nsindex]->idstr, ranknum );
+                 request->refdist, rman->nslist[nsindex]->idstr, ranknum );
             printf( "  Rank %zu is beginning work on NS \"%s\" ( ref range %zu )\n",
-                    ranknum, rman->nslist[nsindex]->idstr, rman->distributed[nsindex] );
+                    ranknum, rman->nslist[nsindex]->idstr, request->refdist );
             return 1;
          }
       }
@@ -1467,9 +1471,9 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
             request->ranknum = ranknum;
             rman->distributed[nsindex]++; // note newly distributed range
             LOG( LOG_INFO, "Passing out reference range %zu of NS \"%s\" to Rank %zu\n",
-                 rman->distributed[nsindex], rman->nslist[nsindex]->idstr, ranknum );
+                 request->refdist, rman->nslist[nsindex]->idstr, ranknum );
             printf( "  Rank %zu is picking up work on NS \"%s\" ( ref range %zu )\n",
-                    ranknum, rman->nslist[nsindex]->idstr, rman->distributed[nsindex] );
+                    ranknum, rman->nslist[nsindex]->idstr, request->refdist );
             // check through remaining namespaces for any undistributed work
             for ( ; nsindex < rman->nscount; nsindex++ ) {
                if ( rman->distributed[nsindex] < rman->workingranks ) { break; }
@@ -1528,7 +1532,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          request->ranknum = ranknum;
          rman->distributed[response->request.nsindex]++; // note newly distributed range
          LOG( LOG_INFO, "Passing out reference range %zu of NS \"%s\" to Rank %zu\n",
-              rman->distributed[response->request.nsindex], rman->nslist[response->request.nsindex]->idstr, ranknum );
+              request->refdist, rman->nslist[response->request.nsindex]->idstr, ranknum );
          return 1;
       }
       // all work in the active NS has been completed
