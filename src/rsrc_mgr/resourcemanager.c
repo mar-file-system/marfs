@@ -1669,9 +1669,10 @@ int managerbehavior( rmanstate* rman ) {
       return -1;
    }
    if ( rman->fatalerror ) { return -1; } // skip final log cleanup if we hit some crucial error
+   // NOTE -- frustrates me greatly to put this sleep in, but a brief pause really seems to help any NFS-hosted
+   //         log location to cleanup state, allowing us to delete the parent dir
+   usleep( 100000 ); 
    // final cleanup
-   sleep( 1 ); // NOTE -- frustrates me greatly to put this in, but a brief pause really seems to help any NFS-hosted
-               //         log location to cleanup state, allowing us to delete the parent dir
    // trim logpath at the last '/' char, to get the parent dir path
    char* iterationroot = resourcelog_genlogpath( 0, rman->logroot, rman->iteration, NULL, -1 );
    if ( iterationroot == NULL ) {

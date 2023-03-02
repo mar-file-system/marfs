@@ -1925,8 +1925,9 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, char
       // also, attempt to remove the next two parent dirs ( NS and iteration ) of this logfile, skipping on error
       char pdel = 0;
       while ( pdel < 2 ) {
-         sleep( 1 ); // NOTE -- frustrates me greatly to put this in, but a brief pause really seems to help any NFS-hosted
-                     //         log location to cleanup state, allowing us to delete the parent dir
+         // NOTE -- frustrates me greatly to put this sleep in, but a brief pause really seems to help any NFS-hosted
+         //         log location to cleanup state, allowing us to delete the parent dir
+         usleep( 100000 ); 
          // trim logpath at the last '/' char, to get the parent dir path
          char* prevsep = NULL;
          char* pparse = rsrclog->logfilepath;
