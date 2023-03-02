@@ -1661,8 +1661,18 @@ int managerbehavior( rmanstate* rman ) {
       // print out NS info
       outputinfo( stdout, curns, rman->walkreport + nsindex, rman->logsummary + nsindex );
    }
+   // close our summary log file
+   int cres = fclose( rman->summarylog );
+   rman->summarylog = NULL; // avoid possible double close
+   if ( cres ) {
+      fprintf( stderr, "ERROR: Failed to close summary logfile for this iteration\n" );
+      return -1;
+   }
    if ( rman->fatalerror ) { return -1; } // skip final log cleanup if we hit some crucial error
    // final cleanup
+   sleep( 1 ); // NOTE -- frustrates me greatly to put this in, but a brief pause really seems to help any NFS-hosted
+               //         log location to cleanup state, allowing us to delete the parent dir
+   // trim logpath at the last '/' char, to get the parent dir path
    char* iterationroot = resourcelog_genlogpath( 0, rman->logroot, rman->iteration, NULL, -1 );
    if ( iterationroot == NULL ) {
       fprintf( stderr, "ERROR: Failed to identify iteration path of this run for final cleanup\n" );

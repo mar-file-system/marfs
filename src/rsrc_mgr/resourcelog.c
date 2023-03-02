@@ -1903,16 +1903,30 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, char
         rsrclog->summary.rebuild_failures  ||  rsrclog->summary.repack_failures ) { errpresent = 1; }
    // potentially record summary info
    if ( summary ) { *summary = rsrclog->summary; }
+   // close our logfile prior to ( possibly ) unlinking it
+   if ( rsrclog->logfile > 0 ) {
+      int cres = close( rsrclog->logfile );
+      rsrclog->logfile = 0; // avoid possible double close
+      if ( cres ) {
+         LOG( LOG_ERR, "Failed to close resourcelog\n" );
+         cleanuplog( rsrclog, 1 ); // this will release the lock
+         *resourcelog = NULL;
+         return -1;
+      }
+   }
    if ( !(errpresent)  &&  delete ) {
       // if there were no errors recorded, just delete the logfile
       if ( unlink( rsrclog->logfilepath ) ) {
          LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", rsrclog->logfilepath );
-         pthread_mutex_unlock( &(rsrclog->lock) );
+         cleanuplog( rsrclog, 1 ); // this will release the lock
+         *resourcelog = NULL;
          return -1;
       }
       // also, attempt to remove the next two parent dirs ( NS and iteration ) of this logfile, skipping on error
       char pdel = 0;
       while ( pdel < 2 ) {
+         sleep( 1 ); // NOTE -- frustrates me greatly to put this in, but a brief pause really seems to help any NFS-hosted
+                     //         log location to cleanup state, allowing us to delete the parent dir
          // trim logpath at the last '/' char, to get the parent dir path
          char* prevsep = NULL;
          char* pparse = rsrclog->logfilepath;
