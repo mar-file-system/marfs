@@ -995,17 +995,19 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
          mdal->close( handle );
          return -1;
       }
-      // potentially clear old ftag values
-      if ( walker->ftag.ctag ) { free( walker->ftag.ctag ); walker->ftag.ctag = NULL; }
-      if ( walker->ftag.streamid ) { free( walker->ftag.streamid ); walker->ftag.streamid = NULL; }
       // potentially parse the ftag
+      int retval = 1; // assume missing ftag
       if ( getres > 0 ) {
+         // potentially clear old ftag values
+         if ( walker->ftag.ctag ) { free( walker->ftag.ctag ); walker->ftag.ctag = NULL; }
+         if ( walker->ftag.streamid ) { free( walker->ftag.streamid ); walker->ftag.streamid = NULL; }
          *(walker->ftagstr + getres) = '\0'; // ensure our string is NULL terminated
          if ( ftag_initstr( &(walker->ftag), walker->ftagstr ) ) {
             LOG( LOG_ERR, "Failed to parse ftag value of reference file target: \"%s\"\n", reftgt );
             mdal->close( handle );
             return -1;
          }
+         retval = 0; // indicate unmitigated success
       }
       // stat the file
       if ( mdal->fstat( handle, &(walker->stval) ) ) {
@@ -1027,7 +1029,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       //         If they do, they will be rebuilt seperately, via their rebuild marker file.
       // populate state value based on link count
       *filestate = ( walker->stval.st_nlink > 1 ) ? 2 : 1;
-      return 0;
+      return retval;
    }
    int olderrno = errno;
    errno = 0;
@@ -1440,7 +1442,7 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
  * @param const char* reftgt : Reference path of the first ( fileno zero ) file of the datastream
  * @param thresholds thresh : Threshold values to be used for determining operation targets
  * @param ne_location* rebuildloc : Location-based rebuild target
- * @return int : Zero on success, or -1 on failure
+ * @return int : Zero on success, -1 on failure, or 1 if the initial reference target should be unlinked ( cleanup stream )
  *               NOTE -- It is possible for success to be indicated without any streamwalker being produced,
  *                       such as, if the stream is incomplete ( missing FTAG values ).
  *                       Failure will only be indicated if an unexpected condition occurred, such as, if the
@@ -1531,23 +1533,31 @@ int process_openstreamwalker( streamwalker* swalker, marfs_position* pos, const 
    walker->rbldops = NULL;
    // retrieve xattrs from the inital stream file
    char filestate = 0;
-   if ( process_getfileinfo( reftgt, 1, walker, &(filestate) )  ||  !(filestate) ) {
+   int getres = process_getfileinfo( reftgt, 1, walker, &(filestate) );
+   if ( getres < 0  ||  !(filestate) ) {
       LOG( LOG_ERR, "Failed to get info from initial reference target: \"%s\"\n", reftgt );
       free( walker->ftagstr );
       free( walker );
       return -1;
    }
    // missing FTAG value means we can't walk the stream
-   if ( walker->ftag.streamid == NULL ) {
+   if ( getres > 0  ||  walker->ftag.streamid == NULL ) {
       LOG( LOG_INFO, "Initial reference target lacks an FTAG: \"%s\"\n", reftgt );
-      // check for possible cleanup of this incomplete stream
-      if ( filestate == 1  &&  walker->cleanupthresh  &&  walker->stval.st_ctime < walker->cleanupthresh ) {
-         // TODO unlink this file and record it
+      int retval = 0;
+      // check for possible gc of this incomplete stream
+      walker->report.filecount++;
+      walker->report.bytecount += walker->stval.st_size;
+      walker->report.streamcount++;
+      if ( filestate == 1  &&  walker->gcthresh  &&  walker->stval.st_ctime < walker->gcthresh ) {
+         // tell the caller to unlink this file + stream
+         walker->report.delfiles++;
+         walker->report.delstreams++;
+         retval = 1;
       }
       free( walker->ftagstr );
       free( walker );
       // this is not a fatal condition
-      return 0;
+      return retval;
    }
    // calculate our header length
    RECOVERY_HEADER header = {
@@ -1839,15 +1849,57 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
       char filestate = -1;
       char prevdelzero = walker->gctag.delzero;
       char haveftag = pullxattrs;
-      if ( process_getfileinfo( reftgt, pullxattrs, walker, &(filestate) ) ) {
+      int getres = process_getfileinfo( reftgt, pullxattrs, walker, &(filestate) );
+      if ( getres < 0 ) {
          LOG( LOG_ERR, "Failed to get info for reference target: \"%s\"\n", reftgt );
+         free( reftgt );
          return -1;
       }
-      if ( walker->ftag.streamid == NULL ) {
-         // missing FTAG value means we can't walk the stream
-         // TODO not necessarily fatal
-         LOG( LOG_ERR, "Failed to get FTAG of reference target: \"%s\"\n", reftgt );
-         return -1;
+      if ( getres > 0 ) {
+         // missing FTAG value means we can't continue to walk the stream
+         LOG( LOG_INFO, "Failed to get FTAG of reference target: \"%s\"\n", reftgt );
+         walker->report.filecount++;
+         walker->report.bytecount += walker->stval.st_size;
+         // check for possible gc of this incomplete stream
+         if ( filestate == 1  &&  walker->gcthresh  &&  walker->stval.st_ctime < walker->gcthresh ) {
+            // tell the caller to unlink this reference file, and that the stream ends here
+            opinfo* optgt = NULL;
+            if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(tmptag), &(optgt) ) ) {
+               LOG( LOG_ERR, "Failed to identify operation target for deletion of file %zu\n", tmptag.fileno );
+               free( reftgt );
+               return -1;
+            }
+            delref_info* delrefinf = NULL;
+            delrefinf->eos = 1; // ALWAYS set this as EndOfStream
+            if ( optgt->count ) {
+               // update existing op
+               optgt->count++;
+               optgt->count += walker->gctag.refcnt;
+               delrefinf = optgt->extendedinfo;
+               // sanity check
+               if ( delrefinf->prev_active_index != walker->activeindex ) {
+                  LOG( LOG_ERR, "Active delref op active index (%zu) does not match current val (%zu)\n",
+                                delrefinf->prev_active_index, walker->activeindex );
+                  free( reftgt );
+                  return -1;
+               }
+            }
+            else {
+               // populate new op
+               optgt->ftag.fileno = walker->ftag.fileno; // be SURE that this is not a dummy op, targeting fileno zero
+               optgt->count = 1;
+               optgt->count += walker->gctag.refcnt;
+               delrefinf = optgt->extendedinfo;
+               delrefinf->prev_active_index = walker->activeindex;
+            }
+            walker->report.delfiles++;
+         }
+         else {
+            walker->report.volfiles++;
+         }
+         // immediately break out of this loop, dispatching any remaining ops
+         free( reftgt );
+         break;
       }
       pullxattrs = ( walker->gcthresh == 0  &&  walker->repackthresh == 0  &&  walker->rebuildthresh == 0 ) ? 0 : 1; // return to default behavior
       if ( filestate == 0 ) {
@@ -1874,17 +1926,55 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
          LOG( LOG_INFO, "Pulling xattrs from previous fileno ( %zu ) due to missing fileno %zu\n",
               walker->fileno, walker->fileno + 1 );
          // failure or missing file is unacceptable here
-         if ( process_getfileinfo( reftgt, 1, walker, &(filestate) )  ||  filestate == 0 ) {
+         getres = process_getfileinfo( reftgt, 1, walker, &(filestate) );
+         if ( getres < 0  ||  filestate == 0 ) {
             LOG( LOG_ERR, "Failed to get info for previous ref tgt: \"%s\"\n", reftgt );
             free( reftgt );
             return -1;
          }
-         if ( walker->ftag.streamid == NULL ) {
+         if ( getres > 0 ) {
             // missing FTAG value means we can't walk the stream
-            // TODO not necessarily fatal
-            LOG( LOG_ERR, "Failed to get FTAG of previous ref tgt: \"%s\"\n", reftgt );
+            LOG( LOG_INFO, "Failed to get FTAG of previous reference target: \"%s\"\n", reftgt );
+            // check for possible gc of this incomplete stream
+            if ( filestate == 1  &&  walker->gcthresh  &&  walker->stval.st_ctime < walker->gcthresh ) {
+               // tell the caller to unlink this reference file, and that the stream ends here
+               opinfo* optgt = NULL;
+               if ( process_identifyoperation( &(walker->gcops), MARFS_DELETE_REF_OP, &(tmptag), &(optgt) ) ) {
+                  LOG( LOG_ERR, "Failed to identify operation target for deletion of file %zu\n", walker->ftag.fileno );
+                  free( reftgt );
+                  return -1;
+               }
+               delref_info* delrefinf = NULL;
+               delrefinf->eos = 1; // ALWAYS set this as EndOfStream
+               if ( optgt->count ) {
+                  // update existing op
+                  optgt->count++;
+                  optgt->count += walker->gctag.refcnt;
+                  delrefinf = optgt->extendedinfo;
+                  // sanity check
+                  if ( delrefinf->prev_active_index != walker->activeindex ) {
+                     LOG( LOG_ERR, "Active delref op active index (%zu) does not match current val (%zu)\n",
+                                   delrefinf->prev_active_index, walker->activeindex );
+                     free( reftgt );
+                     return -1;
+                  }
+               }
+               else {
+                  // populate new op
+                  optgt->ftag.fileno = walker->ftag.fileno; // be SURE that this is not a dummy op, targeting fileno zero
+                  optgt->count = 1;
+                  optgt->count += walker->gctag.refcnt;
+                  delrefinf = optgt->extendedinfo;
+                  delrefinf->prev_active_index = walker->activeindex;
+               }
+               walker->report.delfiles++;
+            }
+            else {
+               walker->report.volfiles++;
+            }
+            // immediately break out of this loop, dispatching any remaining ops
             free( reftgt );
-            return -1;
+            break;
          }
          free( reftgt );
          continue; // restart this iteration, now with all info available
