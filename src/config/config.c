@@ -1672,14 +1672,21 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
    for ( curnode = 0; curnode < nodecount; curnode++ ) {
       nodelist[curnode].content = NULL; // we don't care about content
       nodelist[curnode].weight = dweight; // every node gets the default weight, for now
-      // identify the number of characers needed for this nodename via some cheeky use of snprintf
-      int namelen = snprintf( NULL, 0, "%zu", curnode );
+      // NOTE -- It is ESSENTIAL to include a 'per-distribution-table' unique value in this name string.
+      //         Failing to do so ( just using the same numeric values across pod / cap / scatter ) will 
+      //         result in unintended irregularities in the distribution of objects.
+      //         For example, an exact node name match between pod / cap values results in a hashing preference
+      //         for objects to target matching pod + cap values.
+      //         In this case, we're prepending the first char of the table type ( 'p' / 'c' / 's' ) to EVERY
+      //         hash node name.
+      // identify the number of characers needed for this nodename via snprintf
+      int namelen = snprintf( NULL, 0, "%c%zu", *((char*)distroot->name), curnode );
       nodelist[curnode].name = malloc( sizeof(char) * (namelen + 1) );
       if ( nodelist[curnode].name == NULL ) {
          LOG( LOG_ERR, "failed to allocate space for node names of %s distribution\n", (char*)distroot->name );
          break;
       }
-      if ( snprintf( nodelist[curnode].name, namelen + 1, "%zu", curnode ) > namelen ) {
+      if ( snprintf( nodelist[curnode].name, namelen + 1, "%c%zu", *((char*)distroot->name), curnode ) > namelen ) {
          LOG( LOG_ERR, "failed to populate nodename \"%zu\" of %s distribution\n", curnode, (char*)distroot->name );
          errno = EFAULT;
          free( nodelist[curnode].name );
@@ -2043,6 +2050,10 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
                return -1;
             }
             if ( strncmp( (char*)subnode->name, "pods", 5 ) == 0 ) {
+               if ( ds->podtable ) {
+                  LOG( LOG_ERR, "Encountered duplicate 'pods' distribution subnode\n" );
+                  return -1;
+               }
                if ( (ds->podtable = create_distribution_table( &(maxloc.pod), subnode )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'pods' distribution table\n" );
                   return -1;
@@ -2050,6 +2061,10 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
                maxloc.pod--; // decrement node count to get actual max value
             }
             else if ( strncmp( (char*)subnode->name, "caps", 5 ) == 0 ) {
+               if ( ds->captable ) {
+                  LOG( LOG_ERR, "Encountered duplicate 'caps' distribution subnode\n" );
+                  return -1;
+               }
                if ( (ds->captable = create_distribution_table( &(maxloc.cap), subnode )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'caps' distribution table\n" );
                   return -1;
@@ -2057,6 +2072,10 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
                maxloc.cap--; // decrement node count to get actual max value
             }
             else if ( strncmp( (char*)subnode->name, "scatters", 9 ) == 0 ) {
+               if ( ds->scattertable ) {
+                  LOG( LOG_ERR, "Encountered duplicate 'scatters' distribution subnode\n" );
+                  return -1;
+               }
                if ( (ds->scattertable = create_distribution_table( &(maxloc.scatter), subnode )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'scatters' distribution table\n" );
                   return -1;

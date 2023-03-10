@@ -2118,9 +2118,9 @@ int datastream_objtarget(FTAG* ftag, const marfs_ds* ds, char** objectname, ne_e
          free(objname);
          return -1;
       }
-      // parse our nodename, to produce an integer value
+      // parse our nodename, to produce an integer value ( skipping over the 'p' / 'c' / 's' name prefix )
       char* endptr = NULL;
-      unsigned long long parseval = strtoull(node->name, &(endptr), 10);
+      unsigned long long parseval = strtoull(node->name + 1, &(endptr), 10);
       if (*endptr != '\0' || parseval >= INT_MAX) {
          LOG(LOG_ERR, "Failed to parse %s value of \"%s\" for new object \"%s\"\n",
             (iteration < 1) ? "pod" : (iteration < 2) ? "cap" : "scatter",
