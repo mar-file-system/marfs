@@ -1092,8 +1092,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
             // wait for TQ completion
             if ( tq_wait_for_completion( rman->tq ) ) {
                LOG( LOG_ERR, "Failed to wait for ThreadQueue completion\n" );
-               snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait for ThreadQueue completion\n" );
-               return -1;
+               threaderror = 1;
             }
          }
          // gather all thread status values
@@ -1186,7 +1185,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          return -1;
       }
       if ( threaderror ) {
-         snprintf( response->errorstr, MAX_ERROR_BUFFER, "ThreadQueue had unexpected termination flags\n" );
+         snprintf( response->errorstr, MAX_ERROR_BUFFER, "ThreadQueue had unexpected termination condition\n" );
          return -1;
       }
    }
