@@ -1341,6 +1341,7 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
       ms->mdal->close( mhandle );
       return NULL;
    }
+   op->ftag.objno = objno; // overwrite object number with the one we are actually targeting
    free( ftagstr );
    // allocate health arrays for the rebuild info RTAG
    rinfo->rtag.meta_status = calloc( sizeof(char), op->ftag.protection.N + op->ftag.protection.E );
@@ -1414,6 +1415,13 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
          return NULL;
       }
       free( rtagstr );
+   }
+   else {
+      // free our status arrays, to signal a lack of an RTAG value
+      free( rinfo->rtag.data_status );
+      free( rinfo->rtag.meta_status );
+      rinfo->rtag.data_status = NULL;
+      rinfo->rtag.meta_status = NULL;
    }
    free( rtagname );
    // duplicate marker path
