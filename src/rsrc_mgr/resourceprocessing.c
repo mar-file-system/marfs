@@ -643,6 +643,7 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
                   LOG( LOG_ERR, "Failed to properly abort rebuild handle for object %zu of stream \"%s\"\n",
                                 tmptag.objno, tmptag.streamid );
                }
+               obj = NULL;
                break;
             }
             else { break; }
@@ -656,10 +657,11 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
                LOG( LOG_ERR, "Failed to properly abort rebuild handle for object %zu of stream \"%s\"\n",
                              tmptag.objno, tmptag.streamid );
             }
+            obj = NULL;
             break;
          }
          // close the object reference
-         if ( ne_close( obj, NULL, NULL ) ) {
+         if ( obj  &&  ne_close( obj, NULL, NULL ) ) {
             LOG( LOG_ERR, "Failed to finalize rebuild of object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
             break;
