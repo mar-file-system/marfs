@@ -894,7 +894,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             // ignore '.'-prefixed entries
             if ( strncmp( entry->d_name, ".", 1 ) == 0 ) { continue; }
             // ignore error-prefixed entries
-            if ( strncmp( entry0>d_name, ERROR_LOG_PREFIX, strlen(ERROR_LOG_PREFIX) ) == 0 ) { continue; }
+            if ( strncmp( entry->d_name, ERROR_LOG_PREFIX, strlen(ERROR_LOG_PREFIX) ) == 0 ) { continue; }
             // all other entries are assumed to be logfiles
             break;
          }
@@ -1169,7 +1169,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          free( outlogpath );
          return -1;
       }
-      free( outlogpath );
+      if ( outlogpath ) { free( outlogpath ); }
       if (rlogret) { response->errorlog = 1; } // note if our log was preserved due to errors being present
       if ( rman->gstate.rpst ) {
          if ( repackstreamer_complete( rman->gstate.rpst ) ) {
