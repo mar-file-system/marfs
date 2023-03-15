@@ -218,7 +218,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   char* rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   char* rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file1' (%s)\n", strerror(errno) );
       return -1;
@@ -257,7 +257,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   char* rpath2 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   char* rpath2 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath2 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file2' (%s)\n", strerror(errno) );
       return -1;
@@ -294,7 +294,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   char* rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   char* rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath3 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file3' (%s)\n", strerror(errno) );
       return -1;
@@ -810,7 +810,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file1' (%s)\n", strerror(errno) );
       return -1;
@@ -836,7 +836,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath2 = datastream_genrpath( &(stream->files[1].ftag), stream->ns->prepo->metascheme.reftable );
+   rpath2 = datastream_genrpath( &(stream->files[1].ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath2 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file2' (%s)\n", strerror(errno) );
       return -1;
@@ -895,7 +895,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath3 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file3' (%s)\n", strerror(errno) );
       return -1;
@@ -1430,7 +1430,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pwrite 'file1' (%s)\n", strerror(errno) );
       return -1;
@@ -1456,7 +1456,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath2 = datastream_genrpath( &(stream->files[1].ftag), stream->ns->prepo->metascheme.reftable );
+   rpath2 = datastream_genrpath( &(stream->files[1].ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath2 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pwrite 'file2' (%s)\n", strerror(errno) );
       return -1;

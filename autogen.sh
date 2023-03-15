@@ -1,12 +1,12 @@
 #!/bin/sh
 
 which autoreconf >/dev/null 2>&1
-if [[ $? -ne 0 ]]; then
+if [ $? -ne 0 ]; then
    echo "ERROR: Failed to locate 'autoreconf'.  You may need to install autoconf + automake packages."
    exit -1
 fi
 autoreconf -i
-if [[ $? -ne 0 ]]; then
+if [ $? -ne 0 ]; then
    echo "ERROR: Failed to run 'autoreconf'."
    exit -1
 fi

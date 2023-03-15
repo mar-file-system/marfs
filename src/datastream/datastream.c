@@ -177,7 +177,7 @@ char* repackmarkertgt( const char* rpath, FTAG* ftag, const marfs_ms* ms ) {
    char* refpath = NULL;
    if ( rpath == NULL ) {
       // gen an rpath if we didn't get one
-      refpath = datastream_genrpath( ftag, ms->reftable );
+      refpath = datastream_genrpath( ftag, ms->reftable, NULL, NULL );
    }
    else {
       refpath = strdup( rpath );
@@ -545,7 +545,7 @@ int create_new_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt, mode_t 
    };
 
    // establish a reference path for the new file
-   char* newrpath = datastream_genrpath(&(newfile.ftag), stream->ns->prepo->metascheme.reftable);
+   char* newrpath = datastream_genrpath(&(newfile.ftag), stream->ns->prepo->metascheme.reftable, ms->mdal, ctxt);
    if (newrpath == NULL) {
       LOG(LOG_ERR, "Failed to identify reference path for stream\n");
       if (errno == EBADFD) {
@@ -990,7 +990,7 @@ int open_repack_file(DATASTREAM stream, const char* path, MDAL_CTXT ctxt) {
    }
 
    // link the existing file to the new reference location
-   char* newpath = datastream_genrpath(&(curfile->ftag), stream->ns->prepo->metascheme.reftable);
+   char* newpath = datastream_genrpath(&(curfile->ftag), stream->ns->prepo->metascheme.reftable, curmdal, ctxt);
    if (newpath == NULL) {
       LOG(LOG_ERR, "Failed to identify new reference path for repacked file: \"%s\"\n", path);
       if (errno == EBADFD) {
@@ -1265,8 +1265,33 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       }
       free(rmarkstr);
 
+      // create parent paths, as necessary
+      char* rpathparse = rpath;
+      while ( *rpathparse != '\0' ) {
+         if ( *rpathparse == '/' ) {
+            // if we aren't on the literal first character, we'll need to create this dir
+            if ( rpathparse != rpath ) {
+               // substitute out '/' for '\0', temporarily
+               *rpathparse = '\0';
+               // issue a mkdir for the truncated path
+               if ( mdal->createrefdir( mdalctxt, rpath, 0777 )  &&  errno != EEXIST ) {
+                  LOG(LOG_ERR, "Failed to create refdir parent \"%s\" for rebuild marker\n", rpath);
+                  free(rpath);
+                  free(rmarkstr);
+                  free(rtagstr);
+                  errno = EFAULT;
+                  return -1;
+               }
+               // reverse our string truncation
+               *rpathparse = '/';
+            }
+            while ( *rpathparse == '/' ) { rpathparse++; }
+         }
+         else { rpathparse++; }
+      }
+
       // identify the rpath of the problem file
-      char* filerpath = datastream_genrpath( curftag, stream->ns->prepo->metascheme.reftable );
+      char* filerpath = datastream_genrpath( curftag, stream->ns->prepo->metascheme.reftable, NULL, NULL );
       if ( filerpath == NULL ) {
          LOG( LOG_ERR, "Failed to identify the rpath of the problem file\n" );
          free( rpath );
@@ -1834,7 +1859,7 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
          return -1;
       } // NOTE -- stream->ftagstr now contains the original FTAG value
       // produce the original reference path of this file
-      char* origrefpath = datastream_genrpath( &(origfile.ftag), ms->reftable );
+      char* origrefpath = datastream_genrpath( &(origfile.ftag), ms->reftable, NULL, NULL );
       if ( origrefpath == NULL ) {
          LOG( LOG_ERR, "Failed to identify original refpath of \"%s\"\n", stream->finfo.path );
          free( origfile.ftag.ctag );
@@ -1992,10 +2017,12 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
  * Generate a reference path for the given FTAG
  * @param FTAG* ftag : Reference to the FTAG value to generate an rpath for
  * @param HASH_TABLE reftable : Reference position hash table to be used
+ * @param MDAL mdal : MDAL to be used for reference dir creation ( if desired )
+ * @param MDAL_CTXT ctxt : MDAL_CTXT to be used for reference dir creation ( if desired )
  * @return char* : Reference to the newly generated reference path, or NULL on failure
  *                 NOTE -- returned path must be freed by caller
  */
-char* datastream_genrpath(FTAG* ftag, HASH_TABLE reftable) {
+char* datastream_genrpath(FTAG* ftag, HASH_TABLE reftable, MDAL mdal, MDAL_CTXT ctxt) {
    // generate the meta reference name of this file
    size_t rnamelen = ftag_metatgt(ftag, NULL, 0);
    if (rnamelen < 1) {
@@ -2035,6 +2062,34 @@ char* datastream_genrpath(FTAG* ftag, HASH_TABLE reftable) {
       return NULL;
    }
    free(refname); // done with this tmp string
+
+   if ( mdal  &&  ctxt ) {
+      // create parent paths, as necessary
+      char* rpathparse = rpath;
+      while ( *rpathparse != '\0' ) {
+         if ( *rpathparse == '/' ) {
+            // if we aren't on the literal first character, we'll need to create this dir
+            if ( rpathparse != rpath ) {
+               // substitute out '/' for '\0', temporarily
+               *rpathparse = '\0';
+               // issue a mkdir for the truncated path
+               if ( mdal->createrefdir( ctxt, rpath, 0777 )  &&  errno != EEXIST ) {
+                  LOG(LOG_ERR, "Failed to create refdir parent \"%s\" for rebuild marker\n", rpath);
+                  free(rpath);
+                  free(rmarkstr);
+                  free(rtagstr);
+                  errno = EFAULT;
+                  return -1;
+               }
+               // reverse our string truncation
+               *rpathparse = '/';
+            }
+            while ( *rpathparse == '/' ) { rpathparse++; }
+         }
+         else { rpathparse++; }
+      }
+   }
+
    return rpath;
 }
 
@@ -2853,7 +2908,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
       return -1;
    }
    // identify and open the repack target file
-   char* repacktgtpath = datastream_genrpath( &(tgtftag), ms->reftable );
+   char* repacktgtpath = datastream_genrpath( &(tgtftag), ms->reftable, NULL, NULL );
    if ( repacktgtpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify repack tgt path of repack marker \"%s\"\n", refpath );
       free( tgtftagstr );
@@ -2998,7 +3053,7 @@ int datastream_repack_cleanup(const char* refpath, marfs_position* pos) {
          return -1;
       }
       free( realftagstr );
-      renametgt = datastream_genrpath( &(realftag), ms->reftable );
+      renametgt = datastream_genrpath( &(realftag), ms->reftable, NULL, NULL );
       if ( renametgt == NULL ) {
          LOG( LOG_ERR, "Failed to identify FTAG tgt of repack marker \"%s\"\n", refpath );
          free( realftag.ctag );

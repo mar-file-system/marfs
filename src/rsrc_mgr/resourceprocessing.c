@@ -465,7 +465,7 @@ void process_deleteref( const marfs_position* pos, opinfo* op ) {
       // identify the reference path of our initial target
       FTAG tmptag = op->ftag;
       tmptag.fileno = delrefinf->prev_active_index;
-      char* reftgt = datastream_genrpath( &(tmptag), reftable );
+      char* reftgt = datastream_genrpath( &(tmptag), reftable, NULL, NULL );
       if ( reftgt == NULL ) {
          LOG( LOG_ERR, "Failed to identify reference path of active fileno %zu of stream \"%s\"\n", tmptag.fileno, op->ftag.streamid );
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
@@ -503,7 +503,7 @@ void process_deleteref( const marfs_position* pos, opinfo* op ) {
          // identify the reference path
          tmptag = op->ftag;
          tmptag.fileno += countval;
-         char* rpath = datastream_genrpath( &(tmptag), reftable );
+         char* rpath = datastream_genrpath( &(tmptag), reftable, NULL, NULL );
          if ( rpath == NULL ) {
             LOG( LOG_ERR, "Failed to identify reference path of fileno %zu of stream \"%s\"\n", tmptag.fileno, op->ftag.streamid );
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
@@ -763,7 +763,7 @@ void process_repack( marfs_position* pos, opinfo* op, REPACKSTREAMER rpckstr, co
       if ( rpckerror ) { op->errval = (errno) ? errno : ENOTRECOVERABLE; continue; }
 
       // identify the reference path of the target file
-      char* reftgt = datastream_genrpath( &(op->ftag), reftable );
+      char* reftgt = datastream_genrpath( &(op->ftag), reftable, NULL, NULL );
       if ( reftgt == NULL ) {
          LOG( LOG_ERR, "Failed to identify reference path of active fileno %zu of stream \"%s\"\n", op->ftag.fileno, op->ftag.streamid );
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
@@ -1850,7 +1850,7 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
       FTAG tmptag = walker->ftag;
       tmptag.fileno = walker->fileno;
       tmptag.fileno += tgtoffset;
-      char* reftgt = datastream_genrpath( &(tmptag), walker->reftable );
+      char* reftgt = datastream_genrpath( &(tmptag), walker->reftable, NULL, NULL );
       if ( reftgt == NULL ) {
          LOG( LOG_ERR, "Failed to generate reference path for corrected tgt ( %zu )\n", walker->fileno );
          return -1;
@@ -1928,7 +1928,7 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
          // generate the rpath of the previous file
          free( reftgt );
          tmptag.fileno = walker->fileno;
-         reftgt = datastream_genrpath( &(tmptag), walker->reftable );
+         reftgt = datastream_genrpath( &(tmptag), walker->reftable, NULL, NULL );
          if ( reftgt == NULL ) {
             LOG( LOG_ERR, "Failed to generate reference path for previous file ( %zu )\n", walker->fileno );
             return -1;

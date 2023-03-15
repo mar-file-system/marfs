@@ -572,7 +572,7 @@ int shift_command(marfs_config* config, walkerstate* state, char* args) {
    }
 
    // generate a ref path for the new target file
-   char* newrpath = datastream_genrpath(&(state->ftag), state->reftable);
+   char* newrpath = datastream_genrpath(&(state->ftag), state->reftable, NULL, NULL);
    if (newrpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
       state->ftag.fileno = origfileno;
@@ -662,7 +662,7 @@ int ref_command(marfs_config* config, walkerstate* state, char* args) {
    }
 
    // generate a ref path for the new target file
-   char* curpath = datastream_genrpath(&(state->ftag), state->reftable);
+   char* curpath = datastream_genrpath(&(state->ftag), state->reftable, NULL, NULL);
    if (curpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to identify current ref path\n");
       return -1;
@@ -844,7 +844,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
       while (state->ftag.endofstream == 0 && retval == 0 && state->gctag.eos == 0  &&
          (state->ftag.state & FTAG_DATASTATE) >= FTAG_FIN) {
          // generate a ref path for the new target file
-         char* newrpath = datastream_genrpath(&(state->ftag), state->reftable);
+         char* newrpath = datastream_genrpath(&(state->ftag), state->reftable, NULL, NULL);
          if (newrpath == NULL) {
             printf(OUTPREFX "ERROR: Failed to identify new ref path\n");
             state->ftag.fileno = origfileno;
@@ -874,7 +874,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
       fineos = state->gctag.eos;
       // restore the original value
       state->ftag.fileno = origfileno;
-      char* newrpath = datastream_genrpath(&(state->ftag), state->reftable);
+      char* newrpath = datastream_genrpath(&(state->ftag), state->reftable, NULL, NULL);
       if (newrpath == NULL) {
          printf(OUTPREFX "ERROR: Failed to identify original ref path\n");
          return -1;
@@ -954,7 +954,7 @@ int refresh_command(marfs_config* config, walkerstate* state, char* args) {
    }
 
    // generate a ref path for the current target file
-   char* newrpath = datastream_genrpath(&(state->ftag), state->reftable);
+   char* newrpath = datastream_genrpath(&(state->ftag), state->reftable, NULL, NULL);
    if (newrpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to identify current ref path\n");
       return -1;
@@ -1049,7 +1049,7 @@ int recovery_command(marfs_config* config, walkerstate* state, char* args) {
       return -1;
    }
 
-   char* rpath = datastream_genrpath(&(state->ftag), state->reftable);
+   char* rpath = datastream_genrpath(&(state->ftag), state->reftable, NULL, NULL);
    if (rpath == NULL) {
       printf(OUTPREFX "ERROR: Failed to generate reference path\n");
       return -1;
