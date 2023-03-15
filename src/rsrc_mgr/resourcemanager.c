@@ -94,6 +94,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define MODIFY_ITERATION_PARENT "RMAN-MODIFY-RUNS"
 #define RECORD_ITERATION_PARENT "RMAN-RECORD-RUNS"
 #define SUMMARY_FILENAME "summary.log"
+#define ERROR_LOG_PREFIX "ERRORS-"
 #define ITERATION_ARGS_FILE "PROGRAM-ARGUMENTS"
 #define ITERATION_STRING_LEN 128
 #define OLDLOG_PREALLOC 16  // pre-allocate space for 16 logfiles in the oldlogs hash table ( double from there, as needed )
@@ -892,6 +893,8 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
          while ( (entry = readdir( dirlist[2] )) ) {
             // ignore '.'-prefixed entries
             if ( strncmp( entry->d_name, ".", 1 ) == 0 ) { continue; }
+            // ignore error-prefixed entries
+            if ( strncmp( entry0>d_name, ERROR_LOG_PREFIX, strlen(ERROR_LOG_PREFIX) ) == 0 ) { continue; }
             // all other entries are assumed to be logfiles
             break;
          }
@@ -1327,18 +1330,35 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          }
          // process the work log
          if ( response->errorlog ) {
+            // parse through our output path, looking for the final path element
+            char* parselogpath = outlogpath;
+            char* finelem = outlogpath;
+            while ( *parselogpath != '\0' ) {
+               // check for '/' separator and skip beyond it
+               if ( *parselogpath == '/' ) { while ( *parselogpath == '/' ) { parselogpath++; finelem = parselogpath; } }
+               else { parselogpath++; } // only increment here if we aren't already doing so above ( avoids possible OOB error with '/' final char )
+            }
             // identify the errorlog output location
-            char* errlogpath = resourcelog_genlogpath( 1, rman->logroot, rman->iteration,
-                                                        rman->nslist[response->request.nsindex], ranknum );
+            int logdirlen = finelem - outlogpath; // pointer arithmetic to get prefix dir string length
+            int fnamelen = parselogpath - finelem;
+            size_t errloglen = logdirlen + strlen( ERROR_LOG_PREFIX ) + fnamelen;
+            char* errlogpath = malloc( sizeof(char) * (errloglen + 1) );
             if ( errlogpath == NULL ) {
-               fprintf( stderr, "ERROR: Failed to identify the error log path of Rank %zu for NS \"%s\"\n",
+               fprintf( stderr, "ERROR: Failed to allocate the error log path of Rank %zu for NS \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr );
                resourcelog_term( &(ranklog), NULL, 0 );
                free( outlogpath );
                rman->fatalerror = 1;
                return -1;
             }
-
+            if ( snprintf( errlogpath, errloglen + 1, "%*s%s%s", logdirlen, outlogpath, ERROR_LOG_PREFIX, finelem ) != errloglen ) {
+               fprintf( stderr, "ERROR: Failed to generate the error log path of Rank %zu for NS \"%s\"\n",
+                        ranknum, rman->nslist[response->request.nsindex]->idstr );
+               resourcelog_term( &(ranklog), NULL, 0 );
+               free( outlogpath );
+               rman->fatalerror = 1;
+               return -1;
+            }
             // open the error log for write
             RESOURCELOG errlog = NULL;
             if ( resourcelog_init( &(errlog), errlogpath, RESOURCE_RECORD_LOG, rman->nslist[response->request.nsindex] ) ) {
