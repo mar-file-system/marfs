@@ -1162,17 +1162,17 @@ int cleanup_refdir( marfs_position* pos, const char* refdirpath, time_t gcthresh
    if ( pos == NULL ) {
       LOG( LOG_ERR, "Received a NULL marfs_position reference\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    if ( pos->ns == NULL  ||  pos->ctxt == NULL ) {
       LOG( LOG_ERR, "Received an invalid, non-established marfs_position\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    if ( refdirpath == NULL ) {
       LOG( LOG_ERR, "Received a NULL refdirpath reference\n" );
       errno = EINVAL;
-      return NULL;
+      return -1;
    }
    // nothing to do, if this isn't a GC run
    if ( gcthresh == 0 ) {

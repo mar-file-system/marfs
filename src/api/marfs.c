@@ -1568,8 +1568,6 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
             LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
             return NULL;
          }
-         // increment our index
-         dh->subspcindex++;
          // stat the subspace, to check for existence
          MDAL tgtmdal = tgtsubspace->prepo->metascheme.mdal;
          struct stat stval;
@@ -1590,10 +1588,14 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
                LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
                return NULL;
             }
+            // increment our index
+            dh->subspcindex++;
             pthread_mutex_unlock( &(dh->lock) );
             errno = cachederrno;
             return &(dh->subspcent);
          }
+         // increment our index
+         dh->subspcindex++;
       }
    }
    // perform the op
