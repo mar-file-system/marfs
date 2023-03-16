@@ -1123,13 +1123,6 @@ int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
       return -1;
    }
    LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos.ns->idstr, subpath );
-   if ( tgtdepth == 0 ) {
-      LOG( LOG_ERR, "Cannot rmdir a MarFS NS: \"%s\"\n", path );
-      pathcleanup( subpath, &oppos );
-      errno = EPERM;
-      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-      return -1;
-   }
    // check NS perms
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&  !(oppos.ns->bperms & NS_WRITEMETA) )  ||
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos.ns->iperms & NS_WRITEMETA) ) ) {
@@ -1141,7 +1134,21 @@ int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
    }
    // perform the MDAL op
    MDAL curmdal = oppos.ns->prepo->metascheme.mdal;
-   int retval = curmdal->rmdir( oppos.ctxt, subpath );
+   int retval = -1;
+   if ( tgtdepth == 0 ) {
+      if ( oppos.ctxt == NULL ) {
+         // destroy the namespace without creating an MDAL_CTXT
+         retval = curmdal->destroynamespace( curmdal->ctxt, subpath );
+      }
+      else {
+         // destroy the namespace relative to our current CTXT
+         retval = curmdal->destroynamespace( oppos.ctxt, subpath );
+      }
+   }
+   else {
+      // just issue the base op
+      retval = curmdal->rmdir( oppos.ctxt, subpath );
+   }
    // cleanup references
    pathcleanup( subpath, &oppos );
    // return op result

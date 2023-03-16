@@ -824,7 +824,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                LOG( LOG_ERR, "Thread %u failed to cleanup reference dir \"%s\"\n", tstate->tID, tstate->rdirpath );
                snprintf( tstate->errorstr, MAX_STR_BUFFER,
                          "Thread %u failed to cleanup reference dir \"%s\"\n", tstate->tID, tstate->rdirpath );
-               tstate->fatalerror;
+               tstate->fatalerror = 1;
                // ensure termination of all other threads ( avoids possible deadlock )
                if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
                   LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
