@@ -3249,6 +3249,9 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
       return -1;
    }
 
+   // zero out our umask value, to avoid improper perms
+   mode_t oldmask = umask(0);
+
    // establish a default position value, from which we'll traverse to our targetNS
    MDAL rootmdal = config->rootns->prepo->metascheme.mdal;
    marfs_position pos = {
@@ -3263,15 +3266,18 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
          LOG( LOG_INFO, "Attempting to create rootNS\n" );
          if ( rootmdal->createnamespace( rootmdal->ctxt, "/." )  ) {
             LOG( LOG_ERR, "Failed to create rootNS (%s)\n", strerror(errno) );
+            umask(oldmask);
             return -1;
          }
          if ( config_establishposition( &pos, config ) ) {
             LOG( LOG_ERR, "Failed to establish a rootNS position, even after creation\n" );
+            umask(oldmask);
             return -1;
          }
       }
       else {
          LOG( LOG_ERR, "Failed to establish a rootNS MDAL_CTXT\n" );
+         umask(oldmask);
          return -1;
       }
    }
@@ -3287,6 +3293,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
          LOG( LOG_ERR, "The specified target is not a NS: \"%s\"\n", NSpath );
       }
       free( NSpath );
+      umask(oldmask);
       return -1;
    }
    free( NSpath ); // done with NS path
@@ -3295,6 +3302,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
    marfs_repo** vrepos = calloc( sizeof(marfs_repo*), config->repocount );
    if ( vrepos == NULL ) {
       LOG( LOG_ERR, "Failed to allocate verified repos list\n" );
+      umask(oldmask);
       return -1;
    }
    size_t vrepocnt = 0;
@@ -3305,11 +3313,9 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
    if ( nsiterlist == NULL ) {
       LOG( LOG_ERR, "Failed to allocate NS iterator list\n" );
       free( vrepos );
+      umask(oldmask);
       return -1;
    }
-
-   // zero out our umask value, to avoid improper perms
-   mode_t oldmask = umask(0);
 
    // traverse the entire NS hierarchy, creating any missing NSs and reference dirs
    int errcount = 0;
@@ -3340,6 +3346,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                              pos.ns->prepo->name, strerror(errno) );
                free( vrepos );
                free( nsiterlist );
+               umask(oldmask);
                return -1;
             }
             else if ( verres ) {
@@ -3355,6 +3362,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                              pos.ns->prepo->name, strerror(errno) );
                free( vrepos );
                free( nsiterlist );
+               umask(oldmask);
                return -1;
             }
             else if ( verres ) {
@@ -3465,6 +3473,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             umask(oldmask); // reset umask
             free( vrepos );
             free( nsiterlist );
+            umask(oldmask);
             return -1;
          }
          LOG( LOG_INFO, "Incrementing iterator for parent ( index = %zu / iter = %zu )\n",
@@ -3477,6 +3486,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                LOG( LOG_ERR, "Failed to allocate extended NS iterator list\n" );
                umask(oldmask); // reset umask
                free( vrepos );
+               umask(oldmask);
                return -1;
             }
             curiteralloc += 1024;
@@ -3491,6 +3501,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             umask(oldmask); // reset umask
             free( vrepos );
             free( nsiterlist );
+            umask(oldmask);
             return -1;
          }
          curdepth--;
