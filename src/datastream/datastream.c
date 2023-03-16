@@ -1266,6 +1266,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       free(rmarkstr);
 
       // create parent paths, as necessary
+      mode_t oldmask = umask(0); // blow away umask, to avoid improper refdir perms
       char* rpathparse = rpath;
       while ( *rpathparse != '\0' ) {
          if ( *rpathparse == '/' ) {
@@ -1279,6 +1280,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
                   free(rpath);
                   free(rmarkstr);
                   free(rtagstr);
+                  umask(oldmask); //restore orig umask
                   errno = EFAULT;
                   return -1;
                }
@@ -1289,6 +1291,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          }
          else { rpathparse++; }
       }
+      umask(oldmask); //restore orig umask
 
       // identify the rpath of the problem file
       char* filerpath = datastream_genrpath( curftag, stream->ns->prepo->metascheme.reftable, NULL, NULL );
@@ -2064,6 +2067,7 @@ char* datastream_genrpath(FTAG* ftag, HASH_TABLE reftable, MDAL mdal, MDAL_CTXT 
    free(refname); // done with this tmp string
 
    if ( mdal  &&  ctxt ) {
+      mode_t oldmask = umask(0); // blow away umask, to avoid improper refdir perms
       // create parent paths, as necessary
       char* rpathparse = rpath;
       while ( *rpathparse != '\0' ) {
@@ -2076,6 +2080,7 @@ char* datastream_genrpath(FTAG* ftag, HASH_TABLE reftable, MDAL mdal, MDAL_CTXT 
                if ( mdal->createrefdir( ctxt, rpath, 0777 )  &&  errno != EEXIST ) {
                   LOG(LOG_ERR, "Failed to create refdir parent \"%s\" for rebuild marker\n", rpath);
                   free(rpath);
+                  umask(oldmask); //restore orig umask
                   errno = EFAULT;
                   return NULL;
                }
@@ -2086,6 +2091,7 @@ char* datastream_genrpath(FTAG* ftag, HASH_TABLE reftable, MDAL mdal, MDAL_CTXT 
          }
          else { rpathparse++; }
       }
+      umask(oldmask); //restore orig umask
    }
 
    return rpath;
