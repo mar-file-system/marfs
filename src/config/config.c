@@ -3419,7 +3419,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                   // stat the reference dir
                   struct stat stval;
                   mkdirres = curmdal->statref( nsctxt, rfullpath, &(stval) );
-                  if ( mkdirres  &&  errno = ENOENT ) { // missing reference path is acceptable
+                  if ( mkdirres  &&  errno == ENOENT ) { // missing reference path is acceptable
                      mkdirres = 0;
                   }
                   else if ( mkdirres == 0 ) {
