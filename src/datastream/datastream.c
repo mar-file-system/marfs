@@ -2076,8 +2076,6 @@ char* datastream_genrpath(FTAG* ftag, HASH_TABLE reftable, MDAL mdal, MDAL_CTXT 
                if ( mdal->createrefdir( ctxt, rpath, 0777 )  &&  errno != EEXIST ) {
                   LOG(LOG_ERR, "Failed to create refdir parent \"%s\" for rebuild marker\n", rpath);
                   free(rpath);
-                  free(rmarkstr);
-                  free(rtagstr);
                   errno = EFAULT;
                   return -1;
                }
