@@ -2077,7 +2077,7 @@ char* datastream_genrpath(FTAG* ftag, HASH_TABLE reftable, MDAL mdal, MDAL_CTXT 
                   LOG(LOG_ERR, "Failed to create refdir parent \"%s\" for rebuild marker\n", rpath);
                   free(rpath);
                   errno = EFAULT;
-                  return -1;
+                  return NULL;
                }
                // reverse our string truncation
                *rpathparse = '/';

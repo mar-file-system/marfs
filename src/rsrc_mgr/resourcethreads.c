@@ -270,35 +270,39 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_S
          return 1;
       }
    }
-   // check if the ref range has already been traversed
-   if ( rin->refindex == rin->refmax ) {
-      LOG( LOG_INFO, "Resource inputs have been fully traversed\n" );
-      int retval = 0;
-      if ( rin->prepterm ) {
-         LOG( LOG_INFO, "Caller should prepare for termination\n" );
-         retval = 10;
+   MDAL_SCANNER scanres = NULL;
+   while ( scanres == NULL ) {
+      // check if the ref range has already been traversed
+      if ( rin->refindex == rin->refmax ) {
+         LOG( LOG_INFO, "Resource inputs have been fully traversed\n" );
+         int retval = 0;
+         if ( rin->prepterm ) {
+            LOG( LOG_INFO, "Caller should prepare for termination\n" );
+            retval = 10;
+         }
+         pthread_mutex_unlock( &(rin->lock) );
+         return retval;
       }
-      pthread_mutex_unlock( &(rin->lock) );
-      return retval;
-   }
-   // retrieve the next reference index value
-   ssize_t res = rin->refindex;
-   rin->refindex++;
-   LOG( LOG_INFO, "Passing out reference index: %zd\n", res );
-   // open the corresponding reference scanner
-   MDAL nsmdal = rin->ns->prepo->metascheme.mdal;
-   HASH_NODE* node = rin->ns->prepo->metascheme.refnodes + res;
-   MDAL_SCANNER scanres = nsmdal->openscanner( rin->ctxt, node->name );
-   if ( scanres == NULL ) { // just complain if we failed to open the dir
-      LOG( LOG_ERR, "Failed to open scanner for refdir: \"%s\" ( index %zd )\n", node->name, res );
-      rin->refindex--;
-      pthread_mutex_unlock( &(rin->lock) );
-      return -1;
-   }
-   // check for ref range completion
-   if ( rin->refindex == rin->refmax ) {
-      LOG( LOG_INFO, "Ref range has been completed\n" );
-      pthread_cond_signal( &(rin->complete) );
+      // retrieve the next reference index value
+      ssize_t res = rin->refindex;
+      rin->refindex++;
+      LOG( LOG_INFO, "Passing out reference index: %zd\n", res );
+      // open the corresponding reference scanner
+      MDAL nsmdal = rin->ns->prepo->metascheme.mdal;
+      HASH_NODE* node = rin->ns->prepo->metascheme.refnodes + res;
+      scanres = nsmdal->openscanner( rin->ctxt, node->name );
+      if ( scanres == NULL  &&  errno != ENOENT ) { // only missing dir is acceptable
+         // complain if we failed to open the dir for any other reason
+         LOG( LOG_ERR, "Failed to open scanner for refdir: \"%s\" ( index %zd )\n", node->name, res );
+         rin->refindex--;
+         pthread_mutex_unlock( &(rin->lock) );
+         return -1;
+      }
+      // check for ref range completion
+      if ( rin->refindex == rin->refmax ) {
+         LOG( LOG_INFO, "Ref range has been completed\n" );
+         pthread_cond_signal( &(rin->complete) );
+      }
    }
    pthread_mutex_unlock( &(rin->lock) );
    *scanner = scanres;
