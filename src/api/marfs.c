@@ -1556,39 +1556,45 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
    int cachederrno = errno;
    errno = 0;
    // potentially insert a subspace entry
-   if ( dh->depth == 0  &&  dh->subspcindex < dh->ns->subnodecount ) {
-      // stat the subspace, to identify inode info
-      marfs_ns* tgtsubspace = (marfs_ns *)(dh->ns->subnodes[dh->subspcindex].content);
-      char* subspacepath = NULL;
-      if ( config_nsinfo( tgtsubspace->idstr, NULL, &(subspacepath) ) ) {
-         LOG( LOG_ERR, "Failed to identify NS path of subspace: \"%s\"\n",
-              tgtsubspace->idstr );
-         pthread_mutex_unlock( &(dh->lock) );
-         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-         return NULL;
-      }
-      MDAL tgtmdal = tgtsubspace->prepo->metascheme.mdal;
-      struct stat stval;
-      if ( tgtmdal->statnamespace( tgtmdal->ctxt, subspacepath, &(stval) ) ) {
-         LOG( LOG_ERR, "Failed to stat subspace root: \"%s\"\n", subspacepath );
+   if ( dh->depth == 0 ) {
+      while ( dh->subspcindex < dh->ns->subnodecount ) {
+         // stat the subspace, to identify inode info
+         marfs_ns* tgtsubspace = (marfs_ns *)(dh->ns->subnodes[dh->subspcindex].content);
+         char* subspacepath = NULL;
+         if ( config_nsinfo( tgtsubspace->idstr, NULL, &(subspacepath) ) ) {
+            LOG( LOG_ERR, "Failed to identify NS path of subspace: \"%s\"\n",
+                 tgtsubspace->idstr );
+            pthread_mutex_unlock( &(dh->lock) );
+            LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+            return NULL;
+         }
+         // increment our index
+         dh->subspcindex++;
+         // stat the subspace, to check for existence
+         MDAL tgtmdal = tgtsubspace->prepo->metascheme.mdal;
+         struct stat stval;
+         int stnsres = tgtmdal->statnamespace( tgtmdal->ctxt, subspacepath, &(stval) );
          free( subspacepath );
-         pthread_mutex_unlock( &(dh->lock) );
-         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-         return NULL;
+         if ( stnsres  &&  errno != ENOENT ) {
+            LOG( LOG_ERR, "Failed to stat subspace root: \"%s\"\n", subspacepath );
+            pthread_mutex_unlock( &(dh->lock) );
+            LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+            return NULL;
+         }
+         if ( stnsres == 0 ) {
+            // populate and return the subspace dirent
+            if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->subspcindex].name ) >= dh->subspcnamealloc ) {
+               LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->subspcindex].name, dh->subspcnamealloc );
+               pthread_mutex_unlock( &(dh->lock) );
+               errno = ENAMETOOLONG;
+               LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+               return NULL;
+            }
+            pthread_mutex_unlock( &(dh->lock) );
+            errno = cachederrno;
+            return &(dh->subspcent);
+         }
       }
-      free( subspacepath );
-      if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->subspcindex].name ) >= dh->subspcnamealloc ) {
-         LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->subspcindex].name, dh->subspcnamealloc );
-         pthread_mutex_unlock( &(dh->lock) );
-         errno = ENAMETOOLONG;
-         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-         return NULL;
-      }
-      // increment our index and return the dirent ref
-      dh->subspcindex++;
-      pthread_mutex_unlock( &(dh->lock) );
-      errno = cachederrno;
-      return &(dh->subspcent);
    }
    // perform the op
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
