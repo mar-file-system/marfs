@@ -820,6 +820,19 @@ int rthread_producer_func( void** state, void** work_tofill ) {
          int scanres = process_refdir( tstate->gstate->pos.ns, tstate->scanner, tstate->rdirpath, &(reftgt), &(tgtval) );
          if ( scanres == 0 ) {
             LOG( LOG_INFO, "Thread %u has finished scan of reference dir \"%s\"\n", tstate->tID, tstate->rdirpath );
+            if ( cleanup_refdir( &(tstate->gstate->pos), tstate->rdirpath, tstate->gstate->thresh.gcthreshold ) ) {
+               LOG( LOG_ERR, "Thread %u failed to cleanup reference dir \"%s\"\n", tstate->tID, tstate->rdirpath );
+               snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                         "Thread %u failed to cleanup reference dir \"%s\"\n", tstate->tID, tstate->rdirpath );
+               tstate->fatalerror;
+               // ensure termination of all other threads ( avoids possible deadlock )
+               if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                  LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
+               }
+               tstate->scanner = NULL;
+               tstate->rdirpath = NULL;
+               return -1;
+            }
             // NULL out our dir references, just in case
             tstate->scanner = NULL;
             tstate->rdirpath = NULL;

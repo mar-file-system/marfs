@@ -144,6 +144,15 @@ int repackstreamer_abort( REPACKSTREAMER repackst );
 //   -------------   RESOURCE PROCESSING FUNCTIONS    -------------
 
 /**
+ * Attempts deletion of the specified reference dir 'branch' ( directory and all parent dirs ) based on the given gcthreshold
+ * @param marfs_position* pos : Current MarFS position
+ * @param const char* refdirpath : Path of the reference dir to be cleaned up
+ * @param time_t gcthresh : GC threshold value
+ * @return int : Zero on success, or -1 on failure
+ */
+int cleanup_refdir( marfs_position* pos, const char* refdirpath, time_t gcthresh );
+
+/**
  * Process the next entry from the given refdir scanner
  * @param marfs_ns* ns : Reference to the current NS
  * @param MDAL_SCANNER refdir : Scanner reference to iterate through

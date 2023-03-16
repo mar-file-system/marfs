@@ -1151,6 +1151,93 @@ int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag
 //   -------------   RESOURCE PROCESSING FUNCTIONS    -------------
 
 /**
+ * Attempts deletion of the specified reference dir 'branch' ( directory and all parent dirs ) based on the given gcthreshold
+ * @param marfs_position* pos : Current MarFS position
+ * @param const char* refdirpath : Path of the reference dir to be cleaned up
+ * @param time_t gcthresh : GC threshold value
+ * @return int : Zero on success, or -1 on failure
+ */
+int cleanup_refdir( marfs_position* pos, const char* refdirpath, time_t gcthresh ) {
+   // check args
+   if ( pos == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_position reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   if ( pos->ns == NULL  ||  pos->ctxt == NULL ) {
+      LOG( LOG_ERR, "Received an invalid, non-established marfs_position\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   if ( refdirpath == NULL ) {
+      LOG( LOG_ERR, "Received a NULL refdirpath reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+   // nothing to do, if this isn't a GC run
+   if ( gcthresh == 0 ) {
+      LOG( LOG_INFO, "Skipping cleanup reference dir \"%s\" (non-GC run)\n", refdirpath );
+      return 0;
+   }
+   // convenience refs
+   marfs_ms* ms = &(pos->ns->prepo->metascheme);
+   // stat the reference dir
+   struct stat stval;
+   if ( ms->mdal->statref( pos->ctxt, refdirpath, &(stval) ) ) {
+      LOG( LOG_ERR, "Failed to stat reference dir: \"%s\"\n", refdirpath );
+      return -1;
+   }
+   // check if this refdir is both empty (at least in terms of subdirs) and sufficiently old
+   if ( stval.st_nlink > 2  ||  stval.st_ctime >= gcthresh ) {
+      LOG( LOG_INFO, "Skipping cleanup reference dir \"%s\" (inelligible)\n", refdirpath );
+      return 0;
+   }
+   // duplicate our refdir string, as we'll need to make modifications
+   char* rpath = strdup( refdirpath );
+   if ( rpath == NULL ) {
+      LOG( LOG_ERR, "Failed to duplicate reference dir path: \"%s\"\n", refdirpath );
+      return -1;
+   }
+   // attempt the removal of the target dir and its parents
+   int rmdirres = 0;
+   while ( rmdirres == 0 ) {
+      // attempt to destory this reference dir
+      LOG( LOG_INFO, "Attempting cleanup of reference dir \"%s\"\n", rpath );
+      rmdirres = ms->mdal->destroyrefdir( pos->ctxt, rpath );
+      if ( rmdirres ) {
+         if ( errno == ENOTEMPTY ) {
+            LOG( LOG_INFO, "Skipping cleanup reference dir \"%s\" (not empty)\n", refdirpath );
+            free( rpath );
+            return 0;
+         }
+         else if ( errno == ENOENT ) {
+            // someone beat us to it, which we don't have to worry about
+            rmdirres = 0;
+         }
+         else {
+            LOG( LOG_ERR, "Failed to cleanup reference dir \"%s\" (%s)\n", rpath, strerror(errno) );
+         }
+      }
+      // truncate off the last path element of this reference dir string
+      char* rparse = rpath;
+      char* finelem = rpath;
+      while ( *rparse != '\0' ) {
+         if ( *rparse == '/' ) {
+            // note start of this separator
+            finelem = rparse;
+            // skip all duplicates
+            while ( *rparse == '/' ) { rparse++; }
+         }
+         else { rparse++; }
+      }
+      if ( finelem == rpath ) { break; } // indicates we've already hit the final path element
+      *finelem = '\0';
+   }
+   free( rpath );
+   return rmdirres;
+}
+
+/**
  * Process the next entry from the given refdir scanner
  * @param marfs_ns* ns : Reference to the current NS
  * @param MDAL_SCANNER refdir : Scanner reference to iterate through
