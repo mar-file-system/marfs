@@ -1462,6 +1462,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
       }
       // first, check specifically for NSs that have yet to be processed at all
       size_t nsindex = 0;
+      char anynswork = 0;
       for ( ; nsindex < rman->nscount; nsindex++ ) {
          if ( rman->distributed[nsindex] == 0 ) {
             // this NS still has yet to be worked on at all
@@ -1475,8 +1476,17 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
                  request->refdist, rman->nslist[nsindex]->idstr, ranknum );
             printf( "  Rank %zu is beginning work on NS \"%s\" ( ref range %zu )\n",
                     ranknum, rman->nslist[nsindex]->idstr, request->refdist );
+            // check through remaining namespaces for any undistributed work
+            for ( ; anynswork == 0  &&  nsindex < rman->nscount; nsindex++ ) {
+               if ( rman->distributed[nsindex] < rman->workingranks ) { break; }
+            }
+            if ( nsindex == rman->nscount ) {
+               // just handed out the last NS ref range for processing
+               printf( "  -- All NS reference ranges have been handed out for processing --\n" );
+            }
             return 1;
          }
+         else if ( rman->distributed[nsindex] < rman->workingranks ) { anynswork = 1; }
       }
       // next, check for NSs with ANY remaining work to distribute
       nsindex = 0;
@@ -1552,6 +1562,15 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          rman->distributed[response->request.nsindex]++; // note newly distributed range
          LOG( LOG_INFO, "Passing out reference range %zu of NS \"%s\" to Rank %zu\n",
               request->refdist, rman->nslist[response->request.nsindex]->idstr, ranknum );
+         // check through remaining namespaces for any undistributed work
+         size_t nsindex = 0;
+         for ( ; nsindex < rman->nscount; nsindex++ ) {
+            if ( rman->distributed[nsindex] < rman->workingranks ) { break; }
+         }
+         if ( nsindex == rman->nscount ) {
+            // just handed out the last NS ref range for processing
+            printf( "  -- All NS reference ranges have been handed out for processing --\n" );
+         }
          return 1;
       }
       // all work in the active NS has been completed

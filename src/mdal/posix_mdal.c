@@ -903,7 +903,7 @@ int posixmdal_createnamespace( MDAL_CTXT ctxt, const char* ns ) {
    }
    // attempt to create the ref subdir
    LOG( LOG_INFO, "Attempting to create ref dir: \"%s\"\n", nstruepath );
-   if ( mkdirat( pctxt->refd, nstruepath, S_IRWXU | S_IXOTH | S_IROTH ) ) {
+   if ( mkdirat( pctxt->refd, nstruepath, S_IRWXU | S_IRWXG | S_IRWXO ) ) {
       // here, we actually want to report EEXIST
       LOG( LOG_ERR, "Failed to create NS ref path: \"%s\"\n", nspath );
       free( nspath );

@@ -271,6 +271,7 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_S
       }
    }
    MDAL_SCANNER scanres = NULL;
+   HASH_NODE* node = NULL;
    while ( scanres == NULL ) {
       // check if the ref range has already been traversed
       if ( rin->refindex == rin->refmax ) {
@@ -289,7 +290,7 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_S
       LOG( LOG_INFO, "Passing out reference index: %zd\n", res );
       // open the corresponding reference scanner
       MDAL nsmdal = rin->ns->prepo->metascheme.mdal;
-      HASH_NODE* node = rin->ns->prepo->metascheme.refnodes + res;
+      node = rin->ns->prepo->metascheme.refnodes + res;
       scanres = nsmdal->openscanner( rin->ctxt, node->name );
       if ( scanres == NULL  &&  errno != ENOENT ) { // only missing dir is acceptable
          // complain if we failed to open the dir for any other reason

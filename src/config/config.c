@@ -3416,70 +3416,17 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                      if ( *rparse == '\0' ) { rparse = NULL; break; }
                      rparse++;
                   }
-                  if ( fix ) {
-                     // isssue the createrefdir op
-                     if ( rparse ) {
-                        // create all intermediate dirs with global execute access
-                        mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IXOTH );
-                     }
-                     else {
-                        // create the final dir with full global access
-                        mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IWOTH | S_IXOTH );
-                     }
-                     // ignore any EEXIST errors, and stat the target instead
-                     if ( mkdirres  &&  errno == EEXIST ) {
-                        mkdirres = 0;
-                        errno = 0;
-                        // stat the reference dir
-                        struct stat stval;
-                        mkdirres = curmdal->statref( nsctxt, rfullpath, &(stval) );
-                        if ( mkdirres == 0 ) {
-                           if ( rparse ) {
-                              // check for any group/other perms besides global execute
-                              if ( stval.st_mode & S_IRWXG  ||
-                                   stval.st_mode & S_IROTH  ||
-                                   stval.st_mode & S_IWOTH  ||
-                                   !(stval.st_mode & S_IXOTH) ) {
-                                 LOG( LOG_ERR, "Intermediate dir has unexpected perms: \"%s\"\n", rfullpath );
-                                 mkdirres = -1;
-                              }
-                           }
-                           else {
-                              // check for write/execute global perms
-                              if ( stval.st_mode & S_IROTH  ||
-                                   !(stval.st_mode & S_IWOTH)  ||
-                                   !(stval.st_mode & S_IXOTH) ) {
-                                 LOG( LOG_ERR, "Terminating dir has unexpected perms: \"%s\"\n", rfullpath );
-                                 mkdirres = -1;
-                              }
-                           }
-                        }
-                     }
+                  // stat the reference dir
+                  struct stat stval;
+                  mkdirres = curmdal->statref( nsctxt, rfullpath, &(stval) );
+                  if ( mkdirres  &&  errno = ENOENT ) { // missing reference path is acceptable
+                     mkdirres = 0;
                   }
-                  else {
-                     // stat the reference dir
-                     struct stat stval;
-                     mkdirres = curmdal->statref( nsctxt, rfullpath, &(stval) );
-                     if ( mkdirres == 0 ) {
-                        if ( rparse ) {
-                           // check for any group/other perms besides global execute
-                           if ( stval.st_mode & S_IRWXG  ||
-                                stval.st_mode & S_IROTH  ||
-                                stval.st_mode & S_IWOTH  ||
-                                !(stval.st_mode & S_IXOTH) ) {
-                              LOG( LOG_ERR, "Intermediate dir has unexpected perms: \"%s\"\n", rfullpath );
-                              mkdirres = -1;
-                           }
-                        }
-                        else {
-                           // check for write/execute global perms
-                           if ( stval.st_mode & S_IROTH  ||
-                                !(stval.st_mode & S_IWOTH)  ||
-                                !(stval.st_mode & S_IXOTH) ) {
-                              LOG( LOG_ERR, "Terminating dir has unexpected perms: \"%s\"\n", rfullpath );
-                              mkdirres = -1;
-                           }
-                        }
+                  else if ( mkdirres == 0 ) {
+                     // validate perms
+                     if ( !(stval.st_mode & S_IWOTH)  ||  !(stval.st_mode & S_IXOTH) ) {
+                        LOG( LOG_ERR, "Reference dir has unexpected perms: \"%s\"\n", rfullpath );
+                        mkdirres = -1;
                      }
                   }
                   // if we cut the string short, we need to undo that and progress to the next str comp
@@ -3494,7 +3441,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             }
             if ( anyerror ) {
                errcount++;
-               LOG( LOG_ERR, "Failed to create all ref dirs for NS: \"%s\"\n", nspath );
+               LOG( LOG_ERR, "Failed to verify all ref dirs for NS: \"%s\"\n", nspath );
             }
             else { errno = olderr; }
          }
