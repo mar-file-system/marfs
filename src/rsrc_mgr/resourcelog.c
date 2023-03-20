@@ -868,7 +868,7 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
    else {
       // should indicate the start of a new operation
       if ( newop->start == 0 ) {
-         LOG( LOG_ERR, "Parsed completion of op from logfile \"%s\" with no parsed start of op\n", rsrclog->logfilepath );
+         LOG( LOG_ERR, "Received completion of op with no parsed start of op in logfile \"%s\"\n", rsrclog->logfilepath );
          return -1;
       }
       if ( rsrclog->type == RESOURCE_MODIFY_LOG ) {

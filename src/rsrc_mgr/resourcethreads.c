@@ -689,38 +689,36 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                // restore original op chain structure
                tstate->gcops->next = orignext;
                // check for duplicated op chain
-               if ( newop == NULL ) {
-                  LOG( LOG_WARNING, "Failed to duplicate GC op prior to distribution!\n" );
-                  // can't split this op apart, so just pass out the whole thing anyway
-                  newop = tstate->gcops;
-                  tstate->gcops = NULL; // remove state reference, so we don't repeat
+               if ( newop ) {
+                  newop->count = 1; // set to a single object deletion
+                  tstate->gcops->count--; // note one less op to distribute
+                  delobj_info* delobjinf = (delobj_info*) tstate->gcops->extendedinfo;
+                  delobjinf->offset++; // note to skip over one additional leading object
                }
-               newop->count = 1; // set to a single object deletion
-               tstate->gcops->count--; // note one less op to distribute
-               delobj_info* delobjinf = (delobj_info*) tstate->gcops->extendedinfo;
-               delobjinf->offset++; // note to skip over one additional leading object
+               else {
+                  LOG( LOG_WARNING, "Failed to duplicate GC op prior to distribution!\n" );
+               }
             }
             else {
                // check if we have additional ops between the lead op and the first ref del op
                if ( tstate->gcops->next != refdel ) {
                   // duplicate the REF-DEL portion of the op chain
                   opinfo* refdup = resourcelog_dupopinfo( refdel );
-                  if ( refdup == NULL ) {
-                     LOG( LOG_WARNING, "Failed to duplicate GC REF-DEL op prior to distribution!\n" );
-                     // can't split this op apart, so just pass out the whole thing anyway
+                  if ( refdup ) {
+                     // need to strip off our leading op, and attach it to a new chain
+                     opinfo* orignext = tstate->gcops->next;
+                     tstate->gcops->next = refdup;
                      newop = tstate->gcops;
-                     tstate->gcops = NULL; // remove state reference, so we don't repeat
+                     tstate->gcops = orignext;
                   }
-                  // need to strip off our leading op, and attach it to a new chain
-                  opinfo* orignext = tstate->gcops->next;
-                  tstate->gcops->next = refdup;
-                  newop = tstate->gcops;
-                  tstate->gcops = orignext;
+                  else {
+                     LOG( LOG_WARNING, "Failed to duplicate GC REF-DEL op prior to distribution!\n" );
+                  }
                }
             }
          }
          if ( newop == NULL ) {
-            // just pass our whatever ops remain
+            // just pass out whatever ops remain
             newop = tstate->gcops;
             tstate->gcops = NULL; // remove state reference, so we don't repeat
          }
@@ -741,7 +739,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
             }
             return -1;
          }
-         if ( walkres > 0 ) {
+         else if ( walkres > 0 ) {
             // log every operation prior to distributing them
             if ( tstate->rebuildops ) {
                if ( resourcelog_processop( &(tstate->gstate->rlog), tstate->rebuildops, NULL ) ) {
@@ -783,7 +781,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                }
             }
          }
-         if ( walkres == 0 ) { // check for end of stream
+         else if ( walkres == 0 ) { // check for end of stream
             LOG( LOG_INFO, "Thread %u has reached the end of a datastream\n", tstate->tID );
             streamwalker_report tmpreport = {0};
             if ( process_closestreamwalker( &(tstate->walker), &(tmpreport) ) ) {
@@ -1042,17 +1040,17 @@ void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg ) {
    rthread_state* tstate = (rthread_state*)(*state);
    // producers may need to cleanup remaining state
    if ( tstate->rebuildops ) {
-      LOG( LOG_INFO, "Thread %u is destroying non-issued REBUILD ops\n" );
+      LOG( LOG_INFO, "Thread %u is destroying non-issued REBUILD ops\n", tstate->tID );
       resourcelog_freeopinfo( tstate->rebuildops );
       tstate->rebuildops = NULL;
    }
    if ( tstate->repackops ) {
-      LOG( LOG_INFO, "Thread %u is destroying non-issued REPACK ops\n" );
+      LOG( LOG_INFO, "Thread %u is destroying non-issued REPACK ops\n", tstate->tID );
       resourcelog_freeopinfo( tstate->repackops );
       tstate->repackops = NULL;
    }
    if ( tstate->gcops ) {
-      LOG( LOG_ERR, "Thread %u is destroying remaining GC ops\n" );
+      LOG( LOG_ERR, "Thread %u is destroying remaining GC ops\n", tstate->tID );
       resourcelog_freeopinfo( tstate->gcops );
       tstate->gcops = NULL;
       // this is non-standard, so ensure we note an error
@@ -1063,7 +1061,7 @@ void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg ) {
       }
    }
    if ( tstate->scanner ) {
-      LOG( LOG_ERR, "Thread %u is destroying remaining scanner handle\n" );
+      LOG( LOG_ERR, "Thread %u is destroying remaining scanner handle\n", tstate->tID );
       tstate->gstate->pos.ns->prepo->metascheme.mdal->closescanner( tstate->scanner );
       // this is non-standard, so ensure we note an error
       if ( !(tstate->fatalerror) ) {
