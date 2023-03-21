@@ -164,10 +164,9 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_S
  * Destroy all available inputs and signal threads to prepare or for imminent termination
  * NOTE -- this is useful for aborting, if a thread has hit a fatal error
  * @param RESOURCEINPUT* resourceinput : Resourceinput to purge
- * @param size_t removeclients : Count of total clients to remove ( these will not participate in waitforterm() )
  * @param int : Zero on success, or -1 on failure
  */
-int resourceinput_purge( RESOURCEINPUT* resourceinput, size_t removeclients );
+int resourceinput_purge( RESOURCEINPUT* resourceinput );
 
 /**
  * Wait for the given resourceinput to have available inputs, or for immenent termination

@@ -241,7 +241,7 @@ void cleanupstate( rmanstate* rman, char abort ) {
          }
          tq_set_flags( rman->tq, TQ_ABORT );
          if ( rman->gstate.rinput ) {
-            resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+            resourceinput_purge( &(rman->gstate.rinput) );
             resourceinput_term( &(rman->gstate.rinput) );
          }
          // gather all thread status values
@@ -546,7 +546,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       snprintf( response->errorstr, MAX_ERROR_BUFFER,
                 "Failed to identify output logfile path of rank %zu for NS \"%s\"\n",
                 rman->ranknum, ns->idstr );
-      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_purge( &(rman->gstate.rinput) );
       resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
@@ -556,7 +556,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       LOG( LOG_ERR, "Failed to initialize output logfile: \"%s\"\n", outlogpath );
       snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize output logfile: \"%s\"\n", outlogpath );
       free( outlogpath );
-      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_purge( &(rman->gstate.rinput) );
       resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
@@ -567,7 +567,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       LOG( LOG_ERR, "Failed to initialize repack streamer\n" );
       snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize repack streamer\n" );
       resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
-      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_purge( &(rman->gstate.rinput) );
       resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
@@ -593,7 +593,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       repackstreamer_abort( rman->gstate.rpst );
       rman->gstate.rpst = NULL;
       resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
-      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_purge( &(rman->gstate.rinput) );
       resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
@@ -606,7 +606,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       repackstreamer_abort( rman->gstate.rpst );
       rman->gstate.rpst = NULL;
       resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
-      resourceinput_purge( &(rman->gstate.rinput), rman->gstate.numprodthreads );
+      resourceinput_purge( &(rman->gstate.rinput) );
       resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;

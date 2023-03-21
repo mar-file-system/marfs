@@ -315,10 +315,9 @@ int resourceinput_getnext( RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_S
  * Destroy all available inputs and signal threads to prepare or for imminent termination
  * NOTE -- this is useful for aborting, if a thread has hit a fatal error
  * @param RESOURCEINPUT* resourceinput : Resourceinput to purge
- * @param size_t removeclients : Count of total clients to remove ( these will not participate in waitforterm() )
  * @param int : Zero on success, or -1 on failure
  */
-int resourceinput_purge( RESOURCEINPUT* resourceinput, size_t removeclients ) {
+int resourceinput_purge( RESOURCEINPUT* resourceinput ) {
    // check for valid ref
    if ( resourceinput == NULL  ||  *resourceinput == NULL ) {
       LOG( LOG_ERR, "Received an invalid resourceinput arg\n" );
@@ -340,11 +339,8 @@ int resourceinput_purge( RESOURCEINPUT* resourceinput, size_t removeclients ) {
    rin->rlog = NULL; // be certain this is NULLed out
    // set ref range values to indicate completion
    rin->refindex = rin->refmax;
-   // decrement client counts ( caller may not be using resourceinput_waitforterm() )
-   if ( removeclients ) {
-      LOG( LOG_INFO, "Removing %zu clients from the count ( %zu -> %zu )\n", removeclients, rin->clientcount, rin->clientcount - removeclients );
-      rin->clientcount -= removeclients;
-   }
+   // set prepterm to cause a bypass of the synchronized termination logic
+   rin->prepterm = 3;
    // make sure all threads wake up
    pthread_cond_broadcast( &(rin->updated) );
    pthread_cond_broadcast( &(rin->complete) );
@@ -401,11 +397,11 @@ int resourceinput_waitforterm( RESOURCEINPUT* resourceinput ) {
       LOG( LOG_ERR, "Failed to acquire resourceinput lock\n" );
       return -1;
    }
-   if ( rin->clientcount ) {
+   if ( rin->prepterm < 2  &&  rin->clientcount ) {
       LOG( LOG_INFO, "Decrementing active client count from %zu to %zu\n", rin->clientcount, rin->clientcount - 1 );
       rin->clientcount--; // show that we are waiting
    }
-   else {
+   else if ( rin->clientcount == 0 ) {
       LOG( LOG_ERR, "ClientCount is already zeroed out, but this client is only now waiting!\n" );
    }
    pthread_cond_signal( &(rin->complete) ); // signal the master proc to check status
@@ -417,8 +413,10 @@ int resourceinput_waitforterm( RESOURCEINPUT* resourceinput ) {
          return -1;
       }
    }
-   LOG( LOG_INFO, "Incrementing active client count from %zu to %zu\n", rin->clientcount, rin->clientcount + 1 );
-   rin->clientcount++; // show that we are exiting
+   if ( rin->prepterm == 2 ) {
+      LOG( LOG_INFO, "Incrementing active client count from %zu to %zu\n", rin->clientcount, rin->clientcount + 1 );
+      rin->clientcount++; // show that we are exiting
+   }
    pthread_cond_signal( &(rin->complete) );
    pthread_mutex_unlock( &(rin->lock) );
    LOG( LOG_INFO, "Ready for input termination\n" );
@@ -491,9 +489,9 @@ int resourceinput_term( RESOURCEINPUT* resourceinput ) {
    size_t origclientcount = rin->clientcount; // remember the total number of clients
    LOG( LOG_INFO, "Synchronizing with %zu clients for termination\n", origclientcount );
    // signal clients to prepare for termination
-   rin->prepterm = 1;
+   if ( rin->prepterm < 1 ) { rin->prepterm = 1; }
    pthread_cond_broadcast( &(rin->updated) );
-   while ( rin->clientcount ) {
+   while ( rin->prepterm < 2  &&  rin->clientcount ) {
       if ( pthread_cond_wait( &(rin->complete), &(rin->lock) ) ) {
          LOG( LOG_ERR, "Failed to wait on 'complete' condition value for clients to synchronize\n" );
          pthread_mutex_unlock( &(rin->lock) );
@@ -502,15 +500,16 @@ int resourceinput_term( RESOURCEINPUT* resourceinput ) {
    }
    LOG( LOG_INFO, "All %zu clients are ready for termination\n", origclientcount );
    // signal clients to exit
-   rin->prepterm = 2;
+   if ( rin->prepterm < 2 ) { rin->prepterm = 2; }
    pthread_cond_broadcast( &(rin->updated) );
-   while ( rin->clientcount < origclientcount ) {
+   while ( rin->prepterm < 3  &&  rin->clientcount < origclientcount ) {
       if ( pthread_cond_wait( &(rin->complete), &(rin->lock) ) ) {
          LOG( LOG_ERR, "Failed to wait on 'complete' condition value for clients to exit\n" );
          pthread_mutex_unlock( &(rin->lock) );
          return -1;
       }
    }
+   rin->prepterm = 3; // just in case
    LOG( LOG_INFO, "All %zu clients have terminated\n", origclientcount );
    // begin destroying the structure
    *resourceinput = NULL;
@@ -637,7 +636,7 @@ int rthread_consumer_func( void** state, void** work_todo ) {
             *work_todo = NULL;
             tstate->fatalerror = 1;
             // ensure termination of all other threads ( avoids possible deadlock )
-            if ( resourceinput_purge( &(tstate->gstate->rinput), 0 ) ) {
+            if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
             }
             return -1;
@@ -734,7 +733,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                       tstate->tID, tstate->rdirpath, tstate->gstate->pos.ns->idstr );
             tstate->fatalerror = 1;
             // ensure termination of all other threads ( avoids possible deadlock )
-            if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+            if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
             }
             return -1;
@@ -748,7 +747,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                             "Thread %u failed to log start of a REBUILD operation\n", tstate->tID );
                   tstate->fatalerror = 1;
                   // ensure termination of all other threads ( avoids possible deadlock )
-                  if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                  if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                      LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                   }
                   return -1;
@@ -761,7 +760,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                             "Thread %u failed to log start of a REPACK operation\n", tstate->tID );
                   tstate->fatalerror = 1;
                   // ensure termination of all other threads ( avoids possible deadlock )
-                  if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                  if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                      LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                   }
                   return -1;
@@ -774,7 +773,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                             "Thread %u failed to log start of a GC operation\n", tstate->tID );
                   tstate->fatalerror = 1;
                   // ensure termination of all other threads ( avoids possible deadlock )
-                  if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                  if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                      LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                   }
                   return -1;
@@ -790,7 +789,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                tstate->fatalerror = 1;
                tstate->walker = NULL; // don't repeat a close attempt
                // ensure termination of all other threads ( avoids possible deadlock )
-               if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+               if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                   LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                }
                return -1;
@@ -824,7 +823,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                          "Thread %u failed to cleanup reference dir \"%s\"\n", tstate->tID, tstate->rdirpath );
                tstate->fatalerror = 1;
                // ensure termination of all other threads ( avoids possible deadlock )
-               if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+               if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                   LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                }
                tstate->scanner = NULL;
@@ -849,7 +848,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                tstate->fatalerror = 1;
                if ( reftgt ) { free( reftgt ); }
                // ensure termination of all other threads ( avoids possible deadlock )
-               if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+               if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                   LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                }
                return -1;
@@ -874,7 +873,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                   tstate->fatalerror = 1;
                   if ( reftgt ) { free( reftgt ); }
                   // ensure termination of all other threads ( avoids possible deadlock )
-                  if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                  if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                      LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                   }
                   return -1;
@@ -889,7 +888,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                      tstate->fatalerror = 1;
                      if ( reftgt ) { free( reftgt ); }
                      // ensure termination of all other threads ( avoids possible deadlock )
-                     if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+                     if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                         LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                      }
                      return -1;
@@ -914,7 +913,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                       tstate->tID, tstate->rdirpath, tstate->gstate->pos.ns->idstr );
             tstate->fatalerror = 1;
             // ensure termination of all other threads ( avoids possible deadlock )
-            if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+            if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
             }
             return -1;
@@ -936,7 +935,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                          tstate->tID, tstate->gstate->pos.ns->idstr );
                tstate->fatalerror = 1;
                // ensure termination of all other threads ( avoids possible deadlock )
-               if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+               if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                   LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                }
                return -1;
@@ -951,7 +950,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                          "Thread %u failed to wait for input termination\n", tstate->tID );
                tstate->fatalerror = 1;
                // ensure termination of all other threads ( avoids possible deadlock )
-               if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+               if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                   LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                }
                return -1;
@@ -968,7 +967,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                       tstate->tID, tstate->gstate->pos.ns->idstr );
             tstate->fatalerror = 1;
             // ensure termination of all other threads ( avoids possible deadlock )
-            if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+            if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
             }
             return -1;
@@ -991,7 +990,7 @@ int rthread_producer_func( void** state, void** work_tofill ) {
                resourcelog_freeopinfo( newop );
                tstate->fatalerror = 1;
                // ensure termination of all other threads ( avoids possible deadlock )
-               if ( resourceinput_purge( &(tstate->gstate->rinput), 1 ) ) {
+               if ( resourceinput_purge( &(tstate->gstate->rinput) ) ) {
                   LOG( LOG_WARNING, "Failed to purge resource input following fatal error\n" );
                }
                return -1;

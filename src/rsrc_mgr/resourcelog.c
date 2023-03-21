@@ -778,13 +778,12 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
       opindex = opindex->next;
    }
    if ( opindex != NULL ) {
-      // repeat of operation start can be ignored
-      if ( newop->start == 0 ) {
-         // otherwise, for op completion, we'll need to process each operation in the chain...
-         opinfo* parseop = newop; // new op being added to totals
-         opinfo* parseindex = opindex; // old op being compared against
-         opinfo* previndex = opindex;  // end of the chain of old ops
-         while ( parseop ) {
+      // otherwise, for op completion, we'll need to process each operation in the chain...
+      opinfo* parseop = newop; // new op being added to totals
+      opinfo* parseindex = opindex; // old op being compared against
+      opinfo* previndex = opindex;  // end of the chain of old ops
+      while ( parseop ) {
+         if ( newop->start == 0 ) {
             // check for excessive count
             if ( parseop->count > parseindex->count ) {
                LOG( LOG_ERR, "Processed op count ( %zu ) exceeds expected count ( %zu )\n", parseop->count, parseindex->count );
@@ -848,6 +847,13 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
             // decrement in-progress cnt
             rsrclog->outstandingcnt--;
          }
+         else if ( parseop->count > parseindex->count ) {
+            LOG( LOG_INFO, "Resetting count of in-progress operation from %zu to %zu\n",
+                 parseindex->count, parseop->count );
+            parseindex->count = parseop->count;
+         }
+      }
+      if ( newop->start == 0 ) {
          // ...and remove the matching op(s) from inprogress
          if ( prevop ) {
             // pull the matching ops out of the list
