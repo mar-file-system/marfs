@@ -621,13 +621,14 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
  * @param size_t workingranks : Total number of operating ranks
  * @param size_t refdist : Reference distribution index
  * @param size_t* refmin : Reference to be populated with the minimum range value
- * @param size_t* refmin : Reference to be populated with the maximum range value
+ * @param size_t* refmin : Reference to be populated with the maximum range value ( non-inclusive )
  */
 void getNSrange( marfs_ns* ns, size_t workingranks, size_t refdist, size_t* refmin, size_t* refmax ) {
-   size_t refperrank = ns->prepo->metascheme.refnodecount / workingranks;
-   size_t remainder = ns->prepo->metascheme.refnodecount % workingranks;
-   *refmin = (refdist * refperrank);
-   *refmax = (*refmin + refperrank) + ( (refdist >= remainder) ? 0 : 1 );
+   size_t refperrank = ns->prepo->metascheme.refnodecount / workingranks; // 'average' number of reference ranges per rank ( truncated to integer )
+   size_t remainder = ns->prepo->metascheme.refnodecount % workingranks;  // 'remainder' ref dirs, omitted if every rank merely got the 'average'
+   size_t prevextra = (refdist > remainder) ? remainder : refdist; // how many 'remainder' dirs were included in previous distributions
+   *refmin = (refdist * refperrank) + prevextra; // include the 'average' per-rank count, plus any 'remainder' dirs already issued
+   *refmax = (*refmin + refperrank) + ( (refdist < remainder) ? 1 : 0 ); // add on the 'average' and one extra, if 'remainder' dirs still exist
    LOG( LOG_INFO, "Using Min=%zu / Max=%zu for ref distribution %zu on NS \"%s\"\n", *refmin, *refmax, refdist, ns->idstr );
    return;
 }
@@ -1043,7 +1044,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       getNSrange( rman->nslist[request->nsindex], rman->workingranks, request->refdist, &(refmin), &(refmax) );
       // only actually perform the work if it is a valid reference range
       // NOTE -- This is to handle a case where the number of NS ref dirs < the number of resource manager worker ranks
-      if ( refmax  ||  refmin ) {
+      if ( refmax != refmin ) {
          // update our input to reference the new target range
          if ( resourceinput_setrange( &(rman->gstate.rinput), refmin, refmax ) ) {
             LOG( LOG_ERR, "Failed to set NS \"%s\" reference range values for distribution %zu\n",
@@ -1062,6 +1063,11 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
                       rman->nslist[request->nsindex]->idstr, request->refdist );
             return -1;
          }
+      }
+      else {
+         // NOTE -- In this case, refmin and refmax should both equal the total refdir count
+         LOG( LOG_INFO, "Skipping distribution %zu of NS \"%s\" ( %zu of %zu dirs already processed )\n",
+              request->refdist, rman->nslist[request->nsindex]->idstr, refmin, refmax );
       }
    }
    else if ( request->type == COMPLETE_WORK ) {
