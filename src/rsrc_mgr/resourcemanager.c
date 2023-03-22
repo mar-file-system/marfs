@@ -2217,6 +2217,13 @@ int main(int argc, char** argv) {
    rman.workingranks = 1;
    if ( rankcount > 1 ) { rman.workingranks = rman.totalranks - 1; }
 
+   // for multi-rank invocations, we must synchronize our iteration string across all ranks
+   //     ( due to clock drift + varied startup times across multiple hosts )
+   if ( rman.totalranks > 1  &&  MPI_Bcast( rman.iteration, ITERATION_STRING_LEN, MPI_CHAR, 0, MPI_COMM_WORLD ) ) {
+      fprintf( stderr, "ERROR: Failed to synchronize iteration string across all ranks\n" );
+      return -1;
+   }
+
    // Initialize the MarFS Config
    if ( (rman.config = config_init( config_path )) == NULL ) {
       fprintf( stderr, "ERROR: Failed to initialize MarFS config: \"%s\"\n", config_path );
