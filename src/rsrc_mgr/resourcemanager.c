@@ -765,6 +765,10 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
             }
             FILE* summaryfile = fdopen( sumfd, "r" );
             if ( summaryfile == NULL ) {
+               if ( errno == ENOENT ) {
+                  printf( "Skipping over previous iteration lacking a summary logfile: \"%s\"\n", request.iteration );
+                  continue;
+               }
                LOG( LOG_ERR, "Failed to open a file stream for summary log for old iteration: \"%s\" (%s)\n",
                     request.iteration, strerror(errno) );
                close( sumfd );
