@@ -2077,6 +2077,7 @@ int main(int argc, char** argv) {
            rman.gstate.thresh.repackthreshold  ||  rman.gstate.thresh.cleanupthreshold  ||
            rman.iteration[0] != '\0' ) {
          fprintf( stderr, "ERROR: The '-G', '-R', '-P', and '-i' args are incompatible with '-X'\n" );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       // parse over the specified path, looking for RECORD_ITERATION_PARENT
@@ -2090,6 +2091,7 @@ int main(int argc, char** argv) {
          fprintf( stderr, "ERROR: The specified previous run path is missing the expected '%s' path component: \"%s\"\n",
                   RECORD_ITERATION_PARENT, rman.execprevroot );
          free( prevdup );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       size_t keepbytes = strlen(pathelem) + (pathelem - prevdup); // identify the strlen of the path up to this elem
@@ -2098,11 +2100,13 @@ int main(int argc, char** argv) {
       if ( pathelem == NULL ) {
          fprintf( stderr, "ERROR: Failed to identify iteration string from previous run path: \"%s\"\n", rman.execprevroot );
          free( prevdup );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       if ( snprintf( rman.iteration, ITERATION_STRING_LEN, "%s", pathelem ) >= ITERATION_STRING_LEN ) {
          fprintf( stderr, "ERROR: Parsed invalid iteration string from previous run path: \"%s\"\n", rman.execprevroot );
          free( prevdup );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       free( prevdup );
@@ -2111,6 +2115,7 @@ int main(int argc, char** argv) {
       rman.execprevroot = malloc( sizeof(char) * ( keepbytes + 1 ) );
       if ( rman.execprevroot == NULL ) {
          fprintf( stderr, "ERROR: Failed to allocate execprev root path\n" );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       snprintf( rman.execprevroot, keepbytes + 1, "%s", baseroot ); // use snprintf to truncate to appropriate length
@@ -2121,6 +2126,7 @@ int main(int argc, char** argv) {
          newroot = malloc( sizeof(char) * ( strlen(rman.logroot) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1 ) );
          if ( newroot == NULL ) {
             fprintf( stderr, "ERROR: Failed to allocate log root path string\n" );
+            MPI_Abort( MPI_COMM_WORLD, -1 );
             return -1;
          }
          snprintf( newroot, strlen(rman.logroot) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1, "%s/%s",
@@ -2130,6 +2136,7 @@ int main(int argc, char** argv) {
          newroot = malloc( sizeof(char) * ( strlen(rman.logroot) + 1 + strlen( MODIFY_ITERATION_PARENT )  + 1) );
          if ( newroot == NULL ) {
             fprintf( stderr, "ERROR: Failed to allocate log root path string\n" );
+            MPI_Abort( MPI_COMM_WORLD, -1 );
             return -1;
          }
          snprintf( newroot, strlen(rman.logroot) + 1 + strlen( MODIFY_ITERATION_PARENT ) + 1, "%s/%s",
@@ -2141,6 +2148,7 @@ int main(int argc, char** argv) {
          newroot = malloc( sizeof(char) * ( strlen(DEFAULT_LOG_ROOT) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1 ) );
          if ( newroot == NULL ) {
             fprintf( stderr, "ERROR: Failed to allocate log root path string\n" );
+            MPI_Abort( MPI_COMM_WORLD, -1 );
             return -1;
          }
          snprintf( newroot, strlen(DEFAULT_LOG_ROOT) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1, "%s/%s",
@@ -2150,6 +2158,7 @@ int main(int argc, char** argv) {
          newroot = malloc( sizeof(char) * ( strlen(DEFAULT_LOG_ROOT) + 1 + strlen( MODIFY_ITERATION_PARENT ) + 1 ) );
          if ( newroot == NULL ) {
             fprintf( stderr, "ERROR: Failed to allocate log root path string\n" );
+            MPI_Abort( MPI_COMM_WORLD, -1 );
             return -1;
          }
          snprintf( newroot, strlen(DEFAULT_LOG_ROOT) + 1 + strlen( MODIFY_ITERATION_PARENT ) + 1, "%s/%s",
@@ -2160,6 +2169,7 @@ int main(int argc, char** argv) {
    if ( mkdir( newroot, 0700 )  &&  errno != EEXIST ) {
       fprintf( stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", newroot );
       free( newroot );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    rman.logroot = newroot;
@@ -2169,6 +2179,7 @@ int main(int argc, char** argv) {
          newpresroot = malloc( sizeof(char) * ( strlen(rman.preservelogtgt) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1 ) );
          if ( newpresroot == NULL ) {
             fprintf( stderr, "ERROR: Failed to allocate log preservation path string\n" );
+            MPI_Abort( MPI_COMM_WORLD, -1 );
             return -1;
          }
          snprintf( newpresroot, strlen(rman.preservelogtgt) + 1 + strlen( RECORD_ITERATION_PARENT ) + 1, "%s/%s",
@@ -2178,6 +2189,7 @@ int main(int argc, char** argv) {
          newpresroot = malloc( sizeof(char) * ( strlen(rman.preservelogtgt) + 1 + strlen( MODIFY_ITERATION_PARENT ) + 1 ) );
          if ( newpresroot == NULL ) {
             fprintf( stderr, "ERROR: Failed to allocate log preservation path string\n" );
+            MPI_Abort( MPI_COMM_WORLD, -1 );
             return -1;
          }
          snprintf( newpresroot, strlen(rman.preservelogtgt) + 1 + strlen( MODIFY_ITERATION_PARENT ) + 1, "%s/%s",
@@ -2187,6 +2199,7 @@ int main(int argc, char** argv) {
       if ( mkdir( newpresroot, 0700 )  &&  errno != EEXIST ) {
          fprintf( stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", newpresroot );
          free( newpresroot );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       rman.preservelogtgt = newpresroot;
@@ -2212,10 +2225,12 @@ int main(int argc, char** argv) {
    int rank = 0;
    if ( MPI_Comm_size( MPI_COMM_WORLD, &(rankcount) ) ) {
       fprintf( stderr, "ERROR: Failed to identify rank count\n" );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    if ( MPI_Comm_rank( MPI_COMM_WORLD, &(rank) ) ) {
       fprintf( stderr, "ERROR: Failed to identify process rank\n" );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    rman.ranknum = (size_t)rank;
@@ -2227,12 +2242,14 @@ int main(int argc, char** argv) {
    //     ( due to clock drift + varied startup times across multiple hosts )
    if ( rman.totalranks > 1  &&  MPI_Bcast( rman.iteration, ITERATION_STRING_LEN, MPI_CHAR, 0, MPI_COMM_WORLD ) ) {
       fprintf( stderr, "ERROR: Failed to synchronize iteration string across all ranks\n" );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
 
    // Initialize the MarFS Config
    if ( (rman.config = config_init( config_path )) == NULL ) {
       fprintf( stderr, "ERROR: Failed to initialize MarFS config: \"%s\"\n", config_path );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
 
@@ -2245,25 +2262,31 @@ int main(int argc, char** argv) {
    if ( config_establishposition( &(pos), rman.config ) ) {
       fprintf( stderr, "ERROR: Failed to establish a MarFS root NS position\n" );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    char* nspathdup = strdup( ns_path );
    if ( nspathdup == NULL ) {
       fprintf( stderr, "ERROR: Failed to duplicate NS path string: \"%s\"\n", ns_path );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    int travret = config_traverse( rman.config, &(pos), &(nspathdup), 1 );
    if ( travret < 0 ) {
-      fprintf( stderr, "ERROR: Failed to identify NS path target: \"%s\"\n", ns_path );
+      if ( rman.ranknum == 0 )
+         fprintf( stderr, "ERROR: Failed to identify NS path target: \"%s\"\n", ns_path );
       free( nspathdup );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    if ( travret ) {
-      fprintf( stderr, "ERROR: Path target is not a NS, but a subpath of depth %d: \"%s\"\n", travret, ns_path );
+      if ( rman.ranknum == 0 )
+         fprintf( stderr, "ERROR: Path target is not a NS, but a subpath of depth %d: \"%s\"\n", travret, ns_path );
       free( nspathdup );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    free( nspathdup );
@@ -2274,6 +2297,7 @@ int main(int argc, char** argv) {
    if ( rman.nslist == NULL ) {
       fprintf( stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    *(rman.nslist) = pos.ns;
@@ -2286,6 +2310,7 @@ int main(int argc, char** argv) {
          if ( iterres < 0 ) {
             fprintf( stderr, "ERROR: Failed to iterate through subspaces of \"%s\"\n", curns->idstr );
             config_term( rman.config );
+            MPI_Abort( MPI_COMM_WORLD, -1 );
             return -1;
          }
          else if ( iterres ) {
@@ -2301,6 +2326,7 @@ int main(int argc, char** argv) {
                   fprintf( stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount );
                   free( rman.nslist );
                   config_term( rman.config );
+                  MPI_Abort( MPI_COMM_WORLD, -1 );
                   return -1;
                }
                rman.nslist = newlist;
@@ -2326,6 +2352,7 @@ int main(int argc, char** argv) {
       fprintf( stderr, "WARNING: Failed to abandon MarFS traversal position\n" );
       free( rman.nslist );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    // complete allocation of required state elements
@@ -2334,6 +2361,7 @@ int main(int argc, char** argv) {
       fprintf( stderr, "ERROR: Failed to allocate a 'distributed' list of length %zu\n", rman.nscount );
       free( rman.nslist );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    rman.terminatedworkers = calloc( sizeof(char), rman.totalranks );
@@ -2342,6 +2370,7 @@ int main(int argc, char** argv) {
       free( rman.distributed );
       free( rman.nslist );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    rman.walkreport = calloc( sizeof( struct streamwalker_report_struct ), rman.nscount );
@@ -2351,6 +2380,7 @@ int main(int argc, char** argv) {
       free( rman.distributed );
       free( rman.nslist );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
    rman.logsummary = calloc( sizeof( struct operation_summary_struct ), rman.nscount );
@@ -2361,6 +2391,7 @@ int main(int argc, char** argv) {
       free( rman.distributed );
       free( rman.nslist );
       config_term( rman.config );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
 
@@ -2377,6 +2408,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       snprintf( sumlogpath, alloclen, "%s/%s/%s", rman.execprevroot, rman.iteration, "summary.log" );
@@ -2390,6 +2422,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       if ( parse_program_args( &(rman), sumlog ) ) {
@@ -2402,22 +2435,26 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       if ( rman.quotas ) {
-         fprintf( stderr, "WARNING: Ignoring quota processing for execution of previous run\n" );
+         if ( rman.ranknum == 0 )
+            fprintf( stderr, "WARNING: Ignoring quota processing for execution of previous run\n" );
          rman.quotas = 0;
       }
       fclose( sumlog );
       free( sumlogpath );
       if ( rman.gstate.dryrun == 0 ) {
-         fprintf( stderr, "ERROR: Cannot pick up execution of a non-'dry-run'\n" );
+         if ( rman.ranknum == 0 )
+            fprintf( stderr, "ERROR: Cannot pick up execution of a non-'dry-run'\n" );
          free( rman.logsummary );
          free( rman.walkreport );
          free( rman.terminatedworkers );
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       // incorporate logfiles from the previous run
@@ -2429,6 +2466,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
    }
@@ -2442,6 +2480,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
    }
@@ -2459,6 +2498,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       size_t printres = snprintf( sumlogpath, alloclen, "%s/%s", rman.logroot, rman.iteration );
@@ -2472,6 +2512,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       printres += snprintf( sumlogpath + printres, alloclen - printres, "/summary.log" );
@@ -2485,6 +2526,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       rman.summarylog = fdopen( sumlog, "w" );
@@ -2497,6 +2539,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       // output our program arguments to the summary file
@@ -2509,6 +2552,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
       free( sumlogpath );
@@ -2522,6 +2566,15 @@ int main(int argc, char** argv) {
               (rman.gstate.thresh.repackthreshold) ? " REPACK" : "",
               (rman.gstate.thresh.rebuildthreshold) ?
                ( (rman.gstate.lbrebuild) ? " REBUILD(LOCATION)" : " REBUILD(MARKER)" ) : "" );
+   }
+
+   // synchronize here, to avoid having some ranks run ahead with modifications while other workers
+   //    are hung on earlier initialization ( which may still fail )
+   if ( MPI_Barrier( MPI_COMM_WORLD ) ) {
+      fprintf( stderr, "ERROR: Failed to synchronize mpi ranks prior to execution\n" );
+      cleanupstate( &(rman), 1 );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
+      return -1;
    }
 
    // actually perform core behavior loops
