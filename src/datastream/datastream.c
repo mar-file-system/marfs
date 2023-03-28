@@ -2469,7 +2469,7 @@ int datastream_open(DATASTREAM* stream, STREAM_TYPE type, const char* path, marf
                return -1;
             }
          }
-         else {
+         else if ( newstream->datahandle ) {
             LOG(LOG_INFO, "Seeking to %zu of existing object handle\n",
                newfile->ftag.offset);
             if (ne_seek(newstream->datahandle, newfile->ftag.offset) != newfile->ftag.offset) {
@@ -2482,6 +2482,9 @@ int datastream_open(DATASTREAM* stream, STREAM_TYPE type, const char* path, marf
                errno = EBADFD;
                return -1;
             }
+         }
+         else {
+            LOG( LOG_INFO, "Delaying object handle seek, as we have yet to open it\n" );
          }
          // cleanup our old file reference
          free(curfile->ftag.ctag);
