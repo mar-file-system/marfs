@@ -1265,6 +1265,29 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       }
       free(rmarkstr);
 
+      // check for required MDAL_CTXT
+      char releasectxt = 0;
+      if (mdalctxt == NULL) {
+         // need to create a fresh MDAL_CTXT
+         releasectxt = 1;
+         char* nspath = NULL;
+         if (config_nsinfo(stream->ns->idstr, NULL, &(nspath))) {
+            LOG(LOG_ERR, "Failed to identify path of NS: \"%s\"\n", stream->ns->idstr);
+            free(rpath);
+            free(rtagstr);
+            return -1;
+         }
+         mdalctxt = mdal->newctxt(nspath, stream->ns->prepo->metascheme.mdal->ctxt);
+         free(nspath);
+         if (mdalctxt == NULL) {
+            LOG(LOG_ERR, "Failed to create new MDAL_CTXT for NS: \"%s\"\n",
+               stream->ns->idstr);
+            free(rpath);
+            free(rtagstr);
+            return -1;
+         }
+      }
+
       // create parent paths, as necessary
       mode_t oldmask = umask(0); // blow away umask, to avoid improper refdir perms
       char* rpathparse = rpath;
@@ -1276,10 +1299,12 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
                *rpathparse = '\0';
                // issue a mkdir for the truncated path
                if ( mdal->createrefdir( mdalctxt, rpath, 0777 )  &&  errno != EEXIST ) {
-                  LOG(LOG_ERR, "Failed to create refdir parent \"%s\" for rebuild marker\n", rpath);
+                  LOG(LOG_ERR, "Failed to create refdir parent \"%s\" for rebuild marker (%s)\n", rpath, strerror(errno));
                   free(rpath);
-                  free(rmarkstr);
                   free(rtagstr);
+                  if (releasectxt) {
+                     mdal->destroyctxt(mdalctxt);
+                  }
                   umask(oldmask); //restore orig umask
                   errno = EFAULT;
                   return -1;
@@ -1299,34 +1324,14 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          LOG( LOG_ERR, "Failed to identify the rpath of the problem file\n" );
          free( rpath );
          free(rtagstr);
+         if (releasectxt) {
+            mdal->destroyctxt(mdalctxt);
+         }
          errno = EFAULT;
          return -1;
       }
 
       // create the rebuild marker
-      char releasectxt = 0;
-      if (mdalctxt == NULL) {
-         // need to create a fresh MDAL_CTXT
-         releasectxt = 1;
-         char* nspath = NULL;
-         if (config_nsinfo(stream->ns->idstr, NULL, &(nspath))) {
-            LOG(LOG_ERR, "Failed to identify path of NS: \"%s\"\n", stream->ns->idstr);
-            free(filerpath);
-            free(rpath);
-            free(rtagstr);
-            return -1;
-         }
-         mdalctxt = mdal->newctxt(nspath, stream->ns->prepo->metascheme.mdal->ctxt);
-         free(nspath);
-         if (mdalctxt == NULL) {
-            LOG(LOG_ERR, "Failed to create new MDAL_CTXT for NS: \"%s\"\n",
-               stream->ns->idstr);
-            free(filerpath);
-            free(rpath);
-            free(rtagstr);
-            return -1;
-         }
-      }
       int olderrno = errno;
       errno = 0;
       if ( mdal->linkref( mdalctxt, 1, filerpath, rpath ) ) {
