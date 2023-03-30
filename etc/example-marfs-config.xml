@@ -91,13 +91,13 @@
               * Protection scheme for data objects of this repo.
               * Defines a count of data blocks ( 'N' ), parity blocks ( 'E' ), and erasure 'part' size ( 'PSZ' ) for
               * each object.
-              * Example: Values of N=5, E=2, and PSZ=1024 will result in 5+2 erasure stripes of 7KiB in size
+              * Example: Values of N=5, E=2, and PSZ=4096 will result in 5+2 erasure stripes of 28KiB in size
               *          ( Note that a data object may itself consist of arbitrarily many erasure stripes )
               * -->
          <protection>
             <N>5</N>
             <E>2</E>
-            <PSZ>1024</PSZ>
+            <PSZ>4096</PSZ>
          </protection>
 
          <!-- Packing
@@ -368,7 +368,7 @@
          <protection>
             <N>3</N>
             <E>4</E>
-            <PSZ>1024</PSZ>
+            <PSZ>4096</PSZ>
          </protection>
 
          <!-- Packing -->
