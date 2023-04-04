@@ -311,6 +311,7 @@ cat << EOF
 
 marfs configuration
 #####################
+PREFIX   : $prefix
 CC       : $CC
 CFLAGS   : $CFLAGS
 LDFLAGS  : $LDFLAGS
