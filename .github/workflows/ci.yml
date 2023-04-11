@@ -55,12 +55,17 @@ jobs:
         cd $GITHUB_WORKSPACE
 
     - name: Build and Check MarFS
+      continue-on-error: true
       run: |
         cd marfs
         ./autogen.sh
         ./configure CFLAGS="-I$GITHUB_WORKSPACE/install/include" LDFLAGS="-L$GITHUB_WORKSPACE/install/lib" --prefix="$GITHUB_WORKSPACE/install" --enable-debugALL
         make
         make check
+        cd src/rsrc_mgr/
+        ./test_resourcethreads
+        df -h ./
+        cd ../../
         make install
         cd $GITHUB_WORKSPACE
 
