@@ -1697,7 +1697,7 @@ int process_openstreamwalker( streamwalker* swalker, marfs_position* pos, const 
                return -1;
             }
             // impossible to have an existing op; populate new op
-            optgt->count = 1;
+            optgt->count = 1; // omitting gctag.refcnt is fine here, as we are about to delete the entire stream
             delref_info* delrefinf = optgt->extendedinfo;
             delrefinf->prev_active_index = walker->activeindex;
             delrefinf->eos = 1;
@@ -1739,6 +1739,10 @@ int process_openstreamwalker( streamwalker* swalker, marfs_position* pos, const 
                LOG( LOG_ERR, "Failed to identify operation target for attachment of delzero tag\n" );
                destroystreamwalker( walker );
                return -1;
+            }
+            if ( optgt->count == 0  &&  walker->gctag.refcnt ) {
+               optgt->count = walker->gctag.refcnt; // don't obliterate our existing GC tag count
+               optgt->ftag.fileno++; // target this 'real' refdel op at the subsequent file, not fileno zero
             }
             delref_info* delrefinf = (delref_info*)optgt->extendedinfo;
             delrefinf->delzero = 1;
