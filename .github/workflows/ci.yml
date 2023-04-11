@@ -60,14 +60,7 @@ jobs:
         ./autogen.sh
         ./configure CFLAGS="-I$GITHUB_WORKSPACE/install/include" LDFLAGS="-L$GITHUB_WORKSPACE/install/lib" --prefix="$GITHUB_WORKSPACE/install" --enable-debugRM
         make
-        make check  ||  true
-        cd src/rsrc_mgr/
-        cat test_resourcethreads.log
-        bstrmid="$( cat test_resourcethreads.log | grep -e 'Initial reference target does not exist' | awk -F '.' '{print $NF}' | sed 's/|[0-9]*//' )"
-        echo "BAD STREAM = $bstrmid"
-        find ./test_rman_topdir/mdal_root/MDAL_subspaces/pack/MDAL_reference || true
-        find ./test_rman_topdir/mdal_root/MDAL_subspaces/pack/MDAL_reference | grep -e "$bstrmid" | xargs -I % getfattr -d %
-        cd ../../
+        make check
         make install
         cd $GITHUB_WORKSPACE
 
