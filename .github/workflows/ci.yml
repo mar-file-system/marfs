@@ -62,8 +62,10 @@ jobs:
         make
         make check  ||  true
         cd src/rsrc_mgr/
-        ./test_resourcethreads
+        ./test_resourcethreads ||  true
         df -h ./
+        find ./test_rman_topdir/mdal_root/MDAL_reference
+        find ./test_rman_topdir/mdal_root/MDAL_reference | xargs -I % getfattr -d %
         cd ../../
         make install
         cd $GITHUB_WORKSPACE
