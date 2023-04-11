@@ -486,6 +486,13 @@ int resourceinput_term( RESOURCEINPUT* resourceinput ) {
       errno = EINVAL;
       return -1;
    }
+   // if the resourceinput has been purged, just indicate a failure without freeing anything
+   if ( rin->prepterm > 2 ) {
+      LOG( LOG_ERR, "Cannot terminate a purged resourceinput\n" );
+      pthread_mutex_unlock( &(rin->lock) );
+      errno = EINVAL;
+      return -1;
+   }
    size_t origclientcount = rin->clientcount; // remember the total number of clients
    LOG( LOG_INFO, "Synchronizing with %zu clients for termination\n", origclientcount );
    // signal clients to prepare for termination

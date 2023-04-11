@@ -1086,7 +1086,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       if ( rman->gstate.rinput  &&  resourceinput_term( &(rman->gstate.rinput) ) ) {
          LOG( LOG_ERR, "Failed to terminate resourceinput\n" );
          snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to terminate resourceinput\n" );
-         return -1;
+         // don't quit out yet, try to collect thread states first
       }
       char threaderror = 0;
       if ( rman->tq ) {
@@ -1166,6 +1166,11 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
             return -1;
          }
          rman->tq = NULL;
+      }
+      // potentially abort the resource input ( hitting this case is always a failure )
+      if ( rman->gstate.rinput ) {
+         resourceinput_abort( &(rman->gstate.rinput) );
+         return -1;
       }
       // need to preserve our logfile, allowing the manager to remove it
       char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration, rman->gstate.pos.ns, rman->ranknum );
