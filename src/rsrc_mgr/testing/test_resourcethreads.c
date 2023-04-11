@@ -236,6 +236,7 @@ int main(int argc, char **argv)
             return -1;
          }
          size_t filebytes = (rand() % 20480); // sizes range from 0 to 20K
+         printf( "\"%s\" -- %zu bytes\n", filepath, filebytes );
          // randomly extend some portion of files
          if ( rand() % 10 == 0 ) {
             printf( "extending file \"%s\"\n", filepath );

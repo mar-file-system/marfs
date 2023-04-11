@@ -62,10 +62,11 @@ jobs:
         make
         make check  ||  true
         cd src/rsrc_mgr/
-        ./test_resourcethreads ||  true
-        df -h ./
-        find ./test_rman_topdir/mdal_root/MDAL_subspaces/pack/MDAL_reference
-        find ./test_rman_topdir/mdal_root/MDAL_subspaces/pack/MDAL_reference | xargs -I % getfattr -d %
+        cat test_resourcethreads.log
+        bstrmid="$( cat test_resourcethreads.log | grep -e 'Initial reference target does not exist' | awk -F '.' '{print $NF}' | sed 's/|[0-9]*//' )"
+        echo "BAD STREAM = $bstrmid"
+        find ./test_rman_topdir/mdal_root/MDAL_subspaces/pack/MDAL_reference || true
+        find ./test_rman_topdir/mdal_root/MDAL_subspaces/pack/MDAL_reference | grep -e "$bstrmid" | xargs -I % getfattr -d %
         cd ../../
         make install
         cd $GITHUB_WORKSPACE
