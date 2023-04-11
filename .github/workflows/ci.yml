@@ -64,8 +64,8 @@ jobs:
         cd src/rsrc_mgr/
         ./test_resourcethreads ||  true
         df -h ./
-        find ./test_rman_topdir/mdal_root/MDAL_reference
-        find ./test_rman_topdir/mdal_root/MDAL_reference | xargs -I % getfattr -d %
+        find ./test_rman_topdir/mdal_root/MDAL_subspaces/pack/MDAL_reference
+        find ./test_rman_topdir/mdal_root/MDAL_subspaces/pack/MDAL_reference | xargs -I % getfattr -d %
         cd ../../
         make install
         cd $GITHUB_WORKSPACE
