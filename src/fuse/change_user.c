@@ -57,6 +57,8 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#define _GNU_SOURCE
+
 #include "marfs_auto_config.h"
 #ifdef DEBUG_FUSE
 #define DEBUG DEBUG_FUSE
@@ -77,10 +79,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/syscall.h>
-
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
 
 int enter_groups(user_ctxt ctxt, uid_t uid, gid_t gid)
 {

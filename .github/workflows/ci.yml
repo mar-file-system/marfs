@@ -9,66 +9,58 @@ on:
 jobs:
   Build:
     env:
-      Isal_assembler: nasm
+      Isal_assembler: "nasm"
       Ne_deps: "autoconf libxml2-dev openmpi-bin openmpi-common libopenmpi-dev"
-      Marfs_deps: "libfuse-dev"
+      Marfs_deps: "fuse libfuse-dev"
     runs-on: ubuntu-latest
     steps:
+    - name: Setup Build Dependencies + Environment
+      run: |
+        sudo apt-get install $Isal_assembler $Ne_deps $Marfs_deps
+        mkdir install
+
     - name: Checkout ISA-L
       uses: actions/checkout@v3
       with:
         repository: intel/isa-l
+        ref: v2.30.0
         path: isa-l
-
-    - name: Install ISA-L build dependencies
-      run: sudo apt install $Isal_assembler
-
-    - name: Build ISA-L
-      run: |
-        cd isa-l
-        ./autogen.sh
-        ./configure
-        make
-        sudo make install
-    - name: Return to workspace root
-      run: cd $GITHUB_WORKSPACE
 
     - name: Checkout erasureUtils
       uses: actions/checkout@v3
       with:
         repository: gransom/erasureUtils
+        ref: master
         path: erasureUtils
 
-    - name: Install erasureUtils build dependencies
-      run: sudo apt install $Ne_deps
-
-    - name: Build and check erasureUtils
-      run: |
-        cd erasureUtils
-        mkdir install
-        autoreconf -i
-        ./configure --prefix=$PWD/install
-        make install
-        
-    - name: Return to workspace root
-      run: cd $GITHUB_WORKSPACE
-      
     - name: Checkout MarFS
       uses: actions/checkout@v3
       with:
         path: marfs
 
-    - name: Install MarFS build dependencies
-      run: sudo apt install $Marfs_deps
+    - name: Build ISA-L
+      run: |
+        cd isa-l
+        ./autogen.sh
+        ./configure --prefix="$GITHUB_WORKSPACE/install"
+        make install
+        cd $GITHUB_WORKSPACE
 
-    - name: Build and check MarFS
+    - name: Build erasureUtils
+      run: |
+        cd erasureUtils
+        ./autogen.sh
+        ./configure CFLAGS="-I$GITHUB_WORKSPACE/install/include" LDFLAGS="-L$GITHUB_WORKSPACE/install/lib" --prefix="$GITHUB_WORKSPACE/install"
+        make install
+        cd $GITHUB_WORKSPACE
+
+    - name: Build and Check MarFS
       run: |
         cd marfs
-        mkdir install
-        autoreconf -i
-        ./configure --prefix=$PWD/install --enable-debugALL LDFLAGS="-L$GITHUB_WORKSPACE/erasureUtils/install/lib" CPPFLAGS="-I$GITHUB_WORKSPACE/erasureUtils/install/include"
-        make install
+        ./autogen.sh
+        ./configure CFLAGS="-I$GITHUB_WORKSPACE/install/include" LDFLAGS="-L$GITHUB_WORKSPACE/install/lib" --prefix="$GITHUB_WORKSPACE/install" --enable-debugRM
+        make
         make check
-        
-    - name: Return to workspace root
-      run: cd $GITHUB_WORKSPACE
+        make install
+        cd $GITHUB_WORKSPACE
+

@@ -65,7 +65,7 @@
          * This is the absolute path to a directory at which MarFS expects to be mounted.
          * Tools which interpret absolute paths ( FUSE ) will only function if they operate below this location.
          * -->
-   <mnt_top>/marfs</mnt_top>
+   <mnt_top>/campaign</mnt_top>
 
    <!-- Host Definitions ( CURRENTLY IGNORED )
         * This is a placeholder for future implementation.
@@ -78,9 +78,9 @@
         * A MarFS 'repo' is a definition of data and metadata structure.  It is the uppermost conceptual abstraction of
         * MarFS.
         * All files written to MarFS must be uniquely and permanently associated with a repo, which defines where file
-        * information is placed, how that information is formatted, and what forms of access are supported.
+        * information is placed and how that information is formatted.
         * -->
-   <repo name="5+2_Repo">
+   <repo name="4+1_Repo">
 
       <!-- Per-Repo Data Scheme
            * Defines where data objects are placed, how they are formatted, and through what interface they are accessed
@@ -89,15 +89,13 @@
 
          <!-- Erasure Protection
               * Protection scheme for data objects of this repo.
-              * Defines a count of data blocks ( 'N' ), parity blocks ( 'E' ), and erasure 'part' size ( 'PSZ' ) for
+              * Defines a count of data blocks ( 'N' ), parity blocks ( 'E' ), and erasure stripe width ( 'PSZ' ) for
               * each object.
-              * Example: Values of N=5, E=2, and PSZ=4096 will result in 5+2 erasure stripes of 28KiB in size
-              *          ( Note that a data object may itself consist of arbitrarily many erasure stripes )
               * -->
          <protection>
-            <N>5</N>
-            <E>2</E>
-            <PSZ>4096</PSZ>
+            <N>4</N>
+            <E>1</E>
+            <PSZ>1024</PSZ>
          </protection>
 
          <!-- Packing
@@ -168,8 +166,8 @@
               *            Cap 3 will recieve roughly 25% of data objects from this repo
               * -->
          <distribution>
-            <pods cnt="2" dweight="10">0=5</pods>
-            <caps cnt="3" dweight="3">0=1,1=2</caps>
+            <pods cnt="1"></pods>
+            <caps cnt="4"></caps>
             <scatters cnt="4"/>
          </distribution>
 
@@ -182,7 +180,7 @@
               * -->
          <DAL type="posix">
             <dir_template>pod{p}/block{b}/cap{c}/scat{s}/</dir_template>
-            <sec_root>/marfs-internal/dal-root</sec_root>
+            <sec_root>/marfs/dal-root</sec_root>
          </DAL>
 
       </data>
@@ -220,20 +218,15 @@
               *          Note that, because reference files are only placed at the leaves of the reference tree, this
               *          means that increasing 'rbreadth' is the only adjustment which can safely be made to an active repo.
               * -->
-         <namespaces rbreadth="100" rdepth="2" rdigits="3">
+         <namespaces rbreadth="1" rdepth="2" rdigits="2">
 
             <!-- Namespace
                  * Definition of a standard MarFS Namespace.  Each such NS can have subspaces defined by contained XML 'ns'
-                 * subnodes.  Every NS, with the exception of the single 'root' NS, must have a unique parent NS.  In the
-                 * case of this def, that parent is defined by a remote reference in the subsequent repo
-                 * ( see 'Remote Subspace Definition's below ).
+                 * subnodes.  Every NS, with the exception of the single 'root' NS, must have a unique parent NS.
                  * -->
-            <ns name="restricted-write-allocation">
+            <ns name="root">
 
                <!-- Quota Limits for this NS
-                    * Quota definitions are inherited by any subspaces and can also be defined as children of the 
-                    * 'namespaces' element, in parallel with the top level 'ns' defs, to be inherited by all namespaces
-                    * of the repo.
                     * Quota limits can be defined in terms of number of files and quantity of data.
                     * A missing quota definition is interpreted as no quota limit on that value.
                     * -->
@@ -243,9 +236,6 @@
                </quotas>
 
                <!-- Permission Settings for this NS
-                    * Like quotas, permission definitions are inherited by any subspaces and can also be defined as
-                    * children of the 'namespaces' element, in parallel with the top level 'ns' defs, to be inherited
-                    * by all namespaces of the repo.
                     * Permissions are defined independently for 'interactive' and 'batch' programs.
                     * Program type is determined by the client during MarFS initialization ( see marfs_init() API function ).
                     * Permissions are defined as: '{PermissionCode}[,{PermissionCode}]*'
@@ -293,44 +283,6 @@
                   </perms>
                </ns>
 
-               <!-- Remote Subspace Definition
-                    * This defines a 'remote' NS, which is simply a way to include a subspace which is associated with a
-                    * different MarFS Repo.
-                    * Via 'rns' tags, it should be possible to achieve the desired logical NS tree strcutre, independent of
-                    * associated repos.
-                    * Remote NS definitions cannot include 'quota' or 'perms' elements.  Those are defined in the true NS
-                    * entry, reference by this.
-                    * -->
-               <rns name="heavily-protected-remote-subspace" repo="3+4_Repo"/>
-
-               <!-- Ghost Subspace Definition
-                    * This defines a Ghost Namespace.
-                    * Ghost Namespaces act as sort of 'soft copy' of another existing, 'real' Namespace.  The contents of a
-                    * ghost NS appear distinct from a filesystem user perspective ( independent paths+perms ).
-                    * However, they inherit most of their properties from their 'real' NS target.  A GhostNS cannot violate
-                    * the permission or quota settings of its target NS.  Additionally, files written to either space will
-                    * count against the quota limits of both.  If packing is enabled, files from a GhostNS may be packed
-                    * together with those of the target NS.
-                    * Finally, files/dirs can be freely renamed between a GhostNS and the target NS of that ghost.
-                    * -->
-               <gns name="ghost-of-marfs-root" repo="3+4_Repo" nstgt="/">
-                  <!-- No Quota Limits for this NS -->
-                  <quotas>
-                     <files>1K</files>  <!-- 10240 file count limit
-                                             * ( more restrictive root NS limit will take precedence ) -->
-                     <data>100P</data> <!-- 100 Pibibyte data size limit -->
-                  </quotas>
-
-                  <!-- Permission Settings for this NS -->
-                  <perms>
-                     <!-- read only metadata inter access -->
-                     <interactive>RM</interactive>
-                     <!-- full batch program access
-                          * ( but not really, as the more restrictive root NS perms will still block most ops ) -->
-                     <batch>RM,WM,RD,WD</batch>
-                  </perms>
-               </gns>
-
             </ns>
 
 
@@ -351,109 +303,7 @@
               * of posix files + xattrs.
               * -->
          <MDAL type="posix">
-            <ns_root>/marfs-internal/mdal-root</ns_root>
-         </MDAL>
-
-      </meta>
-
-   </repo>
-
-   <!-- Second Repo Definition -->
-   <repo name="3+4_Repo">
-
-      <!-- Per-Repo Data Scheme -->
-      <data>
-
-         <!-- Erasure Protection -->
-         <protection>
-            <N>3</N>
-            <E>4</E>
-            <PSZ>4096</PSZ>
-         </protection>
-
-         <!-- Packing -->
-         <packing enabled="yes">
-            <max_files>1024</max_files>
-         </packing>
-
-         <!-- Chunking -->
-         <chunking enabled="yes">
-            <max_size>10M</max_size>
-         </chunking>
-
-         <!-- Object Distribution -->
-         <distribution>
-            <pods cnt="2"/>
-            <caps dweight="4" cnt="3">2=2,0=1</caps>
-            <scatters cnt="4"/>
-         </distribution>
-
-         <!-- DAL Definition -->
-         <DAL type="posix">
-            <dir_template>pod{p}/block{b}/cap{c}/scat{s}/</dir_template>
-            <sec_root>/marfs-internal/dal-root</sec_root>
-         </DAL>
-
-      </data>
-
-      <!-- Per-Repo Metadata Scheme -->
-      <meta>
-
-         <!-- Namespace Definitions -->
-         <namespaces rbreadth="20" rdepth="3">
-
-            <!-- Default Perms for Namespaces of this Repo
-                 No metadata manipulation, and no data access -->
-            <perms>
-               <interactive>RM</interactive>
-               <batch>RM</batch>
-            </perms>
-
-            <!-- Root NS Definition
-                 * Every MarFS config MUST include a single 'root' NS, which represents the uppermost NS of the filesystem.
-                 * -->
-            <ns name="root">
-               <!-- Ridiculous quota setting : A single file, up to 100PiB in size -->
-               <quotas>
-                  <files>1</files>
-                  <data>100P</data>
-               </quotas>
-
-               <!-- Remote Subspace Definition -->
-               <rns name="restricted-write-allocation" repo="5+2_Repo"/>
-
-               <!-- Standard Subspace -->
-               <ns name="full-access-allocation">
-                  <!-- No Quota Limits for this NS -->
-
-                  <!-- Full Permissions for this NS -->
-                  <perms>
-                     <interactive>RM,WM,RD,WD</interactive>
-                     <batch>RM,WM,RD,WD</batch>
-                  </perms>
-               </ns>
-
-            </ns>
-
-            <!-- Target of Remote NS ref from the previous repo -->
-            <ns name="heavily-protected-remote-subspace">
-               <!-- No Quota Limits -->
-
-               <!-- Permission Settings for this NS -->
-               <perms>
-                  <!-- full interactive access -->
-                  <interactive>RM,WM,RD,WD</interactive>
-                  <!-- default batch program access ( RM, from above ) -->
-               </perms>
-            </ns>
-
-         </namespaces>
-
-         <!-- No Direct Data -->
-
-         <!-- MDAL Definition -->
-         <MDAL type="posix">
-            <ns_root>/marfs-internal/mdal-root</ns_root>
+            <ns_root>/marfs/mdal-root</ns_root>
          </MDAL>
 
       </meta>

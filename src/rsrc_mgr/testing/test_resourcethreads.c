@@ -236,6 +236,7 @@ int main(int argc, char **argv)
             return -1;
          }
          size_t filebytes = (rand() % 20480); // sizes range from 0 to 20K
+         printf( "\"%s\" -- %zu bytes\n", filepath, filebytes );
          // randomly extend some portion of files
          if ( rand() % 10 == 0 ) {
             printf( "extending file \"%s\"\n", filepath );
@@ -397,6 +398,10 @@ int main(int argc, char **argv)
    ThreadQueue tq = tq_init( &(tqopts) );
    if ( tq == NULL ) {
       printf( "failed to start up threads for first walk\n" );
+      return -1;
+   }
+   if ( tq_check_init( tq ) ) {
+      printf( "failed to verify initialization for threads for first walk\n" );
       return -1;
    }
 
@@ -623,6 +628,10 @@ int main(int argc, char **argv)
    tq = tq_init( &(tqopts) );
    if ( tq == NULL ) {
       printf( "failed to start up threads for second walk\n" );
+      return -1;
+   }
+   if ( tq_check_init( tq ) ) {
+      printf( "failed to verify initialization for threads for second walk\n" );
       return -1;
    }
 
@@ -856,6 +865,10 @@ int main(int argc, char **argv)
       printf( "failed to start up threads for third walk\n" );
       return -1;
    }
+   if ( tq_check_init( tq ) ) {
+      printf( "failed to verify initialization for threads for third walk\n" );
+      return -1;
+   }
 
    // set input to the first ref range
    refcnt = (rand() % (pos.ns->prepo->metascheme.refnodecount)) + 1;
@@ -1020,6 +1033,10 @@ int main(int argc, char **argv)
    tq = tq_init( &(tqopts) );
    if ( tq == NULL ) {
       printf( "failed to start up threads for final walk\n" );
+      return -1;
+   }
+   if ( tq_check_init( tq ) ) {
+      printf( "failed to verify initialization for threads for final walk\n" );
       return -1;
    }
 

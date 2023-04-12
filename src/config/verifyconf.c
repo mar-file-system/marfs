@@ -159,12 +159,22 @@ int main(int argc, const char** argv) {
          printf(OUTPREFX "ERROR: Failed to lookup info for target user: \"%s\"\n", user_name);
          return -1;
       }
-      // switch to the target UID
-      printf(OUTPREFX "Switching to user \"%s\" (UID : %lu)\n", user_name, (unsigned long)pswd->pw_uid);
-      if ( setuid( pswd->pw_uid ) ) {
-         printf(OUTPREFX "ERROR: Failed to perform setuid call to target user\n");
-         return -1;
+      if ( geteuid() != pswd->pw_uid ) {
+         // switch to the target GID + UID
+         printf(OUTPREFX "Switching to user \"%s\" (UID : %lu  |  GID : %lu)\n", user_name, (unsigned long)pswd->pw_uid, (unsigned long)pswd->pw_gid);
+         if ( setgid( pswd->pw_gid ) ) {
+            printf(OUTPREFX "ERROR: Failed to perform setgid call to target group\n");
+            return -1;
+         }
+         if ( setuid( pswd->pw_uid ) ) {
+            printf(OUTPREFX "ERROR: Failed to perform setuid call to target user\n");
+            return -1;
+         }
       }
+   }
+   else if ( geteuid() == 0 ) {
+      printf(OUTPREFX "ERROR: To perform verification as 'root', run with a '-u root' argument.\n");
+      return -1;
    }
 
    // read in the marfs config

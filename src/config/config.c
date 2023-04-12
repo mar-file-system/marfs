@@ -211,15 +211,17 @@ char* config_prevpathelem( char* path, char* curpath ) {
  *                              NOTE -- may be abandoned by this func ( see config_abandonposition() )
  * @param marfs_ns* nextns : Reference to the NS to enter
  * @param const char* relpath : Relative path component which resulted in entering this NS
+ * @param char ascending : Flag indicating traversal direction
+ *                         Zero -> descending ( nextns is a child of the position NS )
+ *                         Non-Zero -> ascending ( nextns is a parent of the position NS )
  * @param char updatectxt : Flag value indicating if an updated MDAL_CTXT is needed
  *                          Zero -> Position CTXT will be destroyed
  *                          Non-Zero -> Position CTXT will be updated to reference the new tgt NS
  * @return int : Zero on success, 1 if the transition will exit the MarFS mountpoint, or -1 on failure
  */
-int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, char updatectxt ) {
+int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, char ascending, char updatectxt ) {
    // create some shorthand refs
    marfs_ns* curns = pos->ns;
-   char ascending = ( nextns == curns->pnamespace ) ? 1 : 0; // useful for quick checks of traversal direction
    // check for expected case first - currently targetting a standard NS
    if ( curns->ghsource == NULL ) {
       // simplest case first, no ghostNS involved
@@ -281,8 +283,8 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
       tgtns->ghsource = nextns;
       // Target of the copy should match that of the Ghost itself
       tgtns->ghtarget = nextns->ghtarget;
-      // Parent NS of the copy should match that of the Ghost
-      tgtns->pnamespace = nextns->pnamespace;
+      // Parent NS of the copy should match that of the Ghost Target ( this parent can never appear as a child )
+      tgtns->pnamespace = nextns->ghtarget->pnamespace;
       // Parent repo of the copy should match that of the target
       tgtns->prepo = nextns->ghtarget->prepo;
       // ID String becomes a copy of the GhostNS itself ( for now )
@@ -377,7 +379,7 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
 
    // we are moving within a GhostNS ( curns->ghsource != NULL )
 
-   // check if we're exiting the active Ghost, by traversing up to its parent NS
+   // check if we're exiting the active Ghost, by traversing up past the original target NS
    //    NOTE -- The parent of the inital ghost may be the target of that ghost, making this check more complex
    if ( ascending  &&  nextns == curns->ghsource->ghtarget->pnamespace ) {
       // we are exiting the ghost dimension!
@@ -451,6 +453,14 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
       }
       if ( prevelem == NULL ) {
          LOG( LOG_ERR, "Failed to identify final path component of NS string: \"%s\"\n", nspath );
+         free( repostr );
+         free( nspath );
+         config_abandonposition( pos );
+         return -1;
+      }
+      if ( prevelem == nspath ) {
+         // sanity check for truncation of the entire nspath string
+         LOG( LOG_ERR, "Ascent from \"%s\" to \"%s\" would result in fully-truncated nspath\n", curns->idstr, nextns->idstr );
          free( repostr );
          free( nspath );
          config_abandonposition( pos );
@@ -581,7 +591,7 @@ int config_enterns( marfs_position* pos, marfs_ns* nextns, const char* relpath, 
          return -1;
       }
    }
-   LOG( LOG_INFO, "Moved within GhostNS \"%s\" to new target: \"%s\"\n", curns->ghsource->idstr, curns->ghtarget->idstr );
+   LOG( LOG_INFO, "Moved within GhostNS \"%s\" to new target \"%s\"  --> \"%s\"\n", curns->ghsource->idstr, curns->ghtarget->idstr, curns->idstr );
    return 0;
 }
 
@@ -740,7 +750,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
          if ( replacechar ) { *parsepath = '/'; }
          replacechar = 0;
          // update our position to the new NS
-         int nsentres = config_enterns( pos, pos->ns->pnamespace, "..", 1 );
+         int nsentres = config_enterns( pos, pos->ns->pnamespace, "..", 1, 1 );
          if ( nsentres > 0 ) {
             // we can't move up any further
             // check if this relative path reenters the MarFS mountpoint
@@ -780,7 +790,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
          // this is a NS path
          if ( *nextpelem != '\0' ) {
             // we will be traversing within the NS; update our position and ctxt
-            if ( config_enterns( pos, (marfs_ns*)(resnode->content), pathelem, 1 ) ) {
+            if ( config_enterns( pos, (marfs_ns*)(resnode->content), pathelem, 0, 1 ) ) {
                LOG( LOG_ERR, "Failed to enter subspace \"%s\"\n", pathelem );
                return NULL;
             }
@@ -793,7 +803,7 @@ char* config_shiftns( marfs_config* config, marfs_position* pos, char* subpath )
             //         Additionally, under some circumstances ( no execute perms ), it 
             //         may not be possible to set our ctxt to the NS, but still possible 
             //         to perform the required op ( stat(), for example ).
-            if ( config_enterns( pos, (marfs_ns*)(resnode->content), pathelem, 0 ) ) {
+            if ( config_enterns( pos, (marfs_ns*)(resnode->content), pathelem, 0, 0 ) ) {
                LOG( LOG_ERR, "Failed to enter subspace (without ctxt) \"%s\"\n", pathelem );
                return NULL;
             }
@@ -879,6 +889,9 @@ marfs_repo* find_repo( marfs_repo* repolist, int repocount, const char* reponame
 int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
    // define an unused character value and use as an indicator of a completed perm string
    char eoperm = 'x';
+   // define chars for tracking duplicate values
+   char haveiperms = 0;
+   char havebperms = 0;
 
    // iterate over nodes at this level
    for ( ; permroot; permroot = permroot->next ) {
@@ -894,20 +907,22 @@ int parse_perms( ns_perms* iperms, ns_perms* bperms, xmlNode* permroot ) {
       // determine if we're parsing iteractive or batch perms
       char ptype = '\0';
       if ( strncmp( (char*)permroot->name, "interactive", 12 ) == 0 ) {
-         if ( *iperms != NS_NOACCESS ) {
+         if ( haveiperms ) {
             // this is a duplicate 'interactive' def
             LOG( LOG_ERR, "encountered duplicate 'interactive' perm set\n" );
             return -1;
          }
          ptype = 'i';
+         haveiperms = 1;
       }
       else if ( strncmp( (char*)permroot->name, "batch", 6 ) == 0 ) {
-         if ( *bperms != NS_NOACCESS ) {
+         if ( havebperms ) {
             // this is a duplicate 'batch' def
             LOG( LOG_ERR, "encountered duplicate 'batch' perm set\n" );
             return -1;
          }
          ptype = 'b';
+         havebperms = 1;
       }
       else {
          LOG( LOG_ERR, "encountered unexpected perm node: \"%s\"\n", (char*)permroot->name );
@@ -1078,6 +1093,9 @@ int parse_int_node( int* target, xmlNode* node ) {
  * @return int : Zero on success, or -1 on failure
  */
 int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
+   // define chars for tracking duplicate values
+   char havefquota = 0;
+   char havedquota = 0;
    // iterate over nodes at this level
    for ( ; quotaroot; quotaroot = quotaroot->next ) {
       // check for unknown node type
@@ -1091,7 +1109,7 @@ int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
 
       // determine if we're parsing file or data quotas
       if ( strncmp( (char*)quotaroot->name, "files", 6 ) == 0 ) {
-         if ( *fquota != 0 ) {
+         if ( havefquota ) {
             // this is a duplicate 'files' def
             LOG( LOG_ERR, "encountered duplicate 'files' quota set\n" );
             return -1;
@@ -1101,9 +1119,10 @@ int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
             LOG( LOG_ERR, "failed to parse 'files' quota value\n" );
             return -1;
          }
+         havefquota = 1;
       }
       else if ( strncmp( (char*)quotaroot->name, "data", 5 ) == 0 ) {
-         if ( *dquota != 0 ) {
+         if ( havedquota ) {
             // this is a duplicate 'data' def
             LOG( LOG_ERR, "encountered duplicate 'data' quota set\n" );
             return -1;
@@ -1113,6 +1132,7 @@ int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
             LOG( LOG_ERR, "failed to parse 'data' quota value\n" );
             return -1;
          }
+         havedquota = 1;
       }
       else {
          LOG( LOG_ERR, "encountered unexpected quota sub-node: \"%s\"\n", (char*)quotaroot->name );
@@ -1182,9 +1202,14 @@ int free_namespace( HASH_NODE* nsnode ) {
  * @param marfs_ns* pnamespace : Parent namespace reference of the new namespace
  * @param marfs_repo* prepo : Parent repo reference of the new namespace
  * @param xmlNode* nsroot : Xml node defining the new namespace
+ * @param size_t dfquota : Default file quota value for the new NS
+ * @param size_t ddquota : Default data quota value for the new NS
+ * @param ns_perms diperms : Default interactive perms value for the new NS
+ * @param ns_perms dbperms : Default interactive perms value for the new NS
  * @return int : Zero on success, or -1 on failure
  */
-int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNode* nsroot ) {
+int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo, xmlNode* nsroot,
+                      size_t dfquota, size_t ddquota, ns_perms diperms, ns_perms dbperms ) {
    // need to check if this is a real NS or a remote/ghost reference
    char rns = 0;
    char gns = 0;
@@ -1348,10 +1373,10 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
    marfs_ns* ns = (marfs_ns*)nsnode->content; //shorthand ref
 
    // set some default namespace values
-   ns->fquota = 0;
-   ns->dquota = 0;
-   ns->iperms = NS_NOACCESS;
-   ns->bperms = NS_NOACCESS;
+   ns->fquota = dfquota;
+   ns->dquota = ddquota;
+   ns->iperms = diperms;
+   ns->bperms = dbperms;
    ns->subspaces = NULL;
    ns->subnodes = NULL;
    ns->subnodecount = 0;
@@ -1479,7 +1504,7 @@ int create_namespace( HASH_NODE* nsnode, marfs_ns* pnamespace, marfs_repo* prepo
             }
             // allocate a subspace
             HASH_NODE* subnsnode = subspacelist + allocsubspaces;
-            if ( create_namespace( subnsnode, ns, prepo, subnode ) ) {
+            if ( create_namespace( subnsnode, ns, prepo, subnode, ns->fquota, ns->dquota, ns->iperms, ns->bperms ) ) {
                LOG( LOG_ERR, "failed to initialize subspace of NS \"%s\"\n", nsname );
                retval = -1;
                break;
@@ -1647,14 +1672,21 @@ HASH_TABLE create_distribution_table( int* count, xmlNode* distroot ) {
    for ( curnode = 0; curnode < nodecount; curnode++ ) {
       nodelist[curnode].content = NULL; // we don't care about content
       nodelist[curnode].weight = dweight; // every node gets the default weight, for now
-      // identify the number of characers needed for this nodename via some cheeky use of snprintf
-      int namelen = snprintf( NULL, 0, "%zu", curnode );
+      // NOTE -- It is ESSENTIAL to include a 'per-distribution-table' unique value in this name string.
+      //         Failing to do so ( just using the same numeric values across pod / cap / scatter ) will 
+      //         result in unintended irregularities in the distribution of objects.
+      //         For example, an exact node name match between pod / cap values results in a hashing preference
+      //         for objects to target matching pod + cap values.
+      //         In this case, we're prepending the first char of the table type ( 'p' / 'c' / 's' ) to EVERY
+      //         hash node name.
+      // identify the number of characers needed for this nodename via snprintf
+      int namelen = snprintf( NULL, 0, "%c%zu", *((char*)distroot->name), curnode );
       nodelist[curnode].name = malloc( sizeof(char) * (namelen + 1) );
       if ( nodelist[curnode].name == NULL ) {
          LOG( LOG_ERR, "failed to allocate space for node names of %s distribution\n", (char*)distroot->name );
          break;
       }
-      if ( snprintf( nodelist[curnode].name, namelen + 1, "%zu", curnode ) > namelen ) {
+      if ( snprintf( nodelist[curnode].name, namelen + 1, "%c%zu", *((char*)distroot->name), curnode ) > namelen ) {
          LOG( LOG_ERR, "failed to populate nodename \"%zu\" of %s distribution\n", curnode, (char*)distroot->name );
          errno = EFAULT;
          free( nodelist[curnode].name );
@@ -2018,6 +2050,10 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
                return -1;
             }
             if ( strncmp( (char*)subnode->name, "pods", 5 ) == 0 ) {
+               if ( ds->podtable ) {
+                  LOG( LOG_ERR, "Encountered duplicate 'pods' distribution subnode\n" );
+                  return -1;
+               }
                if ( (ds->podtable = create_distribution_table( &(maxloc.pod), subnode )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'pods' distribution table\n" );
                   return -1;
@@ -2025,6 +2061,10 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
                maxloc.pod--; // decrement node count to get actual max value
             }
             else if ( strncmp( (char*)subnode->name, "caps", 5 ) == 0 ) {
+               if ( ds->captable ) {
+                  LOG( LOG_ERR, "Encountered duplicate 'caps' distribution subnode\n" );
+                  return -1;
+               }
                if ( (ds->captable = create_distribution_table( &(maxloc.cap), subnode )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'caps' distribution table\n" );
                   return -1;
@@ -2032,6 +2072,10 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
                maxloc.cap--; // decrement node count to get actual max value
             }
             else if ( strncmp( (char*)subnode->name, "scatters", 9 ) == 0 ) {
+               if ( ds->scattertable ) {
+                  LOG( LOG_ERR, "Encountered duplicate 'scatters' distribution subnode\n" );
+                  return -1;
+               }
                if ( (ds->scattertable = create_distribution_table( &(maxloc.scatter), subnode )) == NULL ) {
                   LOG( LOG_ERR, "failed to create 'scatters' distribution table\n" );
                   return -1;
@@ -2154,24 +2198,67 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
             LOG( LOG_ERR, "failed to create reference path table\n" );
             return -1;
          }
-         // count all subnodes
+         // count all subnodes and establish default values
          ms->nscount = 0;
+         size_t dfquota = 0;
+         size_t ddquota = 0;
+         ns_perms diperms = NS_NOACCESS;
+         ns_perms dbperms = NS_NOACCESS;
          int subspaces = 0;
          for( ; subnode; subnode = subnode->next ) {
+            // expecting only element and comment nodes here
             if ( subnode->type != XML_ELEMENT_NODE ) {
-               // skip comment nodes
-               if ( subnode->type == XML_COMMENT_NODE ) { continue; }
-               LOG( LOG_ERR, "encountered unknown node within a 'namespaces' definition\n" );
+               if ( subnode->type != XML_COMMENT_NODE ) {
+                  LOG( LOG_ERR, "encountered unknown node within a 'namespaces' definition\n" );
+                  return -1;
+               }
+               continue; // skip comments
+            }
+            if ( strncmp( (char*)(subnode->name), "ns", 3 ) == 0 ) {
+               // note every NS def
+               subspaces++;
+            }
+            else if ( strncmp( (char*)(subnode->name), "perms", 6 ) == 0 ) {
+               if ( diperms != NS_NOACCESS  ||  dbperms != NS_NOACCESS ) {
+                  LOG( LOG_ERR, "detected duplicate default perm info in 'namespaces' definition\n" );
+                  return -1;
+               }
+               // parse default perm info
+               if ( parse_perms( &(diperms), &(dbperms), subnode->children ) ) {
+                  LOG( LOG_ERR, "failed to parse default perm info in 'namespaces' definition\n" );
+                  return -1;
+               }
+               LOG( LOG_INFO, "Detected default perm defs\n" );
+            }
+            else if ( strncmp( (char*)(subnode->name), "quotas", 7 ) == 0 ) {
+               if ( dfquota  ||  ddquota ) {
+                  LOG( LOG_ERR, "detected duplicate default quota info in 'namespaces' definition\n" );
+                  return -1;
+               }
+               // parse default quota info
+               if( parse_quotas( &(dfquota), &(ddquota), subnode->children ) ) {
+                  LOG( LOG_ERR, "failed to parse default quota info in 'namespaces' definition\n" );
+                  return -1;
+               }
+               LOG( LOG_INFO, "Detected default quota values ( fquota = %zu, dquota = %zu )\n", dfquota, ddquota );
+            }
+            else { // unexpected subnode
+               if ( strncmp( (char*)(subnode->name), "rns", 4 ) == 0 ) {
+                  LOG( LOG_ERR, "Remote NS def found at the root of a 'namespaces' definition\n" );
+               }
+               else {
+                  LOG( LOG_ERR, "Encountered unrecognized element in a 'namespaces' definition: \"%s\"\n",
+                                (char*)(subnode->name) );
+               }
                return -1;
             }
-            // only 'ns' nodes are acceptible; for now, just assume every node is a NS def
-            subspaces++;
          }
          // if we have no subspaces at all, just warn and continue on
          if ( !(subspaces) ) {
             LOG( LOG_WARNING, "metascheme has no namespaces defined\n" );
             continue;
          }
+         LOG( LOG_INFO, "Found %d direct subspaces of repo %s\n", subspaces, repo->name );
          // allocate an array of namespace nodes
          ms->nslist = malloc( sizeof(HASH_NODE) * subspaces );
          if ( ms->nslist == NULL ) {
@@ -2182,20 +2269,15 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
          for( subnode = metaroot->children; subnode; subnode = subnode->next ) {
             if ( subnode->type == XML_ELEMENT_NODE ) {
                if ( strncmp( (char*)(subnode->name), "ns", 3 ) ) {
-                  if ( strncmp( (char*)(subnode->name), "rns", 4 ) == 0 ) {
-                     LOG( LOG_ERR, "Remote NS def found at the root of a 'namespaces' definition\n" );
-                  }
-                  else {
-                     LOG( LOG_ERR, "Encountered unrecognized element in a 'namespaces' definition: \"%s\"\n", (char*)(subnode->name) );
-                  }
-                  return -1;
+                  // just skip non-ns elements
+                  continue;
                }
                // set default namespace values
                HASH_NODE* subspace = ms->nslist + ms->nscount;
                subspace->name = NULL;
                subspace->weight = 0;
                subspace->content = NULL;
-               if ( create_namespace( subspace, NULL, repo, subnode ) ) {
+               if ( create_namespace( subspace, NULL, repo, subnode, dfquota, ddquota, diperms, dbperms ) ) {
                   LOG( LOG_ERR, "failed to create subspace %d\n", ms->nscount );
                   return -1;
                }
@@ -3114,7 +3196,7 @@ HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_
       }
       rnodelist[curnode].weight = 1;
       rnodelist[curnode].content = NULL;
-      LOG( LOG_INFO, "created ref node: \"%s\"\n", rnodelist[curnode].name );
+      //LOG( LOG_INFO, "created ref node: \"%s\"\n", rnodelist[curnode].name );
    }
    // free data structures which we no longer need
    free( rpathtmp );
@@ -3167,6 +3249,9 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
       return -1;
    }
 
+   // zero out our umask value, to avoid improper perms
+   mode_t oldmask = umask(0);
+
    // establish a default position value, from which we'll traverse to our targetNS
    MDAL rootmdal = config->rootns->prepo->metascheme.mdal;
    marfs_position pos = {
@@ -3181,15 +3266,18 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
          LOG( LOG_INFO, "Attempting to create rootNS\n" );
          if ( rootmdal->createnamespace( rootmdal->ctxt, "/." )  ) {
             LOG( LOG_ERR, "Failed to create rootNS (%s)\n", strerror(errno) );
+            umask(oldmask);
             return -1;
          }
          if ( config_establishposition( &pos, config ) ) {
             LOG( LOG_ERR, "Failed to establish a rootNS position, even after creation\n" );
+            umask(oldmask);
             return -1;
          }
       }
       else {
          LOG( LOG_ERR, "Failed to establish a rootNS MDAL_CTXT\n" );
+         umask(oldmask);
          return -1;
       }
    }
@@ -3205,6 +3293,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
          LOG( LOG_ERR, "The specified target is not a NS: \"%s\"\n", NSpath );
       }
       free( NSpath );
+      umask(oldmask);
       return -1;
    }
    free( NSpath ); // done with NS path
@@ -3213,6 +3302,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
    marfs_repo** vrepos = calloc( sizeof(marfs_repo*), config->repocount );
    if ( vrepos == NULL ) {
       LOG( LOG_ERR, "Failed to allocate verified repos list\n" );
+      umask(oldmask);
       return -1;
    }
    size_t vrepocnt = 0;
@@ -3223,11 +3313,9 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
    if ( nsiterlist == NULL ) {
       LOG( LOG_ERR, "Failed to allocate NS iterator list\n" );
       free( vrepos );
+      umask(oldmask);
       return -1;
    }
-
-   // zero out our umask value, to avoid improper perms
-   mode_t oldmask = umask(0);
 
    // traverse the entire NS hierarchy, creating any missing NSs and reference dirs
    int errcount = 0;
@@ -3258,6 +3346,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                              pos.ns->prepo->name, strerror(errno) );
                free( vrepos );
                free( nsiterlist );
+               umask(oldmask);
                return -1;
             }
             else if ( verres ) {
@@ -3273,6 +3362,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                              pos.ns->prepo->name, strerror(errno) );
                free( vrepos );
                free( nsiterlist );
+               umask(oldmask);
                return -1;
             }
             else if ( verres ) {
@@ -3318,7 +3408,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                   anyerror = 1;
                   continue;
                }
-               LOG( LOG_INFO, "Verifying refdir: \"%s\"\n", rfullpath );
+               //LOG( LOG_INFO, "Verifying refdir: \"%s\"\n", rfullpath );
                errno = 0;
                while ( mkdirres == 0  &&  rparse != NULL ) {
                   // iterate ahead in the stream, tokenizing into intermediate path components
@@ -3334,70 +3424,17 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                      if ( *rparse == '\0' ) { rparse = NULL; break; }
                      rparse++;
                   }
-                  if ( fix ) {
-                     // isssue the createrefdir op
-                     if ( rparse ) {
-                        // create all intermediate dirs with global execute access
-                        mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IXOTH );
-                     }
-                     else {
-                        // create the final dir with full global access
-                        mkdirres = curmdal->createrefdir( nsctxt, rfullpath, S_IRWXU | S_IWOTH | S_IXOTH );
-                     }
-                     // ignore any EEXIST errors, and stat the target instead
-                     if ( mkdirres  &&  errno == EEXIST ) {
-                        mkdirres = 0;
-                        errno = 0;
-                        // stat the reference dir
-                        struct stat stval;
-                        mkdirres = curmdal->statref( nsctxt, rfullpath, &(stval) );
-                        if ( mkdirres == 0 ) {
-                           if ( rparse ) {
-                              // check for any group/other perms besides global execute
-                              if ( stval.st_mode & S_IRWXG  ||
-                                   stval.st_mode & S_IROTH  ||
-                                   stval.st_mode & S_IWOTH  ||
-                                   !(stval.st_mode & S_IXOTH) ) {
-                                 LOG( LOG_ERR, "Intermediate dir has unexpected perms: \"%s\"\n", rfullpath );
-                                 mkdirres = -1;
-                              }
-                           }
-                           else {
-                              // check for write/execute global perms
-                              if ( stval.st_mode & S_IROTH  ||
-                                   !(stval.st_mode & S_IWOTH)  ||
-                                   !(stval.st_mode & S_IXOTH) ) {
-                                 LOG( LOG_ERR, "Terminating dir has unexpected perms: \"%s\"\n", rfullpath );
-                                 mkdirres = -1;
-                              }
-                           }
-                        }
-                     }
+                  // stat the reference dir
+                  struct stat stval;
+                  mkdirres = curmdal->statref( nsctxt, rfullpath, &(stval) );
+                  if ( mkdirres  &&  errno == ENOENT ) { // missing reference path is acceptable
+                     mkdirres = 0;
                   }
-                  else {
-                     // stat the reference dir
-                     struct stat stval;
-                     mkdirres = curmdal->statref( nsctxt, rfullpath, &(stval) );
-                     if ( mkdirres == 0 ) {
-                        if ( rparse ) {
-                           // check for any group/other perms besides global execute
-                           if ( stval.st_mode & S_IRWXG  ||
-                                stval.st_mode & S_IROTH  ||
-                                stval.st_mode & S_IWOTH  ||
-                                !(stval.st_mode & S_IXOTH) ) {
-                              LOG( LOG_ERR, "Intermediate dir has unexpected perms: \"%s\"\n", rfullpath );
-                              mkdirres = -1;
-                           }
-                        }
-                        else {
-                           // check for write/execute global perms
-                           if ( stval.st_mode & S_IROTH  ||
-                                !(stval.st_mode & S_IWOTH)  ||
-                                !(stval.st_mode & S_IXOTH) ) {
-                              LOG( LOG_ERR, "Terminating dir has unexpected perms: \"%s\"\n", rfullpath );
-                              mkdirres = -1;
-                           }
-                        }
+                  else if ( mkdirres == 0 ) {
+                     // validate perms
+                     if ( !(stval.st_mode & S_IWOTH)  ||  !(stval.st_mode & S_IXOTH) ) {
+                        LOG( LOG_ERR, "Reference dir has unexpected perms: \"%s\"\n", rfullpath );
+                        mkdirres = -1;
                      }
                   }
                   // if we cut the string short, we need to undo that and progress to the next str comp
@@ -3412,7 +3449,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             }
             if ( anyerror ) {
                errcount++;
-               LOG( LOG_ERR, "Failed to create all ref dirs for NS: \"%s\"\n", nspath );
+               LOG( LOG_ERR, "Failed to verify all ref dirs for NS: \"%s\"\n", nspath );
             }
             else { errno = olderr; }
          }
@@ -3431,11 +3468,12 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
       if ( nsiterlist[curdepth - 1] < pos.ns->subnodecount ) {
          // proceed to the next subspace of the current NS
          marfs_ns* newnstgt = (marfs_ns*)( pos.ns->subnodes[ nsiterlist[curdepth - 1] ].content );
-         if ( config_enterns( &pos, newnstgt, pos.ns->subnodes[ nsiterlist[curdepth - 1] ].name, 0 ) ) {
+         if ( config_enterns( &pos, newnstgt, pos.ns->subnodes[ nsiterlist[curdepth - 1] ].name, 0, 0 ) ) {
             LOG( LOG_ERR, "Failed to transition position into subspace: \"%s\"\n", newnstgt->idstr );
             umask(oldmask); // reset umask
             free( vrepos );
             free( nsiterlist );
+            umask(oldmask);
             return -1;
          }
          LOG( LOG_INFO, "Incrementing iterator for parent ( index = %zu / iter = %zu )\n",
@@ -3448,6 +3486,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
                LOG( LOG_ERR, "Failed to allocate extended NS iterator list\n" );
                umask(oldmask); // reset umask
                free( vrepos );
+               umask(oldmask);
                return -1;
             }
             curiteralloc += 1024;
@@ -3457,11 +3496,12 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
       }
       else {
          // proceed back up to the parent of this space
-         if ( config_enterns( &pos, pos.ns->pnamespace, "..", 0 ) < 0 ) {
+         if ( config_enterns( &pos, pos.ns->pnamespace, "..", 1, 0 ) < 0 ) {
             LOG( LOG_ERR, "Failed to transition to the parent of current NS\n" );
             umask(oldmask); // reset umask
             free( vrepos );
             free( nsiterlist );
+            umask(oldmask);
             return -1;
          }
          curdepth--;

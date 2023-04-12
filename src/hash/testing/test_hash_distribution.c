@@ -128,18 +128,21 @@ int main(int argc, char **argv)
 
    // iterate from the current position, determining if node counts seem sensible
    for ( i = 0; i < (nodecount + 2); i++ ) {
-      size_t minlookup = (nc->num == 0) ? 0 : (nc->num - 1) * lperweight;
-      size_t maxlookup = (nc->num == 0) ? 0 : (nc->num + 1) * lperweight;
-      if ( nc->lcount > maxlookup ) {
-         printf( "Excessive lookup count of %zu on node %zu\n", nc->lcount, nc->num ); 
-         return -1;
-      }
-      if ( nc->lcount < minlookup ) {
-         printf( "Minimal lookup count of %zu on node %zu\n", nc->lcount, nc->num );
-         return -1;
+      if ( noderef ) {
+         nc = noderef->content;
+         size_t minlookup = (nc->num == 0) ? 0 : (nc->num - 1) * lperweight;
+         size_t maxlookup = (nc->num == 0) ? 0 : (nc->num + 1) * lperweight;
+         if ( nc->lcount > maxlookup ) {
+            printf( "Excessive lookup count of %zu on node %zu\n", nc->lcount, nc->num ); 
+            return -1;
+         }
+         if ( nc->lcount < minlookup ) {
+            printf( "Minimal lookup count of %zu on node %zu\n", nc->lcount, nc->num );
+            return -1;
+         }
       }
       int ires = hash_iterate( disttable, &(noderef) );
-      if ( i >= nodecount - 1 ) {
+      if ( i >= nodecount ) {
          if ( ires ) {
             printf( "expected return of iteration completion: %d\n", ires );
             return -1;

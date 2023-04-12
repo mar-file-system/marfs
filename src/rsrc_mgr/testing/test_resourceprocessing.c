@@ -218,7 +218,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   char* rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   char* rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file1' (%s)\n", strerror(errno) );
       return -1;
@@ -257,7 +257,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   char* rpath2 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   char* rpath2 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath2 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file2' (%s)\n", strerror(errno) );
       return -1;
@@ -294,7 +294,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   char* rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   char* rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath3 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file3' (%s)\n", strerror(errno) );
       return -1;
@@ -332,6 +332,13 @@ int main(int argc, char **argv)
       return -1;
    }
 
+   // start up a resourcelog
+   RESOURCELOG logfile = NULL;
+   if ( resourcelog_init( &(logfile), "./test_rman_topdir/logfile", RESOURCE_MODIFY_LOG, pos.ns ) ) {
+      printf( "failed to initialize resourcelog\n" );
+      return -1;
+   }
+
 
    // walk the produced datastream
    struct timeval currenttime;
@@ -342,36 +349,57 @@ int main(int argc, char **argv)
    thresholds thresh = { // set thresholds to 2min in the future
       .gcthreshold = currenttime.tv_sec + 120,
       .repackthreshold = currenttime.tv_sec + 120,
-      .rebuildthreshold = 0, // no rebuilds for now
+      .rebuildthreshold = currenttime.tv_sec + 120,
       .cleanupthreshold = currenttime.tv_sec + 120
    };
-   streamwalker walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   ne_location rebuildloc = { // rebuild all objects
+      .pod = -1,
+      .cap = -1,
+      .scatter = -1
+   };
+   streamwalker walker = NULL;
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, &(rebuildloc) ) ) {
       printf( "failed to open streamwalker for \"%s\"\n", rpath );
       return -1;
    }
    opinfo* gcops = NULL;
    opinfo* repackops = NULL;
    opinfo* rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   ssize_t rebuildcount = 0;
+   int iterres = 1;
+   while( (iterres = process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) )) > 0 ) {
+      // not expecting any gc or repack ops, at present
+      if ( gcops ) {
+         printf( "unexpected GCOPS following first traversal of no-pack stream\n" );
+         return -1;
+      }
+      if ( repackops ) {
+         printf( "unexpected REPACKOPS following first traversal of no-pack stream\n" );
+         return -1;
+      }
+      // count up number of encountered rebuild ops
+      if ( rebuildops ) {
+         rebuildcount += rebuildops->count;
+         if ( resourcelog_processop( &(logfile), rebuildops, NULL ) ) {
+            printf( "failed to log rebuildops for first traversal\n" );
+            return -1;
+         }
+         if ( process_executeoperation( &pos, rebuildops, &(logfile), NULL, "TestClient" ) ) {
+            printf( "failed to execute rebuild ops ( %zu ) of first iteration\n", rebuildcount );
+            return -1;
+         }
+      }
+   }
+   if ( iterres ) {
       printf( "unexpected result of first iteration from \"%s\"\n", rpath );
       return -1;
    }
-   // not expecting any ops, at present
-   if ( gcops ) {
-      printf( "unexpected GCOPS following first traversal of no-pack stream\n" );
-      return -1;
-   }
-   if ( repackops ) {
-      printf( "unexpected REPACKOPS following first traversal of no-pack stream\n" );
-      return -1;
-   }
-   if ( rebuildops ) {
-      printf( "unexpected REBUILDOPS following first traversal of no-pack stream\n" );
+   if ( rebuildcount != 23 ) {
+      printf( "unexpected rebuild op count from first iteration \"%s\": %zu\n", rpath, rebuildcount );
       return -1;
    }
    streamwalker_report walkreport;
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close first streamwalker\n" );
       return -1;
    }
@@ -420,7 +448,7 @@ int main(int argc, char **argv)
       printf( "improper first walk rpckbytes: %zu\n", walkreport.rpckbytes );
       return -1;
    }
-   if ( walkreport.rbldobjs ) {
+   if ( walkreport.rbldobjs != 23 ) {
       printf( "improper first walk rbldobjs: %zu\n", walkreport.rbldobjs );
       return -1;
    }
@@ -435,15 +463,14 @@ int main(int argc, char **argv)
    thresh.repackthreshold = 0;
    thresh.rebuildthreshold = 0;
    thresh.cleanupthreshold = 0;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected result of first quota-only iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -460,7 +487,7 @@ int main(int argc, char **argv)
       printf( "unexpected REBUILDOPS following traversal3 of no-pack stream\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -474,14 +501,6 @@ int main(int argc, char **argv)
       return -1;
    }
 
-
-
-   // start up a resourcelog
-   RESOURCELOG logfile = NULL;
-   if ( resourcelog_init( &(logfile), "./test_rman_topdir/logfile", RESOURCE_MODIFY_LOG, pos.ns ) ) {
-      printf( "failed to initialize resourcelog\n" );
-      return -1;
-   }
 
    // delete file2
    if ( curmdal->unlink( pos.ctxt, "file2" ) ) {
@@ -498,15 +517,14 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker2 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of second iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -530,16 +548,16 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process first gc op of nopack\n" );
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after first gc from nopack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, NULL ) ) {
+   if ( process_closestreamwalker( &walker, NULL ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -623,15 +641,14 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of third iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -649,7 +666,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after second gc from nopack\n" );
       return -1;
    }
@@ -660,11 +677,11 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process second gc op of nopack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, NULL ) ) {
+   if ( process_closestreamwalker( &walker, NULL ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -709,15 +726,14 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of third iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -735,11 +751,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after third gc from nopack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, NULL ) ) {
+   if ( process_closestreamwalker( &walker, NULL ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -750,7 +766,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process third gc op of nopack\n" );
       return -1;
    }
@@ -794,7 +810,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file1' (%s)\n", strerror(errno) );
       return -1;
@@ -820,7 +836,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath2 = datastream_genrpath( &(stream->files[1].ftag), stream->ns->prepo->metascheme.reftable );
+   rpath2 = datastream_genrpath( &(stream->files[1].ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath2 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file2' (%s)\n", strerror(errno) );
       return -1;
@@ -879,7 +895,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath3 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file3' (%s)\n", strerror(errno) );
       return -1;
@@ -991,15 +1007,14 @@ int main(int argc, char **argv)
    thresh.repackthreshold = 0;
    thresh.rebuildthreshold = 0;
    thresh.cleanupthreshold = 0;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open quick-streamwalker1 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected result of first quota-only iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1016,7 +1031,7 @@ int main(int argc, char **argv)
       printf( "unexpected REBUILDOPS following first quota-only iteration of pack stream\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after first quick iteration of pack\n" );
       return -1;
    }
@@ -1039,15 +1054,14 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker2 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected result of second iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1064,7 +1078,7 @@ int main(int argc, char **argv)
       printf( "unexpected REBUILDOPS following first gc traversal of pack stream\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after second gc iteration\n" );
       return -1;
    }
@@ -1179,15 +1193,14 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker3 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of third iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1205,11 +1218,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after third gc from pack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after third pack gc iteration\n" );
       return -1;
    }
@@ -1269,7 +1282,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process third gc op of pack\n" );
       return -1;
    }
@@ -1292,15 +1305,14 @@ int main(int argc, char **argv)
 
 
    // walk a final time, to delete the entire stream
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker4 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of fourth iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1318,11 +1330,11 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after fourth gc from pack\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after fourth pack gc iteration\n" );
       return -1;
    }
@@ -1382,7 +1394,7 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO repackstreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process fourth gc op of pack\n" );
       return -1;
    }
@@ -1418,7 +1430,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable );
+   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pwrite 'file1' (%s)\n", strerror(errno) );
       return -1;
@@ -1444,7 +1456,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath2 = datastream_genrpath( &(stream->files[1].ftag), stream->ns->prepo->metascheme.reftable );
+   rpath2 = datastream_genrpath( &(stream->files[1].ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath2 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pwrite 'file2' (%s)\n", strerror(errno) );
       return -1;
@@ -1585,16 +1597,15 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker1 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
-      printf( "unexpected result of first iteration from \"%s\"\n", rpath );
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+      printf( "unexpected result of fifth iteration from \"%s\"\n", rpath );
       return -1;
    }
    // we should have some gcops, and nothing else
@@ -1611,7 +1622,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after first gc from parallel-write\n" );
       return -1;
    }
@@ -1622,11 +1633,11 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO reparallel-writestreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process first gc op of parallel-write\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after first parallel-write gc iteration\n" );
       return -1;
    }
@@ -1726,15 +1737,14 @@ int main(int argc, char **argv)
    thresh.repackthreshold = currenttime.tv_sec + 120;
    thresh.rebuildthreshold = 0; // no rebuilds for now
    thresh.cleanupthreshold = currenttime.tv_sec + 120;
-   walker = process_openstreamwalker( &pos, rpath, thresh, NULL );
-   if ( walker == NULL ) {
+   if ( process_openstreamwalker( &walker, &pos, rpath, thresh, NULL ) ) {
       printf( "failed to open streamwalker1 for \"%s\"\n", rpath );
       return -1;
    }
    gcops = NULL;
    repackops = NULL;
    rebuildops = NULL;
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) < 1 ) {
       printf( "unexpected result of final iteration from \"%s\"\n", rpath );
       return -1;
    }
@@ -1752,7 +1762,7 @@ int main(int argc, char **argv)
       return -1;
    }
    // continue iteration, which should produce no further ops
-   if ( process_iteratestreamwalker( walker, &(gcops), &(repackops), &(rebuildops) ) ) {
+   if ( process_iteratestreamwalker( &walker, &(gcops), &(repackops), &(rebuildops) ) ) {
       printf( "unexpected walker iteration after final gc from parallel-write\n" );
       return -1;
    }
@@ -1763,11 +1773,11 @@ int main(int argc, char **argv)
    }
    // process the gcops
    // TODO reparallel-writestreamer
-   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL ) ) {
+   if ( process_executeoperation( &(pos), gcops, &(logfile), NULL, NULL ) ) {
       printf( "failed to process final gc op of parallel-write\n" );
       return -1;
    }
-   if ( process_closestreamwalker( walker, &(walkreport) ) ) {
+   if ( process_closestreamwalker( &walker, &(walkreport) ) ) {
       printf( "failed to close walker after final parallel-write gc iteration\n" );
       return -1;
    }

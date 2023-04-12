@@ -1522,7 +1522,7 @@ int command_loop( marfs_config* config ) {
                      continue;
                   }
                }
-               char* actrpath = datastream_genrpath( &( ( *(streamlist + tgtstream) )->files[curfile].ftag ), reftable );
+               char* actrpath = datastream_genrpath( &( ( *(streamlist + tgtstream) )->files[curfile].ftag ), reftable, NULL, NULL );
                if ( actrpath ) {
                   printf( "      -- Active Reference Path : %s\n", actrpath );
                   free( actrpath );

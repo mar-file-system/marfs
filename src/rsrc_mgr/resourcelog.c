@@ -778,13 +778,12 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
       opindex = opindex->next;
    }
    if ( opindex != NULL ) {
-      // repeat of operation start can be ignored
-      if ( newop->start == 0 ) {
-         // otherwise, for op completion, we'll need to process each operation in the chain...
-         opinfo* parseop = newop; // new op being added to totals
-         opinfo* parseindex = opindex; // old op being compared against
-         opinfo* previndex = opindex;  // end of the chain of old ops
-         while ( parseop ) {
+      // otherwise, for op completion, we'll need to process each operation in the chain...
+      opinfo* parseop = newop; // new op being added to totals
+      opinfo* parseindex = opindex; // old op being compared against
+      opinfo* previndex = opindex;  // end of the chain of old ops
+      while ( parseop ) {
+         if ( newop->start == 0 ) {
             // check for excessive count
             if ( parseop->count > parseindex->count ) {
                LOG( LOG_ERR, "Processed op count ( %zu ) exceeds expected count ( %zu )\n", parseop->count, parseindex->count );
@@ -848,6 +847,13 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
             // decrement in-progress cnt
             rsrclog->outstandingcnt--;
          }
+         else if ( parseop->count > parseindex->count ) {
+            LOG( LOG_INFO, "Resetting count of in-progress operation from %zu to %zu\n",
+                 parseindex->count, parseop->count );
+            parseindex->count = parseop->count;
+         }
+      }
+      if ( newop->start == 0 ) {
          // ...and remove the matching op(s) from inprogress
          if ( prevop ) {
             // pull the matching ops out of the list
@@ -868,7 +874,7 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
    else {
       // should indicate the start of a new operation
       if ( newop->start == 0 ) {
-         LOG( LOG_ERR, "Parsed completion of op from logfile \"%s\" with no parsed start of op\n", rsrclog->logfilepath );
+         LOG( LOG_ERR, "Received completion of op with no parsed start of op in logfile \"%s\"\n", rsrclog->logfilepath );
          return -1;
       }
       if ( rsrclog->type == RESOURCE_MODIFY_LOG ) {
@@ -1032,18 +1038,21 @@ opinfo* resourcelog_dupopinfo( opinfo* op ) {
                         resourcelog_freeopinfo( genchain );
                         return NULL;
                      }
-                     newinfo->markerpath = strdup( extinfo->markerpath );
-                     if ( newinfo->markerpath == NULL ) {
-                        LOG( LOG_ERR, "Failed to duplicate rebuild marker path\n" );
-                        free( newinfo );
-                        resourcelog_freeopinfo( genchain );
-                        return NULL;
-                     }
+                     newinfo->markerpath = NULL;
                      newinfo->rtag = extinfo->rtag;
                      newinfo->rtag.meta_status = NULL;
                      newinfo->rtag.data_status = NULL;
                      newinfo->rtag.csum = NULL;
                      size_t stripewidth = op->ftag.protection.N + op->ftag.protection.E;
+                     if ( extinfo->markerpath ) {
+                        newinfo->markerpath = strdup( extinfo->markerpath );
+                        if ( newinfo->markerpath == NULL ) {
+                           LOG( LOG_ERR, "Failed to duplicate rebuild marker path\n" );
+                           free( newinfo );
+                           resourcelog_freeopinfo( genchain );
+                           return NULL;
+                        }
+                     }
                      if ( extinfo->rtag.meta_status ) {
                         newinfo->rtag.meta_status = calloc( stripewidth, sizeof(char) );
                         if ( newinfo->rtag.meta_status == NULL ) {
@@ -1900,16 +1909,31 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, char
         rsrclog->summary.rebuild_failures  ||  rsrclog->summary.repack_failures ) { errpresent = 1; }
    // potentially record summary info
    if ( summary ) { *summary = rsrclog->summary; }
+   // close our logfile prior to ( possibly ) unlinking it
+   if ( rsrclog->logfile > 0 ) {
+      int cres = close( rsrclog->logfile );
+      rsrclog->logfile = 0; // avoid possible double close
+      if ( cres ) {
+         LOG( LOG_ERR, "Failed to close resourcelog\n" );
+         cleanuplog( rsrclog, 1 ); // this will release the lock
+         *resourcelog = NULL;
+         return -1;
+      }
+   }
    if ( !(errpresent)  &&  delete ) {
       // if there were no errors recorded, just delete the logfile
       if ( unlink( rsrclog->logfilepath ) ) {
          LOG( LOG_ERR, "Failed to unlink log file: \"%s\"\n", rsrclog->logfilepath );
-         pthread_mutex_unlock( &(rsrclog->lock) );
+         cleanuplog( rsrclog, 1 ); // this will release the lock
+         *resourcelog = NULL;
          return -1;
       }
       // also, attempt to remove the next two parent dirs ( NS and iteration ) of this logfile, skipping on error
       char pdel = 0;
       while ( pdel < 2 ) {
+         // NOTE -- frustrates me greatly to put this sleep in, but a brief pause really seems to help any NFS-hosted
+         //         log location to cleanup state, allowing us to delete the parent dir
+         usleep( 100000 ); 
          // trim logpath at the last '/' char, to get the parent dir path
          char* prevsep = NULL;
          char* pparse = rsrclog->logfilepath;

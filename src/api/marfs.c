@@ -83,6 +83,7 @@ typedef struct marfs_ctxt_struct {
 
 typedef struct marfs_fhandle_struct {
    pthread_mutex_t    lock; // for serializing access to this structure (if necessary)
+   marfs_flags       flags; // open flags for this file handle
    MDAL_FHANDLE metahandle; // for meta/direct access
    DATASTREAM   datastream; // for standard access
    marfs_ns*            ns; // reference to the containing NS
@@ -509,10 +510,10 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
    else if ( tgtdepth != 0  &&  S_ISREG( buf->st_mode ) ) {
       // regular files may need link count adjusted to ignore ref path
       if ( buf->st_nlink > 1 ) { buf->st_nlink--; }
-      if ( buf->st_blocks == 0  &&  buf->st_size ) {
+      if ( buf->st_size ) {
          // assume allocated blocks, based on logical file size ( saves us having to pull an FTAG xattr )
-         if ( buf->st_blksize == 0 ) { buf->st_blksize = 1; } // avoid div by zero, if the blksize is odd
-         buf->st_blocks = ( buf->st_size / buf->st_blksize ) + (buf->st_size % buf->st_blksize) ? 1 : 0;
+         blkcnt_t estblocks = ( buf->st_size / 512 ) + ( (buf->st_size % 512) ? 1 : 0 );
+         if ( estblocks > buf->st_blocks ) { buf->st_blocks = estblocks; }
       }
    }
    // cleanup references
@@ -1122,13 +1123,6 @@ int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
       return -1;
    }
    LOG( LOG_INFO, "TGT: Depth=%d, NS=\"%s\", SubPath=\"%s\"\n", tgtdepth, oppos.ns->idstr, subpath );
-   if ( tgtdepth == 0 ) {
-      LOG( LOG_ERR, "Cannot rmdir a MarFS NS: \"%s\"\n", path );
-      pathcleanup( subpath, &oppos );
-      errno = EPERM;
-      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-      return -1;
-   }
    // check NS perms
    if ( ( ctxt->itype != MARFS_INTERACTIVE  &&  !(oppos.ns->bperms & NS_WRITEMETA) )  ||
         ( ctxt->itype != MARFS_BATCH        &&  !(oppos.ns->iperms & NS_WRITEMETA) ) ) {
@@ -1140,7 +1134,21 @@ int marfs_rmdir( marfs_ctxt ctxt, const char* path ) {
    }
    // perform the MDAL op
    MDAL curmdal = oppos.ns->prepo->metascheme.mdal;
-   int retval = curmdal->rmdir( oppos.ctxt, subpath );
+   int retval = -1;
+   if ( tgtdepth == 0 ) {
+      if ( oppos.ctxt == NULL ) {
+         // destroy the namespace without creating an MDAL_CTXT
+         retval = curmdal->destroynamespace( curmdal->ctxt, subpath );
+      }
+      else {
+         // destroy the namespace relative to our current CTXT
+         retval = curmdal->destroynamespace( oppos.ctxt, subpath );
+      }
+   }
+   else {
+      // just issue the base op
+      retval = curmdal->rmdir( oppos.ctxt, subpath );
+   }
    // cleanup references
    pathcleanup( subpath, &oppos );
    // return op result
@@ -1293,9 +1301,10 @@ int marfs_futimens(marfs_fhandle fh, const struct timespec times[2]) {
    }
    // perform the op
    int retval;
-   if ( fh->datastream == NULL  &&  fh->ns->prepo->metascheme.directread ) {
+   if ( fh->datastream == NULL  &&
+        ( fh->ns->prepo->metascheme.directread  ||  (fh->flags & MARFS_META) ) ) {
       // only call the MDAL op directly if we both don't have a datastream AND
-      // the config has enabled direct read
+      // either the config has enabled direct read OR the file handle is explicitly metadata only
       LOG( LOG_INFO, "Performing futimens call directly on metahandle\n" );
       retval = fh->ns->prepo->metascheme.mdal->futimens( fh->metahandle, times );
    }
@@ -1554,39 +1563,47 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
    int cachederrno = errno;
    errno = 0;
    // potentially insert a subspace entry
-   if ( dh->depth == 0  &&  dh->subspcindex < dh->ns->subnodecount ) {
-      // stat the subspace, to identify inode info
-      marfs_ns* tgtsubspace = (marfs_ns *)(dh->ns->subnodes[dh->subspcindex].content);
-      char* subspacepath = NULL;
-      if ( config_nsinfo( tgtsubspace->idstr, NULL, &(subspacepath) ) ) {
-         LOG( LOG_ERR, "Failed to identify NS path of subspace: \"%s\"\n",
-              tgtsubspace->idstr );
-         pthread_mutex_unlock( &(dh->lock) );
-         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-         return NULL;
-      }
-      MDAL tgtmdal = tgtsubspace->prepo->metascheme.mdal;
-      struct stat stval;
-      if ( tgtmdal->statnamespace( tgtmdal->ctxt, subspacepath, &(stval) ) ) {
-         LOG( LOG_ERR, "Failed to stat subspace root: \"%s\"\n", subspacepath );
+   if ( dh->depth == 0 ) {
+      while ( dh->subspcindex < dh->ns->subnodecount ) {
+         // stat the subspace, to identify inode info
+         marfs_ns* tgtsubspace = (marfs_ns *)(dh->ns->subnodes[dh->subspcindex].content);
+         char* subspacepath = NULL;
+         if ( config_nsinfo( tgtsubspace->idstr, NULL, &(subspacepath) ) ) {
+            LOG( LOG_ERR, "Failed to identify NS path of subspace: \"%s\"\n",
+                 tgtsubspace->idstr );
+            pthread_mutex_unlock( &(dh->lock) );
+            LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+            return NULL;
+         }
+         // stat the subspace, to check for existence
+         MDAL tgtmdal = tgtsubspace->prepo->metascheme.mdal;
+         struct stat stval;
+         int stnsres = tgtmdal->statnamespace( tgtmdal->ctxt, subspacepath, &(stval) );
          free( subspacepath );
-         pthread_mutex_unlock( &(dh->lock) );
-         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-         return NULL;
+         if ( stnsres  &&  errno != ENOENT ) {
+            LOG( LOG_ERR, "Failed to stat subspace root: \"%s\"\n", subspacepath );
+            pthread_mutex_unlock( &(dh->lock) );
+            LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+            return NULL;
+         }
+         if ( stnsres == 0 ) {
+            // populate and return the subspace dirent
+            if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->subspcindex].name ) >= dh->subspcnamealloc ) {
+               LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->subspcindex].name, dh->subspcnamealloc );
+               pthread_mutex_unlock( &(dh->lock) );
+               errno = ENAMETOOLONG;
+               LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+               return NULL;
+            }
+            // increment our index
+            dh->subspcindex++;
+            pthread_mutex_unlock( &(dh->lock) );
+            errno = cachederrno;
+            return &(dh->subspcent);
+         }
+         // increment our index
+         dh->subspcindex++;
       }
-      free( subspacepath );
-      if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->subspcindex].name ) >= dh->subspcnamealloc ) {
-         LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->subspcindex].name, dh->subspcnamealloc );
-         pthread_mutex_unlock( &(dh->lock) );
-         errno = ENAMETOOLONG;
-         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-         return NULL;
-      }
-      // increment our index and return the dirent ref
-      dh->subspcindex++;
-      pthread_mutex_unlock( &(dh->lock) );
-      errno = cachederrno;
-      return &(dh->subspcent);
    }
    // perform the op
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
@@ -2007,6 +2024,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
    }
    // update our stream info to reflect the new target
    if ( stream->ns ) { config_destroynsref( stream->ns ); }
+   stream->flags = O_WRONLY | O_CREAT;
    stream->ns = dupref;
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
    stream->itype = ctxt->itype;
@@ -2049,7 +2067,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       return NULL;
    }
    // check for invalid flags
-   if ( flags != MARFS_READ  &&  flags != MARFS_WRITE ) {
+   if ( (flags & ~(MARFS_META)) != MARFS_READ  &&  (flags & ~(MARFS_META)) != MARFS_WRITE ) {
       LOG( LOG_ERR, "Unrecognized flags value\n" );
       errno = EINVAL;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -2156,6 +2174,33 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
+   // check for MARFS_META flag
+   if ( flags & MARFS_META ) {
+      // open a meta-only reference for this file
+      stream->flags = flags;
+      flags = flags & ~(MARFS_META);
+      stream->datastream = NULL;
+      if ( stream->ns ) { config_destroynsref( stream->ns ); }
+      stream->ns = dupref;
+      stream->itype = ctxt->itype;
+      MDAL curmdal = oppos.ns->prepo->metascheme.mdal;
+      stream->metahandle = curmdal->open( oppos.ctxt, subpath, (flags == MARFS_READ) ? O_RDONLY : O_WRONLY );
+      if ( stream->metahandle == NULL ) {
+         LOG( LOG_ERR, "Failed to open meta-only reference for the target file: \"%s\" ( %s )\n", path, strerror(errno) );
+         config_destroynsref( dupref );
+         pathcleanup( subpath, &oppos );
+         pthread_mutex_unlock( &(stream->lock) );
+         if ( !(newstream) ) { errno = EBADFD; }
+         else { free( stream ); }
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      // cleanup and return
+      pthread_mutex_unlock( &(stream->lock) );
+      pathcleanup( subpath, &oppos );
+      LOG( LOG_INFO, "EXIT - Success\n" );
+      return stream;
+   }
    // attempt the op, allowing a meta-only reference ONLY if we are opening for read
    MDAL_FHANDLE phandle = NULL;
    if ( datastream_open( &(stream->datastream), (flags == MARFS_READ) ? READ_STREAM : EDIT_STREAM, subpath, &oppos, (flags == MARFS_READ) ? &(phandle) : NULL ) ) {
@@ -2180,6 +2225,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
             return NULL;
          }
          // update stream info to reflect a meta-only reference
+         stream->flags = flags;
          stream->datastream = NULL;
          stream->metahandle = phandle;
          if ( stream->ns ) { config_destroynsref( stream->ns ); }
@@ -2200,6 +2246,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       return NULL;
    }
    // update our stream info to reflect the new target
+   stream->flags = flags;
    if ( stream->ns ) { config_destroynsref( stream->ns ); }
    stream->ns = dupref;
    stream->metahandle = stream->datastream->files[stream->datastream->curfile].metahandle;
@@ -2513,6 +2560,12 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t count) {
       errno = EPERM;
       retval = -1;
    }
+   else if ( stream->flags & MARFS_META ) {
+      // never allow data access via a PATH file handle
+      LOG( LOG_ERR, "Cannot read from an MARFS_META file handle\n" );
+      errno = EPERM;
+      retval = -1;
+   }
    else {
       // perform the direct read
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
@@ -2623,6 +2676,12 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       errno = EPERM;
       retval = -1;
    }
+   else if ( stream->flags & MARFS_META ) {
+      // never allow data access via a PATH file handle
+      LOG( LOG_ERR, "Cannot seek an MARFS_META file handle\n" );
+      errno = EPERM;
+      retval = -1;
+   }
    else {
       LOG( LOG_INFO, "Seeking meta handle\n" );
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
@@ -2691,13 +2750,19 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
          errno = EPERM;
          offval = -1;
       }
+      else if ( stream->flags & MARFS_META ) {
+         // never allow data access via a PATH file handle
+         LOG( LOG_ERR, "Cannot read from an MARFS_META file handle\n" );
+         errno = EPERM;
+         offval = -1;
+      }
       else {
          LOG( LOG_INFO, "Seeking meta handle to %zd offset\n", offset );
          MDAL curmdal = stream->ns->prepo->metascheme.mdal;
          offval = curmdal->lseek( stream->metahandle, offset, SEEK_SET );
       }
    }
-   if ( offval != offset ) {
+   if ( offval != offset  ||  offval < 0 ) {
       pthread_mutex_unlock( &(stream->lock) );
       if ( offval < offset  &&  offval >=0 ) {
          LOG( LOG_INFO, "Reduced offset of %zd implies read beyond EOF ( returning zero bytes )\n", offval );
@@ -2816,6 +2881,12 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
    if ( stream->ns->prepo->metascheme.directread == 0 ) {
       // direct read isn't enabled
       LOG( LOG_ERR, "Direct read is not enabled for this target\n" );
+      errno = EPERM;
+      retval = -1;
+   }
+   else if ( stream->flags & MARFS_META ) {
+      // never allow data access via a PATH file handle
+      LOG( LOG_ERR, "Cannot truncate an MARFS_META file handle\n" );
       errno = EPERM;
       retval = -1;
    }

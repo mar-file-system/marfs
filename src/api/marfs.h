@@ -67,6 +67,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <fcntl.h>
 #include <sys/statvfs.h>
 
+
 /* NOTE: Functions should operate the same as their POSIX counterparts if
 possible.
 Additionally (and if needed, superceding the previous statement), developers
@@ -88,10 +89,14 @@ typedef enum
 	MARFS_BATCH
 } marfs_interface;
 
+// NOTE -- MarFS uses the O_PATH open flag to indicate something different than standard posix / linux.
+//         O_PATH indicates to open a 'metadata-only' reference for the given file, allowing access and manipulation
+//         of metadata ( getxattr, futimens, etc ), but preventing it for data ( read / write ).
 typedef enum
 {
-	MARFS_READ = O_RDONLY,
-	MARFS_WRITE = O_WRONLY
+	MARFS_META =  0x01,
+	MARFS_READ =  0x02,
+	MARFS_WRITE = 0x04
 } marfs_flags;
 
 // CONTEXT MGMT OPS
