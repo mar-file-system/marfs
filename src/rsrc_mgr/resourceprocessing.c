@@ -646,7 +646,7 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
                obj = NULL;
                break;
             }
-            else { break; }
+            else if ( rebuildres == 0 ) { break; } // rebuild success
             iteration++;
          }
          // check for excessive rebuild reattempts
