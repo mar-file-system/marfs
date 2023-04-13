@@ -88,13 +88,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up ( failed repacks, old logs, etc. )
                           // Default to 1 day ago
 
-#define INACTIVE_RUN_SKIP_THRESH (CL_THRESH-60) // Age of seemingly inactive ( no summary file ) rman logdirs before they are skipped 
-                                                // Default to 1 minute ago
-                                                // NOTE -- this is currently used as a modifier to the 'cleanup' time, rather
-                                                //         than having a completely independent defintion.
-                                                //         As in, think of this value as 'this many seconds more recent' than
-                                                //         the cleanup threshold.
-                                                //         Therefore, this value should NEVER exceed CL_THRESH.
+#define INACTIVE_RUN_SKIP_THRESH 60 // Age of seemingly inactive ( no summary file ) rman logdirs before they are skipped 
+                                    // Default to 1 minute ago
 
 #define DEFAULT_PRODUCER_COUNT 16
 #define DEFAULT_CONSUMER_COUNT 32
@@ -647,7 +642,7 @@ void getNSrange( marfs_ns* ns, size_t workingranks, size_t refdist, size_t* refm
  * @param const char* scanroot : Logroot, below which to scan
  * @return int : Zero on success, or -1 on failure
  */
-int findoldlogs( rmanstate* rman, const char* scanroot ) {
+int findoldlogs( rmanstate* rman, const char* scanroot, time_t skipthresh ) {
    // construct a HASH_TABLE to hold old logfile references
    HASH_NODE* lognodelist = calloc( rman->nscount, sizeof( struct hash_node_struct ) );
    if ( lognodelist == NULL ) {
@@ -777,8 +772,7 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
                   return -1;
                }
                // check if this iteration is old enough for us to feel comfortable running
-               // NOTE -- see the defintion of INACTIVE_RUN_SKIP_THRESH for an explanation of how I'm using this value
-               if ( stval.st_mtime > ( rman->gstate.thresh.cleanupthreshold + INACTIVE_RUN_SKIP_THRESH ) ) {
+               if ( stval.st_mtime > skipthresh ) {
                   fprintf( stderr, "ERROR: Found recent iteration with possible conflicting operations ( no summary logfile ): \"%s\"\n",
                                    request.iteration );
                   close( newfd );
@@ -793,6 +787,15 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
                LOG( LOG_ERR, "Failed to stat summary logfile of old iteration: \"%s\" (%s)\n",
                              request.iteration, strerror(errno) );
                close( sumfd );
+               close( newfd );
+               return -1;
+            }
+            // for runs actually modifying FS content (non-quota-only runs),
+            //    check if this iteration is old enough for us to feel comfortable running
+            if ( ( rman->gstate.thresh.gcthreshold  ||  rman->gstate.thresh.repackthreshold  ||
+                   rman->gstate.thresh.rebuildthreshold  ||  rman->gstate.thresh.cleanupthreshold )
+                  &&  stval.st_mtime > rman->gstate.thresh.cleanupthreshold ) {
+               fprintf( stderr, "ERROR: Found recent iteration with possible conflicting operations: \"%s\"\n", request.iteration );
                close( newfd );
                return -1;
             }
@@ -829,12 +832,6 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
                  tmpstate.gstate.dryrun != rman->gstate.dryrun ) {
                printf( "Skipping over previous iteration with incompatible arguments: \"%s\"\n", request.iteration );
                continue;
-            }
-            // check if this iteration is old enough for us to feel comfortable running
-            if ( stval.st_mtime > rman->gstate.thresh.cleanupthreshold ) {
-               fprintf( stderr, "ERROR: Found recent iteration with possible conflicting operations: \"%s\"\n", request.iteration );
-               close( newfd );
-               return -1;
             }
          }
          dirlist[1] = fdopendir( newfd );
@@ -1931,6 +1928,9 @@ int main(int argc, char** argv) {
    time_t rpthresh = currenttime.tv_sec - RP_THRESH;
    time_t clthresh = currenttime.tv_sec - CL_THRESH;
 
+   // for skipping seemingly inactive logs of previous runs
+   time_t skipthresh = currenttime.tv_sec - INACTIVE_RUN_SKIP_THRESH;
+
    // parse all position-independent arguments
    char pr_usage = 0;
    int c;
@@ -2503,7 +2503,7 @@ int main(int argc, char** argv) {
          return -1;
       }
       // incorporate logfiles from the previous run
-      if ( rman.ranknum == 0  &&  findoldlogs( &(rman), rman.execprevroot ) ) {
+      if ( rman.ranknum == 0  &&  findoldlogs( &(rman), rman.execprevroot, 0 ) ) {
          fprintf( stderr, "ERROR: Failed to identify previous run's logfiles: \"%s\"\n", rman.execprevroot );
          free( rman.logsummary );
          free( rman.walkreport );
@@ -2517,7 +2517,7 @@ int main(int argc, char** argv) {
    }
    else if ( rman.gstate.dryrun == 0  &&  rman.ranknum == 0 ) {
       // otherwise, scan for and incorporate logs from previous modification runs
-      if ( findoldlogs( &(rman), rman.logroot ) ) {
+      if ( findoldlogs( &(rman), rman.logroot, skipthresh ) ) {
          fprintf( stderr, "ERROR: Failed to scan for previous iteration logs under \"%s\"\n", rman.logroot );
          free( rman.logsummary );
          free( rman.walkreport );
