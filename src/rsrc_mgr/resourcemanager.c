@@ -1366,7 +1366,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
                rman->fatalerror = 1;
                return -1;
             }
-            if ( snprintf( errlogpath, errloglen + 1, "%*s%s%s", logdirlen, outlogpath, ERROR_LOG_PREFIX, finelem ) != errloglen ) {
+            if ( snprintf( errlogpath, errloglen + 1, "%.*s%s%s", logdirlen, outlogpath, ERROR_LOG_PREFIX, finelem ) != errloglen ) {
                fprintf( stderr, "ERROR: Failed to generate the error log path of Rank %zu for NS \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr );
                resourcelog_term( &(ranklog), NULL, 0 );

@@ -636,7 +636,7 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
             LOG( LOG_INFO, "Rebuilding object %zu of stream \"%s\" (attempt %d)\n",
                            tmptag.objno, tmptag.streamid, (int)iteration + 1 );
             int rebuildres = ne_rebuild( obj, NULL, NULL );
-            if ( rebuildres < 0 ) {
+            if ( rebuildres < 0 ) { // unmitigated failure
                LOG( LOG_ERR, "Failed to rebuild object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
                op->errval = (errno) ? errno : ENOTRECOVERABLE;
                if ( ne_abort( obj ) ) {
@@ -644,14 +644,23 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
                                 tmptag.objno, tmptag.streamid );
                }
                obj = NULL;
+               iteration = -1;
                break;
             }
-            else if ( rebuildres == 0 ) { break; } // rebuild success
+            else { // rebuild success
+               LOG( LOG_INFO, "Successfully rebuilt object %zu of stream \"%s\" (result mask = %d)\n",
+                              tmptag.objno, tmptag.streamid, rebuildres );
+               break;
+            }
+            // incomplete rebuild ( reattempt may succeed )
             iteration++;
          }
          // check for excessive rebuild reattempts
-         if ( iteration >= 2 ) {
-            LOG( LOG_ERR, "Excessive reattempts for rebuild of object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+         if ( iteration >= 2  ||  iteration < 0 ) {
+            if ( iteration < 0 )
+               LOG( LOG_ERR, "Rebuild failure for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+            else
+               LOG( LOG_ERR, "Excessive reattempts for rebuild of object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
             if ( ne_abort( obj ) ) {
                LOG( LOG_ERR, "Failed to properly abort rebuild handle for object %zu of stream \"%s\"\n",
