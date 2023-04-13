@@ -657,10 +657,12 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
          }
          // check for excessive rebuild reattempts
          if ( iteration >= 2  ||  iteration < 0 ) {
-            if ( iteration < 0 )
+            if ( iteration < 0 ) {
                LOG( LOG_ERR, "Rebuild failure for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
-            else
+            }
+            else {
                LOG( LOG_ERR, "Excessive reattempts for rebuild of object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+            }
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
             if ( ne_abort( obj ) ) {
                LOG( LOG_ERR, "Failed to properly abort rebuild handle for object %zu of stream \"%s\"\n",

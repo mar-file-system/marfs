@@ -88,6 +88,14 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up ( failed repacks, old logs, etc. )
                           // Default to 1 day ago
 
+#define INACTIVE_RUN_SKIP_THRESH (CL_THRESH-60) // Age of seemingly inactive ( no summary file ) rman logdirs before they are skipped 
+                                                // Default to 1 minute ago
+                                                // NOTE -- this is currently used as a modifier to the 'cleanup' time, rather
+                                                //         than having a completely independent defintion.
+                                                //         As in, think of this value as 'this many seconds more recent' than
+                                                //         the cleanup threshold.
+                                                //         Therefore, this value should NEVER exceed CL_THRESH.
+
 #define DEFAULT_PRODUCER_COUNT 16
 #define DEFAULT_CONSUMER_COUNT 32
 #define DEFAULT_LOG_ROOT "/var/log/marfs-rman"
@@ -756,19 +764,41 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
          }
          // check if program args are compatible with this run
          if ( !(rman->execprevroot) ) {
+            struct stat stval; // for checking the age of previous iteration files
             int sumfd = openat( newfd, "summary.log", O_RDONLY, 0 );
             if ( sumfd < 0 ) {
-               LOG( LOG_ERR, "Failed to open summary log for old iteration: \"%s\" (%s)\n",
+               LOG( LOG_WARNING, "Failed to open summary log for old iteration: \"%s\" (%s)\n",
                     request.iteration, strerror(errno) );
+               // stat the root of this iteration
+               if ( fstat( newfd, &(stval) ) ) {
+                  LOG( LOG_ERR, "Failed to stat root of old iteration: \"%s\" (%s)\n",
+                                request.iteration, strerror(errno) );
+                  close( newfd );
+                  return -1;
+               }
+               // check if this iteration is old enough for us to feel comfortable running
+               // NOTE -- see the defintion of INACTIVE_RUN_SKIP_THRESH for an explanation of how I'm using this value
+               if ( stval.st_mtime > ( rman->gstate.thresh.cleanupthreshold + INACTIVE_RUN_SKIP_THRESH ) ) {
+                  fprintf( stderr, "ERROR: Found recent iteration with possible conflicting operations ( no summary logfile ): \"%s\"\n",
+                                   request.iteration );
+                  close( newfd );
+                  return -1;
+               }
+               // otherwise, assume we can safely skip over this iteration dir
+               printf( "Skipping over previous iteration lacking a summary logfile: \"%s\"\n", request.iteration );
+               continue;
+            }
+            // stat the summary logfile
+            if ( fstat( sumfd, &(stval) ) ) {
+               LOG( LOG_ERR, "Failed to stat summary logfile of old iteration: \"%s\" (%s)\n",
+                             request.iteration, strerror(errno) );
+               close( sumfd );
                close( newfd );
                return -1;
             }
+            // open a file stream for the summary logfile
             FILE* summaryfile = fdopen( sumfd, "r" );
             if ( summaryfile == NULL ) {
-               if ( errno == ENOENT ) {
-                  printf( "Skipping over previous iteration lacking a summary logfile: \"%s\"\n", request.iteration );
-                  continue;
-               }
                LOG( LOG_ERR, "Failed to open a file stream for summary log for old iteration: \"%s\" (%s)\n",
                     request.iteration, strerror(errno) );
                close( sumfd );
@@ -799,6 +829,12 @@ int findoldlogs( rmanstate* rman, const char* scanroot ) {
                  tmpstate.gstate.dryrun != rman->gstate.dryrun ) {
                printf( "Skipping over previous iteration with incompatible arguments: \"%s\"\n", request.iteration );
                continue;
+            }
+            // check if this iteration is old enough for us to feel comfortable running
+            if ( stval.st_mtime > rman->gstate.thresh.cleanupthreshold ) {
+               fprintf( stderr, "ERROR: Found recent iteration with possible conflicting operations: \"%s\"\n", request.iteration );
+               close( newfd );
+               return -1;
             }
          }
          dirlist[1] = fdopendir( newfd );
