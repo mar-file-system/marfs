@@ -122,6 +122,7 @@ typedef struct rmanstate_struct {
 
    // Global Progress Tracking
    char          fatalerror;
+   char          nonfatalerror;
    char*         terminatedworkers;
    streamwalker_report* walkreport;
    operation_summary*   logsummary;
@@ -506,14 +507,14 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    // update position value
    if ( config_establishposition( &(rman->gstate.pos), rman->config ) ) {
       LOG( LOG_ERR, "Failed to establish a root NS position\n" );
-      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to establish a root NS position\n" );
+      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to establish a root NS position" );
       return -1;
    }
    char* tmpnspath = NULL;
    if ( config_nsinfo( ns->idstr, NULL, &(tmpnspath) ) ) {
       LOG( LOG_ERR, "Failed to identify NS path of NS \"%s\"\n", ns->idstr );
       snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                "Failed to identify NS path of NS \"%s\"\n", ns->idstr );
+                "Failed to identify NS path of NS \"%s\"", ns->idstr );
       return -1;
    }
    char* nspath = strdup( tmpnspath+1 ); // strip off leading '/', to get a relative NS path
@@ -521,7 +522,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    if ( config_traverse( rman->config, &(rman->gstate.pos), &(nspath), 0 ) ) {
       LOG( LOG_ERR, "Failed to traverse config to new NS path: \"%s\"\n", nspath );
       snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                "Failed to traverse config to new NS path: \"%s\"\n", nspath );
+                "Failed to traverse config to new NS path: \"%s\"", nspath );
       free( nspath );
       return -1;
    }
@@ -529,7 +530,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    if ( rman->gstate.pos.ctxt == NULL  &&  config_fortifyposition( &(rman->gstate.pos) ) ) {
       LOG( LOG_ERR, "Failed to fortify position for new NS: \"%s\"\n", ns->idstr );
       snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                "Failed to fortify position for new NS: \"%s\"\n", ns->idstr );
+                "Failed to fortify position for new NS: \"%s\"", ns->idstr );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
    }
@@ -537,7 +538,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    if ( resourceinput_init( &(rman->gstate.rinput), &(rman->gstate.pos), rman->gstate.numprodthreads ) ) {
       LOG( LOG_ERR, "Failed to initialize resourceinput for new NS target: \"%s\"\n", ns->idstr );
       snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                "Failed to initialize resourceinput for new NS target: \"%s\"\n", ns->idstr );
+                "Failed to initialize resourceinput for new NS target: \"%s\"", ns->idstr );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
    }
@@ -547,7 +548,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       LOG( LOG_ERR, "Failed to identify output logfile path of rank %zu for NS \"%s\"\n",
                     rman->ranknum, ns->idstr );
       snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                "Failed to identify output logfile path of rank %zu for NS \"%s\"\n",
+                "Failed to identify output logfile path of rank %zu for NS \"%s\"",
                 rman->ranknum, ns->idstr );
       resourceinput_purge( &(rman->gstate.rinput) );
       resourceinput_term( &(rman->gstate.rinput) );
@@ -557,7 +558,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    if ( resourcelog_init( &(rman->gstate.rlog), outlogpath,
                           (rman->gstate.dryrun) ? RESOURCE_RECORD_LOG : RESOURCE_MODIFY_LOG, ns ) ) {
       LOG( LOG_ERR, "Failed to initialize output logfile: \"%s\"\n", outlogpath );
-      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize output logfile: \"%s\"\n", outlogpath );
+      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize output logfile: \"%s\"", outlogpath );
       free( outlogpath );
       resourceinput_purge( &(rman->gstate.rinput) );
       resourceinput_term( &(rman->gstate.rinput) );
@@ -568,7 +569,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    // update our repack streamer
    if ( (rman->gstate.rpst = repackstreamer_init()) == NULL ) {
       LOG( LOG_ERR, "Failed to initialize repack streamer\n" );
-      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize repack streamer\n" );
+      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize repack streamer" );
       resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
       resourceinput_purge( &(rman->gstate.rinput) );
       resourceinput_term( &(rman->gstate.rinput) );
@@ -592,7 +593,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    };
    if ( (rman->tq = tq_init( &(tqopts) )) == NULL ) {
       LOG( LOG_ERR, "Failed to start ThreadQueue for NS \"%s\"\n", ns->idstr );
-      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to start ThreadQueue for NS \"%s\"\n", ns->idstr );
+      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to start ThreadQueue for NS \"%s\"", ns->idstr );
       repackstreamer_abort( rman->gstate.rpst );
       rman->gstate.rpst = NULL;
       resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
@@ -604,7 +605,7 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
    // ensure all threads have initialized
    if ( tq_check_init( rman->tq ) ) {
       LOG( LOG_ERR, "Some threads failed to initialize for NS \"%s\"\n", ns->idstr );
-      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Some threads failed to initialize for NS \"%s\"\n", ns->idstr );
+      snprintf( response->errorstr, MAX_ERROR_BUFFER, "Some threads failed to initialize for NS \"%s\"", ns->idstr );
       tq_set_flags( rman->tq, TQ_ABORT );
       repackstreamer_abort( rman->gstate.rpst );
       rman->gstate.rpst = NULL;
@@ -1004,7 +1005,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
    bzero( &(response->summary), sizeof( struct operation_summary_struct ) );
    response->errorlog = 0;
    response->fatalerror = 1;
-   snprintf( response->errorstr, MAX_ERROR_BUFFER, "UNKNOWN-ERROR!\n" );
+   snprintf( response->errorstr, MAX_ERROR_BUFFER, "UNKNOWN-ERROR!" );
    // identify and process the request
    if ( request->type == RLOG_WORK ) {
       // potentially update our state to target the NS
@@ -1024,7 +1025,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       if ( rlogpath == NULL ) {
          LOG( LOG_ERR, "Failed to generate logpath for NS \"%s\" ranknum \"%s\"\n",
                        rman->nslist[request->nsindex]->idstr, request->ranknum );
-         snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to generate logpath for NS \"%s\" ranknum \"%zu\"\n",
+         snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to generate logpath for NS \"%s\" ranknum \"%zu\"",
                    rman->nslist[request->nsindex]->idstr, request->ranknum );
          return -1;
       }
@@ -1033,14 +1034,14 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          // we are using the rlog as an input
          if ( resourceinput_setlogpath( &(rman->gstate.rinput), rlogpath ) ) {
             LOG( LOG_ERR, "Failed to update rank %zu input to logfile \"%s\"\n", rman->ranknum, rlogpath );
-            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to update rank %zu input to logfile \"%s\"\n",
+            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to update rank %zu input to logfile \"%s\"",
                       rman->ranknum, rlogpath );
             return -1;
          }
          // wait for our input to be exhausted ( don't respond until we are ready for more work )
          if ( resourceinput_waitforcomp( &(rman->gstate.rinput) ) ) {
             LOG( LOG_ERR, "Failed to wait for completion of logfile \"%s\"\n", request->refdist );
-            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait for completion of logfile \"%s\"\n", rlogpath );
+            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait for completion of logfile \"%s\"", rlogpath );
             return -1;
          }
       }
@@ -1050,14 +1051,14 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          RESOURCELOG newlog = NULL;
          if ( resourcelog_init( &(newlog), rlogpath, RESOURCE_READ_LOG, rman->nslist[request->nsindex] ) ) {
             LOG( LOG_ERR, "Failed to open logfile for read: \"%s\" (%s)\n", rlogpath, strerror(errno) );
-            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to open logfile for read: \"%s\" (%s)\n",
+            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to open logfile for read: \"%s\" (%s)",
                       rlogpath, strerror(errno) );
             free( rlogpath );
             return -1;
          }
          if ( resourcelog_replay( &(newlog), &(rman->gstate.rlog), NULL ) ) {
             LOG( LOG_ERR, "Failed to replay logfile \"%s\" into active state\n", rlogpath );
-            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to replay logfile \"%s\"\n", rlogpath );
+            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to replay logfile \"%s\"", rlogpath );
             resourcelog_abort( &(newlog) );
             free( rlogpath );
             return -1;
@@ -1087,7 +1088,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
             LOG( LOG_ERR, "Failed to set NS \"%s\" reference range values for distribution %zu\n",
                  rman->nslist[request->nsindex]->idstr, request->refdist );
             snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                      "Failed to set NS \"%s\" reference range values for distribution %zu\n",
+                      "Failed to set NS \"%s\" reference range values for distribution %zu",
                       rman->nslist[request->nsindex]->idstr, request->refdist );
             return -1;
          }
@@ -1096,7 +1097,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
             LOG( LOG_ERR, "Failed to wait for completion of NS \"%s\" reference distribution %zu\n",
                  rman->nslist[request->nsindex]->idstr, request->refdist );
             snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                      "Failed to wait for completion of NS \"%s\" reference distribution %zu\n",
+                      "Failed to wait for completion of NS \"%s\" reference distribution %zu",
                       rman->nslist[request->nsindex]->idstr, request->refdist );
             return -1;
          }
@@ -1112,13 +1113,13 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       if ( rman->gstate.rlog == NULL ) {
          LOG( LOG_ERR, "Rank %zu was asked to complete work, but has none\n", rman->ranknum );
          snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                   "Rank %zu was asked to complete work, but has none\n", rman->ranknum );
+                   "Rank %zu was asked to complete work, but has none", rman->ranknum );
          return -1;
       }
       // terminate the resource input
       if ( rman->gstate.rinput  &&  resourceinput_term( &(rman->gstate.rinput) ) ) {
          LOG( LOG_ERR, "Failed to terminate resourceinput\n" );
-         snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to terminate resourceinput\n" );
+         snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to terminate resourceinput" );
          // don't quit out yet, try to collect thread states first
       }
       char threaderror = 0;
@@ -1127,7 +1128,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          TQ_Control_Flags setflags = 0;
          if ( tq_wait_for_flags( rman->tq, 0, &(setflags) ) ) {
             LOG( LOG_ERR, "Failed to wait on ThreadQueue state flags\n" );
-            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait on ThreadQueue state flags\n" );
+            snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to wait on ThreadQueue state flags" );
             return -1;
          }
          if ( setflags != TQ_FINISHED ) {
@@ -1151,7 +1152,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
                LOG( LOG_ERR, "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
                     rman->ranknum, rman->gstate.pos.ns->idstr );
                snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                         "Rank %zu encountered NULL thread state when completing NS \"%s\"\n",
+                         "Rank %zu encountered NULL thread state when completing NS \"%s\"",
                          rman->ranknum, rman->gstate.pos.ns->idstr );
                free( tstate );
                return -1;
@@ -1159,7 +1160,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
             if ( tstate->fatalerror ) {
                LOG( LOG_ERR, "Fatal Error in NS \"%s\": \"%s\"\n",
                     rman->gstate.pos.ns->idstr, tstate->errorstr );
-               snprintf( response->errorstr, MAX_ERROR_BUFFER, "Fatal Error in NS \"%s\": \"%s\"\n",
+               snprintf( response->errorstr, MAX_ERROR_BUFFER, "Fatal Error in NS \"%s\": \"%s\"",
                          rman->gstate.pos.ns->idstr, tstate->errorstr );
                free( tstate );
                return -1;
@@ -1184,7 +1185,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
             LOG( LOG_ERR, "Failed to collect thread states during completion of work on NS \"%s\"\n",
                  rman->gstate.pos.ns->idstr );
             snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                      "Failed to collect thread status during completion of work on NS \"%s\"\n",
+                      "Failed to collect thread status during completion of work on NS \"%s\"",
                       rman->gstate.pos.ns->idstr );
             return -1;
          }
@@ -1194,7 +1195,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
             LOG( LOG_ERR, "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
                  rman->gstate.pos.ns->idstr );
             snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                      "Failed to close ThreadQueue after completion of work on NS \"%s\"\n",
+                      "Failed to close ThreadQueue after completion of work on NS \"%s\"",
                       rman->gstate.pos.ns->idstr );
             return -1;
          }
@@ -1212,7 +1213,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          LOG( LOG_ERR, "Failed to terminate log \"%s\" following completion of work on NS \"%s\"\n",
               outlogpath, rman->gstate.pos.ns->idstr );
          snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                   "Failed to terminate log \"%s\" following completion of work on NS \"%s\"\n",
+                   "Failed to terminate log \"%s\" following completion of work on NS \"%s\"",
                    outlogpath, rman->gstate.pos.ns->idstr );
          free( outlogpath );
          return -1;
@@ -1223,7 +1224,7 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          if ( repackstreamer_complete( rman->gstate.rpst ) ) {
             LOG( LOG_ERR, "Failed to complete repack streamer during completion of NS \"%s\"\n", rman->gstate.pos.ns->idstr );
             snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                      "Failed to complete repack streamer during completion of NS \"%s\"\n", rman->gstate.pos.ns->idstr );
+                      "Failed to complete repack streamer during completion of NS \"%s\"", rman->gstate.pos.ns->idstr );
             return -1;
          }
          rman->gstate.rpst = NULL;
@@ -1232,11 +1233,11 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
       if ( config_abandonposition( &(rman->gstate.pos) ) ) {
          LOG( LOG_ERR, "Failed to abandon marfs position during completion of NS \"%s\"\n", nsidstr );
          snprintf( response->errorstr, MAX_ERROR_BUFFER,
-                   "Failed to abandon marfs position during completion of NS \"%s\"\n", nsidstr );
+                   "Failed to abandon marfs position during completion of NS \"%s\"", nsidstr );
          return -1;
       }
       if ( threaderror ) {
-         snprintf( response->errorstr, MAX_ERROR_BUFFER, "ThreadQueue had unexpected termination condition\n" );
+         snprintf( response->errorstr, MAX_ERROR_BUFFER, "ThreadQueue had unexpected termination condition" );
          return -1;
       }
    }
@@ -1284,6 +1285,7 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
                        ( response->request.type == ABORT_WORK )     ? "Abort Condition"         :
                        "UNKNOWN WORK TYPE",
                        response->errorstr );
+      rman->fatalerror = 1; // set our fatal error condition, so we signal future workers to terminate
       rman->terminatedworkers[ranknum] = 1;
       return 0;
    }
@@ -1378,6 +1380,8 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
          }
          // process the work log
          if ( response->errorlog ) {
+            // note a non-fatal error ( non-zero exit code for this run )
+            rman->nonfatalerror = 1;
             // parse through our output path, looking for the final path element
             char* parselogpath = outlogpath;
             char* finelem = outlogpath;
@@ -1451,13 +1455,13 @@ int handleresponse( rmanstate* rman, size_t ranknum, workresponse* response, wor
       // this rank needs work to process, with no preference for NS
       if ( rman->oldlogs ) {
          // start by checking for old resource logs to process
-         HASH_NODE* resnode = NULL;
-         if ( hash_lookup( rman->oldlogs, "irrelevant, as we just need a point to iterate from", &(resnode) ) < 0 ) {
-            fprintf( stderr, "ERROR: Failure of hash_lookup() when trying to identify logfiles for rank %zu to process\n",
+         if ( hash_reset( rman->oldlogs ) < 0 ) {
+            fprintf( stderr, "ERROR: Failure of hash_reset() when trying to identify logfiles for rank %zu to process\n",
                              ranknum );
             rman->fatalerror = 1;
             return -1;
          }
+         HASH_NODE* resnode = NULL;
          while ( resnode ) {
             // check for any nodes with log processing requests remaining
             loginfo* linfo = (loginfo*)( resnode->content );
@@ -2634,7 +2638,7 @@ int main(int argc, char** argv) {
       cleanupstate( &(rman), 1 );
    }
    else {
-      bres = (int)rman.fatalerror;
+      bres = (rman.fatalerror) ? -((int)rman.fatalerror) : (int)rman.nonfatalerror;
       cleanupstate( &(rman), 0 );
    }
 
