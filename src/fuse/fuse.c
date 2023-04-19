@@ -1158,7 +1158,7 @@ int main(int argc, char *argv[])
   marfs_oper.removexattr = fuse_removexattr;
   marfs_oper.rename = fuse_rename;
   marfs_oper.symlink = fuse_symlink;
-  marfs_oper.link = fuse_link
+  marfs_oper.link = fuse_link;
   marfs_oper.unlink = fuse_unlink;
   marfs_oper.utimens = fuse_utimens;
   marfs_oper.statfs = fuse_statvfs;
