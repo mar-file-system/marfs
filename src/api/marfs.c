@@ -1220,10 +1220,10 @@ int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
       inodeusage = 0;
    }
    buf->f_blocks = oppos.ns->dquota / buf->f_frsize;
-   buf->f_bfree = ( datausage < buf->f_blocks ) ? buf->f_blocks - datausage : buf->f_blocks;
+   buf->f_bfree = ( datausage < buf->f_blocks ) ? buf->f_blocks - datausage : 0;
    buf->f_bavail = buf->f_bfree;
    buf->f_files = oppos.ns->fquota;
-   buf->f_ffree = ( inodeusage < buf->f_files ) ? buf->f_files - inodeusage : buf->f_files;
+   buf->f_ffree = ( inodeusage < buf->f_files ) ? buf->f_files - inodeusage : 0;
    buf->f_favail = buf->f_ffree;
    // cleanup references
    pathcleanup( subpath, &oppos );
