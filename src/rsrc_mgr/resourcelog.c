@@ -847,10 +847,15 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
             // decrement in-progress cnt
             rsrclog->outstandingcnt--;
          }
-         else if ( parseop->count > parseindex->count ) {
-            LOG( LOG_INFO, "Resetting count of in-progress operation from %zu to %zu\n",
-                 parseindex->count, parseop->count );
-            parseindex->count = parseop->count;
+         else {
+            if ( parseop->count > parseindex->count ) {
+               LOG( LOG_INFO, "Resetting count of in-progress operation from %zu to %zu\n",
+                    parseindex->count, parseop->count );
+               parseindex->count = parseop->count;
+            }
+            // just progress to the next op
+            parseop = parseop->next;
+            parseindex = parseindex->next;
          }
       }
       if ( newop->start == 0 ) {
