@@ -204,7 +204,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       op->type = MARFS_DELETE_OBJ_OP;
       parseloc += 8;
       // allocate delobj_info
-      delobj_info* extinfo = malloc( sizeof( struct delobj_info_struct ) );
+      delobj_info* extinfo = calloc( 1, sizeof( struct delobj_info_struct ) );
       if ( extinfo == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for DEL-OBJ extended info\n" );
          free( op );
@@ -247,7 +247,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       op->type = MARFS_DELETE_REF_OP;
       parseloc += 8;
       // allocate delref_info
-      delref_info* extinfo = malloc( sizeof( struct delref_info_struct ) );
+      delref_info* extinfo = calloc( 1, sizeof( struct delref_info_struct ) );
       if ( extinfo == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for DEL-REF extended info\n" );
          free( op );
@@ -321,7 +321,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       rebuild_info* extinfo = NULL;
       if ( strncmp( parseloc, "{ ", 2 ) == 0 ) {
          // allocate rebuild_info
-         extinfo = malloc( sizeof( struct rebuild_info_struct ) );
+         extinfo = calloc( 1, sizeof( struct rebuild_info_struct ) );
          if ( extinfo == NULL ) {
             LOG( LOG_ERR, "Failed to allocate space for REBUILD extended info\n" );
             free( op );
@@ -418,7 +418,7 @@ opinfo* parselogline( int logfile, char* eof ) {
       op->type = MARFS_REPACK_OP;
       parseloc += 7;
       // allocate repack_info
-      repack_info* extinfo = malloc( sizeof( struct repack_info_struct ) );
+      repack_info* extinfo = calloc( 1, sizeof( struct repack_info_struct ) );
       if ( extinfo == NULL ) {
          LOG( LOG_ERR, "Failed to allocate space for REPACK extended info\n" );
          free( op );
