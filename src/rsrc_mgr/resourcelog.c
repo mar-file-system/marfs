@@ -351,48 +351,52 @@ opinfo* parselogline( int logfile, char* eof ) {
          parseloc = endptr + 1;
          endptr = NULL;
          unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
-         if ( endptr == NULL  ||  *endptr != ' ' ) {
+         if ( endptr == NULL  ||  ( *endptr != ' '  &&  *endptr != '}' ) ) {
             LOG( LOG_ERR, "REBUILD extended info has unexpected char in stripewidth string: '%c'\n", *endptr );
             free( extinfo );
             free( op );
             lseek( logfile, origoff, SEEK_SET );
             return NULL;
          }
-         endptr++;
          parseloc = endptr;
-         while ( *endptr != '\0'  &&  *endptr != '\n'  &&  *endptr != ' ' ) { endptr++; }
-         if ( *endptr != ' ' ) {
-            LOG( LOG_ERR, "Failed to identify end of rtag marker in REBUILD extended info string\n" );
-            free( extinfo );
-            free( op );
-            lseek( logfile, origoff, SEEK_SET );
-            return NULL;
+         if ( *endptr == ' ' ) {
+            // possibly parse rtag value
+            endptr++;
+            parseloc = endptr;
+            while ( *endptr != '\0'  &&  *endptr != '\n'  &&  *endptr != ' ' ) { endptr++; }
+            if ( *endptr != ' ' ) {
+               LOG( LOG_ERR, "Failed to identify end of rtag marker in REBUILD extended info string\n" );
+               free( extinfo );
+               free( op );
+               lseek( logfile, origoff, SEEK_SET );
+               return NULL;
+            }
+            extinfo->rtag.meta_status = calloc( (size_t)parseval, sizeof(char) );
+            extinfo->rtag.data_status = calloc( (size_t)parseval, sizeof(char) );
+            extinfo->rtag.csum = NULL;
+            if ( extinfo->rtag.meta_status == NULL  ||  extinfo->rtag.data_status == NULL ) {
+               LOG( LOG_ERR, "Failed to allocate space for REBUILD extended info meta/data_status arrays\n" );
+               if ( extinfo->rtag.meta_status ) { free( extinfo->rtag.meta_status ); }
+               if ( extinfo->rtag.data_status ) { free( extinfo->rtag.data_status ); }
+               free( extinfo );
+               free( op );
+               lseek( logfile, origoff, SEEK_SET );
+               return NULL;
+            }
+            *endptr = '\0'; // truncate string to make rtag parsing easier
+            if ( rtag_initstr( &(extinfo->rtag), (size_t)parseval, parseloc ) ) {
+               LOG( LOG_ERR, "Failed to parse rtag value of REBUILD extended info: \"%s\"\n", parseloc );
+               free( extinfo->rtag.meta_status );
+               free( extinfo->rtag.data_status );
+               free( extinfo );
+               free( op );
+               lseek( logfile, origoff, SEEK_SET );
+               return NULL;
+            }
+            *endptr = ' ';
+            parseloc = endptr + 1;
          }
-         extinfo->rtag.meta_status = calloc( (size_t)parseval, sizeof(char) );
-         extinfo->rtag.data_status = calloc( (size_t)parseval, sizeof(char) );
-         extinfo->rtag.csum = NULL;
-         if ( extinfo->rtag.meta_status == NULL  ||  extinfo->rtag.data_status == NULL ) {
-            LOG( LOG_ERR, "Failed to allocate space for REBUILD extended info meta/data_status arrays\n" );
-            if ( extinfo->rtag.meta_status ) { free( extinfo->rtag.meta_status ); }
-            if ( extinfo->rtag.data_status ) { free( extinfo->rtag.data_status ); }
-            free( extinfo );
-            free( op );
-            lseek( logfile, origoff, SEEK_SET );
-            return NULL;
-         }
-         *endptr = '\0'; // truncate string to make rtag parsing easier
-         if ( rtag_initstr( &(extinfo->rtag), (size_t)parseval, parseloc ) ) {
-            LOG( LOG_ERR, "Failed to parse rtag value of REBUILD extended info: \"%s\"\n", parseloc );
-            free( extinfo->rtag.meta_status );
-            free( extinfo->rtag.data_status );
-            free( extinfo );
-            free( op );
-            lseek( logfile, origoff, SEEK_SET );
-            return NULL;
-         }
-         *endptr = ' ';
-         parseloc = endptr;
-         if ( strncmp( parseloc, " } ", 3 ) ) {
+         if ( strncmp( parseloc, "} ", 2 ) ) {
             LOG( LOG_ERR, "Missing ' } ' tail for REBUILD extended info\n" );
             free( extinfo->rtag.meta_status );
             free( extinfo->rtag.data_status );
@@ -401,7 +405,7 @@ opinfo* parselogline( int logfile, char* eof ) {
             lseek( logfile, origoff, SEEK_SET );
             return NULL;
          }
-         parseloc += 3;
+         parseloc += 2;
       }
       else {
          LOG( LOG_INFO, "Rebuild op is lacking extended info\n" );
@@ -593,10 +597,9 @@ int printlogline( int logfile, opinfo* op ) {
          usedbuff += 8;
          if ( op->extendedinfo ) {
             rebuild_info* rebuild = (rebuild_info*)op->extendedinfo;
-            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %s %u ",
-                                             rebuild->markerpath,
-                                             op->ftag.protection.N + op->ftag.protection.E );
-            if ( extinfoprint < 6 ) {
+            ssize_t extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %s",
+                                             rebuild->markerpath );
+            if ( extinfoprint < 3 ) {
                LOG( LOG_ERR, "Failed to populate first portion of REBUILD extended info string\n" );
                return -1;
             }
@@ -605,13 +608,31 @@ int printlogline( int logfile, opinfo* op ) {
                LOG( LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n" );
                return -1;
             }
-            size_t rtagprint = rtag_tostr( &(rebuild->rtag), op->ftag.protection.N + op->ftag.protection.E,
-                                           buffer + usedbuff, MAX_BUFFER - usedbuff );
-            if ( rtagprint < 1 ) {
-               LOG( LOG_ERR, "Failed to populate REBUILD extended info rtag string\n" );
-               return -1;
+            if ( rebuild->rtag.data_status  &&  rebuild->rtag.meta_status ) {
+               // possibly print out rtag values
+               extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, " %u ",
+                                                op->ftag.protection.N + op->ftag.protection.E );
+               if ( extinfoprint < 3 ) {
+                  LOG( LOG_ERR, "Failed to populate first portion of REBUILD extended info string\n" );
+                  return -1;
+               }
+               usedbuff += extinfoprint;
+               if ( usedbuff >= MAX_BUFFER ) {
+                  LOG( LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n" );
+                  return -1;
+               }
+               size_t rtagprint = rtag_tostr( &(rebuild->rtag), op->ftag.protection.N + op->ftag.protection.E,
+                                              buffer + usedbuff, MAX_BUFFER - usedbuff );
+               if ( rtagprint < 1 ) {
+                  LOG( LOG_ERR, "Failed to populate REBUILD extended info rtag string\n" );
+                  return -1;
+               }
+               usedbuff += rtagprint;
+               if ( usedbuff >= MAX_BUFFER ) {
+                  LOG( LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n" );
+                  return -1;
+               }
             }
-            usedbuff += rtagprint;
             if ( snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, " } " ) != 3 ) {
                LOG( LOG_ERR, "Failed to print tail string of REBUILD extended info\n" );
                return -1;
@@ -758,8 +779,10 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
    opinfo* prevop = NULL;
    while ( opindex != NULL ) {
       if ( strcmp( opindex->ftag.streamid, newop->ftag.streamid ) == 0 ) {
-         // check for exact match ( type, fileno, objno )
-         if ( (opindex->ftag.objno == newop->ftag.objno)  &&
+         // check for exact match ( ctag, type, fileno, objno )
+         if ( ( (opindex->ftag.ctag == NULL  &&  newop->ftag.ctag == NULL )  ||
+                (opindex->ftag.ctag  &&  newop->ftag.ctag  &&  strcmp( opindex->ftag.ctag, newop->ftag.ctag) == 0) )  &&
+              (opindex->ftag.objno == newop->ftag.objno)  &&
               (opindex->ftag.fileno == newop->ftag.fileno)  &&
               (opindex->type == newop->type) ) {
             break;
@@ -847,10 +870,15 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
             // decrement in-progress cnt
             rsrclog->outstandingcnt--;
          }
-         else if ( parseop->count > parseindex->count ) {
-            LOG( LOG_INFO, "Resetting count of in-progress operation from %zu to %zu\n",
-                 parseindex->count, parseop->count );
-            parseindex->count = parseop->count;
+         else {
+            if ( parseop->count > parseindex->count ) {
+               LOG( LOG_INFO, "Resetting count of in-progress operation from %zu to %zu\n",
+                    parseindex->count, parseop->count );
+               parseindex->count = parseop->count;
+            }
+            // just progress to the next op
+            parseop = parseop->next;
+            parseindex = parseindex->next;
          }
       }
       if ( newop->start == 0 ) {

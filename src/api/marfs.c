@@ -134,8 +134,10 @@ int pathshift( marfs_ctxt ctxt, const char* tgtpath, char** subpath, marfs_posit
    int tgtdepth = config_traverse( ctxt->config, oppos, &(modpath), (ctxt->itype == MARFS_INTERACTIVE) ? 1 + linkchk : 0 );
    if ( tgtdepth < 0 ) {
       LOG( LOG_ERR, "Failed to traverse config for subpath: \"%s\"\n", modpath );
+      int origerrno = errno; // cache and restore errno, to better report the 'real' problem to users
       free( modpath );
       config_abandonposition( oppos );
+      errno = origerrno; // restore cached errno
       return -1;
    }
    if ( tgtdepth == 0  &&  oppos->ctxt == NULL ) {
@@ -144,7 +146,9 @@ int pathshift( marfs_ctxt ctxt, const char* tgtpath, char** subpath, marfs_posit
       char* nspath = NULL;
       if ( config_nsinfo( oppos->ns->idstr, NULL, &(nspath) ) ) {
          printf( "Failed to identify NS path of target: \"%s\"\n", oppos->ns->idstr );
+         int origerrno = errno; // cache and restore errno, to better report the 'real' problem to users
          config_abandonposition( oppos );
+         errno = origerrno; // restore cached errno
          return -1;
       }
       modpath = nspath;
@@ -1220,10 +1224,10 @@ int marfs_statvfs( marfs_ctxt ctxt, const char* path, struct statvfs *buf ) {
       inodeusage = 0;
    }
    buf->f_blocks = oppos.ns->dquota / buf->f_frsize;
-   buf->f_bfree = ( datausage < buf->f_blocks ) ? buf->f_blocks - datausage : buf->f_blocks;
+   buf->f_bfree = ( datausage < buf->f_blocks ) ? buf->f_blocks - datausage : 0;
    buf->f_bavail = buf->f_bfree;
    buf->f_files = oppos.ns->fquota;
-   buf->f_ffree = ( inodeusage < buf->f_files ) ? buf->f_files - inodeusage : buf->f_files;
+   buf->f_ffree = ( inodeusage < buf->f_files ) ? buf->f_files - inodeusage : 0;
    buf->f_favail = buf->f_ffree;
    // cleanup references
    pathcleanup( subpath, &oppos );

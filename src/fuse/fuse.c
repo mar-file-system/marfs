@@ -1141,42 +1141,44 @@ void marfs_fuse_destroy(void *userdata)
 int main(int argc, char *argv[])
 {
 
-  struct fuse_operations marfs_oper = {
-      .init = marfs_fuse_init,
-      .destroy = marfs_fuse_destroy,
-
-      .access = fuse_access,
-      .chmod = fuse_chmod,
-      .chown = fuse_chown,
-      .flush = fuse_flush,
-      .ftruncate = fuse_ftruncate,
-      .fsync = fuse_fsync,
-      .fsyncdir = fuse_fsyncdir,
-      .getattr = fuse_getattr,
-      .getxattr = fuse_getxattr,
-      .listxattr = fuse_listxattr,
-      .mkdir = fuse_mkdir,
-      .open = fuse_open,
-      .opendir = fuse_opendir,
-      .read = fuse_read,
-      .readdir = fuse_readdir,
-      .readlink = fuse_readlink,
-      .release = fuse_release,
-      .releasedir = fuse_releasedir,
-      .removexattr = fuse_removexattr,
-      .rename = fuse_rename,
-      .rmdir = fuse_rmdir,
-      .setxattr = fuse_setxattr,
-      .statfs = fuse_statvfs,
-      .symlink = fuse_symlink,
-      .truncate = fuse_truncate,
-      .unlink = fuse_unlink,
-      .utimens = fuse_utimens,
-      .write = fuse_write,
-      .create = fuse_create,
-      .link = fuse_link
-
-  };
+  struct fuse_operations marfs_oper;
+  bzero( &(marfs_oper), sizeof( struct fuse_operations ) );
+  // initialize startup / teardown funcs
+  marfs_oper.init = marfs_fuse_init;
+  marfs_oper.destroy = marfs_fuse_destroy;
+  // initialize basic metadata ops
+  marfs_oper.access = fuse_access;
+  marfs_oper.chmod = fuse_chmod;
+  marfs_oper.chown = fuse_chown;
+  marfs_oper.getattr = fuse_getattr;
+  marfs_oper.getxattr = fuse_getxattr;
+  marfs_oper.setxattr = fuse_setxattr;
+  marfs_oper.listxattr = fuse_listxattr;
+  marfs_oper.readlink = fuse_readlink;
+  marfs_oper.removexattr = fuse_removexattr;
+  marfs_oper.rename = fuse_rename;
+  marfs_oper.symlink = fuse_symlink;
+  marfs_oper.link = fuse_link;
+  marfs_oper.unlink = fuse_unlink;
+  marfs_oper.utimens = fuse_utimens;
+  marfs_oper.statfs = fuse_statvfs;
+  // initialize directory ops
+  marfs_oper.mkdir = fuse_mkdir;
+  marfs_oper.rmdir = fuse_rmdir;
+  marfs_oper.opendir = fuse_opendir;
+  marfs_oper.readdir = fuse_readdir;
+  marfs_oper.fsyncdir = fuse_fsyncdir;
+  marfs_oper.releasedir = fuse_releasedir;
+  // initialize file ops
+  marfs_oper.create = fuse_create;
+  marfs_oper.open = fuse_open;
+  marfs_oper.read = fuse_read;
+  marfs_oper.write = fuse_write;
+  marfs_oper.ftruncate = fuse_ftruncate;
+  marfs_oper.truncate = fuse_truncate;
+  marfs_oper.flush = fuse_flush;
+  marfs_oper.fsync = fuse_fsync;
+  marfs_oper.release = fuse_release;
 
 //  if ((getuid() != 0) || (geteuid() != 0))
 //  {
