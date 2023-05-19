@@ -156,7 +156,7 @@ int fuse_chmod(const char *path, mode_t mode)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_chmod(CTXT, newpath, mode, 0);
+  int ret = marfs_chmod(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
@@ -178,7 +178,7 @@ int fuse_chown(const char *path, uid_t uid, gid_t gid)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_chown(CTXT, newpath, uid, gid, 0);
+  int ret = marfs_chown(CTXT, newpath, uid, gid, AT_SYMLINK_NOFOLLOW);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
@@ -345,7 +345,7 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
   char* newpath = translate_path( CTXT, path );
   LOG( LOG_INFO, "Attempting to open an fhandle for target path: \"%s\"\n", path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_ASYNC );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_NOFOLLOW | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -355,6 +355,7 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
       dh = marfs_opendir( CTXT, newpath );
       err = errno;
     }
+    else if ( errno == ELOOP ) { err = ENODATA; } // assume symlink target ( MarFS doesn't support symlink xattrs )
     if ( dh == NULL ) {
       // no file handle, and no dir handle
       LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
@@ -414,7 +415,7 @@ int fuse_link(const char *oldpath, const char *newpath)
 
   char* newoldpath = translate_path( CTXT, oldpath );
   char* newnewpath = translate_path( CTXT, newpath );
-  int ret = marfs_link(CTXT, newoldpath, newnewpath, 0);
+  int ret = marfs_link(CTXT, newoldpath, newnewpath, AT_SYMLINK_NOFOLLOW);
   if ( ret )
   {
     LOG(LOG_ERR, "%s\n", strerror(errno));
@@ -445,7 +446,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_ASYNC );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_NOFOLLOW | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -461,7 +462,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
            path, strerror(errno) );
       free( newpath );
       exit_user(&u_ctxt);
-      return (err) ? -err : -ENOMSG;
+      return (err) ? ( (err == ELOOP) ? 0 : -err ) : -ENOMSG; // assume ELOOP -> symlink ( MarFS doesn't support symlink xattrs )
     }
   }
   free( newpath );
@@ -481,10 +482,10 @@ int fuse_listxattr(const char *path, char *list, size_t size)
   // cleanup our handle
   if ( fh ) {
     if ( marfs_release(fh) )
-      LOG( LOG_WARNING, "Failed to close marfs_fhandle following getxattr() op\n" );
+      LOG( LOG_WARNING, "Failed to close marfs_fhandle following listxattr() op\n" );
   }
   else if ( marfs_closedir(dh) ) {
-    LOG( LOG_WARNING, "Failed to close marfs_dhandle following getxattr() op\n" );
+    LOG( LOG_WARNING, "Failed to close marfs_dhandle following listxattr() op\n" );
   }
 
   exit_user(&u_ctxt);
@@ -793,7 +794,7 @@ int fuse_removexattr(const char *path, const char *name)
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_ASYNC );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_NOFOLLOW | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -803,6 +804,7 @@ int fuse_removexattr(const char *path, const char *name)
       dh = marfs_opendir( CTXT, newpath );
       err = errno;
     }
+    else if ( errno == ELOOP ) { err = ENODATA; } // assume symlink target ( MarFS doesn't support symlink xattrs )
     if ( dh == NULL ) {
       // no file handle, and no dir handle
       LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
@@ -901,7 +903,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_ASYNC );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_NOFOLLOW | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -911,6 +913,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
       dh = marfs_opendir( CTXT, newpath );
       err = errno;
     }
+    else if ( errno == ELOOP ) { err = ENOSYS; } // assume symlink target ( MarFS doesn't support symlink xattrs )
     if ( dh == NULL ) {
       // no file handle, and no dir handle
       LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
@@ -935,10 +938,10 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   // cleanup our handle
   if ( fh ) {
     if ( marfs_release(fh) )
-      LOG( LOG_WARNING, "Failed to close marfs_fhandle following removexattr() op\n" );
+      LOG( LOG_WARNING, "Failed to close marfs_fhandle following setxattr() op\n" );
   }
   else if ( marfs_closedir(dh) ) {
-    LOG( LOG_WARNING, "Failed to close marfs_dhandle following removexattr() op\n" );
+    LOG( LOG_WARNING, "Failed to close marfs_dhandle following setxattr() op\n" );
   }
 
   exit_user(&u_ctxt);
