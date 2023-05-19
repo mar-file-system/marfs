@@ -345,7 +345,7 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
   char* newpath = translate_path( CTXT, path );
   LOG( LOG_INFO, "Attempting to open an fhandle for target path: \"%s\"\n", path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -445,7 +445,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -524,7 +524,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
     return -EBADF;
   }
 
-  marfs_flags flags = MARFS_READ;
+  int flags = O_RDONLY;
   if (ffi->flags & O_RDWR)
   {
     LOG(LOG_ERR, "invalid flags %x %x\n", ffi->flags, ffi->flags & O_RDWR);
@@ -532,11 +532,11 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
   }
   else if (ffi->flags & O_WRONLY)
   {
-    flags = MARFS_WRITE;
+    flags = O_WRONLY;
   }
 
   if (!strcmp(path, CONFIGVER_FNAME)) {
-    if (flags == MARFS_WRITE) {
+    if (flags == O_WRONLY) {
       LOG( LOG_ERR, "Cannot open config version file \"%s\" for write\n", CONFIGVER_FNAME );
       return -EPERM;
     }
@@ -561,7 +561,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
     return (err) ? -err : -ENOMSG;
   }
 
-  LOG( LOG_INFO, "New MarFS %s Handle: %p\n", (flags == MARFS_READ) ? "Read" : "Write",
+  LOG( LOG_INFO, "New MarFS %s Handle: %p\n", (flags == O_RDONLY) ? "Read" : "Write",
        (void*)ffi->fh );
   return 0;
 }
@@ -793,7 +793,7 @@ int fuse_removexattr(const char *path, const char *name)
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -901,7 +901,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -1007,7 +1007,7 @@ int fuse_truncate(const char *path, off_t length)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  if ((fh = marfs_open(CTXT, NULL, newpath, MARFS_WRITE)) == NULL)
+  if ((fh = marfs_open(CTXT, NULL, newpath, O_WRONLY)) == NULL)
   {
     err = errno;
     free( newpath );

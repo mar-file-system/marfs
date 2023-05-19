@@ -83,7 +83,7 @@ typedef struct marfs_ctxt_struct {
 
 typedef struct marfs_fhandle_struct {
    pthread_mutex_t    lock; // for serializing access to this structure (if necessary)
-   marfs_flags       flags; // open flags for this file handle
+   int               flags; // open flags for this file handle
    MDAL_FHANDLE metahandle; // for meta/direct access
    DATASTREAM   datastream; // for standard access
    marfs_ns*            ns; // reference to the containing NS
@@ -1306,7 +1306,7 @@ int marfs_futimens(marfs_fhandle fh, const struct timespec times[2]) {
    // perform the op
    int retval;
    if ( fh->datastream == NULL  &&
-        ( fh->ns->prepo->metascheme.directread  ||  (fh->flags & MARFS_META) ) ) {
+        ( fh->ns->prepo->metascheme.directread  ||  (fh->flags & O_ASYNC) ) ) {
       // only call the MDAL op directly if we both don't have a datastream AND
       // either the config has enabled direct read OR the file handle is explicitly metadata only
       LOG( LOG_INFO, "Performing futimens call directly on metahandle\n" );
@@ -2052,7 +2052,30 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
  *                               NOTE -- Clients should essentially always open new files
  *                               via an existing marfs_fhandle, when feasible to do so.
  * @param const char* path : Path of the file to be opened
- * @param marfs_flags flags : Flags specifying the mode in which to open the file
+ * @param int flags : A bitwise OR of the following...
+ *                    O_RDONLY   - Read only access
+ *                    O_WRONLY   - Write only access
+ *                    O_RDWR     - Read + Write access
+ *                                 ( note, only supported when combined with O_ASYNC; see below )
+ *                    O_CREAT    - Create the target file, if it does not already exist
+ *                                 ( note, only supported when combined with O_ASYNC; see below.
+ *                                   Standard MarFS file creation should be done via the
+ *                                   marfs_creat() function instead. )
+ *                    O_EXCL     - Ensure this call creates the target file
+ *                                 ( note, only supported when combined with O_ASYNC; see below )
+ *                    O_NOFOLLOW - Do not follow a symlink target
+ *                                 ( note, if targeting a symlink, always returns ELOOP,
+ *                                   unless combined with O_PATH; see linux open() manpage.
+ *                                   Only supported when combined with O_ASYNC; see below. )
+ *                    O_PATH     - Obtain a handle which merely indicates an FS tree location
+ *                                 ( note, see linux open() manpage.
+ *                                   Only supported when combined with O_ASYNC; see below. )
+ *                    O_ASYNC    - Obtain an MDAL ( meta-only ) reference
+ *                                 ( note, here, the behavior of this flag differs entirely from
+ *                                   standard POSIX / Linux.  This flag causes MarFS to bypass
+ *                                   the DAL ( data object path ) and operate exclusively via
+ *                                   the MDAL ( metadata path ). )
+ *                    NOTE -- some of these flags may require the caller to define _GNU_SOURCE!
  * @return marfs_fhandle : marfs_fhandle referencing the opened file,
  *                         or NULL if a failure occurred
  *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
@@ -2061,7 +2084,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
  *            In such a case, errno will be set to EBADFD and any subsequent operations
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
-marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, marfs_flags flags) {
+marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, int flags) {
    LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( ctxt == NULL ) {
@@ -2071,8 +2094,13 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       return NULL;
    }
    // check for invalid flags
-   if ( (flags & ~(MARFS_META)) != MARFS_READ  &&  (flags & ~(MARFS_META)) != MARFS_WRITE ) {
-      LOG( LOG_ERR, "Unrecognized flags value\n" );
+   if ( (flags & O_ASYNC) == 0  &&
+            (
+              (flags & O_ACCMODE) == O_RDWR || 
+              (flags & ~(O_ACCMODE)) != 0
+            )
+      ) {
+      LOG( LOG_ERR, "Invalid flags value\n" );
       errno = EINVAL;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
@@ -2178,17 +2206,28 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
-   // check for MARFS_META flag
-   if ( flags & MARFS_META ) {
+   // check for MDAL-only O_ASYNC flag
+   if ( flags & O_ASYNC ) {
+      // poentially cleanup existing stream info
+      if ( stream->datastream  &&  datastream_release( &(stream->datastream) ) ) {
+         LOG( LOG_ERR, "Failed to release previous datastream reference\n" );
+         stream->datastream = NULL;
+         stream->metahandle = NULL;
+         config_destroynsref( dupref );
+         pathcleanup( subpath, &oppos );
+         pthread_mutex_unlock( &(stream->lock) );
+         errno = EBADFD;
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      if ( stream->ns ) { config_destroynsref( stream->ns ); }
       // open a meta-only reference for this file
       stream->flags = flags;
-      flags = flags & ~(MARFS_META);
       stream->datastream = NULL;
-      if ( stream->ns ) { config_destroynsref( stream->ns ); }
       stream->ns = dupref;
       stream->itype = ctxt->itype;
       MDAL curmdal = oppos.ns->prepo->metascheme.mdal;
-      stream->metahandle = curmdal->open( oppos.ctxt, subpath, (flags == MARFS_READ) ? O_RDONLY : O_WRONLY );
+      stream->metahandle = curmdal->open( oppos.ctxt, subpath, flags & ~(O_ASYNC) );
       if ( stream->metahandle == NULL ) {
          LOG( LOG_ERR, "Failed to open meta-only reference for the target file: \"%s\" ( %s )\n", path, strerror(errno) );
          config_destroynsref( dupref );
@@ -2207,7 +2246,8 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
    }
    // attempt the op, allowing a meta-only reference ONLY if we are opening for read
    MDAL_FHANDLE phandle = NULL;
-   if ( datastream_open( &(stream->datastream), (flags == MARFS_READ) ? READ_STREAM : EDIT_STREAM, subpath, &oppos, (flags == MARFS_READ) ? &(phandle) : NULL ) ) {
+   if ( datastream_open( &(stream->datastream), ((flags & O_ACCMODE) == O_WRONLY) ? EDIT_STREAM : READ_STREAM, subpath, &oppos,
+                         ( (flags & O_ACCMODE) == O_RDONLY ) ? &(phandle) : NULL ) ) {
       // check for a meta-only reference
       if ( phandle != NULL ) {
          LOG( LOG_INFO, "Attempting to use meta-only reference for target file\n" );
@@ -2229,7 +2269,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
             return NULL;
          }
          // update stream info to reflect a meta-only reference
-         stream->flags = flags;
+         stream->flags = flags | O_ASYNC;
          stream->datastream = NULL;
          stream->metahandle = phandle;
          if ( stream->ns ) { config_destroynsref( stream->ns ); }
@@ -2564,16 +2604,11 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t count) {
       errno = EPERM;
       retval = -1;
    }
-   else if ( stream->flags & MARFS_META ) {
-      // never allow data access via a PATH file handle
-      LOG( LOG_ERR, "Cannot read from an MARFS_META file handle\n" );
-      errno = EPERM;
-      retval = -1;
-   }
-   else {
+   else if ( stream->flags & O_ASYNC ) {
       // perform the direct read
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       retval = curmdal->read( stream->metahandle, buf, count );
+      // TODO : MUST prevent cached reads for migrated files
    }
    pthread_mutex_unlock( &(stream->lock) );
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
@@ -2680,16 +2715,11 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       errno = EPERM;
       retval = -1;
    }
-   else if ( stream->flags & MARFS_META ) {
-      // never allow data access via a PATH file handle
-      LOG( LOG_ERR, "Cannot seek an MARFS_META file handle\n" );
-      errno = EPERM;
-      retval = -1;
-   }
-   else {
+   else if ( stream->flags & O_ASYNC ) {
       LOG( LOG_INFO, "Seeking meta handle\n" );
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       retval = curmdal->lseek( stream->metahandle, offset, whence );
+      // TODO : detect cached file migration
    }
    pthread_mutex_unlock( &(stream->lock) );
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
@@ -2754,16 +2784,11 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
          errno = EPERM;
          offval = -1;
       }
-      else if ( stream->flags & MARFS_META ) {
-         // never allow data access via a PATH file handle
-         LOG( LOG_ERR, "Cannot read from an MARFS_META file handle\n" );
-         errno = EPERM;
-         offval = -1;
-      }
-      else {
+      else if ( stream->flags & O_ASYNC ) {
          LOG( LOG_INFO, "Seeking meta handle to %zd offset\n", offset );
          MDAL curmdal = stream->ns->prepo->metascheme.mdal;
          offval = curmdal->lseek( stream->metahandle, offset, SEEK_SET );
+         // TODO : detect cached file migration
       }
    }
    if ( offval != offset  ||  offval < 0 ) {
@@ -2888,16 +2913,11 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
       errno = EPERM;
       retval = -1;
    }
-   else if ( stream->flags & MARFS_META ) {
-      // never allow data access via a PATH file handle
-      LOG( LOG_ERR, "Cannot truncate an MARFS_META file handle\n" );
-      errno = EPERM;
-      retval = -1;
-   }
-   else {
+   else if ( stream->flags & O_ASYNC ) {
       LOG( LOG_INFO, "Truncating meta-only reference\n" );
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       retval = curmdal->ftruncate( stream->metahandle, length );
+      // TODO : detect cached file migration
    }
    pthread_mutex_unlock( &(stream->lock) );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }

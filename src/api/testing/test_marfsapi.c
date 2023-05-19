@@ -341,7 +341,7 @@ int main( int argc, char** argv ) {
       return -1;
    }
    // chunk 0
-   phandle = marfs_open( batchctxt, NULL, "/campaign/gransom-allocation/gasubdir/../parallelfile", MARFS_WRITE );
+   phandle = marfs_open( batchctxt, NULL, "/campaign/gransom-allocation/gasubdir/../parallelfile", O_WRONLY );
    if ( phandle == NULL ) {
       printf( "failed to open 'parallelfile' for write\n" );
       return -1;
@@ -403,7 +403,7 @@ int main( int argc, char** argv ) {
       return -1;
    }
    // open a new handle, writing out chunk 3 from that
-   marfs_fhandle phandle2 = marfs_open( batchctxt, NULL, "/campaign/gransom-allocation/gasubdir/../parallelfile", MARFS_WRITE );
+   marfs_fhandle phandle2 = marfs_open( batchctxt, NULL, "/campaign/gransom-allocation/gasubdir/../parallelfile", O_WRONLY );
    if ( phandle2 == NULL ) {
       printf( "failed to open 'parallelfile' for write via handle2\n" );
       return -1;
@@ -543,7 +543,7 @@ int main( int argc, char** argv ) {
       return -1;
    }
    // parallelfile
-   phandle = marfs_open( batchctxt, NULL, "gransom-allocation/parallelfile", MARFS_READ );
+   phandle = marfs_open( batchctxt, NULL, "gransom-allocation/parallelfile", O_RDONLY );
    if ( phandle == NULL ) {
       printf( "failed to open 'parallelfile' for read\n" );
       return -1;
@@ -563,7 +563,7 @@ int main( int argc, char** argv ) {
          printf( "failed to generate name of packed-files/pfile%d\n", index );
          return -1;
       }
-      phandle = marfs_open( batchctxt, phandle, fname, MARFS_READ );
+      phandle = marfs_open( batchctxt, phandle, fname, O_RDONLY );
       if ( phandle == NULL ) {
          printf( "failed to open packed-files/pfile%d for read\n", index );
          return -1;
@@ -579,7 +579,7 @@ int main( int argc, char** argv ) {
       }
    }
    // file1
-   phandle = marfs_open( batchctxt, phandle, "gransom-allocation/gasubdir/file1", MARFS_READ );
+   phandle = marfs_open( batchctxt, phandle, "gransom-allocation/gasubdir/file1", O_RDONLY );
    if ( phandle == NULL ) {
       printf( "failed to open 'file1' for read\n" );
       return -1;
@@ -659,7 +659,7 @@ int main( int argc, char** argv ) {
       return -1;
    }
    // open a new handle for file2
-   phandle = marfs_open( interctxt, NULL, "../gasubdir/file2", MARFS_READ );
+   phandle = marfs_open( interctxt, NULL, "../gasubdir/file2", O_RDONLY );
    if ( phandle == NULL ) {
       printf( "failed to open 'file2' for read\n" );
       return -1;
