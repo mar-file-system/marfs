@@ -1747,7 +1747,7 @@ int command_loop( marfs_config* config ) {
 int main(int argc, const char **argv)
 {
    errno = 0; // init to zero (apparently not guaranteed)
-   char *config_path = NULL;
+   char* config_path = getenv( "MARFS_CONFIG_PATH" ); // check for config env var
 
    char pr_usage = 0;
    int c;
@@ -1773,14 +1773,14 @@ int main(int argc, const char **argv)
    if ( pr_usage ) {
       printf( OUTPREFX "Usage info --\n" );
       printf( OUTPREFX "%s -c configpath [-h]\n", PROGNAME );
-      printf( OUTPREFX "   -c : Path of the MarFS config file\n" );
+      printf( OUTPREFX "   -c : Path of the MarFS config file ( overrides env value )\n" );
       printf( OUTPREFX "   -h : Print this usage info\n" );
       return -1;
    }
 
    // verify that a config was defined
    if ( config_path == NULL ) {
-      printf( OUTPREFX "no config path defined ( '-c' arg )\n" );
+      printf( OUTPREFX "no config path defined ( '-c' arg or 'MARFS_CONFIG_PATH' env var )\n" );
       return -1;
    }
 
