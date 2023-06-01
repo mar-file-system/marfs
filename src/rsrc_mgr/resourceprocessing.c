@@ -631,26 +631,23 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
             }
          }
          // rebuild the object, performing up to 2 attempts
-         char iteration = 0;
+         int iteration = 0;
          while ( iteration < 2 ) {
             LOG( LOG_INFO, "Rebuilding object %zu of stream \"%s\" (attempt %d)\n",
                            tmptag.objno, tmptag.streamid, (int)iteration + 1 );
             int rebuildres = ne_rebuild( obj, NULL, NULL );
             if ( rebuildres < 0 ) { // unmitigated failure
-               LOG( LOG_ERR, "Failed to rebuild object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
-               op->errval = (errno) ? errno : ENOTRECOVERABLE;
-               if ( ne_abort( obj ) ) {
-                  LOG( LOG_ERR, "Failed to properly abort rebuild handle for object %zu of stream \"%s\"\n",
-                                tmptag.objno, tmptag.streamid );
-               }
-               obj = NULL;
                iteration = -1;
                break;
             }
-            else { // rebuild success
-               LOG( LOG_INFO, "Successfully rebuilt object %zu of stream \"%s\" (result mask = %d)\n",
-                              tmptag.objno, tmptag.streamid, rebuildres );
+            else if ( rebuildres == 0 ) { // rebuild success
+               LOG( LOG_INFO, "Successfully rebuilt object %zu of stream \"%s\"\n",
+                              tmptag.objno, tmptag.streamid );
                break;
+            }
+            else {
+               LOG( LOG_WARNING, "Object %zu of stream \"%s\" still contains %d errors after iteration %d\n",
+                                 tmptag.objno, tmptag.streamid, rebuildres, iteration );
             }
             // incomplete rebuild ( reattempt may succeed )
             iteration++;
@@ -661,7 +658,7 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
                LOG( LOG_ERR, "Rebuild failure for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
             }
             else {
-               LOG( LOG_ERR, "Excessive reattempts for rebuild of object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
+               LOG( LOG_ERR, "Excessive rebuild reattempts for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid );
             }
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
             if ( ne_abort( obj ) ) {
