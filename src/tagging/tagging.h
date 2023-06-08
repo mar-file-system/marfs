@@ -221,6 +221,17 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
 // NOTE -- RTAG names depend upon the object number they are associated with
 //         Use the rtag_getname() func, instead of a static _NAME definition
 
+typedef struct rtag_struct {
+   // version info
+   unsigned int majorversion;
+   unsigned int minorversion;
+   // erasure state info
+   size_t   stripewidth;
+   ne_state stripestate;
+   // marker info
+   time_t   createtime;
+} RTAG;
+
 /**
  * Generate the appropraite RTAG name value for a specific data object
  * @param size_t objno : Object number associated with the RTAG
