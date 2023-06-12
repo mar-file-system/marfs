@@ -365,11 +365,9 @@ int main(int argc, char **argv)
                   printf( "failed to retrieve \"%s\" xatrr value form rebuild marker \"%s\"\n", rtagname, refent->d_name );
                   return -1;
                }
-               ne_state rtag = {0};
-               rtag.data_status = calloc( 5, sizeof(char) );
-               rtag.meta_status = calloc( 5, sizeof(char) );
-               if ( rtag_initstr( &(rtag), 5, rtagval ) ) {
-                  printf( "failed to parse \"%s\" xatrr value form rebuild marker \"%s\"\n", rtagname, refent->d_name );
+               RTAG rtag = {0};
+               if ( rtag_initstr( &(rtag), rtagval ) ) {
+                  printf( "failed to parse \"%s\" xatr value from rebuild marker \"%s\"\n", rtagname, refent->d_name );
                   return -1;
                }
                ne_handle rhandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname3, objlocation3, objerasure3, NE_REBUILD );
@@ -377,12 +375,11 @@ int main(int argc, char **argv)
                   printf( "failed to open for rebuild object 2 from marker \"%s\"\n", refent->d_name );
                   return -1;
                }
-               if ( ne_seed_status( rhandle, &(rtag) ) ) {
+               if ( ne_seed_status( rhandle, &(rtag.stripestate) ) ) {
                   printf( "failed to seed status for rebuild object 2 from marker \"%s\"\n", refent->d_name );
                   return -1;
                }
-               free( rtag.data_status );
-               free( rtag.meta_status );
+               rtag_free( &(rtag) );
                if ( ne_rebuild( rhandle, NULL, NULL ) ) {
                   printf( "failed to rebuild object 2 from marker \"%s\"\n", refent->d_name );
                   return -1;

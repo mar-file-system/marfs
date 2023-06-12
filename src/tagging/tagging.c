@@ -81,6 +81,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define RTAG_NAME "MARFS-REBUILD" // definied here, due to variability ( see rtag_getname() )
 #define RTAG_VERSION_HEADER "VER"
+#define RTAG_TIMESTAMP_HEADER "TIME"
 #define RTAG_STRIPEINFO_HEADER "STP"
 #define RTAG_DATAHEALTH_HEADER "DHLTH"
 #define RTAG_METAHEALTH_HEADER "MHLTH"
@@ -838,21 +839,20 @@ char* rtag_getname( size_t objno ) {
 }
 
 /**
- * Initialize a ne_state value based on the provided string value
+ * Initialize an RTAG based on the provided string value
  * @param ne_state* rtag : Reference to the ne_state structure to be populated
+ *                         NOTE -- If this RTAG has allocated (non-NULL) ne_state.meta/data_status arrays,
+ *                                 they are assumed to be of rtag.stripewidth length.  If this length matches
+ *                                 that of the parsed RTAG, the arrays will be reused.  Otherwise, the arrays
+ *                                 will be freed and recreated with an appropriate length.
  * @param size_t stripewidth : Expected N+E stripe width
  * @param const char* rtagstr : Reference to the string to be parsed
  * @return int : Zero on success, or -1 on failure
  */
-int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
+int rtag_initstr( RTAG* rtag, const char* rtagstr ) {
    // check for NULL rtag
    if ( rtag == NULL ) {
       LOG( LOG_ERR, "Received a NULL ne_state reference\n" );
-      errno = EINVAL;
-      return -1;
-   }
-   if ( rtag->meta_status == NULL  ||  rtag->data_status == NULL ) {
-      LOG( LOG_ERR, "Received ne_state struct has undefined meta/data_status\n" );
       errno = EINVAL;
       return -1;
    }
@@ -876,6 +876,7 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
       errno = EINVAL;
       return -1;
    }
+   unsigned int parsedmajorversion = (unsigned int)parseval;
    parse = endptr + 1;
    parseval = strtoull( parse, &(endptr), 10 );
    if ( *endptr != ')' ) {
@@ -888,7 +889,43 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
       errno = EINVAL;
       return -1;
    }
+   unsigned int parsedminorversion = (unsigned int)parseval;
    parse = endptr + 1;
+   // parse the tag timestamp value
+   if ( strncmp( parse, RTAG_TIMESTAMP_HEADER "(", strlen(RTAG_TIMESTAMP_HEADER) + 1 ) ) {
+      LOG( LOG_ERR, "Invalid stripe info header in RTAG string\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   parse += strlen(RTAG_TIMESTAMP_HEADER) + 1;
+   parseval = strtoull( parse, &(endptr), 10 );
+   if ( parseval > SIZE_MAX ) {
+      LOG( LOG_ERR, "Parsed '%c' value exceeds type bounds: \"%llu\"\n", *parse, parseval );
+      errno = ERANGE;
+      return -1;
+   }
+   time_t parsedcreatetime = (time_t)parseval;
+   if ( *endptr != ')' ) {
+      LOG( LOG_ERR, "Unexpected terminating char on timestamp value: '%c'\n", *endptr );
+      errno = EINVAL;
+      return -1;
+   }
+   parse = endptr + 1; // progress to the next element
+   // check for premature end of tag ( stripe info / health is not 'explicitly' required )
+   if ( *parse == '\0' ) {
+      rtag->majorversion = parsedmajorversion;
+      rtag->minorversion = parsedminorversion;
+      rtag->createtime = parsedcreatetime;
+      rtag->stripewidth = 0;
+      rtag->stripestate.versz = 0;
+      rtag->stripestate.blocksz = 0;
+      rtag->stripestate.totsz = 0;
+      if ( rtag->stripestate.meta_status ) { free( rtag->stripestate.meta_status ); }
+      if ( rtag->stripestate.data_status ) { free( rtag->stripestate.data_status ); }
+      rtag->stripestate.meta_status = NULL;
+      rtag->stripestate.data_status = NULL;
+      return 0;
+   }
    // parse stripe info values
    if ( strncmp( parse, RTAG_STRIPEINFO_HEADER "(", strlen(RTAG_STRIPEINFO_HEADER) + 1 ) ) {
       LOG( LOG_ERR, "Invalid stripe info header in RTAG string\n" );
@@ -896,23 +933,24 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
       return -1;
    }
    parse += strlen(RTAG_STRIPEINFO_HEADER) + 1;
-   char verszval = 0;
-   char blockszval = 0;
-   char totszval = 0;
+   size_t parsedstripewidth = 0;
+   size_t parsedversz = 0;
+   size_t parsedblocksz = 0;
+   size_t parsedtotsz = 0;
    while ( *parse != '\0' ) {
       size_t* tgtval = NULL;
       switch ( *parse ) {
+         case 'w':
+            tgtval = &(parsedstripewidth);
+            break;
          case 'v':
-            tgtval = &(rtag->versz);
-            verszval = 1;
+            tgtval = &(parsedversz);
             break;
          case 'b':
-            tgtval = &(rtag->blocksz);
-            blockszval = 1;
+            tgtval = &(parsedblocksz);
             break;
          case 't':
-            tgtval = &(rtag->totsz);
-            totszval = 1;
+            tgtval = &(parsedtotsz);
             break;
          default:
             LOG( LOG_ERR, "Unrecognized stripe info value tag: '%c'\n", *parse );
@@ -920,7 +958,7 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
             return -1;
       }
       parseval = strtoull( parse+1, &(endptr), 10 );
-      if ( parseval > SIZE_MAX ) {
+      if ( parseval > SIZE_MAX  ||  parseval == 0 ) {
          LOG( LOG_ERR, "Parsed '%c' value exceeds type bounds: \"%llu\"\n", *parse, parseval );
          errno = ERANGE;
          return -1;
@@ -934,7 +972,7 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
       }
       parse = endptr + 1; // progress to the next element
    }
-   if ( !(verszval) || !(blockszval) || !(totszval) ) {
+   if ( !(parsedstripewidth) ||  !(parsedversz) || !(parsedblocksz) || !(parsedtotsz) ) {
       LOG( LOG_ERR, "Missing some required stripe info values\n" );
       errno = EINVAL;
       return -1;
@@ -943,6 +981,22 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
    // parse health strings
    char datahval = 0;
    char metahval = 0;
+   char* parseddata_status = rtag->stripestate.data_status;
+   if ( rtag->stripewidth != parsedstripewidth  ||  rtag->stripestate.data_status == NULL ) {
+      parseddata_status = calloc( sizeof(char), parsedstripewidth );
+      if ( parseddata_status == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate a new data_status array\n" );
+         return -1;
+      }
+   }
+   char* parsedmeta_status = rtag->stripestate.meta_status;
+   if ( rtag->stripewidth != parsedstripewidth  ||  rtag->stripestate.meta_status == NULL ) {
+      parsedmeta_status = calloc( sizeof(char), parsedstripewidth );
+      if ( parsedmeta_status == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate a new meta_status array\n" );
+         return -1;
+      }
+   }
    while ( *parse != '\0' ) {
       // check for data vs meta health
       char* healthlist = NULL;
@@ -952,7 +1006,7 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
             break;
          }
          datahval = 1;
-         healthlist = rtag->data_status;
+         healthlist = parseddata_status;
          parse += strlen(RTAG_DATAHEALTH_HEADER) + 1;
       }
       else if ( strncmp( parse, RTAG_METAHEALTH_HEADER "(", strlen(RTAG_METAHEALTH_HEADER) + 1 ) == 0 ) {
@@ -961,7 +1015,7 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
             break;
          }
          metahval = 1;
-         healthlist = rtag->meta_status;
+         healthlist = parsedmeta_status;
          parse += strlen(RTAG_METAHEALTH_HEADER) + 1;
       }
       else {
@@ -970,7 +1024,7 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
       }
       // parse over health values
       size_t hindex = 0;
-      while ( *parse != ')'  &&  hindex < stripewidth ) {
+      while ( *parse != ')'  &&  hindex < parsedstripewidth ) {
          switch ( *parse ) {
             case '1':
                *(healthlist + hindex) = 1;
@@ -980,6 +1034,8 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
                break;
             default:
                LOG( LOG_ERR, "Health value is neither '0' nor '1': '%c'\n", *parse );
+               if ( rtag->stripestate.meta_status != parsedmeta_status ) { free( parsedmeta_status ); }
+               if ( rtag->stripestate.data_status != parseddata_status ) { free( parseddata_status ); }
                errno = EINVAL;
                return -1;
          }
@@ -987,30 +1043,54 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
          if ( *parse == '-' ) { parse++; hindex++; } // progress to the next health value
       }
       if ( *parse != ')' ) {
-         if ( hindex == stripewidth ) {
+         if ( hindex == parsedstripewidth ) {
             LOG( LOG_ERR, "ne_state struct has insufficient stripewidth value\n" );
+            if ( rtag->stripestate.meta_status != parsedmeta_status ) { free( parsedmeta_status ); }
+            if ( rtag->stripestate.data_status != parseddata_status ) { free( parseddata_status ); }
             errno = EFBIG;
             return -1;
          }
          LOG( LOG_ERR, "Unexpected char in health info string: '%c'\n", *parse );
+         if ( rtag->stripestate.meta_status != parsedmeta_status ) { free( parsedmeta_status ); }
+         if ( rtag->stripestate.data_status != parseddata_status ) { free( parseddata_status ); }
          errno = EINVAL;
          return -1;
       }
       parse++; // progress beyond the end of the health stanza
    }
-   if ( *parse != '\0' ) { errno = EINVAL; return -1; } // catch previous error conditions
-   if ( metahval != 1  ||  datahval != 1 ) {
-      LOG( LOG_ERR, "Failed to locate all expected health stanzas\n" );
+   if ( *parse != '\0' ) { // catch previous error conditions
+      if ( rtag->stripestate.meta_status != parsedmeta_status ) { free( parsedmeta_status ); }
+      if ( rtag->stripestate.data_status != parseddata_status ) { free( parseddata_status ); }
       errno = EINVAL;
       return -1;
    }
+   if ( metahval != 1  ||  datahval != 1 ) {
+      LOG( LOG_ERR, "Failed to locate all expected health stanzas\n" );
+      if ( rtag->stripestate.meta_status != parsedmeta_status ) { free( parsedmeta_status ); }
+      if ( rtag->stripestate.data_status != parseddata_status ) { free( parseddata_status ); }
+      errno = EINVAL;
+      return -1;
+   }
+   // finally populate any health values we didn't previously
+   rtag->majorversion = parsedmajorversion;
+   rtag->minorversion = parsedminorversion;
+   rtag->createtime = parsedcreatetime;
+   rtag->stripewidth = parsedstripewidth;
+   rtag->stripestate.versz = parsedversz;
+   rtag->stripestate.blocksz = parsedblocksz;
+   rtag->stripestate.totsz = parsedtotsz;
+   if ( rtag->stripestate.meta_status  &&
+        rtag->stripestate.meta_status != parsedmeta_status ) { free( rtag->stripestate.meta_status ); }
+   if ( rtag->stripestate.data_status  &&
+        rtag->stripestate.data_status != parseddata_status ) { free( rtag->stripestate.data_status ); }
+   rtag->stripestate.meta_status = parsedmeta_status;
+   rtag->stripestate.data_status = parseddata_status;
    return 0;
 }
 
 /**
- * Populate a string based on the provided ne_state value
- * @param const ne_state* rtag : Reference to the ne_state structure to pull values from
- * @param size_t stripewidth : Current N+E stripe width ( length of allocated health lists )
+ * Populate a string based on the provided RTAG
+ * @param const RTAG* rtag : Reference to the RTAG structure to pull values from
  * @param char* tgtstr : Reference to the string to be populated
  * @param size_t len : Allocated length of the target length
  * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
@@ -1019,15 +1099,15 @@ int rtag_initstr( ne_state* rtag, size_t stripewidth, const char* rtagstr ) {
  *                  indicates that insufficint buffer space was provided and the resulting
  *                  output string was truncated.
  */
-size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_t len ) {
+size_t rtag_tostr( const RTAG* rtag, char* tgtstr, size_t len ) {
    // check for NULL rtag
    if ( rtag == NULL ) {
       LOG( LOG_ERR, "Received a NULL ne_state reference\n" );
       errno = EINVAL;
       return 0;
    }
-   if ( rtag->meta_status == NULL  ||  rtag->data_status == NULL ) {
-      LOG( LOG_ERR, "Received ne_state struct has undefined meta/data_status\n" );
+   if ( rtag->stripewidth  &&  (rtag->stripestate.meta_status == NULL  ||  rtag->stripestate.data_status == NULL) ) {
+      LOG( LOG_ERR, "Received RTAG has undefined meta/data_status\n" );
       errno = EINVAL;
       return 0;
    }
@@ -1036,7 +1116,7 @@ size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_
    size_t totsz = 0;
 
    // output version info first
-   int prres = snprintf( tgtstr, len, "%s(%u.%.3u)", RTAG_VERSION_HEADER, RTAG_CURRENT_MAJORVERSION, RTAG_CURRENT_MINORVERSION );
+   int prres = snprintf( tgtstr, len, "%s(%u.%.3u)", RTAG_VERSION_HEADER, rtag->majorversion, rtag->minorversion );
    if ( prres < 1 ) {
       LOG( LOG_ERR, "Failed to output version info string\n" );
       return 0;
@@ -1045,12 +1125,28 @@ size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_
    else { len = 0; }
    totsz += prres;
 
+   // output timestamp value
+   prres = snprintf( tgtstr, len, "%s(%zu)", RTAG_TIMESTAMP_HEADER, (size_t)rtag->createtime );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output timestamp info string\n" );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+
+   // potentially stop here
+   if ( rtag->stripewidth == 0 ) {
+      return totsz;
+   }
+
    // output stripe info
-   prres = snprintf( tgtstr, len, "%s(v%zu|b%zu|t%zu)",
+   prres = snprintf( tgtstr, len, "%s(w%zu|v%zu|b%zu|t%zu)",
                      RTAG_STRIPEINFO_HEADER,
-                     rtag->versz,
-                     rtag->blocksz,
-                     rtag->totsz );
+                     rtag->stripewidth,
+                     rtag->stripestate.versz,
+                     rtag->stripestate.blocksz,
+                     rtag->stripestate.totsz );
    if ( prres < 1 ) {
       LOG( LOG_ERR, "Failed to output stripe info string\n" );
       return 0;
@@ -1070,8 +1166,8 @@ size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_
    totsz += prres;
    // output per-block data health
    size_t curblock = 0;
-   for ( ; curblock < stripewidth; curblock++ ) {
-      char* blkhealth = rtag->data_status + curblock;
+   for ( ; curblock < rtag->stripewidth; curblock++ ) {
+      char* blkhealth = rtag->stripestate.data_status + curblock;
       if ( curblock ) {
          // print flag with seperator
          prres = snprintf( tgtstr, len, "-%c", (*blkhealth) ? '1' : '0' );
@@ -1098,8 +1194,8 @@ size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_
    else { len = 0; }
    totsz += prres;
    // output per-block meta health info
-   for ( curblock = 0; curblock < stripewidth; curblock++ ) {
-      char* blkhealth = rtag->meta_status + curblock;
+   for ( curblock = 0; curblock < rtag->stripewidth; curblock++ ) {
+      char* blkhealth = rtag->stripestate.meta_status + curblock;
       if ( curblock ) {
          // print flag with seperator
          prres = snprintf( tgtstr, len, "-%c", (*blkhealth) ? '1' : '0' );
@@ -1127,6 +1223,53 @@ size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_
    totsz += prres;
 
    return totsz;
+}
+
+/**
+ * Allocates internal memory for the given RTAG ( based on rtag->stripewidth )
+ * @param RTAG* rtag : Reference to the RTAG to be allocated
+ * @return int : Zero on success, or -1 on failure
+ */
+int rtag_alloc( RTAG* rtag ) {
+   // check for NULL rtag
+   if ( rtag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL ne_state reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( rtag->stripewidth  &&  rtag->stripestate.meta_status != NULL  &&  rtag->stripestate.data_status != NULL ) {
+      LOG( LOG_INFO, "RTAG appears to already have internal allocations created\n" );
+      return 0;
+   }
+   // free any existing arrays, if necessary
+   size_t stripewidth = rtag->stripewidth;
+   rtag_free( rtag );
+   rtag->stripestate.meta_status = calloc( sizeof(char), stripewidth );
+   rtag->stripestate.data_status = calloc( sizeof(char), stripewidth );
+   if ( rtag->stripestate.meta_status == NULL  ||  rtag->stripestate.data_status == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate RTAG stipe state arrays\n" );
+      if ( rtag->stripestate.meta_status ) { free( rtag->stripestate.meta_status ); }
+      if ( rtag->stripestate.data_status ) { free( rtag->stripestate.data_status ); }
+      rtag->stripewidth = 0;
+      rtag->stripestate.meta_status = NULL;
+      rtag->stripestate.data_status = NULL;
+      return -1;
+   }
+   rtag->stripewidth = stripewidth;
+   return 0;
+}
+
+/**
+ * Frees internal memory allocations of the given RTAG
+ */
+void rtag_free( RTAG* rtag ) {
+   if ( rtag ) {
+      if ( rtag->stripestate.meta_status ) { free( rtag->stripestate.meta_status ); }
+      if ( rtag->stripestate.data_status ) { free( rtag->stripestate.data_status ); }
+      rtag->stripestate.meta_status = NULL;
+      rtag->stripestate.data_status = NULL;
+      rtag->stripewidth = 0;
+   }
 }
 
 

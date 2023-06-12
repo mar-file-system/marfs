@@ -225,11 +225,11 @@ typedef struct rtag_struct {
    // version info
    unsigned int majorversion;
    unsigned int minorversion;
+   // marker info
+   time_t   createtime;
    // erasure state info
    size_t   stripewidth;
    ne_state stripestate;
-   // marker info
-   time_t   createtime;
 } RTAG;
 
 /**
@@ -241,18 +241,21 @@ typedef struct rtag_struct {
 char* rtag_getname( size_t objno );
 
 /**
- * Initialize a ne_state value based on the provided string value
- * @param ne_state* rtag : Reference to the ne_state structure to be populated
+ * Initialize an RTAG based on the provided string value
+ * @param ne_state* rtag : Reference to the RTAG to be populated
+ *                         NOTE -- If this RTAG has allocated (non-NULL) ne_state.meta/data_status arrays,
+ *                                 they are assumed to be of rtag.stripewidth length.  If this length matches
+ *                                 that of the parsed RTAG, the arrays will be reused.  Otherwise, the arrays
+ *                                 will be freed and recreated with an appropriate length.
  * @param size_t stripewidth : Expected N+E stripe width
  * @param const char* rtagstr : Reference to the string to be parsed
  * @return int : Zero on success, or -1 on failure
  */
-int rtag_initstr( ne_state* rtag, size_t stipewidth, const char* rtagstr );
+int rtag_initstr( RTAG* rtag, const char* rtagstr );
 
 /**
- * Populate a string based on the provided ne_state value
- * @param const ne_state* rtag : Reference to the ne_state structure to pull values from
- * @param size_t stripewidth : Current N+E stripe width ( length of allocated health lists )
+ * Populate a string based on the provided RTAG
+ * @param const RTAG* rtag : Reference to the RTAG structure to pull values from
  * @param char* tgtstr : Reference to the string to be populated
  * @param size_t len : Allocated length of the target length
  * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
@@ -261,7 +264,19 @@ int rtag_initstr( ne_state* rtag, size_t stipewidth, const char* rtagstr );
  *                  indicates that insufficint buffer space was provided and the resulting
  *                  output string was truncated.
  */
-size_t rtag_tostr( const ne_state* rtag, size_t stripewidth, char* tgtstr, size_t len );
+size_t rtag_tostr( const RTAG* rtag, char* tgtstr, size_t len );
+
+/**
+ * Allocates internal memory for the given RTAG ( based on rtag->stripewidth )
+ * @param RTAG* rtag : Reference to the RTAG to be allocated
+ * @return int : Zero on success, or -1 on failure
+ */
+int rtag_alloc( RTAG* rtag );
+
+/**
+ * Frees internal memory allocations of the given RTAG
+ */
+void rtag_free( RTAG* rtag );
 
 // MARFS ORIGINAL REPACK TAG  --  attached to repacked files, storing original FTAG info
 

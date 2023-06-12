@@ -1160,30 +1160,20 @@ int open_current_obj(DATASTREAM stream) {
  * @return int : Zero on success, or -1 on failure
  */
 int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
-   ne_state objstate = {
-      .versz = 0,
-      .blocksz = 0,
-      .totsz = 0,
-      .meta_status = NULL,
-      .data_status = NULL,
-      .csum = NULL };
+   RTAG rtag;
+   bzero( &(rtag), sizeof(RTAG) );
    MDAL mdal = stream->ns->prepo->metascheme.mdal;
-   size_t stripewidth = curftag->protection.N + curftag->protection.E;
-   objstate.data_status = calloc(sizeof(char), stripewidth);
-   objstate.meta_status = calloc(sizeof(char), stripewidth);
-   if (objstate.data_status == NULL || objstate.meta_status == NULL) {
+   // set a stripewidth and allocate the rtag internal arrays
+   rtag.majorversion = RTAG_CURRENT_MAJORVERSION;
+   rtag.minorversion = RTAG_CURRENT_MINORVERSION;
+   rtag.stripewidth = curftag->protection.N + curftag->protection.E;
+   if ( rtag_alloc( &(rtag) ) ) {
       LOG(LOG_ERR, "Failed to allocate data object status arrays\n");
-      if (objstate.data_status) {
-         free(objstate.data_status);
-      }
-      if (objstate.meta_status) {
-         free(objstate.meta_status);
-      }
       return -1;
    }
    int closeres = 0;
    if (stream->datahandle != NULL) {
-      closeres = ne_close(stream->datahandle, NULL, &(objstate));
+      closeres = ne_close(stream->datahandle, NULL, &(rtag.stripestate));
       stream->datahandle = NULL; // never reattempt this process
    }
    if (closeres > 0) {
@@ -1195,22 +1185,19 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       if (rmarkstrlen < 1) {
          LOG(LOG_ERR, "Failed to identify rebuild marker path of file %zu\n",
             curftag->fileno);
-         free(objstate.data_status);
-         free(objstate.meta_status);
+         rtag_free( &(rtag) );
          return -1;
       }
       if ((rmarkstr = (char*)malloc(sizeof(char) * (rmarkstrlen + 1))) == NULL) {
          LOG(LOG_ERR, "Failed to allocate rebuild marker string of length %zu\n",
             rmarkstrlen + 1);
-         free(objstate.data_status);
-         free(objstate.meta_status);
+         rtag_free( &(rtag) );
          return -1;
       }
       if (ftag_rebuildmarker(curftag, rmarkstr, rmarkstrlen + 1) != rmarkstrlen) {
          LOG(LOG_ERR, "Rebuild marker string has an inconsistent length\n");
          free(rmarkstr);
-         free(objstate.data_status);
-         free(objstate.meta_status);
+         rtag_free( &(rtag) );
          return -1;
       }
 
@@ -1222,8 +1209,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          LOG(LOG_ERR, "Failed to identify reference path for rebuild marker \"%s\"\n",
             rmarkstr);
          free(rmarkstr);
-         free(objstate.data_status);
-         free(objstate.meta_status);
+         rtag_free( &(rtag) );
          return -1;
       }
       rpathlen = strlen(noderef->name) + rmarkstrlen;
@@ -1231,16 +1217,14 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       if (rpath == NULL) {
          LOG(LOG_ERR, "Failed to allocate rebuild marker reference string\n");
          free(rmarkstr);
-         free(objstate.data_status);
-         free(objstate.meta_status);
+         rtag_free( &(rtag) );
          return -1;
       }
       if (snprintf(rpath, rpathlen + 1, "%s%s", noderef->name, rmarkstr) != rpathlen) {
          LOG(LOG_ERR, "Failed to populate rebuild marker reference path\n");
          free(rpath);
          free(rmarkstr);
-         free(objstate.data_status);
-         free(objstate.meta_status);
+         rtag_free( &(rtag) );
          errno = EFAULT;
          return -1;
       }
@@ -1255,8 +1239,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          if (config_nsinfo(stream->ns->idstr, NULL, &(nspath))) {
             LOG(LOG_ERR, "Failed to identify path of NS: \"%s\"\n", stream->ns->idstr);
             free(rpath);
-            free(objstate.data_status);
-            free(objstate.meta_status);
+            rtag_free( &(rtag) );
             return -1;
          }
          mdalctxt = mdal->newctxt(nspath, stream->ns->prepo->metascheme.mdal->ctxt);
@@ -1265,8 +1248,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
             LOG(LOG_ERR, "Failed to create new MDAL_CTXT for NS: \"%s\"\n",
                stream->ns->idstr);
             free(rpath);
-            free(objstate.data_status);
-            free(objstate.meta_status);
+            rtag_free( &(rtag) );
             return -1;
          }
       }
@@ -1284,8 +1266,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
                if ( mdal->createrefdir( mdalctxt, rpath, 0777 )  &&  errno != EEXIST ) {
                   LOG(LOG_ERR, "Failed to create refdir parent \"%s\" for rebuild marker (%s)\n", rpath, strerror(errno));
                   free(rpath);
-                  free(objstate.data_status);
-                  free(objstate.meta_status);
+                  rtag_free( &(rtag) );
                   if (releasectxt) {
                      mdal->destroyctxt(mdalctxt);
                   }
@@ -1307,8 +1288,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       if ( filerpath == NULL ) {
          LOG( LOG_ERR, "Failed to identify the rpath of the problem file\n" );
          free( rpath );
-         free(objstate.data_status);
-         free(objstate.meta_status);
+         rtag_free( &(rtag) );
          if (releasectxt) {
             mdal->destroyctxt(mdalctxt);
          }
@@ -1330,8 +1310,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
             LOG( LOG_ERR, "Failed to link problem file ( \"%s\" ) to rebuild marker location ( \"%s\" )\n", filerpath, rpath );
             free(filerpath);
             free(rpath);
-            free(objstate.data_status);
-            free(objstate.meta_status);
+            rtag_free( &(rtag) );
             if (releasectxt) {
                mdal->destroyctxt(mdalctxt);
             }
@@ -1346,8 +1325,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          if (rhandle == NULL) {
             LOG(LOG_ERR, "Failed to open handle for rebuild marker: \"%s\"\n", rpath);
             free(rpath);
-            free(objstate.data_status);
-            free(objstate.meta_status);
+            rtag_free( &(rtag) );
             if (releasectxt) {
                mdal->destroyctxt(mdalctxt);
             }
@@ -1356,18 +1334,25 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          LOG(LOG_INFO, "Opened rebuild marker: \"%s\"\n", rpath);
          free(rpath);
 
-         // TODO stat the opened file, to get a ctime value
-   //      struct stat stval = {0};
-   //      if ( mdal->fstat( rhandle, &(stval) ) ) {
-   //      }
+         // stat the opened file, to get a ctime value
+         struct stat stval = {0};
+         if ( mdal->fstat( rhandle, &(stval) ) ) {
+            LOG( LOG_ERR, "Failed to stat newly created rebuild marker\n" );
+            rtag_free( &(rtag) );
+            if (releasectxt) {
+               mdal->destroyctxt(mdalctxt);
+            }
+            return -1;
+         }
+         rtag.createtime = stval.st_ctime;
+
          // generate a rebuild tag to speed up future repair
          char* rtagstr = NULL;
-         size_t rtagstrlen = rtag_tostr(&(objstate), stripewidth, NULL, 0);
+         size_t rtagstrlen = rtag_tostr(&(rtag), NULL, 0);
          if (rtagstrlen == 0) {
             LOG(LOG_ERR, "Failed to identify rebuild tag length\n");
             mdal->close(rhandle);
-            free(objstate.data_status);
-            free(objstate.meta_status);
+            rtag_free( &(rtag) );
             if (releasectxt) {
                mdal->destroyctxt(mdalctxt);
             }
@@ -1376,18 +1361,16 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          if ((rtagstr = (char*)malloc(sizeof(char) * (rtagstrlen + 1))) == NULL) {
             LOG(LOG_ERR, "Failed to allocate space for rebuild tag string\n");
             mdal->close(rhandle);
-            free(objstate.data_status);
-            free(objstate.meta_status);
+            rtag_free( &(rtag) );
             if (releasectxt) {
                mdal->destroyctxt(mdalctxt);
             }
             return -1;
          }
-         if (rtag_tostr(&(objstate), stripewidth, rtagstr, rtagstrlen + 1) != rtagstrlen) {
+         if (rtag_tostr(&(rtag), rtagstr, rtagstrlen + 1) != rtagstrlen) {
             LOG(LOG_ERR, "Rebuild tag has inconsistent length\n");
             mdal->close(rhandle);
-            free(objstate.data_status);
-            free(objstate.meta_status);
+            rtag_free( &(rtag) );
             free(rtagstr);
             if (releasectxt) {
                mdal->destroyctxt(mdalctxt);
@@ -1395,8 +1378,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
             return -1;
          }
          // object state has been encoded into our rtag string
-         free(objstate.data_status);
-         free(objstate.meta_status);
+         rtag_free( &(rtag) );
 
 
          // identify the rebuild tag name
@@ -1429,8 +1411,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       else {
          // maker already existed, so just clean up state
          free(rpath);
-         free(objstate.data_status);
-         free(objstate.meta_status);
+         rtag_free( &(rtag) );
       }
 
       // potentially destroy our MDAL_CTXT
@@ -1440,8 +1421,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       errno = olderrno;
    }
    else {
-      free(objstate.data_status);
-      free(objstate.meta_status);
+      rtag_free( &(rtag) );
       if (closeres < 0) {
          LOG(LOG_ERR, "ne_close() indicates failure for object %zu\n", curftag->objno);
          return -1;
