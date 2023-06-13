@@ -228,11 +228,11 @@ int main(int argc, char **argv)
    }
    rebuildinf->rtag = calloc( 1, sizeof(RTAG) );
    if ( rebuildinf->rtag == NULL ) { printf( "failed to allocate RTAG\n" ); return -1; }
-   rebuildinf->rtag.stripewidth = 7;
+   rebuildinf->rtag->stripewidth = 7;
    if ( rtag_alloc( rebuildinf->rtag ) ) { printf( "failed rtag_alloc()\n" ); return -1; }
-   rebuildinf->rtag.stripestate.meta_status[2] = 1;
-   rebuildinf->rtag.stripestate.data_status[0] = 1;
-   rebuildinf->rtag.stripestate.data_status[5] = 1;
+   rebuildinf->rtag->stripestate.meta_status[2] = 1;
+   rebuildinf->rtag->stripestate.data_status[0] = 1;
+   rebuildinf->rtag->stripestate.data_status[5] = 1;
    opparse->start = 1;
    opparse->count = 1;
    opparse->errval = 0;
@@ -418,22 +418,22 @@ int main(int argc, char **argv)
    rebuild_info* rebuildparse = (rebuild_info*)opparse->extendedinfo;
    if ( opparse->type != (opset+2)->type  ||
         strcmp( rebuildparse->markerpath, rebuildinf->markerpath )  ||
-        rebuildparse->rtag.stripestate.versz != rebuildinf->rtag.stripestate.versz  ||
-        rebuildparse->rtag.stripestate.blocksz != rebuildinf->rtag.stripestate.blocksz  ||
-        rebuildparse->rtag.stripestate.totsz != rebuildinf->rtag.stripestate.totsz  ||
-        rebuildparse->rtag.stripestate.meta_status[0] != rebuildinf->rtag.stripestate.meta_status[0]  ||
-        rebuildparse->rtag.stripestate.meta_status[1] != rebuildinf->rtag.stripestate.meta_status[1]  ||
-        rebuildparse->rtag.stripestate.meta_status[2] != rebuildinf->rtag.stripestate.meta_status[2]  ||
-        rebuildparse->rtag.stripestate.meta_status[3] != rebuildinf->rtag.stripestate.meta_status[3]  ||
-        rebuildparse->rtag.stripestate.meta_status[4] != rebuildinf->rtag.stripestate.meta_status[4]  ||
-        rebuildparse->rtag.stripestate.meta_status[5] != rebuildinf->rtag.stripestate.meta_status[5]  ||
-        rebuildparse->rtag.stripestate.data_status[0] != rebuildinf->rtag.stripestate.data_status[0]  ||
-        rebuildparse->rtag.stripestate.data_status[1] != rebuildinf->rtag.stripestate.data_status[1]  ||
-        rebuildparse->rtag.stripestate.data_status[2] != rebuildinf->rtag.stripestate.data_status[2]  ||
-        rebuildparse->rtag.stripestate.data_status[3] != rebuildinf->rtag.stripestate.data_status[3]  ||
-        rebuildparse->rtag.stripestate.data_status[4] != rebuildinf->rtag.stripestate.data_status[4]  ||
-        rebuildparse->rtag.stripestate.data_status[5] != rebuildinf->rtag.stripestate.data_status[5]  ||
-        rebuildparse->rtag.stripestate.csum != rebuildinf->rtag.stripestate.csum  ||
+        rebuildparse->rtag->stripestate.versz != rebuildinf->rtag->stripestate.versz  ||
+        rebuildparse->rtag->stripestate.blocksz != rebuildinf->rtag->stripestate.blocksz  ||
+        rebuildparse->rtag->stripestate.totsz != rebuildinf->rtag->stripestate.totsz  ||
+        rebuildparse->rtag->stripestate.meta_status[0] != rebuildinf->rtag->stripestate.meta_status[0]  ||
+        rebuildparse->rtag->stripestate.meta_status[1] != rebuildinf->rtag->stripestate.meta_status[1]  ||
+        rebuildparse->rtag->stripestate.meta_status[2] != rebuildinf->rtag->stripestate.meta_status[2]  ||
+        rebuildparse->rtag->stripestate.meta_status[3] != rebuildinf->rtag->stripestate.meta_status[3]  ||
+        rebuildparse->rtag->stripestate.meta_status[4] != rebuildinf->rtag->stripestate.meta_status[4]  ||
+        rebuildparse->rtag->stripestate.meta_status[5] != rebuildinf->rtag->stripestate.meta_status[5]  ||
+        rebuildparse->rtag->stripestate.data_status[0] != rebuildinf->rtag->stripestate.data_status[0]  ||
+        rebuildparse->rtag->stripestate.data_status[1] != rebuildinf->rtag->stripestate.data_status[1]  ||
+        rebuildparse->rtag->stripestate.data_status[2] != rebuildinf->rtag->stripestate.data_status[2]  ||
+        rebuildparse->rtag->stripestate.data_status[3] != rebuildinf->rtag->stripestate.data_status[3]  ||
+        rebuildparse->rtag->stripestate.data_status[4] != rebuildinf->rtag->stripestate.data_status[4]  ||
+        rebuildparse->rtag->stripestate.data_status[5] != rebuildinf->rtag->stripestate.data_status[5]  ||
+        rebuildparse->rtag->stripestate.csum != rebuildinf->rtag->stripestate.csum  ||
         opparse->start != (opset+2)->start  ||
         opparse->count != (opset+2)->count  ||
         opparse->errval != (opset+2)->errval  ||
