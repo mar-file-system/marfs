@@ -624,8 +624,8 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
          }
          free( objname );
          // if we have an rtag value, seed it in prior to rebuilding
-         if ( rebinf  &&  rebinf->rtag  &&  rebinf->rtag.stripestate.meta_status  &&  rebinf->rtag.stripestate.data_status ) {
-            if ( ne_seed_status( obj, &(rebinf->rtag.stripestate) ) ) {
+         if ( rebinf  &&  rebinf->rtag  &&  rebinf->rtag->stripestate.meta_status  &&  rebinf->rtag->stripestate.data_status ) {
+            if ( ne_seed_status( obj, &(rebinf->rtag->stripestate) ) ) {
                LOG( LOG_WARNING, "Failed to seed rtag status into handle for object %zu of stream \"%s\"\n",
                                  tmptag.objno, tmptag.streamid );
             }
@@ -1445,7 +1445,7 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
       }
       free( rtagstr );
       // verify RTAG is sufficiently old to process
-      if ( rinfo->rtag.createtime >= rebuildthresh ) {
+      if ( rinfo->rtag->createtime >= rebuildthresh ) {
          LOG( LOG_INFO, "Marker path \"%s\" RTAG create time is too recent to rebuild\n", markerpath );
          rtag_free( rinfo->rtag );
          free( rinfo->rtag );
