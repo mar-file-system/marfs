@@ -228,7 +228,13 @@ int main(int argc, char **argv)
    }
    rebuildinf->rtag = calloc( 1, sizeof(RTAG) );
    if ( rebuildinf->rtag == NULL ) { printf( "failed to allocate RTAG\n" ); return -1; }
+   rebuildinf->rtag->majorversion = RTAG_CURRENT_MAJORVERSION;
+   rebuildinf->rtag->minorversion = RTAG_CURRENT_MINORVERSION;
+   rebuildinf->rtag->createtime = (time_t)945873284;
    rebuildinf->rtag->stripewidth = 7;
+   rebuildinf->rtag->stripestate.versz = 1048576;
+   rebuildinf->rtag->stripestate.blocksz = 104857700;
+   rebuildinf->rtag->stripestate.totsz = 1034871239847;
    if ( rtag_alloc( rebuildinf->rtag ) ) { printf( "failed rtag_alloc()\n" ); return -1; }
    rebuildinf->rtag->stripestate.meta_status[2] = 1;
    rebuildinf->rtag->stripestate.data_status[0] = 1;
