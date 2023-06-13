@@ -349,45 +349,32 @@ opinfo* parselogline( int logfile, char* eof ) {
          }
          *endptr = ' ';
          parseloc = endptr + 1;
-         endptr = NULL;
-         unsigned long long parseval = strtoull( parseloc, &endptr, 10 );
-         if ( endptr == NULL  ||  ( *endptr != ' '  &&  *endptr != '}' ) ) {
-            LOG( LOG_ERR, "REBUILD extended info has unexpected char in stripewidth string: '%c'\n", *endptr );
-            free( extinfo );
-            free( op );
-            lseek( logfile, origoff, SEEK_SET );
-            return NULL;
-         }
-         parseloc = endptr;
-         if ( *endptr == ' ' ) {
+         if ( *parseloc != '}'  &&  *parseloc != '\0' ) {
             // possibly parse rtag value
-            endptr++;
-            parseloc = endptr;
+            endptr = parseloc;
             while ( *endptr != '\0'  &&  *endptr != '\n'  &&  *endptr != ' ' ) { endptr++; }
             if ( *endptr != ' ' ) {
                LOG( LOG_ERR, "Failed to identify end of rtag marker in REBUILD extended info string\n" );
+               free( extinfo->markerpath );
                free( extinfo );
                free( op );
                lseek( logfile, origoff, SEEK_SET );
                return NULL;
             }
-            extinfo->rtag.meta_status = calloc( (size_t)parseval, sizeof(char) );
-            extinfo->rtag.data_status = calloc( (size_t)parseval, sizeof(char) );
-            extinfo->rtag.csum = NULL;
-            if ( extinfo->rtag.meta_status == NULL  ||  extinfo->rtag.data_status == NULL ) {
-               LOG( LOG_ERR, "Failed to allocate space for REBUILD extended info meta/data_status arrays\n" );
-               if ( extinfo->rtag.meta_status ) { free( extinfo->rtag.meta_status ); }
-               if ( extinfo->rtag.data_status ) { free( extinfo->rtag.data_status ); }
+            extinfo->rtag = calloc( 1, sizeof(RTAG) );
+            if ( extinfo->rtag == NULL ) {
+               LOG( LOG_ERR, "Failed to allocate space for REBUILD extended info RTAG\n" );
+               free( extinfo->markerpath );
                free( extinfo );
                free( op );
                lseek( logfile, origoff, SEEK_SET );
                return NULL;
             }
             *endptr = '\0'; // truncate string to make rtag parsing easier
-            if ( rtag_initstr( &(extinfo->rtag), (size_t)parseval, parseloc ) ) {
+            if ( rtag_initstr( extinfo->rtag, parseloc ) ) {
                LOG( LOG_ERR, "Failed to parse rtag value of REBUILD extended info: \"%s\"\n", parseloc );
-               free( extinfo->rtag.meta_status );
-               free( extinfo->rtag.data_status );
+               free( extinfo->rtag );
+               free( extinfo->markerpath );
                free( extinfo );
                free( op );
                lseek( logfile, origoff, SEEK_SET );
@@ -397,9 +384,12 @@ opinfo* parselogline( int logfile, char* eof ) {
             parseloc = endptr + 1;
          }
          if ( strncmp( parseloc, "} ", 2 ) ) {
-            LOG( LOG_ERR, "Missing ' } ' tail for REBUILD extended info\n" );
-            free( extinfo->rtag.meta_status );
-            free( extinfo->rtag.data_status );
+            LOG( LOG_ERR, "Missing '} ' tail for REBUILD extended info\n" );
+            if ( extinfo->rtag ) {
+               rtag_free( extinfo->rtag );
+               free( extinfo->rtag );
+            }
+            free( extinfo->markerpath );
             free( extinfo );
             free( op );
             lseek( logfile, origoff, SEEK_SET );
@@ -608,12 +598,11 @@ int printlogline( int logfile, opinfo* op ) {
                LOG( LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n" );
                return -1;
             }
-            if ( rebuild->rtag.data_status  &&  rebuild->rtag.meta_status ) {
-               // possibly print out rtag values
-               extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, " %u ",
-                                                op->ftag.protection.N + op->ftag.protection.E );
-               if ( extinfoprint < 3 ) {
-                  LOG( LOG_ERR, "Failed to populate first portion of REBUILD extended info string\n" );
+            if ( rebuild->rtag ) {
+               // possibly print out rtag values, starting with a single leading space char
+               extinfoprint = snprintf( buffer + usedbuff, MAX_BUFFER - usedbuff, " " );
+               if ( extinfoprint < 1 ) {
+                  LOG( LOG_ERR, "Failed to populate leading space of REBUILD extended info string\n" );
                   return -1;
                }
                usedbuff += extinfoprint;
@@ -621,8 +610,7 @@ int printlogline( int logfile, opinfo* op ) {
                   LOG( LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n" );
                   return -1;
                }
-               size_t rtagprint = rtag_tostr( &(rebuild->rtag), op->ftag.protection.N + op->ftag.protection.E,
-                                              buffer + usedbuff, MAX_BUFFER - usedbuff );
+               size_t rtagprint = rtag_tostr( rebuild->rtag, buffer + usedbuff, MAX_BUFFER - usedbuff );
                if ( rtagprint < 1 ) {
                   LOG( LOG_ERR, "Failed to populate REBUILD extended info rtag string\n" );
                   return -1;
@@ -965,8 +953,7 @@ void resourcelog_freeopinfo( opinfo* op ) {
                {
                rebuild_info* extinfo = (rebuild_info*)op->extendedinfo;
                if ( extinfo->markerpath ) { free( extinfo->markerpath ); }
-               if ( extinfo->rtag.meta_status ) { free( extinfo->rtag.meta_status ); }
-               if ( extinfo->rtag.data_status ) { free( extinfo->rtag.data_status ); }
+               if ( extinfo->rtag ) { rtag_free( extinfo->rtag ); free( extinfo->rtag ); }
                break;
                }
             default: // nothing extra to be done for other ops
@@ -1060,49 +1047,35 @@ opinfo* resourcelog_dupopinfo( opinfo* op ) {
                   // must allow for rebuild ops without extended info ( rebuild by location case )
                   if ( extinfo ) {
                      // duplicate extended info
-                     newinfo = malloc( sizeof( struct rebuild_info_struct ) );
+                     newinfo = calloc( 1, sizeof( struct rebuild_info_struct ) );
                      if ( newinfo == NULL ) {
                         LOG( LOG_ERR, "Failed to allocate rebuild extended info\n" );
                         resourcelog_freeopinfo( genchain );
                         return NULL;
                      }
-                     newinfo->markerpath = NULL;
-                     newinfo->rtag = extinfo->rtag;
-                     newinfo->rtag.meta_status = NULL;
-                     newinfo->rtag.data_status = NULL;
-                     newinfo->rtag.csum = NULL;
-                     size_t stripewidth = op->ftag.protection.N + op->ftag.protection.E;
+                     if ( extinfo->rtag ) {
+                        newinfo->rtag = calloc( 1, sizeof(RTAG) );
+                        if ( newinfo->rtag == NULL ) {
+                           LOG( LOG_ERR, "Failed to allocate a duplicate rebuild extended info RTAG structure\n" );
+                           resourcelog_freeopinfo( genchain );
+                           return NULL;
+                        }
+                        if ( rtag_dup( extinfo->rtag, newinfo->rtag ) ) {
+                           LOG( LOG_ERR, "Failed to duplicate rebuild extended info RTAG structure\n" );
+                           free( newinfo->rtag );
+                           resourcelog_freeopinfo( genchain );
+                           return NULL;
+                        }
+                     }
                      if ( extinfo->markerpath ) {
                         newinfo->markerpath = strdup( extinfo->markerpath );
                         if ( newinfo->markerpath == NULL ) {
                            LOG( LOG_ERR, "Failed to duplicate rebuild marker path\n" );
+                           if ( newinfo->rtag ) { rtag_free( newinfo->rtag ); free( newinfo->rtag ); }
                            free( newinfo );
                            resourcelog_freeopinfo( genchain );
                            return NULL;
                         }
-                     }
-                     if ( extinfo->rtag.meta_status ) {
-                        newinfo->rtag.meta_status = calloc( stripewidth, sizeof(char) );
-                        if ( newinfo->rtag.meta_status == NULL ) {
-                           LOG( LOG_ERR, "Failed to allocate meta_status array of length %zu\n", stripewidth );
-                           free( newinfo->markerpath );
-                           free( newinfo );
-                           resourcelog_freeopinfo( genchain );
-                           return NULL;
-                        }
-                        memcpy( newinfo->rtag.meta_status, extinfo->rtag.meta_status, sizeof(char) * stripewidth );
-                     }
-                     if ( extinfo->rtag.data_status ) {
-                        newinfo->rtag.data_status = calloc( stripewidth, sizeof(char) );
-                        if ( newinfo->rtag.data_status == NULL ) {
-                           LOG( LOG_ERR, "Failed to allocate data_status array of length %zu\n", stripewidth );
-                           if ( newinfo->rtag.meta_status ) { free( newinfo->rtag.meta_status ); }
-                           free( newinfo->markerpath );
-                           free( newinfo );
-                           resourcelog_freeopinfo( genchain );
-                           return NULL;
-                        }
-                        memcpy( newinfo->rtag.data_status, extinfo->rtag.data_status, sizeof(char) * stripewidth );
                      }
                   }
                   (*newop)->extendedinfo = newinfo;

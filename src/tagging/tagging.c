@@ -900,7 +900,7 @@ int rtag_initstr( RTAG* rtag, const char* rtagstr ) {
    parse += strlen(RTAG_TIMESTAMP_HEADER) + 1;
    parseval = strtoull( parse, &(endptr), 10 );
    if ( parseval > SIZE_MAX ) {
-      LOG( LOG_ERR, "Parsed '%c' value exceeds type bounds: \"%llu\"\n", *parse, parseval );
+      LOG( LOG_ERR, "Parsed timestamp value exceeds type bounds: \"%llu\"\n", parseval );
       errno = ERANGE;
       return -1;
    }
@@ -1270,6 +1270,50 @@ void rtag_free( RTAG* rtag ) {
       rtag->stripestate.data_status = NULL;
       rtag->stripewidth = 0;
    }
+}
+
+/**
+ * Produce a duplicate of the given RTAG
+ * @param const RTAG* srcrtag : Reference to the RTAG to duplicate
+ * @param RTAG* destrtag : Reference to the RTAG to be copied into
+ *                         NOTE -- This func will call rtag_free() on this reference
+ * @return int : Zero on success, or -1 on failure
+ */
+int rtag_dup( const RTAG* srcrtag, RTAG* destrtag ) {
+   // check for NULL rtags
+   if ( srcrtag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL src RTAG reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( destrtag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL dest RTAG reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // produce duplicates of the src rtag's stripestate arrays, if necessary
+   char* new_meta_status = NULL;
+   char* new_data_status = NULL;
+   if ( srcrtag->stripewidth ) {
+      new_meta_status = calloc( srcrtag->stripewidth, sizeof(char) );
+      new_data_status = calloc( srcrtag->stripewidth, sizeof(char) );
+      if ( new_meta_status == NULL  ||  new_data_status == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate duplicate meta/data status arrays\n" );
+         if ( new_meta_status ) { free( new_meta_status ); }
+         if ( new_data_status ) { free( new_data_status ); }
+         return -1;
+      }
+      memcpy( new_meta_status, srcrtag->stripestate.meta_status, srcrtag->stripewidth * sizeof(char) );
+      memcpy( new_data_status, srcrtag->stripestate.data_status, srcrtag->stripewidth * sizeof(char) );
+   }
+   // call free on the dest rtag, to ensure we aren't leaking memory
+   rtag_free( destrtag );
+   // directly copy all src rtag values
+   *destrtag = *srcrtag;
+   // then overwrite pointer values to new allocations
+   destrtag->stripestate.meta_status = new_meta_status;
+   destrtag->stripestate.data_status = new_data_status;
+   return 0;
 }
 
 

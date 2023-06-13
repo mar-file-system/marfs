@@ -624,8 +624,8 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
          }
          free( objname );
          // if we have an rtag value, seed it in prior to rebuilding
-         if ( rebinf  &&  rebinf->rtag.meta_status  &&  rebinf->rtag.data_status ) {
-            if ( ne_seed_status( obj, &(rebinf->rtag) ) ) {
+         if ( rebinf  &&  rebinf->rtag  &&  rebinf->rtag.stripestate.meta_status  &&  rebinf->rtag.stripestate.data_status ) {
+            if ( ne_seed_status( obj, &(rebinf->rtag.stripestate) ) ) {
                LOG( LOG_WARNING, "Failed to seed rtag status into handle for object %zu of stream \"%s\"\n",
                                  tmptag.objno, tmptag.streamid );
             }
@@ -678,7 +678,7 @@ void process_rebuild( const marfs_position* pos, opinfo* op ) {
       }
       if ( countval < op->count ) { continue; } // skip over remaining, if we hit an error
       // potentially cleanup the rtag
-      if ( rebinf  &&  rebinf->rtag.meta_status  &&  rebinf->rtag.data_status ) {
+      if ( rebinf  &&  rebinf->rtag ) {
          // generate the RTAG name
          char* rtagstr = rtag_getname( op->ftag.objno );
          if ( rtagstr == NULL ) {
@@ -1377,84 +1377,10 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
       LOG( LOG_ERR, "Failed to open handle for marker path \"%s\"\n", markerpath );
       return NULL;
    }
-   // stat the marker
-   struct stat stval;
-   if ( ms->mdal->fstat( mhandle, &(stval) ) ) {
-      LOG( LOG_ERR, "Failed to stat via handle for marker path \"%s\"\n", markerpath );
-      return NULL;
-   }
-   if ( stval.st_ctime >= rebuildthresh ) {
-      LOG( LOG_INFO, "Marker path \"%s\" ctime is too recent to rebuild\n", markerpath );
-      ms->mdal->close( mhandle );
-      errno = ETIME;
-      return NULL;
-   }
-   // retrieve the FTAG value
-   ssize_t ftagstrlen = ms->mdal->fgetxattr( mhandle, 1, FTAG_NAME, NULL, 0 );
-   if ( ftagstrlen < 2 ) {
-      LOG( LOG_ERR, "Failed to retrieve FTAG from marker file \"%s\"\n", markerpath );
-      ms->mdal->close( mhandle );
-      return NULL;
-   }
-   char* ftagstr = malloc( sizeof(char) * (ftagstrlen + 1) );
-   if ( ftagstr == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate FTAG string of length %zu\n", ftagstrlen + 1 );
-      ms->mdal->close( mhandle );
-      return NULL;
-   }
-   if ( ms->mdal->fgetxattr( mhandle, 1, FTAG_NAME, ftagstr, ftagstrlen ) != ftagstrlen ) {
-      LOG( LOG_ERR, "FTAG of marker file \"%s\" has an inconsistent length\n", markerpath );
-      free( ftagstr );
-      ms->mdal->close( mhandle );
-      return NULL;
-   }
-   *(ftagstr + ftagstrlen) = '\0'; // ensure a NULL-terminated string
-   // allocate a new operation struct
-   opinfo* op = calloc( 1, sizeof( struct opinfo_struct ) );
-   if ( op == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate opinfo struct\n" );
-      free( ftagstr );
-      ms->mdal->close( mhandle );
-      return NULL;
-   }
+   // allocate rebuild op extended info
    rebuild_info* rinfo = calloc( 1, sizeof( struct rebuild_info_struct ) );
    if ( rinfo == NULL ) {
       LOG( LOG_ERR, "Failed to allocate rebuild extended info struct\n" );
-      free( op );
-      free( ftagstr );
-      ms->mdal->close( mhandle );
-      return NULL;
-   }
-   op->type = MARFS_REBUILD_OP;
-   op->extendedinfo = (void*)rinfo;
-   op->start = 1;
-   op->count = 1;
-   // parse in the FTAG
-   if ( ftag_initstr( &(op->ftag), ftagstr ) ) {
-      LOG( LOG_ERR, "Failed to parse FTAG value from marker file \"%s\"\n", markerpath );
-      free( rinfo );
-      free( op );
-      free( ftagstr );
-      ms->mdal->close( mhandle );
-      return NULL;
-   }
-   op->ftag.objno = objno; // overwrite object number with the one we are actually targeting
-   free( ftagstr );
-   // allocate health arrays for the rebuild info RTAG
-   rinfo->rtag.meta_status = calloc( sizeof(char), op->ftag.protection.N + op->ftag.protection.E );
-   if ( rinfo->rtag.meta_status == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate rebuild info meta_status array\n" );
-      free( rinfo );
-      free( op );
-      ms->mdal->close( mhandle );
-      return NULL;
-   }
-   rinfo->rtag.data_status = calloc( sizeof(char), op->ftag.protection.N + op->ftag.protection.E );
-   if ( rinfo->rtag.data_status == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate rebuild info data_status array\n" );
-      free( rinfo->rtag.meta_status );
-      free( rinfo );
-      free( op );
       ms->mdal->close( mhandle );
       return NULL;
    }
@@ -1463,7 +1389,6 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
    if ( rtagname == NULL ) {
       LOG( LOG_ERR, "Failed to identify the name of object %zu RTAG name\n", objno );
       free( rinfo );
-      free( op );
       ms->mdal->close( mhandle );
       return NULL;
    }
@@ -1472,10 +1397,9 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
    //         Therefore, ENOATTR is acceptable.  Anything else, however, is unusual enough to abort for.
    ssize_t rtaglen = ms->mdal->fgetxattr( mhandle, 1, rtagname, NULL, 0 );
    if ( rtaglen < 1  &&  errno != ENOATTR ) {
-      LOG( LOG_ERR, "Failed to retrieve \"%s\" value from marker file \"%s\"\n", rtagname, markerpath );
+      LOG( LOG_ERR, "Failed to retrieve \"%s\" value from marker file \"%s\" ( %s )\n", rtagname, markerpath, strerror(errno) );
       free( rtagname );
       free( rinfo );
-      free( op );
       ms->mdal->close( mhandle );
       return NULL;
    }
@@ -1486,7 +1410,6 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
          LOG( LOG_ERR, "Failed to allocate an RTAG string\n" );
          free( rtagname );
          free( rinfo );
-         free( op );
          ms->mdal->close( mhandle );
          return NULL;
       }
@@ -1496,45 +1419,138 @@ opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t reb
          free( rtagstr );
          free( rtagname );
          free( rinfo );
-         free( op );
          ms->mdal->close( mhandle );
          return NULL;
       }
       *(rtagstr + rtaglen) = '\0'; // ensure a NULL-terminated value
-      // populate RTAG entry
-      if ( rtag_initstr( &(rinfo->rtag), op->ftag.protection.N + op->ftag.protection.E, rtagstr ) ) {
-         LOG( LOG_ERR, "Failed to parse \"%s\" value of marker file \"%s\"\n", rtagname, markerpath );
+      // allocate an RTAG entry
+      rinfo->rtag = calloc( 1, sizeof(RTAG) );
+      if ( rinfo->rtag == NULL ) {
+         LOG( LOG_ERR, "Failed to allocate a new RTAG structure\n" );
          free( rtagstr );
          free( rtagname );
          free( rinfo );
-         free( op );
+         ms->mdal->close( mhandle );
+         return NULL;
+      }
+      // populate RTAG entry
+      if ( rtag_initstr( rinfo->rtag, rtagstr ) ) {
+         LOG( LOG_ERR, "Failed to parse \"%s\" value of marker file \"%s\"\n", rtagname, markerpath );
+         free( rinfo->rtag );
+         free( rtagstr );
+         free( rtagname );
+         free( rinfo );
          ms->mdal->close( mhandle );
          return NULL;
       }
       free( rtagstr );
+      // verify RTAG is sufficiently old to process
+      if ( rinfo->rtag.createtime >= rebuildthresh ) {
+         LOG( LOG_INFO, "Marker path \"%s\" RTAG create time is too recent to rebuild\n", markerpath );
+         rtag_free( rinfo->rtag );
+         free( rinfo->rtag );
+         free( rtagname );
+         free( rinfo );
+         ms->mdal->close( mhandle );
+         errno = ETIME;
+         return NULL;
+      }
    }
    else {
-      // free our status arrays, to signal a lack of an RTAG value
-      free( rinfo->rtag.data_status );
-      free( rinfo->rtag.meta_status );
-      rinfo->rtag.data_status = NULL;
-      rinfo->rtag.meta_status = NULL;
+      // no RTAG timestamp, so rely on stat ctime as a backup
+      struct stat stval;
+      if ( ms->mdal->fstat( mhandle, &(stval) ) ) {
+         LOG( LOG_ERR, "Failed to stat via handle for marker path \"%s\"\n", markerpath );
+         free( rtagname );
+         free( rinfo );
+         ms->mdal->close( mhandle );
+         return NULL;
+      }
+      if ( stval.st_ctime >= rebuildthresh ) {
+         LOG( LOG_INFO, "Marker path \"%s\" ctime is too recent to rebuild\n", markerpath );
+         free( rtagname );
+         free( rinfo );
+         ms->mdal->close( mhandle );
+         errno = ETIME;
+         return NULL;
+      }
    }
    free( rtagname );
    // duplicate marker path
    rinfo->markerpath = strdup( markerpath );
    if ( rinfo->markerpath == NULL ) {
       LOG( LOG_ERR, "Failed to duplicate rebuild marker path \"%s\"\n", markerpath );
+      if ( rinfo->rtag ) { rtag_free( rinfo->rtag ); free( rinfo->rtag ); }
       free( rinfo );
-      free( op );
       ms->mdal->close( mhandle );
       return NULL;
    }
+   // retrieve the FTAG value
+   ssize_t ftagstrlen = ms->mdal->fgetxattr( mhandle, 1, FTAG_NAME, NULL, 0 );
+   if ( ftagstrlen < 2 ) {
+      LOG( LOG_ERR, "Failed to retrieve FTAG from marker file \"%s\"\n", markerpath );
+      free( rinfo->markerpath );
+      if ( rinfo->rtag ) { rtag_free( rinfo->rtag ); free( rinfo->rtag ); }
+      free( rinfo );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   char* ftagstr = malloc( sizeof(char) * (ftagstrlen + 1) );
+   if ( ftagstr == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate FTAG string of length %zu\n", ftagstrlen + 1 );
+      free( rinfo->markerpath );
+      if ( rinfo->rtag ) { rtag_free( rinfo->rtag ); free( rinfo->rtag ); }
+      free( rinfo );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   if ( ms->mdal->fgetxattr( mhandle, 1, FTAG_NAME, ftagstr, ftagstrlen ) != ftagstrlen ) {
+      LOG( LOG_ERR, "FTAG of marker file \"%s\" has an inconsistent length\n", markerpath );
+      free( ftagstr );
+      free( rinfo->markerpath );
+      if ( rinfo->rtag ) { rtag_free( rinfo->rtag ); free( rinfo->rtag ); }
+      free( rinfo );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   *(ftagstr + ftagstrlen) = '\0'; // ensure a NULL-terminated string
+   // allocate a new operation struct
+   opinfo* op = calloc( 1, sizeof( struct opinfo_struct ) );
+   if ( op == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate opinfo struct\n" );
+      free( ftagstr );
+      free( rinfo->markerpath );
+      if ( rinfo->rtag ) { rtag_free( rinfo->rtag ); free( rinfo->rtag ); }
+      free( rinfo );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   op->type = MARFS_REBUILD_OP;
+   op->extendedinfo = (void*)rinfo;
+   op->start = 1;
+   op->count = 1;
+   // parse in the FTAG
+   if ( ftag_initstr( &(op->ftag), ftagstr ) ) {
+      LOG( LOG_ERR, "Failed to parse FTAG value from marker file \"%s\"\n", markerpath );
+      free( op );
+      free( ftagstr );
+      free( rinfo->markerpath );
+      if ( rinfo->rtag ) { rtag_free( rinfo->rtag ); free( rinfo->rtag ); }
+      free( rinfo );
+      ms->mdal->close( mhandle );
+      return NULL;
+   }
+   op->ftag.objno = objno; // overwrite object number with the one we are actually targeting
+   free( ftagstr );
    // close our handle
    if ( ms->mdal->close( mhandle ) ) {
       LOG( LOG_ERR, "Failed to close handle for marker file \"%s\"\n", markerpath );
-      free( rinfo );
+      if ( op->ftag.ctag ) { free( op->ftag.ctag ); }
+      if ( op->ftag.streamid ) { free( op->ftag.streamid ); }
       free( op );
+      free( rinfo->markerpath );
+      if ( rinfo->rtag ) { rtag_free( rinfo->rtag ); free( rinfo->rtag ); }
+      free( rinfo );
       return NULL;
    }
    return op;

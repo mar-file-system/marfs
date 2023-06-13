@@ -278,6 +278,16 @@ int rtag_alloc( RTAG* rtag );
  */
 void rtag_free( RTAG* rtag );
 
+/**
+ * Produce a duplicate of the given RTAG
+ * @param const RTAG* srcrtag : Reference to the RTAG to duplicate
+ * @param RTAG* destrtag : Reference to the RTAG to be copied into
+ *                         NOTE -- This func will call rtag_free() on this reference
+ * @return int : Zero on success, or -1 on failure
+ */
+int rtag_dup( const RTAG* srcrtag, RTAG* destrtag );
+
+
 // MARFS ORIGINAL REPACK TAG  --  attached to repacked files, storing original FTAG info
 
 #define OREPACK_TAG_NAME "ORIG-MARFS-FILE"
