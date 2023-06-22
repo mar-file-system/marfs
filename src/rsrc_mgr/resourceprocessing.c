@@ -2099,6 +2099,7 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
             }
             // immediately break out of this loop, dispatching any remaining ops
             free( reftgt );
+            walker->ftag.state = FTAG_INIT; // force an 'init' condition into our ftag state, so closestreamwalker() knows this wasn't called early
             break;
          }
          free( reftgt );

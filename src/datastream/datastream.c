@@ -2296,6 +2296,15 @@ int datastream_create(DATASTREAM* stream, const char* path, marfs_position* pos,
             errno = EBADFD;
             return -1;
          }
+         // push out the finalized FTAG
+         STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
+         if ( putftag(newstream, curfile) ) {
+            LOG( LOG_ERR, "Failed to finalize FTAG of previous stream file\n" );
+            freestream(newstream);
+            *stream = NULL; // unsafe to reuse this stream
+            errno = EBADFD;
+            return -1;
+         }
          // progress to the next file
          newstream->curfile++;
          newstream->fileno++;
@@ -2341,16 +2350,6 @@ int datastream_create(DATASTREAM* stream, const char* path, marfs_position* pos,
             // check for any errors
             if (abortflag) {
                LOG(LOG_INFO, "Terminating datastream due to previous errors\n");
-               freestream(newstream);
-               *stream = NULL; // unsafe to reuse this stream
-               errno = EBADFD;
-               return -1;
-            }
-         }
-         else {
-            // at least need to push out the 'FINALIZED' state of the previous file
-            if (putftag(newstream, newstream->files + (newstream->curfile - 1))) {
-               LOG(LOG_ERR, "Failed to push the FINALIZED FTAG for the previous file\n");
                freestream(newstream);
                *stream = NULL; // unsafe to reuse this stream
                errno = EBADFD;
@@ -2776,6 +2775,15 @@ int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* p
             errno = EBADFD;
             return -1;
          }
+         // push out the finalized FTAG
+         STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
+         if ( putftag(newstream, curfile) ) {
+            LOG( LOG_ERR, "Failed to finalize FTAG of previous stream file\n" );
+            freestream(newstream);
+            *stream = NULL; // unsafe to reuse this stream
+            errno = EBADFD;
+            return -1;
+         }
          // progress to the next file
          newstream->curfile++;
          newstream->fileno++;
@@ -2821,16 +2829,6 @@ int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* p
             // check for any errors
             if (abortflag) {
                LOG(LOG_INFO, "Terminating datastream due to previous errors\n");
-               freestream(newstream);
-               *stream = NULL; // unsafe to reuse this stream
-               errno = EBADFD;
-               return -1;
-            }
-         }
-         else {
-            // at least need to push out the 'FINALIZED' state of the previous file
-            if (putftag(newstream, newstream->files + (newstream->curfile - 1))) {
-               LOG(LOG_ERR, "Failed to push the FINALIZED FTAG for the previous file\n");
                freestream(newstream);
                *stream = NULL; // unsafe to reuse this stream
                errno = EBADFD;
