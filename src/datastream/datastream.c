@@ -2297,7 +2297,7 @@ int datastream_create(DATASTREAM* stream, const char* path, marfs_position* pos,
             return -1;
          }
          // push out the finalized FTAG
-         STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
+         STREAMFILE* curfile = newstream->files + tgtstream->curfile;
          if ( putftag(newstream, curfile) ) {
             LOG( LOG_ERR, "Failed to finalize FTAG of previous stream file\n" );
             freestream(newstream);
@@ -2776,7 +2776,7 @@ int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* p
             return -1;
          }
          // push out the finalized FTAG
-         STREAMFILE* curfile = tgtstream->files + tgtstream->curfile;
+         STREAMFILE* curfile = newstream->files + tgtstream->curfile;
          if ( putftag(newstream, curfile) ) {
             LOG( LOG_ERR, "Failed to finalize FTAG of previous stream file\n" );
             freestream(newstream);
