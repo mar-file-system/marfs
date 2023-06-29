@@ -178,7 +178,12 @@ int main(int argc, const char** argv) {
    }
 
    // read in the marfs config
-   marfs_config* config = config_init(config_path);
+   pthread_mutex_t erasurelock;
+   if ( pthread_mutex_init( &erasurelock, NULL ) ) {
+      printf( OUTPREFX "ERROR: failed to initialize erasure lock\n" );
+      return -1;
+   }
+   marfs_config* config = config_init(config_path,&erasurelock);
    if (config == NULL) {
       printf(OUTPREFX "ERROR: Failed to initialize config: \"%s\" ( %s )\n",
          config_path, strerror(errno));
@@ -200,6 +205,7 @@ int main(int argc, const char** argv) {
                 OUTPREFX "                         argument to the autoconf 'configure' binary at the root of this repo )\n"
                 OUTPREFX "                         to get a more explicit indication of why this has failed\n" );
       }
+      pthread_mutex_destroy(&erasurelock);
       return -1;
    }
 
@@ -218,6 +224,7 @@ int main(int argc, const char** argv) {
    else {
       printf(OUTPREFX "Config Verified\n");
    }
+   pthread_mutex_destroy(&erasurelock);
    return verres;
 }
 

@@ -84,7 +84,15 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define CONFIGVER_FNAME "/.configver"
 
-#define CTXT (marfs_ctxt)(fuse_get_context()->private_data)
+#define FCTXT (marfs_fuse_ctxt)(fuse_get_context()->private_data)
+#define CTXT ((marfs_fuse_ctxt)(fuse_get_context()->private_data))->ctxt
+
+
+typedef struct marfs_fuse_ctxt_struct {
+   marfs_ctxt ctxt;
+   pthread_mutex_t erasurelock;
+}* marfs_fuse_ctxt;
+
 
 char* translate_path( marfs_ctxt ctxt, const char* path ) {
   if ( path == NULL ) {
@@ -1119,26 +1127,43 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 void *marfs_fuse_init(struct fuse_conn_info *conn)
 {
   LOG(LOG_INFO, "init\n");
+  marfs_fuse_ctxt fctxt = calloc( 1, sizeof( struct marfs_fuse_ctxt_struct ) );
+  if ( fctxt == NULL ) {
+    LOG( LOG_ERR, "Failed to allocate a marfs_fuse_ctxt struct\n" );
+    exit(-1);
+  }
+  if ( pthread_mutex_init( &(fctxt->erasurelock), NULL ) ) {
+    LOG( LOG_ERR, "Failed to initialize local erasurelock\n" );
+    free( fctxt );
+    exit(-1);
+  }
   // initialize the MarFS config
   // NOTE -- FUSE doesn't attempt to verify the config, as it will almost always be run as root.
   //         We want to allow the 'secure root dir' to be owned by a non-root user, if desired.
-  marfs_ctxt ctxt = marfs_init(getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, 0);
-  if ( ctxt == NULL ) {
+  fctxt->ctxt = marfs_init(getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, 0, &(fctxt->erasurelock));
+  if ( fctxt->ctxt == NULL ) {
     LOG( LOG_ERR, "Failed to initialize MarFS context!\n" );
+    pthread_mutex_destroy( &(fctxt->erasurelock) );
+    free( fctxt );
     exit(-1);
   }
-  if ( marfs_setctag( ctxt, "FUSE" ) ) {
+  if ( marfs_setctag( fctxt->ctxt, "FUSE" ) ) {
     LOG( LOG_WARNING, "Failed to set Client Tag String\n" );
   }
-  return (void*)ctxt;
+  return (void*)fctxt;
 }
 
 void marfs_fuse_destroy(void *userdata)
 {
   LOG(LOG_INFO, "destroy\n");
-  if ( marfs_term(CTXT) ) {
+  marfs_fuse_ctxt fctxt = FCTXT;
+  if ( marfs_term(fctxt->ctxt) ) {
     LOG( LOG_WARNING, "Failed to properly terminate marfs_ctxt\n" );
   }
+  if ( pthread_mutex_destroy( &(fctxt->erasurelock) ) ) {
+    LOG( LOG_WARNING, "Failed to properly destroy local erasurelock\n" );
+  }
+  free( fctxt );
 }
 
 int main(int argc, char *argv[])

@@ -131,7 +131,12 @@ int main( int argc, char** argv ) {
    }
 
    // verify the marfs config
-   marfs_config* verconf = config_init( "testing/config.xml" );
+   pthread_mutex_t erasurelock;
+   if ( pthread_mutex_init( &erasurelock, NULL ) ) {
+      fprintf( stderr, "ERROR: failed to initialize erasure lock\n" );
+      return -1;
+   }
+   marfs_config* verconf = config_init( "testing/config.xml", &erasurelock );
    if ( config_verify( verconf, ".", 1, 1, 1, 1 ) ) {
       printf( "failed to verify batch ctxt config\n" );
       return -1;
@@ -139,7 +144,7 @@ int main( int argc, char** argv ) {
    config_term( verconf );
 
    // initialize our BATCH marfs ctxt
-   marfs_ctxt batchctxt = marfs_init( "testing/config.xml", MARFS_BATCH, 0 );
+   marfs_ctxt batchctxt = marfs_init( "testing/config.xml", MARFS_BATCH, 0, NULL );
    if ( batchctxt == NULL ) {
       printf( "failed to initialize batch ctxt\n" );
       return -1;
@@ -152,7 +157,7 @@ int main( int argc, char** argv ) {
    }
 
    // initialize our INTERACTIVE marfs ctxt
-   marfs_ctxt interctxt = marfs_init( "testing/config.xml", MARFS_INTERACTIVE, 1 );
+   marfs_ctxt interctxt = marfs_init( "testing/config.xml", MARFS_INTERACTIVE, 1, &erasurelock );
    if ( interctxt == NULL ) {
       printf( "failed to initialize inter ctxt\n" );
       return -1;
@@ -800,6 +805,7 @@ int main( int argc, char** argv ) {
       printf( "Failed to destory our inter ctxt\n" );
       return -1;
    }
+   pthread_mutex_destroy(&erasurelock);
 
    // cleanup DAL trees
    if ( deletefstree( "./test_datastream_topdir/dal_root" ) ) {

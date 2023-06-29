@@ -75,10 +75,11 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 //   -------------   INTERNAL DEFINITIONS    -------------
 
 typedef struct marfs_ctxt_struct {
-   pthread_mutex_t    lock; // for serializing access to this structure (if necessary)
-   marfs_config*    config;
-   marfs_interface   itype;
-   marfs_position      pos;
+   pthread_mutex_t        lock; // for serializing access to this structure (if necessary)
+   marfs_config*        config;
+   marfs_interface       itype;
+   marfs_position          pos;
+   pthread_mutex_t erasurelock; // for serializing libNE erasure functions (if necessary)
 }* marfs_ctxt;
 
 typedef struct marfs_fhandle_struct {
@@ -178,9 +179,17 @@ void pathcleanup( char* subpath, marfs_position* oppos ) {
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
  * @param char verify : If zero, skip config verification
  *                      If non-zero, verify the config and abort if any problems are found
+ * @param pthread_mutex_t* erasurelock : Reference to a pthread_mutex lock, to be used for synchronizing access
+ *                                       to isa-l erasure generation functions in multi-threaded programs.
+ *                                       If NULL, marfs will create such a lock internally.  In such a case,
+ *                                       the internal lock will continue to protect multi-threaded programs
+ *                                       ONLY if they exclusively use a single marfs_ctxt at a time.
+ *                                       Multi-threaded programs using multiple marfs_ctxt references in parallel
+ *                                       MUST create + initialize their own pthread_mutex and pass it into
+ *                                       ALL marfs_init() calls.
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
-marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify ) {
+marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify, pthread_mutex_t* erasurelock ) {
    LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid args
    if ( configpath == NULL ) {
@@ -196,7 +205,7 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify
       return NULL;
    }
    // allocate our ctxt struct
-   marfs_ctxt ctxt = malloc( sizeof( struct marfs_ctxt_struct ) );
+   marfs_ctxt ctxt = calloc( 1, sizeof( struct marfs_ctxt_struct ) );
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Failed to allocate a new marfs_ctxt\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -204,8 +213,16 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify
    }
    // set our interface type
    ctxt->itype = type;
+   // initialize our local erasurelock
+   if ( pthread_mutex_init( &(ctxt->erasurelock), NULL ) ) {
+      LOG( LOG_ERR, "Failed to initialize local erasurelock\n" );
+      config_term( ctxt->config );
+      free( ctxt );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
    // initialize our config
-   if ( (ctxt->config = config_init( configpath )) == NULL ) {
+   if ( (ctxt->config = config_init( configpath, (erasurelock != NULL) ? erasurelock : &(ctxt->erasurelock) )) == NULL ) {
       LOG( LOG_ERR, "Failed to initialize marfs_config\n" );
       free( ctxt );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -233,7 +250,7 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
-   // initialize our lock
+   // initialize our structure lock
    if ( pthread_mutex_init( &(ctxt->lock), NULL ) ) {
       LOG( LOG_ERR,"Failed to initialize lock for marfs_ctxt\n" );
       rootmdal->destroyctxt( ctxt->pos.ctxt );
@@ -354,6 +371,7 @@ int marfs_term( marfs_ctxt ctxt ) {
    // free the ctxt struct itself
    pthread_mutex_unlock( &(ctxt->lock) );
    pthread_mutex_destroy( &(ctxt->lock) );
+   pthread_mutex_destroy( &(ctxt->erasurelock) );
    free( ctxt );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }

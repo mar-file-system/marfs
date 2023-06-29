@@ -1884,9 +1884,10 @@ int free_repo( marfs_repo* repo ) {
  * Parse the given datascheme xml node to populate the given datascheme structure
  * @param marfs_ds* ds : Datascheme to be populated
  * @param xmlNode* dataroot : Xml node to be parsed
+ * @param pthread_mutex* erasurelock : Reference to the libne erasure synchronization lock
  * @return int : Zero on success, or -1 on failure
  */
-int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
+int parse_datascheme( marfs_ds* ds, xmlNode* dataroot, pthread_mutex* erasurelock ) {
    xmlNode* dalnode = NULL;
    ne_location maxloc = { .pod = 0, .cap = 0, .scatter = 0 };
    // iterate over nodes at this level
@@ -2099,7 +2100,7 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot ) {
       return -1;
    }
    // attempt to create our NE context
-   if ( (ds->nectxt = ne_init( dalnode, maxloc, ds->protection.N + ds->protection.E )) == NULL ) {
+   if ( (ds->nectxt = ne_init( dalnode, maxloc, ds->protection.N + ds->protection.E, erasurelock )) == NULL ) {
       LOG( LOG_ERR, "failed to initialize an NE context\n" );
       return -1;
    }
@@ -2343,9 +2344,10 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
  * Parse the given repo xml node and populate the given marfs_repo reference
  * @param marfs_repo* repo : Reference to the marfs_repo to be populated
  * @param xmlNode* reporoot : Xml node to be parsed
+ * @param pthread_mutex* erasurelock : Reference to the libne erasure synchronization lock
  * @return int : Zero on success, or -1 on failure
  */
-int create_repo( marfs_repo* repo, xmlNode* reporoot ) {
+int create_repo( marfs_repo* repo, xmlNode* reporoot, pthread_mutex_t* erasurelock ) {
    // check for a name attribute
    xmlAttr* attr = reporoot->properties;
    for ( ; attr; attr = attr->next ) {
@@ -2682,9 +2684,17 @@ int establish_nsrefs( marfs_config* config ) {
 /**
  * Initialize memory structures based on the given config file
  * @param const char* cpath : Path of the config file to be parsed
+ * @param pthread_mutex* erasurelock : Reference to the libne erasure synchronization lock
  * @return marfs_config* : Reference to the newly populated config structures
  */
-marfs_config* config_init( const char* cpath ) {
+marfs_config* config_init( const char* cpath, pthread_mutex* erasurelock ) {
+   // verify that we've been passed in an erasurelock
+   if ( erasurelock == NULL ) {
+      LOG( LOG_ERR, "Received a NULL erasurelock reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+
    // Initialize the libxml library and check potential API mismatches between 
    // the version it was compiled for and the actual shared library used.
    LIBXML_TEST_VERSION
@@ -2798,7 +2808,7 @@ marfs_config* config_init( const char* cpath ) {
       if ( strcmp( (char*)(reponode->name), "repo" ) == 0 ) {
          // NULL out the repo's name value, to indicate an initial parse
          ( config->repolist + config->repocount )->name = NULL;
-         if ( create_repo( config->repolist + config->repocount, reponode ) ) {
+         if ( create_repo( config->repolist + config->repocount, reponode, erasurelock ) ) {
             LOG( LOG_ERR, "Failed to parse repo %d\n", config->repocount );
             config_term( config );
             xmlFreeDoc(doc);

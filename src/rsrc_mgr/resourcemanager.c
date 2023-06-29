@@ -2296,7 +2296,13 @@ int main(int argc, char** argv) {
    }
 
    // Initialize the MarFS Config
-   if ( (rman.config = config_init( config_path )) == NULL ) {
+   pthread_mutex_t erasurelock;
+   if ( pthread_mutex_init( &erasurelock, NULL ) ) {
+      fprintf( stderr, "ERROR: failed to initialize erasure lock\n" );
+      MPI_Abort( MPI_COMM_WORLD, -1 );
+      return -1;
+   }
+   if ( (rman.config = config_init( config_path, &erasurelock )) == NULL ) {
       fprintf( stderr, "ERROR: Failed to initialize MarFS config: \"%s\"\n", config_path );
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
@@ -2311,6 +2317,7 @@ int main(int argc, char** argv) {
    if ( config_establishposition( &(pos), rman.config ) ) {
       fprintf( stderr, "ERROR: Failed to establish a MarFS root NS position\n" );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2318,6 +2325,7 @@ int main(int argc, char** argv) {
    if ( nspathdup == NULL ) {
       fprintf( stderr, "ERROR: Failed to duplicate NS path string: \"%s\"\n", ns_path );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2327,6 +2335,7 @@ int main(int argc, char** argv) {
          fprintf( stderr, "ERROR: Failed to identify NS path target: \"%s\"\n", ns_path );
       free( nspathdup );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2335,6 +2344,7 @@ int main(int argc, char** argv) {
          fprintf( stderr, "ERROR: Path target is not a NS, but a subpath of depth %d: \"%s\"\n", travret, ns_path );
       free( nspathdup );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2346,6 +2356,7 @@ int main(int argc, char** argv) {
    if ( rman.nslist == NULL ) {
       fprintf( stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2359,6 +2370,7 @@ int main(int argc, char** argv) {
          if ( iterres < 0 ) {
             fprintf( stderr, "ERROR: Failed to iterate through subspaces of \"%s\"\n", curns->idstr );
             config_term( rman.config );
+            pthread_mutex_destroy(&erasurelock);
             MPI_Abort( MPI_COMM_WORLD, -1 );
             return -1;
          }
@@ -2375,6 +2387,7 @@ int main(int argc, char** argv) {
                   fprintf( stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount );
                   free( rman.nslist );
                   config_term( rman.config );
+                  pthread_mutex_destroy(&erasurelock);
                   MPI_Abort( MPI_COMM_WORLD, -1 );
                   return -1;
                }
@@ -2401,6 +2414,7 @@ int main(int argc, char** argv) {
       fprintf( stderr, "WARNING: Failed to abandon MarFS traversal position\n" );
       free( rman.nslist );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2410,6 +2424,7 @@ int main(int argc, char** argv) {
       fprintf( stderr, "ERROR: Failed to allocate a 'distributed' list of length %zu\n", rman.nscount );
       free( rman.nslist );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2419,6 +2434,7 @@ int main(int argc, char** argv) {
       free( rman.distributed );
       free( rman.nslist );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2429,6 +2445,7 @@ int main(int argc, char** argv) {
       free( rman.distributed );
       free( rman.nslist );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2440,6 +2457,7 @@ int main(int argc, char** argv) {
       free( rman.distributed );
       free( rman.nslist );
       config_term( rman.config );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2457,6 +2475,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2471,6 +2490,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2484,6 +2504,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2503,6 +2524,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2515,6 +2537,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2529,6 +2552,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2547,6 +2571,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2561,6 +2586,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2575,6 +2601,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2588,6 +2615,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2601,6 +2629,7 @@ int main(int argc, char** argv) {
          free( rman.distributed );
          free( rman.nslist );
          config_term( rman.config );
+         pthread_mutex_destroy(&erasurelock);
          MPI_Abort( MPI_COMM_WORLD, -1 );
          return -1;
       }
@@ -2622,6 +2651,7 @@ int main(int argc, char** argv) {
    if ( MPI_Barrier( MPI_COMM_WORLD ) ) {
       fprintf( stderr, "ERROR: Failed to synchronize mpi ranks prior to execution\n" );
       cleanupstate( &(rman), 1 );
+      pthread_mutex_destroy(&erasurelock);
       MPI_Abort( MPI_COMM_WORLD, -1 );
       return -1;
    }
@@ -2641,6 +2671,7 @@ int main(int argc, char** argv) {
       bres = (rman.fatalerror) ? -((int)rman.fatalerror) : (int)rman.nonfatalerror;
       cleanupstate( &(rman), 0 );
    }
+   pthread_mutex_destroy(&erasurelock);
 
    return bres;
 }

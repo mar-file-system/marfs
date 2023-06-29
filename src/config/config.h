@@ -148,9 +148,10 @@ typedef struct marfs_position_struct {
 /**
  * Initialize memory structures based on the given config file
  * @param const char* cpath : Path of the config file to be parsed
+ * @param pthread_mutex* erasurelock : Reference to the libne erasure synchronization lock
  * @return marfs_config* : Reference to the newly populated config structures
  */
-marfs_config* config_init( const char* cpath );
+marfs_config* config_init( const char* cpath, pthread_mutex* erasurelock );
 
 /**
  * Destroy the given config structures

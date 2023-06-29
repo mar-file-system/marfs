@@ -1784,11 +1784,19 @@ int main(int argc, const char **argv)
       return -1;
    }
 
+   // create an erasure mutex
+   pthread_mutex_t erasurelock;
+   if ( pthread_mutex_init( &erasurelock, NULL ) ) {
+      printf( OUTPREFX "ERROR: Failed to initialize erasure mutex lock\n" );
+      return -1;
+   }
+
    // read in the marfs config
    marfs_config* config = config_init( config_path );
    if ( config == NULL ) {
       printf( OUTPREFX "ERROR: Failed to initialize config: \"%s\" ( %s )\n",
               config_path, strerror(errno) );
+      pthread_mutex_destroy( &erasurelock );
       return -1;
    }
    printf( OUTPREFX "marfs config loaded...\n" );
@@ -1803,9 +1811,11 @@ int main(int argc, const char **argv)
    if ( config_term( config ) ) {
       printf( OUTPREFX "WARNING: Failed to properly terminate MarFS config ( %s )\n",
               strerror(errno) );
+      pthread_mutex_destroy( &erasurelock );
       return -1;
    }
 
+   pthread_mutex_destroy( &erasurelock );
    return retval;
 }
 

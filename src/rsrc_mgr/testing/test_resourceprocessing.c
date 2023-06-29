@@ -142,7 +142,12 @@ int main(int argc, char **argv)
    }
 
    // establish a new marfs config
-   marfs_config* config = config_init( "./testing/config.xml" );
+   pthread_mutex_t erasurelock;
+   if ( pthread_mutex_init( &erasurelock, NULL ) ) {
+      fprintf( stderr, "ERROR: failed to initialize erasure lock\n" );
+      return -1;
+   }
+   marfs_config* config = config_init( "./testing/config.xml", &erasurelock );
    if ( config == NULL ) {
       printf( "Failed to initialize marfs config\n" );
       return -1;
@@ -1890,6 +1895,7 @@ int main(int argc, char **argv)
       printf( "Failed to destory our config reference\n" );
       return -1;
    }
+   pthread_mutex_destroy(&erasurelock);
 
    // cleanup DAL trees
    if ( deletesubdirs( "./test_rman_topdir/dal_root" ) ) {
