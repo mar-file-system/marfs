@@ -3554,6 +3554,7 @@ ssize_t datastream_write(DATASTREAM* stream, const void* buf, size_t count) {
             LOG(LOG_ERR, "Failed to output recovery info to tail of object %zu\n", tgtstream->objno);
             freestream(tgtstream);
             *stream = NULL; // unsafe to continue with previous handle
+            errno = EBADFD;
             return -1;
          }
          // close the previous data handle
@@ -3564,6 +3565,7 @@ ssize_t datastream_write(DATASTREAM* stream, const void* buf, size_t count) {
             LOG(LOG_ERR, "Failed to close previous data object\n");
             freestream(tgtstream);
             *stream = NULL; // unsafe to continue with previous handle
+            errno = EBADFD;
             return -1;
          }
          // we (may) need to mark all previous files as complete
@@ -3810,6 +3812,7 @@ off_t datastream_seek(DATASTREAM* stream, off_t offset, int whence) {
             LOG(LOG_ERR, "Failed to output recovery info to tail of object %zu\n", tgtstream->objno);
             freestream(tgtstream);
             *stream = NULL; // unsafe to continue with previous handle
+            errno = EBADFD;
             return -1;
          }
          tgtstream->finfo.eof = 0; // unset the EOF flag, as it no longer applies
