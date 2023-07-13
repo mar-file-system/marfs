@@ -2032,12 +2032,15 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       return NULL;
    }
    // attempt the op
+   char hadstream = 0;
+   if ( stream->datastream ) { hadstream = 1; }
    if ( datastream_create( &(stream->datastream), subpath, &oppos, mode, ctxt->config->ctag ) ) {
       LOG( LOG_ERR, "Failure of datastream_create()\n" );
       config_destroynsref( dupref );
       pathcleanup( subpath, &oppos );
       if ( newstream ) { free( stream ); }
       else {
+         if ( stream->datastream == NULL  &&  hadstream ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
          if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
          pthread_mutex_unlock( &(stream->lock) );
       }
@@ -2263,6 +2266,8 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       return stream;
    }
    // attempt the op, allowing a meta-only reference ONLY if we are opening for read
+   char hadstream = 0;
+   if ( stream->datastream ) { hadstream = 1; }
    MDAL_FHANDLE phandle = NULL;
    if ( datastream_open( &(stream->datastream), ((flags & O_ACCMODE) == O_WRONLY) ? EDIT_STREAM : READ_STREAM, subpath, &oppos,
                          ( (flags & O_ACCMODE) == O_RDONLY ) ? &(phandle) : NULL ) ) {
@@ -2301,6 +2306,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       }
       LOG( LOG_ERR, "Failure of datastream_open()\n" );
       pathcleanup( subpath, &oppos );
+      if ( stream->datastream == NULL  &&  hadstream ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
       if ( !(newstream)  &&  stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
       pthread_mutex_unlock( &(stream->lock) );
       if ( newstream ) { free( stream ); }
@@ -2674,6 +2680,7 @@ ssize_t marfs_write(marfs_fhandle stream, const void* buf, size_t size) {
    if ( stream->datastream ) {
       // write to the datastream reference
       ssize_t retval = datastream_write( &(stream->datastream), buf, size );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
       pthread_mutex_unlock( &(stream->lock) );
       if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -2720,6 +2727,7 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       LOG( LOG_INFO, "Seeking datastream\n" );
       // seek the datastream reference
       off_t retval = datastream_seek( &(stream->datastream), offset, whence );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
       pthread_mutex_unlock( &(stream->lock) );
       if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -2794,6 +2802,7 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
       LOG( LOG_INFO, "Seeking datastream to %zd offset\n", offset );
       // seek the datastream reference
       offval = datastream_seek( &(stream->datastream), offset, SEEK_SET );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
    }
    else {
       // meta only reference
@@ -2826,6 +2835,7 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
       LOG( LOG_INFO, "Reading %zu bytes from datastream\n", count );
       // read from datastream reference
       retval = datastream_read( &(stream->datastream), buf, count );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
    }
    else {
       // meta only reference
@@ -2978,6 +2988,7 @@ int marfs_extend(marfs_fhandle stream, off_t length) {
    if ( stream->datastream ) {
       // extend the datastream reference
       int retval = datastream_extend( &(stream->datastream), length );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
       pthread_mutex_unlock( &(stream->lock) );
       if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
