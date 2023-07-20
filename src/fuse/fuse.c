@@ -137,7 +137,7 @@ int fuse_access(const char *path, int mode)
   int ret = marfs_access(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW | AT_EACCESS);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
@@ -159,7 +159,7 @@ int fuse_chmod(const char *path, mode_t mode)
   int ret = marfs_chmod(CTXT, newpath, mode, 0);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
@@ -181,7 +181,7 @@ int fuse_chown(const char *path, uid_t uid, gid_t gid)
   int ret = marfs_chown(CTXT, newpath, uid, gid, 0);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
@@ -197,7 +197,7 @@ int fuse_create(const char *path, mode_t mode, struct fuse_file_info *ffi)
 
   if (ffi->fh)
   {
-    LOG( LOG_ERR, "File handle is still open\n" );
+    LOG( LOG_ERR, "%s: File handle is still open\n", path );
     return -EBADF;
   }
 
@@ -274,7 +274,7 @@ int fuse_ftruncate(const char *path, off_t length, struct fuse_file_info *ffi)
 
   if (!ffi->fh)
   {
-    LOG( LOG_ERR, "Cannot truncate a NULL file handle\n" );
+    LOG( LOG_ERR, "%s: Cannot truncate a NULL file handle\n", path );
     return -EBADF;
   }
 
@@ -285,7 +285,7 @@ int fuse_ftruncate(const char *path, off_t length, struct fuse_file_info *ffi)
   int ret = marfs_ftruncate((marfs_fhandle)ffi->fh, length);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
 
@@ -317,7 +317,7 @@ int fuse_getattr(const char *path, struct stat *statbuf)
   int ret = marfs_stat(CTXT, newpath, statbuf, AT_SYMLINK_NOFOLLOW);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
@@ -373,7 +373,7 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
   else { xres = marfs_dgetxattr(dh, name, value, size); }
   if (xres < 0)
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   else { ret = (int)xres; }
@@ -417,7 +417,7 @@ int fuse_link(const char *oldpath, const char *newpath)
   int ret = marfs_link(CTXT, newoldpath, newnewpath, 0);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s %s: %s\n", oldpath, newpath, strerror(errno))
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newoldpath );
@@ -473,7 +473,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
   else { xres = marfs_dlistxattr(dh, list, size); }
   if (xres < 0)
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   else { ret = (int)xres; }
@@ -504,7 +504,7 @@ int fuse_mkdir(const char *path, mode_t mode)
   int ret = marfs_mkdir(CTXT, newpath, mode);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
@@ -520,14 +520,14 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
 
   if (ffi->fh)
   {
-    LOG(LOG_ERR, "previously open file descriptor\n");
+    LOG(LOG_ERR, "%s: previously open file descriptor\n", path);
     return -EBADF;
   }
 
   marfs_flags flags = MARFS_READ;
   if (ffi->flags & O_RDWR)
   {
-    LOG(LOG_ERR, "invalid flags %x %x\n", ffi->flags, ffi->flags & O_RDWR);
+    LOG(LOG_ERR, "%s: invalid flags %x %x\n", path, ffi->flags, ffi->flags & O_RDWR);
     return -EINVAL;
   }
   else if (ffi->flags & O_WRONLY)
@@ -557,7 +557,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
 
   if (!ffi->fh)
   {
-    LOG(LOG_ERR, "%s\n", strerror(err));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(err));
     return (err) ? -err : -ENOMSG;
   }
 
@@ -572,7 +572,7 @@ int fuse_opendir(const char *path, struct fuse_file_info *ffi)
 
   if (ffi->fh)
   {
-    LOG(LOG_ERR, "previously open file descriptor\n");
+    LOG(LOG_ERR, "%s: previously open file descriptor\n", path);
     return -EBADF;
   }
 
@@ -589,7 +589,7 @@ int fuse_opendir(const char *path, struct fuse_file_info *ffi)
 
   if (!ffi->fh)
   {
-    LOG(LOG_ERR, "%s\n", strerror(err));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(err));
     return (err) ? -err : -ENOMSG;
   }
 
@@ -632,7 +632,7 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
       return ret;
     }
     else {
-      LOG(LOG_ERR, "missing file descriptor\n");
+      LOG(LOG_ERR, "%s: missing file descriptor\n", path);
       return -EBADF;
     }
   }
@@ -646,7 +646,7 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
 
   if (rres < 0)
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   else { ret = (int)rres; }
@@ -654,7 +654,7 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
   exit_user(&u_ctxt);
 
   if ( ret >= 0 ) { LOG( LOG_INFO, "Successfully read %d bytes\n", ret ); }
-  else { LOG( LOG_ERR, "Read of %zd bytes failed (%s)\n", size, strerror(errno) ); }
+  else { LOG( LOG_ERR, "%s: Read of %zd bytes failed (%s)\n", path, size, strerror(errno) ); }
   return ret;
 }
 
@@ -664,7 +664,7 @@ int fuse_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
 
   if (!ffi->fh)
   {
-    LOG(LOG_ERR, "missing file descriptor\n");
+    LOG(LOG_ERR, "%s: missing file descriptor\n", path);
     return -EBADF;
   }
 
@@ -680,14 +680,14 @@ int fuse_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
   {
     if (filler(buf, de->d_name, NULL, 0))
     {
-      LOG(LOG_ERR, "%s\n", ENOMEM);
+      LOG(LOG_ERR, "%s: %s\n", path, strerror(ENOMEM));
       exit_user(&u_ctxt);
       return -ENOMEM;
     }
   }
   int ret = 0;
   if ( errno != 0 ) {
-    LOG( LOG_ERR, "Detected errno value post-readdir (%s)\n", strerror(errno) );
+    LOG( LOG_ERR, "%s: Detected errno value post-readdir (%s)\n", path, strerror(errno) );
     ret = -errno;
   }
   else {
@@ -712,7 +712,7 @@ int fuse_readlink(const char *path, char *buf, size_t size)
   ssize_t ret = marfs_readlink(CTXT, newpath, buf, size);
   free( newpath );
   if ( ret < 0 ) {
-    LOG( LOG_ERR, "%s\n", strerror(errno) );
+    LOG( LOG_ERR, "%s: %s\n", path, strerror(errno) );
     return (errno) ? -errno : -ENOMSG;
   }
 
@@ -731,7 +731,7 @@ int fuse_release(const char *path, struct fuse_file_info *ffi)
       LOG(LOG_INFO, "No-Op for config version file \"%s\"\n", CONFIGVER_FNAME);
       return 0;
     }
-    LOG(LOG_ERR, "missing file descriptor\n");
+    LOG(LOG_ERR, "%s: missing file descriptor\n", path);
     return -EBADF;
   }
 
@@ -742,7 +742,7 @@ int fuse_release(const char *path, struct fuse_file_info *ffi)
   int ret = marfs_close((marfs_fhandle)ffi->fh);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
 
@@ -757,7 +757,7 @@ int fuse_releasedir(const char *path, struct fuse_file_info *ffi)
 
   if (!ffi->fh)
   {
-    LOG(LOG_ERR, "missing file descriptor\n");
+    LOG(LOG_ERR, "%s: missing file descriptor\n", path);
     return -EBADF;
   }
 
@@ -768,7 +768,7 @@ int fuse_releasedir(const char *path, struct fuse_file_info *ffi)
   int ret = marfs_closedir((marfs_dhandle)ffi->fh);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   else
@@ -820,7 +820,7 @@ int fuse_removexattr(const char *path, const char *name)
   else { ret = marfs_dremovexattr(dh, name); }
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
 
@@ -856,7 +856,7 @@ int fuse_rename(const char *oldpath, const char *newpath)
   int ret = marfs_rename(CTXT, newoldpath, newnewpath);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s %s: %s\n", oldpath, newpath, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newoldpath );
@@ -879,7 +879,7 @@ int fuse_rmdir(const char *path)
   int ret = marfs_rmdir(CTXT, newpath);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
@@ -928,7 +928,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   else { ret = marfs_dsetxattr(dh, name, value, size, flags); }
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
 
@@ -958,7 +958,7 @@ int fuse_statvfs(const char *path, struct statvfs *statbuf)
   int ret = marfs_statvfs(CTXT, newpath, statbuf);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
@@ -985,7 +985,7 @@ int fuse_symlink(const char *target, const char *linkname)
   int ret = marfs_symlink(CTXT, target, newname);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s %s: %s\n", target, linkname, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newname );
@@ -1019,7 +1019,7 @@ int fuse_truncate(const char *path, off_t length)
   int ret = marfs_ftruncate(fh, length);
   if ( ret  ||  marfs_close(fh) )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
 
@@ -1040,7 +1040,7 @@ int fuse_unlink(const char *path)
   int ret = marfs_unlink(CTXT, newpath);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
@@ -1062,7 +1062,7 @@ int fuse_utimens(const char *path, const struct timespec tv[2])
   int ret = marfs_utimens(CTXT, newpath, tv, 0);
   if ( ret )
   {
-    LOG(LOG_ERR, "%s\n", strerror(errno));
+    LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
     ret = (errno) ? -errno : -ENOMSG;
   }
   free( newpath );
@@ -1078,7 +1078,7 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 
   if (!ffi->fh)
   {
-    LOG( LOG_ERR, "Cannot write no a NULL file handle\n" );
+    LOG( LOG_ERR, "%s: Cannot write to a NULL file handle\n", path );
     return -EBADF;
   }
 
@@ -1089,7 +1089,7 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
   off_t sret = marfs_seek((marfs_fhandle)ffi->fh, offset, SEEK_SET);
   if ( sret != offset)
   {
-    LOG( LOG_ERR, "Unexpected seek res: %zd (%s)\n", sret, strerror(errno) );
+    LOG( LOG_ERR, "%s: unexpected seek res: %zd (%s)\n", path, sret, strerror(errno) );
     int err = errno;
     exit_user(&u_ctxt);
     return (err) ? -err : -ENOMSG;
@@ -1099,12 +1099,12 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 
   if (ret < 0)
   {
-    LOG( LOG_ERR, "Unexpected write res: %zd (%s)\n", ret, strerror(errno) );
+    LOG( LOG_ERR, "%s: unexpected write res: %zd (%s)\n", path, ret, strerror(errno) );
     ret = (errno) ? -errno : -ENOMSG;
   }
   else if ( ret != size )
   {
-    LOG( LOG_ERR, "Unexpected write res: %zd (%s)\n", ret, strerror(errno) );
+    LOG( LOG_ERR, "%s: unexpected write res: %zd (%s)\n", path, ret, strerror(errno) );
     ret = (errno) ? -errno : -ENOMSG;
   }
 
