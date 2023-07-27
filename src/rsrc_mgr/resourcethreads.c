@@ -397,16 +397,21 @@ int resourceinput_waitforterm( RESOURCEINPUT* resourceinput ) {
       LOG( LOG_ERR, "Failed to acquire resourceinput lock\n" );
       return -1;
    }
-   if ( rin->prepterm < 2  &&  rin->clientcount ) {
-      LOG( LOG_INFO, "Decrementing active client count from %zu to %zu\n", rin->clientcount, rin->clientcount - 1 );
-      rin->clientcount--; // show that we are waiting
-   }
-   else if ( rin->clientcount == 0 ) {
-      LOG( LOG_ERR, "ClientCount is already zeroed out, but this client is only now waiting!\n" );
-   }
-   pthread_cond_signal( &(rin->complete) ); // signal the master proc to check status
    // wait for the master proc to signal us
+   char diddec = 0;
    while ( rin->prepterm < 2 ) {
+      // check if we should decrement active client count
+      if ( !(diddec)  &&  rin->prepterm == 1 ) {
+         if ( rin->clientcount ) {
+            LOG( LOG_INFO, "Decrementing active client count from %zu to %zu\n", rin->clientcount, rin->clientcount - 1 );
+            rin->clientcount--; // show that we are waiting
+            diddec = 1;
+         }
+         else if ( rin->clientcount == 0 ) {
+            LOG( LOG_ERR, "ClientCount is already zeroed out, but this client is only now waiting!\n" );
+         }
+         pthread_cond_signal( &(rin->complete) ); // signal the master proc to check status
+      }
       if ( pthread_cond_wait( &(rin->updated), &(rin->lock) ) ) {
          LOG( LOG_ERR, "Failed to wait on 'updated' condition value\n" );
          pthread_mutex_unlock( &(rin->lock) );
@@ -1049,6 +1054,12 @@ void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg ) {
       LOG( LOG_INFO, "Thread %u is destroying non-issued REBUILD ops\n", tstate->tID );
       resourcelog_freeopinfo( tstate->rebuildops );
       tstate->rebuildops = NULL;
+      // this is non-standard, so ensure we note an error
+      if ( !(tstate->fatalerror) ) {
+         snprintf( tstate->errorstr, MAX_STR_BUFFER,
+                   "Thread %u held non-issued REBUILD ops at termination\n", tstate->tID );
+         tstate->fatalerror = 1;
+      }
    }
    if ( tstate->repackops ) {
       LOG( LOG_INFO, "Thread %u is destroying non-issued REPACK ops\n", tstate->tID );
