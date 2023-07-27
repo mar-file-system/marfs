@@ -29,7 +29,7 @@ jobs:
     - name: Checkout erasureUtils
       uses: actions/checkout@v3
       with:
-        repository: gransom/erasureUtils
+        repository: ${{ github.repository_owner }}/erasureUtils
         ref: master
         path: erasureUtils
 
