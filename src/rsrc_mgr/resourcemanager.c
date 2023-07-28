@@ -260,7 +260,7 @@ void cleanupstate( rmanstate* rman, char abort ) {
       }
       if ( rman->gstate.rpst ) { repackstreamer_abort( rman->gstate.rpst ); }
       if ( rman->gstate.rlog ) { resourcelog_abort( &(rman->gstate.rlog) ); }
-      if ( rman->gstate.rinput ) { resourceinput_abort( &(rman->gstate.rinput) ); }
+      if ( rman->gstate.rinput ) { resourceinput_destroy( &(rman->gstate.rinput) ); }
       if ( rman->gstate.pos.ns ) { config_abandonposition( &(rman->gstate.pos) ); }
       if ( rman->logsummary ) { free( rman->logsummary ); }
       if ( rman->walkreport ) { free( rman->walkreport ); }
@@ -555,7 +555,6 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
                 "Failed to identify output logfile path of rank %zu for NS \"%s\"",
                 rman->ranknum, ns->idstr );
       resourceinput_purge( &(rman->gstate.rinput) );
-      resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
    }
@@ -565,7 +564,6 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize output logfile: \"%s\"", outlogpath );
       free( outlogpath );
       resourceinput_purge( &(rman->gstate.rinput) );
-      resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
    }
@@ -576,7 +574,6 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       snprintf( response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize repack streamer" );
       resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
       resourceinput_purge( &(rman->gstate.rinput) );
-      resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
    }
@@ -602,7 +599,6 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       rman->gstate.rpst = NULL;
       resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
       resourceinput_purge( &(rman->gstate.rinput) );
-      resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
    }
@@ -615,7 +611,6 @@ int setranktgt( rmanstate* rman, marfs_ns* ns, workresponse* response ) {
       rman->gstate.rpst = NULL;
       resourcelog_term( &(rman->gstate.rlog), NULL, 1 );
       resourceinput_purge( &(rman->gstate.rinput) );
-      resourceinput_term( &(rman->gstate.rinput) );
       config_abandonposition( &(rman->gstate.pos) );
       return -1;
    }
@@ -1205,10 +1200,13 @@ int handlerequest( rmanstate* rman, workrequest* request, workresponse* response
          }
          rman->tq = NULL;
       }
-      // potentially abort the resource input ( hitting this case is always a failure )
+      // destroy the resource input, if present
       if ( rman->gstate.rinput ) {
-         resourceinput_abort( &(rman->gstate.rinput) );
-         return -1;
+         if ( resourceinput_destroy( &(rman->gstate.rinput) ) ) {
+            // nothing to do but complain
+            LOG( LOG_WARNING, "Failed to destroy resourceinput structure\n" );
+            rman->gstate.rinput = NULL; // NULL it out anyhow
+         }
       }
       // need to preserve our logfile, allowing the manager to remove it
       char* outlogpath = resourcelog_genlogpath( 0, rman->logroot, rman->iteration, rman->gstate.pos.ns, rman->ranknum );

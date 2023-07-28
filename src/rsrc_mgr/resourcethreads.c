@@ -523,23 +523,16 @@ int resourceinput_term( RESOURCEINPUT* resourceinput ) {
    }
    rin->prepterm = 3; // just in case
    LOG( LOG_INFO, "All %zu clients have terminated\n", origclientcount );
-   // begin destroying the structure
-   *resourceinput = NULL;
-   pthread_cond_destroy( &(rin->complete) );
-   pthread_cond_destroy( &(rin->updated) );
    pthread_mutex_unlock( &(rin->lock) );
-   pthread_mutex_destroy( &(rin->lock) );
-   // DO NOT free ctxt or NS
-   free( rin );
    return 0;
 }
 
 /**
- * Terminate the given resourceinput, without checking for completion of inputs
- * @param RESOURCEINPUT* resourceinput : Resourceinput to be terminated
+ * Destroy the given resourceinput
+ * @param RESOURCEINPUT* resourceinput : Resourceinput to be destroyed
  * @return int : Zero on success, or -1 on failure
  */
-int resourceinput_abort( RESOURCEINPUT* resourceinput ) {
+int resourceinput_destroy( RESOURCEINPUT* resourceinput ) {
    // check for valid ref
    if ( resourceinput == NULL  ||  *resourceinput == NULL ) {
       LOG( LOG_ERR, "Received an invalid resourceinput arg\n" );
@@ -557,27 +550,11 @@ int resourceinput_abort( RESOURCEINPUT* resourceinput ) {
       LOG( LOG_WARNING, "Failed to acquire lock, but pressing on regardless\n" );
       havelock = 0;
    }
-   // signal clients to prepare for termination, but don't wait on them forever
-   size_t origclientcount = rin->clientcount; // remember the total number of clients
-   rin->prepterm = 1;
-   char stillwaitin = 1;
-   waittime.tv_sec = 10; // max wait of 10 seconds for conditions
-   pthread_cond_broadcast( &(rin->updated) );
-   while ( stillwaitin  &&  havelock  &&  rin->clientcount ) {
-      if ( pthread_cond_timedwait( &(rin->complete), &(rin->lock), &(waittime) ) ) {
-         LOG( LOG_WARNING, "Pressing on after failed wait for clients to synchronize\n" );
-         stillwaitin = 0;
-      }
-   }
-   // signal clients to exit
-   rin->prepterm = 2;
-   stillwaitin = 1;
-   pthread_cond_broadcast( &(rin->updated) );
-   while ( stillwaitin  &&  havelock  &&  rin->clientcount < origclientcount ) {
-      if ( pthread_cond_timedwait( &(rin->complete), &(rin->lock), &(waittime) ) ) {
-         LOG( LOG_WARNING, "Pressing on after failed wait for clients to exit\n" );
-         stillwaitin = 0;
-      }
+   // verify that clients have been properly signaled to term
+   if ( rin->prepterm < 3 ) {
+      LOG( LOG_ERR, "Received resourceinput arg has not yet been terminated or purged\n" );
+      errno = EINVAL;
+      return -1;
    }
    // begin destroying the structure
    *resourceinput = NULL;
