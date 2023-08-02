@@ -684,17 +684,41 @@ int fuse_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
   int cachederrno = errno; // cache and potentially reset errno
 
+  // potentially seek to the specified offset
+  int ret = 0;
+  if ( offset != marfs_telldir((marfs_dhandle)ffi->fh) ) {
+    int seekres = 0;
+    if ( offset ) {
+      seekres = marfs_seekdir((marfs_dhandle)ffi->fh, offset);
+    }
+    else {
+      seekres = marfs_rewinddir((marfs_dhandle)ffi->fh);
+    }
+    if ( seekres ) {
+      LOG(LOG_ERR, "%s\n", strerror(errno) );
+      ret = (errno) ? -errno : -ENOMSG;
+      exit_user(&u_ctxt);
+      return ret;
+    }
+  }
+
   errno = 0;
   while ((de = marfs_readdir((marfs_dhandle)ffi->fh)) != NULL)
   {
-    if (filler(buf, de->d_name, NULL, 0))
+    long posval = marfs_telldir((marfs_dhandle)ffi->fh);
+    if ( posval == -1 ) {
+      LOG(LOG_ERR, "%s\n", strerror(errno) );
+      ret = (errno) ? -errno : -ENOMSG;
+      exit_user(&u_ctxt);
+      return ret;
+    }
+    if (filler(buf, de->d_name, NULL, (off_t)posval))
     {
-      LOG(LOG_ERR, "%s\n", ENOMEM);
+      LOG( LOG_ERR, "%s\n", strerror(ENOMEM) );
       exit_user(&u_ctxt);
       return -ENOMEM;
     }
   }
-  int ret = 0;
   if ( errno != 0 ) {
     LOG( LOG_ERR, "Detected errno value post-readdir (%s)\n", strerror(errno) );
     ret = -errno;

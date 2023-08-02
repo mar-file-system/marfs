@@ -71,8 +71,19 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "mdal/mdal.h"
 
 #include <dirent.h>
+#include <limits.h>
 
 //   -------------   INTERNAL DEFINITIONS    -------------
+
+#if  __WORDSIZE < 64
+#define MARFS_DIR_NS_OFFSET_BIT 29
+#else
+#define MARFS_DIR_NS_OFFSET_BIT 61
+#endif
+#if ( 1UL << MARFS_DIR_NS_OFFSET_BIT ) > LONG_MAX
+#error "MarFS directory NS offset bit position is invalid!"
+#endif
+#define MARFS_DIR_NS_OFFSET_MASK (long)( 1L << MARFS_DIR_NS_OFFSET_BIT )
 
 typedef struct marfs_ctxt_struct {
    pthread_mutex_t        lock; // for serializing access to this structure (if necessary)
@@ -98,7 +109,7 @@ typedef struct marfs_dhandle_struct {
    marfs_ns*            ns;
    unsigned int      depth;
    marfs_interface   itype; // itype of creating ctxt ( for perm checks )
-   size_t      subspcindex; // for tracking returned subspace direntries
+   long           location; // for tracking our position within this dir ( if applicable )
    size_t  subspcnamealloc; // for tracking the allocated d_name space in our dirent struct
    struct dirent subspcent; // for storing returned subspace direntries
    marfs_config*    config; // reference to the containing config ( for chdir validation )
@@ -1490,7 +1501,7 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
       return NULL;
    }
    // allocate a new dhandle struct
-   marfs_dhandle rethandle = malloc( sizeof( struct marfs_dhandle_struct ) );
+   marfs_dhandle rethandle = calloc( 1, sizeof( struct marfs_dhandle_struct ) );
    if ( rethandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate a new dhandle struct\n" );
       pathcleanup( subpath, &oppos );
@@ -1515,7 +1526,7 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
    rethandle->depth = tgtdepth;
    rethandle->itype = ctxt->itype;
    rethandle->config = ctxt->config;
-   rethandle->subspcindex = 0;
+   rethandle->location = 0;
    rethandle->subspcent.d_name[0] = '\0';
    /**
     * NOTE -- yes, the readdir manpage *explicitly* states that 'use of sizeof(d_name) is 
@@ -1585,10 +1596,10 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
    int cachederrno = errno;
    errno = 0;
    // potentially insert a subspace entry
-   if ( dh->depth == 0 ) {
-      while ( dh->subspcindex < dh->ns->subnodecount ) {
+   if ( dh->depth == 0  &&  dh->ns->subnodecount  &&  (dh->location & MARFS_DIR_NS_OFFSET_MASK) == 0 ) {
+      while ( dh->location < dh->ns->subnodecount ) {
          // stat the subspace, to identify inode info
-         marfs_ns* tgtsubspace = (marfs_ns *)(dh->ns->subnodes[dh->subspcindex].content);
+         marfs_ns* tgtsubspace = (marfs_ns *)(dh->ns->subnodes[dh->location].content);
          char* subspacepath = NULL;
          if ( config_nsinfo( tgtsubspace->idstr, NULL, &(subspacepath) ) ) {
             LOG( LOG_ERR, "Failed to identify NS path of subspace: \"%s\"\n",
@@ -1610,22 +1621,44 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
          }
          if ( stnsres == 0 ) {
             // populate and return the subspace dirent
-            if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->subspcindex].name ) >= dh->subspcnamealloc ) {
-               LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->subspcindex].name, dh->subspcnamealloc );
+            if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->location].name ) >= dh->subspcnamealloc ) {
+               LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->location].name, dh->subspcnamealloc );
                pthread_mutex_unlock( &(dh->lock) );
                errno = ENAMETOOLONG;
                LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
                return NULL;
             }
             // increment our index
-            dh->subspcindex++;
+            dh->location++;
+            if ( dh->location & MARFS_DIR_NS_OFFSET_MASK ) {
+               if ( dh->location != dh->ns->subnodecount ) {
+                  // indicate that our location has become invalid
+                  dh->location = MARFS_DIR_NS_OFFSET_MASK | 1L;
+                  LOG( LOG_ERR, "This readdir op has resulted in an excessive dir handle location value\n" );
+               }
+               else {
+                  // overwrite our location, to indicate that we have finished subspace listing
+                  dh->location = MARFS_DIR_NS_OFFSET_MASK;
+               }
+            }
             pthread_mutex_unlock( &(dh->lock) );
+            LOG( LOG_INFO, "EXIT - Success\n" );
             errno = cachederrno;
             return &(dh->subspcent);
          }
          // increment our index
-         dh->subspcindex++;
+         dh->location++;
       }
+      // overwrite our location, to indicate that we have finished subspace listing
+      dh->location = MARFS_DIR_NS_OFFSET_MASK;
+   }
+   // check for an invalid location value
+   if ( dh->location == (MARFS_DIR_NS_OFFSET_MASK | 1L) ) {
+      pthread_mutex_unlock( &(dh->lock) );
+      LOG( LOG_ERR, "Dir handle location value is invalid\n" );
+      errno = EMSGSIZE;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
    }
    // perform the op
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
@@ -1641,6 +1674,153 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
    }
    pthread_mutex_unlock( &(dh->lock) );
    if ( retval != NULL ) { LOG( LOG_INFO, "EXIT - Success\n" ); errno = cachederrno; }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+/**
+ * Identify the ( abstract ) location of an open directory handle
+ * NOTE -- This 'location' can be used via marfs_seekdir() to allow for the repeating
+ *         of marfs_readdir() results.  However, the 'location' value should be
+ *         considered an opaque type, with no caller assumptions as to content,
+ *         beyond error checking.
+ * @param marfs_dhandle dh : marfs_dhandle to retrieve the location value of
+ * @return long : Abstract location value, or -1 on error
+ */
+long marfs_telldir(marfs_dhandle dh) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_dhandle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // acquire directory lock
+   if ( pthread_mutex_lock( &(dh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to aqcuire marfs_dhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // check for an invalid location
+   if ( dh->depth == 0  &&  dh->ns->subnodecount  &&  dh->location == (MARFS_DIR_NS_OFFSET_MASK | 1L) ) {
+      pthread_mutex_unlock( &(dh->lock) );
+      LOG( LOG_ERR, "Dir handle location value is invalid\n" );
+      errno = EMSGSIZE;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   long retval = 0;
+   // check for a post-NS offset
+   if ( dh->depth != 0  ||  dh->ns->subnodecount == 0  ||  (dh->location & MARFS_DIR_NS_OFFSET_MASK) ) {
+      // get the location value of the underlying MDAL_DHANDLE
+      retval = dh->ns->prepo->metascheme.mdal->telldir( dh->metahandle );
+      // if we have subspaces, this value requires additional checks/modification
+      if ( dh->depth == 0  &&  dh->ns->subnodecount ) {
+         // check for value collision
+         if ( (retval & MARFS_DIR_NS_OFFSET_MASK) ) {
+            pthread_mutex_unlock( &(dh->lock) );
+            LOG( LOG_ERR, "MDAL handle location value collides with MarFS dir NS offset bit\n" );
+            errno = EDOM;
+            LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+            return -1;
+         }
+         // mark this as a post-NS value
+         retval |= MARFS_DIR_NS_OFFSET_MASK;
+      }
+      pthread_mutex_unlock( &(dh->lock) );
+      if ( retval != -1 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+      return retval;
+   }
+   // otherwise, just return our current subspace offset
+   pthread_mutex_unlock( &(dh->lock) );
+   LOG( LOG_INFO, "EXIT - Success\n" );
+   return dh->location;
+}
+
+/**
+ * Set the position of an open directory handle, for future marfs_readdir() calls
+ * @param marfs_dhandle dh : marfs_dhandle to seek
+ * @param long loc : Location value to seek to
+ *                   NOTE -- this value *must* come from a previous marfs_telldir()
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_seekdir(marfs_dhandle dh, long loc) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_dhandle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // acquire directory lock
+   if ( pthread_mutex_lock( &(dh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to aqcuire marfs_dhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   long origloc = dh->location;
+   int retval = 0;
+   // check for a post-NS location
+   if ( dh->depth != 0  ||  dh->ns->subnodecount == 0  ||  (loc & MARFS_DIR_NS_OFFSET_MASK) ) {
+      // possibly strip out our NS offset flag, while noting it in the dir handle struct
+      if ( dh->depth == 0  &&  dh->ns->subnodecount ) {
+         loc &= ~(MARFS_DIR_NS_OFFSET_MASK);
+         dh->location = MARFS_DIR_NS_OFFSET_MASK;
+      }
+      retval = dh->ns->prepo->metascheme.mdal->seekdir( dh->metahandle, loc );
+      pthread_mutex_unlock( &(dh->lock) );
+      if ( retval != -1 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); dh->location = origloc; }
+      return retval;
+   }
+   // otherwise, this value corresponds to an offset within our subspaces
+   dh->location = loc;
+   // potentially rewind our MDAL_DHANDLE
+   if ( origloc & MARFS_DIR_NS_OFFSET_MASK ) {
+      retval = dh->ns->prepo->metascheme.mdal->rewinddir( dh->metahandle );
+   }
+   pthread_mutex_unlock( &(dh->lock) );
+   if ( retval != -1 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); dh->location = origloc; }
+   return retval;
+}
+
+/**
+ * Reset the position of an open directory handle, for future marfs_readdir() calls, to
+ * the beginning of the dir
+ * NOTE -- This will result in marfs_readdir() returning entries as though the directory
+ *         handle had been freshly opened.
+ *         This is also equivalent to issuing a marfs_seekdir() back to a location value
+ *         provided by marfs_telldir() prior to any marfs_readdir() op being issued on
+ *         the directory handle.
+ * @param marfs_dhandle dh : marfs_dhandle to rewind
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_rewinddir(marfs_dhandle dh) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_dhandle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // acquire directory lock
+   if ( pthread_mutex_lock( &(dh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to aqcuire marfs_dhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   int retval = 0;
+   // potentially rewind our MDAL_DHANDLE
+   if ( dh->depth != 0  ||  dh->ns->subnodecount == 0  ||  (dh->location & MARFS_DIR_NS_OFFSET_MASK) ) {
+      retval = dh->ns->prepo->metascheme.mdal->rewinddir( dh->metahandle );
+   }
+   pthread_mutex_unlock( &(dh->lock) );
+   if ( retval != -1 ) { LOG( LOG_INFO, "EXIT - Success\n" ); dh->location = 0; }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }

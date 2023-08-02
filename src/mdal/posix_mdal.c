@@ -2313,6 +2313,69 @@ struct dirent* posixmdal_readdir( MDAL_DHANDLE dh ) {
 
 
 /**
+ * Identify the ( abstract ) location of an open directory handle
+ * NOTE -- This 'location' can be used via seekdir() to allow for the repeating
+ *         of readdir() results.  However, the 'location' value should be
+ *         considered an opaque type, with no caller assumptions as to content,
+ *         beyond error checking.
+ * @param MDAL_DHANDLE dh : MDAL_DHANDLE to retrieve the location value of
+ * @return long : Abstract location value, or -1 on error
+ */
+long posixmdal_telldir( MDAL_DHANDLE dh ) {
+   // check for a NULL dir handle
+   if ( !(dh) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_DHANDLE reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
+   return telldir( pdh->dirp );
+}
+
+/**
+ * Set the position of an open directory handle, for future readdir() calls
+ * @param MDAL_DHANDLE dh : MDAL_DHANDLE to seek
+ * @param long loc : Location value to seek to
+ *                   NOTE -- this value *must* come from a previous telldir()
+ * @return int : Zero on success, or -1 on failure
+ */
+int posixmdal_seekdir( MDAL_DHANDLE dh, long loc ) {
+   // check for a NULL dir handle
+   if ( !(dh) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_DHANDLE reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
+   seekdir( pdh->dirp, loc ); // no error condition defined, so don't bother checking
+   return 0;
+}
+
+/**
+ * Reset the position of an open directory handle, for future readdir() calls, to the
+ * beginning of the dir
+ * NOTE -- This will result in readdir() returning entries as though the directory
+ *         handle had been freshly opened.
+ *         This is also equivalent to issuing a seekdir() back to a location value
+ *         provided by telldir() prior to any readdir() op being issued on the
+ *         directory handle.
+ * @param MDAL_DHANDLE dh : MDAL_DHANDLE to rewind
+ * @return int : Zero on success, or -1 on failure
+ */
+int posixmdal_rewinddir( MDAL_DHANDLE dh ) {
+   // check for a NULL dir handle
+   if ( !(dh) ) {
+      LOG( LOG_ERR, "Received a NULL MDAL_DHANDLE reference\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   POSIX_DHANDLE pdh = (POSIX_DHANDLE) dh;
+   rewinddir( pdh->dirp ); // no error condition defined, so don't bother checking
+   return 0;
+}
+
+
+/**
  * Close the given directory handle
  * @param MDAL_DHANDLE dh : MDAL_DHANDLE to close
  * @return int : Zero on success, or -1 if a failure occurred
@@ -3204,7 +3267,7 @@ MDAL posix_mdal_init( xmlNode* root ) {
          pctxt->refd = rootfd; // populate out root dir reference
 
          // allocate and populate a new MDAL structure
-         MDAL pmdal = malloc( sizeof( struct MDAL_struct ) );
+         MDAL pmdal = calloc( 1, sizeof( struct MDAL_struct ) );
          if ( pmdal == NULL ) {
             LOG( LOG_ERR, "failed to allocate space for an MDAL_struct\n" );
             posixmdal_destroyctxt( pctxt );
@@ -3251,6 +3314,9 @@ MDAL posix_mdal_init( xmlNode* root ) {
          pmdal->dremovexattr = posixmdal_dremovexattr;
          pmdal->dlistxattr = posixmdal_dlistxattr;
          pmdal->readdir = posixmdal_readdir;
+         pmdal->telldir = posixmdal_telldir;
+         pmdal->seekdir = posixmdal_seekdir;
+         pmdal->rewinddir = posixmdal_rewinddir;
          pmdal->closedir = posixmdal_closedir;
          pmdal->open = posixmdal_open;
          pmdal->close = posixmdal_close;

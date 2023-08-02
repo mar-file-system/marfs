@@ -391,6 +391,39 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path);
 struct dirent *marfs_readdir(marfs_dhandle handle);
 
 /**
+ * Identify the ( abstract ) location of an open directory handle
+ * NOTE -- This 'location' can be used via marfs_seekdir() to allow for the repeating
+ *         of marfs_readdir() results.  However, the 'location' value should be
+ *         considered an opaque type, with no caller assumptions as to content,
+ *         beyond error checking.
+ * @param marfs_dhandle handle : marfs_dhandle to retrieve the location value of
+ * @return long : Abstract location value, or -1 on error
+ */
+long marfs_telldir(marfs_dhandle handle);
+
+/**
+ * Set the position of an open directory handle, for future marfs_readdir() calls
+ * @param marfs_dhandle handle : marfs_dhandle to seek
+ * @param long loc : Location value to seek to
+ *                   NOTE -- this value *must* come from a previous marfs_telldir()
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_seekdir(marfs_dhandle handle, long loc);
+
+/**
+ * Reset the position of an open directory handle, for future marfs_readdir() calls, to
+ * the beginning of the dir
+ * NOTE -- This will result in marfs_readdir() returning entries as though the directory
+ *         handle had been freshly opened.
+ *         This is also equivalent to issuing a marfs_seekdir() back to a location value
+ *         provided by marfs_telldir() prior to any marfs_readdir() op being issued on
+ *         the directory handle.
+ * @param marfs_dhandle handle : marfs_dhandle to rewind
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_rewinddir(marfs_dhandle handle);
+
+/**
  * Close the given directory handle
  * @param marfs_dhandle dh : marfs_dhandle to close
  * @return int : Zero on success, or -1 if a failure occurred
