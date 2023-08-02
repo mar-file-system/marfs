@@ -712,12 +712,14 @@ int fuse_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
       exit_user(&u_ctxt);
       return ret;
     }
-    if (filler(buf, de->d_name, NULL, (off_t)posval))
+    int fillret = filler(buf, de->d_name, NULL, (off_t)posval);
+    if ( fillret < 0 )
     {
       LOG( LOG_ERR, "%s\n", strerror(ENOMEM) );
       exit_user(&u_ctxt);
       return -ENOMEM;
     }
+    else if ( fillret ) { break; }
   }
   if ( errno != 0 ) {
     LOG( LOG_ERR, "Detected errno value post-readdir (%s)\n", strerror(errno) );
