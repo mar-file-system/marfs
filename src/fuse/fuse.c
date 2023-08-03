@@ -1180,6 +1180,12 @@ int main(int argc, char *argv[])
   marfs_oper.fsync = fuse_fsync;
   marfs_oper.release = fuse_release;
 
+  if ( getenv("MARFS_CONFIG_PATH") == NULL )
+  {
+    fprintf(stderr, "MARFS_CONFIG_PATH is not specified, will not start fuse.\n");
+    return EXIT_FAILURE;
+  }
+
 //  if ((getuid() != 0) || (geteuid() != 0))
 //  {
 //    LOG( LOG_ERR, "Cannot be run by non-root user\n" );
