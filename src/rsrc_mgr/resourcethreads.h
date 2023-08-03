@@ -197,11 +197,11 @@ int resourceinput_waitforcomp( RESOURCEINPUT* resourceinput );
 int resourceinput_term( RESOURCEINPUT* resourceinput );
 
 /**
- * Terminate the given resourceinput, without checking for completion of inputs
- * @param RESOURCEINPUT* resourceinput : Resourceinput to be terminated
+ * Destroy the given resourceinput
+ * @param RESOURCEINPUT* resourceinput : Resourceinput to be destroyed
  * @return int : Zero on success, or -1 on failure
  */
-int resourceinput_abort( RESOURCEINPUT* resourceinput );
+int resourceinput_destroy( RESOURCEINPUT* resourceinput );
 
 
 //   -------------   THREAD BEHAVIOR FUNCTIONS    -------------

@@ -89,16 +89,6 @@ typedef enum
 	MARFS_BATCH
 } marfs_interface;
 
-// NOTE -- MarFS uses the O_PATH open flag to indicate something different than standard posix / linux.
-//         O_PATH indicates to open a 'metadata-only' reference for the given file, allowing access and manipulation
-//         of metadata ( getxattr, futimens, etc ), but preventing it for data ( read / write ).
-typedef enum
-{
-	MARFS_META =  0x01,
-	MARFS_READ =  0x02,
-	MARFS_WRITE = 0x04
-} marfs_flags;
-
 // CONTEXT MGMT OPS
 
 /**
@@ -112,9 +102,17 @@ typedef enum
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
  * @param char verify : If zero, skip config verification
  *                      If non-zero, verify the config and abort if any problems are found
+ * @param pthread_mutex_t* erasurelock : Reference to a pthread_mutex lock, to be used for synchronizing access
+ *                                       to isa-l erasure generation functions in multi-threaded programs.
+ *                                       If NULL, marfs will create such a lock internally.  In such a case,
+ *                                       the internal lock will continue to protect multi-threaded programs
+ *                                       ONLY if they exclusively use a single marfs_ctxt at a time.
+ *                                       Multi-threaded programs using multiple marfs_ctxt references in parallel
+ *                                       MUST create + initialize their own pthread_mutex and pass it into
+ *                                       ALL marfs_init() calls.
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
-marfs_ctxt marfs_init(const char* configpath, marfs_interface type, char verify);
+marfs_ctxt marfs_init(const char* configpath, marfs_interface type, char verify, pthread_mutex_t* erasurelock);
 
 /**
  * Sets a string 'tag' value for the given context struct, causing all output files to 
@@ -393,6 +391,39 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path);
 struct dirent *marfs_readdir(marfs_dhandle handle);
 
 /**
+ * Identify the ( abstract ) location of an open directory handle
+ * NOTE -- This 'location' can be used via marfs_seekdir() to allow for the repeating
+ *         of marfs_readdir() results.  However, the 'location' value should be
+ *         considered an opaque type, with no caller assumptions as to content,
+ *         beyond error checking.
+ * @param marfs_dhandle handle : marfs_dhandle to retrieve the location value of
+ * @return long : Abstract location value, or -1 on error
+ */
+long marfs_telldir(marfs_dhandle handle);
+
+/**
+ * Set the position of an open directory handle, for future marfs_readdir() calls
+ * @param marfs_dhandle handle : marfs_dhandle to seek
+ * @param long loc : Location value to seek to
+ *                   NOTE -- this value *must* come from a previous marfs_telldir()
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_seekdir(marfs_dhandle handle, long loc);
+
+/**
+ * Reset the position of an open directory handle, for future marfs_readdir() calls, to
+ * the beginning of the dir
+ * NOTE -- This will result in marfs_readdir() returning entries as though the directory
+ *         handle had been freshly opened.
+ *         This is also equivalent to issuing a marfs_seekdir() back to a location value
+ *         provided by marfs_telldir() prior to any marfs_readdir() op being issued on
+ *         the directory handle.
+ * @param marfs_dhandle handle : marfs_dhandle to rewind
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_rewinddir(marfs_dhandle handle);
+
+/**
  * Close the given directory handle
  * @param marfs_dhandle dh : marfs_dhandle to close
  * @return int : Zero on success, or -1 if a failure occurred
@@ -483,28 +514,51 @@ ssize_t marfs_dlistxattr(marfs_dhandle dh, char* buf, size_t size);
 marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, mode_t mode);
 
 /**
- * Open an existing file
+ * Open a MarFS file ( normally used for existing file, but can create 'meta cached' files )
  * @param marfs_ctxt ctxt : marfs_ctxt to operate relative to
  * @param marfs_fhandle stream : Reference to an existing marfs_fhandle, or NULL
- *                               If non-NULL, the previous marfs_fhandle will be modified  
- *                               to reference the new file, preserving existing meta/data 
- *                               values/buffers to whatever extent is possible.  The 
+ *                               If non-NULL, the previous marfs_fhandle will be modified
+ *                               to reference the new file, preserving existing meta/data
+ *                               values/buffers to whatever extent is possible.  The
  *                               modified handle will be returned by this function.
- *                               If NULL, the created file will be tied to a completely 
+ *                               If NULL, the created file will be tied to a completely
  *                               fresh marfs_fhandle.
- *                               NOTE -- Clients should essentially always open new files 
+ *                               NOTE -- Clients should essentially always open new files
  *                               via an existing marfs_fhandle, when feasible to do so.
  * @param const char* path : Path of the file to be opened
- * @param marfs_flags flags : Flags specifying the mode in which to open the file
+ * @param int flags : A bitwise OR of the following...
+ *                    O_RDONLY   - Read only access
+ *                    O_WRONLY   - Write only access
+ *                    O_RDWR     - Read + Write access
+ *                                 ( note, only supported when combined with O_ASYNC; see below )
+ *                    O_CREAT    - Create the target file, if it does not already exist
+ *                                 ( note, only supported when combined with O_ASYNC; see below.
+ *                                   Standard MarFS file creation should be done via the
+ *                                   marfs_creat() function instead. )
+ *                    O_EXCL     - Ensure this call creates the target file
+ *                                 ( note, only supported when combined with O_ASYNC; see below )
+ *                    O_NOFOLLOW - Do not follow a symlink target
+ *                                 ( note, if targeting a symlink, always returns ELOOP,
+ *                                   unless combined with O_PATH; see linux open() manpage.
+ *                                   Only supported when combined with O_ASYNC; see below. )
+ *                    O_PATH     - Obtain a handle which merely indicates an FS tree location
+ *                                 ( note, see linux open() manpage.
+ *                                   Only supported when combined with O_ASYNC; see below. )
+ *                    O_ASYNC    - Obtain an MDAL ( meta-only ) reference
+ *                                 ( note, here, the behavior of this flag differs entirely from
+ *                                   standard POSIX / Linux.  This flag causes MarFS to bypass
+ *                                   the DAL ( data object path ) and operate exclusively via
+ *                                   the MDAL ( metadata path ). )
+ *                    NOTE -- some of these flags may require the caller to define _GNU_SOURCE!
  * @return marfs_fhandle : marfs_fhandle referencing the opened file,
  *                         or NULL if a failure occurred
  *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
  *            preserved ( continue to reference whatever file it previously referenced ).
  *            However, it is possible for certain catastrophic error conditions to occur.
- *            In such a case, errno will be set to EBADFD and any subsequent operations 
+ *            In such a case, errno will be set to EBADFD and any subsequent operations
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
-marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, marfs_flags flags);
+marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, int flags);
 
 /**
  * Free the given file handle and 'complete' the underlying file

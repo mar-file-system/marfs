@@ -71,19 +71,31 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "mdal/mdal.h"
 
 #include <dirent.h>
+#include <limits.h>
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
+#if  __WORDSIZE < 64
+#define MARFS_DIR_NS_OFFSET_BIT 29
+#else
+#define MARFS_DIR_NS_OFFSET_BIT 61
+#endif
+#if ( 1UL << MARFS_DIR_NS_OFFSET_BIT ) > LONG_MAX
+#error "MarFS directory NS offset bit position is invalid!"
+#endif
+#define MARFS_DIR_NS_OFFSET_MASK (long)( 1L << MARFS_DIR_NS_OFFSET_BIT )
+
 typedef struct marfs_ctxt_struct {
-   pthread_mutex_t    lock; // for serializing access to this structure (if necessary)
-   marfs_config*    config;
-   marfs_interface   itype;
-   marfs_position      pos;
+   pthread_mutex_t        lock; // for serializing access to this structure (if necessary)
+   marfs_config*        config;
+   marfs_interface       itype;
+   marfs_position          pos;
+   pthread_mutex_t erasurelock; // for serializing libNE erasure functions (if necessary)
 }* marfs_ctxt;
 
 typedef struct marfs_fhandle_struct {
    pthread_mutex_t    lock; // for serializing access to this structure (if necessary)
-   marfs_flags       flags; // open flags for this file handle
+   int               flags; // open flags for this file handle
    MDAL_FHANDLE metahandle; // for meta/direct access
    DATASTREAM   datastream; // for standard access
    marfs_ns*            ns; // reference to the containing NS
@@ -97,7 +109,7 @@ typedef struct marfs_dhandle_struct {
    marfs_ns*            ns;
    unsigned int      depth;
    marfs_interface   itype; // itype of creating ctxt ( for perm checks )
-   size_t      subspcindex; // for tracking returned subspace direntries
+   long           location; // for tracking our position within this dir ( if applicable )
    size_t  subspcnamealloc; // for tracking the allocated d_name space in our dirent struct
    struct dirent subspcent; // for storing returned subspace direntries
    marfs_config*    config; // reference to the containing config ( for chdir validation )
@@ -178,9 +190,17 @@ void pathcleanup( char* subpath, marfs_position* oppos ) {
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
  * @param char verify : If zero, skip config verification
  *                      If non-zero, verify the config and abort if any problems are found
+ * @param pthread_mutex_t* erasurelock : Reference to a pthread_mutex lock, to be used for synchronizing access
+ *                                       to isa-l erasure generation functions in multi-threaded programs.
+ *                                       If NULL, marfs will create such a lock internally.  In such a case,
+ *                                       the internal lock will continue to protect multi-threaded programs
+ *                                       ONLY if they exclusively use a single marfs_ctxt at a time.
+ *                                       Multi-threaded programs using multiple marfs_ctxt references in parallel
+ *                                       MUST create + initialize their own pthread_mutex and pass it into
+ *                                       ALL marfs_init() calls.
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
-marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify ) {
+marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify, pthread_mutex_t* erasurelock ) {
    LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid args
    if ( configpath == NULL ) {
@@ -196,7 +216,7 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify
       return NULL;
    }
    // allocate our ctxt struct
-   marfs_ctxt ctxt = malloc( sizeof( struct marfs_ctxt_struct ) );
+   marfs_ctxt ctxt = calloc( 1, sizeof( struct marfs_ctxt_struct ) );
    if ( ctxt == NULL ) {
       LOG( LOG_ERR, "Failed to allocate a new marfs_ctxt\n" );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -204,8 +224,16 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify
    }
    // set our interface type
    ctxt->itype = type;
+   // initialize our local erasurelock
+   if ( pthread_mutex_init( &(ctxt->erasurelock), NULL ) ) {
+      LOG( LOG_ERR, "Failed to initialize local erasurelock\n" );
+      config_term( ctxt->config );
+      free( ctxt );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
+   }
    // initialize our config
-   if ( (ctxt->config = config_init( configpath )) == NULL ) {
+   if ( (ctxt->config = config_init( configpath, (erasurelock != NULL) ? erasurelock : &(ctxt->erasurelock) )) == NULL ) {
       LOG( LOG_ERR, "Failed to initialize marfs_config\n" );
       free( ctxt );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -233,7 +261,7 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
-   // initialize our lock
+   // initialize our structure lock
    if ( pthread_mutex_init( &(ctxt->lock), NULL ) ) {
       LOG( LOG_ERR,"Failed to initialize lock for marfs_ctxt\n" );
       rootmdal->destroyctxt( ctxt->pos.ctxt );
@@ -354,6 +382,7 @@ int marfs_term( marfs_ctxt ctxt ) {
    // free the ctxt struct itself
    pthread_mutex_unlock( &(ctxt->lock) );
    pthread_mutex_destroy( &(ctxt->lock) );
+   pthread_mutex_destroy( &(ctxt->erasurelock) );
    free( ctxt );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -1306,7 +1335,7 @@ int marfs_futimens(marfs_fhandle fh, const struct timespec times[2]) {
    // perform the op
    int retval;
    if ( fh->datastream == NULL  &&
-        ( fh->ns->prepo->metascheme.directread  ||  (fh->flags & MARFS_META) ) ) {
+        ( fh->ns->prepo->metascheme.directread  ||  (fh->flags & O_ASYNC) ) ) {
       // only call the MDAL op directly if we both don't have a datastream AND
       // either the config has enabled direct read OR the file handle is explicitly metadata only
       LOG( LOG_INFO, "Performing futimens call directly on metahandle\n" );
@@ -1472,7 +1501,7 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
       return NULL;
    }
    // allocate a new dhandle struct
-   marfs_dhandle rethandle = malloc( sizeof( struct marfs_dhandle_struct ) );
+   marfs_dhandle rethandle = calloc( 1, sizeof( struct marfs_dhandle_struct ) );
    if ( rethandle == NULL ) {
       LOG( LOG_ERR, "Failed to allocate a new dhandle struct\n" );
       pathcleanup( subpath, &oppos );
@@ -1497,7 +1526,7 @@ marfs_dhandle marfs_opendir(marfs_ctxt ctxt, const char *path) {
    rethandle->depth = tgtdepth;
    rethandle->itype = ctxt->itype;
    rethandle->config = ctxt->config;
-   rethandle->subspcindex = 0;
+   rethandle->location = 0;
    rethandle->subspcent.d_name[0] = '\0';
    /**
     * NOTE -- yes, the readdir manpage *explicitly* states that 'use of sizeof(d_name) is 
@@ -1567,10 +1596,10 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
    int cachederrno = errno;
    errno = 0;
    // potentially insert a subspace entry
-   if ( dh->depth == 0 ) {
-      while ( dh->subspcindex < dh->ns->subnodecount ) {
+   if ( dh->depth == 0  &&  dh->ns->subnodecount  &&  (dh->location & MARFS_DIR_NS_OFFSET_MASK) == 0 ) {
+      while ( dh->location < dh->ns->subnodecount ) {
          // stat the subspace, to identify inode info
-         marfs_ns* tgtsubspace = (marfs_ns *)(dh->ns->subnodes[dh->subspcindex].content);
+         marfs_ns* tgtsubspace = (marfs_ns *)(dh->ns->subnodes[dh->location].content);
          char* subspacepath = NULL;
          if ( config_nsinfo( tgtsubspace->idstr, NULL, &(subspacepath) ) ) {
             LOG( LOG_ERR, "Failed to identify NS path of subspace: \"%s\"\n",
@@ -1592,22 +1621,44 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
          }
          if ( stnsres == 0 ) {
             // populate and return the subspace dirent
-            if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->subspcindex].name ) >= dh->subspcnamealloc ) {
-               LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->subspcindex].name, dh->subspcnamealloc );
+            if ( snprintf( dh->subspcent.d_name, dh->subspcnamealloc, "%s", dh->ns->subnodes[dh->location].name ) >= dh->subspcnamealloc ) {
+               LOG( LOG_ERR, "Dirent struct does not have sufficient space to store subspace name: \"%s\" (%zu bytes available)\n", dh->ns->subnodes[dh->location].name, dh->subspcnamealloc );
                pthread_mutex_unlock( &(dh->lock) );
                errno = ENAMETOOLONG;
                LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
                return NULL;
             }
             // increment our index
-            dh->subspcindex++;
+            dh->location++;
+            if ( dh->location & MARFS_DIR_NS_OFFSET_MASK ) {
+               if ( dh->location != dh->ns->subnodecount ) {
+                  // indicate that our location has become invalid
+                  dh->location = MARFS_DIR_NS_OFFSET_MASK | 1L;
+                  LOG( LOG_ERR, "This readdir op has resulted in an excessive dir handle location value\n" );
+               }
+               else {
+                  // overwrite our location, to indicate that we have finished subspace listing
+                  dh->location = MARFS_DIR_NS_OFFSET_MASK;
+               }
+            }
             pthread_mutex_unlock( &(dh->lock) );
+            LOG( LOG_INFO, "EXIT - Success\n" );
             errno = cachederrno;
             return &(dh->subspcent);
          }
          // increment our index
-         dh->subspcindex++;
+         dh->location++;
       }
+      // overwrite our location, to indicate that we have finished subspace listing
+      dh->location = MARFS_DIR_NS_OFFSET_MASK;
+   }
+   // check for an invalid location value
+   if ( dh->location == (MARFS_DIR_NS_OFFSET_MASK | 1L) ) {
+      pthread_mutex_unlock( &(dh->lock) );
+      LOG( LOG_ERR, "Dir handle location value is invalid\n" );
+      errno = EMSGSIZE;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return NULL;
    }
    // perform the op
    MDAL curmdal = dh->ns->prepo->metascheme.mdal;
@@ -1623,6 +1674,153 @@ struct dirent *marfs_readdir(marfs_dhandle dh) {
    }
    pthread_mutex_unlock( &(dh->lock) );
    if ( retval != NULL ) { LOG( LOG_INFO, "EXIT - Success\n" ); errno = cachederrno; }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+   return retval;
+}
+
+/**
+ * Identify the ( abstract ) location of an open directory handle
+ * NOTE -- This 'location' can be used via marfs_seekdir() to allow for the repeating
+ *         of marfs_readdir() results.  However, the 'location' value should be
+ *         considered an opaque type, with no caller assumptions as to content,
+ *         beyond error checking.
+ * @param marfs_dhandle dh : marfs_dhandle to retrieve the location value of
+ * @return long : Abstract location value, or -1 on error
+ */
+long marfs_telldir(marfs_dhandle dh) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_dhandle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // acquire directory lock
+   if ( pthread_mutex_lock( &(dh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to aqcuire marfs_dhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // check for an invalid location
+   if ( dh->depth == 0  &&  dh->ns->subnodecount  &&  dh->location == (MARFS_DIR_NS_OFFSET_MASK | 1L) ) {
+      pthread_mutex_unlock( &(dh->lock) );
+      LOG( LOG_ERR, "Dir handle location value is invalid\n" );
+      errno = EMSGSIZE;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   long retval = 0;
+   // check for a post-NS offset
+   if ( dh->depth != 0  ||  dh->ns->subnodecount == 0  ||  (dh->location & MARFS_DIR_NS_OFFSET_MASK) ) {
+      // get the location value of the underlying MDAL_DHANDLE
+      retval = dh->ns->prepo->metascheme.mdal->telldir( dh->metahandle );
+      // if we have subspaces, this value requires additional checks/modification
+      if ( dh->depth == 0  &&  dh->ns->subnodecount ) {
+         // check for value collision
+         if ( (retval & MARFS_DIR_NS_OFFSET_MASK) ) {
+            pthread_mutex_unlock( &(dh->lock) );
+            LOG( LOG_ERR, "MDAL handle location value collides with MarFS dir NS offset bit\n" );
+            errno = EDOM;
+            LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+            return -1;
+         }
+         // mark this as a post-NS value
+         retval |= MARFS_DIR_NS_OFFSET_MASK;
+      }
+      pthread_mutex_unlock( &(dh->lock) );
+      if ( retval != -1 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
+      return retval;
+   }
+   // otherwise, just return our current subspace offset
+   pthread_mutex_unlock( &(dh->lock) );
+   LOG( LOG_INFO, "EXIT - Success\n" );
+   return dh->location;
+}
+
+/**
+ * Set the position of an open directory handle, for future marfs_readdir() calls
+ * @param marfs_dhandle dh : marfs_dhandle to seek
+ * @param long loc : Location value to seek to
+ *                   NOTE -- this value *must* come from a previous marfs_telldir()
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_seekdir(marfs_dhandle dh, long loc) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_dhandle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // acquire directory lock
+   if ( pthread_mutex_lock( &(dh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to aqcuire marfs_dhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   long origloc = dh->location;
+   int retval = 0;
+   // check for a post-NS location
+   if ( dh->depth != 0  ||  dh->ns->subnodecount == 0  ||  (loc & MARFS_DIR_NS_OFFSET_MASK) ) {
+      // possibly strip out our NS offset flag, while noting it in the dir handle struct
+      if ( dh->depth == 0  &&  dh->ns->subnodecount ) {
+         loc &= ~(MARFS_DIR_NS_OFFSET_MASK);
+         dh->location = MARFS_DIR_NS_OFFSET_MASK;
+      }
+      retval = dh->ns->prepo->metascheme.mdal->seekdir( dh->metahandle, loc );
+      pthread_mutex_unlock( &(dh->lock) );
+      if ( retval != -1 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+      else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); dh->location = origloc; }
+      return retval;
+   }
+   // otherwise, this value corresponds to an offset within our subspaces
+   dh->location = loc;
+   // potentially rewind our MDAL_DHANDLE
+   if ( origloc & MARFS_DIR_NS_OFFSET_MASK ) {
+      retval = dh->ns->prepo->metascheme.mdal->rewinddir( dh->metahandle );
+   }
+   pthread_mutex_unlock( &(dh->lock) );
+   if ( retval != -1 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
+   else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); dh->location = origloc; }
+   return retval;
+}
+
+/**
+ * Reset the position of an open directory handle, for future marfs_readdir() calls, to
+ * the beginning of the dir
+ * NOTE -- This will result in marfs_readdir() returning entries as though the directory
+ *         handle had been freshly opened.
+ *         This is also equivalent to issuing a marfs_seekdir() back to a location value
+ *         provided by marfs_telldir() prior to any marfs_readdir() op being issued on
+ *         the directory handle.
+ * @param marfs_dhandle dh : marfs_dhandle to rewind
+ * @return int : Zero on success, or -1 on failure
+ */
+int marfs_rewinddir(marfs_dhandle dh) {
+   LOG( LOG_INFO, "ENTRY\n" );
+   // check for NULL args
+   if ( dh == NULL ) {
+      LOG( LOG_ERR, "Received a NULL marfs_dhandle arg\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   // acquire directory lock
+   if ( pthread_mutex_lock( &(dh->lock) ) ) {
+      LOG( LOG_ERR, "Failed to aqcuire marfs_dhandle lock\n" );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   int retval = 0;
+   // potentially rewind our MDAL_DHANDLE
+   if ( dh->depth != 0  ||  dh->ns->subnodecount == 0  ||  (dh->location & MARFS_DIR_NS_OFFSET_MASK) ) {
+      retval = dh->ns->prepo->metascheme.mdal->rewinddir( dh->metahandle );
+   }
+   pthread_mutex_unlock( &(dh->lock) );
+   if ( retval != -1 ) { LOG( LOG_INFO, "EXIT - Success\n" ); dh->location = 0; }
    else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
    return retval;
 }
@@ -2014,12 +2212,15 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
       return NULL;
    }
    // attempt the op
+   char hadstream = 0;
+   if ( stream->datastream ) { hadstream = 1; }
    if ( datastream_create( &(stream->datastream), subpath, &oppos, mode, ctxt->config->ctag ) ) {
       LOG( LOG_ERR, "Failure of datastream_create()\n" );
       config_destroynsref( dupref );
       pathcleanup( subpath, &oppos );
       if ( newstream ) { free( stream ); }
       else {
+         if ( stream->datastream == NULL  &&  hadstream ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
          if ( stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
          pthread_mutex_unlock( &(stream->lock) );
       }
@@ -2052,7 +2253,30 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
  *                               NOTE -- Clients should essentially always open new files
  *                               via an existing marfs_fhandle, when feasible to do so.
  * @param const char* path : Path of the file to be opened
- * @param marfs_flags flags : Flags specifying the mode in which to open the file
+ * @param int flags : A bitwise OR of the following...
+ *                    O_RDONLY   - Read only access
+ *                    O_WRONLY   - Write only access
+ *                    O_RDWR     - Read + Write access
+ *                                 ( note, only supported when combined with O_ASYNC; see below )
+ *                    O_CREAT    - Create the target file, if it does not already exist
+ *                                 ( note, only supported when combined with O_ASYNC; see below.
+ *                                   Standard MarFS file creation should be done via the
+ *                                   marfs_creat() function instead. )
+ *                    O_EXCL     - Ensure this call creates the target file
+ *                                 ( note, only supported when combined with O_ASYNC; see below )
+ *                    O_NOFOLLOW - Do not follow a symlink target
+ *                                 ( note, if targeting a symlink, always returns ELOOP,
+ *                                   unless combined with O_PATH; see linux open() manpage.
+ *                                   Only supported when combined with O_ASYNC; see below. )
+ *                    O_PATH     - Obtain a handle which merely indicates an FS tree location
+ *                                 ( note, see linux open() manpage.
+ *                                   Only supported when combined with O_ASYNC; see below. )
+ *                    O_ASYNC    - Obtain an MDAL ( meta-only ) reference
+ *                                 ( note, here, the behavior of this flag differs entirely from
+ *                                   standard POSIX / Linux.  This flag causes MarFS to bypass
+ *                                   the DAL ( data object path ) and operate exclusively via
+ *                                   the MDAL ( metadata path ). )
+ *                    NOTE -- some of these flags may require the caller to define _GNU_SOURCE!
  * @return marfs_fhandle : marfs_fhandle referencing the opened file,
  *                         or NULL if a failure occurred
  *    NOTE -- In most failure conditions, any previous marfs_fhandle reference will be
@@ -2061,7 +2285,7 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
  *            In such a case, errno will be set to EBADFD and any subsequent operations
  *            against the provided marfs_fhandle will fail, besides marfs_release().
  */
-marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, marfs_flags flags) {
+marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path, int flags) {
    LOG( LOG_INFO, "ENTRY\n" );
    // check for NULL args
    if ( ctxt == NULL ) {
@@ -2071,8 +2295,13 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       return NULL;
    }
    // check for invalid flags
-   if ( (flags & ~(MARFS_META)) != MARFS_READ  &&  (flags & ~(MARFS_META)) != MARFS_WRITE ) {
-      LOG( LOG_ERR, "Unrecognized flags value\n" );
+   if ( (flags & O_ASYNC) == 0  &&
+            (
+              (flags & O_ACCMODE) == O_RDWR || 
+              (flags & ~(O_ACCMODE)) != 0
+            )
+      ) {
+      LOG( LOG_ERR, "Invalid flags value\n" );
       errno = EINVAL;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
@@ -2178,17 +2407,28 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
-   // check for MARFS_META flag
-   if ( flags & MARFS_META ) {
+   // check for MDAL-only O_ASYNC flag
+   if ( flags & O_ASYNC ) {
+      // poentially cleanup existing stream info
+      if ( stream->datastream  &&  datastream_release( &(stream->datastream) ) ) {
+         LOG( LOG_ERR, "Failed to release previous datastream reference\n" );
+         stream->datastream = NULL;
+         stream->metahandle = NULL;
+         config_destroynsref( dupref );
+         pathcleanup( subpath, &oppos );
+         pthread_mutex_unlock( &(stream->lock) );
+         errno = EBADFD;
+         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+         return NULL;
+      }
+      if ( stream->ns ) { config_destroynsref( stream->ns ); }
       // open a meta-only reference for this file
       stream->flags = flags;
-      flags = flags & ~(MARFS_META);
       stream->datastream = NULL;
-      if ( stream->ns ) { config_destroynsref( stream->ns ); }
       stream->ns = dupref;
       stream->itype = ctxt->itype;
       MDAL curmdal = oppos.ns->prepo->metascheme.mdal;
-      stream->metahandle = curmdal->open( oppos.ctxt, subpath, (flags == MARFS_READ) ? O_RDONLY : O_WRONLY );
+      stream->metahandle = curmdal->open( oppos.ctxt, subpath, flags & ~(O_ASYNC) );
       if ( stream->metahandle == NULL ) {
          LOG( LOG_ERR, "Failed to open meta-only reference for the target file: \"%s\" ( %s )\n", path, strerror(errno) );
          config_destroynsref( dupref );
@@ -2206,8 +2446,11 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       return stream;
    }
    // attempt the op, allowing a meta-only reference ONLY if we are opening for read
+   char hadstream = 0;
+   if ( stream->datastream ) { hadstream = 1; }
    MDAL_FHANDLE phandle = NULL;
-   if ( datastream_open( &(stream->datastream), (flags == MARFS_READ) ? READ_STREAM : EDIT_STREAM, subpath, &oppos, (flags == MARFS_READ) ? &(phandle) : NULL ) ) {
+   if ( datastream_open( &(stream->datastream), ((flags & O_ACCMODE) == O_WRONLY) ? EDIT_STREAM : READ_STREAM, subpath, &oppos,
+                         ( (flags & O_ACCMODE) == O_RDONLY ) ? &(phandle) : NULL ) ) {
       // check for a meta-only reference
       if ( phandle != NULL ) {
          LOG( LOG_INFO, "Attempting to use meta-only reference for target file\n" );
@@ -2229,7 +2472,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
             return NULL;
          }
          // update stream info to reflect a meta-only reference
-         stream->flags = flags;
+         stream->flags = flags | O_ASYNC;
          stream->datastream = NULL;
          stream->metahandle = phandle;
          if ( stream->ns ) { config_destroynsref( stream->ns ); }
@@ -2243,6 +2486,7 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
       }
       LOG( LOG_ERR, "Failure of datastream_open()\n" );
       pathcleanup( subpath, &oppos );
+      if ( stream->datastream == NULL  &&  hadstream ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
       if ( !(newstream)  &&  stream->metahandle == NULL ) { errno = EBADFD; } // ref is now defunct
       pthread_mutex_unlock( &(stream->lock) );
       if ( newstream ) { free( stream ); }
@@ -2564,16 +2808,11 @@ ssize_t marfs_read(marfs_fhandle stream, void* buf, size_t count) {
       errno = EPERM;
       retval = -1;
    }
-   else if ( stream->flags & MARFS_META ) {
-      // never allow data access via a PATH file handle
-      LOG( LOG_ERR, "Cannot read from an MARFS_META file handle\n" );
-      errno = EPERM;
-      retval = -1;
-   }
-   else {
+   else if ( stream->flags & O_ASYNC ) {
       // perform the direct read
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       retval = curmdal->read( stream->metahandle, buf, count );
+      // TODO : MUST prevent cached reads for migrated files
    }
    pthread_mutex_unlock( &(stream->lock) );
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
@@ -2621,6 +2860,7 @@ ssize_t marfs_write(marfs_fhandle stream, const void* buf, size_t size) {
    if ( stream->datastream ) {
       // write to the datastream reference
       ssize_t retval = datastream_write( &(stream->datastream), buf, size );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
       pthread_mutex_unlock( &(stream->lock) );
       if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (%zd bytes)\n", retval ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -2667,6 +2907,7 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       LOG( LOG_INFO, "Seeking datastream\n" );
       // seek the datastream reference
       off_t retval = datastream_seek( &(stream->datastream), offset, whence );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
       pthread_mutex_unlock( &(stream->lock) );
       if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }
@@ -2680,16 +2921,11 @@ off_t marfs_seek(marfs_fhandle stream, off_t offset, int whence) {
       errno = EPERM;
       retval = -1;
    }
-   else if ( stream->flags & MARFS_META ) {
-      // never allow data access via a PATH file handle
-      LOG( LOG_ERR, "Cannot seek an MARFS_META file handle\n" );
-      errno = EPERM;
-      retval = -1;
-   }
-   else {
+   else if ( stream->flags & O_ASYNC ) {
       LOG( LOG_INFO, "Seeking meta handle\n" );
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       retval = curmdal->lseek( stream->metahandle, offset, whence );
+      // TODO : detect cached file migration
    }
    pthread_mutex_unlock( &(stream->lock) );
    if ( retval >= 0 ) { LOG( LOG_INFO, "EXIT - Success (offset=%zd)\n", retval ); }
@@ -2746,6 +2982,7 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
       LOG( LOG_INFO, "Seeking datastream to %zd offset\n", offset );
       // seek the datastream reference
       offval = datastream_seek( &(stream->datastream), offset, SEEK_SET );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
    }
    else {
       // meta only reference
@@ -2754,16 +2991,11 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
          errno = EPERM;
          offval = -1;
       }
-      else if ( stream->flags & MARFS_META ) {
-         // never allow data access via a PATH file handle
-         LOG( LOG_ERR, "Cannot read from an MARFS_META file handle\n" );
-         errno = EPERM;
-         offval = -1;
-      }
-      else {
+      else if ( stream->flags & O_ASYNC ) {
          LOG( LOG_INFO, "Seeking meta handle to %zd offset\n", offset );
          MDAL curmdal = stream->ns->prepo->metascheme.mdal;
          offval = curmdal->lseek( stream->metahandle, offset, SEEK_SET );
+         // TODO : detect cached file migration
       }
    }
    if ( offval != offset  ||  offval < 0 ) {
@@ -2783,6 +3015,7 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
       LOG( LOG_INFO, "Reading %zu bytes from datastream\n", count );
       // read from datastream reference
       retval = datastream_read( &(stream->datastream), buf, count );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
    }
    else {
       // meta only reference
@@ -2888,16 +3121,11 @@ int marfs_ftruncate(marfs_fhandle stream, off_t length) {
       errno = EPERM;
       retval = -1;
    }
-   else if ( stream->flags & MARFS_META ) {
-      // never allow data access via a PATH file handle
-      LOG( LOG_ERR, "Cannot truncate an MARFS_META file handle\n" );
-      errno = EPERM;
-      retval = -1;
-   }
-   else {
+   else if ( stream->flags & O_ASYNC ) {
       LOG( LOG_INFO, "Truncating meta-only reference\n" );
       MDAL curmdal = stream->ns->prepo->metascheme.mdal;
       retval = curmdal->ftruncate( stream->metahandle, length );
+      // TODO : detect cached file migration
    }
    pthread_mutex_unlock( &(stream->lock) );
    if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
@@ -2940,6 +3168,7 @@ int marfs_extend(marfs_fhandle stream, off_t length) {
    if ( stream->datastream ) {
       // extend the datastream reference
       int retval = datastream_extend( &(stream->datastream), length );
+      if ( stream->datastream == NULL ) { stream->metahandle = NULL; } // don't allow invalid meta handle to persist
       pthread_mutex_unlock( &(stream->lock) );
       if ( retval == 0 ) { LOG( LOG_INFO, "EXIT - Success\n" ); }
       else { LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) ); }

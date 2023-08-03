@@ -66,6 +66,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <unistd.h>
 #include <stdio.h>
 #include <ftw.h>
+#include <dirent.h>
 
 
 // WARNING: error-prone and ugly method of deleting dir trees, written for simplicity only
@@ -123,18 +124,18 @@ int main(int argc, char **argv)
 
    // create the dirs necessary for DAL/MDAL initialization (ignore EEXIST)
    errno = 0;
-   if ( mkdir( "./test_datastream_topdir", S_IRWXU )  &&  errno != EEXIST ) {
-      printf( "failed to create test_datastream_topdir\n" );
+   if ( mkdir( "./test_datastream_rebuilds_topdir", S_IRWXU )  &&  errno != EEXIST ) {
+      printf( "failed to create test_datastream_rebuilds_topdir\n" );
       return -1;
    }
    errno = 0;
-   if ( mkdir( "./test_datastream_topdir/dal_root", S_IRWXU )  &&  errno != EEXIST ) {
-      printf( "failed to create test_datastream_topdir/dal_root\n" );
+   if ( mkdir( "./test_datastream_rebuilds_topdir/dal_root", S_IRWXU )  &&  errno != EEXIST ) {
+      printf( "failed to create test_datastream_rebuilds_topdir/dal_root\n" );
       return -1;
    }
    errno = 0;
-   if ( mkdir( "./test_datastream_topdir/mdal_root", S_IRWXU )  &&  errno != EEXIST ) {
-      printf( "failed to create \"./test_datastream_topdir/mdal_root\"\n" );
+   if ( mkdir( "./test_datastream_rebuilds_topdir/mdal_root", S_IRWXU )  &&  errno != EEXIST ) {
+      printf( "failed to create \"./test_datastream_rebuilds_topdir/mdal_root\"\n" );
       return -1;
    }
 
@@ -144,7 +145,7 @@ int main(int argc, char **argv)
       printf( "failed to initialize erasure lock\n" );
       return -1;
    }
-   marfs_config* config = config_init( "./testing/config.xml", &erasurelock );
+   marfs_config* config = config_init( "./testing/rebuilds_config.xml", &erasurelock );
    if ( config == NULL ) {
       printf( "Failed to initialize marfs config\n" );
       return -1;
@@ -153,6 +154,16 @@ int main(int argc, char **argv)
    // create all namespaces associated with the config
    if ( config_verify( config, "./.", 1, 1, 1, 1 ) ) {
       printf( "Failed to validate the marfs config\n" );
+      return -1;
+   }
+
+
+//  TEST DEGRADED WRITE / READ
+
+
+   // delete a specific block subtree, so that block is never properly written
+   if ( deletesubdirs( "./test_datastream_rebuilds_topdir/dal_root/pod0/block2" ) ) {
+      printf( "Failed to delete subdirs of block2\n" );
       return -1;
    }
 
@@ -168,172 +179,57 @@ int main(int argc, char **argv)
       return -1;
    }
 
-
-// INTERNAL FUNC CHECK
-
-   // generate a datastream
-   DATASTREAM stream = genstream( CREATE_STREAM, "tgtfile", 0, &(pos), S_IRWXU | S_IRGRP, config->ctag, NULL );
-   if ( stream == NULL ) {
-      printf( "Failed to generate a create stream\n" );
+   // establish buffers to hold all data content
+   void* databuf = malloc( 1024 * 1024 * 5 ); // 5MiB
+   if ( databuf == NULL ) {
+      printf( "Failed to allocate 5MiB data buffer\n" );
+      return -1;
+   }
+   int randfd = open( "/dev/urandom", O_RDONLY );
+   if ( randfd < 0 ) {
+      printf( "failed to open /dev/urandom for read\n" );
+      return -1;
+   }
+   if ( read( randfd, databuf, 1024*1024*5 ) != 1024*1024*5 ) {
+      printf( "failed to read 5MiB from /dev/urandom\n" );
+      return -1;
+   }
+   close( randfd ); // really don't care if this fails
+   void* readbuf = calloc( 1024, 1024*5 ); // 5MiB
+   if ( readbuf == NULL ) {
+      printf( "Failed to allocate 5MiB read buffer\n" );
       return -1;
    }
 
-   // attempt to create our initial object
-   if ( open_current_obj( stream ) ) {
-      printf( "Failed to create the current object of 'tgtfile' (%s)\n", strerror(errno) );
+   // create a new stream
+   DATASTREAM stream = NULL;
+   if ( datastream_create( &(stream), "file1", &(pos), 0744, "NO-PACK-CLIENT" ) ) {
+      printf( "create failure for 'file1' of no-pack\n" );
+      return -1;
+   }
+   if ( datastream_write( &(stream), databuf, 1024 * 6 ) != 1024 * 6 ) {
+      printf( "write failure for 'file1' of no-pack\n" );
       return -1;
    }
 
    // keep track of this file's rpath
    char* rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath == NULL ) {
-      LOG( LOG_ERR, "Failed to identify the rpath of 'tgtfile' (%s)\n", strerror(errno) );
-      return -1;
-   }
-   // ...and the data object
-   char* objname;
-   ne_erasure objerasure;
-   ne_location objlocation;
-   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
-      LOG( LOG_ERR, "Failed to identify data object of 'tgtfile' (%s)\n", strerror(errno) );
-      return -1;
-   }
-
-   // finalize the file
-   if ( finfile( stream ) ) {
-      printf( "Failed to finalize 'tgtfile' (%s)\n", strerror(errno) );
-      return -1;
-   }
-
-   // close the data object
-   if ( close_current_obj( stream, &(stream->files->ftag), pos.ctxt ) ) {
-      printf( "Failed to close current stream object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-
-   // complete the file
-   if ( completefile( stream, stream->files ) ) {
-      printf( "Failed to complete 'tgtfile' (%s)\n", strerror(errno) );
-      return -1;
-   }
-
-   // free our datastream
-   freestream( stream );
-   stream = NULL;
-
-
-   // establish a data buffer to hold all data content
-   void* databuf = malloc( 1024 * 1024 * 10 ); // 10MiB
-   if ( databuf == NULL ) {
-      printf( "Failed to allocate 10MiB data buffer\n" );
-      return -1;
-   }
-   ne_handle datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname, objlocation, objerasure, NE_RDALL );
-   if ( datahandle == NULL ) {
-      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   ssize_t datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
-   if ( datasize < 1 ) {
-      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
-   if ( ne_close( datahandle, NULL, NULL ) ) {
-      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
-      return -1;
-   }
-   // use recovery to validate object content
-   RECOVERY recov = recovery_init( databuf, datasize, NULL );
-   if ( recov == NULL ) {
-      printf( "Failed to initialize recovery of 'tgtfile' data object\n" );
-      return -1;
-   }
-   RECOVERY_FINFO rfinfo;
-   size_t bufsize;
-   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
-      printf( "Unexpected return val for recovery of 'tgtfile'\n" );
-      return -1;
-   }
-   if ( bufsize  ||  rfinfo.size  ||  rfinfo.eof != 1  ||  strcmp( rfinfo.path, "tgtfile" ) ) {
-      printf( "Unexpected recovery info for 'tgtfile': bsz=%zu, sz=%zu, eof=%d, path=%s]\n",
-              bufsize, rfinfo.size, (int)rfinfo.eof, rfinfo.path );
-      return -1;
-   }
-   free( rfinfo.path );
-   if ( recovery_nextfile( recov, &(rfinfo), NULL, NULL ) ) {
-      printf( "Trailing recov file or misc failure after 'tgtfile'\n" );
-      return -1;
-   }
-   if ( recovery_close( recov ) ) {
-      printf( "Failed to close recovery of 'tgtfile'\n" );
-      return -1;
-   }
-
-   // cleanup tgtfile
-   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "tgtfile" ) ) {
-      printf( "Failed to unlink \"tgtfile\"\n" );
-      return -1;
-   }
-   // cleanup the reference location
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
-      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
-      return -1;
-   }
-   free( rpath );
-   // cleanup the data object
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname );
-      return -1;
-   }
-   free( objname );
-
-
-// EXTERNAL FUNC TESTS
-
-   // create a new stream
-   if ( datastream_create( &(stream), "file1", &(pos), 0744, "NO-PACK-CLIENT" ) ) {
-      printf( "create failure for 'file1' of no-pack\n" );
-      return -1;
-   }
-   bzero( databuf, 1024 );
-   if ( datastream_write( &(stream), databuf, 1024 ) != 1024 ) {
-      printf( "write failure for 'file1' of no-pack\n" );
-      return -1;
-   }
-   struct timespec times[2];
-   times[0].tv_sec = 123456;
-   times[0].tv_nsec = 0;
-   times[1].tv_sec = 7654321;
-   times[1].tv_nsec = 123;
-   if ( datastream_utimens( &(stream), times ) ) {
-      printf( "failed to set times on 'file1' of no-pack\n" );
-      return -1;
-   }
-
-   // keep track of this file's rpath
-   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
-   if ( rpath == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file1' (%s)\n", strerror(errno) );
       return -1;
    }
    // ...and the data object
+   char* objname = NULL;
+   ne_erasure objerasure = {0};
+   ne_location objlocation = {0};
    if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
       LOG( LOG_ERR, "Failed to identify data object of no-pack 'file1' (%s)\n", strerror(errno) );
       return -1;
    }
 
-   // create a new file off the same stream
-   if ( datastream_create( &(stream), "file2", &(pos), 0622, "NO-PACK-CLIENT" ) ) {
+   // create a chunked file off the same stream
+   if ( datastream_create( &(stream), "file2", &(pos), 0622, NULL ) ) {
       printf( "create failure for 'file2' of no-pack\n" );
-      return -1;
-   }
-   if ( datastream_setrecoverypath( &(stream), "file2-recovset" ) ) {
-      printf( "failed to set recovery path for 'file2' of no-pack\n" );
-      return -1;
-   }
-   if ( datastream_write( &(stream), databuf, 100 ) != 100 ) {
-      printf( "write failure for 'file2' of no-pack\n" );
       return -1;
    }
 
@@ -346,6 +242,15 @@ int main(int argc, char **argv)
       printf( "unexpected curfile for 'file2' of no-pack: %zu\n", stream->curfile );
       return -1;
    }
+   // write content and validate final obj target
+   if ( datastream_write( &(stream), databuf, 1024 * 1024 * 3 ) != 1024 * 1024 * 3 ) {
+      printf( "write failure for 'file2' of no-pack\n" );
+      return -1;
+   }
+   if ( stream->objno != 4 ) {
+      printf( "unexpected final objno for 'file2' of no-pack: %zu\n", stream->objno );
+      return -1;
+   }
 
    // keep track of this file's rpath
    char* rpath2 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
@@ -353,7 +258,7 @@ int main(int argc, char **argv)
       LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file2' (%s)\n", strerror(errno) );
       return -1;
    }
-   // ...and the data object
+   // ...and the data objects
    char* objname2 = NULL;
    ne_erasure objerasure2;
    ne_location objlocation2;
@@ -361,48 +266,18 @@ int main(int argc, char **argv)
       LOG( LOG_ERR, "Failed to identify data object of no-pack 'file2' (%s)\n", strerror(errno) );
       return -1;
    }
-
-   // create a chunked file off the same stream
-   if ( datastream_create( &(stream), "file3", &(pos), 0600, "NO-PACK-CLIENT" ) ) {
-      printf( "create failure for 'file3' of no-pack\n" );
-      return -1;
-   }
-   if ( stream->objno != 2 ) {
-      printf( "unexpected objno after 'file3' create for no-pack: %zu\n", stream->objno );
-      return -1;
-   }
-   if ( stream->curfile ) {
-      printf( "unexpected curfile for 'file3' of no-pack: %zu\n", stream->curfile );
-      return -1;
-   }
-   bzero( databuf, 1024 * 1024 * 2 ); // zero out 2MiB
-   if ( datastream_write( &(stream), databuf, 1024 * 1024 * 2 ) != (1024 * 1024 * 2) ) {
-      printf( "write failure for 'file3' of no-pack\n" );
-      return -1;
-   }
-   if ( stream->objno != 4 ) {
-      printf( "unexpected objno after write of 'file3' in no-pack: %zu\n", stream->objno );
-      return -1;
-   }
-
-   // keep track of this file's rpath
-   char* rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
-   if ( rpath3 == NULL ) {
-      LOG( LOG_ERR, "Failed to identify the rpath of no-pack 'file3' (%s)\n", strerror(errno) );
-      return -1;
-   }
-   // ...and the data objects
    char* objname3 = NULL;
    ne_erasure objerasure3;
    ne_location objlocation3;
-   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname3), &(objerasure3), &(objlocation3) ) ) {
+   FTAG tmptag = stream->files->ftag;
+   tmptag.objno++;
+   if ( datastream_objtarget( &(tmptag), &(stream->ns->prepo->datascheme), &(objname3), &(objerasure3), &(objlocation3) ) ) {
       LOG( LOG_ERR, "Failed to identify data object 1 of no-pack 'file3' (%s)\n", strerror(errno) );
       return -1;
    }
    char* objname4 = NULL;
    ne_erasure objerasure4;
    ne_location objlocation4;
-   FTAG tmptag = stream->files->ftag;
    tmptag.objno++;
    if ( datastream_objtarget( &(tmptag), &(stream->ns->prepo->datascheme), &(objname4), &(objerasure4), &(objlocation4) ) ) {
       LOG( LOG_ERR, "Failed to identify data object 2 of no-pack 'file3' (%s)\n", strerror(errno) );
@@ -424,19 +299,144 @@ int main(int argc, char **argv)
       return -1;
    }
 
+
+   // reverify the config, so we actually have a block location to rebuild into
+   if ( config_verify( config, "./.", 1, 1, 1, 1 ) ) {
+      printf( "Failed to re-validate the marfs config\n" );
+      return -1;
+   }
+
+
+   // verify the existence of and cleanup rebuild markers for every object
+   struct stat stval = {0};
+   MDAL_SCANNER refscan = pos.ns->prepo->metascheme.mdal->openscanner( pos.ctxt, "0" );
+   if ( refscan == NULL ) {
+      printf( "failed to open reference scanner after first round of writes\n" );
+      return -1;
+   }
+   int foundcnt = 0;
+   char foundobjs[5] = {0};
+   errno = 0; // only way to check for scan errors
+   struct dirent* refent = pos.ns->prepo->metascheme.mdal->scan( refscan );
+   while( refent ) {
+      // parse through the dirent name, looking for the final '|' char
+      printf( "parsing no-pack refpath: \"%s\"\n", refent->d_name );
+      char* nameparse = refent->d_name;
+      char* finsep = NULL;
+      while ( *nameparse != '\0' ) { if ( *nameparse == '|' ) { finsep = nameparse; }; nameparse++; }
+      if ( finsep ) {
+         // parse the leading numeric value
+         nameparse = NULL;
+         unsigned long long parseval = strtoull( finsep + 1, &(nameparse), 10 );
+         if ( nameparse  &&  *(nameparse) == 'r'  &&  strcmp( nameparse, "rebuild" ) == 0 ) {
+            if ( parseval > 4 ) {
+               printf( "found rebuild marker for no-pack object %llu ( max expected == 4 )\n", parseval );
+               return -1;
+            }
+            if ( foundobjs[(int)parseval] ) {
+               printf( "found duplicate rebuild marker for no-pack object %llu\n", parseval );
+               return -1;
+            }
+            printf( "found no-pack rebuild marker: %llu\n", parseval );
+            foundobjs[(int)parseval] = 1;
+            foundcnt++;
+
+            // stat the marker and check linkcnt
+            if ( pos.ns->prepo->metascheme.mdal->sstat( refscan, refent->d_name, &(stval) ) ) {
+               printf( "bizzarre stat failure for rebuild marker: \"%s\"\n", refent->d_name );
+               return -1;
+            }
+            if ( parseval  &&  stval.st_nlink != 6 - ( foundcnt - ( foundobjs[0] + 1 ) ) ) { // hideous means of calculating remaining obj1 markers
+               printf( "unexpected link cnt for no-pack rebuild marker %llu: %d\n", parseval, (int)stval.st_nlink );
+               return -1;
+            }
+            else if ( parseval == 0  &&  stval.st_nlink != 3 ) {
+               printf( "unexpected link cnt for no-pack rebuild marker %llu: %d\n", parseval, (int)stval.st_nlink );
+               return -1;
+            }
+
+            // open a handle for the marker, for xattr manipulation
+            MDAL_FHANDLE rhandle = pos.ns->prepo->metascheme.mdal->sopen( refscan, refent->d_name );
+            if ( rhandle == NULL ) {
+               printf( "failed to open a handle for no-pack rebuild marker \"%s\"\n", refent->d_name );
+               return -1;
+            }
+            char* rtagname = rtag_getname( (size_t)parseval );
+
+            // specifically rebuild object 2 ONLY
+            if ( parseval == 2 ) {
+               char rtagval[1024] = {0};
+               if ( pos.ns->prepo->metascheme.mdal->fgetxattr( rhandle, 1, rtagname, rtagval, 1024 ) < 1 ) {
+                  printf( "failed to retrieve \"%s\" xatrr value form rebuild marker \"%s\"\n", rtagname, refent->d_name );
+                  return -1;
+               }
+               RTAG rtag = {0};
+               if ( rtag_initstr( &(rtag), rtagval ) ) {
+                  printf( "failed to parse \"%s\" xatr value from rebuild marker \"%s\"\n", rtagname, refent->d_name );
+                  return -1;
+               }
+               ne_handle rhandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname3, objlocation3, objerasure3, NE_REBUILD );
+               if ( rhandle == NULL ) {
+                  printf( "failed to open for rebuild object 2 from marker \"%s\"\n", refent->d_name );
+                  return -1;
+               }
+               if ( ne_seed_status( rhandle, &(rtag.stripestate) ) ) {
+                  printf( "failed to seed status for rebuild object 2 from marker \"%s\"\n", refent->d_name );
+                  return -1;
+               }
+               rtag_free( &(rtag) );
+               if ( ne_rebuild( rhandle, NULL, NULL ) ) {
+                  printf( "failed to rebuild object 2 from marker \"%s\"\n", refent->d_name );
+                  return -1;
+               }
+               if ( ne_close(rhandle,NULL,NULL) ) {
+                  printf( "failed to close rebuild object 2 from marker \"%s\"\n", refent->d_name );
+                  return -1;
+               }
+            }
+
+            // remove the rebuild tag
+            if ( pos.ns->prepo->metascheme.mdal->fremovexattr( rhandle, 1, rtagname ) ) {
+               printf( "failed to remove \"%s\" xatrr value form rebuild marker \"%s\"\n", rtagname, refent->d_name );
+               return -1;
+            }
+            pos.ns->prepo->metascheme.mdal->close( rhandle ); // ignore failure
+            free( rtagname );
+
+            // delete every encountered marker
+            if ( pos.ns->prepo->metascheme.mdal->sunlink( refscan, refent->d_name ) ) {
+               printf( "failed to unlink no-pack rebuild marker: \"%s\"\n", refent->d_name );
+               return -1;
+            }
+         }
+      }
+      // get the next entry
+      errno = 0;
+      refent = pos.ns->prepo->metascheme.mdal->scan( refscan );
+   }
+   if ( errno ) {
+      printf( "failed to scan reference scanner after first round of writes\n" );
+      return -1;
+   }
+   if ( foundcnt != 5 ) {
+      printf( "failed to find all expected rebuild markers after no-pack write ( found %d )\n", foundcnt );
+      return -1;
+   }
+   pos.ns->prepo->metascheme.mdal->closescanner( refscan ); // don't care about failures
+
+
    // read back the written files
    // file1
    if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
       printf( "failed to open 'file1' of no-pack for read\n" );
       return -1;
    }
-   char zeroarray[1048576] = {0}; // all zero 1MiB buffer
-   ssize_t iores = datastream_read( &(stream), databuf, 1048576 );
-   if ( iores != 1024 ) {
+   ssize_t iores = datastream_read( &(stream), readbuf, 1048576 );
+   if ( iores != 1024 * 6 ) {
       printf( "unexpected read res for 'file1' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
    }
-   if ( memcmp( zeroarray, databuf, 1024 ) ) {
+   if ( memcmp( readbuf, databuf, iores ) ) {
       printf( "unexpected content of 'file1' of no-pack\n" );
       return -1;
    }
@@ -445,12 +445,12 @@ int main(int argc, char **argv)
       printf( "failed to open 'file2' of no-pack for read\n" );
       return -1;
    }
-   iores = datastream_read( &(stream), databuf, 1048576 );
-   if ( iores != 100 ) {
+   iores = datastream_read( &(stream), readbuf, 1048576 * 5 );
+   if ( iores != 1024*1024*3 ) {
       printf( "unexpected read res for 'file2' of no-pack: %zd (%s)\n", iores, strerror(errno) );
       return -1;
    }
-   if ( memcmp( zeroarray, databuf, iores ) ) {
+   if ( memcmp( readbuf, databuf, iores ) ) {
       printf( "unexpected content of 'file2' of no-pack\n" );
       return -1;
    }
@@ -458,38 +458,97 @@ int main(int argc, char **argv)
       printf( "failed to close no-pack read stream\n" );
       return -1;
    }
-   // file3
-   if ( datastream_open( &(stream), READ_STREAM, "file3", &(pos), NULL ) ) {
-      printf( "failed to open 'file3' of no-pack for read\n" );
+
+
+   // this should have generated new rebuild markers
+   // verify the existence of and cleanup rebuild markers for every object ( except 2 )
+   bzero( &stval, sizeof(struct stat) );
+   refscan = pos.ns->prepo->metascheme.mdal->openscanner( pos.ctxt, "0" );
+   if ( refscan == NULL ) {
+      printf( "failed to open reference scanner after first round of writes\n" );
       return -1;
    }
-   iores = datastream_read( &(stream), databuf, 1048576 );
-   if ( iores != 1048576 ) {
-      printf( "unexpected res for read1 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
+   while ( foundcnt ) {
+      foundcnt--;
+      foundobjs[foundcnt] = 0;
+   }
+   errno = 0; // only way to check for scan errors
+   refent = pos.ns->prepo->metascheme.mdal->scan( refscan );
+   while( refent ) {
+      // parse through the dirent name, looking for the final '|' char
+      printf( "parsing no-pack refpath: \"%s\"\n", refent->d_name );
+      char* nameparse = refent->d_name;
+      char* finsep = NULL;
+      while ( *nameparse != '\0' ) { if ( *nameparse == '|' ) { finsep = nameparse; }; nameparse++; }
+      if ( finsep ) {
+         // parse the leading numeric value
+         nameparse = NULL;
+         unsigned long long parseval = strtoull( finsep + 1, &(nameparse), 10 );
+         if ( nameparse  &&  *(nameparse) == 'r'  &&  strcmp( nameparse, "rebuild" ) == 0 ) {
+            if ( parseval > 4 ) {
+               printf( "found rebuild marker for no-pack object %llu ( max expected == 4 )\n", parseval );
+               return -1;
+            }
+            if ( foundobjs[(int)parseval] ) {
+               printf( "found duplicate rebuild marker for no-pack object %llu\n", parseval );
+               return -1;
+            }
+            printf( "found no-pack rebuild marker: %llu\n", parseval );
+            foundobjs[(int)parseval] = 1;
+            foundcnt++;
+
+            // stat the marker and check linkcnt
+            if ( pos.ns->prepo->metascheme.mdal->sstat( refscan, refent->d_name, &(stval) ) ) {
+               printf( "bizzarre stat failure for rebuild marker: \"%s\"\n", refent->d_name );
+               return -1;
+            }
+            if ( parseval  &&  stval.st_nlink != 5 - ( foundcnt - ( foundobjs[0] + 1 ) ) ) { // hideous means of calculating remaining obj1 markers
+               printf( "unexpected link cnt for no-pack rebuild marker %llu: %d\n", parseval, (int)stval.st_nlink );
+               return -1;
+            }
+            else if ( parseval == 0  &&  stval.st_nlink != 3 ) {
+               printf( "unexpected link cnt for no-pack rebuild marker %llu: %d\n", parseval, (int)stval.st_nlink );
+               return -1;
+            }
+
+            // open a handle for the marker, for xattr manipulation
+            MDAL_FHANDLE rhandle = pos.ns->prepo->metascheme.mdal->sopen( refscan, refent->d_name );
+            if ( rhandle == NULL ) {
+               printf( "failed to open a handle for no-pack rebuild marker \"%s\"\n", refent->d_name );
+               return -1;
+            }
+            char* rtagname = rtag_getname( (size_t)parseval );
+
+            // remove the rebuild tag
+            if ( pos.ns->prepo->metascheme.mdal->fremovexattr( rhandle, 1, rtagname ) ) {
+               printf( "failed to remove \"%s\" xatrr value form rebuild marker \"%s\"\n", rtagname, refent->d_name );
+               return -1;
+            }
+            pos.ns->prepo->metascheme.mdal->close( rhandle ); // ignore failure
+            free( rtagname );
+
+            // delete every encountered marker
+            if ( pos.ns->prepo->metascheme.mdal->sunlink( refscan, refent->d_name ) ) {
+               printf( "failed to unlink no-pack rebuild marker: \"%s\"\n", refent->d_name );
+               return -1;
+            }
+         }
+      }
+      // get the next entry
+      errno = 0;
+      refent = pos.ns->prepo->metascheme.mdal->scan( refscan );
+   }
+   if ( errno ) {
+      printf( "failed to scan reference scanner after first round of writes\n" );
       return -1;
    }
-   if ( memcmp( zeroarray, databuf, iores ) ) {
-      printf( "unexpected content of read1 for 'file3' of no-pack\n" );
+   if ( foundcnt != 4 ) {
+      printf( "failed to find all expected rebuild markers after no-pack write ( found %d )\n", foundcnt );
       return -1;
    }
-   iores = datastream_read( &(stream), databuf, 1048576 );
-   if ( iores != 1048576 ) {
-      printf( "unexpected res for read2 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
-      return -1;
-   }
-   if ( memcmp( zeroarray, databuf, iores ) ) {
-      printf( "unexpected content of read2 from 'file3' of no-pack\n" );
-      return -1;
-   }
-   iores = datastream_read( &(stream), databuf, 1048576 );
-   if ( iores ) {
-      printf( "unexpected res for read3 from 'file3' of no-pack: %zd (%s)\n", iores, strerror(errno) );
-      return -1;
-   }
-   if ( datastream_close( &(stream) ) ) {
-      printf( "failed to close no-pack read stream\n" );
-      return -1;
-   }
+   pos.ns->prepo->metascheme.mdal->closescanner( refscan ); // don't care about failures
+
+
 
 
    // cleanup 'file1' refs
@@ -522,16 +581,6 @@ int main(int argc, char **argv)
       return -1;
    }
    free( objname2 );
-   // cleanup 'file3' refs
-   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file3" ) ) {
-      printf( "Failed to unlink \"file3\"\n" );
-      return -1;
-   }
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath3 ) ) {
-      printf( "Failed to unlink rpath: \"%s\"\n", rpath3 );
-      return -1;
-   }
-   free( rpath3 );
    if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname3, objlocation3 ) ) {
       printf( "Failed to delete data object: \"%s\"\n", objname3 );
       return -1;
@@ -561,6 +610,7 @@ int main(int argc, char **argv)
    }
    free( configtgt );
 
+/*
 
 // PACKED OBJECT TESTING
 
@@ -665,7 +715,7 @@ int main(int argc, char **argv)
    }
 
    // keep track of this file's rpath
-   rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
+   char* rpath3 = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
    if ( rpath3 == NULL ) {
       LOG( LOG_ERR, "Failed to identify the rpath of pack 'file3' (%s)\n", strerror(errno) );
       return -1;
@@ -929,339 +979,11 @@ int main(int argc, char **argv)
    free( objname2 );
 
 
-// PARALLEL WRITE TEST
-   // create a new stream
-   if ( datastream_create( &(stream), "file1", &(pos), 0700, "PARLLEL-CLIENT" ) ) {
-      printf( "create failure for 'file1' of pwrite\n" );
-      return -1;
-   }
-   bzero( databuf, 1234 );
-   if ( datastream_write( &(stream), databuf, 34 ) != 34 ) {
-      printf( "write1 failure for 'file1' of pwrite\n" );
-      return -1;
-   }
-   if ( datastream_write( &(stream), databuf, 1000 ) != 1000 ) {
-      printf( "write2 failure for 'file1' of pwrite\n" );
-      return -1;
-   }
-   if ( datastream_write( &(stream), databuf, 200 ) != 200 ) {
-      printf( "write3 failure for 'file1' of pwrite\n" );
-      return -1;
-   }
+*/
 
-   // keep track of this file's rpath
-   rpath = datastream_genrpath( &(stream->files->ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
-   if ( rpath == NULL ) {
-      LOG( LOG_ERR, "Failed to identify the rpath of pwrite 'file1' (%s)\n", strerror(errno) );
-      return -1;
-   }
-   // ...and the data object
-   if ( datastream_objtarget( &(stream->files->ftag), &(stream->ns->prepo->datascheme), &(objname), &(objerasure), &(objlocation) ) ) {
-      LOG( LOG_ERR, "Failed to identify data object of pwrite 'file1' (%s)\n", strerror(errno) );
-      return -1;
-   }
-
-   // create a new file off of the same stream
-   if ( datastream_create( &(stream), "file2", &(pos), 0666, NULL ) ) {
-      printf( "create failure for 'file2' of pwrite\n" );
-      return -1;
-   }
-   if ( stream->curfile != 1 ) {
-      printf( "unexpected curfile following creation of 'file2' of pwrite: %zu\n", stream->curfile );
-      return -1;
-   }
-   if ( stream->objno ) {
-      printf( "unexpected objno following creation of 'file2' of pwrite: %zu\n", stream->objno );
-      return -1;
-   }
-
-   // keep track of this file's rpath
-   rpath2 = datastream_genrpath( &(stream->files[1].ftag), stream->ns->prepo->metascheme.reftable, NULL, NULL );
-   if ( rpath2 == NULL ) {
-      LOG( LOG_ERR, "Failed to identify the rpath of pwrite 'file2' (%s)\n", strerror(errno) );
-      return -1;
-   }
-
-   // extend the file, making it available for parallel write
-   if ( datastream_extend( &(stream), 5 * 1024 ) ) {
-      printf( "extend failure for 'file2' of pwrite\n" );
-      return -1;
-   }
-   if ( stream->curfile ) {
-      printf( "unexpected curfile following extension of 'file2' of pwrite: %zu\n", stream->curfile );
-      return -1;
-   }
-   if ( stream->objno != 1 ) {
-      printf( "unexpected objno following extension of 'file2' of pwrite: %zu\n", stream->objno );
-      return -1;
-   }
-
-   // open a second stream
-   DATASTREAM pstream = NULL;
-   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
-      printf( "failed to open 1st edit stream for 'file2' of pwrite\n" );
-      return -1;
-   }
-   off_t  chunkoffset = 0;
-   size_t chunksize = 0;
-   if ( datastream_chunkbounds( &(pstream), 0, &(chunkoffset), &(chunksize) ) ) {
-      printf( "failed to identify bounds of chunk 0 for 1st edit stream of 'file2' of pwrite\n" );
-      return -1;
-   }
-   if ( chunkoffset  ||  chunksize != 4096 - (stream->recoveryheaderlen + stream->files->ftag.recoverybytes) ) {
-      printf( "unexpected bounds of chunk 0 for 1st edit stream of 'file2' of pwrite: o=%zd, s=%zu\n", chunkoffset, chunksize );
-      return -1;
-   }
-
-   // keep track of this data object and the next
-   tgttag = pstream->files->ftag;
-   if ( datastream_objtarget( &(tgttag), &(stream->ns->prepo->datascheme), &(objname2), &(objerasure2), &(objlocation2) ) ) {
-      LOG( LOG_ERR, "Failed to identify data object of pack 'file3' (%s)\n", strerror(errno) );
-      return -1;
-   }
-   tgttag.objno++;
-   if ( datastream_objtarget( &(tgttag), &(stream->ns->prepo->datascheme), &(objname3), &(objerasure3), &(objlocation3) ) ) {
-      LOG( LOG_ERR, "Failed to identify data object of pack 'file3' (%s)\n", strerror(errno) );
-      return -1;
-   }
-
-   // write to chunk 0 of the file
-   bzero( databuf, chunksize );
-   if ( datastream_write( &(pstream), databuf, chunksize ) != chunksize ) {
-      printf( "paralell write failure for chunk 0 of 'file2'\n" );
-      return -1;
-   }
-   if ( datastream_release( &(pstream) ) ) {
-      printf( "release failure for 1st edit stream for 'file2' of pwrite\n" );
-      return -1;
-   }
-
-   // release the original stream
-   if ( datastream_release( &(stream) ) ) {
-      printf( "release failure for create stream of 'file2' of pwrite\n" );
-      return -1;
-   }
-
-   // reopen an edit stream to write out the final data obj and complete the file
-   if ( datastream_open( &(pstream), EDIT_STREAM, "file2", &(pos), NULL ) ) {
-      printf( "failed to open 1st edit stream for 'file2' of pwrite\n" );
-      return -1;
-   }
-   if ( datastream_chunkbounds( &(pstream), 1, &(chunkoffset), &(chunksize) ) ) {
-      printf( "failed to identify bounds of chunk 0 for 1st edit stream of 'file2' of pwrite\n" );
-      return -1;
-   }
-   if ( chunkoffset != 4096 - (pstream->recoveryheaderlen + pstream->files->ftag.recoverybytes)  ||  chunksize != ( (5 * 1024) - chunkoffset ) ) {
-      printf( "unexpected bounds of chunk 1 for 2nd edit stream of 'file2' of pwrite: o=%zd, s=%zu\n", chunkoffset, chunksize );
-      return -1;
-   }
-   if ( datastream_seek( &(pstream), chunkoffset, SEEK_SET ) != chunkoffset ) {
-      printf( "failed to seek to offset %zu of 2nd edit stream for 'file2' of pwrite\n", chunkoffset );
-      return -1;
-   }
-   bzero( databuf, chunksize );
-   if ( datastream_write( &(pstream), databuf, chunksize ) != chunksize ) {
-      printf( "paralell write failure for chunk 1 of 'file2'\n" );
-      return -1;
-   }
-   if ( datastream_close( &(pstream) ) ) {
-      printf( "release failure for 2nd edit stream for 'file2' of pwrite\n" );
-      return -1;
-   }
-
-
-   // read back the written pwrite files
-   // file1
-   if ( datastream_open( &(stream), READ_STREAM, "file1", &(pos), NULL ) ) {
-      printf( "failed to open 'file1' of pwrite for read\n" );
-      return -1;
-   }
-   iores = datastream_read( &(stream), databuf, 12345 );
-   if ( iores != 1234 ) {
-      printf( "unexpected read res for 'file1' of pwrite: %zd (%s)\n", iores, strerror(errno) );
-      return -1;
-   }
-   if ( memcmp( zeroarray, databuf, 1234 ) ) {
-      printf( "unexpected content of 'file1' of pwrite\n" );
-      return -1;
-   }
-   // file2
-   if ( datastream_open( &(stream), READ_STREAM, "file2", &(pos), NULL ) ) {
-      printf( "failed to open 'file2' of pwrite for read\n" );
-      return -1;
-   }
-   iores = datastream_read( &(stream), databuf, 1048576 );
-   if ( iores != 1024 * 5 ) {
-      printf( "unexpected read res for 'file2' of pwrite: %zd (%s)\n", iores, strerror(errno) );
-      return -1;
-   }
-   if ( memcmp( zeroarray, databuf, iores ) ) {
-      printf( "unexpected content of 'file2' of pwrite\n" );
-      return -1;
-   }
-   if ( datastream_release( &(stream) ) ) {
-      printf( "failed to close pwrite read stream1\n" );
-      return -1;
-   }
-
-   // TODO validate recovery info of written files
-   // validate recovery info in the first obj
-   datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname, objlocation, objerasure, NE_RDALL );
-   if ( datahandle == NULL ) {
-      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
-   if ( datasize < 1 ) {
-      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
-   if ( ne_close( datahandle, NULL, NULL ) ) {
-      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
-      return -1;
-   }
-   recov = recovery_init( databuf, datasize, NULL );
-   if ( recov == NULL ) {
-      printf( "Failed to initialize recovery stream for data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
-      printf( "Failed to retrieve recov info for file1 of pwrite\n" );
-      return -1;
-   }
-   if ( strcmp( rfinfo.path, "file1" )  ||
-         rfinfo.size != 1234  ||
-         rfinfo.size != bufsize  ||
-         rfinfo.eof != 1 ) {
-      printf( "Unexpected recov info for file1 of pwrite\n" );
-      return -1;
-   }
-   free( rfinfo.path );
-   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
-      printf( "Unexpected trailing file in obj0 of pwrite\n" );
-      return -1;
-   }
-
-   // continue to object2
-   datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2, objerasure2, NE_RDALL );
-   if ( datahandle == NULL ) {
-      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
-   if ( datasize < 1 ) {
-      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
-   if ( ne_close( datahandle, NULL, NULL ) ) {
-      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
-      return -1;
-   }
-   if ( recovery_cont( recov, databuf, datasize ) ) {
-      printf( "Failed to continue pwrite recovery process into object1 data\n" );
-      return -1;
-   }
-   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
-      printf( "Failed to retrieve recov info for file2 of pwrite\n" );
-      return -1;
-   }
-   if ( strcmp( rfinfo.path, "file2" )  ||
-         rfinfo.size != chunkoffset  ||
-         rfinfo.size != bufsize  ||
-         rfinfo.eof ) {
-      printf( "Unexpected recov info for file2 chunk 1 of pwrite\n" );
-      return -1;
-   }
-   free( rfinfo.path );
-   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
-      printf( "Unexpected trailing file in obj0 of pwrite\n" );
-      return -1;
-   }
-
-   // continue to object3
-   datahandle = ne_open( pos.ns->prepo->datascheme.nectxt, objname3, objlocation3, objerasure3, NE_RDALL );
-   if ( datahandle == NULL ) {
-      printf( "Failed to open a read handle for data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   datasize = ne_read( datahandle, databuf, 1024 * 1024 * 10 );
-   if ( datasize < 1 ) {
-      printf( "Failed to read from data object: \"%s\" (%s)\n", objname, strerror(errno) );
-      return -1;
-   }
-   printf( "Read %zd bytes from data object: \"%s\"\n", datasize, objname );
-   if ( ne_close( datahandle, NULL, NULL ) ) {
-      printf( "Failed to close handle for data object(%s)\n", strerror(errno) );
-      return -1;
-   }
-   if ( recovery_cont( recov, databuf, datasize ) ) {
-      printf( "Failed to continue pwrite recovery process into object2 data\n" );
-      return -1;
-   }
-   if ( recovery_nextfile( recov, &(rfinfo), NULL, &(bufsize) ) != 1 ) {
-      printf( "Failed to retrieve recov info for file3 of pwrite object2\n" );
-      return -1;
-   }
-   if ( strcmp( rfinfo.path, "file2" )  ||
-         rfinfo.size != (5 * 1024)  ||
-         bufsize != chunksize  ||
-         rfinfo.eof != 1 ) {
-      printf( "Unexpected recov info for file2 chunk 2 of pwrite object2\n" );
-      printf( "path: %s, size = %zu, buf = %zu, eof = %d\n", rfinfo.path, rfinfo.size, bufsize, rfinfo.eof );
-      return -1;
-   }
-   free( rfinfo.path );
-   if ( recovery_nextfile( recov, NULL, NULL, NULL ) ) {
-      printf( "Unexpected trailing file in obj1 of pwrite\n" );
-      return -1;
-   }
-   if ( recovery_close( recov ) ) {
-      printf( "Failed to close recovery stream of pwrite\n" );
-      return -1;
-   }
-
-
-   // cleanup 'file1' refs
-   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file1" ) ) {
-      printf( "Failed to unlink pwrite \"file1\"\n" );
-      return -1;
-   }
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath ) ) {
-      printf( "Failed to unlink rpath: \"%s\"\n", rpath );
-      return -1;
-   }
-   free( rpath );
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname, objlocation ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname );
-      return -1;
-   }
-   free( objname );
-   // cleanup 'file2' refs
-   if ( pos.ns->prepo->metascheme.mdal->unlink( pos.ctxt, "file2" ) ) {
-      printf( "Failed to unlink pwrite \"file2\"\n" );
-      return -1;
-   }
-   if ( pos.ns->prepo->metascheme.mdal->unlinkref( pos.ctxt, rpath2 ) ) {
-      printf( "Failed to unlink rpath: \"%s\"\n", rpath2 );
-      return -1;
-   }
-   free( rpath2 );
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname2, objlocation2 ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname2 );
-      return -1;
-   }
-   free( objname2 );
-   if ( ne_delete( pos.ns->prepo->datascheme.nectxt, objname3, objlocation3 ) ) {
-      printf( "Failed to delete data object: \"%s\"\n", objname3 );
-      return -1;
-   }
-   free( objname3 );
-
-
-   // cleanup our data buffer
+   // cleanup our data buffers
    free( databuf );
+   free( readbuf );
 
    // cleanup our position struct
    MDAL posmdal = pos.ns->prepo->metascheme.mdal;
@@ -1271,7 +993,7 @@ int main(int argc, char **argv)
    }
 
    // cleanup all created NSs
-   if ( deletesubdirs( "./test_datastream_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_subspaces/heavily-protected-data/MDAL_reference" ) ) {
+   if ( deletesubdirs( "./test_datastream_rebuilds_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_subspaces/heavily-protected-data/MDAL_reference" ) ) {
       printf( "Failed to delete refdirs of heavily-protected-data\n" );
       return -1;
    }
@@ -1279,7 +1001,7 @@ int main(int argc, char **argv)
       printf( "Failed to destroy /gransom-allocation/heavily-protected-data NS\n" );
       return -1;
    }
-   if ( deletesubdirs( "./test_datastream_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_subspaces/read-only-data/MDAL_reference" ) ) {
+   if ( deletesubdirs( "./test_datastream_rebuilds_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_subspaces/read-only-data/MDAL_reference" ) ) {
       printf( "Failed to delete refdirs of read-only-data\n" );
       return -1;
    }
@@ -1287,7 +1009,7 @@ int main(int argc, char **argv)
       printf( "Failed to destroy /gransom-allocation/read-only-data NS\n" );
       return -1;
    }
-   if ( deletesubdirs( "./test_datastream_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_reference" ) ) {
+   if ( deletesubdirs( "./test_datastream_rebuilds_topdir/mdal_root/MDAL_subspaces/gransom-allocation/MDAL_reference" ) ) {
       printf( "Failed to delete refdirs of gransom-allocation\n" );
       return -1;
    }
@@ -1295,7 +1017,7 @@ int main(int argc, char **argv)
       printf( "Failed to destroy /gransom-allocation NS\n" );
       return -1;
    }
-   if ( deletesubdirs( "./test_datastream_topdir/mdal_root/MDAL_reference" ) ) {
+   if ( deletesubdirs( "./test_datastream_rebuilds_topdir/mdal_root/MDAL_reference" ) ) {
       printf( "Failed to delete refdirs of rootNS\n" );
       return -1;
    }
@@ -1321,15 +1043,15 @@ int main(int argc, char **argv)
    pthread_mutex_destroy( &erasurelock );
 
    // cleanup DAL trees
-   if ( deletesubdirs( "./test_datastream_topdir/dal_root" ) ) {
+   if ( deletesubdirs( "./test_datastream_rebuilds_topdir/dal_root" ) ) {
       printf( "Failed to delete subdirs of DAL root\n" );
       return -1;
    }
 
    // delete dal/mdal dir structure
-   rmdir( "./test_datastream_topdir/dal_root" );
-   rmdir( "./test_datastream_topdir/mdal_root" );
-   rmdir( "./test_datastream_topdir" );
+   rmdir( "./test_datastream_rebuilds_topdir/dal_root" );
+   rmdir( "./test_datastream_rebuilds_topdir/mdal_root" );
+   rmdir( "./test_datastream_rebuilds_topdir" );
 
    return 0;
 }

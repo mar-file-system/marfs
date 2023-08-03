@@ -480,6 +480,39 @@ typedef struct MDAL_struct {
    struct dirent* (*readdir) ( MDAL_DHANDLE dh );
 
    /**
+    * Identify the ( abstract ) location of an open directory handle
+    * NOTE -- This 'location' can be used via seekdir() to allow for the repeating
+    *         of readdir() results.  However, the 'location' value should be
+    *         considered an opaque type, with no caller assumptions as to content,
+    *         beyond error checking.
+    * @param MDAL_DHANDLE dh : MDAL_DHANDLE to retrieve the location value of
+    * @return long : Abstract location value, or -1 on error
+    */
+   long (*telldir) ( MDAL_DHANDLE dh );
+
+   /**
+    * Set the position of an open directory handle, for future readdir() calls
+    * @param MDAL_DHANDLE dh : MDAL_DHANDLE to seek
+    * @param long loc : Location value to seek to
+    *                   NOTE -- this value *must* come from a previous telldir()
+    * @return int : Zero on success, or -1 on failure
+    */
+   int (*seekdir) ( MDAL_DHANDLE dh, long loc );
+
+   /**
+    * Reset the position of an open directory handle, for future readdir() calls, to the
+    * beginning of the dir
+    * NOTE -- This will result in readdir() returning entries as though the directory
+    *         handle had been freshly opened.
+    *         This is also equivalent to issuing a seekdir() back to a location value
+    *         provided by telldir() prior to any readdir() op being issued on the
+    *         directory handle.
+    * @param MDAL_DHANDLE dh : MDAL_DHANDLE to rewind
+    * @return int : Zero on success, or -1 on failure
+    */
+   int (*rewinddir) ( MDAL_DHANDLE dh );
+
+   /**
     * Close the given directory handle
     * @param MDAL_DHANDLE dh : MDAL_DHANDLE to close
     * @return int : Zero on success, or -1 if a failure occurred

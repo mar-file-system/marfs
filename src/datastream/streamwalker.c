@@ -1434,7 +1434,7 @@ int command_loop(marfs_config* config, char* config_path) {
 
 int main(int argc, const char** argv) {
    errno = 0; // init to zero (apparently not guaranteed)
-   char* config_path = NULL;
+   char* config_path = getenv( "MARFS_CONFIG_PATH" ); // check for config env var
 
    char pr_usage = 0;
    int c;
@@ -1458,22 +1458,28 @@ int main(int argc, const char** argv) {
    if (pr_usage) {
       printf(OUTPREFX "Usage info --\n");
       printf(OUTPREFX "%s -c configpath [-h]\n", PROGNAME);
-      printf(OUTPREFX "   -c : Path of the MarFS config file\n");
+      printf(OUTPREFX "   -c : Path of the MarFS config file ( overrides env value )\n");
       printf(OUTPREFX "   -h : Print this usage info\n");
       return -1;
    }
 
    // verify that a config was defined
    if (config_path == NULL) {
-      printf(OUTPREFX "no config path defined ( '-c' arg )\n");
+      printf(OUTPREFX "no config path defined ( '-c' arg or 'MARFS_CONFIG_PATH' env var )\n");
       return -1;
    }
 
    // read in the marfs config
-   marfs_config* config = config_init(config_path);
+   pthread_mutex_t erasurelock;
+   if ( pthread_mutex_init( &erasurelock, NULL ) ) {
+      printf( "failed to initialize erasure lock\n" );
+      return -1;
+   }
+   marfs_config* config = config_init(config_path,&erasurelock);
    if (config == NULL) {
       printf(OUTPREFX "ERROR: Failed to initialize config: \"%s\" ( %s )\n",
          config_path, strerror(errno));
+      pthread_mutex_destroy( &erasurelock );
       return -1;
    }
    printf(OUTPREFX "marfs config loaded...\n");
@@ -1488,9 +1494,11 @@ int main(int argc, const char** argv) {
    if (config_term(config)) {
       printf(OUTPREFX "WARNING: Failed to properly terminate MarFS config ( %s )\n",
          strerror(errno));
+      pthread_mutex_destroy( &erasurelock );
       return -1;
    }
 
+   pthread_mutex_destroy( &erasurelock );
    return retval;
 }
 

@@ -1160,59 +1160,24 @@ int open_current_obj(DATASTREAM stream) {
  * @return int : Zero on success, or -1 on failure
  */
 int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
-   ne_state objstate = {
-      .versz = 0,
-      .blocksz = 0,
-      .totsz = 0,
-      .meta_status = NULL,
-      .data_status = NULL,
-      .csum = NULL };
+   RTAG rtag;
+   bzero( &(rtag), sizeof(RTAG) );
    MDAL mdal = stream->ns->prepo->metascheme.mdal;
-   size_t stripewidth = curftag->protection.N + curftag->protection.E;
-   objstate.data_status = calloc(sizeof(char), stripewidth);
-   objstate.meta_status = calloc(sizeof(char), stripewidth);
-   if (objstate.data_status == NULL || objstate.meta_status == NULL) {
+   // set a stripewidth and allocate the rtag internal arrays
+   rtag.majorversion = RTAG_CURRENT_MAJORVERSION;
+   rtag.minorversion = RTAG_CURRENT_MINORVERSION;
+   rtag.stripewidth = curftag->protection.N + curftag->protection.E;
+   if ( rtag_alloc( &(rtag) ) ) {
       LOG(LOG_ERR, "Failed to allocate data object status arrays\n");
-      if (objstate.data_status) {
-         free(objstate.data_status);
-      }
-      if (objstate.meta_status) {
-         free(objstate.meta_status);
-      }
       return -1;
    }
    int closeres = 0;
    if (stream->datahandle != NULL) {
-      closeres = ne_close(stream->datahandle, NULL, &(objstate));
+      closeres = ne_close(stream->datahandle, NULL, &(rtag.stripestate));
       stream->datahandle = NULL; // never reattempt this process
    }
    if (closeres > 0) {
       // object synced, but with errors
-      // generate a rebuild tag to speed up future repair
-      char* rtagstr = NULL;
-      size_t rtagstrlen = rtag_tostr(&(objstate), stripewidth, NULL, 0);
-      if (rtagstrlen == 0) {
-         LOG(LOG_ERR, "Failed to identify rebuild tag length\n");
-         free(objstate.data_status);
-         free(objstate.meta_status);
-         return -1;
-      }
-      if ((rtagstr = (char*)malloc(sizeof(char) * (rtagstrlen + 1))) == NULL) {
-         LOG(LOG_ERR, "Failed to allocate space for rebuild tag string\n");
-         free(objstate.data_status);
-         free(objstate.meta_status);
-         return -1;
-      }
-      if (rtag_tostr(&(objstate), stripewidth, rtagstr, rtagstrlen + 1) != rtagstrlen) {
-         LOG(LOG_ERR, "Rebuild tag has inconsistent length\n");
-         free(objstate.data_status);
-         free(objstate.meta_status);
-         free(rtagstr);
-         return -1;
-      }
-      // object state has been encoded into our rtag string
-      free(objstate.data_status);
-      free(objstate.meta_status);
 
       // identify the appropraite rebuild marker name
       char* rmarkstr = NULL;
@@ -1220,19 +1185,19 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       if (rmarkstrlen < 1) {
          LOG(LOG_ERR, "Failed to identify rebuild marker path of file %zu\n",
             curftag->fileno);
-         free(rtagstr);
+         rtag_free( &(rtag) );
          return -1;
       }
       if ((rmarkstr = (char*)malloc(sizeof(char) * (rmarkstrlen + 1))) == NULL) {
          LOG(LOG_ERR, "Failed to allocate rebuild marker string of length %zu\n",
             rmarkstrlen + 1);
-         free(rtagstr);
+         rtag_free( &(rtag) );
          return -1;
       }
       if (ftag_rebuildmarker(curftag, rmarkstr, rmarkstrlen + 1) != rmarkstrlen) {
          LOG(LOG_ERR, "Rebuild marker string has an inconsistent length\n");
          free(rmarkstr);
-         free(rtagstr);
+         rtag_free( &(rtag) );
          return -1;
       }
 
@@ -1244,7 +1209,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          LOG(LOG_ERR, "Failed to identify reference path for rebuild marker \"%s\"\n",
             rmarkstr);
          free(rmarkstr);
-         free(rtagstr);
+         rtag_free( &(rtag) );
          return -1;
       }
       rpathlen = strlen(noderef->name) + rmarkstrlen;
@@ -1252,14 +1217,14 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       if (rpath == NULL) {
          LOG(LOG_ERR, "Failed to allocate rebuild marker reference string\n");
          free(rmarkstr);
-         free(rtagstr);
+         rtag_free( &(rtag) );
          return -1;
       }
       if (snprintf(rpath, rpathlen + 1, "%s%s", noderef->name, rmarkstr) != rpathlen) {
          LOG(LOG_ERR, "Failed to populate rebuild marker reference path\n");
          free(rpath);
          free(rmarkstr);
-         free(rtagstr);
+         rtag_free( &(rtag) );
          errno = EFAULT;
          return -1;
       }
@@ -1274,7 +1239,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          if (config_nsinfo(stream->ns->idstr, NULL, &(nspath))) {
             LOG(LOG_ERR, "Failed to identify path of NS: \"%s\"\n", stream->ns->idstr);
             free(rpath);
-            free(rtagstr);
+            rtag_free( &(rtag) );
             return -1;
          }
          mdalctxt = mdal->newctxt(nspath, stream->ns->prepo->metascheme.mdal->ctxt);
@@ -1283,7 +1248,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
             LOG(LOG_ERR, "Failed to create new MDAL_CTXT for NS: \"%s\"\n",
                stream->ns->idstr);
             free(rpath);
-            free(rtagstr);
+            rtag_free( &(rtag) );
             return -1;
          }
       }
@@ -1301,7 +1266,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
                if ( mdal->createrefdir( mdalctxt, rpath, 0777 )  &&  errno != EEXIST ) {
                   LOG(LOG_ERR, "Failed to create refdir parent \"%s\" for rebuild marker (%s)\n", rpath, strerror(errno));
                   free(rpath);
-                  free(rtagstr);
+                  rtag_free( &(rtag) );
                   if (releasectxt) {
                      mdal->destroyctxt(mdalctxt);
                   }
@@ -1323,7 +1288,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       if ( filerpath == NULL ) {
          LOG( LOG_ERR, "Failed to identify the rpath of the problem file\n" );
          free( rpath );
-         free(rtagstr);
+         rtag_free( &(rtag) );
          if (releasectxt) {
             mdal->destroyctxt(mdalctxt);
          }
@@ -1332,65 +1297,123 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       }
 
       // create the rebuild marker
+      char markercreated = 1;
       int olderrno = errno;
       errno = 0;
       if ( mdal->linkref( mdalctxt, 1, filerpath, rpath ) ) {
          if ( errno == EEXIST ) {
             // note existance, but just continue ( we can still attach an xattr )
             LOG( LOG_INFO, "Rebuild marker already exists: \"%s\"\n", rpath );
+            markercreated = 0;
          }
          else {
             LOG( LOG_ERR, "Failed to link problem file ( \"%s\" ) to rebuild marker location ( \"%s\" )\n", filerpath, rpath );
             free(filerpath);
             free(rpath);
-            free(rtagstr);
+            rtag_free( &(rtag) );
             if (releasectxt) {
                mdal->destroyctxt(mdalctxt);
             }
             return -1;
          }
       }
-      errno = olderrno;
       free(filerpath);
-      MDAL_FHANDLE rhandle = mdal->openref(mdalctxt, rpath, O_WRONLY, 0);
-      if (rhandle == NULL) {
-         LOG(LOG_ERR, "Failed to open handle for rebuild marker: \"%s\"\n", rpath);
-         free(rpath);
-         free(rtagstr);
-         if (releasectxt) {
-            mdal->destroyctxt(mdalctxt);
-         }
-         return -1;
-      }
-      LOG(LOG_INFO, "Opened rebuild marker: \"%s\"\n", rpath);
-      free(rpath);
 
-      // identify the rebuild tag name
-      char* rtagname = rtag_getname( curftag->objno );
-      if ( rtagname == NULL ) {
-         LOG( LOG_ERR, "Failed to identify RTAG name for object %zu\n", curftag->objno );
-         mdal->close(rhandle);
-         free(rtagstr);
-         if (releasectxt) {
-            mdal->destroyctxt(mdalctxt);
+      if ( markercreated ) {
+         // only continue with this process if the rebuild marker did not already exist
+         MDAL_FHANDLE rhandle = mdal->openref(mdalctxt, rpath, O_WRONLY, 0);
+         if (rhandle == NULL) {
+            LOG(LOG_ERR, "Failed to open handle for rebuild marker: \"%s\"\n", rpath);
+            free(rpath);
+            rtag_free( &(rtag) );
+            if (releasectxt) {
+               mdal->destroyctxt(mdalctxt);
+            }
+            return -1;
          }
-         return -1;
-      }
-      // attach the rebuild tag
-      if (mdal->fsetxattr(rhandle, 1, rtagname, rtagstr, rtagstrlen, XATTR_CREATE)) {
-         // don't make this a fatal error, as it is only a speedup to rebuild and not a hard requirement
-         LOG(LOG_WARNING, "Failed to attach rebuild tag: %s=\"%s\"\n", rtagname, rtagstr);
+         LOG(LOG_INFO, "Opened rebuild marker: \"%s\"\n", rpath);
+         free(rpath);
+
+         // stat the opened file, to get a ctime value
+         struct stat stval = {0};
+         if ( mdal->fstat( rhandle, &(stval) ) ) {
+            LOG( LOG_ERR, "Failed to stat newly created rebuild marker\n" );
+            rtag_free( &(rtag) );
+            if (releasectxt) {
+               mdal->destroyctxt(mdalctxt);
+            }
+            return -1;
+         }
+         rtag.createtime = stval.st_ctime;
+
+         // generate a rebuild tag to speed up future repair
+         char* rtagstr = NULL;
+         size_t rtagstrlen = rtag_tostr(&(rtag), NULL, 0);
+         if (rtagstrlen == 0) {
+            LOG(LOG_ERR, "Failed to identify rebuild tag length\n");
+            mdal->close(rhandle);
+            rtag_free( &(rtag) );
+            if (releasectxt) {
+               mdal->destroyctxt(mdalctxt);
+            }
+            return -1;
+         }
+         if ((rtagstr = (char*)malloc(sizeof(char) * (rtagstrlen + 1))) == NULL) {
+            LOG(LOG_ERR, "Failed to allocate space for rebuild tag string\n");
+            mdal->close(rhandle);
+            rtag_free( &(rtag) );
+            if (releasectxt) {
+               mdal->destroyctxt(mdalctxt);
+            }
+            return -1;
+         }
+         if (rtag_tostr(&(rtag), rtagstr, rtagstrlen + 1) != rtagstrlen) {
+            LOG(LOG_ERR, "Rebuild tag has inconsistent length\n");
+            mdal->close(rhandle);
+            rtag_free( &(rtag) );
+            free(rtagstr);
+            if (releasectxt) {
+               mdal->destroyctxt(mdalctxt);
+            }
+            return -1;
+         }
+         // object state has been encoded into our rtag string
+         rtag_free( &(rtag) );
+
+
+         // identify the rebuild tag name
+         char* rtagname = rtag_getname( curftag->objno );
+         if ( rtagname == NULL ) {
+            LOG( LOG_ERR, "Failed to identify RTAG name for object %zu\n", curftag->objno );
+            mdal->close(rhandle);
+            free(rtagstr);
+            if (releasectxt) {
+               mdal->destroyctxt(mdalctxt);
+            }
+            return -1;
+         }
+         // attach the rebuild tag
+         if (mdal->fsetxattr(rhandle, 1, rtagname, rtagstr, rtagstrlen, XATTR_CREATE)) {
+            // don't make this a fatal error, as it is only a speedup to rebuild and not a hard requirement
+            LOG(LOG_WARNING, "Failed to attach rebuild tag: %s=\"%s\"\n", rtagname, rtagstr);
+         }
+         else {
+            LOG(LOG_INFO, "Attached RTAG: %s=\"%s\"\n", rtagname, rtagstr);
+         }
+         free(rtagname);
+         free(rtagstr);
+
+         // close the rebuild marker
+         if (mdal->close(rhandle)) {
+            LOG(LOG_WARNING, "Failed to close rebuild marker file\n");
+         }
       }
       else {
-         LOG(LOG_INFO, "Attached RTAG: %s=\"%s\"\n", rtagname, rtagstr);
+         // maker already existed, so just clean up state
+         free(rpath);
+         rtag_free( &(rtag) );
       }
-      free(rtagname);
-      free(rtagstr);
 
-      // close the rebuild marker
-      if (mdal->close(rhandle)) {
-         LOG(LOG_WARNING, "Failed to close rebuild marker file\n");
-      }
       // potentially destroy our MDAL_CTXT
       if (releasectxt && mdal->destroyctxt(mdalctxt)) {
          LOG(LOG_WARNING, "Failed to destroy MDAL_CTXT\n");
@@ -1398,8 +1421,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
       errno = olderrno;
    }
    else {
-      free(objstate.data_status);
-      free(objstate.meta_status);
+      rtag_free( &(rtag) );
       if (closeres < 0) {
          LOG(LOG_ERR, "ne_close() indicates failure for object %zu\n", curftag->objno);
          return -1;
@@ -2274,6 +2296,15 @@ int datastream_create(DATASTREAM* stream, const char* path, marfs_position* pos,
             errno = EBADFD;
             return -1;
          }
+         // push out the finalized FTAG
+         STREAMFILE* curfile = newstream->files + newstream->curfile;
+         if ( putftag(newstream, curfile) ) {
+            LOG( LOG_ERR, "Failed to finalize FTAG of previous stream file\n" );
+            freestream(newstream);
+            *stream = NULL; // unsafe to reuse this stream
+            errno = EBADFD;
+            return -1;
+         }
          // progress to the next file
          newstream->curfile++;
          newstream->fileno++;
@@ -2319,16 +2350,6 @@ int datastream_create(DATASTREAM* stream, const char* path, marfs_position* pos,
             // check for any errors
             if (abortflag) {
                LOG(LOG_INFO, "Terminating datastream due to previous errors\n");
-               freestream(newstream);
-               *stream = NULL; // unsafe to reuse this stream
-               errno = EBADFD;
-               return -1;
-            }
-         }
-         else {
-            // at least need to push out the 'FINALIZED' state of the previous file
-            if (putftag(newstream, newstream->files + (newstream->curfile - 1))) {
-               LOG(LOG_ERR, "Failed to push the FINALIZED FTAG for the previous file\n");
                freestream(newstream);
                *stream = NULL; // unsafe to reuse this stream
                errno = EBADFD;
@@ -2754,6 +2775,15 @@ int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* p
             errno = EBADFD;
             return -1;
          }
+         // push out the finalized FTAG
+         STREAMFILE* curfile = newstream->files + newstream->curfile;
+         if ( putftag(newstream, curfile) ) {
+            LOG( LOG_ERR, "Failed to finalize FTAG of previous stream file\n" );
+            freestream(newstream);
+            *stream = NULL; // unsafe to reuse this stream
+            errno = EBADFD;
+            return -1;
+         }
          // progress to the next file
          newstream->curfile++;
          newstream->fileno++;
@@ -2799,16 +2829,6 @@ int datastream_repack(DATASTREAM* stream, const char* refpath, marfs_position* p
             // check for any errors
             if (abortflag) {
                LOG(LOG_INFO, "Terminating datastream due to previous errors\n");
-               freestream(newstream);
-               *stream = NULL; // unsafe to reuse this stream
-               errno = EBADFD;
-               return -1;
-            }
-         }
-         else {
-            // at least need to push out the 'FINALIZED' state of the previous file
-            if (putftag(newstream, newstream->files + (newstream->curfile - 1))) {
-               LOG(LOG_ERR, "Failed to push the FINALIZED FTAG for the previous file\n");
                freestream(newstream);
                *stream = NULL; // unsafe to reuse this stream
                errno = EBADFD;
@@ -3534,6 +3554,7 @@ ssize_t datastream_write(DATASTREAM* stream, const void* buf, size_t count) {
             LOG(LOG_ERR, "Failed to output recovery info to tail of object %zu\n", tgtstream->objno);
             freestream(tgtstream);
             *stream = NULL; // unsafe to continue with previous handle
+            errno = EBADFD;
             return -1;
          }
          // close the previous data handle
@@ -3544,6 +3565,7 @@ ssize_t datastream_write(DATASTREAM* stream, const void* buf, size_t count) {
             LOG(LOG_ERR, "Failed to close previous data object\n");
             freestream(tgtstream);
             *stream = NULL; // unsafe to continue with previous handle
+            errno = EBADFD;
             return -1;
          }
          // we (may) need to mark all previous files as complete
@@ -3790,6 +3812,7 @@ off_t datastream_seek(DATASTREAM* stream, off_t offset, int whence) {
             LOG(LOG_ERR, "Failed to output recovery info to tail of object %zu\n", tgtstream->objno);
             freestream(tgtstream);
             *stream = NULL; // unsafe to continue with previous handle
+            errno = EBADFD;
             return -1;
          }
          tgtstream->finfo.eof = 0; // unset the EOF flag, as it no longer applies

@@ -130,7 +130,12 @@ int main(int argc, char **argv)
       return -1;
    }
    // initialize a fresh marfs config
-   marfs_config* config = config_init( "./testing/config.xml" );
+   pthread_mutex_t erasurelock;
+   if ( pthread_mutex_init( &erasurelock, NULL ) ) {
+      fprintf( stderr, "ERROR: failed to initialize erasure lock\n" );
+      return -1;
+   }
+   marfs_config* config = config_init( "./testing/config.xml", &erasurelock );
    if ( config == NULL ) {
       printf( "failed to initalize marfs config\n" );
       return -1;
@@ -226,15 +231,19 @@ int main(int argc, char **argv)
       printf( "failed to allocate rebuild info markerpath\n" );
       return -1;
    }
-   rebuildinf->rtag.versz = 0;
-   rebuildinf->rtag.blocksz = 0;
-   rebuildinf->rtag.totsz = 0;
-   rebuildinf->rtag.meta_status = calloc( sizeof(char), 7 );
-   rebuildinf->rtag.meta_status[2] = 1;
-   rebuildinf->rtag.data_status = calloc( sizeof(char), 7 );
-   rebuildinf->rtag.data_status[0] = 1;
-   rebuildinf->rtag.data_status[5] = 1;
-   rebuildinf->rtag.csum = NULL;
+   rebuildinf->rtag = calloc( 1, sizeof(RTAG) );
+   if ( rebuildinf->rtag == NULL ) { printf( "failed to allocate RTAG\n" ); return -1; }
+   rebuildinf->rtag->majorversion = RTAG_CURRENT_MAJORVERSION;
+   rebuildinf->rtag->minorversion = RTAG_CURRENT_MINORVERSION;
+   rebuildinf->rtag->createtime = (time_t)945873284;
+   rebuildinf->rtag->stripewidth = 7;
+   rebuildinf->rtag->stripestate.versz = 1048576;
+   rebuildinf->rtag->stripestate.blocksz = 104857700;
+   rebuildinf->rtag->stripestate.totsz = 1034871239847;
+   if ( rtag_alloc( rebuildinf->rtag ) ) { printf( "failed rtag_alloc()\n" ); return -1; }
+   rebuildinf->rtag->stripestate.meta_status[2] = 1;
+   rebuildinf->rtag->stripestate.data_status[0] = 1;
+   rebuildinf->rtag->stripestate.data_status[5] = 1;
    opparse->start = 1;
    opparse->count = 1;
    opparse->errval = 0;
@@ -420,22 +429,22 @@ int main(int argc, char **argv)
    rebuild_info* rebuildparse = (rebuild_info*)opparse->extendedinfo;
    if ( opparse->type != (opset+2)->type  ||
         strcmp( rebuildparse->markerpath, rebuildinf->markerpath )  ||
-        rebuildparse->rtag.versz != rebuildinf->rtag.versz  ||
-        rebuildparse->rtag.blocksz != rebuildinf->rtag.blocksz  ||
-        rebuildparse->rtag.totsz != rebuildinf->rtag.totsz  ||
-        rebuildparse->rtag.meta_status[0] != rebuildinf->rtag.meta_status[0]  ||
-        rebuildparse->rtag.meta_status[1] != rebuildinf->rtag.meta_status[1]  ||
-        rebuildparse->rtag.meta_status[2] != rebuildinf->rtag.meta_status[2]  ||
-        rebuildparse->rtag.meta_status[3] != rebuildinf->rtag.meta_status[3]  ||
-        rebuildparse->rtag.meta_status[4] != rebuildinf->rtag.meta_status[4]  ||
-        rebuildparse->rtag.meta_status[5] != rebuildinf->rtag.meta_status[5]  ||
-        rebuildparse->rtag.data_status[0] != rebuildinf->rtag.data_status[0]  ||
-        rebuildparse->rtag.data_status[1] != rebuildinf->rtag.data_status[1]  ||
-        rebuildparse->rtag.data_status[2] != rebuildinf->rtag.data_status[2]  ||
-        rebuildparse->rtag.data_status[3] != rebuildinf->rtag.data_status[3]  ||
-        rebuildparse->rtag.data_status[4] != rebuildinf->rtag.data_status[4]  ||
-        rebuildparse->rtag.data_status[5] != rebuildinf->rtag.data_status[5]  ||
-        rebuildparse->rtag.csum != rebuildinf->rtag.csum  ||
+        rebuildparse->rtag->stripestate.versz != rebuildinf->rtag->stripestate.versz  ||
+        rebuildparse->rtag->stripestate.blocksz != rebuildinf->rtag->stripestate.blocksz  ||
+        rebuildparse->rtag->stripestate.totsz != rebuildinf->rtag->stripestate.totsz  ||
+        rebuildparse->rtag->stripestate.meta_status[0] != rebuildinf->rtag->stripestate.meta_status[0]  ||
+        rebuildparse->rtag->stripestate.meta_status[1] != rebuildinf->rtag->stripestate.meta_status[1]  ||
+        rebuildparse->rtag->stripestate.meta_status[2] != rebuildinf->rtag->stripestate.meta_status[2]  ||
+        rebuildparse->rtag->stripestate.meta_status[3] != rebuildinf->rtag->stripestate.meta_status[3]  ||
+        rebuildparse->rtag->stripestate.meta_status[4] != rebuildinf->rtag->stripestate.meta_status[4]  ||
+        rebuildparse->rtag->stripestate.meta_status[5] != rebuildinf->rtag->stripestate.meta_status[5]  ||
+        rebuildparse->rtag->stripestate.data_status[0] != rebuildinf->rtag->stripestate.data_status[0]  ||
+        rebuildparse->rtag->stripestate.data_status[1] != rebuildinf->rtag->stripestate.data_status[1]  ||
+        rebuildparse->rtag->stripestate.data_status[2] != rebuildinf->rtag->stripestate.data_status[2]  ||
+        rebuildparse->rtag->stripestate.data_status[3] != rebuildinf->rtag->stripestate.data_status[3]  ||
+        rebuildparse->rtag->stripestate.data_status[4] != rebuildinf->rtag->stripestate.data_status[4]  ||
+        rebuildparse->rtag->stripestate.data_status[5] != rebuildinf->rtag->stripestate.data_status[5]  ||
+        rebuildparse->rtag->stripestate.csum != rebuildinf->rtag->stripestate.csum  ||
         opparse->start != (opset+2)->start  ||
         opparse->count != (opset+2)->count  ||
         opparse->errval != (opset+2)->errval  ||
@@ -634,8 +643,8 @@ int main(int argc, char **argv)
    opparse++;
    rebuildinf = (rebuild_info*)(opparse->extendedinfo);
    free( rebuildinf->markerpath );
-   free( rebuildinf->rtag.meta_status );
-   free( rebuildinf->rtag.data_status );
+   rtag_free( rebuildinf->rtag );
+   free( rebuildinf->rtag );
    free( opparse->extendedinfo );
    opparse++;
    free( opparse->extendedinfo );
@@ -654,6 +663,7 @@ int main(int argc, char **argv)
       printf( "failed to terminate config\n" );
       return -1;
    }
+   pthread_mutex_destroy(&erasurelock);
 
    // cleanup test trees
    if ( deletefstree( "./test_rman_topdir" ) ) {

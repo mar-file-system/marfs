@@ -84,7 +84,15 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define CONFIGVER_FNAME "/.configver"
 
-#define CTXT (marfs_ctxt)(fuse_get_context()->private_data)
+#define FCTXT (marfs_fuse_ctxt)(fuse_get_context()->private_data)
+#define CTXT ((marfs_fuse_ctxt)(fuse_get_context()->private_data))->ctxt
+
+
+typedef struct marfs_fuse_ctxt_struct {
+   marfs_ctxt ctxt;
+   pthread_mutex_t erasurelock;
+}* marfs_fuse_ctxt;
+
 
 char* translate_path( marfs_ctxt ctxt, const char* path ) {
   if ( path == NULL ) {
@@ -156,7 +164,7 @@ int fuse_chmod(const char *path, mode_t mode)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_chmod(CTXT, newpath, mode, 0);
+  int ret = marfs_chmod(CTXT, newpath, mode, AT_SYMLINK_NOFOLLOW);
   if ( ret )
   {
     LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
@@ -178,7 +186,7 @@ int fuse_chown(const char *path, uid_t uid, gid_t gid)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  int ret = marfs_chown(CTXT, newpath, uid, gid, 0);
+  int ret = marfs_chown(CTXT, newpath, uid, gid, AT_SYMLINK_NOFOLLOW);
   if ( ret )
   {
     LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));
@@ -345,7 +353,7 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
   char* newpath = translate_path( CTXT, path );
   LOG( LOG_INFO, "Attempting to open an fhandle for target path: \"%s\"\n", path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_NOFOLLOW | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -355,6 +363,7 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
       dh = marfs_opendir( CTXT, newpath );
       err = errno;
     }
+    else if ( errno == ELOOP ) { err = ENODATA; } // assume symlink target ( MarFS doesn't support symlink xattrs )
     if ( dh == NULL ) {
       // no file handle, and no dir handle
       LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
@@ -414,7 +423,7 @@ int fuse_link(const char *oldpath, const char *newpath)
 
   char* newoldpath = translate_path( CTXT, oldpath );
   char* newnewpath = translate_path( CTXT, newpath );
-  int ret = marfs_link(CTXT, newoldpath, newnewpath, 0);
+  int ret = marfs_link(CTXT, newoldpath, newnewpath, AT_SYMLINK_NOFOLLOW);
   if ( ret )
   {
     LOG(LOG_ERR, "%s %s: %s\n", oldpath, newpath, strerror(errno))
@@ -445,7 +454,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_NOFOLLOW | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -461,7 +470,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
            path, strerror(errno) );
       free( newpath );
       exit_user(&u_ctxt);
-      return (err) ? -err : -ENOMSG;
+      return (err) ? ( (err == ELOOP) ? 0 : -err ) : -ENOMSG; // assume ELOOP -> symlink ( MarFS doesn't support symlink xattrs )
     }
   }
   free( newpath );
@@ -481,10 +490,10 @@ int fuse_listxattr(const char *path, char *list, size_t size)
   // cleanup our handle
   if ( fh ) {
     if ( marfs_release(fh) )
-      LOG( LOG_WARNING, "Failed to close marfs_fhandle following getxattr() op\n" );
+      LOG( LOG_WARNING, "Failed to close marfs_fhandle following listxattr() op\n" );
   }
   else if ( marfs_closedir(dh) ) {
-    LOG( LOG_WARNING, "Failed to close marfs_dhandle following getxattr() op\n" );
+    LOG( LOG_WARNING, "Failed to close marfs_dhandle following listxattr() op\n" );
   }
 
   exit_user(&u_ctxt);
@@ -524,7 +533,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
     return -EBADF;
   }
 
-  marfs_flags flags = MARFS_READ;
+  int flags = O_RDONLY;
   if (ffi->flags & O_RDWR)
   {
     LOG(LOG_ERR, "%s: invalid flags %x %x\n", path, ffi->flags, ffi->flags & O_RDWR);
@@ -532,11 +541,11 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
   }
   else if (ffi->flags & O_WRONLY)
   {
-    flags = MARFS_WRITE;
+    flags = O_WRONLY;
   }
 
   if (!strcmp(path, CONFIGVER_FNAME)) {
-    if (flags == MARFS_WRITE) {
+    if (flags == O_WRONLY) {
       LOG( LOG_ERR, "Cannot open config version file \"%s\" for write\n", CONFIGVER_FNAME );
       return -EPERM;
     }
@@ -561,7 +570,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
     return (err) ? -err : -ENOMSG;
   }
 
-  LOG( LOG_INFO, "New MarFS %s Handle: %p\n", (flags == MARFS_READ) ? "Read" : "Write",
+  LOG( LOG_INFO, "New MarFS %s Handle: %p\n", (flags == O_RDONLY) ? "Read" : "Write",
        (void*)ffi->fh );
   return 0;
 }
@@ -675,17 +684,43 @@ int fuse_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
   int cachederrno = errno; // cache and potentially reset errno
 
+  // potentially seek to the specified offset
+  int ret = 0;
+  if ( offset != marfs_telldir((marfs_dhandle)ffi->fh) ) {
+    int seekres = 0;
+    if ( offset ) {
+      seekres = marfs_seekdir((marfs_dhandle)ffi->fh, offset);
+    }
+    else {
+      seekres = marfs_rewinddir((marfs_dhandle)ffi->fh);
+    }
+    if ( seekres ) {
+      LOG(LOG_ERR, "%s\n", strerror(errno) );
+      ret = (errno) ? -errno : -ENOMSG;
+      exit_user(&u_ctxt);
+      return ret;
+    }
+  }
+
   errno = 0;
   while ((de = marfs_readdir((marfs_dhandle)ffi->fh)) != NULL)
   {
-    if (filler(buf, de->d_name, NULL, 0))
+    long posval = marfs_telldir((marfs_dhandle)ffi->fh);
+    if ( posval == -1 ) {
+      LOG(LOG_ERR, "%s\n", strerror(errno) );
+      ret = (errno) ? -errno : -ENOMSG;
+      exit_user(&u_ctxt);
+      return ret;
+    }
+    int fillret = filler(buf, de->d_name, NULL, (off_t)posval);
+    if ( fillret < 0 )
     {
       LOG(LOG_ERR, "%s: %s\n", path, strerror(ENOMEM));
       exit_user(&u_ctxt);
       return -ENOMEM;
     }
+    else if ( fillret ) { break; }
   }
-  int ret = 0;
   if ( errno != 0 ) {
     LOG( LOG_ERR, "%s: Detected errno value post-readdir (%s)\n", path, strerror(errno) );
     ret = -errno;
@@ -793,7 +828,7 @@ int fuse_removexattr(const char *path, const char *name)
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_NOFOLLOW | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -803,6 +838,7 @@ int fuse_removexattr(const char *path, const char *name)
       dh = marfs_opendir( CTXT, newpath );
       err = errno;
     }
+    else if ( errno == ELOOP ) { err = ENODATA; } // assume symlink target ( MarFS doesn't support symlink xattrs )
     if ( dh == NULL ) {
       // no file handle, and no dir handle
       LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
@@ -901,7 +937,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   // we need to use a file handle for this op
   char* newpath = translate_path( CTXT, path );
   marfs_dhandle dh = NULL;
-  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, MARFS_READ | MARFS_META );
+  marfs_fhandle fh = marfs_open( CTXT, NULL, newpath, O_RDONLY | O_NOFOLLOW | O_ASYNC );
   if (!fh) {
     int err = errno;
     if ( errno == EISDIR ) {
@@ -911,6 +947,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
       dh = marfs_opendir( CTXT, newpath );
       err = errno;
     }
+    else if ( errno == ELOOP ) { err = ENOSYS; } // assume symlink target ( MarFS doesn't support symlink xattrs )
     if ( dh == NULL ) {
       // no file handle, and no dir handle
       LOG( LOG_ERR, "Failed to open marfs_fhandle for target path: \"%s\" (%s)\n",
@@ -935,10 +972,10 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
   // cleanup our handle
   if ( fh ) {
     if ( marfs_release(fh) )
-      LOG( LOG_WARNING, "Failed to close marfs_fhandle following removexattr() op\n" );
+      LOG( LOG_WARNING, "Failed to close marfs_fhandle following setxattr() op\n" );
   }
   else if ( marfs_closedir(dh) ) {
-    LOG( LOG_WARNING, "Failed to close marfs_dhandle following removexattr() op\n" );
+    LOG( LOG_WARNING, "Failed to close marfs_dhandle following setxattr() op\n" );
   }
 
   exit_user(&u_ctxt);
@@ -1007,7 +1044,7 @@ int fuse_truncate(const char *path, off_t length)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( CTXT, path );
-  if ((fh = marfs_open(CTXT, NULL, newpath, MARFS_WRITE)) == NULL)
+  if ((fh = marfs_open(CTXT, NULL, newpath, O_WRONLY)) == NULL)
   {
     err = errno;
     free( newpath );
@@ -1116,26 +1153,43 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 void *marfs_fuse_init(struct fuse_conn_info *conn)
 {
   LOG(LOG_INFO, "init\n");
+  marfs_fuse_ctxt fctxt = calloc( 1, sizeof( struct marfs_fuse_ctxt_struct ) );
+  if ( fctxt == NULL ) {
+    LOG( LOG_ERR, "Failed to allocate a marfs_fuse_ctxt struct\n" );
+    exit(-1);
+  }
+  if ( pthread_mutex_init( &(fctxt->erasurelock), NULL ) ) {
+    LOG( LOG_ERR, "Failed to initialize local erasurelock\n" );
+    free( fctxt );
+    exit(-1);
+  }
   // initialize the MarFS config
   // NOTE -- FUSE doesn't attempt to verify the config, as it will almost always be run as root.
   //         We want to allow the 'secure root dir' to be owned by a non-root user, if desired.
-  marfs_ctxt ctxt = marfs_init(getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, 0);
-  if ( ctxt == NULL ) {
+  fctxt->ctxt = marfs_init(getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, 0, &(fctxt->erasurelock));
+  if ( fctxt->ctxt == NULL ) {
     LOG( LOG_ERR, "Failed to initialize MarFS context!\n" );
+    pthread_mutex_destroy( &(fctxt->erasurelock) );
+    free( fctxt );
     exit(-1);
   }
-  if ( marfs_setctag( ctxt, "FUSE" ) ) {
+  if ( marfs_setctag( fctxt->ctxt, "FUSE" ) ) {
     LOG( LOG_WARNING, "Failed to set Client Tag String\n" );
   }
-  return (void*)ctxt;
+  return (void*)fctxt;
 }
 
 void marfs_fuse_destroy(void *userdata)
 {
   LOG(LOG_INFO, "destroy\n");
-  if ( marfs_term(CTXT) ) {
+  marfs_fuse_ctxt fctxt = FCTXT;
+  if ( marfs_term(fctxt->ctxt) ) {
     LOG( LOG_WARNING, "Failed to properly terminate marfs_ctxt\n" );
   }
+  if ( pthread_mutex_destroy( &(fctxt->erasurelock) ) ) {
+    LOG( LOG_WARNING, "Failed to properly destroy local erasurelock\n" );
+  }
+  free( fctxt );
 }
 
 int main(int argc, char *argv[])

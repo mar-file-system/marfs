@@ -146,7 +146,12 @@ int main(int argc, char **argv)
    }
 
    // establish a new marfs config
-   marfs_config* config = config_init( "./testing/config.xml" );
+   pthread_mutex_t erasurelock;
+   if ( pthread_mutex_init( &erasurelock, NULL ) ) {
+      fprintf( stderr, "ERROR: failed to initialize erasure lock\n" );
+      return -1;
+   }
+   marfs_config* config = config_init( "./testing/config.xml", &erasurelock );
    if ( config == NULL ) {
       printf( "Failed to initialize marfs config\n" );
       return -1;
@@ -494,6 +499,10 @@ int main(int argc, char **argv)
       printf( "failed to close first thread queue\n" );
       return -1;
    }
+   if ( resourceinput_destroy( &(gstate.rinput) ) ) {
+      printf( "failed to destroy first walk input\n" );
+      return -1;
+   }
    operation_summary summary = {0};
    if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following first walk\n" );
@@ -722,6 +731,10 @@ int main(int argc, char **argv)
    // close our the thread queue, logs, etc.
    if ( tq_close( tq ) ) {
       printf( "failed to close second thread queue\n" );
+      return -1;
+   }
+   if ( resourceinput_destroy( &(gstate.rinput) ) ) {
+      printf( "failed to destroy second walk input\n" );
       return -1;
    }
    bzero( &(summary), sizeof( struct operation_summary_struct ) );
@@ -959,6 +972,10 @@ int main(int argc, char **argv)
       printf( "failed to close third thread queue\n" );
       return -1;
    }
+   if ( resourceinput_destroy( &(gstate.rinput) ) ) {
+      printf( "failed to destroy third walk input\n" );
+      return -1;
+   }
    bzero( &(summary), sizeof( struct operation_summary_struct ) );
    if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following third walk\n" );
@@ -1129,6 +1146,10 @@ int main(int argc, char **argv)
       printf( "failed to close final thread queue\n" );
       return -1;
    }
+   if ( resourceinput_destroy( &(gstate.rinput) ) ) {
+      printf( "failed to destroy final walk input\n" );
+      return -1;
+   }
    bzero( &(summary), sizeof( struct operation_summary_struct ) );
    if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following final walk\n" );
@@ -1207,6 +1228,7 @@ int main(int argc, char **argv)
       printf( "Failed to destory our config reference\n" );
       return -1;
    }
+   pthread_mutex_destroy(&erasurelock);
 
    // cleanup DAL trees
    if ( deletesubdirs( "./test_rman_topdir/dal_root" ) ) {

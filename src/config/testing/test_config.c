@@ -408,9 +408,16 @@ int main(int argc, char **argv)
    newrepo.metascheme.nscount = 0;
    newrepo.metascheme.nslist = NULL;
 
+   // create an erasure mutex
+   pthread_mutex_t erasurelock;
+   if ( pthread_mutex_init( &erasurelock, NULL ) ) {
+      printf( "failed to initialize erasure lock\n" );
+      return -1;
+   }
+
    // parse the data node
    if ( newrepo.name == NULL ) { printf( "failed strdup\n" ); return -1; }
-   if ( parse_datascheme( &(newrepo.datascheme), nsroot->children ) ) {
+   if ( parse_datascheme( &(newrepo.datascheme), nsroot->children, &erasurelock ) ) {
       printf( "failed to parse first data node\n" );
       return -1;
    }
@@ -512,7 +519,7 @@ int main(int argc, char **argv)
    xmlCleanupParser();
 
    // finally, parse the entire config
-   marfs_config* config = config_init( "./testing/config.xml" );
+   marfs_config* config = config_init( "./testing/config.xml", &erasurelock );
    if ( config == NULL ) {
       printf( "failed to parse the full config file\n" );
       return -1;
@@ -1065,6 +1072,7 @@ int main(int argc, char **argv)
       printf( "failed to terminate the config\n" );
       return -1;
    }
+   pthread_mutex_destroy( &erasurelock );
 
    // delete dal/mdal dir structure
    rmdir( "./test_config_topdir/dal_root" );
