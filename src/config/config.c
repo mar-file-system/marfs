@@ -3232,13 +3232,15 @@ HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_
  *  reference dirs in the given config, and verifies the LibNE CTXT
  * @param marfs_config* config : Reference to the config to be validated
  * @param const char* tgtNS : Path of the NS to be verified
- * @param char MDALcheck : If non-zero, the MDAL security and reference dirs of each encountered NS will be verified
- * @param char NEcheck : If non-zero, the LibNE ctxt of each encountered NS will be verified
- * @param char recurse : If non-zero, children of the target NS will also be verified
- * @param char fix : If non-zero, attempt to correct any problems encountered
+ * @param int flags : flags to control behavior of the verification
  * @return int : A count of uncorrected errors encountered, or -1 if a failure occurred
  */
-int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char NEcheck, char recurse, char fix ) {
+int config_verify( marfs_config* config, const char* tgtNS, int flags ) {
+
+   int MDALcheck = flags & CFG_MDALCHECK;
+   int NEcheck   = flags & CFG_DALCHECK;
+   int recurse   = flags & CFG_RECURSE;
+   int fix       = flags & CFG_FIX;
 
    // check for NULL refs
    if ( config == NULL ) {
@@ -3350,7 +3352,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             }
          }
          if ( checkmdalsec ) {
-            int verres = curmdal->checksec( curmdal->ctxt, fix );
+            int verres = curmdal->checksec( curmdal->ctxt, flags );
             if ( verres < 0 ) {
                LOG( LOG_ERR, "Failed to verify the MDAL security of repo: \"%s\" (%s)\n",
                              pos.ns->prepo->name, strerror(errno) );
@@ -3366,7 +3368,7 @@ int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char
             }
          }
          if ( checklibne ) {
-            int verres = ne_verify( pos.ns->prepo->datascheme.nectxt, fix );
+            int verres = ne_verify( pos.ns->prepo->datascheme.nectxt, flags );
             if ( verres < 0 ) {
                LOG( LOG_ERR, "Failed to verify ne_ctxt of repo: \"%s\" (%s)\n",
                              pos.ns->prepo->name, strerror(errno) );

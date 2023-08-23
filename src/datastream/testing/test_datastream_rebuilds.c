@@ -121,6 +121,7 @@ int main(int argc, char **argv)
 
    // Initialize the libxml lib and check for API mismatches
    LIBXML_TEST_VERSION
+   int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
 
    // create the dirs necessary for DAL/MDAL initialization (ignore EEXIST)
    errno = 0;
@@ -152,7 +153,7 @@ int main(int argc, char **argv)
    }
 
    // create all namespaces associated with the config
-   if ( config_verify( config, "./.", 1, 1, 1, 1 ) ) {
+   if ( config_verify( config, "./.", flags ) ) {
       printf( "Failed to validate the marfs config\n" );
       return -1;
    }
@@ -301,7 +302,7 @@ int main(int argc, char **argv)
 
 
    // reverify the config, so we actually have a block location to rebuild into
-   if ( config_verify( config, "./.", 1, 1, 1, 1 ) ) {
+   if ( config_verify( config, "./.", flags ) ) {
       printf( "Failed to re-validate the marfs config\n" );
       return -1;
    }

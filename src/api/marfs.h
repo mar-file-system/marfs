@@ -100,8 +100,6 @@ typedef enum
  *         maintaining access to the MDAL/DAL root dirs via the returned marfs_ctxt.
  * @param const char* configpath : Path of the config file to initialize based on
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
- * @param char verify : If zero, skip config verification
- *                      If non-zero, verify the config and abort if any problems are found
  * @param pthread_mutex_t* erasurelock : Reference to a pthread_mutex lock, to be used for synchronizing access
  *                                       to isa-l erasure generation functions in multi-threaded programs.
  *                                       If NULL, marfs will create such a lock internally.  In such a case,
@@ -112,7 +110,7 @@ typedef enum
  *                                       ALL marfs_init() calls.
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
-marfs_ctxt marfs_init(const char* configpath, marfs_interface type, char verify, pthread_mutex_t* erasurelock);
+marfs_ctxt marfs_init(const char* configpath, marfs_interface type, pthread_mutex_t* erasurelock);
 
 /**
  * Sets a string 'tag' value for the given context struct, causing all output files to 
