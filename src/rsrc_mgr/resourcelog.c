@@ -875,10 +875,13 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
                *dofree = 1; // not incorporating these ops, so the caller should free
                return 0;
             }
-            // potentially check for subsequent active op in the same segment
             if ( parseop->next == NULL  &&  parseindex->next ) {
-               if ( parseop->type == parseindex->next->type ) { activealike = 1; }
-               else { activechain = 1; } // TODO : REALLY hacky way to workaround the early destruction of count==zero DELREF ops
+               // check for subsequent active op in the same segment
+               opinfo* tmpparse = parseindex;
+               while ( tmpparse->next  &&  parseop->type == tmpparse->next->type ) {
+                  if ( tmpparse->next->count ) { activealike = 1; break; }
+                  tmpparse = tmpparse->next;
+               }
             }
             // progress to the next op in the chain, validating that it matches the subsequent in the opindex chain
             parseop = parseop->next;
@@ -898,13 +901,17 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
             }
             // decrement in-progress cnt
             rsrclog->outstandingcnt--;
+            LOG( LOG_INFO, "Decrementing Outstanding OP Count to %zd\n", rsrclog->outstandingcnt );
          }
          else {
             if ( parseop->count > parseindex->count ) {
                LOG( LOG_INFO, "Resetting count of in-progress operation from %zu to %zu\n",
                     parseindex->count, parseop->count );
                // potentially increment our in-progress cnt, if this operation is being re-issued
-               if ( parseindex->count == 0 ) { rsrclog->outstandingcnt++; }
+               if ( parseindex->count == 0 ) {
+                  rsrclog->outstandingcnt++;
+                  LOG( LOG_INFO, "Incremented Outstanding OP Count to %zd\n", rsrclog->outstandingcnt );
+               }
                parseindex->count = parseop->count;
             }
             // just progress to the next op
@@ -913,6 +920,13 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
          }
       }
       // check if this op has rendered the entire op chain complete
+      // NOTE -- This method of freeing opchains is intended to avoid early freeing in the
+      //         case of a trailing op with count == 0.  However, it has a potential for memory
+      //         inefficiency.
+      //         If the caller completes the chain via anything other than the tail op, the
+      //         chain will not be freed until the entire resourcelog is terminated.
+      //         As we never expect the caller to behave like this, I am leaving this logic
+      //         as is.
       if ( newop->start == 0  &&  activechain == 0  &&  parseindex == NULL ) {
          // destroy the entire operation chain
          resourcelog_freeopinfo( chainindex->chain );
@@ -940,6 +954,7 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
          (*prevchainref)->chain = newop;
          // note that we have another op chain in flight
          rsrclog->outstandingcnt += oplength;
+         LOG( LOG_INFO, "Increased Outstanding OP Count by %zd, to %zd\n", oplength, rsrclog->outstandingcnt );
          // tell the caller NOT to free this chain
          *dofree = 0;
       }
@@ -1762,6 +1777,7 @@ int resourcelog_update_inflight( RESOURCELOG* resourcelog, ssize_t numops ) {
    }
    // modify count
    rsrclog->outstandingcnt += numops;
+   LOG( LOG_INFO, "Modified Outstanding OP Count by %zd, to %zd\n", numops, rsrclog->outstandingcnt );
    // check for quiesced state
    if ( rsrclog->outstandingcnt == 0  &&  pthread_cond_signal( &(rsrclog->nooutstanding) ) ) {
       LOG( LOG_ERR, "Failed to signal 'no outstanding ops' condition\n" );
@@ -1940,7 +1956,7 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, char
    }
    // abort if any outstanding ops remain
    if ( rsrclog->outstandingcnt != 0 ) {
-      LOG( LOG_ERR, "Resourcelog still has outstanding operations\n" );
+      LOG( LOG_ERR, "Resourcelog still has %zd outstanding operations\n", rsrclog->outstandingcnt );
       pthread_mutex_unlock( &(rsrclog->lock) );
       errno = EAGAIN;
       return -1;
