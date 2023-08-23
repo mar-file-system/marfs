@@ -79,6 +79,11 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define MODIFY_LOG_PREFIX "RESOURCE-MODIFY-LOGFILE\n" // prefix for a 'modify'-log
                                                       //    - mix of op starts and completions
 
+typedef struct opchain_struct {
+   struct opchain_struct* next; // subsequent op chains in this list ( or NULL, if none remain )
+   struct opinfo_struct* chain; // ops in this chain
+} opchain;
+
 typedef struct resourcelog_struct {
    // synchronization and access control
    pthread_mutex_t   lock;
@@ -107,8 +112,13 @@ void cleanuplog( RESOURCELOG rsrclog, char destroy ) {
    if ( rsrclog->inprogress ) {
       hash_term( rsrclog->inprogress, &nodelist, &index );
       while ( index ) {
-         opinfo* opindex = (nodelist + index - 1)->content;
-         resourcelog_freeopinfo( opindex );
+         opchain* chain = (nodelist + index - 1)->content;
+         while ( chain ) {
+            resourcelog_freeopinfo( chain->chain );
+            opchain* nextchain = chain->next;
+            free( chain );
+            chain = nextchain;
+         }
          free( (nodelist + index - 1)->name );
          index--;
       }
@@ -744,17 +754,25 @@ int printlogline( int logfile, opinfo* op ) {
  * @return int : Zero on success, or -1 on failure
  */
 int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* dofree ) {
-   // identify the trailing op of the given chain
+   // identify the length of the given chain and validate a consistent 'start' value
+   LOG( LOG_INFO, "Processing operation chain on Stream \"%s\" w/ CTag \"%s\"\n", newop->ftag.streamid, newop->ftag.ctag );
    opinfo* finop = newop;
-   size_t oplength = 1;
-   while ( finop->next ) {
+   size_t oplength = 0;
+   while ( finop ) {
       oplength++;
-      finop = finop->next;
+      LOG( LOG_INFO, "   ( \"%s\", \"%s\" ) -- %s OP of Count %zd ( %s )\n", finop->ftag.ctag, finop->ftag.streamid,
+                     ( finop->type == MARFS_DELETE_OBJ_OP ) ? "MARFS_DELETE_OBJ" :
+                     ( finop->type == MARFS_DELETE_REF_OP ) ? "MARFS_DELETE_REF" :
+                     ( finop->type == MARFS_REBUILD_OP ) ? "MARFS_REBUILD" :
+                     ( finop->type == MARFS_REPACK_OP ) ? "MARFS_REPACK" :
+                     "UNKNOWN", finop->count, ( finop->start ) ? "INITIATION" : "COMPLETION" );
       if ( finop->start != newop->start ) {
          LOG( LOG_ERR, "Operation chain has inconsistent START value\n" );
          return -1;
       }
+      finop = finop->next;
    }
+   LOG( LOG_INFO, "   ( \"%s\", \"%s\" ) -- End of OP chain of length %zd\n", newop->ftag.ctag, newop->ftag.streamid, oplength );
    // map this operation into our inprogress hash table
    HASH_NODE* node = NULL;
    if ( hash_lookup( rsrclog->inprogress, newop->ftag.streamid, &node ) < 0 ) {
@@ -762,31 +780,41 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
       return -1;
    }
    // traverse the attached operations, looking for a match
+   char activechain = 0;
    char activealike = 0; // track if we have active ops of the same type in the same 'segment'
-   opinfo* opindex = node->content;
-   opinfo* prevop = NULL;
-   while ( opindex != NULL ) {
-      if ( strcmp( opindex->ftag.streamid, newop->ftag.streamid ) == 0 ) {
-         // check for exact match ( ctag, type, fileno, objno )
-         if ( ( (opindex->ftag.ctag == NULL  &&  newop->ftag.ctag == NULL )  ||
-                (opindex->ftag.ctag  &&  newop->ftag.ctag  &&  strcmp( opindex->ftag.ctag, newop->ftag.ctag) == 0) )  &&
-              (opindex->ftag.objno == newop->ftag.objno)  &&
-              (opindex->ftag.fileno == newop->ftag.fileno)  &&
-              (opindex->type == newop->type) ) {
-            break;
+   opinfo* opindex = NULL;
+   opchain* chainindex = node->content;
+   opchain** prevchainref = (opchain**)&(node->content);
+   while ( chainindex ) {
+      opindex = chainindex->chain;
+      // check for an opchain on the same stream ( ctag, streamid )
+      if ( opindex  &&  strcmp( opindex->ftag.streamid, newop->ftag.streamid ) == 0  &&
+            ( (opindex->ftag.ctag == NULL  &&  newop->ftag.ctag == NULL )  ||
+                   (opindex->ftag.ctag  &&  newop->ftag.ctag  &&  strcmp( opindex->ftag.ctag, newop->ftag.ctag) == 0) )
+         ) {
+         while ( opindex != NULL ) {
+            // check for exact match ( type, fileno, objno )
+            if ( (opindex->ftag.objno == newop->ftag.objno)  &&
+                 (opindex->ftag.fileno == newop->ftag.fileno)  &&
+                 (opindex->type == newop->type) ) {
+               break;
+            }
+            else if ( opindex->type != newop->type ) {
+               activealike = 0; // op 'segement' is broken, reset
+            }
+            else if ( opindex->count ) {
+               activealike = 1; // found an active op of the same type
+            }
+            if ( opindex->count ) { activechain = 1; }
+            opindex = opindex->next;
          }
-         else if ( opindex->type == newop->type ) {
-            activealike = 1; // found an active op of the same type
-         }
-         else {
-            activealike = 0; // op 'segement' is broken, reset
-         }
+         if ( opindex ) { break; } // break from the parent loop, if we've found a match
       }
-      else {
-         activealike = 0; // op 'segement' is broken, reset
-      }
-      prevop = opindex;
-      opindex = opindex->next;
+      opindex = NULL; // moving to a new chain, so NULL out our potential op match
+      activealike = 0; // moving to a new chain, so the op 'segment' is broken
+      activechain = 0; // moving to a new chain, so reset active state
+      prevchainref = &(chainindex->next);
+      chainindex = chainindex->next;
    }
    if ( opindex != NULL ) {
       // otherwise, for op completion, we'll need to process each operation in the chain...
@@ -797,7 +825,13 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
          if ( newop->start == 0 ) {
             // check for excessive count
             if ( parseop->count > parseindex->count ) {
-               LOG( LOG_ERR, "Processed op count ( %zu ) exceeds expected count ( %zu )\n", parseop->count, parseindex->count );
+               LOG( LOG_ERR, "Processed %s op count ( %zu ) exceeds expected count ( %zu )\n",
+                             ( parseop->type == MARFS_DELETE_OBJ_OP ) ? "MARFS_DELETE_OBJ" :
+                             ( parseop->type == MARFS_DELETE_REF_OP ) ? "MARFS_DELETE_REF" :
+                             ( parseop->type == MARFS_REBUILD_OP ) ? "MARFS_REBUILD" :
+                             ( parseop->type == MARFS_REPACK_OP ) ? "MARFS_REPACK" :
+                             "UNKNOWN",
+                             parseop->count, parseindex->count );
                return -1;
             }
             // ...note each in our totals...
@@ -827,18 +861,25 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
                   return -1;
             }
             if ( parseop->errval ) { parseindex->errval = parseop->errval; } // potentially note an error
+            // decrement remaining op count
+            LOG( LOG_INFO, "Decrementing remaining op count (%zd) by %zd\n", parseindex->count, parseop->count );
+            parseindex->count -= parseop->count; // decrement count
             // check for completion of the specified op
-            if ( parseindex->count != parseop->count ) {
+            if ( parseindex->count ) {
                // first operation is not complete, so cannot progress op chain
-               parseindex->count -= parseop->count; // decrement count
+               if ( parseop->next ) {
+                  LOG( LOG_ERR, "Operation is incomplete, but input operation chain continues\n" );
+                  return -1;
+               }
                if ( progressop ) { *progressop = 0; }
                *dofree = 1; // not incorporating these ops, so the caller should free
                return 0;
             }
             // potentially check for subsequent active op in the same segment
-            if ( parseop->next == NULL  &&  parseindex->next  &&
-                 strcmp( parseop->ftag.streamid, parseindex->next->ftag.streamid ) == 0  &&
-                 parseop->type == parseindex->next->type ) { activealike = 1; }
+            if ( parseop->next == NULL  &&  parseindex->next ) {
+               if ( parseop->type == parseindex->next->type ) { activealike = 1; }
+               else { activechain = 1; } // TODO : REALLY hacky way to workaround the early destruction of count==zero DELREF ops
+            }
             // progress to the next op in the chain, validating that it matches the subsequent in the opindex chain
             parseop = parseop->next;
             previndex = parseindex; // keep track of where the index op chain terminates
@@ -862,6 +903,8 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
             if ( parseop->count > parseindex->count ) {
                LOG( LOG_INFO, "Resetting count of in-progress operation from %zu to %zu\n",
                     parseindex->count, parseop->count );
+               // potentially increment our in-progress cnt, if this operation is being re-issued
+               if ( parseindex->count == 0 ) { rsrclog->outstandingcnt++; }
                parseindex->count = parseop->count;
             }
             // just progress to the next op
@@ -869,19 +912,13 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
             parseindex = parseindex->next;
          }
       }
-      if ( newop->start == 0 ) {
-         // ...and remove the matching op(s) from inprogress
-         if ( prevop ) {
-            // pull the matching ops out of the list
-            prevop->next = previndex->next;
-         }
-         else {
-            // no previous op means the matching op is the first one; just remove it
-            node->content = previndex->next;
-         }
-         // free the removed operation chain
-         previndex->next = NULL; // so we don't end up freeing any predecessors
-         resourcelog_freeopinfo( opindex );
+      // check if this op has rendered the entire op chain complete
+      if ( newop->start == 0  &&  activechain == 0  &&  parseindex == NULL ) {
+         // destroy the entire operation chain
+         resourcelog_freeopinfo( chainindex->chain );
+         // ...and remove the matching op chain
+         *prevchainref = chainindex->next;
+         free( chainindex );
       }
       // a matching op means the parsed operation can be discarded
       // tell the caller to free their own op chain
@@ -894,10 +931,14 @@ int processopinfo( RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* d
          return -1;
       }
       if ( rsrclog->type == RESOURCE_MODIFY_LOG ) {
-         // stitch the new op onto the front of our inprogress list
-         finop->next = node->content;
-         node->content = newop;
-         // note that we have another op in flight
+         // stitch the new op chain onto the end of our inprogress list
+         *prevchainref = calloc( 1, sizeof( struct opchain_struct ) );
+         if ( *prevchainref == NULL ) {
+            LOG( LOG_ERR, "Failed to allocate space for a new operation chain struct\n" );
+            return -1;
+         }
+         (*prevchainref)->chain = newop;
+         // note that we have another op chain in flight
          rsrclog->outstandingcnt += oplength;
          // tell the caller NOT to free this chain
          *dofree = 0;
