@@ -87,6 +87,13 @@ typedef struct walkerstate_struct {
    char*          oftagstr;
 } walkerstate;
 
+typedef struct walkerinfo_struct {
+   marfs_position pos;
+   char*          ftagstr;
+   GCTAG          gctag;
+   char*          oftagstr;
+} walkerinfo;
+
 // Show all the usage options in one place, for easy reference
 // An arrow appears next to the one you tried to use.
 //
@@ -122,11 +129,17 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
    USAGE("open",
-      "( -p userpath | -r refpath )",
+      "( -p userpath | -r refpath [-p NSpath] | -t ftagval )",
       "Begin traversing a new datastream, starting at the given file",
       "       -p userpath  : Specifies a user path to retrieve stream info from\n"
       "                       OR the path of the target NS, if '-r' is used\n"
-      "       -r refpath   : Specifies a reference path to retrieve stream info from\n")
+      "       -r refpath   : Specifies a reference path to retrieve stream info from\n"
+      "       -t ftagval   : Directly specifies the tgt stream info, via FTAG value\n"
+      "                       NOTE - When used with this option, file existence is\n"
+      "                              not verified and any additional file information\n"
+      "                              ( GCTAG, OFTAG, etc. ) WILL be omitted.\n"
+      "                              Use the 'refresh' command to force a retrieval\n"
+      "                              of this info from the corresponding file.\n")
 
       USAGE("shift",
          "( -@ offset | -n filenum )",
@@ -143,26 +156,36 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
          "Identify the metadata reference path of the current file", "")
 
       USAGE("obj",
-         "[-n chunknum]",
-         "Print out the location of the specified object",
-         "       -n chunknum : Specifies a specific data chunk\n")
+         "[-@ offset | -n chunknum]",
+         "Print out the location of the current / specified object",
+         "       -@ chunknum : Specifies a specific object number in this file\n"
+         "       -n chunknum : Specifies a specific object number in this stream\n")
 
       USAGE("bounds",
-         "[-f]",
-         "Identify the boundaries of the current stream",
-         "       -f : Specifies to identify the bounds of just the current file\n")
+         "[-s]",
+         "Identify the boundaries of the current file / stream",
+         "       -s : Specifies to identify the bounds of the entire stream\n")
 
       USAGE("ns",
          "[-p nspath]",
          "Print / change the current MarFS namespace target of this program",
          "       -p nspath : Specifies the path of a new NS target")
 
+      USAGE("ls",
+         "[-p dirpath]",
+         "Print the content of the current / given directory",
+         "       -p dirpath : Specifies the path of a target directory")
+
       USAGE("recovery",
-         "[-@ offset -f seekfrom]",
+         "[-@ offset [-f seekfrom]]",
          "Print the recovery information of the specified object",
          "       -@ offset   : Specifies a file offset to seek to\n"
          "       -f seekfrom : Specifies a start location for the seek\n"
          "                    ( either 'set', 'cur', or 'end' )\n")
+
+      USAGE("refresh",
+         "",
+         "Retrieve updated information from the current file target (via refpath)", "")
 
       USAGE("( exit | quit )",
          "",
@@ -177,7 +200,91 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
 
-int populate_tags(marfs_config* config, marfs_position* pathpos, walkerstate* state, const char* path, const char* rpath, char prout) {
+int update_state(walkerinfo* sourceinfo, walkerstate* tgtstate, char prout) {
+
+   // populate FTAG values based on xattr content
+   FTAG tmpftag = {0};
+   if (ftag_initstr(&(tmpftag), sourceinfo->ftagstr)) {
+      printf(OUTPREFX "ERROR: Failed to parse FTAG string: \"%s\" (%s)\n",
+         sourceinfo->ftagstr, strerror(errno));
+      if ( sourceinfo->oftagstr ) { free(sourceinfo->oftagstr); }
+      free(sourceinfo->ftagstr);
+      config_abandonposition( &(sourceinfo->pos) );
+      return -1;
+   }
+   // check if we need a custom reference table
+   HASH_TABLE tmpreftable = sourceinfo->pos.ns->prepo->metascheme.reftable;
+   if ( tmpftag.refbreadth != sourceinfo->pos.ns->prepo->metascheme.refbreadth  ||
+        tmpftag.refdepth != sourceinfo->pos.ns->prepo->metascheme.refdepth  ||
+        tmpftag.refdigits != sourceinfo->pos.ns->prepo->metascheme.refdigits ) {
+      tmpreftable = config_genreftable( NULL, NULL, tmpftag.refbreadth,
+                                            tmpftag.refdepth, tmpftag.refdigits );
+      if ( tmpreftable == NULL ) {
+         printf(OUTPREFX "ERROR: Failed to instantiate a custom reference table ( %s )\n", strerror(errno));
+         if ( tmpftag.ctag ) { free( tmpftag.ctag ); }
+         if ( tmpftag.streamid ) { free( tmpftag.streamid ); }
+         if ( sourceinfo->oftagstr ) { free(sourceinfo->oftagstr); }
+         free(sourceinfo->ftagstr);
+         config_abandonposition( &(sourceinfo->pos) );
+         return -1;
+      }
+   }
+   // cleanup previous state, if necessary
+   if (tgtstate->ftag.ctag) {
+      free(tgtstate->ftag.ctag);
+      tgtstate->ftag.ctag = NULL;
+   }
+   if (tgtstate->ftag.streamid) {
+      free(tgtstate->ftag.streamid);
+      tgtstate->ftag.streamid = NULL;
+   }
+   if ( tgtstate->reftable  &&  tgtstate->reftable != tgtstate->pos.ns->prepo->metascheme.reftable ) {
+      HASH_NODE* nodelist = NULL;
+      size_t nodecount = 0;
+      if ( hash_term( tgtstate->reftable, &(nodelist), &(nodecount) ) ){
+         printf(OUTPREFX "WARNING: Failed to properly destroy custom reference HASH_TABLE\n");
+      }
+      else {
+         size_t nodeindex = 0;
+         for ( ; nodeindex < nodecount; nodeindex++ ) {
+            if ( (nodelist + nodeindex)->name ) { free( (nodelist + nodeindex)->name ); }
+         }
+         free( nodelist );
+      }
+      tgtstate->reftable = NULL;
+   }
+   if ( tgtstate->oftagstr ) { free( tgtstate->oftagstr ); tgtstate->oftagstr = NULL; }
+   if ( tgtstate->pos.ns  &&  config_abandonposition( &(tgtstate->pos) )) {
+      printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
+   }
+   // update the passed state
+   tgtstate->ftag = tmpftag;
+   tgtstate->reftable = tmpreftable;
+   tgtstate->gctag = sourceinfo->gctag;
+   tgtstate->oftagstr = sourceinfo->oftagstr;
+   // do a semi-sketchy direct copy of postion values
+   tgtstate->pos = sourceinfo->pos;
+   if (prout) {
+      printf(OUTPREFX "Values Updated\n" );
+      if ( tgtstate->gctag.refcnt ) {
+         printf(OUTPREFX "   NOTE -- This file has a GCTAG attached\n" );
+      }
+      if ( tgtstate->oftagstr ) {
+         printf(OUTPREFX "   NOTE -- This file has previously been repacked\n" );
+      }
+      if ( tgtstate->reftable != sourceinfo->pos.ns->prepo->metascheme.reftable ) {
+         printf(OUTPREFX "   NOTE -- File has a non-standard reference structure\n" );
+      }
+      printf("\n");
+   }
+   // cleanup any unused sourceinfo elements
+   free(sourceinfo->ftagstr);
+   return 0;
+
+}
+
+
+int populate_tags(marfs_config* config, marfs_position* pathpos, const char* path, const char* rpath, char prout, walkerinfo* resultinfo) {
    char* modpath = NULL;
    marfs_position oppos = { .ns = NULL, .depth = 0, .ctxt = NULL };
    if ( config_duplicateposition( pathpos, &oppos ) ) {
@@ -320,81 +427,19 @@ int populate_tags(marfs_config* config, marfs_position* pathpos, walkerstate* st
    if (mdal->close(handle)) {
       printf(OUTPREFX "WARNING: Failed to close handle for target file (%s)\n", strerror(errno));
    }
-   // cleanup previous state, if necessary
-   if (state->ftag.ctag) {
-      free(state->ftag.ctag);
-      state->ftag.ctag = NULL;
-   }
-   if (state->ftag.streamid) {
-      free(state->ftag.streamid);
-      state->ftag.streamid = NULL;
-   }
-   if ( state->reftable  &&  state->reftable != state->pos.ns->prepo->metascheme.reftable ) {
-      HASH_NODE* nodelist = NULL;
-      size_t nodecount = 0;
-      if ( hash_term( state->reftable, &(nodelist), &(nodecount) ) ){
-         printf(OUTPREFX "WARNING: Failed to properly destroy custom reference HASH_TABLE\n");
-      }
-      else {
-         size_t nodeindex = 0;
-         for ( ; nodeindex < nodecount; nodeindex++ ) {
-            if ( (nodelist + nodeindex)->name ) { free( (nodelist + nodeindex)->name ); }
-         }
-         free( nodelist );
-      }
-      state->reftable = NULL;
-   }
-   if ( state->oftagstr ) { free( state->oftagstr ); state->oftagstr = NULL; }
-   if ( state->pos.ns  &&  config_abandonposition( &(state->pos) )) {
-      printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
-   }
-   // populate FTAG values based on xattr content
-   if (ftag_initstr(&(state->ftag), ftagstr)) {
-      printf(OUTPREFX "ERROR: Failed to parse FTAG string: \"%s\" (%s)\n",
-         ftagstr, strerror(errno));
-      if ( tmpoftagstr ) { free(tmpoftagstr); }
-      free(ftagstr);
-      config_abandonposition( &oppos );
-      return -1;
-   }
-   // check if we need a custom reference table
-   if ( state->ftag.refbreadth != oppos.ns->prepo->metascheme.refbreadth  ||
-        state->ftag.refdepth != oppos.ns->prepo->metascheme.refdepth  ||
-        state->ftag.refdigits != oppos.ns->prepo->metascheme.refdigits ) {
-      state->reftable = config_genreftable( NULL, NULL, state->ftag.refbreadth,
-                                            state->ftag.refdepth, state->ftag.refdigits );
-      if ( state->reftable == NULL ) {
-         printf(OUTPREFX "ERROR: Failed to instantiate a custom reference table ( %s )\n", strerror(errno));
-         if ( state->ftag.ctag ) { free( state->ftag.ctag ); }
-         if ( state->ftag.streamid ) { free( state->ftag.streamid ); }
-         bzero( &(state->ftag), sizeof( FTAG ) );
-         if ( tmpoftagstr ) { free(tmpoftagstr); }
-         free(ftagstr);
-         config_abandonposition( &oppos );
-         return -1;
-      }
-   }
-   else { state->reftable = oppos.ns->prepo->metascheme.reftable; } // can just use the standard ref table
-   // actually update the passed state now
-   state->gctag = tmpgctag;
-   state->oftagstr = tmpoftagstr;
-   // do a semi-sketchy direct copy of postion values
-   state->pos = oppos; // no need to abandon oppos now
+
    if (prout) {
-      printf(OUTPREFX "Successfully populated FTAG values for target %s file: \"%s\"\n",
+      printf(OUTPREFX "Successfully retrieved values from target %s file: \"%s\"\n",
          (rpath) ? "ref" : "user", (rpath) ? rpath : path);
-      if ( state->gctag.refcnt ) {
-         printf(OUTPREFX "   NOTE -- This file has a GCTAG attached\n" );
-      }
-      if ( state->oftagstr ) {
-         printf(OUTPREFX "   NOTE -- This file has previously been repacked\n" );
-      }
-      if ( state->reftable != oppos.ns->prepo->metascheme.reftable ) {
-         printf(OUTPREFX "   NOTE -- File has a non-standard reference structure\n" );
-      }
-      printf("\n");
    }
-   free(ftagstr);
+
+   // update the passed info struct
+   resultinfo->ftagstr = ftagstr;
+   resultinfo->gctag = tmpgctag;
+   resultinfo->oftagstr = tmpoftagstr;
+   // do a semi-sketchy direct copy of postion values
+   resultinfo->pos = oppos;
+
    return 0;
 }
 
@@ -405,6 +450,7 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
    char curarg = '\0';
    char* userpath = NULL;
    char* refpath = NULL;
+   char* ftagval = NULL;
    char* parse = strtok(args, " ");
    while (parse) {
       if (curarg == '\0') {
@@ -414,6 +460,9 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
          else if (strcmp(parse, "-r") == 0) {
             curarg = 'r';
          }
+         else if (strcmp(parse, "-t") == 0) {
+            curarg = 't';
+         }
          else {
             printf(OUTPREFX "ERROR: Unrecognized argument for 'open' command: '%s'\n", parse);
             if (userpath) {
@@ -421,6 +470,9 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
             }
             if (refpath) {
                free(refpath);
+            }
+            if (ftagval) {
+               free(ftagval);
             }
             return -1;
          }
@@ -434,20 +486,40 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
                if (refpath) {
                   free(refpath);
                }
+               if (ftagval) {
+                  free(ftagval);
+               }
                return -1;
             }
             tgtstr = &(userpath);
          }
-         else { // == r
+         else if (curarg == 'r') {
             if (refpath != NULL) {
                printf(OUTPREFX "ERROR: Detected duplicate '-r' arg: \"%s\"\n", parse);
                free(refpath);
                if (userpath) {
                   free(userpath);
                }
+               if (ftagval) {
+                  free(ftagval);
+               }
                return -1;
             }
             tgtstr = &(refpath);
+         }
+         else { // == t
+            if (ftagval != NULL) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-t' arg: \"%s\"\n", parse);
+               free(ftagval);
+               if (userpath) {
+                  free(userpath);
+               }
+               if (refpath) {
+                  free(refpath);
+               }
+               return -1;
+            }
+            tgtstr = &(ftagval);
          }
          *tgtstr = strdup(parse);
          if (*tgtstr == NULL) {
@@ -459,6 +531,9 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
             if (refpath) {
                free(refpath);
             }
+            if (ftagval) {
+               free(ftagval);
+            }
             return -1;
          }
          curarg = '\0';
@@ -468,19 +543,44 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
       parse = strtok(NULL, " ");
    }
    // check that we have at least one arg
-   if (!(userpath) && !(refpath)) {
-      printf(OUTPREFX "ERROR: 'open' command requires at least one '-p' or '-r' arg\n");
+   if (!(userpath) && !(refpath) && !(ftagval)) {
+      printf(OUTPREFX "ERROR: 'open' command requires at least one '-p', '-r', or '-t' arg\n");
+      return -1;
+   }
+   // check for incompatible args
+   if ( ftagval  &&  (userpath  ||  refpath) ) {
+      free(ftagval);
+      if (userpath) {
+         free(userpath);
+      }
+      if (refpath) {
+         free(refpath);
+      }
+      printf(OUTPREFX "ERROR: the 'open' command '-t' arg is incompatible with both '-p' and '-r'\n");
       return -1;
    }
 
    // populate our FTAG and cleanup strings
-   int retval = populate_tags(config, pathpos, state, userpath, refpath, 1);
+   walkerinfo info = {0};
+   int retval = 0;
+   if ( ftagval ) {
+      info.ftagstr = ftagval;
+      if ( (retval = config_duplicateposition( pathpos, &(info.pos) )) ) {
+         printf(OUTPREFX "ERROR: failed to duplicate current streamwalker position\n");
+         free( ftagval );
+      }
+   }
+   else { retval = populate_tags(config, pathpos, userpath, refpath, 1, &info); }
+   if ( !retval ) {
+      retval = update_state(&info, state, 1);
+   }
    if (userpath) {
       free(userpath);
    }
    if (refpath) {
       free(refpath);
    }
+   // NOTE -- we explicitly don't free ftagval, as update_state() should have done so already
    return retval;
 }
 
@@ -579,7 +679,11 @@ int shift_command(marfs_config* config, walkerstate* state, char* args) {
       return -1;
    }
 
-   int retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 1);
+   walkerinfo info = {0};
+   int retval = populate_tags(config, &(state->pos), NULL, newrpath, 1, &info);
+   if ( !retval ) {
+      retval = update_state(&info, state, 1);
+   }
    if (retval) {
       state->ftag.fileno = origfileno;
    }
@@ -698,18 +802,32 @@ int obj_command(marfs_config* config, char* config_path, walkerstate* state, cha
    // parse args
    char curarg = '\0';
    ssize_t chunknum = -1;
+   char haveoffset = 0;
+   ssize_t chunkoff = 0;
    char* parse = strtok(args, " ");
    while (parse) {
       if (curarg == '\0') {
          if (strcmp(parse, "-n") == 0) {
+            if (chunknum != -1) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-n' arg\n");
+               return -1;
+            }
             curarg = 'n';
+         }
+         else if (strcmp(parse, "-@") == 0) {
+            if (haveoffset) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-@' arg\n");
+               return -1;
+            }
+            curarg = '@';
+            haveoffset = 1;
          }
          else {
             printf(OUTPREFX "ERROR: Unrecognized argument for 'obj' command: '%s'\n", parse);
             return -1;
          }
       }
-      else { // == 'n'
+      else {
          // parse the numeric arg
          char* endptr = NULL;
          long long parseval = strtoll(parse, &(endptr), 0);
@@ -719,22 +837,35 @@ int obj_command(marfs_config* config, char* config_path, walkerstate* state, cha
             return -1;
          }
 
-         if (chunknum != -1) {
-            printf(OUTPREFX "ERROR: Detected duplicate '-n' arg: \"%s\"\n", parse);
-            return -1;
+         if ( curarg == 'n' ) {
+            if (parseval < 0) {
+               printf(OUTPREFX "ERROR: Negative chunknum value: \"%lld\"\n", parseval);
+               return -1;
+            }
+            chunknum = parseval;
          }
-         if (parseval < 0) {
-            printf(OUTPREFX "ERROR: Negative chunknum value: \"%lld\"\n", parseval);
-            return -1;
+         else { // == '@'
+            chunkoff = parseval;
          }
-         chunknum = parseval;
          curarg = '\0';
       }
 
       // progress to the next arg
       parse = strtok(NULL, " ");
    }
-
+   // check for argument conflict
+   if ( haveoffset  &&  chunknum != -1 ) {
+      printf(OUTPREFX "ERROR: The '-n' and '-@' arguments are mutually exclusive\n");
+      return -1;
+   }
+   // establish an actual chunk number target
+   if ( chunknum == -1 ) { chunknum = 0; }
+   if ( haveoffset ) { chunknum += chunkoff + state->ftag.objno; }
+   if ( chunknum < 0 ) {
+      printf(OUTPREFX "WARNING: Specified offset results in a negative object value: %zd ( referencing object zero instead )\n", chunknum);
+      chunknum = 0;
+   }
+   chunkoff = chunknum - state->ftag.objno;
 
    // identify object bounds of the current file
    RECOVERY_HEADER header = {
@@ -758,46 +889,26 @@ int obj_command(marfs_config* config, char* config_path, walkerstate* state, cha
       fileobjbounds--;
    }
 
-   if (chunknum > fileobjbounds) {
-      printf(OUTPREFX "WARNING: Specified object number exceeds file limits ( selecting object %zd instead )\n", fileobjbounds);
-      chunknum = fileobjbounds;
+   if ( chunknum < state->ftag.objno ) {
+      printf(OUTPREFX "WARNING: Specified object number preceeds file limits ( min referenced objno == %zd )\n", state->ftag.objno);
+   }
+   if (chunknum > state->ftag.objno + fileobjbounds) {
+      printf(OUTPREFX "WARNING: Specified object number exceeds file limits ( max referenced objno == %zd )\n", state->ftag.objno + fileobjbounds);
    }
 
-   // iterate over appropriate objects
-   size_t curobj = 0;
-   if (chunknum >= 0) {
-      curobj = chunknum;
+   // identify the object target
+   char* objname = NULL;
+   ne_erasure erasure;
+   ne_location location;
+   FTAG curtag = state->ftag;
+   curtag.objno = chunknum;
+   if (datastream_objtarget(&(curtag), &(state->pos.ns->prepo->datascheme), &(objname), &(erasure), &(location))) {
+      printf(OUTPREFX "ERROR: Failed to identify data info for chunk %zu\n", chunknum);
+      return -1;
    }
-   else {
-      chunknum = fileobjbounds;
-   }
-   for (; curobj <= chunknum; curobj++) {
-      // identify the object target
-      char* objname = NULL;
-      ne_erasure erasure;
-      ne_location location;
-      FTAG curtag = state->ftag;
-      curtag.objno += curobj;
-      if (datastream_objtarget(&(curtag), &(state->pos.ns->prepo->datascheme), &(objname), &(erasure), &(location))) {
-         printf(OUTPREFX "ERROR: Failed to identify data info for chunk %zu\n", curobj);
-         continue;
-      }
-      // print object info
-      printf("Obj#%-5zu\n   Pod: %d\n   Cap: %d\n   Scatter: %d\n   ObjName: %s\n   Erasure Information: N %d, E %d, O %d, partsz %lu\n   neutil Args: -c \"%s:/marfs_config/repo name=%s/data/DAL\" -P %d -C %d -S %d -O \"", curobj, location.pod, location.cap, location.scatter, objname, erasure.N, erasure.E, erasure.O, erasure.partsz, config_path, state->pos.ns->prepo->name, location.pod, location.cap, location.scatter);
-      // print sanitized object name
-      char* parsepath = objname;
-      while (*parsepath != '\0') {
-         if (*parsepath == '*' || *parsepath == '|' || *parsepath == '&') {
-            // escape all problem chars
-            //printf("\\");
-         }
-         printf("%c", *parsepath);
-         parsepath++;
-      }
-      printf("\"\n");
-      free(objname);
-   }
-   printf("\n");
+   // print object info
+   printf("Obj#%-5zu [ FileObjNo %zd/%zd ]\n   Pod: %d\n   Cap: %d\n   Scatter: %d\n   ObjName: %s\n   Erasure Information: N %d, E %d, O %d, partsz %lu\n   neutil Args: -c \"%s:/marfs_config/repo name=%s/data/DAL\" -P %d -C %d -S %d -O \"%s\"\n\n", chunknum, chunkoff, fileobjbounds, location.pod, location.cap, location.scatter, objname, erasure.N, erasure.E, erasure.O, erasure.partsz, config_path, state->pos.ns->prepo->name, location.pod, location.cap, location.scatter, objname);
+   free(objname);
 
    return 0;
 }
@@ -811,11 +922,11 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
    }
 
    // parse args
-   int f_flag = 0;
+   int s_flag = 0;
    char* parse = strtok(args, " ");
    while (parse) {
-      if (strcmp(parse, "-f") == 0) {
-         f_flag = 1;
+      if (strcmp(parse, "-s") == 0) {
+         s_flag = 1;
       }
       else {
          printf(OUTPREFX "ERROR: Unrecognized argument for 'bound' command: '%s'\n", parse);
@@ -838,7 +949,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
    finftag.ctag = NULL; // unsafe to reference values we intend to free at any time
    finftag.streamid = NULL;
    char fineos = 0;
-   if (!f_flag) {
+   if (s_flag) {
       // iterate over files until we find EOS
       char errorflag = 0;
       while (state->ftag.endofstream == 0 && retval == 0 && state->gctag.eos == 0  &&
@@ -852,9 +963,13 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
             break;
          }
          // retrieve the FTAG of the new target
-         retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 0);
+         walkerinfo info = {0};
+         retval = populate_tags(config, &(state->pos), NULL, newrpath, 0, &info);
+         if ( !retval ) {
+            retval = update_state(&info, state, 0);
+         }
          if (retval) {
-            printf(OUTPREFX "ERROR: Failed to retrieve FTAG value from fileno 0\n");
+            printf(OUTPREFX "ERROR: Failed to retrieve FTAG value from fileno %zu\n", state->ftag.fileno);
             state->ftag.fileno = origfileno;
             errorflag = 1;
             break;
@@ -880,7 +995,11 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
          return -1;
       }
       // retrieve the FTAG of the new target
-      retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 0);
+      walkerinfo info = {0};
+      retval = populate_tags(config, &(state->pos), NULL, newrpath, 0, &info);
+      if ( !retval ) {
+         retval = update_state(&info, state, 0);
+      }
       free(newrpath);
       if ( errorflag ) { return -1; }
    }
@@ -911,7 +1030,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
 
 
    // print out stream boundaries
-   if (!f_flag) {
+   if (s_flag) {
       char* eosreason = "End of Stream";
       if (retval) {
          eosreason = "Failed to Identify Subsequent File";
@@ -960,7 +1079,11 @@ int refresh_command(marfs_config* config, walkerstate* state, char* args) {
       return -1;
    }
 
-   int retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 1);
+   walkerinfo info = {0};
+   int retval = populate_tags(config, &(state->pos), NULL, newrpath, 1, &info);
+   if ( !retval ) {
+      retval = update_state(&info, state, 1);
+   }
    printf("\n");
    free(newrpath);
 
