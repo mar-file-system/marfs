@@ -114,6 +114,7 @@ AXATTR_SET_FUNC_CHECK
 AC_CHECK_LIB([m], [log10], [], [AC_MSG_ERROR(["Could not locate libm!])])
 AC_CHECK_LIB([xml2], [xmlReadFile], [], [AC_MSG_ERROR(["Could not locate libxml2!"])])
 AC_CHECK_LIB([fuse], [fuse_main], [], [AC_MSG_ERROR(["Could not locate libfuse!"])])
+AC_CHECK_LIB([readline], [readline], [], [AC_MSG_ERROR(["Could not locate libreadline!"])])
 AC_CHECK_LIB([ne], [ne_init], [], [AC_MSG_ERROR(["Could not locate libne!  Please build and install the 'erasureUtils' repo.  If using a custom install location, you may need to add that 'lib' dir to your LDFLAGS='-L*' environment var."])])
 AC_CHECK_LIB([TQ], [tq_init], [], [AC_MSG_ERROR(["Could not locate libTQ!  Please build and install the 'erasureUtils' repo.  If using a custom install location, you may need to add that 'lib' dir to your LDFLAGS='-L*' environment var."])])
 AC_CHECK_LIB([mpi], [MPI_Abort], [], [AC_MSG_ERROR(["Could not locate libmpi!"])])

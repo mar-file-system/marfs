@@ -70,6 +70,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <string.h>
 #include <errno.h>
 #include <dirent.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 // ENOATTR is not always defined, so define a convenience val
 #ifndef ENOATTR
@@ -141,62 +143,155 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
       "                              Use the 'refresh' command to force a retrieval\n"
       "                              of this info from the corresponding file.\n")
 
-      USAGE("shift",
-         "( -@ offset | -n filenum )",
-         "Move to a new file in the current datastream",
-         "       -@ offset  : Specifies a number of files to move forward of backward\n"
-         "       -n filenum : Specifies a specific file number to move to\n")
+   USAGE("shift",
+      "( -@ offset | -n filenum )",
+      "Move to a new file in the current datastream",
+      "       -@ offset  : Specifies a number of files to move forward of backward\n"
+      "       -n filenum : Specifies a specific file number to move to\n")
 
-      USAGE("tags",
-         "",
-         "Print out the FTAG info of the current file", "")
+   USAGE("tags",
+      "",
+      "Print out the FTAG info of the current file", "")
 
-      USAGE("ref",
-         "",
-         "Identify the metadata reference path of the current file", "")
+   USAGE("ref",
+      "",
+      "Identify the metadata reference path of the current file", "")
 
-      USAGE("obj",
-         "[-@ offset | -n chunknum]",
-         "Print out the location of the current / specified object",
-         "       -@ chunknum : Specifies a specific object number in this file\n"
-         "       -n chunknum : Specifies a specific object number in this stream\n")
+   USAGE("obj",
+      "[-@ offset | -n chunknum]",
+      "Print out the location of the current / specified object",
+      "       -@ chunknum : Specifies a specific object number in this file\n"
+      "       -n chunknum : Specifies a specific object number in this stream\n")
 
-      USAGE("bounds",
-         "[-s]",
-         "Identify the boundaries of the current file / stream",
-         "       -s : Specifies to identify the bounds of the entire stream\n")
+   USAGE("bounds",
+      "[-s]",
+      "Identify the boundaries of the current file / stream",
+      "       -s : Specifies to identify the bounds of the entire stream\n")
 
-      USAGE("ns",
-         "[-p nspath]",
-         "Print / change the current MarFS namespace target of this program",
-         "       -p nspath : Specifies the path of a new NS target")
+   USAGE("ns",
+      "[-p nspath]",
+      "Print / change the current MarFS namespace target of this program",
+      "       -p nspath : Specifies the path of a new NS target")
 
-      USAGE("ls",
-         "[-p dirpath]",
-         "Print the content of the current / given directory",
-         "       -p dirpath : Specifies the path of a target directory")
+   USAGE("ls",
+      "[-p dirpath]",
+      "Print the content of the current / given directory",
+      "       -p dirpath : Specifies the path of a target directory")
 
-      USAGE("recovery",
-         "[-@ offset [-f seekfrom]]",
-         "Print the recovery information of the specified object",
-         "       -@ offset   : Specifies a file offset to seek to\n"
-         "       -f seekfrom : Specifies a start location for the seek\n"
-         "                    ( either 'set', 'cur', or 'end' )\n")
+   USAGE("recovery",
+      "[-@ offset [-f seekfrom]]",
+      "Print the recovery information of the specified object",
+      "       -@ offset   : Specifies a file offset to seek to\n"
+      "       -f seekfrom : Specifies a start location for the seek\n"
+      "                    ( either 'set', 'cur', or 'end' )\n")
 
-      USAGE("refresh",
-         "",
-         "Retrieve updated information from the current file target (via refpath)", "")
+   USAGE("refresh",
+      "",
+      "Retrieve updated information from the current file target (via refpath)", "")
 
-      USAGE("( exit | quit )",
-         "",
-         "Terminate", "")
+   USAGE("( exit | quit )",
+      "",
+      "Terminate", "")
 
-      USAGE("help", "[CMD]", "Print this usage info",
-         "       CMD : A specific command, for which to print detailed info\n")
+   USAGE("help", "[CMD]", "Print this usage info",
+      "       CMD : A specific command, for which to print detailed info\n")
 
-      printf("\n");
+   printf("\n");
 
 #undef USAGE
+}
+
+
+char* command_completion_matches( const char* text, int state ) {
+
+   // get the string length of the term we are substituting
+   size_t textlen = strlen(text);
+
+   // first, check if a comand has been entered at all
+   char* cmdstart = rl_line_buffer;
+   char* cmdend = NULL;
+   if ( cmdstart ) {
+      // progress this pointer to the first non-whitespace char
+      while ( *cmdstart != '\0' ) {
+         if ( *cmdstart != ' ' ) { break; }
+         cmdstart++;
+      }
+      if ( *cmdstart == '\0' ) { cmdstart = NULL; } // no cmd string found, so just drop it
+      else {
+         // find the end of the command string
+         cmdend = cmdstart;
+         while ( *cmdend != '\0' ) {
+            if ( *cmdend == ' ' ) { break; }
+            cmdend++;
+         }
+      }
+   }
+
+   // check if we're trying to fill in a command
+   if ( cmdstart == NULL  ||
+         ( rl_point >= (cmdstart - rl_line_buffer)  &&  rl_point <= (cmdend - rl_line_buffer) ) ) {
+      // iterate over all commands, returning the appropriate match index
+      int matchcount = 0;
+      if ( strncmp( "bounds", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "bounds" ); }
+         matchcount++;
+      }
+      if ( strncmp( "exit", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "exit" ); }
+         matchcount++;
+      }
+      if ( strncmp( "help", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "help" ); }
+         matchcount++;
+      }
+      if ( strncmp( "ls", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "ls" ); }
+         matchcount++;
+      }
+      if ( strncmp( "ns", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "ns" ); }
+         matchcount++;
+      }
+      if ( strncmp( "obj", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "obj" ); }
+         matchcount++;
+      }
+      if ( strncmp( "open", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "open" ); }
+         matchcount++;
+      }
+      if ( strncmp( "quit", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "quit" ); }
+         matchcount++;
+      }
+      if ( strncmp( "recovery", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "recovery" ); }
+         matchcount++;
+      }
+      if ( strncmp( "ref", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "ref" ); }
+         matchcount++;
+      }
+      if ( strncmp( "refresh", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "refresh" ); }
+         matchcount++;
+      }
+      if ( strncmp( "shift", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "shift" ); }
+         matchcount++;
+      }
+      if ( strncmp( "tags", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "tags" ); }
+         matchcount++;
+      }
+      return NULL; // no command matches remain
+   }
+
+   // we have a command established and are filling out some kind of arg
+
+   // TODO iterate forward through the string, trying to establish what arg we are populating
+
+   return NULL;
 }
 
 
@@ -1258,7 +1353,7 @@ int ns_command(marfs_config* config, marfs_position* pos, char* args) {
       if ( depth ) {
          printf(OUTPREFX "WARNING: Path tgt is not a MarFS NS ( depth = %d )\n", depth );
       }
-      else if ( oppos.ctxt == NULL  &&  config_fortifyposition( &oppos ) ) {
+      if ( oppos.ctxt == NULL  &&  config_fortifyposition( &oppos ) ) {
          printf(OUTPREFX "ERROR: Failed to fortify new NS position\n" );
          config_abandonposition( &oppos );
          return -1;
@@ -1392,41 +1487,49 @@ int command_loop(marfs_config* config, char* config_path) {
    bzero( &(state), sizeof( struct walkerstate_struct ) );
    printf("Initial Namespace Target : \"%s\"\n", pos.ns->idstr);
 
+   // initialize readline values
+   rl_completion_entry_function = command_completion_matches;
+
    // infinite loop, processing user commands
    printf(OUTPREFX "Ready for user commands\n");
    int retval = 0;
    while (1) {
-      printf("> ");
-      fflush(stdout);
-      // read in a new line from stdin ( 4096 char limit )
-      char inputline[4097] = { 0 }; // init to NULL bytes
-      if (scanf("%4096[^\n]", inputline) < 0) {
-         printf(OUTPREFX "ERROR: Failed to read user input\n");
-         retval = -1;
-         break;
-      }
-      fgetc(stdin); // to clear newline char
-      if (inputline[4095] != '\0') {
-         printf(OUTPREFX "ERROR: Input command exceeds parsing limit of 4096 chars\n");
-         retval = -1;
+
+      char* inputline = readline( "> " );
+
+      if ( inputline == NULL ) {
+         printf(OUTPREFX "Hit EOF on input\n");
+         printf(OUTPREFX "Terminating...\n");
          break;
       }
 
       // parse the input command
       char* parse = inputline;
       char repchar = 0;
+      char anycontent = 0;
       while (*parse != '\0') {
          parse++;
-         if (*parse == ' ') {
-            *parse = '\0'; repchar = 1;
+         if (anycontent  &&  *parse == ' ') {
+            repchar = 1;
+            break;
          }
+         else { anycontent = 1; }
       }
-      // check for program exit right away
+      // check for empty command right away
+      if (!anycontent) {
+         // no-op
+         continue;
+      }
+      // add this command line to our history
+      add_history(inputline);
+      // insert a NULL char, to allow for easy command comparison
+      if ( repchar ) { *parse = '\0'; }
+      // check for program exit
       if (strcmp(inputline, "exit") == 0 || strcmp(inputline, "quit") == 0) {
          printf(OUTPREFX "Terminating...\n");
          break;
       }
-      // check for 'help' command right away
+      // check for 'help' command
       if (strcmp(inputline, "help") == 0) {
          if (repchar) {
             *parse = ' ';
@@ -1434,11 +1537,8 @@ int command_loop(marfs_config* config, char* config_path) {
          usage(inputline);
          continue;
       }
-      // check for empty command right away
-      if (strcmp(inputline, "") == 0) {
-         // no-op
-         continue;
-      }
+
+      // skip to the next comand arg
       if (repchar) {
          parse++; // proceed to the char following ' '
          while (*parse == ' ') {
@@ -1520,6 +1620,8 @@ int command_loop(marfs_config* config, char* config_path) {
       else {
          printf(OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline);
       }
+
+      free(inputline);
 
    }
 
