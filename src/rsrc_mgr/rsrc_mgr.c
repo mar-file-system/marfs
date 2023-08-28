@@ -1478,7 +1478,8 @@ int main(int argc, char** argv) {
   }
 
   if (config_v) {
-    if (config_verify(cfg, ".", 1, 1, 1, 1)) {
+    int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
+    if (config_verify(cfg, ".", flags)) {
       fprintf(stderr, OUTPREFX "Rank %d: Failed to verify config: %s\n", rank, strerror(errno));
       config_term(cfg);
       return -1;
