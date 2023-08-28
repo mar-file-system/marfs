@@ -1161,9 +1161,7 @@ void marfs_fuse_init(void)
     exit(-1);
   }
   // initialize the MarFS config
-  // NOTE -- FUSE doesn't attempt to verify the config, as it will almost always be run as root.
-  //         We want to allow the 'secure root dir' to be owned by a non-root user, if desired.
-  fctxt->ctxt = marfs_init(getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, 0, &(fctxt->erasurelock));
+  fctxt->ctxt = marfs_init( getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, &(fctxt->erasurelock) );
   if ( fctxt->ctxt == NULL ) {
     fprintf( stderr, "Failed to initialize MarFS context!\n" );
     pthread_mutex_destroy( &(fctxt->erasurelock) );

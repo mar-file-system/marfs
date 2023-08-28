@@ -81,10 +81,7 @@ int main(int argc, const char** argv) {
    char* config_path = getenv( "MARFS_CONFIG_PATH" ); // check for config env var
    char* ns_path = ".";
    char* user_name = NULL;
-   char mdalcheck = 0;
-   char necheck = 0;
-   char recurse = 0;
-   char fix = 0;
+   int flags = CFG_OWNERCHECK;
 
    // parse all position-independent arguments
    char pr_usage = 0;
@@ -101,22 +98,22 @@ int main(int argc, const char** argv) {
          user_name = optarg;
          break;
       case 'm':
-         mdalcheck = 1;
+         flags |= CFG_MDALCHECK;
          break;
       case 'd':
-         necheck = 1;
+         flags |= CFG_DALCHECK;
          break;
       case 'r':
-         recurse = 1;
+         flags |= CFG_RECURSE;
          break;
       case 'f':
-         fix = 1;
+         flags |= CFG_FIX;
          break;
       case 'a':
-         mdalcheck = 1;
-         necheck = 1;
-         recurse = 1;
-         fix = 1;
+         flags |= CFG_MDALCHECK;
+         flags |= CFG_DALCHECK;
+         flags |= CFG_RECURSE;
+         flags |= CFG_FIX;
          break;
       case '?':
          printf( OUTPREFX "ERROR: Unrecognized cmdline argument: \'%c\'\n", optopt );
@@ -210,7 +207,8 @@ int main(int argc, const char** argv) {
    }
 
    // verify the config
-   int verres = config_verify(config, ns_path, mdalcheck, necheck, recurse, fix);
+   int verres = config_verify(config, ns_path, flags);
+
    if ( config_term(config) ) {
       printf(OUTPREFX "WARNING: Failed to properly terminate MarFS config ( %s )\n", strerror(errno));
    }

@@ -137,14 +137,15 @@ int main( int argc, char** argv ) {
       return -1;
    }
    marfs_config* verconf = config_init( "testing/config.xml", &erasurelock );
-   if ( config_verify( verconf, ".", 1, 1, 1, 1 ) ) {
+   int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
+   if ( config_verify( verconf, ".", flags ) ) {
       printf( "failed to verify batch ctxt config\n" );
       return -1;
    }
    config_term( verconf );
 
    // initialize our BATCH marfs ctxt
-   marfs_ctxt batchctxt = marfs_init( "testing/config.xml", MARFS_BATCH, 0, NULL );
+   marfs_ctxt batchctxt = marfs_init( "testing/config.xml", MARFS_BATCH, NULL );
    if ( batchctxt == NULL ) {
       printf( "failed to initialize batch ctxt\n" );
       return -1;
@@ -157,7 +158,7 @@ int main( int argc, char** argv ) {
    }
 
    // initialize our INTERACTIVE marfs ctxt
-   marfs_ctxt interctxt = marfs_init( "testing/config.xml", MARFS_INTERACTIVE, 1, &erasurelock );
+   marfs_ctxt interctxt = marfs_init( "testing/config.xml", MARFS_INTERACTIVE, &erasurelock );
    if ( interctxt == NULL ) {
       printf( "failed to initialize inter ctxt\n" );
       return -1;

@@ -556,7 +556,8 @@ int main(int argc, char **argv)
 
 
    // prepare for full path traversal by actually creating config namespaces
-   if ( config_verify(config,"/campaign/",1,1,1,1) ) {
+   int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
+   if ( config_verify(config,"/campaign/",flags ) ) {
       printf( "Config validation failure\n" );
       return -1;
    }

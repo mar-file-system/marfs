@@ -145,6 +145,15 @@ typedef struct marfs_position_struct {
    MDAL_CTXT ctxt;
 } marfs_position;
 
+// flags for config_verify
+enum {
+   CFG_FIX          = 0x1,  // fix problems found with the config
+   CFG_OWNERCHECK   = 0x2,  // check owner of MDAL "security directory"
+   CFG_MDALCHECK    = 0x4,  // check MDAL
+   CFG_DALCHECK     = 0x8,  // check NE (DAL)
+   CFG_RECURSE      = 0x10, // recursively check children of the namespace
+};
+
 /**
  * Initialize memory structures based on the given config file
  * @param const char* cpath : Path of the config file to be parsed
@@ -220,13 +229,10 @@ HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_
  *  reference dirs in the given config, and verifies the LibNE CTXT
  * @param marfs_config* config : Reference to the config to be validated
  * @param const char* tgtNS : Path of the NS to be verified
- * @param char MDALcheck : If non-zero, the MDAL security and reference dirs of each encountered NS will be verified
- * @param char NEcheck : If non-zero, the LibNE ctxt of each encountered NS will be verified
- * @param char recurse : If non-zero, children of the target NS will also be verified
- * @param char fix : If non-zero, attempt to correct any problems encountered
+ * @param int flags : flags to control behavior of the verification
  * @return int : A count of uncorrected errors encountered, or -1 if a failure occurred
  */
-int config_verify( marfs_config* config, const char* tgtNS, char MDALcheck, char NEcheck, char recurse, char fix );
+int config_verify( marfs_config* config, const char* tgtNS, int flags );
 
 /**
  * Traverse the given path, idetifying a final NS target and resulting subpath

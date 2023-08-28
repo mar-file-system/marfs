@@ -188,8 +188,6 @@ void pathcleanup( char* subpath, marfs_position* oppos ) {
  *         maintaining access to the MDAL/DAL root dirs via the returned marfs_ctxt.
  * @param const char* configpath : Path of the config file to initialize based on
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
- * @param char verify : If zero, skip config verification
- *                      If non-zero, verify the config and abort if any problems are found
  * @param pthread_mutex_t* erasurelock : Reference to a pthread_mutex lock, to be used for synchronizing access
  *                                       to isa-l erasure generation functions in multi-threaded programs.
  *                                       If NULL, marfs will create such a lock internally.  In such a case,
@@ -200,7 +198,7 @@ void pathcleanup( char* subpath, marfs_position* oppos ) {
  *                                       ALL marfs_init() calls.
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
-marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify, pthread_mutex_t* erasurelock ) {
+marfs_ctxt marfs_init( const char* configpath, marfs_interface type, pthread_mutex_t* erasurelock ) {
    LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid args
    if ( configpath == NULL ) {
@@ -239,15 +237,13 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, char verify
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return NULL;
    }
-   // verify our config, if requested
-   if ( verify ) {
-      if ( config_verify( ctxt->config, ".", 1, 1, 1, 0 ) ) {
-         LOG( LOG_ERR, "Encountered uncorrected errors with the MarFS config\n" );
-         config_term( ctxt->config );
-         free( ctxt );
-         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-         return NULL;
-      }
+   // verify our config
+   if ( config_verify( ctxt->config, ".", CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE ) ) {
+      LOG( LOG_ERR, "Encountered uncorrected errors with the MarFS config\n" );
+      config_term( ctxt->config );
+      free( ctxt );
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+    return NULL;
    }
    // initialize our positon to reference the root NS
    MDAL rootmdal = ctxt->config->rootns->prepo->metascheme.mdal;

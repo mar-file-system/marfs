@@ -69,6 +69,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <logging.h>
 
 #include "mdal.h"
+#include "config/config.h"
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -350,10 +351,15 @@ int posixmdal_cleanup( MDAL mdal ) {
  * @param const MDAL_CTXT ctxt : MDAL_CTXT for which to verify security
  *                               NOTE -- this ctxt CANNOT be associated with a NS target
  *                                       ( it must be freshly initialized )
- * @param char fix : If non-zero, attempt to correct any problems encountered
+ * @param int flags : currently uses CFG_FIX (correct any problems if true)
+ *                    and CFG_OWNERCHECK (check that UID of parent security dir
+ *                                        matches current user if true)
  * @return int : A count of uncorrected security issues, or -1 if a failure occurred
  */
-int posixmdal_checksec( const MDAL_CTXT ctxt, char fix ) {
+int posixmdal_checksec( const MDAL_CTXT ctxt, int flags ) {
+   int fix = flags & CFG_FIX;
+   int check_uid = flags & CFG_OWNERCHECK;
+
    // check for NULL ctxt
    if ( !(ctxt) ) {
       LOG( LOG_ERR, "Received a NULL MDAL_CTXT reference\n" );
@@ -421,7 +427,7 @@ int posixmdal_checksec( const MDAL_CTXT ctxt, char fix ) {
       prevdev = pstat.st_dev;
       previno = pstat.st_ino;
       // check if this dir has appropriate perms
-      if ( (pstat.st_mode & (S_IRWXG | S_IRWXO)) == 0  &&  pstat.st_uid == uid ) {
+      if ( (pstat.st_mode & (S_IRWXG | S_IRWXO)) == 0  &&  (!check_uid  ||  pstat.st_uid == uid )) {
          LOG( LOG_INFO, "Detected that parent dir has appropriate perms: \"%s\"\n", parentstr );
          foundsecdir = 1;
       }
