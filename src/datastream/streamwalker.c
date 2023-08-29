@@ -82,7 +82,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define OUTPREFX PROGNAME ": "
 
 static marfs_position globalpos;
-static char* globalcwd;
+static char* globalcwdpath;
 
 typedef struct walkerstate_struct {
    marfs_position pos;
@@ -171,10 +171,10 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
       "Identify the boundaries of the current file / stream",
       "       -s : Specifies to identify the bounds of the entire stream\n")
 
-   USAGE("ns",
-      "[-p nspath]",
-      "Print / change the current MarFS namespace target of this program",
-      "       -p nspath : Specifies the path of a new NS target")
+   USAGE("cd",
+      "[-p dirpath]",
+      "Print / change the current working directory of this program",
+      "       -p dirpath : Specifies the path of a new directory target")
 
    USAGE("ls",
       "[-p dirpath]",
@@ -251,8 +251,8 @@ char* command_completion_matches( const char* text, int state ) {
          if ( matchcount >= state ) { return strdup( "ls" ); }
          matchcount++;
       }
-      if ( strncmp( "ns", text, textlen ) == 0 ) {
-         if ( matchcount >= state ) { return strdup( "ns" ); }
+      if ( strncmp( "cd", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "cd" ); }
          matchcount++;
       }
       if ( strncmp( "obj", text, textlen ) == 0 ) {
@@ -1309,7 +1309,7 @@ int recovery_command(marfs_config* config, walkerstate* state, char* args) {
 
 }
 
-int ns_command(marfs_config* config, char** cwd, marfs_position* pos, char* args) {
+int cd_command(marfs_config* config, char** cwdpath, marfs_position* pos, char* args) {
    printf("\n");
 
    // parse args
@@ -1322,7 +1322,7 @@ int ns_command(marfs_config* config, char** cwd, marfs_position* pos, char* args
             curarg = 'p';
          }
          else {
-            printf(OUTPREFX "ERROR: Unrecognized argument for 'ns' command: '%s'\n", parse);
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'cd' command: '%s'\n", parse);
             return -1;
          }
       }
@@ -1341,10 +1341,11 @@ int ns_command(marfs_config* config, char** cwd, marfs_position* pos, char* args
    }
 
    if (path != NULL) {
-      // Need to traverse this path and update the position
+      // Need to traverse this path relative to our current position
       marfs_position oppos = { .ns = NULL, .depth = 0, .ctxt = NULL };
       if ( config_duplicateposition( pos, &oppos ) ) {
-         printf( OUTPREFX "ERROR: Failed to duplicate active position for config traversal\n" );
+         printf( OUTPREFX "ERROR: Failed to duplicate position for config traversal\n" );
+         free( path );
          return -1;
       }
       // perform path traversal to identify marfs position
@@ -1352,24 +1353,115 @@ int ns_command(marfs_config* config, char** cwd, marfs_position* pos, char* args
       if ( (depth = config_traverse(config, &oppos, &(path), 1)) < 0) {
          printf(OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
             path);
-         free(path);
+         free( path );
          config_abandonposition( &oppos );
          return -1;
-      }
-      free(path);
-      if ( depth ) {
-         printf(OUTPREFX "WARNING: Path tgt is not a MarFS NS ( depth = %d )\n", depth );
       }
       if ( oppos.ctxt == NULL  &&  config_fortifyposition( &oppos ) ) {
          printf(OUTPREFX "ERROR: Failed to fortify new NS position\n" );
+         free( path );
          config_abandonposition( &oppos );
          return -1;
+      }
+      // possibly build up the path, relative to the current NS root
+      char* abspath = NULL;
+      if ( oppos.depth  &&  strlen( *cwdpath ) ) {
+         size_t abspathlen = strlen( *cwdpath ) + 1 + strlen( path ) + 1;
+         abspath = calloc( 1, sizeof(char) * (abspathlen + 1) );
+         if ( abspath == NULL ) {
+            printf( OUTPREFX "ERROR: Failed to allocate absolute path of length %zu\n", abspathlen );
+            free( path );
+            config_abandonposition( &oppos );
+            return -1;
+         }
+         if ( snprintf( abspath, abspathlen, "%s/%s", *cwdpath, path ) != abspathlen - 1 ) {
+            printf( OUTPREFX "ERROR: Failed to construct absolute path of length %zu\n", abspathlen );
+            free( abspath );
+            free( path );
+            config_abandonposition( &oppos );
+            return -1;
+         }
+         // collapse redundant path elements
+//printf( "COLLAPSING \"%s\"\n", abspath );
+         char* parsepos = abspath;
+         char* filltgt = abspath;
+         while ( filltgt <= parsepos  &&  *parsepos != '\0' ) {
+            char* curelem = parsepos;
+            size_t elemlen = 0;
+            while ( *parsepos != '\0' ) {
+               // check for an end to this path element
+               if ( *parsepos == '/' ) {
+                  // progress to the start of the next path element
+                  while ( *parsepos == '/' ) { parsepos++; }
+                  break;
+               }
+               elemlen++;
+               parsepos++;
+            }
+            if ( elemlen == 2  &&  strncmp( curelem, "..", 2 ) == 0 ) {
+               // reverse our filltgt to the start of the previous path element
+               filltgt -= 2; // skip over the previous '/' char
+               while ( filltgt > abspath  &&  *filltgt != '/' ) { filltgt--; }
+               if ( filltgt < abspath ) {
+                  // sanity check
+                  printf( OUTPREFX "ERROR: Failed to collapse NS-relative CWD path: \"%s\"\n", abspath );
+                  free( abspath );
+                  free( path );
+                  config_abandonposition( &oppos );
+                  return -1;
+               }
+               if ( *filltgt == '/' ) { filltgt++; }
+//printf( "trimming elem\n" );
+            }
+            else if ( elemlen != 1  ||  *curelem != '.' ) {
+//printf( "adding elem %.*s\n", (int)elemlen, curelem );
+               // fill in our string with this path element
+               if ( filltgt != curelem ) {
+                  snprintf( filltgt, elemlen + 1, "%s", curelem );
+               }
+               filltgt += elemlen;
+               *filltgt = '/';
+               filltgt++;
+            }
+         }
+         *filltgt = '\0';
+//printf( "RESULT \"%s\"\n", abspath );
+      }
+      if ( depth != oppos.depth ) {
+         // attempt to open the directory target
+         MDAL_DHANDLE tgtdir = oppos.ns->prepo->metascheme.mdal->opendir( oppos.ctxt, path );
+         if ( tgtdir == NULL ) {
+            printf(OUTPREFX "ERROR: Failed to open target subdir of \"%s\" NS: \"%s\" ( %s )\n",
+                   oppos.ns->idstr, path, strerror( errno ) );
+            if ( abspath ) { free( abspath ); }
+            free( path );
+            config_abandonposition( &oppos );
+            return -1;
+         }
+         // update our ctxt to reference the target dir
+         if ( oppos.ns->prepo->metascheme.mdal->chdir( oppos.ctxt, tgtdir ) ) {
+            printf(OUTPREFX "ERROR: Failed to chdir into target subdir of \"%s\" NS: \"%s\" ( %s )\n",
+                   oppos.ns->idstr, path, strerror( errno ) );
+            oppos.ns->prepo->metascheme.mdal->closedir( tgtdir );
+            if ( abspath ) { free( abspath ); }
+            free( path );
+            config_abandonposition( &oppos );
+            return -1;
+         }
+         oppos.depth = depth; // we are actually targeting any subpath, if specified
       }
       // update our pos arg
       config_abandonposition( pos );
       *pos = oppos; // just direct copy, and don't abandon this position
+      if ( *cwdpath ) { free( *cwdpath ); }
+      if ( abspath ) {
+         *cwdpath = abspath; // update our cwd path
+         free( path );
+      }
+      else { *cwdpath = path; }
    }
-   printf("%s Namespace Target : \"%s\" ( Depth = %u )\n\n", (path == NULL) ? "Current" : "New", pos->ns->idstr, pos->depth);
+   printf("%s Namespace Target : \"%s\" Subpath Target : \"%s\" ( Depth = %u )\n\n",
+           (path == NULL) ? "Current" : "New", pos->ns->idstr, *cwdpath, pos->depth);
    return 0;
 }
 
@@ -1421,22 +1513,17 @@ int ls_command(marfs_config* config, marfs_position* pos, char* args) {
    // attempt to open a dir handle for the target path
    MDAL curmdal = tmppos.ns->prepo->metascheme.mdal;
    MDAL_DHANDLE lsdir = NULL;
-   if ( targetdepth == 0 ) {
-      if ( tmppos.ctxt == NULL ) {
-         // ignore our current path
-         if ( lstgt ) { free( lstgt ); }
-         // identify the full path of the NS target
-         if ( config_nsinfo( tmppos.ns->idstr, NULL, &(lstgt) ) ) {
-            printf( OUTPREFX "ERROR: Failed to identify path of NS target: \"%s\" ( %s )\n",
-                    tmppos.ns->idstr, strerror( errno ) );
-            config_abandonposition( &(tmppos) );
-            return -1;
-         }
-         lsdir = curmdal->opendirnamespace( curmdal->ctxt, lstgt );
+   if ( targetdepth == 0  &&  tmppos.ctxt == NULL ) {
+      // ignore our current path
+      if ( lstgt ) { free( lstgt ); }
+      // identify the full path of the NS target
+      if ( config_nsinfo( tmppos.ns->idstr, NULL, &(lstgt) ) ) {
+         printf( OUTPREFX "ERROR: Failed to identify path of NS target: \"%s\" ( %s )\n",
+                 tmppos.ns->idstr, strerror( errno ) );
+         config_abandonposition( &(tmppos) );
+         return -1;
       }
-      else {
-         lsdir = curmdal->opendirnamespace( tmppos.ctxt, lstgt );
-      }
+      lsdir = curmdal->opendirnamespace( curmdal->ctxt, lstgt );
    }
    else { lsdir = curmdal->opendir( tmppos.ctxt, lstgt ); }
    if ( lsdir == NULL ) {
@@ -1458,7 +1545,7 @@ int ls_command(marfs_config* config, marfs_position* pos, char* args) {
    struct dirent* retval = NULL;
    while ( errno == 0 ) {
       retval = curmdal->readdir( lsdir );
-      if ( retval  &&  ( ( targetdepth == 0  &&  curmdal->pathfilter( retval->d_name ) == 0 )  ||  targetdepth ) ) {
+      if ( retval  &&  ( targetdepth  ||  curmdal->pathfilter( retval->d_name ) == 0 ) ) {
          printf( "   %s\n", retval->d_name );
       }
       else if ( retval == NULL ) { break; }
@@ -1488,8 +1575,8 @@ int command_loop(marfs_config* config, char* config_path) {
       return -1;
    }
    // initialize an empty string for our cwd path
-   globalcwd = strdup( "" );
-   if ( globalcwd == NULL ) {
+   globalcwdpath = strdup( "" );
+   if ( globalcwdpath == NULL ) {
       printf(OUTPREFX "ERROR: Failed to allocate a current working directory string\n");
       config_abandonposition( &globalpos );
       return -1;
@@ -1507,13 +1594,13 @@ int command_loop(marfs_config* config, char* config_path) {
    int retval = 0;
    while (1) {
 
-      size_t promptlen = strlen(globalpos.ns->idstr) + 1 + strlen( globalcwd ) + 4;
+      size_t promptlen = strlen(globalpos.ns->idstr) + 1 + strlen( globalcwdpath ) + 4;
       char* promptstr = calloc( 1, promptlen * sizeof(char) );
       if ( promptstr == NULL ) {
          printf(OUTPREFX "ERROR: Failed to allocate prompt string\n" );
          break;
       }
-      snprintf( promptstr, promptlen, "%s/%s > ", globalpos.ns->idstr, globalcwd );
+      snprintf( promptstr, promptlen, "%s/%s > ", globalpos.ns->idstr, globalcwdpath );
 
       char* inputline = readline( promptstr );
       free( promptstr );
@@ -1548,6 +1635,7 @@ int command_loop(marfs_config* config, char* config_path) {
       // check for program exit
       if (strcmp(inputline, "exit") == 0 || strcmp(inputline, "quit") == 0) {
          printf(OUTPREFX "Terminating...\n");
+         free( inputline );
          break;
       }
       // check for 'help' command
@@ -1624,10 +1712,10 @@ int command_loop(marfs_config* config, char* config_path) {
             retval = 0; // note success
          }
       }
-      else if (strcmp(inputline, "ns") == 0) {
+      else if (strcmp(inputline, "cd") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (ns_command(config, &(globalcwd), &(globalpos), parse) == 0) {
+         if (cd_command(config, &(globalcwdpath), &(globalpos), parse) == 0) {
             retval = 0; // note success
          }
       }
@@ -1671,10 +1759,11 @@ int command_loop(marfs_config* config, char* config_path) {
    if ( state.pos.ns  &&  config_abandonposition(&state.pos)) {
       printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
    }
-   if ( globalcwd ) { free( globalcwd ); }
+   if ( globalcwdpath ) { free( globalcwdpath ); }
    if (config_abandonposition(&globalpos)) {
       printf(OUTPREFX "WARNING: Failed to properly destroy active marfs position\n");
    }
+   rl_clear_history();
    return retval;
 }
 
