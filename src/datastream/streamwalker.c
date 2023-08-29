@@ -81,6 +81,9 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define PROGNAME "marfs-streamwalker"
 #define OUTPREFX PROGNAME ": "
 
+static marfs_position globalpos;
+static char* globalcwd;
+
 typedef struct walkerstate_struct {
    marfs_position pos;
    HASH_TABLE     reftable;
@@ -1306,7 +1309,7 @@ int recovery_command(marfs_config* config, walkerstate* state, char* args) {
 
 }
 
-int ns_command(marfs_config* config, marfs_position* pos, char* args) {
+int ns_command(marfs_config* config, char** cwd, marfs_position* pos, char* args) {
    printf("\n");
 
    // parse args
@@ -1326,6 +1329,10 @@ int ns_command(marfs_config* config, marfs_position* pos, char* args) {
       else {
          // duplicate the path arg
          path = strdup( parse );
+         if ( path == NULL ) {
+            printf(OUTPREFX "ERROR: Failed to allocate intermediate string\n" );
+            return -1;
+         }
          curarg = '\0';
       }
 
@@ -1362,7 +1369,7 @@ int ns_command(marfs_config* config, marfs_position* pos, char* args) {
       config_abandonposition( pos );
       *pos = oppos; // just direct copy, and don't abandon this position
    }
-   printf("%s Namespace Target : \"%s\"\n\n", (path == NULL) ? "Current" : "New", pos->ns->idstr);
+   printf("%s Namespace Target : \"%s\" ( Depth = %u )\n\n", (path == NULL) ? "Current" : "New", pos->ns->idstr, pos->depth);
    return 0;
 }
 
@@ -1473,19 +1480,24 @@ int ls_command(marfs_config* config, marfs_position* pos, char* args) {
 
 int command_loop(marfs_config* config, char* config_path) {
    // initialize a marfs position
-   marfs_position pos = {
-      .ns = NULL,
-      .depth = 0,
-      .ctxt = NULL
-   };
-   if ( config_establishposition( &pos, config ) ) {
+   globalpos.ns = NULL;
+   globalpos.depth = 0;
+   globalpos.ctxt = NULL;
+   if ( config_establishposition( &globalpos, config ) ) {
       printf(OUTPREFX "ERROR: Failed to establish a position for the MarFS root\n");
+      return -1;
+   }
+   // initialize an empty string for our cwd path
+   globalcwd = strdup( "" );
+   if ( globalcwd == NULL ) {
+      printf(OUTPREFX "ERROR: Failed to allocate a current working directory string\n");
+      config_abandonposition( &globalpos );
       return -1;
    }
    // initialize walk state
    walkerstate state;
    bzero( &(state), sizeof( struct walkerstate_struct ) );
-   printf("Initial Namespace Target : \"%s\"\n", pos.ns->idstr);
+   printf("Initial Namespace Target : \"%s\"\n", globalpos.ns->idstr);
 
    // initialize readline values
    rl_completion_entry_function = command_completion_matches;
@@ -1495,7 +1507,16 @@ int command_loop(marfs_config* config, char* config_path) {
    int retval = 0;
    while (1) {
 
-      char* inputline = readline( "> " );
+      size_t promptlen = strlen(globalpos.ns->idstr) + 1 + strlen( globalcwd ) + 4;
+      char* promptstr = calloc( 1, promptlen * sizeof(char) );
+      if ( promptstr == NULL ) {
+         printf(OUTPREFX "ERROR: Failed to allocate prompt string\n" );
+         break;
+      }
+      snprintf( promptstr, promptlen, "%s/%s > ", globalpos.ns->idstr, globalcwd );
+
+      char* inputline = readline( promptstr );
+      free( promptstr );
 
       if ( inputline == NULL ) {
          printf(OUTPREFX "Hit EOF on input\n");
@@ -1550,7 +1571,7 @@ int command_loop(marfs_config* config, char* config_path) {
       if (strcmp(inputline, "open") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (open_command(config, &(pos), &(state), parse) == 0) {
+         if (open_command(config, &(globalpos), &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
@@ -1606,14 +1627,14 @@ int command_loop(marfs_config* config, char* config_path) {
       else if (strcmp(inputline, "ns") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (ns_command(config, &(pos), parse) == 0) {
+         if (ns_command(config, &(globalcwd), &(globalpos), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if ( strcmp( inputline, "ls" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
-         if (ls_command(config, &(pos), parse) == 0) {
+         if (ls_command(config, &(globalpos), parse) == 0) {
             retval = 0; // note success
          }
       }
@@ -1650,7 +1671,8 @@ int command_loop(marfs_config* config, char* config_path) {
    if ( state.pos.ns  &&  config_abandonposition(&state.pos)) {
       printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
    }
-   if (config_abandonposition(&pos)) {
+   if ( globalcwd ) { free( globalcwd ); }
+   if (config_abandonposition(&globalpos)) {
       printf(OUTPREFX "WARNING: Failed to properly destroy active marfs position\n");
    }
    return retval;
