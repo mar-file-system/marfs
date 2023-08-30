@@ -231,8 +231,10 @@ char* command_completion_matches( const char* text, int state ) {
    }
 
    // check if we're trying to fill in a command
-   if ( cmdstart == NULL  ||
-         ( rl_point >= (cmdstart - rl_line_buffer)  &&  rl_point <= (cmdend - rl_line_buffer) ) ) {
+   if ( cmdstart == NULL  ||  // no command yet started
+        ( rl_point >= (cmdstart - rl_line_buffer)  &&  rl_point <= (cmdend - rl_line_buffer) )  ||  // user is typing within the command string
+        ( rl_point > (cmdend - rl_line_buffer)  &&  strncmp( cmdstart, "help", cmdend - cmdstart ) == 0 )  // user is typing beyond the 'help' cmd
+       ) {
       // iterate over all commands, returning the appropriate match index
       int matchcount = 0;
       if ( strncmp( "bounds", text, textlen ) == 0 ) {
@@ -292,7 +294,134 @@ char* command_completion_matches( const char* text, int state ) {
 
    // we have a command established and are filling out some kind of arg
 
-   // TODO iterate forward through the string, trying to establish what arg we are populating
+   // iterate forward through the string, trying to establish what arg we are populating
+   char* argparse = cmdend;
+   char* prevarg = NULL;
+   char argstate = 0; // indicate that we are looking for a new arg
+   while ( *argparse != '\0'  &&  rl_point > (argparse - rl_line_buffer) ) {
+      if ( !argstate  &&  *argparse == '-' ) { argstate = 1; }
+      else if ( argstate == 1  &&  prevarg == NULL ) { prevarg = argparse; } // save a pointer to the argument flag
+      // modify argstate if necessary
+      switch ( argstate ) {
+         case 1:
+            if ( *argparse == ' ' ) { argstate++; } // note that we are beyond the argument itself, and now looking for a value
+            break;
+         case 2:
+            if ( *argparse != ' ' ) { argstate++; } // note that we are within the value for the previous arg
+         case 3:
+            if ( *argparse == ' ' ) { argstate = 0; prevarg = NULL; } // note that we are completely done with the previous arg
+      }
+      argparse++;
+   }
+
+   // populate args based on command string
+   // NOTE : omitting all commands which don't have arguments to be populated
+   // TODO argument values
+   if ( strncmp( cmdstart, "bounds", cmdend - cmdstart ) == 0 ) {
+      if ( !state ) { return strdup( "-s" ); }
+   }
+   else if ( strncmp( cmdstart, "ls", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( !state ) { return strdup( "-p" ); }
+      }
+   }
+   else if ( strncmp( cmdstart, "cd", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( !state ) { return strdup( "-p" ); }
+      }
+   }
+   else if ( strncmp( cmdstart, "obj", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( prevarg ) {
+            if ( !state ) {
+               switch( *prevarg ) {
+                  case '@':
+                     return strdup( "-@" );
+                  case 'n':
+                     return strdup( "-n" );
+               }
+            }
+         }
+         else {
+            switch ( state ) {
+               case 0:
+                  return strdup( "-@" );
+               case 1:
+                  return strdup( "-n" );
+            }
+         }
+      }
+   }
+   else if ( strncmp( cmdstart, "open", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( prevarg ) {
+            if ( !state ) {
+               switch( *prevarg ) {
+                  case 'p':
+                     return strdup( "-p" );
+                  case 'r':
+                     return strdup( "-r" );
+                  case 't':
+                     return strdup( "-t" );
+               }
+            }
+         }
+         else {
+            switch ( state ) {
+               case 0:
+                  return strdup( "-p" );
+               case 1:
+                  return strdup( "-r" );
+               case 2:
+                  return strdup( "-t" );
+            }
+         }
+      }
+   }
+   else if ( strncmp( cmdstart, "recovery", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( prevarg ) {
+            if ( !state ) {
+               switch( *prevarg ) {
+                  case '@':
+                     return strdup( "-@" );
+                  case 'f':
+                     return strdup( "-f" );
+               }
+            }
+         }
+         else {
+            switch ( state ) {
+               case 0:
+                  return strdup( "-@" );
+               case 1:
+                  return strdup( "-f" );
+            }
+         }
+      }
+   }
+   else if ( strncmp( cmdstart, "shift", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( prevarg ) {
+            if ( !state ) {
+               switch( *prevarg ) {
+                  case '@':
+                     return strdup( "-@" );
+                  case 'n':
+                     return strdup( "-n" );
+               }
+            }
+         }
+         else {
+            switch ( state ) {
+               case 0:
+                  return strdup( "-@" );
+               case 1:
+                  return strdup( "-n" );
+            }
+         }
+      }
+   }
 
    return NULL;
 }
@@ -1082,6 +1211,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
          if ( state->gctag.refcnt ) { state->ftag.fileno += state->gctag.refcnt; }
       }
       finftag = state->ftag;
+      finftag.fileno--; // subtract one, as we adjusted this before hitting the end of loop check
       finftag.ctag = NULL; // unsafe to reference values we intend to free at any time
       finftag.streamid = NULL;
       fineos = state->gctag.eos;
@@ -1587,6 +1717,7 @@ int command_loop(marfs_config* config, char* config_path) {
    printf("Initial Namespace Target : \"%s\"\n", globalpos.ns->idstr);
 
    // initialize readline values
+   rl_basic_word_break_characters = " \t\n\"\\'`$><=;|&{("; // omit '@' from word break chars
    rl_completion_entry_function = command_completion_matches;
 
    // infinite loop, processing user commands
