@@ -85,7 +85,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 // NOTE - these are necessary to support readline() behaviors
 static marfs_position globalpos = {0};
 static char* globalcwdpath = NULL;
-static MDAL_DHANDLE globalpathcompdir = NULL;
+static char globalusepathcomp = 1;
+//static MDAL_DHANDLE globalpathcompdir = NULL;
 
 // this is used to store the state of a target datastream
 typedef struct walkerstate_struct {
@@ -210,6 +211,8 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
 
+// TODO  -- path copletion, independent of FUSE instance
+#if 0
 char* path_completion_matches( const char* text, int state ) {
    // start by duplicating just the path portion we are matching
    ssize_t matchtextlen = rl_point - ( text - rl_line_buffer );
@@ -301,7 +304,7 @@ char* path_completion_matches( const char* text, int state ) {
    free( path );
    return NULL;
 }
-
+#endif
 
 char* command_completion_matches( const char* text, int state ) {
 
@@ -414,7 +417,6 @@ char* command_completion_matches( const char* text, int state ) {
 
    // populate args based on command string
    // NOTE : omitting all commands which don't have arguments to be populated
-   // TODO argument values
    if ( strncmp( cmdstart, "bounds", cmdend - cmdstart ) == 0 ) {
       if ( !state ) { return strdup( "-s" ); }
    }
@@ -422,10 +424,22 @@ char* command_completion_matches( const char* text, int state ) {
       if ( argstate <= 1 ) { // we are populating an argument to the previous command
          if ( !state ) { return strdup( "-p" ); }
       }
+      else { // we are populating the value of a previous argument flag
+         if ( prevarg ) {
+            // use built-in path completion, via FUSE, for the '-p' arg
+            if ( *prevarg == 'p'  &&  globalusepathcomp ) { return rl_filename_completion_function( text, state ); }
+         }
+      }
    }
    else if ( strncmp( cmdstart, "cd", cmdend - cmdstart ) == 0 ) {
       if ( argstate <= 1 ) { // we are populating an argument to the previous command
          if ( !state ) { return strdup( "-p" ); }
+      }
+      else { // we are populating the value of a previous argument flag
+         if ( prevarg ) {
+            // use built-in path completion, via FUSE, for the '-p' arg
+            if ( *prevarg == 'p'  &&  globalusepathcomp ) { return rl_filename_completion_function( text, state ); }
+         }
       }
    }
    else if ( strncmp( cmdstart, "obj", cmdend - cmdstart ) == 0 ) {
@@ -475,6 +489,12 @@ char* command_completion_matches( const char* text, int state ) {
             }
          }
       }
+      else { // we are populating the value of a previous argument flag
+         if ( prevarg ) {
+            // use built-in path completion, via FUSE, for the '-p' arg
+            if ( *prevarg == 'p'  &&  globalusepathcomp ) { return rl_filename_completion_function( text, state ); }
+         }
+      }
    }
    else if ( strncmp( cmdstart, "recovery", cmdend - cmdstart ) == 0 ) {
       if ( argstate <= 1 ) { // we are populating an argument to the previous command
@@ -494,6 +514,26 @@ char* command_completion_matches( const char* text, int state ) {
                   return strdup( "-@" );
                case 1:
                   return strdup( "-f" );
+            }
+         }
+      }
+      else { // we are populating the value of a previous argument flag
+         if ( prevarg ) {
+            // '-f' arg has a very limited set of possible strings
+            if ( *prevarg == 'f' ) {
+               // iterate over all commands, returning the appropriate match index
+               int matchcount = 0;
+               if ( strncmp( "set", text, textlen ) == 0 ) {
+                  if ( matchcount >= state ) { return strdup( "set" ); }
+                  matchcount++;
+               }
+               if ( strncmp( "cur", text, textlen ) == 0 ) {
+                  if ( matchcount >= state ) { return strdup( "cur" ); }
+                  matchcount++;
+               }
+               if ( strncmp( "end", text, textlen ) == 0 ) {
+                  if ( matchcount >= state ) { return strdup( "end" ); }
+               } // fall through to NULL case
             }
          }
       }
@@ -1542,6 +1582,7 @@ int cd_command(marfs_config* config, char** cwdpath, marfs_position* pos, char* 
 
    // parse args
    char curarg = '\0';
+   const char* origpath = NULL; // for potential FUSE chdir() use
    char* path = NULL;
    char* parse = strtok(args, " ");
    while (parse) {
@@ -1561,6 +1602,7 @@ int cd_command(marfs_config* config, char** cwdpath, marfs_position* pos, char* 
             printf(OUTPREFX "ERROR: Failed to allocate intermediate string\n" );
             return -1;
          }
+         origpath = parse;
          curarg = '\0';
       }
 
@@ -1678,6 +1720,14 @@ int cd_command(marfs_config* config, char** cwdpath, marfs_position* pos, char* 
          }
          oppos.depth = depth; // we are actually targeting any subpath, if specified
       }
+      // if we are using FUSE for path completion, attempt to chdir as well
+      if ( globalusepathcomp ) {
+         if ( chdir( origpath ) ) {
+            printf(OUTPREFX "WARNING: Failed to chdir() into MarFS FUSE position \"%s\" ( %s ) : Path autocompletion is now disabled\n",
+                   origpath, strerror(errno) );
+            globalusepathcomp = 0;
+         }
+      }
       // update our pos arg
       config_abandonposition( pos );
       *pos = oppos; // just direct copy, and don't abandon this position
@@ -1741,7 +1791,7 @@ int ls_command(marfs_config* config, marfs_position* pos, char* args) {
    // attempt to open a dir handle for the target path
    MDAL curmdal = tmppos.ns->prepo->metascheme.mdal;
    MDAL_DHANDLE lsdir = NULL;
-   if ( targetdepth == 0  &&  tmppos.ctxt == NULL ) {
+   if ( targetdepth == 0 ) {
       // ignore our current path
       if ( lstgt ) { free( lstgt ); }
       // identify the full path of the NS target
@@ -2048,6 +2098,61 @@ int main(int argc, const char** argv) {
       return -1;
    }
    printf(OUTPREFX "marfs config loaded...\n");
+
+   // verify that FUSE appears to be mounted
+   struct stat fstatval;
+   if ( stat( config->mountpoint, &(fstatval) ) == 0 ) {
+      // duplicate FUSE mount path ( for modification )
+      char* fmount = strdup( config->mountpoint );
+      if ( fmount ) {
+         // iterate through the path, looking for the final '/' char
+         char* lastsep = fmount;
+         char* parse = fmount;
+         while ( *parse != '\0' ) {
+            if ( *parse == '/' ) { lastsep = parse; }
+            parse++;
+         }
+         *lastsep = '\0'; // truncate off the final path element
+         // stat the parent path
+         struct stat pstatval;
+         int statres;
+         if ( lastsep == fmount ) { // FUSE is mounted at the global FS root
+            statres = stat( "/", &(pstatval) );
+         }
+         else {
+            statres = stat( fmount, &(pstatval) );
+         }
+         // check for error / device match between FUSE and parent paths
+         if ( statres ) {
+            printf(OUTPREFX "WARNING: Failed to stat parent path of MarFS FUSE mount \"%s\" ( %s ) : Path autocompletion is disabled\n",
+                   config->mountpoint, strerror(errno) );
+            globalusepathcomp = 0;
+         }
+         else if ( fstatval.st_dev == pstatval.st_dev ) {
+            printf(OUTPREFX "WARNING: MarFS FUSE does not appear to be mounted at \"%s\" : Path autocompletion is disabled\n",
+                   config->mountpoint );
+            globalusepathcomp = 0;
+         }
+         free( fmount );
+      }
+      else {
+         printf(OUTPREFX "WARNING: Failed to duplicate path of MarFS FUSE mount \"%s\" ( %s ) : Path autocompletion is disabled\n",
+                config->mountpoint, strerror(errno) );
+         globalusepathcomp = 0;
+      }
+   }
+   else {
+      printf(OUTPREFX "WARNING: Failed to stat MarFS FUSE mount \"%s\" ( %s ) : Path autocompletion is disabled\n",
+             config->mountpoint, strerror(errno) );
+      globalusepathcomp = 0;
+   }
+
+   // attempt to chdir into FUSE instance
+   if ( globalusepathcomp  &&  chdir( config->mountpoint ) ) {
+      printf(OUTPREFX "WARNING: Failed to chdir() into MarFS FUSE at \"%s\" ( %s ) : Path autocompletion is disabled\n",
+             config->mountpoint, strerror(errno) );
+      globalusepathcomp = 0;
+   }
 
    // enter the main command loop
    int retval = 0;
