@@ -2042,7 +2042,6 @@ int command_loop(marfs_config* config, char* config_path) {
    if (config_abandonposition(&globalpos)) {
       printf(OUTPREFX "WARNING: Failed to properly destroy active marfs position\n");
    }
-   rl_clear_history();
    return retval;
 }
 
