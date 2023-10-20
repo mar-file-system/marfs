@@ -238,7 +238,9 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, pthread_mut
       return NULL;
    }
    // verify our config
-   if ( config_verify( ctxt->config, ".", CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE ) ) {
+   int verifyflags = CFG_MDALCHECK | CFG_DALCHECK;
+   if ( getuid() == 0 ) { verifyflags |= CFG_RECURSE; } // only attempt to recurse if we are running as root ( guarantess sub-NS access )
+   if ( config_verify( ctxt->config, ".", verifyflags ) ) {
       LOG( LOG_ERR, "Encountered uncorrected errors with the MarFS config\n" );
       config_term( ctxt->config );
       free( ctxt );
