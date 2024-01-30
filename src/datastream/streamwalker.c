@@ -86,7 +86,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 static marfs_position globalpos = {0};
 static char* globalcwdpath = NULL;
 static char globalusepathcomp = 1;
-//static MDAL_DHANDLE globalpathcompdir = NULL;
 
 // this is used to store the state of a target datastream
 typedef struct walkerstate_struct {
@@ -210,101 +209,6 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 #undef USAGE
 }
 
-
-// TODO  -- path copletion, independent of FUSE instance
-#if 0
-char* path_completion_matches( const char* text, int state ) {
-   // start by duplicating just the path portion we are matching
-   ssize_t matchtextlen = rl_point - ( text - rl_line_buffer );
-   if ( matchtextlen < 0 ) { return NULL; } // no point being descriptive, just give up
-   char* path = calloc( 1, sizeof(char) * (matchtextlen + 1) );
-   if ( path == NULL ) { return NULL; }
-   snprintf( path, matchtextlen + 1, "%s", text ); // will truncate off text beyond 'rl_point'
-
-   // sanity checks and convenience vars
-   if ( globalpos.ns == NULL ) { free( path ); return NULL; }
-   MDAL curmdal = globalpos.ns->prepo->metascheme.mdal;
-   char* matchpath = path; // for dirent comparision, may be modified during comp dir setup
-
-   // setup / cleanup our completion dir handle, if we are in initial state
-   if ( !state ) {
-      // cleanup our previous completion dir handle, if necessary
-      if ( globalpathcompdir ) {
-         curmdal->closedir( globalpathcompdir ); // ignore failure
-         globalpathcompdir = NULL;
-      }
-
-      // first, optimistically check if the user is already targeting a valid path
-      struct stat stval;
-      if ( curmdal->stat( globalpos.ctxt, path, &(stval), 0 ) == 0 ) {
-         // if this is a directory, that is our new compdir tgt
-         if ( S_ISDIR( stval.st_mode ) ) {
-            globalpathcompdir = curmdal->opendir( globalpos.ctxt, path );
-            matchpath = NULL;
-         }
-         else { return path; } // otherwise, just return the file itself as the target
-      }
-      else if ( errno == ENOENT ) { // any unexpected errno values should fall through, causing a NULL return
-         // now we need to identify the most appropriate parent dir path to open
-         char* parsepath = path;
-         char* finsep = NULL;
-         while ( *parsepath != '\0' ) {
-            if ( *parsepath == '/' ) {
-               finsep = parsepath;
-            }
-            parsepath++;
-         }
-
-         // potentially use the most immediate parent path as our compdir tgt
-         if ( finsep ) {
-            matchpath = finsep + 1; // we'll be matching against the final path element
-            *finsep = '\0'; // trim off the trailing element for now
-            globalpathcompdir = curmdal->opendir( globalpos.ctxt, path ); // open the truncated path
-         }
-         else {
-            // otherwise, we'll just be using the cwd of the program
-            globalpathcompdir = curmdal->opendir( globalpos.ctxt, "." ); // open a new cwd handle via the '.' entry
-         }
-      }
-   }
-
-   // perform matches against available dirents
-   if ( globalpathcompdir ) {
-      // readdir through the tgt compdir until we find a possible match
-      struct dirent* matchent = NULL;
-      while ( matchent == NULL ) {
-         // get the next dirent
-         matchent = curmdal->readdir( globalpathcompdir );
-         if ( matchent == NULL ) { break; } // check for end of dir
-         if ( globalpos.depth == 0  &&  curmdal->pathfilter( matchent->d_name ) ) {
-            // omit any filtered paths
-            matchent = NULL;
-            continue;
-         }
-         // check if this is a possible match
-         int matchpathlen = 0;
-         if ( matchpath ) { matchpathlen = strlen(matchpath); }
-         if ( matchpathlen ) {
-            // check if the entry fits our existing prefix
-            if ( strncmp( matchpath, matchent->d_name, matchpathlen ) ) {
-               matchent = NULL; // throw out mismatch
-            }
-         } // otherwise, this is an automatic match
-      }
-
-      // if we have a match, use it to construct a path completion
-      if ( matchent ) {
-      }
-
-      // cleanup our compdir
-      curmdal->closedir( globalpathcompdir ); // ignore failure
-      globalpathcompdir = NULL;
-   }
-
-   free( path );
-   return NULL;
-}
-#endif
 
 char* command_completion_matches( const char* text, int state ) {
 
