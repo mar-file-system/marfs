@@ -1743,7 +1743,7 @@ int posixmdal_statref ( const MDAL_CTXT ctxt, const char* rpath, struct stat* bu
    }
    // issue the stat
    if ( fstatat( pctxt->refd, rpath, buf, 0 ) ) {
-      LOG( LOG_ERR, "Failed to stat the target path: \"%s\"\n", rpath );
+      LOG( LOG_INFO, "Failed to stat the target path: \"%s\" ( %s )\n", rpath, strerror(errno) );
       return -1;
    }
    return 0;

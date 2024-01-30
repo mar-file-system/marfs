@@ -719,10 +719,10 @@ char* config_validatemnt( marfs_config* config, marfs_ns* tgtns, char* subpath )
  *         restrictive perms.  Such non-NS paths must actually be traversed.
  *         Example, original values:
  *            tgtns == rootns
- *            return == "subspace/somedir/../../../target"
+ *            subpath == "subspace/somedir/../../target"
  *         Result:
- *            tgtns == subspace                     (NOT rootns)
- *            return == "somedir/../../../target"   (NOT "target")
+ *            tgtns == subspace                  (NOT rootns)
+ *            return == "somedir/../../target"   (NOT "target")
  * @param marfs_config* config : Config to traverse
  * @param marfs_ns** tgtns : Reference populated with the initial NS value
  *                           This will be updated to reflect the resulting NS value

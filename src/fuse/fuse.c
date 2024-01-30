@@ -161,7 +161,7 @@ int fuse_chmod(const char *path, mode_t mode)
   enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
-  int ret = marfs_chmod(fctxt->ctxt, newpath, mode, AT_SYMLINK_NOFOLLOW);
+  int ret = marfs_chmod(fctxt->ctxt, newpath, mode, 0);
   if ( ret )
   {
     LOG(LOG_ERR, "%s: %s\n", path, strerror(errno));

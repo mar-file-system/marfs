@@ -681,7 +681,7 @@ typedef struct MDAL_struct {
     * @param const char* path : String path of the target file
     * @param mode_t mode : New mode value for the file (see inode man page)
     * @param int flags : A bitwise OR of the following...
-    *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
+    *                    AT_SYMLINK_NOFOLLOW - (AVOID: POSIX LEAVES UNIMPLEMENTED) do not dereference a symlink target
     * @return int : Zero on success, or -1 if a failure occurred
     */
    int (*chmod) ( const MDAL_CTXT ctxt, const char* path, mode_t mode, int flags );

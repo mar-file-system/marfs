@@ -238,7 +238,9 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, pthread_mut
       return NULL;
    }
    // verify our config
-   if ( config_verify( ctxt->config, ".", CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE ) ) {
+   int verifyflags = CFG_MDALCHECK | CFG_DALCHECK;
+   if ( getuid() == 0 ) { verifyflags |= CFG_RECURSE; } // only attempt to recurse if we are running as root ( guarantess sub-NS access )
+   if ( config_verify( ctxt->config, ".", verifyflags ) ) {
       LOG( LOG_ERR, "Encountered uncorrected errors with the MarFS config\n" );
       config_term( ctxt->config );
       free( ctxt );
@@ -559,7 +561,7 @@ int marfs_stat( marfs_ctxt ctxt, const char* path, struct stat *buf, int flags )
  * @param const char* path : String path of the target file
  * @param mode_t mode : New mode value for the file (see inode man page)
  * @param int flags : A bitwise OR of the following...
- *                    AT_SYMLINK_NOFOLLOW - do not dereference a symlink target
+ *                    AT_SYMLINK_NOFOLLOW - (AVOID: POSIX LEAVES UNIMPLEMENTED) do not dereference a symlink target
  * @return int : Zero on success, or -1 if a failure occurred
  */
 int marfs_chmod( marfs_ctxt ctxt, const char* path, mode_t mode, int flags ) {

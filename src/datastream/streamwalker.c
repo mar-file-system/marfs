@@ -70,6 +70,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <string.h>
 #include <errno.h>
 #include <dirent.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 // ENOATTR is not always defined, so define a convenience val
 #ifndef ENOATTR
@@ -79,6 +81,13 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define PROGNAME "marfs-streamwalker"
 #define OUTPREFX PROGNAME ": "
 
+// global vars defining MarFS position / cwd path / tab-completion dir
+// NOTE - these are necessary to support readline() behaviors
+static marfs_position globalpos = {0};
+static char* globalcwdpath = NULL;
+static char globalusepathcomp = 1;
+
+// this is used to store the state of a target datastream
 typedef struct walkerstate_struct {
    marfs_position pos;
    HASH_TABLE     reftable;
@@ -86,6 +95,14 @@ typedef struct walkerstate_struct {
    GCTAG          gctag;
    char*          oftagstr;
 } walkerstate;
+
+// this is used as a temporary holding structure for new datastream info
+typedef struct walkerinfo_struct {
+   marfs_position pos;
+   char*          ftagstr;
+   GCTAG          gctag;
+   char*          oftagstr;
+} walkerinfo;
 
 // Show all the usage options in one place, for easy reference
 // An arrow appears next to the one you tried to use.
@@ -122,62 +139,421 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
 }
 
    USAGE("open",
-      "( -p userpath | -r refpath )",
+      "( -p path | -r refpath [-p NSpath] | -t ftagval )",
       "Begin traversing a new datastream, starting at the given file",
-      "       -p userpath  : Specifies a user path to retrieve stream info from\n"
+      "       -p path      : Specifies a user-visible path to pull stream info from\n"
       "                       OR the path of the target NS, if '-r' is used\n"
-      "       -r refpath   : Specifies a reference path to retrieve stream info from\n")
+      "       -r refpath   : Specifies a reference path to retrieve stream info from\n"
+      "       -t ftagval   : Directly specifies the tgt stream info, via FTAG value\n"
+      "                       NOTE - When used with this option, file existence is\n"
+      "                              not verified and any additional file information\n"
+      "                              ( GCTAG, OFTAG, etc. ) WILL be omitted.\n"
+      "                              Use the 'refresh' command to force a retrieval\n"
+      "                              of this info from the corresponding file.\n")
 
-      USAGE("shift",
-         "( -@ offset | -n filenum )",
-         "Move to a new file in the current datastream",
-         "       -@ offset  : Specifies a number of files to move forward of backward\n"
-         "       -n filenum : Specifies a specific file number to move to\n")
+   USAGE("shift",
+      "( -@ offset | -n filenum )",
+      "Move to a new file in the current datastream",
+      "       -@ offset  : Specifies a number of files to move forward of backward\n"
+      "       -n filenum : Specifies a specific file number to move to\n")
 
-      USAGE("tags",
-         "",
-         "Print out the FTAG info of the current file", "")
+   USAGE("tags",
+      "",
+      "Print out the FTAG info of the current file", "")
 
-      USAGE("ref",
-         "",
-         "Identify the metadata reference path of the current file", "")
+   USAGE("ref",
+      "",
+      "Identify the metadata reference path of the current file", "")
 
-      USAGE("obj",
-         "[-n chunknum]",
-         "Print out the location of the specified object",
-         "       -n chunknum : Specifies a specific data chunk\n")
+   USAGE("obj",
+      "[-@ offset | -n chunknum]",
+      "Print out the location of the current / specified object",
+      "       -@ chunknum : Specifies a specific object number in this *file*\n"
+      "       -n chunknum : Specifies a specific object number in this *stream*\n")
 
-      USAGE("bounds",
-         "[-f]",
-         "Identify the boundaries of the current stream",
-         "       -f : Specifies to identify the bounds of just the current file\n")
+   USAGE("bounds",
+      "[-s]",
+      "Identify the boundaries of the current file / stream",
+      "       -s : Specifies to identify the bounds of the entire stream\n")
 
-      USAGE("ns",
-         "[-p nspath]",
-         "Print / change the current MarFS namespace target of this program",
-         "       -p nspath : Specifies the path of a new NS target")
+   USAGE("cd",
+      "[-p dirpath]",
+      "Print / change the current working directory of this program",
+      "       -p dirpath : Specifies the path of a new directory target")
 
-      USAGE("recovery",
-         "[-@ offset -f seekfrom]",
-         "Print the recovery information of the specified object",
-         "       -@ offset   : Specifies a file offset to seek to\n"
-         "       -f seekfrom : Specifies a start location for the seek\n"
-         "                    ( either 'set', 'cur', or 'end' )\n")
+   USAGE("ls",
+      "[-p dirpath]",
+      "Print the content of the current / given directory",
+      "       -p dirpath : Specifies the path of a target directory")
 
-      USAGE("( exit | quit )",
-         "",
-         "Terminate", "")
+   USAGE("recovery",
+      "[-@ offset [-f seekfrom]]",
+      "Print the recovery information of the specified object",
+      "       -@ offset   : Specifies a file offset to seek to\n"
+      "       -f seekfrom : Specifies a start location for the seek\n"
+      "                    ( either 'set', 'cur', or 'end' )\n")
 
-      USAGE("help", "[CMD]", "Print this usage info",
-         "       CMD : A specific command, for which to print detailed info\n")
+   USAGE("refresh",
+      "",
+      "Retrieve updated information from the current file target (via refpath)", "")
 
-      printf("\n");
+   USAGE("( exit | quit )",
+      "",
+      "Terminate", "")
+
+   USAGE("help", "[CMD]", "Print this usage info",
+      "       CMD : A specific command, for which to print detailed info\n")
+
+   printf("\n");
 
 #undef USAGE
 }
 
 
-int populate_tags(marfs_config* config, marfs_position* pathpos, walkerstate* state, const char* path, const char* rpath, char prout) {
+char* command_completion_matches( const char* text, int state ) {
+
+   // get the string length of the term we are substituting
+   size_t textlen = strlen(text);
+
+   // first, check if a comand has been entered at all
+   char* cmdstart = rl_line_buffer;
+   char* cmdend = NULL;
+   if ( cmdstart ) {
+      // progress this pointer to the first non-whitespace char
+      while ( *cmdstart != '\0' ) {
+         if ( *cmdstart != ' ' ) { break; }
+         cmdstart++;
+      }
+      if ( *cmdstart == '\0' ) { cmdstart = NULL; } // no cmd string found, so just drop it
+      else {
+         // find the end of the command string
+         cmdend = cmdstart;
+         while ( *cmdend != '\0' ) {
+            if ( *cmdend == ' ' ) { break; }
+            cmdend++;
+         }
+      }
+   }
+
+   // check if we're trying to fill in a command
+   if ( cmdstart == NULL  ||  // no command yet started
+        ( rl_point >= (cmdstart - rl_line_buffer)  &&  rl_point <= (cmdend - rl_line_buffer) )  ||  // user is typing within the command string
+        ( rl_point > (cmdend - rl_line_buffer)  &&  strncmp( cmdstart, "help", cmdend - cmdstart ) == 0 )  // user is typing beyond the 'help' cmd
+       ) {
+      // iterate over all commands, returning the appropriate match index
+      int matchcount = 0;
+      if ( strncmp( "bounds", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "bounds" ); }
+         matchcount++;
+      }
+      if ( strncmp( "exit", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "exit" ); }
+         matchcount++;
+      }
+      if ( strncmp( "help", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "help" ); }
+         matchcount++;
+      }
+      if ( strncmp( "ls", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "ls" ); }
+         matchcount++;
+      }
+      if ( strncmp( "cd", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "cd" ); }
+         matchcount++;
+      }
+      if ( strncmp( "obj", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "obj" ); }
+         matchcount++;
+      }
+      if ( strncmp( "open", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "open" ); }
+         matchcount++;
+      }
+      if ( strncmp( "quit", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "quit" ); }
+         matchcount++;
+      }
+      if ( strncmp( "recovery", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "recovery" ); }
+         matchcount++;
+      }
+      if ( strncmp( "ref", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "ref" ); }
+         matchcount++;
+      }
+      if ( strncmp( "refresh", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "refresh" ); }
+         matchcount++;
+      }
+      if ( strncmp( "shift", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "shift" ); }
+         matchcount++;
+      }
+      if ( strncmp( "tags", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "tags" ); }
+         matchcount++;
+      }
+      return NULL; // no command matches remain
+   }
+
+   // we have a command established and are filling out some kind of arg
+
+   // iterate forward through the string, trying to establish what arg we are populating
+   char* argparse = cmdend;
+   char* prevarg = NULL;
+   char argstate = 0; // indicate that we are looking for a new arg
+   while ( *argparse != '\0'  &&  rl_point > (argparse - rl_line_buffer) ) {
+      if ( !argstate  &&  *argparse == '-' ) { argstate = 1; }
+      else if ( argstate == 1  &&  prevarg == NULL ) { prevarg = argparse; } // save a pointer to the argument flag
+      // modify argstate if necessary
+      switch ( argstate ) {
+         case 1:
+            if ( *argparse == ' ' ) { argstate++; } // note that we are beyond the argument itself, and now looking for a value
+            break;
+         case 2:
+            if ( *argparse != ' ' ) { argstate++; } // note that we are within the value for the previous arg
+         case 3:
+            if ( *argparse == ' ' ) { argstate = 0; prevarg = NULL; } // note that we are completely done with the previous arg
+      }
+      argparse++;
+   }
+
+   // populate args based on command string
+   // NOTE : omitting all commands which don't have arguments to be populated
+   if ( strncmp( cmdstart, "bounds", cmdend - cmdstart ) == 0 ) {
+      if ( !state ) { return strdup( "-s" ); }
+   }
+   else if ( strncmp( cmdstart, "ls", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( !state ) { return strdup( "-p" ); }
+      }
+      else { // we are populating the value of a previous argument flag
+         if ( prevarg ) {
+            // use built-in path completion, via FUSE, for the '-p' arg
+            if ( *prevarg == 'p'  &&  globalusepathcomp ) { return rl_filename_completion_function( text, state ); }
+         }
+      }
+   }
+   else if ( strncmp( cmdstart, "cd", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( !state ) { return strdup( "-p" ); }
+      }
+      else { // we are populating the value of a previous argument flag
+         if ( prevarg ) {
+            // use built-in path completion, via FUSE, for the '-p' arg
+            if ( *prevarg == 'p'  &&  globalusepathcomp ) { return rl_filename_completion_function( text, state ); }
+         }
+      }
+   }
+   else if ( strncmp( cmdstart, "obj", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( prevarg ) {
+            if ( !state ) {
+               switch( *prevarg ) {
+                  case '@':
+                     return strdup( "-@" );
+                  case 'n':
+                     return strdup( "-n" );
+               }
+            }
+         }
+         else {
+            switch ( state ) {
+               case 0:
+                  return strdup( "-@" );
+               case 1:
+                  return strdup( "-n" );
+            }
+         }
+      }
+   }
+   else if ( strncmp( cmdstart, "open", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( prevarg ) {
+            if ( !state ) {
+               switch( *prevarg ) {
+                  case 'p':
+                     return strdup( "-p" );
+                  case 'r':
+                     return strdup( "-r" );
+                  case 't':
+                     return strdup( "-t" );
+               }
+            }
+         }
+         else {
+            switch ( state ) {
+               case 0:
+                  return strdup( "-p" );
+               case 1:
+                  return strdup( "-r" );
+               case 2:
+                  return strdup( "-t" );
+            }
+         }
+      }
+      else { // we are populating the value of a previous argument flag
+         if ( prevarg ) {
+            // use built-in path completion, via FUSE, for the '-p' arg
+            if ( *prevarg == 'p'  &&  globalusepathcomp ) { return rl_filename_completion_function( text, state ); }
+         }
+      }
+   }
+   else if ( strncmp( cmdstart, "recovery", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( prevarg ) {
+            if ( !state ) {
+               switch( *prevarg ) {
+                  case '@':
+                     return strdup( "-@" );
+                  case 'f':
+                     return strdup( "-f" );
+               }
+            }
+         }
+         else {
+            switch ( state ) {
+               case 0:
+                  return strdup( "-@" );
+               case 1:
+                  return strdup( "-f" );
+            }
+         }
+      }
+      else { // we are populating the value of a previous argument flag
+         if ( prevarg ) {
+            // '-f' arg has a very limited set of possible strings
+            if ( *prevarg == 'f' ) {
+               // iterate over all commands, returning the appropriate match index
+               int matchcount = 0;
+               if ( strncmp( "set", text, textlen ) == 0 ) {
+                  if ( matchcount >= state ) { return strdup( "set" ); }
+                  matchcount++;
+               }
+               if ( strncmp( "cur", text, textlen ) == 0 ) {
+                  if ( matchcount >= state ) { return strdup( "cur" ); }
+                  matchcount++;
+               }
+               if ( strncmp( "end", text, textlen ) == 0 ) {
+                  if ( matchcount >= state ) { return strdup( "end" ); }
+               } // fall through to NULL case
+            }
+         }
+      }
+   }
+   else if ( strncmp( cmdstart, "shift", cmdend - cmdstart ) == 0 ) {
+      if ( argstate <= 1 ) { // we are populating an argument to the previous command
+         if ( prevarg ) {
+            if ( !state ) {
+               switch( *prevarg ) {
+                  case '@':
+                     return strdup( "-@" );
+                  case 'n':
+                     return strdup( "-n" );
+               }
+            }
+         }
+         else {
+            switch ( state ) {
+               case 0:
+                  return strdup( "-@" );
+               case 1:
+                  return strdup( "-n" );
+            }
+         }
+      }
+   }
+
+   return NULL;
+}
+
+
+int update_state(walkerinfo* sourceinfo, walkerstate* tgtstate, char prout) {
+
+   // populate FTAG values based on xattr content
+   FTAG tmpftag = {0};
+   if (ftag_initstr(&(tmpftag), sourceinfo->ftagstr)) {
+      printf(OUTPREFX "ERROR: Failed to parse FTAG string: \"%s\" (%s)\n",
+         sourceinfo->ftagstr, strerror(errno));
+      if ( sourceinfo->oftagstr ) { free(sourceinfo->oftagstr); }
+      free(sourceinfo->ftagstr);
+      config_abandonposition( &(sourceinfo->pos) );
+      return -1;
+   }
+   // check if we need a custom reference table
+   HASH_TABLE tmpreftable = sourceinfo->pos.ns->prepo->metascheme.reftable;
+   if ( tmpftag.refbreadth != sourceinfo->pos.ns->prepo->metascheme.refbreadth  ||
+        tmpftag.refdepth != sourceinfo->pos.ns->prepo->metascheme.refdepth  ||
+        tmpftag.refdigits != sourceinfo->pos.ns->prepo->metascheme.refdigits ) {
+      tmpreftable = config_genreftable( NULL, NULL, tmpftag.refbreadth,
+                                            tmpftag.refdepth, tmpftag.refdigits );
+      if ( tmpreftable == NULL ) {
+         printf(OUTPREFX "ERROR: Failed to instantiate a custom reference table ( %s )\n", strerror(errno));
+         if ( tmpftag.ctag ) { free( tmpftag.ctag ); }
+         if ( tmpftag.streamid ) { free( tmpftag.streamid ); }
+         if ( sourceinfo->oftagstr ) { free(sourceinfo->oftagstr); }
+         free(sourceinfo->ftagstr);
+         config_abandonposition( &(sourceinfo->pos) );
+         return -1;
+      }
+   }
+   // cleanup previous state, if necessary
+   if (tgtstate->ftag.ctag) {
+      free(tgtstate->ftag.ctag);
+      tgtstate->ftag.ctag = NULL;
+   }
+   if (tgtstate->ftag.streamid) {
+      free(tgtstate->ftag.streamid);
+      tgtstate->ftag.streamid = NULL;
+   }
+   if ( tgtstate->reftable  &&  tgtstate->reftable != tgtstate->pos.ns->prepo->metascheme.reftable ) {
+      HASH_NODE* nodelist = NULL;
+      size_t nodecount = 0;
+      if ( hash_term( tgtstate->reftable, &(nodelist), &(nodecount) ) ){
+         printf(OUTPREFX "WARNING: Failed to properly destroy custom reference HASH_TABLE\n");
+      }
+      else {
+         size_t nodeindex = 0;
+         for ( ; nodeindex < nodecount; nodeindex++ ) {
+            if ( (nodelist + nodeindex)->name ) { free( (nodelist + nodeindex)->name ); }
+         }
+         free( nodelist );
+      }
+      tgtstate->reftable = NULL;
+   }
+   if ( tgtstate->oftagstr ) { free( tgtstate->oftagstr ); tgtstate->oftagstr = NULL; }
+   if ( tgtstate->pos.ns  &&  config_abandonposition( &(tgtstate->pos) )) {
+      printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
+   }
+   // update the passed state
+   tgtstate->ftag = tmpftag;
+   tgtstate->reftable = tmpreftable;
+   tgtstate->gctag = sourceinfo->gctag;
+   tgtstate->oftagstr = sourceinfo->oftagstr;
+   // do a semi-sketchy direct copy of postion values
+   tgtstate->pos = sourceinfo->pos;
+   if (prout) {
+      printf(OUTPREFX "Values Updated\n" );
+      if ( tgtstate->gctag.refcnt ) {
+         printf(OUTPREFX "   NOTE -- This file has a GCTAG attached\n" );
+      }
+      if ( tgtstate->oftagstr ) {
+         printf(OUTPREFX "   NOTE -- This file has previously been repacked\n" );
+      }
+      if ( tgtstate->reftable != sourceinfo->pos.ns->prepo->metascheme.reftable ) {
+         printf(OUTPREFX "   NOTE -- File has a non-standard reference structure\n" );
+      }
+      printf("\n");
+   }
+   // cleanup any unused sourceinfo elements
+   free(sourceinfo->ftagstr);
+   return 0;
+
+}
+
+
+int populate_tags(marfs_config* config, marfs_position* pathpos, const char* path, const char* rpath, char prout, walkerinfo* resultinfo) {
    char* modpath = NULL;
    marfs_position oppos = { .ns = NULL, .depth = 0, .ctxt = NULL };
    if ( config_duplicateposition( pathpos, &oppos ) ) {
@@ -320,81 +696,19 @@ int populate_tags(marfs_config* config, marfs_position* pathpos, walkerstate* st
    if (mdal->close(handle)) {
       printf(OUTPREFX "WARNING: Failed to close handle for target file (%s)\n", strerror(errno));
    }
-   // cleanup previous state, if necessary
-   if (state->ftag.ctag) {
-      free(state->ftag.ctag);
-      state->ftag.ctag = NULL;
-   }
-   if (state->ftag.streamid) {
-      free(state->ftag.streamid);
-      state->ftag.streamid = NULL;
-   }
-   if ( state->reftable  &&  state->reftable != state->pos.ns->prepo->metascheme.reftable ) {
-      HASH_NODE* nodelist = NULL;
-      size_t nodecount = 0;
-      if ( hash_term( state->reftable, &(nodelist), &(nodecount) ) ){
-         printf(OUTPREFX "WARNING: Failed to properly destroy custom reference HASH_TABLE\n");
-      }
-      else {
-         size_t nodeindex = 0;
-         for ( ; nodeindex < nodecount; nodeindex++ ) {
-            if ( (nodelist + nodeindex)->name ) { free( (nodelist + nodeindex)->name ); }
-         }
-         free( nodelist );
-      }
-      state->reftable = NULL;
-   }
-   if ( state->oftagstr ) { free( state->oftagstr ); state->oftagstr = NULL; }
-   if ( state->pos.ns  &&  config_abandonposition( &(state->pos) )) {
-      printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
-   }
-   // populate FTAG values based on xattr content
-   if (ftag_initstr(&(state->ftag), ftagstr)) {
-      printf(OUTPREFX "ERROR: Failed to parse FTAG string: \"%s\" (%s)\n",
-         ftagstr, strerror(errno));
-      if ( tmpoftagstr ) { free(tmpoftagstr); }
-      free(ftagstr);
-      config_abandonposition( &oppos );
-      return -1;
-   }
-   // check if we need a custom reference table
-   if ( state->ftag.refbreadth != oppos.ns->prepo->metascheme.refbreadth  ||
-        state->ftag.refdepth != oppos.ns->prepo->metascheme.refdepth  ||
-        state->ftag.refdigits != oppos.ns->prepo->metascheme.refdigits ) {
-      state->reftable = config_genreftable( NULL, NULL, state->ftag.refbreadth,
-                                            state->ftag.refdepth, state->ftag.refdigits );
-      if ( state->reftable == NULL ) {
-         printf(OUTPREFX "ERROR: Failed to instantiate a custom reference table ( %s )\n", strerror(errno));
-         if ( state->ftag.ctag ) { free( state->ftag.ctag ); }
-         if ( state->ftag.streamid ) { free( state->ftag.streamid ); }
-         bzero( &(state->ftag), sizeof( FTAG ) );
-         if ( tmpoftagstr ) { free(tmpoftagstr); }
-         free(ftagstr);
-         config_abandonposition( &oppos );
-         return -1;
-      }
-   }
-   else { state->reftable = oppos.ns->prepo->metascheme.reftable; } // can just use the standard ref table
-   // actually update the passed state now
-   state->gctag = tmpgctag;
-   state->oftagstr = tmpoftagstr;
-   // do a semi-sketchy direct copy of postion values
-   state->pos = oppos; // no need to abandon oppos now
+
    if (prout) {
-      printf(OUTPREFX "Successfully populated FTAG values for target %s file: \"%s\"\n",
+      printf(OUTPREFX "Successfully retrieved values from target %s file: \"%s\"\n",
          (rpath) ? "ref" : "user", (rpath) ? rpath : path);
-      if ( state->gctag.refcnt ) {
-         printf(OUTPREFX "   NOTE -- This file has a GCTAG attached\n" );
-      }
-      if ( state->oftagstr ) {
-         printf(OUTPREFX "   NOTE -- This file has previously been repacked\n" );
-      }
-      if ( state->reftable != oppos.ns->prepo->metascheme.reftable ) {
-         printf(OUTPREFX "   NOTE -- File has a non-standard reference structure\n" );
-      }
-      printf("\n");
    }
-   free(ftagstr);
+
+   // update the passed info struct
+   resultinfo->ftagstr = ftagstr;
+   resultinfo->gctag = tmpgctag;
+   resultinfo->oftagstr = tmpoftagstr;
+   // do a semi-sketchy direct copy of postion values
+   resultinfo->pos = oppos;
+
    return 0;
 }
 
@@ -405,6 +719,7 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
    char curarg = '\0';
    char* userpath = NULL;
    char* refpath = NULL;
+   char* ftagval = NULL;
    char* parse = strtok(args, " ");
    while (parse) {
       if (curarg == '\0') {
@@ -414,6 +729,9 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
          else if (strcmp(parse, "-r") == 0) {
             curarg = 'r';
          }
+         else if (strcmp(parse, "-t") == 0) {
+            curarg = 't';
+         }
          else {
             printf(OUTPREFX "ERROR: Unrecognized argument for 'open' command: '%s'\n", parse);
             if (userpath) {
@@ -421,6 +739,9 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
             }
             if (refpath) {
                free(refpath);
+            }
+            if (ftagval) {
+               free(ftagval);
             }
             return -1;
          }
@@ -434,20 +755,40 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
                if (refpath) {
                   free(refpath);
                }
+               if (ftagval) {
+                  free(ftagval);
+               }
                return -1;
             }
             tgtstr = &(userpath);
          }
-         else { // == r
+         else if (curarg == 'r') {
             if (refpath != NULL) {
                printf(OUTPREFX "ERROR: Detected duplicate '-r' arg: \"%s\"\n", parse);
                free(refpath);
                if (userpath) {
                   free(userpath);
                }
+               if (ftagval) {
+                  free(ftagval);
+               }
                return -1;
             }
             tgtstr = &(refpath);
+         }
+         else { // == t
+            if (ftagval != NULL) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-t' arg: \"%s\"\n", parse);
+               free(ftagval);
+               if (userpath) {
+                  free(userpath);
+               }
+               if (refpath) {
+                  free(refpath);
+               }
+               return -1;
+            }
+            tgtstr = &(ftagval);
          }
          *tgtstr = strdup(parse);
          if (*tgtstr == NULL) {
@@ -459,6 +800,9 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
             if (refpath) {
                free(refpath);
             }
+            if (ftagval) {
+               free(ftagval);
+            }
             return -1;
          }
          curarg = '\0';
@@ -468,19 +812,44 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
       parse = strtok(NULL, " ");
    }
    // check that we have at least one arg
-   if (!(userpath) && !(refpath)) {
-      printf(OUTPREFX "ERROR: 'open' command requires at least one '-p' or '-r' arg\n");
+   if (!(userpath) && !(refpath) && !(ftagval)) {
+      printf(OUTPREFX "ERROR: 'open' command requires at least one '-p', '-r', or '-t' arg\n");
+      return -1;
+   }
+   // check for incompatible args
+   if ( ftagval  &&  (userpath  ||  refpath) ) {
+      free(ftagval);
+      if (userpath) {
+         free(userpath);
+      }
+      if (refpath) {
+         free(refpath);
+      }
+      printf(OUTPREFX "ERROR: the 'open' command '-t' arg is incompatible with both '-p' and '-r'\n");
       return -1;
    }
 
    // populate our FTAG and cleanup strings
-   int retval = populate_tags(config, pathpos, state, userpath, refpath, 1);
+   walkerinfo info = {0};
+   int retval = 0;
+   if ( ftagval ) {
+      info.ftagstr = ftagval;
+      if ( (retval = config_duplicateposition( pathpos, &(info.pos) )) ) {
+         printf(OUTPREFX "ERROR: failed to duplicate current streamwalker position\n");
+         free( ftagval );
+      }
+   }
+   else { retval = populate_tags(config, pathpos, userpath, refpath, 1, &info); }
+   if ( !retval ) {
+      retval = update_state(&info, state, 1);
+   }
    if (userpath) {
       free(userpath);
    }
    if (refpath) {
       free(refpath);
    }
+   // NOTE -- we explicitly don't free ftagval, as update_state() should have done so already
    return retval;
 }
 
@@ -579,7 +948,11 @@ int shift_command(marfs_config* config, walkerstate* state, char* args) {
       return -1;
    }
 
-   int retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 1);
+   walkerinfo info = {0};
+   int retval = populate_tags(config, &(state->pos), NULL, newrpath, 1, &info);
+   if ( !retval ) {
+      retval = update_state(&info, state, 1);
+   }
    if (retval) {
       state->ftag.fileno = origfileno;
    }
@@ -698,18 +1071,32 @@ int obj_command(marfs_config* config, char* config_path, walkerstate* state, cha
    // parse args
    char curarg = '\0';
    ssize_t chunknum = -1;
+   char haveoffset = 0;
+   ssize_t chunkoff = 0;
    char* parse = strtok(args, " ");
    while (parse) {
       if (curarg == '\0') {
          if (strcmp(parse, "-n") == 0) {
+            if (chunknum != -1) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-n' arg\n");
+               return -1;
+            }
             curarg = 'n';
+         }
+         else if (strcmp(parse, "-@") == 0) {
+            if (haveoffset) {
+               printf(OUTPREFX "ERROR: Detected duplicate '-@' arg\n");
+               return -1;
+            }
+            curarg = '@';
+            haveoffset = 1;
          }
          else {
             printf(OUTPREFX "ERROR: Unrecognized argument for 'obj' command: '%s'\n", parse);
             return -1;
          }
       }
-      else { // == 'n'
+      else {
          // parse the numeric arg
          char* endptr = NULL;
          long long parseval = strtoll(parse, &(endptr), 0);
@@ -719,22 +1106,35 @@ int obj_command(marfs_config* config, char* config_path, walkerstate* state, cha
             return -1;
          }
 
-         if (chunknum != -1) {
-            printf(OUTPREFX "ERROR: Detected duplicate '-n' arg: \"%s\"\n", parse);
-            return -1;
+         if ( curarg == 'n' ) {
+            if (parseval < 0) {
+               printf(OUTPREFX "ERROR: Negative chunknum value: \"%lld\"\n", parseval);
+               return -1;
+            }
+            chunknum = parseval;
          }
-         if (parseval < 0) {
-            printf(OUTPREFX "ERROR: Negative chunknum value: \"%lld\"\n", parseval);
-            return -1;
+         else { // == '@'
+            chunkoff = parseval;
          }
-         chunknum = parseval;
          curarg = '\0';
       }
 
       // progress to the next arg
       parse = strtok(NULL, " ");
    }
-
+   // check for argument conflict
+   if ( haveoffset  &&  chunknum != -1 ) {
+      printf(OUTPREFX "ERROR: The '-n' and '-@' arguments are mutually exclusive\n");
+      return -1;
+   }
+   // establish an actual chunk number target
+   if ( chunknum == -1 ) { chunknum = 0; }
+   if ( haveoffset ) { chunknum += chunkoff + state->ftag.objno; }
+   if ( chunknum < 0 ) {
+      printf(OUTPREFX "WARNING: Specified offset results in a negative object value: %zd ( referencing object zero instead )\n", chunknum);
+      chunknum = 0;
+   }
+   chunkoff = chunknum - state->ftag.objno;
 
    // identify object bounds of the current file
    RECOVERY_HEADER header = {
@@ -758,46 +1158,26 @@ int obj_command(marfs_config* config, char* config_path, walkerstate* state, cha
       fileobjbounds--;
    }
 
-   if (chunknum > fileobjbounds) {
-      printf(OUTPREFX "WARNING: Specified object number exceeds file limits ( selecting object %zd instead )\n", fileobjbounds);
-      chunknum = fileobjbounds;
+   if ( chunknum < state->ftag.objno ) {
+      printf(OUTPREFX "WARNING: Specified object number preceeds file limits ( min referenced objno == %zd )\n", state->ftag.objno);
+   }
+   if (chunknum > state->ftag.objno + fileobjbounds) {
+      printf(OUTPREFX "WARNING: Specified object number exceeds file limits ( max referenced objno == %zd )\n", state->ftag.objno + fileobjbounds);
    }
 
-   // iterate over appropriate objects
-   size_t curobj = 0;
-   if (chunknum >= 0) {
-      curobj = chunknum;
+   // identify the object target
+   char* objname = NULL;
+   ne_erasure erasure;
+   ne_location location;
+   FTAG curtag = state->ftag;
+   curtag.objno = chunknum;
+   if (datastream_objtarget(&(curtag), &(state->pos.ns->prepo->datascheme), &(objname), &(erasure), &(location))) {
+      printf(OUTPREFX "ERROR: Failed to identify data info for chunk %zu\n", chunknum);
+      return -1;
    }
-   else {
-      chunknum = fileobjbounds;
-   }
-   for (; curobj <= chunknum; curobj++) {
-      // identify the object target
-      char* objname = NULL;
-      ne_erasure erasure;
-      ne_location location;
-      FTAG curtag = state->ftag;
-      curtag.objno += curobj;
-      if (datastream_objtarget(&(curtag), &(state->pos.ns->prepo->datascheme), &(objname), &(erasure), &(location))) {
-         printf(OUTPREFX "ERROR: Failed to identify data info for chunk %zu\n", curobj);
-         continue;
-      }
-      // print object info
-      printf("Obj#%-5zu\n   Pod: %d\n   Cap: %d\n   Scatter: %d\n   ObjName: %s\n   Erasure Information: N %d, E %d, O %d, partsz %lu\n   neutil Args: -c \"%s:/marfs_config/repo name=%s/data/DAL\" -P %d -C %d -S %d -O \"", curobj, location.pod, location.cap, location.scatter, objname, erasure.N, erasure.E, erasure.O, erasure.partsz, config_path, state->pos.ns->prepo->name, location.pod, location.cap, location.scatter);
-      // print sanitized object name
-      char* parsepath = objname;
-      while (*parsepath != '\0') {
-         if (*parsepath == '*' || *parsepath == '|' || *parsepath == '&') {
-            // escape all problem chars
-            //printf("\\");
-         }
-         printf("%c", *parsepath);
-         parsepath++;
-      }
-      printf("\"\n");
-      free(objname);
-   }
-   printf("\n");
+   // print object info
+   printf("Obj#%-5zu [ FileObjNo %zd/%zd ]\n   Pod: %d\n   Cap: %d\n   Scatter: %d\n   ObjName: %s\n   Erasure Information: N %d, E %d, O %d, partsz %lu\n   neutil Args: -c \"%s:/marfs_config/repo name=%s/data/DAL\" -P %d -C %d -S %d -O \"%s\"\n\n", chunknum, chunkoff, fileobjbounds, location.pod, location.cap, location.scatter, objname, erasure.N, erasure.E, erasure.O, erasure.partsz, config_path, state->pos.ns->prepo->name, location.pod, location.cap, location.scatter, objname);
+   free(objname);
 
    return 0;
 }
@@ -811,11 +1191,11 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
    }
 
    // parse args
-   int f_flag = 0;
+   int s_flag = 0;
    char* parse = strtok(args, " ");
    while (parse) {
-      if (strcmp(parse, "-f") == 0) {
-         f_flag = 1;
+      if (strcmp(parse, "-s") == 0) {
+         s_flag = 1;
       }
       else {
          printf(OUTPREFX "ERROR: Unrecognized argument for 'bound' command: '%s'\n", parse);
@@ -838,7 +1218,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
    finftag.ctag = NULL; // unsafe to reference values we intend to free at any time
    finftag.streamid = NULL;
    char fineos = 0;
-   if (!f_flag) {
+   if (s_flag) {
       // iterate over files until we find EOS
       char errorflag = 0;
       while (state->ftag.endofstream == 0 && retval == 0 && state->gctag.eos == 0  &&
@@ -852,9 +1232,13 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
             break;
          }
          // retrieve the FTAG of the new target
-         retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 0);
+         walkerinfo info = {0};
+         retval = populate_tags(config, &(state->pos), NULL, newrpath, 0, &info);
+         if ( !retval ) {
+            retval = update_state(&info, state, 0);
+         }
          if (retval) {
-            printf(OUTPREFX "ERROR: Failed to retrieve FTAG value from fileno 0\n");
+            printf(OUTPREFX "ERROR: Failed to retrieve FTAG value from fileno %zu\n", state->ftag.fileno);
             state->ftag.fileno = origfileno;
             errorflag = 1;
             break;
@@ -869,6 +1253,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
          if ( state->gctag.refcnt ) { state->ftag.fileno += state->gctag.refcnt; }
       }
       finftag = state->ftag;
+      finftag.fileno--; // subtract one, as we adjusted this before hitting the end of loop check
       finftag.ctag = NULL; // unsafe to reference values we intend to free at any time
       finftag.streamid = NULL;
       fineos = state->gctag.eos;
@@ -880,7 +1265,11 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
          return -1;
       }
       // retrieve the FTAG of the new target
-      retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 0);
+      walkerinfo info = {0};
+      retval = populate_tags(config, &(state->pos), NULL, newrpath, 0, &info);
+      if ( !retval ) {
+         retval = update_state(&info, state, 0);
+      }
       free(newrpath);
       if ( errorflag ) { return -1; }
    }
@@ -911,7 +1300,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
 
 
    // print out stream boundaries
-   if (!f_flag) {
+   if (s_flag) {
       char* eosreason = "End of Stream";
       if (retval) {
          eosreason = "Failed to Identify Subsequent File";
@@ -960,7 +1349,11 @@ int refresh_command(marfs_config* config, walkerstate* state, char* args) {
       return -1;
    }
 
-   int retval = populate_tags(config, &(state->pos), state, NULL, newrpath, 1);
+   walkerinfo info = {0};
+   int retval = populate_tags(config, &(state->pos), NULL, newrpath, 1, &info);
+   if ( !retval ) {
+      retval = update_state(&info, state, 1);
+   }
    printf("\n");
    free(newrpath);
 
@@ -1088,11 +1481,12 @@ int recovery_command(marfs_config* config, walkerstate* state, char* args) {
 
 }
 
-int ns_command(marfs_config* config, marfs_position* pos, char* args) {
+int cd_command(marfs_config* config, char** cwdpath, marfs_position* pos, char* args) {
    printf("\n");
 
    // parse args
    char curarg = '\0';
+   const char* origpath = NULL; // for potential FUSE chdir() use
    char* path = NULL;
    char* parse = strtok(args, " ");
    while (parse) {
@@ -1101,13 +1495,18 @@ int ns_command(marfs_config* config, marfs_position* pos, char* args) {
             curarg = 'p';
          }
          else {
-            printf(OUTPREFX "ERROR: Unrecognized argument for 'ns' command: '%s'\n", parse);
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'cd' command: '%s'\n", parse);
             return -1;
          }
       }
       else {
          // duplicate the path arg
          path = strdup( parse );
+         if ( path == NULL ) {
+            printf(OUTPREFX "ERROR: Failed to allocate intermediate string\n" );
+            return -1;
+         }
+         origpath = parse;
          curarg = '\0';
       }
 
@@ -1116,10 +1515,11 @@ int ns_command(marfs_config* config, marfs_position* pos, char* args) {
    }
 
    if (path != NULL) {
-      // Need to traverse this path and update the position
+      // Need to traverse this path relative to our current position
       marfs_position oppos = { .ns = NULL, .depth = 0, .ctxt = NULL };
       if ( config_duplicateposition( pos, &oppos ) ) {
-         printf( OUTPREFX "ERROR: Failed to duplicate active position for config traversal\n" );
+         printf( OUTPREFX "ERROR: Failed to duplicate position for config traversal\n" );
+         free( path );
          return -1;
       }
       // perform path traversal to identify marfs position
@@ -1127,24 +1527,123 @@ int ns_command(marfs_config* config, marfs_position* pos, char* args) {
       if ( (depth = config_traverse(config, &oppos, &(path), 1)) < 0) {
          printf(OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n",
             path);
-         free(path);
+         free( path );
          config_abandonposition( &oppos );
          return -1;
       }
-      free(path);
-      if ( depth ) {
-         printf(OUTPREFX "WARNING: Path tgt is not a MarFS NS ( depth = %d )\n", depth );
-      }
-      else if ( oppos.ctxt == NULL  &&  config_fortifyposition( &oppos ) ) {
+      if ( oppos.ctxt == NULL  &&  config_fortifyposition( &oppos ) ) {
          printf(OUTPREFX "ERROR: Failed to fortify new NS position\n" );
+         free( path );
          config_abandonposition( &oppos );
          return -1;
+      }
+      // possibly build up the path, relative to the current NS root
+      char* abspath = NULL;
+      if ( oppos.depth  &&  strlen( *cwdpath ) ) {
+         size_t abspathlen = strlen( *cwdpath ) + 1 + strlen( path ) + 1;
+         abspath = calloc( 1, sizeof(char) * (abspathlen + 1) );
+         if ( abspath == NULL ) {
+            printf( OUTPREFX "ERROR: Failed to allocate absolute path of length %zu\n", abspathlen );
+            free( path );
+            config_abandonposition( &oppos );
+            return -1;
+         }
+         if ( snprintf( abspath, abspathlen, "%s/%s", *cwdpath, path ) != abspathlen - 1 ) {
+            printf( OUTPREFX "ERROR: Failed to construct absolute path of length %zu\n", abspathlen );
+            free( abspath );
+            free( path );
+            config_abandonposition( &oppos );
+            return -1;
+         }
+         // collapse redundant path elements
+//printf( "COLLAPSING \"%s\"\n", abspath );
+         char* parsepos = abspath;
+         char* filltgt = abspath;
+         while ( filltgt <= parsepos  &&  *parsepos != '\0' ) {
+            char* curelem = parsepos;
+            size_t elemlen = 0;
+            while ( *parsepos != '\0' ) {
+               // check for an end to this path element
+               if ( *parsepos == '/' ) {
+                  // progress to the start of the next path element
+                  while ( *parsepos == '/' ) { parsepos++; }
+                  break;
+               }
+               elemlen++;
+               parsepos++;
+            }
+            if ( elemlen == 2  &&  strncmp( curelem, "..", 2 ) == 0 ) {
+               // reverse our filltgt to the start of the previous path element
+               filltgt -= 2; // skip over the previous '/' char
+               while ( filltgt > abspath  &&  *filltgt != '/' ) { filltgt--; }
+               if ( filltgt < abspath ) {
+                  // sanity check
+                  printf( OUTPREFX "ERROR: Failed to collapse NS-relative CWD path: \"%s\"\n", abspath );
+                  free( abspath );
+                  free( path );
+                  config_abandonposition( &oppos );
+                  return -1;
+               }
+               if ( *filltgt == '/' ) { filltgt++; }
+//printf( "trimming elem\n" );
+            }
+            else if ( elemlen != 1  ||  *curelem != '.' ) {
+//printf( "adding elem %.*s\n", (int)elemlen, curelem );
+               // fill in our string with this path element
+               if ( filltgt != curelem ) {
+                  snprintf( filltgt, elemlen + 1, "%s", curelem );
+               }
+               filltgt += elemlen;
+               *filltgt = '/';
+               filltgt++;
+            }
+         }
+         *filltgt = '\0';
+//printf( "RESULT \"%s\"\n", abspath );
+      }
+      if ( depth != oppos.depth ) {
+         // attempt to open the directory target
+         MDAL_DHANDLE tgtdir = oppos.ns->prepo->metascheme.mdal->opendir( oppos.ctxt, path );
+         if ( tgtdir == NULL ) {
+            printf(OUTPREFX "ERROR: Failed to open target subdir of \"%s\" NS: \"%s\" ( %s )\n",
+                   oppos.ns->idstr, path, strerror( errno ) );
+            if ( abspath ) { free( abspath ); }
+            free( path );
+            config_abandonposition( &oppos );
+            return -1;
+         }
+         // update our ctxt to reference the target dir
+         if ( oppos.ns->prepo->metascheme.mdal->chdir( oppos.ctxt, tgtdir ) ) {
+            printf(OUTPREFX "ERROR: Failed to chdir into target subdir of \"%s\" NS: \"%s\" ( %s )\n",
+                   oppos.ns->idstr, path, strerror( errno ) );
+            oppos.ns->prepo->metascheme.mdal->closedir( tgtdir );
+            if ( abspath ) { free( abspath ); }
+            free( path );
+            config_abandonposition( &oppos );
+            return -1;
+         }
+         oppos.depth = depth; // we are actually targeting any subpath, if specified
+      }
+      // if we are using FUSE for path completion, attempt to chdir as well
+      if ( globalusepathcomp ) {
+         if ( chdir( origpath ) ) {
+            printf(OUTPREFX "WARNING: Failed to chdir() into MarFS FUSE position \"%s\" ( %s ) : Path autocompletion is now disabled\n",
+                   origpath, strerror(errno) );
+            globalusepathcomp = 0;
+         }
       }
       // update our pos arg
       config_abandonposition( pos );
       *pos = oppos; // just direct copy, and don't abandon this position
+      if ( *cwdpath ) { free( *cwdpath ); }
+      if ( abspath ) {
+         *cwdpath = abspath; // update our cwd path
+         free( path );
+      }
+      else { *cwdpath = path; }
    }
-   printf("%s Namespace Target : \"%s\"\n\n", (path == NULL) ? "Current" : "New", pos->ns->idstr);
+   printf("%s Namespace Target : \"%s\" Subpath Target : \"%s\" ( Depth = %u )\n\n",
+           (path == NULL) ? "Current" : "New", pos->ns->idstr, *cwdpath, pos->depth);
    return 0;
 }
 
@@ -1197,21 +1696,16 @@ int ls_command(marfs_config* config, marfs_position* pos, char* args) {
    MDAL curmdal = tmppos.ns->prepo->metascheme.mdal;
    MDAL_DHANDLE lsdir = NULL;
    if ( targetdepth == 0 ) {
-      if ( tmppos.ctxt == NULL ) {
-         // ignore our current path
-         if ( lstgt ) { free( lstgt ); }
-         // identify the full path of the NS target
-         if ( config_nsinfo( tmppos.ns->idstr, NULL, &(lstgt) ) ) {
-            printf( OUTPREFX "ERROR: Failed to identify path of NS target: \"%s\" ( %s )\n",
-                    tmppos.ns->idstr, strerror( errno ) );
-            config_abandonposition( &(tmppos) );
-            return -1;
-         }
-         lsdir = curmdal->opendirnamespace( curmdal->ctxt, lstgt );
+      // ignore our current path
+      if ( lstgt ) { free( lstgt ); }
+      // identify the full path of the NS target
+      if ( config_nsinfo( tmppos.ns->idstr, NULL, &(lstgt) ) ) {
+         printf( OUTPREFX "ERROR: Failed to identify path of NS target: \"%s\" ( %s )\n",
+                 tmppos.ns->idstr, strerror( errno ) );
+         config_abandonposition( &(tmppos) );
+         return -1;
       }
-      else {
-         lsdir = curmdal->opendirnamespace( tmppos.ctxt, lstgt );
-      }
+      lsdir = curmdal->opendirnamespace( curmdal->ctxt, lstgt );
    }
    else { lsdir = curmdal->opendir( tmppos.ctxt, lstgt ); }
    if ( lsdir == NULL ) {
@@ -1225,7 +1719,7 @@ int ls_command(marfs_config* config, marfs_position* pos, char* args) {
    if ( targetdepth == 0 ) {
       size_t index = 0;
       for ( ; index < tmppos.ns->subnodecount; index++ ) {
-         printf( "   %s\n", tmppos.ns->subnodes[index].name );
+         printf( "<NS> %s/\n", tmppos.ns->subnodes[index].name );
       }
    }
    // readdir contents
@@ -1233,8 +1727,8 @@ int ls_command(marfs_config* config, marfs_position* pos, char* args) {
    struct dirent* retval = NULL;
    while ( errno == 0 ) {
       retval = curmdal->readdir( lsdir );
-      if ( retval  &&  ( ( targetdepth == 0  &&  curmdal->pathfilter( retval->d_name ) == 0 )  ||  targetdepth ) ) {
-         printf( "   %s\n", retval->d_name );
+      if ( retval  &&  ( targetdepth  ||  curmdal->pathfilter( retval->d_name ) == 0 ) ) {
+         printf( "     %s\n", retval->d_name );
       }
       else if ( retval == NULL ) { break; }
    }
@@ -1255,55 +1749,79 @@ int ls_command(marfs_config* config, marfs_position* pos, char* args) {
 
 int command_loop(marfs_config* config, char* config_path) {
    // initialize a marfs position
-   marfs_position pos = {
-      .ns = NULL,
-      .depth = 0,
-      .ctxt = NULL
-   };
-   if ( config_establishposition( &pos, config ) ) {
+   globalpos.ns = NULL;
+   globalpos.depth = 0;
+   globalpos.ctxt = NULL;
+   if ( config_establishposition( &globalpos, config ) ) {
       printf(OUTPREFX "ERROR: Failed to establish a position for the MarFS root\n");
+      return -1;
+   }
+   // initialize an empty string for our cwd path
+   globalcwdpath = strdup( "" );
+   if ( globalcwdpath == NULL ) {
+      printf(OUTPREFX "ERROR: Failed to allocate a current working directory string\n");
+      config_abandonposition( &globalpos );
       return -1;
    }
    // initialize walk state
    walkerstate state;
    bzero( &(state), sizeof( struct walkerstate_struct ) );
-   printf("Initial Namespace Target : \"%s\"\n", pos.ns->idstr);
+   printf("Initial Namespace Target : \"%s\"\n", globalpos.ns->idstr);
+
+   // initialize readline values
+   rl_basic_word_break_characters = " \t\n\"\\'`$><=;|&{("; // omit '@' from word break chars ( used in cmd args )
+   rl_completion_entry_function = command_completion_matches;
 
    // infinite loop, processing user commands
    printf(OUTPREFX "Ready for user commands\n");
    int retval = 0;
    while (1) {
-      printf("> ");
-      fflush(stdout);
-      // read in a new line from stdin ( 4096 char limit )
-      char inputline[4097] = { 0 }; // init to NULL bytes
-      if (scanf("%4096[^\n]", inputline) < 0) {
-         printf(OUTPREFX "ERROR: Failed to read user input\n");
-         retval = -1;
+
+      size_t promptlen = strlen(globalpos.ns->idstr) + 1 + strlen( globalcwdpath ) + 4;
+      char* promptstr = calloc( 1, promptlen * sizeof(char) );
+      if ( promptstr == NULL ) {
+         printf(OUTPREFX "ERROR: Failed to allocate prompt string\n" );
          break;
       }
-      fgetc(stdin); // to clear newline char
-      if (inputline[4095] != '\0') {
-         printf(OUTPREFX "ERROR: Input command exceeds parsing limit of 4096 chars\n");
-         retval = -1;
+      snprintf( promptstr, promptlen, "%s/%s > ", globalpos.ns->idstr, globalcwdpath );
+
+      char* inputline = readline( promptstr );
+      free( promptstr );
+
+      if ( inputline == NULL ) {
+         printf(OUTPREFX "Hit EOF on input\n");
+         printf(OUTPREFX "Terminating...\n");
          break;
       }
 
       // parse the input command
       char* parse = inputline;
       char repchar = 0;
+      char anycontent = 0;
       while (*parse != '\0') {
          parse++;
-         if (*parse == ' ') {
-            *parse = '\0'; repchar = 1;
+         if (anycontent  &&  *parse == ' ') {
+            repchar = 1;
+            break;
          }
+         else { anycontent = 1; }
       }
-      // check for program exit right away
+      // check for empty command right away
+      if (!anycontent) {
+         // no-op
+         continue;
+      }
+      // add this command line to our history
+      add_history(inputline);
+      // insert a NULL char, to allow for easy command comparison
+      if ( repchar ) { *parse = '\0'; }
+      // check for program exit
       if (strcmp(inputline, "exit") == 0 || strcmp(inputline, "quit") == 0) {
          printf(OUTPREFX "Terminating...\n");
+         free( inputline );
          break;
       }
-      // check for 'help' command right away
+      // check for 'help' command
       if (strcmp(inputline, "help") == 0) {
          if (repchar) {
             *parse = ' ';
@@ -1311,11 +1829,8 @@ int command_loop(marfs_config* config, char* config_path) {
          usage(inputline);
          continue;
       }
-      // check for empty command right away
-      if (strcmp(inputline, "") == 0) {
-         // no-op
-         continue;
-      }
+
+      // skip to the next comand arg
       if (repchar) {
          parse++; // proceed to the char following ' '
          while (*parse == ' ') {
@@ -1327,7 +1842,7 @@ int command_loop(marfs_config* config, char* config_path) {
       if (strcmp(inputline, "open") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (open_command(config, &(pos), &(state), parse) == 0) {
+         if (open_command(config, &(globalpos), &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
@@ -1380,23 +1895,25 @@ int command_loop(marfs_config* config, char* config_path) {
             retval = 0; // note success
          }
       }
-      else if (strcmp(inputline, "ns") == 0) {
+      else if (strcmp(inputline, "cd") == 0) {
          errno = 0;
          retval = -1; // assume failure
-         if (ns_command(config, &(pos), parse) == 0) {
+         if (cd_command(config, &(globalcwdpath), &(globalpos), parse) == 0) {
             retval = 0; // note success
          }
       }
       else if ( strcmp( inputline, "ls" ) == 0 ) {
          errno = 0;
          retval = -1; // assume failure
-         if (ls_command(config, &(pos), parse) == 0) {
+         if (ls_command(config, &(globalpos), parse) == 0) {
             retval = 0; // note success
          }
       }
       else {
          printf(OUTPREFX "ERROR: Unrecognized command: \"%s\"\n", inputline);
       }
+
+      free(inputline);
 
    }
 
@@ -1425,7 +1942,8 @@ int command_loop(marfs_config* config, char* config_path) {
    if ( state.pos.ns  &&  config_abandonposition(&state.pos)) {
       printf(OUTPREFX "WARNING: Failed to properly destroy tgt marfs position\n");
    }
-   if (config_abandonposition(&pos)) {
+   if ( globalcwdpath ) { free( globalcwdpath ); }
+   if (config_abandonposition(&globalpos)) {
       printf(OUTPREFX "WARNING: Failed to properly destroy active marfs position\n");
    }
    return retval;
@@ -1483,6 +2001,61 @@ int main(int argc, const char** argv) {
       return -1;
    }
    printf(OUTPREFX "marfs config loaded...\n");
+
+   // verify that FUSE appears to be mounted
+   struct stat fstatval;
+   if ( stat( config->mountpoint, &(fstatval) ) == 0 ) {
+      // duplicate FUSE mount path ( for modification )
+      char* fmount = strdup( config->mountpoint );
+      if ( fmount ) {
+         // iterate through the path, looking for the final '/' char
+         char* lastsep = fmount;
+         char* parse = fmount;
+         while ( *parse != '\0' ) {
+            if ( *parse == '/' ) { lastsep = parse; }
+            parse++;
+         }
+         *lastsep = '\0'; // truncate off the final path element
+         // stat the parent path
+         struct stat pstatval;
+         int statres;
+         if ( lastsep == fmount ) { // FUSE is mounted at the global FS root
+            statres = stat( "/", &(pstatval) );
+         }
+         else {
+            statres = stat( fmount, &(pstatval) );
+         }
+         // check for error / device match between FUSE and parent paths
+         if ( statres ) {
+            printf(OUTPREFX "WARNING: Failed to stat parent path of MarFS FUSE mount \"%s\" ( %s ) : Path autocompletion is disabled\n",
+                   config->mountpoint, strerror(errno) );
+            globalusepathcomp = 0;
+         }
+         else if ( fstatval.st_dev == pstatval.st_dev ) {
+            printf(OUTPREFX "WARNING: MarFS FUSE does not appear to be mounted at \"%s\" : Path autocompletion is disabled\n",
+                   config->mountpoint );
+            globalusepathcomp = 0;
+         }
+         free( fmount );
+      }
+      else {
+         printf(OUTPREFX "WARNING: Failed to duplicate path of MarFS FUSE mount \"%s\" ( %s ) : Path autocompletion is disabled\n",
+                config->mountpoint, strerror(errno) );
+         globalusepathcomp = 0;
+      }
+   }
+   else {
+      printf(OUTPREFX "WARNING: Failed to stat MarFS FUSE mount \"%s\" ( %s ) : Path autocompletion is disabled\n",
+             config->mountpoint, strerror(errno) );
+      globalusepathcomp = 0;
+   }
+
+   // attempt to chdir into FUSE instance
+   if ( globalusepathcomp  &&  chdir( config->mountpoint ) ) {
+      printf(OUTPREFX "WARNING: Failed to chdir() into MarFS FUSE at \"%s\" ( %s ) : Path autocompletion is disabled\n",
+             config->mountpoint, strerror(errno) );
+      globalusepathcomp = 0;
+   }
 
    // enter the main command loop
    int retval = 0;
