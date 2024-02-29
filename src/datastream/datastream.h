@@ -95,10 +95,10 @@ typedef struct datastream_struct {
    size_t      filealloc;
    RECOVERY_FINFO finfo;
    // Temporary Buffers
-   char* ftagstr;
+   char*       ftagstr;
    size_t      ftagstrsize;
-   char* finfostr;
-   size_t finfostrlen;
+   char*       finfostr;
+   size_t      finfostrlen;
 }*DATASTREAM;
 
 /**
