@@ -2062,6 +2062,7 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
                      delrefinf->eos = 1; // set to assume EndOfStream
                   }
                }
+               walker->ftag.endofstream = 1; // set previous ftag value to reflect assumed EOS
                break;
             }
             LOG( LOG_ERR, "Datastream break detected at file number %zu: \"%s\"\n", walker->fileno, reftgt );

@@ -1814,7 +1814,12 @@ MDAL_SCANNER posixmdal_openscanner( MDAL_CTXT ctxt, const char* rpath ) {
    // open the target
    int dfd = openat( pctxt->refd, rpath, O_RDONLY );
    if ( dfd < 0 ) {
-      LOG( LOG_ERR, "Failed to open the target path: \"%s\"\n", rpath );
+      if ( errno == ENOENT ) { // very common case, downgrade to informational only
+         LOG( LOG_INFO, "Failed to open the target path: \"%s\" ( %s )\n", rpath, strerror(errno) );
+      }
+      else {
+         LOG( LOG_ERR, "Failed to open the target path: \"%s\" ( %s )\n", rpath, strerror(errno) );
+      }
       return NULL;
    }
    // verify the target is a dir
