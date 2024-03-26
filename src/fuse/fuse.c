@@ -73,6 +73,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <unistd.h>
 #include <dirent.h>
 #include <errno.h>
+#include <limits.h>
 
 #include "change_user.h"
 #include "api/marfs.h"
@@ -747,10 +748,18 @@ int fuse_readlink(const char *path, char *buf, size_t size)
     LOG( LOG_ERR, "%s: %s\n", path, strerror(errno) );
     return (errno) ? -errno : -ENOMSG;
   }
+  // sanity check return values and null-terminate on the behalf of fuse because it just can't be bothered to define its readlink interface sensibly
+  if ( ret < size ) { *(buf + ret) = '\0'; ret = 0; } // NULL terminate the string, and indicate success
+  else {
+    if ( size > 0 ) { // silly check to try to properly null-terminate, even if we're called to fill a zero-length buffer
+      *(buf + (size - 1)) = '\0';
+    }
+    if ( ret > INT_MAX ) { ret = INT_MAX; }
+  }
 
   exit_user(&u_ctxt);
 
-  return 0;
+  return (int)ret;
 }
 
 int fuse_release(const char *path, struct fuse_file_info *ffi)
