@@ -591,6 +591,13 @@ int populate_tags(marfs_config* config, marfs_position* pathpos, const char* pat
       free(modpath);
    }
    if (handle == NULL) {
+      if ( errno == ENOENT ) {
+         // handle ENOENT slightly differently, as this is a semi-expected case
+         printf(OUTPREFX "WARNING: Failed to open target %s file: \"%s\" (%s)\n",
+            (rpath) ? "ref" : "user", (rpath) ? rpath : path, strerror(errno));
+         config_abandonposition( &oppos );
+         return 1;
+      }
       printf(OUTPREFX "ERROR: Failed to open target %s file: \"%s\" (%s)\n",
          (rpath) ? "ref" : "user", (rpath) ? rpath : path, strerror(errno));
       config_abandonposition( &oppos );
@@ -1234,6 +1241,9 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
          // retrieve the FTAG of the new target
          walkerinfo info = {0};
          retval = populate_tags(config, &(state->pos), NULL, newrpath, 0, &info);
+         if ( retval == 1  &&  (state->ftag.state & FTAG_DATASTATE) == FTAG_FIN ) { // ENOENT after a FINALIZED file is a special case
+            break;
+         }
          if ( !retval ) {
             retval = update_state(&info, state, 0);
          }
@@ -1266,9 +1276,9 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
       }
       // retrieve the FTAG of the new target
       walkerinfo info = {0};
-      retval = populate_tags(config, &(state->pos), NULL, newrpath, 0, &info);
-      if ( !retval ) {
-         retval = update_state(&info, state, 0);
+      int tmpretval = populate_tags(config, &(state->pos), NULL, newrpath, 0, &info);
+      if ( !tmpretval ) {
+         tmpretval = update_state(&info, state, 0);
       }
       free(newrpath);
       if ( errorflag ) { return -1; }

@@ -915,6 +915,32 @@ void destroystreamwalker( streamwalker walker ) {
    }
 }
 
+
+int searchoperations( opinfo** opchain, operation_type type, FTAG* ftag, opinfo** optgt ) {
+   opinfo* prevop = NULL;
+   if ( opchain  &&  *opchain ) {
+      // check for any existing ops of this type in the chain
+      opinfo* parseop = *opchain;
+      while ( parseop ) {
+         // for most ops, matching on type is sufficent to reuse the same op tgt
+         // For object deletions, repacks, and rebuilds, we need to check that the new tgt is in the same 'chain'
+         if ( parseop->type == type  &&
+              ( type != MARFS_DELETE_OBJ_OP  ||  ftag->objno == (parseop->ftag.objno + parseop->count) )  &&
+              ( type != MARFS_REPACK_OP  ||  ftag->fileno == (parseop->ftag.fileno + parseop->count) )  &&
+              ( type != MARFS_REBUILD_OP  ||  ftag->objno == (parseop->ftag.objno + parseop->count) )
+            ) {
+            *optgt = parseop;
+            return 0;
+         }
+         prevop = parseop;
+         parseop = parseop->next;
+      }
+   }
+   *optgt = prevop; // return a reference to the tail of the operation chain
+   return -1;
+}
+
+
 int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker, char* filestate ) {
    MDAL mdal = walker->pos.ns->prepo->metascheme.mdal;
    if ( getxattrs ) {
@@ -980,7 +1006,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       // retrieve FTAG of the current file
       getres = mdal->fgetxattr( handle, 1, FTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 );
       // check for overflow
-      if ( getres >= walker->ftagstralloc ) {
+      if ( getres > 0  &&  getres >= walker->ftagstralloc ) {
          // double our allocated string length
          char* newstr = malloc( sizeof(char) * (getres + 1) );
          if ( newstr == NULL ) {
@@ -1066,24 +1092,11 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
 }
 
 int process_identifyoperation( opinfo** opchain, operation_type type, FTAG* ftag, opinfo** optgt ) {
+   // check for any existing ops of this type in the chain
    opinfo* prevop = NULL;
-   if ( opchain  &&  *opchain ) {
-      // check for any existing ops of this type in the chain
-      opinfo* parseop = *opchain;
-      while ( parseop ) {
-         // for most ops, matching on type is sufficent to reuse the same op tgt
-         // For object deletions, repacks, and rebuilds, we need to check that the new tgt is in the same 'chain'
-         if ( parseop->type == type  &&
-              ( type != MARFS_DELETE_OBJ_OP  ||  ftag->objno == (parseop->ftag.objno + parseop->count) )  &&
-              ( type != MARFS_REPACK_OP  ||  ftag->fileno == (parseop->ftag.fileno + parseop->count) )  &&
-              ( type != MARFS_REBUILD_OP  ||  ftag->objno == (parseop->ftag.objno + parseop->count) )
-            ) {
-            *optgt = parseop;
-            return 0;
-         }
-         prevop = parseop;
-         parseop = parseop->next;
-      }
+   if ( searchoperations( opchain, type, ftag, &(prevop) ) == 0 ) {
+      *optgt = prevop;
+      return 0;
    }
    // allocate a new operation struct
    opinfo* newop = malloc( sizeof( struct opinfo_struct ) );
@@ -1994,13 +2007,12 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
                free( reftgt );
                return -1;
             }
-            delref_info* delrefinf = NULL;
+            delref_info* delrefinf = optgt->extendedinfo;
             delrefinf->eos = 1; // ALWAYS set this as EndOfStream
             if ( optgt->count ) {
                // update existing op
                optgt->count++;
                optgt->count += walker->gctag.refcnt;
-               delrefinf = optgt->extendedinfo;
                // sanity check
                if ( delrefinf->prev_active_index != walker->activeindex ) {
                   LOG( LOG_ERR, "Active delref op active index (%zu) does not match current val (%zu)\n",
@@ -2014,7 +2026,6 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
                optgt->ftag.fileno = walker->ftag.fileno; // be SURE that this is not a dummy op, targeting fileno zero
                optgt->count = 1;
                optgt->count += walker->gctag.refcnt;
-               delrefinf = optgt->extendedinfo;
                delrefinf->prev_active_index = walker->activeindex;
             }
             walker->report.delfiles++;
@@ -2033,11 +2044,29 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
          if ( walker->fileno == 0 ) {
             // can't decrement beyond the beginning of the datastream
             LOG( LOG_ERR, "Initial reference target does not exist: \"%s\"\n", reftgt );
+            free( reftgt );
             return -1;
          }
          if ( walker->fileno == walker->ftag.fileno ) {
             // looks like we already pulled xattrs from the previous file, and must not have found a GCTAG
+            if ( (walker->ftag.state & FTAG_DATASTATE) == FTAG_FIN ) {
+               // special case, writer has yet to / failed to create the next reference file
+               LOG( LOG_WARNING, "Datastream break ( assumed EOS ) detected at file number %zu: \"%s\"\n", walker->fileno, reftgt );
+               free( reftgt );
+               // modify any active GC ref-del op to properly include EOS value
+               if ( walker->gcthresh ) {
+                  opinfo* optgt = NULL;
+                  if ( searchoperations( &(walker->gcops), MARFS_DELETE_REF_OP, &(tmptag), &(optgt) ) == 0 ) {
+                     LOG( LOG_INFO, "Detected outstanding reference deletion op is being set to assume EOS\n" );
+                     delref_info* delrefinf = optgt->extendedinfo;
+                     delrefinf->eos = 1; // set to assume EndOfStream
+                  }
+               }
+               walker->ftag.endofstream = 1; // set previous ftag value to reflect assumed EOS
+               break;
+            }
             LOG( LOG_ERR, "Datastream break detected at file number %zu: \"%s\"\n", walker->fileno, reftgt );
+            free( reftgt );
             return -1;
          }
          // generate the rpath of the previous file
@@ -2069,13 +2098,12 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
                   free( reftgt );
                   return -1;
                }
-               delref_info* delrefinf = NULL;
+               delref_info* delrefinf = optgt->extendedinfo;
                delrefinf->eos = 1; // ALWAYS set this as EndOfStream
                if ( optgt->count ) {
                   // update existing op
                   optgt->count++;
                   optgt->count += walker->gctag.refcnt;
-                  delrefinf = optgt->extendedinfo;
                   // sanity check
                   if ( delrefinf->prev_active_index != walker->activeindex ) {
                      LOG( LOG_ERR, "Active delref op active index (%zu) does not match current val (%zu)\n",
@@ -2089,7 +2117,6 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
                   optgt->ftag.fileno = walker->ftag.fileno; // be SURE that this is not a dummy op, targeting fileno zero
                   optgt->count = 1;
                   optgt->count += walker->gctag.refcnt;
-                  delrefinf = optgt->extendedinfo;
                   delrefinf->prev_active_index = walker->activeindex;
                }
                walker->report.delfiles++;

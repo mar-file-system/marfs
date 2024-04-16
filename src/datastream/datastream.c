@@ -257,6 +257,7 @@ void freestream(DATASTREAM stream) {
          if (stream->files[curfile].metahandle && ms->mdal->close(stream->files[curfile].metahandle)) {
             LOG(LOG_WARNING, "Failed to close meta handle for file %zu\n", curfile);
          }
+         stream->files[curfile].metahandle = NULL; // likely unnecessary, but just in case
       }
       // free the file list itself
       free(stream->files);
@@ -1338,6 +1339,7 @@ int close_current_obj(DATASTREAM stream, FTAG* curftag, MDAL_CTXT mdalctxt) {
          struct stat stval = {0};
          if ( mdal->fstat( rhandle, &(stval) ) ) {
             LOG( LOG_ERR, "Failed to stat newly created rebuild marker\n" );
+            mdal->close(rhandle);
             rtag_free( &(rtag) );
             if (releasectxt) {
                mdal->destroyctxt(mdalctxt);

@@ -238,8 +238,14 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, pthread_mut
       return NULL;
    }
    // verify our config
-   int verifyflags = CFG_MDALCHECK | CFG_DALCHECK;
-   if ( getuid() == 0 ) { verifyflags |= CFG_RECURSE; } // only attempt to recurse if we are running as root ( guarantess sub-NS access )
+   int verifyflags = CFG_MDALCHECK;
+   /**
+   * TODO Need to handle automatic config verification in a more efficient way
+   *   Full DAL scatter check is prohibitively intensive for startup of most programs
+   *   Even full recursion of all NS paths *may* be too intensive for some cases
+   */
+   //int verifyflags = CFG_MDALCHECK | CFG_DALCHECK;
+   //if ( getuid() == 0 ) { verifyflags |= CFG_RECURSE; } // only attempt to recurse if we are running as root ( guarantess sub-NS access )
    if ( config_verify( ctxt->config, ".", verifyflags ) ) {
       LOG( LOG_ERR, "Encountered uncorrected errors with the MarFS config\n" );
       config_term( ctxt->config );
