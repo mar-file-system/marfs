@@ -1006,7 +1006,7 @@ int process_getfileinfo( const char* reftgt, char getxattrs, streamwalker walker
       // retrieve FTAG of the current file
       getres = mdal->fgetxattr( handle, 1, FTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1 );
       // check for overflow
-      if ( getres >= walker->ftagstralloc ) {
+      if ( getres > 0  &&  getres >= walker->ftagstralloc ) {
          // double our allocated string length
          char* newstr = malloc( sizeof(char) * (getres + 1) );
          if ( newstr == NULL ) {
