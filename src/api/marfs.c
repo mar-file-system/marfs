@@ -174,6 +174,24 @@ void pathcleanup( char* subpath, marfs_position* oppos ) {
    if ( subpath ) { free( subpath ); }
 }
 
+/**
+ * Allocate and initialize a new struct marfs_fhandle_struct.
+ */
+marfs_fhandle new_marfs_fhandle( void ) {
+   struct marfs_fhandle_struct* fh = calloc( 1, sizeof( struct marfs_fhandle_struct ) );
+   if ( fh == NULL ) {
+      LOG( LOG_ERR, "Failed to allocate a new marfs_fhandle struct\n" );
+      return NULL;
+   }
+
+   if ( pthread_mutex_init( &(fh->lock), NULL ) ) {
+      LOG( LOG_ERR, "Failed to initialize lock of new marfs_fhandle struct\n" );
+      free( fh );
+      return NULL;
+   }
+
+   return fh;
+}
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
@@ -2154,20 +2172,8 @@ marfs_fhandle marfs_creat(marfs_ctxt ctxt, marfs_fhandle stream, const char *pat
    char newstream = 0;
    if ( stream == NULL ) {
       // allocate a fresh handle
-      stream = malloc( sizeof( struct marfs_fhandle_struct ) );
+      stream = new_marfs_fhandle();
       if ( stream == NULL ) {
-         LOG( LOG_ERR, "Failed to allocate a new marfs_fhandle struct\n" );
-         pathcleanup( subpath, &oppos );
-         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-         return NULL;
-      }
-      stream->ns = NULL;
-      stream->datastream = NULL;
-      stream->metahandle = NULL;
-      stream->dataremaining = 0;
-      if ( pthread_mutex_init( &(stream->lock), NULL ) ) {
-         LOG( LOG_ERR, "Failed to initialize lock of new marfs_fhandle struct\n" );
-         free( stream );
          pathcleanup( subpath, &oppos );
          LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
@@ -2340,19 +2346,8 @@ marfs_fhandle marfs_open(marfs_ctxt ctxt, marfs_fhandle stream, const char *path
    char newstream = 0;
    if ( stream == NULL ) {
       // allocate a fresh handle
-      stream = malloc( sizeof( struct marfs_fhandle_struct ) );
+      stream = new_marfs_fhandle();
       if ( stream == NULL ) {
-         LOG( LOG_ERR, "Failed to allocate a new marfs_fhandle struct\n" );
-         pathcleanup( subpath, &oppos );
-         LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
-         return NULL;
-      }
-      stream->ns = NULL;
-      stream->datastream = NULL;
-      stream->metahandle = NULL;
-      if ( pthread_mutex_init( &(stream->lock), NULL ) ) {
-         LOG( LOG_ERR, "Failed to initialize lock of new marfs_fhandle struct\n" );
-         free( stream );
          pathcleanup( subpath, &oppos );
          LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
          return NULL;
