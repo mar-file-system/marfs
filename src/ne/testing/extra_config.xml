@@ -1,0 +1,151 @@
+<?xml version = "1.0" encoding = "UTF-8" ?>
+
+<marfs_config version="1.10">
+
+    <!-- Mount Point -->
+    <mnt_top>/campaign</mnt_top>
+
+    <!-- Host Definitions -->
+    <hosts>
+        <storage_node name="tc-sn001.lanl.gov">
+            <pod>0</pod>
+            <block>0</block>
+        </storage_node>
+        <storage_node name="tc-sn002.lanl.gov">
+            <pod>0</pod>
+            <block>1</block>
+        </storage_node>
+        <storage_node name="tc-sn003.lanl.gov">
+            <pod>0</pod>
+            <block>2</block>
+        </storage_node>
+        <storage_node name="tc-sn004.lanl.gov">
+            <pod>0</pod>
+            <block>3</block>
+        </storage_node>
+        <storage_node name="tc-sn005.lanl.gov">
+            <pod>1</pod>
+            <block>0</block>
+        </storage_node>
+        <storage_node name="tc-sn006.lanl.gov">
+            <pod>1</pod>
+            <block>1</block>
+        </storage_node>
+        <storage_node name="tc-sn007.lanl.gov">
+            <pod>1</pod>
+            <block>2</block>
+        </storage_node>
+        <storage_node name="tc-sn008.lanl.gov">
+            <pod>1</pod>
+            <block>3</block>
+        </storage_node>
+        <storage_node name="tc-sn009.lanl.gov">
+            <pod>2</pod>
+            <block>0</block>
+        </storage_node>
+        <storage_node name="tc-sn010.lanl.gov">
+            <pod>2</pod>
+            <block>1</block>
+        </storage_node>
+        <storage_node name="tc-sn011.lanl.gov">
+            <pod>2</pod>
+            <block>2</block>
+        </storage_node>
+        <storage_node name="tc-sn012.lanl.gov">
+            <pod>2</pod>
+            <block>3</block>
+        </storage_node>
+
+        <batch_node name="tc-tn001.lanl.gov" />
+        <batch_node name="tc-tn002.lanl.gov" />
+        <batch_node name="tc-tn003.lanl.gov" />
+        <batch_node name="tc-tn004.lanl.gov" />
+
+        <metadata_node name="tc-md001.lanl.gov" />
+        <metadata_node name="tc-md002.lanl.gov" />
+        <metadata_node name="tc-md003.lanl.gov" />
+
+        <interactive_node name="tc-int001.lanl.gov" />
+        <interactive_node name="tc-int002.lanl.gov" />
+        <interactive_node name="tc-int003.lanl.gov" />
+    </hosts>
+
+    <!-- REPOS -->
+    <repo name="MC10+2">
+        <data>
+            <!-- Object Erasure -->
+            <protection>
+                <N>10</N>
+                <E>2</E>
+                <BSZ>1048576</BSZ>
+            </protection>
+
+            <!-- Packed Objects -->
+            <packing enabled="yes">
+                <max_files>4096</max_files>
+            </packing>
+
+            <!-- Chunked Objects -->
+            <chunking enabled="yes">
+                <max_size>1073741824</max_size>
+            </chunking>
+
+            <!-- Object Distribution -->
+            <distribution>
+                <pods>4</pods>
+                <caps>4</caps>
+                <scatters>1024</scatters>
+            </distribution>
+
+            <!-- I/O Pattern -->
+            <io>
+                <read_size>5248000</read_size>
+                <write_size>5248000</write_size>
+            </io>
+
+            <!-- DAL Definition -->
+            <DAL type="posix">
+                <dir_template>stripefile.{b}</dir_template>
+                <sec_root>./teststripe/</sec_root>
+            </DAL>
+        </data>
+
+        <metadata>
+            <!-- All Namespaces -->
+            <namespaces>
+            <!-- TODO Guess we need to talk about the names thing -->
+                <ns name="ATCC6-0">
+                    <quota>
+                        <files></files>
+                        <data>549755813888000</data>
+                    </quota>
+                    <perms>
+                        <interactive>RM,WM,RD</interactive>
+                        <batch>RM,WM,RD,WD</batch>
+                    </perms>
+                </ns>
+                <ns name="space-with-literal-brackets\[in-name\]">
+                    <quota>
+                        <files>1024</files>
+                        <data>549755813888000</data>
+                    </quota>
+                    <perms>
+                        <interactive>RM,WM,RD</interactive>
+                        <batch>RM,WM,RD,WD</batch>
+                    </perms>
+                </ns>
+            </namespaces>
+
+            <!-- Data On Metadata -->
+            <direct read="yes" write="no"/>
+
+            <!-- MDAL Definition -->
+            <MDAL type="posix">
+                <!-- Root of Namespace Tree -->
+                <ns_root>/gpfs/marfs</ns_root>
+                <!-- Restricted Directory (optional) -->
+                <security_root>/gpfs</security_root>
+            </MDAL>
+        </metadata>
+    </repo>
+</marfs_config>
