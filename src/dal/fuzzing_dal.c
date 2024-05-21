@@ -72,6 +72,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdlib.h>
 
 #define FZ_LN 20 // Maximum number of blocks that can be fuzzed
 

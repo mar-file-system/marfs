@@ -80,6 +80,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <sys/stat.h>
 #include <errno.h>
 #include <assert.h>
+#include <stdlib.h>
 
 
 #define MINFO_VER 1

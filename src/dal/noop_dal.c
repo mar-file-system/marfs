@@ -76,6 +76,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <pwd.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 //   -------------    NO-OP DEFINITIONS    -------------
 

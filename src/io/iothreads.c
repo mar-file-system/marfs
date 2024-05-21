@@ -126,6 +126,7 @@ underlying skt_etc() functions.
 #include <errno.h>
 #include <assert.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 
 /* ------------------------------   THREAD BEHAVIOR FUNCTIONS   ------------------------------ */

@@ -74,6 +74,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <errno.h>
 #include <sys/time.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 #define NODE_SIZE 1024 * 1024 // Buffer size for each timing data node
 
