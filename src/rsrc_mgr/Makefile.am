@@ -65,7 +65,7 @@ CC = mpicc
 lib_LTLIBRARIES = libResourceLog.la
 
 libResourceLog_la_SOURCES = resourcelog.c
-libResourceLog_la_LIBADD = ../config/libConfig.la ../tagging/libTagging.la
+libResourceLog_la_LIBADD = ../config/libConfig.la ../tagging/libTagging.la ../thread_queue/libTQ.la ../ne/libne.la
 libResourceLog_la_CFLAGS = $(XML_CFLAGS)
 RSRC_LOG_LIB = libResourceLog.la
 
