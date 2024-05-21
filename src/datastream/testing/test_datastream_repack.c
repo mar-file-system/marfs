@@ -61,7 +61,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 // directly including the C file allows more flexibility for these tests
 #include "datastream/datastream.c"
 
-#include <ne.h>
+#include "ne/ne.h"
 
 #include <unistd.h>
 #include <stdio.h>

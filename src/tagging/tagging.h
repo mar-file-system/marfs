@@ -58,7 +58,7 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include <ne.h>
+#include "ne/ne.h"
 
 
 // MARFS FILE TAG  --  attached to every marfs file, providing stream/data info

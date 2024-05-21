@@ -64,7 +64,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define DEBUG DEBUG_ALL
 #endif
 #define LOG_PREFIX "resourcethreads"
-#include <logging.h>
+#include "logging/logging.h"
 
 #include "resourcethreads.h"
 

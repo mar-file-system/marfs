@@ -66,7 +66,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 #define LOG_PREFIX "recovery"
 
-#include <logging.h>
+#include "logging/logging.h"
 #include "recovery.h"
 #include "general_include/numdigits.h"
 

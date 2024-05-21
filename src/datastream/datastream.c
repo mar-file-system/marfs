@@ -65,7 +65,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 #define LOG_PREFIX "datastream"
 
-#include <logging.h>
+#include "logging/logging.h"
 #include "datastream.h"
 #include "general_include/numdigits.h"
 

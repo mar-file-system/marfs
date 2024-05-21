@@ -60,7 +60,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "hash/hash.h"
 #include "mdal/mdal.h"
-#include <ne.h>
+#include "ne/ne.h"
 
 #define CONFIG_CTAG_LENGTH 32
 
