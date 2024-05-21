@@ -73,7 +73,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 //#endif
 //}
 
-#include "erasureUtils_auto_config.h"
+#include "marfs_auto_config.h"
 #if defined(DEBUG_ALL) || defined(DEBUG_NE)
 #define DEBUG
 #endif

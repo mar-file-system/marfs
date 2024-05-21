@@ -57,7 +57,7 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "erasureUtils_auto_config.h"
+#include "marfs_auto_config.h"
 
 // NOTE -- this tool is specific to the POSIX DAL implementation
 #include "posix_dal.c"

@@ -100,7 +100,7 @@ underlying skt_etc() functions.
 
 --------------------------------------------------------------------------- */
 
-#include "erasureUtils_auto_config.h"
+#include "marfs_auto_config.h"
 #ifdef DEBUG_NE
 #define DEBUG DEBUG_NE
 #elif (defined DEBUG_ALL)

@@ -60,7 +60,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 
 
-#include "erasureUtils_auto_config.h"
+#include "marfs_auto_config.h"
 #ifdef DEBUG_DAL
 #define DEBUG DEBUG_DAL
 #elif (defined DEBUG_ALL)

@@ -69,7 +69,7 @@ IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGE.
 */
 
-#include "erasureUtils_auto_config.h"
+#include "marfs_auto_config.h"
 #ifdef DEBUG_TQ
 #define DEBUG DEBUG_TQ
 #elif (defined DEBUG_ALL)
