@@ -60,7 +60,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "resourceprocessing.h"
 
-#include <thread_queue.h>
+#include "thread_queue/thread_queue.h"
 
 #define MAX_STR_BUFFER 1024
 

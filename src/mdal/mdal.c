@@ -66,7 +66,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 #define LOG_PREFIX "mdal"
 
-#include <logging.h>
+#include "logging/logging.h"
 #include "mdal.h"
 
 #include <ctype.h>

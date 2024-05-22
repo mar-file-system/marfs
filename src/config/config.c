@@ -166,7 +166,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 #define LOG_PREFIX "config"
 
-#include <logging.h>
+#include "logging/logging.h"
 #include "config.h"
 #include "general_include/numdigits.h"
 #include "general_include/restrictedchars.h"

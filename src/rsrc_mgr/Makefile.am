@@ -65,7 +65,7 @@ CC = mpicc
 lib_LTLIBRARIES = libResourceLog.la
 
 libResourceLog_la_SOURCES = resourcelog.c
-libResourceLog_la_LIBADD = ../config/libConfig.la ../tagging/libTagging.la
+libResourceLog_la_LIBADD = ../config/libConfig.la ../tagging/libTagging.la ../thread_queue/libTQ.la ../ne/libne.la
 libResourceLog_la_CFLAGS = $(XML_CFLAGS)
 RSRC_LOG_LIB = libResourceLog.la
 
@@ -99,7 +99,7 @@ check_PROGRAMS = test_resourcelog test_resourceprocessing test_resourcethreads
 #test_rsrc_mgr_nopack_CFLAGS = $(XML_CFLAGS)
 
 test_resourcelog_SOURCES = testing/test_resourcelog.c
-test_resourcelog_LDADD = libResourceLog.la
+test_resourcelog_LDADD = libResourceLog.la ../logging/liblogging.la
 test_resourcelog_CFLAGS = $(XML_CFLAGS)
 
 test_resourceprocessing_SOURCES = testing/test_resourceprocessing.c

@@ -54,5 +54,10 @@
 #
 #GNU licenses can be found at http://www.gnu.org/licenses/.
 
-SUBDIRS = hash mdal tagging recovery config datastream api rsrc_mgr fuse
+if BENCH
+  MAYBE_BENCHMARK = isal_benchmark
+endif
+
+SUBDIRS = logging thread_queue dal io ne recursion hash mdal tagging recovery \
+          config datastream api rsrc_mgr fuse $(MAYBE_BENCHMARK)
 

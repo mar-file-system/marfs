@@ -65,7 +65,7 @@ AM_LDFLAGS  =
 noinst_LTLIBRARIES = libDatastream.la
 
 libDatastream_la_SOURCES = datastream.c
-libDatastream_la_LIBADD  = ../config/libConfig.la ../recovery/libRecovery.la ../tagging/libTagging.la
+libDatastream_la_LIBADD  = ../config/libConfig.la ../recovery/libRecovery.la ../tagging/libTagging.la ../ne/libne.la
 libDatastream_la_CFLAGS  = $(XML_CFLAGS)
 DATASTREAM_LIB = libDatastream.la
 

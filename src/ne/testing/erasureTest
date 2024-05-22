@@ -1,0 +1,881 @@
+#! /bin/bash
+
+#Copyright (c) 2015, Los Alamos National Security, LLC
+#All rights reserved.
+#
+#Copyright 2015.  Los Alamos National Security, LLC. This software was produced
+#under U.S. Government contract DE-AC52-06NA25396 for Los Alamos National
+#Laboratory (LANL), which is operated by Los Alamos National Security, LLC for
+#the U.S. Department of Energy. The U.S. Government has rights to use, reproduce,
+#and distribute this software.  NEITHER THE GOVERNMENT NOR LOS ALAMOS NATIONAL
+#SECURITY, LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
+#FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
+#works, such modified software should be clearly marked, so as not to confuse it
+#with the version available from LANL.
+# 
+#Additionally, redistribution and use in source and binary forms, with or without
+#modification, are permitted provided that the following conditions are met:
+#1. Redistributions of source code must retain the above copyright notice, this
+#list of conditions and the following disclaimer.
+#
+#2. Redistributions in binary form must reproduce the above copyright notice,
+#this list of conditions and the following disclaimer in the documentation
+#and/or other materials provided with the distribution.
+#3. Neither the name of Los Alamos National Security, LLC, Los Alamos National
+#Laboratory, LANL, the U.S. Government, nor the names of its contributors may be
+#used to endorse or promote products derived from this software without specific
+#prior written permission.
+#
+#THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND CONTRIBUTORS
+#"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+#THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+#ARE DISCLAIMED. IN NO EVENT SHALL LOS ALAMOS NATIONAL SECURITY, LLC OR
+#CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
+#OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+#SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+#INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+#STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+#OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#-----
+#NOTE:
+#-----
+#Although these files reside in a seperate repository, they fall under the MarFS copyright and license.
+#
+#MarFS is released under the BSD license.
+#
+#MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier:
+#LA-CC-15-039.
+#
+#These erasure utilites make use of the Intel Intelligent Storage Acceleration Library (Intel ISA-L), which can be found at https://github.com/01org/isa-l and is under its own license.
+#
+#MarFS uses libaws4c for Amazon S3 object communication. The original version
+#is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
+#LANL added functionality to the original work. The original work plus
+#LANL contributions is found at https://github.com/jti-lanl/aws4c.
+#
+#GNU licenses can be found at http://www.gnu.org/licenses/.
+
+ITER=1 # Number of N+E file arrays to generate
+INITER=2 # Number of error patterns to test for each file array
+POSTSLEEP=0 # Number of seconds the program should sleep after a test
+WORK_DIRECTORY=wrkdir_errasureTest
+TLOGPREF="$WORK_DIRECTORY/log_time."    # Prefix for execution time logfiles
+LOGFILE=$WORK_DIRECTORY/log_errTests.$$ # Name of the test logfile
+LIBTLOG=$WORK_DIRECTORY/log_libneTests.$$ # Name of the libneTest output logfile
+DATAFILE=$WORK_DIRECTORY/testfile.$$
+OUTFILE=$WORK_DIRECTORY/outfile.$$
+EPAT=$WORK_DIRECTORY/testout.{b}.$$
+FSZ=1  # Size of the input file in 10s of MBytes (i.e. a value of 20 -> 200M file)
+
+re='^[0-9]+$'
+
+
+
+if [[ $# -gt 0 ]]; then
+   if [[ $1 =~ $re ]]; then
+      ITER=$1
+   else
+      echo "erasureTest: warning: ignoring unrecognized arumgent \"$1\", expected an integer number of stripes to be tested"
+   fi
+fi
+if [[ $# -gt 1 ]]; then
+   if [[ $2 =~ $re ]]; then 
+      INITER=$2
+   else
+      echo "erasureTest: warning: ignoring unrecognized arumgent \"$2\", expected an integer number of error patterns per stripe to be tested"
+   fi
+fi
+if [[ $# -gt 2 ]]; then
+   if [[ $3 =~ $re ]]; then
+      FSZ=$3
+   else
+      echo "erasureTest: warning: ignoring unrecognized arumgent \"$3\", expected an integer filesize value (in 10s of MiBs)"
+   fi
+fi
+
+
+echo
+echo "Testing erasure library functions..."
+echo "   Tests to perform:  $ITER stripings with $INITER error patterns apiece ( $(( ITER * INITER )) Tests Total )"
+
+stfmt="-c%s"
+
+{ stat $stfmt /dev/null 2>&1; } > /dev/null
+ret=$?
+if [[ $ret -ne 0 ]]; then
+   stfmt="-f %z"
+   { stat $stfmt /dev/null 2>&1; } > /dev/null
+   ret=$?
+   if [[ $ret -ne 0 ]]; then
+      echo "Failed to identify proper 'stat' argument format!"
+      exit -1
+   fi
+fi
+
+LIBNETEST="./neutil"
+if [[ ! -e "$LIBNETEST" ]]; then
+   LIBNETEST="$( which neutil 2>/dev/null )"
+   if [[ $? -ne 0 ]]; then
+      echo "erasureTest: error: could not locate executable \"neutil\""
+      echo "erasureTest: please run this script from within the \"erasureLib\" directory or install the neutil program to a default location!"
+      exit 1
+   fi
+fi
+
+echo "   Using libneTest located at: $LIBNETEST"
+
+# corruption insertion function
+corrupt_file() {
+   ftocorr="$1"
+   secondary_backup="$2"
+   echo "   Corrupting file \"$ftocorr\"..."
+   echo "      creating backup of $ftocorr"
+   cp $ftocorr "$ftocorr".backup
+
+   extra_backup="$ftocorr".meta
+   if [[ "$ftocorr" =~ .meta$ ]]; then
+      extra_backup=$( echo "$ftocorr" | sed 's/\.meta$//' )
+   fi
+   if [[ $secondary_backup -eq 1 ]]; then
+      echo "      creating a backup of $extra_backup"
+      cp "$extra_backup" "$extra_backup".backup
+   fi
+
+   ctype=$(( RANDOM % (3-ICRC) ))
+   if [[ $ctype -eq 0 ]]; then
+      echo "      corrupting file $ftocorr ( corruption-type : removal )"
+      echo "      corrupting file $ftocorr ( corruption-type : removal )" >> $LOGFILE
+      rm $ftocorr
+   elif [[ $ctype -eq 1 ]]; then
+      echo "      corrupting file $ftocorr ( corruption-type : truncate )"
+      echo "      corrupting file $ftocorr ( corruption-type : truncate )" >> $LOGFILE
+      fsize=$( stat $stfmt $ftocorr )
+      corr=$(( `od -N 4 -t uL -An /dev/urandom | awk '{print $1}'` % fsize ))
+      if [[ $(( fsize - corr )) -lt 2  &&  "$ftocorr" =~ .meta ]]; then
+         corr=$(( corr - 1 )) # meta files aren't affected by the loss of only the last byte
+      fi
+      echo "      truncating from $fsize to $corr bytes"
+      echo "      truncating from $fsize to $corr bytes" >> $LOGFILE
+      truncate -s $corr $ftocorr
+      echo "      creating backup of corrupted file"
+      cp $ftocorr "$ftocorr".corrupted
+   else
+      echo "      corrupting file $ftocorr ( corruption-type : silent )"
+      echo "      corrupting file $ftocorr ( corruption-type : silent )" >> $LOGFILE
+      fsize=$( stat $stfmt $ftocorr )
+      corr=$(( `od -N 4 -t uL -An /dev/urandom | awk '{print $1}'` % fsize ))
+      if [[ $corr -eq 0 ]]; then corr=1; fi # make sure we are actually inserting an error
+      offset=$(( `od -N 4 -t uL -An /dev/urandom | awk '{print $1}'` % ( fsize + 1 - corr ) ))
+      if [[ $corr -eq 1  &&  $offset -eq $(( fsize - 1 ))  &&  "$ftocorr" =~ .meta ]]; then
+         offset=$(( offset - 1 )) # meta files aren't affected by the loss of only the last byte
+      fi
+      echo "      inserting $corr random bytes at offset $offset"
+      echo "      inserting $corr random bytes at offset $offset" >> $LOGFILE
+
+      corrmegab=$(( ($corr / 1048576) + 1 ))
+
+      cp $ftocorr $ftocorr".tmp"
+      iter=0
+      diff=0
+      while [[ $diff -eq 0 ]]; do
+         # generate the random source inside this loop, so we get a different set of bytes each time
+         dd if=/dev/urandom of="$ftocorr".esource bs=1M count=1 > /dev/null 2>&1
+
+         # first, insert enough corruption to get to a MiB aligned offset
+         corr_done=$(( 1048576 - (offset % 1048576) ))
+         # make sure not to insert too much though
+         if [[ $corr_done -gt $corr ]]; then corr_done=$corr; fi
+         dd if="$ftocorr".esource of=$ftocorr bs=1c count=$corr_done seek=$offset conv=notrunc > /dev/null 2>&1
+
+         # now insert the remaining corruption
+         while [[ $corr_done -lt $corr ]]; do
+            # try to insert in 1MiB chunks at 1MiB aligned offsets
+            tocorr=1
+            corrbs="1M"
+            toffset=$(( (offset + corr_done) / 1048576 ))
+            if [[ $(( $corr_done + 1048576 )) -gt $corr ]]; then
+               # if we have less than 1MiB remaining, we'll have to do the insert one byte at a time
+               tocorr=$(( corr - corr_done ))
+               corrbs="1c"
+               toffset=$(( offset + corr_done ))
+            fi
+            dd if="$ftocorr".esource of=$ftocorr bs=$corrbs count=$tocorr seek=$toffset conv=notrunc > /dev/null 2>&1
+            corr_done=$(( corr_done + 1048576 ))
+         done
+         diff $ftocorr $ftocorr".tmp" > /dev/null 2>&1
+         diff=$?
+         if [[ $diff -eq 0 ]]; then
+            if [[ $iter -gt 4 ]]; then
+               echo "      too many corruption iterations, giving up now"
+               exit -1
+            fi
+            echo "      corrption insertion did not alter file, retrying"
+         fi
+         iter=$(( iter + 1 ))
+      done
+      rm $ftocorr".tmp"
+      rm "$ftocorr".esource
+      echo "      creating backup of corrupted file"
+      cp $ftocorr "$ftocorr".corrupted
+   fi
+
+   return $ctype
+
+}
+
+
+#re=".* Active.*"
+#
+#ret=$( $LIBNETEST crc-status | tail -n 2 )
+#crcs=$( echo "$ret" | tail -n 1 )
+#ret=$( echo "$ret" | head -n 1 )
+#maxN=$( echo "$ret" | awk '{print $2}' )
+#maxE=$( echo "$ret" | awk '{print $4}' )
+#echo "   MaxN: $maxN   MaxE: $maxE"
+#echo
+#if [[ $crcs =~ $re ]]; then
+#   ICRC=0
+#   echo "INTERMEDIATE CRCS - ACTIVE"
+#else
+#   ICRC=1
+#   echo "INTERMEDIATE CRCS - INACTIVE"
+#fi
+
+maxN=15
+maxE=5
+maxPartsz=2097152
+ICRC=0
+
+re='^[0-9]+$'
+
+command -v bc >/dev/null 2>&1
+BC=$?
+
+if [[ $BC -ne 0 ]]; then
+   echo "Note: command 'bc' could not be found.  Times will be displayed as ranges and averages will be skipped!"
+fi
+
+
+CREATED_WRKDIR=0
+
+if [[ ! -e $WORK_DIRECTORY ]]; then
+   echo -n "Creating working directory \"$WORK_DIRECTORY\"..."
+   mkdir -p $WORK_DIRECTORY
+   CREATED_WRKDIR=1
+   echo "done"
+fi
+
+echo "Generating input file '$DATAFILE'..."
+dd if=/dev/urandom of=$DATAFILE bs=10485760 count=$FSZ
+echo "done"
+echo
+
+FSZ=$(( FSZ * 10485760 ))
+
+echo "Created $DATAFILE" >> $LOGFILE
+echo >> $LOGFILE
+
+cnt=0
+while [[ $cnt -lt $ITER ]]; do
+   n=$RANDOM
+   let "n %= maxN"
+   n=$(( n + 1 ))
+   e=$RANDOM
+   let "e %= maxE"
+   e=$(( e + 1 ))
+   start=$RANDOM
+   let "start %= $(( n + e ))"
+   partsz=$( dd if=/dev/urandom bs=1 count=4 2>/dev/null | od -t u4 | head -n 1 | awk '{print $NF}' ) #need something larger than RANDOM
+   let "partsz %= maxPartsz"
+   partsz=$(( partsz + 1 ))
+
+   err_free=0
+
+   echo
+   echo -e "\e[7;96mGenerating $n+$e stripe with partsz $partsz and starting file $start...\e[0m"
+   echo >> $LOGFILE
+   echo >> $LIBTLOG
+   echo "Generating $n+$e stripe with partsz $partsz and starting file $start""..." >> $LOGFILE
+   { ret=$( time -p $LIBNETEST write -r $EPAT $n $e $start $partsz -s $FSZ -i $DATAFILE 2>&1 | tee -a $LIBTLOG | tail -n 1 | awk '{print $NF}' ); } 2>> $TLOGPREF$$.write
+
+
+   if [[ ! $ret =~ $re  ||  $ret -ne 0 ]]; then
+      echo -e "\033[0;31mFAIL - write operation returned a non-zero status"
+      echo -e "CMD = $LIBNETEST write -r $EPAT $n $e $start $partsz -s $FSZ -i $DATAFILE\033[0m"
+      echo "   FAILURE: wite operation returned a non-zero status" >> $LOGFILE
+      echo "CMD = $LIBNETEST write -r $EPAT $n $e $start $partsz -s $FSZ -i $DATAFILE" >> $LOGFILE
+      exit -1
+   fi
+   echo "   stripe generation complete" >> $LOGFILE
+   echo
+   ls $( echo "$EPAT" | sed 's/{b}/\*/' )
+
+   incnt=0
+   while [[ $incnt -lt $INITER ]]; do
+
+      if [[ $incnt -ne 0 ]]; then
+         echo
+         echo -e "\e[7;96mContinuing with the same $n+$e stripe with partsz $partsz and start position $start...\e[0m"
+         echo >> $LOGFILE
+         echo "Continuring to use $n+$e striping with partsz $partsz and start $start..." >> $LOGFILE
+      fi
+
+      met_err_list=( 0 )
+      dat_err_list=( 0 )
+      silent_err_list=( 0 )
+
+      stat=0
+      tstat=0
+      dstat=0
+
+      # Determine error counts
+      nerr_met=0
+      nerr=0
+
+      while true; do
+         nerr_met=$RANDOM
+         let "nerr_met %= $(( e + 1 ))"
+         if [[ $nerr_met -eq $(( n + e - 1 )) ]]; then
+            # special case, we can't leave only a single valid meta file, as there is no guaratee we will get correct values then
+            nerr_met=$(( nerr_met - 1 ))
+         fi
+    
+         nerr=$RANDOM
+         let "nerr %= $(( e + 1 ))"
+
+         # only accept a stripe without errors if we have not already tried it
+         if [[ $nerr -ne 0  ||  $nerr_met -ne 0 ]]; then
+            break
+         elif [[ $err_free -eq 0 ]]; then
+            err_free=1
+            break
+         fi
+         echo "Re-randomizing error counts to avoid pristine stripe"
+      done
+      echo
+
+      # Insert Meta Corruption
+      errcnt=0
+
+      echo "$nerr_met meta error(s) are to be inserted..."
+      echo "Inserting $nerr_met meta error(s)..." >> $LOGFILE
+
+      # these are used to note locations with potential silent global crc errors
+      # we must make sure not to leave so many of these that the stripe becomes unrecoverable
+      silent_met_err_cnt=0
+      silent_met_err_list=( 0 )
+
+      while [[ $errcnt -lt $nerr_met ]]; do
+         errpos=$RANDOM
+         let "errpos %= $(( n + e ))"
+         if [[ ${met_err_list[$errpos]} -eq 0 ]]; then
+            # only corrupt the file if we are hitting a new postion
+            errcnt=$(( errcnt + 1 ))
+            met_err_list[$errpos]=1
+            stat=$(( stat + 1 ))
+            tstat=$(( tstat + 1 ))
+            corrupt_file "$( echo "$EPAT" | sed 's/{b}/'"$errpos"'/' | sed 's/$/.meta/' )" 1
+            if [[ $? -eq 2 ]]; then
+               (( silent_met_err_cnt++ ))
+               silent_met_err_list[$errpos]=1
+            else
+               dstat=$(( dstat + 1 ))
+            fi
+         fi
+      done
+
+      npat=""
+      for pos in $(seq 0 $(( n + e - 1 )) ); do
+         if [[ ${met_err_list[$pos]} -eq 0  ]]; then
+            npat="$npat""0 "
+         else
+            npat="$npat""1 "
+         fi
+      done
+
+      echo "Meta error insertion complete, pattern is : $npat"
+      echo "Meta errors inserted, pattern is  $npat" >> $LOGFILE
+
+
+      # Insert Data Corruption
+      errcnt=0
+
+      echo "$nerr data error(s) are to be inserted..."
+      echo "Inserting $nerr data error(s)..." >> $LOGFILE
+
+      while [[ $errcnt -lt $nerr ]]; do
+         errpos=$RANDOM
+         let "errpos %= $(( n + e ))"
+         # special checks to avoid the possiblity of a silent global crc error rendering the stripe unrecoverable
+         if [[ ${silent_met_err_list[$errpos]} -eq 0  &&  $(( 1 + errcnt + silent_met_err_cnt )) -gt $e ]]; then
+            echo "ERROR AT POSTION $errpos MAY RESULT IN UNRECOVERABLE STRIPE"
+            for errpos in $(seq 0 $(( n + e - 1 )) ); do
+               if [[ ${silent_met_err_list[$errpos]} -ne 0 ]]; then
+                  break;
+               fi
+            done
+            echo "RELOCATING ERROR TO POSTION $errpos"
+         fi
+         if [[ ${dat_err_list[$errpos]} -eq 0 ]]; then
+            # only corrupt the file if we are hitting a new postion
+            truepos=$(( errpos - start ))
+            if [[ $truepos -lt 0 ]]; then
+               truepos=$(( truepos + n + e ))
+            fi
+            errcnt=$(( errcnt + 1 ))
+            dat_err_list[$errpos]=1
+            cor_type=0
+            # if there are no previous errors at this postion, note it for rc checking
+            if [[ ${met_err_list[$errpos]} -eq 0 ]]; then
+               stat=$(( stat + 1 ))
+               corrupt_file "$( echo "$EPAT" | sed 's/{b}/'"$errpos"'/' )" 1
+               cor_type=$?
+            else
+               # make sure not to create a backup '.meta' file if we have already corrupted it
+               corrupt_file "$( echo "$EPAT" | sed 's/{b}/'"$errpos"'/' )" 0
+               cor_type=$?
+            fi
+            # only note errors which do not align with meta errors and which are removal type or in data blocks
+            if [[ $cor_type -eq 0  ||  $truepos -lt $n ]]; then
+               if [[ ${met_err_list[$errpos]} -eq 0  ]]; then
+                  tstat=$(( tstat + 1 ))
+                  dstat=$(( dstat + 1 ))
+               elif [[ ${silent_met_err_list[$errpos]} -ne 0 ]]; then
+                  dstat=$(( dstat + 1 ))
+               fi
+            fi
+         fi
+         if [[ ${silent_met_err_list[$errpos]} -ne 0 ]]; then
+            # if we'er corrupting a block with silent meta corruption, we don't need to worry about that location any more
+            silent_met_err_list[$errpos]=0
+            (( silent_met_err_cnt-- ))
+         fi
+      done
+
+      npat=""
+      for pos in $(seq 0 $(( n + e - 1 )) ); do
+         if [[ ${dat_err_list[$pos]} -eq 0 ]]; then
+            npat="$npat""0 "
+         else
+            npat="$npat""1 "
+         fi
+      done
+
+      echo "Data error insertion complete, pattern is : $npat"
+      echo "Data errors inserted, pattern is  $npat" >> $LOGFILE
+
+      # finally, get the total error pattern
+      npat=""
+      for pos in $(seq 0 $(( n + e - 1 )) ); do
+         if [[ ${met_err_list[$pos]} -eq 0  &&  ${dat_err_list[$pos]} -eq 0 ]]; then
+            npat="$npat""0 "
+         else
+            npat="$npat""1 "
+         fi
+      done
+
+      echo
+      echo "The combined error pattern for this stripe is : $npat"
+      echo "The combined error pattern for this stripe is : $npat" >> $LOGFILE
+      echo "The expected return code for complete error detection is $stat"
+      echo "The expected return code for complete error detection is $stat" >> $LOGFILE
+      echo "The minimum expected error detection for reads is $tstat"
+      echo "The minimum expected error detection for reads is $tstat" >> $LOGFILE
+      echo "The minimum acceptible error detection for reads is $dstat"
+      echo "The minimum acceptible error detection for reads is $dstat" >> $LOGFILE
+      echo
+      echo >> $LIBTLOG
+
+
+      {
+
+         echo -n "Verifying corruption pattern (expecting pattern $stat)..."
+         echo "Verifying corruption pattern (expecting pattern $stat)..." >> $LOGFILE
+
+         noinfo=$RANDOM
+         let "noinfo %= 2"
+
+         CMD="$LIBNETEST verify $EPAT $n $e $start $partsz"
+
+         if [[ $noinfo -eq 1 ]]; then
+            echo -n "ignoring stripe state for this verification..."
+            echo "   Using '-n' option to perform verification while ignoring stripe state..." >> $LOGFILE
+            CMD="$LIBNETEST verify $EPAT -n $(( n + e ))"
+         fi
+
+         { ret=$( time -p $CMD 2>&1 | tee -a $LIBTLOG | tail -n 1 | awk '{print $NF}' ); } 2>>$TLOGPREF$$.status
+
+         if [[ ! $ret =~ $re  ||  $ret -ne $stat ]]; then
+            echo
+            echo -e "\033[0;31mFAIL - status check returned an unexpected error pattern ($ret)"
+            echo -e "CMD = $CMD\033[0m"
+            echo "FAIL - status check returned an unexpected error pattern ($ret)" >> $LOGFILE
+            echo "CMD = $CMD" >> $LOGFILE
+            exit -1
+         fi
+         echo "corruption pattern matches"
+         echo
+
+         echo -n "Performing a read of all data from striping (expected return value = $stat)..."
+         echo "Performing read of all data from striping (expected return value = $stat)..." >> $LOGFILE
+
+         noinfo=$RANDOM
+         let "noinfo %= 2"
+
+         CMD="$LIBNETEST read $EPAT $n $e $start $partsz -s $FSZ -o $OUTFILE"
+
+         if [[ $noinfo -eq 1 ]]; then
+            echo -n "ignoring stripe state for this read..."
+            echo "   Using '-n' option to perform read while ignoring stripe state..." >> $LOGFILE
+            CMD="$LIBNETEST read $EPAT -n $(( n + e )) -s $FSZ -o $OUTFILE"
+         fi
+
+         { ret=$( time -p $CMD 2>&1 | tee -a $LIBTLOG | tail -n 1 | awk '{print $NF}' ); } 2>> $TLOGPREF$$.read
+         
+         if [[ ! $ret =~ $re  ||  $ret -gt $stat  ||  $ret -lt $dstat ]]; then
+            # may still be possible to get false failure on silent zero-fill corruption
+            echo
+            echo -e "\033[0;31mFAIL - read operation returned an inappropriate status, expected $stat but received $ret"
+            echo -e "Minimum expected status value is $tstat"".  Minimum acceptible value is $dstat."
+            echo -e "CMD = $CMD\033[0m"
+            echo "   FAILURE: read operation returned an inappropriate status, expected $stat but received $ret" >> $LOGFILE
+            echo "CMD = $CMD" >> $LOGFILE
+            exit -1
+         elif [[ $ret -lt $tstat ]]; then
+            echo -e "\033[0;33mWARNING - read operation returned an inappropriate status, expected $stat but received $ret"
+            echo -e "The minimum acceptible status value is $dstat."
+            echo -e "This may be the result of corruption of the meta crcsum value for an unused/partially used erasure block."
+            echo -e "CMD = $CMD\033[0m"
+            echo "   WARNING: read operation returned an inappropriate status, expected $stat but received $ret" >> $LOGFILE
+            echo "CMD = $CMD" >> $LOGFILE
+         elif [[ $ret -lt $stat ]]; then
+            echo
+            echo -e "\e[33mNOTE - \e[0mRead operation failed to detect all erasure errors (expected $stat but received $ret)."
+            echo "       This is not unusual, as the faulty erasure sections may not have been needed for data recovery."
+            echo "       The minimum expected status value is $tstat."
+            echo "       CMD = $CMD"
+            echo "   NOTE: read operation failed to detect all erasure errors, expected $stat but received $ret" >> $LOGFILE
+            echo "CMD = $CMD" >> $LOGFILE
+         fi
+         echo "read completed"
+         echo
+         
+         echo -n "Performing comparison..."
+         echo "Performing comparison..." >> $LOGFILE
+         cmp $DATAFILE $OUTFILE
+
+         if [[ $? -ne 0 ]]; then
+            echo
+            echo -e "\033[0;31mFAIL - output does not match expected data"
+            echo -e "        compared $DATAFILE and $OUTFILE"
+            echo -e "CMD = $CMD\033[0m"
+            echo "   FAILURE: output of ne_read does not match the expected data" >> $LOGFILE
+            echo "            compared $DATAFILE and $OUTFILE" >> $LOGFILE
+            echo "CMD = $CMD" >> $LOGFILE
+            exit -1
+         fi
+         echo "Comparison passed"
+         echo "Comparison passed" >> $LOGFILE
+      
+         echo -n "Cleaining up output..."
+         echo "Cleaining up output..." >> $LOGFILE
+         rm $OUTFILE
+         echo "done"
+         echo
+
+         echo -n "Performing \"no-output\" read of all data from striping (expected return value = $stat)..."
+         echo "Performing \"no-output\" read of all data from striping (expected return value = $stat)..." >> $LOGFILE
+
+         noinfo=$RANDOM
+         let "noinfo %= 2"
+         
+         CMD="$LIBNETEST read $EPAT $n $e $start $partsz -s $FSZ"
+
+         if [[ $noinfo -eq 1 ]]; then
+            echo -n "ignoring stripe state for this read..."
+            echo "   Using '-n' option to perform read while ignoring stripe state..." >> $LOGFILE
+            CMD="$LIBNETEST read $EPAT -n $(( n + e )) -s $FSZ"
+         fi
+
+         { ret=$( time -p $CMD 2>&1 | tee -a $LIBTLOG | tail -n 1 | awk '{print $NF}' ); } 2>> $TLOGPREF$$.no_read
+         
+         if [[ ! $ret =~ $re  ||  $ret -gt $stat  ||  $ret -lt $tstat ]]; then
+            echo
+            echo -e "\033[0;33mWARNING - read operation returned an inappropriate status, expected $stat but received $ret"
+            echo -e "Minimum acceptible status value is $tstat"
+            echo -e "This may be the result of corruption of the meta crcsum value for an unused/partially used erasure block."
+            echo -e "CMD = $CMD\033[0m"
+            echo "   WARNING: read operation returned an inappropriate status, expected $stat but received $ret" >> $LOGFILE
+            echo "CMD = $CMD" >> $LOGFILE
+         elif [[ $ret -lt $stat ]]; then
+            echo
+            echo -e "\e[33mNOTE - \e[0mRead operation failed to detect all erasure errors (expected $stat but received $ret)."
+            echo "       This is not unusual, as the faulty erasure sections may not have been needed for data recovery."
+            echo "       CMD = $CMD"
+            echo "   NOTE: read operation failed to detect all erasure errors, expected $stat but received $ret" >> $LOGFILE
+            echo "CMD = $CMD" >> $LOGFILE
+         fi
+         echo "read completed"
+         echo
+
+         echo >> $LIBTLOG
+         echo -n "Attempting error recovery..."
+         echo "Attempting error recovery..." >> $LOGFILE
+
+         noinfo=$RANDOM
+         let "noinfo %= 2"
+
+         CMD="$LIBNETEST rebuild $EPAT $n $e $start $partsz"
+         
+         if [[ $noinfo -eq 1 ]]; then
+            echo -n "ignoring stripe state for this rebuild..."
+            echo "   Using '-n' option to perform rebuild while ignoring stripe state..." >> $LOGFILE
+            CMD="$LIBNETEST rebuild $EPAT -n $(( n + e ))"
+         fi
+
+         { ret=$( time -p $CMD 2>&1 | tee -a $LIBTLOG | tail -n 1 | awk '{print $NF}' ); } 2>>$TLOGPREF$$.recovery
+
+
+         #if [[ ! $ret =~ $re  ||  $ret -ne $stat ]]; then
+         if [[ ! $ret =~ $re  ||  $ret -ne 0 ]]; then
+            echo
+            echo -e "\033[0;31mFAIL - ne_rebuild has failed, expected return of 0 but received $ret"
+            echo -e "CMD = $CMD\033[0m"
+            echo "   FAILURE: an error occured within ne_rebuild, expected return of 0 but received $ret" >> $LOGFILE
+            echo "CMD = $CMD" >> $LOGFILE
+            exit $ret
+         fi
+         echo "rebuild completed"
+         echo
+
+         if [[ $npat == *"1"* ]]; then
+            ls $( echo "$EPAT*" | sed 's/{b}/\*/' ) | while read -r line; do
+               if [[ -e "$line".backup ]]; then
+                  echo -n "Performing comparison against original file = \"""$line"".backup\"..."
+                  echo "Performing comparison against original file = \"""$line"".backup\"..." >> $LOGFILE
+                  cmp "$line" "$line".backup
+
+                  if [[ $? -ne 0 ]]; then
+                     echo
+                     echo -e "\033[0;31mFAIL - rebuild output does not match expected data"
+                     echo -e "        compared $line and $line"".backup"
+                     echo -e "CMD = $CMD\033[0m"
+                     echo "   FAILURE: output of ne_rebuild does not match the expected data" >> $LOGFILE
+                     echo "            compared $line and $line"".backup" >> $LOGFILE
+                     echo "CMD = $CMD" >> $LOGFILE
+                     exit -1
+                  fi
+                  echo "Comparison passed"
+                  echo -n "Removing backup file..."
+                  echo "Comparison passed. Removing backup file." >> $LOGFILE
+                  rm "$line".backup
+                  if [[ -e "$line".corrupted ]]; then
+#                     cmp "$line".corrupted "$line".rebuild_bkp.*
+#                     if [[ $? -ne 0 ]]; then
+#                        echo
+#                        echo -e "\033[0;31mFAIL - rebuild backup does not match expected data"
+#                        echo -e "        compared $line"".corrupted and $line"".rebuild_bkp.*"
+#                        echo -e "CMD = $CMD\033[0m"
+#                        echo "   FAILURE: output of ne_rebuild backup file does not match the expected data" >> $LOGFILE
+#                        echo "            compared $line"".corrupted and $line"".rebuild_bkp.*" >> $LOGFILE
+#                        echo "CMD = $CMD" >> $LOGFILE
+#                        exit -1
+#                     fi
+
+                     echo -n "removing backup corrupted file..."
+                     echo "Removing backup corrupted file." >> $LOGFILE
+                     rm "$line".corrupted
+
+#                     echo -n "Removing backup pre-rebuild file..."
+#                     echo "Removing backup pre-rebuild file." >> $LOGFILE
+#                     rm "$line".rebuild_bkp.*
+                  fi
+                  echo "done"
+               fi
+            done
+
+            if [[ $? -ne 0 ]]; then
+               exit -1
+            fi
+
+         fi
+
+         echo -n "Checking the striping for corruption..."
+         echo "Checking the striping for corruption..." >> $LOGFILE
+
+         noinfo=$RANDOM
+         let "noinfo %= 2"
+
+         CMD="$LIBNETEST verify $EPAT $n $e $start $partsz"
+
+         if [[ $noinfo -eq 1 ]]; then
+            echo -n "ignoring stripe state for this verification..."
+            echo "   Using '-n' option to perform verification while ignoring stripe state..." >> $LOGFILE
+            CMD="$LIBNETEST verify $EPAT -n $(( n + e ))"
+         fi
+
+         { ret=$( time -p $CMD 2>&1 | tee -a $LIBTLOG | tail -n 1 | awk '{print $NF}' ); } 2>>$TLOGPREF$$.status
+
+         if [[ ! $ret =~ $re  ||  $ret -ne 0 ]]; then
+            echo
+            echo -e "\033[0;31mFAIL - status check indicates corruption present in erasure striping ( code : $ret )"
+            echo -e "CMD = $CMD\033[0m"
+            echo "FAIL - status check indicates corruption present in erasure striping ( code : $ret )" >> $LOGFILE
+            echo "CMD = $CMD" >> $LOGFILE
+            exit $ret
+         fi
+         echo "done"
+         echo
+
+
+         #All tests passed for this iteration
+         if [[ $incnt -gt 0 ]]; then
+            echo -e "\033[0;32mPASS - $n+$e with partsz $partsz, start position $start, (reused)"
+         else
+            echo -e "\033[0;32mPASS - $n+$e with partsz $partsz, start position $start,"
+         fi
+         echo -e "       and error pattern   $npat"
+         echo -e "       ( Test $(( (cnt*INITER) + incnt + 1 )) )\033[0m"
+         echo
+
+         echo "PASS - $n+$e with partsz $partsz, start position $start," >> $LOGFILE 
+         echo "       and error pattern   $npat" >> $LOGFILE
+         echo "       ( Test $(( (cnt + 1) * (incnt + 1) )) )" >> $LOGFILE
+      }
+
+      sleep $POSTSLEEP
+
+      echo -n "Removing libneTest log file..."
+      rm $LIBTLOG
+      echo "done"
+
+      incnt=$(( incnt + 1 ))
+   done
+
+   echo -n "Cleaning up file array..."
+   $LIBNETEST delete $EPAT $(( n + e )) -f > /dev/null
+   if [[ $? -ne 0 ]]; then
+      echo
+      echo -e "\033[0;31mDeletion failure...continuing.\033[0m"
+      echo "Deletion failure...continuing." >> $LOGFILE
+   else
+      echo "done"
+   fi
+   echo -n "Cleaning up test log..."
+   rm $LOGFILE
+   echo "done"
+
+   cnt=$(( cnt + 1 ))
+done
+
+echo
+
+if [[ $BC -eq 0 ]]; then
+   output=""
+   echo -n "Generating average times..."
+   tcnt="( 0.0"
+   count=0
+
+   while read -r line; do
+      line=$( echo "$line" | awk '{print $2}' )
+      tcnt="$tcnt + $line"
+      count=$(( count + 1 ));
+   done < "$TLOGPREF$$.write"
+   count=$(( count / 3 ));
+
+   if [[ $count -ne 0 ]]; then
+      tcnt=$( echo "$tcnt ) / $count" | bc -l )
+      output="$output\nWrites:,Performed = $count,AvgTime = $tcnt Seconds"
+   fi
+
+   tcnt="( 0.0"
+   count=0
+
+   while read -r line; do
+      line=$( echo "$line" | awk '{print $2}' )
+      tcnt="$tcnt + $line"
+      count=$(( count + 1 ));
+   done < "$TLOGPREF$$.read"
+   count=$(( count / 3 ));
+
+   if [[ $count -ne 0 ]]; then
+      tcnt=$( echo "$tcnt ) / $count" | bc -l )
+      output="$output\nReads:,Performed = $count,AvgTime = $tcnt Seconds"
+   fi
+
+   tcnt="( 0.0"
+   count=0
+
+   while read -r line; do
+      line=$( echo "$line" | awk '{print $2}' )
+      tcnt="$tcnt + $line"
+      count=$(( count + 1 ));
+   done < "$TLOGPREF$$.no_read"
+   count=$(( count / 3 ));
+
+   if [[ $count -ne 0 ]]; then
+      tcnt=$( echo "$tcnt ) / $count" | bc -l )
+      output="$output\nNo-Output Reads:,Performed = $count,AvgTime = $tcnt Seconds"
+   fi
+
+   tcnt="( 0.0"
+   count=0
+
+   while read -r line; do
+      line=$( echo "$line" | awk '{print $2}' )
+      tcnt="$tcnt + $line"
+      count=$(( count + 1 ));
+   done < "$TLOGPREF$$.recovery"
+   count=$(( count / 3 ));
+
+   if [[ $count -ne 0 ]]; then
+      tcnt=$( echo "$tcnt ) / $count" | bc -l )
+      output="$output\nRecoveries:,Performed = $count,AvgTime = $tcnt Seconds"
+   fi
+
+   tcnt="( 0.0"
+   count=0
+
+   while read -r line; do
+      line=$( echo "$line" | awk '{print $2}' )
+      tcnt="$tcnt + $line"
+      count=$(( count + 1 ));
+   done < "$TLOGPREF$$.status"
+   count=$(( count / 3 ));
+
+   if [[ $count -ne 0 ]]; then
+      tcnt=$( echo "$tcnt ) / $count" | bc -l )
+      output="$output\nVerify:,Performed = $count,AvgTime = $tcnt Seconds"
+   fi
+
+   { res=$( printf "$output\n" | column -s "," -o "   " -t ); } 2>/dev/null
+
+   if [[ $? -ne 0 ]]; then
+      { res=$( printf "$output\n" | column -s "," -c 100 -t ); } 2>/dev/null
+   fi
+
+   echo "done"
+   echo "$res"
+
+   echo
+fi
+
+echo -n "Cleaning up remaining files..."
+rm $DATAFILE
+echo "done"
+echo -n "Removing time files..."
+rm $TLOGPREF$$.*
+echo "done"
+if [[ $CREATED_WRKDIR == 1 ]]; then
+   echo -n "Deleting working directory..."
+   rmdir $WORK_DIRECTORY
+   ret=$?
+   if [[ $ret -ne 0 ]]; then
+      echo -e "\033[0;31mfailure\033[0m"
+      echo "Failed to delete working directory!  Terminating anyway." >> $LOGFILE
+   else
+      echo "done"
+   fi
+fi
+

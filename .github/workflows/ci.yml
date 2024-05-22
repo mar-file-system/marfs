@@ -26,13 +26,6 @@ jobs:
         ref: v2.30.0
         path: isa-l
 
-    - name: Checkout erasureUtils
-      uses: actions/checkout@v3
-      with:
-        repository: ${{ github.repository_owner }}/erasureUtils
-        ref: master
-        path: erasureUtils
-
     - name: Checkout MarFS
       uses: actions/checkout@v3
       with:
@@ -43,14 +36,6 @@ jobs:
         cd isa-l
         ./autogen.sh
         ./configure --prefix="$GITHUB_WORKSPACE/install"
-        make install
-        cd $GITHUB_WORKSPACE
-
-    - name: Build erasureUtils
-      run: |
-        cd erasureUtils
-        ./autogen.sh
-        ./configure CFLAGS="-I$GITHUB_WORKSPACE/install/include" LDFLAGS="-L$GITHUB_WORKSPACE/install/lib" --prefix="$GITHUB_WORKSPACE/install"
         make install
         cd $GITHUB_WORKSPACE
 

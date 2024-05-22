@@ -63,7 +63,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "datastream/datastream.h"
 
-#include <ne.h>
+#include "ne/ne.h"
 
 #include <unistd.h>
 #include <stdio.h>
