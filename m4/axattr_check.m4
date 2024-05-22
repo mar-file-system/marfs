@@ -47,6 +47,7 @@ AC_DEFUN([AXATTR_SET_FUNC_CHECK],
       #else
       #   include <sys/xattr.h>
       #endif
+      #include <string.h>
       char xattrval[20];
       ]], [[
       fsetxattr(12,"user.test", xattrval,strlen(xattrval),0);
@@ -61,11 +62,12 @@ AC_DEFUN([AXATTR_SET_FUNC_CHECK],
          #else
          #   include <sys/xattr.h>
          #endif
+	 #include <string.h>
          char xattrval[20];
          ]], [[
          fsetxattr(12,"user.test", xattrval,strlen(xattrval),0,0);
          ]])], 
          [echo "verified format of fsetxattr() with 6 args..."
           AC_SUBST(AXATTR_GET_FUNC, [6]) ], 
-         [AC_MSG_ERROR([Could not identify a getxattr() function on this system])])])])
+         [AC_MSG_ERROR([Could not identify a fsetxattr() function on this system])])])])
 
