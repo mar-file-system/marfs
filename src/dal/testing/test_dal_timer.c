@@ -62,6 +62,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <unistd.h>
 #include <stdio.h>
 #include <ftw.h>
+#include <stdlib.h>
 
 // WARNING: error-prone and ugly method of deleting files, written for simplicity only
 //          don't replicate this junk into ANY production code paths!
