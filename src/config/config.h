@@ -139,6 +139,11 @@ typedef struct marfs_config_struct {
    marfs_repo* repolist;
 } marfs_config;
 
+typedef struct {
+	marfs_config *config;
+	pthread_mutex_t erasureLock;
+} marfs_config_rust_wrapper;
+
 typedef struct marfs_position_struct {
    marfs_ns* ns;
    unsigned int depth;
@@ -146,7 +151,7 @@ typedef struct marfs_position_struct {
 } marfs_position;
 
 // flags for config_verify
-enum {
+enum config_flags {
    CFG_FIX          = 0x1,  // fix problems found with the config
    CFG_OWNERCHECK   = 0x2,  // check owner of MDAL "security directory"
    CFG_MDALCHECK    = 0x4,  // check MDAL
@@ -168,6 +173,9 @@ marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock );
  * @return int : Zero on success, or -1 on failure
  */
 int config_term( marfs_config* config );
+
+marfs_config_rust_wrapper config_init_rust_helper( const char* cpath );
+int config_term_rust_helper( marfs_config_rust_wrapper config );
 
 /**
  * Duplicate the reference to a given NS
