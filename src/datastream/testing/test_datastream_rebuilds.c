@@ -121,7 +121,7 @@ int main(int argc, char **argv)
 
    // Initialize the libxml lib and check for API mismatches
    LIBXML_TEST_VERSION
-   int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
+   unsigned int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
 
    // create the dirs necessary for DAL/MDAL initialization (ignore EEXIST)
    errno = 0;

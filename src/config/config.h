@@ -232,7 +232,7 @@ HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_
  * @param int flags : flags to control behavior of the verification
  * @return int : A count of uncorrected errors encountered, or -1 if a failure occurred
  */
-int config_verify( marfs_config* config, const char* tgtNS, int flags );
+int config_verify( marfs_config* config, const char* tgtNS, unsigned int flags );
 
 /**
  * Traverse the given path, idetifying a final NS target and resulting subpath

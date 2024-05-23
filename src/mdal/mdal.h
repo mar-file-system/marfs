@@ -142,7 +142,7 @@ typedef struct MDAL_struct {
     *                                        matches current user if true)
     * @return int : A count of uncorrected security issues, or -1 if a failure occurred
     */
-   int (*checksec) ( const MDAL_CTXT ctxt, int flags );
+   int (*checksec) ( const MDAL_CTXT ctxt, unsigned int flags );
 
 
    // Namespace Functions
