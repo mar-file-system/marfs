@@ -137,7 +137,7 @@ int main( int argc, char** argv ) {
       return -1;
    }
    marfs_config* verconf = config_init( "testing/config.xml", &erasurelock );
-   int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
+   unsigned int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
    if ( config_verify( verconf, ".", flags ) ) {
       printf( "failed to verify batch ctxt config\n" );
       return -1;
