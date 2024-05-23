@@ -110,7 +110,7 @@ typedef struct noop_block_context_struct
  * @param xmlNode* node : Node to be parsed
  * @return int : Zero on success, -1 on error
  */
-int parse_int_node( int* target, xmlNode* node ) {
+static int parse_int_node( int* target, xmlNode* node ) {
    // check for an included value
    if ( node->children != NULL  &&
         node->children->type == XML_TEXT_NODE  &&
@@ -142,7 +142,7 @@ int parse_int_node( int* target, xmlNode* node ) {
  * @param xmlNode* node : Node to be parsed
  * @return int : Zero on success, -1 on error
  */
-int parse_size_node( ssize_t* target, xmlNode* node ) {
+static int parse_size_node( ssize_t* target, xmlNode* node ) {
    // check for unexpected node format
    if ( node->children == NULL  ||  node->children->type != XML_TEXT_NODE ) {
       LOG( LOG_ERR, "unexpected format of size node: \"%s\"\n", (char*)node->name );
