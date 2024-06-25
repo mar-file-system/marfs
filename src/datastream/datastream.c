@@ -1993,16 +1993,16 @@ size_t datastream_filebounds( const FTAG* ftag ) {
    size_t headerlen = recovery_headertostr(&(header), NULL, 0);
    // calculate the ending position of this file
    size_t dataperobj = ( ftag->objsize ) ?
-                         ftag->objsize - (walker->headerlen + ftag->recoverybytes) : 0;
+                         ftag->objsize - (headerlen + ftag->recoverybytes) : 0;
    size_t endobj = ftag->objno; // update ending object index
    if ( dataperobj ) {
       // calculate the final object referenced by this file
-      size_t finobjbounds = (ftag->bytes + ftag->offset - walker->headerlen) / dataperobj;
+      size_t finobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
       // if we exactly align to object bounds AND the file is FINALIZED,
       //   we've overestimated by one object
       if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
             finobjbounds  &&
-            (ftag->bytes + ftag->offset - walker->headerlen) % dataperobj == 0 ) {
+            (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0 ) {
          finobjbounds--;
       }
       endobj += finobjbounds;
@@ -2012,14 +2012,14 @@ size_t datastream_filebounds( const FTAG* ftag ) {
 
 /**
  * Generate a new Stream ID string and recovery header size based on that ID
- * @param const char* ctag : Client string associated with this datastream
+ * @param char* const ctag : Client string associated with this datastream
  * @param const marfs_ns* ns : MarFS Namespace associated with this datastream
  * @param char** streamid : Reference to be populated with the Stream ID string
  *                          ( client is responsible for freeing this string )
  * @param size_t* rheadersize : Reference to be populated with the recovery header size
  * @return int : Zero on success, or -1 on failure
  */
-int datastream_genstreamid(const char* ctag, const marfs_ns* ns, char** streamid, size_t* rheadersize) {
+int datastream_genstreamid(char* const ctag, const marfs_ns* ns, char** streamid, size_t* rheadersize) {
    struct timespec curtime;
    if (clock_gettime(CLOCK_REALTIME, &curtime)) {
       LOG(LOG_ERR, "Failed to determine the current time\n");
