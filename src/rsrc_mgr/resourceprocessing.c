@@ -1702,19 +1702,7 @@ int process_openstreamwalker( streamwalker* swalker, marfs_position* pos, const 
    };
    walker->headerlen = recovery_headertostr(&(header), NULL, 0);
    // calculate the ending position of this file
-   size_t dataperobj = ( walker->ftag.objsize ) ?
-                         walker->ftag.objsize - (walker->headerlen + walker->ftag.recoverybytes) : 0;
-   size_t endobj = walker->ftag.objno; // update ending object index
-   if ( dataperobj ) {
-      // calculate the final object referenced by this file
-      size_t finobjbounds = (walker->ftag.bytes + walker->ftag.offset - walker->headerlen) / dataperobj;
-      if ( (walker->ftag.state & FTAG_DATASTATE) >= FTAG_FIN  &&
-            finobjbounds  &&
-            (walker->ftag.bytes + walker->ftag.offset - walker->headerlen) % dataperobj == 0 ) {
-         finobjbounds--;
-      }
-      endobj += finobjbounds;
-   }
+   size_t endobj = datastream_filebounds( &(walker->ftag) );
    // TODO sanity checks
    // perform state checking for this first file
    char assumeactive = 0;
@@ -2142,23 +2130,10 @@ int process_iteratestreamwalker( streamwalker* swalker, opinfo** gcops, opinfo**
             LOG( LOG_ERR, "Invalid FTAG filenumber (%zu) on file %zu\n", walker->ftag.fileno, walker->fileno + tgtoffset );
             return -1;
          }
-         size_t dataperobj = ( walker->ftag.objsize ) ?
-           walker->ftag.objsize - (walker->headerlen + walker->ftag.recoverybytes) : 0; // data chunk size for this stream
-         endobj = walker->ftag.objno; // update ending object index
+         endobj = datastream_filebounds( &(walker->ftag) ); // update ending object index
          eos = walker->ftag.endofstream;
          if ( (walker->ftag.state & FTAG_DATASTATE) < FTAG_FIN ) { eos = 1; }
          if ( walker->gctag.refcnt  &&  walker->gctag.eos ) { eos = 1; }
-         // calculate final object referenced by this file
-         if ( dataperobj ) {
-            // calculate the final object referenced by this file
-            size_t finobjbounds = (walker->ftag.bytes + walker->ftag.offset - walker->headerlen) / dataperobj;
-            if ( (walker->ftag.state & FTAG_DATASTATE) >= FTAG_FIN  &&
-                  finobjbounds  &&
-                  (walker->ftag.bytes + walker->ftag.offset - walker->headerlen) % dataperobj == 0 ) {
-               finobjbounds--;
-            }
-            endobj += finobjbounds;
-         }
          // check for object transition
          if ( walker->ftag.objno != walker->objno ) {
             // only update object count if we are doing a 'full' walk

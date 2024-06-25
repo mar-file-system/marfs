@@ -69,6 +69,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "marfs.h"
 #include "datastream/datastream.h"
 #include "mdal/mdal.h"
+#include "general_include/restrictedchars.h"
 
 #include <dirent.h>
 #include <limits.h>
@@ -315,6 +316,12 @@ int marfs_setctag( marfs_ctxt ctxt, const char* ctag ) {
    }
    if ( ctag == NULL ) {
       LOG( LOG_ERR, "Received a NULL ctag reference\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
+   if ( restrictedchars_check( ctag ) ) {
+      LOG( LOG_ERR, "Received a ctag string containing restricted characters\n" );
       errno = EINVAL;
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;

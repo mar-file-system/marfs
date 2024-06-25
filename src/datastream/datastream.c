@@ -95,77 +95,6 @@ typedef struct datastream_position_struct {
 //   -------------   INTERNAL FUNCTIONS    -------------
 
 /**
- * Generate a new Stream ID string and recovery header size based on that ID
- * @param char** streamid : Reference to be populated with the Stream ID string
- *                          ( client is responsible for freeing this string )
- * @param size_t* rheadersize : Reference to be populated with the recovery header size
- * @return int : Zero on success, or -1 on failure
- */
-int genstreamid(char* ctag, const marfs_ns* ns, char** streamid, size_t* rheadersize) {
-   struct timespec curtime;
-   if (clock_gettime(CLOCK_REALTIME, &curtime)) {
-      LOG(LOG_ERR, "Failed to determine the current time\n");
-      return -1;
-   }
-   char* nsrepo = NULL;
-   char* nspath = NULL;
-   if (config_nsinfo(ns->idstr, &(nsrepo), &(nspath))) {
-      LOG(LOG_ERR, "Failed to retrieve path/repo info for NS: \"%s\"\n", ns->idstr);
-      return -1;
-   }
-   char* nsparse = nspath;
-   size_t nspathlen = 0;
-   for (; *nsparse != '\0'; nsparse++) {
-      // replace all '/' chars in a NS path with '#'
-      if (*nsparse == '/') {
-         *nsparse = '#';
-      }
-      nspathlen++;
-   }
-   size_t streamidlen = SIZE_DIGITS;  // to account for tv_sec (see numdigits.h)
-   streamidlen += SIZE_DIGITS; // to account for tv_nsec
-   streamidlen += strlen(nsrepo) + nspathlen; // to include NS/Repo info
-   streamidlen += 4; // for '#'/'.' seperators and null terminator
-   char* newstreamid = NULL;
-   if ((newstreamid = malloc(sizeof(char) * streamidlen)) == NULL) {
-      LOG(LOG_ERR, "Failed to allocate space for streamID\n");
-      free(nsrepo);
-      free(nspath);
-      return -1;
-   }
-   ssize_t prres = snprintf(newstreamid, streamidlen, "%s#%s#%zd.%ld",
-      nsrepo, nspath, curtime.tv_sec, curtime.tv_nsec);
-   if (prres <= 0 || prres >= streamidlen) {
-      LOG(LOG_ERR, "Failed to generate streamID value\n");
-      free(nsrepo);
-      free(nspath);
-      free(newstreamid);
-      return -1;
-   }
-   free(nsrepo);
-   free(nspath);
-
-   // establish our recovery header length
-   RECOVERY_HEADER header = {
-      .majorversion = RECOVERY_CURRENT_MAJORVERSION,
-      .minorversion = RECOVERY_CURRENT_MINORVERSION,
-      .ctag = ctag,
-      .streamid = newstreamid
-   };
-   size_t newrecoveryheaderlen = recovery_headertostr(&(header), NULL, 0);
-   if (newrecoveryheaderlen < 1) {
-      LOG(LOG_ERR, "Failed to identify length of create stream recov header\n");
-      free(newstreamid);
-      return -1;
-   }
-
-   // populate our return values
-   *streamid = newstreamid;
-   *rheadersize = newrecoveryheaderlen;
-   return 0;
-}
-
-/**
  * Generate a repack marker path for a file
  * @param const char* rpath : Reference path of the repacked file ( can be left NULL, if unknown )
  * @param FTAG* ftag : FTAG value of the repacked file
@@ -1557,7 +1486,7 @@ DATASTREAM genstream(STREAM_TYPE type, const char* path, char rpathflag, marfs_p
       }
 
       // generate a new streamID
-      if ( genstreamid( stream->ctag, stream->ns, &(stream->streamid), &(stream->recoveryheaderlen) ) ) {
+      if ( datastream_genstreamid( stream->ctag, stream->ns, &(stream->streamid), &(stream->recoveryheaderlen) ) ) {
          LOG(LOG_ERR, "Failed to generate streamID value\n");
          freestream(stream);
          return NULL;
@@ -2044,6 +1973,115 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
 
 //   -------------   EXTERNAL FUNCTIONS    -------------
 
+/**
+ * Calculates the final data object number referenced by the given FTAG of a MarFS file
+ * @param const FTAG* ftag : FTAG value associated with the target file
+ * @return size_t : Final object number ( ftag->objno ) referenced by the provided FTAG
+ *                  NOTE -- This value is inclusive and absolute ( as opposed to relative ).
+ *                          As in, a return value of 100, for an FTAG /w objno == 3 means that
+ *                          the data content referenced by the FTAG spans object numbers 3 to
+ *                          100, inclusively.
+ */
+size_t datastream_filebounds( const FTAG* ftag ) {
+   // calculate our header length
+   const RECOVERY_HEADER header = {
+      .majorversion = ftag->majorversion,
+      .minorversion = ftag->minorversion,
+      .ctag = ftag->ctag,
+      .streamid = ftag->streamid
+   };
+   size_t headerlen = recovery_headertostr(&(header), NULL, 0);
+   // calculate the ending position of this file
+   size_t dataperobj = ( ftag->objsize ) ?
+                         ftag->objsize - (headerlen + ftag->recoverybytes) : 0;
+   size_t endobj = ftag->objno; // update ending object index
+   if ( dataperobj ) {
+      // calculate the final object referenced by this file
+      size_t finobjbounds = (ftag->bytes + ftag->offset - headerlen) / dataperobj;
+      // if we exactly align to object bounds AND the file is FINALIZED,
+      //   we've overestimated by one object
+      if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
+            finobjbounds  &&
+            (ftag->bytes + ftag->offset - headerlen) % dataperobj == 0 ) {
+         finobjbounds--;
+      }
+      endobj += finobjbounds;
+   }
+   return endobj;
+}
+
+/**
+ * Generate a new Stream ID string and recovery header size based on that ID
+ * @param char* const ctag : Client string associated with this datastream
+ * @param const marfs_ns* ns : MarFS Namespace associated with this datastream
+ * @param char** streamid : Reference to be populated with the Stream ID string
+ *                          ( client is responsible for freeing this string )
+ * @param size_t* rheadersize : Reference to be populated with the recovery header size
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_genstreamid(char* const ctag, const marfs_ns* ns, char** streamid, size_t* rheadersize) {
+   struct timespec curtime;
+   if (clock_gettime(CLOCK_REALTIME, &curtime)) {
+      LOG(LOG_ERR, "Failed to determine the current time\n");
+      return -1;
+   }
+   char* nsrepo = NULL;
+   char* nspath = NULL;
+   if (config_nsinfo(ns->idstr, &(nsrepo), &(nspath))) {
+      LOG(LOG_ERR, "Failed to retrieve path/repo info for NS: \"%s\"\n", ns->idstr);
+      return -1;
+   }
+   char* nsparse = nspath;
+   size_t nspathlen = 0;
+   for (; *nsparse != '\0'; nsparse++) {
+      // replace all '/' chars in a NS path with '#'
+      if (*nsparse == '/') {
+         *nsparse = '#';
+      }
+      nspathlen++;
+   }
+   size_t streamidlen = SIZE_DIGITS;  // to account for tv_sec (see numdigits.h)
+   streamidlen += SIZE_DIGITS; // to account for tv_nsec
+   streamidlen += strlen(nsrepo) + nspathlen; // to include NS/Repo info
+   streamidlen += 4; // for '#'/'.' seperators and null terminator
+   char* newstreamid = NULL;
+   if ((newstreamid = malloc(sizeof(char) * streamidlen)) == NULL) {
+      LOG(LOG_ERR, "Failed to allocate space for streamID\n");
+      free(nsrepo);
+      free(nspath);
+      return -1;
+   }
+   ssize_t prres = snprintf(newstreamid, streamidlen, "%s#%s#%zd.%ld",
+      nsrepo, nspath, curtime.tv_sec, curtime.tv_nsec);
+   if (prres <= 0 || prres >= streamidlen) {
+      LOG(LOG_ERR, "Failed to generate streamID value\n");
+      free(nsrepo);
+      free(nspath);
+      free(newstreamid);
+      return -1;
+   }
+   free(nsrepo);
+   free(nspath);
+
+   // establish our recovery header length
+   const RECOVERY_HEADER header = {
+      .majorversion = RECOVERY_CURRENT_MAJORVERSION,
+      .minorversion = RECOVERY_CURRENT_MINORVERSION,
+      .ctag = ctag,
+      .streamid = newstreamid
+   };
+   size_t newrecoveryheaderlen = recovery_headertostr(&(header), NULL, 0);
+   if (newrecoveryheaderlen < 1) {
+      LOG(LOG_ERR, "Failed to identify length of create stream recov header\n");
+      free(newstreamid);
+      return -1;
+   }
+
+   // populate our return values
+   *streamid = newstreamid;
+   *rheadersize = newrecoveryheaderlen;
+   return 0;
+}
 
 /**
  * Generate a reference path for the given FTAG
