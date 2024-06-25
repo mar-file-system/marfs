@@ -69,6 +69,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "marfs.h"
 #include "datastream/datastream.h"
 #include "mdal/mdal.h"
+#include "general_include/restrictedchars.h"
 
 #include <dirent.h>
 #include <limits.h>
