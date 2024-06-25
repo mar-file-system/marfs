@@ -1144,32 +1144,12 @@ int obj_command(marfs_config* config, char* config_path, walkerstate* state, cha
    chunkoff = chunknum - state->ftag.objno;
 
    // identify object bounds of the current file
-   RECOVERY_HEADER header = {
-      .majorversion = RECOVERY_CURRENT_MAJORVERSION,
-      .minorversion = RECOVERY_CURRENT_MINORVERSION,
-      .ctag = state->ftag.ctag,
-      .streamid = state->ftag.streamid
-   };
-   size_t headerlen = recovery_headertostr(&(header), NULL, 0);
-   if (headerlen < 1) {
-      printf(OUTPREFX "ERROR: Failed to identify recovery header length for file\n");
-      headerlen = 0;
-   }
-   size_t dataperobj = state->ftag.objsize - (headerlen + state->ftag.recoverybytes);
-   ssize_t fileobjbounds = (state->ftag.bytes + state->ftag.offset - headerlen) / dataperobj;
-   // special case check
-   if ((state->ftag.state & FTAG_DATASTATE) >= FTAG_FIN && fileobjbounds &&
-      (state->ftag.bytes + state->ftag.offset - headerlen) % dataperobj == 0) {
-      // if we exactly align to object bounds AND the file is FINALIZED,
-      //   we've overestimated by one object
-      fileobjbounds--;
-   }
-
+   size_t endobj = datastream_filebounds( &(state->ftag) );
    if ( chunknum < state->ftag.objno ) {
       printf(OUTPREFX "WARNING: Specified object number preceeds file limits ( min referenced objno == %zd )\n", state->ftag.objno);
    }
-   if (chunknum > state->ftag.objno + fileobjbounds) {
-      printf(OUTPREFX "WARNING: Specified object number exceeds file limits ( max referenced objno == %zd )\n", state->ftag.objno + fileobjbounds);
+   if (chunknum > endobj) {
+      printf(OUTPREFX "WARNING: Specified object number exceeds file limits ( max referenced objno == %zd )\n", endobj);
    }
 
    // identify the object target
@@ -1183,7 +1163,7 @@ int obj_command(marfs_config* config, char* config_path, walkerstate* state, cha
       return -1;
    }
    // print object info
-   printf("Obj#%-5zu [ FileObjNo %zd/%zd ]\n   Pod: %d\n   Cap: %d\n   Scatter: %d\n   ObjName: %s\n   Erasure Information: N %d, E %d, O %d, partsz %lu\n   neutil Args: -c \"%s:/marfs_config/repo name=%s/data/DAL\" -P %d -C %d -S %d -O \"%s\"\n\n", chunknum, chunkoff, fileobjbounds, location.pod, location.cap, location.scatter, objname, erasure.N, erasure.E, erasure.O, erasure.partsz, config_path, state->pos.ns->prepo->name, location.pod, location.cap, location.scatter, objname);
+   printf("Obj#%-5zu [ FileObjNo %zd/%zd ]\n   Pod: %d\n   Cap: %d\n   Scatter: %d\n   ObjName: %s\n   Erasure Information: N %d, E %d, O %d, partsz %lu\n   neutil Args: -c \"%s:/marfs_config/repo name=%s/data/DAL\" -P %d -C %d -S %d -O \"%s\"\n\n", chunknum, chunkoff, endobj - state->ftag.objno, location.pod, location.cap, location.scatter, objname, erasure.N, erasure.E, erasure.O, erasure.partsz, config_path, state->pos.ns->prepo->name, location.pod, location.cap, location.scatter, objname);
    free(objname);
 
    return 0;

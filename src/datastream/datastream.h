@@ -102,6 +102,28 @@ typedef struct datastream_struct {
 }*DATASTREAM;
 
 /**
+ * Calculates the final data object number referenced by the given FTAG of a MarFS file
+ * @param const FTAG* ftag : FTAG value associated with the target file
+ * @return size_t : Final object number ( ftag.objno ) referenced by the provided FTAG
+ *                  NOTE -- This value is inclusive and absolute ( as opposed to relative ).
+ *                          As in, a return value of 100, for an FTAG /w objno == 3 means that
+ *                          the data content referenced by the FTAG spans object numbers 3 to
+ *                          100, inclusively.
+ */
+size_t datastream_filebounds( const FTAG* ftag );
+
+/**
+ * Generate a new Stream ID string and recovery header size based on that ID
+ * @param char* ctag : Client string associated with this datastream
+ * @param const marfs_ns* ns : MarFS Namespace associated with this datastream
+ * @param char** streamid : Reference to be populated with the Stream ID string
+ *                          ( client is responsible for freeing this string )
+ * @param size_t* rheadersize : Reference to be populated with the recovery header size
+ * @return int : Zero on success, or -1 on failure
+ */
+int datastream_genstreamid(char* ctag, const marfs_ns* ns, char** streamid, size_t* rheadersize);
+
+/**
  * Generate a reference path for the given FTAG
  * @param FTAG* ftag : Reference to the FTAG value to generate an rpath for
  * @param HASH_TABLE reftable : Reference position hash table to be used
