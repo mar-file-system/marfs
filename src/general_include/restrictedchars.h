@@ -64,7 +64,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 // NOTE: This file is intended for direct, inline inclusion in other SRC files
 
 
-#define RESTRICTEDCHARS_STRING "/()|#"
+#define RESTRICTEDCHARS_STRING "/()|#^*"
 
 // parse over a provided string to check for restricted chars
 int restrictedchars_check( const char* str ) {

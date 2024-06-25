@@ -319,6 +319,12 @@ int marfs_setctag( marfs_ctxt ctxt, const char* ctag ) {
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
       return -1;
    }
+   if ( restrictedchars_check( ctag ) ) {
+      LOG( LOG_ERR, "Received a ctag string containing restricted characters\n" );
+      errno = EINVAL;
+      LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
+      return -1;
+   }
    // duplicate the client string
    char* newctag = strdup( ctag );
    if ( newctag == NULL ) {
