@@ -1976,7 +1976,7 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
 /**
  * Calculates the final data object number referenced by the given FTAG of a MarFS file
  * @param const FTAG* ftag : FTAG value associated with the target file
- * @return size_t : Final object number ( ftag.objno ) referenced by the provided FTAG
+ * @return size_t : Final object number ( ftag->objno ) referenced by the provided FTAG
  *                  NOTE -- This value is inclusive and absolute ( as opposed to relative ).
  *                          As in, a return value of 100, for an FTAG /w objno == 3 means that
  *                          the data content referenced by the FTAG spans object numbers 3 to
@@ -1985,24 +1985,24 @@ int completefile(DATASTREAM stream, STREAMFILE* file) {
 size_t datastream_filebounds( const FTAG* ftag ) {
    // calculate our header length
    const RECOVERY_HEADER header = {
-      .majorversion = ftag.majorversion,
-      .minorversion = ftag.minorversion,
-      .ctag = ftag.ctag,
-      .streamid = ftag.streamid
+      .majorversion = ftag->majorversion,
+      .minorversion = ftag->minorversion,
+      .ctag = ftag->ctag,
+      .streamid = ftag->streamid
    };
    size_t headerlen = recovery_headertostr(&(header), NULL, 0);
    // calculate the ending position of this file
-   size_t dataperobj = ( ftag.objsize ) ?
-                         ftag.objsize - (walker->headerlen + ftag.recoverybytes) : 0;
-   size_t endobj = ftag.objno; // update ending object index
+   size_t dataperobj = ( ftag->objsize ) ?
+                         ftag->objsize - (walker->headerlen + ftag->recoverybytes) : 0;
+   size_t endobj = ftag->objno; // update ending object index
    if ( dataperobj ) {
       // calculate the final object referenced by this file
-      size_t finobjbounds = (ftag.bytes + ftag.offset - walker->headerlen) / dataperobj;
+      size_t finobjbounds = (ftag->bytes + ftag->offset - walker->headerlen) / dataperobj;
       // if we exactly align to object bounds AND the file is FINALIZED,
       //   we've overestimated by one object
-      if ( (ftag.state & FTAG_DATASTATE) >= FTAG_FIN  &&
+      if ( (ftag->state & FTAG_DATASTATE) >= FTAG_FIN  &&
             finobjbounds  &&
-            (ftag.bytes + ftag.offset - walker->headerlen) % dataperobj == 0 ) {
+            (ftag->bytes + ftag->offset - walker->headerlen) % dataperobj == 0 ) {
          finobjbounds--;
       }
       endobj += finobjbounds;
