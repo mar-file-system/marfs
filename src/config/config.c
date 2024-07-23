@@ -834,7 +834,7 @@ int count_nodes( xmlNode* root, const char* tag ) {
    // iterate over all nodes at this level, checking for instances of 'tag'
    int tagcnt = 0;
    for ( ; root; root = root->next ) {
-      if ( root->type == XML_ELEMENT_NODE  &&  strncmp( (char*)root->name, tag, strlen(tag) ) == 0 ) {
+      if ( root->type == XML_ELEMENT_NODE  &&  strncmp( (char*)root->name, tag, strlen(tag) + 1 ) == 0 ) {
          tagcnt++;
       }
    }
@@ -853,7 +853,7 @@ HASH_NODE* find_namespace( HASH_NODE* nslist, size_t nscount, const char* nsname
    // iterate over the elements of the nslist, searching for a matching name
    size_t index;
    for( index = 0; index < nscount; index++ ) {
-      if( strncmp( nslist[index].name, nsname, strlen(nsname) ) == 0 ) {
+      if( strncmp( nslist[index].name, nsname, strlen(nsname) + 1 ) == 0 ) {
          return ( nslist + index );
       }
    }
@@ -872,7 +872,7 @@ marfs_repo* find_repo( marfs_repo* repolist, int repocount, const char* reponame
    // iterate over the elements of the repolist, searching for a matching name
    int index;
    for ( index = 0; index < repocount; index++ ) {
-      if ( strncmp( repolist[index].name, reponame, strlen(reponame) ) == 0 ) {
+      if ( strncmp( repolist[index].name, reponame, strlen(reponame) + 1 ) == 0 ) {
          return ( repolist + index );
       }
    }
