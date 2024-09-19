@@ -1,4 +1,4 @@
-# MUSTANG version 1.2.2
+# MUSTANG version 1.3.0
 
 Welcome to **MUSTANG**!
 * **M**arFS (_or **M**archive/**M**etadata_)
@@ -22,13 +22,16 @@ dependencies. Installation instructions and documentation can be found
 
 ## Version history
 
-Users are strongly encouraged to use the current version (1.2.2), which is
-implemented using a thread pool and which is far more resilient to large
-workloads than previous versions are. Version 1.2.2 also patches "false
-positive" behavior in hashtable and cache searches which caused an incorrectly
-low number of MarFS objects to be reported in the output file.
+Users are strongly encouraged to use the current version (1.3.0), which 
+adds the ability to retireve the MarFS objects of a single file. There
+have also been minor error message corrections made. Initial changes
+to integrate the mustang buildinto the general MarFS build were made.
 
 Previous versions are:
+* 1.2.2: implements a thread pool and which is far more resilient to large
+  workloads than previous versions are. It patches "false positive" behavior 
+  in hashtable and cache searches which caused an incorrectly low number of 
+  MarFS objects to be reported in the output file.
 * 1.2.1: similar to version 1.2.2 but containing aforementioned bugs related to
   `strncmp()` usage in hashtable and ID cache search functionality.
 * 1.2.0: functionally the same as version 1.2.1 except for different default
