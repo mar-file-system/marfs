@@ -212,6 +212,7 @@ ssize_t ftag_metainfo( const char* fileid, char* entrytype );
  */
 size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
 
+void ftag_cleanup(FTAG* ftag);
 
 // MARFS REBUILD TAG  --  attached to rebuild marker files, providing rebuild info
 

@@ -810,6 +810,32 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
    return retval;
 }
 
+
+/**
+ * Free allocated memory for internal ctag and streamid fields within an ftag.
+ * NOTE: this function does not free the ftag itself since this function cannot
+ * make assumptions about whether an ftag is heap-allocated or on the stack.
+ * @param FTAG* ftag: the ftag whose ctag and streamid fields will be freed.
+ */
+void ftag_cleanup(FTAG* ftag) {
+    if (ftag == NULL) {
+        LOG( LOG_ERR, "Received a NULL FTAG reference\n" );
+    }
+
+    if (ftag->ctag == NULL) {
+        LOG( LOG_ERR, "FTAG ctag field is NULL--skipping free\n" );
+    } else {
+        free(ftag->ctag);
+    }
+
+    if (ftag->streamid == NULL) {
+        LOG( LOG_ERR, "FTAG streamid field is NULL--skipping free\n" );
+    } else {
+        free(ftag->streamid);
+    }
+}
+
+
 // MARFS REBUILD TAG  --  attached to damaged marfs files, providing rebuild info
 
 /**

@@ -59,5 +59,5 @@ if BENCH
 endif
 
 SUBDIRS = logging thread_queue dal io ne recursion hash mdal tagging recovery \
-          config datastream api rsrc_mgr fuse $(MAYBE_BENCHMARK)
+          config datastream api rsrc_mgr mustang fuse $(MAYBE_BENCHMARK)
 
