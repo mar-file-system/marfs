@@ -28,7 +28,7 @@ have also been minor error message corrections made. Initial changes
 to integrate the mustang buildinto the general MarFS build were made.
 
 Previous versions are:
-* 1.2.2: implements a thread pool and which is far more resilient to large
+* 1.2.2: implements a thread pool, which is far more resilient to large
   workloads than previous versions are. It patches "false positive" behavior 
   in hashtable and cache searches which caused an incorrectly low number of 
   MarFS objects to be reported in the output file.
