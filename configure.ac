@@ -366,6 +366,7 @@ AC_CONFIG_FILES([Makefile
                  src/config/Makefile
                  src/datastream/Makefile
                  src/api/Makefile
+		 src/mustang/Makefile
                  src/fuse/Makefile
                  src/rsrc_mgr/Makefile
                  etc/Makefile

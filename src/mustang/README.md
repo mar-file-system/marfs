@@ -62,19 +62,11 @@ entries to hash nodes.
 
 # Building mustang
 
-The current build system for `mustang` is a local `Makefile`; however, the
-build process may be integrated with the general MarFS build system in a future
-release.
-
-Assuming that building with the `Makefile` is necessary, users must edit the
-`MARFS_PREFIX` variable within the provided `Makefile` to match the path which
-was passed to the `--prefix=` argument when running `./configure` to build
-MarFS. Other macros within the Makefile are defined relative to `MARFS_PREFIX`
-and should not need to be edited. Some adjustment of the `INCLUDE_XML` macro
-may be needed to match a different `libxml2` installation path on your system.
+`mustang` is built as part of the general MarFS build system, and uses
+the same build envirnoment as the restof the MarFS build.
 
 Simply running `make` followed by `make install` will properly build all
-targets (`libmustang.a`, binary `mustang_engine`, and frontend `mustang`) and
+targets (`libMustang.la`, binary `mustang_engine`, and frontend `mustang`) and
 copy them to accessible MarFS bin and library locations.
 
 # Running mustang
