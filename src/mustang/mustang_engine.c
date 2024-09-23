@@ -65,7 +65,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <errno.h>
 #include <pthread.h>
 #include <limits.h>
-#include <marfs.h>
+#include <api/marfs.h>
 #include <config/config.h>
 #include <datastream/datastream.h>
 
