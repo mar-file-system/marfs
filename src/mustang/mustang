@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+
+import argparse
+import subprocess
+import datetime
+import shutil
+import os
+import sys
+
+startup_timestamp = datetime.datetime.now()
+default_filename = f"mustang-output-{startup_timestamp.year}{startup_timestamp.month}{startup_timestamp.day}-{startup_timestamp.hour}-{startup_timestamp.minute}-{startup_timestamp.second}"
+default_logname = f"mustang-run-{startup_timestamp.year}{startup_timestamp.month}{startup_timestamp.day}-{startup_timestamp.hour}-{startup_timestamp.minute}-{startup_timestamp.second}.log"
+
+parser = argparse.ArgumentParser(prog='mustang', description='Parse command-line arguments as a wrapper for the mustang_engine binary.')
+
+parser.add_argument("-p", "--paths", required=True, nargs='+', metavar='PATH', 
+        help='One or more POSIX-like paths to recursively traverse within a MarFS instance and catalog objects along.')
+parser.add_argument("-t", "--threads", "--threads-max", required=False, type=int, default=16, metavar = "THREADS",
+        help='Number of threads that will be created to form the program\'s thread pool and which will serve be the hard limit for the maximum number of concurrent threads (plus a manager).')
+parser.add_argument("-tc", "--task-capacity", "--tasks-capacity", "--tasks-max", "--task-queue-capacity", required=False, type=int, default=-1, metavar='TASKS',
+        help='Maximum number of tasks that may reside in the thread pool task queue at one time.')
+parser.add_argument("-hc", "--hc", "--hashtable-capacity", required=False, type=int, default=17, metavar="PWR", 
+        help='Power of 2 determining output capacity (e.g., default 17 -> 2^17 -> capacity = 131072).')
+parser.add_argument("-cc", "--cc", "--cache-capacity", "--id-cache-capacity", required=False, type=int, default=16, metavar="CAPACITY", 
+        help='Maximum number of unique MarFS object IDs that will be \"cached\" at one time in per-thread data structures (default: 16).') 
+parser.add_argument("-o", "--output", required=False, type=str, default=default_filename, metavar="FILE", 
+        help='Output file where names of catalogged objects (as maintained in the program\'s hashtable) will be written.')
+
+version_str = \
+        "MUSTANG (MarFS/Marchive Underlying Storage Tree and Namespace Gatherer) version 1.3.0, by Paul D. Karhnak. See MarFS copyright for more information."
+
+parser.add_argument("--version", action='version', help='Print version and license information, then exit.', version=version_str)
+
+parser.add_argument("-v", "--verbose", action='store_true', required=False, default=False, help='Print additional information about the argument format passed to the executable.')
+
+logging_group = parser.add_mutually_exclusive_group()
+logging_group.add_argument("-l", "--logfile", "--log-file", required=False, type=str, nargs=1, default=default_logname, metavar="LOGFILE",
+        help='Log file where thread-specific state changes, warnings, and errors will be recorded. Exclusive with --use-stderr.')
+logging_group.add_argument("--use-stderr", required=False, action='store_true', 
+        help='Do not log in a separate file and print all messages to stderr. Exclusive with -l/--logfile/--log-file.')
+
+if __name__ == '__main__': 
+    # Check whether executable is built
+    if not(os.access("./mustang_engine", os.F_OK)) and not(os.access("mustang_engine", os.F_OK)):
+        print("Executable for MUSTANG engine does not exist! Please build it and try again.")
+        exit(1)
+
+    args = parser.parse_args()
+
+    if (args.hc < 1) or (args.hc > 24):
+        print(f"ERROR: invalid argument \"{args.hc}\" specified for hashtable capacity exponent (should be in range 1, 24 inclusive).", file=sys.stderr)
+        exit(1)
+
+    computed_capacity = 1 << args.hc
+
+    engine_args = ["mustang_engine"]
+    engine_args.append(str(args.threads))
+    engine_args.append(str(args.task_capacity))
+    engine_args.append(str(computed_capacity))
+    engine_args.append(str(args.cc))
+
+    init_output_handle = f"{args.output}_in-progress"
+
+    final_handle = f"{args.output}_finalized"
+
+    engine_args.append(init_output_handle)
+
+    if (args.use_stderr):
+        engine_args.append("stderr")
+    else:
+        engine_args.append(args.logfile[0])
+        with open (args.logfile[0], 'a') as log:
+            print(42 * '=', file=log)
+            print(f"| Started at: {datetime.datetime.now()} |", file=log)
+            print(42 * '=', file=log)
+
+    for path_arg in args.paths:
+        tmp_arg = ''
+
+        # If path contains a trailing glob (e.g., "/campaign/*"), attempt to 
+        # slice the string so that the trailing glob is excluded
+        if (path_arg[-1] == '*'):
+            print("WARNING: ignoring trailing glob (\"*\") in path.", file=sys.stderr)
+            tmp_arg = path_arg[:-1:1]
+            print(f"Attempting to use prefix path \"{tmp_arg}\".", file=sys.stderr)
+        
+        # Otherwise, if a glob is found _not_ at the trailing index of a string 
+        # (end index of .find() is exclusive, so string actually searched until 
+        # index -2), reject the path outright
+        if (path_arg.find('*', 0, -1) != -1):
+            print("ERROR: non-trailing glob (\"*\") found in string. Skipping this path argument.", file=sys.stderr)
+            continue
+
+        # If string was sliced to exclude a trailing glob, append that new 
+        # string; else, simply append the argument as normal
+        if (tmp_arg):
+            engine_args.append(tmp_arg)
+        else:
+            engine_args.append(path_arg)
+
+    if (args.verbose):
+        print(f"Using invocation: {engine_args}", file=sys.stderr)
+
+    try:
+        subprocess.run(engine_args)
+        shutil.move(init_output_handle, final_handle) # Output file handle acts as "sentinel" for whether run successfully concluded or not
+
+        with open(final_handle, 'r') as hashtable:
+            line_count = len(hashtable.readlines())
+            if line_count >= (2**(args.hc)):
+                print("WARNING: the hashtable was filled to capacity, meaning that separate chaining was most likely resorted to to resolve hash collisions and ensure all unique objects were recorded.", file=sys.stderr)
+                print("This likely degraded performance. Try running with a larger hashtable capacity to speed up put() operations.", file=sys.stderr)
+    except subprocess.CalledProcessError:
+        print("WARNING: mustang_engine process returned a non-zero exit code. Check logs for more details.", file=sys.stderr)
+    except FileNotFoundError:
+        print("WARNING: Could not find mustang_engine executable in PATH. Check logs for more details.", file=sys.stderr)
+    except:
+        print("Some other error occurred. Please try again.", file=sys.stderr)
+    finally:
+        if not (args.use_stderr):
+            with open (args.logfile[0], 'a') as log:
+                print(43 * '=', file=log)
+                print(f"| Finished at: {datetime.datetime.now()} |", file=log)
+                print(43 * '=', file=log)
+
