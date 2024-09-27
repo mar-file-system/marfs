@@ -69,10 +69,10 @@ libMustang_la_LIBADD  = ../config/libConfig.la ../recovery/libRecovery.la ../tag
 libMustang_la_CFLAGS  =  -std=gnu99 -Wall -Wextra -Og -g $(XML_CFLAGS)
 MUSTANG_LIB = libMustang.la
 
-bin_PROGRAMS = mustang_engine
-mustang_engine_SOURCES = mustang_engine.c
-mustang_engine_LDADD   = $(MUSTANG_LIB)
-mustang_engine_CFLAGS  = -std=gnu99 -Wall -Wextra -Og -g $(XML_CFLAGS)
+bin_PROGRAMS = mustang
+mustang_SOURCES = mustang_engine.c
+mustang_LDADD   = $(MUSTANG_LIB)
+mustang_CFLAGS  = -std=gnu99 -Wall -Wextra -Og -g $(XML_CFLAGS)
 
 # ---
 

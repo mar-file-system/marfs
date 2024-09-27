@@ -65,6 +65,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <errno.h>
 #include <pthread.h>
 #include <limits.h>
+#include <time.h>
+#include <sys/time.h>
 #include <api/marfs.h>
 #include <config/config.h>
 #include <datastream/datastream.h>
@@ -85,7 +87,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "task_queue.h"
 
 // Maximum hashtable capacity: 2^24
-#define HC_MAX ((size_t) 1 << 24)
+#define HC_MAX (1L << 24)
 
 extern void* thread_launcher(void* args);
 
@@ -242,63 +244,144 @@ void push_args2queue(char *the_arg, marfs_config* config, marfs_position* start_
 
 }
 
+// Argument definition string for getopt(). The command line arguments are as 
+// follows:
+//    -t <max_threads>		Maximum number of threads used by this process. This
+//                              is the maximum size if the thread pool.
+//    -q <max_tasks>		Maximum number of tasks in a given threads task
+//                      	queue
+//    -c <max_cache_entries>	Maximum number of entries for a thread's Object ID
+//                              cache
+//    -h <power_of_2>		Used to set the size of the Object ID hash table
+//                              (e.g. 17 -> 2^17 -> table size = 131072)
+//    -l <log file>		Log file for this process. Should be a full path.
+//    -o <output file>		Output file for the generated Object ID list. This is 
+//                              actually a prefix. Should be a full path.
+#define GETOPT_STR ":c:hH:l:o:q:t:"
+#define USAGE "Usage: mustang -t [max threads] -H [hashtable capacity exponent] -c [cache capacity] -q [task queue size] -o [output file] -l [log file] [paths, ...]\n"
+
 int main(int argc, char** argv) {
+    int opt;                         // holds current command line arg from getopt()
+    size_t max_threads = 2;          // Maximum # of threads
+    size_t queue_capacity = SIZE_MAX;// Maximum size of task queue
+    long fetched_id_cache_capacity = 16;//Maximum # of Object ID cache entries
+    long hashtable_capacity = 131072;// Maxium size of the Object ID hash table
+    FILE* output_ptr = NULL;         // Stream Ptr for output file
+
+    char* invalid = NULL;            // temporary pointer used in numeric conversion
+    long hashtable_exp = 0L;         // temporary variable used in argument parsing
+    int patharg_idx;                 // holds the arument index of the first path argument
+
+    struct timeval ts;               // timestamp structure
+    struct tm ts_local;              // holds local time
+    char ts_buf[128];                // buffer to hold formatted timestamp
+
     errno = 0; // to guarantee an initially successful context and avoid "false positive" errno settings (errno not guaranteed to be initialized)
 
-    if (argc < 7) {
-        printf("USAGE: ./mustang-engine [max threads] [hashtable capacity exponent] [cache capacity] [output file] [log file] [paths, ...]\n");
-        printf("\tHINT: see mustang wrapper or invoke \"mustang -h\" for more details.\n");
-        return 1;
+	// put ':' in the starting of the 
+	// string so that program can 
+	//distinguish between '?' and ':' 
+    while((opt = getopt(argc, argv, GETOPT_STR)) > 0) { 
+          switch(opt) { 
+             case 't':            // cmdline args are strings. Conversion to numeric is required 
+                       invalid = NULL;
+                       max_threads = (size_t) strtol(optarg, &invalid, 10);
+                       if ((errno == EINVAL) || (*invalid != '\0')) {
+                           fprintf(stderr,"Bad max threads argument \"%s\" received. Please specify a nonnegative integer (i.e. > 0), then try again.\n", optarg);
+                           if (output_ptr) fclose(output_ptr);
+                           return 1;
+                       }
+                       break; 
+             case 'l':            // If stderr not being used for logging, redirect stdout and stderr to specified file (redirection is default behavior)
+                       if (strncmp(optarg, "stderr", strlen("stderr")) != 0) {
+                           int log_fd = open(optarg, O_WRONLY | O_CREAT | O_APPEND, 0644);
+
+                           if (dup2(log_fd, STDERR_FILENO) == -1) 
+                               fprintf(stderr, "Failed to redirect stderr to file \"%s\"! (%s)\n", optarg, strerror(errno));
+                           close(log_fd);
+                       }
+                       break; 
+             case 'q':          // Allow -1 as a sentinel for "unlimited" capacity. Conversion to numeric is required
+                       invalid = NULL;
+                       if (strncmp(optarg, "-1", strlen(optarg)) == 0) {
+                           fprintf(stderr,"Using SIZE_MAX as queue capacity (effectively unlimited).\n");
+                       } else {
+                           queue_capacity = (size_t) strtol(argv[2], &invalid, 10);
+                           if ((errno == EINVAL) || (*invalid != '\0')) {
+                               fprintf(stderr,"Bad task queue capacity argument \"%s\" received. Please specify a nonnegative integer (i.e., > 0), then try again.\n", optarg);
+                               if (output_ptr) fclose(output_ptr);
+                               return 1;
+                           }
+                       }
+                       break; 
+             case 'c':          // per-thread object ID cache capacity. Conversion to numeric is required
+
+                       fetched_id_cache_capacity = strtol(optarg, &invalid, 10);
+                       if ((fetched_id_cache_capacity <= 0) || (errno == EINVAL) || (*invalid != '\0')) {
+                           fprintf(stderr,"Bad cache capacity argument \"%s\" received. Please specify a nonnegative integer (i.e. > 0), then try again.\n", optarg);
+                           if (output_ptr) fclose(output_ptr);
+                           return 1;
+                       }
+                       break; 
+             case 'H':        // value used to compute hashtable capacity. Conversion to numeric is required
+                       invalid = NULL;
+                       hashtable_exp = strtol(optarg, &invalid, 10);
+                       if ((hashtable_exp < 2) || (((size_t) hashtable_exp) > 24) || 
+                           (errno == EINVAL) || (*invalid != '\0')) {
+                           fprintf(stderr, "Bad hashtable capacity exponent \"%s\" received. Please specify a positive integer between 2 and 24, then try again.\n", optarg);
+                           if (output_ptr) fclose(output_ptr);
+                           return 1;
+                       }
+		       hashtable_capacity = (1L << hashtable_exp);
+                       break; 
+             case 'o':          // open the output file for writing
+                       output_ptr = fopen(optarg, "w");
+                       if (output_ptr == NULL) {
+                           fprintf(stderr, "Failed to open file \"%s\" for writing to output (%s)\n", optarg, strerror(errno));
+                           return 1;
+                       }
+                       break; 
+             case 'h':
+                       fprintf(stderr,USAGE);
+                       return 0; 
+             case ':': 
+                       fprintf(stderr, "Command option %c needs a value\n",optopt); 
+                       fprintf(stderr,USAGE);
+                       if (output_ptr) fclose(output_ptr);
+		       return 1;
+             case '?': 
+                       fprintf(stderr, "Unknown option: %c\n", optopt); 
+                       fprintf(stderr,USAGE);
+                       if (output_ptr) fclose(output_ptr);
+		       return 1;
+          } 
     } 
+    patharg_idx = optind;            // value of optind can get funky later in the program. Caputure it now.
+	
+    // Verify commandline calues
 
-    FILE* output_ptr = fopen(argv[5], "w");
-
-    if (output_ptr == NULL) {
-        LOG(LOG_ERR, "Failed to open file \"%s\" for writing to output (%s)\n", argv[4], strerror(errno));
-        return 1;
+    // Double check that an output file was specified on the Commandline
+    if (!output_ptr) {
+        LOG(LOG_ERR, "No output file (-o <output file>) was provided. Exiting ...\n");
+	return 1;
     }
 
-    // If stderr not being used for logging, redirect stdout and stderr to specified file (redirection is default behavior)
-    if (strncmp(argv[6], "stderr", strlen("stderr")) != 0) {
-        int log_fd = open(argv[6], O_WRONLY | O_CREAT | O_APPEND, 0644);
-
-        if (dup2(log_fd, STDERR_FILENO) == -1) {
-            printf("Failed to redirect stderr! (%s)\n", strerror(errno));
-        }
-
-        close(log_fd);
+    // Check to see that we have paths to scan
+    if (patharg_idx >= argc) {
+        LOG(LOG_ERR, "No MarFS paths to scan. Exiting ...\n");
+        if (output_ptr) fclose(output_ptr);
+	return 1;
     }
 
-    // subprocess.run() in frontend mandates passing an argument list of strings, so conversion back into numeric values required here
-    char* invalid = NULL;
-    size_t max_threads = (size_t) strtol(argv[1], &invalid, 10);
-
-    if ((errno == EINVAL) || (*invalid != '\0')) {
-        LOG(LOG_ERR, "Bad max threads argument \"%s\" received. Please specify a nonnegative integer (i.e. > 0), then try again.\n", argv[1]);
-        fclose(output_ptr);
-        return 1;
+    // Set the global Object ID Cache, which is treated as a constant by the worker threads,
+    // to the successfully parsed value.
+    id_cache_capacity = (size_t) fetched_id_cache_capacity; 
+    if (id_cache_capacity > 1024) {
+        LOG(LOG_WARNING, "Provided cache capacity argument will result in large per-thread data structures, which may overwhelm the heap.\n");
     }
 
     if (max_threads > 32768) {
         LOG(LOG_WARNING, "Using extremely large number of threads %zu. This may overwhelm system limits such as those set in /proc/sys/kernel/threads-max or /proc/sys/vm/max_map_count.\n", max_threads);
-    }
-
-    // Parse argument for queue capacity
-    size_t queue_capacity;
-
-    // Allow -1 as a sentinel for "unlimited" capacity
-    if (strncmp(argv[2], "-1", strlen(argv[2])) == 0) {
-        queue_capacity = SIZE_MAX;
-        LOG(LOG_INFO, "Using SIZE_MAX as queue capacity (effectively unlimited).\n");
-    } else {
-        invalid = NULL;
-        queue_capacity = (size_t) strtol(argv[2], &invalid, 10);
-
-        if ((errno == EINVAL) || (*invalid != '\0')) {
-            LOG(LOG_ERR, "Bad task queue capacity argument \"%s\" received. Please specify a nonnegative integer (i.e., > 0), then try again.\n", argv[2]);
-            fclose(output_ptr);
-            return 1;
-        }
     }
 
     if (queue_capacity < max_threads) {
@@ -306,38 +389,15 @@ int main(int argc, char** argv) {
         LOG(LOG_WARNING, "Consider passing a task queue capacity argument that is greater than or equal to the maximum number of threads so that all threads have the chance to dequeue at least one task.\n");
     }
 
-    // Parse argument for hashtable capacity
-    invalid = NULL;
-    long hashtable_capacity = strtol(argv[3], &invalid, 10);
-
-    if ((hashtable_capacity < 2) || (((size_t) hashtable_capacity) > (HC_MAX)) || 
-            (errno == EINVAL) || (*invalid != '\0')) {
-        LOG(LOG_ERR, "Bad hashtable capacity argument \"%s\" received. Please specify a positive integer between (2**1) and (2**63), then try again.\n", argv[3]);
-        fclose(output_ptr);
-        return 1;
-    }
-
     if (hashtable_capacity < 256) {
         LOG(LOG_WARNING, "Received very small hashtable capacity argument \"%s\". Separate chaining will handle this, but may slow the program run unnecessarily.\n", argv[3]);
     }
 
-    // Parse argument for per-thread object ID cache capacity
-    invalid = NULL;
-    long fetched_id_cache_capacity = strtol(argv[4], &invalid, 10);
-
-    if ((fetched_id_cache_capacity <= 0) || (errno == EINVAL) || (*invalid != '\0')) {
-        LOG(LOG_ERR, "Bad cache capacity argument \"%s\" received. Please specify a nonnegative integer (i.e. > 0), then try again.\n", argv[4]);
-        fclose(output_ptr);
-        return 1;
-    }
-
-    // Set the global, which is treated as a constant by the worker threads,
-    // to the successfully parsed value.
-    id_cache_capacity = (size_t) fetched_id_cache_capacity; 
-
-    if (id_cache_capacity > 1024) {
-        LOG(LOG_WARNING, "Provided cache capacity argument will result in large per-thread data structures, which may overwhelm the heap.\n");
-    }
+    // Prepare to scan
+    gettimeofday(&ts, NULL);
+    localtime_r(&ts.tv_sec,&ts_local);
+    strftime(ts_buf, sizeof(ts_buf), "%d %b %Y %T",&ts_local);
+    LOG(LOG_INFO, "*** Starting scan at %s.%ld\n",ts_buf,ts.tv_usec);
 
     // Begin state initialization
     hashtable* output_table = hashtable_init((size_t) hashtable_capacity);
@@ -426,9 +486,9 @@ int main(int argc, char** argv) {
     }
 
     // Parse each path argument, check them for validity, and pass along initial tasks
-    for (int index = 7; index < argc; index += 1) {
-        LOG(LOG_INFO, "Processing arg \"%s\"\n", argv[index]);
-	push_args2queue(argv[index], parent_config, &parent_position, output_table, &ht_lock, queue);
+    for (; patharg_idx < argc; patharg_idx++){	 
+        LOG(LOG_INFO, "Processing arg \"%s\"\n", argv[patharg_idx]);
+	push_args2queue(argv[patharg_idx], parent_config, &parent_position, output_table, &ht_lock, queue);
     }
 
     pthread_mutex_lock(queue->lock);
@@ -500,5 +560,9 @@ int main(int argc, char** argv) {
 
     pthread_mutex_destroy(&erasure_lock);
 
+    gettimeofday(&ts, NULL);
+    localtime_r(&ts.tv_sec,&ts_local);
+    strftime(ts_buf, sizeof(ts_buf), "%d %b %Y %T",&ts_local);
+    LOG(LOG_INFO, "*** End scan at %s.%ld\n",ts_buf,ts.tv_usec);
     return 0;
 }

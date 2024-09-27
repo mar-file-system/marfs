@@ -71,12 +71,7 @@ copy them to accessible MarFS bin and library locations.
 
 # Running mustang
 
-Directly invoking the `mustang_engine` executable is discouraged since the
-executable attempts no substantive argument parsing. Instead, use the `mustang`
-frontend, which will appropriately parse arguments and can print help
-information.
-
-The `mustang` frontend requires at least one absolute path argument
+The `mustang` exeutable requires at least one absolute path argument
 corresponding to an active MarFS location where traversal will begin. The
 frontend will not check whether the absolute path actually maps to the MarFS
 instance; rather, such an error will likely be caught within the engine itself
@@ -95,7 +90,7 @@ aware of system limits on the number of concurrent threads which may be created
 per process (e.g., those in `/proc/sys/kernel/threads-max` or
 `/proc/sys/vm/max_map_count`) and pass argument values responsibly.
 
-`-hc` and its aliases (hashtable capacity) represent the _power of two_ that
+`-H` and its aliases (hashtable capacity) represent the _power of two_ that
 the frontend computes to get the hashtable capacity. Hashtable capacity should
 be specified proportionately to the anticipated number of MarFS objects that
 will be encountered. Specifying small hashtable capacities for large targets
@@ -105,7 +100,7 @@ slow hashtable operations (and, therefore application performance) due to
 requiring linear traversal and chaining operations for a progressively greater
 frequency of hash collisions as the application runs.
 
-`-tc` and its aliases (task queue capacity) correspond to the maximum length of
+`-q` and its aliases (task queue capacity) correspond to the maximum length of
 the thread pool's task queue that will be allowed before `pthread_cond_wait()`
 calls when enqueueing tasks will "take effect" (i.e., force callers to sleep
 and wait on the corresponding condition variable tied to available space). By

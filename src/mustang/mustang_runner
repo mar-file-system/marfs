@@ -17,11 +17,11 @@ parser.add_argument("-p", "--paths", required=True, nargs='+', metavar='PATH',
         help='One or more POSIX-like paths to recursively traverse within a MarFS instance and catalog objects along.')
 parser.add_argument("-t", "--threads", "--threads-max", required=False, type=int, default=16, metavar = "THREADS",
         help='Number of threads that will be created to form the program\'s thread pool and which will serve be the hard limit for the maximum number of concurrent threads (plus a manager).')
-parser.add_argument("-tc", "--task-capacity", "--tasks-capacity", "--tasks-max", "--task-queue-capacity", required=False, type=int, default=-1, metavar='TASKS',
+parser.add_argument("-q", "--task-capacity", "--tasks-capacity", "--tasks-max", "--task-queue-capacity", required=False, type=int, default=-1, metavar='TASKS',
         help='Maximum number of tasks that may reside in the thread pool task queue at one time.')
 parser.add_argument("-hc", "--hc", "--hashtable-capacity", required=False, type=int, default=17, metavar="PWR", 
         help='Power of 2 determining output capacity (e.g., default 17 -> 2^17 -> capacity = 131072).')
-parser.add_argument("-cc", "--cc", "--cache-capacity", "--id-cache-capacity", required=False, type=int, default=16, metavar="CAPACITY", 
+parser.add_argument("-c", "--cc", "--cache-capacity", "--id-cache-capacity", required=False, type=int, default=16, metavar="CAPACITY", 
         help='Maximum number of unique MarFS object IDs that will be \"cached\" at one time in per-thread data structures (default: 16).') 
 parser.add_argument("-o", "--output", required=False, type=str, default=default_filename, metavar="FILE", 
         help='Output file where names of catalogged objects (as maintained in the program\'s hashtable) will be written.')
@@ -41,7 +41,7 @@ logging_group.add_argument("--use-stderr", required=False, action='store_true',
 
 if __name__ == '__main__': 
     # Check whether executable is built
-    if not(os.access("./mustang_engine", os.F_OK)) and not(os.access("mustang_engine", os.F_OK)):
+    if not(os.access("./mustang", os.F_OK)) and not(os.access("mustang_engine", os.F_OK)):
         print("Executable for MUSTANG engine does not exist! Please build it and try again.")
         exit(1)
 
@@ -53,21 +53,27 @@ if __name__ == '__main__':
 
     computed_capacity = 1 << args.hc
 
-    engine_args = ["mustang_engine"]
+    engine_args = ["mustang"]
+    engine_args.append(str("-t"))
     engine_args.append(str(args.threads))
+    engine_args.append(str("-q"))
     engine_args.append(str(args.task_capacity))
-    engine_args.append(str(computed_capacity))
+    engine_args.append(str("-h"))
+    engine_args.append(str(args.hc))
+    engine_args.append(str("-c"))
     engine_args.append(str(args.cc))
 
     init_output_handle = f"{args.output}_in-progress"
 
     final_handle = f"{args.output}_finalized"
 
+    engine_args.append(str("-o"))
     engine_args.append(init_output_handle)
 
     if (args.use_stderr):
         engine_args.append("stderr")
     else:
+        engine_args.append(str("-l"))
         engine_args.append(args.logfile[0])
         with open (args.logfile[0], 'a') as log:
             print(42 * '=', file=log)
