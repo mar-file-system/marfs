@@ -81,7 +81,7 @@ int main(int argc, const char** argv) {
    char* config_path = getenv( "MARFS_CONFIG_PATH" ); // check for config env var
    char* ns_path = ".";
    char* user_name = NULL;
-   int flags = CFG_OWNERCHECK;
+   unsigned int flags = CFG_OWNERCHECK;
 
    // parse all position-independent arguments
    char pr_usage = 0;
