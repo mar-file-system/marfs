@@ -100,9 +100,14 @@ typedef struct posixmdal_scanner_struct {
    DIR*     dirp; // Directory reference
 }* POSIX_SCANNER;
 
-typedef struct posixmdal_file_handle_struct {
-   int        fd; // File handle
-}* POSIX_FHANDLE;
+#if __STDC_VERSION__ >= 202311L
+static_assert(sizeof(intptr_t) >= sizeof(int));
+#elif __STDC_VERSION__ >= 201112L
+#include <assert.h>
+_Static_assert(sizeof(intptr_t) >= sizeof(int), "Need sizeof(intptr_t) >= sizeof(int)");
+#endif
+
+typedef intptr_t POSIX_FHANDLE;
 
 typedef struct posix_mdal_context_struct {
    int refd;   // Dir handle for NS ref tree ( or the secure root, if NS hasn't been set )
@@ -1777,15 +1782,7 @@ MDAL_FHANDLE posixmdal_openref ( const MDAL_CTXT ctxt, const char* rpath, int fl
       LOG( LOG_ERR, "Failed to open reference path: \"%s\"\n", rpath );
       return NULL;
    }
-   // allocate a new FHANDLE ref
-   POSIX_FHANDLE fhandle = malloc( sizeof(struct posixmdal_file_handle_struct) );
-   if ( fhandle == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate space for a new FHANDLE struct\n" );
-      close( fd );
-      return NULL;
-   }
-   fhandle->fd = fd;
-   return (MDAL_FHANDLE) fhandle;
+   return (MDAL_FHANDLE) (POSIX_FHANDLE) fd;
 }
 
 
@@ -1908,15 +1905,7 @@ MDAL_FHANDLE posixmdal_sopen( MDAL_SCANNER scanner, const char* path ) {
       LOG( LOG_ERR, "Failed to open relative scanner path: \"%s\"\n", path );
       return NULL;
    }
-   // allocate a new FHANDLE ref
-   POSIX_FHANDLE fhandle = malloc( sizeof(struct posixmdal_file_handle_struct) );
-   if ( fhandle == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate space for a new FHANDLE struct\n" );
-      close( fd );
-      return NULL;
-   }
-   fhandle->fd = fd;
-   return (MDAL_FHANDLE) fhandle;
+   return (MDAL_FHANDLE) (POSIX_FHANDLE) fd;
 }
 
 /**
@@ -2460,15 +2449,7 @@ MDAL_FHANDLE posixmdal_open( MDAL_CTXT ctxt, const char* path, int flags ) {
       errno = EISDIR;
       return NULL;
    }
-   // allocate a new FHANDLE ref
-   POSIX_FHANDLE fhandle = malloc( sizeof(struct posixmdal_file_handle_struct) );
-   if ( fhandle == NULL ) {
-      LOG( LOG_ERR, "Failed to allocate space for a new FHANDLE struct\n" );
-      close( fd );
-      return NULL;
-   }
-   fhandle->fd = fd;
-   return (MDAL_FHANDLE) fhandle;
+   return (MDAL_FHANDLE) (POSIX_FHANDLE) fd;
 }
 
 /**
@@ -2483,9 +2464,7 @@ int posixmdal_close( MDAL_FHANDLE fh ) {
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
-   int fd = pfh->fd;
-   free( pfh );
+   int fd = (POSIX_FHANDLE) fh;
    return close( fd );
 }
 
@@ -2503,8 +2482,8 @@ ssize_t posixmdal_write( MDAL_FHANDLE fh, const void* buf, size_t count ) {
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
-   return write( pfh->fd, buf, count );
+   int fd = (POSIX_FHANDLE) fh;
+   return write( fd, buf, count );
 }
 
 /**
@@ -2521,8 +2500,8 @@ ssize_t posixmdal_read( MDAL_FHANDLE fh, void* buf, size_t count ) {
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
-   return read( pfh->fd, buf, count );
+   int fd = (POSIX_FHANDLE) fh;
+   return read( fd, buf, count );
 }
 
 /**
@@ -2538,8 +2517,8 @@ int posixmdal_ftruncate( MDAL_FHANDLE fh, off_t length ) {
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
-   return ftruncate( pfh->fd, length );
+   int fd = (POSIX_FHANDLE) fh;
+   return ftruncate( fd, length );
 }
 
 /**
@@ -2558,8 +2537,8 @@ off_t posixmdal_lseek( MDAL_FHANDLE fh, off_t offset, int whence ) {
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
-   return lseek( pfh->fd, offset, whence );
+   int fd = (POSIX_FHANDLE) fh;
+   return lseek( fd, offset, whence );
 }
 
 
@@ -2582,7 +2561,7 @@ int posixmdal_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const v
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   int fd = (POSIX_FHANDLE) fh;
    // the non-hidden op is more straightforward
    if ( !(hidden) ) {
       // filter out any reserved name
@@ -2591,7 +2570,7 @@ int posixmdal_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const v
          errno = EPERM;
          return -1;
       }
-      return fsetxattr( pfh->fd, name, value, size, flags );
+      return fsetxattr( fd, name, value, size, flags );
    }
    // if this is a hidden value, we need to attach the appropriate prefix
    char* newname = malloc( sizeof(char) * (strlen(PMDAL_XATTR) + 1 + strlen(name)) );
@@ -2605,7 +2584,7 @@ int posixmdal_fsetxattr( MDAL_FHANDLE fh, char hidden, const char* name, const v
       return -1;
    }
    // now we can actually perform the op
-   int retval = fsetxattr( pfh->fd, newname, value, size, flags );
+   int retval = fsetxattr( fd, newname, value, size, flags );
    if ( retval ) {
       LOG( LOG_ERR, "fsetxattr failure for \"%s\" value (%s)\n", newname, strerror(errno) );
    }
@@ -2630,7 +2609,7 @@ ssize_t posixmdal_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, voi
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   int fd = (POSIX_FHANDLE) fh;
    // the non-hidden op is more straightforward
    if ( !(hidden) ) {
       // filter out any reserved name
@@ -2639,7 +2618,7 @@ ssize_t posixmdal_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, voi
          errno = EPERM;
          return -1;
       }
-      return fgetxattr( pfh->fd, name, value, size );
+      return fgetxattr( fd, name, value, size );
    }
    // if this is a hidden value, we need to attach the appropriate prefix
    char* newname = malloc( sizeof(char) * (strlen(PMDAL_XATTR) + 1 + strlen(name)) );
@@ -2653,7 +2632,7 @@ ssize_t posixmdal_fgetxattr( MDAL_FHANDLE fh, char hidden, const char* name, voi
       return -1;
    }
    // now we can actually perform the op
-   ssize_t retval = fgetxattr( pfh->fd, newname, value, size );
+   ssize_t retval = fgetxattr( fd, newname, value, size );
    free( newname ); // cleanup
    return retval;
 }
@@ -2673,7 +2652,7 @@ int posixmdal_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   int fd = (POSIX_FHANDLE) fh;
    // the non-hidden op is more straightforward
    if ( !(hidden) ) {
       // filter out any reserved name
@@ -2682,7 +2661,7 @@ int posixmdal_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
          errno = EPERM;
          return -1;
       }
-      return fremovexattr( pfh->fd, name );
+      return fremovexattr( fd, name );
    }
    // if this is a hidden value, we need to attach the appropriate prefix
    char* newname = malloc( sizeof(char) * (strlen(PMDAL_XATTR) + 1 + strlen(name)) );
@@ -2696,7 +2675,7 @@ int posixmdal_fremovexattr( MDAL_FHANDLE fh, char hidden, const char* name ) {
       return -1;
    }
    // now we can actually perform the op
-   int retval = fremovexattr( pfh->fd, newname );
+   int retval = fremovexattr( fd, newname );
    free( newname ); // cleanup
    return retval;
 }
@@ -2717,9 +2696,9 @@ ssize_t posixmdal_flistxattr( MDAL_FHANDLE fh, char hidden, char* buf, size_t si
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   int fd = (POSIX_FHANDLE) fh;
    // perform the op, but capture the result
-   ssize_t res = flistxattr( pfh->fd, buf, size );
+   ssize_t res = flistxattr( fd, buf, size );
    if ( size == 0 ) {
       // special, no-output case, which can be immediately returned
       LOG( LOG_INFO, "Immediately returning result of size == 0 call\n" );
@@ -2776,9 +2755,9 @@ int posixmdal_fstat ( MDAL_FHANDLE fh, struct stat* buf ) {
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   int fd = (POSIX_FHANDLE) fh;
    // issue the stat
-   return fstat( pfh->fd, buf );
+   return fstat( fd, buf );
 }
 
 /**
@@ -2797,9 +2776,9 @@ int posixmdal_futimens ( MDAL_FHANDLE fh, const struct timespec times[2] ) {
       errno = EINVAL;
       return -1;
    }
-   POSIX_FHANDLE pfh = (POSIX_FHANDLE) fh;
+   int fd = (POSIX_FHANDLE) fh;
    // issue the utime call
-   return futimens( pfh->fd, times );
+   return futimens( fd, times );
 }
 
 
@@ -3363,6 +3342,3 @@ MDAL posix_mdal_init( xmlNode* root ) {
    errno = EINVAL;
    return NULL; // failure of any condition check fails the function
 }
-
-
-
