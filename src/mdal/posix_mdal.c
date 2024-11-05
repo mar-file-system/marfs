@@ -356,7 +356,7 @@ int posixmdal_cleanup( MDAL mdal ) {
  *                                        matches current user if true)
  * @return int : A count of uncorrected security issues, or -1 if a failure occurred
  */
-int posixmdal_checksec( const MDAL_CTXT ctxt, int flags ) {
+int posixmdal_checksec( const MDAL_CTXT ctxt, unsigned int flags ) {
    int fix = flags & CFG_FIX;
    int check_uid = flags & CFG_OWNERCHECK;
 

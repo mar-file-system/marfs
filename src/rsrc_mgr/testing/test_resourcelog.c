@@ -140,7 +140,7 @@ int main(int argc, char **argv)
       printf( "failed to initalize marfs config\n" );
       return -1;
    }
-   int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
+   unsigned int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
    if ( config_verify(config,"/campaign/",flags) ) {
       printf( "Config validation failure\n" );
       return -1;
