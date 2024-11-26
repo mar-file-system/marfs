@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
   }
 
   // create all namespaces associated with the config
-  int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
+  unsigned int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
   if (config_verify(config, "/campaign", flags)) {
     printf("Failed to validate the marfs config\n");
     return -1;
