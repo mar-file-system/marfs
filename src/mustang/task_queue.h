@@ -71,13 +71,14 @@ typedef struct mustang_task_queue_struct task_queue;
 typedef struct mustang_task_struct {
     marfs_config* config;
     marfs_position* position;
-    char* fname;
+    char* usrpath; // holds the user path of the directory the task is operating in
+    void* taskarg; // holds an optional task argument
     hashtable* ht;
     pthread_mutex_t* ht_lock;
     task_queue* queue_ptr; // Tasks are retrieved from the queue, but during task execution other tasks may need to be enqueued.
     // The routine to execute. For the current version of Mustang (1.2.x), either `traverse_ns()` for a namespace or `traverse_dir()` for a regular directory.
     // If NULL, workers will detect this, clean up their state, and exit.
-    void (*task_func)(marfs_config*, marfs_position*, char *, hashtable*, pthread_mutex_t*, task_queue*);
+    void (*task_func)(marfs_config*, marfs_position*, char *, void*, hashtable*, pthread_mutex_t*, task_queue*);
     mustang_task* prev; // Queue implemented as doubly-linked list of tasks
     mustang_task* next;
 } mustang_task;
@@ -103,7 +104,7 @@ typedef struct mustang_task_queue_struct {
  * Returns: valid pointer to mustang_task struct on success, or NULL on 
  * failure.
  */
-mustang_task* task_init(marfs_config* task_config, marfs_position* task_position, char *task_fname, hashtable* task_ht, pthread_mutex_t* task_ht_lock, task_queue* task_queue_ref, void (*traversal_routine)(marfs_config*, marfs_position*, char *, hashtable*, pthread_mutex_t*, task_queue*));
+mustang_task* task_init(marfs_config* task_config, marfs_position* task_position, char* task_path, void* task_arg, hashtable* task_ht, pthread_mutex_t* task_ht_lock, task_queue* task_queue_ref, void (*traversal_routine)(marfs_config*, marfs_position*, char *, void*, hashtable*, pthread_mutex_t*, task_queue*));
 
 /**
  * Allocate space for, and return a pointer to, a new task_queue struct on the 

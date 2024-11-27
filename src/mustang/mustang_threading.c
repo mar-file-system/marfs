@@ -237,6 +237,7 @@ void process_file(marfs_position* task_position, char * current_file, hashtable*
  * the object id(s) of the file, and places them in the output_table.
  * @param marfs_config* base_config : Configuration for MarFS file system
  * @param marfs_position* task_position : Location or position of directory in MarFS file system
+ * @param char* usrpath : the path of the directory the task in currently in
  * @param char* file_name : a "short file name". No path/parent included. Used only by this routine!
  * @param hashtable* output_table : Hash Table holding Object Ids of scanned files
  * @param pthread_mutex_t* table_lock : Lock to use when accessing output_table
@@ -246,8 +247,10 @@ void process_file(marfs_position* task_position, char * current_file, hashtable*
  * always logged to the logfile passed as a program argument since all 
  * build settings at least log errors.
  */
-void traverse_file(marfs_config* base_config, marfs_position* task_position, char* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
-    if (file_name == NULL) {
+void traverse_file(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
+    char* fname = (char*)file_name;
+
+    if (fname == NULL) {
         LOG(LOG_ERR, "Attempted to traverse a blank file name!\n");
         return;
     }
@@ -266,11 +269,12 @@ void traverse_file(marfs_config* base_config, marfs_position* task_position, cha
 
     // Do the actual scanning of the file. Since this is always a single file, no
     // ID Cache is needed.
-    process_file(task_position, file_name, output_table, table_lock, NULL);
+    process_file(task_position, fname, output_table, table_lock, NULL);
 
     // The task is done with file_name. So we can clean it up!
     free(file_name);
     file_name = NULL;
+    free(usrpath);
 
     return;
 }
@@ -284,7 +288,8 @@ void traverse_file(marfs_config* base_config, marfs_position* task_position, cha
  * worker thread to complete.
  * @param marfs_config* base_config : Configuration for MarFS file system
  * @param marfs_position* task_position : Location or position of directory in MarFS file system
- * @param char* file_name : a "short file name". No path/parent included. Not used by this routine.
+ * @param char* usrpath : the path of the directory the task in currently in
+ * @param void* file_name : a "short file name". No path/parent included. Not used by this routine.
  * @param hashtable* output_table : Hash Table holding Object Ids of scanned files
  * @param pthread_mutex_t* table_lock : Lock to use when accessing output_table
  * @param task_queue* pool_queue : Queue of available threads
@@ -293,7 +298,7 @@ void traverse_file(marfs_config* base_config, marfs_position* task_position, cha
  * always logged to the logfile passed as a program argument since all 
  * build settings at least log errors.
  */
-void traverse_dir(marfs_config* base_config, marfs_position* task_position, char* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
+void traverse_dir(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
     id_cache* this_id_cache = id_cache_init(id_cache_capacity);
 
     if (this_id_cache == NULL) {
@@ -402,20 +407,23 @@ void traverse_dir(marfs_config* base_config, marfs_position* task_position, char
                 continue;
             }
 
-            new_dir_position->depth = new_depth;
+            char dnamebuf[PATH_MAX];
             mustang_task* new_task;
+
+            snprintf(dnamebuf, PATH_MAX, "%s/%s", usrpath, current_entry->d_name);
+            new_dir_position->depth = new_depth;
 
             // depth == -1 case (config_traverse() error) has already been handled, so presuming that 0 and > 0 are exhaustive is safe.
             switch (new_depth) {
                 case 0:
                     // Namespace case. Enqueue a new namespace traversal task.
-                    new_task = task_init(base_config, new_dir_position, file_name, output_table, table_lock, pool_queue, &traverse_ns);
+                    new_task = task_init(base_config, new_dir_position, strdup(dnamebuf), file_name, output_table, table_lock, pool_queue, &traverse_ns);
                     task_enqueue(pool_queue, new_task);
                     LOG(LOG_DEBUG, "Created new task to traverse namespace \"%s\"\n", new_basepath);
                     break;
                 default:
                     // "Regular" (directory) case. Enqueue a new directory traversal task.
-                    new_task = task_init(base_config, new_dir_position, file_name, output_table, table_lock, pool_queue, &traverse_dir);
+                    new_task = task_init(base_config, new_dir_position, strdup(dnamebuf), file_name, output_table, table_lock, pool_queue, &traverse_dir);
                     task_enqueue(pool_queue, new_task);
                     LOG(LOG_DEBUG, "Created new task to traverse directory \"%s\"\n", new_basepath);
                     break;
@@ -445,6 +453,222 @@ void traverse_dir(marfs_config* base_config, marfs_position* task_position, char
     }
 
     free(task_position);
+    free(usrpath);
+}
+
+/**
+ * Using a task's parameters, traverse the directory that the current setting
+ * of `task_position` corresponds to, reading all directory entries and acting
+ * accordingly. If an entry corresponds to a regular file, get its FTAG and its
+ * object ID(s), and compares against the object ID specified in objid. If there 
+ * is a matchi then the pathname is storedin the hashtable. If an entry corresponds 
+ * to a regular directory, create a new task for that directory bundled with 
+ * appropriate state for a worker thread to complete. If namespace is encountered,
+ * it is ignored.
+ * @param marfs_config* base_config : Configuration for MarFS file system
+ * @param marfs_position* task_position : Location or position of directory in MarFS file system
+ * @param char* usrpath : the path of the directory the task in currently in
+ * @param void* objid : the object ID to look for
+ * @param hashtable* output_table : Hash Table holding Object Ids of scanned files
+ * @param pthread_mutex_t* table_lock : Lock to use when accessing output_table
+ * @param task_queue* pool_queue : Queue of available threads
+ *
+ * NOTE: This function always returns, including on failure. Failures are
+ * always logged to the logfile passed as a program argument since all
+ * build settings at least log errors.
+ */
+void traverse_objdir(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* objid, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
+    char* dataobj_id = (char*)objid;
+
+    // Attempt to fortify the thread's position (if not already fortified) and check for errors
+    if ((task_position->ctxt == NULL) && config_fortifyposition(task_position)) {
+         LOG(LOG_ERR, "Failed to fortify MarFS position while traversing a directory!\n");
+         return;
+    }
+
+    // Define a convenient alias for this thread's relevant MDAL, from which 
+    // all metadata ops will be launched
+    MDAL thread_mdal = task_position->ns->prepo->metascheme.mdal;
+
+    // Recover a directory handle for the cwd to enable later readdir()
+    MDAL_DHANDLE cwd_handle = thread_mdal->opendir(task_position->ctxt, ".");
+
+    // Cannot proceed with "main" traversal logic if handle is NULL (i.e.,
+    // if an error occurred on opendir)
+    if (cwd_handle == NULL) {
+        LOG(LOG_ERR, "Failed to open current directory for reading! (%s)\n", strerror(errno));
+        config_abandonposition(task_position);
+        free(task_position);
+        return;
+    }
+
+    // "Regular" readdir logic
+    struct dirent* current_entry = thread_mdal->readdir(cwd_handle);
+
+    // Unlike a standard collection, directories are not strictly "ordered".
+    // So, simply retrieve all entries until readdir() returns NULL to
+    // indicate "no more entries"
+    while (current_entry != NULL) {
+        // Ignore dirents corresponding to "invalid" paths (reference tree,
+        // etc.)
+        if (thread_mdal->pathfilter(current_entry->d_name) != 0) {
+            current_entry = thread_mdal->readdir(cwd_handle); 
+            continue; 
+        }
+
+        if (current_entry->d_type == DT_DIR) {
+            // Skip current directory "." and parent directory ".." to avoid infinite loop in directory traversal
+            if ( (strncmp(current_entry->d_name, ".", strlen(current_entry->d_name)) == 0) || (strncmp(current_entry->d_name, "..", strlen(current_entry->d_name)) == 0) ) {
+                current_entry = thread_mdal->readdir(cwd_handle);
+                continue;
+            }
+
+            marfs_position* new_dir_position = (marfs_position*) calloc(1, sizeof(marfs_position));
+            if (new_dir_position == NULL) {
+                LOG(LOG_ERR, "Failed to allocate memory for new new_task position (current entry: %s)\n", current_entry->d_name);
+                current_entry = thread_mdal->readdir(cwd_handle);
+                continue;
+            }
+
+            if (config_duplicateposition(task_position, new_dir_position)) {
+                LOG(LOG_ERR, "Failed to duplicate parent position to new_task (current entry: %s)\n", current_entry->d_name);
+                config_abandonposition(new_dir_position);
+                free(new_dir_position);
+                current_entry = thread_mdal->readdir(cwd_handle);
+                continue;
+            }
+
+            char* new_basepath = strdup(current_entry->d_name);
+            int new_depth = config_traverse(base_config, new_dir_position, &new_basepath, 0);
+
+            if (new_depth <= 0) {
+                // Skipping any namespace entries
+                if (!new_depth) {
+                    LOG(LOG_DEBUG, "Skipping namespace: \"%s\"\n", current_entry->d_name);
+                } else {
+                    LOG(LOG_ERR, "Failed to traverse to target: \"%s\"\n", current_entry->d_name);
+                }
+
+                free(new_basepath);
+                config_abandonposition(new_dir_position);
+                free(new_dir_position);
+                
+                current_entry = thread_mdal->readdir(cwd_handle);
+                continue;
+            }
+
+            // Open a directory handle for the "child" task that is being 
+            // created to enable chdir() for that task and starting "directly"
+            // at the new position
+            MDAL_DHANDLE next_cwd_handle = thread_mdal->opendir(new_dir_position->ctxt, current_entry->d_name);
+
+            if (next_cwd_handle == NULL) {
+                LOG(LOG_ERR, "Failed to open directory handle for new_task (%s) (directory: \"%s\")\n", strerror(errno), current_entry->d_name);
+
+                free(new_basepath);
+                config_abandonposition(new_dir_position);
+                free(new_dir_position);
+
+                current_entry = thread_mdal->readdir(cwd_handle);
+                continue;
+            }
+
+            if (thread_mdal->chdir(new_dir_position->ctxt, next_cwd_handle)) {
+                LOG(LOG_ERR, "Failed to chdir to target directory \"%s\" (%s).\n", current_entry->d_name, strerror(errno));
+
+                free(new_basepath);
+                config_abandonposition(new_dir_position);
+                free(new_dir_position);
+                thread_mdal->closedir(next_cwd_handle);
+
+                current_entry = thread_mdal->readdir(cwd_handle);
+                continue;
+            }
+
+            char dnamebuf[PATH_MAX];
+
+            snprintf(dnamebuf, PATH_MAX, "%s/%s", usrpath, current_entry->d_name);
+            new_dir_position->depth = new_depth;
+            mustang_task* new_task = task_init(base_config, new_dir_position, strdup(dnamebuf), objid, output_table, table_lock, pool_queue, &traverse_objdir);
+
+            // Put new task on queue
+            task_enqueue(pool_queue, new_task);
+            LOG(LOG_DEBUG, "Created new task to traverse directory \"%s\"\n", new_basepath);
+
+            // Basepath no longer needed after logging since new_task reopens 
+            // dirhandle not with basepath, but with post-chdir "." reference.
+            free(new_basepath);
+        } else if (current_entry->d_type == DT_REG) {
+            // Get FTAG of the file
+            char* file_ftagstr = get_ftag(task_position, thread_mdal, current_entry->d_name);
+            FTAG retrieved_tag = {0};
+            char* retrieved_id = NULL;
+
+            // Initialize FTAG struct from string representation
+            if (ftag_initstr(&retrieved_tag, file_ftagstr)) {
+                LOG(LOG_ERR, "Failed to initialize FTAG for file: \"%s\"\n", current_entry->d_name);
+                free(file_ftagstr);
+                free(usrpath);
+                return;
+            }
+
+           size_t objno_min = retrieved_tag.objno;
+           size_t objno_max = datastream_filebounds(&retrieved_tag);
+           ne_erasure placeholder_erasure;
+           ne_location placeholder_location;
+
+           // Sufficiently large files may be "chunked" (i.e., logically 
+           // separated) into multiple backend MarFS objects depending on file
+           // size and the MarFS config. Make sure that object IDs for *all* chunks 
+           // of the file are retrieved and compared, not just the ID for the
+           // first chunk.
+           for (size_t i = objno_min; i <= objno_max; i += 1) {
+               int found = 0;  //  a flag to set if the object ID is found in the file's objects
+               retrieved_tag.objno = i;
+               if (datastream_objtarget(&retrieved_tag, &(task_position->ns->prepo->datascheme), &retrieved_id, &placeholder_erasure, &placeholder_location)) { 
+                   LOG(LOG_ERR, "Failed to get object ID for chunk %zu of current object \"%s\"\n", i, current_entry->d_name);
+                  continue;
+               }
+
+               // Compare the retrieved object ID with the object ID we are looking for
+               if (!strcmp(retrieved_id,dataobj_id)) {
+                   char fnamebuf[PATH_MAX];
+                   // We have a winner!
+                   snprintf(fnamebuf, PATH_MAX, "%s/%s", usrpath, current_entry->d_name);
+                   pthread_mutex_lock(table_lock);
+                   put(output_table, fnamebuf); // put() dupes string into new heap space
+                   pthread_mutex_unlock(table_lock);		
+                   LOG(LOG_DEBUG, "Recorded file \"%s\" in  output table for object \"%s\".\n", fnamebuf, retrieved_id);
+                   found = 1;
+               }
+
+               free(retrieved_id);
+               retrieved_id = NULL; // make ptr NULL to better discard stale reference
+               if (found) break;
+           }
+
+// Paul defined ftag_cleanup(). But currently not availible in current INSTALLED version of MarFS library
+//           ftag_cleanup(&retrieved_tag); // free internal allocated memory for FTAG's ctag and streamid fields
+           if (retrieved_tag.ctag) free(retrieved_tag.ctag);
+           if (retrieved_tag.streamid) free(retrieved_tag.streamid);
+           free(file_ftagstr);
+           file_ftagstr = NULL; // discard stale reference to FTAG to prevent double-free
+        }
+
+        current_entry = thread_mdal->readdir(cwd_handle);
+    } // end readdir loop
+
+    // Clean up other per-task state
+    if (thread_mdal->closedir(cwd_handle)) {
+        LOG(LOG_WARNING, "Failed to close handle for current working directory!\n");
+    }
+
+    if (config_abandonposition(task_position)) {
+        LOG(LOG_WARNING, "Failed to abandon base position!\n");
+    }
+
+    free(task_position);
+    free(usrpath);
 }
 
 /**
@@ -456,7 +680,8 @@ void traverse_dir(marfs_config* base_config, marfs_position* task_position, char
  * traverse_dir().
  * @param marfs_config* base_config : Configuration for MarFS file system
  * @param marfs_position* task_position : Location or position of directory in MarFS file system
- * @param char* file_name : a "short file name". No path/parent included. Not used by this routine.
+ * @param char* usrpath : the path of the current directory the task is in
+ * @param void* file_name : a "short file name". No path/parent included. Not used by this routine.
  * @param hashtable* output_table : Hash Table holding Object Ids of scanned files
  * @param pthread_mutex_t* table_lock : Lock to use when accessing output_table
  * @param task_queue* pool_queue : Queue of available threads
@@ -465,10 +690,11 @@ void traverse_dir(marfs_config* base_config, marfs_position* task_position, char
  * failure. Failures are always logged to the relevant logfile since all build
  * settings for MUSTANG log errors.
  */
-void traverse_ns(marfs_config* base_config, marfs_position* task_position, char * file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
+void traverse_ns(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
     // Attempt to fortify the thread's position (if not already fortified) and check for errors
     if ((task_position->ctxt == NULL) && config_fortifyposition(task_position)) {
         LOG(LOG_ERR, "Failed to fortify MarFS position!\n");
+        free(usrpath);
         return;
     }
 
@@ -508,7 +734,7 @@ void traverse_ns(marfs_config* base_config, marfs_position* task_position, char 
             }
 
             // subspaces of this namespace are namespaces "prima facie" --- automatically create traverse_ns task
-            mustang_task* new_ns_task = task_init(base_config, new_ns_position, file_name, output_table, table_lock, pool_queue, &traverse_ns);
+            mustang_task* new_ns_task = task_init(base_config, new_ns_position, strdup(current_subnode.name), (void*)file_name, output_table, table_lock, pool_queue, &traverse_ns);
             task_enqueue(pool_queue, new_ns_task);
             LOG(LOG_DEBUG, "Created new namespace traversal task at basepath: \"%s\"\n", new_ns_path);
             free(new_ns_path);
@@ -518,7 +744,40 @@ void traverse_ns(marfs_config* base_config, marfs_position* task_position, char 
     // Namespaces may also contain subdirectories and files. Proceed to the 
     // directory traversal routine (the "regular" common case) and examine any
     // other namespace contents.
-    traverse_dir(base_config, task_position, file_name, output_table, table_lock, pool_queue);
+    traverse_dir(base_config, task_position, strdup(usrpath), file_name, output_table, table_lock, pool_queue);
+
+    free(usrpath);
+    return;
+}
+
+/**
+ * This basically wrapper for traverse_objdir(). Since we are only looking
+ * for files in a specified namespace, no need to follow subspaces, like
+ * traverse_ns().
+ * @param marfs_config* base_config : Configuration for MarFS file system
+ * @param marfs_position* task_position : Location or position of directory in MarFS file system
+ * @param char* usrpath : the path of the current directory the task is in
+ * @param void* objid : the object ID to look for
+ * @param hashtable* output_table : Hash Table holding scanned files who are apart of objid
+ * @param pthread_mutex_t* table_lock : Lock to use when accessing output_table
+ * @param task_queue* pool_queue : Queue of available threads
+ *
+ * NOTE: Like traverse_dir(), this function always returns, including on 
+ * failure. Failures are always logged to the relevant logfile since all build
+ * settings for MUSTANG log errors.
+ */
+void traverse_objns(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* objid, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
+    // Attempt to fortify the thread's position (if not already fortified) and check for errors
+    if ((task_position->ctxt == NULL) && config_fortifyposition(task_position)) {
+        LOG(LOG_ERR, "Failed to fortify MarFS position!\n");
+        free(usrpath);
+        return;
+    }
+
+    traverse_objdir(base_config, task_position, strdup(usrpath), objid, output_table, table_lock, pool_queue);
+
+    free(usrpath);
+    return;
 }
 
 /**
@@ -546,7 +805,7 @@ void* thread_launcher(void* args) {
         // In all other circumstances, tasks will be initialized with a
         // function pointer indicating what work (traversing a namespace or
         // traversing a directory) needs to be performed, so jump to that.
-        next_task->task_func(next_task->config, next_task->position, next_task->fname, next_task->ht, next_task->ht_lock, queue);
+        next_task->task_func(next_task->config, next_task->position, next_task->usrpath, next_task->taskarg, next_task->ht, next_task->ht_lock, queue);
 
         pthread_mutex_lock(queue->lock); 
         

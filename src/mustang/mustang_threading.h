@@ -105,7 +105,7 @@ char* get_ftag(marfs_position* current_position, MDAL current_mdal, char* path);
  * always logged to the logfile passed as a program argument since all 
  * build settings at least log errors.
  */
-void traverse_file(marfs_config* base_config, marfs_position* task_position, char* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue);
+void traverse_file(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue);
 
 /**
  * Using a task's parameters, traverse the directory that the current setting 
@@ -119,7 +119,22 @@ void traverse_file(marfs_config* base_config, marfs_position* task_position, cha
  * always logged to the logfile passed as a program argument since all 
  * build settings at least log errors.
  */
-void traverse_dir(marfs_config* base_config, marfs_position* task_position, char* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue);
+void traverse_dir(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue);
+
+/**
+ * Using a task's parameters, traverse the directory that the current setting
+ * of `task_position` corresponds to, reading all directory entries and acting
+ * accordingly. If an entry corresponds to a regular file, get its FTAG and its
+ * object ID(s), and compares against the object ID specified in objid. If there
+ * is a matchi then the pathname is storedin the hashtable. If an entry corresponds
+ * to a regular directory, create a new task for that directory bundled with
+ * appropriate state for a worker thread to complete. If namespace is encountered,
+ *
+ * NOTE: This function always returns, including on failure. Failures are
+ * always logged to the logfile passed as a program argument since all
+ * build settings at least log errors.
+ */
+void traverse_objdir(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* objid, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue); 
 
 /**
  * Using a task's parameters, check the namespace that the current setting of
@@ -133,6 +148,17 @@ void traverse_dir(marfs_config* base_config, marfs_position* task_position, char
  * failure. Failures are always logged to the relevant logfile since all build
  * settings for MUSTANG log errors.
  */
-void traverse_ns(marfs_config* base_config, marfs_position* task_position, char* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue);
+void traverse_ns(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* file_name, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue);
+
+/**
+ * This basically wrapper for traverse_objdir(). Since we are only looking
+ * for files in a specified namespace, no need to follow subspaces, like
+ * traverse_ns().
+ *
+ * NOTE: Like traverse_dir(), this function always returns, including on
+ * failure. Failures are always logged to the relevant logfile since all build
+ * settings for MUSTANG log errors.
+ */
+void traverse_objns(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* objid, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue);
 
 #endif

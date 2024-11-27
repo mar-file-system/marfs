@@ -812,27 +812,86 @@ size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len ) {
 
 
 /**
+ * Parses a given object ID string, and populates the given string buffer with the
+ * namespace associated with the object ID in a path format (i.e. /namespace).
+ * @param const char *objid : String containing the object ID
+ * @param char* tgtstr : String buffer to be populated with the namespace path
+ * @param size_t len : Byte length of the target buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t ftag_nspath( const char* objid, char* tgtstr, size_t len ) {
+   // check for NULL object ID string
+   if ( objid == NULL ) {
+      LOG( LOG_ERR, "Received a NULL Object ID\n" );
+      return 0;
+   }
+   // check for NULL string target
+   if ( len  &&  tgtstr == NULL ) {
+      LOG( LOG_ERR, "Receieved a NULL tgtstr value w/ non-zero len\n" );
+      return 0;
+   }
+   // find the namespace path in the objstr
+   char* objstr = strdup( objid);
+   char* parse = objstr;
+   char* nspath = NULL;
+   while ( *parse != '\0' ) {
+      // 2 #'s next to each other means the namespace has been found in the object ID
+      if ( *parse == '#' && *(parse+1) == '#' ) { nspath = parse+1; }
+      if ( *parse == '#' ) { *parse = '/'; }
+      // if '|' is found after nspath has been assigned -> end of streamid
+      if ( *parse == '|' && nspath ) {
+         *parse = '\0';
+         break;
+      }
+      parse++;
+   }
+   // verify that a namespace path was found
+   if ( nspath == NULL ) {
+      LOG( LOG_ERR, "Failed to find a namespace path for object ID %s\n", objid );
+      free( objstr );
+      return 0;
+   }
+   // need to set the "real" end of the namespace path
+   char* nspathend = strrchr( nspath, '/');
+   if ( nspathend == NULL ) {
+      LOG( LOG_ERR, "Failed to find the end of the namespace path for stream ID %s\n", nspath );
+      free( objstr );
+      return 0;
+   }
+   *nspathend = '\0';
+   // assign nspath to the buffer
+   size_t retval = snprintf( tgtstr, len, "%s", nspath );
+   free( objstr );
+   return retval;
+}
+
+
+/**
  * Free allocated memory for internal ctag and streamid fields within an ftag.
  * NOTE: this function does not free the ftag itself since this function cannot
  * make assumptions about whether an ftag is heap-allocated or on the stack.
  * @param FTAG* ftag: the ftag whose ctag and streamid fields will be freed.
  */
 void ftag_cleanup(FTAG* ftag) {
-    if (ftag == NULL) {
-        LOG( LOG_ERR, "Received a NULL FTAG reference\n" );
-    }
+   if (ftag == NULL) {
+      LOG( LOG_ERR, "Received a NULL FTAG reference\n" );
+   }
 
-    if (ftag->ctag == NULL) {
-        LOG( LOG_ERR, "FTAG ctag field is NULL--skipping free\n" );
-    } else {
-        free(ftag->ctag);
-    }
-
-    if (ftag->streamid == NULL) {
-        LOG( LOG_ERR, "FTAG streamid field is NULL--skipping free\n" );
-    } else {
-        free(ftag->streamid);
-    }
+   if (ftag->ctag == NULL) {
+      LOG( LOG_ERR, "FTAG ctag field is NULL--skipping free\n" );
+   } else {
+      free(ftag->ctag);
+   }
+   // check for NULL stream ID
+   if (ftag->streamid == NULL) {
+      LOG( LOG_ERR, "FTAG streamid field is NULL--skipping free\n" );
+   } else {
+      free(ftag->streamid);
+   }
 }
 
 

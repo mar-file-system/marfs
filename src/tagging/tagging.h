@@ -212,6 +212,26 @@ ssize_t ftag_metainfo( const char* fileid, char* entrytype );
  */
 size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
 
+/**
+ * Parses a given object ID string, and populates the given string buffer with the
+ * namespace associated with the object ID in a path format (i.e. /namespace).
+ * @param const char *objid : String containing the object ID
+ * @param char* tgtstr : String buffer to be populated with the namespace path
+ * @param size_t len : Byte length of the target buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t ftag_nspath( const char* objid, char* tgtstr, size_t len );
+
+/**
+ * Free allocated memory for internal ctag and streamid fields within an ftag.
+ * NOTE: this function does not free the ftag itself since this function cannot
+ * make assumptions about whether an ftag is heap-allocated or on the stack.
+ * @param FTAG* ftag: the ftag whose ctag and streamid fields will be freed.
+ */
 void ftag_cleanup(FTAG* ftag);
 
 // MARFS REBUILD TAG  --  attached to rebuild marker files, providing rebuild info
