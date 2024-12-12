@@ -291,6 +291,22 @@ void put(hashtable* table, char* new_object_name) {
     }
 }
 
+/**
+ * This tests to see if an object ID is contained in the given hashtable.
+ * This is essentially a wrapper for verify_original(), which returns 0
+ * if the object ID is found.
+ * @param table : The hashtable to test
+ * @param object_name : the object ID to test for
+ *
+ * @returns : 1 of the object_name is in the table. 0 otherwise
+ */
+int hashtable_exists(hashtable* table, char* object_name) {
+    // Compute the hash to see which index to search
+    uint64_t mapped_hashcode = hashcode(table, object_name);
+
+    return(!verify_original((table->stored_nodes)[mapped_hashcode], object_name));
+}
+
 /** 
  * An internal "private" function to print a hashnode's full contents,
  * including the data for all nodes in the hashnode's separately chained data

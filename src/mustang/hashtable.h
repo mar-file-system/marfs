@@ -125,6 +125,15 @@ void hashtable_destroy(hashtable* table);
  */
 void put(hashtable* table, char* new_object_name);
 
+/**
+ * This tests to see if an object ID is contained in the given hashtable.
+ * This is essentially a wrapper for verify_original(), which returns 0
+ * if the object ID is found.
+ *
+ * @returns : 1 of the object_name is in the table. 0 otherwise
+ */
+int hashtable_exists(hashtable* table, char* object_name);
+
 /** 
  * A helper function to print the contents of non-empty hashnodes, including 
  * the contents of their linked lists maintained for separate chaining, in a

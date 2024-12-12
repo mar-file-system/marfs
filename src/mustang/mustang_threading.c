@@ -460,7 +460,7 @@ void traverse_dir(marfs_config* base_config, marfs_position* task_position, char
  * Using a task's parameters, traverse the directory that the current setting
  * of `task_position` corresponds to, reading all directory entries and acting
  * accordingly. If an entry corresponds to a regular file, get its FTAG and its
- * object ID(s), and compares against the object ID specified in objid. If there 
+ * object ID(s), and compares against the object ID list specified in objlist. If there 
  * is a matchi then the pathname is storedin the hashtable. If an entry corresponds 
  * to a regular directory, create a new task for that directory bundled with 
  * appropriate state for a worker thread to complete. If namespace is encountered,
@@ -468,7 +468,7 @@ void traverse_dir(marfs_config* base_config, marfs_position* task_position, char
  * @param marfs_config* base_config : Configuration for MarFS file system
  * @param marfs_position* task_position : Location or position of directory in MarFS file system
  * @param char* usrpath : the path of the directory the task in currently in
- * @param void* objid : the object ID to look for
+ * @param void* objlist : the object ID to look for
  * @param hashtable* output_table : Hash Table holding Object Ids of scanned files
  * @param pthread_mutex_t* table_lock : Lock to use when accessing output_table
  * @param task_queue* pool_queue : Queue of available threads
@@ -477,8 +477,8 @@ void traverse_dir(marfs_config* base_config, marfs_position* task_position, char
  * always logged to the logfile passed as a program argument since all
  * build settings at least log errors.
  */
-void traverse_objdir(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* objid, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
-    char* dataobj_id = (char*)objid;
+void traverse_objdir(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* objlist, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
+    hashtable* dataobj_list = (hashtable*)objlist;
 
     // Attempt to fortify the thread's position (if not already fortified) and check for errors
     if ((task_position->ctxt == NULL) && config_fortifyposition(task_position)) {
@@ -589,7 +589,7 @@ void traverse_objdir(marfs_config* base_config, marfs_position* task_position, c
 
             snprintf(dnamebuf, PATH_MAX, "%s/%s", usrpath, current_entry->d_name);
             new_dir_position->depth = new_depth;
-            mustang_task* new_task = task_init(base_config, new_dir_position, strdup(dnamebuf), objid, output_table, table_lock, pool_queue, &traverse_objdir);
+            mustang_task* new_task = task_init(base_config, new_dir_position, strdup(dnamebuf), objlist, output_table, table_lock, pool_queue, &traverse_objdir);
 
             // Put new task on queue
             task_enqueue(pool_queue, new_task);
@@ -631,7 +631,7 @@ void traverse_objdir(marfs_config* base_config, marfs_position* task_position, c
                }
 
                // Compare the retrieved object ID with the object ID we are looking for
-               if (!strcmp(retrieved_id,dataobj_id)) {
+               if (hashtable_exists(dataobj_list,retrieved_id)) {
                    char fnamebuf[PATH_MAX];
                    // We have a winner!
                    snprintf(fnamebuf, PATH_MAX, "%s/%s", usrpath, current_entry->d_name);
@@ -647,10 +647,7 @@ void traverse_objdir(marfs_config* base_config, marfs_position* task_position, c
                if (found) break;
            }
 
-// Paul defined ftag_cleanup(). But currently not availible in current INSTALLED version of MarFS library
-//           ftag_cleanup(&retrieved_tag); // free internal allocated memory for FTAG's ctag and streamid fields
-           if (retrieved_tag.ctag) free(retrieved_tag.ctag);
-           if (retrieved_tag.streamid) free(retrieved_tag.streamid);
+           ftag_cleanup(&retrieved_tag); // free internal allocated memory for FTAG's ctag and streamid fields
            free(file_ftagstr);
            file_ftagstr = NULL; // discard stale reference to FTAG to prevent double-free
         }
@@ -757,8 +754,8 @@ void traverse_ns(marfs_config* base_config, marfs_position* task_position, char*
  * @param marfs_config* base_config : Configuration for MarFS file system
  * @param marfs_position* task_position : Location or position of directory in MarFS file system
  * @param char* usrpath : the path of the current directory the task is in
- * @param void* objid : the object ID to look for
- * @param hashtable* output_table : Hash Table holding scanned files who are apart of objid
+ * @param void* objlist : the list of object IDs to look for, in a hashtable format
+ * @param hashtable* output_table : Hash Table holding scanned files who are apart of objlist
  * @param pthread_mutex_t* table_lock : Lock to use when accessing output_table
  * @param task_queue* pool_queue : Queue of available threads
  *
@@ -766,7 +763,7 @@ void traverse_ns(marfs_config* base_config, marfs_position* task_position, char*
  * failure. Failures are always logged to the relevant logfile since all build
  * settings for MUSTANG log errors.
  */
-void traverse_objns(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* objid, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
+void traverse_objns(marfs_config* base_config, marfs_position* task_position, char* usrpath, void* objlist, hashtable* output_table, pthread_mutex_t* table_lock, task_queue* pool_queue) {
     // Attempt to fortify the thread's position (if not already fortified) and check for errors
     if ((task_position->ctxt == NULL) && config_fortifyposition(task_position)) {
         LOG(LOG_ERR, "Failed to fortify MarFS position!\n");
@@ -774,7 +771,7 @@ void traverse_objns(marfs_config* base_config, marfs_position* task_position, ch
         return;
     }
 
-    traverse_objdir(base_config, task_position, strdup(usrpath), objid, output_table, table_lock, pool_queue);
+    traverse_objdir(base_config, task_position, strdup(usrpath), objlist, output_table, table_lock, pool_queue);
 
     free(usrpath);
     return;

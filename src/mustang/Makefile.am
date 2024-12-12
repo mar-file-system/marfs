@@ -64,7 +64,7 @@ AM_LDFLAGS  = -lpthread
 # define sources used by many programs as noinst libraries, to avoid multiple compilations
 noinst_LTLIBRARIES = libMustang.la
 
-libMustang_la_SOURCES = mustang_threading.c hashtable.c id_cache.c task_queue.c
+libMustang_la_SOURCES = mustang_threading.c hashtable.c id_cache.c id_list.c task_queue.c
 libMustang_la_LIBADD  = ../config/libConfig.la ../recovery/libRecovery.la ../tagging/libTagging.la ../ne/libne.la ../datastream/libDatastream.la ../mdal/libMDAL.la
 libMustang_la_CFLAGS  =  -std=gnu99 -Wall -Wextra -Og -g $(XML_CFLAGS)
 MUSTANG_LIB = libMustang.la

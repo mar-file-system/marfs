@@ -83,6 +83,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <logging/logging.h>
 
 #include "hashtable.h"
+#include "id_cache.h" 
+#include "id_list.h"
 #include "mustang_threading.h"
 #include "task_queue.h"
 
@@ -92,6 +94,147 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 extern void* thread_launcher(void* args);
 
 size_t id_cache_capacity;
+
+/**
+ * This private routine reads the input file. Based on the 
+ * first line of the file, it determines if it is reading 
+ * paths or object IDs. If paths are being returned, then 
+ * fdata is an id_cache structure. Otherwise fdata is an
+ * id_list structure.
+ * @param fname : The file name to read
+ * @param fdata : the data structure holding the
+ *                data from the file
+ *
+ * @returns : 1 indicates that paths (id_cache structure)
+ *            were read. 0 means that object IDs
+ *            (id_list structure) were read. <0
+ *            means there were problems readng the
+ *            file.
+ */            
+int read_inputfile(char* fname, void** fdata) {
+   FILE *fp;
+   char line[512];             // Adjust the size as needed
+   int read_paths = (-1);      // flag to indicated what was read from the file
+
+   id_cache* pathlist = NULL;  // List to hold paths
+   id_list* objlist = NULL;    // List to hold object IDs, based on namespace
+
+   if (!(fp = fopen(fname, "r"))) {
+       LOG(LOG_ERR, "Error opening %s", fname);
+       return -1;
+   }
+   if (*fdata) {
+       LOG(LOG_ERR, "Data Buffer for the file needs to be empty (NULL)\n");
+       return -1;
+   }
+
+   while (fgets(line, sizeof(line), fp) != NULL) {
+       char*  is_object;	   
+
+       line[strlen(line)-1] = '\0';   // cuts the CR off the line	   
+       is_object = strchr(line,'|');  // determine if line is and object ID or path
+       if (!(*fdata)) {
+           read_paths = (!is_object);  // Set the return flag     
+           if (is_object) {
+               objlist = id_list_init(33668);    // New list of object IDs, based on namespace
+	       *fdata = (void*)objlist; 
+	   } else {
+	      pathlist = id_cache_init(16834);  // New list of Paths 	 
+	      *fdata = (void*)pathlist; 
+	 }   
+       }	      
+
+       if (is_object && objlist) {   // Must be reading objects
+           char nspath_buf[256];
+           size_t nspathlen = ftag_nspath(line, nspath_buf, PATH_MAX);
+
+           // If namespace string is bigger than maxpath, then something wierd is happening.
+           // If it is zero then there was a problem parsing it out of the object ID
+           if (!nspathlen || (nspathlen >= PATH_MAX)) {
+               LOG(LOG_WARNING, "Failed to extract namespace path from object ID  arg \"%s\" (path length = %d)\n", line, nspathlen);
+               continue;
+           }
+           if (id_list_add(objlist, nspath_buf, line) < 0)
+               LOG(LOG_WARNING, "Failed to add %s to Namespace %s\n", line, nspath_buf);    
+       } else if (!is_object && pathlist) {
+	   if (id_cache_add(pathlist, line) < 0)
+               LOG(LOG_WARNING, "Failed to add %s to path list\n", line);     
+       } else
+           LOG(LOG_WARNING, "Ignored line: %s\n", line);	      
+   }
+
+   fclose(fp);
+   return read_paths;
+}
+
+/**
+ * This private routine reads the arguments from the command line. 
+ * Based on the first argument read, it determines if it is reading
+ * paths or object IDs. If paths are being returned, then fdata
+ * is an id_cache structure. Otherwise fdata is an
+ * id_list structure.
+ * @param theargs : The command line argument array (argv)
+ * @param argcnt : The total number of command line arguments (argc)
+ * @param argidx : The starting index into the argv array
+ * @param fdata : the data structure holding the
+ *                data from the arguments
+ *
+ * @returns : 1 indicates that paths (id_cache structure)
+ *            were read. 0 means that object IDs
+ *            (id_list structure) were read. <0
+ *            means there were problems reading the
+ *            arguments.
+ */            
+int read_args(char* theargs[], int argcnt, int argidx, void** fdata) {
+   int read_paths = (-1);      // flag to indicated what was read from the args
+   id_cache* pathlist = NULL;  // List to hold paths
+   id_list* objlist = NULL;    // List to hold object IDs, based on namespace
+
+   if (argidx <= 0 || argidx >= argcnt) {
+       LOG(LOG_ERR, "There are problems with the arument index (idx = %d, argc = %d)\n", argidx, argcnt);
+       return -1;
+   }	   
+   if (*fdata) {
+       LOG(LOG_ERR, "Data Buffer for the argument data needs to be empty (NULL)\n");
+       return -1;
+   }
+
+   for (; argidx < argcnt; argidx++) {
+       char*  is_object;	   
+
+       is_object = strchr(theargs[argidx],'|');  // determine if theargs[argidx] is and object ID or path
+       if (!(*fdata)) {
+           read_paths = (!is_object);  // Set the return flag     
+          if (is_object) {
+              objlist = id_list_init(1024);    // New list of object IDs, based on namespace
+	      *fdata = (void*)objlist; 
+	  } else {
+	      pathlist = id_cache_init(1024);  // New list of Paths 	 
+	      *fdata = (void*)pathlist; 
+	  }   
+       }	      
+
+       if (is_object && objlist) {   // Must be reading objects
+           char nspath_buf[PATH_MAX];
+           size_t nspathlen = ftag_nspath(theargs[argidx], nspath_buf, PATH_MAX);
+
+           // If namespace string is bigger than maxpath, then something wierd is happening.
+           // If it is zero then there was a problem parsing it out of the object ID
+           if (!nspathlen || (nspathlen >= PATH_MAX)) {
+               LOG(LOG_WARNING, "Failed to extract namespace path from object ID  arg \"%s\" (path length = %d)\n", theargs[argidx], nspathlen);
+               continue;
+           }
+           if (id_list_add(objlist, nspath_buf, theargs[argidx]) < 0)
+               LOG(LOG_WARNING, "Failed to add %s to Namespace %s\n", theargs[argidx], nspath_buf);    
+       } else if (!is_object && pathlist) {
+           if (id_cache_add(pathlist, theargs[argidx]) < 0)
+               LOG(LOG_WARNING, "Failed to add %s to path list\n", theargs[argidx]);     
+       } else
+           LOG(LOG_WARNING, "Ignored argument: %s\n", theargs[argidx]);	      
+   }  // end processing loop
+
+   return read_paths;
+}
 
 /**
  * This private routine encapulates the logic used to generete the thread
@@ -249,7 +392,8 @@ void push_pathargs2queue(char *the_arg, marfs_config* config, marfs_position* st
  * 
  * Like push_pathargs2queue(), this routine adds initial tasks to the task queue.
  * However these tasks will only run in the namespaces designated by the object IDs.
- * @param the_arg : the commandline argument to process
+ * @param the_arg : an id_listnode structure, containing the name space and any associated 
+ *                  object IDs (in the hashtable)
  * @param marfs_position* start_position : the Start Position of directory in MarFS file system.
  *                                         Used to create the Task Position
  * @param hashtable* output_table : Hash Table holding the file paths of files that are in
@@ -258,27 +402,16 @@ void push_pathargs2queue(char *the_arg, marfs_config* config, marfs_position* st
  *                                          passed to the tasks
  * @param task_queue* queue : Queue of available threads - passed to the tasks. 
  */
-void push_objargs2queue(char* the_arg, marfs_config* config, marfs_position* start_position, hashtable* output_table, pthread_mutex_t* hashtable_lock, task_queue* queue) {
-    char* the_objid = strdup(the_arg);//holds the object ID of the files to look for in the namespace
-    char nsrootbuf[PATH_MAX];         //buffer to hold the namespace root path found in the object ID
+void push_objargs2queue(id_listnode* the_arg, marfs_config* config, marfs_position* start_position, hashtable* output_table, pthread_mutex_t* hashtable_lock, task_queue* queue) {
     char nsmntbuf[PATH_MAX];          //buffer to hold the actual MarFS user mount point
-    size_t nsrootlen = ftag_nspath(the_objid, nsrootbuf, PATH_MAX);//the length of the namespace root path string
 
-    // If namespace string is bigger than maxpath, then something wierd is happening.
-    // If it is zero then there was a problem parsing it out of the object ID
-    if (!nsrootlen || (nsrootlen >= PATH_MAX)) {
-        LOG(LOG_ERR, "Failed to extract namespace path from object ID  arg \"%s\" (path length = %d)--skipping to next\n", the_arg, nsrootlen);
-        if (the_objid) free(the_objid);
-        return;
-    }
-    snprintf(nsmntbuf, PATH_MAX, "%s%s", config->mountpoint, nsrootbuf);
+    snprintf(nsmntbuf, PATH_MAX, "%s%s", config->mountpoint, the_arg->name);
 
     // Once we have the namespace root, need to postion ourselves in the user metadata tree
     marfs_position* new_task_position = calloc(1, sizeof(marfs_position));
 
     if (config_duplicateposition(start_position, new_task_position)) {
         LOG(LOG_ERR, "Failed to duplicate parent position to new task--skipping to next\n");
-        if (the_objid) free(the_objid);
         free(new_task_position);
         return;
     }
@@ -288,7 +421,6 @@ void push_objargs2queue(char* the_arg, marfs_config* config, marfs_position* sta
 
     if (new_task_depth < 0) {
         LOG(LOG_ERR, "Failed to traverse (got depth: %d)--skipping to next\n", new_task_depth);
-        if (the_objid) free(the_objid);
         free(nsroot);
         config_abandonposition(new_task_position);
         free(new_task_position);
@@ -297,7 +429,6 @@ void push_objargs2queue(char* the_arg, marfs_config* config, marfs_position* sta
     // If new depth != 0, then the namespace root must not designate a valid namespace
     if (new_task_depth > 0) {
         LOG(LOG_ERR, "\"%s\" is NOT a valid namespace root (got depth: %d)--skipping to next\n", nsroot, new_task_depth);
-        if (the_objid) free(the_objid);
         free(nsroot);
         config_abandonposition(new_task_position);
         free(new_task_position);
@@ -306,7 +437,6 @@ void push_objargs2queue(char* the_arg, marfs_config* config, marfs_position* sta
     // ... fortify the new position
     if (config_fortifyposition(new_task_position)) {
         LOG(LOG_ERR, "Failed to fortify new_task position after new_task traverse!\n");
-        if (the_objid) free(the_objid);
         free(nsroot);
         config_abandonposition(new_task_position);
         free(new_task_position);
@@ -319,9 +449,9 @@ void push_objargs2queue(char* the_arg, marfs_config* config, marfs_position* sta
 
     // Now add the task to traverse the namespace, looking for files in the object to
     // the task queue
-    mustang_task* top_task = task_init(config, new_task_position, strdup(nsmntbuf), the_objid, output_table, hashtable_lock, queue, &traverse_objns);
+    mustang_task* top_task = task_init(config, new_task_position, strdup(nsmntbuf), the_arg->idlist, output_table, hashtable_lock, queue, &traverse_objns);
     task_enqueue(queue, top_task);
-    LOG(LOG_DEBUG, "Created top-level namespace traversal task at namespace path: \"%s\" looking for files in object \"%s\"\n", nsmntbuf, the_objid);
+    LOG(LOG_DEBUG, "Created top-level namespace traversal task at namespace path: \"%s\" looking for files\n", nsmntbuf);
 
     
     return;
@@ -335,13 +465,15 @@ void push_objargs2queue(char* the_arg, marfs_config* config, marfs_position* sta
 //                      	queue
 //    -c <max_cache_entries>	Maximum number of entries for a thread's Object ID
 //                              cache
-//    -h <power_of_2>		Used to set the size of the Object ID hash table
+//    -H <power_of_2>		Used to set the size of the Object ID hash table
 //                              (e.g. 17 -> 2^17 -> table size = 131072)
+//    -i <input file>           A list of MarFs paths or object IDs to translate. 
+//                              The file cannot contain both.                          
 //    -l <log file>		Log file for this process. Should be a full path.
 //    -o <output file>		Output file for the generated Object ID list. This is 
 //                              actually a prefix. Should be a full path.
-#define GETOPT_STR ":c:hH:l:o:q:t:"
-#define USAGE "Usage: mustang -t [max threads] -H [hashtable capacity exponent] -c [cache capacity] -q [task queue size] -o [output file] -l [log file] [paths, ...]\n"
+#define GETOPT_STR ":c:hH:i:l:o:q:t:"
+#define USAGE "Usage: mustang [-t <max threads>] [-H <hashtable capacity exponent>] [-c <cache capacity>] [-q <task queue size>] [-l <log file>] -o <output file>  -i <input file> | paths/objIDs, ...\n" 
 
 int main(int argc, char** argv) {
     int opt;                         // holds current command line arg from getopt()
@@ -349,6 +481,7 @@ int main(int argc, char** argv) {
     size_t queue_capacity = SIZE_MAX;// Maximum size of task queue
     long fetched_id_cache_capacity = 16;//Maximum # of Object ID cache entries
     long hashtable_capacity = 131072;// Maxium size of the Object ID hash table
+    char* input_file = NULL;         // Name of the input file
     FILE* output_ptr = NULL;         // Stream Ptr for output file
 
     char* invalid = NULL;            // temporary pointer used in numeric conversion
@@ -417,7 +550,10 @@ int main(int argc, char** argv) {
                        }
 		       hashtable_capacity = (1L << hashtable_exp);
                        break; 
-             case 'o':          // open the output file for writing
+             case 'i':        // assign the input file name. This means all non-flag arguments will be ignored
+                       input_file = strdup(optarg);
+                       break; 
+             case 'o':        // open the output file for writing
                        output_ptr = fopen(optarg, "w");
                        if (output_ptr == NULL) {
                            fprintf(stderr, "Failed to open file \"%s\" for writing to output (%s)\n", optarg, strerror(errno));
@@ -450,10 +586,12 @@ int main(int argc, char** argv) {
     }
 
     // Check to see that we have paths to scan
-    if (patharg_idx >= argc) {
-        LOG(LOG_ERR, "No MarFS paths to scan. Exiting ...\n");
+    if (patharg_idx >= argc && input_file == NULL) {
+        LOG(LOG_ERR, "No MarFS paths or object IDs to scan. Exiting ...\n");
         if (output_ptr) fclose(output_ptr);
 	return 1;
+    } else if (patharg_idx < argc && input_file) {
+        LOG(LOG_WARNING, "Input file %s will be used, instead of paths or object IDs on the command line.\n", input_file);
     }
 
     // Set the global Object ID Cache, which is treated as a constant by the worker threads,
@@ -568,16 +706,50 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Parse each path argument, check them for validity, and pass along initial tasks
-    for (; patharg_idx < argc; patharg_idx++){	 
-        LOG(LOG_INFO, "Processing arg \"%s\"\n", argv[patharg_idx]);
-        // If the arg has a "|" in it, then it is an object ID, not a path. 
-        // Need to initilize the queue/task differently
-        if (strchr(argv[patharg_idx],'|'))
-	    push_objargs2queue(argv[patharg_idx], parent_config, &parent_position, output_table, &ht_lock, queue);
-        else
-	    push_pathargs2queue(argv[patharg_idx], parent_config, &parent_position, output_table, &ht_lock, queue);
+    // Process the arguments to this process
+    void* data_buf = NULL;     // holds the data from the processed arguments
+    int read_paths;            // a flag indicating that paths were read from the arguments
+
+    if (input_file) {
+        LOG(LOG_INFO, "Reading the arguments from file \"%s\"\n", input_file);
+        read_paths = read_inputfile(input_file, &data_buf);
+    } else {
+        LOG(LOG_INFO, "Reading the arguments from command line\n");
+        read_paths = read_args(argv, argc, patharg_idx, &data_buf);
     }
+
+    if (read_paths < 0) {
+        LOG(LOG_ERR, "Failed to process the arguments! Exiting ...\n");
+        return 1;
+    } else if (read_paths) {
+        id_cache* plist = (id_cache*)data_buf;
+        id_cachenode* n = plist->head;
+
+        while (n) {
+            push_pathargs2queue(n->id, parent_config, &parent_position, output_table, &ht_lock, queue);
+            n = n->next;
+        }
+        id_cache_destroy(plist);  // push_pathargs2queue() duplicates path strings -> we are done with the cache at this point.
+        data_buf = NULL;
+    } else {
+        id_list* olist = (id_list*)data_buf;
+        id_listnode* n = olist->head;
+
+        while (n) {
+	    push_objargs2queue(n, parent_config, &parent_position, output_table, &ht_lock, queue);
+            n = n->next;
+        }
+    }
+    // Parse each path argument, check them for validity, and pass along initial tasks
+//    for (; patharg_idx < argc; patharg_idx++){	 
+//        LOG(LOG_INFO, "Processing arg \"%s\"\n", argv[patharg_idx]);
+//        // If the arg has a "|" in it, then it is an object ID, not a path. 
+//        // Need to initilize the queue/task differently
+//        if (strchr(argv[patharg_idx],'|'))
+//	    push_objargs2queue(argv[patharg_idx], parent_config, &parent_position, output_table, &ht_lock, queue);
+//        else
+//	    push_pathargs2queue(argv[patharg_idx], parent_config, &parent_position, output_table, &ht_lock, queue);
+//    }
 
     pthread_mutex_lock(queue->lock);
 
@@ -604,6 +776,10 @@ int main(int argc, char** argv) {
             LOG(LOG_ERR, "Failed to join thread %0lx! (%s)\n", worker_pool[i], strerror(errno));
         }
     }
+
+    // Unlike paths, the argument structure for object IDs are used by the threads.
+    // Now that they are gone, we can deallocate it.
+    if (data_buf) id_list_destroy((id_list*)data_buf);
 
     /**
      * If destroying the task queue fails (which will set errno to EBUSY for a 

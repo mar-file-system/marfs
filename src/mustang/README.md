@@ -1,4 +1,4 @@
-# MUSTANG version 1.3.0
+# MUSTANG version 1.4.0
 
 Welcome to **MUSTANG**!
 * **M**arFS (_or **M**archive/**M**etadata_)
@@ -9,9 +9,58 @@ Welcome to **MUSTANG**!
 * **N**amespace
 * **G**atherer
 
-This is a tool originally designed to traverse a MarFS metadata reference tree
+This is a tool originally designed to traverse a MarFS metadata user tree
 and generate a list of relevant MarFS objects when given paths within a MarFS
 instance. Why the name MUSTANG? A Mustang is a car, and cars traverse!
+
+Starting with version 1.4.0, MUSTANG can run in 2 modes. The first mode is
+based on the original design specification, in that, given a list of user
+paths, a list of MarFS objects for all files contained in those paths is 
+returned. The second mode is that given a list of MarFS objects, all user
+paths of files in those objects is returned.
+
+Due to the requirement that the objects of files do NOT span Namespaces, when
+searching for files, based on objects, MUSTANG stays within a given Namespace.
+So the treewalking logic is limited somewhat in this second mode. However in 
+order to get all files associated with a given object(s), it is necessary to
+search the entire Namespace. Consequently, this second mode can be quite expensive
+in terms of time and system resources.
+
+To enhance the efficiency of this second mode, objects processed by MUSTANG
+are first sorted based on Namespace. That is, a list of objects is formed for
+each Namespace, then each file in the Namespace is tested against the list of
+objects. The paths of those files whose objects are member of that list are
+added to the resulting list of paths.
+
+The mode in which MUSTANG runs is determined by the first argument that the
+process encounters. For example, if the first argument is a path, then 
+MUSTANG runs in the first mode, returning a list of objects. If the first
+argument is an objectID, then MUSTANG runs in the second mode, returning a
+list of user paths.
+
+The command line for MUSTANG is as follows:
+
+mustang [-t <max threads>] [-H <hashtable capacity exponent>] [-c <cache capacity>] [-q <task queue size>] [-l <log file>] -o <output file>  -i <input file> | paths/objIDs, ...
+
+Options are defined as follows:
+
+    -t <max_threads>          Maximum number of threads used by this process. This
+                              is the maximum size if the thread pool.
+    -q <max_tasks>            Maximum number of tasks in a given threads task
+                              queue
+    -c <max_cache_entries>    Maximum number of entries for a thread's Object ID
+                              cache
+    -H <power_of_2>           Used to set the size of the Object ID hash table
+                              (e.g. 17 -> 2^17 -> table size = 131072)
+    -i <input file>           A list of MarFs paths or object IDs to translate.
+                              The file cannot contain both.
+    -l <log file>             Log file for this process. Should be a full path.
+    -o <output file>          Output file for the generated Object ID list. This is
+                              actually a prefix. Should be a full path.
+
+Note that either an input file (-i) or the path/object ID arguments can be
+specified on the command line, but *not* both. If both are included, then
+the input file is processed, and the rest of the arguments are ignored.
 
 # MarFS
 
@@ -22,12 +71,17 @@ dependencies. Installation instructions and documentation can be found
 
 ## Version history
 
-Users are strongly encouraged to use the current version (1.3.0), which 
-adds the ability to retireve the MarFS objects of a single file. There
-have also been minor error message corrections made. Initial changes
-to integrate the mustang buildinto the general MarFS build were made.
+Users are strongly encouraged to use the current version (1.4.0), which 
+allows for the scanning of a Namespace in order to return the user paths
+of files contained in MarFS objects. In some sense, this is the reverse
+function of what MUSTANG was originally designed to do. Argument processing
+was also modified to allow for MUSTANG to read files, rather than just the 
+command line for paths/object IDs to process.
 
 Previous versions are:
+* 1.3.0: adds the ability to retireve the MarFS objects of a single file. 
+  Also made build changes to integrate the MUSTANG build into the general
+  MarFS build.
 * 1.2.2: implements a thread pool, which is far more resilient to large
   workloads than previous versions are. It patches "false positive" behavior 
   in hashtable and cache searches which caused an incorrectly low number of 
@@ -71,7 +125,12 @@ copy them to accessible MarFS bin and library locations.
 
 # Running mustang
 
-The `mustang` exeutable requires at least one absolute path argument
+Directly invoking the `mustang_engine` executable is discouraged since the
+executable attempts no substantive argument parsing. Instead, use the `mustang`
+frontend, which will appropriately parse arguments and can print help
+information.
+
+The `mustang` frontend requires at least one absolute path argument
 corresponding to an active MarFS location where traversal will begin. The
 frontend will not check whether the absolute path actually maps to the MarFS
 instance; rather, such an error will likely be caught within the engine itself
@@ -90,7 +149,7 @@ aware of system limits on the number of concurrent threads which may be created
 per process (e.g., those in `/proc/sys/kernel/threads-max` or
 `/proc/sys/vm/max_map_count`) and pass argument values responsibly.
 
-`-H` and its aliases (hashtable capacity) represent the _power of two_ that
+`-hc` and its aliases (hashtable capacity) represent the _power of two_ that
 the frontend computes to get the hashtable capacity. Hashtable capacity should
 be specified proportionately to the anticipated number of MarFS objects that
 will be encountered. Specifying small hashtable capacities for large targets
@@ -100,7 +159,7 @@ slow hashtable operations (and, therefore application performance) due to
 requiring linear traversal and chaining operations for a progressively greater
 frequency of hash collisions as the application runs.
 
-`-q` and its aliases (task queue capacity) correspond to the maximum length of
+`-tc` and its aliases (task queue capacity) correspond to the maximum length of
 the thread pool's task queue that will be allowed before `pthread_cond_wait()`
 calls when enqueueing tasks will "take effect" (i.e., force callers to sleep
 and wait on the corresponding condition variable tied to available space). By
