@@ -11,7 +11,7 @@ jobs:
     env:
       Isal_assembler: "nasm"
       Ne_deps: "autoconf libxml2-dev openmpi-bin openmpi-common libopenmpi-dev"
-      Marfs_deps: "fuse libfuse-dev"
+      Marfs_deps: "fuse libfuse-dev libreadline-dev"
     runs-on: ubuntu-latest
     steps:
     - name: Setup Build Dependencies + Environment
@@ -50,7 +50,7 @@ jobs:
         cd $GITHUB_WORKSPACE
 
   # https://doc.rust-lang.org/cargo/guide/continuous-integration.html
-  flush_ls:
+  obj_scanner:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,8 +60,8 @@ jobs:
 
       - name: Build
         run: cargo build --verbose
-        working-directory: flush_ls
+        working-directory: obj_scanner
 
       - name: Test
         run: cargo test --verbose
-        working-directory: flush_ls
+        working-directory: obj_scanner
