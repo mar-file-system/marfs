@@ -11,7 +11,7 @@ jobs:
     env:
       Isal_assembler: "nasm"
       Ne_deps: "autoconf libxml2-dev openmpi-bin openmpi-common libopenmpi-dev"
-      Marfs_deps: "fuse libfuse-dev"
+      Marfs_deps: "fuse libfuse-dev libreadline-dev"
     runs-on: ubuntu-latest
     steps:
     - name: Setup Build Dependencies + Environment
