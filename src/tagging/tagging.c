@@ -179,7 +179,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       LOG( LOG_ERR, "Unrecognized CTAG format\n" );
       return -1;
    }
-   *output = '\0'; // ensure we NULL-terminate the output string
+   if (output) *output = '\0'; // ensure we NULL-terminate the output string
    parse++; // skip over '|' char
    ftag->streamid = NULL;
    output = NULL;
@@ -202,7 +202,7 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       outputlen++;
       parse++;
    }
-   *output = '\0'; // ensure we NULL-terminate the output string
+   if (output) *output = '\0'; // ensure we NULL-terminate the output string
    if ( ftag->streamid == NULL ) {
       LOG( LOG_ERR, "Unrecognized streamid format\n" );
       return -1;
@@ -422,6 +422,104 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
       LOG( LOG_ERR, "FTAG string has trailing characters: \"%s\"\n", parse );
       return -1;
    }
+   return 0;
+}
+
+/**
+ * Populates or initializes the given FTAG with the stream ID and object number of the 
+ * object ID. The file number is set to 0, which means the returned FTAG points to the 
+ * beginning of the datastream, no matter what the object ID is. In some sense, this is 
+ * the reverse of ftag_datatgt(), though it is only a partial initialization.
+ * @param FTAG* ftag : Reference to the ftag struct to populate
+ * @param char* objstr : Object ID used to pull values from
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int ftag_objstr( FTAG* ftag, char* objstr) {
+   // check for NULL references
+   if ( ftag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL FTAG reference\n" );
+      return -1;
+   }
+   if ( objstr == NULL || !strchr(objstr, '|')) {
+      LOG( LOG_ERR, "Received an invalid object ID str reference\n" );
+      return -1;
+   }
+
+   char* parse = objstr;  // start at ClientTag of Object ID
+   char* endptr = parse;
+   char* output = NULL;
+   size_t outputlen = 1;
+
+   ftag->ctag = NULL;
+   // This is a 2-pass parse. First pass - get length of ClientTag, Second pass - store ClientTag
+   while ( *parse != '\0' ) { // don't allow extension beyond end of string
+      if ( *parse == '|' ) {
+         if ( ftag->ctag ) { break; }
+         ftag->ctag = malloc( sizeof(char) * outputlen );
+         if ( ftag->ctag == NULL ) {
+            LOG( LOG_ERR, "Failed to allocate FTAG CTAG string\n" );
+            return -1;
+         }
+         output = ftag->ctag;
+         outputlen = 1;
+         parse = endptr; // reset back to the beginning of the client tag string
+         continue;
+      }
+      if ( ftag->ctag ) { *output = *parse; output++; }
+      outputlen++;
+      parse++;
+   }
+   if (output) *output = '\0'; // ensure we NULL-terminate the output string
+   if ( ftag->ctag == NULL ) {
+      LOG( LOG_ERR, "Unrecognized CTAG format\n" );
+      return -1;
+   }
+
+   parse++; // skip over '|' char
+   endptr = parse;
+   output = NULL;
+   outputlen = 1;
+   ftag->streamid = NULL;
+   // This is a 2-pass parse. First pass - get length of StreamID, Second pass - store StreamID
+   while ( *parse != '\0' ) { // don't allow extension beyond end of string
+      if ( *parse == '|' ) {
+         if ( ftag->streamid ) { break; }
+         ftag->streamid = malloc( sizeof(char) * outputlen );
+         if ( ftag->streamid == NULL ) {
+            LOG( LOG_ERR, "Failed to allocate FTAG streamid string\n" );
+            return -1;
+         }
+         output = ftag->streamid;
+         outputlen = 1;
+         parse = endptr; // reset back to the beginning of the streamid string for 2nd pass
+         continue;
+      }
+      if ( ftag->streamid ) { *output = *parse; output++; }
+      outputlen++;
+      parse++;
+   }
+   if (output) *output = '\0'; // ensure we NULL-terminate the output string
+   if ( ftag->streamid == NULL ) {
+      LOG( LOG_ERR, "Unrecognized streamid format\n" );
+      return -1;
+   }
+
+   parse++; // skip over the next '|' char to get to the Object #
+   endptr = NULL;
+   errno = 0; // in preparation for strtoull()
+   unsigned long long parseval = strtoull( parse, &(endptr), 10 );
+
+   if (*parse == '\0' || (*parse && *endptr)) {	// if the filed is blank, or has funny characters in it -> through error
+      LOG( LOG_ERR, "Unrecognized objno format\n" );
+      return -1;
+   }
+   if ( errno || parseval > SIZE_MAX ) {
+      LOG( LOG_ERR, "Failed to parse Object Number value. May have exceeded size limits. (Conversion error: %d - %s) \n", errno, strerror(errno));
+      return -1;
+   }
+   ftag->objno = (size_t)parseval;
+   ftag->fileno = 0; // always starts at 0th file
+   
    return 0;
 }
 

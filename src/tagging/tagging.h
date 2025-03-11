@@ -121,6 +121,16 @@ typedef struct ftag_struct {
 int ftag_initstr( FTAG* ftag, char* ftagstr );
 
 /**
+ * Populates or initializes the given FTAG with the stream ID and object number of the 
+ * object ID. The file number is set to 0. In some sense, this is the reverse of 
+ * ftag_datatgt(), though it is only a partial initialization.
+ * @param FTAG* ftag : Reference to the ftag struct to populate
+ * @param char* objstr : Object ID used to pull values from
+ * @return int : Zero on success, or -1 if a failure occurred
+ */
+int ftag_objstr( FTAG* ftag, char* objstr);
+
+/**
  * Populate the given string buffer with the encoded values of the given ftag struct
  * @param const FTAG* ftag : Reference to the ftag struct to encode values from
  * @param char* tgtstr : String buffer to be populated with encoded info

@@ -274,5 +274,13 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
  */
 int config_nsinfo( const char* nsidstr, char** repo, char** path );
 
+/**
+ * Scan through the list of repos, searching for one with the given name
+ * NOTE -- used to identify the targets of remote namespace references
+ *
+ * This was orignially a internal/private function. Maybe it should be renamed? -cds 2/2025
+ */
+marfs_repo* find_repo( marfs_repo* repolist, int repocount, const char* reponame );
+
 #endif // _CONFIG_H
 

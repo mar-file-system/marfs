@@ -638,7 +638,8 @@ void traverse_objdir(marfs_config* base_config, marfs_position* task_position, c
                    pthread_mutex_lock(table_lock);
                    put(output_table, fnamebuf); // put() dupes string into new heap space
                    pthread_mutex_unlock(table_lock);		
-                   LOG(LOG_DEBUG, "Recorded file \"%s\" in  output table for object \"%s\".\n", fnamebuf, retrieved_id);
+                   LOG(LOG_DEBUG, "Recorded file \"%s\" in  output table for object \"%s\" (file# %zu, obj# %zu).\n", fnamebuf, retrieved_id, retrieved_tag.fileno, retrieved_tag.objno);
+//                   LOG(LOG_DEBUG, "Recorded file \"%s\" in  output table for object \"%s\" (ftagstr: %s).\n", fnamebuf, retrieved_id, file_ftagstr);
                    found = 1;
                }
 

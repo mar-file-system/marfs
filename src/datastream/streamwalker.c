@@ -165,6 +165,11 @@ else if ( !strncmp(cmd, CMD, 11) ) { \
       "",
       "Identify the metadata reference path of the current file", "")
 
+   USAGE("rpath",
+      "( -o objectID)",
+      "Print out all files associated with the given object ID in reference path format",
+      "       -o objectID : The object to process/search in a string format\n")
+
    USAGE("obj",
       "[-@ offset | -n chunknum]",
       "Print out the location of the current / specified object",
@@ -284,6 +289,10 @@ char* command_completion_matches( const char* text, int state ) {
       }
       if ( strncmp( "refresh", text, textlen ) == 0 ) {
          if ( matchcount >= state ) { return strdup( "refresh" ); }
+         matchcount++;
+      }
+      if ( strncmp( "rpath", text, textlen ) == 0 ) {
+         if ( matchcount >= state ) { return strdup( "rpath" ); }
          matchcount++;
       }
       if ( strncmp( "shift", text, textlen ) == 0 ) {
@@ -837,7 +846,7 @@ int open_command(marfs_config* config, marfs_position* pathpos, walkerstate* sta
    }
 
    // populate our FTAG and cleanup strings
-   walkerinfo info = {0};
+   walkerinfo info = {{0}};
    int retval = 0;
    if ( ftagval ) {
       info.ftagstr = ftagval;
@@ -955,7 +964,7 @@ int shift_command(marfs_config* config, walkerstate* state, char* args) {
       return -1;
    }
 
-   walkerinfo info = {0};
+   walkerinfo info = {{0}};
    int retval = populate_tags(config, &(state->pos), NULL, newrpath, 1, &info);
    if ( !retval ) {
       retval = update_state(&info, state, 1);
@@ -1063,6 +1072,164 @@ int ref_command(marfs_config* config, walkerstate* state, char* args) {
    printf("\n\n");
 
    free(curpath);
+
+   return 0;
+}
+
+int rpath_command(marfs_config* config, walkerstate* state, char* args) {
+   printf("\n");
+
+   // parse args
+   char curarg = '\0';
+   char* objid = NULL;
+   char* parse = strtok(args, " ");
+
+   while (parse) {
+      if (curarg == '\0') {
+         if (strcmp(parse, "-o") == 0) {
+            curarg = 'o';
+         }
+         else {
+            printf(OUTPREFX "ERROR: Unrecognized argument for 'rpath' command: '%s'\n", parse);
+            return -1;
+         }
+      } 
+      else {
+         if (curarg == 'o' && objid == NULL) {
+            if (strchr(parse,'|')) { // If the string has a pipe in the string -> assume it is an object ID
+               objid = strdup(parse);		 
+	    }
+	    else {
+               printf(OUTPREFX "ERROR: \"%s\" is an invalid object ID. Ignored...\n", parse);		 
+            }		 
+         }
+         else {
+            if (curarg == 'o' && objid != NULL)
+   	       printf(OUTPREFX "ERROR: This command only handles one argument at a time. All other arguments are ignored.\n");      
+            else
+               printf(OUTPREFX "ERROR: Command option \"%c\" is not recognized.\n", curarg);
+         }
+         curarg = '\0';  // argument processed
+      }
+
+      // progress to the next arg
+      parse = strtok(NULL, " ");
+   }
+   if (objid == NULL) {
+      printf(OUTPREFX "ERROR: No Object ID given.\n");
+      free(objid);
+      return -1;
+   }   
+
+   // Create FTAG for 0th file, and start cycling through the object
+   FTAG zftag;              // structure to hold the FTAG that is used to cycle through the object
+   char *rpath;             // holds the returned reference path - for each file in the object
+
+   if (ftag_objstr(&zftag,objid) < 0) {
+      printf(OUTPREFX "ERROR: Failed to extract initial FTAG from \"%s\".\n", objid);
+      free(objid);
+      return -1;
+   }	   
+
+   // Getting the repo's hashtable for the specifed object
+   char *streamns = strdup(zftag.streamid);
+   char *snsend;         // address for the end of the namespace in the stream ID
+   char *streamrepo = NULL, *nspath = NULL;
+   marfs_repo *objrepo;  // repo for the object
+   char pospathbuf[PATH_MAX];
+
+   if (!(snsend = strrchr(streamns,'#'))) {
+      printf(OUTPREFX "ERROR: Stream ID is invalid for initial FTAG from \"%s\".\n", objid);
+      free(streamns);
+      free(objid);
+      return -1;
+   }
+   *snsend = '\0';
+   snsend = strchr(streamns,'#');    // morph streamid into a nsidstr
+   *snsend = '|';
+   snsend = strchr(streamns,'#');
+   *snsend = '/';
+
+   if (config_nsinfo(streamns, &streamrepo, &nspath)) {
+      printf(OUTPREFX "ERROR: Could not find NS info from stream ID \"%s\".\n", zftag.streamid);
+      free(streamrepo);
+      free(objid);
+      return -1;
+   }
+   snprintf(pospathbuf, PATH_MAX, "%s%s", config->mountpoint, nspath);
+
+   if (!(objrepo = find_repo(config->repolist,config->repocount,streamrepo))) {
+      printf(OUTPREFX "ERROR: Could not find repository for initial FTAG from \"%s\".\n", objid);
+      free(streamrepo);
+      free(objid);
+      return -1;
+   }
+
+   printf("Initial FTAG: Stream ID: %s   Obj#: %zu   File# %zu\n", zftag.streamid, zftag.objno, zftag.fileno);
+   printf("Repo Name: %s    Position Path: %s\n", streamrepo, pospathbuf);
+
+   free(streamrepo);   // we're done with the repo name at this point
+   free(nspath);       // we're done with the nspath at this point
+   free(objid);        // we're done with the objid at this point
+
+   // Set initial position, based on stream ID
+   marfs_position oppos = { .ns = NULL, .depth = 0, .ctxt = NULL };
+   int depth;
+   char *pospathstr = strdup(pospathbuf);
+
+   if ( config_duplicateposition( &globalpos, &oppos ) ) {    // duplicate from the global position for this command
+      printf( OUTPREFX "ERROR: Failed to duplicate position for config traversal\n" );
+      free( pospathstr );
+      return -1;
+   }
+   if ( (depth = config_traverse(config, &oppos, &(pospathstr), 1)) < 0) {
+      printf(OUTPREFX "ERROR: Failed to identify config subpath for target: \"%s\"\n", pospathstr);
+      free( pospathstr );
+      config_abandonposition( &oppos );
+      return -1;
+   }
+   if ( oppos.ctxt == NULL  &&  config_fortifyposition( &oppos ) ) {
+      printf(OUTPREFX "ERROR: Failed to fortify new NS position\n" );
+      free( pospathstr );
+      config_abandonposition( &oppos );
+      return -1;
+   }
+   free(pospathstr);   // we're done with the position path at this point
+
+   // Now loop over fileno to find all files in the specified object
+   size_t specobjno = zftag.objno;  // object number we are looking for ...
+   walkerinfo info = {{0}};         // structure to hold tags for the generated rpath
+   int rval;                        // return value for populate_tags()
+
+   while ( zftag.objno <= specobjno) {
+      if ( !(rpath=datastream_genrpath(&zftag,objrepo->metascheme.reftable, NULL, NULL))) {
+         printf(OUTPREFX "ERROR: Failed to get reference path from FTAG at: fileno: %zu objno: %zu!\n", zftag.fileno, zftag.objno);
+         return -1;
+      }
+      // Get FTAG of retrieved reference path
+      if ( (rval=populate_tags(config, &oppos, NULL, rpath, 0, &info))) {
+         free( rpath );           // free rpath no matter what ....
+         if ( rval > 0) {
+            printf("Previous path appears to be the last file in the data stream.\n");
+           break;
+         }
+         printf(OUTPREFX "ERROR: Failed to get tags for reference path %s\n",rpath);
+         return -1;
+      }
+      if ( ftag_initstr(&zftag,info.ftagstr)) {
+         printf(OUTPREFX "ERROR: Failed to parse FTAG string for reference path %s. FTAG String: \"%s\"\n",rpath,info.ftagstr);
+         free( rpath );
+         return -1;
+      }
+
+      size_t maxobjno = datastream_filebounds(&zftag);
+
+      if ( zftag.objno == specobjno || (specobjno <= maxobjno && zftag.objno != maxobjno)) 
+         printf("    %s\n", rpath);
+
+      if ( rpath) free(rpath);
+      zftag.fileno++;    // Increment file and rehash the FTAG
+   }
 
    return 0;
 }
@@ -1219,7 +1386,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
             break;
          }
          // retrieve the FTAG of the new target
-         walkerinfo info = {0};
+         walkerinfo info = {{0}};
          retval = populate_tags(config, &(state->pos), NULL, newrpath, 0, &info);
          if ( retval == 1  &&  (state->ftag.state & FTAG_DATASTATE) == FTAG_FIN ) { // ENOENT after a FINALIZED file is a special case
             break;
@@ -1255,7 +1422,7 @@ int bounds_command(marfs_config* config, walkerstate* state, char* args) {
          return -1;
       }
       // retrieve the FTAG of the new target
-      walkerinfo info = {0};
+      walkerinfo info = {{0}};
       int tmpretval = populate_tags(config, &(state->pos), NULL, newrpath, 0, &info);
       if ( !tmpretval ) {
          tmpretval = update_state(&info, state, 0);
@@ -1339,7 +1506,7 @@ int refresh_command(marfs_config* config, walkerstate* state, char* args) {
       return -1;
    }
 
-   walkerinfo info = {0};
+   walkerinfo info = {{0}};
    int retval = populate_tags(config, &(state->pos), NULL, newrpath, 1, &info);
    if ( !retval ) {
       retval = update_state(&info, state, 1);
@@ -1882,6 +2049,13 @@ int command_loop(marfs_config* config, char* config_path) {
          errno = 0;
          retval = -1; // assume failure
          if (recovery_command(config, &(state), parse) == 0) {
+            retval = 0; // note success
+         }
+      }
+      else if (strcmp(inputline, "rpath") == 0) {
+         errno = 0;
+         retval = -1; // assume failure
+         if (rpath_command(config, &(state), parse) == 0) {
             retval = 0; // note success
          }
       }
