@@ -2140,7 +2140,8 @@ int main(int argc, char** argv) {
       }
       case '?':
          printf("ERROR: Unrecognized cmdline argument: \'%c\'\n", optopt);
-      case 'h': // note fallthrough from above
+         // fall through
+      case 'h':
          pr_usage = 1;
          break;
       default:
