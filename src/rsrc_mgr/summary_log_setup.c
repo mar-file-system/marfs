@@ -1,5 +1,3 @@
-#ifndef _RESOURCE_MANAGER_STATE_H
-#define _RESOURCE_MANAGER_STATE_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -59,54 +57,64 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "config/config.h"
-#include "hash/hash.h"
-#include "rsrc_mgr/consts.h"
-#include "rsrc_mgr/resourcelog.h"
-#include "rsrc_mgr/resourceprocessing.h"
-#include "rsrc_mgr/resourcethreads.h"
-#include "thread_queue/thread_queue.h"
+#include <string.h>
+#include <fcntl.h>
+#include <stdlib.h>
 
-typedef struct {
-   // Per-Run Rank State
-   size_t        ranknum;
-   size_t        totalranks;
-   size_t        workingranks;
+#include "rsrc_mgr/summary_log_setup.h"
+#include "rsrc_mgr/output_program_args.h"
 
-   // Per-Run MarFS State
-   marfs_config* config;
+int summary_log_setup(rmanstate *rman, const int recurse) {
+   // rank zero needs to output our summary header
+   if (rman->ranknum == 0) {
+      // open our summary log
+      size_t alloclen = strlen(rman->logroot) + 1 + strlen(rman->iteration) + 1 + strlen(SUMMARY_FILENAME) + 1;
+      char* sumlogpath = malloc(sizeof(char) * alloclen);
+      size_t printres = snprintf(sumlogpath, alloclen, "%s/%s", rman->logroot, rman->iteration);
+      if (mkdir(sumlogpath, 0700) && errno != EEXIST) {
+         fprintf(stderr, "ERROR: Failed to create summary log parent dir: \"%s\"\n",
+                 sumlogpath);
+         free(sumlogpath);
+         return -1;
+      }
 
-   // Old Logfile Progress Tracking
-   HASH_TABLE    oldlogs;
+      printres += snprintf(sumlogpath + printres, alloclen - printres, "/" SUMMARY_FILENAME);
+      int sumlog = open(sumlogpath, O_WRONLY | O_CREAT | O_EXCL, 0700);
+      if (sumlog < 0) {
+         fprintf(stderr, "ERROR: Failed to open summary logfile: \"%s\"\n",
+                 sumlogpath);
+         free(sumlogpath);
+         return -1;
+      }
 
-   // NS Progress Tracking
-   size_t        nscount;
-   marfs_ns**    nslist;
-   size_t*       distributed;
+      rman->summarylog = fdopen(sumlog, "w");
+      if (rman->summarylog == NULL) {
+         fprintf(stderr, "ERROR: Failed to convert summary logfile to file stream: \"%s\"\n",
+                 sumlogpath);
+         free(sumlogpath);
+         return -1;
+      }
 
-   // Global Progress Tracking
-   char          fatalerror;
-   char          nonfatalerror;
-   char*         terminatedworkers;
-   streamwalker_report* walkreport;
-   operation_summary*   logsummary;
+      // output our program arguments to the summary file
+      if (output_program_args(rman)) {
+         fprintf(stderr, "ERROR: Failed to output program arguments to summary log: \"%s\"\n",
+                 sumlogpath);
+         free(sumlogpath);
+         return -1;
+      }
 
-   // Thread State
-   rthread_global_state gstate;
-   ThreadQueue tq;
+      free(sumlogpath);
 
-   // Output Logging
-   FILE* summarylog;
+      // print out run info
+      printf("Processing %zu Total Namespaces (%sTarget NS \"%s\")\n",
+              rman->nscount, (recurse) ? "Recursing Below " : "", (rman->nslist[0])->idstr);
+      printf("   Operation Summary:%s%s%s%s%s\n",
+              (rman->gstate.dryrun) ? " DRY-RUN" : "", (rman->quotas) ? " QUOTAS" : "",
+              (rman->gstate.thresh.gcthreshold) ? " GC" : "",
+              (rman->gstate.thresh.repackthreshold) ? " REPACK" : "",
+              (rman->gstate.thresh.rebuildthreshold) ?
+               ((rman->gstate.lbrebuild) ? " REBUILD(LOCATION)" : " REBUILD(MARKER)") : "");
+   }
 
-   // arg reference vals
-   char        quotas;
-   char        iteration[ITERATION_STRING_LEN];
-   char*       execprevroot;
-   char*       logroot;
-   char*       preservelogtgt;
-} rmanstate;
-
-void rmanstate_init(rmanstate *rman, int rank, int rankcount);
-void rmanstate_fini(rmanstate* rman, char abort);
-
-#endif
+   return 0;
+}

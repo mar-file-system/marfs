@@ -1,5 +1,5 @@
-#ifndef _RESOURCE_MANAGER_STATE_H
-#define _RESOURCE_MANAGER_STATE_H
+#ifndef _RESOURCE_MANAGER_CONSTS_H
+#define _RESOURCE_MANAGER_CONSTS_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -59,54 +59,45 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "config/config.h"
-#include "hash/hash.h"
-#include "rsrc_mgr/consts.h"
-#include "rsrc_mgr/resourcelog.h"
-#include "rsrc_mgr/resourceprocessing.h"
-#include "rsrc_mgr/resourcethreads.h"
-#include "thread_queue/thread_queue.h"
+#include "marfs_auto_config.h"
+#ifdef DEBUG_RM
+#define DEBUG DEBUG_RM
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
+#endif
+#ifndef LOG_PREFIX
+#define LOG_PREFIX "resourcemanager"
+#endif
+#include "logging/logging.h"
 
-typedef struct {
-   // Per-Run Rank State
-   size_t        ranknum;
-   size_t        totalranks;
-   size_t        workingranks;
+//   -------------   INTERNAL DEFINITIONS    -------------
 
-   // Per-Run MarFS State
-   marfs_config* config;
+#define GC_THRESH 604800  // Age of deleted files before they are Garbage Collected
+                          // Default to 7 days ago
+#define RB_L_THRESH  600  // Age of files before they are rebuilt (based on location)
+                          // Default to 10 minutes ago
+#define RB_M_THRESH  120  // Age of files before they are rebuilt (based on marker)
+                          // Default to 2 minutes ago
+#define RP_THRESH 259200  // Age of files before they are repacked
+                          // Default to 3 days ago
+#define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up (failed repacks, old logs, etc.)
+                          // Default to 1 day ago
 
-   // Old Logfile Progress Tracking
-   HASH_TABLE    oldlogs;
+#define INACTIVE_RUN_SKIP_THRESH 60 // Age of seemingly inactive (no summary file) rman logdirs before they are skipped
+                                    // Default to 1 minute ago
 
-   // NS Progress Tracking
-   size_t        nscount;
-   marfs_ns**    nslist;
-   size_t*       distributed;
+#define DEFAULT_PRODUCER_COUNT 16
+#define DEFAULT_CONSUMER_COUNT 32
+#define DEFAULT_LOG_ROOT "/var/log/marfs-rman"
+#define MODIFY_ITERATION_PARENT "RMAN-MODIFY-RUNS"
+#define RECORD_ITERATION_PARENT "RMAN-RECORD-RUNS"
+#define SUMMARY_FILENAME "summary.log"
+#define ERROR_LOG_PREFIX "ERRORS-"
+#define ITERATION_ARGS_FILE "PROGRAM-ARGUMENTS"
+#define ITERATION_STRING_LEN 128
+#define OLDLOG_PREALLOC 16  // pre-allocate space for 16 logfiles in the oldlogs hash table (double from there, as needed)
 
-   // Global Progress Tracking
-   char          fatalerror;
-   char          nonfatalerror;
-   char*         terminatedworkers;
-   streamwalker_report* walkreport;
-   operation_summary*   logsummary;
-
-   // Thread State
-   rthread_global_state gstate;
-   ThreadQueue tq;
-
-   // Output Logging
-   FILE* summarylog;
-
-   // arg reference vals
-   char        quotas;
-   char        iteration[ITERATION_STRING_LEN];
-   char*       execprevroot;
-   char*       logroot;
-   char*       preservelogtgt;
-} rmanstate;
-
-void rmanstate_init(rmanstate *rman, int rank, int rankcount);
-void rmanstate_fini(rmanstate* rman, char abort);
+#define MAX_STR_BUFFER 1024
+#define MAX_ERROR_BUFFER MAX_STR_BUFFER + 100  // define our error strings as slightly larger than the error message itself
 
 #endif

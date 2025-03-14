@@ -59,8 +59,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "rmanstate.h"
 
-#define LOG_PREFIX "resourcemanager"
-#include "logging/logging.h"
 #include "rsrc_mgr/work.h"
 #include "rsrc_mgr/loginfo.h"
 

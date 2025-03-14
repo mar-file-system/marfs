@@ -1,3 +1,5 @@
+#ifndef _RESOURCE_MANAGER_LOGINFO_H
+#define _RESOURCE_MANAGER_LOGINFO_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -56,9 +58,6 @@ https://github.com/jti-lanl/aws4c.
 
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
-
-#ifndef RESOURCE_MANAGER_LOGINFO_H
-#define RESOURCE_MANAGER_LOGINFO_H
 
 #include "work.h"
 

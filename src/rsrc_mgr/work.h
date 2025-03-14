@@ -1,3 +1,5 @@
+#ifndef _RESOURCE_MANAGER_WORK_H
+#define _RESOURCE_MANAGER_WORK_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -57,14 +59,10 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#ifndef RESOURCE_MANAGER_WORK_H
-#define RESOURCE_MANAGER_WORK_H
-
-#ifndef ITERATION_STRING_LEN
-#define ITERATION_STRING_LEN 128
-#endif
-
-#define MAX_ERROR_BUFFER MAX_STR_BUFFER + 100  // define our error strings as slightly larger than the error message itself
+#include "rsrc_mgr/consts.h"
+#include "rsrc_mgr/resourceprocessing.h"
+#include "rsrc_mgr/rmanstate.h"
+#include "rsrc_mgr/work.h"
 
 typedef enum {
    RLOG_WORK,      // request to process an existing resource log (either previous dry-run or dead run pickup)
@@ -94,5 +92,8 @@ typedef struct {
    char                 fatalerror;
    char                 errorstr[MAX_ERROR_BUFFER];
 } workresponse;
+
+int handlerequest(rmanstate* rman, workrequest* request, workresponse* response);
+int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, workrequest* request);
 
 #endif

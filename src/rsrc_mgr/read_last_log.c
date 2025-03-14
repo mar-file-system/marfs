@@ -1,5 +1,3 @@
-#ifndef _RESOURCE_MANAGER_STATE_H
-#define _RESOURCE_MANAGER_STATE_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -59,54 +57,69 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "config/config.h"
-#include "hash/hash.h"
-#include "rsrc_mgr/consts.h"
-#include "rsrc_mgr/resourcelog.h"
-#include "rsrc_mgr/resourceprocessing.h"
-#include "rsrc_mgr/resourcethreads.h"
-#include "thread_queue/thread_queue.h"
+#include <stdio.h>
 
-typedef struct {
-   // Per-Run Rank State
-   size_t        ranknum;
-   size_t        totalranks;
-   size_t        workingranks;
+#include "rsrc_mgr/findoldlogs.h"
+#include "rsrc_mgr/parse_program_args.h"
+#include "rsrc_mgr/read_last_log.h"
+#include "rsrc_mgr/rmanstate.h"
 
-   // Per-Run MarFS State
-   marfs_config* config;
+int read_last_log(rmanstate *rman, const time_t skip) {
+   // check for previous run execution
+   if (rman->execprevroot) {
+      // open the summary log of that run
+      size_t alloclen = strlen(rman->execprevroot) + 1 + strlen(rman->iteration) + 1 + strlen(SUMMARY_FILENAME) + 1;
+      char* sumlogpath = malloc(sizeof(char) * alloclen);
+      snprintf(sumlogpath, alloclen, "%s/%s/%s", rman->execprevroot, rman->iteration, SUMMARY_FILENAME);
 
-   // Old Logfile Progress Tracking
-   HASH_TABLE    oldlogs;
+      FILE* sumlog = fopen(sumlogpath, "r");
+      if (sumlog == NULL) {
+         const int err = errno;
+         fprintf(stderr, "ERROR: Failed to open previous run's summary log: \"%s\" (%s)\n",
+                 sumlogpath, strerror(err));
+         return -1;
+      }
 
-   // NS Progress Tracking
-   size_t        nscount;
-   marfs_ns**    nslist;
-   size_t*       distributed;
+      const int ppa = parse_program_args(rman, sumlog);
+      fclose(sumlog);
 
-   // Global Progress Tracking
-   char          fatalerror;
-   char          nonfatalerror;
-   char*         terminatedworkers;
-   streamwalker_report* walkreport;
-   operation_summary*   logsummary;
+      if (ppa != 0) {
+         fprintf(stderr, "ERROR: Failed to parse previous run info from summary log: \"%s\"\n",
+                 sumlogpath);
+         free(sumlogpath);
+         return -1;
+      }
+      free(sumlogpath);
 
-   // Thread State
-   rthread_global_state gstate;
-   ThreadQueue tq;
+      if (rman->quotas) {
+         if (rman->ranknum == 0) {
+            fprintf(stderr, "WARNING: Ignoring quota processing for execution of previous run\n");
+         }
+         rman->quotas = 0;
+      }
 
-   // Output Logging
-   FILE* summarylog;
+      if (rman->gstate.dryrun == 0) {
+         if (rman->ranknum == 0) {
+            fprintf(stderr, "ERROR: Cannot pick up execution of a non-'dry-run'\n");
+         }
+         return -1;
+      }
 
-   // arg reference vals
-   char        quotas;
-   char        iteration[ITERATION_STRING_LEN];
-   char*       execprevroot;
-   char*       logroot;
-   char*       preservelogtgt;
-} rmanstate;
+      // incorporate logfiles from the previous run
+      if (rman->ranknum == 0 && findoldlogs(rman, rman->execprevroot, 0)) {
+         fprintf(stderr, "ERROR: Failed to identify previous run's logfiles: \"%s\"\n",
+                 rman->execprevroot);
+         return -1;
+      }
+   }
+   else if (rman->gstate.dryrun == 0 && rman->ranknum == 0) {
+      // otherwise, scan for and incorporate logs from previous modification runs
+      if (findoldlogs(rman, rman->logroot, skip)) {
+         fprintf(stderr, "ERROR: Failed to scan for previous iteration logs under \"%s\"\n",
+                 rman->logroot);
+         return -1;
+      }
+   }
 
-void rmanstate_init(rmanstate *rman, int rank, int rankcount);
-void rmanstate_fini(rmanstate* rman, char abort);
-
-#endif
+   return 0;
+}

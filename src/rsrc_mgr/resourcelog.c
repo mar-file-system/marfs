@@ -57,18 +57,10 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "marfs_auto_config.h"
-#ifdef DEBUG_RM
-#define DEBUG DEBUG_RM
-#elif (defined DEBUG_ALL)
-#define DEBUG DEBUG_ALL
-#endif
-#define LOG_PREFIX "resourcelog"
-#include "logging/logging.h"
-
-#include "resourcelog.h"
-
 #include <pthread.h>
+
+#include "rsrc_mgr/consts.h"
+#include "rsrc_mgr/resourcelog.h"
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 

@@ -1,5 +1,5 @@
-#ifndef _RESOURCE_MANAGER_STATE_H
-#define _RESOURCE_MANAGER_STATE_H
+#ifndef _RESOURCE_MANAGER_PARSE_PROGRAM_ARGS_H
+#define _RESOURCE_MANAGER_PARSE_PROGRAM_ARGS_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -59,54 +59,10 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "config/config.h"
-#include "hash/hash.h"
-#include "rsrc_mgr/consts.h"
-#include "rsrc_mgr/resourcelog.h"
-#include "rsrc_mgr/resourceprocessing.h"
-#include "rsrc_mgr/resourcethreads.h"
-#include "thread_queue/thread_queue.h"
+#include <stdio.h>
 
-typedef struct {
-   // Per-Run Rank State
-   size_t        ranknum;
-   size_t        totalranks;
-   size_t        workingranks;
+#include "rsrc_mgr/rmanstate.h"
 
-   // Per-Run MarFS State
-   marfs_config* config;
-
-   // Old Logfile Progress Tracking
-   HASH_TABLE    oldlogs;
-
-   // NS Progress Tracking
-   size_t        nscount;
-   marfs_ns**    nslist;
-   size_t*       distributed;
-
-   // Global Progress Tracking
-   char          fatalerror;
-   char          nonfatalerror;
-   char*         terminatedworkers;
-   streamwalker_report* walkreport;
-   operation_summary*   logsummary;
-
-   // Thread State
-   rthread_global_state gstate;
-   ThreadQueue tq;
-
-   // Output Logging
-   FILE* summarylog;
-
-   // arg reference vals
-   char        quotas;
-   char        iteration[ITERATION_STRING_LEN];
-   char*       execprevroot;
-   char*       logroot;
-   char*       preservelogtgt;
-} rmanstate;
-
-void rmanstate_init(rmanstate *rman, int rank, int rankcount);
-void rmanstate_fini(rmanstate* rman, char abort);
+int parse_program_args(rmanstate* rman, FILE* inputsummary);
 
 #endif

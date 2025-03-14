@@ -1,5 +1,3 @@
-#ifndef _RESOURCE_MANAGER_STATE_H
-#define _RESOURCE_MANAGER_STATE_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -59,54 +57,61 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "config/config.h"
-#include "hash/hash.h"
-#include "rsrc_mgr/consts.h"
-#include "rsrc_mgr/resourcelog.h"
-#include "rsrc_mgr/resourceprocessing.h"
-#include "rsrc_mgr/resourcethreads.h"
-#include "thread_queue/thread_queue.h"
+#include <stdio.h>
 
-typedef struct {
-   // Per-Run Rank State
-   size_t        ranknum;
-   size_t        totalranks;
-   size_t        workingranks;
+#include "rsrc_mgr/output_program_args.h"
+#include "rsrc_mgr/rmanstate.h"
 
-   // Per-Run MarFS State
-   marfs_config* config;
+int output_program_args(rmanstate* rman) {
+   // start with marfs config version (config changes could seriously break an attempt to re-execute this later)
+   if (fprintf(rman->summarylog, "%s\n", rman->config->version) < 1) {
+      fprintf(stderr, "ERROR: Failed to output config version to summary log\n");
+      return -1;
+   }
 
-   // Old Logfile Progress Tracking
-   HASH_TABLE    oldlogs;
+   // output operation types and threshold values
+   if (rman->gstate.dryrun  &&  fprintf(rman->summarylog, "DRY-RUN\n") < 1) {
+      fprintf(stderr, "ERROR: Failed to output dry-run flag to summary log\n");
+      return -1;
+   }
 
-   // NS Progress Tracking
-   size_t        nscount;
-   marfs_ns**    nslist;
-   size_t*       distributed;
+   if (rman->quotas  &&  fprintf(rman->summarylog, "QUOTAS\n") < 1) {
+      fprintf(stderr, "ERROR: Failed to output quota flag to summary log\n");
+      return -1;
+   }
 
-   // Global Progress Tracking
-   char          fatalerror;
-   char          nonfatalerror;
-   char*         terminatedworkers;
-   streamwalker_report* walkreport;
-   operation_summary*   logsummary;
+   if (rman->gstate.thresh.gcthreshold  &&
+        fprintf(rman->summarylog, "GC=%llu\n", (unsigned long long) rman->gstate.thresh.gcthreshold) < 1) {
+      fprintf(stderr, "ERROR: Failed to output GC threshold to summary log\n");
+      return -1;
+   }
 
-   // Thread State
-   rthread_global_state gstate;
-   ThreadQueue tq;
+   if (rman->gstate.thresh.repackthreshold  &&
+        fprintf(rman->summarylog, "REPACK=%llu\n", (unsigned long long) rman->gstate.thresh.repackthreshold) < 1) {
+      fprintf(stderr, "ERROR: Failed to output REPACK threshold to summary log\n");
+      return -1;
+   }
 
-   // Output Logging
-   FILE* summarylog;
+   if (rman->gstate.thresh.rebuildthreshold  &&
+        fprintf(rman->summarylog, "REBUILD=%llu\n", (unsigned long long) rman->gstate.thresh.rebuildthreshold) < 1) {
+      fprintf(stderr, "ERROR: Failed to output REBUILD threshold to summary log\n");
+      return -1;
+   }
 
-   // arg reference vals
-   char        quotas;
-   char        iteration[ITERATION_STRING_LEN];
-   char*       execprevroot;
-   char*       logroot;
-   char*       preservelogtgt;
-} rmanstate;
+   if (rman->gstate.lbrebuild  &&
+        (
+         fprintf(rman->summarylog, "REBUILD-LOCATION-POD=%d\n", rman->gstate.rebuildloc.pod) < 1  ||
+         fprintf(rman->summarylog, "REBUILD-LOCATION-CAP=%d\n", rman->gstate.rebuildloc.cap) < 1  ||
+         fprintf(rman->summarylog, "REBUILD-LOCATION-SCATTER=%d\n", rman->gstate.rebuildloc.scatter) < 1
+       )) {
+      fprintf(stderr, "ERROR: Failed to output REBUILD location to summary log\n");
+      return -1;
+   }
 
-void rmanstate_init(rmanstate *rman, int rank, int rankcount);
-void rmanstate_fini(rmanstate* rman, char abort);
+   if (fprintf(rman->summarylog, "\n") < 1) {
+      fprintf(stderr, "ERROR: Failed to output header separator summary log\n");
+      return -1;
+   }
 
-#endif
+   return 0;
+}

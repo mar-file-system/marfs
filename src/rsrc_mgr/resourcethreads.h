@@ -58,11 +58,9 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "resourceprocessing.h"
-
+#include "rsrc_mgr/consts.h"
+#include "rsrc_mgr/resourceprocessing.h"
 #include "thread_queue/thread_queue.h"
-
-#define MAX_STR_BUFFER 1024
 
 typedef struct {
    // synchronization and access control
