@@ -285,9 +285,6 @@ static void cleanupstate(rmanstate* rman, char abort) {
       }
       if (rman->config) { config_term(rman->config); }
    }
-#ifdef RMAN_USE_MPI
-   MPI_Finalize();
-#endif
 }
 
 static int error_only_filter(const opinfo* op) {
@@ -2667,6 +2664,11 @@ int main(int argc, char** argv) {
       cleanupstate(&rman, 0);
    }
    pthread_mutex_destroy(&erasurelock);
+
+
+#ifdef RMAN_USE_MPI
+    MPI_Finalize();
+#endif
 
    return bres;
 }
