@@ -182,7 +182,7 @@ typedef struct {
 
 //   -------------   HELPER FUNCTIONS    -------------
 
-void print_usage_info() {
+static void print_usage_info() {
    printf("\n"
            "marfs-rman [-c MarFS-Config-File] [-n MarFS-NS-Target] [-r] [-i Iteraion-Name] [-l Log-Root]\n"
            "           [-p Log-Pres-Root] [-d] [-X Execution-Target] [-Q] [-G] [-R] [-P] [-C]\n"
@@ -233,7 +233,7 @@ void print_usage_info() {
            DEFAULT_LOG_ROOT);
 }
 
-void cleanupstate(rmanstate* rman, char abort) {
+static void cleanupstate(rmanstate* rman, char abort) {
    if (rman) {
       if (rman->preservelogtgt) { free(rman->preservelogtgt); }
       if (rman->logroot)        { free(rman->logroot); }
@@ -290,12 +290,12 @@ void cleanupstate(rmanstate* rman, char abort) {
 #endif
 }
 
-int error_only_filter(const opinfo* op) {
+static int error_only_filter(const opinfo* op) {
    if (op->errval) { return 0; }
    return 1;
 }
 
-void outputinfo(FILE* output, marfs_ns* ns, streamwalker_report* report , operation_summary* summary) {
+static void outputinfo(FILE* output, marfs_ns* ns, streamwalker_report* report , operation_summary* summary) {
    char userout = 0;
    if (output == stdout) { userout = 1; } // limit info output directly to the user
    fprintf(output, "Namespace \"%s\"%s --\n", ns->idstr, (userout) ? " Totals" : " Incremental Values");
@@ -372,7 +372,7 @@ void outputinfo(FILE* output, marfs_ns* ns, streamwalker_report* report , operat
    return;
 }
 
-int output_program_args(rmanstate* rman) {
+static int output_program_args(rmanstate* rman) {
    // start with marfs config version (config changes could seriously break an attempt to re-execute this later)
    if (fprintf(rman->summarylog, "%s\n", rman->config->version) < 1) {
       fprintf(stderr, "ERROR: Failed to output config version to summary log\n");
@@ -418,7 +418,7 @@ int output_program_args(rmanstate* rman) {
    return 0;
 }
 
-int parse_program_args(rmanstate* rman, FILE* inputsummary) {
+static int parse_program_args(rmanstate* rman, FILE* inputsummary) {
    // parse in a verify the config version
    char* readline = NULL;
    size_t linealloc = 0;
@@ -507,7 +507,7 @@ int parse_program_args(rmanstate* rman, FILE* inputsummary) {
  * @param workresponse* response : Response to populate with error description, on failure
  * @return int : Zero on success, -1 on failure
  */
-int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
+static int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
    // update position value
    if (config_establishposition(&rman->gstate.pos, rman->config)) {
       LOG(LOG_ERR, "Failed to establish a root NS position\n");
@@ -626,7 +626,7 @@ int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
  * @param size_t* refmin : Reference to be populated with the minimum range value
  * @param size_t* refmin : Reference to be populated with the maximum range value (non-inclusive)
  */
-void getNSrange(marfs_ns* ns, size_t workingranks, size_t refdist, size_t* refmin, size_t* refmax) {
+static void getNSrange(marfs_ns* ns, size_t workingranks, size_t refdist, size_t* refmin, size_t* refmax) {
    size_t refperrank = ns->prepo->metascheme.refnodecount / workingranks; // 'average' number of reference ranges per rank (truncated to integer)
    size_t remainder = ns->prepo->metascheme.refnodecount % workingranks;  // 'remainder' ref dirs, omitted if every rank merely got the 'average'
    size_t prevextra = (refdist > remainder) ? remainder : refdist; // how many 'remainder' dirs were included in previous distributions
@@ -642,7 +642,7 @@ void getNSrange(marfs_ns* ns, size_t workingranks, size_t refdist, size_t* refmi
  * @param const char* scanroot : Logroot, below which to scan
  * @return int : Zero on success, or -1 on failure
  */
-int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
+static int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
    // construct a HASH_TABLE to hold old logfile references
    HASH_NODE* lognodelist = calloc(rman->nscount, sizeof(struct hash_node_struct));
    if (lognodelist == NULL) {
@@ -996,7 +996,7 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
  *               One if the rank should send the populated response and continue processing
  *               -1 if the rank should send the populated response, then abort
  */
-int handlerequest(rmanstate* rman, workrequest* request, workresponse* response) {
+static int handlerequest(rmanstate* rman, workrequest* request, workresponse* response) {
    // pre-populate response with a 'fatal error' condition, just in case
    response->request = *request;
    response->haveinfo = 0;
@@ -1269,7 +1269,7 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
  *               0 if no request should be sent (rank has exited, or hit a fatal error);
  *               -1 if a fatal error has occurred in this function itself (invalid processing)
  */
-int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, workrequest* request) {
+static int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, workrequest* request) {
    // check for a fatal error condition, as this overrides all other behaviors
    if (response->fatalerror) {
       // note a fatalerror, and don't generate a request
@@ -1867,7 +1867,7 @@ int managerbehavior(rmanstate* rman) {
  * @param rmanstate* rman : Resource manager state
  * @return int : Zero on success, or -1 on failure
  */
-int workerbehavior(rmanstate* rman) {
+static int workerbehavior(rmanstate* rman) {
 #ifdef RMAN_USE_MPI
    // setup out response and request structs
    workresponse response;
