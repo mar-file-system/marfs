@@ -298,8 +298,7 @@ static void cleanupstate(rmanstate* rman, char abort) {
 }
 
 static int error_only_filter(const opinfo* op) {
-   if (op->errval) { return 0; }
-   return 1;
+    return !op->errval;
 }
 
 static void outputinfo(FILE* output, marfs_ns* ns, streamwalker_report* report , operation_summary* summary) {
