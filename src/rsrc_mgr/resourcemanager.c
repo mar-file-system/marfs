@@ -234,57 +234,67 @@ static void print_usage_info() {
 }
 
 static void cleanupstate(rmanstate* rman, char abort) {
-   if (rman) {
-      if (rman->preservelogtgt) { free(rman->preservelogtgt); }
-      if (rman->logroot)        { free(rman->logroot); }
-      if (rman->execprevroot)   { free(rman->execprevroot); }
-      if (rman->summarylog)     { fclose(rman->summarylog); }
-      if (rman->tq) {
-         if (!abort) {
+    free(rman->preservelogtgt);
+    free(rman->logroot);
+    free(rman->execprevroot);
+    if (rman->summarylog) {
+        fclose(rman->summarylog);
+    }
+    if (rman->tq) {
+        if (!abort) {
             LOG(LOG_ERR, "Encountered active TQ with no abort condition specified\n");
             fprintf(stderr, "Encountered active TQ with no abort condition specified\n");
             rman->fatalerror = 1;
-         }
-         tq_set_flags(rman->tq, TQ_ABORT);
-         if (rman->gstate.rinput) {
+        }
+        tq_set_flags(rman->tq, TQ_ABORT);
+        if (rman->gstate.rinput) {
             resourceinput_purge(&rman->gstate.rinput);
             resourceinput_term(&rman->gstate.rinput);
-         }
-         // gather all thread status values
-         rthread_state* tstate = NULL;
-         while (tq_next_thread_status(rman->tq, (void**)&tstate) > 0) {
+        }
+        // gather all thread status values
+        rthread_state* tstate = NULL;
+        while (tq_next_thread_status(rman->tq, (void**)&tstate) > 0) {
             // verify thread status
-            if (tstate) { free(tstate); }
-         }
-         tq_close(rman->tq);
-      }
-      if (rman->gstate.rpst) { repackstreamer_abort(rman->gstate.rpst); }
-      if (rman->gstate.rlog) { resourcelog_abort(&rman->gstate.rlog); }
-      if (rman->gstate.rinput) { resourceinput_destroy(&rman->gstate.rinput); }
-      if (rman->gstate.pos.ns) { config_abandonposition(&rman->gstate.pos); }
-      if (rman->logsummary) { free(rman->logsummary); }
-      if (rman->walkreport) { free(rman->walkreport); }
-      if (rman->terminatedworkers) { free(rman->terminatedworkers); }
-      if (rman->distributed) { free(rman->distributed); }
-      if (rman->nslist) { free(rman->nslist); }
-      if (rman->oldlogs) {
-         HASH_NODE* resnode = NULL;
-         size_t ncount = 0;
-         if (hash_term(rman->oldlogs, &resnode, &ncount) == 0) {
+            free(tstate);
+        }
+        tq_close(rman->tq);
+    }
+    if (rman->gstate.rpst) {
+        repackstreamer_abort(rman->gstate.rpst);
+    }
+    if (rman->gstate.rlog) {
+        resourcelog_abort(&rman->gstate.rlog);
+    }
+    if (rman->gstate.rinput) {
+        resourceinput_destroy(&rman->gstate.rinput);
+    }
+    if (rman->gstate.pos.ns) {
+        config_abandonposition(&rman->gstate.pos);
+    }
+    free(rman->logsummary);
+    free(rman->walkreport);
+    free(rman->terminatedworkers);
+    free(rman->distributed);
+    free(rman->nslist);
+    if (rman->oldlogs) {
+        HASH_NODE* resnode = NULL;
+        size_t ncount = 0;
+        if (hash_term(rman->oldlogs, &resnode, &ncount) == 0) {
             // free all subnodes and requests
-            size_t nindex = 0;
-            for (; nindex < ncount; nindex++) {
-               loginfo* linfo = (loginfo*)((resnode+nindex)->content);
-               if (linfo) {
-                  if (linfo->requests) { free(linfo->requests); }
-                  free(linfo);
-               }
+            for (size_t nindex = 0; nindex < ncount; nindex++) {
+                loginfo* linfo = (loginfo*)resnode[nindex].content;
+                if (linfo) {
+                    free(linfo->requests);
+                    free(linfo);
+                }
+                free(resnode[nindex].name);
             }
             free(resnode); // these were allocated in one block, and thus require only one free()
-         }
-      }
-      if (rman->config) { config_term(rman->config); }
-   }
+        }
+    }
+    if (rman->config) {
+        config_term(rman->config);
+    }
 }
 
 static int error_only_filter(const opinfo* op) {
@@ -2419,8 +2429,7 @@ int main(int argc, char** argv) {
    // abandon our current position
    if (config_abandonposition(&pos)) {
       fprintf(stderr, "WARNING: Failed to abandon MarFS traversal position\n");
-      free(rman.nslist);
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
@@ -2428,38 +2437,28 @@ int main(int argc, char** argv) {
    rman.distributed = calloc(sizeof(size_t), rman.nscount);
    if (rman.distributed == NULL) {
       fprintf(stderr, "ERROR: Failed to allocate a 'distributed' list of length %zu\n", rman.nscount);
-      free(rman.nslist);
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
    rman.terminatedworkers = calloc(sizeof(char), rman.totalranks);
    if (rman.terminatedworkers == NULL) {
       fprintf(stderr, "ERROR: Failed to allocate a 'terminatedworkers' list of length %zu\n", rman.totalranks);
-      free(rman.distributed);
-      free(rman.nslist);
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
    rman.walkreport = calloc(sizeof(*rman.walkreport), rman.nscount);
    if (rman.walkreport == NULL) {
       fprintf(stderr, "ERROR: Failed to allocate a 'walkreport' list of length %zu\n", rman.nscount);
-      free(rman.terminatedworkers);
-      free(rman.distributed);
-      free(rman.nslist);
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
    rman.logsummary = calloc(sizeof(*rman.logsummary), rman.nscount);
    if (rman.logsummary == NULL) {
       fprintf(stderr, "ERROR: Failed to allocate a 'logsummary' list of length %zu\n", rman.nscount);
-      free(rman.walkreport);
-      free(rman.terminatedworkers);
-      free(rman.distributed);
-      free(rman.nslist);
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
@@ -2471,12 +2470,7 @@ int main(int argc, char** argv) {
       char* sumlogpath = malloc(sizeof(char) * alloclen);
       if (sumlogpath == NULL) {
          fprintf(stderr, "ERROR: Failed to allocate summary logfile path\n");
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
@@ -2484,26 +2478,14 @@ int main(int argc, char** argv) {
       FILE* sumlog = fopen(sumlogpath, "r");
       if (sumlog == NULL) {
          fprintf(stderr, "ERROR: Failed to open previous run's summary log: \"%s\" (%s)\n", sumlogpath, strerror(errno));
-         free(sumlogpath);
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
       if (parse_program_args(&rman, sumlog)) {
          fprintf(stderr, "ERROR: Failed to parse previous run info from summary log: \"%s\"\n", sumlogpath);
          fclose(sumlog);
-         free(sumlogpath);
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
@@ -2517,24 +2499,14 @@ int main(int argc, char** argv) {
       if (rman.gstate.dryrun == 0) {
          if (rman.ranknum == 0)
             fprintf(stderr, "ERROR: Cannot pick up execution of a non-'dry-run'\n");
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
       // incorporate logfiles from the previous run
       if (rman.ranknum == 0  &&  findoldlogs(&rman, rman.execprevroot, 0)) {
          fprintf(stderr, "ERROR: Failed to identify previous run's logfiles: \"%s\"\n", rman.execprevroot);
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
@@ -2543,12 +2515,7 @@ int main(int argc, char** argv) {
       // otherwise, scan for and incorporate logs from previous modification runs
       if (findoldlogs(&rman, rman.logroot, skipthresh)) {
          fprintf(stderr, "ERROR: Failed to scan for previous iteration logs under \"%s\"\n", rman.logroot);
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
@@ -2561,12 +2528,7 @@ int main(int argc, char** argv) {
       char* sumlogpath = malloc(sizeof(char) * alloclen);
       if (sumlogpath == NULL) {
          fprintf(stderr, "ERROR: Failed to allocate summary logfile path\n");
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
@@ -2574,13 +2536,7 @@ int main(int argc, char** argv) {
       errno = 0;
       if (mkdir(sumlogpath, 0700)  &&  errno != EEXIST) {
          fprintf(stderr, "ERROR: Failed to create summary log parent dir: \"%s\"\n", sumlogpath);
-         free(sumlogpath);
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
@@ -2588,39 +2544,21 @@ int main(int argc, char** argv) {
       int sumlog = open(sumlogpath, O_WRONLY | O_CREAT | O_EXCL, 0700);
       if (sumlog < 0) {
          fprintf(stderr, "ERROR: Failed to open summary logfile: \"%s\"\n", sumlogpath);
-         free(sumlogpath);
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
       rman.summarylog = fdopen(sumlog, "w");
       if (rman.summarylog == NULL) {
          fprintf(stderr, "ERROR: Failed to convert summary logfile to file stream: \"%s\"\n", sumlogpath);
-         free(sumlogpath);
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
       // output our program arguments to the summary file
       if (output_program_args(&rman)) {
          fprintf(stderr, "ERROR: Failed to output program arguments to summary log: \"%s\"\n", sumlogpath);
-         free(sumlogpath);
-         free(rman.logsummary);
-         free(rman.walkreport);
-         free(rman.terminatedworkers);
-         free(rman.distributed);
-         free(rman.nslist);
-         config_term(rman.config);
+         cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
