@@ -240,28 +240,28 @@ void cleanupstate(rmanstate* rman, char abort) {
       if (rman->execprevroot)   { free(rman->execprevroot); }
       if (rman->summarylog)     { fclose(rman->summarylog); }
       if (rman->tq) {
-         if (!(abort)) {
+         if (!abort) {
             LOG(LOG_ERR, "Encountered active TQ with no abort condition specified\n");
             fprintf(stderr, "Encountered active TQ with no abort condition specified\n");
             rman->fatalerror = 1;
          }
          tq_set_flags(rman->tq, TQ_ABORT);
          if (rman->gstate.rinput) {
-            resourceinput_purge(&(rman->gstate.rinput));
-            resourceinput_term(&(rman->gstate.rinput));
+            resourceinput_purge(&rman->gstate.rinput);
+            resourceinput_term(&rman->gstate.rinput);
          }
          // gather all thread status values
          rthread_state* tstate = NULL;
-         while (tq_next_thread_status(rman->tq, (void**)&(tstate)) > 0) {
+         while (tq_next_thread_status(rman->tq, (void**)&tstate) > 0) {
             // verify thread status
             if (tstate) { free(tstate); }
          }
          tq_close(rman->tq);
       }
       if (rman->gstate.rpst) { repackstreamer_abort(rman->gstate.rpst); }
-      if (rman->gstate.rlog) { resourcelog_abort(&(rman->gstate.rlog)); }
-      if (rman->gstate.rinput) { resourceinput_destroy(&(rman->gstate.rinput)); }
-      if (rman->gstate.pos.ns) { config_abandonposition(&(rman->gstate.pos)); }
+      if (rman->gstate.rlog) { resourcelog_abort(&rman->gstate.rlog); }
+      if (rman->gstate.rinput) { resourceinput_destroy(&rman->gstate.rinput); }
+      if (rman->gstate.pos.ns) { config_abandonposition(&rman->gstate.pos); }
       if (rman->logsummary) { free(rman->logsummary); }
       if (rman->walkreport) { free(rman->walkreport); }
       if (rman->terminatedworkers) { free(rman->terminatedworkers); }
@@ -270,7 +270,7 @@ void cleanupstate(rmanstate* rman, char abort) {
       if (rman->oldlogs) {
          HASH_NODE* resnode = NULL;
          size_t ncount = 0;
-         if (hash_term(rman->oldlogs, &(resnode), &(ncount)) == 0) {
+         if (hash_term(rman->oldlogs, &resnode, &ncount) == 0) {
             // free all subnodes and requests
             size_t nindex = 0;
             for (; nindex < ncount; nindex++) {
@@ -300,7 +300,7 @@ void outputinfo(FILE* output, marfs_ns* ns, streamwalker_report* report , operat
    if (output == stdout) { userout = 1; } // limit info output directly to the user
    fprintf(output, "Namespace \"%s\"%s --\n", ns->idstr, (userout) ? " Totals" : " Incremental Values");
    fprintf(output, "   Walk Report --\n");
-   if (!(userout) || report->fileusage)   { fprintf(output, "      File Usage = %zu\n", report->fileusage); }
+   if (!userout || report->fileusage)   { fprintf(output, "      File Usage = %zu\n", report->fileusage); }
    size_t bytetrans = report->byteusage;
    char remainder[6] = {0};
    char* unit = "B";
@@ -316,12 +316,12 @@ void outputinfo(FILE* output, marfs_ns* ns, streamwalker_report* report , operat
       } else { *remainder = '\0'; }
       bytetrans /= 1024;
    }
-   if (!(userout))   { fprintf(output, "      Byte Usage = %zu\n", report->byteusage); }
+   if (!userout)   { fprintf(output, "      Byte Usage = %zu\n", report->byteusage); }
    else if (report->byteusage) {
       fprintf(output, "      Byte Usage = %zu%s%s\n", bytetrans, remainder, unit);
    }
-   if (!(userout) || report->filecount)   { fprintf(output, "      File Count = %zu\n", report->filecount); }
-   if (!(userout) || report->objcount)    { fprintf(output, "      Object Count = %zu\n", report->objcount); }
+   if (!userout || report->filecount)   { fprintf(output, "      File Count = %zu\n", report->filecount); }
+   if (!userout || report->objcount)    { fprintf(output, "      Object Count = %zu\n", report->objcount); }
    bytetrans = report->bytecount;
    *remainder = '\0';
    unit = "B";
@@ -337,33 +337,33 @@ void outputinfo(FILE* output, marfs_ns* ns, streamwalker_report* report , operat
       } else { *remainder = '\0'; }
       bytetrans /= 1024;
    }
-   if (!(userout))   { fprintf(output, "      Byte Count = %zu\n", report->bytecount); }
+   if (!userout)   { fprintf(output, "      Byte Count = %zu\n", report->bytecount); }
    else if (report->bytecount) {
       fprintf(output, "      Byte Count = %zu%s%s\n", bytetrans, remainder, unit);
    }
-   if (!(userout) || report->streamcount) { fprintf(output, "      Stream Count = %zu\n", report->streamcount); }
-   if (!(userout) || report->delobjs)     { fprintf(output, "      Object Deletion Candidates = %zu\n", report->delobjs); }
-   if (!(userout) || report->delfiles)    { fprintf(output, "      File Deletion Candidates = %zu\n", report->delfiles); }
-   if (!(userout) || report->delstreams)  { fprintf(output, "      Stream Deletion Candidates = %zu\n", report->delstreams); }
-   if (!(userout) || report->volfiles)    { fprintf(output, "      Volatile File Count = %zu\n", report->volfiles); }
-   if (!(userout) || report->rpckfiles)   { fprintf(output, "      File Repack Candidates = %zu\n", report->rpckfiles); }
-   if (!(userout) || report->rpckbytes)   { fprintf(output, "      Repack Candidate Bytes = %zu\n", report->rpckbytes); }
-   if (!(userout) || report->rbldobjs)    { fprintf(output, "      Object Rebuild Candidates = %zu\n", report->rbldobjs); }
-   if (!(userout) || report->rbldbytes)   { fprintf(output, "      Rebuild Candidate Bytes = %zu\n", report->rbldbytes); }
+   if (!userout || report->streamcount) { fprintf(output, "      Stream Count = %zu\n", report->streamcount); }
+   if (!userout || report->delobjs)     { fprintf(output, "      Object Deletion Candidates = %zu\n", report->delobjs); }
+   if (!userout || report->delfiles)    { fprintf(output, "      File Deletion Candidates = %zu\n", report->delfiles); }
+   if (!userout || report->delstreams)  { fprintf(output, "      Stream Deletion Candidates = %zu\n", report->delstreams); }
+   if (!userout || report->volfiles)    { fprintf(output, "      Volatile File Count = %zu\n", report->volfiles); }
+   if (!userout || report->rpckfiles)   { fprintf(output, "      File Repack Candidates = %zu\n", report->rpckfiles); }
+   if (!userout || report->rpckbytes)   { fprintf(output, "      Repack Candidate Bytes = %zu\n", report->rpckbytes); }
+   if (!userout || report->rbldobjs)    { fprintf(output, "      Object Rebuild Candidates = %zu\n", report->rbldobjs); }
+   if (!userout || report->rbldbytes)   { fprintf(output, "      Rebuild Candidate Bytes = %zu\n", report->rbldbytes); }
    fprintf(output, "   Operation Summary --\n");
-   if (!(userout) || summary->deletion_object_count) {
+   if (!userout || summary->deletion_object_count) {
       fprintf(output, "      Object Deletion Count = %zu (%zu Failures)\n",
                summary->deletion_object_count, summary->deletion_object_failures);
    }
-   if (!(userout) || summary->deletion_reference_count) {
+   if (!userout || summary->deletion_reference_count) {
       fprintf(output, "      Reference Deletion Count = %zu (%zu Failures)\n",
                summary->deletion_reference_count, summary->deletion_reference_failures);
    }
-   if (!(userout) || summary->rebuild_count) {
+   if (!userout || summary->rebuild_count) {
       fprintf(output, "      Object Rebuild Count = %zu (%zu Failures)\n",
                summary->rebuild_count, summary->rebuild_failures);
    }
-   if (!(userout) || summary->repack_count) {
+   if (!userout || summary->repack_count) {
       fprintf(output, "      File Repack Count = %zu (%zu Failures)\n",
                summary->repack_count, summary->repack_failures);
    }
@@ -422,7 +422,7 @@ int parse_program_args(rmanstate* rman, FILE* inputsummary) {
    // parse in a verify the config version
    char* readline = NULL;
    size_t linealloc = 0;
-   ssize_t linelen = getline(&(readline), &(linealloc), inputsummary);
+   ssize_t linelen = getline(&readline, &linealloc, inputsummary);
    if (linelen < 2) {
       fprintf(stderr, "WARNING: Failed to read MarFS config version string from previous run's summary log\n");
       return 1;
@@ -434,7 +434,7 @@ int parse_program_args(rmanstate* rman, FILE* inputsummary) {
       return 1;
    }
    // parse in operation threshold values and set our state to match
-   while ((linelen = getline(&(readline), &(linealloc), inputsummary)) > 1) {
+   while ((linelen = getline(&readline, &linealloc, inputsummary)) > 1) {
       linelen--; // decrement length, to exclude newline
       if (strncmp(readline, "QUOTAS", linelen) == 0) {
          rman->quotas = 1;
@@ -457,7 +457,7 @@ int parse_program_args(rmanstate* rman, FILE* inputsummary) {
          parse++;
          // parse in the numeric value
          char* endptr = NULL;
-         unsigned long long parseval = strtoull(parse, &(endptr), 10);
+         unsigned long long parseval = strtoull(parse, &endptr, 10);
          if (endptr == NULL  ||  *endptr != '\n'  ||  parseval == ULLONG_MAX) {
             fprintf(stderr, "ERROR: Failed to parse previous run's \"%s\" operation threshold: \"%s\"\n", readline, parse);
             free(readline);
@@ -509,13 +509,13 @@ int parse_program_args(rmanstate* rman, FILE* inputsummary) {
  */
 int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
    // update position value
-   if (config_establishposition(&(rman->gstate.pos), rman->config)) {
+   if (config_establishposition(&rman->gstate.pos, rman->config)) {
       LOG(LOG_ERR, "Failed to establish a root NS position\n");
       snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to establish a root NS position");
       return -1;
    }
    char* tmpnspath = NULL;
-   if (config_nsinfo(ns->idstr, NULL, &(tmpnspath))) {
+   if (config_nsinfo(ns->idstr, NULL, &tmpnspath)) {
       LOG(LOG_ERR, "Failed to identify NS path of NS \"%s\"\n", ns->idstr);
       snprintf(response->errorstr, MAX_ERROR_BUFFER,
                 "Failed to identify NS path of NS \"%s\"", ns->idstr);
@@ -523,7 +523,7 @@ int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
    }
    char* nspath = strdup(tmpnspath+1); // strip off leading '/', to get a relative NS path
    free(tmpnspath);
-   if (config_traverse(rman->config, &(rman->gstate.pos), &(nspath), 0)) {
+   if (config_traverse(rman->config, &rman->gstate.pos, &nspath, 0)) {
       LOG(LOG_ERR, "Failed to traverse config to new NS path: \"%s\"\n", nspath);
       snprintf(response->errorstr, MAX_ERROR_BUFFER,
                 "Failed to traverse config to new NS path: \"%s\"", nspath);
@@ -531,19 +531,19 @@ int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
       return -1;
    }
    free(nspath);
-   if (rman->gstate.pos.ctxt == NULL  &&  config_fortifyposition(&(rman->gstate.pos))) {
+   if (rman->gstate.pos.ctxt == NULL  &&  config_fortifyposition(&rman->gstate.pos)) {
       LOG(LOG_ERR, "Failed to fortify position for new NS: \"%s\"\n", ns->idstr);
       snprintf(response->errorstr, MAX_ERROR_BUFFER,
                 "Failed to fortify position for new NS: \"%s\"", ns->idstr);
-      config_abandonposition(&(rman->gstate.pos));
+      config_abandonposition(&rman->gstate.pos);
       return -1;
    }
    // update our resource input struct
-   if (resourceinput_init(&(rman->gstate.rinput), &(rman->gstate.pos), rman->gstate.numprodthreads)) {
+   if (resourceinput_init(&rman->gstate.rinput, &rman->gstate.pos, rman->gstate.numprodthreads)) {
       LOG(LOG_ERR, "Failed to initialize resourceinput for new NS target: \"%s\"\n", ns->idstr);
       snprintf(response->errorstr, MAX_ERROR_BUFFER,
                 "Failed to initialize resourceinput for new NS target: \"%s\"", ns->idstr);
-      config_abandonposition(&(rman->gstate.pos));
+      config_abandonposition(&rman->gstate.pos);
       return -1;
    }
    // update our output resource log
@@ -554,17 +554,17 @@ int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
       snprintf(response->errorstr, MAX_ERROR_BUFFER,
                 "Failed to identify output logfile path of rank %zu for NS \"%s\"",
                 rman->ranknum, ns->idstr);
-      resourceinput_purge(&(rman->gstate.rinput));
-      config_abandonposition(&(rman->gstate.pos));
+      resourceinput_purge(&rman->gstate.rinput);
+      config_abandonposition(&rman->gstate.pos);
       return -1;
    }
-   if (resourcelog_init(&(rman->gstate.rlog), outlogpath,
+   if (resourcelog_init(&rman->gstate.rlog, outlogpath,
                           (rman->gstate.dryrun) ? RESOURCE_RECORD_LOG : RESOURCE_MODIFY_LOG, ns)) {
       LOG(LOG_ERR, "Failed to initialize output logfile: \"%s\"\n", outlogpath);
       snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize output logfile: \"%s\"", outlogpath);
       free(outlogpath);
-      resourceinput_purge(&(rman->gstate.rinput));
-      config_abandonposition(&(rman->gstate.pos));
+      resourceinput_purge(&rman->gstate.rinput);
+      config_abandonposition(&rman->gstate.pos);
       return -1;
    }
    free(outlogpath);
@@ -572,9 +572,9 @@ int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
    if ((rman->gstate.rpst = repackstreamer_init()) == NULL) {
       LOG(LOG_ERR, "Failed to initialize repack streamer\n");
       snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize repack streamer");
-      resourcelog_term(&(rman->gstate.rlog), NULL, 1);
-      resourceinput_purge(&(rman->gstate.rinput));
-      config_abandonposition(&(rman->gstate.pos));
+      resourcelog_term(&rman->gstate.rlog, NULL, 1);
+      resourceinput_purge(&rman->gstate.rinput);
+      config_abandonposition(&rman->gstate.pos);
       return -1;
    }
    // kick off our worker threads
@@ -582,7 +582,7 @@ int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
       .log_prefix = "RManWorker",
       .init_flags = 0,
       .max_qdepth = rman->gstate.numprodthreads + rman->gstate.numconsthreads,
-      .global_state = &(rman->gstate),
+      .global_state = &rman->gstate,
       .num_threads = rman->gstate.numprodthreads + rman->gstate.numconsthreads,
       .num_prod_threads = rman->gstate.numprodthreads,
       .thread_init_func = rthread_init_func,
@@ -592,14 +592,14 @@ int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
       .thread_resume_func = NULL,
       .thread_term_func = rthread_term_func
    };
-   if ((rman->tq = tq_init(&(tqopts))) == NULL) {
+   if ((rman->tq = tq_init(&tqopts)) == NULL) {
       LOG(LOG_ERR, "Failed to start ThreadQueue for NS \"%s\"\n", ns->idstr);
       snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to start ThreadQueue for NS \"%s\"", ns->idstr);
       repackstreamer_abort(rman->gstate.rpst);
       rman->gstate.rpst = NULL;
-      resourcelog_term(&(rman->gstate.rlog), NULL, 1);
-      resourceinput_purge(&(rman->gstate.rinput));
-      config_abandonposition(&(rman->gstate.pos));
+      resourcelog_term(&rman->gstate.rlog, NULL, 1);
+      resourceinput_purge(&rman->gstate.rinput);
+      config_abandonposition(&rman->gstate.pos);
       return -1;
    }
    // ensure all threads have initialized
@@ -609,9 +609,9 @@ int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
       tq_set_flags(rman->tq, TQ_ABORT);
       repackstreamer_abort(rman->gstate.rpst);
       rman->gstate.rpst = NULL;
-      resourcelog_term(&(rman->gstate.rlog), NULL, 1);
-      resourceinput_purge(&(rman->gstate.rinput));
-      config_abandonposition(&(rman->gstate.pos));
+      resourcelog_term(&rman->gstate.rlog, NULL, 1);
+      resourceinput_purge(&rman->gstate.rinput);
+      config_abandonposition(&rman->gstate.pos);
       return -1;
    }
    LOG(LOG_INFO, "Rank %zu is now targetting NS \"%s\"\n", rman->ranknum, ns->idstr);
@@ -758,14 +758,14 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
             return -1;
          }
          // check if program args are compatible with this run
-         if (!(rman->execprevroot)) {
+         if (!rman->execprevroot) {
             struct stat stval; // for checking the age of previous iteration files
             int sumfd = openat(newfd, "summary.log", O_RDONLY, 0);
             if (sumfd < 0) {
                LOG(LOG_WARNING, "Failed to open summary log for old iteration: \"%s\" (%s)\n",
                     request.iteration, strerror(errno));
                // stat the root of this iteration
-               if (fstat(newfd, &(stval))) {
+               if (fstat(newfd, &stval)) {
                   LOG(LOG_ERR, "Failed to stat root of old iteration: \"%s\" (%s)\n",
                                 request.iteration, strerror(errno));
                   close(newfd);
@@ -783,7 +783,7 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
                continue;
             }
             // stat the summary logfile
-            if (fstat(sumfd, &(stval))) {
+            if (fstat(sumfd, &stval)) {
                LOG(LOG_ERR, "Failed to stat summary logfile of old iteration: \"%s\" (%s)\n",
                              request.iteration, strerror(errno));
                close(sumfd);
@@ -810,9 +810,9 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
             }
             // parse args into a temporary state struct, for comparison
             rmanstate tmpstate;
-            bzero(&(tmpstate), sizeof(struct rmanstate_struct));
+            bzero(&tmpstate, sizeof(struct rmanstate_struct));
             tmpstate.config = rman->config;
-            int parseargres = parse_program_args(&(tmpstate), summaryfile);
+            int parseargres = parse_program_args(&tmpstate, summaryfile);
             fclose(summaryfile);
             if (parseargres > 0) {
                printf("Skipping over previous iteration with incompatible config: \"%s\"\n", request.iteration);
@@ -893,7 +893,7 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
          char* tmpparse = oldnsid;
          while (*tmpparse != '\0') { if (*tmpparse == '#') { *tmpparse = '/'; } tmpparse++; }
          HASH_NODE* lnode = NULL;
-         if (hash_lookup(rman->oldlogs, oldnsid, &(lnode))) {
+         if (hash_lookup(rman->oldlogs, oldnsid, &lnode)) {
             // if we can't map this to a NS entry, just ignore it
             fprintf(stderr, "WARNING: Encountered resource logs from a previoius iteration (\"%s\")\n"
                              "         associated with an unrecognized namespace (\"%s\").\n"
@@ -957,7 +957,7 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
             fparse++;
          }
          char* endptr = NULL;
-         unsigned long long parseval = strtoull(fparse, &(endptr), 10);
+         unsigned long long parseval = strtoull(fparse, &endptr, 10);
          if (endptr == NULL  ||  *endptr != '\0'  ||  *fparse == '\0'  ||  parseval >= SIZE_MAX  ||  parseval >= ULLONG_MAX) {
             fprintf(stderr, "WARNING: Failed to identify rank number associated with logfile \"%s/%s/%s/%s\"\n"
                              "         The logfile will be skipped\n",
@@ -998,10 +998,10 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
  */
 int handlerequest(rmanstate* rman, workrequest* request, workresponse* response) {
    // pre-populate response with a 'fatal error' condition, just in case
-   response->request = *(request);
+   response->request = *request;
    response->haveinfo = 0;
-   bzero(&(response->report), sizeof(struct streamwalker_report_struct));
-   bzero(&(response->summary), sizeof(struct operation_summary_struct));
+   bzero(&response->report, sizeof(struct streamwalker_report_struct));
+   bzero(&response->summary, sizeof(struct operation_summary_struct));
    response->errorlog = 0;
    response->fatalerror = 1;
    snprintf(response->errorstr, MAX_ERROR_BUFFER, "UNKNOWN-ERROR!");
@@ -1031,14 +1031,14 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
       // determine what we're actually doing with this logfile
       if (rman->execprevroot) {
          // we are using the rlog as an input
-         if (resourceinput_setlogpath(&(rman->gstate.rinput), rlogpath)) {
+         if (resourceinput_setlogpath(&rman->gstate.rinput, rlogpath)) {
             LOG(LOG_ERR, "Failed to update rank %zu input to logfile \"%s\"\n", rman->ranknum, rlogpath);
             snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to update rank %zu input to logfile \"%s\"",
                       rman->ranknum, rlogpath);
             return -1;
          }
          // wait for our input to be exhausted (don't respond until we are ready for more work)
-         if (resourceinput_waitforcomp(&(rman->gstate.rinput))) {
+         if (resourceinput_waitforcomp(&rman->gstate.rinput)) {
             LOG(LOG_ERR, "Failed to wait for completion of logfile \"%s\"\n", request->refdist);
             snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to wait for completion of logfile \"%s\"", rlogpath);
             return -1;
@@ -1048,17 +1048,17 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
          // we are just cleaning up this old logfile by replaying it into our current one
          // open the specified rlog for read
          RESOURCELOG newlog = NULL;
-         if (resourcelog_init(&(newlog), rlogpath, RESOURCE_READ_LOG, rman->nslist[request->nsindex])) {
+         if (resourcelog_init(&newlog, rlogpath, RESOURCE_READ_LOG, rman->nslist[request->nsindex])) {
             LOG(LOG_ERR, "Failed to open logfile for read: \"%s\" (%s)\n", rlogpath, strerror(errno));
             snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to open logfile for read: \"%s\" (%s)",
                       rlogpath, strerror(errno));
             free(rlogpath);
             return -1;
          }
-         if (resourcelog_replay(&(newlog), &(rman->gstate.rlog), NULL)) {
+         if (resourcelog_replay(&newlog, &rman->gstate.rlog, NULL)) {
             LOG(LOG_ERR, "Failed to replay logfile \"%s\" into active state\n", rlogpath);
             snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to replay logfile \"%s\"", rlogpath);
-            resourcelog_abort(&(newlog));
+            resourcelog_abort(&newlog);
             free(rlogpath);
             return -1;
          }
@@ -1078,12 +1078,12 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
       // calculate the start and end reference indices for this request
       size_t refmin = -1;
       size_t refmax = -1;
-      getNSrange(rman->nslist[request->nsindex], rman->workingranks, request->refdist, &(refmin), &(refmax));
+      getNSrange(rman->nslist[request->nsindex], rman->workingranks, request->refdist, &refmin, &refmax);
       // only actually perform the work if it is a valid reference range
       // NOTE -- This is to handle a case where the number of NS ref dirs < the number of resource manager worker ranks
       if (refmax != refmin) {
          // update our input to reference the new target range
-         if (resourceinput_setrange(&(rman->gstate.rinput), refmin, refmax)) {
+         if (resourceinput_setrange(&rman->gstate.rinput, refmin, refmax)) {
             LOG(LOG_ERR, "Failed to set NS \"%s\" reference range values for distribution %zu\n",
                  rman->nslist[request->nsindex]->idstr, request->refdist);
             snprintf(response->errorstr, MAX_ERROR_BUFFER,
@@ -1092,7 +1092,7 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
             return -1;
          }
          // wait for our input to be exhausted (don't respond until we are ready for more work)
-         if (resourceinput_waitforcomp(&(rman->gstate.rinput))) {
+         if (resourceinput_waitforcomp(&rman->gstate.rinput)) {
             LOG(LOG_ERR, "Failed to wait for completion of NS \"%s\" reference distribution %zu\n",
                  rman->nslist[request->nsindex]->idstr, request->refdist);
             snprintf(response->errorstr, MAX_ERROR_BUFFER,
@@ -1116,7 +1116,7 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
          return -1;
       }
       // terminate the resource input
-      if (rman->gstate.rinput  &&  resourceinput_term(&(rman->gstate.rinput))) {
+      if (rman->gstate.rinput  &&  resourceinput_term(&rman->gstate.rinput)) {
          LOG(LOG_ERR, "Failed to terminate resourceinput\n");
          snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to terminate resourceinput");
          // don't quit out yet, try to collect thread states first
@@ -1125,7 +1125,7 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
       if (rman->tq) {
          // wait for the queue to be marked as FINISHED
          TQ_Control_Flags setflags = 0;
-         if (tq_wait_for_flags(rman->tq, 0, &(setflags))) {
+         if (tq_wait_for_flags(rman->tq, 0, &setflags)) {
             LOG(LOG_ERR, "Failed to wait on ThreadQueue state flags\n");
             snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to wait on ThreadQueue state flags");
             return -1;
@@ -1144,7 +1144,7 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
          // gather all thread status values
          rthread_state* tstate = NULL;
          int retval;
-         while ((retval = tq_next_thread_status(rman->tq, (void**)&(tstate))) > 0) {
+         while ((retval = tq_next_thread_status(rman->tq, (void**)&tstate)) > 0) {
             LOG(LOG_INFO, "Got state for Thread %zu\n", tstate->tID);
             // verify thread status
             if (tstate == NULL) {
@@ -1202,7 +1202,7 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
       }
       // destroy the resource input, if present
       if (rman->gstate.rinput) {
-         if (resourceinput_destroy(&(rman->gstate.rinput))) {
+         if (resourceinput_destroy(&rman->gstate.rinput)) {
             // nothing to do but complain
             LOG(LOG_WARNING, "Failed to destroy resourceinput structure\n");
             rman->gstate.rinput = NULL; // NULL it out anyhow
@@ -1211,7 +1211,7 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
       // need to preserve our logfile, allowing the manager to remove it
       char* outlogpath = resourcelog_genlogpath(0, rman->logroot, rman->iteration, rman->gstate.pos.ns, rman->ranknum);
       int rlogret;
-      if ((rlogret = resourcelog_term(&(rman->gstate.rlog), &(response->summary), 0)) < 0) {
+      if ((rlogret = resourcelog_term(&rman->gstate.rlog, &response->summary, 0)) < 0) {
          LOG(LOG_ERR, "Failed to terminate log \"%s\" following completion of work on NS \"%s\"\n",
               outlogpath, rman->gstate.pos.ns->idstr);
          snprintf(response->errorstr, MAX_ERROR_BUFFER,
@@ -1232,7 +1232,7 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
          rman->gstate.rpst = NULL;
       }
       const char* nsidstr = rman->gstate.pos.ns->idstr;
-      if (config_abandonposition(&(rman->gstate.pos))) {
+      if (config_abandonposition(&rman->gstate.pos)) {
          LOG(LOG_ERR, "Failed to abandon marfs position during completion of NS \"%s\"\n", nsidstr);
          snprintf(response->errorstr, MAX_ERROR_BUFFER,
                    "Failed to abandon marfs position during completion of NS \"%s\"", nsidstr);
@@ -1338,7 +1338,7 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
             rman->logsummary[response->request.nsindex].repack_count += response->summary.repack_count;
             rman->logsummary[response->request.nsindex].repack_failures += response->summary.repack_failures;
             // output all gathered info, prior to possible log deletion
-            outputinfo(rman->summarylog, rman->nslist[response->request.nsindex], &(response->report) , &(response->summary));
+            outputinfo(rman->summarylog, rman->nslist[response->request.nsindex], &response->report , &response->summary);
          }
          // identify the output log of the transmitting rank
          char* outlogpath = resourcelog_genlogpath(0, rman->logroot, rman->iteration,
@@ -1373,7 +1373,7 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
          }
          // open the logfile for read
          RESOURCELOG ranklog = NULL;
-         if (resourcelog_init(&(ranklog), outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex])) {
+         if (resourcelog_init(&ranklog, outlogpath, RESOURCE_READ_LOG, rman->nslist[response->request.nsindex])) {
             fprintf(stderr, "ERROR: Failed to open the output log of Rank %zu for NS \"%s\": \"%s\"\n",
                      ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath);
             free(outlogpath);
@@ -1400,7 +1400,7 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
             if (errlogpath == NULL) {
                fprintf(stderr, "ERROR: Failed to allocate the error log path of Rank %zu for NS \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr);
-               resourcelog_term(&(ranklog), NULL, 0);
+               resourcelog_term(&ranklog, NULL, 0);
                free(outlogpath);
                rman->fatalerror = 1;
                return -1;
@@ -1408,32 +1408,32 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
             if (snprintf(errlogpath, errloglen + 1, "%.*s%s%s", logdirlen, outlogpath, ERROR_LOG_PREFIX, finelem) != errloglen) {
                fprintf(stderr, "ERROR: Failed to generate the error log path of Rank %zu for NS \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr);
-               resourcelog_term(&(ranklog), NULL, 0);
+               resourcelog_term(&ranklog, NULL, 0);
                free(outlogpath);
                rman->fatalerror = 1;
                return -1;
             }
             // open the error log for write
             RESOURCELOG errlog = NULL;
-            if (resourcelog_init(&(errlog), errlogpath, RESOURCE_RECORD_LOG, rman->nslist[response->request.nsindex])) {
+            if (resourcelog_init(&errlog, errlogpath, RESOURCE_RECORD_LOG, rman->nslist[response->request.nsindex])) {
                fprintf(stderr, "ERROR: Failed to open the error log of Rank %zu: \"%s\"\n", ranknum, errlogpath);
-               resourcelog_term(&(ranklog), NULL, 0);
+               resourcelog_term(&ranklog, NULL, 0);
                free(errlogpath);
                free(outlogpath);
                rman->fatalerror = 1;
                return -1;
             }
             // replay the logfile into the error log location
-            if (resourcelog_replay(&(ranklog), &(errlog), error_only_filter)) {
+            if (resourcelog_replay(&ranklog, &errlog, error_only_filter)) {
                fprintf(stderr, "ERROR: Failed to replay errors from logfile \"%s\" into \"%s\"\n", outlogpath, errlogpath);
-               resourcelog_term(&(errlog), NULL, 1);
-               resourcelog_term(&(ranklog), NULL, 0);
+               resourcelog_term(&errlog, NULL, 1);
+               resourcelog_term(&ranklog, NULL, 0);
                free(errlogpath);
                free(outlogpath);
                rman->fatalerror = 1;
                return -1;
             }
-            if (resourcelog_term(&(errlog), NULL, 0)) {
+            if (resourcelog_term(&errlog, NULL, 0)) {
                fprintf(stderr, "ERROR: Failed to finalize error logfile: \"%s\"\n", errlogpath);
                free(errlogpath);
                free(outlogpath);
@@ -1444,7 +1444,7 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
          }
          else {
             // simply delete the output logfile of this rank
-            if (resourcelog_term(&(ranklog), NULL, 1)) {
+            if (resourcelog_term(&ranklog, NULL, 1)) {
                fprintf(stderr, "ERROR: Failed to delete the output log of Rank %zu for NS \"%s\": \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr, outlogpath);
                free(outlogpath);
@@ -1477,7 +1477,7 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
                linfo->logcount--;
                return 1;
             }
-            if (hash_iterate(rman->oldlogs, &(resnode)) < 0) {
+            if (hash_iterate(rman->oldlogs, &resnode) < 0) {
                fprintf(stderr,
                         "ERROR: Failure of hash_iterate() when trying to identify logfiles for rank %zu to process\n",
                         ranknum);
@@ -1489,7 +1489,7 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
          // it seems we've iterated over our entire oldlogs table, with no requests remaining
          // need to free our table
          size_t ncount = 0;
-         if (hash_term(rman->oldlogs, &(resnode), &(ncount))) {
+         if (hash_term(rman->oldlogs, &resnode, &ncount)) {
             fprintf(stderr, "ERROR: Failure of hash_term() after passing out all logfiles for processing\n");
             rman->fatalerror = 1;
             return -1;
@@ -1578,7 +1578,7 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
       if (rman->oldlogs) {
          // start by checking for old resource logs to process
          HASH_NODE* resnode = NULL;
-         if (hash_lookup(rman->oldlogs, rman->nslist[response->request.nsindex]->idstr, &(resnode))) {
+         if (hash_lookup(rman->oldlogs, rman->nslist[response->request.nsindex]->idstr, &resnode)) {
             fprintf(stderr, "ERROR: Failure of hash_lookup() when looking for logfiles in NS \"%s\" for rank %zu\n",
                              rman->nslist[response->request.nsindex]->idstr, ranknum);
             rman->fatalerror = 1;
@@ -1652,10 +1652,10 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
 int managerbehavior(rmanstate* rman) {
    // setup out response and request structs
    workresponse response;
-   bzero(&(response), sizeof(struct workresponse_struct));
+   bzero(&response, sizeof(struct workresponse_struct));
    size_t respondingrank = 0;
    workrequest  request;
-   bzero(&(request), sizeof(struct workrequest_struct));
+   bzero(&request, sizeof(struct workrequest_struct));
    if (rman->totalranks == 1) {
       // we need to fake our own 'startup' response
       response.request.type = COMPLETE_WORK;
@@ -1668,7 +1668,7 @@ int managerbehavior(rmanstate* rman) {
       if (rman->totalranks > 1) {
 #ifdef RMAN_USE_MPI
          MPI_Status msgstatus;
-         if (MPI_Recv(&(response), sizeof(struct workresponse_struct), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &(msgstatus))) {
+         if (MPI_Recv(&response, sizeof(struct workresponse_struct), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &msgstatus)) {
             LOG(LOG_ERR, "Failed to recieve a response\n");
             fprintf(stderr, "ERROR: Failed to receive an MPI response message\n");
             return -1;
@@ -1680,7 +1680,7 @@ int managerbehavior(rmanstate* rman) {
 #endif
       }
       // generate an appropriate request, based on response
-      int handleres = handleresponse(rman, respondingrank, &(response), &(request));
+      int handleres = handleresponse(rman, respondingrank, &response, &request);
       if (handleres < 0) {
          fprintf(stderr, "Fatal error detected during response handling.  Program will terminate.\n");
          return -1;
@@ -1690,7 +1690,7 @@ int managerbehavior(rmanstate* rman) {
          if (rman->totalranks > 1) {
 #ifdef RMAN_USE_MPI
             // send out the request via MPI to the responding rank
-            if (MPI_Send(&(request), sizeof(struct workrequest_struct), MPI_BYTE, respondingrank, 0, MPI_COMM_WORLD)) {
+            if (MPI_Send(&request, sizeof(struct workrequest_struct), MPI_BYTE, respondingrank, 0, MPI_COMM_WORLD)) {
                LOG(LOG_ERR, "Failed to send a request\n");
                fprintf(stderr, "ERROR: Failed to send an MPI request message\n");
                return -1;
@@ -1702,7 +1702,7 @@ int managerbehavior(rmanstate* rman) {
          }
          else {
             // just process the new request ourself
-            if (handlerequest(rman, &(request), &(response)) < 0) {
+            if (handlerequest(rman, &request, &response) < 0) {
                fprintf(stderr, "ERROR: %s\nFatal error detected during local request processing.  Program will terminate.\n",
                         response.errorstr);
                return -1;
@@ -1724,30 +1724,30 @@ int managerbehavior(rmanstate* rman) {
       // potentially set NS quota values
       if (rman->quotas) {
          // update position value
-         if (config_establishposition(&(rman->gstate.pos), rman->config)) {
+         if (config_establishposition(&rman->gstate.pos, rman->config)) {
             LOG(LOG_ERR, "Failed to establish a rootNS position\n");
             fprintf(stderr, "ERROR: Failed to establish a rootNS position\n");
             return -1;
          }
          char* tmpnspath = NULL;
-         if (config_nsinfo(curns->idstr, NULL, &(tmpnspath))) {
+         if (config_nsinfo(curns->idstr, NULL, &tmpnspath)) {
             LOG(LOG_ERR, "Failed to identify NS path of NS \"%s\"\n", curns->idstr);
             fprintf(stderr, "ERROR: Failed to identify NS path of NS \"%s\"\n", curns->idstr);
             return -1;
          }
          char* nspath = strdup(tmpnspath+1); // strip off leading '/', to get a relative NS path
          free(tmpnspath);
-         if (config_traverse(rman->config, &(rman->gstate.pos), &(nspath), 0)) {
+         if (config_traverse(rman->config, &rman->gstate.pos, &nspath, 0)) {
             LOG(LOG_ERR, "Failed to traverse config to new NS path: \"%s\"\n", nspath);
             fprintf(stderr, "ERROR: Failed to traverse config to new NS path: \"%s\"\n", nspath);
             free(nspath);
             return -1;
          }
          free(nspath);
-         if (rman->gstate.pos.ctxt == NULL  &&  config_fortifyposition(&(rman->gstate.pos))) {
+         if (rman->gstate.pos.ctxt == NULL  &&  config_fortifyposition(&rman->gstate.pos)) {
             LOG(LOG_ERR, "Failed to fortify position for new NS: \"%s\"\n", curns->idstr);
             fprintf(stderr, "ERROR: Failed to fortify position for new NS: \"%s\"\n", curns->idstr);
-            config_abandonposition(&(rman->gstate.pos));
+            config_abandonposition(&rman->gstate.pos);
             return -1;
          }
          // update quota values based on report totals
@@ -1758,7 +1758,7 @@ int managerbehavior(rmanstate* rman) {
          if (nsmdal->setdatausage(rman->gstate.pos.ctxt, rman->walkreport[nsindex].byteusage)) {
             fprintf(stderr, "WARNING: Failed to set data usage for NS \"%s\"\n", curns->idstr);
          }
-         config_abandonposition(&(rman->gstate.pos));
+         config_abandonposition(&rman->gstate.pos);
       }
       // print out NS info
       outputinfo(stdout, curns, rman->walkreport + nsindex, rman->logsummary + nsindex);
@@ -1871,14 +1871,14 @@ int workerbehavior(rmanstate* rman) {
 #ifdef RMAN_USE_MPI
    // setup out response and request structs
    workresponse response;
-   bzero(&(response), sizeof(struct workresponse_struct));
+   bzero(&response, sizeof(struct workresponse_struct));
    workrequest  request;
-   bzero(&(request), sizeof(struct workrequest_struct));
+   bzero(&request, sizeof(struct workrequest_struct));
    // we need to fake a 'startup' response
    response.request.type = COMPLETE_WORK;
    response.request.nsindex = rman->nscount;
    // begin by sending a response
-   if (MPI_Send(&(response), sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD)) {
+   if (MPI_Send(&response, sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD)) {
       LOG(LOG_ERR, "Failed to send initial 'dummy' response\n");
       fprintf(stderr, "ERROR: Failed to send an initial MPI response message\n");
       return -1;
@@ -1887,20 +1887,20 @@ int workerbehavior(rmanstate* rman) {
    int handleres = 1;
    while (handleres) {
       // wait for a new request
-      if (MPI_Recv(&(request), sizeof(struct workrequest_struct), MPI_BYTE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE)) {
+      if (MPI_Recv(&request, sizeof(struct workrequest_struct), MPI_BYTE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE)) {
          LOG(LOG_ERR, "Failed to recieve a new request\n");
          fprintf(stderr, "ERROR: Failed to receive an MPI request message\n");
          return -1;
       }
       // generate an appropriate response
-      if ((handleres = handlerequest(rman, &(request), &(response))) < 0) {
+      if ((handleres = handlerequest(rman, &request, &response)) < 0) {
          LOG(LOG_ERR, "Fatal error detected during request processing: \"%s\"\n", response.errorstr);
          // send out our response anyway, so the manger prints our error message
-         MPI_Send(&(response), sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+         MPI_Send(&response, sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
          return -1;
       }
       // send out our response
-      if (MPI_Send(&(response), sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD)) {
+      if (MPI_Send(&response, sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD)) {
          LOG(LOG_ERR, "Failed to send a response\n");
          fprintf(stderr, "ERROR: Failed to send an MPI response message\n");
          return -1;
@@ -1932,7 +1932,7 @@ int main(int argc, char** argv) {
    char* ns_path = ".";
    char recurse = 0;
    rmanstate rman;
-   bzero(&(rman), sizeof(struct rmanstate_struct));
+   bzero(&rman, sizeof(struct rmanstate_struct));
    rman.gstate.numprodthreads = DEFAULT_PRODUCER_COUNT;
    rman.gstate.numconsthreads = DEFAULT_CONSUMER_COUNT;
    rman.gstate.rebuildloc.pod = -1;
@@ -2033,7 +2033,7 @@ int main(int argc, char** argv) {
             else {
                // parse the expected numeric value trailing the type flag
                char* endptr = NULL;
-               unsigned long long parseval = strtoull(threshparse, &(endptr), 10);
+               unsigned long long parseval = strtoull(threshparse, &endptr, 10);
                if (parseval == ULLONG_MAX  ||  endptr == NULL  ||
                     (*endptr != 's'  &&  *endptr != 'm'  &&  *endptr != 'h'  &&  *endptr != 'd'  &&
                       *endptr != '-'  &&  *endptr != '\0')) {
@@ -2098,7 +2098,7 @@ int main(int argc, char** argv) {
             else {
                // parse the expected numeric value trailing the type flag
                char* endptr = NULL;
-               unsigned long long parseval = strtoull(locparse, &(endptr), 10);
+               unsigned long long parseval = strtoull(locparse, &endptr, 10);
                if (parseval == ULLONG_MAX  ||  endptr == NULL  ||
                     (*endptr != '-'  &&  *endptr != '\0')) {
                   printf("ERROR: Failed to parse '%c' location from '-L' argument value: \"%s\"\n", tflag, optarg);
@@ -2271,7 +2271,7 @@ int main(int argc, char** argv) {
 
    // populate an iteration string, if missing
    if (rman.iteration[0] == '\0') {
-      struct tm* timeinfo = localtime(&(currenttime.tv_sec));
+      struct tm* timeinfo = localtime(&currenttime.tv_sec);
       strftime(rman.iteration, ITERATION_STRING_LEN, "%Y-%m-%d-%H:%M:%S", timeinfo);
    }
 
@@ -2288,11 +2288,11 @@ int main(int argc, char** argv) {
    int rankcount = 1;
    int rank = 0;
 #ifdef RMAN_USE_MPI
-   if (MPI_Comm_size(MPI_COMM_WORLD, &(rankcount))) {
+   if (MPI_Comm_size(MPI_COMM_WORLD, &rankcount)) {
       fprintf(stderr, "ERROR: Failed to identify rank count\n");
       RMAN_ABORT();
    }
-   if (MPI_Comm_rank(MPI_COMM_WORLD, &(rank))) {
+   if (MPI_Comm_rank(MPI_COMM_WORLD, &rank)) {
       fprintf(stderr, "ERROR: Failed to identify process rank\n");
       RMAN_ABORT();
    }
@@ -2331,7 +2331,7 @@ int main(int argc, char** argv) {
       .depth = 0,
       .ctxt = NULL
    };
-   if (config_establishposition(&(pos), rman.config)) {
+   if (config_establishposition(&pos, rman.config)) {
       fprintf(stderr, "ERROR: Failed to establish a MarFS root NS position\n");
       config_term(rman.config);
       pthread_mutex_destroy(&erasurelock);
@@ -2344,7 +2344,7 @@ int main(int argc, char** argv) {
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
-   int travret = config_traverse(rman.config, &(pos), &(nspathdup), 1);
+   int travret = config_traverse(rman.config, &pos, &nspathdup, 1);
    if (travret < 0) {
       if (rman.ranknum == 0)
          fprintf(stderr, "ERROR: Failed to identify NS path target: \"%s\"\n", ns_path);
@@ -2378,7 +2378,7 @@ int main(int argc, char** argv) {
       HASH_NODE* subnode = NULL;
       int iterres = 0;
       if (curns->subspaces  &&  recurse) {
-         iterres = hash_iterate(curns->subspaces, &(subnode));
+         iterres = hash_iterate(curns->subspaces, &subnode);
          if (iterres < 0) {
             fprintf(stderr, "ERROR: Failed to iterate through subspaces of \"%s\"\n", curns->idstr);
             config_term(rman.config);
@@ -2420,7 +2420,7 @@ int main(int argc, char** argv) {
       }
    }
    // abandon our current position
-   if (config_abandonposition(&(pos))) {
+   if (config_abandonposition(&pos)) {
       fprintf(stderr, "WARNING: Failed to abandon MarFS traversal position\n");
       free(rman.nslist);
       config_term(rman.config);
@@ -2497,7 +2497,7 @@ int main(int argc, char** argv) {
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
       }
-      if (parse_program_args(&(rman), sumlog)) {
+      if (parse_program_args(&rman, sumlog)) {
          fprintf(stderr, "ERROR: Failed to parse previous run info from summary log: \"%s\"\n", sumlogpath);
          fclose(sumlog);
          free(sumlogpath);
@@ -2530,7 +2530,7 @@ int main(int argc, char** argv) {
          RMAN_ABORT();
       }
       // incorporate logfiles from the previous run
-      if (rman.ranknum == 0  &&  findoldlogs(&(rman), rman.execprevroot, 0)) {
+      if (rman.ranknum == 0  &&  findoldlogs(&rman, rman.execprevroot, 0)) {
          fprintf(stderr, "ERROR: Failed to identify previous run's logfiles: \"%s\"\n", rman.execprevroot);
          free(rman.logsummary);
          free(rman.walkreport);
@@ -2544,7 +2544,7 @@ int main(int argc, char** argv) {
    }
    else if (rman.gstate.dryrun == 0  &&  rman.ranknum == 0) {
       // otherwise, scan for and incorporate logs from previous modification runs
-      if (findoldlogs(&(rman), rman.logroot, skipthresh)) {
+      if (findoldlogs(&rman, rman.logroot, skipthresh)) {
          fprintf(stderr, "ERROR: Failed to scan for previous iteration logs under \"%s\"\n", rman.logroot);
          free(rman.logsummary);
          free(rman.walkreport);
@@ -2615,7 +2615,7 @@ int main(int argc, char** argv) {
          RMAN_ABORT();
       }
       // output our program arguments to the summary file
-      if (output_program_args(&(rman))) {
+      if (output_program_args(&rman)) {
          fprintf(stderr, "ERROR: Failed to output program arguments to summary log: \"%s\"\n", sumlogpath);
          free(sumlogpath);
          free(rman.logsummary);
@@ -2645,7 +2645,7 @@ int main(int argc, char** argv) {
    //    are hung on earlier initialization (which may still fail)
    if (MPI_Barrier(MPI_COMM_WORLD)) {
       fprintf(stderr, "ERROR: Failed to synchronize mpi ranks prior to execution\n");
-      cleanupstate(&(rman), 1);
+      cleanupstate(&rman, 1);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
@@ -2654,17 +2654,17 @@ int main(int argc, char** argv) {
    // actually perform core behavior loops
    int bres;
    if (rman.ranknum == 0) {
-      bres = managerbehavior(&(rman));
+      bres = managerbehavior(&rman);
    }
    else {
-      bres = workerbehavior(&(rman));
+      bres = workerbehavior(&rman);
    }
    if (bres) {
-      cleanupstate(&(rman), 1);
+      cleanupstate(&rman, 1);
    }
    else {
       bres = (rman.fatalerror) ? -((int)rman.fatalerror) : (int)rman.nonfatalerror;
-      cleanupstate(&(rman), 0);
+      cleanupstate(&rman, 0);
    }
    pthread_mutex_destroy(&erasurelock);
 

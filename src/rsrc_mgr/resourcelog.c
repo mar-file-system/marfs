@@ -128,13 +128,13 @@ void cleanuplog(RESOURCELOG rsrclog, char destroy) {
    if (rsrclog->logfilepath) { free(rsrclog->logfilepath); }
    if (rsrclog->logfile > 0) { close(rsrclog->logfile); }
    if (destroy) {
-      pthread_cond_destroy(&(rsrclog->nooutstanding));
-      pthread_mutex_unlock(&(rsrclog->lock));
-      pthread_mutex_destroy(&(rsrclog->lock));
+      pthread_cond_destroy(&rsrclog->nooutstanding);
+      pthread_mutex_unlock(&rsrclog->lock);
+      pthread_mutex_destroy(&rsrclog->lock);
       free(rsrclog);
    }
    else {
-      pthread_mutex_unlock(&(rsrclog->lock));
+      pthread_mutex_unlock(&rsrclog->lock);
    }
    return;
 }
@@ -514,7 +514,7 @@ opinfo* parselogline(int logfile, char* eof) {
    }
    // parse the FTAG value
    *tgtchar = '\0'; // trim the string, to make FTAG parsing easy
-   if (ftag_initstr(&(op->ftag), parseloc)) {
+   if (ftag_initstr(&op->ftag, parseloc)) {
       LOG(LOG_ERR, "Failed to parse FTAG value of log line\n");
       resourcelog_freeopinfo(op);
       lseek(logfile, origoff, SEEK_SET);
@@ -701,7 +701,7 @@ int printlogline(int logfile, opinfo* op) {
       return -1;
    }
    // populate the FTAG string
-   if ((printres = ftag_tostr(&(op->ftag), buffer + usedbuff, MAX_BUFFER - usedbuff)) < 1) {
+   if ((printres = ftag_tostr(&op->ftag, buffer + usedbuff, MAX_BUFFER - usedbuff)) < 1) {
       LOG(LOG_ERR, "Failed to populate FTAG string\n");
       return -1;
    }
@@ -784,7 +784,7 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
    char activealike = 0; // track if we have active ops of the same type in the same 'segment'
    opinfo* opindex = NULL;
    opchain* chainindex = node->content;
-   opchain** prevchainref = (opchain**)&(node->content);
+   opchain** prevchainref = (opchain**)&node->content;
    while (chainindex) {
       opindex = chainindex->chain;
       // check for an opchain on the same stream (ctag, streamid)
@@ -813,7 +813,7 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
       opindex = NULL; // moving to a new chain, so NULL out our potential op match
       activealike = 0; // moving to a new chain, so the op 'segment' is broken
       activechain = 0; // moving to a new chain, so reset active state
-      prevchainref = &(chainindex->next);
+      prevchainref = &chainindex->next;
       chainindex = chainindex->next;
    }
    if (opindex != NULL) {
@@ -1041,7 +1041,7 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
    }
    // parse over the op chain
    opinfo* genchain = NULL;
-   opinfo** newop = &(genchain);
+   opinfo** newop = &genchain;
    while (op) {
       // allocate a new op struct
       *newop = malloc(sizeof(struct opinfo_struct));
@@ -1158,7 +1158,7 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
       }
       LOG(LOG_INFO, "Successfully duplicated operation\n");
       op = op->next;
-      newop = &((*newop)->next);
+      newop = &(*newop)->next;
    }
    return genchain;
 }
@@ -1346,27 +1346,27 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
       LOG(LOG_ERR, "Failed to allocate space for a new resourcelog\n");
       return -1;
    }
-   if (pthread_mutex_init(&(rsrclog->lock), NULL)) {
+   if (pthread_mutex_init(&rsrclog->lock, NULL)) {
       LOG(LOG_ERR, "Failed to initialize lock on new resourcelog struct\n");
       free(rsrclog);
       return -1;
    }
-   if (pthread_cond_init(&(rsrclog->nooutstanding), NULL)) {
+   if (pthread_cond_init(&rsrclog->nooutstanding, NULL)) {
       LOG(LOG_ERR, "Failed to initialize condition on new resourcelog struct\n");
-      pthread_mutex_destroy(&(rsrclog->lock));
+      pthread_mutex_destroy(&rsrclog->lock);
       free(rsrclog);
       return -1;
    }
-   if (pthread_mutex_lock(&(rsrclog->lock))) {
+   if (pthread_mutex_lock(&rsrclog->lock)) {
       LOG(LOG_ERR, "Failed to acquire new resourcelog lock\n");
-      pthread_cond_destroy(&(rsrclog->nooutstanding));
-      pthread_mutex_destroy(&(rsrclog->lock));
+      pthread_cond_destroy(&rsrclog->nooutstanding);
+      pthread_mutex_destroy(&rsrclog->lock);
       free(rsrclog);
       return -1;
    }
    rsrclog->outstandingcnt = 0;
    rsrclog->type = type; // may be updated later
-   bzero(&(rsrclog->summary), sizeof(struct operation_summary_struct));
+   bzero(&rsrclog->summary, sizeof(struct operation_summary_struct));
    rsrclog->inprogress = NULL;
    rsrclog->logfile = -1;
    rsrclog->logfilepath = NULL;
@@ -1374,9 +1374,9 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
    rsrclog->logfilepath = strdup(logpath);
    if (rsrclog->logfilepath == NULL) {
       LOG(LOG_ERR, "Failed to duplicate logfile path: \"%s\"\n", logpath);
-      pthread_mutex_unlock(&(rsrclog->lock));
-      pthread_cond_destroy(&(rsrclog->nooutstanding));
-      pthread_mutex_destroy(&(rsrclog->lock));
+      pthread_mutex_unlock(&rsrclog->lock);
+      pthread_cond_destroy(&rsrclog->nooutstanding);
+      pthread_mutex_destroy(&rsrclog->lock);
       free(rsrclog);
       return -1;
    }
@@ -1469,7 +1469,7 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
          }
       }
       // when reading a log, we can exit early
-      if (pthread_mutex_unlock(&(rsrclog->lock))) {
+      if (pthread_mutex_unlock(&rsrclog->lock)) {
          LOG(LOG_ERR, "Failed to relinquish resourcelog lock\n");
          cleanuplog(rsrclog, 1);
          return -1;
@@ -1627,7 +1627,7 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
 
 
    // finally done
-   if (pthread_mutex_unlock(&(rsrclog->lock))) {
+   if (pthread_mutex_unlock(&rsrclog->lock)) {
       LOG(LOG_ERR, "Failed to relinquish resourcelog lock\n");
       cleanuplog(rsrclog, 1);
       return -1;
@@ -1667,13 +1667,13 @@ int resourcelog_replay(RESOURCELOG* inputlog, RESOURCELOG* outputlog, int (*filt
    RESOURCELOG inrsrclog = *inputlog;
    RESOURCELOG outrsrclog = *outputlog;
    // acquire both resourcelog locks
-   if (pthread_mutex_lock(&(inrsrclog->lock))) {
+   if (pthread_mutex_lock(&inrsrclog->lock)) {
       LOG(LOG_ERR, "Failed to acquire input resourcelog lock\n");
       return -1;
    }
-   if (pthread_mutex_lock(&(outrsrclog->lock))) {
+   if (pthread_mutex_lock(&outrsrclog->lock)) {
       LOG(LOG_ERR, "Failed to acquire output resourcelog lock\n");
-      pthread_mutex_unlock(&(inrsrclog->lock));
+      pthread_mutex_unlock(&inrsrclog->lock);
       return -1;
    }
    // process all entries from the current resourcelog
@@ -1685,8 +1685,8 @@ int resourcelog_replay(RESOURCELOG* inputlog, RESOURCELOG* outputlog, int (*filt
       opinfo* dupop = resourcelog_dupopinfo(parsedop);
       if (dupop == NULL) {
          LOG(LOG_ERR, "Failed to duplicate parsed operation chain\n");
-         pthread_mutex_unlock(&(inrsrclog->lock));
-         pthread_mutex_unlock(&(outrsrclog->lock));
+         pthread_mutex_unlock(&inrsrclog->lock);
+         pthread_mutex_unlock(&outrsrclog->lock);
          resourcelog_freeopinfo(parsedop);
          return -1;
       }
@@ -1696,10 +1696,10 @@ int resourcelog_replay(RESOURCELOG* inputlog, RESOURCELOG* outputlog, int (*filt
          // incorporate the op into our current state
          if ((outrsrclog->type & ~(RESOURCE_READ_LOG)) == RESOURCE_MODIFY_LOG) {
             dofree = 0;
-            if (processopinfo(outrsrclog, parsedop, NULL, &(dofree)) < 0) {
+            if (processopinfo(outrsrclog, parsedop, NULL, &dofree) < 0) {
                LOG(LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", inrsrclog->logfilepath);
-               pthread_mutex_unlock(&(inrsrclog->lock));
-               pthread_mutex_unlock(&(outrsrclog->lock));
+               pthread_mutex_unlock(&inrsrclog->lock);
+               pthread_mutex_unlock(&outrsrclog->lock);
                resourcelog_freeopinfo(dupop);
                resourcelog_freeopinfo(parsedop);
                return -1;
@@ -1709,8 +1709,8 @@ int resourcelog_replay(RESOURCELOG* inputlog, RESOURCELOG* outputlog, int (*filt
          if (printlogline(outrsrclog->logfile, dupop)) {
             LOG(LOG_ERR, "Failed to duplicate op from input logfile \"%s\" into active log: \"%s\"\n",
                  inrsrclog->logfilepath, outrsrclog->logfilepath);
-            pthread_mutex_unlock(&(inrsrclog->lock));
-            pthread_mutex_unlock(&(outrsrclog->lock));
+            pthread_mutex_unlock(&inrsrclog->lock);
+            pthread_mutex_unlock(&outrsrclog->lock);
             resourcelog_freeopinfo(dupop);
             if (dofree)
                resourcelog_freeopinfo(parsedop);
@@ -1724,25 +1724,25 @@ int resourcelog_replay(RESOURCELOG* inputlog, RESOURCELOG* outputlog, int (*filt
    }
    if (eof != 1) {
       LOG(LOG_ERR, "Failed to parse input logfile: \"%s\"\n", inrsrclog->logfilepath);
-      pthread_mutex_unlock(&(inrsrclog->lock));
-      pthread_mutex_unlock(&(outrsrclog->lock));
+      pthread_mutex_unlock(&inrsrclog->lock);
+      pthread_mutex_unlock(&outrsrclog->lock);
       return -1;
    }
    LOG(LOG_INFO, "Replayed %zu ops from input log (\"%s\") into output log (\"%s\")\n",
                   opcnt, inrsrclog->logfilepath, outrsrclog->logfilepath);
    // cleanup the inputlog
    *inputlog = NULL;
-   pthread_mutex_unlock(&(inrsrclog->lock));
-   if (resourcelog_term(&(inrsrclog), NULL, 1)) {
+   pthread_mutex_unlock(&inrsrclog->lock);
+   if (resourcelog_term(&inrsrclog, NULL, 1)) {
       LOG(LOG_ERR, "Failed to cleanup input logfile\n");
-      pthread_mutex_unlock(&(outrsrclog->lock));
+      pthread_mutex_unlock(&outrsrclog->lock);
       return -1;
    }
    if (outrsrclog->outstandingcnt == 0) {
       // potentially signal that the output log has quiesced
-      pthread_cond_signal(&(outrsrclog->nooutstanding));
+      pthread_cond_signal(&outrsrclog->nooutstanding);
    }
-   pthread_mutex_unlock(&(outrsrclog->lock));
+   pthread_mutex_unlock(&outrsrclog->lock);
    return 0;
 }
 
@@ -1766,25 +1766,25 @@ int resourcelog_update_inflight(RESOURCELOG* resourcelog, ssize_t numops) {
       return -1;
    }
    // acquire resourcelog lock
-   if (pthread_mutex_lock(&(rsrclog->lock))) {
+   if (pthread_mutex_lock(&rsrclog->lock)) {
       LOG(LOG_ERR, "Failed to acquire resourcelog lock\n");
       return -1;
    }
    // check for excessive reduction
-   if (rsrclog->outstandingcnt < -(numops)) {
+   if (rsrclog->outstandingcnt < -numops) {
       LOG(LOG_WARNING, "Value of %zd would result in negative thread count\n", numops);
-      numops = -(rsrclog->outstandingcnt);
+      numops = -rsrclog->outstandingcnt;
    }
    // modify count
    rsrclog->outstandingcnt += numops;
    LOG(LOG_INFO, "Modified Outstanding OP Count by %zd, to %zd\n", numops, rsrclog->outstandingcnt);
    // check for quiesced state
-   if (rsrclog->outstandingcnt == 0  &&  pthread_cond_signal(&(rsrclog->nooutstanding))) {
+   if (rsrclog->outstandingcnt == 0  &&  pthread_cond_signal(&rsrclog->nooutstanding)) {
       LOG(LOG_ERR, "Failed to signal 'no outstanding ops' condition\n");
-      pthread_mutex_unlock(&(rsrclog->lock));
+      pthread_mutex_unlock(&rsrclog->lock);
       return -1;
    }
-   if (pthread_mutex_unlock(&(rsrclog->lock))) {
+   if (pthread_mutex_unlock(&rsrclog->lock)) {
       LOG(LOG_ERR, "Failed to release resourcelog lock\n");
       return -1;
    }
@@ -1822,7 +1822,7 @@ int resourcelog_processop(RESOURCELOG* resourcelog, opinfo* op, char* progress) 
    }
    RESOURCELOG rsrclog = *resourcelog;
    // acquire resourcelog lock
-   if (pthread_mutex_lock(&(rsrclog->lock))) {
+   if (pthread_mutex_lock(&rsrclog->lock)) {
       LOG(LOG_ERR, "Failed to acquire resourcelog lock\n");
       resourcelog_freeopinfo(dupop);
       return -1;
@@ -1835,7 +1835,7 @@ int resourcelog_processop(RESOURCELOG* resourcelog, opinfo* op, char* progress) 
 //         if (parseop->start == 0) {
 //            LOG(LOG_ERR, "Detected op completion struct in chain for RECORD log\n");
 //            errno = EINVAL;
-//            pthread_mutex_unlock(&(rsrclog->lock));
+//            pthread_mutex_unlock(&rsrclog->lock));
 //            resourcelog_freeopinfo(dupop);
 //            return -1;
 //         }
@@ -1844,30 +1844,30 @@ int resourcelog_processop(RESOURCELOG* resourcelog, opinfo* op, char* progress) 
 //   }
    // incorporate operation info
    char dofree = 0;
-   if (processopinfo(rsrclog, dupop, progress, &(dofree))) {
+   if (processopinfo(rsrclog, dupop, progress, &dofree)) {
       LOG(LOG_ERR, "Failed to incorportate op info into MODIFY log\n");
-      pthread_mutex_unlock(&(rsrclog->lock));
+      pthread_mutex_unlock(&rsrclog->lock);
       resourcelog_freeopinfo(dupop);
       return -1;
    }
    // output the operation to the actual log file (must use the initial, unmodified op)
    if (printlogline(rsrclog->logfile, op)) {
       LOG(LOG_ERR, "Failed to output operation info to logfile: \"%s\"\n", rsrclog->logfilepath);
-      pthread_mutex_unlock(&(rsrclog->lock));
+      pthread_mutex_unlock(&rsrclog->lock);
       if (dofree)
          resourcelog_freeopinfo(dupop);
       return -1;
    }
    // check for quiesced state
    if (rsrclog->type == RESOURCE_MODIFY_LOG  &&
-        rsrclog->outstandingcnt == 0  &&  pthread_cond_signal(&(rsrclog->nooutstanding))) {
+        rsrclog->outstandingcnt == 0  &&  pthread_cond_signal(&rsrclog->nooutstanding)) {
       LOG(LOG_ERR, "Failed to signal 'no outstanding ops' condition\n");
-      pthread_mutex_unlock(&(rsrclog->lock));
+      pthread_mutex_unlock(&rsrclog->lock);
       if (dofree)
          resourcelog_freeopinfo(dupop);
       return -1;
    }
-   if (pthread_mutex_unlock(&(rsrclog->lock))) {
+   if (pthread_mutex_unlock(&rsrclog->lock)) {
       LOG(LOG_ERR, "Failed to release resourcelog lock\n");
       if (dofree)
          resourcelog_freeopinfo(dupop);
@@ -1903,7 +1903,7 @@ int resourcelog_readop(RESOURCELOG* resourcelog, opinfo** op) {
    }
    RESOURCELOG rsrclog = *resourcelog;
    // acquire resourcelog lock
-   if (pthread_mutex_lock(&(rsrclog->lock))) {
+   if (pthread_mutex_lock(&rsrclog->lock)) {
       LOG(LOG_ERR, "Failed to acquire resourcelog lock\n");
       return -1;
    }
@@ -1913,18 +1913,18 @@ int resourcelog_readop(RESOURCELOG* resourcelog, opinfo** op) {
    if (parsedop == NULL) {
       if (eof < 0) {
          LOG(LOG_ERR, "Hit unexpected EOF on logfile: \"%s\"\n", rsrclog->logfilepath);
-         pthread_mutex_unlock(&(rsrclog->lock));
+         pthread_mutex_unlock(&rsrclog->lock);
          return -1;
       }
       if (eof == 0) {
          LOG(LOG_ERR, "Failed to parse operation info from logfile: \"%s\"\n", rsrclog->logfilepath);
-         pthread_mutex_unlock(&(rsrclog->lock));
+         pthread_mutex_unlock(&rsrclog->lock);
          return -1;
       }
       LOG(LOG_INFO, "Hit EOF on logfile: \"%s\"\n", rsrclog->logfilepath);
    }
    // release the log lock
-   if (pthread_mutex_unlock(&(rsrclog->lock))) {
+   if (pthread_mutex_unlock(&rsrclog->lock)) {
       LOG(LOG_ERR, "Failed to release resourcelog lock\n");
       return -1;
    }
@@ -1950,14 +1950,14 @@ int resourcelog_term(RESOURCELOG* resourcelog, operation_summary* summary, char 
    }
    RESOURCELOG rsrclog = *resourcelog;
    // acquire the resourcelog lock
-   if (pthread_mutex_lock(&(rsrclog->lock))) {
+   if (pthread_mutex_lock(&rsrclog->lock)) {
       LOG(LOG_ERR, "Failed to acquire resourcelog lock\n");
       return -1;
    }
    // abort if any outstanding ops remain
    if (rsrclog->outstandingcnt != 0) {
       LOG(LOG_ERR, "Resourcelog still has %zd outstanding operations\n", rsrclog->outstandingcnt);
-      pthread_mutex_unlock(&(rsrclog->lock));
+      pthread_mutex_unlock(&rsrclog->lock);
       errno = EAGAIN;
       return -1;
    }
