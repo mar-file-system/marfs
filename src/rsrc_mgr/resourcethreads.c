@@ -92,7 +92,7 @@ int resourceinput_init(RESOURCEINPUT* resourceinput, marfs_position* pos, size_t
       return -1;
    }
    // allocate a new resourceinput
-   RESOURCEINPUT rin = malloc(sizeof(struct resourceinput_struct));
+   RESOURCEINPUT rin = malloc(sizeof(*rin));
    if (rin == NULL) {
       LOG(LOG_ERR, "Failed to allocate space for a new resourceinput\n");
       return -1;
@@ -582,13 +582,13 @@ int rthread_init_func(unsigned int tID, void* global_state, void** state) {
    // cast values to appropriate types
    rthread_global_state* gstate = (rthread_global_state*)global_state;
    // allocate thread state
-   rthread_state* tstate = malloc(sizeof(struct rthread_state_struct));
+   rthread_state* tstate = malloc(sizeof(*tstate));
    if (tstate == NULL) {
       LOG(LOG_ERR, "Thread %u failed to allocate state structure\n", tID);
       return -1;
    }
    // populate thread state
-   memset(tstate, 0, sizeof(struct rthread_state_struct));
+   memset(tstate, 0, sizeof(*tstate));
    tstate->tID = tID;
    tstate->gstate = gstate;
    *state = tstate;

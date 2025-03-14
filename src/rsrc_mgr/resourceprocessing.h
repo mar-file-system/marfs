@@ -14,7 +14,7 @@ LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
 FOR THE USE OF THIS SOFTWARE.  If software is modified to produce
 derivative works, such modified software should be clearly marked, so
 as not to confuse it with the version available from LANL.
- 
+
 Additionally, redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the following
 conditions are met: 1. Redistributions of source code must retain the
@@ -63,7 +63,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "datastream/datastream.h"
 
-typedef struct threshold_struct {
+typedef struct {
    time_t gcthreshold;      // files newer than this will not be GCd
                             //    Recommendation -- this should be fairly old ( # of days ago )
    time_t repackthreshold;  // files newer than this will not be repacked
@@ -77,7 +77,7 @@ typedef struct threshold_struct {
    // NOTE -- setting any of these values to zero will cause the corresponding operations to be skipped
 } thresholds;
 
-typedef struct streamwalker_report_struct {
+typedef struct {
    // quota info
    size_t fileusage;   // count of active files
    size_t byteusage;   // count of active bytes
@@ -100,8 +100,8 @@ typedef struct streamwalker_report_struct {
 } streamwalker_report;
 
 // forward decls of internal types
-typedef struct repackstreamer_struct* REPACKSTREAMER;
-typedef struct streamwalker_struct* streamwalker;
+typedef struct repackstreamer* REPACKSTREAMER;
+typedef struct streamwalker* streamwalker;
 
 
 //   -------------   REPACKSTREAMER FUNCTIONS    -------------
@@ -231,4 +231,3 @@ int process_executeoperation( marfs_position* pos, opinfo* op, RESOURCELOG* rlog
 
 
 #endif // _RESOURCEPROCESSING_H
-

@@ -79,12 +79,12 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define MODIFY_LOG_PREFIX "RESOURCE-MODIFY-LOGFILE\n" // prefix for a 'modify'-log
                                                       //    - mix of op starts and completions
 
-typedef struct opchain_struct {
-   struct opchain_struct* next; // subsequent op chains in this list (or NULL, if none remain)
-   struct opinfo_struct* chain; // ops in this chain
+typedef struct opchain {
+   struct opchain* next; // subsequent op chains in this list (or NULL, if none remain)
+   struct opinfo* chain; // ops in this chain
 } opchain;
 
-typedef struct resourcelog_struct {
+typedef struct resourcelog {
    // synchronization and access control
    pthread_mutex_t   lock;
    pthread_cond_t    nooutstanding;  // left NULL for a 'record' log
@@ -194,7 +194,7 @@ opinfo* parselogline(int logfile, char* eof) {
    }
    *eof = 0; // preemptively populate with zero
    // allocate our operation node
-   opinfo* op = malloc(sizeof(struct opinfo_struct));
+   opinfo* op = malloc(sizeof(*op));
    if (op == NULL) {
       LOG(LOG_ERR, "Failed to allocate opinfo struct for logfile line\n");
       lseek(logfile, origoff, SEEK_SET);
@@ -214,7 +214,7 @@ opinfo* parselogline(int logfile, char* eof) {
       op->type = MARFS_DELETE_OBJ_OP;
       parseloc += 8;
       // allocate delobj_info
-      delobj_info* extinfo = calloc(1, sizeof(struct delobj_info_struct));
+      delobj_info* extinfo = calloc(1, sizeof(*extinfo));
       if (extinfo == NULL) {
          LOG(LOG_ERR, "Failed to allocate space for DEL-OBJ extended info\n");
          free(op);
@@ -257,7 +257,7 @@ opinfo* parselogline(int logfile, char* eof) {
       op->type = MARFS_DELETE_REF_OP;
       parseloc += 8;
       // allocate delref_info
-      delref_info* extinfo = calloc(1, sizeof(struct delref_info_struct));
+      delref_info* extinfo = calloc(1, sizeof(*extinfo));
       if (extinfo == NULL) {
          LOG(LOG_ERR, "Failed to allocate space for DEL-REF extended info\n");
          free(op);
@@ -331,7 +331,7 @@ opinfo* parselogline(int logfile, char* eof) {
       rebuild_info* extinfo = NULL;
       if (strncmp(parseloc, "{ ", 2) == 0) {
          // allocate rebuild_info
-         extinfo = calloc(1, sizeof(struct rebuild_info_struct));
+         extinfo = calloc(1, sizeof(*extinfo));
          if (extinfo == NULL) {
             LOG(LOG_ERR, "Failed to allocate space for REBUILD extended info\n");
             free(op);
@@ -418,7 +418,7 @@ opinfo* parselogline(int logfile, char* eof) {
       op->type = MARFS_REPACK_OP;
       parseloc += 7;
       // allocate repack_info
-      repack_info* extinfo = calloc(1, sizeof(struct repack_info_struct));
+      repack_info* extinfo = calloc(1, sizeof(*extinfo));
       if (extinfo == NULL) {
          LOG(LOG_ERR, "Failed to allocate space for REPACK extended info\n");
          free(op);
@@ -946,7 +946,7 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
       }
       if (rsrclog->type == RESOURCE_MODIFY_LOG) {
          // stitch the new op chain onto the end of our inprogress list
-         *prevchainref = calloc(1, sizeof(struct opchain_struct));
+         *prevchainref = calloc(1, sizeof(**prevchainref));
          if (*prevchainref == NULL) {
             LOG(LOG_ERR, "Failed to allocate space for a new operation chain struct\n");
             return -1;
@@ -1044,7 +1044,7 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
    opinfo** newop = &genchain;
    while (op) {
       // allocate a new op struct
-      *newop = malloc(sizeof(struct opinfo_struct));
+      *newop = malloc(sizeof(**newop));
       if (*newop == NULL) {
          LOG(LOG_ERR, "Failed to allocate new operation info struct\n");
          resourcelog_freeopinfo(genchain);
@@ -1073,7 +1073,7 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
             case MARFS_DELETE_OBJ_OP:
                {
                   delobj_info* extinfo = (delobj_info*)op->extendedinfo;
-                  delobj_info* newinfo = malloc(sizeof(struct delobj_info_struct));
+                  delobj_info* newinfo = malloc(sizeof(*newinfo));
                   if (newinfo == NULL) {
                      LOG(LOG_ERR, "Failed to allocate delobj extended info\n");
                      resourcelog_freeopinfo(genchain);
@@ -1086,7 +1086,7 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
             case MARFS_DELETE_REF_OP:
                {
                   delref_info* extinfo = (delref_info*)op->extendedinfo;
-                  delref_info* newinfo = malloc(sizeof(struct delref_info_struct));
+                  delref_info* newinfo = malloc(sizeof(*newinfo));
                   if (newinfo == NULL) {
                      LOG(LOG_ERR, "Failed to allocate delref extended info\n");
                      resourcelog_freeopinfo(genchain);
@@ -1103,7 +1103,7 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
                   // must allow for rebuild ops without extended info (rebuild by location case)
                   if (extinfo) {
                      // duplicate extended info
-                     newinfo = calloc(1, sizeof(struct rebuild_info_struct));
+                     newinfo = calloc(1, sizeof(*newinfo));
                      if (newinfo == NULL) {
                         LOG(LOG_ERR, "Failed to allocate rebuild extended info\n");
                         resourcelog_freeopinfo(genchain);
@@ -1140,7 +1140,7 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
             case MARFS_REPACK_OP:
                {
                   repack_info* extinfo = (repack_info*)op->extendedinfo;
-                  repack_info* newinfo = malloc(sizeof(struct repack_info_struct));
+                  repack_info* newinfo = malloc(sizeof(*newinfo));
                   if (newinfo == NULL) {
                      LOG(LOG_ERR, "Failed to allocate repack extended info\n");
                      resourcelog_freeopinfo(genchain);
@@ -1341,7 +1341,7 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
    // identify our actual resourcelog
    RESOURCELOG rsrclog = *resourcelog;
    // allocate a new resourcelog
-   rsrclog = malloc(sizeof(struct resourcelog_struct));
+   rsrclog = malloc(sizeof(*rsrclog));
    if (rsrclog == NULL) {
       LOG(LOG_ERR, "Failed to allocate space for a new resourcelog\n");
       return -1;
@@ -1366,7 +1366,7 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
    }
    rsrclog->outstandingcnt = 0;
    rsrclog->type = type; // may be updated later
-   memset(&rsrclog->summary, 0, sizeof(struct operation_summary_struct));
+   memset(&rsrclog->summary, 0, sizeof(rsrclog->summary));
    rsrclog->inprogress = NULL;
    rsrclog->logfile = -1;
    rsrclog->logfilepath = NULL;

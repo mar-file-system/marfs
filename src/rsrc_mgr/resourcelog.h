@@ -14,7 +14,7 @@ LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
 FOR THE USE OF THIS SOFTWARE.  If software is modified to produce
 derivative works, such modified software should be clearly marked, so
 as not to confuse it with the version available from LANL.
- 
+
 Additionally, redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the following
 conditions are met: 1. Redistributions of source code must retain the
@@ -61,17 +61,17 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "config/config.h"
 #include "tagging/tagging.h"
 
-typedef struct resourcelog_struct* RESOURCELOG;
+typedef struct resourcelog* RESOURCELOG;
 
 typedef enum
 {
    RESOURCE_RECORD_LOG = 0,
    RESOURCE_MODIFY_LOG = 1,
    RESOURCE_READ_LOG = 2
-   // NOTE -- The caller should treat each of these type values as exclusive ( one of the three values ), when 
+   // NOTE -- The caller should treat each of these type values as exclusive ( one of the three values ), when
    //         providing them as arguments to resourcelog_init().
    //         However, the underlying resourcelog code treats 'RESOURCE_READ_LOG' as a bitflag for internal typing.
-   //         As in, it will store internal type values for read resourcelogs as a bitwise OR between this value and  
+   //         As in, it will store internal type values for read resourcelogs as a bitwise OR between this value and
    //         one of the other two.  This allows it to track both that it is reading and from what type of log.
 } resourcelog_type;
 
@@ -83,36 +83,36 @@ typedef enum
    MARFS_REPACK_OP
 } operation_type;
 
-typedef struct opinfo_struct {
+typedef struct opinfo {
    operation_type type;  // which class of operation
    void* extendedinfo;   // extra, operation-specific, info
    char start;           // flag indicating the start of an op ( if zero, this entry indicates completion )
    size_t count;         // how many targets are there
    int errval;           // errno value of the attempted op ( always zero for operation start )
    FTAG ftag;            // which FTAG value is the target
-   struct opinfo_struct* next; // subsequent ops in this chain ( or NULL, if none remain )
+   struct opinfo* next;  // subsequent ops in this chain ( or NULL, if none remain )
 } opinfo;
 
-typedef struct delobj_info_struct {
+typedef struct {
    size_t offset; // offset of the objects to begin deletion at ( used for spliting del ops across threads )
 } delobj_info;
 
-typedef struct delref_info_struct {
+typedef struct {
    size_t prev_active_index; // index of the closest active ( not to be deleted ) reference in the stream
    char   delzero; // deleted zero flag, indicating that the data object(s) referenced by fileno zero have been deleted
    char   eos; // end-of-stream flag, indicating that this delete will make prev_active_index the new EOS
 } delref_info;
 
-typedef struct rebuild_info_struct {
+typedef struct {
    char* markerpath; // rpath of the rebuild marker associated with this operation ( or NULL, if none present )
    RTAG* rtag;       // rebuild tag value from the marker ( or NULL, if none present )
 } rebuild_info;
 
-typedef struct repack_info_struct {
+typedef struct {
    size_t totalbytes; // total count of bytes to be repacked
 } repack_info;
 
-typedef struct operation_summary_struct {
+typedef struct {
    size_t deletion_object_count;
    size_t deletion_object_failures;
    size_t deletion_reference_count;
@@ -122,8 +122,6 @@ typedef struct operation_summary_struct {
    size_t repack_count;
    size_t repack_failures;
 } operation_summary;
-
-typedef struct resourcelog_struct* RESOURCELOG;
 
 
 /**
@@ -155,7 +153,7 @@ char* resourcelog_genlogpath( char create, const char* logroot, const char* iter
 /**
  * Initialize a resourcelog, associated with the given logging root, namespace, and rank
  * @param RESOURCELOG* resourcelog : Statelog to be initialized
- *                             NOTE -- This can either be a NULL value, or a resourcelog which was 
+ *                             NOTE -- This can either be a NULL value, or a resourcelog which was
  *                                     previously terminated / finalized
  * @param resourcelog_type type : Type of resourcelog to open
  * @param const char* logpath : Location of the resourcelog file
@@ -219,4 +217,3 @@ int resourcelog_term( RESOURCELOG* resourcelog, operation_summary* summary, char
 int resourcelog_abort( RESOURCELOG* resourcelog );
 
 #endif // _RESOURCELOG_H
-

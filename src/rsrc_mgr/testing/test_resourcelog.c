@@ -161,11 +161,11 @@ int main(int argc, char **argv)
    }
 
    // create a set of operations
-   opinfo* opset = malloc( sizeof( struct opinfo_struct ) * 4 );
+   opinfo* opset = malloc( sizeof( *opset ) * 4 );
    opinfo* opparse = opset;
    // start of an object deletion op
    opparse->type = MARFS_DELETE_OBJ_OP;
-   opparse->extendedinfo = calloc( 1, sizeof( struct delobj_info_struct ) );
+   opparse->extendedinfo = calloc( 1, sizeof( delobj_info ) );
    if ( opparse->extendedinfo == NULL ) {
       printf( "failed to allocate delobj extended info\n" );
       return -1;
@@ -204,7 +204,7 @@ int main(int argc, char **argv)
    opparse++;
    // start of a ref deletion op
    opparse->type = MARFS_DELETE_REF_OP;
-   opparse->extendedinfo = malloc( sizeof( struct delref_info_struct ) );
+   opparse->extendedinfo = malloc( sizeof( delref_info ) );
    if ( opparse->extendedinfo == NULL ) {
       printf( "failed to allocate delref extended info\n" );
       return -1;
@@ -221,7 +221,7 @@ int main(int argc, char **argv)
    opparse++;
    // start of a rebuild op
    opparse->type = MARFS_REBUILD_OP;
-   opparse->extendedinfo = malloc( sizeof( struct rebuild_info_struct ) );
+   opparse->extendedinfo = malloc( sizeof( rebuild_info ) );
    if ( opparse->extendedinfo == NULL ) {
       printf( "failed to allocate rebuild extended info\n" );
       return -1;
@@ -253,7 +253,7 @@ int main(int argc, char **argv)
    opparse++;
    // start of a repack op
    opparse->type = MARFS_REPACK_OP;
-   opparse->extendedinfo = malloc( sizeof( struct repack_info_struct ) );
+   opparse->extendedinfo = malloc( sizeof( repack_info ) );
    if ( opparse->extendedinfo == NULL ) {
       printf( "failed to allocate repack extended info\n" );
       return -1;
@@ -675,5 +675,3 @@ int main(int argc, char **argv)
 
    return 0;
 }
-
-

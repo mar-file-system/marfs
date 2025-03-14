@@ -115,7 +115,7 @@ int deletesubdirs( const char* basepath ) {
 
 int main(int argc, char **argv)
 {
-   // NOTE -- I'm ignoring memory leaks for error conditions 
+   // NOTE -- I'm ignoring memory leaks for error conditions
    //         which result in immediate termination
 
    // get a start of run time
@@ -364,7 +364,7 @@ int main(int argc, char **argv)
 
    // set up resource threads
    rthread_global_state gstate;
-   bzero( &(gstate), sizeof( struct rthread_global_state_struct ) );
+   bzero( &(gstate), sizeof( rthread_global_state ) );
    gstate.pos = pos;
    gstate.thresh = thresh;
    if ( resourceinput_init( &(gstate.rinput), &(gstate.pos), 2 ) ) {
@@ -693,7 +693,7 @@ int main(int argc, char **argv)
    origdelstreams += report.delstreams;
    printf( "ODELSTREAMS = %zu\n", origdelstreams );
    reportedstreams = origdelstreams; // include any previously deleted streams
-   bzero( &(report), sizeof( struct streamwalker_report_struct ) );
+   bzero( &(report), sizeof( streamwalker_report ) );
    while ( (retval = tq_next_thread_status( tq, (void**)&(tstate) )) > 0 ) {
       if ( tstate == NULL ) {
          printf( "received a NULL thread status for second walk\n" );
@@ -738,7 +738,7 @@ int main(int argc, char **argv)
       printf( "failed to destroy second walk input\n" );
       return -1;
    }
-   bzero( &(summary), sizeof( struct operation_summary_struct ) );
+   bzero( &(summary), sizeof( operation_summary ) );
    if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following second walk\n" );
       return -1;
@@ -932,7 +932,7 @@ int main(int argc, char **argv)
    origdelstreams += report.delstreams;
    printf( "ODELSTREAMS = %zu\n", origdelstreams );
    reportedstreams = origdelstreams; // include any previously deleted streams
-   bzero( &(report), sizeof( struct streamwalker_report_struct ) );
+   bzero( &(report), sizeof( streamwalker_report ) );
    while ( (retval = tq_next_thread_status( tq, (void**)&(tstate) )) > 0 ) {
       if ( tstate == NULL ) {
          printf( "received a NULL thread status for third walk\n" );
@@ -977,7 +977,7 @@ int main(int argc, char **argv)
       printf( "failed to destroy third walk input\n" );
       return -1;
    }
-   bzero( &(summary), sizeof( struct operation_summary_struct ) );
+   bzero( &(summary), sizeof( operation_summary ) );
    if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following third walk\n" );
       return -1;
@@ -1106,7 +1106,7 @@ int main(int argc, char **argv)
    origdelstreams += report.delstreams;
    printf( "ODELSTREAMS = %zu\n", origdelstreams );
    reportedstreams = origdelstreams; // include any previously deleted streams
-   bzero( &(report), sizeof( struct streamwalker_report_struct ) );
+   bzero( &(report), sizeof( streamwalker_report ) );
    while ( (retval = tq_next_thread_status( tq, (void**)&(tstate) )) > 0 ) {
       if ( tstate == NULL ) {
          printf( "received a NULL thread status for final walk\n" );
@@ -1151,7 +1151,7 @@ int main(int argc, char **argv)
       printf( "failed to destroy final walk input\n" );
       return -1;
    }
-   bzero( &(summary), sizeof( struct operation_summary_struct ) );
+   bzero( &(summary), sizeof( operation_summary ) );
    if ( resourcelog_term( &(gstate.rlog), &(summary), 1 ) ) {
       printf( "failed to terminate resource log following final walk\n" );
       return -1;
@@ -1244,5 +1244,3 @@ int main(int argc, char **argv)
 
    return 0;
 }
-
-

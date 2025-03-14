@@ -105,7 +105,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define OLDLOG_PREALLOC 16  // pre-allocate space for 16 logfiles in the oldlogs hash table (double from there, as needed)
 #define MAX_ERROR_BUFFER MAX_STR_BUFFER + 100  // define our error strings as slightly larger than the error message itself
 
-typedef struct rmanstate_struct {
+typedef struct {
    // Per-Run Rank State
    size_t        ranknum;
    size_t        totalranks;
@@ -152,7 +152,7 @@ typedef enum {
    ABORT_WORK      // request to abort all processing and terminate
 } worktype;
 
-typedef struct workrequest_struct {
+typedef struct {
    worktype  type;
    // NS target info
    size_t    nsindex;
@@ -162,7 +162,7 @@ typedef struct workrequest_struct {
    size_t    ranknum;
 } workrequest;
 
-typedef struct workresponse_struct {
+typedef struct {
    workrequest request;
    // Work results
    char                 haveinfo;
@@ -173,7 +173,7 @@ typedef struct workresponse_struct {
    char                 errorstr[MAX_ERROR_BUFFER];
 } workresponse;
 
-typedef struct loginfo_struct {
+typedef struct {
    size_t nsindex;
    size_t logcount;
    workrequest* requests;
@@ -659,7 +659,7 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
          return -1;
       }
       // node weight should be pre-zeroed by calloc()
-      (lognodelist + pindex)->content = calloc(1, sizeof(struct loginfo_struct));
+      (lognodelist + pindex)->content = calloc(1, sizeof(loginfo));
       if ((lognodelist + pindex)->content == NULL) {
          LOG(LOG_ERR, "Failed to allocate a loginfo struct (%s)\n", strerror(errno));
          free((lognodelist + pindex)->name);
@@ -810,7 +810,7 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
             }
             // parse args into a temporary state struct, for comparison
             rmanstate tmpstate;
-            memset(&tmpstate, 0, sizeof(struct rmanstate_struct));
+            memset(&tmpstate, 0, sizeof(tmpstate));
             tmpstate.config = rman->config;
             int parseargres = parse_program_args(&tmpstate, summaryfile);
             fclose(summaryfile);
@@ -968,7 +968,7 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
          // populate the HASH_TABLE entry with the newly completed request
          if (linfo->logcount % OLDLOG_PREALLOC == 0) {
             // logs are allocated in groups of OLDLOG_PREALLOC, so we can use modulo to check for overflow
-            workrequest* newrequests = realloc(linfo->requests, (linfo->logcount + OLDLOG_PREALLOC) * sizeof(struct workrequest_struct));
+            workrequest* newrequests = realloc(linfo->requests, (linfo->logcount + OLDLOG_PREALLOC) * sizeof(*newrequests));
             if (newrequests == NULL) {
                LOG(LOG_ERR, "Failed to allocate a list of old log requests with length %zu\n", linfo->logcount + OLDLOG_PREALLOC);
                return -1;
@@ -1000,8 +1000,8 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
    // pre-populate response with a 'fatal error' condition, just in case
    response->request = *request;
    response->haveinfo = 0;
-   memset(&response->report, 0, sizeof(struct streamwalker_report_struct));
-   memset(&response->summary, 0, sizeof(struct operation_summary_struct));
+   memset(&response->report, 0, sizeof(response->report));
+   memset(&response->summary, 0, sizeof(response->summary));
    response->errorlog = 0;
    response->fatalerror = 1;
    snprintf(response->errorstr, MAX_ERROR_BUFFER, "UNKNOWN-ERROR!");
@@ -1652,10 +1652,10 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
 int managerbehavior(rmanstate* rman) {
    // setup out response and request structs
    workresponse response;
-   memset(&response, 0, sizeof(struct workresponse_struct));
+   memset(&response, 0, sizeof(response));
    size_t respondingrank = 0;
    workrequest  request;
-   memset(&request, 0, sizeof(struct workrequest_struct));
+   memset(&request, 0, sizeof(request));
    if (rman->totalranks == 1) {
       // we need to fake our own 'startup' response
       response.request.type = COMPLETE_WORK;
@@ -1668,7 +1668,7 @@ int managerbehavior(rmanstate* rman) {
       if (rman->totalranks > 1) {
 #ifdef RMAN_USE_MPI
          MPI_Status msgstatus;
-         if (MPI_Recv(&response, sizeof(struct workresponse_struct), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &msgstatus)) {
+         if (MPI_Recv(&response, sizeof(response), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &msgstatus)) {
             LOG(LOG_ERR, "Failed to recieve a response\n");
             fprintf(stderr, "ERROR: Failed to receive an MPI response message\n");
             return -1;
@@ -1690,7 +1690,7 @@ int managerbehavior(rmanstate* rman) {
          if (rman->totalranks > 1) {
 #ifdef RMAN_USE_MPI
             // send out the request via MPI to the responding rank
-            if (MPI_Send(&request, sizeof(struct workrequest_struct), MPI_BYTE, respondingrank, 0, MPI_COMM_WORLD)) {
+            if (MPI_Send(&request, sizeof(request), MPI_BYTE, respondingrank, 0, MPI_COMM_WORLD)) {
                LOG(LOG_ERR, "Failed to send a request\n");
                fprintf(stderr, "ERROR: Failed to send an MPI request message\n");
                return -1;
@@ -1871,14 +1871,14 @@ int workerbehavior(rmanstate* rman) {
 #ifdef RMAN_USE_MPI
    // setup out response and request structs
    workresponse response;
-   memset(&response, 0, sizeof(struct workresponse_struct));
+   memset(&response, 0, sizeof(response));
    workrequest  request;
-   memset(&request, 0, sizeof(struct workrequest_struct));
+   memset(&request, 0, sizeof(request));
    // we need to fake a 'startup' response
    response.request.type = COMPLETE_WORK;
    response.request.nsindex = rman->nscount;
    // begin by sending a response
-   if (MPI_Send(&response, sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD)) {
+   if (MPI_Send(&response, sizeof(response), MPI_BYTE, 0, 0, MPI_COMM_WORLD)) {
       LOG(LOG_ERR, "Failed to send initial 'dummy' response\n");
       fprintf(stderr, "ERROR: Failed to send an initial MPI response message\n");
       return -1;
@@ -1887,7 +1887,7 @@ int workerbehavior(rmanstate* rman) {
    int handleres = 1;
    while (handleres) {
       // wait for a new request
-      if (MPI_Recv(&request, sizeof(struct workrequest_struct), MPI_BYTE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE)) {
+      if (MPI_Recv(&request, sizeof(request), MPI_BYTE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE)) {
          LOG(LOG_ERR, "Failed to recieve a new request\n");
          fprintf(stderr, "ERROR: Failed to receive an MPI request message\n");
          return -1;
@@ -1896,11 +1896,11 @@ int workerbehavior(rmanstate* rman) {
       if ((handleres = handlerequest(rman, &request, &response)) < 0) {
          LOG(LOG_ERR, "Fatal error detected during request processing: \"%s\"\n", response.errorstr);
          // send out our response anyway, so the manger prints our error message
-         MPI_Send(&response, sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+         MPI_Send(&response, sizeof(response), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
          return -1;
       }
       // send out our response
-      if (MPI_Send(&response, sizeof(struct workresponse_struct), MPI_BYTE, 0, 0, MPI_COMM_WORLD)) {
+      if (MPI_Send(&response, sizeof(response), MPI_BYTE, 0, 0, MPI_COMM_WORLD)) {
          LOG(LOG_ERR, "Failed to send a response\n");
          fprintf(stderr, "ERROR: Failed to send an MPI response message\n");
          return -1;
@@ -1932,7 +1932,7 @@ int main(int argc, char** argv) {
    char* ns_path = ".";
    char recurse = 0;
    rmanstate rman;
-   memset(&rman, 0, sizeof(struct rmanstate_struct));
+   memset(&rman, 0, sizeof(rman));
    rman.gstate.numprodthreads = DEFAULT_PRODUCER_COUNT;
    rman.gstate.numconsthreads = DEFAULT_CONSUMER_COUNT;
    rman.gstate.rebuildloc.pod = -1;
@@ -2445,7 +2445,7 @@ int main(int argc, char** argv) {
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
-   rman.walkreport = calloc(sizeof(struct streamwalker_report_struct), rman.nscount);
+   rman.walkreport = calloc(sizeof(*rman.walkreport), rman.nscount);
    if (rman.walkreport == NULL) {
       fprintf(stderr, "ERROR: Failed to allocate a 'walkreport' list of length %zu\n", rman.nscount);
       free(rman.terminatedworkers);
@@ -2455,7 +2455,7 @@ int main(int argc, char** argv) {
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
-   rman.logsummary = calloc(sizeof(struct operation_summary_struct), rman.nscount);
+   rman.logsummary = calloc(sizeof(*rman.logsummary), rman.nscount);
    if (rman.logsummary == NULL) {
       fprintf(stderr, "ERROR: Failed to allocate a 'logsummary' list of length %zu\n", rman.nscount);
       free(rman.walkreport);

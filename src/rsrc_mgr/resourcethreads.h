@@ -14,7 +14,7 @@ LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
 FOR THE USE OF THIS SOFTWARE.  If software is modified to produce
 derivative works, such modified software should be clearly marked, so
 as not to confuse it with the version available from LANL.
- 
+
 Additionally, redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the following
 conditions are met: 1. Redistributions of source code must retain the
@@ -64,7 +64,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #define MAX_STR_BUFFER 1024
 
-typedef struct resourceinput_struct {
+typedef struct {
    // synchronization and access control
    pthread_mutex_t  lock;     // no simultaneous access
    pthread_cond_t   complete; // signaled when all work is handed out
@@ -81,7 +81,7 @@ typedef struct resourceinput_struct {
    ssize_t          refmax;
 }*RESOURCEINPUT;
 
-typedef struct rthread_global_state_struct {
+typedef struct {
    // Required MarFS Values
    marfs_position  pos;
 
@@ -99,7 +99,7 @@ typedef struct rthread_global_state_struct {
    unsigned int    numconsthreads;
 } rthread_global_state;
 
-typedef struct rthread_state_struct {
+typedef struct {
    // universal thread state
    unsigned int              tID;  // thread ID
    char               fatalerror;  // flag indicating some form of fatal thread error
@@ -232,4 +232,3 @@ void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg );
 
 
 #endif // _RESOURCETHREADS_H
-

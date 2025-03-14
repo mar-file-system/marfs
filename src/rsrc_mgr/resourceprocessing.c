@@ -82,7 +82,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define ENOATTR ENODATA
 #endif
 
-typedef struct repackstreamer_struct {
+typedef struct repackstreamer {
    // synchronization and access control
    pthread_mutex_t lock;
    // state info
@@ -91,7 +91,7 @@ typedef struct repackstreamer_struct {
    char* streamstatus;
 }* REPACKSTREAMER;
 
-typedef struct streamwalker_struct {
+typedef struct streamwalker {
    // initialization info
    marfs_position pos;
    time_t      gcthresh;       // time threshold for GCing a file (none performed, if zero)
@@ -132,7 +132,7 @@ typedef struct streamwalker_struct {
  */
 REPACKSTREAMER repackstreamer_init(void) {
    // allocate a new struct
-   REPACKSTREAMER repackst = malloc(sizeof(struct repackstreamer_struct));
+   REPACKSTREAMER repackst = malloc(sizeof(*repackst));
    if (repackst == NULL) {
       LOG(LOG_ERR, "Failed to allocate new repackstreamer\n");
       return NULL;
@@ -1099,7 +1099,7 @@ int process_identifyoperation(opinfo** opchain, operation_type type, FTAG* ftag,
       return 0;
    }
    // allocate a new operation struct
-   opinfo* newop = malloc(sizeof(struct opinfo_struct));
+   opinfo* newop = malloc(sizeof(*newop));
    if (newop == NULL) {
       LOG(LOG_ERR,"Failed to allocate new opinfo structure\n");
       return -1;
@@ -1130,16 +1130,16 @@ int process_identifyoperation(opinfo** opchain, operation_type type, FTAG* ftag,
    // allocate extended info
    switch(type) {
       case MARFS_DELETE_OBJ_OP:
-         newop->extendedinfo = calloc(1, sizeof(struct delobj_info_struct));
+         newop->extendedinfo = calloc(1, sizeof(delobj_info));
          break;
       case MARFS_DELETE_REF_OP:
-         newop->extendedinfo = calloc(1, sizeof(struct delref_info_struct));
+         newop->extendedinfo = calloc(1, sizeof(delref_info));
          break;
       case MARFS_REBUILD_OP:
          newop->extendedinfo = NULL; // do NOT allocate extended info for location-based rebuilds calloc(1, sizeof(struct rebuild_info_struct));
          break;
       case MARFS_REPACK_OP:
-         newop->extendedinfo = calloc(1, sizeof(struct repack_info_struct));
+         newop->extendedinfo = calloc(1, sizeof(repack_info));
          break;
    }
    // check for allocation failure
@@ -1391,7 +1391,7 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
       return NULL;
    }
    // allocate rebuild op extended info
-   rebuild_info* rinfo = calloc(1, sizeof(struct rebuild_info_struct));
+   rebuild_info* rinfo = calloc(1, sizeof(*rinfo));
    if (rinfo == NULL) {
       LOG(LOG_ERR, "Failed to allocate rebuild extended info struct\n");
       ms->mdal->close(mhandle);
@@ -1528,7 +1528,7 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
    }
    *(ftagstr + ftagstrlen) = '\0'; // ensure a NULL-terminated string
    // allocate a new operation struct
-   opinfo* op = calloc(1, sizeof(struct opinfo_struct));
+   opinfo* op = calloc(1, sizeof(*op));
    if (op == NULL) {
       LOG(LOG_ERR, "Failed to allocate opinfo struct\n");
       free(ftagstr);
@@ -1615,7 +1615,7 @@ int process_openstreamwalker(streamwalker* swalker, marfs_position* pos, const c
       return -1;
    }
    // allocate a new streamwalker struct
-   streamwalker walker = malloc(sizeof(struct streamwalker_struct));
+   streamwalker walker = malloc(sizeof(*walker));
    if (walker == NULL) {
       LOG(LOG_ERR, "Failed to allocate streamwalker\n");
       return -1;
@@ -2188,7 +2188,7 @@ int process_iteratestreamwalker(streamwalker* swalker, opinfo** gcops, opinfo** 
                else {
                   // dispatch all ops
                   walker->report.rpckfiles += walker->rpckops->count;
-                  walker->report.rpckbytes += ((struct repack_info_struct*) walker->rpckops->extendedinfo)->totalbytes;
+                  walker->report.rpckbytes += ((repack_info*) walker->rpckops->extendedinfo)->totalbytes;
                   *repackops = walker->rpckops;
                   dispatchedops = 1; // note to exit after this file
                }
@@ -2451,7 +2451,7 @@ int process_iteratestreamwalker(streamwalker* swalker, opinfo** gcops, opinfo** 
          opinfo* repackparse = walker->rpckops;
          while (repackparse) {
             walker->report.rpckfiles += repackparse->count;
-            walker->report.rpckbytes += ((struct repack_info_struct*) repackparse->extendedinfo)->totalbytes;
+            walker->report.rpckbytes += ((repack_info*) repackparse->extendedinfo)->totalbytes;
             repackparse = repackparse->next;
          }
          // dispatch all ops
