@@ -810,7 +810,7 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
             }
             // parse args into a temporary state struct, for comparison
             rmanstate tmpstate;
-            bzero(&tmpstate, sizeof(struct rmanstate_struct));
+            memset(&tmpstate, 0, sizeof(struct rmanstate_struct));
             tmpstate.config = rman->config;
             int parseargres = parse_program_args(&tmpstate, summaryfile);
             fclose(summaryfile);
@@ -1000,8 +1000,8 @@ int handlerequest(rmanstate* rman, workrequest* request, workresponse* response)
    // pre-populate response with a 'fatal error' condition, just in case
    response->request = *request;
    response->haveinfo = 0;
-   bzero(&response->report, sizeof(struct streamwalker_report_struct));
-   bzero(&response->summary, sizeof(struct operation_summary_struct));
+   memset(&response->report, 0, sizeof(struct streamwalker_report_struct));
+   memset(&response->summary, 0, sizeof(struct operation_summary_struct));
    response->errorlog = 0;
    response->fatalerror = 1;
    snprintf(response->errorstr, MAX_ERROR_BUFFER, "UNKNOWN-ERROR!");
@@ -1652,10 +1652,10 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
 int managerbehavior(rmanstate* rman) {
    // setup out response and request structs
    workresponse response;
-   bzero(&response, sizeof(struct workresponse_struct));
+   memset(&response, 0, sizeof(struct workresponse_struct));
    size_t respondingrank = 0;
    workrequest  request;
-   bzero(&request, sizeof(struct workrequest_struct));
+   memset(&request, 0, sizeof(struct workrequest_struct));
    if (rman->totalranks == 1) {
       // we need to fake our own 'startup' response
       response.request.type = COMPLETE_WORK;
@@ -1871,9 +1871,9 @@ int workerbehavior(rmanstate* rman) {
 #ifdef RMAN_USE_MPI
    // setup out response and request structs
    workresponse response;
-   bzero(&response, sizeof(struct workresponse_struct));
+   memset(&response, 0, sizeof(struct workresponse_struct));
    workrequest  request;
-   bzero(&request, sizeof(struct workrequest_struct));
+   memset(&request, 0, sizeof(struct workrequest_struct));
    // we need to fake a 'startup' response
    response.request.type = COMPLETE_WORK;
    response.request.nsindex = rman->nscount;
@@ -1932,7 +1932,7 @@ int main(int argc, char** argv) {
    char* ns_path = ".";
    char recurse = 0;
    rmanstate rman;
-   bzero(&rman, sizeof(struct rmanstate_struct));
+   memset(&rman, 0, sizeof(struct rmanstate_struct));
    rman.gstate.numprodthreads = DEFAULT_PRODUCER_COUNT;
    rman.gstate.numconsthreads = DEFAULT_CONSUMER_COUNT;
    rman.gstate.rebuildloc.pod = -1;

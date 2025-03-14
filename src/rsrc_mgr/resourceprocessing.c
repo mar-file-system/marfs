@@ -1639,18 +1639,18 @@ int process_openstreamwalker(streamwalker* swalker, marfs_position* pos, const c
       walker->rebuildloc = *rebuildloc;
    }
    else {
-      bzero(&walker->rebuildloc, sizeof(ne_location));
+      memset(&walker->rebuildloc, 0, sizeof(ne_location));
    }
    // zero out report info
-   bzero(&walker->report, sizeof(streamwalker_report));
+   memset(&walker->report, 0, sizeof(streamwalker_report));
    // initialize iteration info
    walker->fileno = 0;
    walker->objno = 0;
    // populate a bunch of placeholder info for the remainder
    walker->reftable = NULL;
-   bzero(&walker->stval, sizeof(struct stat));
-   bzero(&walker->ftag, sizeof(FTAG));
-   bzero(&walker->gctag, sizeof(GCTAG));
+   memset(&walker->stval, 0, sizeof(struct stat));
+   memset(&walker->ftag, 0, sizeof(FTAG));
+   memset(&walker->gctag, 0, sizeof(GCTAG));
    walker->headerlen = 0;
    walker->ftagstr = malloc(sizeof(char) * 1024);
    if (walker->ftagstr == NULL) {

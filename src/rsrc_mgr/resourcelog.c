@@ -1366,7 +1366,7 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
    }
    rsrclog->outstandingcnt = 0;
    rsrclog->type = type; // may be updated later
-   bzero(&rsrclog->summary, sizeof(struct operation_summary_struct));
+   memset(&rsrclog->summary, 0, sizeof(struct operation_summary_struct));
    rsrclog->inprogress = NULL;
    rsrclog->logfile = -1;
    rsrclog->logfilepath = NULL;

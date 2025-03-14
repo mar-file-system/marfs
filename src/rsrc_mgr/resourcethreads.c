@@ -588,7 +588,7 @@ int rthread_init_func(unsigned int tID, void* global_state, void** state) {
       return -1;
    }
    // populate thread state
-   bzero(tstate, sizeof(struct rthread_state_struct));
+   memset(tstate, 0, sizeof(struct rthread_state_struct));
    tstate->tID = tID;
    tstate->gstate = gstate;
    *state = tstate;
