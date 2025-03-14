@@ -201,9 +201,9 @@ void print_usage_info() {
            "  -p Log-Pres-Root     : Specifies a location to store resource logs to, post-run\n"
            "                         (logfiles will be deleted, if unspecified)\n"
            "  -d                   : Specifies a 'dry-run', logging but skipping execution of all ops\n"
-           "  -X Execution-Target  : Specifies the loging path of a previous 'dry-run' iteration to\n"
-           "                         be processed by this run.  The program will NOT scan reference\n"
-           "                         paths to identify operations.  Instead, it will exclusively\n"
+           "  -X Execution-Target  : Specifies the logging path of a previous 'dry-run' iteration to\n"
+           "                         be processed by this run. The program will NOT scan reference\n"
+           "                         paths to identify operations. Instead, it will exclusively\n"
            "                         perform the operations logged by the targetted iteration.\n"
            "                         This argument is incompatible with any of the below args.\n"
            "  -Q                   : The resource manager will set NS usage values (files / bytes)\n"
@@ -691,7 +691,7 @@ int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh) {
    // open the 'scanroot'
    dirlist[0] = opendir(scanroot);
    if (dirlist[0] == NULL) {
-      LOG(LOG_ERR, "Failed to open loging root \"%s\" for scanning\n", scanroot);
+      LOG(LOG_ERR, "Failed to open logging root \"%s\" for scanning\n", scanroot);
       return -1;
    }
    size_t logcount = 0; // per iteration log count
