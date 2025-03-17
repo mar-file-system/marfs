@@ -2282,6 +2282,7 @@ int main(int argc, char** argv) {
     if (mkdir(rman.logroot, 0700) && (errno != EEXIST)) {
         fprintf(stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", rman.logroot);
         cleanupstate(&rman, 0);
+        RMAN_ABORT();
     }
 
     // create log presetvation root dir
@@ -2289,6 +2290,7 @@ int main(int argc, char** argv) {
         if (mkdir(rman.preservelogtgt, 0700) && (errno != EEXIST)) {
             fprintf(stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", rman.preservelogtgt);
             cleanupstate(&rman, 0);
+            RMAN_ABORT();
         }
     }
 
@@ -2323,14 +2325,14 @@ int main(int argc, char** argv) {
    };
    if (config_establishposition(&pos, rman.config)) {
       fprintf(stderr, "ERROR: Failed to establish a MarFS root NS position\n");
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
    char* nspathdup = strdup(args.ns_path);
    if (nspathdup == NULL) {
       fprintf(stderr, "ERROR: Failed to duplicate NS path string: \"%s\"\n", args.ns_path);
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
@@ -2339,7 +2341,7 @@ int main(int argc, char** argv) {
       if (rman.ranknum == 0)
          fprintf(stderr, "ERROR: Failed to identify NS path target: \"%s\"\n", args.ns_path);
       free(nspathdup);
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
@@ -2347,7 +2349,7 @@ int main(int argc, char** argv) {
       if (rman.ranknum == 0)
          fprintf(stderr, "ERROR: Path target is not a NS, but a subpath of depth %d: \"%s\"\n", travret, args.ns_path);
       free(nspathdup);
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
@@ -2358,7 +2360,7 @@ int main(int argc, char** argv) {
    rman.nslist = malloc(sizeof(marfs_ns*));
    if (rman.nslist == NULL) {
       fprintf(stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount);
-      config_term(rman.config);
+      cleanupstate(&rman, 0);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
@@ -2371,7 +2373,7 @@ int main(int argc, char** argv) {
          iterres = hash_iterate(curns->subspaces, &subnode);
          if (iterres < 0) {
             fprintf(stderr, "ERROR: Failed to iterate through subspaces of \"%s\"\n", curns->idstr);
-            config_term(rman.config);
+            cleanupstate(&rman, 0);
             pthread_mutex_destroy(&erasurelock);
             RMAN_ABORT();
          }
@@ -2386,8 +2388,7 @@ int main(int argc, char** argv) {
                marfs_ns** newlist = realloc(rman.nslist, sizeof(marfs_ns*) * rman.nscount);
                if (newlist == NULL) {
                   fprintf(stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount);
-                  free(rman.nslist);
-                  config_term(rman.config);
+                  cleanupstate(&rman, 0);
                   pthread_mutex_destroy(&erasurelock);
                   RMAN_ABORT();
                }
