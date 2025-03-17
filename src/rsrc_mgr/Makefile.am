@@ -82,7 +82,7 @@ RSRC_LOG_LIB = libResourceLog.la
 #marfs_rsrc_mgr_CFLAGS  = $(XML_CFLAGS)
 
 bin_PROGRAMS = marfs-rman
-marfs_rman_SOURCES = resourcemanager.c resourcethreads.c resourceprocessing.c
+marfs_rman_SOURCES = resourcemanager.c resourcethreads.c resourceprocessing.c rmanstate.c
 marfs_rman_LDADD = libResourceLog.la ../datastream/libDatastream.la
 marfs_rman_CFLAGS = $(XML_CFLAGS)
 
