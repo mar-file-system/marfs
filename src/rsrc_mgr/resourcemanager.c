@@ -1055,9 +1055,10 @@ static int handlerequest(rmanstate* rman, workrequest* request, workresponse* re
          // open the specified rlog for read
          RESOURCELOG newlog = NULL;
          if (resourcelog_init(&newlog, rlogpath, RESOURCE_READ_LOG, rman->nslist[request->nsindex])) {
-            LOG(LOG_ERR, "Failed to open logfile for read: \"%s\" (%s)\n", rlogpath, strerror(errno));
+            const int err = errno;
+            LOG(LOG_ERR, "Failed to open logfile for read: \"%s\" (%s)\n", rlogpath, strerror(err));
             snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to open logfile for read: \"%s\" (%s)",
-                      rlogpath, strerror(errno));
+                      rlogpath, strerror(err));
             free(rlogpath);
             return -1;
          }
@@ -1835,7 +1836,8 @@ int managerbehavior(rmanstate* rman) {
    // attempt to unlink our iteration dir
    if (rmdir(iterationroot)) {
       // just complain
-      fprintf(stderr, "WARNING: Failed to unlink iteration root: \"%s\" (%s)\n", iterationroot, strerror(errno));
+      const int err = errno;
+      fprintf(stderr, "WARNING: Failed to unlink iteration root: \"%s\" (%s)\n", iterationroot, strerror(err));
    }
    free(iterationroot);
    // potentially cleanup the previous run's summary log and iteration dir
@@ -1860,7 +1862,8 @@ int managerbehavior(rmanstate* rman) {
       free(sumlogpath);
       if (rmdir(iterationroot)) {
          // just complain
-         fprintf(stderr, "WARNING: Failed to unlink iteration root of previous run: \"%s\" (%s)\n", iterationroot, strerror(errno));
+         const int err = errno;
+         fprintf(stderr, "WARNING: Failed to unlink iteration root of previous run: \"%s\" (%s)\n", iterationroot, strerror(err));
       }
       free(iterationroot);
    }
@@ -2457,7 +2460,8 @@ int main(int argc, char** argv) {
       snprintf(sumlogpath, alloclen, "%s/%s/%s", rman.execprevroot, rman.iteration, "summary.log");
       FILE* sumlog = fopen(sumlogpath, "r");
       if (sumlog == NULL) {
-         fprintf(stderr, "ERROR: Failed to open previous run's summary log: \"%s\" (%s)\n", sumlogpath, strerror(errno));
+         const int err = errno;
+         fprintf(stderr, "ERROR: Failed to open previous run's summary log: \"%s\" (%s)\n", sumlogpath, strerror(err));
          cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
          RMAN_ABORT();
@@ -2513,7 +2517,6 @@ int main(int argc, char** argv) {
          RMAN_ABORT();
       }
       size_t printres = snprintf(sumlogpath, alloclen, "%s/%s", rman.logroot, rman.iteration);
-      errno = 0;
       if (mkdir(sumlogpath, 0700)  &&  errno != EEXIST) {
          fprintf(stderr, "ERROR: Failed to create summary log parent dir: \"%s\"\n", sumlogpath);
          cleanupstate(&rman, 0);
