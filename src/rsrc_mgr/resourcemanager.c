@@ -2075,6 +2075,15 @@ static int parse_args(int argc, char** argv,
    return 0;
 }
 
+#define cleanup_abort(rman, erasurelock)                    \
+    pthread_mutex_destroy(&(erasurelock));                  \
+    rmanstate_fini(&(rman), 0);                             \
+    RMAN_ABORT()
+
+#define print_cleanup_abort(rman, erasurelock, fmt, ...)    \
+    fprintf(stderr, fmt, ##__VA_ARGS__);                    \
+    cleanup_abort((rman), (erasurelock))
+
 //   -------------    STARTUP BEHAVIOR     -------------
 
 
@@ -2112,34 +2121,34 @@ int main(int argc, char** argv) {
    rmanstate rman;
    rmanstate_init(&rman, rank, rankcount);
 
-    Args_t args = {
-        .rman        = &rman,
-        .config_path = NULL,
-        .ns_path     = NULL,
-        .recurse     = 0,
-        .currenttime = {0},
-        .thresh      = {0},
-    };
+   Args_t args = {
+       .rman        = &rman,
+       .config_path = NULL,
+       .ns_path     = NULL,
+       .recurse     = 0,
+       .currenttime = {0},
+       .thresh      = {0},
+   };
 
-    if (parse_args(argc, argv, &args) != 0) {
+   if (parse_args(argc, argv, &args) != 0) {
        RMAN_ABORT();
    }
 
-    // create logging root dir
-    if (mkdir(rman.logroot, 0700) && (errno != EEXIST)) {
-        fprintf(stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", rman.logroot);
-        rmanstate_fini(&rman, 0);
-        RMAN_ABORT();
-    }
+   // create logging root dir
+   if (mkdir(rman.logroot, 0700) && (errno != EEXIST)) {
+       fprintf(stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", rman.logroot);
+       rmanstate_fini(&rman, 0);
+       RMAN_ABORT();
+   }
 
-    // create log presetvation root dir
-    if (rman.preservelogtgt) {
-        if (mkdir(rman.preservelogtgt, 0700) && (errno != EEXIST)) {
-            fprintf(stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", rman.preservelogtgt);
-            rmanstate_fini(&rman, 0);
-            RMAN_ABORT();
-        }
-    }
+   // create log presetvation root dir
+   if (rman.preservelogtgt) {
+       if (mkdir(rman.preservelogtgt, 0700) && (errno != EEXIST)) {
+           fprintf(stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", rman.preservelogtgt);
+           rmanstate_fini(&rman, 0);
+           RMAN_ABORT();
+       }
+   }
 
    // for multi-rank invocations, we must synchronize our iteration string across all ranks
    //     (due to clock drift + varied startup times across multiple hosts)
@@ -2157,11 +2166,12 @@ int main(int argc, char** argv) {
    pthread_mutex_t erasurelock;
    if (pthread_mutex_init(&erasurelock, NULL)) {
       fprintf(stderr, "ERROR: failed to initialize erasure lock\n");
+      rmanstate_fini(&rman, 0);
       RMAN_ABORT();
    }
    if ((rman.config = config_init(args.config_path, &erasurelock)) == NULL) {
       fprintf(stderr, "ERROR: Failed to initialize MarFS config: \"%s\"\n", args.config_path);
-      RMAN_ABORT();
+      cleanup_abort(rman, erasurelock);
    }
 
    // Identify our target NS
@@ -2171,34 +2181,26 @@ int main(int argc, char** argv) {
       .ctxt = NULL
    };
    if (config_establishposition(&pos, rman.config)) {
-      fprintf(stderr, "ERROR: Failed to establish a MarFS root NS position\n");
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      print_cleanup_abort(rman, erasurelock,
+                          "ERROR: Failed to establish a MarFS root NS position\n");
    }
    char* nspathdup = strdup(args.ns_path);
    if (nspathdup == NULL) {
-      fprintf(stderr, "ERROR: Failed to duplicate NS path string: \"%s\"\n", args.ns_path);
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      print_cleanup_abort(rman, erasurelock,
+                          "ERROR: Failed to duplicate NS path string: \"%s\"\n", args.ns_path);
    }
    int travret = config_traverse(rman.config, &pos, &nspathdup, 1);
    if (travret < 0) {
       if (rman.ranknum == 0)
          fprintf(stderr, "ERROR: Failed to identify NS path target: \"%s\"\n", args.ns_path);
       free(nspathdup);
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      cleanup_abort(rman, erasurelock);
    }
    if (travret) {
       if (rman.ranknum == 0)
          fprintf(stderr, "ERROR: Path target is not a NS, but a subpath of depth %d: \"%s\"\n", travret, args.ns_path);
       free(nspathdup);
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      cleanup_abort(rman, erasurelock);
    }
    free(nspathdup);
    // Generate our NS list
@@ -2206,10 +2208,8 @@ int main(int argc, char** argv) {
    rman.nscount = 1;
    rman.nslist = malloc(sizeof(marfs_ns*));
    if (rman.nslist == NULL) {
-      fprintf(stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount);
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      print_cleanup_abort(rman, erasurelock,
+                          "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount);
    }
    *(rman.nslist) = pos.ns;
    while (curns) {
@@ -2219,10 +2219,8 @@ int main(int argc, char** argv) {
       if (curns->subspaces  &&  args.recurse) {
          iterres = hash_iterate(curns->subspaces, &subnode);
          if (iterres < 0) {
-            fprintf(stderr, "ERROR: Failed to iterate through subspaces of \"%s\"\n", curns->idstr);
-            rmanstate_fini(&rman, 0);
-            pthread_mutex_destroy(&erasurelock);
-            RMAN_ABORT();
+            print_cleanup_abort(rman, erasurelock,
+                                "ERROR: Failed to iterate through subspaces of \"%s\"\n", curns->idstr);
          }
          else if (iterres) {
             marfs_ns* subspace = (marfs_ns*)(subnode->content);
@@ -2234,10 +2232,8 @@ int main(int argc, char** argv) {
                // yeah, this is very inefficient; but we're only expecting 10s to 1000s of elements
                marfs_ns** newlist = realloc(rman.nslist, sizeof(marfs_ns*) * rman.nscount);
                if (newlist == NULL) {
-                  fprintf(stderr, "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount);
-                  rmanstate_fini(&rman, 0);
-                  pthread_mutex_destroy(&erasurelock);
-                  RMAN_ABORT();
+                  print_cleanup_abort(rman, erasurelock,
+                                      "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount);
                }
                rman.nslist = newlist;
                *(rman.nslist + rman.nscount - 1) = subspace;
@@ -2259,39 +2255,29 @@ int main(int argc, char** argv) {
    }
    // abandon our current position
    if (config_abandonposition(&pos)) {
-      fprintf(stderr, "WARNING: Failed to abandon MarFS traversal position\n");
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      print_cleanup_abort(rman, erasurelock,
+                          "WARNING: Failed to abandon MarFS traversal position\n");
    }
    // complete allocation of required state elements
    rman.distributed = calloc(sizeof(size_t), rman.nscount);
    if (rman.distributed == NULL) {
-      fprintf(stderr, "ERROR: Failed to allocate a 'distributed' list of length %zu\n", rman.nscount);
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      print_cleanup_abort(rman, erasurelock,
+                          "ERROR: Failed to allocate a 'distributed' list of length %zu\n", rman.nscount);
    }
    rman.terminatedworkers = calloc(sizeof(char), rman.totalranks);
    if (rman.terminatedworkers == NULL) {
-      fprintf(stderr, "ERROR: Failed to allocate a 'terminatedworkers' list of length %zu\n", rman.totalranks);
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      print_cleanup_abort(rman, erasurelock,
+                          "ERROR: Failed to allocate a 'terminatedworkers' list of length %zu\n", rman.totalranks);
    }
    rman.walkreport = calloc(sizeof(*rman.walkreport), rman.nscount);
    if (rman.walkreport == NULL) {
-      fprintf(stderr, "ERROR: Failed to allocate a 'walkreport' list of length %zu\n", rman.nscount);
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      print_cleanup_abort(rman, erasurelock,
+                          "ERROR: Failed to allocate a 'walkreport' list of length %zu\n", rman.nscount);
    }
    rman.logsummary = calloc(sizeof(*rman.logsummary), rman.nscount);
    if (rman.logsummary == NULL) {
-      fprintf(stderr, "ERROR: Failed to allocate a 'logsummary' list of length %zu\n", rman.nscount);
-      rmanstate_fini(&rman, 0);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      print_cleanup_abort(rman, erasurelock,
+                          "ERROR: Failed to allocate a 'logsummary' list of length %zu\n", rman.nscount);
    }
 
    // check for previous run execution
@@ -2300,26 +2286,22 @@ int main(int argc, char** argv) {
       size_t alloclen = strlen(rman.execprevroot) + 1 + strlen(rman.iteration) + 1 + strlen("summary.log") + 1;
       char* sumlogpath = malloc(sizeof(char) * alloclen);
       if (sumlogpath == NULL) {
-         fprintf(stderr, "ERROR: Failed to allocate summary logfile path\n");
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to allocate summary logfile path\n");
       }
       snprintf(sumlogpath, alloclen, "%s/%s/%s", rman.execprevroot, rman.iteration, "summary.log");
       FILE* sumlog = fopen(sumlogpath, "r");
       if (sumlog == NULL) {
          const int err = errno;
-         fprintf(stderr, "ERROR: Failed to open previous run's summary log: \"%s\" (%s)\n", sumlogpath, strerror(err));
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to open previous run's summary log: \"%s\" (%s)\n",
+                             sumlogpath, strerror(err));
       }
       if (parse_program_args(&rman, sumlog)) {
-         fprintf(stderr, "ERROR: Failed to parse previous run info from summary log: \"%s\"\n", sumlogpath);
          fclose(sumlog);
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to parse previous run info from summary log: \"%s\"\n",
+                             sumlogpath);
       }
       if (rman.quotas) {
          if (rman.ranknum == 0)
@@ -2331,25 +2313,21 @@ int main(int argc, char** argv) {
       if (rman.gstate.dryrun == 0) {
          if (rman.ranknum == 0)
             fprintf(stderr, "ERROR: Cannot pick up execution of a non-'dry-run'\n");
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         cleanup_abort(rman, erasurelock);
       }
       // incorporate logfiles from the previous run
       if (rman.ranknum == 0  &&  findoldlogs(&rman, rman.execprevroot, 0)) {
-         fprintf(stderr, "ERROR: Failed to identify previous run's logfiles: \"%s\"\n", rman.execprevroot);
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to identify previous run's logfiles: \"%s\"\n",
+                             rman.execprevroot);
       }
    }
    else if (rman.gstate.dryrun == 0  &&  rman.ranknum == 0) {
       // otherwise, scan for and incorporate logs from previous modification runs
       if (findoldlogs(&rman, rman.logroot, args.thresh.skip)) {
-         fprintf(stderr, "ERROR: Failed to scan for previous iteration logs under \"%s\"\n", rman.logroot);
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to scan for previous iteration logs under \"%s\"\n",
+                             rman.logroot);
       }
    }
 
@@ -2359,39 +2337,33 @@ int main(int argc, char** argv) {
       size_t alloclen = strlen(rman.logroot) + 1 + strlen(rman.iteration) + 1 + strlen("summary.log") + 1;
       char* sumlogpath = malloc(sizeof(char) * alloclen);
       if (sumlogpath == NULL) {
-         fprintf(stderr, "ERROR: Failed to allocate summary logfile path\n");
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to allocate summary logfile path\n");
       }
       size_t printres = snprintf(sumlogpath, alloclen, "%s/%s", rman.logroot, rman.iteration);
       if (mkdir(sumlogpath, 0700)  &&  errno != EEXIST) {
-         fprintf(stderr, "ERROR: Failed to create summary log parent dir: \"%s\"\n", sumlogpath);
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to create summary log parent dir: \"%s\"\n",
+                             sumlogpath);
       }
       printres += snprintf(sumlogpath + printres, alloclen - printres, "/summary.log");
       int sumlog = open(sumlogpath, O_WRONLY | O_CREAT | O_EXCL, 0700);
       if (sumlog < 0) {
-         fprintf(stderr, "ERROR: Failed to open summary logfile: \"%s\"\n", sumlogpath);
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to open summary logfile: \"%s\"\n",
+                             sumlogpath);
       }
       rman.summarylog = fdopen(sumlog, "w");
       if (rman.summarylog == NULL) {
-         fprintf(stderr, "ERROR: Failed to convert summary logfile to file stream: \"%s\"\n", sumlogpath);
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to convert summary logfile to file stream: \"%s\"\n",
+                             sumlogpath);
       }
       // output our program arguments to the summary file
       if (output_program_args(&rman)) {
-         fprintf(stderr, "ERROR: Failed to output program arguments to summary log: \"%s\"\n", sumlogpath);
-         rmanstate_fini(&rman, 0);
-         pthread_mutex_destroy(&erasurelock);
-         RMAN_ABORT();
+         print_cleanup_abort(rman, erasurelock,
+                             "ERROR: Failed to output program arguments to summary log: \"%s\"\n",
+                             sumlogpath);
       }
       free(sumlogpath);
 
