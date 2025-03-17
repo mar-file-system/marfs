@@ -1920,6 +1920,310 @@ static int workerbehavior(rmanstate* rman) {
 #endif
 }
 
+static void rmanstate_init(rmanstate *rman, int rank, int rankcount) {
+   memset(rman, 0, sizeof(*rman));
+   rman->gstate.numprodthreads = DEFAULT_PRODUCER_COUNT;
+   rman->gstate.numconsthreads = DEFAULT_CONSUMER_COUNT;
+   rman->gstate.rebuildloc.pod = -1;
+   rman->gstate.rebuildloc.cap = -1;
+   rman->gstate.rebuildloc.scatter = -1;
+   rman->ranknum = (size_t)rank;
+   rman->totalranks = (size_t)rankcount;
+   rman->workingranks = 1;
+   if (rankcount > 1) { rman->workingranks = rman->totalranks - 1; }
+}
+
+typedef struct {
+    time_t skip;    // for skipping seemingly inactive logs of previous runs
+    time_t gc;
+    time_t rbl;
+    time_t rbm;
+    time_t rp;
+    time_t cl;
+} ArgThresholds_t;
+
+typedef struct {
+    rmanstate* rman;
+    char* config_path;
+    char* ns_path;
+    int recurse;
+
+    struct timeval currenttime;
+    ArgThresholds_t thresh;
+} Args_t;
+
+// getopt and fill in config
+static int parse_args(int argc, char** argv,
+                      Args_t* args) {
+   // get the initialization time of the program, to identify thresholds
+   if (gettimeofday(&args->currenttime, NULL)) {
+      printf("failed to get current time for first walk\n");
+      return -1;
+   }
+
+    rmanstate* rman    = args->rman;
+    args->config_path  = getenv("MARFS_CONFIG_PATH");
+    args->ns_path      = ".";
+    args->thresh       = (ArgThresholds_t) {
+        .skip = args->currenttime.tv_sec - INACTIVE_RUN_SKIP_THRESH,
+        .gc   = args->currenttime.tv_sec - GC_THRESH,
+        .rbl  = args->currenttime.tv_sec - RB_L_THRESH,
+        .rbm  = args->currenttime.tv_sec - RB_M_THRESH,
+        .rp   = args->currenttime.tv_sec - RP_THRESH,
+        .cl   = args->currenttime.tv_sec - CL_THRESH,
+    };
+    ArgThresholds_t* thresh = &args->thresh;
+
+   // parse all position-independent arguments
+   int print_usage = 0;
+   int c;
+   while ((c = getopt(argc, (char* const*)argv, "c:n:ri:l:p:dX:QGRPCT:L:h")) != -1) {
+      switch (c) {
+      case 'c':
+         args->config_path = optarg;
+         break;
+      case 'n':
+         args->ns_path = optarg;
+         break;
+      case 'r':
+         args->recurse = 1;
+         break;
+      case 'i':
+         if (strlen(optarg) >= ITERATION_STRING_LEN) {
+            fprintf(stderr, "ERROR: Iteration string exceeds allocated length %u: \"%s\"\n",
+                    ITERATION_STRING_LEN, optarg);
+            return -1;
+         }
+         snprintf(rman->iteration, ITERATION_STRING_LEN, "%s", optarg);
+         break;
+      case 'l':
+         rman->logroot = optarg;
+         break;
+      case 'p':
+         rman->preservelogtgt = optarg;
+         break;
+      case 'd':
+         rman->gstate.dryrun = 1;
+         break;
+      case 'X':
+         rman->execprevroot = optarg;
+         break;
+      case 'Q':
+         rman->quotas = 1;
+         break;
+      case 'G':
+         rman->gstate.thresh.gcthreshold = 1;       // time_t used as bool for now
+         break;
+      case 'R':
+         rman->gstate.thresh.rebuildthreshold = 1;  // time_t used as bool for now
+         break;
+      case 'P':
+         rman->gstate.thresh.repackthreshold = 1;   // time_t used as bool for now
+         break;
+      case 'C':
+         rman->gstate.thresh.cleanupthreshold = 1;  // time_t used as bool for now
+         break;
+      case 'T':
+      {
+         char* threshparse = optarg;
+
+         // check for a Threshold type flag
+         char tflag = *threshparse;
+         if (tflag == '-') {
+            tflag = *++threshparse;
+         }
+
+         if ((tflag != 'G') && (tflag != 'R') &&
+             (tflag != 'P') && (tflag != 'C')) {
+            printf("ERROR: Failed to parse '-T' argument value: \"%s\"\n",
+                   optarg);
+            print_usage = 1;
+            break;
+         }
+
+         // move to the value part of the string
+         threshparse++;
+
+         // parse the expected numeric value trailing the type flag
+         char* endptr = NULL;
+         unsigned long long parseval = strtoull(threshparse, &endptr, 10);
+         if ((parseval == ULLONG_MAX) ||
+             (endptr == NULL) ||
+             ((*endptr != 's') && (*endptr != 'm') &&
+              (*endptr != 'h') && (*endptr != 'd') &&
+              (*endptr != '-') && (*endptr != '\0'))) {
+            printf("ERROR: Failed to parse '%c' threshold from '-T' argument value: \"%s\"\n",
+                   tflag, optarg);
+            print_usage = 1;
+            break;
+         }
+
+         if (*endptr == 'm') { parseval *= 60; }
+         else if (*endptr == 'h') { parseval *= 60 * 60; }
+         else if (*endptr == 'd') { parseval *= 60 * 60 * 24; }
+
+         // actually assign the parsed value to the appropriate threshold
+         switch (tflag) {
+            case 'G':
+               thresh->gc = args->currenttime.tv_sec - parseval;
+               break;
+             case 'R':
+                thresh->rbl = args->currenttime.tv_sec - parseval;
+                thresh->rbm = args->currenttime.tv_sec - parseval;
+                break;
+             case 'P':
+                thresh->rp = args->currenttime.tv_sec - parseval;
+                break;
+             case 'C':
+                thresh->cl = args->currenttime.tv_sec - parseval;
+                break;
+         }
+
+         break;
+      }
+      case 'L':
+      {
+         rman->gstate.lbrebuild = 1;
+
+         char* locparse = optarg;
+         char lflag = *locparse;
+         if (lflag == '-') {
+            lflag = *++locparse;
+         }
+
+         // check for a location value type flag
+         if ((*locparse != 'p') &&
+             (*locparse != 'c') &&
+             (*locparse != 's')) {
+            printf("ERROR: Failed to parse '-L' argument value: \"%s\"\n", optarg);
+            print_usage = 1;
+            break;
+         }
+
+         // move to the value part of the string
+         locparse++;
+
+         // parse the expected numeric value trailing the type flag
+         char* endptr = NULL;
+         unsigned long long parseval = strtoull(locparse, &endptr, 10);
+         if ((parseval == ULLONG_MAX) || (endptr == NULL) ||
+             ((*endptr != '-') && (*endptr != '\0'))) {
+            printf("ERROR: Failed to parse '%c' location from '-L' argument value: \"%s\"\n",
+                   lflag, optarg);
+            print_usage = 1;
+            break;
+         }
+
+         // actually assign the parsed value to the appropriate location value
+         switch (lflag) {
+            case 'p':
+               rman->gstate.rebuildloc.pod = parseval;
+               break;
+             case 'c':
+               rman->gstate.rebuildloc.cap = parseval;
+               break;
+             case 's':
+               rman->gstate.rebuildloc.scatter = parseval;
+               break;
+         }
+
+         break;
+      }
+      case '?':
+         printf("ERROR: Unrecognized cmdline argument: \'%c\'\n", optopt);
+         // fall through
+      case 'h':
+         print_usage = 1;
+         break;
+      default:
+         printf("ERROR: Failed to parse command line options\n");
+         return -1;
+      }
+   }
+   if (print_usage) {
+      print_usage_info();
+      return -1;
+   }
+
+   // validate arguments
+   if (rman->execprevroot) {
+      // check if we were incorrectly passed any args
+      if (rman->gstate.thresh.gcthreshold      ||  rman->gstate.thresh.rebuildthreshold  ||
+          rman->gstate.thresh.repackthreshold  ||  rman->gstate.thresh.cleanupthreshold  ||
+          rman->iteration[0] != '\0') {
+         fprintf(stderr, "ERROR: The '-G', '-R', '-P', and '-i' args are incompatible with '-X'\n");
+         return -1;
+      }
+      // parse over the specified path, looking for RECORD_ITERATION_PARENT
+      char* prevdup = strdup(rman->execprevroot);
+      char* pathelem = strtok(prevdup, "/");
+      while (pathelem) {
+         if (strcmp(RECORD_ITERATION_PARENT, pathelem) == 0) {
+             break;
+         }
+         pathelem = strtok(NULL, "/");
+      }
+      if (pathelem == NULL) {
+         fprintf(stderr, "ERROR: The specified previous run path is missing the expected '%s' path component: \"%s\"\n",
+                 RECORD_ITERATION_PARENT, rman->execprevroot);
+         free(prevdup);
+         return -1;
+      }
+
+      size_t keepbytes = strlen(pathelem) + (pathelem - prevdup); // identify the strlen of the path up to this elem
+      // get our iteration name from the subsequent path element
+      pathelem = strtok(NULL, "/");
+      if (snprintf(rman->iteration, ITERATION_STRING_LEN, "%s", pathelem) >= ITERATION_STRING_LEN) {
+         fprintf(stderr, "ERROR: Parsed invalid iteration string from previous run path: \"%s\"\n",
+                 rman->execprevroot);
+         free(prevdup);
+         return -1;
+      }
+      free(prevdup);
+
+      // identify the log root we will be pulling from
+      char* baseroot = rman->execprevroot;
+      rman->execprevroot = malloc(sizeof(char) * (keepbytes + 1));
+      snprintf(rman->execprevroot, keepbytes + 1, "%s", baseroot); // use snprintf to truncate to appropriate length
+   }
+
+   // fill in more of rman
+
+   const char* iteration_parent = rman->gstate.dryrun?(const char*) RECORD_ITERATION_PARENT:(const char*) MODIFY_ITERATION_PARENT;
+
+   // construct logroot subdirectory path and replace variable
+   const char* logroot = rman->logroot?rman->logroot:(char *) DEFAULT_LOG_ROOT;
+   const size_t newroot_len = sizeof(char) * (strlen(logroot) + 1 + strlen(iteration_parent));
+   char* newroot = malloc(newroot_len + 1);
+   snprintf(newroot, newroot_len + 1, "%s/%s", rman->logroot, iteration_parent);
+   rman->logroot = newroot;
+
+   // construct log preservation root subdirectory path and replace variable
+   if (rman->preservelogtgt) {
+      const size_t presroot_len = strlen(rman->preservelogtgt) + 1 + strlen(iteration_parent);
+      char* presroot = calloc(sizeof(char), presroot_len + 1);
+      snprintf(presroot, presroot_len + 1, "%s/%s",
+               rman->preservelogtgt, iteration_parent);
+      rman->preservelogtgt = presroot;
+   }
+
+   // populate an iteration string, if missing
+   if (rman->iteration[0] == '\0') {
+      struct tm* timeinfo = localtime(&args->currenttime.tv_sec);
+      strftime(rman->iteration, ITERATION_STRING_LEN, "%Y-%m-%d-%H:%M:%S", timeinfo);
+   }
+
+   // substitute in appropriate threshold values, if specified
+   if (rman->gstate.thresh.gcthreshold) { rman->gstate.thresh.gcthreshold = args->thresh.gc; }
+   if (rman->gstate.thresh.rebuildthreshold) {
+      if (rman->gstate.lbrebuild) { rman->gstate.thresh.rebuildthreshold = args->thresh.rbl; }
+      else { rman->gstate.thresh.rebuildthreshold = args->thresh.rbm; }
+   }
+   if (rman->gstate.thresh.repackthreshold) { rman->gstate.thresh.repackthreshold = args->thresh.rp; }
+   if (rman->gstate.thresh.cleanupthreshold) { rman->gstate.thresh.cleanupthreshold = args->thresh.cl; }
+
+   return 0;
+}
 
 //   -------------    STARTUP BEHAVIOR     -------------
 
@@ -1933,18 +2237,6 @@ int main(int argc, char** argv) {
    }
 #endif
 
-   errno = 0; // init to zero (apparently not guaranteed)
-   char* config_path = getenv("MARFS_CONFIG_PATH"); // check for config env var
-   char* ns_path = ".";
-   char recurse = 0;
-   rmanstate rman;
-   memset(&rman, 0, sizeof(rman));
-   rman.gstate.numprodthreads = DEFAULT_PRODUCER_COUNT;
-   rman.gstate.numconsthreads = DEFAULT_CONSUMER_COUNT;
-   rman.gstate.rebuildloc.pod = -1;
-   rman.gstate.rebuildloc.cap = -1;
-   rman.gstate.rebuildloc.scatter = -1;
-
 #ifdef RMAN_USE_MPI
 #define RMAN_ABORT() \
       MPI_Abort(MPI_COMM_WORLD, -1); \
@@ -1953,343 +2245,6 @@ int main(int argc, char** argv) {
 #define RMAN_ABORT() \
       return -1;
 #endif
-
-   // get the initialization time of the program, to identify thresholds
-   struct timeval currenttime;
-   if (gettimeofday(&currenttime, NULL)) {
-      printf("failed to get current time for first walk\n");
-      return -1;
-   }
-   time_t gcthresh = currenttime.tv_sec - GC_THRESH;
-   time_t rblthresh = currenttime.tv_sec - RB_L_THRESH;
-   time_t rbmthresh = currenttime.tv_sec - RB_M_THRESH;
-   time_t rpthresh = currenttime.tv_sec - RP_THRESH;
-   time_t clthresh = currenttime.tv_sec - CL_THRESH;
-
-   // for skipping seemingly inactive logs of previous runs
-   time_t skipthresh = currenttime.tv_sec - INACTIVE_RUN_SKIP_THRESH;
-
-   // parse all position-independent arguments
-   char pr_usage = 0;
-   int c;
-   while ((c = getopt(argc, (char* const*)argv, "c:n:ri:l:p:dX:QGRPCT:L:h")) != -1) {
-      switch (c) {
-      case 'c':
-         config_path = optarg;
-         break;
-      case 'n':
-         ns_path = optarg;
-         break;
-      case 'r':
-         recurse = 1;
-         break;
-      case 'i':
-         if (strlen(optarg) >= ITERATION_STRING_LEN) {
-            fprintf(stderr, "ERROR: Iteration string exceeds allocated length %u: \"%s\"\n", ITERATION_STRING_LEN, optarg);
-            errno = ENAMETOOLONG;
-            return -1;
-         }
-         snprintf(rman.iteration, ITERATION_STRING_LEN, "%s", optarg);
-         break;
-      case 'l':
-         rman.logroot = optarg;
-         break;
-      case 'p':
-         rman.preservelogtgt = optarg;
-         break;
-      case 'd':
-         rman.gstate.dryrun = 1;
-         break;
-      case 'X':
-         rman.execprevroot = optarg;
-         break;
-      case 'Q':
-         rman.quotas = 1;
-         break;
-      case 'G':
-         rman.gstate.thresh.gcthreshold = 1;
-         break;
-      case 'R':
-         rman.gstate.thresh.rebuildthreshold = 1;
-         break;
-      case 'P':
-         rman.gstate.thresh.repackthreshold = 1;
-         break;
-      case 'C':
-         rman.gstate.thresh.cleanupthreshold = 1;
-         break;
-      case 'T':
-      {
-         char* threshparse = optarg;
-         char foundtval = 0;
-         char tflag = '\0';
-         while (threshparse  &&  *threshparse != ' '  &&  *threshparse != '\0') {
-            if (tflag == '\0') {
-               // check for a Threshold type flag
-               if (*threshparse == 'G'  ||  *threshparse == 'R'  ||  *threshparse == 'P'  ||  *threshparse == 'C') {
-                  tflag = *threshparse;
-               }
-               else if (*threshparse != '-') { // ignore '-' chars
-                  printf("ERROR: Failed to parse '-T' argument value: \"%s\"\n", optarg);
-                  foundtval = 1; // don't double print this error
-                  pr_usage = 1;
-                  break;
-               }
-            }
-            else {
-               // parse the expected numeric value trailing the type flag
-               char* endptr = NULL;
-               unsigned long long parseval = strtoull(threshparse, &endptr, 10);
-               if (parseval == ULLONG_MAX  ||  endptr == NULL  ||
-                    (*endptr != 's'  &&  *endptr != 'm'  &&  *endptr != 'h'  &&  *endptr != 'd'  &&
-                      *endptr != '-'  &&  *endptr != '\0')) {
-                  printf("ERROR: Failed to parse '%c' threshold from '-T' argument value: \"%s\"\n", tflag, optarg);
-                  foundtval = 1; // don't double print this error
-                  pr_usage = 1;
-                  break;
-               }
-               if (*endptr == 'm') { parseval *= 60; }
-               else if (*endptr == 'h') { parseval *= 60 * 60; }
-               else if (*endptr == 'd') { parseval *= 60 * 60 * 24; }
-               // actually asign the parsed value to the appropriate threshold
-               if (tflag == 'G') {
-                  gcthresh = currenttime.tv_sec - parseval;
-               }
-               else if (tflag == 'R') {
-                  rblthresh = currenttime.tv_sec - parseval;
-                  rbmthresh = currenttime.tv_sec - parseval;
-               }
-               else if (tflag == 'P') {
-                  rpthresh = currenttime.tv_sec - parseval;
-               }
-               else if (tflag == 'C') {
-                  clthresh = currenttime.tv_sec - parseval;
-               }
-               foundtval = 1;
-               tflag = '\0';
-               // check for early termination
-               if (*endptr == '\0'  ||  *endptr == ' ') {
-                  break;
-               }
-               threshparse = endptr;
-            }
-            threshparse++;
-         }
-         if (threshparse == NULL  ||  foundtval == 0) {
-            printf("ERROR: Failed to parse '-T' argument value: \"%s\"\n", optarg);
-            pr_usage = 1;
-            break;
-         }
-         break;
-      }
-      case 'L':
-      {
-         rman.gstate.lbrebuild = 1;
-         char* locparse = optarg;
-         char foundlval = 0;
-         char tflag = '\0';
-         while (locparse  &&  *locparse != ' '  &&  *locparse != '\0') {
-            if (tflag == '\0') {
-               // check for a location value type flag
-               if (*locparse == 'p'  ||  *locparse == 'c'  ||  *locparse == 's') {
-                  tflag = *locparse;
-               }
-               else if (*locparse != '-') { // ignore '-' chars
-                  printf("ERROR: Failed to parse '-L' argument value: \"%s\"\n", optarg);
-                  foundlval = 1; // don't double print this error
-                  pr_usage = 1;
-                  break;
-               }
-            }
-            else {
-               // parse the expected numeric value trailing the type flag
-               char* endptr = NULL;
-               unsigned long long parseval = strtoull(locparse, &endptr, 10);
-               if (parseval == ULLONG_MAX  ||  endptr == NULL  ||
-                    (*endptr != '-'  &&  *endptr != '\0')) {
-                  printf("ERROR: Failed to parse '%c' location from '-L' argument value: \"%s\"\n", tflag, optarg);
-                  pr_usage = 1;
-                  break;
-               }
-               // actually asign the parsed value to the appropriate location value
-               if (tflag == 'p') {
-                  rman.gstate.rebuildloc.pod = parseval;
-               }
-               else if (tflag == 'c') {
-                  rman.gstate.rebuildloc.cap = parseval;
-               }
-               else if (tflag == 's') {
-                  rman.gstate.rebuildloc.scatter = parseval;
-               }
-               foundlval = 1;
-               tflag = '\0';
-               // check for early termination
-               if (*endptr == '\0'  ||  *endptr == ' ') {
-                  break;
-               }
-               locparse = endptr;
-            }
-            locparse++;
-         }
-         if (locparse  &&  foundlval == 0) {
-            printf("ERROR: Failed to parse '-L' argument value: \"%s\"\n", optarg);
-            pr_usage = 1;
-            break;
-         }
-         break;
-      }
-      case '?':
-         printf("ERROR: Unrecognized cmdline argument: \'%c\'\n", optopt);
-         // fall through
-      case 'h':
-         pr_usage = 1;
-         break;
-      default:
-         printf("ERROR: Failed to parse command line options\n");
-         return -1;
-      }
-   }
-   if (pr_usage) {
-      print_usage_info();
-      return -1;
-   }
-
-   // validate arguments
-   if (rman.execprevroot) {
-      // check if we were incorrectly passed any args
-      if (rman.gstate.thresh.gcthreshold  ||  rman.gstate.thresh.rebuildthreshold  ||
-           rman.gstate.thresh.repackthreshold  ||  rman.gstate.thresh.cleanupthreshold  ||
-           rman.iteration[0] != '\0') {
-         fprintf(stderr, "ERROR: The '-G', '-R', '-P', and '-i' args are incompatible with '-X'\n");
-         RMAN_ABORT();
-      }
-      // parse over the specified path, looking for RECORD_ITERATION_PARENT
-      char* prevdup = strdup(rman.execprevroot);
-      char* pathelem = strtok(prevdup, "/");
-      while (pathelem) {
-         if (strcmp(RECORD_ITERATION_PARENT, pathelem) == 0) { break; }
-         pathelem = strtok(NULL, "/");
-      }
-      if (pathelem == NULL) {
-         fprintf(stderr, "ERROR: The specified previous run path is missing the expected '%s' path component: \"%s\"\n",
-                  RECORD_ITERATION_PARENT, rman.execprevroot);
-         free(prevdup);
-         RMAN_ABORT();
-      }
-      size_t keepbytes = strlen(pathelem) + (pathelem - prevdup); // identify the strlen of the path up to this elem
-      // get our iteration name from the subsequent path element
-      pathelem = strtok(NULL, "/");
-      if (pathelem == NULL) {
-         fprintf(stderr, "ERROR: Failed to identify iteration string from previous run path: \"%s\"\n", rman.execprevroot);
-         free(prevdup);
-         RMAN_ABORT();
-      }
-      if (snprintf(rman.iteration, ITERATION_STRING_LEN, "%s", pathelem) >= ITERATION_STRING_LEN) {
-         fprintf(stderr, "ERROR: Parsed invalid iteration string from previous run path: \"%s\"\n", rman.execprevroot);
-         free(prevdup);
-         RMAN_ABORT();
-      }
-      free(prevdup);
-      // identify the log root we will be pulling from
-      char* baseroot = rman.execprevroot;
-      rman.execprevroot = malloc(sizeof(char) * (keepbytes + 1));
-      if (rman.execprevroot == NULL) {
-         fprintf(stderr, "ERROR: Failed to allocate execprev root path\n");
-         RMAN_ABORT();
-      }
-      snprintf(rman.execprevroot, keepbytes + 1, "%s", baseroot); // use snprintf to truncate to appropriate length
-   }
-   char* newroot = NULL;
-   if (rman.logroot) {
-      if (rman.gstate.dryrun) {
-         newroot = malloc(sizeof(char) * (strlen(rman.logroot) + 1 + strlen(RECORD_ITERATION_PARENT) + 1));
-         if (newroot == NULL) {
-            fprintf(stderr, "ERROR: Failed to allocate log root path string\n");
-            RMAN_ABORT();
-         }
-         snprintf(newroot, strlen(rman.logroot) + 1 + strlen(RECORD_ITERATION_PARENT) + 1, "%s/%s",
-                   rman.logroot, RECORD_ITERATION_PARENT);
-      }
-      else {
-         newroot = malloc(sizeof(char) * (strlen(rman.logroot) + 1 + strlen(MODIFY_ITERATION_PARENT)  + 1));
-         if (newroot == NULL) {
-            fprintf(stderr, "ERROR: Failed to allocate log root path string\n");
-            RMAN_ABORT();
-         }
-         snprintf(newroot, strlen(rman.logroot) + 1 + strlen(MODIFY_ITERATION_PARENT) + 1, "%s/%s",
-                   rman.logroot, MODIFY_ITERATION_PARENT);
-      }
-   }
-   else {
-      if (rman.gstate.dryrun) {
-         newroot = malloc(sizeof(char) * (strlen(DEFAULT_LOG_ROOT) + 1 + strlen(RECORD_ITERATION_PARENT) + 1));
-         if (newroot == NULL) {
-            fprintf(stderr, "ERROR: Failed to allocate log root path string\n");
-            RMAN_ABORT();
-         }
-         snprintf(newroot, strlen(DEFAULT_LOG_ROOT) + 1 + strlen(RECORD_ITERATION_PARENT) + 1, "%s/%s",
-                   DEFAULT_LOG_ROOT, RECORD_ITERATION_PARENT);
-      }
-      else {
-         newroot = malloc(sizeof(char) * (strlen(DEFAULT_LOG_ROOT) + 1 + strlen(MODIFY_ITERATION_PARENT) + 1));
-         if (newroot == NULL) {
-            fprintf(stderr, "ERROR: Failed to allocate log root path string\n");
-            RMAN_ABORT();
-         }
-         snprintf(newroot, strlen(DEFAULT_LOG_ROOT) + 1 + strlen(MODIFY_ITERATION_PARENT) + 1, "%s/%s",
-                   DEFAULT_LOG_ROOT, MODIFY_ITERATION_PARENT);
-      }
-   }
-   errno = 0;
-   if (mkdir(newroot, 0700)  &&  errno != EEXIST) {
-      fprintf(stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", newroot);
-      free(newroot);
-      RMAN_ABORT();
-   }
-   rman.logroot = newroot;
-   if (rman.preservelogtgt) {
-      char* newpresroot;
-      if (rman.gstate.dryrun) {
-         newpresroot = malloc(sizeof(char) * (strlen(rman.preservelogtgt) + 1 + strlen(RECORD_ITERATION_PARENT) + 1));
-         if (newpresroot == NULL) {
-            fprintf(stderr, "ERROR: Failed to allocate log preservation path string\n");
-            RMAN_ABORT();
-         }
-         snprintf(newpresroot, strlen(rman.preservelogtgt) + 1 + strlen(RECORD_ITERATION_PARENT) + 1, "%s/%s",
-                   rman.preservelogtgt, RECORD_ITERATION_PARENT);
-      }
-      else {
-         newpresroot = malloc(sizeof(char) * (strlen(rman.preservelogtgt) + 1 + strlen(MODIFY_ITERATION_PARENT) + 1));
-         if (newpresroot == NULL) {
-            fprintf(stderr, "ERROR: Failed to allocate log preservation path string\n");
-            RMAN_ABORT();
-         }
-         snprintf(newpresroot, strlen(rman.preservelogtgt) + 1 + strlen(MODIFY_ITERATION_PARENT) + 1, "%s/%s",
-                   rman.preservelogtgt, MODIFY_ITERATION_PARENT);
-      }
-      errno = 0;
-      if (mkdir(newpresroot, 0700)  &&  errno != EEXIST) {
-         fprintf(stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", newpresroot);
-         free(newpresroot);
-         RMAN_ABORT();
-      }
-      rman.preservelogtgt = newpresroot;
-   }
-
-   // populate an iteration string, if missing
-   if (rman.iteration[0] == '\0') {
-      struct tm* timeinfo = localtime(&currenttime.tv_sec);
-      strftime(rman.iteration, ITERATION_STRING_LEN, "%Y-%m-%d-%H:%M:%S", timeinfo);
-   }
-
-   // substitute in appropriate threshold values, if specified
-   if (rman.gstate.thresh.gcthreshold) { rman.gstate.thresh.gcthreshold = gcthresh; }
-   if (rman.gstate.thresh.rebuildthreshold) {
-      if (rman.gstate.lbrebuild) { rman.gstate.thresh.rebuildthreshold = rblthresh; }
-      else { rman.gstate.thresh.rebuildthreshold = rbmthresh; }
-   }
-   if (rman.gstate.thresh.repackthreshold) { rman.gstate.thresh.repackthreshold = rpthresh; }
-   if (rman.gstate.thresh.cleanupthreshold) { rman.gstate.thresh.cleanupthreshold = clthresh; }
 
    // check how many ranks we have
    int rankcount = 1;
@@ -2304,10 +2259,35 @@ int main(int argc, char** argv) {
       RMAN_ABORT();
    }
 #endif
-   rman.ranknum = (size_t)rank;
-   rman.totalranks = (size_t)rankcount;
-   rman.workingranks = 1;
-   if (rankcount > 1) { rman.workingranks = rman.totalranks - 1; }
+   rmanstate rman;
+   rmanstate_init(&rman, rank, rankcount);
+
+    Args_t args = {
+        .rman        = &rman,
+        .config_path = NULL,
+        .ns_path     = NULL,
+        .recurse     = 0,
+        .currenttime = {0},
+        .thresh      = {0},
+    };
+
+    if (parse_args(argc, argv, &args) != 0) {
+       RMAN_ABORT();
+   }
+
+    // create logging root dir
+    if (mkdir(rman.logroot, 0700) && (errno != EEXIST)) {
+        fprintf(stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", rman.logroot);
+        cleanupstate(&rman, 0);
+    }
+
+    // create log presetvation root dir
+    if (rman.preservelogtgt) {
+        if (mkdir(rman.preservelogtgt, 0700) && (errno != EEXIST)) {
+            fprintf(stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", rman.preservelogtgt);
+            cleanupstate(&rman, 0);
+        }
+    }
 
    // for multi-rank invocations, we must synchronize our iteration string across all ranks
    //     (due to clock drift + varied startup times across multiple hosts)
@@ -2327,8 +2307,8 @@ int main(int argc, char** argv) {
       fprintf(stderr, "ERROR: failed to initialize erasure lock\n");
       RMAN_ABORT();
    }
-   if ((rman.config = config_init(config_path, &erasurelock)) == NULL) {
-      fprintf(stderr, "ERROR: Failed to initialize MarFS config: \"%s\"\n", config_path);
+   if ((rman.config = config_init(args.config_path, &erasurelock)) == NULL) {
+      fprintf(stderr, "ERROR: Failed to initialize MarFS config: \"%s\"\n", args.config_path);
       RMAN_ABORT();
    }
 
@@ -2344,9 +2324,9 @@ int main(int argc, char** argv) {
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
    }
-   char* nspathdup = strdup(ns_path);
+   char* nspathdup = strdup(args.ns_path);
    if (nspathdup == NULL) {
-      fprintf(stderr, "ERROR: Failed to duplicate NS path string: \"%s\"\n", ns_path);
+      fprintf(stderr, "ERROR: Failed to duplicate NS path string: \"%s\"\n", args.ns_path);
       config_term(rman.config);
       pthread_mutex_destroy(&erasurelock);
       RMAN_ABORT();
@@ -2354,7 +2334,7 @@ int main(int argc, char** argv) {
    int travret = config_traverse(rman.config, &pos, &nspathdup, 1);
    if (travret < 0) {
       if (rman.ranknum == 0)
-         fprintf(stderr, "ERROR: Failed to identify NS path target: \"%s\"\n", ns_path);
+         fprintf(stderr, "ERROR: Failed to identify NS path target: \"%s\"\n", args.ns_path);
       free(nspathdup);
       config_term(rman.config);
       pthread_mutex_destroy(&erasurelock);
@@ -2362,7 +2342,7 @@ int main(int argc, char** argv) {
    }
    if (travret) {
       if (rman.ranknum == 0)
-         fprintf(stderr, "ERROR: Path target is not a NS, but a subpath of depth %d: \"%s\"\n", travret, ns_path);
+         fprintf(stderr, "ERROR: Path target is not a NS, but a subpath of depth %d: \"%s\"\n", travret, args.ns_path);
       free(nspathdup);
       config_term(rman.config);
       pthread_mutex_destroy(&erasurelock);
@@ -2384,7 +2364,7 @@ int main(int argc, char** argv) {
       // we can use hash_iterate, as this is guaranteed to be the only proc using this config struct
       HASH_NODE* subnode = NULL;
       int iterres = 0;
-      if (curns->subspaces  &&  recurse) {
+      if (curns->subspaces  &&  args.recurse) {
          iterres = hash_iterate(curns->subspaces, &subnode);
          if (iterres < 0) {
             fprintf(stderr, "ERROR: Failed to iterate through subspaces of \"%s\"\n", curns->idstr);
@@ -2513,7 +2493,7 @@ int main(int argc, char** argv) {
    }
    else if (rman.gstate.dryrun == 0  &&  rman.ranknum == 0) {
       // otherwise, scan for and incorporate logs from previous modification runs
-      if (findoldlogs(&rman, rman.logroot, skipthresh)) {
+      if (findoldlogs(&rman, rman.logroot, args.thresh.skip)) {
          fprintf(stderr, "ERROR: Failed to scan for previous iteration logs under \"%s\"\n", rman.logroot);
          cleanupstate(&rman, 0);
          pthread_mutex_destroy(&erasurelock);
@@ -2566,7 +2546,7 @@ int main(int argc, char** argv) {
 
       // print out run info
       printf("Processing %zu Total Namespaces (%sTarget NS \"%s\")\n",
-              rman.nscount, (recurse) ? "Recursing Below " : "", (rman.nslist[0])->idstr);
+              rman.nscount, (args.recurse) ? "Recursing Below " : "", (rman.nslist[0])->idstr);
       printf("   Operation Summary:%s%s%s%s%s\n",
               (rman.gstate.dryrun) ? " DRY-RUN" : "", (rman.quotas) ? " QUOTAS" : "",
               (rman.gstate.thresh.gcthreshold) ? " GC" : "",
@@ -2587,22 +2567,20 @@ int main(int argc, char** argv) {
 #endif
 
    // actually perform core behavior loops
-   int bres;
+   int bres = 0;
    if (rman.ranknum == 0) {
       bres = managerbehavior(&rman);
    }
    else {
       bres = workerbehavior(&rman);
    }
-   if (bres) {
-      cleanupstate(&rman, 1);
-   }
-   else {
-      bres = (rman.fatalerror) ? -((int)rman.fatalerror) : (int)rman.nonfatalerror;
-      cleanupstate(&rman, 0);
-   }
-   pthread_mutex_destroy(&erasurelock);
 
+   if (!bres) {
+      bres = (rman.fatalerror) ? -((int)rman.fatalerror) : (int)rman.nonfatalerror;
+   }
+
+   cleanupstate(&rman, !!bres);
+   pthread_mutex_destroy(&erasurelock);
 
 #ifdef RMAN_USE_MPI
     MPI_Finalize();
