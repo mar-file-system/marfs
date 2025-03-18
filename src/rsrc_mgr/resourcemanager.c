@@ -626,7 +626,7 @@ static int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh)
          // check if program args are compatible with this run
          if (!rman->execprevroot) {
             struct stat stval; // for checking the age of previous iteration files
-            int sumfd = openat(newfd, "summary.log", O_RDONLY, 0);
+            int sumfd = openat(newfd, SUMMARY_FILENAME, O_RDONLY, 0);
             if (sumfd < 0) {
                LOG(LOG_WARNING, "Failed to open summary log for old iteration: \"%s\" (%s)\n",
                     request.iteration, strerror(errno));
@@ -720,7 +720,7 @@ static int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh)
             // ignore '.'-prefixed entries
             if (strncmp(entry->d_name, ".", 1) == 0) { continue; }
             // ignore the summary log
-            if (strcmp(entry->d_name, "summary.log") == 0) { continue; }
+            if (strcmp(entry->d_name, SUMMARY_FILENAME) == 0) { continue; }
             // all other entries are assumed to be namespaces
             break;
          }
@@ -733,7 +733,7 @@ static int findoldlogs(rmanstate* rman, const char* scanroot, time_t skipthresh)
             // no Namespaces remain, we are done
             if (logcount == 0  &&  rman->execprevroot == NULL) {
                // if this is a dead iteration, with no logs remaining, just delete it
-               if (unlinkat(dirfd(dirlist[1]), "summary.log", 0)) {
+               if (unlinkat(dirfd(dirlist[1]), SUMMARY_FILENAME, 0)) {
                   fprintf(stderr, "WARNING: Failed to remove summary log of previous iteration: \"%s\"\n", request.iteration);
                }
                else if (unlinkat(dirfd(dirlist[0]), request.iteration, AT_REMOVEDIR)) {
@@ -1640,14 +1640,14 @@ int managerbehavior(rmanstate* rman) {
       fprintf(stderr, "ERROR: Failed to identify iteration path of this run for final cleanup\n");
       return -1;
    }
-   size_t sumstrlen = strlen(iterationroot) + 1 + strlen("summary.log");
+   size_t sumstrlen = strlen(iterationroot) + 1 + strlen(SUMMARY_FILENAME);
    char* sumlogpath = calloc(sizeof(char), sumstrlen + 1);
    if (sumlogpath == NULL) {
       fprintf(stderr, "ERROR: Failed to identify summary log path of this run for final cleanup\n");
       free(iterationroot);
       return -1;
    }
-   snprintf(sumlogpath, sumstrlen + 1, "%s/%s", iterationroot, "summary.log");
+   snprintf(sumlogpath, sumstrlen + 1, "%s/%s", iterationroot, SUMMARY_FILENAME);
    // potentially duplicate our summary log to a final location
    if (rman->preservelogtgt) {
       char* presiterroot = resourcelog_genlogpath(0, rman->preservelogtgt, rman->iteration, NULL, -1);
@@ -1657,7 +1657,7 @@ int managerbehavior(rmanstate* rman) {
          free(iterationroot);
          return -1;
       }
-      size_t presstrlen = strlen(presiterroot) + 1 + strlen("summary.log");
+      size_t presstrlen = strlen(presiterroot) + 1 + strlen(SUMMARY_FILENAME);
       char* preslogpath = calloc(sizeof(char), presstrlen + 1);
       if (preslogpath == NULL) {
          fprintf(stderr, "ERROR: Failed to identify summary log path of this run for final cleanup\n");
@@ -1666,7 +1666,7 @@ int managerbehavior(rmanstate* rman) {
          free(iterationroot);
          return -1;
       }
-      snprintf(preslogpath, presstrlen + 1, "%s/%s", presiterroot, "summary.log");
+      snprintf(preslogpath, presstrlen + 1, "%s/%s", presiterroot, SUMMARY_FILENAME);
       free(presiterroot);
       // simply use a hardlink for this purpose, no need to make a 'real' duplicate
       if (link(sumlogpath, preslogpath)) {
@@ -1699,14 +1699,14 @@ int managerbehavior(rmanstate* rman) {
          fprintf(stderr, "ERROR: Failed to identify iteration path of the previous run for final cleanup\n");
          return -1;
       }
-      sumstrlen = strlen(iterationroot) + 1 + strlen("summary.log");
+      sumstrlen = strlen(iterationroot) + 1 + strlen(SUMMARY_FILENAME);
       sumlogpath = calloc(sizeof(char), sumstrlen + 1);
       if (sumlogpath == NULL) {
          fprintf(stderr, "ERROR: Failed to identify summary log path of the previous run for final cleanup\n");
          free(iterationroot);
          return -1;
       }
-      snprintf(sumlogpath, sumstrlen + 1, "%s/%s", iterationroot, "summary.log");
+      snprintf(sumlogpath, sumstrlen + 1, "%s/%s", iterationroot, SUMMARY_FILENAME);
       if (unlink(sumlogpath)) {
          // just complain
          fprintf(stderr, "WARNING: Failed to unlink summary log path of previous run during final cleanup\n");
@@ -2255,9 +2255,9 @@ int main(int argc, char** argv) {
    // check for previous run execution
    if (rman.execprevroot) {
       // open the summary log of that run
-      size_t alloclen = strlen(rman.execprevroot) + 1 + strlen(rman.iteration) + 1 + strlen("summary.log") + 1;
+      size_t alloclen = strlen(rman.execprevroot) + 1 + strlen(rman.iteration) + 1 + strlen(SUMMARY_FILENAME) + 1;
       char* sumlogpath = malloc(sizeof(char) * alloclen);
-      snprintf(sumlogpath, alloclen, "%s/%s/%s", rman.execprevroot, rman.iteration, "summary.log");
+      snprintf(sumlogpath, alloclen, "%s/%s/%s", rman.execprevroot, rman.iteration, SUMMARY_FILENAME);
       FILE* sumlog = fopen(sumlogpath, "r");
       if (sumlog == NULL) {
          const int err = errno;
@@ -2302,7 +2302,7 @@ int main(int argc, char** argv) {
    // rank zero needs to output our summary header
    if (rman.ranknum == 0) {
       // open our summary log
-      size_t alloclen = strlen(rman.logroot) + 1 + strlen(rman.iteration) + 1 + strlen("summary.log") + 1;
+      size_t alloclen = strlen(rman.logroot) + 1 + strlen(rman.iteration) + 1 + strlen(SUMMARY_FILENAME) + 1;
       char* sumlogpath = malloc(sizeof(char) * alloclen);
       size_t printres = snprintf(sumlogpath, alloclen, "%s/%s", rman.logroot, rman.iteration);
       if (mkdir(sumlogpath, 0700)  &&  errno != EEXIST) {
@@ -2310,7 +2310,7 @@ int main(int argc, char** argv) {
                              "ERROR: Failed to create summary log parent dir: \"%s\"\n",
                              sumlogpath);
       }
-      printres += snprintf(sumlogpath + printres, alloclen - printres, "/summary.log");
+      printres += snprintf(sumlogpath + printres, alloclen - printres, "/" SUMMARY_FILENAME);
       int sumlog = open(sumlogpath, O_WRONLY | O_CREAT | O_EXCL, 0700);
       if (sumlog < 0) {
          print_cleanup_abort(rman, erasurelock,
