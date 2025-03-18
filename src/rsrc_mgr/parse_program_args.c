@@ -57,6 +57,8 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#include <string.h>
+
 #include "parse_program_args.h"
 
 int parse_program_args(rmanstate* rman, FILE* inputsummary) {
@@ -88,50 +90,42 @@ int parse_program_args(rmanstate* rman, FILE* inputsummary) {
          rman->gstate.dryrun = 1;
       }
       else {
-         // look for an '=' char
-         char* parse = readline;
-         while (*parse != '=') {
-            if (*parse == '\0') {
-               fprintf(stderr, "ERROR: Failed to parse previous run's operation info (\"%s\")\n", readline);
-               free(readline);
-               return -1;
-            }
-            parse++;
+         char *value = NULL;
+         char *key = strtok_r(readline, "=", &value);
+
+         if (value == (readline + linelen)) {
+            fprintf(stderr, "ERROR: Failed to parse previous run's operation info (\"%s\")\n", readline);
+            free(readline);
+            return -1;
          }
 
-         *parse = '\0';
-
-         parse++;
-
-         // parse in the numeric value
-         char* endptr = NULL;
-         unsigned long long parseval = strtoull(parse, &endptr, 10);
-         if (endptr == NULL  ||  *endptr != '\n'  ||  parseval == ULLONG_MAX) {
+         unsigned long long parseval = 0;
+         if (sscanf(value, "%llu", &parseval) != 1) {
             fprintf(stderr, "ERROR: Failed to parse previous run's \"%s\" operation threshold: \"%s\"\n",
-                    readline, parse);
+                    readline, value);
             free(readline);
             return -1;
          }
 
          // populate the appropriate value, based on string header
-         if (strcmp(readline, "GC") == 0) {
+         if (strncmp(key, "GC", 3) == 0) {
             rman->gstate.thresh.gcthreshold = (time_t)parseval;
          }
-         else if (strcmp(readline, "REPACK") == 0) {
+         else if (strncmp(key, "REPACK", 7) == 0) {
             rman->gstate.thresh.repackthreshold = (time_t)parseval;
          }
-         else if (strcmp(readline, "REBUILD") == 0) {
+         else if (strncmp(key, "REBUILD", 8) == 0) {
             rman->gstate.thresh.rebuildthreshold = (time_t)parseval;
          }
-         else if (strcmp(readline, "REBUILD-LOCATION-POD") == 0) {
+         else if (strncmp(key, "REBUILD-LOCATION-POD", 21) == 0) {
             rman->gstate.rebuildloc.pod = (int)parseval;
             rman->gstate.lbrebuild = 1;
          }
-         else if (strcmp(readline, "REBUILD-LOCATION-CAP") == 0) {
+         else if (strncmp(key, "REBUILD-LOCATION-CAP", 21) == 0) {
             rman->gstate.rebuildloc.cap = (int)parseval;
             rman->gstate.lbrebuild = 1;
          }
-         else if (strcmp(readline, "REBUILD-LOCATION-SCATTER") == 0) {
+         else if (strncmp(key, "REBUILD-LOCATION-SCATTER", 25) == 0) {
             rman->gstate.rebuildloc.scatter = (int)parseval;
             rman->gstate.lbrebuild = 1;
          }
