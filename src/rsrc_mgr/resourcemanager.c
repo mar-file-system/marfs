@@ -1264,14 +1264,6 @@ static int handleresponse(rmanstate* rman, size_t ranknum, workresponse* respons
             int fnamelen = parselogpath - finelem;
             size_t errloglen = logdirlen + strlen(ERROR_LOG_PREFIX) + fnamelen;
             char* errlogpath = malloc(sizeof(char) * (errloglen + 1));
-            if (errlogpath == NULL) {
-               fprintf(stderr, "ERROR: Failed to allocate the error log path of Rank %zu for NS \"%s\"\n",
-                        ranknum, rman->nslist[response->request.nsindex]->idstr);
-               resourcelog_term(&ranklog, NULL, 0);
-               free(outlogpath);
-               rman->fatalerror = 1;
-               return -1;
-            }
             if (snprintf(errlogpath, errloglen + 1, "%.*s%s%s", logdirlen, outlogpath, ERROR_LOG_PREFIX, finelem) != errloglen) {
                fprintf(stderr, "ERROR: Failed to generate the error log path of Rank %zu for NS \"%s\"\n",
                         ranknum, rman->nslist[response->request.nsindex]->idstr);
@@ -2207,10 +2199,6 @@ int main(int argc, char** argv) {
    marfs_ns* curns = pos.ns;
    rman.nscount = 1;
    rman.nslist = malloc(sizeof(marfs_ns*));
-   if (rman.nslist == NULL) {
-      print_cleanup_abort(rman, erasurelock,
-                          "ERROR: Failed to allocate NS list of length %zu\n", rman.nscount);
-   }
    *(rman.nslist) = pos.ns;
    while (curns) {
       // we can use hash_iterate, as this is guaranteed to be the only proc using this config struct
@@ -2260,35 +2248,15 @@ int main(int argc, char** argv) {
    }
    // complete allocation of required state elements
    rman.distributed = calloc(sizeof(size_t), rman.nscount);
-   if (rman.distributed == NULL) {
-      print_cleanup_abort(rman, erasurelock,
-                          "ERROR: Failed to allocate a 'distributed' list of length %zu\n", rman.nscount);
-   }
    rman.terminatedworkers = calloc(sizeof(char), rman.totalranks);
-   if (rman.terminatedworkers == NULL) {
-      print_cleanup_abort(rman, erasurelock,
-                          "ERROR: Failed to allocate a 'terminatedworkers' list of length %zu\n", rman.totalranks);
-   }
    rman.walkreport = calloc(sizeof(*rman.walkreport), rman.nscount);
-   if (rman.walkreport == NULL) {
-      print_cleanup_abort(rman, erasurelock,
-                          "ERROR: Failed to allocate a 'walkreport' list of length %zu\n", rman.nscount);
-   }
    rman.logsummary = calloc(sizeof(*rman.logsummary), rman.nscount);
-   if (rman.logsummary == NULL) {
-      print_cleanup_abort(rman, erasurelock,
-                          "ERROR: Failed to allocate a 'logsummary' list of length %zu\n", rman.nscount);
-   }
 
    // check for previous run execution
    if (rman.execprevroot) {
       // open the summary log of that run
       size_t alloclen = strlen(rman.execprevroot) + 1 + strlen(rman.iteration) + 1 + strlen("summary.log") + 1;
       char* sumlogpath = malloc(sizeof(char) * alloclen);
-      if (sumlogpath == NULL) {
-         print_cleanup_abort(rman, erasurelock,
-                             "ERROR: Failed to allocate summary logfile path\n");
-      }
       snprintf(sumlogpath, alloclen, "%s/%s/%s", rman.execprevroot, rman.iteration, "summary.log");
       FILE* sumlog = fopen(sumlogpath, "r");
       if (sumlog == NULL) {
@@ -2336,10 +2304,6 @@ int main(int argc, char** argv) {
       // open our summary log
       size_t alloclen = strlen(rman.logroot) + 1 + strlen(rman.iteration) + 1 + strlen("summary.log") + 1;
       char* sumlogpath = malloc(sizeof(char) * alloclen);
-      if (sumlogpath == NULL) {
-         print_cleanup_abort(rman, erasurelock,
-                             "ERROR: Failed to allocate summary logfile path\n");
-      }
       size_t printres = snprintf(sumlogpath, alloclen, "%s/%s", rman.logroot, rman.iteration);
       if (mkdir(sumlogpath, 0700)  &&  errno != EEXIST) {
          print_cleanup_abort(rman, erasurelock,
