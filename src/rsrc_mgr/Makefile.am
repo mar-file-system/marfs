@@ -85,6 +85,7 @@ bin_PROGRAMS = marfs-rman
 marfs_rman_SOURCES =        \
     find_namespaces.c       \
     findoldlogs.c           \
+    manager.c               \
     output_program_args.c   \
     outputinfo.c            \
     parse_program_args.c    \
