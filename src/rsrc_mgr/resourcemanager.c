@@ -60,10 +60,13 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define RMAN_USE_MPI
 
 #include <dirent.h>
-#include <mpi.h>
 #include <stdio.h>
 #include <sys/time.h>
 #include <sys/types.h>
+
+#ifdef RMAN_USE_MPI
+#include <mpi.h>
+#endif
 
 // specifically needed for this file
 #include "config/config.h"
@@ -741,14 +744,11 @@ static int parse_args(int argc, char** argv,
    return 0;
 }
 
-#define cleanup_abort(rman, erasurelock)                    \
-    pthread_mutex_destroy(&(erasurelock));                  \
-    rmanstate_fini(&(rman), 0);                             \
+#define print_cleanup_abort(fini_abort, rman, erasurelock, fmt, ...)    \
+    fprintf(stderr, fmt, ##__VA_ARGS__);                                \
+    pthread_mutex_destroy(&(erasurelock));                              \
+    rmanstate_fini(&(rman), fini_abort);                                \
     RMAN_ABORT()
-
-#define print_cleanup_abort(rman, erasurelock, fmt, ...)    \
-    fprintf(stderr, fmt, ##__VA_ARGS__);                    \
-    cleanup_abort((rman), (erasurelock))
 
 //   -------------    STARTUP BEHAVIOR     -------------
 
@@ -836,13 +836,13 @@ int main(int argc, char** argv) {
    }
 
    if ((rman.config = config_init(args.config_path, &erasurelock)) == NULL) {
-       print_cleanup_abort(rman, erasurelock,
-                           "ERROR: Failed to initialize MarFS config: \"%s\"\n", args.config_path);
+      print_cleanup_abort(0, rman, erasurelock,
+                          "ERROR: Failed to initialize MarFS config: \"%s\"\n", args.config_path);
    }
 
    if (find_namespaces(&rman, args.ns_path, args.recurse) != 0) {
-       print_cleanup_abort(rman, erasurelock,
-                           "Error: Failed to find namespace\n");
+      print_cleanup_abort(0, rman, erasurelock,
+                          "Error: Failed to find namespace\n");
    }
 
    // complete allocation of required state elements
@@ -852,12 +852,12 @@ int main(int argc, char** argv) {
    rman.logsummary = calloc(sizeof(*rman.logsummary), rman.nscount);
 
    if (read_last_log(&rman, args.thresh.skip) != 0) {
-       print_cleanup_abort(rman, erasurelock,
-                           "ERROR: Failed to open previous run's log\n");
+      print_cleanup_abort(0, rman, erasurelock,
+                          "ERROR: Failed to open previous run's log\n");
    }
 
    if (summary_log_setup(&rman, args.recurse) != 0) {
-      print_cleanup_abort(rman, erasurelock,
+      print_cleanup_abort(0, rman, erasurelock,
                           "ERROR: Failed to set up summary\n");
    }
 
@@ -865,10 +865,8 @@ int main(int argc, char** argv) {
    // synchronize here, to avoid having some ranks run ahead with modifications while other workers
    //    are hung on earlier initialization (which may still fail)
    if (MPI_Barrier(MPI_COMM_WORLD)) {
-      fprintf(stderr, "ERROR: Failed to synchronize mpi ranks prior to execution\n");
-      rmanstate_fini(&rman, 1);
-      pthread_mutex_destroy(&erasurelock);
-      RMAN_ABORT();
+      print_cleanup_abort(1, rman, erasurelock,
+                          "ERROR: Failed to synchronize mpi ranks prior to execution\n");
    }
 #endif
 
