@@ -95,7 +95,8 @@ marfs_rman_SOURCES =        \
     resourcethreads.c       \
     rmanstate.c             \
     summary_log_setup.c     \
-    work.c
+    work.c                  \
+    worker.c
 marfs_rman_LDADD = libResourceLog.la ../datastream/libDatastream.la
 marfs_rman_CFLAGS = $(XML_CFLAGS)
 
