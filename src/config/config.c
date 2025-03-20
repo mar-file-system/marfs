@@ -2839,6 +2839,30 @@ marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock ) {
 }
 
 /**
+ * Initialize memory structures based on the given config file
+ * @param const char* cpath : Path of the config file to be parsed
+ * @return marfs_config_rust_wrapper : newly populated config
+ *
+ * On error, the marfs_config* field of marfs_config_rust_wrapper
+ *       will be NULL
+ */
+marfs_config_rust_wrapper config_init_rust_helper( const char* cpath ) {
+   marfs_config_rust_wrapper c;
+   c.config = NULL;
+
+   if ( pthread_mutex_init( &c.erasureLock, NULL ) ) {
+      LOG( LOG_ERR, "ERROR: failed to initialize erasure lock\n" );
+      return c;
+   }
+
+   marfs_config* config = config_init(cpath, &c.erasureLock);
+
+   c.config = config;
+
+   return c;
+}
+
+/**
  * Destroy the given config structures
  * @param marfs_config* config : Reference to the config to be destroyed
  * @return int : Zero on success, or -1 on failure
@@ -2865,6 +2889,21 @@ int config_term( marfs_config* config ) {
    // free the config itself
    free( config );
    return retval;
+}
+
+/**
+ * Destroy the given config structures
+ * @param marfs_config* config : Reference to the config to be destroyed
+ * @return int : Zero on success, or -1 on failure
+ */
+int config_term_rust_helper( marfs_config_rust_wrapper c ) {
+   pthread_mutex_destroy(&c.erasureLock);
+
+   if (c.config) {
+      return config_term( c.config );
+   }
+
+   return 0;
 }
 
 /**
@@ -3235,7 +3274,7 @@ HASH_TABLE config_genreftable( HASH_NODE** refnodes, size_t* refnodecount, size_
  * @param int flags : flags to control behavior of the verification
  * @return int : A count of uncorrected errors encountered, or -1 if a failure occurred
  */
-int config_verify( marfs_config* config, const char* tgtNS, int flags ) {
+int config_verify( marfs_config* config, const char* tgtNS, unsigned int flags ) {
 
    int MDALcheck = flags & CFG_MDALCHECK;
    int NEcheck   = flags & CFG_DALCHECK;

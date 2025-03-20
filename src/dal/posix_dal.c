@@ -641,7 +641,7 @@ int tgtMatch(DAL_location* loc, POSIX_REBUILD_LOC tgt) {
  * @param const char* string : String to hash
  * @return uint64_t : hash of the string
  */
-uint64_t polyhash(const char* string) {
+static uint64_t polyhash(const char* string) {
    // According to http://www.cse.yorku.ca/~oz/hash.html
    // 33 is a magical number that inexplicably works the best.
    const int salt = 33;
@@ -659,7 +659,7 @@ uint64_t polyhash(const char* string) {
  * @param uint64_t a : second value to hash
  * @return uint64_t : hash of the two values
  */
-uint64_t h_a(const uint64_t key, uint64_t a) {
+static uint64_t h_a(const uint64_t key, uint64_t a) {
    return ((a * key) >> 32);
 }
 
