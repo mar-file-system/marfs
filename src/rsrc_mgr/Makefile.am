@@ -56,7 +56,7 @@
 
 
 # automake requires '=' before '+=', even for these built-in vars
-AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CPPFLAGS = -I ${top_srcdir}/src -DRMAN_USE_MPI=1
 AM_CFLAGS   =
 AM_LDFLAGS  =
 

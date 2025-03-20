@@ -60,6 +60,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdio.h>
 #include <unistd.h>
 
+#if RMAN_USE_MPI
+#include <mpi.h>
+#endif
+
 #include "rsrc_mgr/rmanstate.h"
 #include "rsrc_mgr/work.h"
 #include "rsrc_mgr/worker.h"
@@ -70,7 +74,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  * @return int : Zero on success, or -1 on failure
  */
 int workerbehavior(rmanstate* rman) {
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
    // setup out response and request structs
    workresponse response;
    workrequest  request;

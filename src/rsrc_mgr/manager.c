@@ -60,6 +60,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdio.h>
 #include <unistd.h>
 
+#if RMAN_USE_MPI
+#include <mpi.h>
+#endif
+
 #include "rsrc_mgr/manager.h"
 #include "rsrc_mgr/outputinfo.h"
 #include "rsrc_mgr/rmanstate.h"
@@ -240,7 +244,7 @@ int managerbehavior(rmanstate* rman) {
    while (workersrunning) {
       // begin by getting a response from a worker via MPI
       if (rman->totalranks > 1) {
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
          MPI_Status msgstatus;
          if (MPI_Recv(&response, sizeof(response), MPI_BYTE, MPI_ANY_SOURCE,
                       MPI_ANY_TAG, MPI_COMM_WORLD, &msgstatus)) {
@@ -265,7 +269,7 @@ int managerbehavior(rmanstate* rman) {
       // send out a new request, if appropriate
       if (handleres) {
          if (rman->totalranks > 1) {
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
             // send out the request via MPI to the responding rank
             if (MPI_Send(&request, sizeof(request), MPI_BYTE, respondingrank, 0, MPI_COMM_WORLD)) {
                LOG(LOG_ERR, "Failed to send a request\n");

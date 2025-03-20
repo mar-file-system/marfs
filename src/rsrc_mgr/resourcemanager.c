@@ -57,14 +57,12 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#define RMAN_USE_MPI
-
 #include <dirent.h>
 #include <stdio.h>
 #include <sys/time.h>
 #include <sys/types.h>
 
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
 #include <mpi.h>
 #endif
 
@@ -450,7 +448,7 @@ static int parse_args(int argc, char** argv,
 //   -------------    STARTUP BEHAVIOR     -------------
 
 int main(int argc, char** argv) {
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
    // Initialize MPI
    if (MPI_Init(&argc,&argv)) {
       fprintf(stderr, "ERROR: Failed to initialize MPI\n");
@@ -458,7 +456,7 @@ int main(int argc, char** argv) {
    }
 #endif
 
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
 #define RMAN_ABORT() \
       MPI_Abort(MPI_COMM_WORLD, -1); \
       return -1;
@@ -470,7 +468,7 @@ int main(int argc, char** argv) {
    // check how many ranks we have
    int rankcount = 1;
    int rank = 0;
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
    if (MPI_Comm_size(MPI_COMM_WORLD, &rankcount)) {
       fprintf(stderr, "ERROR: Failed to identify rank count\n");
       RMAN_ABORT();
@@ -515,7 +513,7 @@ int main(int argc, char** argv) {
    // for multi-rank invocations, we must synchronize our iteration string across all ranks
    //     (due to clock drift + varied startup times across multiple hosts)
    if (rman.totalranks > 1  &&
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
          MPI_Bcast(rman.iteration, ITERATION_STRING_LEN, MPI_CHAR, 0, MPI_COMM_WORLD)) {
 #else
          1) {
@@ -558,7 +556,7 @@ int main(int argc, char** argv) {
                           "ERROR: Failed to set up summary\n");
    }
 
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
    // synchronize here, to avoid having some ranks run ahead with modifications while other workers
    //    are hung on earlier initialization (which may still fail)
    if (MPI_Barrier(MPI_COMM_WORLD)) {
@@ -583,7 +581,7 @@ int main(int argc, char** argv) {
    rmanstate_fini(&rman, !!bres);
    pthread_mutex_destroy(&erasurelock);
 
-#ifdef RMAN_USE_MPI
+#if RMAN_USE_MPI
     MPI_Finalize();
 #endif
 
