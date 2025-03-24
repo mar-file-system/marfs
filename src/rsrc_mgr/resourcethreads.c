@@ -72,23 +72,19 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  */
 int resourceinput_init(RESOURCEINPUT* resourceinput, marfs_position* pos, size_t clientcount) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput != NULL) {
+   if (resourceinput == NULL || *resourceinput != NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
-   if (pos == NULL  ||  pos->ns == NULL  ||  pos->ctxt == NULL) {
+
+   if (pos == NULL || pos->ns == NULL || pos->ctxt == NULL) {
       LOG(LOG_ERR, "Received NULL position/NS/CTXT ref\n");
       errno = EINVAL;
       return -1;
    }
-   // allocate a new resourceinput
+
    RESOURCEINPUT rin = malloc(sizeof(*rin));
-   if (rin == NULL) {
-      LOG(LOG_ERR, "Failed to allocate space for a new resourceinput\n");
-      return -1;
-   }
-   // initialize resourceinput values
    rin->ns = pos->ns;
    rin->ctxt = pos->ctxt;
    rin->rlog = NULL;
@@ -96,24 +92,10 @@ int resourceinput_init(RESOURCEINPUT* resourceinput, marfs_position* pos, size_t
    rin->refindex = 0;
    rin->prepterm = 0;
    rin->clientcount = clientcount;
-   if (pthread_cond_init(&(rin->complete), NULL)) {
-      LOG(LOG_ERR, "Failed to initialize 'complete' condition for new resourceinput\n");
-      free(rin);
-      return -1;
-   }
-   if (pthread_cond_init(&(rin->updated), NULL)) {
-      LOG(LOG_ERR, "Failed to initialize 'complete' condition for new resourceinput\n");
-      pthread_cond_destroy(&(rin->complete));
-      free(rin);
-      return -1;
-   }
-   if (pthread_mutex_init(&(rin->lock), NULL)) {
-      LOG(LOG_ERR, "Failed to initialize lock for new resourceinput\n");
-      pthread_cond_destroy(&(rin->updated));
-      pthread_cond_destroy(&(rin->complete));
-      free(rin);
-      return -1;
-   }
+   pthread_cond_init(&rin->complete, NULL);
+   pthread_cond_init(&rin->updated, NULL);
+   pthread_mutex_init(&rin->lock, NULL);
+
    *resourceinput = rin;
    return 0;
 }
@@ -126,39 +108,43 @@ int resourceinput_init(RESOURCEINPUT* resourceinput, marfs_position* pos, size_t
  */
 int resourceinput_setlogpath(RESOURCEINPUT* resourceinput, const char* logpath) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput == NULL) {
+   if (resourceinput == NULL || *resourceinput == NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCEINPUT rin = *resourceinput;
+
    // acquire the structure lock
-   if (pthread_mutex_lock(&(rin->lock))) {
-      LOG(LOG_ERR, "Failed to acquire resourceinput lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rin->lock);
+
    // verify that we don't have an active resourcelog
    if (rin->rlog) {
       LOG(LOG_ERR, "Already have an active resourcelog value\n");
-      pthread_mutex_unlock(&(rin->lock));
+      pthread_mutex_unlock(&rin->lock);
       errno = EINVAL;
       return -1;
    }
+
    // don't allow inputs to be updated if threads are already preping for termination
    if (rin->prepterm) {
       LOG(LOG_ERR, "Resourceinput cannot be updated while preparing for termination\n");
-      pthread_mutex_unlock(&(rin->lock));
+      pthread_mutex_unlock(&rin->lock);
       errno = EINVAL;
       return -1;
    }
+
    // initialize the new resourcelog
-   if (resourcelog_init(&(rin->rlog), logpath, RESOURCE_READ_LOG, rin->ns)) {
+   if (resourcelog_init(&rin->rlog, logpath, RESOURCE_READ_LOG, rin->ns)) {
       LOG(LOG_ERR, "Failed to initialize resourcelog input: \"%s\"\n", logpath);
-      pthread_mutex_unlock(&(rin->lock));
+      pthread_mutex_unlock(&rin->lock);
       return -1;
    }
-   pthread_cond_broadcast(&(rin->updated)); // notify all waiting threads
-   pthread_mutex_unlock(&(rin->lock));
+
+   pthread_cond_broadcast(&rin->updated); // notify all waiting threads
+   pthread_mutex_unlock(&rin->lock);
+
    LOG(LOG_INFO, "Successfully initialized input resourcelog \"%s\"\n", logpath);
    return 0;
 }
@@ -173,43 +159,49 @@ int resourceinput_setlogpath(RESOURCEINPUT* resourceinput, const char* logpath) 
  */
 int resourceinput_setrange(RESOURCEINPUT* resourceinput, size_t start, size_t end) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput == NULL) {
+   if (resourceinput == NULL || *resourceinput == NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCEINPUT rin = *resourceinput;
    // acquire the structure lock
-   if (pthread_mutex_lock(&(rin->lock))) {
+   if (pthread_mutex_lock(&rin->lock)) {
       LOG(LOG_ERR, "Failed to acquire resourceinput lock\n");
       return -1;
    }
+
    // verify that the ref range has already been traversed
    if (rin->refindex != rin->refmax) {
       LOG(LOG_ERR, "Ref range of tracker has not been fully traversed\n");
-      pthread_mutex_unlock(&(rin->lock));
+      pthread_mutex_unlock(&rin->lock);
       errno = EINVAL;
       return -1;
    }
+
    // don't allow inputs to be updated if threads are already preping for termination
    if (rin->prepterm) {
       LOG(LOG_ERR, "Resourceinput cannot be updated while preparing for termination\n");
-      pthread_mutex_unlock(&(rin->lock));
+      pthread_mutex_unlock(&rin->lock);
       errno = EINVAL;
       return -1;
    }
+
    // check that range values are valid
-   if (start >= end  ||  end > rin->ns->prepo->metascheme.refnodecount) {
+   if (start >= end || end > rin->ns->prepo->metascheme.refnodecount) {
       LOG(LOG_ERR, "Invalid reference range values: (start = %zu / end = %zu / max = %zu)\n", start, end, rin->ns->prepo->metascheme.refnodecount);
-      pthread_mutex_unlock(&(rin->lock));
+      pthread_mutex_unlock(&rin->lock);
       errno = EINVAL;
       return -1;
    }
+
    // set range values
    rin->refindex = start;
    rin->refmax = end;
-   pthread_cond_broadcast(&(rin->updated)); // notify all waiting threads
-   pthread_mutex_unlock(&(rin->lock));
+   pthread_cond_broadcast(&rin->updated); // notify all waiting threads
+   pthread_mutex_unlock(&rin->lock);
+
    return 0;
 }
 
@@ -225,42 +217,44 @@ int resourceinput_setrange(RESOURCEINPUT* resourceinput, size_t start, size_t en
  */
 int resourceinput_getnext(RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_SCANNER* scanner, char** rdirpath) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput == NULL) {
+   if (resourceinput == NULL || *resourceinput == NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCEINPUT rin = *resourceinput;
+
    // acquire the structure lock
-   if (pthread_mutex_lock(&(rin->lock))) {
-      LOG(LOG_ERR, "Failed to acquire resourceinput lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rin->lock);
+
    // check for active resourcelog
    if (rin->rlog) {
-      if (resourcelog_readop(&(rin->rlog), nextop)) {
+      if (resourcelog_readop(&rin->rlog, nextop)) {
          LOG(LOG_ERR, "Failed to read operation from active resourcelog\n");
-         resourcelog_abort(&(rin->rlog));
-         pthread_mutex_unlock(&(rin->lock));
+         resourcelog_abort(&rin->rlog);
+         pthread_mutex_unlock(&rin->lock);
          return -1;
       }
+
       // check for completion of log
       if (*nextop == NULL) {
          LOG(LOG_INFO, "Statelog has been completely read\n");
-         if (resourcelog_term(&(rin->rlog), NULL, 1)) {
+         if (resourcelog_term(&rin->rlog, NULL, 1)) {
             // nothing to do but complain
             LOG(LOG_WARNING, "Failed to properly terminate input resourcelog\n");
          }
          rin->rlog = NULL; // be certain this is NULLed out
-         pthread_cond_signal(&(rin->complete));
+         pthread_cond_signal(&rin->complete);
       }
       else {
          // provide the read value
-         pthread_mutex_unlock(&(rin->lock));
+         pthread_mutex_unlock(&rin->lock);
          LOG(LOG_INFO, "Produced a new operation from logfile input\n");
          return 1;
       }
    }
+
    MDAL_SCANNER scanres = NULL;
    HASH_NODE* node = NULL;
    while (scanres == NULL) {
@@ -272,33 +266,39 @@ int resourceinput_getnext(RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_SC
             LOG(LOG_INFO, "Caller should prepare for termination\n");
             retval = 10;
          }
-         pthread_mutex_unlock(&(rin->lock));
+
+         pthread_mutex_unlock(&rin->lock);
          return retval;
       }
+
       // retrieve the next reference index value
       ssize_t res = rin->refindex;
       rin->refindex++;
       LOG(LOG_INFO, "Passing out reference index: %zd\n", res);
+
       // open the corresponding reference scanner
       MDAL nsmdal = rin->ns->prepo->metascheme.mdal;
       node = rin->ns->prepo->metascheme.refnodes + res;
       scanres = nsmdal->openscanner(rin->ctxt, node->name);
-      if (scanres == NULL  &&  errno != ENOENT) { // only missing dir is acceptable
+      if (scanres == NULL && errno != ENOENT) { // only missing dir is acceptable
          // complain if we failed to open the dir for any other reason
          LOG(LOG_ERR, "Failed to open scanner for refdir: \"%s\" (index %zd)\n", node->name, res);
          rin->refindex--;
-         pthread_mutex_unlock(&(rin->lock));
+         pthread_mutex_unlock(&rin->lock);
          return -1;
       }
+
       // check for ref range completion
       if (rin->refindex == rin->refmax) {
          LOG(LOG_INFO, "Ref range has been completed\n");
-         pthread_cond_signal(&(rin->complete));
+         pthread_cond_signal(&rin->complete);
       }
    }
-   pthread_mutex_unlock(&(rin->lock));
+
+   pthread_mutex_unlock(&rin->lock);
    *scanner = scanres;
    *rdirpath = node->name;
+
    return 1;
 }
 
@@ -310,32 +310,38 @@ int resourceinput_getnext(RESOURCEINPUT* resourceinput, opinfo** nextop, MDAL_SC
  */
 int resourceinput_purge(RESOURCEINPUT* resourceinput) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput == NULL) {
+   if (resourceinput == NULL || *resourceinput == NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCEINPUT rin = *resourceinput;
+
    // acquire the structure lock
-   if (pthread_mutex_lock(&(rin->lock))) {
-      LOG(LOG_ERR, "Failed to acquire resourceinput lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rin->lock);
+
    LOG(LOG_INFO, "Purging resource inputs\n");
+
    // potentially terminate our resourcelog
-   if (rin->rlog  &&  resourcelog_abort(&(rin->rlog))) {
+   if (rin->rlog && resourcelog_abort(&rin->rlog)) {
       // nothing to do but complain
       LOG(LOG_WARNING, "Failed to abort input resourcelog\n");
    }
+
    rin->rlog = NULL; // be certain this is NULLed out
+
    // set ref range values to indicate completion
    rin->refindex = rin->refmax;
+
    // set prepterm to cause a bypass of the synchronized termination logic
    rin->prepterm = 3;
+
    // make sure all threads wake up
-   pthread_cond_broadcast(&(rin->updated));
-   pthread_cond_broadcast(&(rin->complete));
-   pthread_mutex_unlock(&(rin->lock));
+   pthread_cond_broadcast(&rin->updated);
+   pthread_cond_broadcast(&rin->complete);
+   pthread_mutex_unlock(&rin->lock);
+
    return 0;
 }
 
@@ -346,26 +352,28 @@ int resourceinput_purge(RESOURCEINPUT* resourceinput) {
  */
 int resourceinput_waitforupdate(RESOURCEINPUT* resourceinput) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput == NULL) {
+   if (resourceinput == NULL || *resourceinput == NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCEINPUT rin = *resourceinput;
+
    // acquire the structure lock
-   if (pthread_mutex_lock(&(rin->lock))) {
-      LOG(LOG_ERR, "Failed to acquire resourceinput lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rin->lock);
+
    // wait for the ref range to be traversed
-   while (rin->rlog == NULL  &&  rin->refindex == rin->refmax  &&  rin->prepterm == 0) {
-      if (pthread_cond_wait(&(rin->updated), &(rin->lock))) {
+   while (rin->rlog == NULL && rin->refindex == rin->refmax && rin->prepterm == 0) {
+      if (pthread_cond_wait(&rin->updated, &rin->lock)) {
          LOG(LOG_ERR, "Failed to wait on 'updated' condition value\n");
-         pthread_mutex_unlock(&(rin->lock));
+         pthread_mutex_unlock(&rin->lock);
          return -1;
       }
    }
-   pthread_mutex_unlock(&(rin->lock));
+
+   pthread_mutex_unlock(&rin->lock);
+
    LOG(LOG_INFO, "Detected available inputs\n");
    return 0;
 }
@@ -377,22 +385,22 @@ int resourceinput_waitforupdate(RESOURCEINPUT* resourceinput) {
  */
 int resourceinput_waitforterm(RESOURCEINPUT* resourceinput) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput == NULL) {
+   if (resourceinput == NULL || *resourceinput == NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCEINPUT rin = *resourceinput;
+
    // acquire the structure lock
-   if (pthread_mutex_lock(&(rin->lock))) {
-      LOG(LOG_ERR, "Failed to acquire resourceinput lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rin->lock);
+
    // wait for the master proc to signal us
    char diddec = 0;
    while (rin->prepterm < 2) {
       // check if we should decrement active client count
-      if (!(diddec)  &&  rin->prepterm == 1) {
+      if (!(diddec) && rin->prepterm == 1) {
          if (rin->clientcount) {
             LOG(LOG_INFO, "Decrementing active client count from %zu to %zu\n", rin->clientcount, rin->clientcount - 1);
             rin->clientcount--; // show that we are waiting
@@ -401,20 +409,25 @@ int resourceinput_waitforterm(RESOURCEINPUT* resourceinput) {
          else if (rin->clientcount == 0) {
             LOG(LOG_ERR, "ClientCount is already zeroed out, but this client is only now waiting!\n");
          }
-         pthread_cond_signal(&(rin->complete)); // signal the master proc to check status
+
+         pthread_cond_signal(&rin->complete); // signal the master proc to check status
       }
-      if (pthread_cond_wait(&(rin->updated), &(rin->lock))) {
+
+      if (pthread_cond_wait(&rin->updated, &rin->lock)) {
          LOG(LOG_ERR, "Failed to wait on 'updated' condition value\n");
-         pthread_mutex_unlock(&(rin->lock));
+         pthread_mutex_unlock(&rin->lock);
          return -1;
       }
    }
+
    if (rin->prepterm == 2) {
       LOG(LOG_INFO, "Incrementing active client count from %zu to %zu\n", rin->clientcount, rin->clientcount + 1);
       rin->clientcount++; // show that we are exiting
    }
-   pthread_cond_signal(&(rin->complete));
-   pthread_mutex_unlock(&(rin->lock));
+
+   pthread_cond_signal(&rin->complete);
+   pthread_mutex_unlock(&rin->lock);
+
    LOG(LOG_INFO, "Ready for input termination\n");
    return 0;
 }
@@ -426,26 +439,28 @@ int resourceinput_waitforterm(RESOURCEINPUT* resourceinput) {
  */
 int resourceinput_waitforcomp(RESOURCEINPUT* resourceinput) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput == NULL) {
+   if (resourceinput == NULL || *resourceinput == NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCEINPUT rin = *resourceinput;
+
    // acquire the structure lock
-   if (pthread_mutex_lock(&(rin->lock))) {
-      LOG(LOG_ERR, "Failed to acquire resourceinput lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rin->lock);
+
    // wait for the ref range to be traversed
-   while (rin->rlog  ||  rin->refindex != rin->refmax) {
-      if (pthread_cond_wait(&(rin->complete), &(rin->lock))) {
+   while (rin->rlog || rin->refindex != rin->refmax) {
+      if (pthread_cond_wait(&rin->complete, &rin->lock)) {
          LOG(LOG_ERR, "Failed to wait on 'complete' condition value\n");
-         pthread_mutex_unlock(&(rin->lock));
+         pthread_mutex_unlock(&rin->lock);
          return -1;
       }
    }
-   pthread_mutex_unlock(&(rin->lock));
+
+   pthread_mutex_unlock(&rin->lock);
+
    LOG(LOG_INFO, "Detected input completion\n");
    return 0;
 }
@@ -457,64 +472,72 @@ int resourceinput_waitforcomp(RESOURCEINPUT* resourceinput) {
  */
 int resourceinput_term(RESOURCEINPUT* resourceinput) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput == NULL) {
+   if (resourceinput == NULL || *resourceinput == NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCEINPUT rin = *resourceinput;
+
    // acquire the structure lock
-   if (pthread_mutex_lock(&(rin->lock))) {
-      LOG(LOG_ERR, "Failed to acquire resourceinput lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rin->lock);
+
    // verify that the resourcelog has been completed
    if (rin->rlog) {
       LOG(LOG_ERR, "Statelog of inputs has not yet been fully traversed\n");
-      pthread_mutex_unlock(&(rin->lock));
+      pthread_mutex_unlock(&rin->lock);
       errno = EINVAL;
       return -1;
    }
+
    // verify that the ref range has been traversed
    if (rin->refindex != rin->refmax) {
       LOG(LOG_ERR, "Ref range of inputs has not yet been fully traversed\n");
-      pthread_mutex_unlock(&(rin->lock));
+      pthread_mutex_unlock(&rin->lock);
       errno = EINVAL;
       return -1;
    }
+
    // if the resourceinput has been purged, just indicate a failure without freeing anything
    if (rin->prepterm > 2) {
       LOG(LOG_ERR, "Cannot terminate a purged resourceinput\n");
-      pthread_mutex_unlock(&(rin->lock));
+      pthread_mutex_unlock(&rin->lock);
       errno = EINVAL;
       return -1;
    }
+
    size_t origclientcount = rin->clientcount; // remember the total number of clients
    LOG(LOG_INFO, "Synchronizing with %zu clients for termination\n", origclientcount);
+
    // signal clients to prepare for termination
    if (rin->prepterm < 1) { rin->prepterm = 1; }
-   pthread_cond_broadcast(&(rin->updated));
-   while (rin->prepterm < 2  &&  rin->clientcount) {
-      if (pthread_cond_wait(&(rin->complete), &(rin->lock))) {
+   pthread_cond_broadcast(&rin->updated);
+   while (rin->prepterm < 2 && rin->clientcount) {
+      if (pthread_cond_wait(&rin->complete, &rin->lock)) {
          LOG(LOG_ERR, "Failed to wait on 'complete' condition value for clients to synchronize\n");
-         pthread_mutex_unlock(&(rin->lock));
+         pthread_mutex_unlock(&rin->lock);
          return -1;
       }
    }
+
    LOG(LOG_INFO, "All %zu clients are ready for termination\n", origclientcount);
+
    // signal clients to exit
    if (rin->prepterm < 2) { rin->prepterm = 2; }
-   pthread_cond_broadcast(&(rin->updated));
-   while (rin->prepterm < 3  &&  rin->clientcount < origclientcount) {
-      if (pthread_cond_wait(&(rin->complete), &(rin->lock))) {
+   pthread_cond_broadcast(&rin->updated);
+   while (rin->prepterm < 3 && rin->clientcount < origclientcount) {
+      if (pthread_cond_wait(&rin->complete, &rin->lock)) {
          LOG(LOG_ERR, "Failed to wait on 'complete' condition value for clients to exit\n");
-         pthread_mutex_unlock(&(rin->lock));
+         pthread_mutex_unlock(&rin->lock);
          return -1;
       }
    }
+
    rin->prepterm = 3; // just in case
    LOG(LOG_INFO, "All %zu clients have terminated\n", origclientcount);
-   pthread_mutex_unlock(&(rin->lock));
+   pthread_mutex_unlock(&rin->lock);
+
    return 0;
 }
 
@@ -525,40 +548,48 @@ int resourceinput_term(RESOURCEINPUT* resourceinput) {
  */
 int resourceinput_destroy(RESOURCEINPUT* resourceinput) {
    // check for valid ref
-   if (resourceinput == NULL  ||  *resourceinput == NULL) {
+   if (resourceinput == NULL || *resourceinput == NULL) {
       LOG(LOG_ERR, "Received an invalid resourceinput arg\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCEINPUT rin = *resourceinput;
+
+   char havelock = 1;
+
    // attempt to acquire the mutex lock, but don't let it stop us from killing the struct
    struct timespec waittime = {
       .tv_sec = 5, // maximum wait of 5sec to acquire the lock
       .tv_nsec = 0
    };
-   char havelock = 1;
-   if (pthread_mutex_timedlock(&(rin->lock), &(waittime))) {
+   if (pthread_mutex_timedlock(&rin->lock, &waittime)) {
       LOG(LOG_WARNING, "Failed to acquire lock, but pressing on regardless\n");
       havelock = 0;
    }
+
    // verify that clients have been properly signaled to term
    if (rin->prepterm < 3) {
       LOG(LOG_ERR, "Received resourceinput arg has not yet been terminated or purged\n");
       errno = EINVAL;
       return -1;
    }
+
    // begin destroying the structure
    *resourceinput = NULL;
+
    // abort the resourcelog, if present
-   if (rin->rlog  &&  resourcelog_abort(&(rin->rlog))) {
+   if (rin->rlog && resourcelog_abort(&rin->rlog)) {
       LOG(LOG_WARNING, "Failed to abort input resourcelog\n");
    }
-   pthread_cond_destroy(&(rin->complete));
-   pthread_cond_destroy(&(rin->updated));
-   if (havelock) { pthread_mutex_unlock(&(rin->lock)); }
-   pthread_mutex_destroy(&(rin->lock));
+
+   pthread_cond_destroy(&rin->complete);
+   pthread_cond_destroy(&rin->updated);
+   if (havelock) { pthread_mutex_unlock(&rin->lock); }
+   pthread_mutex_destroy(&rin->lock);
    // DO NOT free ctxt or NS
    free(rin);
+
    return 0;
 }
 
@@ -572,17 +603,13 @@ int resourceinput_destroy(RESOURCEINPUT* resourceinput) {
 int rthread_init_func(unsigned int tID, void* global_state, void** state) {
    // cast values to appropriate types
    rthread_global_state* gstate = (rthread_global_state*)global_state;
-   // allocate thread state
+
    rthread_state* tstate = malloc(sizeof(*tstate));
-   if (tstate == NULL) {
-      LOG(LOG_ERR, "Thread %u failed to allocate state structure\n", tID);
-      return -1;
-   }
-   // populate thread state
    memset(tstate, 0, sizeof(*tstate));
    tstate->tID = tID;
    tstate->gstate = gstate;
    *state = tstate;
+
    LOG(LOG_INFO, "Thread %u has initialized\n", tstate->tID);
    return 0;
 }
@@ -595,6 +622,7 @@ int rthread_consumer_func(void** state, void** work_todo) {
    // cast values to appropriate types
    rthread_state* tstate = (rthread_state*)(*state);
    opinfo* op = (opinfo*)(*work_todo);
+
    // execute operation
    if (op) {
       if (tstate->gstate->dryrun) {
@@ -611,19 +639,21 @@ int rthread_consumer_func(void** state, void** work_todo) {
               (op->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
               (op->type == MARFS_REBUILD_OP)    ? "REBUILD" :
               (op->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN", op->ftag.streamid);
-         if (process_executeoperation(&(tstate->gstate->pos), op, &(tstate->gstate->rlog), tstate->gstate->rpst, NULL)) {
+         if (process_executeoperation(&tstate->gstate->pos, op, &tstate->gstate->rlog, tstate->gstate->rpst, NULL)) {
             LOG(LOG_ERR, "Thread %u has encountered critical error during operation execution\n", tstate->tID);
             *work_todo = NULL;
             tstate->fatalerror = 1;
             // ensure termination of all other threads (avoids possible deadlock)
-            if (resourceinput_purge(&(tstate->gstate->rinput))) {
+            if (resourceinput_purge(&tstate->gstate->rinput)) {
                LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
             }
             return -1;
          }
       }
+
       *work_todo = NULL;
    }
+
    return 0;
 }
 
@@ -634,6 +664,7 @@ int rthread_consumer_func(void** state, void** work_todo) {
 int rthread_producer_func(void** state, void** work_tofill) {
    // cast values to appropriate types
    rthread_state* tstate = (rthread_state*)(*state);
+
    // loop until we have an op to enqueue
    opinfo* newop = NULL;
    while (newop == NULL) {
@@ -663,10 +694,13 @@ int rthread_producer_func(void** state, void** work_tofill) {
                // temporarily strip our op chain down to a single DEL-OBJ op, followed by all reference deletions
                opinfo* orignext = tstate->gcops->next;
                tstate->gcops->next = refdel;
+
                // split the object deletion op apart into multiple work packages
                newop = resourcelog_dupopinfo(tstate->gcops);
+
                // restore original op chain structure
                tstate->gcops->next = orignext;
+
                // check for duplicated op chain
                if (newop) {
                   newop->count = 1; // set to a single object deletion
@@ -696,6 +730,7 @@ int rthread_producer_func(void** state, void** work_tofill) {
                }
             }
          }
+
          if (newop == NULL) {
             // just pass out whatever ops remain
             newop = tstate->gcops;
@@ -704,58 +739,70 @@ int rthread_producer_func(void** state, void** work_tofill) {
       }
       else if (tstate->walker) {
          // walk our current datastream
-         int walkres = streamwalker_iterate(&(tstate->walker), &(tstate->gcops), &(tstate->repackops), &(tstate->rebuildops));
+         int walkres = streamwalker_iterate(&tstate->walker, &tstate->gcops, &tstate->repackops, &tstate->rebuildops);
          if (walkres < 0) { // check for failure
             LOG(LOG_ERR, "Thread %u failed to walk a stream beginning in refdir \"%s\" of NS \"%s\"\n",
                  tstate->tID, tstate->rdirpath, tstate->gstate->pos.ns->idstr);
             snprintf(tstate->errorstr, MAX_STR_BUFFER,
                       "Thread %u failed to walk a stream beginning in refdir \"%s\" of NS \"%s\"\n",
                       tstate->tID, tstate->rdirpath, tstate->gstate->pos.ns->idstr);
+
             tstate->fatalerror = 1;
+
             // ensure termination of all other threads (avoids possible deadlock)
-            if (resourceinput_purge(&(tstate->gstate->rinput))) {
+            if (resourceinput_purge(&tstate->gstate->rinput)) {
                LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
             }
+
             return -1;
          }
          else if (walkres > 0) {
             // log every operation prior to distributing them
             if (tstate->rebuildops) {
-               if (resourcelog_processop(&(tstate->gstate->rlog), tstate->rebuildops, NULL)) {
+               if (resourcelog_processop(&tstate->gstate->rlog, tstate->rebuildops, NULL)) {
                   LOG(LOG_ERR, "Thread %u failed to log start of a REBUILD operation\n", tstate->tID);
                   snprintf(tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a REBUILD operation\n", tstate->tID);
+
                   tstate->fatalerror = 1;
+
                   // ensure termination of all other threads (avoids possible deadlock)
-                  if (resourceinput_purge(&(tstate->gstate->rinput))) {
+                  if (resourceinput_purge(&tstate->gstate->rinput)) {
                      LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                   }
+
                   return -1;
                }
             }
             if (tstate->repackops) {
-               if (resourcelog_processop(&(tstate->gstate->rlog), tstate->repackops, NULL)) {
+               if (resourcelog_processop(&tstate->gstate->rlog, tstate->repackops, NULL)) {
                   LOG(LOG_ERR, "Thread %u failed to log start of a REPACK operation\n", tstate->tID);
                   snprintf(tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a REPACK operation\n", tstate->tID);
+
                   tstate->fatalerror = 1;
+
                   // ensure termination of all other threads (avoids possible deadlock)
-                  if (resourceinput_purge(&(tstate->gstate->rinput))) {
+                  if (resourceinput_purge(&tstate->gstate->rinput)) {
                      LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                   }
+
                   return -1;
                }
             }
             if (tstate->gcops) {
-               if (resourcelog_processop(&(tstate->gstate->rlog), tstate->gcops, NULL)) {
+               if (resourcelog_processop(&tstate->gstate->rlog, tstate->gcops, NULL)) {
                   LOG(LOG_ERR, "Thread %u failed to log start of a GC operation\n", tstate->tID);
                   snprintf(tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to log start of a GC operation\n", tstate->tID);
+
                   tstate->fatalerror = 1;
+
                   // ensure termination of all other threads (avoids possible deadlock)
-                  if (resourceinput_purge(&(tstate->gstate->rinput))) {
+                  if (resourceinput_purge(&tstate->gstate->rinput)) {
                      LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                   }
+
                   return -1;
                }
             }
@@ -763,17 +810,21 @@ int rthread_producer_func(void** state, void** work_tofill) {
          else if (walkres == 0) { // check for end of stream
             LOG(LOG_INFO, "Thread %u has reached the end of a datastream\n", tstate->tID);
             streamwalker_report tmpreport = {0};
-            if (streamwalker_close(&(tstate->walker), &(tmpreport))) {
+            if (streamwalker_close(&tstate->walker, &tmpreport)) {
                LOG(LOG_ERR, "Thread %u failed to close a streamwalker\n", tstate->tID);
                snprintf(tstate->errorstr, MAX_STR_BUFFER, "Thread %u failed to close a streamwalker\n", tstate->tID);
                tstate->fatalerror = 1;
+
                tstate->walker = NULL; // don't repeat a close attempt
+
                // ensure termination of all other threads (avoids possible deadlock)
-               if (resourceinput_purge(&(tstate->gstate->rinput))) {
+               if (resourceinput_purge(&tstate->gstate->rinput)) {
                   LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                }
+
                return -1;
             }
+
             tstate->report.fileusage   += tmpreport.fileusage;
             tstate->report.byteusage   += tmpreport.byteusage;
             tstate->report.filecount   += tmpreport.filecount;
@@ -794,22 +845,27 @@ int rthread_producer_func(void** state, void** work_tofill) {
          // iterate through the scanner, looking for new operations to dispatch
          char* reftgt = NULL;
          ssize_t tgtval = 0;
-         int scanres = process_refdir(tstate->gstate->pos.ns, tstate->scanner, tstate->rdirpath, &(reftgt), &(tgtval));
+         int scanres = process_refdir(tstate->gstate->pos.ns, tstate->scanner, tstate->rdirpath, &reftgt, &tgtval);
          if (scanres == 0) {
             LOG(LOG_INFO, "Thread %u has finished scan of reference dir \"%s\"\n", tstate->tID, tstate->rdirpath);
-            if (cleanup_refdir(&(tstate->gstate->pos), tstate->rdirpath, tstate->gstate->thresh.gcthreshold)) {
+            if (cleanup_refdir(&tstate->gstate->pos, tstate->rdirpath, tstate->gstate->thresh.gcthreshold)) {
                LOG(LOG_ERR, "Thread %u failed to cleanup reference dir \"%s\"\n", tstate->tID, tstate->rdirpath);
                snprintf(tstate->errorstr, MAX_STR_BUFFER,
                          "Thread %u failed to cleanup reference dir \"%s\"\n", tstate->tID, tstate->rdirpath);
+
                tstate->fatalerror = 1;
+
                // ensure termination of all other threads (avoids possible deadlock)
-               if (resourceinput_purge(&(tstate->gstate->rinput))) {
+               if (resourceinput_purge(&tstate->gstate->rinput)) {
                   LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                }
+
                tstate->scanner = NULL;
                tstate->rdirpath = NULL;
+
                return -1;
             }
+
             // NULL out our dir references, just in case
             tstate->scanner = NULL;
             tstate->rdirpath = NULL;
@@ -819,20 +875,26 @@ int rthread_producer_func(void** state, void** work_tofill) {
             thresholds tmpthresh = tstate->gstate->thresh;
             if (!(tstate->gstate->lbrebuild)) { tmpthresh.rebuildthreshold = 0; }
             LOG(LOG_INFO, "Thread %u beginning streamwalk from reference file \"%s\"\n", tstate->tID, reftgt);
-            if (streamwalker_open(&(tstate->walker), &(tstate->gstate->pos), reftgt, tmpthresh, &(tstate->gstate->rebuildloc))) {
+
+            if (streamwalker_open(&tstate->walker, &tstate->gstate->pos, reftgt, tmpthresh, &tstate->gstate->rebuildloc)) {
                LOG(LOG_ERR, "Thread %u failed to open streamwalker for \"%s\" of NS \"%s\"\n",
                              tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr);
                snprintf(tstate->errorstr, MAX_STR_BUFFER,
                          "Thread %u failed to open streamwalker for \"%s\" of NS \"%s\"\n",
                          tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr);
+
                tstate->fatalerror = 1;
+
                if (reftgt) { free(reftgt); }
+
                // ensure termination of all other threads (avoids possible deadlock)
-               if (resourceinput_purge(&(tstate->gstate->rinput))) {
+               if (resourceinput_purge(&tstate->gstate->rinput)) {
                   LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                }
+
                return -1;
             }
+
             tstate->streamcount++;
          }
          else if (scanres == 2) { // rebuild marker file
@@ -843,34 +905,42 @@ int rthread_producer_func(void** state, void** work_tofill) {
                // note the rebuild candidate regardless, to give an indication of remaining count
                errno = 0;
                tstate->report.rbldobjs++;
-               newop = process_rebuildmarker(&(tstate->gstate->pos), reftgt, tstate->gstate->thresh.rebuildthreshold, tgtval);
-               if (newop == NULL  &&  errno != ETIME) { // only ignore failure due to recently created marker file
+               newop = process_rebuildmarker(&tstate->gstate->pos, reftgt, tstate->gstate->thresh.rebuildthreshold, tgtval);
+               if (newop == NULL && errno != ETIME) { // only ignore failure due to recently created marker file
                   LOG(LOG_ERR, "Thread %u failed to process rebuild marker \"%s\" of NS \"%s\"\n",
                                 tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr);
                   snprintf(tstate->errorstr, MAX_STR_BUFFER,
                             "Thread %u failed to process rebuild marker \"%s\" of NS \"%s\"\n",
                             tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr);
+
                   tstate->fatalerror = 1;
+
                   if (reftgt) { free(reftgt); }
+
                   // ensure termination of all other threads (avoids possible deadlock)
-                  if (resourceinput_purge(&(tstate->gstate->rinput))) {
+                  if (resourceinput_purge(&tstate->gstate->rinput)) {
                      LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                   }
+
                   return -1;
                }
                else if (newop) {
                   // log the new operation, before we distribute it
-                  if (resourcelog_processop(&(tstate->gstate->rlog), newop, NULL)) {
+                  if (resourcelog_processop(&tstate->gstate->rlog, newop, NULL)) {
                      LOG(LOG_ERR, "Thread %u failed to log start of a marker REBUILD operation\n", tstate->tID);
                      snprintf(tstate->errorstr, MAX_STR_BUFFER,
                                "Thread %u failed to log start of a marker REBUILD operation\n", tstate->tID);
+
                      resourcelog_freeopinfo(newop);
                      tstate->fatalerror = 1;
+
                      if (reftgt) { free(reftgt); }
+
                      // ensure termination of all other threads (avoids possible deadlock)
-                     if (resourceinput_purge(&(tstate->gstate->rinput))) {
+                     if (resourceinput_purge(&tstate->gstate->rinput)) {
                         LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                      }
+
                      return -1;
                   }
                }
@@ -891,11 +961,14 @@ int rthread_producer_func(void** state, void** work_tofill) {
             snprintf(tstate->errorstr, MAX_STR_BUFFER,
                       "Thread %u failed to process reference dir \"%s\" of NS \"%s\"\n",
                       tstate->tID, tstate->rdirpath, tstate->gstate->pos.ns->idstr);
+
             tstate->fatalerror = 1;
+
             // ensure termination of all other threads (avoids possible deadlock)
-            if (resourceinput_purge(&(tstate->gstate->rinput))) {
+            if (resourceinput_purge(&tstate->gstate->rinput)) {
                LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
             }
+
             return -1;
          }
          // free temporary reference target string
@@ -904,40 +977,48 @@ int rthread_producer_func(void** state, void** work_tofill) {
       else {
          // pull from our resource input reference
          int inputres = 0;
-         while ((inputres = resourceinput_getnext(&(tstate->gstate->rinput), &(newop), &(tstate->scanner), &(tstate->rdirpath))) == 0) {
+         while ((inputres = resourceinput_getnext(&tstate->gstate->rinput, &newop, &tstate->scanner, &tstate->rdirpath)) == 0) {
             // wait until inputs are available
             LOG(LOG_INFO, "Thread %u is waiting for inputs\n", tstate->tID);
-            if (resourceinput_waitforupdate(&(tstate->gstate->rinput))) {
+            if (resourceinput_waitforupdate(&tstate->gstate->rinput)) {
                LOG(LOG_ERR, "Thread %u failed to wait for resourceinput update while scanning NS \"%s\"\n",
                              tstate->tID, tstate->gstate->pos.ns->idstr);
                snprintf(tstate->errorstr, MAX_STR_BUFFER,
                          "Thread %u failed to wait for resourceinput update while scanning NS \"%s\"\n",
                          tstate->tID, tstate->gstate->pos.ns->idstr);
+
                tstate->fatalerror = 1;
+
                // ensure termination of all other threads (avoids possible deadlock)
-               if (resourceinput_purge(&(tstate->gstate->rinput))) {
+               if (resourceinput_purge(&tstate->gstate->rinput)) {
                   LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                }
+
                return -1;
             }
          }
          // check for termination condition
          if (inputres == 10) {
             LOG(LOG_INFO, "Thread %u is waiting for termination\n", tstate->tID);
-            if (resourceinput_waitforterm(&(tstate->gstate->rinput))) {
+            if (resourceinput_waitforterm(&tstate->gstate->rinput)) {
                LOG(LOG_ERR, "Thread %u failed to wait for input termination\n", tstate->tID);
                snprintf(tstate->errorstr, MAX_STR_BUFFER,
                          "Thread %u failed to wait for input termination\n", tstate->tID);
+
                tstate->fatalerror = 1;
+
                // ensure termination of all other threads (avoids possible deadlock)
-               if (resourceinput_purge(&(tstate->gstate->rinput))) {
+               if (resourceinput_purge(&tstate->gstate->rinput)) {
                   LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                }
+
                return -1;
             }
+
             LOG(LOG_INFO, "Thread %u is signaling FINISHED state\n", tstate->tID);
             return 1;
          }
+
          // check for failure
          if (inputres < 0) {
             LOG(LOG_INFO, "Thread %u failed to retrieve next input while scanning NS \"%s\"\n",
@@ -945,17 +1026,20 @@ int rthread_producer_func(void** state, void** work_tofill) {
             snprintf(tstate->errorstr, MAX_STR_BUFFER,
                       "Thread %u failed to retrieve next input while scanning NS \"%s\"\n",
                       tstate->tID, tstate->gstate->pos.ns->idstr);
+
             tstate->fatalerror = 1;
+
             // ensure termination of all other threads (avoids possible deadlock)
-            if (resourceinput_purge(&(tstate->gstate->rinput))) {
+            if (resourceinput_purge(&tstate->gstate->rinput)) {
                LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
             }
+
             return -1;
          }
          // if we got an op directly, we'll need to process it
          if (newop) {
             // log the operation
-            if (resourcelog_processop(&(tstate->gstate->rlog), newop, NULL)) {
+            if (resourcelog_processop(&tstate->gstate->rlog, newop, NULL)) {
                LOG(LOG_ERR, "Thread %u failed to log start of a resourceinput provided %s operation\n", tstate->tID,
                     (newop->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
                     (newop->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
@@ -967,14 +1051,19 @@ int rthread_producer_func(void** state, void** work_tofill) {
                          (newop->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
                          (newop->type == MARFS_REBUILD_OP)    ? "REBUILD" :
                          (newop->type == MARFS_REPACK_OP)     ? "REPACK"  : "UNKNOWN");
+
                resourcelog_freeopinfo(newop);
+
                tstate->fatalerror = 1;
+
                // ensure termination of all other threads (avoids possible deadlock)
-               if (resourceinput_purge(&(tstate->gstate->rinput))) {
+               if (resourceinput_purge(&tstate->gstate->rinput)) {
                   LOG(LOG_WARNING, "Failed to purge resource input following fatal error\n");
                }
+
                return -1;
             }
+
             // filter the op to our appropriate 'queue'
             switch (newop->type) {
                case MARFS_DELETE_OBJ_OP:
@@ -995,6 +1084,7 @@ int rthread_producer_func(void** state, void** work_tofill) {
          }
       }
    }
+
    LOG(LOG_INFO, "Thread %u dispatching a %s%s operation on StreamID \"%s\"\n", tstate->tID,
         (newop->type == MARFS_DELETE_OBJ_OP) ? "DEL-OBJ" :
         (newop->type == MARFS_DELETE_REF_OP) ? "DEL-REF" :
@@ -1007,6 +1097,7 @@ int rthread_producer_func(void** state, void** work_tofill) {
         (newop->next->type == MARFS_REPACK_OP)     ? " + REPACK"  : " + UNKNOWN", newop->ftag.streamid);
    // actually populate our work package
    *work_tofill = (void*)newop;
+
    return 0;
 }
 
@@ -1022,39 +1113,46 @@ void rthread_term_func(void** state, void** prev_work, TQ_Control_Flags flg) {
       LOG(LOG_INFO, "Thread %u is destroying non-issued REBUILD ops\n", tstate->tID);
       resourcelog_freeopinfo(tstate->rebuildops);
       tstate->rebuildops = NULL;
+
       // this is non-standard, so ensure we note an error
-      if (!(tstate->fatalerror)) {
+      if (!tstate->fatalerror) {
          snprintf(tstate->errorstr, MAX_STR_BUFFER,
                    "Thread %u held non-issued REBUILD ops at termination\n", tstate->tID);
          tstate->fatalerror = 1;
       }
    }
+
    if (tstate->repackops) {
       LOG(LOG_INFO, "Thread %u is destroying non-issued REPACK ops\n", tstate->tID);
       resourcelog_freeopinfo(tstate->repackops);
       tstate->repackops = NULL;
    }
+
    if (tstate->gcops) {
       LOG(LOG_ERR, "Thread %u is destroying remaining GC ops\n", tstate->tID);
       resourcelog_freeopinfo(tstate->gcops);
       tstate->gcops = NULL;
+
       // this is non-standard, so ensure we note an error
-      if (!(tstate->fatalerror)) {
+      if (!tstate->fatalerror) {
          snprintf(tstate->errorstr, MAX_STR_BUFFER,
                    "Thread %u held non-issued GC ops at termination\n", tstate->tID);
          tstate->fatalerror = 1;
       }
    }
+
    if (tstate->scanner) {
       LOG(LOG_ERR, "Thread %u is destroying remaining scanner handle\n", tstate->tID);
       tstate->gstate->pos.ns->prepo->metascheme.mdal->closescanner(tstate->scanner);
+
       // this is non-standard, so ensure we note an error
-      if (!(tstate->fatalerror)) {
+      if (!tstate->fatalerror) {
          snprintf(tstate->errorstr, MAX_STR_BUFFER,
                    "Thread %u held an open MDAL_SCANNER at termination\n", tstate->tID);
          tstate->fatalerror = 1;
       }
    }
+
    // merely note termination (state struct itself will be freed by master proc)
    LOG(LOG_INFO, "Thread %u is terminating\n", tstate->tID);
 }
