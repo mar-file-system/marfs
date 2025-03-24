@@ -84,7 +84,11 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "rsrc_mgr/rmanstate.h"
 #include "rsrc_mgr/summary_log_setup.h"
 
-static void print_usage_info() {
+static void print_usage_info(const int rank) {
+   if (rank != 0) {
+       return;
+   }
+
    printf("\n"
            "marfs-rman [-c MarFS-Config-File] [-n MarFS-NS-Target] [-r] [-i Iteraion-Name] [-l Log-Root]\n"
            "           [-p Log-Pres-Root] [-d] [-X Execution-Target] [-Q] [-G] [-R] [-P] [-C]\n"
@@ -345,7 +349,7 @@ static int parse_args(int argc, char** argv,
       }
    }
    if (print_usage) {
-      print_usage_info();
+      print_usage_info(rman->ranknum);
       return -1;
    }
 
