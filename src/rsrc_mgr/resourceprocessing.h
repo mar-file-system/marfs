@@ -62,6 +62,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "resourcelog.h"
 
 #include "datastream/datastream.h"
+#include "rsrc_mgr/repack.h"
 
 typedef struct {
    time_t gcthreshold;      // files newer than this will not be GCd
@@ -100,46 +101,7 @@ typedef struct {
 } streamwalker_report;
 
 // forward decls of internal types
-typedef struct repackstreamer* REPACKSTREAMER;
 typedef struct streamwalker* streamwalker;
-
-
-//   -------------   REPACKSTREAMER FUNCTIONS    -------------
-
-/**
- * Initialize a new repackstreamer
- * @return REPACKSTREAMER : New repackstreamer, or NULL on failure
- */
-REPACKSTREAMER repackstreamer_init(void);
-
-/**
- * Checkout a repack datastream
- * @param REPACKSTREAMER repackst : Repackstreamer to checkout from
- * @return DATASTREAM* : Checked out datastream, or NULL on failure
- */
-DATASTREAM* repackstreamer_getstream( REPACKSTREAMER repackst );
-
-/**
- * Return a previously checked out repack datastream
- * @param REPACKSTREAMER repackst : Repackstreamer to return to
- * @param DATASTREAM* stream : Repack datastream to return
- * @return int : Zero on success, or -1 on failure
- */
-int repackstreamer_returnstream( REPACKSTREAMER repackst, DATASTREAM* stream );
-
-/**
- * Terminate the given repackstreamer and close all associated datastreams
- * @param REPACKSTREAMER repackst : Repackstreamer to close
- * @return int : Zero on success, or -1 on failure
- */
-int repackstreamer_complete( REPACKSTREAMER repackst );
-
-/**
- * Abort the given repackstreamer, bypassing all locks and releasing all datastreams
- * @param REPACKSTREAMER repackst : Repackstreamer to abort
- * @return int : Zero on success, or -1 on failure
- */
-int repackstreamer_abort( REPACKSTREAMER repackst );
 
 //   -------------   RESOURCE PROCESSING FUNCTIONS    -------------
 
