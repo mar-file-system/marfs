@@ -62,8 +62,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdlib.h>
 
 #include "rsrc_mgr/resourcelog.h"
-#include "rsrc_mgr/resourceprocessing.h"
 #include "rsrc_mgr/rmanstate.h"
+#include "rsrc_mgr/streamwalker.h"
 
 void outputinfo(FILE* output, marfs_ns* ns, streamwalker_report* report, operation_summary* summary);
 

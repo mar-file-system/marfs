@@ -704,7 +704,7 @@ int rthread_producer_func(void** state, void** work_tofill) {
       }
       else if (tstate->walker) {
          // walk our current datastream
-         int walkres = process_iteratestreamwalker(&(tstate->walker), &(tstate->gcops), &(tstate->repackops), &(tstate->rebuildops));
+         int walkres = streamwalker_iterate(&(tstate->walker), &(tstate->gcops), &(tstate->repackops), &(tstate->rebuildops));
          if (walkres < 0) { // check for failure
             LOG(LOG_ERR, "Thread %u failed to walk a stream beginning in refdir \"%s\" of NS \"%s\"\n",
                  tstate->tID, tstate->rdirpath, tstate->gstate->pos.ns->idstr);
@@ -763,7 +763,7 @@ int rthread_producer_func(void** state, void** work_tofill) {
          else if (walkres == 0) { // check for end of stream
             LOG(LOG_INFO, "Thread %u has reached the end of a datastream\n", tstate->tID);
             streamwalker_report tmpreport = {0};
-            if (process_closestreamwalker(&(tstate->walker), &(tmpreport))) {
+            if (streamwalker_close(&(tstate->walker), &(tmpreport))) {
                LOG(LOG_ERR, "Thread %u failed to close a streamwalker\n", tstate->tID);
                snprintf(tstate->errorstr, MAX_STR_BUFFER, "Thread %u failed to close a streamwalker\n", tstate->tID);
                tstate->fatalerror = 1;
@@ -819,7 +819,7 @@ int rthread_producer_func(void** state, void** work_tofill) {
             thresholds tmpthresh = tstate->gstate->thresh;
             if (!(tstate->gstate->lbrebuild)) { tmpthresh.rebuildthreshold = 0; }
             LOG(LOG_INFO, "Thread %u beginning streamwalk from reference file \"%s\"\n", tstate->tID, reftgt);
-            if (process_openstreamwalker(&(tstate->walker), &(tstate->gstate->pos), reftgt, tmpthresh, &(tstate->gstate->rebuildloc))) {
+            if (streamwalker_open(&(tstate->walker), &(tstate->gstate->pos), reftgt, tmpthresh, &(tstate->gstate->rebuildloc))) {
                LOG(LOG_ERR, "Thread %u failed to open streamwalker for \"%s\" of NS \"%s\"\n",
                              tstate->tID, (reftgt) ? reftgt : "NULL-REFERENCE!", tstate->gstate->pos.ns->idstr);
                snprintf(tstate->errorstr, MAX_STR_BUFFER,
