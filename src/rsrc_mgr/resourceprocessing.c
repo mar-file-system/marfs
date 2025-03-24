@@ -65,63 +65,68 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "rsrc_mgr/consts.h"
 #include "rsrc_mgr/streamwalker.h"
 
-//   -------------   INTERNAL DEFINITIONS    -------------
-
 // ENOATTR is not always defined, so define a convenience val
 #ifndef ENOATTR
 #define ENOATTR ENODATA
 #endif
 
-//   -------------   INTERNAL FUNCTIONS    -------------
-
-void process_deleteobj(marfs_position* pos, opinfo* op) {
+static void process_deleteobj(marfs_position* pos, opinfo* op) {
    marfs_ds* ds = &pos->ns->prepo->datascheme;
    while (op) {
       op->start = 0;
+
       size_t countval = 0;
+
       // check for extendedinfo
+
       delobj_info* delobjinf = (delobj_info*)op->extendedinfo;
       if (delobjinf != NULL) {
          countval = delobjinf->offset; // skip ahead by some offset, if specified
       }
+
       while (countval < op->count + delobjinf->offset) {
          // identify the object target of the op
          FTAG tmptag = op->ftag;
          tmptag.objno += countval;
+
          char* objname = NULL;
          ne_erasure erasure;
          ne_location location;
          if (datastream_objtarget(&tmptag, ds, &objname, &erasure, &location)) {
-            LOG(LOG_ERR, "Failed to identify object target %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid);
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to identify object target %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid);
             break;
          }
+
          // delete the object
          LOG(LOG_INFO, "Deleting object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid);
+
          int olderrno = errno;
          if (ne_delete(ds->nectxt, objname, location)) {
             if (errno == ENOENT) {
                LOG(LOG_INFO, "Object %zu of stream \"%s\" was already deleted\n", tmptag.objno, tmptag.streamid);
             }
             else {
+               op->errval = (errno) ? errno : ENOTRECOVERABLE;
                LOG(LOG_ERR, "Failed to delete object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid);
                free(objname);
-               op->errval = (errno) ? errno : ENOTRECOVERABLE;
                break;
             }
          }
          errno = olderrno;
+
+         errno = olderrno;
          free(objname);
          countval++;
       }
+
       op = op->next;
    }
+
    return;
 }
 
-
-void process_deleteref(const marfs_position* pos, opinfo* op) {
-
+static void process_deleteref(const marfs_position* pos, opinfo* op) {
    // identify the appropriate reference table to be used for path determination
    HASH_TABLE reftable = NULL;
    if (op->ftag.refbreadth == pos->ns->prepo->metascheme.refbreadth  &&
@@ -134,24 +139,27 @@ void process_deleteref(const marfs_position* pos, opinfo* op) {
       // we must generate a fresh ref table, based on FTAG values
       reftable = config_genreftable(NULL, NULL, op->ftag.refbreadth, op->ftag.refdepth, op->ftag.refdigits);
       if (reftable == NULL) {
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          LOG(LOG_ERR, "Failed to generate reference table with values (breadth=%d, depth=%d, digits=%d)\n",
               op->ftag.refbreadth, op->ftag.refdepth, op->ftag.refdigits);
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          return;
       }
    }
 
    for (; op; op = op->next) {
       op->start = 0;
+
       // verify we have extendedinfo
       delref_info* delrefinf = (delref_info*)op->extendedinfo;
       if (delrefinf == NULL) {
-         LOG(LOG_ERR, "DEL-REF op is missing extendedinfo\n");
          op->errval = EINVAL;
+         LOG(LOG_ERR, "DEL-REF op is missing extendedinfo\n");
          continue;
       }
+
       // convenience refs
       MDAL mdal = pos->ns->prepo->metascheme.mdal;
+
       // first, need to attach a GCTAG to the previous active file
       GCTAG gctag = {
          .refcnt = op->count,
@@ -159,58 +167,64 @@ void process_deleteref(const marfs_position* pos, opinfo* op) {
          .eos = delrefinf->eos,
          .inprog = 0
       };
+
       // note any previously deleted refs between us and prev_active_index
       if (op->ftag.fileno > delrefinf->prev_active_index + 1) {
          gctag.refcnt += (op->ftag.fileno - 1) - delrefinf->prev_active_index;
          LOG(LOG_INFO, "Including previous gap of %zu files (%zu resultant gap)\n",
                         (op->ftag.fileno - 1) - delrefinf->prev_active_index, gctag.refcnt);
       }
+
       if (op->count) { gctag.inprog = 1; } // set inprog, if we're actually doing any reference deletions
+
       size_t gctaglen = gctag_tostr(&gctag, NULL, 0);
       if (gctaglen < 1) {
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          LOG(LOG_ERR, "Failed to identify length of GCTAG for stream \"%s\"\n", op->ftag.streamid);
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          continue;
       }
+
       char* gctagstr = malloc(sizeof(char) * (gctaglen + 1));
-      if (gctagstr == NULL) {
-         LOG(LOG_ERR, "Failed to allocate a GCTAG string for stream \"%s\"\n", op->ftag.streamid);
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
-         continue;
-      }
       if (gctag_tostr(&gctag, gctagstr, gctaglen+1) != gctaglen) {
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          LOG(LOG_ERR, "GCTAG has an inconsistent length for stream \"%s\"\n", op->ftag.streamid);
          free(gctagstr);
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          continue;
       }
+
       // identify the reference path of our initial target
       FTAG tmptag = op->ftag;
       tmptag.fileno = delrefinf->prev_active_index;
+
       char* reftgt = datastream_genrpath(&tmptag, reftable, NULL, NULL);
       if (reftgt == NULL) {
-         LOG(LOG_ERR, "Failed to identify reference path of active fileno %zu of stream \"%s\"\n", tmptag.fileno, op->ftag.streamid);
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         LOG(LOG_ERR, "Failed to identify reference path of active fileno %zu of stream \"%s\"\n", tmptag.fileno, op->ftag.streamid);
          free(gctagstr);
          continue;
       }
+
       MDAL_FHANDLE activefile = mdal->openref(pos->ctxt, reftgt, O_RDWR, 0);
       if (activefile == NULL) {
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          LOG(LOG_ERR, "Failed to open handle for active fileno %zu of stream \"%s\"\n", tmptag.fileno, op->ftag.streamid);
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          free(reftgt);
          free(gctagstr);
          continue;
       }
+
       LOG(LOG_INFO, "Attaching GCTAG \"%s\" to reference file \"%s\"\n", gctagstr, reftgt);
+
       if (mdal->fsetxattr(activefile, 1, GCTAG_NAME, gctagstr, gctaglen, 0)) {
-         LOG(LOG_ERR, "Failed to attach GCTAG \"%s\" to reference file \"%s\"\n", gctagstr, reftgt);
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         LOG(LOG_ERR, "Failed to attach GCTAG \"%s\" to reference file \"%s\"\n", gctagstr, reftgt);
          free(reftgt);
          free(gctagstr);
          continue;
       }
+
       free(gctagstr);
+
       // for a zero-count refdel op, we're done here
       if (op->count == 0) {
          if (mdal->close(activefile)) {
@@ -219,80 +233,85 @@ void process_deleteref(const marfs_position* pos, opinfo* op) {
          free(reftgt);
          continue;
       }
+
       // iterate over reference targets
       size_t countval = 0;
       while (countval < op->count) {
          // identify the reference path
          tmptag = op->ftag;
          tmptag.fileno += countval;
+
          char* rpath = datastream_genrpath(&tmptag, reftable, NULL, NULL);
          if (rpath == NULL) {
-            LOG(LOG_ERR, "Failed to identify reference path of fileno %zu of stream \"%s\"\n", tmptag.fileno, op->ftag.streamid);
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to identify reference path of fileno %zu of stream \"%s\"\n", tmptag.fileno, op->ftag.streamid);
             mdal->close(activefile);
             free(reftgt);
             break;
          }
+
          // perform the deletion
          int olderrno = errno;
          errno = 0;
-         if (mdal->unlinkref(pos->ctxt, rpath)  &&  errno != ENOENT) {
-            LOG(LOG_ERR, "Failed to unlink reference path \"%s\"\n", rpath);
+         if (mdal->unlinkref(pos->ctxt, rpath) && errno != ENOENT) {
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to unlink reference path \"%s\"\n", rpath);
             free(rpath);
             mdal->close(activefile);
             free(reftgt);
             break;
          }
+
          errno = olderrno;
          LOG(LOG_INFO, "Deleted reference path \"%s\"\n", rpath);
          free(rpath);
          countval++;
       }
+
       if (countval < op->count) { continue; } // skip over remaining, if we hit an error
+
       // update GCTAG to reflect completion
       gctag.inprog = 0;
       gctaglen = gctag_tostr(&gctag, NULL, 0);
       if (gctaglen < 1) {
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          LOG(LOG_ERR, "Failed to identify length of GCTAG for stream \"%s\"\n", op->ftag.streamid);
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          mdal->close(activefile);
          free(reftgt);
          continue;
       }
+
       gctagstr = malloc(sizeof(char) * (gctaglen + 1));
-      if (gctagstr == NULL) {
-         LOG(LOG_ERR, "Failed to allocate a GCTAG string for stream \"%s\"\n", op->ftag.streamid);
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
-         mdal->close(activefile);
-         free(reftgt);
-         continue;
-      }
       if (gctag_tostr(&gctag, gctagstr, gctaglen+1) != gctaglen) {
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          LOG(LOG_ERR, "GCTAG has an inconsistent length for stream \"%s\"\n", op->ftag.streamid);
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          free(gctagstr);
          mdal->close(activefile);
          free(reftgt);
          continue;
       }
+
       LOG(LOG_INFO, "Updating GCTAG to \"%s\" for reference file \"%s\"\n", gctagstr, reftgt);
+
       if (mdal->fsetxattr(activefile, 1, GCTAG_NAME, gctagstr, gctaglen, 0)) {
-         LOG(LOG_ERR, "Failed to update GCTAG to \"%s\" for reference file \"%s\"\n", gctagstr, reftgt);
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         LOG(LOG_ERR, "Failed to update GCTAG to \"%s\" for reference file \"%s\"\n", gctagstr, reftgt);
          free(gctagstr);
          mdal->close(activefile);
          free(reftgt);
          continue;
       }
+
       free(gctagstr);
+
       // close our active file, and terminate
       if (mdal->close(activefile)) {
-         LOG(LOG_ERR, "Failed to close handle for active file \"%s\"\n", reftgt);
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         LOG(LOG_ERR, "Failed to close handle for active file \"%s\"\n", reftgt);
          free(reftgt);
          continue;
       }
+
       free(reftgt);
    }
 
@@ -327,30 +346,35 @@ static void process_rebuild(const marfs_position* pos, opinfo* op) {
          // identify the object target of the op
          FTAG tmptag = op->ftag;
          tmptag.objno += countval;
+
          char* objname = NULL;
          ne_erasure erasure;
          ne_location location;
          if (datastream_objtarget(&tmptag, ds, &objname, &erasure, &location)) {
-            LOG(LOG_ERR, "Failed to identify object target %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid);
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to identify object target %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid);
             break;
          }
+
          // open an object handle
          ne_handle obj = ne_open(ds->nectxt, objname, location, erasure, NE_REBUILD);
          if (obj == NULL) {
-            LOG(LOG_ERR, "Failed to open rebuild handle for object \"%s\"\n", objname);
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to open rebuild handle for object \"%s\"\n", objname);
             free(objname);
             break;
          }
+
          free(objname);
+
          // if we have an rtag value, seed it in prior to rebuilding
-         if (rebinf  &&  rebinf->rtag  &&  rebinf->rtag->stripestate.meta_status  &&  rebinf->rtag->stripestate.data_status) {
+         if (rebinf && rebinf->rtag && rebinf->rtag->stripestate.meta_status && rebinf->rtag->stripestate.data_status) {
             if (ne_seed_status(obj, &rebinf->rtag->stripestate)) {
                LOG(LOG_WARNING, "Failed to seed rtag status into handle for object %zu of stream \"%s\"\n",
                                  tmptag.objno, tmptag.streamid);
             }
          }
+
          // rebuild the object, performing up to 2 attempts
          int iteration = 0;
          while (iteration < 2) {
@@ -373,8 +397,9 @@ static void process_rebuild(const marfs_position* pos, opinfo* op) {
             // incomplete rebuild (reattempt may succeed)
             iteration++;
          }
+
          // check for excessive rebuild reattempts
-         if (iteration >= 2  ||  iteration < 0) {
+         if (iteration >= 2 || iteration < 0) {
             if (iteration < 0) {
                LOG(LOG_ERR, "Rebuild failure for object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid);
             }
@@ -389,65 +414,76 @@ static void process_rebuild(const marfs_position* pos, opinfo* op) {
             obj = NULL;
             break;
          }
+
          // close the object reference
-         if (obj  &&  ne_close(obj, NULL, NULL)) {
-            LOG(LOG_ERR, "Failed to finalize rebuild of object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid);
+         if (obj && ne_close(obj, NULL, NULL)) {
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to finalize rebuild of object %zu of stream \"%s\"\n", tmptag.objno, tmptag.streamid);
             break;
          }
+
          countval++;
       }
+
       if (countval < op->count) { continue; } // skip over remaining, if we hit an error
+
       // potentially cleanup the rtag
-      if (rebinf  &&  rebinf->rtag) {
+      if (rebinf && rebinf->rtag) {
          // generate the RTAG name
          char* rtagstr = rtag_getname(op->ftag.objno);
          if (rtagstr == NULL) {
-            LOG(LOG_ERR, "Failed to identify the name of object %zu RTAG in stream \"%s\"\n", op->ftag.objno, op->ftag.streamid);
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to identify the name of object %zu RTAG in stream \"%s\"\n", op->ftag.objno, op->ftag.streamid);
             continue;
          }
+
          // open a file handle for the marker
          if (rebinf->markerpath == NULL) {
+            op->errval = EINVAL;
             LOG(LOG_ERR, "No marker path available by which to remove RTAG of object %zu in stream \"%s\"\n",
                           op->ftag.objno, op->ftag.streamid);
-            op->errval = EINVAL;
             free(rtagstr);
             continue;
          }
+
          MDAL_FHANDLE mhandle = ms->mdal->openref(pos->ctxt, rebinf->markerpath, O_RDONLY, 0);
          if (mhandle == NULL) {
-            LOG(LOG_ERR, "Failed to open handle for marker path \"%s\"\n", rebinf->markerpath);
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to open handle for marker path \"%s\"\n", rebinf->markerpath);
             free(rtagstr);
             continue;
          }
+
          // remove the RTAG
          if (ms->mdal->fremovexattr(mhandle, 1, rtagstr)) {
-            LOG(LOG_ERR, "Failed to remove \"%s\" xattr from marker file \"%s\"\n", rtagstr, rebinf->markerpath);
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to remove \"%s\" xattr from marker file \"%s\"\n", rtagstr, rebinf->markerpath);
             ms->mdal->close(mhandle);
             free(rtagstr);
             continue;
          }
+
          free(rtagstr);
+
          // close our handle
          if (ms->mdal->close(mhandle)) {
-            LOG(LOG_ERR, "Failed to close handle for marker file \"%s\"\n", rebinf->markerpath);
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to close handle for marker file \"%s\"\n", rebinf->markerpath);
             continue;
          }
       }
+
       // potentially cleanup the rebuild marker
-      if (rebinf  &&  rebinf->markerpath) {
+      if (rebinf && rebinf->markerpath) {
          // unlink the rebuild marker
          if (ms->mdal->unlinkref(pos->ctxt, rebinf->markerpath)) {
-            LOG(LOG_ERR, "Failed to unlink marker file \"%s\"\n", rebinf->markerpath);
             op->errval = (errno) ? errno : ENOTRECOVERABLE;
+            LOG(LOG_ERR, "Failed to unlink marker file \"%s\"\n", rebinf->markerpath);
             continue;
          }
       }
    }
+
    // rebuild complete
    return;
 }
@@ -478,12 +514,9 @@ static void process_repack(marfs_position* pos, opinfo* op, REPACKSTREAMER rpcks
          rpckerror = 1;
       }
    }
+
    // allocate a 1MiB buffer to use for data migration
    void* iobuf = malloc(1024 * 1024);
-   if (iobuf == NULL) {
-      LOG(LOG_ERR, "Failed to allocate an IOBuffer for repack\n");
-      rpckerror = 1;
-   }
    DATASTREAM readstream = NULL;
    opinfo* prevop = op;
 
@@ -494,11 +527,12 @@ static void process_repack(marfs_position* pos, opinfo* op, REPACKSTREAMER rpcks
       // identify the reference path of the target file
       char* reftgt = datastream_genrpath(&op->ftag, reftable, NULL, NULL);
       if (reftgt == NULL) {
-         LOG(LOG_ERR, "Failed to identify reference path of active fileno %zu of stream \"%s\"\n", op->ftag.fileno, op->ftag.streamid);
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         LOG(LOG_ERR, "Failed to identify reference path of active fileno %zu of stream \"%s\"\n", op->ftag.fileno, op->ftag.streamid);
          rpckerror = 1;
          continue;
       }
+
       // establish our client tag
       ssize_t ctaglen;
       if (ctagsuf) {
@@ -507,54 +541,59 @@ static void process_repack(marfs_position* pos, opinfo* op, REPACKSTREAMER rpcks
       else {
          ctaglen = snprintf(NULL, 0, "RMAN-Repack\n");
       }
+
       char* ctag = calloc(sizeof(char), ctaglen + 1);
-      if (ctag == NULL) {
-         LOG(LOG_ERR, "Failed to allocate a client tag string for repack\n");
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
-         rpckerror = 1;
-         continue;
-      }
+
       if (ctagsuf) {
          snprintf(ctag, ctaglen + 1, "RMAN-%s-Repack\n", ctagsuf);
       }
       else {
          snprintf(ctag, ctaglen + 1, "RMAN-Repack\n");
       }
+
       // open a repack datastream for the target file
       if (datastream_repack(rpckstream, reftgt, pos, ctag)) {
-         LOG(LOG_ERR, "Failed to open repack stream for reference target: \"%s\"\n", reftgt);
          op->errval = (errno) ? errno : ENOTRECOVERABLE;
+         LOG(LOG_ERR, "Failed to open repack stream for reference target: \"%s\"\n", reftgt);
          free(ctag);
          free(reftgt);
          rpckerror = 1;
          continue;
       }
+
       free(ctag);
+
       // open a read datastream for the target file
       if (datastream_open(&readstream, READ_STREAM, reftgt, pos, NULL)) {
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          LOG(LOG_ERR, "Failed to open read stream for reference target: \"%s\"\n", reftgt);
          if (datastream_release(rpckstream)) {
             LOG(LOG_WARNING, "Failed to abort repack stream after previous failure\n");
          }
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
          free(reftgt);
          rpckerror = 1;
          continue;
       }
+
       // read all data from the file, writing it out to the repack stream
       ssize_t iores = 1024 * 1024;
       while (iores) {
          iores = datastream_read(&readstream, iobuf, 1024 * 1024);
+
          if (iores < 0) {
             LOG(LOG_ERR, "Failed to read from reference target: \"%s\"\n", reftgt);
             break;
          }
+
          if (iores != datastream_write(rpckstream, iobuf, (size_t)iores)) {
             LOG(LOG_ERR, "Failed to write to repack stream of reference target: \"%s\"\n", reftgt);
             break;
          }
       }
+
       if (iores) {
+         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+
          // cleanup from previous errors
          if (datastream_release(rpckstream)) {
             LOG(LOG_WARNING, "Failed to abort repack stream after previous failure\n");
@@ -562,7 +601,7 @@ static void process_repack(marfs_position* pos, opinfo* op, REPACKSTREAMER rpcks
          if (datastream_release(&readstream)) {
             LOG(LOG_WARNING, "Failed to abort read stream after previous failure\n");
          }
-         op->errval = (errno) ? errno : ENOTRECOVERABLE;
+
          free(reftgt);
          rpckerror = 1;
          continue;
@@ -593,16 +632,18 @@ static void process_repack(marfs_position* pos, opinfo* op, REPACKSTREAMER rpcks
    }
 
    // close our read stream
-   if (readstream  &&  datastream_close(&readstream)) {
+   if (readstream && datastream_close(&readstream)) {
       // this isn't worth aborting over, it's just... odd
       LOG(LOG_WARNING, "Failed to close read stream\n");
    }
+
    // check in our repack stream reference (will only be closed when the repackstreamer is terminated)
-   if (rpckstr  &&  repackstreamer_returnstream(rpckstr, rpckstream)) {
+   if (rpckstr && repackstreamer_returnstream(rpckstr, rpckstream)) {
       // this is a problem, so at least mark our final op as being in error
       LOG(LOG_ERR, "Failed to return our repack stream\n");
       if (prevop) { prevop->errval = ENOTRECOVERABLE; }
    }
+
    // repack complete
    return;
 }
@@ -621,40 +662,44 @@ int cleanup_refdir(marfs_position* pos, const char* refdirpath, time_t gcthresh)
       errno = EINVAL;
       return -1;
    }
-   if (pos->ns == NULL  ||  pos->ctxt == NULL) {
+
+   if (pos->ns == NULL || pos->ctxt == NULL) {
       LOG(LOG_ERR, "Received an invalid, non-established marfs_position\n");
       errno = EINVAL;
       return -1;
    }
+
    if (refdirpath == NULL) {
       LOG(LOG_ERR, "Received a NULL refdirpath reference\n");
       errno = EINVAL;
       return -1;
    }
+
    // nothing to do, if this isn't a GC run
    if (gcthresh == 0) {
       LOG(LOG_INFO, "Skipping cleanup reference dir \"%s\" (non-GC run)\n", refdirpath);
       return 0;
    }
+
    // convenience refs
    marfs_ms* ms = &pos->ns->prepo->metascheme;
+
    // stat the reference dir
    struct stat stval;
    if (ms->mdal->statref(pos->ctxt, refdirpath, &stval)) {
       LOG(LOG_ERR, "Failed to stat reference dir: \"%s\"\n", refdirpath);
       return -1;
    }
+
    // check if this refdir is both empty (at least in terms of subdirs) and sufficiently old
-   if (stval.st_nlink > 2  ||  stval.st_ctime >= gcthresh) {
+   if (stval.st_nlink > 2 || stval.st_ctime >= gcthresh) {
       LOG(LOG_INFO, "Skipping cleanup reference dir \"%s\" (inelligible)\n", refdirpath);
       return 0;
    }
+
    // duplicate our refdir string, as we'll need to make modifications
    char* rpath = strdup(refdirpath);
-   if (rpath == NULL) {
-      LOG(LOG_ERR, "Failed to duplicate reference dir path: \"%s\"\n", refdirpath);
-      return -1;
-   }
+
    // attempt the removal of the target dir and its parents
    int rmdirres = 0;
    while (rmdirres == 0) {
@@ -675,6 +720,7 @@ int cleanup_refdir(marfs_position* pos, const char* refdirpath, time_t gcthresh)
             LOG(LOG_ERR, "Failed to cleanup reference dir \"%s\" (%s)\n", rpath, strerror(errno));
          }
       }
+
       // truncate off the last path element of this reference dir string
       char* rparse = rpath;
       char* finelem = rpath;
@@ -687,10 +733,13 @@ int cleanup_refdir(marfs_position* pos, const char* refdirpath, time_t gcthresh)
          }
          else { rparse++; }
       }
+
       if (finelem == rpath) { break; } // indicates we've already hit the final path element
       *finelem = '\0';
    }
+
    free(rpath);
+
    return rmdirres;
 }
 
@@ -716,29 +765,34 @@ int process_refdir(marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, ch
       errno = EINVAL;
       return -1;
    }
+
    if (refdir == NULL) {
       LOG(LOG_ERR, "Received a NULL scanner\n");
       errno = EINVAL;
       return -1;
    }
+
    if (refdirpath == NULL) {
       LOG(LOG_ERR, "Received a NULL reference dir path\n");
       errno = EINVAL;
       return -1;
    }
+
    if (reftgt == NULL) {
       LOG(LOG_ERR, "Received a NULL reftgt value\n");
       errno = EINVAL;
       return -1;
    }
+
    if (tgtval == NULL) {
       LOG(LOG_ERR, "Received a NULL tgtval value\n");
       errno = EINVAL;
       return -1;
    }
+
    // scan through the dir until we find something of interest
    MDAL mdal = ns->prepo->metascheme.mdal;
-   struct dirent* dent;
+   struct dirent* dent = NULL;
    int olderrno = errno;
    errno = 0;
    char type = 9;
@@ -747,8 +801,9 @@ int process_refdir(marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, ch
       if (*(dent->d_name) == '.') {
          continue;
       }
+
       // identify the entry type
-      ssize_t parseval = ftag_metainfo(dent->d_name, &type);
+      const ssize_t parseval = ftag_metainfo(dent->d_name, &type);
       if (parseval < 0) {
          LOG(LOG_WARNING, "Failed to identify entry type: \"%s\"\n", dent->d_name);
          // unknown type (set to 9, since we'll return type + 1)
@@ -756,13 +811,15 @@ int process_refdir(marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, ch
          // rezero errno, so it doesn't mess up our scan() error check
          errno = 0;
       }
-      else if (type == 0  &&  parseval != 0) {
+      else if (type == 0 && parseval != 0) {
          // skip any non-zero reference targets
          continue;
       }
+
       *tgtval = parseval;
       break; // exit the loop by default
    }
+
    // check for scan failure
    if (errno) {
       LOG(LOG_ERR, "Detected failure of scan() for refdir \"%s\"\n", refdirpath);
@@ -775,17 +832,15 @@ int process_refdir(marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, ch
       }
       return 0;
    }
+
    // populate the reftgt string
    int rpathlen = snprintf(NULL, 0, "%s/%s", refdirpath, dent->d_name);
    if (rpathlen < 1) {
       LOG(LOG_ERR, "Failed to identify length of ref path for \"%s\"\n", dent->d_name);
       return -1;
    }
+
    *reftgt = malloc(sizeof(char) * (rpathlen + 1));
-   if (reftgt == NULL) {
-      LOG(LOG_ERR, "Failed to allocate space for ref path of \"%s\"\n", dent->d_name);
-      return -1;
-   }
    if (snprintf(*reftgt, rpathlen + 1, "%s/%s", refdirpath, dent->d_name) != rpathlen) {
       LOG(LOG_ERR, "Inconsistent length for ref path of \"%s\"\n", dent->d_name);
       free(*reftgt);
@@ -793,7 +848,9 @@ int process_refdir(marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, ch
       errno = EDOM;
       return -1;
    }
+
    errno = olderrno; // restore old errno
+
    return ((int)type + 1);
 }
 
@@ -813,26 +870,26 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
       errno = EINVAL;
       return NULL;
    }
+
    if (markerpath == NULL) {
       LOG(LOG_ERR, "Received a NULL markerpath reference\n");
       errno = EINVAL;
       return NULL;
    }
+
    // convenience refs
    marfs_ms* ms = &pos->ns->prepo->metascheme;
+
    // open a file handle for the marker
    MDAL_FHANDLE mhandle = ms->mdal->openref(pos->ctxt, markerpath, O_RDONLY, 0);
    if (mhandle == NULL) {
       LOG(LOG_ERR, "Failed to open handle for marker path \"%s\"\n", markerpath);
       return NULL;
    }
+
    // allocate rebuild op extended info
    rebuild_info* rinfo = calloc(1, sizeof(*rinfo));
-   if (rinfo == NULL) {
-      LOG(LOG_ERR, "Failed to allocate rebuild extended info struct\n");
-      ms->mdal->close(mhandle);
-      return NULL;
-   }
+
    // generate the RTAG name
    char* rtagname = rtag_getname(objno);
    if (rtagname == NULL) {
@@ -841,27 +898,23 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
       ms->mdal->close(mhandle);
       return NULL;
    }
+
    // retrieve the RTAG from the marker file
    // NOTE -- RTAG is just a rebuild speedup.  A missing value doesn't prevent rebuild completion.
    //         Therefore, ENOATTR is acceptable.  Anything else, however, is unusual enough to abort for.
    ssize_t rtaglen = ms->mdal->fgetxattr(mhandle, 1, rtagname, NULL, 0);
-   if (rtaglen < 1  &&  errno != ENOATTR) {
+   if (rtaglen < 1 && errno != ENOATTR) {
       LOG(LOG_ERR, "Failed to retrieve \"%s\" value from marker file \"%s\" (%s)\n", rtagname, markerpath, strerror(errno));
       free(rtagname);
       free(rinfo);
       ms->mdal->close(mhandle);
       return NULL;
    }
+
    if (rtaglen > 0) {
       // allocate RTAG string
       char* rtagstr = malloc(sizeof(char) * (1 + rtaglen));
-      if (rtagstr == NULL) {
-         LOG(LOG_ERR, "Failed to allocate an RTAG string\n");
-         free(rtagname);
-         free(rinfo);
-         ms->mdal->close(mhandle);
-         return NULL;
-      }
+
       // retrieve the RTAG value, for real
       if (ms->mdal->fgetxattr(mhandle, 1, rtagname, rtagstr, rtaglen + 1) != rtaglen) {
          LOG(LOG_ERR, "\"%s\" value of \"%s\" marker file has an inconsistent length\n", rtagname, markerpath);
@@ -871,17 +924,12 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
          ms->mdal->close(mhandle);
          return NULL;
       }
+
       *(rtagstr + rtaglen) = '\0'; // ensure a NULL-terminated value
+
       // allocate an RTAG entry
       rinfo->rtag = calloc(1, sizeof(RTAG));
-      if (rinfo->rtag == NULL) {
-         LOG(LOG_ERR, "Failed to allocate a new RTAG structure\n");
-         free(rtagstr);
-         free(rtagname);
-         free(rinfo);
-         ms->mdal->close(mhandle);
-         return NULL;
-      }
+
       // populate RTAG entry
       if (rtag_initstr(rinfo->rtag, rtagstr)) {
          LOG(LOG_ERR, "Failed to parse \"%s\" value of marker file \"%s\"\n", rtagname, markerpath);
@@ -892,7 +940,9 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
          ms->mdal->close(mhandle);
          return NULL;
       }
+
       free(rtagstr);
+
       // verify RTAG is sufficiently old to process
       if (rinfo->rtag->createtime >= rebuildthresh) {
          LOG(LOG_INFO, "Marker path \"%s\" RTAG create time is too recent to rebuild\n", markerpath);
@@ -915,6 +965,7 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
          ms->mdal->close(mhandle);
          return NULL;
       }
+
       if (stval.st_ctime >= rebuildthresh) {
          LOG(LOG_INFO, "Marker path \"%s\" ctime is too recent to rebuild\n", markerpath);
          free(rtagname);
@@ -924,7 +975,9 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
          return NULL;
       }
    }
+
    free(rtagname);
+
    // duplicate marker path
    rinfo->markerpath = strdup(markerpath);
    if (rinfo->markerpath == NULL) {
@@ -934,6 +987,7 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
       ms->mdal->close(mhandle);
       return NULL;
    }
+
    // retrieve the FTAG value
    ssize_t ftagstrlen = ms->mdal->fgetxattr(mhandle, 1, FTAG_NAME, NULL, 0);
    if (ftagstrlen < 2) {
@@ -944,15 +998,8 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
       ms->mdal->close(mhandle);
       return NULL;
    }
+
    char* ftagstr = malloc(sizeof(char) * (ftagstrlen + 1));
-   if (ftagstr == NULL) {
-      LOG(LOG_ERR, "Failed to allocate FTAG string of length %zu\n", ftagstrlen + 1);
-      free(rinfo->markerpath);
-      if (rinfo->rtag) { rtag_free(rinfo->rtag); free(rinfo->rtag); }
-      free(rinfo);
-      ms->mdal->close(mhandle);
-      return NULL;
-   }
    if (ms->mdal->fgetxattr(mhandle, 1, FTAG_NAME, ftagstr, ftagstrlen) != ftagstrlen) {
       LOG(LOG_ERR, "FTAG of marker file \"%s\" has an inconsistent length\n", markerpath);
       free(ftagstr);
@@ -962,21 +1009,15 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
       ms->mdal->close(mhandle);
       return NULL;
    }
-   *(ftagstr + ftagstrlen) = '\0'; // ensure a NULL-terminated string
+
+   ftagstr[ftagstrlen] = '\0'; // ensure a NULL-terminated string
+
    // allocate a new operation struct
    opinfo* op = calloc(1, sizeof(*op));
-   if (op == NULL) {
-      LOG(LOG_ERR, "Failed to allocate opinfo struct\n");
-      free(ftagstr);
-      free(rinfo->markerpath);
-      if (rinfo->rtag) { rtag_free(rinfo->rtag); free(rinfo->rtag); }
-      free(rinfo);
-      ms->mdal->close(mhandle);
-      return NULL;
-   }
    op->type = MARFS_REBUILD_OP;
    op->extendedinfo = (void*)rinfo;
    op->start = 1;
+
    op->count = 1;
    // parse in the FTAG
    if (ftag_initstr(&op->ftag, ftagstr)) {
@@ -989,8 +1030,10 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
       ms->mdal->close(mhandle);
       return NULL;
    }
+
    op->ftag.objno = objno; // overwrite object number with the one we are actually targeting
    free(ftagstr);
+
    // close our handle
    if (ms->mdal->close(mhandle)) {
       LOG(LOG_ERR, "Failed to close handle for marker file \"%s\"\n", markerpath);
@@ -1002,6 +1045,7 @@ opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time_t rebu
       free(rinfo);
       return NULL;
    }
+
    return op;
 }
 
@@ -1024,24 +1068,28 @@ int process_executeoperation(marfs_position* pos, opinfo* op, RESOURCELOG* rlog,
       errno = EINVAL;
       return -1;
    }
+
    if (pos == NULL) {
       LOG(LOG_ERR, "Received a NULL marfs_position value\n");
       resourcelog_freeopinfo(op);
       errno = EINVAL;
       return -1;
    }
+
    if (pos->ctxt == NULL) {
       LOG(LOG_ERR, "Received a marfs_position value with no MDAL_CTXT\n");
       resourcelog_freeopinfo(op);
       errno = EINVAL;
       return -1;
    }
-   if (!(op->start)) {
+
+   if (!op->start) {
       LOG(LOG_ERR, "Received a non-start operation value\n");
       resourcelog_freeopinfo(op);
       errno = EINVAL;
       return -1;
    }
+
    char abortops = 0;
    while (op) {
       opinfo* nextop = op->next;
@@ -1083,6 +1131,7 @@ int process_executeoperation(marfs_position* pos, opinfo* op, RESOURCELOG* rlog,
                return -1;
          }
       }
+
       // log operation end, and check if we can progress
       char progress = 0;
       LOG(LOG_INFO, "Logging end of operation stream \"%s\"\n", op->ftag.streamid);
@@ -1092,18 +1141,23 @@ int process_executeoperation(marfs_position* pos, opinfo* op, RESOURCELOG* rlog,
          if (nextop) { resourcelog_freeopinfo(nextop); }
          return -1;
       }
+
       resourcelog_freeopinfo(op);
+
       if (progress == 0) {
          LOG(LOG_INFO, "Terminating execution, as portions of this op have not yet been completed\n");
          if (nextop) { resourcelog_freeopinfo(nextop); }
          return 0;
       }
+
       if (progress < 0) {
          LOG(LOG_ERR, "Previous operation failures will prevent execution of remaining op chain\n");
          abortops = 1;
       }
+
       op = nextop;
    }
+
    LOG(LOG_INFO, "Terminating execution, as all operations were completed\n");
    return 0;
 }
