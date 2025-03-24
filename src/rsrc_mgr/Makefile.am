@@ -79,6 +79,7 @@ marfs_rman_SOURCES =        \
     parse_program_args.c    \
     read_last_log.c         \
     repack.c                \
+    resourceinput.c         \
     resourcemanager.c       \
     resourceprocessing.c    \
     resourcethreads.c       \
@@ -102,7 +103,7 @@ test_resourceprocessing_SOURCES = testing/test_resourceprocessing.c repack.c str
 test_resourceprocessing_LDADD = libResourceLog.la ../datastream/libDatastream.la ../logging/liblogging.la
 test_resourceprocessing_CFLAGS = $(XML_CFLAGS)
 
-test_resourcethreads_SOURCES = testing/test_resourcethreads.c repack.c resourceprocessing.c streamwalker.c
+test_resourcethreads_SOURCES = testing/test_resourcethreads.c repack.c resourceinput.c resourceprocessing.c streamwalker.c
 test_resourcethreads_LDADD = libResourceLog.la ../datastream/libDatastream.la ../logging/liblogging.la
 test_resourcethreads_CFLAGS = $(XML_CFLAGS)
 
