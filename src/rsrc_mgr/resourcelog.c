@@ -98,27 +98,31 @@ typedef struct resourcelog {
  * @param char destroy : If non-zero, the entire resourcelog structure will be freed
  *                       If zero, all state will be purged, but the struct can be reinitialized
  */
-void cleanuplog(RESOURCELOG rsrclog, char destroy) {
+static void cleanuplog(RESOURCELOG rsrclog, char destroy) {
    HASH_NODE* nodelist = NULL;
    size_t index = 0;
    if (rsrclog->inprogress) {
       hash_term(rsrclog->inprogress, &nodelist, &index);
       while (index) {
-         opchain* chain = (nodelist + index - 1)->content;
+         opchain* chain = (opchain*) nodelist[index - 1].content;
          while (chain) {
             resourcelog_freeopinfo(chain->chain);
             opchain* nextchain = chain->next;
             free(chain);
             chain = nextchain;
          }
-         free((nodelist + index - 1)->name);
+
+         free(nodelist[index - 1].name);
          index--;
       }
+
       free(nodelist);
       rsrclog->inprogress = NULL;
    }
-   if (rsrclog->logfilepath) { free(rsrclog->logfilepath); }
-   if (rsrclog->logfile > 0) { close(rsrclog->logfile); }
+
+   free(rsrclog->logfilepath);
+   close(rsrclog->logfile);
+
    if (destroy) {
       pthread_cond_destroy(&rsrclog->nooutstanding);
       pthread_mutex_unlock(&rsrclog->lock);
@@ -128,7 +132,6 @@ void cleanuplog(RESOURCELOG rsrclog, char destroy) {
    else {
       pthread_mutex_unlock(&rsrclog->lock);
    }
-   return;
 }
 
 /**
@@ -167,6 +170,7 @@ opinfo* parselogline(int logfile, char* eof) {
       }
       tgtchar++;
    }
+
    if (*tgtchar != '\n') {
       if (readbytes == 0) {
          if (tgtchar == buffer) {
@@ -177,21 +181,20 @@ opinfo* parselogline(int logfile, char* eof) {
             LOG(LOG_ERR, "Hit mid-line EOF on logfile\n");
             *eof = -1;
          }
+
          return NULL;
       }
+
       LOG(LOG_ERR, "Encountered error while reading from logfile\n");
       lseek(logfile, origoff, SEEK_SET);
       *eof = 0;
       return NULL;
    }
+
    *eof = 0; // preemptively populate with zero
+
    // allocate our operation node
    opinfo* op = malloc(sizeof(*op));
-   if (op == NULL) {
-      LOG(LOG_ERR, "Failed to allocate opinfo struct for logfile line\n");
-      lseek(logfile, origoff, SEEK_SET);
-      return NULL;
-   }
    op->extendedinfo = NULL;
    op->start = 0;
    op->count = 0;
@@ -199,20 +202,17 @@ opinfo* parselogline(int logfile, char* eof) {
    op->next = NULL;
    op->ftag.ctag = NULL;
    op->ftag.streamid = NULL;
+
    // parse the op type and extended info
    char* parseloc = buffer;
    if (strncmp(buffer, "DEL-OBJ ", 8) == 0) {
       LOG(LOG_INFO, "Parsing a MARFS_DELETE_OBJ operation\n");
       op->type = MARFS_DELETE_OBJ_OP;
       parseloc += 8;
+
       // allocate delobj_info
       delobj_info* extinfo = calloc(1, sizeof(*extinfo));
-      if (extinfo == NULL) {
-         LOG(LOG_ERR, "Failed to allocate space for DEL-OBJ extended info\n");
-         free(op);
-         lseek(logfile, origoff, SEEK_SET);
-         return NULL;
-      }
+
       // parse in delobj_info
       if (strncmp(parseloc, "{ ", 2)) {
          LOG(LOG_ERR, "Missing '{ ' header for DEL-OBJ extended info\n");
@@ -221,18 +221,23 @@ opinfo* parselogline(int logfile, char* eof) {
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       parseloc += 2;
+
       char* endptr = NULL;
       unsigned long long parseval = strtoull(parseloc, &endptr, 10);
-      if (endptr == NULL  ||  *endptr != ' ') {
+      if (endptr == NULL || *endptr != ' ') {
          LOG(LOG_ERR, "DEL-OBJ extended info has unexpected char in prev_active_index string: '%c'\n", *endptr);
          free(extinfo);
          free(op);
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       extinfo->offset = (size_t)parseval;
+
       parseloc = endptr + 1;
+
       if (strncmp(parseloc, "} ", 2)) {
          LOG(LOG_ERR, "Missing '} ' tail for DEL-OBJ extended info\n");
          free(extinfo);
@@ -240,7 +245,9 @@ opinfo* parselogline(int logfile, char* eof) {
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       parseloc += 2;
+
       // attach delobj_info
       op->extendedinfo = extinfo;
    }
@@ -250,12 +257,7 @@ opinfo* parselogline(int logfile, char* eof) {
       parseloc += 8;
       // allocate delref_info
       delref_info* extinfo = calloc(1, sizeof(*extinfo));
-      if (extinfo == NULL) {
-         LOG(LOG_ERR, "Failed to allocate space for DEL-REF extended info\n");
-         free(op);
-         lseek(logfile, origoff, SEEK_SET);
-         return NULL;
-      }
+
       // parse in delref_info
       if (strncmp(parseloc, "{ ", 2)) {
          LOG(LOG_ERR, "Missing '{ ' header for DEL-REF extended info\n");
@@ -264,18 +266,23 @@ opinfo* parselogline(int logfile, char* eof) {
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       parseloc += 2;
+
       char* endptr = NULL;
       unsigned long long parseval = strtoull(parseloc, &endptr, 10);
-      if (endptr == NULL  ||  *endptr != ' ') {
+      if (endptr == NULL || *endptr != ' ') {
          LOG(LOG_ERR, "DEL-REF extended info has unexpected char in prev_active_index string: '%c'\n", *endptr);
          free(extinfo);
          free(op);
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       extinfo->prev_active_index = (size_t)parseval;
+
       parseloc = endptr + 1;
+
       if (strncmp(parseloc, "DZ ", 3) == 0) {
          extinfo->delzero = 1;
       }
@@ -289,7 +296,9 @@ opinfo* parselogline(int logfile, char* eof) {
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       parseloc += 3;
+
       if (strncmp(parseloc, "EOS", 3) == 0) {
          extinfo->eos = 1;
       }
@@ -303,7 +312,9 @@ opinfo* parselogline(int logfile, char* eof) {
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       parseloc += 3;
+
       if (strncmp(parseloc, " } ", 3)) {
          LOG(LOG_ERR, "Missing ' } ' tail for DEL-REF extended info\n");
          free(extinfo);
@@ -311,7 +322,9 @@ opinfo* parselogline(int logfile, char* eof) {
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       parseloc += 3;
+
       // attach delref_info
       op->extendedinfo = extinfo;
    }
@@ -319,20 +332,16 @@ opinfo* parselogline(int logfile, char* eof) {
       LOG(LOG_INFO, "Parsing a MARFS_REBUILD operation\n");
       op->type = MARFS_REBUILD_OP;
       parseloc += 8;
+
       // parse in rebuild_info
       rebuild_info* extinfo = NULL;
       if (strncmp(parseloc, "{ ", 2) == 0) {
          // allocate rebuild_info
          extinfo = calloc(1, sizeof(*extinfo));
-         if (extinfo == NULL) {
-            LOG(LOG_ERR, "Failed to allocate space for REBUILD extended info\n");
-            free(op);
-            lseek(logfile, origoff, SEEK_SET);
-            return NULL;
-         }
          parseloc += 2;
+
          char* endptr = parseloc;
-         while (*endptr != ' '  &&  *endptr != '\n') { endptr++; }
+         while (*endptr != ' ' && *endptr != '\n') { endptr++; }
          if (*endptr != ' ') {
             LOG(LOG_ERR, "Failed to parse markerpath from REBUILD extended info\n");
             free(extinfo);
@@ -340,8 +349,11 @@ opinfo* parselogline(int logfile, char* eof) {
             lseek(logfile, origoff, SEEK_SET);
             return NULL;
          }
+
          *endptr = '\0'; // temporarily truncate string
+
          extinfo->markerpath = strdup(parseloc);
+
          if (extinfo->markerpath == NULL) {
             LOG(LOG_ERR, "Failed to duplicate markerpath from REBUILD extended info\n");
             free(extinfo);
@@ -349,12 +361,15 @@ opinfo* parselogline(int logfile, char* eof) {
             lseek(logfile, origoff, SEEK_SET);
             return NULL;
          }
+
          *endptr = ' ';
+
          parseloc = endptr + 1;
-         if (*parseloc != '}'  &&  *parseloc != '\0') {
+
+         if (*parseloc != '}' && *parseloc != '\0') {
             // possibly parse rtag value
             endptr = parseloc;
-            while (*endptr != '\0'  &&  *endptr != '\n'  &&  *endptr != ' ') { endptr++; }
+            while (*endptr != '\0' && *endptr != '\n' && *endptr != ' ') { endptr++; }
             if (*endptr != ' ') {
                LOG(LOG_ERR, "Failed to identify end of rtag marker in REBUILD extended info string\n");
                free(extinfo->markerpath);
@@ -363,16 +378,11 @@ opinfo* parselogline(int logfile, char* eof) {
                lseek(logfile, origoff, SEEK_SET);
                return NULL;
             }
+
             extinfo->rtag = calloc(1, sizeof(RTAG));
-            if (extinfo->rtag == NULL) {
-               LOG(LOG_ERR, "Failed to allocate space for REBUILD extended info RTAG\n");
-               free(extinfo->markerpath);
-               free(extinfo);
-               free(op);
-               lseek(logfile, origoff, SEEK_SET);
-               return NULL;
-            }
+
             *endptr = '\0'; // truncate string to make rtag parsing easier
+
             if (rtag_initstr(extinfo->rtag, parseloc)) {
                LOG(LOG_ERR, "Failed to parse rtag value of REBUILD extended info: \"%s\"\n", parseloc);
                free(extinfo->rtag);
@@ -382,9 +392,11 @@ opinfo* parselogline(int logfile, char* eof) {
                lseek(logfile, origoff, SEEK_SET);
                return NULL;
             }
+
             *endptr = ' ';
             parseloc = endptr + 1;
          }
+
          if (strncmp(parseloc, "} ", 2)) {
             LOG(LOG_ERR, "Missing '} ' tail for REBUILD extended info\n");
             if (extinfo->rtag) {
@@ -397,6 +409,7 @@ opinfo* parselogline(int logfile, char* eof) {
             lseek(logfile, origoff, SEEK_SET);
             return NULL;
          }
+
          parseloc += 2;
       }
       else {
@@ -409,14 +422,10 @@ opinfo* parselogline(int logfile, char* eof) {
       LOG(LOG_INFO, "Parsing a MARFS_REPACK operation\n");
       op->type = MARFS_REPACK_OP;
       parseloc += 7;
+
       // allocate repack_info
       repack_info* extinfo = calloc(1, sizeof(*extinfo));
-      if (extinfo == NULL) {
-         LOG(LOG_ERR, "Failed to allocate space for REPACK extended info\n");
-         free(op);
-         lseek(logfile, origoff, SEEK_SET);
-         return NULL;
-      }
+
       // parse in repack_info
       if (strncmp(parseloc, "{ ", 2)) {
          LOG(LOG_ERR, "Missing '{ ' header for REPACK extended info\n");
@@ -425,16 +434,19 @@ opinfo* parselogline(int logfile, char* eof) {
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       parseloc += 2;
+
       char* endptr = NULL;
       unsigned long long parseval = strtoull(parseloc, &endptr, 10);
-      if (endptr == NULL  ||  *endptr != ' ') {
+      if (endptr == NULL || *endptr != ' ') {
          LOG(LOG_ERR, "REPACK extended info has unexpected char in totalbytes string: '%c'\n", *endptr);
          free(extinfo);
          free(op);
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       extinfo->totalbytes = (size_t)parseval;
       parseloc = endptr;
       if (strncmp(parseloc, " } ", 3)) {
@@ -444,7 +456,9 @@ opinfo* parselogline(int logfile, char* eof) {
          lseek(logfile, origoff, SEEK_SET);
          return NULL;
       }
+
       parseloc += 3;
+
       // attach repack_info
       op->extendedinfo = extinfo;
    }
@@ -454,64 +468,65 @@ opinfo* parselogline(int logfile, char* eof) {
       lseek(logfile, origoff, SEEK_SET);
       return NULL;
    }
+
    // parse the start value
    if (*parseloc == 'S') {
       op->start = 1;
    }
    else if (*parseloc != 'E') {
-      LOG(LOG_ERR, "Unexpected START string value: '\%c'\n", *parseloc);
-      resourcelog_freeopinfo(op);
-      lseek(logfile, origoff, SEEK_SET);
-      return NULL;
+      LOG(LOG_ERR, "Unexpected START string value: '%c'\n", *parseloc);
+      goto error;
    }
-   if (*(parseloc + 1) != ' ') {
+
+   if (parseloc[1] != ' ') {
       LOG(LOG_ERR, "Unexpected trailing character after START value: '%c'\n", *(parseloc + 1));
-      resourcelog_freeopinfo(op);
-      lseek(logfile, origoff, SEEK_SET);
-      return NULL;
+      goto error;
    }
+
    parseloc += 2;
+
    // parse the count value
    char* endptr = NULL;
    unsigned long long parseval = strtoull(parseloc, &endptr, 10);
-   if (endptr == NULL  ||  *endptr != ' ') {
+   if (endptr == NULL || *endptr != ' ') {
       LOG(LOG_ERR, "Failed to parse COUNT value with unexpected char: '%c'\n", *endptr);
-      resourcelog_freeopinfo(op);
-      lseek(logfile, origoff, SEEK_SET);
-      return NULL;
+      goto error;
    }
+
    op->count = (size_t)parseval;
+
    parseloc = endptr + 1;
+
    // parse the errno value
    long sparseval = strtol(parseloc, &endptr, 10);
-   if (endptr == NULL  ||  *endptr != ' ') {
+   if (endptr == NULL || *endptr != ' ') {
       LOG(LOG_ERR, "Failed to parse ERRNO value with unexpected char: '%c'\n", *endptr);
-      resourcelog_freeopinfo(op);
-      lseek(logfile, origoff, SEEK_SET);
-      return NULL;
+      goto error;
    }
+
    op->errval = (int)sparseval;
+
    parseloc = endptr + 1;
+
    // parse the NEXT value
    char nextval = 0;
    if (*(tgtchar - 1) == '-') {
       if (*(tgtchar - 2) != ' ') {
          LOG(LOG_ERR, "Unexpected char preceeds NEXT flag: '%c'\n", *(tgtchar - 2));
-         resourcelog_freeopinfo(op);
-         lseek(logfile, origoff, SEEK_SET);
-         return NULL;
+         goto error;
       }
+
       nextval = 1; // note that we need to append another op
       tgtchar -= 2; // pull this back, so we'll trim off the NEXT value
    }
+
    // parse the FTAG value
    *tgtchar = '\0'; // trim the string, to make FTAG parsing easy
    if (ftag_initstr(&op->ftag, parseloc)) {
       LOG(LOG_ERR, "Failed to parse FTAG value of log line\n");
-      resourcelog_freeopinfo(op);
-      lseek(logfile, origoff, SEEK_SET);
-      return NULL;
+      goto error;
    }
+
    // finally, parse in any subsequent linked ops
    if (nextval) {
       // NOTE -- Recursive parsing isn't the most efficient approach.
@@ -522,11 +537,19 @@ opinfo* parselogline(int logfile, char* eof) {
       if (op->next == NULL) {
          LOG(LOG_ERR, "Failed to parse linked operation\n");
          resourcelog_freeopinfo(op);
-         if (*eof == 0) { lseek(logfile, origoff, SEEK_SET); }
+         if (*eof == 0) {
+             lseek(logfile, origoff, SEEK_SET);
+         }
          return NULL;
       }
    }
+
    return op;
+
+  error:
+   resourcelog_freeopinfo(op);
+   lseek(logfile, origoff, SEEK_SET);
+   return NULL;
 }
 
 /**
@@ -543,6 +566,7 @@ int printlogline(int logfile, opinfo* op) {
       LOG(LOG_ERR, "Failed to identify current logfile offset\n");
       return -1;
    }
+
    // populate the type string of the operation
    switch (op->type) {
       case MARFS_DELETE_OBJ_OP:
@@ -550,7 +574,9 @@ int printlogline(int logfile, opinfo* op) {
             LOG(LOG_ERR, "Failed to populate 'DEL-OBJ' type string\n");
             return -1;
          }
+
          usedbuff += 8;
+
          if (op->extendedinfo) {
             delobj_info* delobj = (delobj_info*)op->extendedinfo;
             ssize_t extinfoprint = snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
@@ -561,13 +587,16 @@ int printlogline(int logfile, opinfo* op) {
             }
             usedbuff += extinfoprint;
          }
+
          break;
       case MARFS_DELETE_REF_OP:
          if (snprintf(buffer, MAX_BUFFER, "%s ", "DEL-REF") != 8) {
             LOG(LOG_ERR, "Failed to populate 'DEL-REF' type string\n");
             return -1;
          }
+
          usedbuff += 8;
+
          if (op->extendedinfo) {
             delref_info* delref = (delref_info*)op->extendedinfo;
             ssize_t extinfoprint = snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu %s %s } ",
@@ -580,13 +609,16 @@ int printlogline(int logfile, opinfo* op) {
             }
             usedbuff += extinfoprint;
          }
+
          break;
       case MARFS_REBUILD_OP:
          if (snprintf(buffer, MAX_BUFFER, "%s ", "REBUILD") != 8) {
             LOG(LOG_ERR, "Failed to populate 'REBUILD' type string\n");
             return -1;
          }
+
          usedbuff += 8;
+
          if (op->extendedinfo) {
             rebuild_info* rebuild = (rebuild_info*)op->extendedinfo;
             ssize_t extinfoprint = snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %s",
@@ -595,11 +627,14 @@ int printlogline(int logfile, opinfo* op) {
                LOG(LOG_ERR, "Failed to populate first portion of REBUILD extended info string\n");
                return -1;
             }
+
             usedbuff += extinfoprint;
+
             if (usedbuff >= MAX_BUFFER) {
                LOG(LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n");
                return -1;
             }
+
             if (rebuild->rtag) {
                // possibly print out rtag values, starting with a single leading space char
                extinfoprint = snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, " ");
@@ -607,35 +642,45 @@ int printlogline(int logfile, opinfo* op) {
                   LOG(LOG_ERR, "Failed to populate leading space of REBUILD extended info string\n");
                   return -1;
                }
+
                usedbuff += extinfoprint;
+
                if (usedbuff >= MAX_BUFFER) {
                   LOG(LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n");
                   return -1;
                }
+
                size_t rtagprint = rtag_tostr(rebuild->rtag, buffer + usedbuff, MAX_BUFFER - usedbuff);
                if (rtagprint < 1) {
                   LOG(LOG_ERR, "Failed to populate REBUILD extended info rtag string\n");
                   return -1;
                }
+
                usedbuff += rtagprint;
+
                if (usedbuff >= MAX_BUFFER) {
                   LOG(LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n");
                   return -1;
                }
             }
+
             if (snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, " } ") != 3) {
                LOG(LOG_ERR, "Failed to print tail string of REBUILD extended info\n");
                return -1;
             }
+
             usedbuff += 3;
          }
+
          break;
       case MARFS_REPACK_OP:
          if (snprintf(buffer, MAX_BUFFER, "%s ", "REPACK") != 7) {
             LOG(LOG_ERR, "Failed to populate 'REPACK' type string\n");
             return -1;
          }
+
          usedbuff += 7;
+
          if (op->extendedinfo) {
             repack_info* repack = (repack_info*)op->extendedinfo;
             ssize_t extinfoprint = snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "{ %zu } ",
@@ -644,17 +689,21 @@ int printlogline(int logfile, opinfo* op) {
                LOG(LOG_ERR, "Failed to populate REPACK extended info string\n");
                return -1;
             }
+
             usedbuff += extinfoprint;
          }
+
          break;
       default:
          LOG(LOG_ERR, "Unrecognized TYPE value of operation\n");
          return -1;
    }
+
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
       return -1;
    }
+
    // populate start flag
    if (op->start) {
       if (snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%c ", 'S') != 2) {
@@ -666,54 +715,69 @@ int printlogline(int logfile, opinfo* op) {
       LOG(LOG_ERR, "Failed to populate 'E' start flag string\n");
       return -1;
    }
+
    usedbuff += 2;
+
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
       return -1;
    }
+
    // populate the count string
    ssize_t printres;
    if ((printres = snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%zu ", op->count)) < 2) {
       LOG(LOG_ERR, "Failed to populate \"%zu\" count string\n", op->count);
       return -1;
    }
+
    usedbuff += printres;
+
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
       return -1;
    }
+
    // populate the errval string
    if ((printres = snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%d ", op->errval)) < 2) {
       LOG(LOG_ERR, "Failed to populate \"%d\" errval string\n", op->errval);
       return -1;
    }
+
    usedbuff += printres;
+
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
       return -1;
    }
+
    // populate the FTAG string
    if ((printres = ftag_tostr(&op->ftag, buffer + usedbuff, MAX_BUFFER - usedbuff)) < 1) {
       LOG(LOG_ERR, "Failed to populate FTAG string\n");
       return -1;
    }
+
    usedbuff += printres;
+
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
       return -1;
    }
+
    // populate the NEXT flag
    if (op->next) {
       if (snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, " -") != 2) {
          LOG(LOG_ERR, "Failed to populate NEXT flag string\n");
          return -1;
       }
+
       usedbuff += 2;
+
       if (usedbuff >= MAX_BUFFER) {
          LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
          return -1;
       }
    }
+
    // populate EOL
    *(buffer + usedbuff) = '\n';
    usedbuff++;
@@ -721,16 +785,20 @@ int printlogline(int logfile, opinfo* op) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
       return -1;
    }
-   *(buffer + usedbuff) = '\0'; // NULL-terminate, just in case
+
+   buffer[usedbuff] = '\0'; // NULL-terminate, just in case
+
    // finally, output the full op line
    if (write(logfile, buffer, usedbuff) != usedbuff) {
       LOG(LOG_ERR, "Failed to write operation string of length %zd to logfile\n", usedbuff);
       return -1;
    }
+
    // potentially output trailing ops recursively
    if (op->next) {
       return printlogline(logfile, op->next);
    }
+
    return 0;
 }
 
@@ -748,6 +816,7 @@ int printlogline(int logfile, opinfo* op) {
 int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* dofree) {
    // identify the length of the given chain and validate a consistent 'start' value
    LOG(LOG_INFO, "Processing operation chain on Stream \"%s\" w/ CTag \"%s\"\n", newop->ftag.streamid, newop->ftag.ctag);
+
    opinfo* finop = newop;
    size_t oplength = 0;
    while (finop) {
@@ -762,15 +831,19 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
          LOG(LOG_ERR, "Operation chain has inconsistent START value\n");
          return -1;
       }
+
       finop = finop->next;
    }
+
    LOG(LOG_INFO, "   (\"%s\", \"%s\") -- End of OP chain of length %zd\n", newop->ftag.ctag, newop->ftag.streamid, oplength);
+
    // map this operation into our inprogress hash table
    HASH_NODE* node = NULL;
    if (hash_lookup(rsrclog->inprogress, newop->ftag.streamid, &node) < 0) {
       LOG(LOG_ERR, "Failed to map operation on \"%s\" into inprogress HASH_TABLE\n", newop->ftag.streamid);
       return -1;
    }
+
    // traverse the attached operations, looking for a match
    char activechain = 0;
    char activealike = 0; // track if we have active ops of the same type in the same 'segment'
@@ -780,9 +853,9 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
    while (chainindex) {
       opindex = chainindex->chain;
       // check for an opchain on the same stream (ctag, streamid)
-      if (opindex  &&  strcmp(opindex->ftag.streamid, newop->ftag.streamid) == 0  &&
-            ((opindex->ftag.ctag == NULL  &&  newop->ftag.ctag == NULL)  ||
-                   (opindex->ftag.ctag  &&  newop->ftag.ctag  &&  strcmp(opindex->ftag.ctag, newop->ftag.ctag) == 0))
+      if (opindex && strcmp(opindex->ftag.streamid, newop->ftag.streamid) == 0  &&
+            ((opindex->ftag.ctag == NULL && newop->ftag.ctag == NULL)  ||
+                   (opindex->ftag.ctag && newop->ftag.ctag && strcmp(opindex->ftag.ctag, newop->ftag.ctag) == 0))
         ) {
          while (opindex != NULL) {
             // check for exact match (type, fileno, objno)
@@ -797,17 +870,26 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
             else if (opindex->count) {
                activealike = 1; // found an active op of the same type
             }
-            if (opindex->count) { activechain = 1; }
+
+            if (opindex->count) {
+                activechain = 1;
+            }
+
             opindex = opindex->next;
          }
-         if (opindex) { break; } // break from the parent loop, if we've found a match
+
+         if (opindex) {
+            break; // break from the parent loop, if we've found a match
+         }
       }
+
       opindex = NULL; // moving to a new chain, so NULL out our potential op match
       activealike = 0; // moving to a new chain, so the op 'segment' is broken
       activechain = 0; // moving to a new chain, so reset active state
       prevchainref = &chainindex->next;
       chainindex = chainindex->next;
    }
+
    if (opindex != NULL) {
       // otherwise, for op completion, we'll need to process each operation in the chain...
       opinfo* parseop = newop; // new op being added to totals
@@ -826,6 +908,7 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
                              parseop->count, parseindex->count);
                return -1;
             }
+
             // ...note each in our totals...
             switch(parseop->type) {
                case MARFS_DELETE_OBJ_OP:
@@ -852,10 +935,15 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
                   LOG(LOG_ERR, "Unrecognized operation type value\n");
                   return -1;
             }
-            if (parseop->errval) { parseindex->errval = parseop->errval; } // potentially note an error
+
+            if (parseop->errval) {
+               parseindex->errval = parseop->errval; // potentially note an error
+            }
+
             // decrement remaining op count
             LOG(LOG_INFO, "Decrementing remaining op count (%zd) by %zd\n", parseindex->count, parseop->count);
             parseindex->count -= parseop->count; // decrement count
+
             // check for completion of the specified op
             if (parseindex->count) {
                // first operation is not complete, so cannot progress op chain
@@ -863,34 +951,51 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
                   LOG(LOG_ERR, "Operation is incomplete, but input operation chain continues\n");
                   return -1;
                }
-               if (progressop) { *progressop = 0; }
+
+               if (progressop) {
+                  *progressop = 0;
+               }
+
                *dofree = 1; // not incorporating these ops, so the caller should free
                return 0;
             }
-            if (parseop->next == NULL  &&  parseindex->next) {
+
+            if (parseop->next == NULL && parseindex->next) {
                // check for subsequent active op in the same segment
                opinfo* tmpparse = parseindex;
-               while (tmpparse->next  &&  parseop->type == tmpparse->next->type) {
-                  if (tmpparse->next->count) { activealike = 1; break; }
+               while (tmpparse->next && parseop->type == tmpparse->next->type) {
+                  if (tmpparse->next->count) {
+                     activealike = 1;
+                     break;
+                  }
                   tmpparse = tmpparse->next;
                }
             }
+
             // progress to the next op in the chain, validating that it matches the subsequent in the opindex chain
             parseop = parseop->next;
             previndex = parseindex; // keep track of where the index op chain terminates
             parseindex = parseindex->next;
+
             if (parseop) {
                // at this point, any variation between operation chains is a fatal error
-               if (parseindex == NULL  ||  ftag_cmp(&parseop->ftag, &parseindex->ftag)  ||  parseop->type != parseindex->type) {
+               if (parseindex == NULL || ftag_cmp(&parseop->ftag, &parseindex->ftag) || parseop->type != parseindex->type) {
                   LOG(LOG_ERR, "Operation completion chain does not match outstainding operation chain\n");
                   return -1;
                }
             }
             else if (progressop) {
-               if (activealike) { *progressop = 0; } // do not progress if alike ops remain in a single 'segment'
-               else if (previndex->errval == 0) { *progressop = 1; } // corresponding ops were completed without error
-               else { *progressop = -1; } // note that the corresponding ops were completed with errors
+               if (activealike) {
+                  *progressop = 0; // do not progress if alike ops remain in a single 'segment'
+               }
+               else if (previndex->errval == 0) {
+                  *progressop = 1; // corresponding ops were completed without error
+               }
+               else {
+                  *progressop = -1; // note that the corresponding ops were completed with errors
+               }
             }
+
             // decrement in-progress cnt
             rsrclog->outstandingcnt--;
             LOG(LOG_INFO, "Decrementing Outstanding OP Count to %zd\n", rsrclog->outstandingcnt);
@@ -899,13 +1004,16 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
             if (parseop->count > parseindex->count) {
                LOG(LOG_INFO, "Resetting count of in-progress operation from %zu to %zu\n",
                     parseindex->count, parseop->count);
+
                // potentially increment our in-progress cnt, if this operation is being re-issued
                if (parseindex->count == 0) {
                   rsrclog->outstandingcnt++;
                   LOG(LOG_INFO, "Incremented Outstanding OP Count to %zd\n", rsrclog->outstandingcnt);
                }
+
                parseindex->count = parseop->count;
             }
+
             // just progress to the next op
             parseop = parseop->next;
             parseindex = parseindex->next;
@@ -919,13 +1027,15 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
       //         chain will not be freed until the entire resourcelog is terminated.
       //         As we never expect the caller to behave like this, I am leaving this logic
       //         as is.
-      if (newop->start == 0  &&  activechain == 0  &&  parseindex == NULL) {
+      if (newop->start == 0 && activechain == 0 && parseindex == NULL) {
          // destroy the entire operation chain
          resourcelog_freeopinfo(chainindex->chain);
+
          // ...and remove the matching op chain
          *prevchainref = chainindex->next;
          free(chainindex);
       }
+
       // a matching op means the parsed operation can be discarded
       // tell the caller to free their own op chain
       *dofree = 1;
@@ -939,10 +1049,6 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
       if (rsrclog->type == RESOURCE_MODIFY_LOG) {
          // stitch the new op chain onto the end of our inprogress list
          *prevchainref = calloc(1, sizeof(**prevchainref));
-         if (*prevchainref == NULL) {
-            LOG(LOG_ERR, "Failed to allocate space for a new operation chain struct\n");
-            return -1;
-         }
          (*prevchainref)->chain = newop;
          // note that we have another op chain in flight
          rsrclog->outstandingcnt += oplength;
@@ -975,12 +1081,15 @@ int processopinfo(RESOURCELOG rsrclog, opinfo* newop, char* progressop, char* do
                   LOG(LOG_ERR, "Unrecognized operation type value\n");
                   return -1;
             }
+
             parseop = parseop->next;
          }
+
          // tell the caller to free their own op chain
          *dofree = 1;
       }
    }
+
    return 0;
 }
 
@@ -999,21 +1108,33 @@ void resourcelog_freeopinfo(opinfo* op) {
          switch (op->type) { // only REBUILD and DEL-REF ops should have extended info at all
             case MARFS_REBUILD_OP:
                {
-               rebuild_info* extinfo = (rebuild_info*)op->extendedinfo;
-               if (extinfo->markerpath) { free(extinfo->markerpath); }
-               if (extinfo->rtag) { rtag_free(extinfo->rtag); free(extinfo->rtag); }
-               break;
+                  rebuild_info* extinfo = (rebuild_info*)op->extendedinfo;
+                  free(extinfo->markerpath);
+                  if (extinfo->rtag) {
+                     rtag_free(extinfo->rtag);
+                     free(extinfo->rtag);
+                  }
+                  break;
                }
             default: // nothing extra to be done for other ops
                break;
          }
+
          free(op->extendedinfo);
       }
       // free ctag+streamid only if they are not simply duplicated references throughout the op chain
       // NOTE -- This won't catch if non-neighbor ops have the same string values, but I am considering that a degenerate case.
       //         Behavior would be a double free by this func.
-      if (op->ftag.ctag  &&  op->ftag.ctag != prevctag) { prevctag = op->ftag.ctag; free(op->ftag.ctag); }
-      if (op->ftag.streamid  &&  op->ftag.streamid != prevstreamid) { prevstreamid = op->ftag.streamid; free(op->ftag.streamid); }
+      if (op->ftag.ctag && op->ftag.ctag != prevctag) {
+         prevctag = op->ftag.ctag;
+         free(op->ftag.ctag);
+      }
+
+      if (op->ftag.streamid && op->ftag.streamid != prevstreamid) {
+         prevstreamid = op->ftag.streamid;
+         free(op->ftag.streamid);
+      }
+
       opinfo* nextop = op->next;
       free(op);
       op = nextop;
@@ -1031,34 +1152,21 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
       LOG(LOG_ERR, "Received a NULL opinfo reference\n");
       return NULL;
    }
+
    // parse over the op chain
    opinfo* genchain = NULL;
    opinfo** newop = &genchain;
    while (op) {
       // allocate a new op struct
       *newop = malloc(sizeof(**newop));
-      if (*newop == NULL) {
-         LOG(LOG_ERR, "Failed to allocate new operation info struct\n");
-         resourcelog_freeopinfo(genchain);
-         return NULL;
-      }
       **newop = *op; // just duplicate op values, to start
       (*newop)->ftag.ctag = NULL;
       (*newop)->ftag.streamid = NULL;
       (*newop)->extendedinfo = NULL; // always NULL these out, just in case
       // allocate new ctag/streamid
       (*newop)->ftag.ctag = strdup(op->ftag.ctag);
-      if ((*newop)->ftag.ctag == NULL) {
-         LOG(LOG_ERR, "Failed to duplicate CTAG string\n");
-         resourcelog_freeopinfo(genchain);
-         return NULL;
-      }
       (*newop)->ftag.streamid = strdup(op->ftag.streamid);
-      if ((*newop)->ftag.streamid == NULL) {
-         LOG(LOG_ERR, "Failed to duplicate StreamID string\n");
-         resourcelog_freeopinfo(genchain);
-         return NULL;
-      }
+
       // potentially populate extended info
       if (op->extendedinfo) {
          switch (op->type) { // only REBUILD and DEL-REF ops should have extended info at all
@@ -1066,11 +1174,6 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
                {
                   delobj_info* extinfo = (delobj_info*)op->extendedinfo;
                   delobj_info* newinfo = malloc(sizeof(*newinfo));
-                  if (newinfo == NULL) {
-                     LOG(LOG_ERR, "Failed to allocate delobj extended info\n");
-                     resourcelog_freeopinfo(genchain);
-                     return NULL;
-                  }
                   *newinfo = *extinfo;
                   (*newop)->extendedinfo = newinfo;
                   break;
@@ -1079,11 +1182,6 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
                {
                   delref_info* extinfo = (delref_info*)op->extendedinfo;
                   delref_info* newinfo = malloc(sizeof(*newinfo));
-                  if (newinfo == NULL) {
-                     LOG(LOG_ERR, "Failed to allocate delref extended info\n");
-                     resourcelog_freeopinfo(genchain);
-                     return NULL;
-                  }
                   *newinfo = *extinfo;
                   (*newop)->extendedinfo = newinfo;
                   break;
@@ -1096,18 +1194,8 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
                   if (extinfo) {
                      // duplicate extended info
                      newinfo = calloc(1, sizeof(*newinfo));
-                     if (newinfo == NULL) {
-                        LOG(LOG_ERR, "Failed to allocate rebuild extended info\n");
-                        resourcelog_freeopinfo(genchain);
-                        return NULL;
-                     }
                      if (extinfo->rtag) {
                         newinfo->rtag = calloc(1, sizeof(RTAG));
-                        if (newinfo->rtag == NULL) {
-                           LOG(LOG_ERR, "Failed to allocate a duplicate rebuild extended info RTAG structure\n");
-                           resourcelog_freeopinfo(genchain);
-                           return NULL;
-                        }
                         if (rtag_dup(extinfo->rtag, newinfo->rtag)) {
                            LOG(LOG_ERR, "Failed to duplicate rebuild extended info RTAG structure\n");
                            free(newinfo->rtag);
@@ -1115,11 +1203,15 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
                            return NULL;
                         }
                      }
+
                      if (extinfo->markerpath) {
                         newinfo->markerpath = strdup(extinfo->markerpath);
                         if (newinfo->markerpath == NULL) {
                            LOG(LOG_ERR, "Failed to duplicate rebuild marker path\n");
-                           if (newinfo->rtag) { rtag_free(newinfo->rtag); free(newinfo->rtag); }
+                           if (newinfo->rtag) {
+                              rtag_free(newinfo->rtag);
+                              free(newinfo->rtag);
+                           }
                            free(newinfo);
                            resourcelog_freeopinfo(genchain);
                            return NULL;
@@ -1133,11 +1225,6 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
                {
                   repack_info* extinfo = (repack_info*)op->extendedinfo;
                   repack_info* newinfo = malloc(sizeof(*newinfo));
-                  if (newinfo == NULL) {
-                     LOG(LOG_ERR, "Failed to allocate repack extended info\n");
-                     resourcelog_freeopinfo(genchain);
-                     return NULL;
-                  }
                   *newinfo = *extinfo;
                   (*newop)->extendedinfo = newinfo;
                   break;
@@ -1148,10 +1235,12 @@ opinfo* resourcelog_dupopinfo(opinfo* op) {
                return NULL;
          }
       }
+
       LOG(LOG_INFO, "Successfully duplicated operation\n");
       op = op->next;
       newop = &(*newop)->next;
    }
+
    return genchain;
 }
 
@@ -1173,6 +1262,7 @@ char* resourcelog_genlogpath(char create, const char* logroot, const char* itera
       errno = EINVAL;
       return NULL;
    }
+
    // if we have a NS, identify an appropriate FS path
    char* nspath = NULL;
    if (ns) {
@@ -1183,12 +1273,13 @@ char* resourcelog_genlogpath(char create, const char* logroot, const char* itera
          tmpparse++;
       }
    }
+
    // identify length of the constructed path
    ssize_t pathlen = 0;
-   if (iteration  &&  nspath  &&  ranknum >= 0) {
+   if (iteration && nspath && ranknum >= 0) {
       pathlen = snprintf(NULL, 0, "%s/%s/%s/resourcelog-%zu", logroot, iteration, nspath, ranknum);
    }
-   else if (iteration  &&  nspath) {
+   else if (iteration && nspath) {
       pathlen = snprintf(NULL, 0, "%s/%s/%s", logroot, iteration, nspath);
    }
    else if (iteration) {
@@ -1197,67 +1288,72 @@ char* resourcelog_genlogpath(char create, const char* logroot, const char* itera
    else {
       pathlen = snprintf(NULL, 0, "%s", logroot);
    }
+
    if (pathlen < 1) {
       LOG(LOG_ERR, "Failed to identify strlen of logfile path\n");
-      if (nspath) { free(nspath); }
+      free(nspath);
       return NULL;
    }
+
    // allocate the path
    char* path = malloc(sizeof(char) * (pathlen + 1));
-   if (path == NULL) {
-      LOG(LOG_ERR, "Failed to allocate %zu bytes for logfile path\n", pathlen + 1);
-      if (nspath) { free(nspath); }
-      return NULL;
-   }
+
    // populate the path root
-   ssize_t lrootlen = snprintf(path, pathlen + 1, "%s", logroot);
-   if (lrootlen < 1  ||  lrootlen > pathlen) {
+   const ssize_t lrootlen = snprintf(path, pathlen + 1, "%s", logroot);
+   if (lrootlen < 1 || lrootlen > pathlen) {
       LOG(LOG_ERR, "Failed to populate logfile root path\n");
-      if (nspath) { free(nspath); }
+      free(nspath);
       free(path);
       return NULL;
    }
+
    // potentially exit here
    if (iteration == NULL) {
       LOG(LOG_INFO, "Generated root path: \"%s\"\n", path);
-      if (nspath) { free(nspath); }
+      free(nspath);
       return path;
    }
+
    // create, if necessary
-   if (create  &&  mkdir(path, 0700)  &&  errno != EEXIST) {
+   if (create && mkdir(path, 0700) && errno != EEXIST) {
       LOG(LOG_ERR, "Failed to create log root dir: \"%s\"\n", path);
-      if (nspath) { free(nspath); }
+      free(nspath);
       free(path);
       return NULL;
    }
+
    // populate the path iteration
    ssize_t iterlen = snprintf(path + lrootlen, (pathlen - lrootlen) + 1, "/%s", iteration);
-   if (iterlen < 1  ||  iterlen > (pathlen - lrootlen)) {
+   if (iterlen < 1 || iterlen > (pathlen - lrootlen)) {
       LOG(LOG_ERR, "Failed to populate logfile iteration path: \"%s\"\n", iteration);
-      if (nspath) { free(nspath); }
+      free(nspath);
       free(path);
       return NULL;
    }
+
    // potentially exit here
    if (nspath == NULL) {
       LOG(LOG_INFO, "Generated iteration path: \"%s\"\n", path);
       return path;
    }
+
    // create, if necessary
-   if (create  &&  mkdir(path, 0700)  &&  errno != EEXIST) {
+   if (create && mkdir(path, 0700) && errno != EEXIST) {
       LOG(LOG_ERR, "Failed to create logfile iteration dir: \"%s\"\n", path);
       free(nspath);
       free(path);
       return NULL;
    }
+
    // populate the path ns
    ssize_t nslen = snprintf(path + lrootlen + iterlen, (pathlen - (lrootlen + iterlen)) + 1, "/%s", nspath);
-   if (nslen < 1  ||  nslen > ((pathlen - lrootlen) - iterlen)) {
+   if (nslen < 1 || nslen > ((pathlen - lrootlen) - iterlen)) {
       LOG(LOG_ERR, "Failed to populate NS path value: \"%s\"\n", nspath);
       free(nspath);
       free(path);
       return NULL;
    }
+
    // create NS parent paths, if necessary
    if (create) {
       // have to iterate over and create all intermediate dirs
@@ -1265,29 +1361,35 @@ char* resourcelog_genlogpath(char create, const char* logroot, const char* itera
       while (*parse != '\0') {
          if (*parse == '/') {
             *parse = '\0';
-            if (mkdir(path, 0700)  &&  errno != EEXIST) {
+            if (mkdir(path, 0700) && errno != EEXIST) {
                LOG(LOG_ERR, "Failed to create log NS subdir: \"%s\"\n", path);
                free(nspath);
                free(path);
                return NULL;
             }
+
             *parse = '/';
          }
+
          parse++;
       }
    }
+
    free(nspath); // done with this value
+
    // potentially exit here
    if (ranknum < 0) {
       LOG(LOG_INFO, "Generated NS log path: \"%s\"\n", path);
       return path;
    }
+
    // create, if necessary
-   if (create  &&  mkdir(path, 0700)  &&  errno != EEXIST) {
+   if (create && mkdir(path, 0700) && errno != EEXIST) {
       LOG(LOG_ERR, "Failed to create logfile NS dir: \"%s\"\n", path);
       free(path);
       return NULL;
    }
+
    // populate the final logfile path
    // NOTE -- we never create this file in this func
    if (snprintf(path + lrootlen + iterlen + nslen, (pathlen - (lrootlen + iterlen + nslen)) + 1, "/resourcelog-%zu", ranknum) !=  (pathlen - (lrootlen + iterlen + nslen))) {
@@ -1295,6 +1397,7 @@ char* resourcelog_genlogpath(char create, const char* logroot, const char* itera
       free(path);
       return NULL;
    }
+
    return path;
 }
 
@@ -1315,47 +1418,34 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
       errno = EINVAL;
       return -1;
    }
-   if (type != RESOURCE_RECORD_LOG  &&  type != RESOURCE_MODIFY_LOG  &&  type != RESOURCE_READ_LOG) {
+
+   if (type != RESOURCE_RECORD_LOG && type != RESOURCE_MODIFY_LOG && type != RESOURCE_READ_LOG) {
       LOG(LOG_ERR, "Unknown resourcelog type value\n");
       errno = EINVAL;
       return -1;
    }
-   if (type != RESOURCE_READ_LOG  &&  ns == NULL) {
+
+   if (type != RESOURCE_READ_LOG && ns == NULL) {
       LOG(LOG_ERR, "Recieved a NULL 'ns' arg for a non-read log\n");
       errno = EINVAL;
       return -1;
    }
+
    if (logpath == NULL) {
       LOG(LOG_ERR, "Received a NULL logpath value\n");
       errno = EINVAL;
       return -1;
    }
+
    // identify our actual resourcelog
    RESOURCELOG rsrclog = *resourcelog;
+   // FIXME
    // allocate a new resourcelog
    rsrclog = malloc(sizeof(*rsrclog));
-   if (rsrclog == NULL) {
-      LOG(LOG_ERR, "Failed to allocate space for a new resourcelog\n");
-      return -1;
-   }
-   if (pthread_mutex_init(&rsrclog->lock, NULL)) {
-      LOG(LOG_ERR, "Failed to initialize lock on new resourcelog struct\n");
-      free(rsrclog);
-      return -1;
-   }
-   if (pthread_cond_init(&rsrclog->nooutstanding, NULL)) {
-      LOG(LOG_ERR, "Failed to initialize condition on new resourcelog struct\n");
-      pthread_mutex_destroy(&rsrclog->lock);
-      free(rsrclog);
-      return -1;
-   }
-   if (pthread_mutex_lock(&rsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to acquire new resourcelog lock\n");
-      pthread_cond_destroy(&rsrclog->nooutstanding);
-      pthread_mutex_destroy(&rsrclog->lock);
-      free(rsrclog);
-      return -1;
-   }
+
+   pthread_mutex_init(&rsrclog->lock, NULL);
+   pthread_cond_init(&rsrclog->nooutstanding, NULL);
+   pthread_mutex_lock(&rsrclog->lock);
    rsrclog->outstandingcnt = 0;
    rsrclog->type = type; // may be updated later
    memset(&rsrclog->summary, 0, sizeof(rsrclog->summary));
@@ -1364,23 +1454,16 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
    rsrclog->logfilepath = NULL;
    // initialize our logging path
    rsrclog->logfilepath = strdup(logpath);
-   if (rsrclog->logfilepath == NULL) {
-      LOG(LOG_ERR, "Failed to duplicate logfile path: \"%s\"\n", logpath);
-      pthread_mutex_unlock(&rsrclog->lock);
-      pthread_cond_destroy(&rsrclog->nooutstanding);
-      pthread_mutex_destroy(&rsrclog->lock);
-      free(rsrclog);
-      return -1;
-   }
+
    // open our logfile
-   int openmode = O_CREAT | O_EXCL | O_WRONLY;
-   if (type == RESOURCE_READ_LOG) { openmode = O_RDONLY; }
+   const int openmode = (type == RESOURCE_READ_LOG)?O_RDONLY:(O_CREAT | O_EXCL | O_WRONLY);
    rsrclog->logfile = open(rsrclog->logfilepath, openmode, 0600);
    if (rsrclog->logfile < 0) {
       LOG(LOG_ERR, "Failed to open resourcelog: \"%s\"\n", rsrclog->logfilepath);
       cleanuplog(rsrclog, 1);
       return -1;
    }
+
    // when reading an existing logfile, behavior is significantly different
    if (type == RESOURCE_READ_LOG) {
       // read in the header value of an existing log file
@@ -1398,33 +1481,38 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
          shortestprefx = strlen(MODIFY_LOG_PREFIX);
          extraread = strlen(RECORD_LOG_PREFIX) - shortestprefx;
       }
+
       if (shortestprefx + extraread >= 128) {
          LOG(LOG_ERR, "Logfile header strings exceed memory allocation!\n");
          cleanuplog(rsrclog, 1);
          return -1;
       }
+
       if (read(rsrclog->logfile, buffer, shortestprefx) != shortestprefx) {
          LOG(LOG_ERR, "Failed to read prefix string of length %zd from logfile: \"%s\"\n",
                        shortestprefx, rsrclog->logfilepath);
          cleanuplog(rsrclog, 1);
          return -1;
       }
+
       // string comparison, accounting for possible variety of header length, is a bit complex
       if (recordshortest) {
          // check if this is a RECORD log first
          if (strncmp(buffer, RECORD_LOG_PREFIX, shortestprefx)) {
             // not a RECORD log, so read in extra MODIFY prefix chars, if necessary
-            if (extraread > 0  &&  read(rsrclog->logfile, buffer + shortestprefx, extraread) != extraread) {
+            if (extraread > 0 && read(rsrclog->logfile, buffer + shortestprefx, extraread) != extraread) {
                LOG(LOG_ERR, "Failed to read in trailing chars of MODIFY prefix\n");
                cleanuplog(rsrclog, 1);
                return -1;
             }
+
             // check for MODIFY prefix
             if (strncmp(buffer, MODIFY_LOG_PREFIX, shortestprefx + extraread)) {
                LOG(LOG_ERR, "Failed to identify header prefix of logfile: \"%s\"\n", rsrclog->logfilepath);
                cleanuplog(rsrclog, 1);
                return -1;
             }
+
             // we are reading a MODIFY log
             LOG(LOG_INFO, "Identified as a MODIFY log source: \"%s\"\n", rsrclog->logfilepath);
             rsrclog->type = RESOURCE_MODIFY_LOG | RESOURCE_READ_LOG;
@@ -1439,17 +1527,19 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
          // check if this is a MODIFY log first
          if (strncmp(buffer, MODIFY_LOG_PREFIX, shortestprefx)) {
             // not a MODIFY log, so read in extra RECORD prefix chars, if necessary
-            if (extraread > 0  &&  read(rsrclog->logfile, buffer + shortestprefx, extraread) != extraread) {
+            if (extraread > 0 && read(rsrclog->logfile, buffer + shortestprefx, extraread) != extraread) {
                LOG(LOG_ERR, "Failed to read in trailing chars of RECORD prefix\n");
                cleanuplog(rsrclog, 1);
                return -1;
             }
+
             // check for RECORD prefix
             if (strncmp(buffer, RECORD_LOG_PREFIX, shortestprefx + extraread)) {
                LOG(LOG_ERR, "Failed to identify header prefix of logfile: \"%s\"\n", rsrclog->logfilepath);
                cleanuplog(rsrclog, 1);
                return -1;
             }
+
             // we are reading a RECORD log
             LOG(LOG_INFO, "Identified as a RECORD log source: \"%s\"\n", rsrclog->logfilepath);
             rsrclog->type = RESOURCE_RECORD_LOG | RESOURCE_READ_LOG;
@@ -1460,15 +1550,14 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
             rsrclog->type = RESOURCE_MODIFY_LOG | RESOURCE_READ_LOG;
          }
       }
+
       // when reading a log, we can exit early
-      if (pthread_mutex_unlock(&rsrclog->lock)) {
-         LOG(LOG_ERR, "Failed to relinquish resourcelog lock\n");
-         cleanuplog(rsrclog, 1);
-         return -1;
-      }
+      pthread_mutex_unlock(&rsrclog->lock);
+
       *resourcelog = rsrclog;
       return 0;
    }
+
    // write out our log prefix
    if (rsrclog->type == RESOURCE_MODIFY_LOG) {
       if (write(rsrclog->logfile, MODIFY_LOG_PREFIX, strlen(MODIFY_LOG_PREFIX)) !=
@@ -1486,35 +1575,22 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
          return -1;
       }
    }
+
    // initialize our HASH_TABLE
    HASH_NODE* nodelist = malloc(sizeof(HASH_NODE) * ns->prepo->metascheme.refnodecount);
-   if (nodelist == NULL) {
-      LOG(LOG_ERR, "Failed to allocate nodelist for in progress hash table\n");
-      cleanuplog(rsrclog, 1);
-      return -1;
-   }
    size_t index = 0;
    for (; index < ns->prepo->metascheme.refnodecount; index++) {
       // initialize node list to mirror the reference nodes
-      (nodelist + index)->content = NULL;
-      (nodelist + index)->weight = (ns->prepo->metascheme.refnodes + index)->weight;
-      (nodelist + index)->name = strdup((ns->prepo->metascheme.refnodes + index)->name);
-      if ((nodelist + index)->name == NULL) {
-         LOG(LOG_ERR, "Failed to allocate name of node %zu\n", index);
-         while (index) {
-            free((nodelist + index - 1)->name);
-            index--;
-         }
-         free(nodelist);
-         cleanuplog(rsrclog, 1);
-         return -1;
-      }
+      nodelist[index].content = NULL;
+      nodelist[index].weight = ns->prepo->metascheme.refnodes[index].weight;
+      nodelist[index].name = strdup(ns->prepo->metascheme.refnodes[index].name);
    }
+
    rsrclog->inprogress = hash_init(nodelist, ns->prepo->metascheme.refnodecount, 0);
    if (rsrclog->inprogress == NULL) {
       LOG(LOG_ERR, "Failed to initialize inprogress hash table\n");
       while (index) {
-         free((nodelist + index - 1)->name);
+         free(nodelist[index - 1].name);
          index--;
       }
       free(nodelist);
@@ -1616,14 +1692,9 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
 //   }
 
 
-
-
    // finally done
-   if (pthread_mutex_unlock(&rsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to relinquish resourcelog lock\n");
-      cleanuplog(rsrclog, 1);
-      return -1;
-   }
+   pthread_mutex_unlock(&rsrclog->lock);
+
    *resourcelog = rsrclog;
    return 0;
 }
@@ -1641,33 +1712,31 @@ int resourcelog_init(RESOURCELOG* resourcelog, const char* logpath, resourcelog_
  */
 int resourcelog_replay(RESOURCELOG* inputlog, RESOURCELOG* outputlog, int (*filter)(const opinfo* op)) {
    // check for invalid args
-   if (inputlog == NULL  ||  outputlog == NULL) {
+   if (inputlog == NULL || outputlog == NULL) {
       LOG(LOG_ERR, "Received a NULL resourcelog reference\n");
       errno = EINVAL;
       return -1;
    }
-   if (*inputlog == NULL  ||  *outputlog == NULL) {
+
+   if (*inputlog == NULL || *outputlog == NULL) {
       LOG(LOG_ERR, "Received a NULL resourcelog\n");
       errno = EINVAL;
       return -1;
    }
+
    if (!((*inputlog)->type & RESOURCE_READ_LOG)) {
       LOG(LOG_ERR, "Invalid input resourcelog type values\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCELOG inrsrclog = *inputlog;
    RESOURCELOG outrsrclog = *outputlog;
+
    // acquire both resourcelog locks
-   if (pthread_mutex_lock(&inrsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to acquire input resourcelog lock\n");
-      return -1;
-   }
-   if (pthread_mutex_lock(&outrsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to acquire output resourcelog lock\n");
-      pthread_mutex_unlock(&inrsrclog->lock);
-      return -1;
-   }
+   pthread_mutex_lock(&inrsrclog->lock);
+   pthread_mutex_lock(&outrsrclog->lock);
+
    // process all entries from the current resourcelog
    size_t opcnt = 0;
    opinfo* parsedop = NULL;
@@ -1677,64 +1746,79 @@ int resourcelog_replay(RESOURCELOG* inputlog, RESOURCELOG* outputlog, int (*filt
       opinfo* dupop = resourcelog_dupopinfo(parsedop);
       if (dupop == NULL) {
          LOG(LOG_ERR, "Failed to duplicate parsed operation chain\n");
-         pthread_mutex_unlock(&inrsrclog->lock);
          pthread_mutex_unlock(&outrsrclog->lock);
+         pthread_mutex_unlock(&inrsrclog->lock);
          resourcelog_freeopinfo(parsedop);
          return -1;
       }
+
       char dofree = 1;
+
       // check our filter
-      if (filter == NULL  ||  filter(dupop) == 0) {
+      if (filter == NULL || filter(dupop) == 0) {
          // incorporate the op into our current state
          if ((outrsrclog->type & ~(RESOURCE_READ_LOG)) == RESOURCE_MODIFY_LOG) {
             dofree = 0;
             if (processopinfo(outrsrclog, parsedop, NULL, &dofree) < 0) {
                LOG(LOG_ERR, "Failed to process lines from old logfile: \"%s\"\n", inrsrclog->logfilepath);
-               pthread_mutex_unlock(&inrsrclog->lock);
                pthread_mutex_unlock(&outrsrclog->lock);
+               pthread_mutex_unlock(&inrsrclog->lock);
                resourcelog_freeopinfo(dupop);
                resourcelog_freeopinfo(parsedop);
                return -1;
             }
          }
+
          // duplicate this op into our output logfile (must use duplicate, as parsedop->next may be modified)
          if (printlogline(outrsrclog->logfile, dupop)) {
             LOG(LOG_ERR, "Failed to duplicate op from input logfile \"%s\" into active log: \"%s\"\n",
                  inrsrclog->logfilepath, outrsrclog->logfilepath);
-            pthread_mutex_unlock(&inrsrclog->lock);
             pthread_mutex_unlock(&outrsrclog->lock);
+            pthread_mutex_unlock(&inrsrclog->lock);
             resourcelog_freeopinfo(dupop);
             if (dofree)
                resourcelog_freeopinfo(parsedop);
             return -1;
          }
       }
+
       resourcelog_freeopinfo(dupop);
+
       if (dofree)
          resourcelog_freeopinfo(parsedop);
+
       opcnt++;
    }
+
    if (eof != 1) {
       LOG(LOG_ERR, "Failed to parse input logfile: \"%s\"\n", inrsrclog->logfilepath);
-      pthread_mutex_unlock(&inrsrclog->lock);
       pthread_mutex_unlock(&outrsrclog->lock);
+      pthread_mutex_unlock(&inrsrclog->lock);
       return -1;
    }
+
    LOG(LOG_INFO, "Replayed %zu ops from input log (\"%s\") into output log (\"%s\")\n",
                   opcnt, inrsrclog->logfilepath, outrsrclog->logfilepath);
+
    // cleanup the inputlog
    *inputlog = NULL;
+
+   // FIXME: unlock order is incorrect, but not sure if can flip
    pthread_mutex_unlock(&inrsrclog->lock);
+
    if (resourcelog_term(&inrsrclog, NULL, 1)) {
       LOG(LOG_ERR, "Failed to cleanup input logfile\n");
       pthread_mutex_unlock(&outrsrclog->lock);
       return -1;
    }
+
    if (outrsrclog->outstandingcnt == 0) {
       // potentially signal that the output log has quiesced
       pthread_cond_signal(&outrsrclog->nooutstanding);
    }
+
    pthread_mutex_unlock(&outrsrclog->lock);
+
    return 0;
 }
 
@@ -1751,35 +1835,37 @@ int resourcelog_update_inflight(RESOURCELOG* resourcelog, ssize_t numops) {
       errno = EINVAL;
       return -1;
    }
+
    RESOURCELOG rsrclog = *resourcelog;
-   if (rsrclog == NULL  ||  rsrclog->logfile < 1) {
+   if (rsrclog == NULL || rsrclog->logfile < 1) {
       LOG(LOG_ERR, "Received an uninitialized resourcelog reference\n");
       errno = EINVAL;
       return -1;
    }
+
    // acquire resourcelog lock
-   if (pthread_mutex_lock(&rsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to acquire resourcelog lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rsrclog->lock);
+
    // check for excessive reduction
    if (rsrclog->outstandingcnt < -numops) {
       LOG(LOG_WARNING, "Value of %zd would result in negative thread count\n", numops);
       numops = -rsrclog->outstandingcnt;
    }
+
    // modify count
    rsrclog->outstandingcnt += numops;
+
    LOG(LOG_INFO, "Modified Outstanding OP Count by %zd, to %zd\n", numops, rsrclog->outstandingcnt);
+
    // check for quiesced state
-   if (rsrclog->outstandingcnt == 0  &&  pthread_cond_signal(&rsrclog->nooutstanding)) {
+   if (rsrclog->outstandingcnt == 0 && pthread_cond_signal(&rsrclog->nooutstanding)) {
       LOG(LOG_ERR, "Failed to signal 'no outstanding ops' condition\n");
       pthread_mutex_unlock(&rsrclog->lock);
       return -1;
    }
-   if (pthread_mutex_unlock(&rsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to release resourcelog lock\n");
-      return -1;
-   }
+
+   pthread_mutex_unlock(&rsrclog->lock);
+
    return 0;
 }
 
@@ -1791,34 +1877,36 @@ int resourcelog_update_inflight(RESOURCELOG* resourcelog, ssize_t numops) {
  */
 int resourcelog_processop(RESOURCELOG* resourcelog, opinfo* op, char* progress) {
    // check for invalid args
-   if (resourcelog == NULL  ||  *resourcelog == NULL) {
+   if (resourcelog == NULL || *resourcelog == NULL) {
       LOG(LOG_ERR, "Received a NULL resourcelog reference\n");
       errno = EINVAL;
       return -1;
    }
+
    if ((*resourcelog)->type & RESOURCE_READ_LOG) {
       LOG(LOG_ERR, "Cannot update a reading resourcelog\n");
       errno = EINVAL;
       return -1;
    }
+
    if (op == NULL) {
       LOG(LOG_ERR, "Received a NULL op reference\n");
       errno = EINVAL;
       return -1;
    }
+
    // produce a duplicate of the given op chain
    opinfo* dupop = resourcelog_dupopinfo(op);
    if (dupop == NULL) {
       LOG(LOG_ERR, "Failed to duplicate operation chain\n");
       return -1;
    }
+
    RESOURCELOG rsrclog = *resourcelog;
+
    // acquire resourcelog lock
-   if (pthread_mutex_lock(&rsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to acquire resourcelog lock\n");
-      resourcelog_freeopinfo(dupop);
-      return -1;
-   }
+   pthread_mutex_lock(&rsrclog->lock);
+
    // special check for RECORD log
 //   if (rsrclog->type == RESOURCE_RECORD_LOG) {
 //      // traverse the op chain to ensure we don't have any completions slipping into this RECORD log
@@ -1842,6 +1930,7 @@ int resourcelog_processop(RESOURCELOG* resourcelog, opinfo* op, char* progress) 
       resourcelog_freeopinfo(dupop);
       return -1;
    }
+
    // output the operation to the actual log file (must use the initial, unmodified op)
    if (printlogline(rsrclog->logfile, op)) {
       LOG(LOG_ERR, "Failed to output operation info to logfile: \"%s\"\n", rsrclog->logfilepath);
@@ -1850,23 +1939,22 @@ int resourcelog_processop(RESOURCELOG* resourcelog, opinfo* op, char* progress) 
          resourcelog_freeopinfo(dupop);
       return -1;
    }
+
    // check for quiesced state
-   if (rsrclog->type == RESOURCE_MODIFY_LOG  &&
-        rsrclog->outstandingcnt == 0  &&  pthread_cond_signal(&rsrclog->nooutstanding)) {
+   if (rsrclog->type == RESOURCE_MODIFY_LOG &&
+        rsrclog->outstandingcnt == 0 && pthread_cond_signal(&rsrclog->nooutstanding)) {
       LOG(LOG_ERR, "Failed to signal 'no outstanding ops' condition\n");
       pthread_mutex_unlock(&rsrclog->lock);
       if (dofree)
          resourcelog_freeopinfo(dupop);
       return -1;
    }
-   if (pthread_mutex_unlock(&rsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to release resourcelog lock\n");
-      if (dofree)
-         resourcelog_freeopinfo(dupop);
-      return -1;
-   }
+
+   pthread_mutex_unlock(&rsrclog->lock);
+
    if (dofree)
       resourcelog_freeopinfo(dupop);
+
    return 0;
 }
 
@@ -1878,27 +1966,29 @@ int resourcelog_processop(RESOURCELOG* resourcelog, opinfo* op, char* progress) 
  */
 int resourcelog_readop(RESOURCELOG* resourcelog, opinfo** op) {
    // check for invalid args
-   if (resourcelog == NULL  ||  *resourcelog == NULL) {
+   if (resourcelog == NULL || *resourcelog == NULL) {
       LOG(LOG_ERR, "Received a NULL resourcelog reference\n");
       errno = EINVAL;
       return -1;
    }
+
    if ((*resourcelog)->type != (RESOURCE_RECORD_LOG | RESOURCE_READ_LOG)) {
       LOG(LOG_ERR, "Statelog is not a RECORD log, open for read\n");
       errno = EINVAL;
       return -1;
    }
+
    if (op == NULL) {
       LOG(LOG_ERR, "Receieved a NULL value instead of an opinfo* reference\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCELOG rsrclog = *resourcelog;
+
    // acquire resourcelog lock
-   if (pthread_mutex_lock(&rsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to acquire resourcelog lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rsrclog->lock);
+
    // parse a new op sequence from the logfile
    char eof = 0;
    opinfo* parsedop = parselogline(rsrclog->logfile, &eof);
@@ -1908,18 +1998,19 @@ int resourcelog_readop(RESOURCELOG* resourcelog, opinfo** op) {
          pthread_mutex_unlock(&rsrclog->lock);
          return -1;
       }
+
       if (eof == 0) {
          LOG(LOG_ERR, "Failed to parse operation info from logfile: \"%s\"\n", rsrclog->logfilepath);
          pthread_mutex_unlock(&rsrclog->lock);
          return -1;
       }
+
       LOG(LOG_INFO, "Hit EOF on logfile: \"%s\"\n", rsrclog->logfilepath);
    }
+
    // release the log lock
-   if (pthread_mutex_unlock(&rsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to release resourcelog lock\n");
-      return -1;
-   }
+   pthread_mutex_unlock(&rsrclog->lock);
+
    *op = parsedop;
    return 0;
 }
@@ -1935,17 +2026,17 @@ int resourcelog_readop(RESOURCELOG* resourcelog, opinfo** op) {
  */
 int resourcelog_term(RESOURCELOG* resourcelog, operation_summary* summary, char delete) {
    // check for invalid args
-   if (resourcelog == NULL  ||  *resourcelog == NULL) {
+   if (resourcelog == NULL || *resourcelog == NULL) {
       LOG(LOG_ERR, "Received a NULL resourcelog reference\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCELOG rsrclog = *resourcelog;
+
    // acquire the resourcelog lock
-   if (pthread_mutex_lock(&rsrclog->lock)) {
-      LOG(LOG_ERR, "Failed to acquire resourcelog lock\n");
-      return -1;
-   }
+   pthread_mutex_lock(&rsrclog->lock);
+
    // abort if any outstanding ops remain
    if (rsrclog->outstandingcnt != 0) {
       LOG(LOG_ERR, "Resourcelog still has %zd outstanding operations\n", rsrclog->outstandingcnt);
@@ -1953,12 +2044,20 @@ int resourcelog_term(RESOURCELOG* resourcelog, operation_summary* summary, char 
       errno = EAGAIN;
       return -1;
    }
+
    // check for any recorded errors
-   char errpresent = 0;
-   if (rsrclog->summary.deletion_object_failures  ||  rsrclog->summary.deletion_reference_failures  ||
-        rsrclog->summary.rebuild_failures  ||  rsrclog->summary.repack_failures) { errpresent = 1; }
+   const int errpresent = (
+      rsrclog->summary.deletion_object_failures     ||
+      rsrclog->summary.deletion_reference_failures  ||
+      rsrclog->summary.rebuild_failures             ||
+      rsrclog->summary.repack_failures
+   );
+
    // potentially record summary info
-   if (summary) { *summary = rsrclog->summary; }
+   if (summary) {
+       *summary = rsrclog->summary;
+   }
+
    // close our logfile prior to (possibly) unlinking it
    if (rsrclog->logfile > 0) {
       int cres = close(rsrclog->logfile);
@@ -1970,7 +2069,8 @@ int resourcelog_term(RESOURCELOG* resourcelog, operation_summary* summary, char 
          return -1;
       }
    }
-   if (!(errpresent)  &&  delete) {
+
+   if (!errpresent && delete) {
       // if there were no errors recorded, just delete the logfile
       if (unlink(rsrclog->logfilepath)) {
          LOG(LOG_ERR, "Failed to unlink log file: \"%s\"\n", rsrclog->logfilepath);
@@ -1978,6 +2078,7 @@ int resourcelog_term(RESOURCELOG* resourcelog, operation_summary* summary, char 
          *resourcelog = NULL;
          return -1;
       }
+
       // also, attempt to remove the next two parent dirs (NS and iteration) of this logfile, skipping on error
       char pdel = 0;
       while (pdel < 2) {
@@ -1994,17 +2095,26 @@ int resourcelog_term(RESOURCELOG* resourcelog, operation_summary* summary, char 
             }
             else { pparse++; }
          }
-         if (prevsep == NULL) { LOG(LOG_WARNING, "Skipping deletion of parent path %d, as we failed to find a separator\n", (int)pdel); break; }
+
+         if (prevsep == NULL) {
+             LOG(LOG_WARNING, "Skipping deletion of parent path %d, as we failed to find a separator\n", (int)pdel);
+             break;
+         }
+
          *prevsep = '\0';
+
          pdel++;
+
          if (rmdir(rsrclog->logfilepath)) {
             LOG(LOG_WARNING, "Failed to rmdir parent path %d: \"%s\" (%s)\n", (int)pdel, rsrclog->logfilepath, strerror(errno));
             break;
          }
       }
    }
+
    cleanuplog(rsrclog, 1); // this will release the lock
    *resourcelog = NULL;
+
    return (errpresent) ? 1 : 0;
 }
 
@@ -2015,13 +2125,15 @@ int resourcelog_term(RESOURCELOG* resourcelog, operation_summary* summary, char 
  */
 int resourcelog_abort(RESOURCELOG* resourcelog) {
    // check for invalid args
-   if (resourcelog == NULL  ||  *resourcelog == NULL) {
+   if (resourcelog == NULL || *resourcelog == NULL) {
       LOG(LOG_ERR, "Received a NULL resourcelog reference\n");
       errno = EINVAL;
       return -1;
    }
+
    RESOURCELOG rsrclog = *resourcelog;
    cleanuplog(rsrclog, 1); // this will release the lock
    *resourcelog = NULL;
+
    return 0;
 }
