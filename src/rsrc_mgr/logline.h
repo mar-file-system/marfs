@@ -104,5 +104,6 @@ typedef struct {
 } repack_info;
 
 opinfo* parselogline(int logfile, char* eof);
+int printlogline(int logfile, opinfo* op);
 
 #endif
