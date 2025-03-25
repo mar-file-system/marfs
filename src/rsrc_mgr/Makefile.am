@@ -73,6 +73,7 @@ bin_PROGRAMS = marfs-rman
 marfs_rman_SOURCES =        \
     find_namespaces.c       \
     findoldlogs.c           \
+    logline.c               \
     manager.c               \
     output_program_args.c   \
     outputinfo.c            \
@@ -95,15 +96,15 @@ marfs_rman_CFLAGS = $(XML_CFLAGS)
 
 check_PROGRAMS = test_resourcelog test_resourceprocessing test_resourcethreads
 
-test_resourcelog_SOURCES = testing/test_resourcelog.c
+test_resourcelog_SOURCES = testing/test_resourcelog.c logline.c
 test_resourcelog_LDADD = libResourceLog.la ../logging/liblogging.la
 test_resourcelog_CFLAGS = $(XML_CFLAGS)
 
-test_resourceprocessing_SOURCES = testing/test_resourceprocessing.c repack.c streamwalker.c
+test_resourceprocessing_SOURCES = testing/test_resourceprocessing.c logline.c repack.c streamwalker.c
 test_resourceprocessing_LDADD = libResourceLog.la ../datastream/libDatastream.la ../logging/liblogging.la
 test_resourceprocessing_CFLAGS = $(XML_CFLAGS)
 
-test_resourcethreads_SOURCES = testing/test_resourcethreads.c repack.c resourceinput.c resourceprocessing.c streamwalker.c
+test_resourcethreads_SOURCES = testing/test_resourcethreads.c logline.c repack.c resourceinput.c resourceprocessing.c streamwalker.c
 test_resourcethreads_LDADD = libResourceLog.la ../datastream/libDatastream.la ../logging/liblogging.la
 test_resourcethreads_CFLAGS = $(XML_CFLAGS)
 
