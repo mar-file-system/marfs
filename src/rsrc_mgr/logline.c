@@ -648,12 +648,12 @@ static int print_repack(char *buffer, const size_t buffer_size, opinfo *op, size
 }
 
 /**
- * Print the specified operation info (or chain of them) to the specified logfile
+ * Print the specified operation info to the specified logfile
  * @param int logfile : File descriptor for the target logfile
  * @param opinfo* op : Reference to the operation to be printed
  * @return int : Zero on success, or -1 on failure
  */
-int printlogline(int logfile, opinfo* op) {
+static int printlogline_one(int logfile, opinfo* op) {
    char buffer[MAX_BUFFER];
    size_t usedbuff = 0;
    off_t origoff = lseek(logfile, 0, SEEK_CUR);
@@ -783,10 +783,20 @@ int printlogline(int logfile, opinfo* op) {
       return -1;
    }
 
-   // potentially output trailing ops recursively
-   if (op->next) {
-      return printlogline(logfile, op->next);
-   }
-
    return 0;
+}
+
+/**
+ * Print the specified operation info (or chain of them) to the specified logfile
+ * @param int logfile : File descriptor for the target logfile
+ * @param opinfo* op : Reference to the operation to be printed
+ * @return int : Zero on success, or -1 on failure
+ */
+int printlogline(int logfile, opinfo* op) {
+    int rc = 0;
+    while (op != NULL && rc == 0) {
+        rc = printlogline_one(logfile, op);
+        op = op->next;
+    }
+    return rc;
 }
