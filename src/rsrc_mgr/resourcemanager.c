@@ -454,19 +454,19 @@ static int parse_args(int argc, char** argv,
 int main(int argc, char** argv) {
 #if RMAN_USE_MPI
    // Initialize MPI
-   if (MPI_Init(&argc,&argv)) {
+   if (MPI_Init(&argc, &argv)) {
       fprintf(stderr, "ERROR: Failed to initialize MPI\n");
       return -1;
    }
 #endif
 
 #if RMAN_USE_MPI
-#define RMAN_ABORT() \
-      MPI_Abort(MPI_COMM_WORLD, -1); \
-      return -1;
+#define RMAN_ABORT()                \
+   MPI_Abort(MPI_COMM_WORLD, -1);   \
+   return -1;
 #else
-#define RMAN_ABORT() \
-      return -1;
+#define RMAN_ABORT()                \
+   return -1;
 #endif
 
    // check how many ranks we have
@@ -486,41 +486,41 @@ int main(int argc, char** argv) {
    rmanstate_init(&rman, rank, rankcount);
 
    Args_t args = {
-       .rman        = &rman,
-       .config_path = NULL,
-       .ns_path     = NULL,
-       .recurse     = 0,
-       .currenttime = {0},
-       .thresh      = {0},
+      .rman        = &rman,
+      .config_path = NULL,
+      .ns_path     = NULL,
+      .recurse     = 0,
+      .currenttime = {0},
+      .thresh      = {0},
    };
 
    if (parse_args(argc, argv, &args) != 0) {
-       RMAN_ABORT();
+      RMAN_ABORT();
    }
 
    // create logging root dir
    if (mkdir(rman.logroot, 0700) && (errno != EEXIST)) {
-       fprintf(stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", rman.logroot);
-       rmanstate_fini(&rman, 0);
-       RMAN_ABORT();
+      fprintf(stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", rman.logroot);
+      rmanstate_fini(&rman, 0);
+      RMAN_ABORT();
    }
 
    // create log presetvation root dir
    if (rman.preservelogtgt) {
-       if (mkdir(rman.preservelogtgt, 0700) && (errno != EEXIST)) {
-           fprintf(stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", rman.preservelogtgt);
-           rmanstate_fini(&rman, 0);
-           RMAN_ABORT();
-       }
+      if (mkdir(rman.preservelogtgt, 0700) && (errno != EEXIST)) {
+         fprintf(stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", rman.preservelogtgt);
+         rmanstate_fini(&rman, 0);
+         RMAN_ABORT();
+      }
    }
 
    // for multi-rank invocations, we must synchronize our iteration string across all ranks
    //     (due to clock drift + varied startup times across multiple hosts)
    if (rman.totalranks > 1  &&
 #if RMAN_USE_MPI
-         MPI_Bcast(rman.iteration, ITERATION_STRING_LEN, MPI_CHAR, 0, MPI_COMM_WORLD)) {
+      MPI_Bcast(rman.iteration, ITERATION_STRING_LEN, MPI_CHAR, 0, MPI_COMM_WORLD)) {
 #else
-         1) {
+      1) {
 #endif
       fprintf(stderr, "ERROR: Failed to synchronize iteration string across all ranks\n");
       RMAN_ABORT();
@@ -528,11 +528,7 @@ int main(int argc, char** argv) {
 
    // Initialize the MarFS Config
    pthread_mutex_t erasurelock;
-   if (pthread_mutex_init(&erasurelock, NULL)) {
-      fprintf(stderr, "ERROR: failed to initialize erasure lock\n");
-      rmanstate_fini(&rman, 0);
-      RMAN_ABORT();
-   }
+   pthread_mutex_init(&erasurelock, NULL);
 
    if ((rman.config = config_init(args.config_path, &erasurelock)) == NULL) {
       print_cleanup_abort(0, rman, erasurelock,
