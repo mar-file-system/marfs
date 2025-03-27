@@ -94,15 +94,6 @@ int cleanup_refdir( marfs_position* pos, const char* refdirpath, time_t gcthresh
 int process_refdir( marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, char** reftgt, ssize_t* tgtval );
 
 /**
- * Generate a rebuild opinfo element corresponding to the given marker and object
- * @param char* markerpath : Reference path of the rebuild marker ( will be bundled into the opinfo ref )
- * @param time_t rebuildthresh : Rebuild threshold value ( files more recent than this will be ignored )
- * @param size_t objno : Index of the object corresponding to the marker
- * @return opinfo* : Reference to the newly generated op, or NULL on failure
- */
-opinfo* process_rebuildmarker( marfs_position* pos, char* markerpath, time_t rebuildthresh, size_t objno );
-
-/**
  * Perform the given operation
  * @param MDAL_CTXT ctxt : MDAL_CTXT associated with the current NS
  * @param opinfo* op : Reference to the operation to be performed
