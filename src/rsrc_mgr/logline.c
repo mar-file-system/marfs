@@ -513,71 +513,39 @@ opinfo* parselogline(int logfile, char* eof) {
 }
 
 static int print_del_obj(char* buffer, const size_t buffer_size, opinfo* op, size_t *usedbuff) {
-   if (snprintf(buffer, buffer_size, "%s ", "DEL-OBJ") != 8) {
-      LOG(LOG_ERR, "Failed to populate 'DEL-OBJ' type string\n");
-      return -1;
-   }
-
-   *usedbuff += 8;
+   *usedbuff += snprintf(buffer, buffer_size, "%s ", "DEL-OBJ");
 
    if (op->extendedinfo) {
        delobj_info* delobj = (delobj_info*)op->extendedinfo;
-       ssize_t extinfoprint = snprintf(buffer + *usedbuff, buffer_size - *usedbuff, "{ %zu } ",
-                                       delobj->offset);
-       if (extinfoprint < 6) {
-          LOG(LOG_ERR, "Failed to populate DEL-OBJ extended info string\n");
-          return -1;
-       }
 
-       *usedbuff += extinfoprint;
+       *usedbuff += snprintf(buffer + *usedbuff, buffer_size - *usedbuff, "{ %zu } ",
+                                       delobj->offset);
    }
 
    return 0;
 }
 
 static int print_del_ref(char *buffer, const size_t buffer_size, opinfo *op, size_t *usedbuff) {
-   if (snprintf(buffer, buffer_size, "%s ", "DEL-REF") != 8) {
-      LOG(LOG_ERR, "Failed to populate 'DEL-REF' type string\n");
-      return -1;
-   }
-
-   *usedbuff += 8;
+   *usedbuff += snprintf(buffer, buffer_size, "%s ", "DEL-REF");
 
    if (op->extendedinfo) {
       delref_info* delref = (delref_info*)op->extendedinfo;
-      ssize_t extinfoprint = snprintf(buffer + *usedbuff, buffer_size - *usedbuff, "{ %zu %s %s } ",
-                                      delref->prev_active_index,
-                                      (delref->delzero == 0) ? "--" : "DZ",
-                                      (delref->eos == 0) ? "CNT" : "EOS");
-      if (extinfoprint < 10) {
-         LOG(LOG_ERR, "Failed to populate DEL-REF extended info string\n");
-         return -1;
-      }
-
-      *usedbuff += extinfoprint;
+      *usedbuff += snprintf(buffer + *usedbuff, buffer_size - *usedbuff, "{ %zu %s %s } ",
+                            delref->prev_active_index,
+                            (delref->delzero == 0) ? "--" : "DZ",
+                            (delref->eos == 0) ? "CNT" : "EOS");
    }
 
    return 0;
 }
 
 static int print_rebuild(char *buffer, const size_t buffer_size, opinfo *op, size_t *usedbuff) {
-   if (snprintf(buffer, buffer_size, "%s ", "REBUILD") != 8) {
-       LOG(LOG_ERR, "Failed to populate 'REBUILD' type string\n");
-       return -1;
-   }
-
-   *usedbuff += 8;
+   *usedbuff += snprintf(buffer, buffer_size, "%s ", "REBUILD");
 
    if (op->extendedinfo) {
       rebuild_info* rebuild = (rebuild_info*)op->extendedinfo;
-      ssize_t extinfoprint = snprintf(buffer + *usedbuff, buffer_size - *usedbuff, "{ %s",
-                                      rebuild->markerpath);
-      if (extinfoprint < 3) {
-         LOG(LOG_ERR, "Failed to populate first portion of REBUILD extended info string\n");
-         return -1;
-      }
-
-      *usedbuff += extinfoprint;
+      *usedbuff += snprintf(buffer + *usedbuff, buffer_size - *usedbuff, "{ %s",
+                            rebuild->markerpath);
 
       if (*usedbuff >= buffer_size) {
          LOG(LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n");
@@ -586,26 +554,14 @@ static int print_rebuild(char *buffer, const size_t buffer_size, opinfo *op, siz
 
       if (rebuild->rtag) {
          // possibly print out rtag values, starting with a single leading space char
-         extinfoprint = snprintf(buffer + *usedbuff, buffer_size - *usedbuff, " ");
-         if (extinfoprint < 1) {
-            LOG(LOG_ERR, "Failed to populate leading space of REBUILD extended info string\n");
-            return -1;
-         }
-
-         *usedbuff += extinfoprint;
+         *usedbuff += snprintf(buffer + *usedbuff, buffer_size - *usedbuff, " ");
 
          if (*usedbuff >= buffer_size) {
             LOG(LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n");
             return -1;
          }
 
-         size_t rtagprint = rtag_tostr(rebuild->rtag, buffer + *usedbuff, buffer_size - *usedbuff);
-         if (rtagprint < 1) {
-            LOG(LOG_ERR, "Failed to populate REBUILD extended info rtag string\n");
-            return -1;
-         }
-
-         *usedbuff += rtagprint;
+         *usedbuff += rtag_tostr(rebuild->rtag, buffer + *usedbuff, buffer_size - *usedbuff);
 
          if (*usedbuff >= buffer_size) {
             LOG(LOG_ERR, "REBUILD Operation string exceeds memory allocation limits\n");
@@ -613,35 +569,19 @@ static int print_rebuild(char *buffer, const size_t buffer_size, opinfo *op, siz
          }
       }
 
-      if (snprintf(buffer + *usedbuff, buffer_size - *usedbuff, " } ") != 3) {
-         LOG(LOG_ERR, "Failed to print tail string of REBUILD extended info\n");
-         return -1;
-      }
-
-      *usedbuff += 3;
+      *usedbuff += snprintf(buffer + *usedbuff, buffer_size - *usedbuff, " } ");
    }
 
    return 0;
 }
 
 static int print_repack(char *buffer, const size_t buffer_size, opinfo *op, size_t *usedbuff) {
-   if (snprintf(buffer, buffer_size, "%s ", "REPACK") != 7) {
-      LOG(LOG_ERR, "Failed to populate 'REPACK' type string\n");
-      return -1;
-   }
-
-   *usedbuff += 7;
+   *usedbuff += snprintf(buffer, buffer_size, "%s ", "REPACK");
 
    if (op->extendedinfo) {
       repack_info* repack = (repack_info*)op->extendedinfo;
-      ssize_t extinfoprint = snprintf(buffer + *usedbuff, buffer_size - *usedbuff, "{ %zu } ",
-                                      repack->totalbytes);
-      if (extinfoprint < 6) {
-          LOG(LOG_ERR, "Failed to populate REPACK extended info string\n");
-          return -1;
-      }
-
-      *usedbuff += extinfoprint;
+      *usedbuff += snprintf(buffer + *usedbuff, buffer_size - *usedbuff, "{ %zu } ",
+                            repack->totalbytes);
    }
 
    return 0;
@@ -694,18 +634,7 @@ static int printlogline_one(int logfile, opinfo* op) {
    }
 
    // populate start flag
-   if (op->start) {
-      if (snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%c ", 'S') != 2) {
-         LOG(LOG_ERR, "Failed to populate 'S' start flag string\n");
-         return -1;
-      }
-   }
-   else if (snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%c ", 'E') != 2) {
-      LOG(LOG_ERR, "Failed to populate 'E' start flag string\n");
-      return -1;
-   }
-
-   usedbuff += 2;
+   usedbuff += snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%c ", op->start?'S':'E');
 
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
@@ -713,13 +642,7 @@ static int printlogline_one(int logfile, opinfo* op) {
    }
 
    // populate the count string
-   ssize_t printres;
-   if ((printres = snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%zu ", op->count)) < 2) {
-      LOG(LOG_ERR, "Failed to populate \"%zu\" count string\n", op->count);
-      return -1;
-   }
-
-   usedbuff += printres;
+   usedbuff += snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%zu ", op->count);
 
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
@@ -727,12 +650,7 @@ static int printlogline_one(int logfile, opinfo* op) {
    }
 
    // populate the errval string
-   if ((printres = snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%d ", op->errval)) < 2) {
-      LOG(LOG_ERR, "Failed to populate \"%d\" errval string\n", op->errval);
-      return -1;
-   }
-
-   usedbuff += printres;
+   usedbuff += snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, "%d ", op->errval);
 
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
@@ -740,12 +658,7 @@ static int printlogline_one(int logfile, opinfo* op) {
    }
 
    // populate the FTAG string
-   if ((printres = ftag_tostr(&op->ftag, buffer + usedbuff, MAX_BUFFER - usedbuff)) < 1) {
-      LOG(LOG_ERR, "Failed to populate FTAG string\n");
-      return -1;
-   }
-
-   usedbuff += printres;
+   usedbuff += ftag_tostr(&op->ftag, buffer + usedbuff, MAX_BUFFER - usedbuff);
 
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
@@ -754,12 +667,7 @@ static int printlogline_one(int logfile, opinfo* op) {
 
    // populate the NEXT flag
    if (op->next) {
-      if (snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, " -") != 2) {
-         LOG(LOG_ERR, "Failed to populate NEXT flag string\n");
-         return -1;
-      }
-
-      usedbuff += 2;
+      usedbuff += snprintf(buffer + usedbuff, MAX_BUFFER - usedbuff, " -");
 
       if (usedbuff >= MAX_BUFFER) {
          LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
@@ -768,8 +676,9 @@ static int printlogline_one(int logfile, opinfo* op) {
    }
 
    // populate EOL
-   *(buffer + usedbuff) = '\n';
+   buffer[usedbuff] = '\n';
    usedbuff++;
+
    if (usedbuff >= MAX_BUFFER) {
       LOG(LOG_ERR, "Operation string exceeds memory allocation limits\n");
       return -1;

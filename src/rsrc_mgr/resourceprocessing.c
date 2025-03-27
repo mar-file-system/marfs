@@ -834,20 +834,10 @@ int process_refdir(marfs_ns* ns, MDAL_SCANNER refdir, const char* refdirpath, ch
    }
 
    // populate the reftgt string
-   int rpathlen = snprintf(NULL, 0, "%s/%s", refdirpath, dent->d_name);
-   if (rpathlen < 1) {
-      LOG(LOG_ERR, "Failed to identify length of ref path for \"%s\"\n", dent->d_name);
-      return -1;
-   }
+   const int rpathlen = snprintf(NULL, 0, "%s/%s", refdirpath, dent->d_name);
 
    *reftgt = malloc(sizeof(char) * (rpathlen + 1));
-   if (snprintf(*reftgt, rpathlen + 1, "%s/%s", refdirpath, dent->d_name) != rpathlen) {
-      LOG(LOG_ERR, "Inconsistent length for ref path of \"%s\"\n", dent->d_name);
-      free(*reftgt);
-      *reftgt = NULL;
-      errno = EDOM;
-      return -1;
-   }
+   snprintf(*reftgt, rpathlen + 1, "%s/%s", refdirpath, dent->d_name);
 
    errno = olderrno; // restore old errno
 

@@ -630,12 +630,6 @@ char* resourcelog_genlogpath(char create, const char* logroot, const char* itera
 
    // populate the path root
    const ssize_t lrootlen = snprintf(path, pathlen + 1, "%s", logroot);
-   if (lrootlen < 1 || lrootlen > pathlen) {
-      LOG(LOG_ERR, "Failed to populate logfile root path\n");
-      free(nspath);
-      free(path);
-      return NULL;
-   }
 
    // potentially exit here
    if (iteration == NULL) {
@@ -653,13 +647,7 @@ char* resourcelog_genlogpath(char create, const char* logroot, const char* itera
    }
 
    // populate the path iteration
-   ssize_t iterlen = snprintf(path + lrootlen, (pathlen - lrootlen) + 1, "/%s", iteration);
-   if (iterlen < 1 || iterlen > (pathlen - lrootlen)) {
-      LOG(LOG_ERR, "Failed to populate logfile iteration path: \"%s\"\n", iteration);
-      free(nspath);
-      free(path);
-      return NULL;
-   }
+   const ssize_t iterlen = snprintf(path + lrootlen, (pathlen - lrootlen) + 1, "/%s", iteration);
 
    // potentially exit here
    if (nspath == NULL) {
@@ -676,13 +664,7 @@ char* resourcelog_genlogpath(char create, const char* logroot, const char* itera
    }
 
    // populate the path ns
-   ssize_t nslen = snprintf(path + lrootlen + iterlen, (pathlen - (lrootlen + iterlen)) + 1, "/%s", nspath);
-   if (nslen < 1 || nslen > ((pathlen - lrootlen) - iterlen)) {
-      LOG(LOG_ERR, "Failed to populate NS path value: \"%s\"\n", nspath);
-      free(nspath);
-      free(path);
-      return NULL;
-   }
+   const ssize_t nslen = snprintf(path + lrootlen + iterlen, (pathlen - (lrootlen + iterlen)) + 1, "/%s", nspath);
 
    // create NS parent paths, if necessary
    if (create) {
@@ -722,11 +704,7 @@ char* resourcelog_genlogpath(char create, const char* logroot, const char* itera
 
    // populate the final logfile path
    // NOTE -- we never create this file in this func
-   if (snprintf(path + lrootlen + iterlen + nslen, (pathlen - (lrootlen + iterlen + nslen)) + 1, "/resourcelog-%zu", ranknum) !=  (pathlen - (lrootlen + iterlen + nslen))) {
-      LOG(LOG_ERR, "Logfile path has inconsistent length\n");
-      free(path);
-      return NULL;
-   }
+   snprintf(path + lrootlen + iterlen + nslen, (pathlen - (lrootlen + iterlen + nslen)) + 1, "/resourcelog-%zu", ranknum);
 
    return path;
 }
