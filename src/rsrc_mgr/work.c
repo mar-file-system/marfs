@@ -781,7 +781,19 @@ static int handle_complete_response(rmanstate* rman, const size_t ranknum, workr
       }
 
       HASH_NODE* resnode = NULL;
-      while (resnode) {
+      do {
+         const int iter_rc = hash_iterate(rman->oldlogs, &resnode);
+         if (iter_rc < 0) {
+            fprintf(stderr,
+                    "ERROR: Failure of hash_iterate() when trying to identify logfiles for rank %zu to process\n",
+                    ranknum);
+            rman->fatalerror = 1;
+            return -1;
+         }
+         else if (iter_rc == 0) {
+             break;
+         }
+
          // check for any nodes with log processing requests remaining
          loginfo* linfo = (loginfo*)(resnode->content);
          if (linfo->logcount) {
@@ -794,15 +806,7 @@ static int handle_complete_response(rmanstate* rman, const size_t ranknum, workr
             linfo->logcount--;
             return 1;
          }
-
-         if (hash_iterate(rman->oldlogs, &resnode) < 0) {
-            fprintf(stderr,
-                    "ERROR: Failure of hash_iterate() when trying to identify logfiles for rank %zu to process\n",
-                    ranknum);
-            rman->fatalerror = 1;
-            return -1;
-         }
-      }
+      } while (resnode);
 
       printf("  -- All old logfiles have been handed out for processing --\n");
 
