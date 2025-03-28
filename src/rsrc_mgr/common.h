@@ -1,5 +1,5 @@
-#ifndef _RESOURCE_MANAGER_CONSTS_H
-#define _RESOURCE_MANAGER_CONSTS_H
+#ifndef _RESOURCE_MANAGER_COMMON_H
+#define _RESOURCE_MANAGER_COMMON_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -70,34 +70,12 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 #include "logging/logging.h"
 
-//   -------------   INTERNAL DEFINITIONS    -------------
-
-#define GC_THRESH 604800  // Age of deleted files before they are Garbage Collected
-                          // Default to 7 days ago
-#define RB_L_THRESH  600  // Age of files before they are rebuilt (based on location)
-                          // Default to 10 minutes ago
-#define RB_M_THRESH  120  // Age of files before they are rebuilt (based on marker)
-                          // Default to 2 minutes ago
-#define RP_THRESH 259200  // Age of files before they are repacked
-                          // Default to 3 days ago
-#define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up (failed repacks, old logs, etc.)
-                          // Default to 1 day ago
-
-#define INACTIVE_RUN_SKIP_THRESH 60 // Age of seemingly inactive (no summary file) rman logdirs before they are skipped
-                                    // Default to 1 minute ago
-
-#define DEFAULT_PRODUCER_COUNT 16
-#define DEFAULT_CONSUMER_COUNT 32
 #define DEFAULT_LOG_ROOT "/var/log/marfs-rman"
 #define MODIFY_ITERATION_PARENT "RMAN-MODIFY-RUNS"
 #define RECORD_ITERATION_PARENT "RMAN-RECORD-RUNS"
+
 #define SUMMARY_FILENAME "summary.log"
 #define ERROR_LOG_PREFIX "ERRORS-"
-#define ITERATION_ARGS_FILE "PROGRAM-ARGUMENTS"
 #define ITERATION_STRING_LEN 128
-#define OLDLOG_PREALLOC 16  // pre-allocate space for 16 logfiles in the oldlogs hash table (double from there, as needed)
-
-#define MAX_STR_BUFFER 1024
-#define MAX_ERROR_BUFFER MAX_STR_BUFFER + 100  // define our error strings as slightly larger than the error message itself
 
 #endif

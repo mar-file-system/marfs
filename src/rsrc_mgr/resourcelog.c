@@ -59,7 +59,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include <pthread.h>
 
-#include "rsrc_mgr/consts.h"
+#include "rsrc_mgr/common.h"
 #include "rsrc_mgr/resourcelog.h"
 
 //   -------------   INTERNAL DEFINITIONS    -------------

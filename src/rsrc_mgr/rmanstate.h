@@ -61,7 +61,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "config/config.h"
 #include "hash/hash.h"
-#include "rsrc_mgr/consts.h"
+#include "rsrc_mgr/common.h"
 #include "rsrc_mgr/resourcelog.h"
 #include "rsrc_mgr/resourceprocessing.h"
 #include "rsrc_mgr/resourcethreads.h"

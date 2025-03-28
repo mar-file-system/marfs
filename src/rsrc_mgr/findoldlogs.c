@@ -67,6 +67,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "rsrc_mgr/loginfo.h"
 #include "rsrc_mgr/parse_program_args.h"
 
+#define OLDLOG_PREALLOC 16  // pre-allocate space for 16 logfiles in the oldlogs hash table (double from there, as needed)
+
 static void close_dirlist(DIR **dirlist) {
     for(int i = 3; i > 0; i--) {
         closedir(dirlist[i - 1]);

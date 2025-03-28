@@ -56,7 +56,7 @@ LANL contributions is found at https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "rsrc_mgr/consts.h"
+#include "rsrc_mgr/common.h"
 #include "rsrc_mgr/resourceinput.h"
 
 /**

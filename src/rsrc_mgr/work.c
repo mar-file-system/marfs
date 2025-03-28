@@ -59,6 +59,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "rsrc_mgr/loginfo.h"
 #include "rsrc_mgr/outputinfo.h"
+#include "rsrc_mgr/resourceinput.h"
 
 static int error_only_filter(const opinfo* op) {
     return !op->errval;

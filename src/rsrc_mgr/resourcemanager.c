@@ -68,7 +68,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 // specifically needed for this file
 #include "config/config.h"
-#include "rsrc_mgr/consts.h"
+#include "rsrc_mgr/common.h"
 #include "rsrc_mgr/loginfo.h"
 #include "rsrc_mgr/manager.h"
 #include "rsrc_mgr/worker.h"
@@ -83,6 +83,22 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "rsrc_mgr/read_last_log.h"
 #include "rsrc_mgr/rmanstate.h"
 #include "rsrc_mgr/summary_log_setup.h"
+
+//   -------------   INTERNAL DEFINITIONS    -------------
+
+#define GC_THRESH 604800  // Age of deleted files before they are Garbage Collected
+                          // Default to 7 days ago
+#define RB_L_THRESH  600  // Age of files before they are rebuilt (based on location)
+                          // Default to 10 minutes ago
+#define RB_M_THRESH  120  // Age of files before they are rebuilt (based on marker)
+                          // Default to 2 minutes ago
+#define RP_THRESH 259200  // Age of files before they are repacked
+                          // Default to 3 days ago
+#define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up (failed repacks, old logs, etc.)
+                          // Default to 1 day ago
+
+#define INACTIVE_RUN_SKIP_THRESH 60 // Age of seemingly inactive (no summary file) rman logdirs before they are skipped
+                                    // Default to 1 minute ago
 
 static void print_usage_info(const int rank) {
    if (rank != 0) {
@@ -169,18 +185,18 @@ static int parse_args(int argc, char** argv,
       return -1;
    }
 
-    rmanstate* rman    = args->rman;
-    args->config_path  = getenv("MARFS_CONFIG_PATH");
-    args->ns_path      = ".";
-    args->thresh       = (ArgThresholds_t) {
-        .skip = args->currenttime.tv_sec - INACTIVE_RUN_SKIP_THRESH,
-        .gc   = args->currenttime.tv_sec - GC_THRESH,
-        .rbl  = args->currenttime.tv_sec - RB_L_THRESH,
-        .rbm  = args->currenttime.tv_sec - RB_M_THRESH,
-        .rp   = args->currenttime.tv_sec - RP_THRESH,
-        .cl   = args->currenttime.tv_sec - CL_THRESH,
-    };
-    ArgThresholds_t* thresh = &args->thresh;
+   rmanstate* rman    = args->rman;
+   args->config_path  = getenv("MARFS_CONFIG_PATH");
+   args->ns_path      = ".";
+   args->thresh       = (ArgThresholds_t) {
+       .skip = args->currenttime.tv_sec - INACTIVE_RUN_SKIP_THRESH,
+       .gc   = args->currenttime.tv_sec - GC_THRESH,
+       .rbl  = args->currenttime.tv_sec - RB_L_THRESH,
+       .rbm  = args->currenttime.tv_sec - RB_M_THRESH,
+       .rp   = args->currenttime.tv_sec - RP_THRESH,
+       .cl   = args->currenttime.tv_sec - CL_THRESH,
+   };
+   ArgThresholds_t* thresh = &args->thresh;
 
    // parse all position-independent arguments
    int print_usage = 0;

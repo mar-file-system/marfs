@@ -63,7 +63,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include "config/config.h"
 #include "mdal/mdal.h"
-#include "rsrc_mgr/consts.h"
+#include "rsrc_mgr/common.h"
 #include "rsrc_mgr/resourcelog.h"
 
 typedef struct {

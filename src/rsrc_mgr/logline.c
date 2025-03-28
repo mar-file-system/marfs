@@ -59,7 +59,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 #include <string.h>
 
-#include "rsrc_mgr/consts.h"
+#include "rsrc_mgr/common.h"
 #include "rsrc_mgr/logline.h"
 #include "rsrc_mgr/resourcelog.h" // need resourcelog_freeopinfo
 

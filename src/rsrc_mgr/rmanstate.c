@@ -62,6 +62,9 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "rsrc_mgr/work.h"
 #include "rsrc_mgr/loginfo.h"
 
+#define DEFAULT_PRODUCER_COUNT 16
+#define DEFAULT_CONSUMER_COUNT 32
+
 void rmanstate_init(rmanstate *rman, int rank, int rankcount) {
    memset(rman, 0, sizeof(*rman));
    rman->gstate.numprodthreads = DEFAULT_PRODUCER_COUNT;

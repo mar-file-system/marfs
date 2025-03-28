@@ -62,6 +62,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "rsrc_mgr/resourceprocessing.h"
 #include "thread_queue/thread_queue.h"
 
+#define MAX_STR_BUFFER 1024
+
 typedef struct {
    // Required MarFS Values
    marfs_position  pos;
