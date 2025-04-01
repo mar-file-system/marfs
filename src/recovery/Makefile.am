@@ -10,7 +10,7 @@
 #FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
 #works, such modified software should be clearly marked, so as not to confuse it
 #with the version available from LANL.
-# 
+#
 #Additionally, redistribution and use in source and binary forms, with or without
 #modification, are permitted provided that the following conditions are met:
 #1. Redistributions of source code must retain the above copyright notice, this
@@ -72,8 +72,6 @@ RECOVERY_LIB = libRecovery.la
 check_PROGRAMS = test_recovery
 
 test_recovery_SOURCES = testing/test_recovery.c
-test_recovery_LDADD = $(RECOVERY_LIB)
+test_recovery_LDADD = $(RECOVERY_LIB) ../logging/liblogging.la
 
 TESTS = test_recovery
-
-
