@@ -318,17 +318,18 @@ static int parse_repack(char **parseloc, opinfo *op) {
 }
 
 /**
- * Parse a new operation (or sequence of them) from the given logfile
+ * Parse a new operation from the given logfile
  * @param int logfile : Reference to the logfile to parse a line from
  * @param char* eof : Reference to a character to be populated with an exit flag value
  *                    1 if we hit EOF on the file on a line division
  *                    -1 if we hit EOF in the middle of a line
  *                    zero otherwise
+ * @param int* nextval: whether or not there is another value after this one
  * @return opinfo* : Reference to a new set of operation info structs (caller must free)
  * NOTE -- Under most failure conditions, the logfile offset will be returned to its original value.
  *         This is not the case if parsing reaches EOF, in which case, offset will be left there.
  */
-opinfo* parselogline(int logfile, char* eof) {
+opinfo* parselogline_one(int logfile, char* eof, int* nextval, int* err) {
    char buffer[MAX_BUFFER] = {0};
    char* tgtchar = buffer;
    off_t origoff = lseek(logfile, 0, SEEK_CUR);
@@ -412,9 +413,7 @@ opinfo* parselogline(int logfile, char* eof) {
    }
 
    if (rc != 0) {
-      free(op);
-      lseek(logfile, origoff, SEEK_SET);
-      return NULL;
+      goto error;
    }
 
    // parse the start value
@@ -457,14 +456,14 @@ opinfo* parselogline(int logfile, char* eof) {
    parseloc = endptr + 1;
 
    // parse the NEXT value
-   char nextval = 0;
+   *nextval = 0;
    if (tgtchar[-1] == '-') {
       if (tgtchar[-2] != ' ') {
          LOG(LOG_ERR, "Unexpected char preceeds NEXT flag: '%c'\n", tgtchar[-2]);
          goto error;
       }
 
-      nextval = 1; // note that we need to append another op
+      *nextval = 1; // note that we need to append another op
       tgtchar -= 2; // pull this back, so we'll trim off the NEXT value
    }
 
@@ -475,29 +474,42 @@ opinfo* parselogline(int logfile, char* eof) {
       goto error;
    }
 
-   // finally, parse in any subsequent linked ops
-   if (nextval) {
-      // NOTE -- Recursive parsing isn't the most efficient approach.
-      //         Simple though, and, once again, we don't expect logfile parsing to be a
-      //         significant performance consideration.
-      LOG(LOG_INFO, "Recursively parsing subsequent operation\n");
-      op->next = parselogline(logfile, eof);
-      if (op->next == NULL) {
-         LOG(LOG_ERR, "Failed to parse linked operation\n");
-         resourcelog_freeopinfo(op);
-         if (*eof == 0) {
-             lseek(logfile, origoff, SEEK_SET);
-         }
-         return NULL;
-      }
-   }
-
    return op;
 
   error:
-   resourcelog_freeopinfo(op);
-   lseek(logfile, origoff, SEEK_SET);
+   *err = 1;
    return NULL;
+}
+
+opinfo* parselogline(int logfile, char* eof) {
+   off_t origoff = lseek(logfile, 0, SEEK_CUR);
+   if (origoff < 0) {
+      LOG(LOG_ERR, "Failed to identify current logfile offset\n");
+      return NULL;
+   }
+
+   *eof = 0; // preemptively populate with zero
+
+   int nextval = 1;
+   int err = 0;
+
+   opinfo head;
+   opinfo *curr = &head;
+   while (curr && nextval && !err) {
+      curr->next = parselogline_one(logfile, eof, &nextval, &err);
+      curr = curr->next;
+   }
+
+   if (err) {
+      LOG(LOG_ERR, "Failed to parse linked operation\n");
+      resourcelog_freeopinfo(head.next);
+      if (*eof == 0) {
+         lseek(logfile, origoff, SEEK_SET);
+      }
+      return NULL;
+   }
+
+   return head.next;
 }
 
 static int print_del_obj(char* buffer, const size_t buffer_size, opinfo* op, size_t *usedbuff) {
