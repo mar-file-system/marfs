@@ -949,17 +949,6 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
       return 0;
    }
 
-   if (rman->fatalerror && (response->request.type != ABORT_WORK)) {
-       // if we are in an error state, all ranks should be signaled to abort
-       LOG(LOG_INFO, "Signaling Rank %zu to Abort\n", ranknum);
-       request->type = ABORT_WORK;
-       request->nsindex = 0;
-       request->refdist = 0;
-       request->iteration[0] = '\0';
-       request->ranknum = 0;
-       return 1;
-   }
-
    int rc = 0;
    switch (response->request.type) {
       case RLOG_WORK:
