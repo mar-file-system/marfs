@@ -78,6 +78,7 @@ void rmanstate_init(rmanstate *rman, int rank, int rankcount) {
    if (rankcount > 1) {
        rman->workingranks = rman->totalranks - 1;
    }
+   rman->logroot = DEFAULT_LOG_ROOT;
 }
 
 void rmanstate_fini(rmanstate* rman, char abort) {
