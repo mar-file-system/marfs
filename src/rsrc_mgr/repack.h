@@ -1,5 +1,5 @@
-#ifndef _RESOURCETHREADS_H
-#define _RESOURCETHREADS_H
+#ifndef _RESOURCE_MANAGER_REPACK_H
+#define _RESOURCE_MANAGER_REPACK_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -50,78 +50,62 @@ MarFS is released under the BSD license.
 MarFS was reviewed and released by LANL under Los Alamos Computer Code
 identifier: LA-CC-15-039.
 
-MarFS uses libaws4c for Amazon S3 object communication. The original version
-is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
-LANL added functionality to the original work. The original work plus
-LANL contributions is found at https://github.com/jti-lanl/aws4c.
+MarFS uses libaws4c for Amazon S3 object communication. The original
+version is at https://aws.amazon.com/code/Amazon-S3/2601 and under the
+LGPL license.  LANL added functionality to the original work. The
+original work plus LANL contributions is found at
+https://github.com/jti-lanl/aws4c.
 
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "rsrc_mgr/resourceinput.h"
-#include "rsrc_mgr/resourceprocessing.h"
-#include "thread_queue/thread_queue.h"
+#include <pthread.h>
 
-#define MAX_STR_BUFFER 1024
+#include "datastream/datastream.h"
 
-typedef struct {
-   // Required MarFS Values
-   marfs_position  pos;
+typedef struct repackstreamer {
+   // synchronization and access control
+   pthread_mutex_t lock;
 
-   // Operation Values
-   char            dryrun;
-   thresholds      thresh;
-   char            lbrebuild;
-   ne_location     rebuildloc;
-
-   // Thread Values
-   RESOURCEINPUT   rinput;
-   RESOURCELOG     rlog;
-   REPACKSTREAMER  rpst;
-   unsigned int    numprodthreads;
-   unsigned int    numconsthreads;
-} rthread_global_state;
-
-typedef struct {
-   // universal thread state
-   unsigned int              tID;  // thread ID
-   char               fatalerror;  // flag indicating some form of fatal thread error
-   char errorstr[MAX_STR_BUFFER];  // error string buffer
-   rthread_global_state*  gstate;  // global state reference
-   // producer thread state
-   MDAL_SCANNER  scanner;  // MDAL reference scanner ( if open )
-   char*         rdirpath;
-   streamwalker  walker;
-   opinfo*       gcops;
-   opinfo*       repackops;
-   opinfo*       rebuildops;
-   // producer thread totals
-   size_t        streamcount;
-   streamwalker_report report;
-} rthread_state;
+   // state info
+   size_t streamcount;
+   DATASTREAM* streamlist;
+   char* streamstatus;
+}* REPACKSTREAMER;
 
 /**
- * Resource thread initialization ( producers and consumers )
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
+ * Initialize a new repackstreamer
+ * @return REPACKSTREAMER : New repackstreamer, or NULL on failure
  */
-int rthread_init_func( unsigned int tID, void* global_state, void** state );
+REPACKSTREAMER repackstreamer_init(void);
 
 /**
- * Resource thread consumer behavior
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
+ * Checkout a repack datastream
+ * @param REPACKSTREAMER repackst : Repackstreamer to checkout from
+ * @return DATASTREAM* : Checked out datastream, or NULL on failure
  */
-int rthread_consumer_func( void** state, void** work_todo );
+DATASTREAM* repackstreamer_getstream( REPACKSTREAMER repackst );
 
 /**
- * Resource thread producer behavior
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
+ * Return a previously checked out repack datastream
+ * @param REPACKSTREAMER repackst : Repackstreamer to return to
+ * @param DATASTREAM* stream : Repack datastream to return
+ * @return int : Zero on success, or -1 on failure
  */
-int rthread_producer_func( void** state, void** work_tofill );
+int repackstreamer_returnstream( REPACKSTREAMER repackst, DATASTREAM* stream );
 
 /**
- * Resource thread termination ( producers and consumers )
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
+ * Terminate the given repackstreamer and close all associated datastreams
+ * @param REPACKSTREAMER repackst : Repackstreamer to close
+ * @return int : Zero on success, or -1 on failure
  */
-void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg );
+int repackstreamer_complete( REPACKSTREAMER repackst );
 
-#endif // _RESOURCETHREADS_H
+/**
+ * Abort the given repackstreamer, bypassing all locks and releasing all datastreams
+ * @param REPACKSTREAMER repackst : Repackstreamer to abort
+ * @return int : Zero on success, or -1 on failure
+ */
+int repackstreamer_abort( REPACKSTREAMER repackst );
+
+#endif

@@ -1,5 +1,5 @@
-#ifndef _RESOURCETHREADS_H
-#define _RESOURCETHREADS_H
+#ifndef _RESOURCE_LOG_LINE_H
+#define _RESOURCE_LOG_LINE_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -50,78 +50,60 @@ MarFS is released under the BSD license.
 MarFS was reviewed and released by LANL under Los Alamos Computer Code
 identifier: LA-CC-15-039.
 
-MarFS uses libaws4c for Amazon S3 object communication. The original version
-is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
-LANL added functionality to the original work. The original work plus
-LANL contributions is found at https://github.com/jti-lanl/aws4c.
+MarFS uses libaws4c for Amazon S3 object communication. The original
+version is at https://aws.amazon.com/code/Amazon-S3/2601 and under the
+LGPL license.  LANL added functionality to the original work. The
+original work plus LANL contributions is found at
+https://github.com/jti-lanl/aws4c.
 
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "rsrc_mgr/resourceinput.h"
-#include "rsrc_mgr/resourceprocessing.h"
-#include "thread_queue/thread_queue.h"
+#include <stdint.h>
 
-#define MAX_STR_BUFFER 1024
+#include "tagging/tagging.h"
+
+#define MAX_BUFFER 8192 // maximum character buffer to be used for parsing/printing log lines
+                        //    program will abort if limit is exceeded when reading or writing
+
+typedef enum
+{
+   MARFS_DELETE_OBJ_OP,
+   MARFS_DELETE_REF_OP,
+   MARFS_REBUILD_OP,
+   MARFS_REPACK_OP
+} operation_type;
+
+typedef struct opinfo {
+   operation_type type;  // which class of operation
+   void* extendedinfo;   // extra, operation-specific, info
+   char start;           // flag indicating the start of an op ( if zero, this entry indicates completion )
+   size_t count;         // how many targets are there
+   int errval;           // errno value of the attempted op ( always zero for operation start )
+   FTAG ftag;            // which FTAG value is the target
+   struct opinfo* next;  // subsequent ops in this chain ( or NULL, if none remain )
+} opinfo;
 
 typedef struct {
-   // Required MarFS Values
-   marfs_position  pos;
-
-   // Operation Values
-   char            dryrun;
-   thresholds      thresh;
-   char            lbrebuild;
-   ne_location     rebuildloc;
-
-   // Thread Values
-   RESOURCEINPUT   rinput;
-   RESOURCELOG     rlog;
-   REPACKSTREAMER  rpst;
-   unsigned int    numprodthreads;
-   unsigned int    numconsthreads;
-} rthread_global_state;
+   size_t offset; // offset of the objects to begin deletion at ( used for spliting del ops across threads )
+} delobj_info;
 
 typedef struct {
-   // universal thread state
-   unsigned int              tID;  // thread ID
-   char               fatalerror;  // flag indicating some form of fatal thread error
-   char errorstr[MAX_STR_BUFFER];  // error string buffer
-   rthread_global_state*  gstate;  // global state reference
-   // producer thread state
-   MDAL_SCANNER  scanner;  // MDAL reference scanner ( if open )
-   char*         rdirpath;
-   streamwalker  walker;
-   opinfo*       gcops;
-   opinfo*       repackops;
-   opinfo*       rebuildops;
-   // producer thread totals
-   size_t        streamcount;
-   streamwalker_report report;
-} rthread_state;
+   size_t prev_active_index; // index of the closest active ( not to be deleted ) reference in the stream
+   char   delzero; // deleted zero flag, indicating that the data object(s) referenced by fileno zero have been deleted
+   char   eos; // end-of-stream flag, indicating that this delete will make prev_active_index the new EOS
+} delref_info;
 
-/**
- * Resource thread initialization ( producers and consumers )
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-int rthread_init_func( unsigned int tID, void* global_state, void** state );
+typedef struct {
+   char* markerpath; // rpath of the rebuild marker associated with this operation ( or NULL, if none present )
+   RTAG* rtag;       // rebuild tag value from the marker ( or NULL, if none present )
+} rebuild_info;
 
-/**
- * Resource thread consumer behavior
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-int rthread_consumer_func( void** state, void** work_todo );
+typedef struct {
+   size_t totalbytes; // total count of bytes to be repacked
+} repack_info;
 
-/**
- * Resource thread producer behavior
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-int rthread_producer_func( void** state, void** work_tofill );
+opinfo* parselogline(int logfile, char* eof);
+int printlogline(int logfile, opinfo* op);
 
-/**
- * Resource thread termination ( producers and consumers )
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg );
-
-#endif // _RESOURCETHREADS_H
+#endif

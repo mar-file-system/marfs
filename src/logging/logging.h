@@ -58,7 +58,7 @@ extern "C" {
              (unsigned int)pthread_self(),                                 \
              __FILE__, __LINE__,                                           \
              LOG_FNAME_SIZE-(int)strlen(__FILE__), "",                     \
-             __FUNCTION__,                                                 \
+             __func__,                                                     \
              (((PRIO)<=LOG_ERR) ? "#ERR " : ""), ## __VA_ARGS__);          \
    }
 
@@ -76,7 +76,7 @@ extern "C" {
                  (unsigned int)pthread_self(),                             \
                  __FILE__, __LINE__,                                       \
                  LOG_FNAME_SIZE-(int)strlen(__FILE__), "",                 \
-                 __FUNCTION__,                                             \
+                 __func__,                                                 \
                  (((PRIO)<=LOG_ERR) ? "#ERR " : ""), ## __VA_ARGS__);      \
    }
 

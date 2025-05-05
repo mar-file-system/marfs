@@ -10,7 +10,7 @@
 #FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
 #works, such modified software should be clearly marked, so as not to confuse it
 #with the version available from LANL.
-# 
+#
 #Additionally, redistribution and use in source and binary forms, with or without
 #modification, are permitted provided that the following conditions are met:
 #1. Redistributions of source code must retain the above copyright notice, this
@@ -74,8 +74,6 @@ check_PROGRAMS = test_marfsapi
 
 test_marfsapi_SOURCES = testing/test_marfsapi.c
 test_marfsapi_CFLAGS = $(XML_CFLAGS)
-test_marfsapi_LDADD = $(MARFS_LIB)
+test_marfsapi_LDADD = $(MARFS_LIB) ../logging/liblogging.la
 
 TESTS = test_marfsapi
-
-

@@ -1,5 +1,5 @@
-#ifndef _RESOURCETHREADS_H
-#define _RESOURCETHREADS_H
+#ifndef _RESOURCE_MANAGER_WORK_H
+#define _RESOURCE_MANAGER_WORK_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -50,78 +50,52 @@ MarFS is released under the BSD license.
 MarFS was reviewed and released by LANL under Los Alamos Computer Code
 identifier: LA-CC-15-039.
 
-MarFS uses libaws4c for Amazon S3 object communication. The original version
-is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
-LANL added functionality to the original work. The original work plus
-LANL contributions is found at https://github.com/jti-lanl/aws4c.
+MarFS uses libaws4c for Amazon S3 object communication. The original
+version is at https://aws.amazon.com/code/Amazon-S3/2601 and under the
+LGPL license.  LANL added functionality to the original work. The
+original work plus LANL contributions is found at
+https://github.com/jti-lanl/aws4c.
 
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "rsrc_mgr/resourceinput.h"
+#include "rsrc_mgr/common.h"
 #include "rsrc_mgr/resourceprocessing.h"
-#include "thread_queue/thread_queue.h"
+#include "rsrc_mgr/rmanstate.h"
+#include "rsrc_mgr/resourcethreads.h"
 
-#define MAX_STR_BUFFER 1024
+#define MAX_ERROR_BUFFER MAX_STR_BUFFER + 100  // define our error strings as slightly larger than the error message itself
 
-typedef struct {
-   // Required MarFS Values
-   marfs_position  pos;
-
-   // Operation Values
-   char            dryrun;
-   thresholds      thresh;
-   char            lbrebuild;
-   ne_location     rebuildloc;
-
-   // Thread Values
-   RESOURCEINPUT   rinput;
-   RESOURCELOG     rlog;
-   REPACKSTREAMER  rpst;
-   unsigned int    numprodthreads;
-   unsigned int    numconsthreads;
-} rthread_global_state;
+typedef enum {
+   RLOG_WORK,      // request to process an existing resource log (either previous dry-run or dead run pickup)
+   NS_WORK,        // request to process a portion of a NS
+   COMPLETE_WORK,  // request to complete outstanding work (quiesce all threads and close all streams)
+   TERMINATE_WORK, // request to terminate the rank
+   ABORT_WORK      // request to abort all processing and terminate
+} worktype;
 
 typedef struct {
-   // universal thread state
-   unsigned int              tID;  // thread ID
-   char               fatalerror;  // flag indicating some form of fatal thread error
-   char errorstr[MAX_STR_BUFFER];  // error string buffer
-   rthread_global_state*  gstate;  // global state reference
-   // producer thread state
-   MDAL_SCANNER  scanner;  // MDAL reference scanner ( if open )
-   char*         rdirpath;
-   streamwalker  walker;
-   opinfo*       gcops;
-   opinfo*       repackops;
-   opinfo*       rebuildops;
-   // producer thread totals
-   size_t        streamcount;
-   streamwalker_report report;
-} rthread_state;
+   worktype  type;
+   // NS target info
+   size_t    nsindex;
+   size_t    refdist;
+   // Log target info
+   char      iteration[ITERATION_STRING_LEN];
+   size_t    ranknum;
+} workrequest;
 
-/**
- * Resource thread initialization ( producers and consumers )
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-int rthread_init_func( unsigned int tID, void* global_state, void** state );
+typedef struct {
+   workrequest request;
+   // Work results
+   char                 haveinfo;
+   streamwalker_report  report;
+   operation_summary    summary;
+   char                 errorlog;
+   char                 fatalerror;
+   char                 errorstr[MAX_ERROR_BUFFER];
+} workresponse;
 
-/**
- * Resource thread consumer behavior
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-int rthread_consumer_func( void** state, void** work_todo );
+int handlerequest(rmanstate* rman, workrequest* request, workresponse* response);
+int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, workrequest* request);
 
-/**
- * Resource thread producer behavior
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-int rthread_producer_func( void** state, void** work_tofill );
-
-/**
- * Resource thread termination ( producers and consumers )
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg );
-
-#endif // _RESOURCETHREADS_H
+#endif

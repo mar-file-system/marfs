@@ -10,7 +10,7 @@
 #FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
 #works, such modified software should be clearly marked, so as not to confuse it
 #with the version available from LANL.
-# 
+#
 #Additionally, redistribution and use in source and binary forms, with or without
 #modification, are permitted provided that the following conditions are met:
 #1. Redistributions of source code must retain the above copyright notice, this
@@ -74,11 +74,9 @@ Hash_LIB = libHash.la
 check_PROGRAMS = test_hash_lookup test_hash_distribution
 
 test_hash_lookup_SOURCES = testing/test_hash_lookup.c
-test_hash_lookup_LDADD = $(Hash_LIB)
+test_hash_lookup_LDADD = $(Hash_LIB) ../logging/liblogging.la
 
 test_hash_distribution_SOURCES = testing/test_hash_distribution.c
-test_hash_distribution_LDADD = $(Hash_LIB)
+test_hash_distribution_LDADD = $(Hash_LIB) ../logging/liblogging.la
 
 TESTS = test_hash_lookup test_hash_distribution
-
-

@@ -1,5 +1,5 @@
-#ifndef _RESOURCETHREADS_H
-#define _RESOURCETHREADS_H
+#ifndef _RESOURCE_MANAGER_STATE_H
+#define _RESOURCE_MANAGER_STATE_H
 /*
 Copyright (c) 2015, Los Alamos National Security, LLC
 All rights reserved.
@@ -50,78 +50,63 @@ MarFS is released under the BSD license.
 MarFS was reviewed and released by LANL under Los Alamos Computer Code
 identifier: LA-CC-15-039.
 
-MarFS uses libaws4c for Amazon S3 object communication. The original version
-is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
-LANL added functionality to the original work. The original work plus
-LANL contributions is found at https://github.com/jti-lanl/aws4c.
+MarFS uses libaws4c for Amazon S3 object communication. The original
+version is at https://aws.amazon.com/code/Amazon-S3/2601 and under the
+LGPL license.  LANL added functionality to the original work. The
+original work plus LANL contributions is found at
+https://github.com/jti-lanl/aws4c.
 
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
-#include "rsrc_mgr/resourceinput.h"
+#include "config/config.h"
+#include "hash/hash.h"
+#include "rsrc_mgr/common.h"
+#include "rsrc_mgr/resourcelog.h"
 #include "rsrc_mgr/resourceprocessing.h"
+#include "rsrc_mgr/resourcethreads.h"
 #include "thread_queue/thread_queue.h"
 
-#define MAX_STR_BUFFER 1024
-
 typedef struct {
-   // Required MarFS Values
-   marfs_position  pos;
+   // Per-Run Rank State
+   size_t        ranknum;
+   size_t        totalranks;
+   size_t        workingranks;
 
-   // Operation Values
-   char            dryrun;
-   thresholds      thresh;
-   char            lbrebuild;
-   ne_location     rebuildloc;
+   // Per-Run MarFS State
+   marfs_config* config;
 
-   // Thread Values
-   RESOURCEINPUT   rinput;
-   RESOURCELOG     rlog;
-   REPACKSTREAMER  rpst;
-   unsigned int    numprodthreads;
-   unsigned int    numconsthreads;
-} rthread_global_state;
+   // Old Logfile Progress Tracking
+   HASH_TABLE    oldlogs;
 
-typedef struct {
-   // universal thread state
-   unsigned int              tID;  // thread ID
-   char               fatalerror;  // flag indicating some form of fatal thread error
-   char errorstr[MAX_STR_BUFFER];  // error string buffer
-   rthread_global_state*  gstate;  // global state reference
-   // producer thread state
-   MDAL_SCANNER  scanner;  // MDAL reference scanner ( if open )
-   char*         rdirpath;
-   streamwalker  walker;
-   opinfo*       gcops;
-   opinfo*       repackops;
-   opinfo*       rebuildops;
-   // producer thread totals
-   size_t        streamcount;
-   streamwalker_report report;
-} rthread_state;
+   // NS Progress Tracking
+   size_t        nscount;
+   marfs_ns**    nslist;
+   size_t*       distributed;
 
-/**
- * Resource thread initialization ( producers and consumers )
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-int rthread_init_func( unsigned int tID, void* global_state, void** state );
+   // Global Progress Tracking
+   char          fatalerror;
+   char          nonfatalerror;
+   char*         terminatedworkers;
+   streamwalker_report* walkreport;
+   operation_summary*   logsummary;
 
-/**
- * Resource thread consumer behavior
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-int rthread_consumer_func( void** state, void** work_todo );
+   // Thread State
+   rthread_global_state gstate;
+   ThreadQueue tq;
 
-/**
- * Resource thread producer behavior
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-int rthread_producer_func( void** state, void** work_tofill );
+   // Output Logging
+   FILE* summarylog;
 
-/**
- * Resource thread termination ( producers and consumers )
- * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
- */
-void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg );
+   // arg reference vals
+   char        quotas;
+   char        iteration[ITERATION_STRING_LEN];
+   char*       execprevroot;
+   char*       logroot;
+   char*       preservelogtgt;
+} rmanstate;
 
-#endif // _RESOURCETHREADS_H
+void rmanstate_init(rmanstate *rman, int rank, int rankcount);
+void rmanstate_fini(rmanstate* rman, char abort);
+
+#endif
