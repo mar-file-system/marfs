@@ -74,8 +74,17 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define MODIFY_ITERATION_PARENT "RMAN-MODIFY-RUNS"
 #define RECORD_ITERATION_PARENT "RMAN-RECORD-RUNS"
 
+#define INACTIVE_RUN_SKIP_THRESH 60 // Age of seemingly inactive (no summary file) rman logdirs before they are skipped
+                                    // Default to 1 minute ago
+
 #define SUMMARY_FILENAME "summary.log"
 #define ERROR_LOG_PREFIX "ERRORS-"
 #define ITERATION_STRING_LEN 128
+
+#if RMAN_USE_MPI
+#define RMAN_ABORT() MPI_Abort(MPI_COMM_WORLD, -1)
+#else
+#define RMAN_ABORT() return -1
+#endif
 
 #endif

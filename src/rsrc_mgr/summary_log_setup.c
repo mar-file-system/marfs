@@ -62,7 +62,60 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdlib.h>
 
 #include "rsrc_mgr/summary_log_setup.h"
-#include "rsrc_mgr/output_program_args.h"
+
+static int output_program_args(rmanstate* rman) {
+   // start with marfs config version (config changes could seriously break an attempt to re-execute this later)
+   if (fprintf(rman->summarylog, "%s\n", rman->config->version) < 1) {
+      fprintf(stderr, "ERROR: Failed to output config version to summary log\n");
+      return -1;
+   }
+
+   // output operation types and threshold values
+   if (rman->gstate.dryrun && fprintf(rman->summarylog, "DRY-RUN\n") < 1) {
+      fprintf(stderr, "ERROR: Failed to output dry-run flag to summary log\n");
+      return -1;
+   }
+
+   if (rman->quotas && fprintf(rman->summarylog, "QUOTAS\n") < 1) {
+      fprintf(stderr, "ERROR: Failed to output quota flag to summary log\n");
+      return -1;
+   }
+
+   if (rman->gstate.thresh.gcthreshold &&
+        fprintf(rman->summarylog, "GC=%llu\n", (unsigned long long) rman->gstate.thresh.gcthreshold) < 1) {
+      fprintf(stderr, "ERROR: Failed to output GC threshold to summary log\n");
+      return -1;
+   }
+
+   if (rman->gstate.thresh.repackthreshold &&
+        fprintf(rman->summarylog, "REPACK=%llu\n", (unsigned long long) rman->gstate.thresh.repackthreshold) < 1) {
+      fprintf(stderr, "ERROR: Failed to output REPACK threshold to summary log\n");
+      return -1;
+   }
+
+   if (rman->gstate.thresh.rebuildthreshold &&
+        fprintf(rman->summarylog, "REBUILD=%llu\n", (unsigned long long) rman->gstate.thresh.rebuildthreshold) < 1) {
+      fprintf(stderr, "ERROR: Failed to output REBUILD threshold to summary log\n");
+      return -1;
+   }
+
+   if (rman->gstate.lbrebuild &&
+        (
+         fprintf(rman->summarylog, "REBUILD-LOCATION-POD=%d\n", rman->gstate.rebuildloc.pod) < 1  ||
+         fprintf(rman->summarylog, "REBUILD-LOCATION-CAP=%d\n", rman->gstate.rebuildloc.cap) < 1  ||
+         fprintf(rman->summarylog, "REBUILD-LOCATION-SCATTER=%d\n", rman->gstate.rebuildloc.scatter) < 1
+       )) {
+      fprintf(stderr, "ERROR: Failed to output REBUILD location to summary log\n");
+      return -1;
+   }
+
+   if (fprintf(rman->summarylog, "\n") < 1) {
+      fprintf(stderr, "ERROR: Failed to output header separator summary log\n");
+      return -1;
+   }
+
+   return 0;
+}
 
 int summary_log_setup(rmanstate *rman, const int recurse) {
    // rank zero needs to output our summary header

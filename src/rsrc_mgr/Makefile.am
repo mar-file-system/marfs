@@ -71,13 +71,10 @@ RSRC_LOG_LIB = libResourceLog.la
 
 bin_PROGRAMS = marfs-rman
 marfs_rman_SOURCES =        \
-    find_namespaces.c       \
     findoldlogs.c           \
     manager.c               \
-    output_program_args.c   \
     outputinfo.c            \
     parse_program_args.c    \
-    read_last_log.c         \
     repack.c                \
     resourceinput.c         \
     resourcemanager.c       \

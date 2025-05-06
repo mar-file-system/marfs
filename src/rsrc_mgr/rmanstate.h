@@ -59,11 +59,11 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#include <sys/time.h>
+
 #include "config/config.h"
 #include "hash/hash.h"
-#include "rsrc_mgr/common.h"
 #include "rsrc_mgr/resourcelog.h"
-#include "rsrc_mgr/resourceprocessing.h"
 #include "rsrc_mgr/resourcethreads.h"
 #include "thread_queue/thread_queue.h"
 
@@ -106,7 +106,14 @@ typedef struct {
    char*       preservelogtgt;
 } rmanstate;
 
+// initialize rmanstate with some default values, but not everything
 void rmanstate_init(rmanstate *rman, int rank, int rankcount);
+
+// complete rmanstate initialization
+int rmanstate_complete(rmanstate *rman, const char *config_path, const char *ns_path,
+                       const time_t log_skip, const int recurse, pthread_mutex_t *erasuremutex);
+
+// destroy the rmanstate
 void rmanstate_fini(rmanstate* rman, char abort);
 
 #endif
