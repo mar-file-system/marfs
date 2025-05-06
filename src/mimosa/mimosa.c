@@ -1,0 +1,677 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <errno.h> 
+#include <string.h>
+#include <utime.h>
+#include <assert.h>
+
+#include "mimosa.h"
+
+#include "mimosa_logging.h"
+#ifdef DEBUG_MIMOSA
+#define DEBUG DEBUG_MIMOSA
+#elif (defined DEBUG_ALL)
+#define DEBUG DEBUG_ALL
+#endif
+#define LOG_PREFIX "mimosa"
+#include <logging/logging.h>
+
+//MarFS Includes
+
+#include "tagging/tagging.h"
+#include "config/config.h"
+#include "datastream/datastream.h"
+
+#define STR_BUF_SIZE 4096
+
+// MarFS Globals (initialize with mimosa_init())
+marfs_config* config = NULL;
+marfs_position* root_ns_pos = NULL;
+marfs_position* dest_pos = NULL;
+
+// global references to source and dest arguments
+static char *SOURCE_ARG = NULL;  		// The source  (or trace) root
+static char *DEST_ARG = NULL;			// Root of MIMOSA output tree
+char* MDAL_REF_PATH = "/var/marfs/mdal-root/MDAL_subspaces/full-access-subspace/MDAL_reference/"; // there is probably a better way to do this
+char* MARFS_ROOT_REL_PATH;
+
+// hardlink globals
+list_meta* hardlink_list;
+pthread_mutex_t hardlink_mutex;
+
+/**
+ * This function initializes the global config and sets up initial positions.
+ * @param config: reference of global config struct to be initialized. This config is extern and declared in mimosa.h.
+ * @param mutex: MarFS internal stuff
+ * @param dest_arg: path to the destination MarFS user path for this pwalk iteration. Received from the command line arguments of mimosa.py.
+ * @return none
+ */ 
+void mimosa_init(marfs_config** config, pthread_mutex_t* mutex, char* source_arg, char* dest_arg)
+{
+	// arg sanitation and glob prefix setup
+	SOURCE_ARG = strdup(source_arg);
+	DEST_ARG = strdup(dest_arg);
+	MARFS_ROOT_REL_PATH = marfs_root_rel_path();
+	
+	// setup hardlink management data structure and mutex	
+	hardlink_init();
+return;	
+
+	// populate global config struct
+	*config = config_init(getenv("MARFS_CONFIG_PATH"), mutex);
+	if (*config == NULL)
+		LOG(LOG_ERR, "config_init: failed to Initialize MarFS context. Is MARFS_CONFIG_PATH set? \n"); 
+	
+	// establish position based on config
+	root_ns_pos = (marfs_position*) calloc(1, sizeof(marfs_position));
+	if (config_establishposition(root_ns_pos, *config) == -1)
+		LOG(LOG_ERR, "config_establishposition: failed to establish position of root namespace\n");
+	
+	// set position of destination
+	dest_pos = calloc(1, sizeof(marfs_position));
+	config_duplicateposition(root_ns_pos, dest_pos);
+
+	if (config_traverse(*config, dest_pos, &dest_arg, 1) < 0)
+		LOG(LOG_ERR, "config_traverse: failed to traverse to destination position\n");
+	
+	// create destination root directory
+	if (dest_pos->ns->prepo->metascheme.mdal->access(dest_pos->ctxt, dest_arg, F_OK, 0) == 0) {
+                LOG(LOG_ERR, "root directory %s exists: continuing to map unmapped files\n", dest_arg);
+	}	
+	else
+		mimosa_create_dir(dest_pos, MARFS_ROOT_REL_PATH, NULL);
+
+	if (config_fortifyposition(dest_pos) == -1)
+		LOG(LOG_ERR, "config_fortifyposition: failed to create MDAL_CTXT for dest_pos\n");
+	
+}
+
+/*
+ * Free global data structures and strings
+ */
+void mimosa_cleanup()
+{
+	free(SOURCE_ARG);
+	free(DEST_ARG);
+	free(MARFS_ROOT_REL_PATH);
+	hardlink_destruct(hardlink_list);
+	// config_abandonposition led to free() error, removed completely due to end of summer time restrictions
+	config_term(config);
+}
+
+// EXTERNAL FUNCTIONS
+
+/**
+ * This function contains the entire process of mapping a file/directory from POSIX to MarFS. It is intended to be the single function called in a parallel treewalk utility to handle all the conversion needs. Decides the type of file from path and calls a separate function to handle each case. Contains lots of boilerplate code to deal with pwalk issues. 
+ * @param tentry_path: path read from a GUFI trace file. This path is already an absolute path. The destination MarFS path will be determined from this path.
+ * @param stat_struct: stat struct of the file tentry_path. This is passed as an argument to reduce I/O load. 
+ * @return 0 on success, -1 on failure
+ */
+int mimosa_convert(char* tentry_path, struct stat* stat_struct)
+{
+	// important paths
+	char* ent_rel_path = gen_rel_path(tentry_path, SOURCE_ARG);
+	char* dest_rel_path = dot_to_source(ent_rel_path, MARFS_ROOT_REL_PATH);
+	char* dest_abs_path = gen_abs_path(ent_rel_path, DEST_ARG);
+	
+	// do not reprocess files that exist in destination
+        if (dest_pos->ns->prepo->metascheme.mdal->access(dest_pos->ctxt, dest_abs_path, F_OK, AT_SYMLINK_NOFOLLOW) == 0)
+        {
+		#if defined(ALL) || defined(CONVERSION)
+                LOG(LOG_INFO, "SKIPPING\t%s\texists\n", dest_abs_path);
+		#endif
+		free(ent_rel_path);
+		free(dest_rel_path);
+		free(dest_abs_path);
+		return -1;
+        }
+	
+	if (S_ISDIR(stat_struct->st_mode))
+	{
+		#if defined(ALL) || defined(CONVERSION)
+		printf("CONVERSION\tDIRECTORY\tTARGET:  %s\tDEST:  %s\n", tentry_path, dest_abs_path);
+		#endif
+		mimosa_create_dir(dest_pos, dest_rel_path, stat_struct);
+		// update utime and atime of all dirs after conversion
+	}
+	if (S_ISLNK(stat_struct->st_mode))
+	{
+		#if defined(ALL) || defined(CONVERSION)
+		printf("CONVERSION\tSYMLINK\tTARGET:  %s\tDEST:  %s\n", tentry_path, dest_abs_path);
+		#endif
+		mimosa_create_symlink( dest_pos, dest_rel_path, tentry_path );
+		update_times(dest_pos, dest_rel_path, stat_struct, 1); // 1 to indicate symlink
+	}
+	if (S_ISREG(stat_struct->st_mode))
+	{
+		#if defined(ALL) || defined(CONVERSION)
+		printf("CONVERSION\tFILE\tTARGET:  %s\tDEST:  %s\n", tentry_path, dest_abs_path);
+	 	#endif
+		
+		// for detection of hardlinked inode with no MarFS instances yet
+		hardlink_node* node = NULL;
+		int hardlink_create_first_file = 0;
+
+		// if link count > 1, search hardlink list for inode to see if a regular file needs to be created
+		if (stat_struct->st_nlink > 1)
+		{
+			pthread_mutex_lock(&hardlink_mutex);
+			node = hardlink_search_src_inode(hardlink_list, stat_struct->st_ino);
+			hardlink_create_first_file = check_new_linked_inode(dest_abs_path, stat_struct, node); 		
+			pthread_mutex_unlock(&hardlink_mutex);
+		}
+		
+		// creating a new MarFS file
+		if (stat_struct->st_nlink == 1 || hardlink_create_first_file)
+		{
+
+			// loop to catch exception of duplicate reference path
+			for(int i = 0; i <= 1; i++)
+			{
+				int ret = mimosa_create_file( dest_pos, dest_rel_path, generate_ftag(dest_pos), stat_struct);
+
+				if (ret == 0) //success
+					break;
+
+				if (i == 1) // failed twice, give up
+					printf("ERROR\tfsetxattr\tgenerating duplicate reference path failed\n");
+			}
+		
+			// If update_times fails, something went wrong in the creation process, so try again to create. Best approach to navigate around pwalk issues is to catch errors, resolve the issue an try again.
+			// This control structure can likely be removed after pwalk is scrapped because the majority of issues originate from it.
+			if (update_times(dest_pos, dest_abs_path, stat_struct, 0) == -1)
+			{
+				#if defined(ALL) || defined(WARNING)
+				printf("WARNING\tupdate_times\t%s\t%s\tcalling mkdir_p and retry\n", dest_abs_path, strerror(errno));
+				#endif
+				#if defined(ALL) || defined(NOTICE)
+				printf("NOTICE\tAttempting to recreate %s and parent dirs\n", dest_abs_path);
+				#endif 
+
+				char* dest_rel_path_copy =  strdup(dest_rel_path);             // strtok will mangle path
+				
+				mkdir_p(dest_pos, dest_rel_path_copy); // in case pwalk returns children before parents
+				mimosa_create_file( dest_pos, dest_rel_path, generate_ftag(dest_pos), stat_struct);
+				
+				if ( update_times(dest_pos, dest_abs_path, stat_struct, 0) == -1)
+					printf("ERROR\tupdate_times\t%s\tfailed to set time after recreate\n", dest_abs_path);
+				else
+				{
+					#if defined(ALL) || defined(NOTICE)
+					printf("NOTICE\tSuccessfully recreated %s and updated times\n", dest_abs_path);
+					#endif
+				}
+
+				free(dest_rel_path_copy);
+			} 
+
+		}
+	        else // create a hardlink to an existing inode	
+		{
+			pthread_mutex_lock(&hardlink_mutex);
+
+			// link
+			#if defined(ALL) || defined(NOTICE) || defined(HARDLINK)
+			printf("HARDLINK\tlinking %s to %s\n", dest_rel_path, node->dest_filename); 
+			#endif
+			if (dest_pos->ns->prepo->metascheme.mdal->link(dest_pos->ctxt, node->dest_filename, dest_pos->ctxt, dest_rel_path, 0) == -1)
+			{
+				// does not warn when encounters hardlink outside source root
+				printf("ERROR\tHARDLINK\toriginal: %s\tnew: %s\t%s\n", node->dest_filename, dest_rel_path, strerror(errno));
+			}
+
+			node->dest_link_count++; // account for newly created link in data structure
+			
+			// check if this if this was the last link to inode 
+			if ( node->source_link_count == node->dest_link_count )
+			{
+				// all hard links to this node mapped, can free hardlink_node
+				if ( hardlink_delete_entry(hardlink_list, node->source_inode_num) == -1)
+					printf("ERROR\thardlink_delete_entry\t%s\t%ld\n", dest_abs_path, stat_struct->st_ino);
+				else	
+				{
+					#if defined(ALL) || defined(NOTICE) || defined(HARDLINK)
+					int debug_src_inode = node->source_inode_num;
+					printf("NOTICE\tHARDLINK\tFinished mapping files for inode\tsource: %d\n", debug_src_inode);
+					#endif
+				}
+			}
+			pthread_mutex_unlock(&hardlink_mutex);
+		}
+
+		
+	}
+	
+	free(ent_rel_path);
+	free(dest_rel_path);
+	free(dest_abs_path);
+	return 0;
+}
+
+/**
+ * External wrapper to update_times that is intended to be called on the second pass over the tree to update the atimes and mtimes of directories. This function uses the global position for this thread and cannot take a position argument because it is called in pwalk.
+ * @param tentry_path: path of directory received from tree walk util
+ * @param stat_struct: stat struct generated in tree walk util, no need to call stat twice
+ */ 
+void mimosa_update_times(char* tentry_path, struct stat* stat_struct)
+{
+	char* ent_rel_path = gen_rel_path(tentry_path, SOURCE_ARG);
+	char* dest_abs_path = gen_abs_path(ent_rel_path, DEST_ARG);
+
+	update_times(dest_pos, dest_abs_path, stat_struct, 0); // regular because only dirs should be passed into this function, no symlinks
+	free(ent_rel_path);
+	free(dest_abs_path);
+
+	return;
+}
+
+// INTERNAL FUNCTIONS
+
+/**
+ * Function to map a file from source to destination. Takes the source file (dest_rel_path) and creates a new reference file and user file  in the destination location. Executes the process openref -> fsetxattr -> linkref. This function contains extra lines to handle specific race conditions from the pwalk utility. It will likely be able to be reduced if a new parallel treewalk utility is used.   
+ * @param pos: MarFS position to create the file relative to
+ * @param dest_rel_path: MarFS user tree path for the file, in which the user will be able to find it.
+ * @param ftag: ftag struct containing metadata for the reference tree filei
+ * @param stat_struct: stat struct generated in tree walk util, no need to call stat twice
+ * @return -1 if the file already exists, or 0 on success
+ */	
+int mimosa_create_file(marfs_position* pos, char* dest_rel_path, FTAG ftag_struct, struct stat* stat_struct)
+{
+	
+	// if trying to create a file that does not have a souce 
+	int mode;
+	if (stat_struct == NULL)
+		mode = S_IRWXU;
+	else
+		mode = stat_struct->st_mode;
+	
+	char* ref_path;
+	char* abs_ref_path;
+	char* xattr_str_buf;
+
+	ref_path = datastream_genrpath(&ftag_struct, pos->ns->prepo->metascheme.reftable, pos->ns->prepo->metascheme.mdal, pos->ctxt);
+	abs_ref_path = gen_abs_path(ref_path, MDAL_REF_PATH);
+
+	// openref to create reference file
+	MDAL_FHANDLE fhandle = pos->ns->prepo->metascheme.mdal->openref(pos->ctxt, ref_path, O_WRONLY | O_CREAT, mode);
+        if (fhandle == NULL)
+                printf("ERROR\topenref\tFailed to get file handle\t%s\n", strerror(errno));
+		
+        xattr_str_buf = (char *) calloc(1, STR_BUF_SIZE); // not sure how large to make FTAG buffer so doing a generous static size
+//        int size = ftag_tostr(&ftag_struct, xattr_str_buf, STR_BUF_SIZE); // will not work properly until more fields defined
+        
+	/* fix later
+	if (size < STR_BUF_SIZE) //realloc if buffer size too small
+	{
+		char* tmp = realloc(xattr_str_buf, size + 1);
+		free(xattr_str_buf);
+		xattr_str_buf = tmp;
+		ftag_tostr(&ftag_struct, xattr_str_buf, size);
+	}
+	*/
+
+	// attach ftag to reference file
+	if (pos->ns->prepo->metascheme.mdal->fsetxattr(fhandle, 1, ref_path, xattr_str_buf, sizeof(FTAG), XATTR_CREATE) == -1)
+	{
+		// datastream_genrpath can sometimes make duplicate reference paths: catch collision
+		#if defined(ALL) || defined(WARNING)
+		printf("WARNING\tfsetxattr\t%s\tduplicate reference path detected\t%s\tregenerating\n", ref_path, strerror(errno));	
+		#endif
+
+		pos->ns->prepo->metascheme.mdal->close(fhandle);
+		free(ref_path);
+		free(abs_ref_path);
+		free(xattr_str_buf);	
+		return -1; // in this case, easier to call the function again than to regenerate path in this call
+	}
+
+	// can free memory copy of FTAG struct now that it is stored in reference file xattr
+	free(ftag_struct.streamid);
+	
+	// create link to reference file in user space
+	if (pos->ns->prepo->metascheme.mdal->linkref(pos->ctxt, 0, ref_path, dest_rel_path) == -1)
+	{
+		// hopefully all this can be removed after pwalk and its out of order path returns are gone
+		
+		#if defined(ALL) || defined(WARNING)
+		printf("WARNING\tlinkref\tfailed to link %s and %s\t%s\tcalling mkdir_p and retry\n", ref_path, dest_rel_path, strerror(errno));  
+		#endif
+		#if defined(ALL) || defined(NOTICE)
+		printf("NOTICE\t Building parent directories of %s\n", dest_rel_path);
+		#endif
+
+		char* dest_rel_path_copy = strdup(dest_rel_path);
+		
+		// if linkref fails, likely because parents do not exist, so try to create them
+		// pwalk does guarantee parents will be processed before children
+		mkdir_p(pos, dest_rel_path_copy);
+	
+		// try to linkref again after creating parent dirs
+		if (pos->ns->prepo->metascheme.mdal->linkref(pos->ctxt, 0, ref_path, dest_rel_path) == -1) 
+			printf("ERROR\tlinkref\tfailed to link %s and %s after mkdir_p call\t%s\n", ref_path, dest_rel_path, strerror(errno));
+		else
+		{
+			#if defined(ALL) || defined(NOTICE)
+			printf("NOTICE\tSuccessfully recreated and linked %s\n", dest_rel_path);
+			#endif
+		}
+		
+		free(dest_rel_path_copy);
+	}
+	
+	pos->ns->prepo->metascheme.mdal->close(fhandle);
+	free(ref_path);
+	free(abs_ref_path);
+	free(xattr_str_buf);
+	return 0;
+}
+
+/**
+ * Create a MarFS directory at a specific position.
+ * @param pos: MarFS position to create the directory relative to
+ * @param dest_rel_path: path to create the directory at relative to the position
+ * @param stat_struct: for permission info 
+ * @return -1 on error, 0 on success
+ */	
+int mimosa_create_dir(marfs_position* pos, char* dest_rel_path, struct stat* stat_struct)
+{
+	int mode;
+        if (stat_struct == NULL)
+                mode = S_IRWXU;
+        else
+                mode = stat_struct->st_mode;
+
+	if (pos->ns->prepo->metascheme.mdal->mkdir(pos->ctxt, dest_rel_path, mode) == -1)
+	{
+		#if defined(ALL) || defined(WARNING)
+		printf("WARNING\tmdal->mkdir\t%s\t%s\tcalling mkdir_p and retry\n", dest_rel_path, strerror(errno));
+		#endif
+		#if defined(ALL) || defined(NOTICE)
+		printf("NOTICE\tBuilding parent directories of %s\n", dest_rel_path);
+		#endif
+
+		char* dest_rel_path_copy = strdup(dest_rel_path);
+
+		mkdir_p(pos, dest_rel_path_copy);
+		
+		if (pos->ns->prepo->metascheme.mdal->mkdir(pos->ctxt, dest_rel_path, mode) == -1)
+			printf("ERROR\tmdal->mkdir\t%s\tfailed to create directory after mkdir_p: %s\n", dest_rel_path, strerror(errno));
+	
+		free(dest_rel_path_copy);
+	}
+
+	return 0;
+}
+
+/*
+ * Create a symlink at a specific position. Will link to whatever is referenced by source_abs_path. Works with relative links within the source root but not absolute. 
+ * @param pos: marfs position to create the link relative to
+ * @param link: the path of the link to create
+ * @param source_abs_path: absolute path of source link to read to determine dest
+ * @return -1 on fail, 0 on success
+ */
+int mimosa_create_symlink(marfs_position* pos, char* link, char* source_abs_path)
+{
+	char* dest = calloc(1, STR_BUF_SIZE);
+
+	readlink(source_abs_path, dest, STR_BUF_SIZE); // reading POSIX source so no mdal
+
+	// add later: modify absolute dest path to be absolute MarFS path
+	//  - this should not take too much work but is an edge case I just noticed I did not test when documenting
+	
+	if (pos->ns->prepo->metascheme.mdal->symlink(pos->ctxt, dest, link) == -1)
+	{
+		#if defined(ALL) || defined(WARNING)
+		printf("WARNING\tmdal->symlink\t%s to %s\t%s\tcalling mkdir_p and retry\n", dest, link, strerror(errno));
+		#endif
+		mkdir_p(pos, link);
+		
+		if (pos->ns->prepo->metascheme.mdal->symlink(pos->ctxt, dest, link) == -1)   
+			printf("ERROR\tmdal->symlink\t%s to %s\t%s\n", link, dest, strerror(errno));
+		else
+		{
+			#if defined(ALL) || defined(NOTICE)
+			printf("NOTICE\tSuccessfully build parents and linked %s to %s\n", link, dest);
+			#endif
+		}
+
+		free(dest);
+		return -1;
+	}
+
+	free(dest);	
+	return 0;
+}
+
+// HELPER FUNCTIONS
+
+/*
+ * When an inode with hard links is passed in, need to see if at least one instance has been mapped to the destination before linking.
+ * For this function, locking should be done before and after call if being used in multithreaded context.
+ * @param dest_abs_path: for dest_filename in hardlink_node
+ * @param stat_struct: to get inode num
+ * @param node: node to initialize if not found
+ * @return: 0 if a corresponding inode exists in destination, 1 if a file needs to be created to represent it 
+ */
+int check_new_linked_inode(char* dest_abs_path, struct stat* stat_struct, hardlink_node* node)
+{
+	int hardlink_create_first_file = 0;
+
+	if (node != NULL)
+		return hardlink_create_first_file;
+	else
+	{
+		hardlink_create_first_file = 1;
+	
+		#if defined(ALL) || defined(NOTICE) || defined(HARDLINK) 
+		printf("NOTICE\tHARDLINK\t%s\tinode_num: %ld\tentry does not exist\tcreating\n", dest_abs_path, stat_struct->st_ino); 
+		#endif
+
+		node = hardlink_add_entry(hardlink_list, stat_struct->st_ino, stat_struct->st_nlink, 1, dest_abs_path);
+	}
+
+	return hardlink_create_first_file;
+
+}
+
+/**
+ * Create a new ftag struct based on the MarFS position and global config. This function does not allocate heap memory for the FTAG. This function currently initializes state, ctag, and streamid.
+ * @param pos
+ * return FTAG struct
+ */
+FTAG generate_ftag(marfs_position* pos)
+{
+	FTAG ftag_struct = { 0 };
+        ftag_struct.state = FTAG_INIT;
+        ftag_struct.ctag = "mimosa-created";
+	
+	size_t* rheader = (size_t *) calloc(1, sizeof(size_t));
+
+	if(datastream_genstreamid(ftag_struct.ctag, pos->ns, &ftag_struct.streamid, rheader) == -1)
+	{
+		printf("datastream_genstreamid: failed to set stream id\n");
+	}
+
+	free(rheader); // not sure what to do with this
+
+	return ftag_struct;
+}
+
+/**
+ * Create the parents of a file or directory in MarFS. This function is intended to fix the issue of pwalk returning entries before their parents are created. 
+ * @param pos
+ * @param dest_rel_path_copy: copy of the path of the entiry who's parents need to be created
+ * @return -1 on failure, 0 on success
+ */
+int mkdir_p(marfs_position* pos, char* dest_rel_path_copy)
+{	
+	// path string set up
+	char* curr_path = calloc(1, strlen(dest_rel_path_copy) + 1);
+	char dest_rel_path[4096]; // big size for static array ( strtok breaking with char* )
+	memset(dest_rel_path, 0, 4096);
+	memcpy(dest_rel_path, dest_rel_path_copy, strlen(dest_rel_path_copy));
+
+	char* token = strtok(dest_rel_path, "/");
+
+	while ( token != NULL )
+	{
+		// extend path
+		strcat(curr_path, token);
+		strcat(curr_path, "/");
+
+		token = strtok(NULL, "/");
+
+		if ( token == NULL )
+                    break;
+		else // create MarFS parent
+		{
+			struct stat* curr_dir_stat = calloc(1, sizeof(struct stat));
+
+			if ( pos->ns->prepo->metascheme.mdal->mkdir(pos->ctxt, curr_path, S_IRWXU) == -1)
+			{	
+				if ( errno == EEXIST )
+				{
+					#if defined(ALL) || defined(NOTICE)
+					printf("NOTICE\tmkdir_p\t%s\tparent directory exists\n", curr_path);
+					#endif
+				}
+				else
+				{
+					printf("ERROR\tmkdir_p\t%s\t%s\n", curr_path, strerror(errno));
+				}
+			}
+			free(curr_dir_stat);
+		}
+	}
+
+	free(curr_path);
+	return 0;
+}
+
+/**
+ * After a MarFS file is created, update its atime and mtime with the ones from the source file.
+ * @param pos
+ * @param dest_rel_path
+ * @param stat_struct: for original times
+ * @param symlink: if the entry is a symlink and AT_SYMLINK_NOFOLLOW should be used
+ * @return -1 on failure, 0 on success
+ */
+int update_times(marfs_position* pos, char* dest_rel_path, struct stat* stat_struct, int symlink)
+{
+	#if defined(ALL) || defined(CONVERSION)
+	printf("CONVERSION\tUPDATE TIMES\tSYMLINK\t%s\n", dest_rel_path);
+	#endif
+	
+	// set up utimens arg
+	struct timespec times[2];
+	times[0].tv_sec = stat_struct->st_atime;
+	times[0].tv_nsec = 0;
+	times[1].tv_sec = stat_struct->st_mtime;
+	times[1].tv_nsec = 0;
+	
+	if (symlink)
+	{
+		if(pos->ns->prepo->metascheme.mdal->utimens(pos->ctxt, dest_rel_path, times, AT_SYMLINK_NOFOLLOW) == -1)
+		{
+			printf("ERROR\tutimens\tSYMLINK\t%s\tfailed to update atime and mtime\t%s\n", dest_rel_path, strerror(errno));
+			return -1;
+		}
+	}
+	else // not a symlink
+	{
+		if(pos->ns->prepo->metascheme.mdal->utimens(pos->ctxt, dest_rel_path, times, 0) == -1)
+		{
+			printf("ERROR\tutimens\tREGULAR\t%s\tfailed to update atime and mtime\t%s\n", dest_rel_path, strerror(errno));
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * Generates a relative path to the last directory of the prefix
+ * (i.e. source_arg). Basically it tacks on the last directory as a
+ * parent directory to rel_path
+ * @param rel_path    a path that does not start with /
+ * @param source_arg  the last directory of a prefix
+ * @return a relative path
+ */
+char* dot_to_source(char* rel_path, char* source_arg)
+{
+	return gen_abs_path(rel_path,source_arg);	
+
+}
+
+/**
+ * Concatonates a prefix to a relative path. This 
+ * function assumes that the prefix does NOT contain
+ * a trailing slash (/), and that the relative
+ * path does NOT start with a slash (/).
+ * @param rel_path    a path that does not start with /
+ * @param prefix      a path that starts with /, but does not
+ *                    end with /
+ * @return the absolute path                   
+ */
+char* gen_abs_path(char* rel_path, char* prefix)
+{
+	int abslen = strlen(rel_path) + strlen(prefix) + 2;     // 2 because we need one for the extra slash
+	char* abs_path = calloc(1, abslen);
+
+	snprintf(abs_path, abslen, "%s/%s", prefix, rel_path);
+	return abs_path; 
+}
+
+/**
+ * Generates a relative path, which, by definition does not
+ * start with a slash (/). This is done by removing the given
+ * prefix. If the prefix is not found, then a copy of the 
+ * absolute path minus the leading slash (/) is returned
+ * @param abs_path     an absolute path used to generate the
+ *                     realive path
+ * @param prefix       a string of charater to remove from the 
+ *                     start of the absolute path. By definition
+ *                     this string does not have a trailing /
+ * @return a path that does not start with /
+ */
+char* gen_rel_path(char* abs_path, char* prefix)
+{
+        size_t plen = strlen(prefix);
+
+	if (!plen || strlen(abs_path) < plen)  // if absolute path cannot contain prefix, return a copy of absolute path
+	   return strdup(abs_path+1);	       // +1 removes the leading slash
+
+                    // if prefix is found -> make relative path. Otherwise return copy of absolute path
+	return (!strncmp(abs_path,prefix,plen))?strdup(abs_path+plen+1):strdup(abs_path+1);
+}
+
+// return the relative path of the root namespace: /usr/bin -> bin
+char* marfs_root_rel_path()
+{
+	int pos = 0;
+	int slash_index = -1;
+
+	while(*(DEST_ARG + pos) != '\0')
+	{
+		if ( *(DEST_ARG + pos) == '/')
+			slash_index = pos;
+		
+		pos++;
+	}
+
+	// no / detected
+	if ( slash_index == -1)
+	{
+		char* ret = strdup(DEST_ARG);
+		return ret;
+	}
+		
+	char* root_rel_path = calloc(1, strlen(DEST_ARG) + 1); // indeterminant amount of space needed, but guaranteed to be <= len source_arg
+	strncpy(root_rel_path, DEST_ARG + slash_index + 1, strlen(DEST_ARG) - slash_index - 1);
+
+	return root_rel_path;
+}
