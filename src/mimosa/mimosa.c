@@ -59,7 +59,6 @@ void mimosa_init(marfs_config** config, pthread_mutex_t* mutex, char* source_arg
 	
 	// setup hardlink management data structure and mutex	
 	hardlink_init();
-return;	
 
 	// populate global config struct
 	*config = config_init(getenv("MARFS_CONFIG_PATH"), mutex);
@@ -80,7 +79,7 @@ return;
 	
 	// create destination root directory
 	if (dest_pos->ns->prepo->metascheme.mdal->access(dest_pos->ctxt, dest_arg, F_OK, 0) == 0) {
-                LOG(LOG_ERR, "root directory %s exists: continuing to map unmapped files\n", dest_arg);
+                LOG(LOG_WARNING, "root directory %s exists: continuing to map unmapped files\n", dest_arg);
 	}	
 	else
 		mimosa_create_dir(dest_pos, MARFS_ROOT_REL_PATH, NULL);
@@ -122,18 +121,18 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
         if (dest_pos->ns->prepo->metascheme.mdal->access(dest_pos->ctxt, dest_abs_path, F_OK, AT_SYMLINK_NOFOLLOW) == 0)
         {
 		#if defined(ALL) || defined(CONVERSION)
-                LOG(LOG_INFO, "SKIPPING\t%s\texists\n", dest_abs_path);
+                LOG(LOG_INFO, "SKIPPING\t%s exists\n", dest_abs_path);
 		#endif
 		free(ent_rel_path);
 		free(dest_rel_path);
 		free(dest_abs_path);
-		return -1;
+		return -EEXIST;
         }
 	
 	if (S_ISDIR(stat_struct->st_mode))
 	{
 		#if defined(ALL) || defined(CONVERSION)
-		printf("CONVERSION\tDIRECTORY\tTARGET:  %s\tDEST:  %s\n", tentry_path, dest_abs_path);
+		LOG(LOG_INFO, "CONVERSION\tDIRECTORY\tTARGET:  %s\tDEST:  %s\n", tentry_path, dest_abs_path);
 		#endif
 		mimosa_create_dir(dest_pos, dest_rel_path, stat_struct);
 		// update utime and atime of all dirs after conversion
@@ -141,7 +140,7 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 	if (S_ISLNK(stat_struct->st_mode))
 	{
 		#if defined(ALL) || defined(CONVERSION)
-		printf("CONVERSION\tSYMLINK\tTARGET:  %s\tDEST:  %s\n", tentry_path, dest_abs_path);
+		LOG(LOG_INFO, "CONVERSION\tSYMLINK\tTARGET:  %s\tDEST:  %s\n", tentry_path, dest_abs_path);
 		#endif
 		mimosa_create_symlink( dest_pos, dest_rel_path, tentry_path );
 		update_times(dest_pos, dest_rel_path, stat_struct, 1); // 1 to indicate symlink
@@ -149,7 +148,7 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 	if (S_ISREG(stat_struct->st_mode))
 	{
 		#if defined(ALL) || defined(CONVERSION)
-		printf("CONVERSION\tFILE\tTARGET:  %s\tDEST:  %s\n", tentry_path, dest_abs_path);
+		LOG(LOG_INFO, "CONVERSION\tFILE\tTARGET:  %s\tDEST:  %s\n", tentry_path, dest_abs_path);
 	 	#endif
 		
 		// for detection of hardlinked inode with no MarFS instances yet
@@ -166,7 +165,7 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 		}
 		
 		// creating a new MarFS file
-		if (stat_struct->st_nlink == 1 || hardlink_create_first_file)
+		if (stat_struct->st_nlink <= 1 || hardlink_create_first_file)
 		{
 
 			// loop to catch exception of duplicate reference path
@@ -178,7 +177,7 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 					break;
 
 				if (i == 1) // failed twice, give up
-					printf("ERROR\tfsetxattr\tgenerating duplicate reference path failed\n");
+					LOG(LOG_ERR, "fsetxattr\tgenerating duplicate reference path failed\n");
 			}
 		
 			// If update_times fails, something went wrong in the creation process, so try again to create. Best approach to navigate around pwalk issues is to catch errors, resolve the issue an try again.
@@ -186,10 +185,10 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 			if (update_times(dest_pos, dest_abs_path, stat_struct, 0) == -1)
 			{
 				#if defined(ALL) || defined(WARNING)
-				printf("WARNING\tupdate_times\t%s\t%s\tcalling mkdir_p and retry\n", dest_abs_path, strerror(errno));
+				LOG(LOG_WARNING, "update_times()\t%s\t%s\tcalling mkdir_p and retry\n", dest_abs_path, strerror(errno));
 				#endif
 				#if defined(ALL) || defined(NOTICE)
-				printf("NOTICE\tAttempting to recreate %s and parent dirs\n", dest_abs_path);
+				LOG(LOG_INFO, " ...Attempting to recreate %s and parent dirs\n", dest_abs_path);
 				#endif 
 
 				char* dest_rel_path_copy =  strdup(dest_rel_path);             // strtok will mangle path
@@ -198,11 +197,13 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 				mimosa_create_file( dest_pos, dest_rel_path, generate_ftag(dest_pos), stat_struct);
 				
 				if ( update_times(dest_pos, dest_abs_path, stat_struct, 0) == -1)
-					printf("ERROR\tupdate_times\t%s\tfailed to set time after recreate\n", dest_abs_path);
+			        {		
+					LOG(LOG_ERR, "update_times()\t%s failed to set time after recreate\n", dest_abs_path);
+			        }
 				else
 				{
 					#if defined(ALL) || defined(NOTICE)
-					printf("NOTICE\tSuccessfully recreated %s and updated times\n", dest_abs_path);
+					LOG(LOG_INFO, "Successfully recreated %s and updated times\n", dest_abs_path);
 					#endif
 				}
 
@@ -216,12 +217,12 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 
 			// link
 			#if defined(ALL) || defined(NOTICE) || defined(HARDLINK)
-			printf("HARDLINK\tlinking %s to %s\n", dest_rel_path, node->dest_filename); 
+			LOG(LOG_INFO, "HARDLINK\tlinking %s to %s\n", dest_rel_path, node->dest_filename); 
 			#endif
 			if (dest_pos->ns->prepo->metascheme.mdal->link(dest_pos->ctxt, node->dest_filename, dest_pos->ctxt, dest_rel_path, 0) == -1)
 			{
 				// does not warn when encounters hardlink outside source root
-				printf("ERROR\tHARDLINK\toriginal: %s\tnew: %s\t%s\n", node->dest_filename, dest_rel_path, strerror(errno));
+				LOG(LOG_ERR, "HARDLINK\toriginal: %s\tnew: %s\t%s\n", node->dest_filename, dest_rel_path, strerror(errno));
 			}
 
 			node->dest_link_count++; // account for newly created link in data structure
@@ -231,12 +232,14 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 			{
 				// all hard links to this node mapped, can free hardlink_node
 				if ( hardlink_delete_entry(hardlink_list, node->source_inode_num) == -1)
-					printf("ERROR\thardlink_delete_entry\t%s\t%ld\n", dest_abs_path, stat_struct->st_ino);
+				{
+					LOG(LOG_ERR, "hardlink_delete_entry()\t%s\t%ld\n", dest_abs_path, stat_struct->st_ino);
+			        }
 				else	
 				{
 					#if defined(ALL) || defined(NOTICE) || defined(HARDLINK)
 					int debug_src_inode = node->source_inode_num;
-					printf("NOTICE\tHARDLINK\tFinished mapping files for inode\tsource: %d\n", debug_src_inode);
+					LOG(LOG_INFO, "HARDLINK\tFinished mapping files for inode\tsource: %d\n", debug_src_inode);
 					#endif
 				}
 			}
@@ -254,8 +257,8 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 
 /**
  * External wrapper to update_times that is intended to be called on the second pass over the tree to update the atimes and mtimes of directories. This function uses the global position for this thread and cannot take a position argument because it is called in pwalk.
- * @param tentry_path: path of directory received from tree walk util
- * @param stat_struct: stat struct generated in tree walk util, no need to call stat twice
+ * @param tentry_path: path of directory received from the parser
+ * @param stat_struct: stat struct read from the parser, no need to call stat twice
  */ 
 void mimosa_update_times(char* tentry_path, struct stat* stat_struct)
 {

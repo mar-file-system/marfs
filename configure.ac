@@ -367,6 +367,7 @@ AC_CONFIG_FILES([Makefile
                  src/datastream/Makefile
                  src/api/Makefile
 		 src/mustang/Makefile
+		 src/mimosa/Makefile
                  src/fuse/Makefile
                  src/rsrc_mgr/Makefile
                  etc/Makefile

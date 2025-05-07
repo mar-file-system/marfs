@@ -265,13 +265,17 @@ int main(int argc, char *argv[]) {
 
     // Main Parsing loop
     while ((nread = getline(&line, &len, trace_ptr)) != -1) {
+	int rc;                                          // general return code variable
+
         linetodata(line,nread,TRACEDELIM,&path,&path_data);
 	LOG(LOG_INFO, "Trace Entry (%zu bytes) - [%c] Path: %s (%lu bytes)\n", nread, path_data.type, path, path_data.statuso.st_size);
 
 	if (strncmp(path,trace_prefix,prefixlen)) {     // If specified source prefix is not found, skip entry
 	   LOG(LOG_INFO, "   SKIPPING ENTRY %s  - directory prefix does not match.\n", path);
-	} else if (mimosa_convert(path,&path_data.statuso) < 0) {
-	   LOG(LOG_WARNING, "Failed move metadata for %s to %s\n", path, marfs_dpath);
+	} else if ((rc=mimosa_convert(path,&path_data.statuso)) < 0) {
+	   if (rc !=-EEXIST) {	
+	      LOG(LOG_WARNING, "Failed move metadata for %s to %s\n", path, marfs_dpath);
+	   }   
 	}   
 	else if (path_data.type == 'd')               // If entry was a directory, update the times in MarFS
 	   mimosa_update_times(path,&path_data.statuso);	
