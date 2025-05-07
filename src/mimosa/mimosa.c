@@ -36,6 +36,7 @@ marfs_position* dest_pos = NULL;
 // global references to source and dest arguments
 static char *SOURCE_ARG = NULL;  		// The source  (or trace) root
 static char *DEST_ARG = NULL;			// Root of MIMOSA output tree
+static DATASTREAM MIMOSA_STREAM = NULL;         // The datastream to use when creating files from the parser
 char* MDAL_REF_PATH = "/var/marfs/mdal-root/MDAL_subspaces/full-access-subspace/MDAL_reference/"; // there is probably a better way to do this
 char* MARFS_ROOT_REL_PATH;
 
@@ -171,7 +172,7 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 			// loop to catch exception of duplicate reference path
 			for(int i = 0; i <= 1; i++)
 			{
-				int ret = mimosa_create_file( dest_pos, dest_rel_path, generate_ftag(dest_pos), stat_struct);
+				int ret = mimosa_create_file( dest_pos, dest_rel_path, stat_struct);
 
 				if (ret == 0) //success
 					break;
@@ -193,8 +194,8 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 
 				char* dest_rel_path_copy =  strdup(dest_rel_path);             // strtok will mangle path
 				
-				mkdir_p(dest_pos, dest_rel_path_copy); // in case pwalk returns children before parents
-				mimosa_create_file( dest_pos, dest_rel_path, generate_ftag(dest_pos), stat_struct);
+				mkdir_p(dest_pos, dest_rel_path_copy); // in case files are created before parent directories
+				mimosa_create_file( dest_pos, dest_rel_path, stat_struct);
 				
 				if ( update_times(dest_pos, dest_abs_path, stat_struct, 0) == -1)
 			        {		
@@ -227,7 +228,7 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 
 			node->dest_link_count++; // account for newly created link in data structure
 			
-			// check if this if this was the last link to inode 
+			// check if this file this was the last link to inode 
 			if ( node->source_link_count == node->dest_link_count )
 			{
 				// all hard links to this node mapped, can free hardlink_node
@@ -282,94 +283,35 @@ void mimosa_update_times(char* tentry_path, struct stat* stat_struct)
  * @param stat_struct: stat struct generated in tree walk util, no need to call stat twice
  * @return -1 if the file already exists, or 0 on success
  */	
-int mimosa_create_file(marfs_position* pos, char* dest_rel_path, FTAG ftag_struct, struct stat* stat_struct)
+int mimosa_create_file(marfs_position* pos, char* dest_rel_path, struct stat* stat_struct)
 {
+	mode_t mode = (stat_struct)?stat_struct->st_mode:S_IRWXU;	// create mode for file
+	size_t size = (stat_struct)?stat_struct->st_size:0;             // size of file in bytes
+	int err_rc = 0;                                                 // returned error
 	
 	// if trying to create a file that does not have a souce 
-	int mode;
 	if (stat_struct == NULL)
 		mode = S_IRWXU;
 	else
 		mode = stat_struct->st_mode;
 	
-	char* ref_path;
-	char* abs_ref_path;
-	char* xattr_str_buf;
-
-	ref_path = datastream_genrpath(&ftag_struct, pos->ns->prepo->metascheme.reftable, pos->ns->prepo->metascheme.mdal, pos->ctxt);
-	abs_ref_path = gen_abs_path(ref_path, MDAL_REF_PATH);
-
-	// openref to create reference file
-	MDAL_FHANDLE fhandle = pos->ns->prepo->metascheme.mdal->openref(pos->ctxt, ref_path, O_WRONLY | O_CREAT, mode);
-        if (fhandle == NULL)
-                printf("ERROR\topenref\tFailed to get file handle\t%s\n", strerror(errno));
-		
-        xattr_str_buf = (char *) calloc(1, STR_BUF_SIZE); // not sure how large to make FTAG buffer so doing a generous static size
-//        int size = ftag_tostr(&ftag_struct, xattr_str_buf, STR_BUF_SIZE); // will not work properly until more fields defined
-        
-	/* fix later
-	if (size < STR_BUF_SIZE) //realloc if buffer size too small
+	if (!datastream_create(&MIMOSA_STREAM, dest_rel_path, pos, mode, "mimosa-created"))
 	{
-		char* tmp = realloc(xattr_str_buf, size + 1);
-		free(xattr_str_buf);
-		xattr_str_buf = tmp;
-		ftag_tostr(&ftag_struct, xattr_str_buf, size);
+	   errno = 0;              // make sure errno is clear before calling next function
+	   if (datastream_extend(&MIMOSA_STREAM, size))
+           {
+	      err_rc = errno;	   
+              LOG(LOG_ERR, "Failed to extend %s by %ld bytes (error %d: %s)\n", dest_rel_path, size, err_rc, strerror(err_rc));		   
+	      return -(err_rc);
+	   }
 	}
-	*/
-
-	// attach ftag to reference file
-	if (pos->ns->prepo->metascheme.mdal->fsetxattr(fhandle, 1, ref_path, xattr_str_buf, sizeof(FTAG), XATTR_CREATE) == -1)
+        else
 	{
-		// datastream_genrpath can sometimes make duplicate reference paths: catch collision
-		#if defined(ALL) || defined(WARNING)
-		printf("WARNING\tfsetxattr\t%s\tduplicate reference path detected\t%s\tregenerating\n", ref_path, strerror(errno));	
-		#endif
+	   err_rc = errno;
+           LOG(LOG_ERR, "Failed to create %s (error %d: %s)\n", dest_rel_path, err_rc, strerror(err_rc));		   
+	   return -(err_rc);
+        }	   
 
-		pos->ns->prepo->metascheme.mdal->close(fhandle);
-		free(ref_path);
-		free(abs_ref_path);
-		free(xattr_str_buf);	
-		return -1; // in this case, easier to call the function again than to regenerate path in this call
-	}
-
-	// can free memory copy of FTAG struct now that it is stored in reference file xattr
-	free(ftag_struct.streamid);
-	
-	// create link to reference file in user space
-	if (pos->ns->prepo->metascheme.mdal->linkref(pos->ctxt, 0, ref_path, dest_rel_path) == -1)
-	{
-		// hopefully all this can be removed after pwalk and its out of order path returns are gone
-		
-		#if defined(ALL) || defined(WARNING)
-		printf("WARNING\tlinkref\tfailed to link %s and %s\t%s\tcalling mkdir_p and retry\n", ref_path, dest_rel_path, strerror(errno));  
-		#endif
-		#if defined(ALL) || defined(NOTICE)
-		printf("NOTICE\t Building parent directories of %s\n", dest_rel_path);
-		#endif
-
-		char* dest_rel_path_copy = strdup(dest_rel_path);
-		
-		// if linkref fails, likely because parents do not exist, so try to create them
-		// pwalk does guarantee parents will be processed before children
-		mkdir_p(pos, dest_rel_path_copy);
-	
-		// try to linkref again after creating parent dirs
-		if (pos->ns->prepo->metascheme.mdal->linkref(pos->ctxt, 0, ref_path, dest_rel_path) == -1) 
-			printf("ERROR\tlinkref\tfailed to link %s and %s after mkdir_p call\t%s\n", ref_path, dest_rel_path, strerror(errno));
-		else
-		{
-			#if defined(ALL) || defined(NOTICE)
-			printf("NOTICE\tSuccessfully recreated and linked %s\n", dest_rel_path);
-			#endif
-		}
-		
-		free(dest_rel_path_copy);
-	}
-	
-	pos->ns->prepo->metascheme.mdal->close(fhandle);
-	free(ref_path);
-	free(abs_ref_path);
-	free(xattr_str_buf);
 	return 0;
 }
 
@@ -382,11 +324,7 @@ int mimosa_create_file(marfs_position* pos, char* dest_rel_path, FTAG ftag_struc
  */	
 int mimosa_create_dir(marfs_position* pos, char* dest_rel_path, struct stat* stat_struct)
 {
-	int mode;
-        if (stat_struct == NULL)
-                mode = S_IRWXU;
-        else
-                mode = stat_struct->st_mode;
+	mode_t mode = (stat_struct)?stat_struct->st_mode:S_IRWXU;	// create mode for directory
 
 	if (pos->ns->prepo->metascheme.mdal->mkdir(pos->ctxt, dest_rel_path, mode) == -1)
 	{
@@ -479,29 +417,6 @@ int check_new_linked_inode(char* dest_abs_path, struct stat* stat_struct, hardli
 
 	return hardlink_create_first_file;
 
-}
-
-/**
- * Create a new ftag struct based on the MarFS position and global config. This function does not allocate heap memory for the FTAG. This function currently initializes state, ctag, and streamid.
- * @param pos
- * return FTAG struct
- */
-FTAG generate_ftag(marfs_position* pos)
-{
-	FTAG ftag_struct = { 0 };
-        ftag_struct.state = FTAG_INIT;
-        ftag_struct.ctag = "mimosa-created";
-	
-	size_t* rheader = (size_t *) calloc(1, sizeof(size_t));
-
-	if(datastream_genstreamid(ftag_struct.ctag, pos->ns, &ftag_struct.streamid, rheader) == -1)
-	{
-		printf("datastream_genstreamid: failed to set stream id\n");
-	}
-
-	free(rheader); // not sure what to do with this
-
-	return ftag_struct;
 }
 
 /**

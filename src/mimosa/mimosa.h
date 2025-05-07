@@ -54,7 +54,7 @@ void mimosa_update_times(char* entry_path, struct stat* stat_struct);
  * @param stat_struct: stat struct generated in tree walk util, no need to call stat twice
  * @return -1 if the file already exists, or 0 on success
  */
-int mimosa_create_file(marfs_position* pos, char* dest_rel_path, FTAG ftag_struct, struct stat* stat_struct);
+int mimosa_create_file(marfs_position* pos, char* dest_rel_path, struct stat* stat_struct);
 
 /**
  * Create a MarFS directory at a specific position.
@@ -85,13 +85,6 @@ int mimosa_create_symlink(marfs_position* pos, char* link, char* source_abs_path
  * @return: 0 if a corresponding inode exists in destination, 1 if a file needs to be created to represent it 
  */
 int check_new_linked_inode(char* dest_abs_path, struct stat* stat_struct, hardlink_node* node);
-
-/**
- * Create a new ftag struct based on the MarFS position and global config. This function does not allocate heap memory for the FTAG. This function currently initializes state, ctag, and streamid.
- * @param pos
- * return FTAG struct
- */
-FTAG generate_ftag(marfs_position* pos);
 
 /**
  * Create the parents of a file or directory in MarFS. This function is intended to fix the issue of the parser returning entries before their parents are created. 
