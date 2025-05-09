@@ -57,7 +57,9 @@ https://github.com/jti-lanl/aws4c.
 GNU licenses can be found at http://www.gnu.org/licenses/.
 */
 
+#include <errno.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #if RMAN_USE_MPI
@@ -156,8 +158,9 @@ static int cleanup_iteration_root(rmanstate* rman) {
 
       // simply use a hardlink for this purpose, no need to make a 'real' duplicate
       if (link(sumlogpath, preslogpath)) {
-         fprintf(stderr, "ERROR: Failed to link summary logfile \"%s\" to new target path: \"%s\"\n",
-                  sumlogpath, preslogpath);
+         const int err = errno;
+         fprintf(stderr, "ERROR: Failed to link summary logfile \"%s\" to new target path: \"%s\": %s (%d)\n",
+                 sumlogpath, preslogpath, strerror(err), err);
          free(preslogpath);
          free(sumlogpath);
          free(iterationroot);
@@ -170,7 +173,9 @@ static int cleanup_iteration_root(rmanstate* rman) {
    // unlink our summary logfile
    if (unlink(sumlogpath)) {
       // just complain
-      fprintf(stderr, "WARNING: Failed to unlink summary log path during final cleanup\n");
+      const int err = errno;
+      fprintf(stderr, "WARNING: Failed to unlink summary log path during final cleanup: %s (%d)\n",
+              strerror(err), err);
    }
 
    free(sumlogpath);
@@ -201,15 +206,17 @@ static int cleanup_previous(rmanstate* rman) {
       snprintf(sumlogpath, sumstrlen + 1, "%s/%s", iterationroot, SUMMARY_FILENAME);
       if (unlink(sumlogpath)) {
          // just complain
-         fprintf(stderr, "WARNING: Failed to unlink summary log path of previous run during final cleanup\n");
+         const int err = errno;
+         fprintf(stderr, "WARNING: Failed to unlink summary log path of previous run during final cleanup: %s (%d)\n",
+                 strerror(err), err);
       }
       free(sumlogpath);
 
       if (rmdir(iterationroot)) {
          // just complain
          const int err = errno;
-         fprintf(stderr, "WARNING: Failed to unlink iteration root of previous run: \"%s\" (%s)\n",
-                 iterationroot, strerror(err));
+         fprintf(stderr, "WARNING: Failed to unlink iteration root of previous run: \"%s\": %s (%d)\n",
+                 iterationroot, strerror(err), err);
       }
 
       free(iterationroot);
@@ -311,7 +318,9 @@ int managerbehavior(rmanstate* rman) {
    int cres = fclose(rman->summarylog);
    rman->summarylog = NULL; // avoid possible double close
    if (cres) {
-      fprintf(stderr, "ERROR: Failed to close summary logfile for this iteration\n");
+      const int err = errno;
+      fprintf(stderr, "ERROR: Failed to close summary logfile for this iteration: %s (%d)\n",
+              strerror(err), err);
       return -1;
    }
 
