@@ -136,11 +136,7 @@ static int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
    free(outlogpath);
 
    // update our repack streamer
-   if ((rman->gstate.rpst = repackstreamer_init()) == NULL) {
-      LOG(LOG_ERR, "Failed to initialize repack streamer\n");
-      snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize repack streamer");
-      goto rman_error;
-   }
+   rman->gstate.rpst = repackstreamer_init();
 
    // kick off our worker threads
    TQ_Init_Opts tqopts = {
