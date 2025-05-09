@@ -314,6 +314,29 @@ int managerbehavior(rmanstate* rman) {
        return -1;
    }
 
+   int synced = 0;
+
+   // fflush(3) and fclose(3) only flush userspace buffers
+   // need fsync(2) to flush kernel buffers
+#if _POSIX_C_SOURCE >= 200112L
+   int fd = fileno(rman->summarylog);
+   if (fd < 0) {
+       const int err = errno;
+       fprintf(stderr, "WARNING: Failed to get file descriptor from summarylog: %s (%d)\n",
+               strerror(err), err);
+   }
+   else {
+       if (fsync(fd) < 0) {
+           const int err = errno;
+           fprintf(stderr, "WARNING: Failed to sync summarylog: %s (%d)\n",
+                   strerror(err), err);
+       }
+       else {
+           synced = 1;
+       }
+   }
+#endif
+
    // close our summary log file
    int cres = fclose(rman->summarylog);
    rman->summarylog = NULL; // avoid possible double close
@@ -326,9 +349,11 @@ int managerbehavior(rmanstate* rman) {
 
    if (rman->fatalerror) { return -1; } // skip final log cleanup if we hit some crucial error
 
-   // NOTE -- frustrates me greatly to put this sleep in, but a brief pause really seems to help any NFS-hosted
-   //         log location to cleanup state, allowing us to delete the parent dir
-   usleep(100000);
+   if (!synced) {
+       // NOTE -- frustrates me greatly to put this sleep in, but a brief pause really seems to help any NFS-hosted
+       //         log location to cleanup state, allowing us to delete the parent dir
+       usleep(100000);
+   }
 
    // final cleanup
    if (cleanup_iteration_root(rman) != 0) {
