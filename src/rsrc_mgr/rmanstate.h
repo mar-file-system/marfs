@@ -64,6 +64,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "config/config.h"
 #include "hash/hash.h"
 #include "rsrc_mgr/resourcelog.h"
+#include "rsrc_mgr/streamwalker.h"
 #include "rsrc_mgr/resourcethreads.h"
 #include "thread_queue/thread_queue.h"
 
@@ -93,6 +94,7 @@ typedef struct {
 
    // Thread State
    rthread_global_state gstate;
+   TQ_Init_Opts tqopts;          // executable specific function pointers template; other members are ignored
    ThreadQueue tq;
 
    // Output Logging

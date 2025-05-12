@@ -62,7 +62,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "rsrc_mgr/common.h"
 #include "rsrc_mgr/resourceprocessing.h"
 #include "rsrc_mgr/rmanstate.h"
-#include "rsrc_mgr/resourcethreads.h"
 
 #define MAX_ERROR_BUFFER MAX_STR_BUFFER + 100  // define our error strings as slightly larger than the error message itself
 

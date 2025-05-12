@@ -104,24 +104,25 @@ typedef struct {
  * Resource thread initialization ( producers and consumers )
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
-int rthread_init_func( unsigned int tID, void* global_state, void** state );
+int rthread_init( unsigned int tID, void* global_state, void** state );
 
 /**
  * Resource thread consumer behavior
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
-int rthread_consumer_func( void** state, void** work_todo );
+int rthread_all_consumer( void** state, void** work_todo );
 
 /**
  * Resource thread producer behavior
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
-int rthread_producer_func( void** state, void** work_tofill );
+int rthread_all_producer( void** state, void** work_tofill );
+int rthread_quota_producer( void** state, void** work_tofill );
 
 /**
  * Resource thread termination ( producers and consumers )
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
-void rthread_term_func( void** state, void** prev_work, TQ_Control_Flags flg );
+void rthread_term( void** state, void** prev_work, TQ_Control_Flags flg );
 
 #endif // _RESOURCETHREADS_H
