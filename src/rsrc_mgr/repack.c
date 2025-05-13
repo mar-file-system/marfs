@@ -215,7 +215,7 @@ int repackstreamer_complete(REPACKSTREAMER repackst) {
    char prevactive = 1;
    size_t index = 0;
    for (; index < repackst->streamcount; index++) {
-      if (*(repackst->streamlist + index) != NULL) {
+      if (repackst->streamlist[index] != NULL) {
          // minor sanity check, not even certain that this is a true failure
          if (prevactive == 0) {
             LOG(LOG_WARNING, "Encountered active stream at index %zu with previous stream being NULL\n");
@@ -252,7 +252,7 @@ int repackstreamer_abort(REPACKSTREAMER repackst) {
    int retval = 0;
    char prevactive = 1;
    for (size_t index = 0; index < repackst->streamcount; index++) {
-      if (*(repackst->streamlist + index) != NULL) {
+      if (repackst->streamlist[index] != NULL) {
          // minor sanity check, not even certain that this is a true failure
          if (prevactive == 0) {
             LOG(LOG_WARNING, "Encountered active stream at index %zu with previous stream being NULL\n");

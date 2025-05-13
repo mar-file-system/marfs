@@ -135,7 +135,7 @@ static int find_namespaces(rmanstate *rman, const char *ns_path, const int recur
                    return -1;
                }
                rman->nslist = newlist;
-               *(rman->nslist + rman->nscount - 1) = subspace;
+               rman->nslist[rman->nscount - 1] = subspace;
                curns = subspace;
                continue;
             }

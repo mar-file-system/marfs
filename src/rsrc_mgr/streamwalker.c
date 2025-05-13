@@ -109,7 +109,7 @@ static int process_getfileinfo(const char* reftgt, char getxattrs, streamwalker 
       ssize_t getres = mdal->fgetxattr(handle, 1, GCTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1);
 
       // check for overflow
-      if (getres > 0 && getres >= walker->ftagstralloc) {
+      if (getres > 0 && ((size_t) getres) >= walker->ftagstralloc) {
          // increase our allocated string length
          char* newstr = malloc(sizeof(char) * (getres + 1));
 
@@ -134,7 +134,7 @@ static int process_getfileinfo(const char* reftgt, char getxattrs, streamwalker 
       }
       else if (getres > 0) {
          // we must parse the GC tag value
-         *(walker->ftagstr + getres) = '\0'; // ensure our string is NULL terminated
+         walker->ftagstr[getres] = '\0'; // ensure our string is NULL terminated
          if (gctag_initstr(&walker->gctag, walker->ftagstr)) {
             LOG(LOG_ERR, "Failed to parse GCTAG for reference file target: \"%s\"\n", reftgt);
             mdal->close(handle);
@@ -153,7 +153,7 @@ static int process_getfileinfo(const char* reftgt, char getxattrs, streamwalker 
       getres = mdal->fgetxattr(handle, 1, FTAG_NAME, walker->ftagstr, walker->ftagstralloc - 1);
 
       // check for overflow
-      if (getres > 0 && getres >= walker->ftagstralloc) {
+      if (getres > 0 && ((size_t) getres) >= walker->ftagstralloc) {
          // double our allocated string length
          char* newstr = malloc(sizeof(char) * (getres + 1));
 
@@ -183,7 +183,7 @@ static int process_getfileinfo(const char* reftgt, char getxattrs, streamwalker 
          // potentially clear old ftag values
          if (walker->ftag.ctag) { free(walker->ftag.ctag); walker->ftag.ctag = NULL; }
          if (walker->ftag.streamid) { free(walker->ftag.streamid); walker->ftag.streamid = NULL; }
-         *(walker->ftagstr + getres) = '\0'; // ensure our string is NULL terminated
+         walker->ftagstr[getres] = '\0'; // ensure our string is NULL terminated
          if (ftag_initstr(&walker->ftag, walker->ftagstr)) {
             LOG(LOG_ERR, "Failed to parse ftag value of reference file target: \"%s\"\n", reftgt);
             mdal->close(handle);
