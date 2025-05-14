@@ -6,6 +6,7 @@
 #include "tagging/tagging.h"
 
 #include "hardlink.h"
+#include "mimosa_gufi.h"
 
 // External global variables
 extern marfs_config* config;
@@ -30,11 +31,11 @@ void mimosa_cleanup();
 
 /**
  * This function contains the entire process of mapping a file/directory from a GUFI trace entry to MarFS. It is intended to be the single function called by the parser to handle all the conversion needs. Decides the type of file from path and calls a separate function to handle each case.
- * @param entry_path: path of the file/dir read by the parser. The destination MarFS path will be determined from this path.
- * @param stat_struct: stat struct of the file entry_path. This is passed as an argument to reduce I/O load. 
+ * @param tentry_path: path of the file/dir read by the parser. The destination MarFS path will be determined from this path.
+ * @param tentry_struct: the entry data for the file tentry_path. This is passed as an argument to reduce I/O load. 
  * @return 0 on success, -1 on failure
  */
-int mimosa_convert(char* entry_path, struct stat* stat_struct);
+int mimosa_convert(char* tentry_path, struct entry_data* tentry_struct);
 
 /**
  * External wrapper to update_times that is intended to be called on the second pass over the tree to update the atimes and mtimes of directories. This function uses the global position for this thread and cannot take a position argument because it is called in pwalk.
@@ -103,6 +104,16 @@ int mkdir_p(marfs_position* pos, char* dest_rel_path_copy);
  * @return -1 on failure, 0 on success
  */
 int update_times(marfs_position* pos, char* dest_rel_path, struct stat* stat_struct, int symlink);
+
+/**
+ * After a MarFS file is created, create the MARFS-CACHE xattr and store the given path
+ * into it
+ * @param pos
+ * @param dest_rel_path: the MarFS user path, relative to the Namespace
+ * @param cache_path: the value of the MARFS-CACHE xattr
+ * @return -1 on failure, 0 on success
+ */
+int set_cachepath(marfs_position* pos, char* dest_rel_path, char* cache_path);
 
 /* ---------- Path String Helper Functions ---------- */
 

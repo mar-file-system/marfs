@@ -20,7 +20,6 @@
 #include <logging/logging.h>
 
 #include "mimosa.h"                  // contains global variable declaration for config
-#include "mimosa_gufi.h"
 
 
 const char TRACEDELIM = '\x1E';     // ASCII record Separator
@@ -272,7 +271,7 @@ int main(int argc, char *argv[]) {
 
 	if (strncmp(path,trace_prefix,prefixlen)) {     // If specified source prefix is not found, skip entry
 	   LOG(LOG_INFO, "   SKIPPING ENTRY %s  - directory prefix does not match.\n", path);
-	} else if ((rc=mimosa_convert(path,&path_data.statuso)) < 0) {
+	} else if ((rc=mimosa_convert(path,&path_data)) < 0) {
 	   if (rc !=-EEXIST) {	
 	      LOG(LOG_WARNING, "Failed move metadata for %s to %s\n", path, marfs_dpath);
 	   }   

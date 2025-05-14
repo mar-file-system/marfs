@@ -108,15 +108,16 @@ void mimosa_cleanup()
 /**
  * This function contains the entire process of mapping a file/directory from POSIX to MarFS. It is intended to be the single function called in a parallel treewalk utility to handle all the conversion needs. Decides the type of file from path and calls a separate function to handle each case. Contains lots of boilerplate code to deal with pwalk issues. 
  * @param tentry_path: path read from a GUFI trace file. This path is already an absolute path. The destination MarFS path will be determined from this path.
- * @param stat_struct: stat struct of the file tentry_path. This is passed as an argument to reduce I/O load. 
+ * @param tentry_struct: the entry data for the file tentry_path. This is passed as an argument to reduce I/O load.
  * @return 0 on success, -1 on failure
  */
-int mimosa_convert(char* tentry_path, struct stat* stat_struct)
+int mimosa_convert(char* tentry_path, struct entry_data* tentry_struct)
 {
 	// important paths
 	char* ent_rel_path = gen_rel_path(tentry_path, SOURCE_ARG);
 	char* dest_rel_path = dot_to_source(ent_rel_path, MARFS_ROOT_REL_PATH);
 	char* dest_abs_path = gen_abs_path(ent_rel_path, DEST_ARG);
+        struct stat* stat_struct = &tentry_struct->statuso;       // the stat structure for the entry
 	
 	// do not reprocess files that exist in destination
         if (dest_pos->ns->prepo->metascheme.mdal->access(dest_pos->ctxt, dest_abs_path, F_OK, AT_SYMLINK_NOFOLLOW) == 0)
@@ -211,6 +212,11 @@ int mimosa_convert(char* tentry_path, struct stat* stat_struct)
 				free(dest_rel_path_copy);
 			} 
 
+			// Now attach the source path to the MarFS file via the MARFS-CACHE xattr
+			if (set_cachepath(dest_pos, dest_rel_path, tentry_path) == -1)
+			{
+				LOG(LOG_ERR, "set_cachepath()\t%s failed to set MARFS-CACHE xattr\n", dest_abs_path);
+			}
 		}
 	        else // create a hardlink to an existing inode	
 		{
@@ -276,12 +282,11 @@ void mimosa_update_times(char* tentry_path, struct stat* stat_struct)
 // INTERNAL FUNCTIONS
 
 /**
- * Function to map a file from source to destination. Takes the source file (dest_rel_path) and creates a new reference file and user file  in the destination location. Executes the process openref -> fsetxattr -> linkref. This function contains extra lines to handle specific race conditions from the pwalk utility. It will likely be able to be reduced if a new parallel treewalk utility is used.   
+ * Function to map a file from source to destination. Takes the source file (dest_rel_path) and creates a new reference file and user file  in the destination location, via a datastream.
  * @param pos: MarFS position to create the file relative to
  * @param dest_rel_path: MarFS user tree path for the file, in which the user will be able to find it.
- * @param ftag: ftag struct containing metadata for the reference tree filei
  * @param stat_struct: stat struct generated in tree walk util, no need to call stat twice
- * @return -1 if the file already exists, or 0 on success
+ * @return < 0 if there are problems creating the file, or 0 on success
  */	
 int mimosa_create_file(marfs_position* pos, char* dest_rel_path, struct stat* stat_struct)
 {
@@ -289,16 +294,10 @@ int mimosa_create_file(marfs_position* pos, char* dest_rel_path, struct stat* st
 	size_t size = (stat_struct)?stat_struct->st_size:0;             // size of file in bytes
 	int err_rc = 0;                                                 // returned error
 	
-	// if trying to create a file that does not have a souce 
-	if (stat_struct == NULL)
-		mode = S_IRWXU;
-	else
-		mode = stat_struct->st_mode;
-	
 	if (!datastream_create(&MIMOSA_STREAM, dest_rel_path, pos, mode, "mimosa-created"))
 	{
-	   errno = 0;              // make sure errno is clear before calling next function
-	   if (datastream_extend(&MIMOSA_STREAM, size))
+	   errno = 0;                                                  // make sure errno is clear before calling next function
+	   if (datastream_extend(&MIMOSA_STREAM, size))                // extend the file to make sure the size is recorded in the ftag
            {
 	      err_rc = errno;	   
               LOG(LOG_ERR, "Failed to extend %s by %ld bytes (error %d: %s)\n", dest_rel_path, size, err_rc, strerror(err_rc));		   
@@ -471,31 +470,39 @@ int mkdir_p(marfs_position* pos, char* dest_rel_path_copy)
 }
 
 /**
- * After a MarFS file is created, update its atime and mtime with the ones from the source file.
+ * After a MarFS file is created, update its atime and mtime with the ones from the source file. Owner and Group are also updated.
  * @param pos
- * @param dest_rel_path
+ * @param dest_rel_path: the MarFS user path, relative to the Namespace
  * @param stat_struct: for original times
  * @param symlink: if the entry is a symlink and AT_SYMLINK_NOFOLLOW should be used
  * @return -1 on failure, 0 on success
  */
 int update_times(marfs_position* pos, char* dest_rel_path, struct stat* stat_struct, int symlink)
 {
-	#if defined(ALL) || defined(CONVERSION)
-	printf("CONVERSION\tUPDATE TIMES\tSYMLINK\t%s\n", dest_rel_path);
-	#endif
-	
-	// set up utimens arg
+	uid_t uid = (stat_struct)?stat_struct->st_uid:0;	// get UID for file
+	gid_t gid = (stat_struct)?stat_struct->st_gid:0;	// get GID for file
 	struct timespec times[2];
+
+	// set up utimens arg
 	times[0].tv_sec = stat_struct->st_atime;
 	times[0].tv_nsec = 0;
 	times[1].tv_sec = stat_struct->st_mtime;
 	times[1].tv_nsec = 0;
 	
+	#if defined(ALL) || defined(CONVERSION)
+	LOG(LOG_INFO, "CONVERSION\tUPDATE TIMES/OWNER\t%s\n", dest_rel_path);
+	#endif
+	
 	if (symlink)
 	{
 		if(pos->ns->prepo->metascheme.mdal->utimens(pos->ctxt, dest_rel_path, times, AT_SYMLINK_NOFOLLOW) == -1)
 		{
-			printf("ERROR\tutimens\tSYMLINK\t%s\tfailed to update atime and mtime\t%s\n", dest_rel_path, strerror(errno));
+			LOG(LOG_ERR, "utimens()\tSYMLINK\t%s\tfailed to update atime and mtime\t%s\n", dest_rel_path, strerror(errno));
+			return -1;
+		}
+		if(pos->ns->prepo->metascheme.mdal->chown(pos->ctxt, dest_rel_path, uid, gid, AT_SYMLINK_NOFOLLOW) == -1)
+		{
+			LOG(LOG_ERR, "chown()\tSYMLINK\t%s\tfailed to update uid and/or gid\t%s\n", dest_rel_path, strerror(errno));
 			return -1;
 		}
 	}
@@ -503,11 +510,49 @@ int update_times(marfs_position* pos, char* dest_rel_path, struct stat* stat_str
 	{
 		if(pos->ns->prepo->metascheme.mdal->utimens(pos->ctxt, dest_rel_path, times, 0) == -1)
 		{
-			printf("ERROR\tutimens\tREGULAR\t%s\tfailed to update atime and mtime\t%s\n", dest_rel_path, strerror(errno));
+			LOG(LOG_ERR, "utimens()\tREGULAR\t%s\tfailed to update atime and mtime\t%s\n", dest_rel_path, strerror(errno));
+			return -1;
+		}
+		if(pos->ns->prepo->metascheme.mdal->chown(pos->ctxt, dest_rel_path, uid, gid, 0) == -1)
+		{
+			LOG(LOG_ERR, "chown()\tREGULAR\t%s\tfailed to update uid and/or gid\t%s\n", dest_rel_path, strerror(errno));
 			return -1;
 		}
 	}
 
+	return 0;
+}
+
+/**
+ * After a MarFS file is created, create the MARFS-CACHE xattr and store the given path
+ * into it
+ * @param pos
+ * @param dest_rel_path: the MarFS user path, relative to the Namespace
+ * @param cache_path: the value of the MARFS-CACHE xattr
+ * @return -1 on failure, 0 on success
+ */
+int set_cachepath(marfs_position* pos, char* dest_rel_path, char* cache_path)
+{
+        MDAL_FHANDLE marfs_fh = pos->ns->prepo->metascheme.mdal->open(pos->ctxt, dest_rel_path, O_WRONLY);
+
+	#if defined(ALL) || defined(CONVERSION)
+	LOG(LOG_INFO, "CONVERSION\tXATTR\t%s\n", dest_rel_path);
+	#endif
+	
+	if (!marfs_fh)
+	{
+                LOG(LOG_ERR, "open()\tXATTR\t%s\tcould not populate MARFS-CACHE\t%s\n", dest_rel_path, strerror(errno));
+		return -1;
+	}
+
+	if (pos->ns->prepo->metascheme.mdal->fsetxattr(marfs_fh, 1, "MARFS-CACHE", cache_path, strlen(cache_path), XATTR_CREATE) == -1)
+	{
+		LOG(LOG_ERR, "fsetxattr()\tXATTR\t%s\tfailed to set MARFS-CACHE\t%s\n", dest_rel_path, strerror(errno));
+                pos->ns->prepo->metascheme.mdal->close(marfs_fh);
+		return -1;
+	}
+
+        pos->ns->prepo->metascheme.mdal->close(marfs_fh);
 	return 0;
 }
 
