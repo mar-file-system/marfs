@@ -78,6 +78,12 @@ int xattrs_alloc(struct xattrs *xattrs) {
     return !xattrs->pairs;
 }
 
+void xattrs_cleanup(struct xattrs *xattrs) {
+    /* Not checking argument */
+
+    free(xattrs->pairs);
+    xattrs->pairs = NULL;
+}
 
 /* parse serialized xattrs */
 int xattrs_from_line(char *start, const char *end, struct xattrs *xattrs, const char delim) {
@@ -276,10 +282,11 @@ int main(int argc, char *argv[]) {
 	      LOG(LOG_WARNING, "Failed move metadata for %s to %s\n", path, marfs_dpath);
 	   }   
 	}   
-	else if (path_data.type == 'd')               // If entry was a directory, update the times in MarFS
+	else if (path_data.type == 'd')               // if entry was a directory, update the times in MarFS
 	   mimosa_update_times(path,&path_data.statuso);	
 
-	free(path); free(line);   // we're done with these values ...
+	xattrs_cleanup(&path_data.xattrs);           // clean up parsing structures (for xattrs) 
+	free(path); free(line);                      // we're done with these values ...
 	line=NULL; len=0;
     }
 

@@ -13,6 +13,9 @@ extern marfs_config* config;
 extern marfs_position* root_ns_pos; // not currently used
 extern marfs_position* dest_pos;
 
+// Name of the xattr holding the cache/source path
+#define MARFS_CACHE_XATTR "MARFS-CACHE"
+
 /* ---------- External Functions to be Called by the GUFI Trace parser --------- */
 
 /**
@@ -114,6 +117,16 @@ int update_times(marfs_position* pos, char* dest_rel_path, struct stat* stat_str
  * @return -1 on failure, 0 on success
  */
 int set_cachepath(marfs_position* pos, char* dest_rel_path, char* cache_path);
+
+/**
+ * After a MarFS file is created, create any user-specifed xattrs that may have
+ * been included with the file.
+ * @param pos
+ * @param dest_rel_path: the MarFS user path, relative to the Namespace
+ * @param xattr_list: list of name/value pairs representing user xattrs
+ * @return -1 on failure, 0 on success
+ */
+int set_userxattrs(marfs_position* pos, char* dest_rel_path, struct xattrs* xattr_list);
 
 /* ---------- Path String Helper Functions ---------- */
 

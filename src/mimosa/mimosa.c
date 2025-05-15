@@ -215,7 +215,13 @@ int mimosa_convert(char* tentry_path, struct entry_data* tentry_struct)
 			// Now attach the source path to the MarFS file via the MARFS-CACHE xattr
 			if (set_cachepath(dest_pos, dest_rel_path, tentry_path) == -1)
 			{
-				LOG(LOG_ERR, "set_cachepath()\t%s failed to set MARFS-CACHE xattr\n", dest_abs_path);
+				LOG(LOG_ERR, "set_cachepath()\t%s failed to set %s xattr\n", dest_abs_path, MARFS_CACHE_XATTR);
+			}
+
+			//... and finally handle any user-define xattrs that came with the file
+			if (set_userxattrs(dest_pos, dest_rel_path, &tentry_struct->xattrs) == -1)
+			{
+				LOG(LOG_ERR, "set_userxattrs()\t%s failed to set user xattrs\n", dest_abs_path);
 			}
 		}
 	        else // create a hardlink to an existing inode	
@@ -536,22 +542,63 @@ int set_cachepath(marfs_position* pos, char* dest_rel_path, char* cache_path)
         MDAL_FHANDLE marfs_fh = pos->ns->prepo->metascheme.mdal->open(pos->ctxt, dest_rel_path, O_WRONLY);
 
 	#if defined(ALL) || defined(CONVERSION)
-	LOG(LOG_INFO, "CONVERSION\tXATTR\t%s\n", dest_rel_path);
+	LOG(LOG_INFO, "CONVERSION\tXATTR %s\t%s\n", MARFS_CACHE_XATTR, dest_rel_path);
 	#endif
 	
 	if (!marfs_fh)
 	{
-                LOG(LOG_ERR, "open()\tXATTR\t%s\tcould not populate MARFS-CACHE\t%s\n", dest_rel_path, strerror(errno));
+                LOG(LOG_ERR, "open()\tXATTR %s\t%s\tcould not populate cache path\t%s\n", MARFS_CACHE_XATTR, dest_rel_path, strerror(errno));
 		return -1;
 	}
 
-	if (pos->ns->prepo->metascheme.mdal->fsetxattr(marfs_fh, 1, "MARFS-CACHE", cache_path, strlen(cache_path), XATTR_CREATE) == -1)
+	if (pos->ns->prepo->metascheme.mdal->fsetxattr(marfs_fh, 1, MARFS_CACHE_XATTR, cache_path, strlen(cache_path), XATTR_CREATE) == -1)
 	{
-		LOG(LOG_ERR, "fsetxattr()\tXATTR\t%s\tfailed to set MARFS-CACHE\t%s\n", dest_rel_path, strerror(errno));
+		LOG(LOG_ERR, "fsetxattr()\tXATTR %s\t%s\tfailed to set cache path\t%s\n", MARFS_CACHE_XATTR, dest_rel_path, strerror(errno));
                 pos->ns->prepo->metascheme.mdal->close(marfs_fh);
 		return -1;
 	}
 
+        pos->ns->prepo->metascheme.mdal->close(marfs_fh);
+	return 0;
+}
+
+/**
+ * After a MarFS file is created, create any user-specifed xattrs that may have
+ * been included with the file.
+ * @param pos
+ * @param dest_rel_path: the MarFS user path, relative to the Namespace
+ * @param xattr_list: list of name/value pairs representing user xattrs
+ * @return -1 on failure, 0 on success
+ */
+int set_userxattrs(marfs_position* pos, char* dest_rel_path, struct xattrs* xattr_list)
+{
+	if (!xattr_list->count)                                  // no xattrs is considered a SUCCESS
+		return 0;
+
+        MDAL_FHANDLE marfs_fh = pos->ns->prepo->metascheme.mdal->open(pos->ctxt, dest_rel_path, O_WRONLY);
+
+	if (!marfs_fh)
+	{
+                LOG(LOG_ERR, "open()\tXATTR\t%s\tcould not populate user xattrs\t%s\n", dest_rel_path, strerror(errno));
+		return -1;
+	}
+
+        for (size_t i = 0; i < xattr_list->count; i++) 
+        {		
+		struct xattr *xattr = &xattr_list->pairs[i];	
+
+		#if defined(ALL) || defined(CONVERSION)
+		LOG(LOG_INFO, "CONVERSION\tXATTR %s\t%s\n", xattr->name, dest_rel_path);
+		#endif
+
+		if (pos->ns->prepo->metascheme.mdal->fsetxattr(marfs_fh, 0, xattr->name, xattr->value, xattr->value_len, XATTR_CREATE) == -1)
+		{
+			LOG(LOG_ERR, "fsetxattr()\tXATTR %s\t%s\tfailed to set value\t%s\n", xattr->name, dest_rel_path, strerror(errno));
+               	 	pos->ns->prepo->metascheme.mdal->close(marfs_fh);
+			return -1;
+		}	
+	}
+	
         pos->ns->prepo->metascheme.mdal->close(marfs_fh);
 	return 0;
 }
