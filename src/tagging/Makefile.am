@@ -10,7 +10,7 @@
 #FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
 #works, such modified software should be clearly marked, so as not to confuse it
 #with the version available from LANL.
-# 
+#
 #Additionally, redistribution and use in source and binary forms, with or without
 #modification, are permitted provided that the following conditions are met:
 #1. Redistributions of source code must retain the above copyright notice, this
@@ -74,8 +74,6 @@ check_PROGRAMS = test_tagging
 
 test_tagging_SOURCES = testing/test_tagging.c
 test_tagging_CFLAGS  = $(XML_CFLAGS)
-test_tagging_LDADD = $(TAGGING_LIB)
+test_tagging_LDADD = $(TAGGING_LIB) ../logging/liblogging.la
 
 TESTS = test_tagging
-
-

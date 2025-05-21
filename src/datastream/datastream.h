@@ -114,14 +114,14 @@ size_t datastream_filebounds( const FTAG* ftag );
 
 /**
  * Generate a new Stream ID string and recovery header size based on that ID
- * @param char* ctag : Client string associated with this datastream
+ * @param char* const ctag : Client string associated with this datastream
  * @param const marfs_ns* ns : MarFS Namespace associated with this datastream
  * @param char** streamid : Reference to be populated with the Stream ID string
  *                          ( client is responsible for freeing this string )
  * @param size_t* rheadersize : Reference to be populated with the recovery header size
  * @return int : Zero on success, or -1 on failure
  */
-int datastream_genstreamid(char* ctag, const marfs_ns* ns, char** streamid, size_t* rheadersize);
+int datastream_genstreamid(char* const ctag, const marfs_ns* ns, char** streamid, size_t* rheadersize);
 
 /**
  * Generate a reference path for the given FTAG

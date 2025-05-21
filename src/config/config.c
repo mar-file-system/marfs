@@ -3027,9 +3027,9 @@ int config_duplicateposition( marfs_position* srcpos, marfs_position* destpos ) 
 }
 
 /**
- * Establish a CTXT for the given position, if it is lacking one
- * @param marfs_position* pos : Reference to the position
- * @return int : Zero on success ( ctxt established or already present ),
+ * Establish an MDAL_CTXT for the given position, if it is lacking one
+ * @param marfs_position* pos : Reference to the position to modify
+ * @return int : Zero on success ( MDAL_CTXT established or already present ),
  *               or -1 on failure
  */
 int config_fortifyposition( marfs_position* pos ) {

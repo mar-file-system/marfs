@@ -11,7 +11,7 @@ jobs:
     env:
       Isal_assembler: "nasm"
       Ne_deps: "autoconf libxml2-dev openmpi-bin openmpi-common libopenmpi-dev"
-      Marfs_deps: "fuse libfuse-dev"
+      Marfs_deps: "fuse libfuse-dev libreadline-dev"
     runs-on: ubuntu-latest
     steps:
     - name: Setup Build Dependencies + Environment
@@ -20,14 +20,14 @@ jobs:
         mkdir install
 
     - name: Checkout ISA-L
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: intel/isa-l
         ref: v2.30.0
         path: isa-l
 
     - name: Checkout MarFS
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         path: marfs
 
@@ -49,3 +49,19 @@ jobs:
         make install
         cd $GITHUB_WORKSPACE
 
+  # https://doc.rust-lang.org/cargo/guide/continuous-integration.html
+  obj_scanner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Toolchain
+        run: rustup update stable && rustup default stable
+
+      - name: Build
+        run: cargo build --verbose
+        working-directory: obj_scanner
+
+      - name: Test
+        run: cargo test --verbose
+        working-directory: obj_scanner

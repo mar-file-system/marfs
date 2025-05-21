@@ -73,6 +73,13 @@
         * host definitions within this config.
         * -->
    <hosts> ... </hosts>
+   <global_cache_map>
+      <cache id="landing-zone">
+         <MDAL type="posix">
+            <ns_root>/marfs-internal/landing-zone</ns_root>
+         </MDAL>
+      </cache>
+   </global_cache_map>
 
    <!-- Repo Definition
         * A MarFS 'repo' is a definition of data and metadata structure.  It is the uppermost conceptual abstraction of
@@ -86,6 +93,11 @@
            * Defines where data objects are placed, how they are formatted, and through what interface they are accessed
            * -->
       <data>
+
+         <client_caching>
+            <client ctag="^Pftool.*$" id="landing-zone"/>
+            <client ctag="" force id="MEDIC"/>
+         </client_caching>
 
          <!-- Erasure Protection
               * Protection scheme for data objects of this repo.

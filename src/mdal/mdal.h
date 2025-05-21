@@ -86,6 +86,7 @@ typedef void* MDAL_DHANDLE;
 typedef void* MDAL_SCANNER;
 typedef struct MDAL_struct* MDAL;
 
+#define MDAL_CACHEID "MEDIC" // reserve the name 'MEDIC' ( MetaData Inlined Cache ) for writing data to MDAL files
 
 typedef struct MDAL_struct {
    // Name -- Used to identify and configure the MDAL
@@ -543,6 +544,9 @@ typedef struct MDAL_struct {
 
    /**
     * Write data to the given MDAL_FHANDLE
+    * NOTE -- This function may be left unimplemented ( NULL ) by the underlying
+    *         MDAL.  This will prohibit the use of data caching via that MDAL,
+    *         but should otherwise not impede functionality.
     * @param MDAL_FHANDLE fh : File handle to be written to
     * @param const void* buf : Buffer containing the data to be written
     * @param size_t count : Number of data bytes contained within the buffer

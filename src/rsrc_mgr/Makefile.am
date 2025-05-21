@@ -56,7 +56,7 @@
 
 
 # automake requires '=' before '+=', even for these built-in vars
-AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CPPFLAGS = -I ${top_srcdir}/src -DRMAN_USE_MPI=1
 AM_CFLAGS   =
 AM_LDFLAGS  =
 
@@ -64,25 +64,30 @@ CC = mpicc
 
 lib_LTLIBRARIES = libResourceLog.la
 
-libResourceLog_la_SOURCES = resourcelog.c
+libResourceLog_la_SOURCES = resourcelog.c logline.c
 libResourceLog_la_LIBADD = ../config/libConfig.la ../tagging/libTagging.la ../thread_queue/libTQ.la ../ne/libne.la
 libResourceLog_la_CFLAGS = $(XML_CFLAGS)
 RSRC_LOG_LIB = libResourceLog.la
 
-#noinst_LTLIBRARIES = libRsrcMgr.la
-#
-#libRsrcMgr_la_SOURCES = rsrc_mgr.c
-#libRsrcMgr_la_LIBADD  = ../config/libConfig.la ../mdal/libMDAL.la ../tagging/libTagging.la ../datastream/libDatastream.la
-#libRsrcMgr_la_CFLAGS  = $(XML_CFLAGS)
-#RSRC_MGR_LIB = libRsrcMgr.la
-#
-#bin_PROGRAMS = marfs-rsrc_mgr
-#marfs_rsrc_mgr_SOURCES = rsrc_mgr.c
-#marfs_rsrc_mgr_LDADD   = ../config/libConfig.la ../mdal/libMDAL.la ../tagging/libTagging.la ../datastream/libDatastream.la
-#marfs_rsrc_mgr_CFLAGS  = $(XML_CFLAGS)
-
 bin_PROGRAMS = marfs-rman
-marfs_rman_SOURCES = resourcemanager.c resourcethreads.c resourceprocessing.c
+marfs_rman_SOURCES =        \
+    find_namespaces.c       \
+    findoldlogs.c           \
+    manager.c               \
+    output_program_args.c   \
+    outputinfo.c            \
+    parse_program_args.c    \
+    read_last_log.c         \
+    repack.c                \
+    resourceinput.c         \
+    resourcemanager.c       \
+    resourceprocessing.c    \
+    resourcethreads.c       \
+    rmanstate.c             \
+    streamwalker.c          \
+    summary_log_setup.c     \
+    work.c                  \
+    worker.c
 marfs_rman_LDADD = libResourceLog.la ../datastream/libDatastream.la
 marfs_rman_CFLAGS = $(XML_CFLAGS)
 
@@ -90,26 +95,16 @@ marfs_rman_CFLAGS = $(XML_CFLAGS)
 
 check_PROGRAMS = test_resourcelog test_resourceprocessing test_resourcethreads
 
-#test_rsrc_mgr_SOURCES = testing/test_rsrc_mgr.c
-#test_rsrc_mgr_LDADD = libRsrcMgr.la
-#test_rsrc_mgr_CFLAGS = $(XML_CFLAGS)
-#
-#test_rsrc_mgr_nopack_SOURCES = testing/test_rsrc_mgr_nopack.c
-#test_rsrc_mgr_nopack_LDADD = libRsrcMgr.la
-#test_rsrc_mgr_nopack_CFLAGS = $(XML_CFLAGS)
-
 test_resourcelog_SOURCES = testing/test_resourcelog.c
 test_resourcelog_LDADD = libResourceLog.la ../logging/liblogging.la
 test_resourcelog_CFLAGS = $(XML_CFLAGS)
 
-test_resourceprocessing_SOURCES = testing/test_resourceprocessing.c
-test_resourceprocessing_LDADD = libResourceLog.la ../datastream/libDatastream.la
+test_resourceprocessing_SOURCES = testing/test_resourceprocessing.c repack.c streamwalker.c
+test_resourceprocessing_LDADD = libResourceLog.la ../datastream/libDatastream.la ../logging/liblogging.la
 test_resourceprocessing_CFLAGS = $(XML_CFLAGS)
 
-test_resourcethreads_SOURCES = testing/test_resourcethreads.c resourceprocessing.c
-test_resourcethreads_LDADD = libResourceLog.la ../datastream/libDatastream.la
+test_resourcethreads_SOURCES = testing/test_resourcethreads.c repack.c resourceinput.c resourceprocessing.c streamwalker.c
+test_resourcethreads_LDADD = libResourceLog.la ../datastream/libDatastream.la ../logging/liblogging.la
 test_resourcethreads_CFLAGS = $(XML_CFLAGS)
 
-TESTS = test_resourcelog test_resourceprocessing test_resourcethreads #test_rsrc_mgr test_rsrc_mgr_nopack
-
-
+TESTS = test_resourcelog test_resourceprocessing test_resourcethreads

@@ -68,6 +68,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "logging/logging.h"
 #include "tagging.h"
 
+#include "mdal/mdal.h"
 #include <string.h>
 #include <errno.h>
 
@@ -89,6 +90,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define GCTAG_VERSION_HEADER "VER"
 #define GCTAG_SKIP_HEADER "SKIP"
 #define GCTAG_PROGRESS_HEADER "PROG"
+
+#define CATAG_VERSION_HEADER "VER"
+#define CATAG_CACHEID_HEADER "ID"
+#define CATAG_CACHELOC_HEADER "LOC"
 
 
 //   -------------   INTERNAL FUNCTIONS    -------------
@@ -327,46 +332,99 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
    }
    parse += strlen( FTAG_DATACONTENT_HEADER"(" );
    foundvals = 0;
+   ftag->state = 0; // initialize to zero
+   char found_datastate = 0;
+   char found_dataperms = 0;
    while ( *parse != '\0' ) {
       // check for string values
       if ( strncmp( parse, "INIT", 4 ) == 0 ) {
+         if ( found_datastate ) {
+            LOG( LOG_ERR, "Detected duplicate DATASTATE value\n" );
+            return -1;
+         }
+         found_datastate = 1;
          LOG( LOG_INFO, "Parsed 'INIT' datastate\n" );
          ftag->state = FTAG_INIT | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 4;
       }
       else if ( strncmp( parse, "SIZED", 5 ) == 0 ) {
+         if ( found_datastate ) {
+            LOG( LOG_ERR, "Detected duplicate DATASTATE value\n" );
+            return -1;
+         }
+         found_datastate = 1;
          LOG( LOG_INFO, "Parsed 'SIZED' datastate\n" );
          ftag->state = FTAG_SIZED | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 5;
       }
       else if ( strncmp( parse, "FIN", 3 ) == 0 ) {
+         if ( found_datastate ) {
+            LOG( LOG_ERR, "Detected duplicate DATASTATE value\n" );
+            return -1;
+         }
+         found_datastate = 1;
          LOG( LOG_INFO, "Parsed 'FIN' datastate\n" );
          ftag->state = FTAG_FIN | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 3;
       }
       else if ( strncmp( parse, "COMP", 4 ) == 0 ) {
+         if ( found_datastate ) {
+            LOG( LOG_ERR, "Detected duplicate DATASTATE value\n" );
+            return -1;
+         }
+         found_datastate = 1;
          LOG( LOG_INFO, "Parsed 'COMP' datastate\n" );
          ftag->state = FTAG_COMP | ( ftag->state & ~(FTAG_DATASTATE) );
          endptr = parse + 4;
       }
+      else if ( strncmp( parse, "CACHED", 6 ) == 0 ) {
+         if ( found_datastate ) {
+            LOG( LOG_ERR, "Detected duplicate DATASTATE value\n" );
+            return -1;
+         }
+         found_datastate = 1;
+         LOG( LOG_INFO, "Parsed 'CACHED' datastate\n" );
+         ftag->state = FTAG_CACHED | ( ftag->state & ~(FTAG_DATASTATE) );
+         endptr = parse + 6;
+      }
       else if ( strncmp( parse, "RO", 2 ) == 0 ) {
+         if ( found_dataperms ) {
+            LOG( LOG_ERR, "Detected duplicate DATAPERMS value\n" );
+            return -1;
+         }
+         found_dataperms = 1;
          LOG( LOG_INFO, "Parsed 'READ-ONLY' dataperms\n" );
-         ftag->state = FTAG_READABLE | ( ftag->state & FTAG_DATASTATE );
+         ftag->state |= FTAG_READABLE;
          endptr = parse + 2;
       }
       else if ( strncmp( parse, "WO", 2 ) == 0 ) {
+         if ( found_dataperms ) {
+            LOG( LOG_ERR, "Detected duplicate DATAPERMS value\n" );
+            return -1;
+         }
+         found_dataperms = 1;
          LOG( LOG_INFO, "Parsed 'WRITE-ONLY' dataperms\n" );
-         ftag->state = FTAG_WRITEABLE | ( ftag->state & FTAG_DATASTATE );
+         ftag->state |= FTAG_WRITEABLE;
          endptr = parse + 2;
       }
       else if ( strncmp( parse, "RW", 2 ) == 0 ) {
+         if ( found_dataperms ) {
+            LOG( LOG_ERR, "Detected duplicate DATAPERMS value\n" );
+            return -1;
+         }
+         found_dataperms = 1;
          LOG( LOG_INFO, "Parsed 'READ-WRITE' dataperms\n" );
-         ftag->state = (FTAG_WRITEABLE | FTAG_READABLE) | ( ftag->state & FTAG_DATASTATE );
+         ftag->state |= (FTAG_WRITEABLE | FTAG_READABLE);
          endptr = parse + 2;
       }
       else if ( strncmp( parse, "NO", 2 ) == 0 ) {
+         if ( found_dataperms ) {
+            LOG( LOG_ERR, "Detected duplicate DATAPERMS value\n" );
+            return -1;
+         }
+         found_dataperms = 1;
          LOG( LOG_INFO, "Parsed 'NO-ACCESS' dataperms\n" );
-         ftag->state = ( ftag->state & FTAG_DATASTATE );
+         ftag->state &= ~(FTAG_WRITEABLE | FTAG_READABLE); 
          endptr = parse + 2;
       }
       else {
@@ -403,16 +461,16 @@ int ftag_initstr( FTAG* ftag, char* ftagstr ) {
                LOG( LOG_ERR, "Unrecognized data content value: \'%c\'\n", *parse );
                return -1;
          }
+         foundvals++;
       }
-      if ( *endptr != '-'  &&  *endptr != ')' ) {
+      parse = endptr + 1;
+      if ( *endptr == ')' ) { break; }
+      if ( *endptr != '-' ) {
          LOG( LOG_ERR, "Unrecognized data value format: \"%s\" (%c)\n", parse, *endptr );
          return -1;
       }
-      foundvals++;
-      parse = endptr + 1;
-      if ( *endptr == ')' ) { break; }
    }
-   if ( foundvals != 9 ) {
+   if ( foundvals != 7  ||  !(found_datastate)  ||  !(found_dataperms) ) {
       LOG( LOG_ERR, "Failed to identify the expected number of data content values\n" );
       return -1;
    }
@@ -611,6 +669,9 @@ size_t ftag_tostr( const FTAG* ftag, char* tgtstr, size_t len ) {
    }
    else if ( dstate == FTAG_COMP ) {
       dstatestr = "COMP";
+   }
+   else if ( dstate == FTAG_CACHED ) {
+      dstatestr = "CACHED";
    }
    char* daccstr = "NO"; // no access
    if ( ftag->state & FTAG_WRITEABLE ) {
@@ -1684,11 +1745,176 @@ size_t gctag_tostr( GCTAG* gctag, char*tgtstr, size_t len ) {
          LOG( LOG_ERR, "Failed to output refcnt value %zu\n", gctag->refcnt );
          return 0;
       }
-      if ( len > prres ) { len -= prres; tgtstr += prres; }
-      else { len = 0; }
-      totsz += prres;
+      totsz += prres; // no more need to update tgtstr / len
    }
 
+   return totsz;
+}
+
+
+// MARFS CACHE TAG -- attached to files whose data content is stored to an alternate FS target ( no MarFS data objects )
+
+/**
+ * Initialize a CATAG based on the provided string value
+ * @param CATAG* catag : Reference to the CATAG structure to be populated
+ * @param const char* catagstr : Reference to the string to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
+int catag_initstr( CATAG* catag, char* catagstr ) {
+   // check args
+   if ( catag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL catag arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( catagstr == NULL ) {
+      LOG( LOG_ERR, "Received a NULL catagstr arg\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   // parse version info first
+   const char* parse = catagstr;
+   if ( strncmp( parse, CATAG_VERSION_HEADER "(", strlen(CATAG_VERSION_HEADER) + 1 ) ) {
+      LOG( LOG_ERR, "Unexpected version header for CATAG string\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   parse += strlen(CATAG_VERSION_HEADER) + 1;
+   char* endptr = NULL;
+   unsigned long long parseval = strtoull( parse, &(endptr), 10 );
+   if ( endptr == NULL  ||  *endptr != '.'  ||  parseval == ULONG_MAX ) {
+      LOG( LOG_ERR, "Failed to parse major version value of CATAG\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( parseval != CATAG_CURRENT_MAJORVERSION ) {
+      LOG( LOG_ERR, "Unexpected CATAG major version: %llu\n", parseval );
+      errno = EINVAL;
+      return -1;
+   }
+   parse = endptr + 1;
+   parseval = strtoull( parse, &(endptr), 10 );
+   if ( *endptr != ')' ) {
+      LOG( LOG_ERR, "CATAG version string has unexpected format\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   if ( parseval != CATAG_CURRENT_MINORVERSION ) {
+      LOG( LOG_ERR, "Unexpected CATAG minor version: %llu\n", parseval );
+      errno = EINVAL;
+      return -1;
+   }
+   parse = endptr + 1;
+   // parse skip info
+   if ( strncmp( parse, CATAG_CACHEID_HEADER "(", strlen(CATAG_CACHEID_HEADER) + 1 ) ) {
+      LOG( LOG_ERR, "Unexpected CACHEID header for CATAG string\n" );
+      errno = EINVAL;
+      return -1;
+   }
+   parse += strlen(CATAG_CACHEID_HEADER) + 1;
+   const char* fwdparse = parse;
+	// loop ahead, looking for a terminating ')' or '\0'
+	while ( *(fwdparse) != ')'  &&  *(fwdparse) != '\0' ) {
+		fwdparse++;
+	}
+   if ( *fwdparse != ')' ) {
+      LOG( LOG_ERR, "Unexpected tail string of CACHEID stanza\n" );
+      errno = EINVAL;
+      return -1;
+   }
+	// duplicate this string element
+	char* cacheid = strndup( parse, (fwdparse - parse) );
+	if ( cacheid == NULL ) {
+		LOG( LOG_ERR, "Failed to duplicate CACHEID buffer of size %zd\n", ( (fwdparse - parse) + 1 ) );
+		return -1;
+	}
+	// parse CACHELOC stanza
+	parse = fwdparse + 1;
+	if ( strncmp( parse, CATAG_CACHELOC_HEADER "(", strlen(CATAG_CACHELOC_HEADER) + 1 ) ) {
+		LOG( LOG_ERR, "Unexpected CACHELOC header for CATAG string\n" );
+		free( cacheid );
+		errno = EINVAL;
+		return -1;
+	}
+	parse += strlen(CATAG_CACHELOC_HEADER) + 1;
+	fwdparse = parse;
+	// loop ahead, looking for a terminating ')' or '\0'
+	while ( *(fwdparse) != ')'  &&  *(fwdparse) != '\0' ) {
+		fwdparse++;
+	}
+	if ( *fwdparse != ')' ) {
+		LOG( LOG_ERR, "Unexpected tail string of CACHELOC stanza\n" );
+		free( cacheid );
+		errno = EINVAL;
+		return -1;
+	}
+	// duplicate this string element
+	char* cacheloc = strndup( parse, (fwdparse - parse) );
+	if ( cacheloc == NULL ) {
+		LOG( LOG_ERR, "Failed to duplicate CACHELOC buffer of size %zd\n", ( (fwdparse - parse) + 1 ) );
+		free( cacheid );
+		return -1;
+	}
+	// verify expected termination of the string
+   parse = fwdparse + 1;
+	if ( *parse != '\0' ) {
+		LOG( LOG_ERR, "Detected unexpected trailing characters at EOS\n" );
+		if ( cacheloc ) { free( cacheloc ); }
+		free( cacheid );
+      errno = EINVAL;
+		return -1;
+	}
+	// populate CATAG values
+	catag->cacheid = cacheid;
+	catag->cacheloc = cacheloc;
+   return 0;
+}
+
+/**
+ * Populate a string based on the provided CATAG
+ * @param const CATAG* catag : Reference to the CATAG structure to pull values from
+ * @param char* tgtstr : Reference to the string to be populated
+ * @param size_t len : Allocated length of the target string buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t catag_tostr( CATAG* catag, char* tgtstr, size_t len ) {
+   // check for NULL args
+   if ( catag == NULL ) {
+      LOG( LOG_ERR, "Received a NULL ne_state reference\n" );
+      errno = EINVAL;
+      return 0;
+   }
+   // keep track of total string length, even if we can't output that much
+   size_t totsz = 0;
+   // output version info first
+   int prres = snprintf( tgtstr, len, "%s(%u.%.3u)", CATAG_VERSION_HEADER, CATAG_CURRENT_MAJORVERSION, CATAG_CURRENT_MINORVERSION );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output version info string\n" );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+   // output cacheid info
+   prres = snprintf( tgtstr, len, "%s(%s)", CATAG_CACHEID_HEADER, catag->cacheid );
+   if ( prres < 1 ) {
+      LOG( LOG_ERR, "Failed to output cacheid value: \"%s\"\n", catag->cacheid );
+      return 0;
+   }
+   if ( len > prres ) { len -= prres; tgtstr += prres; }
+   else { len = 0; }
+   totsz += prres;
+   // output cache location
+	prres = snprintf( tgtstr, len, "%s(%s)", CATAG_CACHELOC_HEADER, catag->cacheloc );
+	if ( prres < 1 ) {
+		LOG( LOG_ERR, "Failed to output refcnt value %zu\n", catag->refcnt );
+		return 0;
+	}
+	totsz += prres; // no more need to update tgtstr / len
    return totsz;
 }
 

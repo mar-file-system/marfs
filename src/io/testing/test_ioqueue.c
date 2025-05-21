@@ -63,6 +63,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "dal/dal.h"
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 
 // sentinel values to ensure good data transfer
