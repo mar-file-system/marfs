@@ -66,22 +66,21 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #define FTAG_CURRENT_MAJORVERSION 0
 #define FTAG_CURRENT_MINORVERSION 1
 
-#define FTAG_RESERVED_CHARS "()|"
-
 #define FTAG_NAME "MARFS-FILE"
 
 typedef enum 
 {
    // Data Object State Indicators ( Every file will be in one of the following states )
-   FTAG_INIT = 0,  // initial state   -- no file data exists
-   FTAG_SIZED = 1, // sized state     -- known lower bound on file size (may be up to objsize bytes larger)
-   FTAG_FIN = 2,   // finalized state -- known total file size
-   FTAG_COMP = 3,  // completed state -- all data written
-   FTAG_DATASTATE = FTAG_COMP, // mask value for retrieving data state indicator
+   FTAG_INIT = 0,   // initial state   -- no file data exists
+   FTAG_CACHED = 1, // cached state    -- data is not managed by MarFS, but instead resident on an alternate FS tgt
+   FTAG_SIZED = 2,  // sized state     -- known lower bound on file size (may be up to objsize bytes larger)
+   FTAG_FIN = 3,    // finalized state -- known total file size
+   FTAG_COMP = 4,   // completed state -- all data written
+   FTAG_DATASTATE = 7, // mask value for retrieving data state indicator
 
    // State Flag values ( These may or may not be set )
-   FTAG_WRITEABLE = 4,  // Writable flag -- file's data is writable by arbitrary procs
-   FTAG_READABLE = 8,  // Readable flag -- file's data is readable by arbitrary procs
+   FTAG_WRITEABLE = 1<<3,  // Writable flag ( value of 8 ) -- file's data is writable by arbitrary procs
+   FTAG_READABLE = 1<<4,  // Readable flag ( value of 16 ) -- file's data is readable by arbitrary procs
 } FTAG_STATE;
 
 
@@ -107,7 +106,7 @@ typedef struct ftag_struct {
    // data content info
    ne_erasure protection;
    size_t bytes;
-   size_t availbytes;
+   size_t availbytes;  // TODO: remove this concept, as FTAG updates during truncation will race with any migration / repack
    size_t recoverybytes;
    FTAG_STATE state;
 } FTAG;
@@ -257,7 +256,7 @@ int rtag_initstr( RTAG* rtag, const char* rtagstr );
  * Populate a string based on the provided RTAG
  * @param const RTAG* rtag : Reference to the RTAG structure to pull values from
  * @param char* tgtstr : Reference to the string to be populated
- * @param size_t len : Allocated length of the target length
+ * @param size_t len : Allocated length of the target string buffer
  * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
  *                  an error occurred.
  *                  NOTE -- if this value is >= the length of the provided buffer, this
@@ -323,14 +322,48 @@ int gctag_initstr( GCTAG* gctag, char* gctagstr );
  * Populate a string based on the provided GCTAG
  * @param const GCTAG* gctag : Reference to the GCTAG structure to pull values from
  * @param char* tgtstr : Reference to the string to be populated
- * @param size_t len : Allocated length of the target length
+ * @param size_t len : Allocated length of the target string buffer
  * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
  *                  an error occurred.
  *                  NOTE -- if this value is >= the length of the provided buffer, this
  *                  indicates that insufficint buffer space was provided and the resulting
  *                  output string was truncated.
  */
-size_t gctag_tostr( GCTAG* gctag, char*tgtstr, size_t len );
+size_t gctag_tostr( GCTAG* gctag, char* tgtstr, size_t len );
+
+
+// MARFS CACHE TAG -- attached to files whose data content is stored to an alternate FS target ( no MarFS data objects )
+
+#define CATAG_CURRENT_MAJORVERSION 0
+#define CATAG_CURRENT_MINORVERSION 1
+
+#define CATAG_NAME "MARFS-CACHE"
+
+typedef struct catag_struct {
+   char* cacheid;    // ID string by which MarFS will map to a data cache definition
+   char* cacheloc;   // Path, within a data cache, at which MarFS will look for data content
+} CATAG;
+
+/**
+ * Initialize a CATAG based on the provided string value
+ * @param CATAG* catag : Reference to the CATAG structure to be populated
+ * @param const char* catagstr : Reference to the string to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
+int catag_initstr( CATAG* catag, char* catagstr );
+
+/**
+ * Populate a string based on the provided CATAG
+ * @param const CATAG* catag : Reference to the CATAG structure to pull values from
+ * @param char* tgtstr : Reference to the string to be populated
+ * @param size_t len : Allocated length of the target string buffer
+ * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
+ *                  an error occurred.
+ *                  NOTE -- if this value is >= the length of the provided buffer, this
+ *                  indicates that insufficint buffer space was provided and the resulting
+ *                  output string was truncated.
+ */
+size_t catag_tostr( CATAG* catag, char* tgtstr, size_t len );
 
 
 #endif // _TAGGING_H
