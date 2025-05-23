@@ -69,6 +69,8 @@ size_t tgtlistpos = 0;
 char** tgtlist = NULL;
 
 int ftwnotetgt(const char* fpath, const struct stat* sb, int typeflag) {
+   (void) sb; (void) typeflag;
+
    tgtlist[tgtlistpos] = strdup(fpath);
    tgtlistpos++;
 
@@ -109,7 +111,7 @@ int deletefstree(const char* basepath) {
    return retval;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
    // create required config root dirs
    if (mkdir("./test_rman_topdir", S_IRWXU) && errno != EEXIST) {

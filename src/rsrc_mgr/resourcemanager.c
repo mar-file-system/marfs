@@ -67,22 +67,10 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #endif
 
 // specifically needed for this file
-#include "config/config.h"
 #include "rsrc_mgr/common.h"
-#include "rsrc_mgr/loginfo.h"
 #include "rsrc_mgr/manager.h"
-#include "rsrc_mgr/worker.h"
-
-// rmanstate initialization
-// TODO: merge into rmanstate
-#include "rsrc_mgr/find_namespaces.h"
-#include "rsrc_mgr/findoldlogs.h"
-#include "rsrc_mgr/output_program_args.h"
-#include "rsrc_mgr/outputinfo.h"
-#include "rsrc_mgr/parse_program_args.h"
-#include "rsrc_mgr/read_last_log.h"
 #include "rsrc_mgr/rmanstate.h"
-#include "rsrc_mgr/summary_log_setup.h"
+#include "rsrc_mgr/worker.h"
 
 //   -------------   INTERNAL DEFINITIONS    -------------
 
@@ -96,9 +84,6 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
                           // Default to 3 days ago
 #define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up (failed repacks, old logs, etc.)
                           // Default to 1 day ago
-
-#define INACTIVE_RUN_SKIP_THRESH 60 // Age of seemingly inactive (no summary file) rman logdirs before they are skipped
-                                    // Default to 1 minute ago
 
 static void print_usage_info(const int rank) {
    if (rank != 0) {
@@ -181,7 +166,7 @@ static int parse_args(int argc, char** argv,
                       Args_t* args) {
    // get the initialization time of the program, to identify thresholds
    if (gettimeofday(&args->currenttime, NULL)) {
-      printf("failed to get current time for first walk\n");
+      fprintf(stderr, "failed to get current time for first walk\n");
       return -1;
    }
 
@@ -422,6 +407,14 @@ static int parse_args(int argc, char** argv,
    snprintf(newroot, newroot_len + 1, "%s/%s", rman->logroot, iteration_parent);
    rman->logroot = newroot;
 
+   // create logging root dir
+   if (mkdir(rman->logroot, 0700) && (errno != EEXIST)) {
+       fprintf(stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", rman->logroot);
+       free(rman->logroot);
+       rman->logroot = NULL;
+       return -1;
+   }
+
    // construct log preservation root subdirectory path and replace variable
    if (rman->preservelogtgt) {
       const size_t presroot_len = strlen(rman->preservelogtgt) + 1 + strlen(iteration_parent);
@@ -429,6 +422,15 @@ static int parse_args(int argc, char** argv,
       snprintf(presroot, presroot_len + 1, "%s/%s",
                rman->preservelogtgt, iteration_parent);
       rman->preservelogtgt = presroot;
+
+      if (mkdir(rman->preservelogtgt, 0700) && (errno != EEXIST)) {
+          fprintf(stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", rman->preservelogtgt);
+          free(rman->logroot);
+          rman->logroot = NULL;
+          free(rman->preservelogtgt);
+          rman->preservelogtgt = NULL;
+          return -1;
+      }
    }
 
    // populate an iteration string, if missing
@@ -459,12 +461,6 @@ static int parse_args(int argc, char** argv,
    return 0;
 }
 
-#define print_cleanup_abort(fini_abort, rman, erasurelock, fmt, ...)    \
-    fprintf(stderr, fmt, ##__VA_ARGS__);                                \
-    pthread_mutex_destroy(&(erasurelock));                              \
-    rmanstate_fini(&(rman), fini_abort);                                \
-    RMAN_ABORT()
-
 //   -------------    STARTUP BEHAVIOR     -------------
 
 int main(int argc, char** argv) {
@@ -474,15 +470,6 @@ int main(int argc, char** argv) {
       fprintf(stderr, "ERROR: Failed to initialize MPI\n");
       return -1;
    }
-#endif
-
-#if RMAN_USE_MPI
-#define RMAN_ABORT()                \
-   MPI_Abort(MPI_COMM_WORLD, -1);   \
-   return -1;
-#else
-#define RMAN_ABORT()                \
-   return -1;
 #endif
 
    // check how many ranks we have
@@ -514,22 +501,6 @@ int main(int argc, char** argv) {
       RMAN_ABORT();
    }
 
-   // create logging root dir
-   if (mkdir(rman.logroot, 0700) && (errno != EEXIST)) {
-      fprintf(stderr, "ERROR: Failed to create logging root dir: \"%s\"\n", rman.logroot);
-      rmanstate_fini(&rman, 0);
-      RMAN_ABORT();
-   }
-
-   // create log presetvation root dir
-   if (rman.preservelogtgt) {
-      if (mkdir(rman.preservelogtgt, 0700) && (errno != EEXIST)) {
-         fprintf(stderr, "ERROR: Failed to create log preservation root dir: \"%s\"\n", rman.preservelogtgt);
-         rmanstate_fini(&rman, 0);
-         RMAN_ABORT();
-      }
-   }
-
    // for multi-rank invocations, we must synchronize our iteration string across all ranks
    //     (due to clock drift + varied startup times across multiple hosts)
    if (rman.totalranks > 1  &&
@@ -538,46 +509,30 @@ int main(int argc, char** argv) {
 #else
       1) {
 #endif
-      fprintf(stderr, "ERROR: Failed to synchronize iteration string across all ranks\n");
-      RMAN_ABORT();
+       fprintf(stderr, "ERROR: Failed to synchronize iteration string across all ranks\n");
+       rmanstate_fini(&rman, 0);
+       RMAN_ABORT();
    }
 
    // Initialize the MarFS Config
    pthread_mutex_t erasurelock;
    pthread_mutex_init(&erasurelock, NULL);
 
-   if ((rman.config = config_init(args.config_path, &erasurelock)) == NULL) {
-      print_cleanup_abort(0, rman, erasurelock,
-                          "ERROR: Failed to initialize MarFS config: \"%s\"\n", args.config_path);
-   }
-
-   if (find_namespaces(&rman, args.ns_path, args.recurse) != 0) {
-      print_cleanup_abort(0, rman, erasurelock,
-                          "Error: Failed to find namespace\n");
-   }
-
-   // complete allocation of required state elements
-   rman.distributed = calloc(sizeof(size_t), rman.nscount);
-   rman.terminatedworkers = calloc(sizeof(char), rman.totalranks);
-   rman.walkreport = calloc(sizeof(*rman.walkreport), rman.nscount);
-   rman.logsummary = calloc(sizeof(*rman.logsummary), rman.nscount);
-
-   if (read_last_log(&rman, args.thresh.skip) != 0) {
-      print_cleanup_abort(0, rman, erasurelock,
-                          "ERROR: Failed to open previous run's log\n");
-   }
-
-   if (summary_log_setup(&rman, args.recurse) != 0) {
-      print_cleanup_abort(0, rman, erasurelock,
-                          "ERROR: Failed to set up summary\n");
+   if (rmanstate_complete(&rman, args.config_path, args.ns_path,
+                          args.thresh.skip, args.recurse, &erasurelock) != 0) {
+       pthread_mutex_destroy(&erasurelock);
+       rmanstate_fini(&rman, 0);
+       RMAN_ABORT();
    }
 
 #if RMAN_USE_MPI
    // synchronize here, to avoid having some ranks run ahead with modifications while other workers
    //    are hung on earlier initialization (which may still fail)
    if (MPI_Barrier(MPI_COMM_WORLD)) {
-      print_cleanup_abort(1, rman, erasurelock,
-                          "ERROR: Failed to synchronize mpi ranks prior to execution\n");
+       fprintf(stderr, "ERROR: Failed to synchronize mpi ranks prior to execution\n");
+       pthread_mutex_destroy(&erasurelock);
+       rmanstate_fini(&rman, 1);
+       RMAN_ABORT();
    }
 #endif
 
@@ -594,8 +549,8 @@ int main(int argc, char** argv) {
       bres = (rman.fatalerror) ? -((int)rman.fatalerror) : (int)rman.nonfatalerror;
    }
 
-   rmanstate_fini(&rman, !!bres);
    pthread_mutex_destroy(&erasurelock);
+   rmanstate_fini(&rman, !!bres);
 
 #if RMAN_USE_MPI
     MPI_Finalize();

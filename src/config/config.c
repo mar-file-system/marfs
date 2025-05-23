@@ -2688,14 +2688,7 @@ int establish_nsrefs( marfs_config* config ) {
  * @return marfs_config* : Reference to the newly populated config structures
  */
 marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock ) {
-   // verify that we've been passed in an erasurelock
-   if ( erasurelock == NULL ) {
-      LOG( LOG_ERR, "Received a NULL erasurelock reference\n" );
-      errno = EINVAL;
-      return NULL;
-   }
-
-   // Initialize the libxml library and check potential API mismatches between 
+   // Initialize the libxml library and check potential API mismatches between
    // the version it was compiled for and the actual shared library used.
    LIBXML_TEST_VERSION
 

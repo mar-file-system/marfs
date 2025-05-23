@@ -119,7 +119,9 @@ static void cleanuplog(RESOURCELOG rsrclog, char destroy) {
    }
 
    free(rsrclog->logfilepath);
-   close(rsrclog->logfile);
+   if (rsrclog->logfile > 0) {
+       close(rsrclog->logfile);
+   }
 
    if (destroy) {
       pthread_cond_destroy(&rsrclog->nooutstanding);

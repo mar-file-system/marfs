@@ -77,6 +77,8 @@ size_t dirlistpos = 0;
 char** dirlist = NULL;
 
 int ftwnotedir(const char* fpath, const struct stat* sb, int typeflag) {
+   (void) sb;
+
    if (typeflag != FTW_D) {
       printf("Encountered non-directory during tree deletion: \"%s\"\n", fpath);
       return -1;
@@ -119,7 +121,7 @@ int deletesubdirs(const char* basepath) {
    return retval;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
    // NOTE -- I'm ignoring memory leaks for error conditions
    //         which result in immediate termination
@@ -188,12 +190,12 @@ int main(int argc, char **argv)
    MDAL curmdal = pos.ns->prepo->metascheme.mdal;
 
    // establish a data buffer to hold all data content
-   void* databuf = malloc(1024 * 1024 * 10 * sizeof(char)); // 10MiB
+   const size_t databuf_size = 1024 * 1024 * 10; // 10MiB
+   char* databuf = malloc(databuf_size * sizeof(char));
 
-   int tmpcnt = 0;
-   for (; tmpcnt < (1024 * 1024 * 10); tmpcnt++) {
+   for (size_t tmpcnt = 0; tmpcnt < databuf_size; tmpcnt++) {
       // populate databuf
-      *((char*)databuf + tmpcnt) = (char)tmpcnt;
+      databuf[tmpcnt] = (char)tmpcnt;
    }
 
    char readarray[1048576] = {0}; // all zero 1MiB buffer
@@ -1701,7 +1703,7 @@ int main(int argc, char **argv)
    }
 
    // write to chunk 0 of the file
-   if (datastream_write(&pstream, databuf, chunksize) != chunksize) {
+   if (datastream_write(&pstream, databuf, chunksize) != (ssize_t) chunksize) {
       printf("paralell write failure for chunk 0 of 'file2'\n");
       return -1;
    }
@@ -1737,7 +1739,7 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   if (datastream_write(&pstream, databuf + chunkoffset, chunksize) != chunksize) {
+   if (datastream_write(&pstream, databuf + chunkoffset, chunksize) != (ssize_t) chunksize) {
       printf("paralell write failure for chunk 1 of 'file2'\n");
       return -1;
    }
