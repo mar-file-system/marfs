@@ -79,6 +79,16 @@ typedef enum {
 } ns_perms;
 
 
+typedef struct marfs_cache_struct {
+   char*      idstr;         // unique (per-cache) ID of this cache
+   MDAL       mdal;          // MDAL reference for metadata access in this cache
+} marfs_cache;
+
+typedef struct marfs_dataclient_struct {
+   char*      idstr;         // ID of a cache in the global cache list
+   char*      ctag;          // regex used to match a client tag
+} marfs_dc;
+
 typedef struct marfs_namespace_struct {
    char*       idstr;        // unique (per-repo) ID of this namespace
    size_t      fquota;       // file quota of the namespace ( zero if no limit )
@@ -106,10 +116,12 @@ typedef struct marfs_datascheme_struct {
    HASH_TABLE podtable;      // hash table for object POD postion
    HASH_TABLE captable;      // hash table for object CAP position
    HASH_TABLE scattertable;  // hash table for object SCATTER position
+   int        clientcnt;     // number of data client definitions
+   marfs_dc*  clientlist;    // list of client definitions
 } marfs_ds;
 
 
-typedef struct marfs_metadatascheme_struct {
+typedef struct marfs__struct {
    MDAL       mdal;          // MDAL reference for metadata access
    char       directread;    // flag indicating support for data read from metadata files
    int        refbreadth;    // breadth of reference trees
@@ -131,12 +143,14 @@ typedef struct marfs_repo_struct {
 
 
 typedef struct marfs_config_struct {
-   char*       version;
-   char*       mountpoint;
-   char*       ctag;
-   marfs_ns*   rootns;
-   int         repocount;
-   marfs_repo* repolist;
+   char*        version;
+   char*        mountpoint;
+   char*        ctag;
+   marfs_ns*    rootns;
+   int          cachecount;
+   marfs_cache* cachelist;
+   int          repocount;
+   marfs_repo*  repolist;
 } marfs_config;
 
 typedef struct marfs_position_struct {
@@ -273,14 +287,6 @@ int config_traverse( marfs_config* config, marfs_position* pos, char** subpath, 
  *               -1 on failure.
  */
 int config_nsinfo( const char* nsidstr, char** repo, char** path );
-
-/**
- * Scan through the list of repos, searching for one with the given name
- * NOTE -- used to identify the targets of remote namespace references
- *
- * This was orignially a internal/private function. Maybe it should be renamed? -cds 2/2025
- */
-marfs_repo* find_repo( marfs_repo* repolist, int repocount, const char* reponame );
 
 #endif // _CONFIG_H
 

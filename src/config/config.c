@@ -1144,6 +1144,20 @@ int parse_quotas( size_t* fquota, size_t* dquota, xmlNode* quotaroot ) {
 }
 
 /**
+ * Free the given client structure
+ * @param marfs_dc* client : Reference to the client to be freed
+ * @return int : always Zero.
+ */
+int free_client( marfs_dc* client ) {
+
+   // free strings associated with the data client structure
+   free( client->idstr );
+   free( client->ctag );
+
+   return 0;
+}
+
+/**
  * Free a namespace and other references of the given hash node
  * @param HASH_NODE* nsnode : Reference to the namespace hash node to be freed
  * @return int : Zero on success, or -1 on failure
@@ -1874,10 +1888,94 @@ int free_repo( marfs_repo* repo ) {
          free( nodelist );
       }
    }
+   int dcindex;
+   for ( dcindex = 0; dcindex < repo->datascheme.clientcnt; dcindex++ ) {
+      // free all the client structures - no need to check for errors....
+      free_client( repo->datascheme.clientlist + dcindex );
+   }
+   if ( repo->datascheme.clientlist ) { free( repo->datascheme.clientlist ); }
+
 
    free( repo->name );
 
    return retval;
+}
+
+/**
+ * Free the given cache structure
+ * @param marfs_cache* cache : Reference to the cache to be freed
+ * @return int : Zero on success, or -1 on failure
+ */
+int free_cache( marfs_cache* cache ) {
+   // note any errors
+   int retval = 0;
+
+   // free metadata scheme components
+   if ( cache->mdal ) {
+      if ( cache->mdal->cleanup( cache->mdal ) ) {
+         LOG( LOG_WARNING, "failed to terminate MDAL of \"%s\" cache\n", cache->idstr );
+         retval = -1;
+      }
+   }
+   free( cache->idstr );
+
+   return retval;
+}
+
+/**
+ * Parse the given client xml node and populate the given marfs_dc reference
+ * @param marfs_dc* client : Reference to the marfs_dc to be populated
+ * @param xmlNode* clientroot : Xml node to be parsed
+ * @return int : Zero on success, or -1 on failure
+ */
+int parse_client( marfs_dc* client, xmlNode* clientroot ) {
+   xmlAttr* attr = clientroot->properties;
+
+   // Prep the dataclient structure for parsing ...
+   client->idstr = NULL;
+   client->ctag = NULL;
+
+   // check for the attributes of a client tag
+   for ( ; attr; attr = attr->next ) {
+      if ( strncmp( (char*)attr->name, "id", 2 ) == 0 ) {
+         if ( attr->type == XML_ATTRIBUTE_NODE ) {
+            if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+               if ( client->idstr ) {
+                  LOG( LOG_ERR, "detected a repeated 'id' attribute for client \"%s\"\n", client->idstr );
+                  return -1;
+               }
+               client->idstr = strdup( (char*)attr->children->content );
+            }
+         }
+      }
+      else if ( strncmp( (char*)attr->name, "ctag", 4 ) == 0 ) {
+         if ( attr->type == XML_ATTRIBUTE_NODE ) {
+            if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+               if ( client->ctag ) {
+                  LOG( LOG_ERR, "detected a repeated 'ctag' attribute for client \"%s\"\n", client->idstr );
+                  return -1;
+               }
+               client->ctag = strdup( (char*)attr->children->content );
+            }
+         }
+      }
+      else {
+         LOG( LOG_ERR, "encountered an unrecognized attribute of a 'client' node: \"%s\"\n", (char*)attr->name );
+         return -1;
+      }
+   }
+   // verify that we did find a cache map id
+   if ( !(client->idstr) ) {
+      LOG( LOG_ERR, "failed to identify cache map value for client\n" );
+      return -1;
+   }
+   // verify that we did find a ctag REGX
+   if ( !(client->ctag) ) {
+      LOG( LOG_ERR, "failed to identify CTAG regular expression value for client \"%s\"\n", client->idstr );
+      return -1;
+   }
+
+   return 0;
 }
 
 /**
@@ -2089,6 +2187,27 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot, pthread_mutex_t* erasurel
             }
          }
       }
+      else if ( strncmp( (char*)dataroot->name, "client_caching", 14 ) == 0 ) {
+         // count up the number of repo nodes
+         int clientcnt = count_nodes( dataroot->children, "client" );
+
+         ds->clientlist = (clientcnt)?malloc( sizeof( struct marfs_dataclient_struct ) * clientcnt ):NULL;
+	 if ( !ds->clientlist ) {
+            LOG( LOG_ERR, "\"%s\" tag was specified for this datascheme, but no clients specified\n", (char*)dataroot->name );
+            return -1;	    
+         }		 
+         for ( ; subnode; subnode = subnode->next ) {
+            if ( strcmp( (char*)(subnode->name), "client" ) == 0 ) {
+               if ( parse_client( ds->clientlist + ds->clientcnt, subnode ) ) {
+                  LOG( LOG_ERR, "failed to parse client %d\n", ds->clientcnt );
+                  return -1;
+               }	 
+	       LOG( LOG_INFO, "adding a client description \"%s\" using cache map \"%s\" to datascheme\n", 
+			       (ds->clientlist + ds->clientcnt)->ctag, (ds->clientlist + ds->clientcnt)->idstr);
+               ds->clientcnt++;
+            }		 
+         }	      
+      }	      
       else {
          LOG( LOG_ERR, "encountered unexpected 'data' sub-node: \"%s\"\n", (char*)dataroot->name );
          return -1;
@@ -2383,6 +2502,8 @@ int create_repo( marfs_repo* repo, xmlNode* reporoot, pthread_mutex_t* erasurelo
    repo->datascheme.podtable = NULL;
    repo->datascheme.captable = NULL;
    repo->datascheme.scattertable = NULL;
+   repo->datascheme.clientcnt = 0;
+   repo->datascheme.clientlist = NULL;
    repo->metascheme.mdal = NULL;
    repo->metascheme.directread = 0;
    repo->metascheme.refbreadth = 0;
@@ -2423,6 +2544,68 @@ int create_repo( marfs_repo* repo, xmlNode* reporoot, pthread_mutex_t* erasurelo
    if ( repo->datascheme.nectxt == NULL  ||  repo->metascheme.mdal == NULL ) {
       LOG( LOG_ERR, "\"%s\" repo is missing required data/meta definitions\n", repo->name );
       free_repo( repo );
+      return -1;
+   }
+
+   return 0;
+}
+
+/**
+ * Parse the given cache xml node and populate the given marfs_cache reference
+ * @param marfs_cache* cache : Reference to the marfs_cache to be populated
+ * @param xmlNode* cacheroot : Xml node to be parsed
+ * @param pthread_mutex_t* erasurelock : Reference to the libne erasure synchronization lock
+ * @return int : Zero on success, or -1 on failure
+ */
+int create_cache( marfs_cache* cache, xmlNode* cacheroot, pthread_mutex_t* erasurelock ) {
+   xmlNode* mdalnode = NULL;
+   xmlAttr* attr = cacheroot->properties;
+
+   // check for a idstr attribute
+   for ( ; attr; attr = attr->next ) {
+      if ( strncmp( (char*)attr->name, "id", 2 ) == 0 ) {
+         if ( attr->type == XML_ATTRIBUTE_NODE ) {
+            if ( attr->children->type == XML_TEXT_NODE  &&  attr->children->content != NULL ) {
+               if ( cache->idstr ) {
+                  LOG( LOG_ERR, "detected a repeated 'id' attribute for cache \"%s\"\n", cache->idstr );
+                  return -1;
+               }
+               cache->idstr = strdup( (char*)attr->children->content );
+            }
+         }
+      }
+      else {
+         LOG( LOG_ERR, "encountered an unrecognized attribute of a 'cache' node: \"%s\"\n", (char*)attr->name );
+         return -1;
+      }
+   }
+   // verify that we did find a name value
+   if ( !(cache->idstr) ) {
+      LOG( LOG_ERR, "failed to identify name value for cache\n" );
+      return -1;
+   }
+
+   // Now look for the MDAL assocated with the cache. There should only be one.
+   for ( ; cacheroot; cacheroot = cacheroot->next ) {
+      // first, check for an MDAL definition
+      if ( strncmp( (char*)cacheroot->name, "MDAL", 5 ) == 0 ) {
+         if ( mdalnode ) {
+            LOG( LOG_ERR, "detected duplicate MDAL definition for a 'cache' node\n" );
+            return -1;
+         }
+         mdalnode = cacheroot; // save our MDAL node reference for later
+         continue;
+      }
+   }   
+
+   // ensure we found an MDAL def
+   if ( !(mdalnode) ) {
+      LOG( LOG_ERR, "failed to locate MDAL definition for a 'cache' node\n" );
+      return -1;
+   }
+   // initialize the MDAL
+   if ( (cache->mdal = init_mdal( mdalnode )) == NULL ) {
+      LOG( LOG_ERR, "failed to initialize MDAL for a 'cache' node\n" );
       return -1;
    }
 
@@ -2763,6 +2946,18 @@ marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock ) {
       return NULL;
    }
 
+   // see if this config has a cache map (and therefore caches)
+   int cachecnt = 0;
+   xmlNode* cachetxt = root_element->children;
+   for ( ; cachetxt != NULL; cachetxt = cachetxt->next ) {
+      if ( strcmp( (char*)(cachetxt->name), "global_cache_map" ) == 0 ) {
+         // we've found the mnt_top node, and need its content
+         cachetxt = cachetxt->children;
+         break;
+      }
+   }
+   if ( cachetxt != NULL) { cachecnt = count_nodes( cachetxt->children, "cache" ); }
+
    // count up the number of repo nodes
    int repocnt = count_nodes( root_element->children, "repo" );
    if ( repocnt < 1 ) {
@@ -2785,6 +2980,7 @@ marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock ) {
    config->version = strdup( (char*)(vertxt->content) );
    config->mountpoint = strdup( (char*)(mnttxt->content) );
    config->ctag = strdup( "UNKNOWN" ); // default to unknown client
+   config->cachelist = (cachecnt)?malloc( sizeof( struct marfs_cache_struct ) * cachecnt ):NULL;
    config->repolist = malloc( sizeof( struct marfs_repo_struct ) * repocnt );
    if ( config->version == NULL  ||  config->mountpoint == NULL  ||  config->ctag == NULL  ||  config->repolist == NULL ) {
       LOG( LOG_ERR, "Failed to allocate required config values\n" );
@@ -2792,6 +2988,7 @@ marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock ) {
       if ( config->mountpoint ) { free( config->mountpoint ); }
       if ( config->ctag ) { free( config->ctag ); }
       if ( config->repolist ) { free( config->repolist ); }
+      if ( config->cachelist ) { free( config->cachelist ); }
       free( config );
       xmlFreeDoc(doc);
       xmlCleanupParser();
@@ -2800,6 +2997,26 @@ marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock ) {
 
    // populate some initial config vals
    config->rootns = NULL;
+
+   // allocate and populate any cache maps
+   if (config->cachelist) {
+      xmlNode* cachenode = cachetxt->children;	   
+      for ( config->cachecount = 0; cachenode; cachenode = cachenode->next ) {
+         if ( strcmp( (char*)(cachenode->name), "cache" ) == 0 ) {
+            // NULL out the cache's name value, to indicate an initial parse
+	    ( config->cachelist + config->cachecount )->idstr = NULL;
+            if ( create_cache( config->cachelist + config->cachecount, cachenode, erasurelock ) ) {
+               LOG( LOG_ERR, "Failed to parse cache %d\n", config->cachecount );
+               config_term( config );
+               xmlFreeDoc(doc);
+               xmlCleanupParser();
+               return NULL;
+            }	 
+            config->cachecount++;
+            if ( config->cachecount == cachecnt ) { break; }		 
+         }		 
+      }	      
+   }
 
    // allocate and populate all repos
    xmlNode* reponode = root_element->children;
@@ -2849,8 +3066,21 @@ int config_term( marfs_config* config ) {
       LOG( LOG_ERR, "Received a NULL config reference\n" );
       return -1;
    }
-   // free all repos
+
    int retval = 0;
+
+   // free any caches
+   if ( config->cachelist ) {
+      for ( ; config->cachecount > 0; config->cachecount-- ) {
+         if ( free_cache( config->cachelist + (config->cachecount - 1) ) ) {
+            LOG( LOG_ERR, "Failed to free cache %d\n", config->cachecount - 1 );
+            retval = -1;
+         }
+      }
+      free( config->cachelist );
+   }
+
+   // free all repos
    for ( ; config->repocount > 0; config->repocount-- ) {
       if ( free_repo( config->repolist + (config->repocount - 1) ) ) {
          LOG( LOG_ERR, "Failed to free repo %d\n", config->repocount - 1 );
