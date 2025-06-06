@@ -191,6 +191,14 @@ int config_term( marfs_config* config );
 marfs_ns* config_duplicatensref( marfs_ns* ns );
 
 /**
+ * Returns the MDAL of the global cache map specified by the given mapid
+ * @param marfs_config* config : Reference to the config to be used
+ * @param char *mapid : Map ID string of the desired MDAL
+ * @return MDAL : valid pointer to an MDAL on success. NULL if not found
+ */
+MDAL config_getcachemdal( marfs_config* config, char* mapid );
+
+/**
  * Potentially free the given NS ( only if it is an allocated ghostNS )
  * @param marfs_ns* ns : Namespace to be freed
  */

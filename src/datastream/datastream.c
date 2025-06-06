@@ -708,6 +708,119 @@ int open_existing_file(DATASTREAM stream, const char* path, char rpathflag, MDAL
 }
 
 /**
+ * Opens the data file of a cached file, based on the flags given, and populates a DATACACHE structure
+ * with the handle and MDAL to access it.
+ * @param DATASTREAM stream : Current DATASTREAM
+ * @param const char* path : Path of the file to be opened
+ * @param char rpathflag : If zero, treat 'path' as a user path
+ *                         If non-zero AND stream is a READ_STREAM, treat 'path' as a reference path
+ *                         NOTE -- ALL datastream_*() functions should use USER PATHS ONLY
+ *                                 This flag is intended to provide options to specific
+ *                                 administrator programs ( see streamwalker.c, for example )
+ * @param DATACACHE* cache : Cache structure to populate to provide data
+ * @param MDAL_CTXT ctxt : Current MDAL_CTXT
+ * @return int : Zero on success;
+ *               or -1 on failure
+ */
+int open_cache(DATASTREAM stream, const char* path, char rpathflag, DATACACHE* cache, MDAL_CTXT ctxt) {
+   // Retrieve cache file info from the MARFS-CACHE tag, and the config structure
+   MDAL curmdal = stream->ns->prepo->metascheme.mdal;
+   STREAMFILE* curfile = stream->files + stream->curfile;
+   int openmeta = (curfile->metahandle == NULL);                 // flag to indicate we need to close the metahandle
+
+   if (openmeta) {
+      if (rpathflag) {
+         LOG(LOG_INFO, "Opening to access CATAG BY REFERENCE PATH: \"%s\"\n", path);
+         curfile->metahandle = curmdal->openref(ctxt, path, O_RDONLY, 0);
+      }
+      else {
+         curfile->metahandle = curmdal->open(ctxt, path, O_RDONLY);
+      }
+      if (curfile->metahandle == NULL) {
+         LOG(LOG_ERR, "Failed to open metahandle for CATAG target file: \"%s\"\n", path);
+         return -1;
+      }
+   }
+
+   // Now get CATAG xattr
+   CATAG tgtcatag;
+   ssize_t tgtcatagstrlen = curmdal->fgetxattr( curfile->metahandle, 1, CATAG_NAME, NULL, 0 );
+   if ( tgtcatagstrlen < 0 ) {
+      if (openmeta) { curmdal->close( curfile->metahandle ); curfile->metahandle = NULL; }	 
+      if ( errno != ENODATA ) {
+         LOG( LOG_ERR, "Failed to retrieve \"%s\" value from cached data file \"%s\"\n", CATAG_NAME, path );
+         curmdal->close( curfile->metahandle );
+         return -1;
+      }
+      LOG( LOG_ERR, "Cached data file \"%s\" with no attached \"%s\" value\n", path, CATAG_NAME );
+      return -1; 
+   }
+   char* tgtcatagstr = malloc( sizeof(char) * (tgtcatagstrlen + 21) ); // leave extra space ( so we can maybe reuse )
+   if ( tgtcatagstr == NULL ) {
+      if (openmeta) { curmdal->close( curfile->metahandle ); curfile->metahandle = NULL; }	 
+      LOG( LOG_ERR, "Failed to allocate tgtcatagstr of size %zd\n", tgtcatagstrlen + 1 );
+      return -1;
+   }
+   if ( curmdal->fgetxattr( curfile->metahandle, 1, CATAG_NAME, tgtcatagstr, tgtcatagstrlen ) != tgtcatagstrlen ) {
+      if (openmeta) { curmdal->close( curfile->metahandle ); curfile->metahandle = NULL; }	 
+      free( tgtcatagstr );
+      LOG( LOG_ERR, "\"%s\" value of \"%s\" has inconsistent length\n", CATAG_NAME, path );
+      return -1;
+   }
+   *(tgtcatagstr + tgtcatagstrlen) = '\0'; // ensure a NULL-terminated string
+   if ( catag_initstr( &(tgtcatag), tgtcatagstr ) ) {
+      if (openmeta) { curmdal->close( curfile->metahandle ); curfile->metahandle = NULL; }	 
+      free( tgtcatagstr );
+      LOG( LOG_ERR, "Failed to parse \"%s\" value of cached data file \"%s\"\n", CATAG_NAME, path );
+      errno = ENOSTR; // cheeky error code to indicate invalid datastream
+      return -1;
+   }
+
+/***   - NEED to figure out how to get a global marfs_config pointer to this logic! - cds 6 Jun 2025 
+   // populate DATACACHE, based on CATAG value
+   marfs_config* config = stream->ns;
+
+   *cache = (DATACACHE)malloc(sizeof(struct datacache_struct));
+   if (*cache == NULL) {
+      catag_clear(&tgtcatag);     
+      if (openmeta) { curmdal->close( curfile->metahandle ); curfile->metahandle = NULL; }	 
+      LOG(LOG_ERR, "Failed to allocate datahandle for cached file: \"%s\"\n", path);
+      return -1;
+   }	   
+   (*cache)->mdal = config_getcachemdal( config, tgtcatag.cacheid );
+   if (!(*cache)->mdal) {
+      free(*cache);                                         // this is good enough. MDAL is null at this point
+      *cache = NULL:
+      catag_clear(&tgtcatag);     
+      if (openmeta) { curmdal->close( curfile->metahandle ); curfile->metahandle = NULL; }	 
+      LOG(LOG_ERR, "Failed to find cach map \"%s\" for cached file: \"%s\"\n", tgtcatag.cacheid, path);
+      return -1;
+   }	   	   
+
+   // open a handle for the cache file, based on the type of stream
+   if (stream->type == READ_STREAM) {
+      (*cache)->datahandle = (*cache)->mdal->open(ctxt, tgtcatag.cacheloc, O_RDONLY);
+   }
+   else {
+      curfile->metahandle = (*cache)->mdal->open(ctxt, tgtcatag.cacheloc, O_WRONLY);
+   }
+   if ( (*cache)->datahandle == NULL) {
+      free(*cache);                                         // this is good enough. MDAL is point at a constant memory location in config
+      *cache = NULL:
+      catag_clear(&tgtcatag);     
+      LOG(LOG_ERR, "Failed to open datahandle for cached file: \"%s\" (loc: %s)\n", path, tgtcatag.cacheloc);
+      return -1;
+   }
+*/
+   if (openmeta) {					  // if we open it, we close it
+      curmdal->close(curfile->metahandle);
+      curfile->metahandle = NULL;
+   }	   
+   catag_clear(&tgtcatag);                               // we are done with the CATAG
+   return 0;
+}
+
+/**
  * Prep the specified file for repack at the current ( 'curfile' ) STREAMFILE reference position
  * @param DATASTREAM stream : Current DATASTREAM
  * @param const char* path : Reference path of the file to be opened
@@ -2512,7 +2625,13 @@ int datastream_open(DATASTREAM* stream, STREAM_TYPE type, const char* path, marf
             }
             return -1;
          }
+         
          STREAMFILE* newfile = newstream->files + newstream->curfile;
+	 // Test to see if data for new file is in a data cache
+	 if (newfile->ftag.state & FTAG_CACHED) {
+	    // populate the DATACACHE structure. open_cache() opens the cache file
+            // put call to open_cache() HERE! - cds 6 Jun 2025
+         }
          // check if our old stream targets the same object
          if (strcmp(curfile->ftag.streamid, newfile->ftag.streamid) ||
             strcmp(curfile->ftag.ctag, newfile->ftag.ctag) ||
@@ -2535,6 +2654,7 @@ int datastream_open(DATASTREAM* stream, STREAM_TYPE type, const char* path, marf
                return -1;
             }
          }
+	 // seeking to the location of the file data in the open object
          else if ( newstream->datahandle ) {
             LOG(LOG_INFO, "Seeking to %zu of existing object handle\n",
                newfile->ftag.offset);

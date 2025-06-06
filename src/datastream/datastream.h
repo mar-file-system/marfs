@@ -101,6 +101,12 @@ typedef struct datastream_struct {
    size_t      finfostrlen;
 }*DATASTREAM;
 
+// Structure to provide access to cached file data. Essentially a cache file handle
+typedef struct datacache_struct {
+   MDAL_FHANDLE    datahandle;
+   MDAL            mdal;
+}*DATACACHE;	
+
 /**
  * Calculates the final data object number referenced by the given FTAG of a MarFS file
  * @param const FTAG* ftag : FTAG value associated with the target file

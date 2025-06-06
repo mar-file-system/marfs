@@ -3175,6 +3175,34 @@ void config_destroynsref( marfs_ns* ns ) {
 }
 
 /**
+ * Returns the MDAL of the global cache map specified by the given mapid
+ * @param marfs_config* config : Reference to the config to be used
+ * @param char *mapid : Map ID string of the desired MDAL
+ * @return MDAL : valid pointer to an MDAL on success. NULL if not found
+ */
+MDAL config_getcachemdal( marfs_config* config, char* mapid ) {
+   if ( mapid == NULL) {
+      LOG( LOG_ERR, "Received a NULL map id arg\n" );
+      errno = EINVAL;
+      return NULL;
+   }	   
+   if ( config == NULL ) {
+      LOG( LOG_ERR, "Received a NULL config arg\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+
+   int len = strlen(mapid);
+
+   for (int i=0; i<config->cachecount; i++) {
+      if (!strncmp(config->cachelist[i].idstr,mapid,len))
+         return config->cachelist[i].mdal;  
+   }
+
+   return NULL;   
+}	
+
+/**
  * Create a fresh marfs_position struct, targeting the MarFS root
  * @param marfs_position* pos : Reference to the position to be initialized,
  * @param marfs_config* config : Reference to the config to be used

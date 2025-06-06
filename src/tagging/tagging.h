@@ -120,16 +120,6 @@ typedef struct ftag_struct {
 int ftag_initstr( FTAG* ftag, char* ftagstr );
 
 /**
- * Populates or initializes the given FTAG with the stream ID and object number of the 
- * object ID. The file number is set to 0. In some sense, this is the reverse of 
- * ftag_datatgt(), though it is only a partial initialization.
- * @param FTAG* ftag : Reference to the ftag struct to populate
- * @param char* objstr : Object ID used to pull values from
- * @return int : Zero on success, or -1 if a failure occurred
- */
-int ftag_objstr( FTAG* ftag, char* objstr);
-
-/**
  * Populate the given string buffer with the encoded values of the given ftag struct
  * @param const FTAG* ftag : Reference to the ftag struct to encode values from
  * @param char* tgtstr : String buffer to be populated with encoded info
@@ -221,27 +211,6 @@ ssize_t ftag_metainfo( const char* fileid, char* entrytype );
  */
 size_t ftag_datatgt( const FTAG* ftag, char* tgtstr, size_t len );
 
-/**
- * Parses a given object ID string, and populates the given string buffer with the
- * namespace associated with the object ID in a path format (i.e. /namespace).
- * @param const char *objid : String containing the object ID
- * @param char* tgtstr : String buffer to be populated with the namespace path
- * @param size_t len : Byte length of the target buffer
- * @return size_t : Length of the produced string ( excluding NULL-terminator ), or zero if
- *                  an error occurred.
- *                  NOTE -- if this value is >= the length of the provided buffer, this
- *                  indicates that insufficint buffer space was provided and the resulting
- *                  output string was truncated.
- */
-size_t ftag_nspath( const char* objid, char* tgtstr, size_t len );
-
-/**
- * Free allocated memory for internal ctag and streamid fields within an ftag.
- * NOTE: this function does not free the ftag itself since this function cannot
- * make assumptions about whether an ftag is heap-allocated or on the stack.
- * @param FTAG* ftag: the ftag whose ctag and streamid fields will be freed.
- */
-void ftag_cleanup(FTAG* ftag);
 
 // MARFS REBUILD TAG  --  attached to rebuild marker files, providing rebuild info
 
@@ -396,6 +365,12 @@ int catag_initstr( CATAG* catag, char* catagstr );
  */
 size_t catag_tostr( CATAG* catag, char* tgtstr, size_t len );
 
+/**
+ * Deallocate the fields of a CATAG structure. Does NOT
+ * deallocate the structure itself
+ * @param CATAG* catag : the structure to clear
+ */
+void catag_clear(CATAG* catag);
 
 #endif // _TAGGING_H
 
