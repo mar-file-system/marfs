@@ -136,11 +136,7 @@ static int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
    free(outlogpath);
 
    // update our repack streamer
-   if ((rman->gstate.rpst = repackstreamer_init()) == NULL) {
-      LOG(LOG_ERR, "Failed to initialize repack streamer\n");
-      snprintf(response->errorstr, MAX_ERROR_BUFFER, "Failed to initialize repack streamer");
-      goto rman_error;
-   }
+   rman->gstate.rpst = repackstreamer_init();
 
    // kick off our worker threads
    TQ_Init_Opts tqopts = {
@@ -947,17 +943,6 @@ int handleresponse(rmanstate* rman, size_t ranknum, workresponse* response, work
       rman->fatalerror = 1; // set our fatal error condition, so we signal future workers to terminate
       rman->terminatedworkers[ranknum] = 1;
       return 0;
-   }
-
-   if (rman->fatalerror && (response->request.type != ABORT_WORK)) {
-       // if we are in an error state, all ranks should be signaled to abort
-       LOG(LOG_INFO, "Signaling Rank %zu to Abort\n", ranknum);
-       request->type = ABORT_WORK;
-       request->nsindex = 0;
-       request->refdist = 0;
-       request->iteration[0] = '\0';
-       request->ranknum = 0;
-       return 1;
    }
 
    int rc = 0;

@@ -194,7 +194,7 @@ static opinfo* process_rebuildmarker(marfs_position* pos, char* markerpath, time
          return NULL;
       }
 
-      *(rtagstr + rtaglen) = '\0'; // ensure a NULL-terminated value
+      rtagstr[rtaglen] = '\0'; // ensure a NULL-terminated value
 
       // allocate an RTAG entry
       rinfo->rtag = calloc(1, sizeof(RTAG));

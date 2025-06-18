@@ -62,33 +62,36 @@ AM_LDFLAGS  =
 
 CC = mpicc
 
-lib_LTLIBRARIES = libResourceLog.la
+lib_LTLIBRARIES = libResourceLog.la libResourceCore.la
 
+# Standalone Resource Log library
 libResourceLog_la_SOURCES = resourcelog.c logline.c
-libResourceLog_la_LIBADD = ../config/libConfig.la ../tagging/libTagging.la ../thread_queue/libTQ.la ../ne/libne.la
+libResourceLog_la_LIBADD = ../config/libConfig.la ../tagging/libTagging.la ../thread_queue/libTQ.la ../ne/libne.la ../logging/liblogging.la
 libResourceLog_la_CFLAGS = $(XML_CFLAGS)
-RSRC_LOG_LIB = libResourceLog.la
+
+# Combination of all code required for Resource Manager other than entry point
+libResourceCore_la_SOURCES = \
+    findoldlogs.c            \
+    manager.c                \
+    outputinfo.c             \
+    parse_program_args.c     \
+    repack.c                 \
+    resourceinput.c          \
+    resourcemanager.c        \
+    resourceprocessing.c     \
+    resourcethreads.c        \
+    rmanstate.c              \
+    streamwalker.c           \
+    summary_log_setup.c      \
+    work.c                   \
+    worker.c
+libResourceCore_la_LIBADD = libResourceLog.la
+libResourceCore_la_CFLAGS = $(XML_CFLAGS)
 
 bin_PROGRAMS = marfs-rman
-marfs_rman_SOURCES =        \
-    find_namespaces.c       \
-    findoldlogs.c           \
-    manager.c               \
-    output_program_args.c   \
-    outputinfo.c            \
-    parse_program_args.c    \
-    read_last_log.c         \
-    repack.c                \
-    resourceinput.c         \
-    resourcemanager.c       \
-    resourceprocessing.c    \
-    resourcethreads.c       \
-    rmanstate.c             \
-    streamwalker.c          \
-    summary_log_setup.c     \
-    work.c                  \
-    worker.c
-marfs_rman_LDADD = libResourceLog.la ../datastream/libDatastream.la
+marfs_rman_SOURCES =         \
+    resourcemanager.c
+marfs_rman_LDADD = libResourceCore.la ../datastream/libDatastream.la
 marfs_rman_CFLAGS = $(XML_CFLAGS)
 
 # ---
@@ -96,15 +99,15 @@ marfs_rman_CFLAGS = $(XML_CFLAGS)
 check_PROGRAMS = test_resourcelog test_resourceprocessing test_resourcethreads
 
 test_resourcelog_SOURCES = testing/test_resourcelog.c
-test_resourcelog_LDADD = libResourceLog.la ../logging/liblogging.la
+test_resourcelog_LDADD = libResourceLog.la
 test_resourcelog_CFLAGS = $(XML_CFLAGS)
 
 test_resourceprocessing_SOURCES = testing/test_resourceprocessing.c repack.c streamwalker.c
-test_resourceprocessing_LDADD = libResourceLog.la ../datastream/libDatastream.la ../logging/liblogging.la
+test_resourceprocessing_LDADD = libResourceLog.la ../datastream/libDatastream.la
 test_resourceprocessing_CFLAGS = $(XML_CFLAGS)
 
 test_resourcethreads_SOURCES = testing/test_resourcethreads.c repack.c resourceinput.c resourceprocessing.c streamwalker.c
-test_resourcethreads_LDADD = libResourceLog.la ../datastream/libDatastream.la ../logging/liblogging.la
+test_resourcethreads_LDADD = libResourceLog.la ../datastream/libDatastream.la
 test_resourcethreads_CFLAGS = $(XML_CFLAGS)
 
 TESTS = test_resourcelog test_resourceprocessing test_resourcethreads

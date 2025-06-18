@@ -74,6 +74,8 @@ size_t dirlistpos = 0;
 char** dirlist = NULL;
 
 int ftwnotedir(const char* fpath, const struct stat* sb, int typeflag) {
+   (void) sb;
+
    if (typeflag != FTW_D) {
       printf("Encountered non-directory during tree deletion: \"%s\"\n", fpath);
       return -1;
@@ -115,7 +117,7 @@ int deletesubdirs(const char* basepath) {
    return retval;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
    // get a start of run time
    struct timeval starttime;
@@ -175,12 +177,12 @@ int main(int argc, char **argv)
    }
 
    // establish a data buffer to hold all data content
-   void* databuf = malloc(1024 * 1024 * 10 * sizeof(char)); // 10MiB
+   const size_t databuf_size = 1024 * 1024 * 10; // 10MiB
+   char* databuf = malloc(databuf_size * sizeof(char));
 
-   int tmpcnt = 0;
-   for (; tmpcnt < (1024 * 1024 * 10); tmpcnt++) {
+   for (size_t tmpcnt = 0; tmpcnt < databuf_size; tmpcnt++) {
       // populate databuf
-      *((char*)databuf + tmpcnt) = (char)tmpcnt;
+      databuf[tmpcnt] = (char)tmpcnt;
    }
 
    char readarray[1048576] = {0}; // all zero 1MiB buffer
@@ -209,9 +211,8 @@ int main(int argc, char **argv)
    size_t streamcount = (rand() % 10) + 3;
 
    // create each stream in a new subdir
-   int streamnum = 0;
-   for (; streamnum < streamcount; streamnum++) {
-      const int printres = snprintf(filepath, 1024, "stream%.2d", streamnum);
+   for (size_t streamnum = 0; streamnum < streamcount; streamnum++) {
+      const int printres = snprintf(filepath, 1024, "stream%.2zu", streamnum);
 
       if (curmdal->mkdir(pos.ctxt, filepath, 0770)) {
          printf("failed to mkdir \"%s\"\n", filepath);
@@ -221,10 +222,9 @@ int main(int argc, char **argv)
       // create all files for the stream
       DATASTREAM stream = NULL;
       DATASTREAM editstream = NULL;
-      int filenum = 0;
       size_t filecount = (rand() % 10) + 1;
-      for (; filenum < filecount; filenum++) {
-         snprintf(filepath + printres, 1024 - printres, "/file-%.2d", filenum);
+      for (size_t filenum = 0; filenum < filecount; filenum++) {
+         snprintf(filepath + printres, 1024 - printres, "/file-%.2zu", filenum);
          if (datastream_create(&stream, filepath, &pos, 0744, "Thread-Client-1")) {
             printf("failed to create marfs file \"%s\"\n", filepath);
             goto free_databuf;
@@ -253,7 +253,7 @@ int main(int argc, char **argv)
                goto free_databuf;
             }
 
-            if (datastream_write(&editstream, databuf, filebytes) != filebytes) {
+            if (datastream_write(&editstream, databuf, filebytes) != (ssize_t) filebytes) {
                printf("failed to write %zu bytes to extended file \"%s\"\n", filebytes, filepath);
                goto free_databuf;
             }
@@ -264,7 +264,7 @@ int main(int argc, char **argv)
             }
          }
          else {
-            if (datastream_write(&stream, databuf, filebytes) != filebytes) {
+            if (datastream_write(&stream, databuf, filebytes) != (ssize_t) filebytes) {
                printf("failed to write %zu bytes to file \"%s\"\n", filebytes, filepath);
                goto free_databuf;
             }
@@ -286,8 +286,8 @@ int main(int argc, char **argv)
    // read back all written files, and perform random deletions
    size_t delfiles = 0;
    size_t delbytes = 0;
-   for (streamnum = 0; streamnum < streamcount; streamnum++) {
-      const int printres = snprintf(filepath, 1024, "stream%.2d", streamnum);
+   for (size_t streamnum = 0; streamnum < streamcount; streamnum++) {
+      const int printres = snprintf(filepath, 1024, "stream%.2zu", streamnum);
 
       MDAL_DHANDLE dir = curmdal->opendir(pos.ctxt, filepath);
       if (dir == NULL) {
@@ -336,7 +336,7 @@ int main(int argc, char **argv)
       }
 
       if (errno) {
-         *(filepath + printres) = '\0';
+         filepath[printres] = '\0';
          printf("failed readdir for \"%s\"\n", filepath);
          goto free_databuf;
       }
@@ -572,8 +572,8 @@ int main(int argc, char **argv)
    size_t gcfiles = report.delfiles;
 
    // re-read all files, and delete more
-   for (streamnum = 0; streamnum < streamcount; streamnum++) {
-      const int printres = snprintf(filepath, 1024, "stream%.2d", streamnum);
+   for (size_t streamnum = 0; streamnum < streamcount; streamnum++) {
+      const int printres = snprintf(filepath, 1024, "stream%.2zu", streamnum);
 
       MDAL_DHANDLE dir = curmdal->opendir(pos.ctxt, filepath);
       if (dir == NULL) {
@@ -622,7 +622,7 @@ int main(int argc, char **argv)
       }
 
       if (errno) {
-         *(filepath + printres) = '\0';
+         filepath[printres] = '\0';
          printf("failed readdir for \"%s\"\n", filepath);
          goto free_databuf;
       }
@@ -841,8 +841,8 @@ int main(int argc, char **argv)
    gcfiles += report.delfiles;
 
    // re-read and delete all remaining files
-   for (streamnum = 0; streamnum < streamcount; streamnum++) {
-      const int printres = snprintf(filepath, 1024, "stream%.2d", streamnum);
+   for (size_t streamnum = 0; streamnum < streamcount; streamnum++) {
+      const int printres = snprintf(filepath, 1024, "stream%.2zu", streamnum);
 
       MDAL_DHANDLE dir = curmdal->opendir(pos.ctxt, filepath);
       if (dir == NULL) {
@@ -889,7 +889,7 @@ int main(int argc, char **argv)
       }
 
       if (errno) {
-         *(filepath + printres) = '\0';
+         filepath[printres] = '\0';
          printf("failed readdir for \"%s\"\n", filepath);
          goto free_databuf;
       }
@@ -905,7 +905,7 @@ int main(int argc, char **argv)
       curmdal->closedir(dir);
 
       // should be safe to remove the parent dir as well
-      snprintf(filepath, 1024, "stream%.2d", streamnum);
+      snprintf(filepath, 1024, "stream%.2zu", streamnum);
       if (curmdal->rmdir(pos.ctxt, filepath)) {
          printf("failed to rmdir \"%s\"\n", filepath);
          goto free_databuf;
