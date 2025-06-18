@@ -89,6 +89,7 @@ libResourceCore_la_LIBADD = libResourceLog.la
 libResourceCore_la_CFLAGS = $(XML_CFLAGS)
 
 bin_PROGRAMS = marfs-rman quota
+
 marfs_rman_SOURCES =         \
     resourcemanager.c
 marfs_rman_LDADD = libResourceCore.la ../datastream/libDatastream.la
