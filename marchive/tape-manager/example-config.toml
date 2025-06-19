@@ -1,0 +1,88 @@
+# 
+# Copyright 2015. Triad National Security, LLC. All rights reserved.
+# 
+# Full details and licensing terms can be found in the License file in the main development branch
+# of the repository.
+# 
+# MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
+# 
+
+[options]
+status_frequency  = 00:00:30 # frequency of status reports
+cleanup_frequency = 00:10:00 # frequency of output tree scans for deletion targets
+scan_frequency    = 00:00:10 # frequency of scans for new taskfile inputs
+filter_frequency  = 00:00:30 # frequency of filtering reattempts for taskfile inputs
+poll_frequency    = 00:00:10 # frequency of task proc polls for completion
+check_frequency   = 00:00:05 # frequency of checks for client completion ( output file deleted )
+task_parallelism  = 64       # total number of active task procs allowed at once
+hard_timeout      = 06:00:00 # maximum runtime of any task before it is force-killed ( ignores proc output )
+cleanup_timeout   = 06:00:00 # delay on autodeletion of output files ( success + failure )
+root = "./tape-manager-root"     # root of program file state trees ( all further paths are appended to this )
+generating_subdir = "generating" # location for clients to generate taskfile content, prior to rename into input tree
+input_subdir = "input"           # location of the taskfile input tree
+processing_subdir = "processing" # location for processing of taskfiles ( no client access )
+output_success_subdir = "output/success"  # output location for successful tasks
+output_failure_subdir = "output/failure"  # output location for failed tasks
+logged_failure_subdir = "logged-failures" # output location for failed task proc STDOUT + STDERR
+task_file_path = "{task}/pod{pod}/block{block}/cap{cap}/{_}" # format of taskfile input tree ( subpath of taskfiles )
+task_file_content = "{scatter}/{object}"  # format of taskfile lines ( must include '{object}' value )
+
+# per-host definitions
+#   name -- matched against the 'HOSTNAME' env var, determining which def to use for a prog instance
+#   pods --     (OPTIONAL) which pods should the prog instance accept taskfiles for
+#   blocks --   (OPTIONAL) which blocks should the prog instance accept taskfiles for
+#   caps --     (OPTIONAL) which caps should the prog instance accept taskfiles for
+#   scatters -- (OPTIONAL) which scatters should the prog instance accept taskfiles for
+#     Absence of a pods/blocks/... def implies accepting *all* such values
+[[hosts]]
+name = "test-sn01"
+pods = [0]
+blocks = [0,1,2,3,4]
+[[hosts]]
+name = "test-sn02"
+pods = [1]
+
+# per-task definitions
+#   name -- string name of the task ( matched against "{task}" value in file path )
+#   command -- string command ( bash format ) to be executed
+#              supports '{...}' value substitutions and must include a '{file}' reference
+#   file_format -- string format of the taskfile ( located at '{file}' ) expected by the command
+#                  supports '{...}' value substitutions
+#   overrides -- (OPTIONAL) array of task names which this task takes priority over
+#                should an instance of this task share an object target with a task it overrides,
+#                  that object will be omitted from the workload of the overriden task
+#                should a pre-existing overriden task share an object target with this task, this 
+#                  task must await completion of that instance before launching
+#   conflicts -- (OPTIONAL) array of task names which this task conflicts with
+#                should an instance of this task share an object target with a task it conflicts
+#                  with, the conflicting task will be immediately failed
+#                should a pre-existing conflicting task share and object target with this task,
+#                  this task must await completion of that instance before launching
+#   timeout -- (OPTIONAL) maximum allowable runtime of task command procs w/o producing new output
+#              any stdout / stderr output from a proc resets this timeout
+#              if the timeout elapses w/o new output, the proc will be force-killed
+[[tasks]]
+name = "read"
+command = "sleep 8 && echo TGT = {file} && cat {file} && sleep 8 && echo \"done\" >&2"
+file_format = "{object}"
+overrides = [ "flush" ]
+timeout = 00:00:10
+[[tasks]]
+name = "delete"
+command = "sleep 8 && echo TGT = {file} && cat {file} && sleep 8 && echo \"done\" >&2"
+file_format = "{pod} {block} {cap} {scatter} {object}"
+overrides = [ "push", "flush" ]
+conflicts = [ "read" ]
+timeout = 00:00:10
+[[tasks]]
+name = "flush"
+command = "sleep 8 && echo TGT = {file} && cat {file} && sleep 8 && echo \"done\" >&2"
+file_format = "/zfs/export/block*/cap{cap}/scat{scatter}/{object}"
+overrides = [ "push" ]
+timeout = 00:00:10
+[[tasks]]
+name = "push"
+command = "sleep 8 && echo TGT = {file} && cat {file} && sleep 8 && echo \"done\" >&2"
+file_format = "pod{pod}/block{block}/cap{cap}/scat{scatter}/{object}"
+timeout = 00:00:10
+
