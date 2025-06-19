@@ -140,18 +140,18 @@ static int setranktgt(rmanstate* rman, marfs_ns* ns, workresponse* response) {
 
    // kick off our worker threads
    TQ_Init_Opts tqopts = {
-      .log_prefix = "RManWorker",
-      .init_flags = 0,
-      .max_qdepth = rman->gstate.numprodthreads + rman->gstate.numconsthreads,
-      .global_state = &rman->gstate,
-      .num_threads = rman->gstate.numprodthreads + rman->gstate.numconsthreads,
-      .num_prod_threads = rman->gstate.numprodthreads,
-      .thread_init_func = rthread_init_func,
-      .thread_consumer_func = rthread_consumer_func,
-      .thread_producer_func = rthread_producer_func,
-      .thread_pause_func = NULL,
-      .thread_resume_func = NULL,
-      .thread_term_func = rthread_term_func
+      .log_prefix           = "RManWorker",
+      .init_flags           = 0,
+      .max_qdepth           = rman->gstate.numprodthreads + rman->gstate.numconsthreads,
+      .global_state         = &rman->gstate,
+      .num_threads          = rman->gstate.numprodthreads + rman->gstate.numconsthreads,
+      .num_prod_threads     = rman->gstate.numprodthreads,
+      .thread_init_func     = rman->tqopts.thread_init_func,
+      .thread_consumer_func = rman->tqopts.thread_consumer_func,
+      .thread_producer_func = rman->tqopts.thread_producer_func,
+      .thread_pause_func    = rman->tqopts.thread_pause_func,
+      .thread_resume_func   = rman->tqopts.thread_resume_func,
+      .thread_term_func     = rman->tqopts.thread_term_func,
    };
 
    if ((rman->tq = tq_init(&tqopts)) == NULL) {

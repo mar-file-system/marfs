@@ -66,7 +66,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  * Resource thread initialization (producers and consumers)
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
-int rthread_init_func(unsigned int tID, void* global_state, void** state) {
+int rthread_init(unsigned int tID, void* global_state, void** state) {
    // cast values to appropriate types
    rthread_global_state* gstate = (rthread_global_state*)global_state;
 
@@ -84,7 +84,7 @@ int rthread_init_func(unsigned int tID, void* global_state, void** state) {
  * Resource thread consumer behavior
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
-int rthread_consumer_func(void** state, void** work_todo) {
+int rthread_all_consumer(void** state, void** work_todo) {
    // cast values to appropriate types
    rthread_state* tstate = (rthread_state*)(*state);
    opinfo* op = (opinfo*)(*work_todo);
@@ -682,7 +682,7 @@ static int process_rinput_ref(rthread_state* tstate, opinfo **newop) {
  * Resource thread producer behavior
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
-int rthread_producer_func(void** state, void** work_tofill) {
+int rthread_all_producer(void** state, void** work_tofill) {
    // cast values to appropriate types
    rthread_state* tstate = (rthread_state*)(*state);
 
@@ -739,10 +739,71 @@ int rthread_producer_func(void** state, void** work_tofill) {
 }
 
 /**
+ * Quota thread producer
+ *
+ * This function only exects to collect quotas. All other operations are ignored.
+ *
+ * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
+ */
+int rthread_quota_producer(void** state, void** work_tofill) {
+   (void) work_tofill;
+
+   // cast values to appropriate types
+   rthread_state* tstate = (rthread_state*)(*state);
+
+   // loop until we have an op to enqueue
+   opinfo* newop = NULL;
+   while (newop == NULL) {
+      // ignore
+      if (tstate->rebuildops) {
+         resourcelog_freeopinfo(newop);
+         newop = NULL;
+         tstate->rebuildops = NULL;
+      }
+      else if (tstate->repackops) {
+         resourcelog_freeopinfo(newop);
+         newop = NULL;
+         tstate->repackops = NULL;
+      }
+      else if (tstate->gcops) {
+         resourcelog_freeopinfo(newop);
+         newop = NULL;
+         tstate->gcops = NULL;
+      }
+      else if (tstate->walker) {
+         if (process_walker(tstate, &newop) != 0) {
+            return -1;
+         }
+      }
+      else if (tstate->scanner) {
+         if (process_scanner(tstate, &newop) != 0) {
+            return -1;
+         }
+      }
+      else {
+         const int rc = process_rinput_ref(tstate, &newop);
+         if (rc != 0) {
+            return rc;
+         }
+      }
+   }
+
+   // should never get here
+
+   LOG(LOG_INFO, "Thread %u dispatching a %s%s operation on StreamID \"%s\"\n",
+       tstate->tID, "QUOTA", newop->next?" + QUOTA":"", newop->ftag.streamid);
+
+   return 0;
+}
+
+/**
  * Resource thread termination (producers and consumers)
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
-void rthread_term_func(void** state, void** prev_work, TQ_Control_Flags flg) {
+void rthread_term(void** state, void** prev_work, TQ_Control_Flags flg) {
+   (void) prev_work;
+   (void) flg;
+
    // cast values to appropriate types
    rthread_state* tstate = (rthread_state*)(*state);
 

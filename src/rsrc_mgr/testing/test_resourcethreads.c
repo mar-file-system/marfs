@@ -404,12 +404,12 @@ int main(void)
       .global_state = &gstate,
       .num_threads = gstate.numprodthreads + gstate.numconsthreads,
       .num_prod_threads = gstate.numprodthreads,
-      .thread_init_func = rthread_init_func,
-      .thread_consumer_func = rthread_consumer_func,
-      .thread_producer_func = rthread_producer_func,
+      .thread_init_func = rthread_init,
+      .thread_consumer_func = rthread_all_consumer,
+      .thread_producer_func = rthread_all_producer,
       .thread_pause_func = NULL,
       .thread_resume_func = NULL,
-      .thread_term_func = rthread_term_func
+      .thread_term_func = rthread_term
    };
 
    printf("starting up threads for first walk\n");

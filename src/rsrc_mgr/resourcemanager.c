@@ -69,6 +69,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 // specifically needed for this file
 #include "rsrc_mgr/common.h"
 #include "rsrc_mgr/manager.h"
+#include "rsrc_mgr/resourcethreads.h"
 #include "rsrc_mgr/rmanstate.h"
 #include "rsrc_mgr/worker.h"
 
@@ -182,6 +183,14 @@ static int parse_args(int argc, char** argv,
        .cl   = args->currenttime.tv_sec - CL_THRESH,
    };
    ArgThresholds_t* thresh = &args->thresh;
+
+   // set some resourcemanager specific values
+   rman->tqopts.thread_init_func     = rthread_init;
+   rman->tqopts.thread_consumer_func = rthread_all_consumer;
+   rman->tqopts.thread_producer_func = rthread_all_producer;
+   rman->tqopts.thread_pause_func    = NULL;
+   rman->tqopts.thread_resume_func   = NULL;
+   rman->tqopts.thread_term_func     = rthread_term;
 
    // parse all position-independent arguments
    int print_usage = 0;
