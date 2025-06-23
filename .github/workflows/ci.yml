@@ -60,8 +60,8 @@ jobs:
 
       - name: Build
         run: cargo build --verbose
-        working-directory: obj_scanner
+        working-directory: marchive/obj_scanner
 
       - name: Test
         run: cargo test --verbose
-        working-directory: obj_scanner
+        working-directory: marchive/obj_scanner
