@@ -7,10 +7,22 @@
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
 
-use std::{collections::HashMap, fmt, fs, io::{ErrorKind, LineWriter}, path::PathBuf, process::{Child, Command, Stdio}, sync::Arc, time::{Instant, SystemTime}};
+use std::{
+    collections::HashMap,
+    fmt,
+    fs,
+    io::{ErrorKind, LineWriter},
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::Arc,
+    time::{Instant, SystemTime}
+};
+use crate::{
+    config::ConfigTask,
+    format::{ProcessingPath, ProcessingPathElement},
+    PROGRAM_CONFIG
+};
 use chrono::{DateTime, Local};
-
-use crate::{config::ConfigTask, format::{ProcessingPath, ProcessingPathElement}, PROGRAM_CONFIG};
 
 /// Encapsulate state of child procs and clean up after them
 pub struct SubTask {

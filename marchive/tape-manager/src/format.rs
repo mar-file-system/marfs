@@ -7,19 +7,25 @@
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
 
+use std::{
+    convert::TryFrom,
+    path::{self, PathBuf},
+    sync::LazyLock,
+    time::{Duration, SystemTime}
+};
 use crate::PROGRAM_CONFIG;
 use chrono::{DateTime,Local};
-use std::{convert::TryFrom, path::{self, PathBuf}, sync::LazyLock, time::{Duration, SystemTime}};
 use regex::Regex;
 
 /// Static regex for replacement of '{...}' strings containing some name value
 pub static BRACED_NAME_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{(?<name>\w+)\}").unwrap());
 /// Static regex for replacement of '{...}' strings containing some name value
-/// Should only be used following regex::escape() of the containing string
+///   Should only be used following regex::escape() of the containing string
 pub static ESCAPED_BRACED_NAME_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\\{(?<name>\w+)\\\}").unwrap());
 
+/// Format a duration reference as a human-readable String
 pub fn duration_to_string(duration: &Duration) -> String {
     let totalsecs = duration.as_secs();
     if totalsecs == 0 {
@@ -39,6 +45,15 @@ pub fn duration_to_string(duration: &Duration) -> String {
     }
 }
 
+/// Logical representation of a location ( file / dir ) within the processing subtree.
+///   Always represents a path specific to the 'host' value in PROGRAM_CONFIG
+///     ( a program instance should never touch a processing subpath associated with another host ).
+///   'process' is expected to be the pid ( process::id() ) of the utility instance
+///   'timestamp' is a value unique to a Task instance
+///   'element' specifies the exact target file / dir
+///             this field is public, for convenience of reusing an instance to generate multiple PathBufs
+///             if both 'process' + 'timestamp' are specified, any variant of this field is valid
+///             if either are omitted, this is expected to be PorcessingPathElement::IntermediateDir
 pub struct ProcessingPath<'path> {
     process: Option<u32>,
     timestamp: Option<SystemTime>,
@@ -55,6 +70,10 @@ pub enum ProcessingPathElement<'path> {
 }
 
 impl<'p> ProcessingPath<'p> {
+    /// construct a new ProcessingPath
+    /// If either process or timestamp is None, element must be a ProcessingPathElement::IntermediateDir variant
+    /// If process is None, timestamp must be as well ( all Task-specific paths must be associated with a process instance )
+    /// Violation of either of the above contraints results in a panic
     pub fn new(process: Option<u32>, timestamp: Option<SystemTime>, element: ProcessingPathElement<'p>) -> Self {
         match (&process, &timestamp, &element) {
             (None,None,ProcessingPathElement::IntermediateDir) => (),
@@ -70,14 +89,17 @@ impl<'p> ProcessingPath<'p> {
         ProcessingPath { process, timestamp, element }
     }
 
+    /// 'getter' for process value
     pub fn process(&self) -> Option<u32> { self.process }
 
+    /// 'getter' for timestamp value
     pub fn timestamp(&self) -> Option<SystemTime> { self.timestamp }
 }
 
 impl<'p> TryFrom<&'p path::Path> for ProcessingPath<'p> {
     type Error = String;
 
+    /// attempt to parse a given Path into a ProcessingPath representation
     fn try_from(path: &'p path::Path) -> Result<ProcessingPath<'p>,String> {
         let config = PROGRAM_CONFIG.get().unwrap(); // convenience ref
         // strip processing subdir prefix
@@ -177,6 +199,8 @@ impl<'p> TryFrom<&'p path::Path> for ProcessingPath<'p> {
 }
 
 impl<'p> From<&ProcessingPath<'p>> for path::PathBuf {
+    /// Produce a PathBuf representation of a Processing Path
+    /// Panics if the ProcessingPath is in a state unrepresentable by ProcessingPath::new()
     fn from(ppath: &ProcessingPath<'p>) -> path::PathBuf {
         let config = PROGRAM_CONFIG.get().unwrap(); // convenience ref
         match (&ppath.process, &ppath.timestamp, &ppath.element) {
@@ -214,8 +238,10 @@ impl<'p> From<&ProcessingPath<'p>> for path::PathBuf {
 }
 
 impl<'p> From<&ProcessingPath<'p>> for String {
+    /// Convenience wrapper around PathBuf::from::<&ProcessingPath>(), to produce a String instead
+    /// Panics if the ProcessingPath references any non-UTF-8 text
     fn from(ppath: &ProcessingPath<'p>) -> String {
         // just the dumbest possible implementation
-        PathBuf::from(ppath).to_str().unwrap().to_string()
+        PathBuf::from(ppath).into_os_string().into_string().unwrap()
     }
 }

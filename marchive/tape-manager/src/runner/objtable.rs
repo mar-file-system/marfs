@@ -7,19 +7,26 @@
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
 
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::Arc,
+    time::SystemTime
+};
 use crate::config::{ConfigTask};
-use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
 
+/// Tracks active operations and associated object targets
+/// Upon addition of a new operation, identifies any conflicts / overrides
 pub struct ObjTable {
     map: HashMap<Object, Vec<(Arc<ConfigTask>, Vec<SystemTime>)>>,
 }
 
+/// Representation of an object target
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Object {
     pub name: String,
     pub location: ObjLocation,
 }
-
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad(
@@ -43,6 +50,14 @@ pub struct ObjLocation {
     pub scatter: u32,
 }
 
+/// Error return from attempted operation insert()
+///   Conflict -- A conflicting Task is running against this object
+///               Something has gone wrong.  The requesting Task should abort.
+///   Skip -- An overriding Task is running against this object
+///           This operation should be omitted by the requesting Task.
+///   Wait -- A Task is running against this object which the requesting operation
+///           would normally conflict with and/or override.
+///           The requesting Task must wait until completion of the problem Task.
 pub enum LookupError {
     Conflict(String),
     Skip,
@@ -62,7 +77,7 @@ impl Drop for ObjTable {
 }
 
 impl ObjTable {
-    /// Construct a new ObjTable instance, based on the given Config
+    /// Construct a new ObjTable instance
     pub fn new() -> Self {
         ObjTable {
             map: HashMap::new(),
@@ -139,6 +154,7 @@ impl ObjTable {
                         // identify which specific Task timestamp values to keep, associated with an op type
                         tstamps.retain(
                             |time| {
+                                // keep only non-matching timestamp values
                                 #[cfg(debug_assertions)]
                                 if time == &task_timestamp {
                                     println!(

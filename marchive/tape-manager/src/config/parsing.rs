@@ -7,9 +7,11 @@
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
 
-use serde::Deserialize;
 use std::fs;
+use serde::Deserialize;
 
+/// Representation of the raw config TOML structure
+/// Used for initial parsing, before translation to a more generalized Config
 #[derive(Debug, Deserialize)]
 pub struct ParsedConfig {
     pub options: ConfigOptions,
@@ -17,6 +19,7 @@ pub struct ParsedConfig {
     pub tasks: Vec<ConfigTask>,
 }
 
+/// [options] subsection values
 #[derive(Debug, Deserialize)]
 pub struct ConfigOptions {
     pub status_frequency: toml::value::Datetime,
@@ -38,6 +41,7 @@ pub struct ConfigOptions {
     pub task_file_content: String,
 }
 
+/// [hosts] subsection(s) values
 #[derive(Debug, Deserialize)]
 pub struct ConfigHost {
     pub name: String,
@@ -47,6 +51,7 @@ pub struct ConfigHost {
     pub scatters: Option<Vec<u32>>,
 }
 
+/// [tasks] subsection(s) values
 #[derive(Debug, Deserialize)]
 pub struct ConfigTask {
     pub name: String,

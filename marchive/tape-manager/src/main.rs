@@ -7,12 +7,66 @@
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
 
+///
+/// This utility is meant to perform management 'tasks' for the orchestration of Marchive data objects
+/// stored on tape media.
+/// 
+/// The utility is intended to be run on Marchive storage nodes ( separate instance per-node ) via a
+/// systemd unit wrapper.  It is assumed that only a single utility instance will be active on a
+/// host at a time ( systemd service unit wrapper should enforce this ).
+/// 
+/// Behavior of the utility is controlled via a TOML config file, passed as a '-c <ConfigFilePath>'
+/// argument to the program at statup.
+/// See 'example-config.toml' for details.
+/// 
+/// The utility does not itself perform any direct tape-interaction.  Instead, it is designed to
+/// take in 'taskfiles' ( lists of objects associated with some operation ) produced by client
+/// programs, reformat those taskfiles for ingest by arbitrary tape management program(s),
+/// check for conflicts between various tasks targeting the same object, 
+/// launch and track the status of tape management program instances,
+/// recognize when the original client program has completed its associated work,
+/// and finally to release the associated tracking state for any tasks from that client.
+/// 
+/// Taskfiles transition between various filesystem paths, indicating their overall status:
+///   GENERATING -- Location for clients to perform initial output of taskfiles.
+///                 This utility ignores this location, so as to avoid parsing an incomplete
+///                 taskfile output.
+///   INPUT      -- Location scanned by this utility for new taskfile inputs
+///   PROCESSING -- Location where taskfiles are stored during parsing / conflict checks / and
+///                 throughout the runtime of the associated tape management program(s).
+///   OUTPUT     -- Location where taskfiles are moved to upon completion of associated tape
+///                 management programs.
+///                 There are two subpaths within this location, one for successful tasks and
+///                 another for failed tasks.  Any failure of any associated tape management
+///                 program results in the entire task being marked as 'failed'.
+///                 Note also that 'successful' tasks may have entries omitted from their
+///                 taskfile if that object operation was 'overridden' by another client.
+///                 See the TOML config file for details on this.
+///   COMPLETE   -- NOT a location, but rather an assumed state indicated once a taksfile is 
+///                 deleted from the OUTPUT location.
+///                 At this point, the associated client is assumed to have completed.  This
+///                 utility will then clear state associated with the task, allowing any
+///                 subsequent conflicting / overriding tasks to run.
+/// 
+
+/// parsing / validation / representation of TOML config file
 mod config;
+/// depth-first-search capability for filesystem trees
 mod dfs;
+/// definition of various regex / printing / pathname formatters
 mod format;
+/// tracker for all task state and associated procs
 mod runner;
 
-use std::{env, fs, io::ErrorKind, path::{Path, PathBuf}, sync::{Arc,OnceLock, RwLock}, thread::sleep, time::{Duration,Instant, SystemTime}};
+use std::{
+    env,
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    sync::{Arc, OnceLock, RwLock},
+    thread::sleep,
+    time::{Duration, Instant, SystemTime}
+};
 use config::Config;
 use dfs::DFS;
 use format::{ProcessingPath, ProcessingPathElement};

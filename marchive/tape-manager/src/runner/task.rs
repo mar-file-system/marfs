@@ -9,18 +9,33 @@
 
 mod subtask;
 
-use crate::{config::ConfigTask, format::{ProcessingPath, ProcessingPathElement, BRACED_NAME_REGEX}, PROGRAM_CONFIG};
+use std::{
+    cell::RefCell,
+    collections::{HashMap,VecDeque},
+    fs,
+    io::{BufRead, BufReader, ErrorKind, LineWriter, Write},
+    marker::PhantomData,
+    path::{Path, PathBuf},
+    process,
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime}
+};
+use crate::{
+    config::ConfigTask,
+    format::{ProcessingPath, ProcessingPathElement, BRACED_NAME_REGEX},
+    PROGRAM_CONFIG
+};
 use super::objtable::{LookupError, Object, ObjTable, ObjLocation};
 use subtask::SubTask;
 use regex::Match;
-use std::{cell::RefCell, collections::{HashMap,VecDeque}, fs, io::{BufRead, BufReader, ErrorKind, LineWriter, Write}, marker::PhantomData, path::{Path, PathBuf}, process, rc::Rc, sync::Arc, time::{Duration, Instant, SystemTime}};
 
 /// Encapsulates the handling of a particular taskfile from the config input subdir
 pub struct Task<S> {
     itask: InnerTask,
     status: PhantomData<S>,
 }
-/// 'inner' Task def to make cleanup simpler ( Drop implementation )
+/// 'inner' Task def to make cleanup simpler ( see Drop implementation )
 struct InnerTask {
     taskfile: PathBuf,
     currentpath: PathBuf,
@@ -70,8 +85,8 @@ pub enum TaskResult<U,T> {
 
 // Cleanup logic for InnerTask
 impl Drop for InnerTask {
-    /// Remove any ObjTable entries associated with this Task and rename the original taskfile to
-    /// the appropriate output location
+    /// Remove any ObjTable entries associated with this Task and either rename the original taskfile to
+    /// the appropriate output location, delete it, or ignore it
     fn drop(&mut self) {
         let config = PROGRAM_CONFIG.get().unwrap(); // convenience ref
         if self.parsedoffset > 0 {
