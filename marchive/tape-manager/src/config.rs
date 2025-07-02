@@ -9,14 +9,21 @@
 
 mod parsing;
 
+use std::{env, sync::Arc, time};
 use crate::format::{BRACED_NAME_REGEX, ESCAPED_BRACED_NAME_REGEX};
 use regex::{self, Regex};
-use std::{env, sync::Arc, time};
 
 pub const NUMERIC_VALUES: [&str; 4] = ["pod", "block", "cap", "scatter"];
 pub const REQUIRED_PATH_VALUES: [&str; 1] = ["task"];
 const REQUIRED_PATH_VALUE_COUNT: usize = REQUIRED_PATH_VALUES.len();
 
+/// Representation of the program's TOML config file
+/// 
+/// WARNING: Be aware that Config::new() performs a env::set_current_dir() to the root path
+///          specified in the config file.  This is for convenience of subpath interaction
+///          throughout the program.
+///          However, this does mean we can not support multiple Config instances in a sensible
+///          manner.
 #[derive(Debug)]
 pub struct Config {
     // Options
@@ -49,7 +56,7 @@ pub struct Config {
     // Tasks
     pub tasks: Vec<Arc<ConfigTask>>,
 }
-
+/// Per-Task config values
 #[derive(Debug)]
 pub struct ConfigTask {
     pub name: String,
@@ -61,7 +68,7 @@ pub struct ConfigTask {
     pub conflicts: Vec<String>,
     pub timeout: Option<time::Duration>,
 }
-
+// internal conversion helper for TOML time values
 fn time_to_duration(time: &toml::value::Time) -> time::Duration {
     time::Duration::new(
         ((time.hour as u64) * 60 * 60) + ((time.minute as u64) * 60) + (time.second as u64),
@@ -77,6 +84,7 @@ impl Config {
 }
 
 impl From<(parsing::ParsedConfig, String)> for Config {
+    /// Translates a (ParsedConfig, Hostname: String) tuple to a Config struct
     fn from(confhost: (parsing::ParsedConfig, String)) -> Self {
         let (pconfig, hostname) = confhost;
         // only incorporate info for the host we're running on

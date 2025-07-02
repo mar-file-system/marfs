@@ -7,18 +7,35 @@
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
 
+/// manipulation of taskfiles and tracking of associated procs
 mod task;
+/// tracking of operations targeting specific objects for conflict detection
 mod objtable;
 
-use crate::{ PROGRAM_CONFIG, dfs::DFS, format::{duration_to_string, ProcessingPath, ProcessingPathElement}, runner::task::TaskComplete};
+use std::{
+    cell::RefCell,
+    fmt,
+    fs,
+    io::ErrorKind,
+    ops::Div,
+    path::PathBuf,
+    process,
+    rc::Rc,
+    time::{Duration, Instant}
+};
+use crate::{
+    PROGRAM_CONFIG,
+    dfs::DFS,
+    format::{duration_to_string, ProcessingPath, ProcessingPathElement},
+    runner::task::TaskComplete
+};
 use objtable::{ObjTable};
 use task::{Task,TaskResult};
-use std::{cell::RefCell, fmt, fs, io::ErrorKind, ops::Div, path::PathBuf, process, rc::Rc, time::{Duration, Instant}};
 
 /// Maximum number of tasks to track at one time
 const TASKCOUNT: i32 = 4096;
 
-/// Identifies task files, launches associated commands, and
+/// Identifies task files, launches associated commands, tracks command status, and checks for client termination
 pub struct Runner {
     started: Instant,
     status: RunnerStatus,
@@ -31,6 +48,7 @@ pub struct Runner {
 }
 
 impl Drop for Runner {
+    /// cleanup processing path locations associated with this program instance + hostname
     fn drop(&mut self) {
         let ppath = ProcessingPath::new(Some(process::id()), None, ProcessingPathElement::IntermediateDir);
         let cleanpath = PathBuf::from(&ppath);
@@ -46,6 +64,7 @@ impl Drop for Runner {
 }
 
 impl fmt::Display for Runner {
+    /// print details on overall status / operation times / running tasks / task times
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let status = match &self.status {
             RunnerStatus::Idle(since) => format!("Idle for {}", &duration_to_string(&since.elapsed())),
@@ -110,6 +129,7 @@ struct RunnerTimes {
     tasks: Vec<(String,u32,TaskTimes)>,
 }
 impl Default for RunnerTimes {
+    /// default to no task / op times yet recorded
     fn default() -> Self {
         RunnerTimes {
             scan: (0,Default::default()),
@@ -122,6 +142,7 @@ impl Default for RunnerTimes {
     }
 }
 impl fmt::Display for RunnerTimes {
+    /// print time info for any recorded operations
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let task_times = if self.tasks.is_empty() { "".to_string() }
         else {
@@ -159,6 +180,7 @@ impl fmt::Display for RunnerTimes {
     }
 }
 impl RunnerTimes {
+    /// record details from the lifetime of a completed task
     fn record_task(&mut self, task_name: String, newtimes: &task::Times) {
         let (_,count,times) = match self.tasks.iter().position(|(name,_,_)| name == &task_name) {
             Some(index) => self.tasks.get_mut(index).unwrap(),
@@ -178,8 +200,11 @@ impl RunnerTimes {
 
 /// Tracker of times we care about for Task variants
 struct TaskTimes {
+    /// time spent between detection and startup of proc(s)
     waiting: OpTimes,
+    /// time spent between startup of proc(s) and completion of final proc
     running: OpTimes,
+    /// time spent between completion of final proc and completion of client ( deletion of output file )
     resting: OpTimes,
 }
 impl Default for TaskTimes {
@@ -230,6 +255,7 @@ impl fmt::Display for OpTimes {
     }
 }
 impl OpTimes {
+    /// update value based on a new duration for this op
     fn update(&mut self, op_count: &mut u32, op_duration: Duration) {
         *op_count = op_count.saturating_add(1);
         if op_duration > self.longest {
@@ -274,7 +300,7 @@ impl Runner {
         self.times = Default::default();
     }
 
-    /// Checks if the Runner is in an Overloaded state
+    /// Checks if the Runner is in an Overloaded state ( task count limit reached )
     pub fn is_overloaded(&self) -> bool {
         matches!(&self.status, RunnerStatus::Overloaded(_))
     }
@@ -285,7 +311,6 @@ impl Runner {
     }
 
     /// Perform depth-first search of our input_subdir for new Tasks
-    /// This wrapper function serves to track scanning statistics
     pub fn scan_for_inputs(&mut self) -> bool {
         let start = Instant::now();
         let result = self._internal_scan_for_inputs();
@@ -293,6 +318,7 @@ impl Runner {
         result
     }
     // Actual logical implementation of the scan_for_inputs op
+    //  Separating them in this manner just makes timing start -> end simpler
     fn _internal_scan_for_inputs(&mut self) -> bool {
         // calculate how many tasks we can safely track
         let mut availtasks: u32 = match TASKCOUNT -
