@@ -1,14 +1,13 @@
+// Copyright 2015. Triad National Security, LLC. All rights reserved.
+//
+// Full details and licensing terms can be found in the License file in the main development branch
+// of the repository.
+//
+// MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
+
 use crate::PROGRAM_CONFIG;
 use chrono::{DateTime, Local};
 use regex::Regex;
-/**
- * Copyright 2015. Triad National Security, LLC. All rights reserved.
- *
- * Full details and licensing terms can be found in the License file in the main development branch
- * of the repository.
- *
- * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
- */
 use std::{
     convert::TryFrom,
     path::{self, PathBuf},
