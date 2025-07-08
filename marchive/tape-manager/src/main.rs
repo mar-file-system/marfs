@@ -55,6 +55,7 @@ mod format;
 /// tracker for all task state and associated procs
 mod runner;
 
+use clap::Parser;
 use config::Config;
 use dfs::DFS;
 use format::{ProcessingPath, ProcessingPathElement};
@@ -62,7 +63,7 @@ use runner::Runner;
 use std::{
     env, fs,
     io::ErrorKind,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, OnceLock, RwLock},
     thread::sleep,
     time::{Duration, Instant, SystemTime},
@@ -71,79 +72,24 @@ use tokio;
 
 pub static PROGRAM_CONFIG: OnceLock<Config> = OnceLock::new();
 
+#[derive(Parser, Debug)]
+struct Args {
+    /// Path to the program config file.
+    #[arg(short, long)]
+    config_path: String,
+
+    /// Hostname associated with this program. Determines which per-host config params to utilize.
+    #[arg(short = 'H', long)]
+    hostname: Option<String>,
+}
+
 #[tokio::main]
 async fn main() {
-    // identify config file target + hostname
-    let mut configtgt = None;
-    let mut hostname = env::var("HOSTNAME");
-    let mut pval: Option<String> = None;
-    let mut argiter = env::args();
-    let progname: String = argiter
-        .next()
-        .as_ref()
-        .map(|name| {
-            AsRef::<Path>::as_ref(name)
-                .file_name()
-                .map(|s| s.to_str())
-                .flatten()
-        })
-        .flatten()
-        .unwrap_or("marchive-tman")
-        .into();
-    for value in argiter {
-        match value.as_ref() {
-            "-c" | "--config" | "-H" | "--host" | "--hostname" => (), // only relevant once we have the param
-            "-h" | "-?" | "--help" => {
-                println!("{progname} -c <ConfigPath> [-H <Hostname>]");
-                println!("   -c <ConfigPath> :  Path to the program config file");
-                println!("   -H <Hostname>   :  Hostname associated with this program");
-                println!("                      Determines which per-host config params");
-                println!("                        to utilize");
-                println!("   -h|-?|--help    :  Print this help text and exit");
-                std::process::exit(-1); // exit non-zero, so no wrapper thinks just printing help text is 'working as intended'
-            }
-            _ => match pval.as_ref().map(|v| v.as_ref()) {
-                Some("-c" | "--config") => {
-                    configtgt = Some(value);
-                    pval = None;
-                    continue;
-                }
-                Some("-H" | "--host" | "--hostname") => {
-                    hostname = Ok(value);
-                    pval = None;
-                    continue;
-                }
-                None | Some(_) => {
-                    eprintln!("unrecognized command argument: {value}");
-                    std::process::exit(-1);
-                }
-            },
-        }
-        pval = Some(value);
-    }
-    if let Some(pval) = pval {
-        // value persisting here means it wasn't cleared as a recognized flag
-        eprintln!(
-            "unrecognized command argument{}: {pval}",
-            match pval.starts_with('-') {
-                true => " ( flag lacks a parameter )",
-                false => "",
-            }
-        );
-        std::process::exit(-1);
-    }
-    let Some(configtgt) = configtgt else {
-        eprintln!("missing required '-c <ConfigPath>' argument");
-        std::process::exit(-1);
-    };
-    let Ok(hostname) = hostname else {
-        eprintln!(
-            "missing '-H <Hostname>' argument and failed to access 'HOSTNAME' env var: {}",
-            hostname.err().unwrap()
-        );
-        std::process::exit(-1);
-    };
+    let args = Args::parse();
 
+    let hostname: String = args.hostname.unwrap_or_else(||
+        env::var("HOSTNAME").expect("hostname should either be passed as '-H <hostname>' or specified in the HOSTNAME environment variable")
+    );
     println!("/// Startup ///");
     let check_signals = Arc::new(RwLock::new((false, false)));
     let set_signals = Arc::clone(&check_signals);
@@ -156,7 +102,7 @@ async fn main() {
 
     println!("/// Reading in config file content ///");
     if PROGRAM_CONFIG
-        .set(dbg!(Config::new(&configtgt, hostname)))
+        .set(dbg!(Config::new(&args.config_path, hostname)))
         .is_err()
     {
         panic!("failed to initialize PROGRAM_CONFIG OnceLock");
