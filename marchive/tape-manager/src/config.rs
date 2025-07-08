@@ -6,19 +6,18 @@
  *
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
-
 mod parsing;
 
-use std::{env, sync::Arc, time};
 use crate::format::{BRACED_NAME_REGEX, ESCAPED_BRACED_NAME_REGEX};
 use regex::{self, Regex};
+use std::{env, sync::Arc, time};
 
 pub const NUMERIC_VALUES: [&str; 4] = ["pod", "block", "cap", "scatter"];
 pub const REQUIRED_PATH_VALUES: [&str; 1] = ["task"];
 const REQUIRED_PATH_VALUE_COUNT: usize = REQUIRED_PATH_VALUES.len();
 
 /// Representation of the program's TOML config file
-/// 
+///
 /// WARNING: Be aware that Config::new() performs a env::set_current_dir() to the root path
 ///          specified in the config file.  This is for convenience of subpath interaction
 ///          throughout the program.
@@ -105,11 +104,10 @@ impl From<(parsing::ParsedConfig, String)> for Config {
                     panic = true;
                 }
                 name if REQUIRED_PATH_VALUES.contains(&name) => {
-                    requiredvals[
-                        REQUIRED_PATH_VALUES.iter()
-                                            .position(|n| n == &name)
-                                            .unwrap()
-                    ] = true;
+                    requiredvals[REQUIRED_PATH_VALUES
+                        .iter()
+                        .position(|n| n == &name)
+                        .unwrap()] = true;
                 }
                 "_" => continue, // ignore special '_' name
                 name => {
@@ -164,7 +162,7 @@ impl From<(parsing::ParsedConfig, String)> for Config {
         // our task file path MUST provide enough info for this instance to identify
         // which files our program instance is responsible for and which task types
         // they correspond to
-        for (position,_) in requiredvals.iter().enumerate().filter(|(_,have)| !*have) {
+        for (position, _) in requiredvals.iter().enumerate().filter(|(_, have)| !*have) {
             eprintln!(
                 "ERROR: No '{{{}}}' value could be identified in task file paths.",
                 REQUIRED_PATH_VALUES[position]
@@ -256,32 +254,28 @@ impl From<(parsing::ParsedConfig, String)> for Config {
                 }
             }
             // when instantiating, translate task conflict / override names to indicies
-            tasks.push(
-                Arc::new(
-                    ConfigTask {
-                        name: task.name.clone(),
-                        command: task.command.clone(),
-                        command_values: command_values,
-                        file_format: task.file_format.clone(),
-                        file_format_values: file_format_values,
-                        overrides: match &task.overrides {
-                            None => Vec::new(),
-                            Some(list) => list.iter().map(|s| String::from(s)).collect(),
-                        },
-                        conflicts: match &task.conflicts {
-                            None => Vec::new(),
-                            Some(list) => list.iter().map(|s| String::from(s)).collect(),
-                        },
-                        timeout: match &task.timeout {
-                            None => None,
-                            Some(timeout) => match timeout.time {
-                                Some(time) => Some(time_to_duration(&time)),
-                                None => None,
-                            },
-                        },
-                    }
-                )
-            );
+            tasks.push(Arc::new(ConfigTask {
+                name: task.name.clone(),
+                command: task.command.clone(),
+                command_values: command_values,
+                file_format: task.file_format.clone(),
+                file_format_values: file_format_values,
+                overrides: match &task.overrides {
+                    None => Vec::new(),
+                    Some(list) => list.iter().map(|s| String::from(s)).collect(),
+                },
+                conflicts: match &task.conflicts {
+                    None => Vec::new(),
+                    Some(list) => list.iter().map(|s| String::from(s)).collect(),
+                },
+                timeout: match &task.timeout {
+                    None => None,
+                    Some(timeout) => match timeout.time {
+                        Some(time) => Some(time_to_duration(&time)),
+                        None => None,
+                    },
+                },
+            }));
         }
         if panic {
             panic!("Some task definitions were invalid");

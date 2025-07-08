@@ -1,3 +1,6 @@
+use crate::PROGRAM_CONFIG;
+use chrono::{DateTime, Local};
+use regex::Regex;
 /**
  * Copyright 2015. Triad National Security, LLC. All rights reserved.
  *
@@ -6,16 +9,12 @@
  *
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
-
 use std::{
     convert::TryFrom,
     path::{self, PathBuf},
     sync::LazyLock,
-    time::{Duration, SystemTime}
+    time::{Duration, SystemTime},
 };
-use crate::PROGRAM_CONFIG;
-use chrono::{DateTime,Local};
-use regex::Regex;
 
 /// Static regex for replacement of '{...}' strings containing some name value
 pub static BRACED_NAME_REGEX: LazyLock<Regex> =
@@ -37,11 +36,11 @@ pub fn duration_to_string(duration: &Duration) -> String {
     sec %= 60 * 60;
     let min = sec / 60;
     sec %= 60;
-    match (days,hrs,min,sec) {
-        (0,0,0,s) => format!("{s}s"),
-        (0,0,m,s) => format!("{m}m:{s:0>2}s"),
-        (0,h,m,s) => format!("{h}h:{m:0>2}m:{s:0>2}s"),
-        (d,h,m,s) => format!("{d}d:{h:0>2}h:{m:0>2}m:{s:0>2}s"),
+    match (days, hrs, min, sec) {
+        (0, 0, 0, s) => format!("{s}s"),
+        (0, 0, m, s) => format!("{m}m:{s:0>2}s"),
+        (0, h, m, s) => format!("{h}h:{m:0>2}m:{s:0>2}s"),
+        (d, h, m, s) => format!("{d}d:{h:0>2}h:{m:0>2}m:{s:0>2}s"),
     }
 }
 
@@ -74,7 +73,11 @@ impl<'p> ProcessingPath<'p> {
     /// If either process or timestamp is None, element must be a ProcessingPathElement::IntermediateDir variant
     /// If process is None, timestamp must be as well ( all Task-specific paths must be associated with a process instance )
     /// Violation of either of the above contraints results in a panic
-    pub fn new(process: Option<u32>, timestamp: Option<SystemTime>, element: ProcessingPathElement<'p>) -> Self {
+    pub fn new(
+        process: Option<u32>,
+        timestamp: Option<SystemTime>,
+        element: ProcessingPathElement<'p>,
+    ) -> Self {
         match (&process, &timestamp, &element) {
             (None,None,ProcessingPathElement::IntermediateDir) => (),
             (Some(_),None,ProcessingPathElement::IntermediateDir) => (),
@@ -86,23 +89,31 @@ impl<'p> ProcessingPath<'p> {
                 "cannot specify a non-itermediate dir element without also specifying 'process' + 'timestamp'"
             ),
         };
-        ProcessingPath { process, timestamp, element }
+        ProcessingPath {
+            process,
+            timestamp,
+            element,
+        }
     }
 
     /// 'getter' for process value
-    pub fn process(&self) -> Option<u32> { self.process }
+    pub fn process(&self) -> Option<u32> {
+        self.process
+    }
 
     /// 'getter' for timestamp value
-    pub fn timestamp(&self) -> Option<SystemTime> { self.timestamp }
+    pub fn timestamp(&self) -> Option<SystemTime> {
+        self.timestamp
+    }
 }
 
 impl<'p> TryFrom<&'p path::Path> for ProcessingPath<'p> {
     type Error = String;
 
     /// attempt to parse a given Path into a ProcessingPath representation
-    fn try_from(path: &'p path::Path) -> Result<ProcessingPath<'p>,String> {
+    fn try_from(path: &'p path::Path) -> Result<ProcessingPath<'p>, String> {
         let config = PROGRAM_CONFIG.get().unwrap(); // convenience ref
-        // strip processing subdir prefix
+                                                    // strip processing subdir prefix
         let path = match path.strip_prefix(&config.processing_subdir) {
             Err(_) => return Err("not within processing subdir".into()),
             Ok(s) => s,
@@ -114,46 +125,64 @@ impl<'p> TryFrom<&'p path::Path> for ProcessingPath<'p> {
         };
         // stip+parse PID prefix
         let Some(path::Component::Normal(piddir)) = path.components().next() else {
-            return Ok(
-                ProcessingPath { process: None, timestamp: None, element: ProcessingPathElement::IntermediateDir }
-            );
+            return Ok(ProcessingPath {
+                process: None,
+                timestamp: None,
+                element: ProcessingPathElement::IntermediateDir,
+            });
         };
-        let Some(piddir)= piddir.to_str() else { return Err("invalid UTF-8 encoding".into()); };
-        let Some(pidstr) = piddir.strip_prefix("PID") else { return Err("'PID' subdir prefix not found".into()) };
-        let process = Some(
-            match pidstr.parse() {
-                Ok(pid) => pid,
-                Err(e) => return Err(format!("process ID could not be parsed: {e}")),
-            }
-        );
+        let Some(piddir) = piddir.to_str() else {
+            return Err("invalid UTF-8 encoding".into());
+        };
+        let Some(pidstr) = piddir.strip_prefix("PID") else {
+            return Err("'PID' subdir prefix not found".into());
+        };
+        let process = Some(match pidstr.parse() {
+            Ok(pid) => pid,
+            Err(e) => return Err(format!("process ID could not be parsed: {e}")),
+        });
         let path = path.strip_prefix(piddir).unwrap();
         // strip+parse timestamp prefix
         let Some(path::Component::Normal(timestampstr)) = path.components().next() else {
-            return Ok(
-                ProcessingPath { process, timestamp: None, element: ProcessingPathElement::IntermediateDir }
-            );
+            return Ok(ProcessingPath {
+                process,
+                timestamp: None,
+                element: ProcessingPathElement::IntermediateDir,
+            });
         };
-        let Some(timestampstr) = timestampstr.to_str() else { return Err("invalid UTF-8 encoding".into()); };
-        let Ok(timestamp) = timestampstr.parse::<DateTime<Local>>() else { return Err(format!("failed to parse timestamp value \"{timestampstr}\"")); };
+        let Some(timestampstr) = timestampstr.to_str() else {
+            return Err("invalid UTF-8 encoding".into());
+        };
+        let Ok(timestamp) = timestampstr.parse::<DateTime<Local>>() else {
+            return Err(format!(
+                "failed to parse timestamp value \"{timestampstr}\""
+            ));
+        };
         let timestamp = Some(SystemTime::from(timestamp));
         let path = path.strip_prefix(timestampstr).unwrap();
         // identify element type
         if path.starts_with("original") {
-            Ok(
-                ProcessingPath { process, timestamp, element: ProcessingPathElement::OriginalTaskfile(path.strip_prefix("original").unwrap()) }
-            )
-        }
-        else if path.starts_with("filtered")  &&  path.components().count() == 1 {
-            Ok(
-                ProcessingPath { process, timestamp, element: ProcessingPathElement::FilteredTaskfile }
-            )
-        }
-        else {
+            Ok(ProcessingPath {
+                process,
+                timestamp,
+                element: ProcessingPathElement::OriginalTaskfile(
+                    path.strip_prefix("original").unwrap(),
+                ),
+            })
+        } else if path.starts_with("filtered") && path.components().count() == 1 {
+            Ok(ProcessingPath {
+                process,
+                timestamp,
+                element: ProcessingPathElement::FilteredTaskfile,
+            })
+        } else {
             let mut pathcomps = path.components();
             let Some(path::Component::Normal(comp)) = pathcomps.next() else {
-                return Ok(
-                    ProcessingPath { process, timestamp, element: ProcessingPathElement::IntermediateDir }
-                );
+                return Ok(ProcessingPath {
+                    process,
+                    timestamp,
+                    element: ProcessingPathElement::IntermediateDir,
+                });
             };
             let Some(comp) = comp.to_str() else {
                 return Err("invalid UTF-8 encoding".into());
@@ -164,33 +193,36 @@ impl<'p> TryFrom<&'p path::Path> for ProcessingPath<'p> {
                 );
             };
             let Ok(stnum) = comp.parse() else {
-                return Err(
-                    format!("unparsable subtask number: {comp}")
-                );
+                return Err(format!("unparsable subtask number: {comp}"));
             };
             match pathcomps.next() {
-                None => Ok(
-                    ProcessingPath { process, timestamp, element: ProcessingPathElement::SubTaskDir(stnum) }
-                ),
+                None => Ok(ProcessingPath {
+                    process,
+                    timestamp,
+                    element: ProcessingPathElement::SubTaskDir(stnum),
+                }),
                 Some(comp) => {
                     if let Some(_) = pathcomps.next() {
-                        return Err(
-                            format!("unexpectedly deep subtask subpath: \"{}\"", path.to_str().unwrap())
-                        );
+                        return Err(format!(
+                            "unexpectedly deep subtask subpath: \"{}\"",
+                            path.to_str().unwrap()
+                        ));
                     }
                     let Some(comp) = comp.as_os_str().to_str() else {
                         return Err("invalid UTF-8 encoding".into());
                     };
                     match comp {
-                        "input" => Ok(
-                            ProcessingPath { process, timestamp, element: ProcessingPathElement::SubTaskInput(stnum) }
-                        ),
-                        "output" => Ok(
-                            ProcessingPath { process, timestamp, element: ProcessingPathElement::SubTaskOutput(stnum) }
-                        ),
-                        _ => return Err(
-                            format!("unrecognized subtask element: \"{comp}\"")
-                        ),
+                        "input" => Ok(ProcessingPath {
+                            process,
+                            timestamp,
+                            element: ProcessingPathElement::SubTaskInput(stnum),
+                        }),
+                        "output" => Ok(ProcessingPath {
+                            process,
+                            timestamp,
+                            element: ProcessingPathElement::SubTaskOutput(stnum),
+                        }),
+                        _ => return Err(format!("unrecognized subtask element: \"{comp}\"")),
                     }
                 }
             }

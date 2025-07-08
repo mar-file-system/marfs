@@ -6,14 +6,7 @@
  *
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
-
-use std::{
-    convert::AsRef,
-    collections::VecDeque,
-    fs,
-    io,
-    path
-};
+use std::{collections::VecDeque, convert::AsRef, fs, io, path};
 
 /// Iterator over entries / types encountered during a FS tree depth-first search
 pub struct DFS {
@@ -26,12 +19,10 @@ impl DFS {
     /// An Err() result may be produced from the initial fs::read_dir()
     pub fn new<P: AsRef<path::Path> + ?Sized>(path: &P) -> io::Result<Self> {
         let inputdir = fs::read_dir(path)?;
-        Ok (
-            DFS {
-                readdirs: VecDeque::from([ inputdir ]),
-                buffer: VecDeque::new(),
-            }
-        )
+        Ok(DFS {
+            readdirs: VecDeque::from([inputdir]),
+            buffer: VecDeque::new(),
+        })
     }
 
     /// Limits the DFS to traversing only below the most recently encountered dir
@@ -41,7 +32,7 @@ impl DFS {
     ///     dfs.next().unwrap(); // "./root-path/subdir"
     ///     dfs.limit_search(); // all further entries will be limited to those
     ///                         // within "./root-path/subdir"
-    ///                         // Entries such as "./root-path/file" or 
+    ///                         // Entries such as "./root-path/file" or
     ///                         // "./root-path/otherdir/path" would be
     ///                         // omitted
     pub fn focus_search(&mut self) {
@@ -59,7 +50,7 @@ impl DFS {
     ///     dfs.next().unwrap(); // "./root-path/subdir"
     ///     dfs.omit_search();  // all further entries within "./root-path/subdir"
     ///                         // will be omitted
-    ///                         // Entries such as "./root-path/file" or 
+    ///                         // Entries such as "./root-path/file" or
     ///                         // "./root-path/otherdir/path" would remain
     pub fn omit_search(&mut self) {
         let _ = self.readdirs.pop_back();
@@ -71,11 +62,13 @@ impl Iterator for DFS {
 
     /// Iterates through results of the depth-first search
     /// An Err() result does not necessarily indicate the end of the search,
-    /// just that the search will not continue with / descend into the problem 
+    /// just that the search will not continue with / descend into the problem
     /// directory.
     fn next(&mut self) -> Option<io::Result<(fs::DirEntry, fs::FileType)>> {
         // check for buffered entries
-        if let Some(value) = self.buffer.pop_front() { return Some(value); }
+        if let Some(value) = self.buffer.pop_front() {
+            return Some(value);
+        }
         // otherwise actually perform readdirs
         while let Some(mut reader) = self.readdirs.pop_back() {
             if let Some(entry) = reader.next() {
@@ -88,7 +81,7 @@ impl Iterator for DFS {
                     Err(e) => return Some(Err(e)),
                     Ok(t) => t,
                 };
-                if etype.is_dir() { 
+                if etype.is_dir() {
                     let subreader = match fs::read_dir(&entry.path()) {
                         Ok(reader) => reader,
                         // NOTE error here unfortunately means we omit this entry,
@@ -97,7 +90,7 @@ impl Iterator for DFS {
                     };
                     self.readdirs.push_back(subreader); // new search target
                 }
-                return Some(Ok((entry,etype)));
+                return Some(Ok((entry, etype)));
             }
         }
         None
