@@ -1,36 +1,33 @@
-/**
- * Copyright 2015. Triad National Security, LLC. All rights reserved.
- *
- * Full details and licensing terms can be found in the License file in the main development branch
- * of the repository.
- *
- * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
- */
+/// tracking of operations targeting specific objects for conflict detection
+mod objtable;
+// Copyright 2015. Triad National Security, LLC. All rights reserved.
+//
+// Full details and licensing terms can be found in the License file in the main development branch
+// of the repository.
+//
+// MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
 
 /// manipulation of taskfiles and tracking of associated procs
 mod task;
-/// tracking of operations targeting specific objects for conflict detection
-mod objtable;
 
+use crate::{
+    dfs::DFS,
+    format::{duration_to_string, ProcessingPath, ProcessingPathElement},
+    runner::task::TaskComplete,
+    PROGRAM_CONFIG,
+};
+use objtable::ObjTable;
 use std::{
     cell::RefCell,
-    fmt,
-    fs,
+    fmt, fs,
     io::ErrorKind,
     ops::Div,
     path::PathBuf,
     process,
     rc::Rc,
-    time::{Duration, Instant}
+    time::{Duration, Instant},
 };
-use crate::{
-    PROGRAM_CONFIG,
-    dfs::DFS,
-    format::{duration_to_string, ProcessingPath, ProcessingPathElement},
-    runner::task::TaskComplete
-};
-use objtable::{ObjTable};
-use task::{Task,TaskResult};
+use task::{Task, TaskResult};
 
 /// Maximum number of tasks to track at one time
 const TASKCOUNT: i32 = 4096;
@@ -50,15 +47,23 @@ pub struct Runner {
 impl Drop for Runner {
     /// cleanup processing path locations associated with this program instance + hostname
     fn drop(&mut self) {
-        let ppath = ProcessingPath::new(Some(process::id()), None, ProcessingPathElement::IntermediateDir);
+        let ppath = ProcessingPath::new(
+            Some(process::id()),
+            None,
+            ProcessingPathElement::IntermediateDir,
+        );
         let cleanpath = PathBuf::from(&ppath);
         if let Err(error) = fs::remove_dir(&cleanpath) {
-            if error.kind() != ErrorKind::NotFound { eprintln!("ERROR: Failed to cleanup processing dir {cleanpath:?}: {error}"); }
+            if error.kind() != ErrorKind::NotFound {
+                eprintln!("ERROR: Failed to cleanup processing dir {cleanpath:?}: {error}");
+            }
         }
         let ppath = ProcessingPath::new(None, None, ProcessingPathElement::IntermediateDir);
         let cleanpath = PathBuf::from(&ppath);
         if let Err(error) = fs::remove_dir(&cleanpath) {
-            if error.kind() != ErrorKind::NotFound { eprintln!("ERROR: Failed to cleanup processing dir {cleanpath:?}: {error}"); }
+            if error.kind() != ErrorKind::NotFound {
+                eprintln!("ERROR: Failed to cleanup processing dir {cleanpath:?}: {error}");
+            }
         }
     }
 }
@@ -67,13 +72,25 @@ impl fmt::Display for Runner {
     /// print details on overall status / operation times / running tasks / task times
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let status = match &self.status {
-            RunnerStatus::Idle(since) => format!("Idle for {}", &duration_to_string(&since.elapsed())),
-            RunnerStatus::Working(since) => format!("Working for {}", &duration_to_string(&since.elapsed())),
-            RunnerStatus::Busy(since) => format!("Busy for {}", &duration_to_string(&since.elapsed())),
-            RunnerStatus::Overloaded(since) => format!("Overloaded for {}", &duration_to_string(&since.elapsed())),
+            RunnerStatus::Idle(since) => {
+                format!("Idle for {}", &duration_to_string(&since.elapsed()))
+            }
+            RunnerStatus::Working(since) => {
+                format!("Working for {}", &duration_to_string(&since.elapsed()))
+            }
+            RunnerStatus::Busy(since) => {
+                format!("Busy for {}", &duration_to_string(&since.elapsed()))
+            }
+            RunnerStatus::Overloaded(since) => {
+                format!("Overloaded for {}", &duration_to_string(&since.elapsed()))
+            }
         };
         f.pad("")?;
-        write!(f, "Running for {}\n", &duration_to_string(&self.started.elapsed()))?;
+        write!(
+            f,
+            "Running for {}\n",
+            &duration_to_string(&self.started.elapsed())
+        )?;
         f.pad("")?;
         write!(f, "{status}\n")?;
         if self.has_active_tasks() {
@@ -96,8 +113,12 @@ impl fmt::Display for Runner {
                 write!(f, "{:>4}{} Resting\n", "", self.resting_tasks.len())?;
             }
         }
-        if self.times.scan.0 != 0  ||  self.times.filter.0 != 0  ||  self.times.launch.0 != 0  ||
-           self.times.poll.0 != 0  ||  !self.times.tasks.is_empty() {
+        if self.times.scan.0 != 0
+            || self.times.filter.0 != 0
+            || self.times.launch.0 != 0
+            || self.times.poll.0 != 0
+            || !self.times.tasks.is_empty()
+        {
             f.pad("")?;
             write!(f, "Times:\n")?;
             f.pad("")?;
@@ -121,22 +142,22 @@ pub enum RunnerStatus {
 
 /// Tracker of time statistics for a Runner
 struct RunnerTimes {
-    scan: (u32,OpTimes),
-    filter: (u32,OpTimes),
-    launch: (u32,OpTimes),
-    poll: (u32,OpTimes),
-    check: (u32,OpTimes),
-    tasks: Vec<(String,u32,TaskTimes)>,
+    scan: (u32, OpTimes),
+    filter: (u32, OpTimes),
+    launch: (u32, OpTimes),
+    poll: (u32, OpTimes),
+    check: (u32, OpTimes),
+    tasks: Vec<(String, u32, TaskTimes)>,
 }
 impl Default for RunnerTimes {
     /// default to no task / op times yet recorded
     fn default() -> Self {
         RunnerTimes {
-            scan: (0,Default::default()),
-            filter: (0,Default::default()),
-            launch: (0,Default::default()),
-            poll: (0,Default::default()),
-            check: (0,Default::default()),
+            scan: (0, Default::default()),
+            filter: (0, Default::default()),
+            launch: (0, Default::default()),
+            poll: (0, Default::default()),
+            check: (0, Default::default()),
             tasks: Vec::new(),
         }
     }
@@ -144,13 +165,12 @@ impl Default for RunnerTimes {
 impl fmt::Display for RunnerTimes {
     /// print time info for any recorded operations
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let task_times = if self.tasks.is_empty() { "".to_string() }
-        else {
+        let task_times = if self.tasks.is_empty() {
+            "".to_string()
+        } else {
             let mut task_times = "Completed Tasks:\n".to_string();
-            for (name,count,times) in &self.tasks {
-                task_times.push_str(
-                    &format!("        {count} \"{name}\" Tasks:\n{times:>12}\n")
-                );
+            for (name, count, times) in &self.tasks {
+                task_times.push_str(&format!("        {count} \"{name}\" Tasks:\n{times:>12}\n"));
             }
             let _ = task_times.pop(); // throw out trailing newline
             task_times
@@ -182,7 +202,11 @@ impl fmt::Display for RunnerTimes {
 impl RunnerTimes {
     /// record details from the lifetime of a completed task
     fn record_task(&mut self, task_name: String, newtimes: &task::Times) {
-        let (_,count,times) = match self.tasks.iter().position(|(name,_,_)| name == &task_name) {
+        let (_, count, times) = match self
+            .tasks
+            .iter()
+            .position(|(name, _, _)| name == &task_name)
+        {
             Some(index) => self.tasks.get_mut(index).unwrap(),
             None => {
                 let index = self.tasks.len();
@@ -191,10 +215,28 @@ impl RunnerTimes {
             }
         };
         let mut countdup = *count;
-        times.waiting.update(&mut countdup, newtimes.started.unwrap().duration_since(newtimes.detected.unwrap()));
+        times.waiting.update(
+            &mut countdup,
+            newtimes
+                .started
+                .unwrap()
+                .duration_since(newtimes.detected.unwrap()),
+        );
         let mut countdup = *count;
-        times.running.update(&mut countdup, newtimes.completed.unwrap().duration_since(newtimes.started.unwrap()));
-        times.resting.update(count, newtimes.cleaned.unwrap().duration_since(newtimes.completed.unwrap()));
+        times.running.update(
+            &mut countdup,
+            newtimes
+                .completed
+                .unwrap()
+                .duration_since(newtimes.started.unwrap()),
+        );
+        times.resting.update(
+            count,
+            newtimes
+                .cleaned
+                .unwrap()
+                .duration_since(newtimes.completed.unwrap()),
+        );
     }
 }
 
@@ -264,10 +306,11 @@ impl OpTimes {
         if self.shortest.is_zero() || op_duration < self.shortest {
             self.shortest = op_duration;
         }
-        self.average = self.average
-                           .saturating_mul(*op_count-1)
-                           .saturating_add(op_duration)
-                           .div(*op_count);
+        self.average = self
+            .average
+            .saturating_mul(*op_count - 1)
+            .saturating_add(op_duration)
+            .div(*op_count);
     }
 }
 
@@ -275,7 +318,11 @@ impl Runner {
     /// Create a new Runner, associated with the given Config reference
     pub fn new() -> Runner {
         // create expected subdirs
-        let ppath = ProcessingPath::new(Some(process::id()), None, ProcessingPathElement::IntermediateDir);
+        let ppath = ProcessingPath::new(
+            Some(process::id()),
+            None,
+            ProcessingPathElement::IntermediateDir,
+        );
         let dirpath = PathBuf::from(&ppath);
         if let Err(error) = fs::create_dir_all(&dirpath) {
             if error.kind() != ErrorKind::AlreadyExists {
@@ -307,27 +354,32 @@ impl Runner {
 
     /// Checks if the Runner has any active tasks ( running or preparing to run )
     pub fn has_active_tasks(&self) -> bool {
-        !self.new_tasks.is_empty()  ||  !self.filtered_tasks.is_empty()  ||  !self.running_tasks.is_empty()  ||  !self.resting_tasks.is_empty()
+        !self.new_tasks.is_empty()
+            || !self.filtered_tasks.is_empty()
+            || !self.running_tasks.is_empty()
+            || !self.resting_tasks.is_empty()
     }
 
     /// Perform depth-first search of our input_subdir for new Tasks
     pub fn scan_for_inputs(&mut self) -> bool {
         let start = Instant::now();
         let result = self._internal_scan_for_inputs();
-        self.times.scan.1.update(&mut self.times.scan.0, start.elapsed());
+        self.times
+            .scan
+            .1
+            .update(&mut self.times.scan.0, start.elapsed());
         result
     }
     // Actual logical implementation of the scan_for_inputs op
     //  Separating them in this manner just makes timing start -> end simpler
     fn _internal_scan_for_inputs(&mut self) -> bool {
         // calculate how many tasks we can safely track
-        let mut availtasks: u32 = match TASKCOUNT -
-            (
-                self.new_tasks.len() +
-                self.filtered_tasks.len() +
-                self.running_tasks.len() +
-                self.resting_tasks.len()
-            ) as i32  {
+        let mut availtasks: u32 = match TASKCOUNT
+            - (self.new_tasks.len()
+                + self.filtered_tasks.len()
+                + self.running_tasks.len()
+                + self.resting_tasks.len()) as i32
+        {
             value @ ..0 => panic!(
                 "FATAL ERROR: Number of tracked tasks exceeds task limit of {} by {}",
                 TASKCOUNT,
@@ -337,7 +389,7 @@ impl Runner {
             value @ 1.. => value.try_into().unwrap(),
         };
         let config = PROGRAM_CONFIG.get().unwrap(); // convenience ref
-        // begin a DFS of our input subdir
+                                                    // begin a DFS of our input subdir
         let dfs = match DFS::new(&config.input_subdir) {
             Ok(d) => d,
             Err(error) => {
@@ -356,23 +408,24 @@ impl Runner {
                     eprintln!("ERROR: Failure during input tree scanning: {e}");
                     continue;
                 }
-                Ok((e,_)) => e,
+                Ok((e, _)) => e,
             };
             // attempt to construct associated Task
-            let Some(task) = Task::new(
-                entry.path(),
-                Rc::clone(&self.objtable),
-                ) else { continue; };
+            let Some(task) = Task::new(entry.path(), Rc::clone(&self.objtable)) else {
+                continue;
+            };
             foundfiles = true;
             availtasks -= 1;
-            if matches!(&self.status,RunnerStatus::Idle(_)) {
+            if matches!(&self.status, RunnerStatus::Idle(_)) {
                 self.status = RunnerStatus::Working(task.times().detected.unwrap());
             }
-            if availtasks == 0  &&  ! matches!(&self.status,RunnerStatus::Overloaded(_)) {
+            if availtasks == 0 && !matches!(&self.status, RunnerStatus::Overloaded(_)) {
                 self.status = RunnerStatus::Overloaded(task.times().detected.unwrap());
             }
             self.new_tasks.push(task);
-            if availtasks == 0 { return foundfiles; }
+            if availtasks == 0 {
+                return foundfiles;
+            }
         }
         foundfiles
     }
@@ -383,7 +436,10 @@ impl Runner {
         for task in self.new_tasks.drain(..) {
             let start = Instant::now();
             let result = task.filter();
-            self.times.filter.1.update(&mut self.times.filter.0, start.elapsed());
+            self.times
+                .filter
+                .1
+                .update(&mut self.times.filter.0, start.elapsed());
             match result {
                 TaskResult::Unchanged(t) => new_tasks.push(t),
                 TaskResult::Transformed(t) => self.filtered_tasks.push(t),
@@ -399,7 +455,10 @@ impl Runner {
         for task in self.filtered_tasks.drain(..) {
             let start = Instant::now();
             let result = task.launch(proc_limit);
-            self.times.launch.1.update(&mut self.times.launch.0, start.elapsed());
+            self.times
+                .launch
+                .1
+                .update(&mut self.times.launch.0, start.elapsed());
             match result {
                 TaskResult::Unchanged(t) => filtered_tasks.push(t),
                 TaskResult::Transformed(t) => self.running_tasks.push(t),
@@ -408,8 +467,9 @@ impl Runner {
         }
         if *proc_limit == 0 {
             self.status = match self.status {
-                RunnerStatus::Idle(_) | RunnerStatus::Working(_) =>
-                    RunnerStatus::Busy(Instant::now()),
+                RunnerStatus::Idle(_) | RunnerStatus::Working(_) => {
+                    RunnerStatus::Busy(Instant::now())
+                }
                 RunnerStatus::Busy(t) => RunnerStatus::Busy(t),
                 RunnerStatus::Overloaded(t) => RunnerStatus::Overloaded(t),
             }
@@ -424,19 +484,25 @@ impl Runner {
         for task in self.running_tasks.drain(..) {
             let start = Instant::now();
             let result = task.poll(proc_limit);
-            self.times.poll.1.update(&mut self.times.poll.0, start.elapsed());
+            self.times
+                .poll
+                .1
+                .update(&mut self.times.poll.0, start.elapsed());
             match result {
                 TaskResult::Unchanged(t) => running_tasks.push(t),
                 TaskResult::Transformed(t) => self.resting_tasks.push(t),
                 TaskResult::Err(e) => {
-                    if *proc_limit == config.task_parallelism  &&
-                        self.new_tasks.is_empty()  &&
-                        self.filtered_tasks.is_empty()  &&
-                        self.resting_tasks.is_empty()  &&
-                        ! matches!(&self.status,RunnerStatus::Idle(_)) {
+                    if *proc_limit == config.task_parallelism
+                        && self.new_tasks.is_empty()
+                        && self.filtered_tasks.is_empty()
+                        && self.resting_tasks.is_empty()
+                        && !matches!(&self.status, RunnerStatus::Idle(_))
+                    {
                         self.status = RunnerStatus::Idle(Instant::now());
-                    }
-                    else if matches!(&self.status,RunnerStatus::Busy(_) | RunnerStatus::Overloaded(_)) {
+                    } else if matches!(
+                        &self.status,
+                        RunnerStatus::Busy(_) | RunnerStatus::Overloaded(_)
+                    ) {
                         self.status = RunnerStatus::Working(Instant::now());
                     }
                     eprintln!("{e}");
@@ -453,11 +519,14 @@ impl Runner {
         for task in self.resting_tasks.drain(..) {
             let start = Instant::now();
             let result = task.check();
-            self.times.check.1.update(&mut self.times.check.0, start.elapsed());
+            self.times
+                .check
+                .1
+                .update(&mut self.times.check.0, start.elapsed());
             match result {
                 TaskResult::Unchanged(t) => resting_tasks.push(t),
-                TaskResult::Transformed((taskname,times)) => {
-                    self.times.record_task(taskname,&times);
+                TaskResult::Transformed((taskname, times)) => {
+                    self.times.record_task(taskname, &times);
                     taskcleaned = times.cleaned;
                 }
                 TaskResult::Err(e) => {
@@ -467,16 +536,19 @@ impl Runner {
             }
         }
         if let Some(cleaned) = taskcleaned {
-                if  self.new_tasks.is_empty()  &&
-                    self.filtered_tasks.is_empty()  &&
-                    self.running_tasks.is_empty()  &&
-                    resting_tasks.is_empty()  &&
-                    ! matches!(&self.status,RunnerStatus::Idle(_)) {
-                    self.status = RunnerStatus::Idle(cleaned);
-                }
-                else if matches!(&self.status,RunnerStatus::Busy(_) | RunnerStatus::Overloaded(_)) {
-                    self.status = RunnerStatus::Working(cleaned);
-                }
+            if self.new_tasks.is_empty()
+                && self.filtered_tasks.is_empty()
+                && self.running_tasks.is_empty()
+                && resting_tasks.is_empty()
+                && !matches!(&self.status, RunnerStatus::Idle(_))
+            {
+                self.status = RunnerStatus::Idle(cleaned);
+            } else if matches!(
+                &self.status,
+                RunnerStatus::Busy(_) | RunnerStatus::Overloaded(_)
+            ) {
+                self.status = RunnerStatus::Working(cleaned);
+            }
         }
         self.resting_tasks = resting_tasks;
         taskcleaned.is_some()

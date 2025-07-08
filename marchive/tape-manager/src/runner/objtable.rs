@@ -1,19 +1,13 @@
-/**
- * Copyright 2015. Triad National Security, LLC. All rights reserved.
- *
- * Full details and licensing terms can be found in the License file in the main development branch
- * of the repository.
- *
- * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
- */
+// Copyright 2015. Triad National Security, LLC. All rights reserved.
+//
+// Full details and licensing terms can be found in the License file in the main development branch
+// of the repository.
+//
+// MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
 
-use std::{
-    collections::HashMap,
-    fmt,
-    sync::Arc,
-    time::SystemTime
-};
-use crate::config::{ConfigTask};
+use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
+
+use crate::config::ConfigTask;
 
 /// Tracks active operations and associated object targets
 /// Upon addition of a new operation, identifies any conflicts / overrides
@@ -29,16 +23,14 @@ pub struct Object {
 }
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad(
-            &format!(
-                "Obj{{ \"{}\"@{{Pod{},Block{},Cap{},Scat{}}} }}",
-                &self.name,
-                &self.location.pod,
-                &self.location.block,
-                &self.location.cap,
-                &self.location.scatter
-            )
-        )
+        f.pad(&format!(
+            "Obj{{ \"{}\"@{{Pod{},Block{},Cap{},Scat{}}} }}",
+            &self.name,
+            &self.location.pod,
+            &self.location.block,
+            &self.location.cap,
+            &self.location.scatter
+        ))
     }
 }
 
@@ -85,12 +77,14 @@ impl ObjTable {
     }
 
     /// Insert a new object operation associated with a Task timestamp + ConfigTask definition, checking for conflicts / overrides
-    pub fn insert(&mut self,
-                  object: Object,
-                  task_def: &Arc<ConfigTask>,
-                  task_timestamp: SystemTime) -> Result<(), LookupError> {
+    pub fn insert(
+        &mut self,
+        object: Object,
+        task_def: &Arc<ConfigTask>,
+        task_timestamp: SystemTime,
+    ) -> Result<(), LookupError> {
         let objstr = format!("{object}"); // for error+debug reporting, after we give up ownership
-        // look up / create object entry
+                                          // look up / create object entry
         let tasklist = self.map.entry(object).or_insert(Vec::new());
         // find any conflicts / overrides / pre-existing matches
         let mut lookupres: Result<(), LookupError> = Ok(());
@@ -101,7 +95,9 @@ impl ObjTable {
                 matchstamps = Some(timestamps);
             }
             // if the new task would override / conflict with a running task, we must wait
-            if task_def.overrides.contains(&elemtask.name) || task_def.conflicts.contains(&elemtask.name) {
+            if task_def.overrides.contains(&elemtask.name)
+                || task_def.conflicts.contains(&elemtask.name)
+            {
                 lookupres = match lookupres {
                     Ok(()) => Err(LookupError::Wait), // only return 'wait' if nothing else has happened
                     oldres => oldres,
@@ -116,9 +112,10 @@ impl ObjTable {
             }
             // if the new task conflicts with a running task, we must abort
             if elemtask.conflicts.contains(&task_def.name) {
-                lookupres = Err(LookupError::Conflict(
-                    format!("conflicting {} task on {objstr}", &elemtask.name)
-                ));
+                lookupres = Err(LookupError::Conflict(format!(
+                    "conflicting {} task on {objstr}",
+                    &elemtask.name
+                )));
             }
         }
         if let Err(_) = lookupres {
@@ -126,15 +123,11 @@ impl ObjTable {
             return lookupres;
         }
         #[cfg(debug_assertions)]
-        println!(
-            "ADDING {} of {objstr}",
-            &task_def.name
-        );
+        println!("ADDING {} of {objstr}", &task_def.name);
         if let Some(timestamps) = matchstamps {
             // found a match
             timestamps.push(task_timestamp);
-        }
-        else {
+        } else {
             // object entry, but no matching task
             tasklist.push((Arc::clone(task_def), vec![task_timestamp]));
         }
@@ -145,31 +138,24 @@ impl ObjTable {
     pub fn remove(&mut self, task_def: &Arc<ConfigTask>, task_timestamp: SystemTime) {
         // identify which HashMap entries to keep
         #[allow(unused_variables)] // for 'object' debug printing
-        self.map.retain(
-            |object, tasklist| {
-                // identify which Task-type entries to keep, associated with an object
-                tasklist.retain_mut(
-                    |(ref tdef, tstamps)| {
-                        if tdef.name != task_def.name { return true; } // keep all non-matching op types
-                        // identify which specific Task timestamp values to keep, associated with an op type
-                        tstamps.retain(
-                            |time| {
-                                // keep only non-matching timestamp values
-                                #[cfg(debug_assertions)]
-                                if time == &task_timestamp {
-                                    println!(
-                                        "REMOVING {} of {object}",
-                                        &task_def.name
-                                    );
-                                }
-                                time != &task_timestamp
-                            }
-                        );
-                        !tstamps.is_empty()
+        self.map.retain(|object, tasklist| {
+            // identify which Task-type entries to keep, associated with an object
+            tasklist.retain_mut(|(ref tdef, tstamps)| {
+                if tdef.name != task_def.name {
+                    return true;
+                } // keep all non-matching op types
+                  // identify which specific Task timestamp values to keep, associated with an op type
+                tstamps.retain(|time| {
+                    // keep only non-matching timestamp values
+                    #[cfg(debug_assertions)]
+                    if time == &task_timestamp {
+                        println!("REMOVING {} of {object}", &task_def.name);
                     }
-                );
-                !tasklist.is_empty()
-            }
-        );
+                    time != &task_timestamp
+                });
+                !tstamps.is_empty()
+            });
+            !tasklist.is_empty()
+        });
     }
 }
