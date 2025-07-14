@@ -67,11 +67,26 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
  *    <!-- Host Definitions ( ignored by this code ) -->
  *    <hosts> ... </hosts>
  *
+ *    <!-- Cache Map -->
+ *    <global_cache_map>
+ *       <cache id="landing-zone">
+ *          <MDAL type="posix">
+ *             <ns_root>/marfs/landing-zone</ns_root>
+ *          </MDAL>
+ *       </cache>
+ *    </global_cache_map>
+ *
  *    <!-- Repo Definition -->
  *    <repo name="mc10+2">
  *
  *       <!-- Per-Repo Data Scheme -->
  *       <data>
+ *
+ *          <! -- Client Cache -->
+ *          <client_caching>
+ *             <client ctag="^Pftool.*$" id="landing-zone"/>
+ *             <client ctag="^ProFTP.*$" id="landing-zone"/>
+ *          </client_caching>
  *
  *          <!-- Erasure Protection -->
  *          <protection>
@@ -172,6 +187,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "general_include/restrictedchars.h"
 
 #include <libxml/tree.h>
+#include <regex.h>
 
 #ifndef LIBXML_TREE_ENABLED
 #error "Included Libxml2 does not support tree functionality!"
@@ -1860,6 +1876,7 @@ int free_repo( marfs_repo* repo ) {
    if ( repo->metascheme.nslist ) { free( repo->metascheme.nslist ); }
 
    // free data scheme components
+   if ( repo->datascheme.datatgt ) { free( repo->datascheme.datatgt ); }
    if ( repo->datascheme.nectxt ) {
       if ( ne_term( repo->datascheme.nectxt ) ) {
          LOG( LOG_WARNING, "failed to terminate NE context of \"%s\" repo\n", repo->name );
@@ -1888,13 +1905,6 @@ int free_repo( marfs_repo* repo ) {
          free( nodelist );
       }
    }
-   int dcindex;
-   for ( dcindex = 0; dcindex < repo->datascheme.clientcnt; dcindex++ ) {
-      // free all the client structures - no need to check for errors....
-      free_client( repo->datascheme.clientlist + dcindex );
-   }
-   if ( repo->datascheme.clientlist ) { free( repo->datascheme.clientlist ); }
-
 
    free( repo->name );
 
@@ -1982,10 +1992,11 @@ int parse_client( marfs_dc* client, xmlNode* clientroot ) {
  * Parse the given datascheme xml node to populate the given datascheme structure
  * @param marfs_ds* ds : Datascheme to be populated
  * @param xmlNode* dataroot : Xml node to be parsed
+ * @param char* configclnt : the parent client tag for this config
  * @param pthread_mutex_t* erasurelock : Reference to the libne erasure synchronization lock
  * @return int : Zero on success, or -1 on failure
  */
-int parse_datascheme( marfs_ds* ds, xmlNode* dataroot, pthread_mutex_t* erasurelock ) {
+int parse_datascheme( marfs_ds* ds, xmlNode* dataroot, char* configclnt, pthread_mutex_t* erasurelock ) {
    xmlNode* dalnode = NULL;
    ne_location maxloc = { .pod = 0, .cap = 0, .scatter = 0 };
    // iterate over nodes at this level
@@ -2037,6 +2048,7 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot, pthread_mutex_t* erasurel
          // if this node has been disabled, don't even bother parsing it
          if ( !(enabled) ) { continue; }
       }
+
       // determine what definition we are parsing
       xmlNode* subnode = dataroot->children;
       if ( strncmp( (char*)dataroot->name, "protection", 11 ) == 0 ) {
@@ -2188,25 +2200,58 @@ int parse_datascheme( marfs_ds* ds, xmlNode* dataroot, pthread_mutex_t* erasurel
          }
       }
       else if ( strncmp( (char*)dataroot->name, "client_caching", 14 ) == 0 ) {
-         // count up the number of repo nodes
-         int clientcnt = count_nodes( dataroot->children, "client" );
+	 int clientidx = 0;                                               // index into the list
+         int clientcnt = count_nodes( dataroot->children, "client" );     // count up the number of client entries in the list
+         marfs_dc* clientlist = (clientcnt)?malloc( sizeof( struct marfs_dataclient_struct ) * clientcnt ):NULL;
 
-         ds->clientlist = (clientcnt)?malloc( sizeof( struct marfs_dataclient_struct ) * clientcnt ):NULL;
-	 if ( !ds->clientlist ) {
+	 int found = 0;                                                   // flag to inidicate of a matching client tag was found
+	 regex_t clntregx;                                                // REGX structure for the client tags of the cache table entries
+	 int regxerr;                                                     // error code from regular expression functions
+	 char regxmsg[256];                                               // holds an error message from the regular expression functions
+
+	 if ( !clientlist ) {
             LOG( LOG_ERR, "\"%s\" tag was specified for this datascheme, but no clients specified\n", (char*)dataroot->name );
             return -1;	    
          }		 
+	 // Create the client list by parsing the client_caching tag. As we are
+	 // parsing, check to see if there is an entry that matches the config's
+	 // client tag. If so, set the datatgt field
          for ( ; subnode; subnode = subnode->next ) {
             if ( strcmp( (char*)(subnode->name), "client" ) == 0 ) {
-               if ( parse_client( ds->clientlist + ds->clientcnt, subnode ) ) {
-                  LOG( LOG_ERR, "failed to parse client %d\n", ds->clientcnt );
+               if ( parse_client( clientlist + clientidx, subnode ) ) {
+                  LOG( LOG_ERR, "failed to parse client %d\n", clientidx );
                   return -1;
                }	 
-	       LOG( LOG_INFO, "adding a client description \"%s\" using cache map \"%s\" to datascheme\n", 
-			       (ds->clientlist + ds->clientcnt)->ctag, (ds->clientlist + ds->clientcnt)->idstr);
-               ds->clientcnt++;
+	       LOG( LOG_INFO, "adding a client description \"%s\" using cache map entry \"%s\" to datascheme\n", 
+			       (clientlist + clientidx)->ctag, (clientlist + clientidx)->idstr);
+	       // Are we going to save this cache id?
+               if ( !(regxerr = regcomp(&clntregx, (clientlist + clientidx)->ctag, REG_EXTENDED)) ) {
+		  found = !(regxerr = regexec(&clntregx, configclnt, 0, NULL, 0));    // test config ctag. return 0 if found
+		  if ( regxerr && (regxerr != REG_NOMATCH) ) {              // there was an error on the match ...
+                     regerror(regxerr, &clntregx, regxmsg, sizeof(regxmsg));  
+		     LOG( LOG_WARNING, "Problems matching %s against %s (error:%s)\n",
+                                     configclnt, (clientlist + clientidx)->ctag, regxmsg)
+                  }
+	          if ( found ) { ds->datatgt = strdup((clientlist + clientidx)->idstr); }	  
+	       }
+               else {                                                       // handle compilation error....
+		   regerror(regxerr, &clntregx, regxmsg, sizeof(regxmsg));  
+		   LOG( LOG_WARNING, "Could not compile client tag REGX: %s (error: %s)\n", 
+                                   (clientlist + clientidx)->ctag, regxmsg);
+	       }
+               regfree(&clntregx);                                         // clean up structure for next entry	       
+               clientidx++;
             }		 
-         }	      
+	    if ( found ) break;
+         }
+         clientcnt = clientidx;                                           // save off the number of parsed entries	 
+
+	 // We're done with the client list - throw it away
+	 for ( clientidx=0; clientidx<clientcnt; clientidx++) {
+	    if ( (clientlist + clientidx)->ctag ) free( (clientlist + clientidx)->ctag );	 
+	    if ( (clientlist + clientidx)->idstr ) free( (clientlist + clientidx)->idstr );	 
+         }		 
+	 free( clientlist );                                              // deallocate whole list
       }	      
       else {
          LOG( LOG_ERR, "encountered unexpected 'data' sub-node: \"%s\"\n", (char*)dataroot->name );
@@ -2463,10 +2508,11 @@ int parse_metascheme( marfs_repo* repo, xmlNode* metaroot ) {
  * Parse the given repo xml node and populate the given marfs_repo reference
  * @param marfs_repo* repo : Reference to the marfs_repo to be populated
  * @param xmlNode* reporoot : Xml node to be parsed
+ * @param marfs_config* parentconfig : pointer referring to the config this repo is a part of
  * @param pthread_mutex_t* erasurelock : Reference to the libne erasure synchronization lock
  * @return int : Zero on success, or -1 on failure
  */
-int create_repo( marfs_repo* repo, xmlNode* reporoot, pthread_mutex_t* erasurelock ) {
+int create_repo( marfs_repo* repo, xmlNode* reporoot, marfs_config* parentconfig, pthread_mutex_t* erasurelock ) {
    // check for a name attribute
    xmlAttr* attr = reporoot->properties;
    for ( ; attr; attr = attr->next ) {
@@ -2486,12 +2532,19 @@ int create_repo( marfs_repo* repo, xmlNode* reporoot, pthread_mutex_t* erasurelo
          return -1;
       }
    }
-   // verify that we did find a name value
+   // verify that we did find a name value5yy
    if ( !(repo->name) ) {
       LOG( LOG_ERR, "failed to identify name value for repo\n" );
       return -1;
    }
+   // verify that  this repo will be in a marfs config structure
+   if ( !(parentconfig) ) {
+      LOG( LOG_ERR, "failed to find a parent config for repo\n" );
+      return -1;
+   }
    // populate some default repo values
+   repo->pconfig = parentconfig;        // assign the wrapping config struct to the repo
+   repo->datascheme.datatgt = NULL;     // default to handling/writing objects
    repo->datascheme.protection.N = 1;
    repo->datascheme.protection.E = 0;
    repo->datascheme.protection.O = 0;
@@ -2502,8 +2555,6 @@ int create_repo( marfs_repo* repo, xmlNode* reporoot, pthread_mutex_t* erasurelo
    repo->datascheme.podtable = NULL;
    repo->datascheme.captable = NULL;
    repo->datascheme.scattertable = NULL;
-   repo->datascheme.clientcnt = 0;
-   repo->datascheme.clientlist = NULL;
    repo->metascheme.mdal = NULL;
    repo->metascheme.directread = 0;
    repo->metascheme.refbreadth = 0;
@@ -2526,10 +2577,13 @@ int create_repo( marfs_repo* repo, xmlNode* reporoot, pthread_mutex_t* erasurelo
       }
       // check node names
       if ( strncmp( (char*)(children->name), "data", 5 ) == 0 ) {
-         if ( parse_datascheme( &(repo->datascheme), children->children, erasurelock ) ) {
+         if ( parse_datascheme( &(repo->datascheme), children->children, repo->pconfig->ctag, erasurelock ) ) {
             LOG( LOG_ERR, "Failed to parse the 'data' subnode of the \"%s\" repo\n", repo->name );
             break;
          }
+	 LOG( LOG_INFO, "Data target for \"%s\" repo is: %s (id: %s)\n", repo->name,
+			 (!repo->datascheme.datatgt)?"Object":"Cache",
+			 (!repo->datascheme.datatgt)?repo->pconfig->ctag:repo->datascheme.datatgt) 
       }
       else if ( strncmp( (char*)(children->name), "meta", 5 ) == 0 ) {
          if ( parse_metascheme( repo, children->children ) ) {
@@ -2609,6 +2663,7 @@ int create_cache( marfs_cache* cache, xmlNode* cacheroot, pthread_mutex_t* erasu
       return -1;
    }
 
+   LOG( LOG_INFO, "Cache Entry \"%s\" added to Global Cache Map\n", cache->idstr);
    return 0;
 }
 
@@ -2867,13 +2922,27 @@ int establish_nsrefs( marfs_config* config ) {
 /**
  * Initialize memory structures based on the given config file
  * @param const char* cpath : Path of the config file to be parsed
+ * @param const char* clienttag : a client identifer, used to form object/files/etc in
+ *                                the MarFS system. 
  * @param pthread_mutex_t* erasurelock : Reference to the libne erasure synchronization lock
  * @return marfs_config* : Reference to the newly populated config structures
  */
-marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock ) {
+marfs_config* config_init( const char* cpath, const char* clienttag, pthread_mutex_t* erasurelock ) {
    // verify that we've been passed in an erasurelock
    if ( erasurelock == NULL ) {
       LOG( LOG_ERR, "Received a NULL erasurelock reference\n" );
+      errno = EINVAL;
+      return NULL;
+   }
+
+   // verify the client tag
+   if ( !clienttag ) {
+      LOG( LOG_ERR, "A NULL Client Tag was passed to initialize the configuration\n" );
+      errno = EINVAL;
+      return NULL;
+   }	   
+   if ( restrictedchars_check( clienttag ) ) {
+      LOG( LOG_ERR, "Received a Client Tag containing restricted characters\n" );
       errno = EINVAL;
       return NULL;
    }
@@ -2979,7 +3048,7 @@ marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock ) {
    // populate config string values and allocate repolist
    config->version = strdup( (char*)(vertxt->content) );
    config->mountpoint = strdup( (char*)(mnttxt->content) );
-   config->ctag = strdup( "UNKNOWN" ); // default to unknown client
+   config->ctag = strdup( clienttag ); // default to the passed in client tag
    config->cachelist = (cachecnt)?malloc( sizeof( struct marfs_cache_struct ) * cachecnt ):NULL;
    config->repolist = malloc( sizeof( struct marfs_repo_struct ) * repocnt );
    if ( config->version == NULL  ||  config->mountpoint == NULL  ||  config->ctag == NULL  ||  config->repolist == NULL ) {
@@ -3025,7 +3094,7 @@ marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock ) {
       if ( strcmp( (char*)(reponode->name), "repo" ) == 0 ) {
          // NULL out the repo's name value, to indicate an initial parse
          ( config->repolist + config->repocount )->name = NULL;
-         if ( create_repo( config->repolist + config->repocount, reponode, erasurelock ) ) {
+         if ( create_repo( config->repolist + config->repocount, reponode, config, erasurelock ) ) {
             LOG( LOG_ERR, "Failed to parse repo %d\n", config->repocount );
             config_term( config );
             xmlFreeDoc(doc);

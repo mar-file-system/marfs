@@ -66,6 +66,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 
 typedef struct marfs_repo_struct marfs_repo;
 typedef struct marfs_namespace_struct marfs_ns;
+typedef struct marfs_config_struct marfs_config;
 
 typedef enum {
    NS_NOACCESS = 0,    // 0  = 0b0000 -- No access at all
@@ -109,6 +110,7 @@ typedef struct marfs_namespace_struct {
 
 
 typedef struct marfs_datascheme_struct {
+   char*      datatgt;       // indicates the type of underlying data storage (NULL - object, non-NULL - cache id)	
    ne_erasure protection;    // erasure defintion for writing out objects
    ne_ctxt    nectxt;        // LibNE context reference for data access
    size_t     objfiles;      // maximum count of files per data object (zero if no limit)
@@ -116,8 +118,6 @@ typedef struct marfs_datascheme_struct {
    HASH_TABLE podtable;      // hash table for object POD postion
    HASH_TABLE captable;      // hash table for object CAP position
    HASH_TABLE scattertable;  // hash table for object SCATTER position
-   int        clientcnt;     // number of data client definitions
-   marfs_dc*  clientlist;    // list of client definitions
 } marfs_ds;
 
 
@@ -136,9 +136,10 @@ typedef struct marfs__struct {
 
 
 typedef struct marfs_repo_struct {
-   char*     name;        // name of this repo
-   marfs_ds  datascheme;  // struct defining the data structure of this repo
-   marfs_ms  metascheme;  // struct defining the metadata structure of this repo
+   char*         name;        // name of this repo
+   marfs_ds      datascheme;  // struct defining the data structure of this repo
+   marfs_ms      metascheme;  // struct defining the metadata structure of this repo
+   marfs_config* pconfig;     // a pointer back to the overall config structure that contains this repo
 } marfs_repo;
 
 
@@ -171,10 +172,12 @@ enum {
 /**
  * Initialize memory structures based on the given config file
  * @param const char* cpath : Path of the config file to be parsed
+ * @param const char* clienttag : a client identifer, used to form object/files/etc in
+ *                                the MarFS system.
  * @param pthread_mutex_t* erasurelock : Reference to the libne erasure synchronization lock
  * @return marfs_config* : Reference to the newly populated config structures
  */
-marfs_config* config_init( const char* cpath, pthread_mutex_t* erasurelock );
+marfs_config* config_init( const char* cpath, const char* clienttag, pthread_mutex_t* erasurelock );
 
 /**
  * Destroy the given config structures

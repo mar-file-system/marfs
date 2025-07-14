@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
   }
 
   // establish a new marfs config
-  marfs_config* config = config_init("./testing/config_nopack.xml");
+  marfs_config* config = config_init("./testing/config_nopack.xml", "TestResourceManagerNopack", NULL);
   if (config == NULL) {
     printf("Failed to initialize marfs config\n");
     return -1;

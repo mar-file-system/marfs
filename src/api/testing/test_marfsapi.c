@@ -136,7 +136,7 @@ int main( int argc, char** argv ) {
       fprintf( stderr, "ERROR: failed to initialize erasure lock\n" );
       return -1;
    }
-   marfs_config* verconf = config_init( "testing/config.xml", &erasurelock );
+   marfs_config* verconf = config_init( "testing/config.xml", "TestAPI". &erasurelock );
    int flags = CFG_FIX | CFG_OWNERCHECK | CFG_MDALCHECK | CFG_DALCHECK | CFG_RECURSE;
    if ( config_verify( verconf, ".", flags ) ) {
       printf( "failed to verify batch ctxt config\n" );
@@ -145,7 +145,7 @@ int main( int argc, char** argv ) {
    config_term( verconf );
 
    // initialize our BATCH marfs ctxt
-   marfs_ctxt batchctxt = marfs_init( "testing/config.xml", MARFS_BATCH, NULL );
+   marfs_ctxt batchctxt = marfs_init( "testing/config.xml", MARFS_BATCH, "TestAPI", NULL );
    if ( batchctxt == NULL ) {
       printf( "failed to initialize batch ctxt\n" );
       return -1;
@@ -158,7 +158,7 @@ int main( int argc, char** argv ) {
    }
 
    // initialize our INTERACTIVE marfs ctxt
-   marfs_ctxt interctxt = marfs_init( "testing/config.xml", MARFS_INTERACTIVE, &erasurelock );
+   marfs_ctxt interctxt = marfs_init( "testing/config.xml", MARFS_INTERACTIVE, "TestAPI", &erasurelock );
    if ( interctxt == NULL ) {
       printf( "failed to initialize inter ctxt\n" );
       return -1;

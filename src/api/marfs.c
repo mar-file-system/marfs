@@ -207,6 +207,7 @@ marfs_fhandle new_marfs_fhandle( void ) {
  *         maintaining access to the MDAL/DAL root dirs via the returned marfs_ctxt.
  * @param const char* configpath : Path of the config file to initialize based on
  * @param marfs_interface type : Interface type to use for MarFS ops ( interactive / batch )
+ * @param const char* clientname : a string describing the client process
  * @param pthread_mutex_t* erasurelock : Reference to a pthread_mutex lock, to be used for synchronizing access
  *                                       to isa-l erasure generation functions in multi-threaded programs.
  *                                       If NULL, marfs will create such a lock internally.  In such a case,
@@ -217,7 +218,7 @@ marfs_fhandle new_marfs_fhandle( void ) {
  *                                       ALL marfs_init() calls.
  * @return marfs_ctxt : Newly initialized marfs_ctxt, or NULL if a failure occurred
  */
-marfs_ctxt marfs_init( const char* configpath, marfs_interface type, pthread_mutex_t* erasurelock ) {
+marfs_ctxt marfs_init( const char* configpath, marfs_interface type, const char* clientname, pthread_mutex_t* erasurelock ) {
    LOG( LOG_INFO, "ENTRY\n" );
    // check for invalid args
    if ( configpath == NULL ) {
@@ -250,7 +251,7 @@ marfs_ctxt marfs_init( const char* configpath, marfs_interface type, pthread_mut
       return NULL;
    }
    // initialize our config
-   if ( (ctxt->config = config_init( configpath, (erasurelock != NULL) ? erasurelock : &(ctxt->erasurelock) )) == NULL ) {
+   if ( (ctxt->config = config_init( configpath, clientname, (erasurelock != NULL) ? erasurelock : &(ctxt->erasurelock) )) == NULL ) {
       LOG( LOG_ERR, "Failed to initialize marfs_config\n" );
       free( ctxt );
       LOG( LOG_INFO, "EXIT - Failure w/ \"%s\"\n", strerror(errno) );
@@ -2982,7 +2983,7 @@ ssize_t marfs_read_at_offset(marfs_fhandle stream, off_t offset, void* buf, size
    }
 
    // seek to the requested offset
-   off_t offval;
+   off_t offval = 0;
    // check for datastream reference
    if ( stream->datastream ) {
       LOG( LOG_INFO, "Seeking datastream to %zd offset\n", offset );

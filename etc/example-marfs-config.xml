@@ -73,6 +73,11 @@
         * host definitions within this config.
         * -->
    <hosts> ... </hosts>
+
+   <!-- Cache Map Definition
+	* Defines data caches (typically posix filesystems) that are known/supported by this configuration. These are 
+        * alternate data storage locations that this instance/configuration of MarFS can write/read from.
+        * -->
    <global_cache_map>
       <cache id="landing-zone">
          <MDAL type="posix">
@@ -94,6 +99,14 @@
            * -->
       <data>
 
+	 <!-- Client Cache Table
+	      * A Repo that defines this optional tag stores its data in a data	cache. The actual cache used is indicated
+	      * based on the client used (ctag subtag) to write the data, and the cache id (id subtag). The values of the
+              * cache id must correspond to entries of the global Cache Map, which provides the MDAL used to access the 
+	      * data of this repo. Values specifying clients can be regular expressions. This allows for specifying a
+	      * class, grouping, or multiple versions of the same client. Multiple client definitions can be specified 
+              * in this table, allowing the Repo to use several data caches, based on what client is writing the data.
+              * -->
          <client_caching>
             <client ctag="^Pftool.*$" id="landing-zone"/>
             <client ctag="^ProFTP.*$" id="landing-zone"/>

@@ -546,7 +546,7 @@ int main(int argc, char** argv) {
    pthread_mutex_t erasurelock;
    pthread_mutex_init(&erasurelock, NULL);
 
-   if ((rman.config = config_init(args.config_path, &erasurelock)) == NULL) {
+   if ((rman.config = config_init(args.config_path, "ResourceManager", &erasurelock)) == NULL) {
       print_cleanup_abort(0, rman, erasurelock,
                           "ERROR: Failed to initialize MarFS config: \"%s\"\n", args.config_path);
    }

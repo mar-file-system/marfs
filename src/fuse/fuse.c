@@ -1170,7 +1170,7 @@ void marfs_fuse_init(void)
     exit(-1);
   }
   // initialize the MarFS config
-  fctxt->ctxt = marfs_init( getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, &(fctxt->erasurelock) );
+  fctxt->ctxt = marfs_init( getenv("MARFS_CONFIG_PATH"), MARFS_INTERACTIVE, "FUSE", &(fctxt->erasurelock) );
   if ( fctxt->ctxt == NULL ) {
     fprintf( stderr, "Failed to initialize MarFS context!\n" );
     pthread_mutex_destroy( &(fctxt->erasurelock) );

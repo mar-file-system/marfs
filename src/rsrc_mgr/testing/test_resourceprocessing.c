@@ -147,7 +147,7 @@ int main(int argc, char **argv)
    pthread_mutex_t erasurelock;
    pthread_mutex_init(&erasurelock, NULL);
 
-   marfs_config* config = config_init("./testing/config.xml", &erasurelock);
+   marfs_config* config = config_init("./testing/config.xml", "TestResourceProcessing", &erasurelock);
    if (config == NULL) {
       printf("Failed to initialize marfs config\n");
       return -1;

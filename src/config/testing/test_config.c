@@ -519,7 +519,7 @@ int main(int argc, char **argv)
    xmlCleanupParser();
 
    // finally, parse the entire config
-   marfs_config* config = config_init( "./testing/config.xml", &erasurelock );
+   marfs_config* config = config_init( "./testing/config.xml", "TestConfig", &erasurelock );
    if ( config == NULL ) {
       printf( "failed to parse the full config file\n" );
       return -1;

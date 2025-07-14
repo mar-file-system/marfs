@@ -144,7 +144,7 @@ int main(int argc, char **argv)
       printf( "failed to initialize erasure lock\n" );
       return -1;
    }
-   marfs_config* config = config_init( "./testing/config.xml", &erasurelock );
+   marfs_config* config = config_init( "./testing/config.xml", "TestDatastreamRepack", &erasurelock );
    if ( config == NULL ) {
       printf( "Failed to initialize marfs config\n" );
       return -1;

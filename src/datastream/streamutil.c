@@ -1792,7 +1792,7 @@ int main(int argc, const char **argv)
    }
 
    // read in the marfs config
-   marfs_config* config = config_init( config_path, &erasurelock );
+   marfs_config* config = config_init( config_path, "StreamUtil", &erasurelock );
    if ( config == NULL ) {
       printf( OUTPREFX "ERROR: Failed to initialize config: \"%s\" ( %s )\n",
               config_path, strerror(errno) );

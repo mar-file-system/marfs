@@ -82,14 +82,20 @@ int main(int argc, const char** argv) {
    char* ns_path = ".";
    char* user_name = NULL;
    int flags = CFG_OWNERCHECK;
+   char clnt_tag[250];                              // buffer to hold client tag
 
    // parse all position-independent arguments
    char pr_usage = 0;
    int c;
-   while ((c = getopt(argc, (char* const*)argv, "c:n:u:mdrfah")) != -1) {
+
+   clnt_tag[0] = '\0';                         // initialize client tag buffer
+   while ((c = getopt(argc, (char* const*)argv, "c:C:n:u:mdrfah")) != -1) {
       switch (c) {
       case 'c':
          config_path = optarg;
+         break;
+      case 'C':	 
+	 snprintf(clnt_tag,sizeof(clnt_tag), "%s-VERIFYCONF", optarg); 
          break;
       case 'n':
          ns_path = optarg;
@@ -129,7 +135,8 @@ int main(int argc, const char** argv) {
    // check if we need to print usage info
    if (pr_usage) {
       printf(OUTPREFX "Usage info --\n");
-      printf(OUTPREFX "%s [-c configpath] [-n namespace] [-u username] [-m] [-d] [-r] [-f] [-a] [-h]\n", PROGNAME);
+      printf(OUTPREFX "%s [-C testclienttag ] [-c configpath] [-n namespace] [-u username] [-m] [-d] [-r] [-f] [-a] [-h]\n", PROGNAME);
+      printf(OUTPREFX "   -C : A client tag used to test/verify a Cache Map. Default client tag is \"VERIFYCONF\"\n");
       printf(OUTPREFX "   -c : Path of the MarFS config file ( will use MARFS_CONFIG_PATH env var, if omitted )\n");
       printf(OUTPREFX "   -n : NS target to be verified ( will assume rootNS, \".\", if omitted )\n");
       printf(OUTPREFX "   -u : Username to switch to prior to verification\n");
@@ -173,14 +180,16 @@ int main(int argc, const char** argv) {
       printf(OUTPREFX "ERROR: To perform verification as 'root', run with a '-u root' argument.\n");
       return -1;
    }
-
+   // If no client tag given -> set to a default value
+   if (!clnt_tag[0]) { strncpy(clnt_tag, "VERIFYCONF", 11); }
+    
    // read in the marfs config
    pthread_mutex_t erasurelock;
    if ( pthread_mutex_init( &erasurelock, NULL ) ) {
       printf( OUTPREFX "ERROR: failed to initialize erasure lock\n" );
       return -1;
    }
-   marfs_config* config = config_init(config_path,&erasurelock);
+   marfs_config* config = config_init(config_path, clnt_tag, &erasurelock);
    if (config == NULL) {
       printf(OUTPREFX "ERROR: Failed to initialize config: \"%s\" ( %s )\n",
          config_path, strerror(errno));

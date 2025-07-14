@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
   }
 
   // establish a new marfs config
-  marfs_config* config = config_init("./testing/config.xml");
+  marfs_config* config = config_init("./testing/config.xml","TestResourceManager", NULL);
   if (config == NULL) {
     printf("Failed to initialize marfs config\n");
     return -1;
