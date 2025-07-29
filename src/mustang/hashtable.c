@@ -279,6 +279,8 @@ void hashtable_destroy(hashtable* table) {
  * insert the object name into the table (including through internal separate 
  * chaining functionality) if it is not present at the computed index or will 
  * simply return without inserting upon encountering a duplicate.
+ * @param table : The hashtable to insert into
+ * @param new_object_name : the object ID to test/insert into table
  */
 void put(hashtable* table, char* new_object_name) {
     // Compute the hash to see which index (and, therefore, which relevant
@@ -289,6 +291,22 @@ void put(hashtable* table, char* new_object_name) {
     if (verify_original((table->stored_nodes)[mapped_hashcode], new_object_name)) {
         hashnode_chain((table->stored_nodes)[mapped_hashcode], new_object_name);
     }
+}
+
+/**
+ * A public function that allows for the concationation of object location
+ * information to the object name, prior to inserting it into a hash table.
+ * All data passed to this function is duplicated prior to instertion into
+ * the table.
+ * @param table : The hashtable to insert into
+ * @param new_object_name : the object ID to test/insert into table
+ */
+void putloc(hashtable* table, char* new_object_name, ne_location *location_buf) {
+    char objname_buf[PATH_MAX-1];                       // buffer to hold both object ID and location information
+
+    snprintf(objname_buf, PATH_MAX-1, "[%s][%d][%d][%d]", new_object_name, location_buf->pod,
+		    location_buf->cap, location_buf->scatter);
+    put(table, objname_buf);
 }
 
 /**

@@ -63,6 +63,8 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include <stdint.h>
 #include <stdio.h>
 
+#include "ne.h"
+
 #define KEY_SEED 43 // a prime number arbitrarily and pseudorandomly chosen from the range [13, 173] to seed the hashing algorithm
 
 typedef struct hashnode_link_struct hashnode_link;
@@ -124,6 +126,14 @@ void hashtable_destroy(hashtable* table);
  * simply return without inserting upon encountering a duplicate.
  */
 void put(hashtable* table, char* new_object_name);
+
+/**
+ * A public function that allows for the concationation of object location
+ * information to the object name, prior to inserting it into a hash table.
+ * All data passed to this function is duplicated prior to instertion into
+ * the table.
+ */
+void putloc(hashtable* table, char* new_object_name, ne_location *location_buf);
 
 /**
  * This tests to see if an object ID is contained in the given hashtable.
