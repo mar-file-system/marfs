@@ -23,26 +23,13 @@
 #include "rsrc_mgr/rmanstate.h"
 #include "rsrc_mgr/worker.h"
 
-//   -------------   INTERNAL DEFINITIONS    -------------
-
-#define GC_THRESH 604800  // Age of deleted files before they are Garbage Collected
-                          // Default to 7 days ago
-#define RB_L_THRESH  600  // Age of files before they are rebuilt (based on location)
-                          // Default to 10 minutes ago
-#define RB_M_THRESH  120  // Age of files before they are rebuilt (based on marker)
-                          // Default to 2 minutes ago
-#define RP_THRESH 259200  // Age of files before they are repacked
-                          // Default to 3 days ago
-#define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up (failed repacks, old logs, etc.)
-                          // Default to 1 day ago
-
 static void print_usage_info(const int rank) {
    if (rank != 0) {
        return;
    }
 
    printf("\n"
-           "marfs-rman [-c MarFS-Config-File] [-n MarFS-NS-Target] [-r] [-i Iteraion-Name] [-l Log-Root]\n"
+           "marfs-rman [-c MarFS-Config-File] [-n MarFS-NS-Target] [-r] [-i Iteration-Name] [-l Log-Root]\n"
            "           [-p Log-Pres-Root] [-d] [-X Execution-Target] [-Q] [-G] [-R] [-P] [-C]\n"
            "           [-T Threshold-Values] [-L [NE-Location]] [-h]\n"
            "\n"
@@ -92,15 +79,6 @@ static void print_usage_info(const int rank) {
 }
 
 //   -------------   CORE BEHAVIOR LOOPS   -------------
-
-typedef struct {
-    time_t skip;    // for skipping seemingly inactive logs of previous runs
-    time_t gc;
-    time_t rbl;
-    time_t rbm;
-    time_t rp;
-    time_t cl;
-} ArgThresholds_t;
 
 typedef struct {
     rmanstate* rman;
@@ -478,7 +456,7 @@ int main(int argc, char** argv) {
    pthread_mutex_init(&erasurelock, NULL);
 
    if (rmanstate_complete(&rman, args.config_path, args.ns_path,
-                          args.thresh.skip, args.recurse, &erasurelock) != 0) {
+                          &args.thresh, args.recurse, &erasurelock) != 0) {
        pthread_mutex_destroy(&erasurelock);
        rmanstate_fini(&rman, 0);
        RMAN_ABORT();

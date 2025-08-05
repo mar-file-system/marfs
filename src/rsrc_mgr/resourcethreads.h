@@ -68,6 +68,7 @@ int rthread_all_consumer( void** state, void** work_todo );
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
 int rthread_all_producer( void** state, void** work_tofill );
+int rthread_rebuild_producer(void** state, void** work_tofill);
 int rthread_quota_producer( void** state, void** work_tofill );
 
 /**
