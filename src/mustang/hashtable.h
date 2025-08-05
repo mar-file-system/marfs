@@ -128,12 +128,16 @@ void hashtable_destroy(hashtable* table);
 void put(hashtable* table, char* new_object_name);
 
 /**
- * A public function that allows for the concationation of object location
- * information to the object name, prior to inserting it into a hash table.
- * All data passed to this function is duplicated prior to instertion into
- * the table.
+ * A public function that allows for the concationation of object erasure 
+ * and location information to the object name, prior to inserting it into
+ * a hash table. All data passed to this function is duplicated prior to 
+ * instertion into the table.
+ * @param table : The hashtable to insert into
+ * @param new_object_name : the object ID to test/insert into table
+ * @param erasure_buf: the object's erasure info
+ * @param location_buf: the object's location info
  */
-void putloc(hashtable* table, char* new_object_name, ne_location *location_buf);
+void putloc(hashtable* table, char* new_object_name, ne_erasure* erasure_buf, ne_location* location_buf);
 
 /**
  * This tests to see if an object ID is contained in the given hashtable.
