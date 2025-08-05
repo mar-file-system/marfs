@@ -651,7 +651,7 @@ int main(int argc, char** argv) {
     pthread_mutex_t erasure_lock = PTHREAD_MUTEX_INITIALIZER;
 
     // Worker threads will get `parent_config`, but treat it as read-only
-    marfs_config* parent_config = config_init(config_path, &erasure_lock);    
+    marfs_config* parent_config = config_init(config_path, "Mustang", &erasure_lock);    
     marfs_position parent_position = { .ns = NULL, .depth = 0, .ctxt = NULL };
 
     if (config_establishposition(&parent_position, parent_config)) {
