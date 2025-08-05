@@ -689,9 +689,66 @@ int rthread_all_producer(void** state, void** work_tofill) {
 }
 
 /**
+ * Rebuild thread producer
+ *
+ * This function only expects to kick off rebuilds. All other operations are ignored.
+ *
+ * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
+ */
+int rthread_rebuild_producer(void** state, void** work_tofill) {
+   // cast values to appropriate types
+   rthread_state* tstate = (rthread_state*)(*state);
+
+   // loop until we have an op to enqueue
+   opinfo* newop = NULL;
+   while (newop == NULL) {
+      if (tstate->rebuildops) {
+         // enqueue previously produced rebuild op(s)
+         newop = tstate->rebuildops; // hand out the next rebuild op
+         tstate->rebuildops = tstate->rebuildops->next; // progress to the subsequent op
+         newop->next = NULL; // break the op chain, handing out all ops independently
+      }
+      else if (tstate->repackops) {
+         resourcelog_freeopinfo(newop);
+         newop = NULL;
+         tstate->repackops = NULL;
+      }
+      else if (tstate->gcops) {
+         resourcelog_freeopinfo(newop);
+         newop = NULL;
+         tstate->gcops = NULL;
+      }
+      else if (tstate->walker) {
+         if (process_walker(tstate, &newop) != 0) {
+            return -1;
+         }
+      }
+      else if (tstate->scanner) {
+         if (process_scanner(tstate, &newop) != 0) {
+            return -1;
+         }
+      }
+      else {
+         const int rc = process_rinput_ref(tstate, &newop);
+         if (rc != 0) {
+            return rc;
+         }
+      }
+   }
+
+   LOG(LOG_INFO, "Thread %u dispatching a %s%s operation on StreamID \"%s\"\n",
+       tstate->tID, "REBUILD", newop->next?" + REBUILD":"", newop->ftag.streamid);
+
+   // actually populate our work package
+   *work_tofill = (void*)newop;
+
+   return 0;
+}
+
+/**
  * Quota thread producer
  *
- * This function only exects to collect quotas. All other operations are ignored.
+ * This function only expects to collect quotas. All other operations are ignored.
  *
  * NOTE -- see thread_queue.h in the erasureUtils repo for arg / return descriptions
  */
