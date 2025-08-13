@@ -190,7 +190,7 @@ void rmanstate_init(rmanstate *rman, int rank, int rankcount) {
 
 int rmanstate_complete(rmanstate *rman, const char *config_path, const char *ns_path,
                        const time_t log_skip, const int recurse, pthread_mutex_t *erasuremutex) {
-   if ((rman->config = config_init(config_path, erasuremutex)) == NULL) {
+   if ((rman->config = config_init(config_path, "ResourceManager", erasuremutex)) == NULL) {
        fprintf(stderr, "ERROR: Failed to initialize MarFS config: \"%s\"\n", config_path);
        return -1;
    }
