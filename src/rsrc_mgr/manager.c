@@ -1,63 +1,15 @@
-/*
-Copyright (c) 2015, Los Alamos National Security, LLC
-All rights reserved.
+/**
+ * Copyright 2015. Triad National Security, LLC. All rights reserved.
+ *
+ * Full details and licensing terms can be found in the License file in the main development branch
+ * of the repository.
+ *
+ * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
+ */
 
-Copyright 2015.  Los Alamos National Security, LLC. This software was
-produced under U.S. Government contract DE-AC52-06NA25396 for Los
-Alamos National Laboratory (LANL), which is operated by Los Alamos
-National Security, LLC for the U.S. Department of Energy. The
-U.S. Government has rights to use, reproduce, and distribute this
-software.  NEITHER THE GOVERNMENT NOR LOS ALAMOS NATIONAL SECURITY,
-LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
-FOR THE USE OF THIS SOFTWARE.  If software is modified to produce
-derivative works, such modified software should be clearly marked, so
-as not to confuse it with the version available from LANL.
-
-Additionally, redistribution and use in source and binary forms, with
-or without modification, are permitted provided that the following
-conditions are met: 1. Redistributions of source code must retain the
-above copyright notice, this list of conditions and the following
-disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-3. Neither the name of Los Alamos National Security, LLC, Los Alamos
-National Laboratory, LANL, the U.S. Government, nor the names of its
-contributors may be used to endorse or promote products derived from
-this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND
-CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING,
-BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
-FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL LOS
-ALAMOS NATIONAL SECURITY, LLC OR CONTRIBUTORS BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
-GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
-ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
------
-NOTE:
------
-MarFS is released under the BSD license.
-
-MarFS was reviewed and released by LANL under Los Alamos Computer Code
-identifier: LA-CC-15-039.
-
-MarFS uses libaws4c for Amazon S3 object communication. The original
-version is at https://aws.amazon.com/code/Amazon-S3/2601 and under the
-LGPL license.  LANL added functionality to the original work. The
-original work plus LANL contributions is found at
-https://github.com/jti-lanl/aws4c.
-
-GNU licenses can be found at http://www.gnu.org/licenses/.
-*/
-
+#include <errno.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #if RMAN_USE_MPI
@@ -156,8 +108,9 @@ static int cleanup_iteration_root(rmanstate* rman) {
 
       // simply use a hardlink for this purpose, no need to make a 'real' duplicate
       if (link(sumlogpath, preslogpath)) {
-         fprintf(stderr, "ERROR: Failed to link summary logfile \"%s\" to new target path: \"%s\"\n",
-                  sumlogpath, preslogpath);
+         const int err = errno;
+         fprintf(stderr, "ERROR: Failed to link summary logfile \"%s\" to new target path: \"%s\": %s (%d)\n",
+                 sumlogpath, preslogpath, strerror(err), err);
          free(preslogpath);
          free(sumlogpath);
          free(iterationroot);
@@ -170,7 +123,9 @@ static int cleanup_iteration_root(rmanstate* rman) {
    // unlink our summary logfile
    if (unlink(sumlogpath)) {
       // just complain
-      fprintf(stderr, "WARNING: Failed to unlink summary log path during final cleanup\n");
+      const int err = errno;
+      fprintf(stderr, "WARNING: Failed to unlink summary log path during final cleanup: %s (%d)\n",
+              strerror(err), err);
    }
 
    free(sumlogpath);
@@ -201,15 +156,17 @@ static int cleanup_previous(rmanstate* rman) {
       snprintf(sumlogpath, sumstrlen + 1, "%s/%s", iterationroot, SUMMARY_FILENAME);
       if (unlink(sumlogpath)) {
          // just complain
-         fprintf(stderr, "WARNING: Failed to unlink summary log path of previous run during final cleanup\n");
+         const int err = errno;
+         fprintf(stderr, "WARNING: Failed to unlink summary log path of previous run during final cleanup: %s (%d)\n",
+                 strerror(err), err);
       }
       free(sumlogpath);
 
       if (rmdir(iterationroot)) {
          // just complain
          const int err = errno;
-         fprintf(stderr, "WARNING: Failed to unlink iteration root of previous run: \"%s\" (%s)\n",
-                 iterationroot, strerror(err));
+         fprintf(stderr, "WARNING: Failed to unlink iteration root of previous run: \"%s\": %s (%d)\n",
+                 iterationroot, strerror(err), err);
       }
 
       free(iterationroot);
@@ -307,19 +264,46 @@ int managerbehavior(rmanstate* rman) {
        return -1;
    }
 
+   int synced = 0;
+
+   // fflush(3) and fclose(3) only flush userspace buffers
+   // need fsync(2) to flush kernel buffers
+#if _POSIX_C_SOURCE >= 200112L
+   int fd = fileno(rman->summarylog);
+   if (fd < 0) {
+       const int err = errno;
+       fprintf(stderr, "WARNING: Failed to get file descriptor from summarylog: %s (%d)\n",
+               strerror(err), err);
+   }
+   else {
+       if (fsync(fd) < 0) {
+           const int err = errno;
+           fprintf(stderr, "WARNING: Failed to sync summarylog: %s (%d)\n",
+                   strerror(err), err);
+       }
+       else {
+           synced = 1;
+       }
+   }
+#endif
+
    // close our summary log file
    int cres = fclose(rman->summarylog);
    rman->summarylog = NULL; // avoid possible double close
    if (cres) {
-      fprintf(stderr, "ERROR: Failed to close summary logfile for this iteration\n");
+      const int err = errno;
+      fprintf(stderr, "ERROR: Failed to close summary logfile for this iteration: %s (%d)\n",
+              strerror(err), err);
       return -1;
    }
 
    if (rman->fatalerror) { return -1; } // skip final log cleanup if we hit some crucial error
 
-   // NOTE -- frustrates me greatly to put this sleep in, but a brief pause really seems to help any NFS-hosted
-   //         log location to cleanup state, allowing us to delete the parent dir
-   usleep(100000);
+   if (!synced) {
+       // NOTE -- frustrates me greatly to put this sleep in, but a brief pause really seems to help any NFS-hosted
+       //         log location to cleanup state, allowing us to delete the parent dir
+       usleep(100000);
+   }
 
    // final cleanup
    if (cleanup_iteration_root(rman) != 0) {

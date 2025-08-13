@@ -1,62 +1,11 @@
-/*
-Copyright (c) 2015, Los Alamos National Security, LLC
-All rights reserved.
-
-Copyright 2015.  Los Alamos National Security, LLC. This software was produced
-under U.S. Government contract DE-AC52-06NA25396 for Los Alamos National
-Laboratory (LANL), which is operated by Los Alamos National Security, LLC for
-the U.S. Department of Energy. The U.S. Government has rights to use, reproduce,
-and distribute this software.  NEITHER THE GOVERNMENT NOR LOS ALAMOS NATIONAL
-SECURITY, LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
-FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
-works, such modified software should be clearly marked, so as not to confuse it
-with the version available from LANL.
-
-Additionally, redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-1. Redistributions of source code must retain the above copyright notice, this
-list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright notice,
-this list of conditions and the following disclaimer in the documentation
-and/or other materials provided with the distribution.
-3. Neither the name of Los Alamos National Security, LLC, Los Alamos National
-Laboratory, LANL, the U.S. Government, nor the names of its contributors may be
-used to endorse or promote products derived from this software without specific
-prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
-THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED. IN NO EVENT SHALL LOS ALAMOS NATIONAL SECURITY, LLC OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
-OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
------
-NOTE:
------
-Although these files reside in a seperate repository, they fall under the MarFS copyright and license.
-
-MarFS is released under the BSD license.
-
-MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier:
-LA-CC-15-039.
-
-These erasure utilites make use of the Intel Intelligent Storage
-Acceleration Library (Intel ISA-L), which can be found at
-https://github.com/01org/isa-l and is under its own license.
-
-MarFS uses libaws4c for Amazon S3 object communication. The original version
-is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
-LANL added functionality to the original work. The original work plus
-LANL contributions is found at https://github.com/jti-lanl/aws4c.
-
-GNU licenses can be found at http://www.gnu.org/licenses/.
-*/
+/**
+ * Copyright 2015. Triad National Security, LLC. All rights reserved.
+ *
+ * Full details and licensing terms can be found in the License file in the main development branch
+ * of the repository.
+ *
+ * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
+ */
 
 #include <ftw.h>
 #include <stdio.h>
@@ -77,6 +26,8 @@ size_t dirlistpos = 0;
 char** dirlist = NULL;
 
 int ftwnotedir(const char* fpath, const struct stat* sb, int typeflag) {
+   (void) sb;
+
    if (typeflag != FTW_D) {
       printf("Encountered non-directory during tree deletion: \"%s\"\n", fpath);
       return -1;
@@ -119,7 +70,7 @@ int deletesubdirs(const char* basepath) {
    return retval;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
    // NOTE -- I'm ignoring memory leaks for error conditions
    //         which result in immediate termination
@@ -188,12 +139,12 @@ int main(int argc, char **argv)
    MDAL curmdal = pos.ns->prepo->metascheme.mdal;
 
    // establish a data buffer to hold all data content
-   void* databuf = malloc(1024 * 1024 * 10 * sizeof(char)); // 10MiB
+   const size_t databuf_size = 1024 * 1024 * 10; // 10MiB
+   char* databuf = malloc(databuf_size * sizeof(char));
 
-   int tmpcnt = 0;
-   for (; tmpcnt < (1024 * 1024 * 10); tmpcnt++) {
+   for (size_t tmpcnt = 0; tmpcnt < databuf_size; tmpcnt++) {
       // populate databuf
-      *((char*)databuf + tmpcnt) = (char)tmpcnt;
+      databuf[tmpcnt] = (char)tmpcnt;
    }
 
    char readarray[1048576] = {0}; // all zero 1MiB buffer
@@ -1701,7 +1652,7 @@ int main(int argc, char **argv)
    }
 
    // write to chunk 0 of the file
-   if (datastream_write(&pstream, databuf, chunksize) != chunksize) {
+   if (datastream_write(&pstream, databuf, chunksize) != (ssize_t) chunksize) {
       printf("paralell write failure for chunk 0 of 'file2'\n");
       return -1;
    }
@@ -1737,7 +1688,7 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   if (datastream_write(&pstream, databuf + chunkoffset, chunksize) != chunksize) {
+   if (datastream_write(&pstream, databuf + chunkoffset, chunksize) != (ssize_t) chunksize) {
       printf("paralell write failure for chunk 1 of 'file2'\n");
       return -1;
    }

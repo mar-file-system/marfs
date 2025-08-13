@@ -1,62 +1,11 @@
-/*
-Copyright (c) 2015, Los Alamos National Security, LLC
-All rights reserved.
-
-Copyright 2015.  Los Alamos National Security, LLC. This software was produced
-under U.S. Government contract DE-AC52-06NA25396 for Los Alamos National
-Laboratory (LANL), which is operated by Los Alamos National Security, LLC for
-the U.S. Department of Energy. The U.S. Government has rights to use, reproduce,
-and distribute this software.  NEITHER THE GOVERNMENT NOR LOS ALAMOS NATIONAL
-SECURITY, LLC MAKES ANY WARRANTY, EXPRESS OR IMPLIED, OR ASSUMES ANY LIABILITY
-FOR THE USE OF THIS SOFTWARE.  If software is modified to produce derivative
-works, such modified software should be clearly marked, so as not to confuse it
-with the version available from LANL.
-
-Additionally, redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-1. Redistributions of source code must retain the above copyright notice, this
-list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright notice,
-this list of conditions and the following disclaimer in the documentation
-and/or other materials provided with the distribution.
-3. Neither the name of Los Alamos National Security, LLC, Los Alamos National
-Laboratory, LANL, the U.S. Government, nor the names of its contributors may be
-used to endorse or promote products derived from this software without specific
-prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
-THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED. IN NO EVENT SHALL LOS ALAMOS NATIONAL SECURITY, LLC OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
-OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
------
-NOTE:
------
-Although these files reside in a seperate repository, they fall under the MarFS copyright and license.
-
-MarFS is released under the BSD license.
-
-MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier:
-LA-CC-15-039.
-
-These erasure utilites make use of the Intel Intelligent Storage
-Acceleration Library (Intel ISA-L), which can be found at
-https://github.com/01org/isa-l and is under its own license.
-
-MarFS uses libaws4c for Amazon S3 object communication. The original version
-is at https://aws.amazon.com/code/Amazon-S3/2601 and under the LGPL license.
-LANL added functionality to the original work. The original work plus
-LANL contributions is found at https://github.com/jti-lanl/aws4c.
-
-GNU licenses can be found at http://www.gnu.org/licenses/.
-*/
+/**
+ * Copyright 2015. Triad National Security, LLC. All rights reserved.
+ *
+ * Full details and licensing terms can be found in the License file in the main development branch
+ * of the repository.
+ *
+ * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
+ */
 
 #include <dirent.h>
 #include <ftw.h>
@@ -74,6 +23,8 @@ size_t dirlistpos = 0;
 char** dirlist = NULL;
 
 int ftwnotedir(const char* fpath, const struct stat* sb, int typeflag) {
+   (void) sb;
+
    if (typeflag != FTW_D) {
       printf("Encountered non-directory during tree deletion: \"%s\"\n", fpath);
       return -1;
@@ -115,7 +66,7 @@ int deletesubdirs(const char* basepath) {
    return retval;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
    // get a start of run time
    struct timeval starttime;
@@ -175,12 +126,12 @@ int main(int argc, char **argv)
    }
 
    // establish a data buffer to hold all data content
-   void* databuf = malloc(1024 * 1024 * 10 * sizeof(char)); // 10MiB
+   const size_t databuf_size = 1024 * 1024 * 10; // 10MiB
+   char* databuf = malloc(databuf_size * sizeof(char));
 
-   int tmpcnt = 0;
-   for (; tmpcnt < (1024 * 1024 * 10); tmpcnt++) {
+   for (size_t tmpcnt = 0; tmpcnt < databuf_size; tmpcnt++) {
       // populate databuf
-      *((char*)databuf + tmpcnt) = (char)tmpcnt;
+      databuf[tmpcnt] = (char)tmpcnt;
    }
 
    char readarray[1048576] = {0}; // all zero 1MiB buffer
@@ -209,9 +160,8 @@ int main(int argc, char **argv)
    size_t streamcount = (rand() % 10) + 3;
 
    // create each stream in a new subdir
-   int streamnum = 0;
-   for (; streamnum < streamcount; streamnum++) {
-      const int printres = snprintf(filepath, 1024, "stream%.2d", streamnum);
+   for (size_t streamnum = 0; streamnum < streamcount; streamnum++) {
+      const int printres = snprintf(filepath, 1024, "stream%.2zu", streamnum);
 
       if (curmdal->mkdir(pos.ctxt, filepath, 0770)) {
          printf("failed to mkdir \"%s\"\n", filepath);
@@ -221,10 +171,9 @@ int main(int argc, char **argv)
       // create all files for the stream
       DATASTREAM stream = NULL;
       DATASTREAM editstream = NULL;
-      int filenum = 0;
       size_t filecount = (rand() % 10) + 1;
-      for (; filenum < filecount; filenum++) {
-         snprintf(filepath + printres, 1024 - printres, "/file-%.2d", filenum);
+      for (size_t filenum = 0; filenum < filecount; filenum++) {
+         snprintf(filepath + printres, 1024 - printres, "/file-%.2zu", filenum);
          if (datastream_create(&stream, filepath, &pos, 0744, "Thread-Client-1")) {
             printf("failed to create marfs file \"%s\"\n", filepath);
             goto free_databuf;
@@ -253,7 +202,7 @@ int main(int argc, char **argv)
                goto free_databuf;
             }
 
-            if (datastream_write(&editstream, databuf, filebytes) != filebytes) {
+            if (datastream_write(&editstream, databuf, filebytes) != (ssize_t) filebytes) {
                printf("failed to write %zu bytes to extended file \"%s\"\n", filebytes, filepath);
                goto free_databuf;
             }
@@ -264,7 +213,7 @@ int main(int argc, char **argv)
             }
          }
          else {
-            if (datastream_write(&stream, databuf, filebytes) != filebytes) {
+            if (datastream_write(&stream, databuf, filebytes) != (ssize_t) filebytes) {
                printf("failed to write %zu bytes to file \"%s\"\n", filebytes, filepath);
                goto free_databuf;
             }
@@ -286,8 +235,8 @@ int main(int argc, char **argv)
    // read back all written files, and perform random deletions
    size_t delfiles = 0;
    size_t delbytes = 0;
-   for (streamnum = 0; streamnum < streamcount; streamnum++) {
-      const int printres = snprintf(filepath, 1024, "stream%.2d", streamnum);
+   for (size_t streamnum = 0; streamnum < streamcount; streamnum++) {
+      const int printres = snprintf(filepath, 1024, "stream%.2zu", streamnum);
 
       MDAL_DHANDLE dir = curmdal->opendir(pos.ctxt, filepath);
       if (dir == NULL) {
@@ -336,7 +285,7 @@ int main(int argc, char **argv)
       }
 
       if (errno) {
-         *(filepath + printres) = '\0';
+         filepath[printres] = '\0';
          printf("failed readdir for \"%s\"\n", filepath);
          goto free_databuf;
       }
@@ -404,12 +353,12 @@ int main(int argc, char **argv)
       .global_state = &gstate,
       .num_threads = gstate.numprodthreads + gstate.numconsthreads,
       .num_prod_threads = gstate.numprodthreads,
-      .thread_init_func = rthread_init_func,
-      .thread_consumer_func = rthread_consumer_func,
-      .thread_producer_func = rthread_producer_func,
+      .thread_init_func = rthread_init,
+      .thread_consumer_func = rthread_all_consumer,
+      .thread_producer_func = rthread_all_producer,
       .thread_pause_func = NULL,
       .thread_resume_func = NULL,
-      .thread_term_func = rthread_term_func
+      .thread_term_func = rthread_term
    };
 
    printf("starting up threads for first walk\n");
@@ -572,8 +521,8 @@ int main(int argc, char **argv)
    size_t gcfiles = report.delfiles;
 
    // re-read all files, and delete more
-   for (streamnum = 0; streamnum < streamcount; streamnum++) {
-      const int printres = snprintf(filepath, 1024, "stream%.2d", streamnum);
+   for (size_t streamnum = 0; streamnum < streamcount; streamnum++) {
+      const int printres = snprintf(filepath, 1024, "stream%.2zu", streamnum);
 
       MDAL_DHANDLE dir = curmdal->opendir(pos.ctxt, filepath);
       if (dir == NULL) {
@@ -622,7 +571,7 @@ int main(int argc, char **argv)
       }
 
       if (errno) {
-         *(filepath + printres) = '\0';
+         filepath[printres] = '\0';
          printf("failed readdir for \"%s\"\n", filepath);
          goto free_databuf;
       }
@@ -841,8 +790,8 @@ int main(int argc, char **argv)
    gcfiles += report.delfiles;
 
    // re-read and delete all remaining files
-   for (streamnum = 0; streamnum < streamcount; streamnum++) {
-      const int printres = snprintf(filepath, 1024, "stream%.2d", streamnum);
+   for (size_t streamnum = 0; streamnum < streamcount; streamnum++) {
+      const int printres = snprintf(filepath, 1024, "stream%.2zu", streamnum);
 
       MDAL_DHANDLE dir = curmdal->opendir(pos.ctxt, filepath);
       if (dir == NULL) {
@@ -889,7 +838,7 @@ int main(int argc, char **argv)
       }
 
       if (errno) {
-         *(filepath + printres) = '\0';
+         filepath[printres] = '\0';
          printf("failed readdir for \"%s\"\n", filepath);
          goto free_databuf;
       }
@@ -905,7 +854,7 @@ int main(int argc, char **argv)
       curmdal->closedir(dir);
 
       // should be safe to remove the parent dir as well
-      snprintf(filepath, 1024, "stream%.2d", streamnum);
+      snprintf(filepath, 1024, "stream%.2zu", streamnum);
       if (curmdal->rmdir(pos.ctxt, filepath)) {
          printf("failed to rmdir \"%s\"\n", filepath);
          goto free_databuf;
