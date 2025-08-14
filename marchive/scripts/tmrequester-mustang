@@ -1,0 +1,414 @@
+#!/usr/bin/env python3.12
+# coding=utf-8
+
+"""
+# Splits output generated from the MarFS utility mustang so that it
+# can be digested by the marchive Tape Manager. The output from
+# mustang must have object and location information in it. Lines
+# in the output should have the following format (including "[]"):
+#    [object id][pod][cap][scatter]
+#
+# See the argparse in main() for a list of arguments taken by this
+# script.
+#
+# A good pylint command for this file:
+#    pylint --max-line-length 175 -d C0103 -d C0116 tmrequester-mustang
+"""
+
+import argparse
+from datetime import datetime
+import logging
+import logging.handlers
+import os
+from pathlib import Path
+import re
+import sys
+import time
+import tomllib
+
+                                                                      # Regular expression used to parse mustang output
+REGX_MUSTANG_LINE = r"\s*\[(.+)\]\s*\[([0-9]+)\]\s*\[([0-9]+)\]\s*\[([0-9]+)\]\s*\[([0-9]+)\]\s*"
+REGX_MUSTANG_COMMENT = "[#].+"                                        # Regular expression to match a comment line
+TMCONFIG = "TMCONFIG"                                                 # Name of the environment variable to hold the Tape Manager configuration file
+LOGDIR = "SPLITTER_LOGDIR"                                            # Name of the environment variable to hold a log directory path
+
+# Key strings to use for direcory/file maps
+FILEKEY = "__file"
+CONTENTKEY = "__contents"
+GENKEY = "gen"
+INPUTKEY = "input"
+SUCCESSKEY = "success"
+FAILKEY = "fail"
+
+logger = logging.getLogger('TMREQUEST_LOGGER')                        # global logger for the script - set up in main()
+
+#======================================================================
+# Sets up the logging for this script, based on the commandline
+# options, as well as the environment.
+#
+#  Args:
+#       opts (namespace): a List of arguments and values returned by
+#                         ArgumentParser.parse_args()
+#       pname (str): the name of process
+#======================================================================
+def setup_log(opts, pname):
+    logdir = None                                                     # log directory starts with a NULL value
+
+    logger.setLevel(logging.DEBUG)
+    if opts.logdir:                                                   # handle the logdir option
+        logdir = Path(opts.logdir[0])
+    elif os.getenv(LOGDIR):
+        logdir = Path(str(os.getenv(LOGDIR)))
+                                                                      # always write to syslog
+    slhandle = logging.handlers.SysLogHandler(address = opts.syslogdev[0])
+    slhandle.setFormatter(logging.Formatter('%(filename)s[%(process)d]: %(message)s'))
+    if opts.debug:
+        slhandle.setLevel(logging.DEBUG)
+    else:
+        slhandle.setLevel(logging.INFO)
+    logger.addHandler(slhandle)
+
+    if logdir:                                                        # writes to a log file, if a directory is specified
+        flhandle = logging.FileHandler(f"{logdir.resolve()}/{pname}.log")
+        flhandle.setFormatter(logging.Formatter('%(asctime)s.%(msecs)d %(levelname)s: %(message)s',
+            datefmt='%d %b %Y %T'))
+        if opts.debug:
+            flhandle.setLevel(logging.DEBUG)
+        else:
+            flhandle.setLevel(logging.INFO)
+        logger.addHandler(flhandle)
+
+    if not opts.quiet:                                                # Writes to the console, if not turned off
+        clhandle = logging.StreamHandler()                            # writes to STDERR (by default)
+        clhandle.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+        if opts.debug:
+            clhandle.setLevel(logging.DEBUG)
+        elif opts.verbose:
+            clhandle.setLevel(logging.INFO)
+        else:
+            clhandle.setLevel(logging.WARNING)
+        logger.addHandler(clhandle)
+
+#======================================================================
+# Parse a string of the format "H:M:S", and returns the number of
+# seconds specified.
+#
+#  Args:
+#       tstr (datetime.time): a string of the form "00:00:00"
+#
+#  Returns:
+#       int: the number of seconds represented by the string. If
+#            the string is not valid, then a ValueError will be
+#            thrown.
+#======================================================================
+def get_timeout(tstr):
+    return tstr.hour*3600+tstr.minute*60+tstr.second
+
+#======================================================================
+# Sets up the Tape Manager string maps needed by process_line() in order
+# to form directory and file names
+#
+#  Args:
+#       cfg (dict): a TOML configuration dictionary, containing the
+#                   Tape Manager directory strings
+#
+#  Returns:
+#       dict: a dictionary indexed by the following TM states -
+#             (generating,input,output/success,output/failure)
+#======================================================================
+def setup_dirmaps(cfg):
+    dirmap = {}                                                       # map to return
+
+    tmroot = cfg['options']['root']
+
+    dirmap[FILEKEY] = cfg['options']['task_file_path']
+    dirmap[CONTENTKEY] = cfg['options']['task_file_content']
+    dirmap[GENKEY] = f"{tmroot}/{cfg['options']['generating_subdir']}"
+    dirmap[INPUTKEY] = f"{tmroot}/{cfg['options']['input_subdir']}"
+    dirmap[SUCCESSKEY] = f"{tmroot}/{cfg['options']['output_success_subdir']}"
+    dirmap[FAILKEY] = f"{tmroot}/{cfg['options']['output_failure_subdir']}"
+
+    return dirmap
+
+#======================================================================
+# Writes the file (and contents) to the generating portion of the Tape
+# Manager's tree. If this is a newly created file in the TM tree, then
+# it is also added to the file table, along with all TM paths necessary
+# to have this script track its progress.
+#
+#  Args:
+#       jobfile (str): contains the partial path of the file that needs
+#                      to be written to
+#       content (str): the line to be written into the file
+#       dirmaps (dict): holds string maps and directory roots, used to
+#                       form various paths, based on what is needed
+#       filetab (dict): a dictionary to store all files generated by
+#                       processing lines
+#======================================================================
+def write_genfile(jobfile, content, dirmaps, filetab):
+
+    if not jobfile in filetab:
+        fentry = {}                                                   # an entry into the file table
+
+        fentry[GENKEY] = f"{dirmaps[GENKEY]}/{jobfile}"
+        fentry[INPUTKEY] = f"{dirmaps[INPUTKEY]}/{jobfile}"
+        fentry[SUCCESSKEY] = Path(f"{dirmaps[SUCCESSKEY]}/{jobfile}")
+        fentry[FAILKEY] = Path(f"{dirmaps[FAILKEY]}/{jobfile}")
+
+        genpath = Path(fentry[GENKEY])
+        gendir = Path(genpath.parent)
+
+        try:
+            if not gendir.exists():
+                gendir.mkdir(parents=True)
+        except OSError as e:
+            logger.error("Failed to create directory %s: %s", gendir, e)
+            logger.error("Did not add [%s] to file table.", jobfile)
+            return
+        try:
+            genpath.touch(exist_ok=False)                             # simulate create exclusive...
+        except OSError as e:
+            logger.error("Failed to create file %s: %s", genpath, e)
+            logger.error("Did not add [%s] to file table.", jobfile)
+            return
+
+        filetab[jobfile] = fentry
+
+    # Write the content to the job file
+    genfile = Path(filetab[jobfile][GENKEY])
+
+    logger.debug("Writing [%s] to %s", content, genfile)
+    try:
+        with genfile.open(mode='a', encoding="utf-8") as genfh:
+            genfh.write(content+"\n")
+    except OSError as e:
+        logger.error("Failed to write content to %s: %s",
+            genfile, e)
+
+    return
+
+#======================================================================
+# Processes a line from a mustang output file. Comment lines are
+# simply ignored.
+#
+#  Args:
+#       inline (str): the line to process
+#       regx (regx object): a compiled regular expression that matches
+#                           a mustang output line
+#       tmtask (str): indicates the task the Task Manager should do
+#                     with the data from the lines
+#       job (str): Name if the current job processing the line. Used
+#                  to create the output file name (jobfile)
+#       dirmaps (dict): holds string maps and directory roots, used to
+#                       form various paths, based on what is needed
+#       filetab (dict): a dictionary to store all files generated by
+#                       processing lines
+#======================================================================
+def process_line(inline, regx, tmtask, job, dirmaps, filetab):
+
+    jobfile = f"{job}.req"                                            # formed, base on the name of running job
+
+    # Ignore comment lines
+    if re.match(REGX_MUSTANG_COMMENT,inline) is not None:
+        return
+
+    inline = inline.strip()                                           # strip off new line...
+    # Parse the line
+    linedata = regx.fullmatch(inline)
+    if linedata is None:
+        logger.error("Invalid output line: %s", inline)
+        return
+    objid = linedata.group(1)
+    maxstrip = int(linedata.group(2))
+    pod = linedata.group(3)
+    cap = linedata.group(4)
+    scatter = linedata.group(5)
+
+    # Now add object to appropriate files in the Tape Manager tree/file table
+    for b in range(0,maxstrip):
+        linedict = {'task':tmtask, 'pod':pod, 'block':b, 'cap':cap,
+                    'scatter':scatter, 'object':objid, '_':jobfile}
+        tmfile = dirmaps[FILEKEY].format_map(linedict)
+        tmline = dirmaps[CONTENTKEY].format_map(linedict)
+        write_genfile(tmfile, tmline, dirmaps, filetab)
+
+    return
+
+#======================================================================
+# Submits a generated job file to the tape manger. This is done by
+# moving (i.e. renameing) the generated job file into the tape
+# manager's input tree. All information needed to perform this
+# operation is contanted in the table entry.
+#
+#  Args:
+#       tabentry (dict): an entry from the job file table
+#
+#  Returns:
+#       bool: True, if the files was successfully renamed to the
+#             Tape Manager input tree. False otherwise
+#======================================================================
+def submit_jobfile(tabentry):
+    inputfile = Path(tabentry[INPUTKEY])
+    inputdir = Path(inputfile.parent)
+
+    try:
+        if not inputdir.exists():
+            inputdir.mkdir(parents=True)
+    except OSError as e:
+        logger.error("Failed to create directory %s: %s",
+            inputdir, e)
+        return False
+
+    genfile = Path(tabentry[GENKEY])
+    try:
+        genfile.replace(inputfile)
+    except OSError as e:
+        logger.error("Failed to replace %s: %s",
+            inputfile, e)
+        return False
+
+    return True
+
+#======================================================================
+# MAIN for marchsplitter script
+#======================================================================
+if __name__=="__main__":
+    errorhappened = False                                             # a flag to indicate if there were errors during processing
+    config = {}                                                       # a TOML configuration object
+    ftab = {}                                                         # a table to hold all files created/managed by this script
+    mustangregx = re.compile(REGX_MUSTANG_LINE)                       # regex object for parsing output lines
+    clntname = os.path.basename(sys.argv[0])                          # name of script
+    procname = f"{clntname}_{os.getpid()}"                            # name of the process to use/log
+    looptime = 60                                                     # seconds to wait in a loop - typically based on the task
+    maxjoblines = 100000                                              # maximum lines processed for a job - need to make this configurable - cds8/2025
+    cmdline = argparse.ArgumentParser(prog=clntname,
+        description='%(prog)s --  Options')
+
+    # Set up agruments and parse them
+    cmdline.add_argument('task',
+            help='The operation to configure the mustang for. '+
+                 '(values: read,delete,flush,push)')
+    cmdline.add_argument('-c', '--tmconfig', dest='tmconfig', nargs=1, default='',
+        help='File containing the Marchive Tape Manager configuration '+
+             f'(default: Value of {TMCONFIG} environment variable)')
+    cmdline.add_argument('-d', '--debug', dest='debug', default=False, action='store_true',
+        help='Prints the debugging statements, unless "-q" is specified '+
+             '(default: off)')
+    cmdline.add_argument('-f', '--infile', dest='infile', nargs=1, default=['/dev/stdin'],
+        help='File containing object (with location) output from MUSTANG utility '+
+             '(default: Reads from STDIN)')
+    cmdline.add_argument('-L', '--logdir', dest='logdir', nargs=1, default='',
+        help='Directory to write the log file. If this option is not specified, '+
+             f'and {LOGDIR} is not set, then no log file is generated '+
+             f'(default: Value of {LOGDIR} environment variable)')
+    cmdline.add_argument('-q', '--quiet', dest='quiet', default=False, action='store_true',
+        help='Turns off all console output (default: off)')
+    cmdline.add_argument('-S', '--syslog', dest='syslogdev', nargs=1, default=['/dev/log'],
+        help='Device used to write log messages to SYSLOG '+
+             '(default: /dev/log)')
+    cmdline.add_argument('--verbose', dest='verbose', default=False, action='store_true',
+        help='Turns on additional console output (default: off)')
+    cmdopts = cmdline.parse_args()
+
+    # Set up logging
+    setup_log(cmdopts,procname)
+
+    # Read the Tape Manager configuration
+    try:
+        if cmdopts.tmconfig:                                          # use specified config file
+            configfile = cmdopts.tmconfig[0]
+        else:                                                         # get value from envronment variable
+            configfile = os.getenv(TMCONFIG)
+            if not configfile:
+                raise IOError(f"{TMCONFIG} is not set. " +
+                    "Cannot find the Tape Manager configuration. Exiting...")
+
+        logger.info("Reading Tape Manager configuration from: %s", configfile)
+        with open(configfile, 'rb') as conffh:
+            config = tomllib.load(conffh)
+    except IOError as e:
+        logger.critical(e)
+        sys.exit(42)
+
+    # Verify task argument before creating directory maps
+    try:
+        taskverified = False
+        for t in config['tasks']:
+            taskverified = cmdopts.task == t['name']
+            if taskverified:
+                looptime = get_timeout(t['timeout'])                  # set the looptime, based on the given task
+                logger.info("Loop Wait Time: %d seconds (from [%s])",
+                    looptime, cmdopts.task)
+                break
+        if not taskverified:
+            raise NameError(f"Task value [{cmdopts.task}] is invalid. Exiting ...")
+    except NameError as e:
+        logger.critical(e)
+        sys.exit(99)
+
+    logger.info("Processing lines from: %s", cmdopts.infile[0])
+
+    # Loop to process Mustang Output entries
+    jobname = ""                                                      # initialize job name
+    jobcnt = 0                                                        # initialize job count
+    linecnt = 0                                                       # initialize line count
+    tmdirmaps = setup_dirmaps(config)                                 # create maps needed to process the mustang output lines
+
+    with open(cmdopts.infile[0], 'r', encoding="utf-8") as moutfh:
+        for line in moutfh:
+            if not linecnt:                                           # time to start using a new job number
+                jobname = f"{procname}.{jobcnt}"
+                curtime = datetime.now()
+                logger.info("Job %s started at %s (since epoch: %d)",
+                    jobname, curtime, curtime.timestamp())
+
+            process_line(line, mustangregx, cmdopts.task, jobname, tmdirmaps, ftab)
+            linecnt = linecnt + 1
+
+            if not linecnt%maxjoblines:
+                curtime = datetime.now()
+                logger.info("Job %s ended at %s (since epoch: %d) "+
+                    "Entries processed: %d", jobname, curtime, 
+                    curtime.timestamp(), linecnt)
+                jobcnt = jobcnt + 1
+                linecnt = 0                                           # starting a new job ...
+
+    curtime = datetime.now()
+    logger.info("Job %s ended at %s (since epoch: %d) Entries processed: %d "+
+        "Files created: %d", jobname, curtime, curtime.timestamp(), linecnt,
+        len(ftab))
+
+    # Submit job files to Tape Manager
+    for k, entry in ftab.items():
+        if not submit_jobfile(entry):
+            logger.error("Failed to submit job [%s] to tape manager!", k)
+            errorhappened = True
+        else:
+            logger.debug("Adding [%s] to watch lists", k)
+    logger.info("Submitting %d job files ...", len(ftab))
+
+    # Now wait to see what the status of the job files is.
+    # This is done by testing the existence of the file in either
+    # the Tape Manger's SUCCESS or FAILURE subtrees
+    while ftab:
+        donekeys = []                                                 # list of keys to remove from the file table
+
+        time.sleep(looptime)                                          # give the tape manger time to so something ...
+        for k,entry in ftab.items():
+            if entry[SUCCESSKEY].exists():
+                logger.info("Job [%s] was Successful!", k)
+                donekeys.append(k)
+            elif entry[FAILKEY].exists():
+                logger.error("Job [%s] Failed!",k)
+                errorhappened = True
+                donekeys.append(k)
+
+        if donekeys:                                                  # remove completed job files from file table
+            for k in donekeys:
+                ftab.pop(k)
+
+        logger.debug("%d job files left", len(ftab))
+
+    if errorhappened:
+        sys.exit(1)
+    sys.exit(0)
