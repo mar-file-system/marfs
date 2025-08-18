@@ -68,6 +68,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 #include "task_queue.h"
 
 extern size_t id_cache_capacity;
+extern int tm_output;              // flag to indicate if tape manager request Object ID output should be generated
 
 /**
  * Open the file at `path` using the context of the current MarFS position

@@ -203,7 +203,10 @@ void process_file(marfs_position* task_position, char * current_file, hashtable*
 	// to the output table
 	if (!dir_id_cache) {
             pthread_mutex_lock(table_lock);
-            putloc(output_table, retrieved_id, &placeholder_erasure, &placeholder_location); // put() dupes string into new heap space = may want option not to include location information - cds 7/2025
+	    if (tm_output)
+                putloc(output_table, retrieved_id, &placeholder_erasure, &placeholder_location); // put() dupes string into new heap space
+	    else
+		put(output_table, retrieved_id);    
             pthread_mutex_unlock(table_lock);		
             LOG(LOG_DEBUG, "Recorded object \"%s\" in hashtable for file \"%s\".\n", retrieved_id, current_file);
 	} else if (id_cache_probe(dir_id_cache, retrieved_id) == 0) {
@@ -211,7 +214,10 @@ void process_file(marfs_position* task_position, char * current_file, hashtable*
             // and not attempting to add them to the hashtable again.                    
             id_cache_add(dir_id_cache, retrieved_id);
             pthread_mutex_lock(table_lock);
-            putloc(output_table, retrieved_id, &placeholder_erasure, &placeholder_location); // put() dupes string into new heap space
+	    if (tm_output)
+               putloc(output_table, retrieved_id, &placeholder_erasure, &placeholder_location); // put() dupes string into new heap space
+	    else
+		put(output_table, retrieved_id);    
             pthread_mutex_unlock(table_lock);
             LOG(LOG_DEBUG, "Recorded object \"%s\" in hashtable for file \"%s\".\n", retrieved_id, current_file);
         }

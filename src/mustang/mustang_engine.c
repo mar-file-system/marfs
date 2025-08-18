@@ -94,6 +94,7 @@ GNU licenses can be found at http://www.gnu.org/licenses/.
 extern void* thread_launcher(void* args);
 
 size_t id_cache_capacity;
+int tm_output = 0;              // flag to indicate if tape manager request Object ID output should be generated
 
 /**
  * This private routine reads the input file. Based on the 
@@ -469,11 +470,14 @@ void push_objargs2queue(id_listnode* the_arg, marfs_config* config, marfs_positi
 //                              (e.g. 17 -> 2^17 -> table size = 131072)
 //    -i <input file>           A list of MarFs paths or object IDs to translate. 
 //                              The file cannot contain both.                          
+//    -M                        A flag to indicate if Tape Manager Request format
+//                              should be generated for the Object ID list. This
+//                              flag is ignored, if file paths are generated.
 //    -l <log file>		Log file for this process. Should be a full path.
 //    -o <output file>		Output file for the generated Object ID list. This is 
 //                              actually a prefix. Should be a full path.
-#define GETOPT_STR ":c:hH:i:l:o:q:t:"
-#define USAGE "Usage: mustang [-t <max threads>] [-H <hashtable capacity exponent>] [-c <cache capacity>] [-q <task queue size>] [-l <log file>] -o <output file>  -i <input file> | paths/objIDs, ...\n" 
+#define GETOPT_STR ":c:hH:i:l:Mo:q:t:"
+#define USAGE "Usage: mustang [-t <max threads>] [-H <hashtable capacity exponent>] [-c <cache capacity>] [-q <task queue size>] [-l <log file>] [-M] -o <output file>  -i <input file> | paths/objIDs, ...\n" 
 
 int main(int argc, char** argv) {
     int opt;                         // holds current command line arg from getopt()
@@ -549,6 +553,9 @@ int main(int argc, char** argv) {
                            return 1;
                        }
 		       hashtable_capacity = (1L << hashtable_exp);
+                       break; 
+             case 'M':	       // set the Object ID list output format
+		       tm_output = 1;
                        break; 
              case 'i':        // assign the input file name. This means all non-flag arguments will be ignored
                        input_file = strdup(optarg);
@@ -731,10 +738,11 @@ int main(int argc, char** argv) {
         }
         id_cache_destroy(plist);  // push_pathargs2queue() duplicates path strings -> we are done with the cache at this point.
         data_buf = NULL;
-    } else {
+    } else {                      // reading Object IDs (producing file paths)
         id_list* olist = (id_list*)data_buf;
         id_listnode* n = olist->head;
 
+	tm_output = 0;           // Make sure no Tape Manager output is generated ...
         while (n) {
 	    push_objargs2queue(n, parent_config, &parent_position, output_table, &ht_lock, queue);
             n = n->next;
