@@ -287,6 +287,12 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
 {
   LOG(LOG_INFO, "%s -- %s\n", path, name);
 
+  // Temporary (?) change to block non-user xattr interactions for perf benefits
+  // TODO Could implementation of path-based xattr interaction remove the need for this?
+  if (strncmp(name,"user.",5)) {
+    LOG( LOG_INFO, "Faking absent \"%s\" xattr\n", name );
+    return -ENOATTR;
+  }
   if (!strcmp(path, CONFIGVER_FNAME)) {
     LOG( LOG_INFO, "Faking absent \"%s\" xattr for reserved config ver file\n", name );
     return -ENOATTR;
@@ -884,6 +890,13 @@ int fuse_rmdir(const char *path)
 int fuse_setxattr(const char *path, const char *name, const char *value, size_t size, int flags)
 {
   LOG(LOG_INFO, "%s\n", path);
+
+  // Temporary (?) change to block non-user xattr interactions for perf benefits
+  // TODO Could implementation of path-based xattr interaction remove the need for this?
+  if (strncmp(name,"user.",5)) {
+    LOG( LOG_INFO, "Blocking set of \"%s\" xattr\n", name );
+    return -ENOTSUP;
+  }
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
