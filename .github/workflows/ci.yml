@@ -65,3 +65,23 @@ jobs:
       - name: Test
         run: cargo test --verbose
         working-directory: marchive/obj_scanner
+
+  tape-manager:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Toolchain
+        run: rustup update stable && rustup default stable
+
+      - name: Build
+        run: cargo build --verbose
+        working-directory: marchive/tape-manager
+
+      - name: Test
+        run: cargo test --verbose
+        working-directory: marchive/tape-manager
+
+      - name: Format
+        run: cargo fmt --check
+        working-directory: marchive/tape-manager
