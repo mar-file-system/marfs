@@ -477,7 +477,7 @@ void push_objargs2queue(id_listnode* the_arg, marfs_config* config, marfs_positi
 //    -o <output file>		Output file for the generated Object ID list. This is 
 //                              actually a prefix. Should be a full path.
 #define GETOPT_STR ":c:hH:i:l:Mo:q:t:"
-#define USAGE "Usage: mustang [-t <max threads>] [-H <hashtable capacity exponent>] [-c <cache capacity>] [-q <task queue size>] [-l <log file>] [-M] -o <output file>  -i <input file> | paths/objIDs, ...\n" 
+#define USAGE "Usage: mustang [-t <max threads>] [-H <hashtable capacity exponent>] [-c <cache capacity>] [-q <task queue size>] [-l <log file>] [-M] [-o <output file>]  -i <input file> | paths/objIDs, ...\n" 
 
 int main(int argc, char** argv) {
     int opt;                         // holds current command line arg from getopt()
@@ -586,16 +586,16 @@ int main(int argc, char** argv) {
 	
     // Verify commandline calues
 
-    // Double check that an output file was specified on the Commandline
+    // Double check that an output file was specified on the Commandline. If not, use STDOUT
     if (!output_ptr) {
-        LOG(LOG_ERR, "No output file (-o <output file>) was provided. Exiting ...\n");
-	return 1;
+        LOG(LOG_INFO, "No output file (-o <output file>) was provided. Writing to STDOUT ...\n");
+	output_ptr = stdout;
     }
 
     // Check to see that we have paths to scan
     if (patharg_idx >= argc && input_file == NULL) {
         LOG(LOG_ERR, "No MarFS paths or object IDs to scan. Exiting ...\n");
-        if (output_ptr) fclose(output_ptr);
+        if (output_ptr && output_ptr != stdout) fclose(output_ptr);
 	return 1;
     } else if (patharg_idx < argc && input_file) {
         LOG(LOG_WARNING, "Input file %s will be used, instead of paths or object IDs on the command line.\n", input_file);
@@ -632,7 +632,7 @@ int main(int argc, char** argv) {
     
     if ((output_table == NULL) || (errno == ENOMEM)) {
         LOG(LOG_ERR, "Failed to initialize hashtable (%s)\n", strerror(errno));
-        fclose(output_ptr);
+        if(output_ptr != stdout) fclose(output_ptr);
         return 1;
     }
 
@@ -658,9 +658,30 @@ int main(int argc, char** argv) {
     pthread_mutex_t erasure_lock = PTHREAD_MUTEX_INITIALIZER;
 
     // Worker threads will get `parent_config`, but treat it as read-only
+    // Note that config_init() requires admin/root type permissions to be 
+    // read or generated. If end-users need to run this utility, then
+    // the binary needs to have the SUID bit on, and owned by a MARFS
+    // admin/root account - so that the effective UID can read the MARFS
+    // config.
     marfs_config* parent_config = config_init(config_path, "Mustang", &erasure_lock);    
     marfs_position parent_position = { .ns = NULL, .depth = 0, .ctxt = NULL };
 
+    // Down-grading the effective UID to the running user - if needed
+    uid_t curuid = getuid();
+
+    if (curuid != geteuid()) {
+       errno = 0;	    
+       if (seteuid(curuid)) {
+	  LOG(LOG_ERR, "Failed to downgrade to effective UID (%d): %s\n", curuid, strerror(errno));
+	  return 1;
+       }	       
+       if (setegid(getgid())) {				// May not be needed unless SGID bit is set on binary
+	  LOG(LOG_ERR, "Failed to downgrade to effective GID (%d): %s\n", getgid(), strerror(errno));
+	  return 1;
+       }	       
+    }	    
+
+    // Now set up initial MARFS position ...
     if (config_establishposition(&parent_position, parent_config)) {
         LOG(LOG_ERR, "Failed to establish marfs_position!\n");
         return 1;
