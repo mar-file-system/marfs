@@ -2,18 +2,63 @@
 # coding=utf-8
 
 """
+Tape Manager Requester
+
+@author David Sherrill <dsherril@lanl.gov>
+"""
 # Splits output generated from a MarFS utility that produces object data
 # lists so that it can be digested by the marchive Tape Manager. The list
 # output from must have object and location information in it. Lines
 # in the output should have the following format (including "[]"):
-#    [object id][pod][cap][scatter]
+#     [object id][stripe][pod][cap][scatter]
 #
-# See the argparse in main() for a list of arguments taken by this
-# script.
+# This script can read from a variety of sources, including running
+# commands that generate object data in the format specified above.
+# The following is an example of how to specify a generating command:
+#     marchive-tmrequest --verbose -j xjunkx -X flush -- cat testfile
+#
+# The following options are accepted by this script:
+#    usage: marchive-tmrequest [-h] [-c TMCONFIG] [-d] [-E ENVFILE] [-f INFILE] [-j JOBTAG] [-L LOGDIR] [-q]
+#                              [-S SYSLOGDEV] [--verbose] [-X]
+#                              task [gencmd ...]
+#
+#    marchive-tmrequest -- Options
+#
+#    positional arguments:
+#      task                  The operation to configure the mustang for. (values: read,delete,flush,push)
+#      gencmd                A command that generates approriate object output that can be formatted in request
+#                            for the Tape Manager. This command/utility should be able to generate output to
+#                            STDOUT.
+#
+#    options:
+#      -h, --help            show this help message and exit
+#      -c TMCONFIG, --tmconfig TMCONFIG
+#                            File containing the Marchive Tape Manager configuration (default: Value of
+#                            MARCHIVE_TMCONFIG_PATH environment variable)
+#      -d, --debug           Prints the debugging statements, unless "-q" is specified (default: off)
+#      -E ENVFILE, --envfile ENVFILE
+#                            File containing the Marchive environment variables used by this script (default:
+#                            <Installed Marchive ENV file>)
+#      -f INFILE, --infile INFILE
+#                            File containing object (with location) output from a utility that generates the
+#                            required request information. This option is ignored if a command is given
+#                            (default: Reads from STDIN, unless "-X" is specified)
+#      -j JOBTAG, --jobtag JOBTAG
+#                            Specifies a string (with no spaces) to include in the name of the generated job
+#                            files. This option is required if -X is set and there is no object output to
+#                            process.
+#      -L LOGDIR, --logdir LOGDIR
+#                            Directory to write the log file. If this option is not specified, and
+#                            MARCHIVE_LOGDIR_PATH is not set, then no log file is generated (default: Value of
+#                            MARCHIVE_LOGDIR_PATH environment variable)
+#      -q, --quiet           Turns off all console output (default: off)
+#      -S SYSLOGDEV, --syslog SYSLOGDEV
+#                            Device used to write log messages to SYSLOG (default: /dev/log)
+#      --verbose             Turns on additional console output (default: off)
+#      -X, --cleanup         Removes files from the Tape Manager's output directory (default: off)
 #
 # A good pylint command for this file:
 #    pylint --max-line-length 175 -d C0103 -d C0116 -d R1732 marchive-tmrequest
-"""
 
 import argparse
 from datetime import datetime
@@ -28,11 +73,14 @@ import sys
 import time
 import tomllib
 
-                                                                      # Regular expression used to parse mustang output
-REGX_OBJECT_LINE = r"\s*\[(.+)\]\s*\[([0-9]+)\]\s*\[([0-9]+)\]\s*\[([0-9]+)\]\s*\[([0-9]+)\]\s*"
-REGX_OBJECT_COMMENT = "[#].+"                                         # Regular expression to match a comment line
+DEFAULT_ENVFILE = "test.env"                                          # File containing the running environment for this script
 TMCONFIG = "MARCHIVE_TMCONFIG_PATH"                                   # Name of the environment variable to hold the Tape Manager configuration file
-LOGDIR = "SPLITTER_LOGDIR"                                            # Name of the environment variable to hold a log directory path
+LOGDIR = "MARCHIVE_LOGDIR_PATH"                                       # Name of the environment variable to hold a log directory path
+
+REGX_COMMENT_LINE = re.compile(r"[#].*|^\s*$")                        # Compiled Regular expression to match a comment line or empty line
+REGX_ENV_LINE = re.compile(r"(export\s+)*([A-Z0-9_]+)\s*=\s*(.+)")    # Compiled Regular expression to match an environment variable line
+                                                                      # Compiled Regular expression used to parse object output
+REGX_OBJECT_LINE = re.compile(r"\s*\[(.+)\]\s*\[([0-9]+)\]\s*\[([0-9]+)\]\s*\[([0-9]+)\]\s*\[([0-9]+)\]\s*")
 
 # Key strings to use for direcory/file maps
 FILEKEY = "__file"
@@ -43,6 +91,75 @@ SUCCESSKEY = "success"
 FAILKEY = "fail"
 
 logger = logging.getLogger('TMREQUEST_LOGGER')                        # global logger for the script - set up in main()
+
+#======================================================================
+# Processes a line from an env file. Comment lines are simply ignored.
+# Since this routine is called prior to logging being initialized,
+# all messages are written to stderr.
+#
+#  Args:
+#       inline (str): the line to process
+#       verbose (bool): if set, prints a line for each variable
+#                       assigned by this routine
+#======================================================================
+def process_env_line(inline,verbose):
+    # Ignore comment lines
+    if REGX_COMMENT_LINE.match(inline) is not None:
+        return
+
+    inline = inline.strip()                                           # strip off new line...
+    # Parse the line
+    linedata = REGX_ENV_LINE.fullmatch(inline)
+    if linedata is None:
+        sys.stderr.write(f"ERROR: Invalid environment line: {inline}\n")
+        return
+    name = linedata.group(2)                                          # group 1 is the word "export", if it given on the line
+    rawvalue = str(linedata.group(3)).strip('\'"')                    # removes any enclosing quotes in value
+
+    if name not in os.environ:                                        # assign only the missing variables ...
+        if name.endswith('_PATH'):
+            value = str(Path(rawvalue).resolve())                     # makes sure all _PATH variables have full path values
+        else:
+            value = rawvalue
+        os.environ[name] = value
+        if verbose:
+            print(f"DEBUG: {name} = [{value}]")
+
+#======================================================================
+# Reads the given envronment file, and sets the scripts running
+# environment to the values contained there in. Note that it tests to
+# see if an evironment variable already has a value before setting it.
+# That means that environment values set prior to this script's
+# invocation have precidence.
+#
+# This routine is typically called before logging is set up. As such.
+# it write all messages to stderr/stdout. In particular, if the specified
+# envronment file does not exist, then a message saying that is written
+# to stderr, and this routine exits.
+#
+#  Args:
+#       marchenv (str): the path to the Marchive environment file.
+#                       Typically this is a full path (but that is
+#                       not required).
+#       verbose (bool): if set, prints a line for each variable
+#                       assigned by this routine
+#======================================================================
+def setenv_marchive(marchenv, verbose):
+    envfile = Path(marchenv).resolve()                                # path to the specified marchive env file
+
+    if not envfile.exists():
+        sys.stderr.write(f"The environment file {envfile} is not found.\n"+
+            "WARNING: Only the currently set envronment will be used by this "+
+            "script.\n")
+        return
+
+    try:
+        with envfile.open(mode='r', encoding="utf-8") as envfh:
+            for envline in envfh:
+                process_env_line(envline, verbose)
+    except OSError as e:
+        sys.stderr.write(f"Failed to read {envfile}: {e}\nWARNING: Only the "+
+            "currently set envronment will be used by this script.\n") 
 
 #======================================================================
 # Sets up the logging for this script, based on the commandline
@@ -107,8 +224,8 @@ def get_timeout(tstr):
     return tstr.hour*3600+tstr.minute*60+tstr.second
 
 #======================================================================
-# Sets up the Tape Manager string maps needed by process_line() in order
-# to form directory and file names
+# Sets up the Tape Manager string maps needed by process_object_line()
+# in order to form directory and file names
 #
 #  Args:
 #       cfg (dict): a TOML configuration dictionary, containing the
@@ -152,13 +269,12 @@ def write_genfile(jobfile, content, dirmaps, filetab):
     if not jobfile in filetab:
         fentry = {}                                                   # an entry into the file table
 
-        fentry[GENKEY] = f"{dirmaps[GENKEY]}/{jobfile}"
+        fentry[GENKEY] = Path(f"{dirmaps[GENKEY]}/{jobfile}")
         fentry[INPUTKEY] = f"{dirmaps[INPUTKEY]}/{jobfile}"
         fentry[SUCCESSKEY] = Path(f"{dirmaps[SUCCESSKEY]}/{jobfile}")
         fentry[FAILKEY] = Path(f"{dirmaps[FAILKEY]}/{jobfile}")
 
-        genpath = Path(fentry[GENKEY])
-        gendir = Path(genpath.parent)
+        gendir = Path(fentry[GENKEY].parent)
 
         try:
             if not gendir.exists():
@@ -168,16 +284,16 @@ def write_genfile(jobfile, content, dirmaps, filetab):
             logger.error("Did not add [%s] to file table.", jobfile)
             return
         try:
-            genpath.touch(exist_ok=False)                             # simulate create exclusive...
+            fentry[GENKEY].touch(exist_ok=False)                      # simulate create exclusive...
         except OSError as e:
-            logger.error("Failed to create file %s: %s", genpath, e)
+            logger.error("Failed to create file %s: %s", fentry[GENKEY], e)
             logger.error("Did not add [%s] to file table.", jobfile)
             return
 
         filetab[jobfile] = fentry
 
     # Write the content to the job file
-    genfile = Path(filetab[jobfile][GENKEY])
+    genfile = filetab[jobfile][GENKEY]
 
     logger.debug("Writing [%s] to %s", content, genfile)
     try:
@@ -190,13 +306,11 @@ def write_genfile(jobfile, content, dirmaps, filetab):
     return
 
 #======================================================================
-# Processes a line from an object list output file. Comment lines are
-# simply ignored.
+# Processes a line from an object list output file or stream. Comment
+# lines are simply ignored.
 #
 #  Args:
 #       inline (str): the line to process
-#       regx (regx object): a compiled regular expression that matches
-#                           a mustang output line
 #       tmtask (str): indicates the task the Task Manager should do
 #                     with the data from the lines
 #       job (str): Name if the current job processing the line. Used
@@ -206,28 +320,28 @@ def write_genfile(jobfile, content, dirmaps, filetab):
 #       filetab (dict): a dictionary to store all files generated by
 #                       processing lines
 #======================================================================
-def process_line(inline, regx, tmtask, job, dirmaps, filetab):
+def process_object_line(inline, tmtask, job, dirmaps, filetab):
 
     jobfile = f"{job}.req"                                            # formed, base on the name of running job
 
     # Ignore comment lines
-    if re.match(REGX_OBJECT_COMMENT,inline) is not None:
+    if REGX_COMMENT_LINE.match(inline) is not None:
         return
 
     inline = inline.strip()                                           # strip off new line...
     # Parse the line
-    linedata = regx.fullmatch(inline)
+    linedata = REGX_OBJECT_LINE.fullmatch(inline)
     if linedata is None:
         logger.error("Invalid output line: %s", inline)
         return
     objid = linedata.group(1)
-    maxstrip = int(linedata.group(2))
+    maxstripe = int(linedata.group(2))
     pod = linedata.group(3)
     cap = linedata.group(4)
     scatter = linedata.group(5)
 
     # Now add object to appropriate files in the Tape Manager tree/file table
-    for b in range(0,maxstrip):
+    for b in range(0,maxstripe):
         linedict = {'task':tmtask, 'pod':pod, 'block':b, 'cap':cap,
                     'scatter':scatter, 'object':objid, '_':jobfile}
         tmfile = dirmaps[FILEKEY].format_map(linedict)
@@ -261,7 +375,7 @@ def submit_jobfile(tabentry):
             inputdir, e)
         return False
 
-    genfile = Path(tabentry[GENKEY])
+    genfile = tabentry[GENKEY]
     try:
         genfile.replace(inputfile)
     except OSError as e:
@@ -279,7 +393,6 @@ if __name__=="__main__":
     config = {}                                                       # a TOML configuration object
     ftab = {}                                                         # a table to hold all files created/managed by this script
     cleanupfiles = []                                                 # a list of files to clean up. Used if "-X" specified
-    objregx = re.compile(REGX_OBJECT_LINE)                            # regex object for parsing output lines
     clntname = os.path.basename(sys.argv[0])                          # name of script
     procname = f"{clntname}_{os.getpid()}"                            # name of the process to use/log
 
@@ -305,12 +418,17 @@ if __name__=="__main__":
     cmdline.add_argument('-d', '--debug', dest='debug', default=False, action='store_true',
         help='Prints the debugging statements, unless "-q" is specified '+
             '(default: off)')
+    cmdline.add_argument('-E', '--envfile', dest='envfile', nargs=1, default=[DEFAULT_ENVFILE],
+        help='File containing the Marchive environment variables used by this script '+
+            f'(default: {DEFAULT_ENVFILE})')
     cmdline.add_argument('-f', '--infile', dest='infile', nargs=1, default=['/dev/stdin'],
         help='File containing object (with location) output from a utility that '+
-            'generates the required request information (default: Reads from STDIN)')
+            'generates the required request information. This option is ignored '+
+            'if a command is given (default: Reads from STDIN, unless "-X" is '+
+            'specified)')
     cmdline.add_argument('-j', '--jobtag', dest='jobtag', nargs=1, default='',
         help='Specifies a string (with no spaces) to include in the name of the '+
-            'generated job files. This argument is required if -X is set and there '+
+            'generated job files. This option is required if -X is set and there '+
             'is no object output to process.')
     cmdline.add_argument('-L', '--logdir', dest='logdir', nargs=1, default='',
         help='Directory to write the log file. If this option is not specified, '+
@@ -326,6 +444,9 @@ if __name__=="__main__":
     cmdline.add_argument('-X', '--cleanup', dest='clean', default=False, action='store_true',
         help='Removes files from the Tape Manager\'s output directory (default: off)')
     cmdopts = cmdline.parse_args()
+
+    # Set up the running environment for this script
+    setenv_marchive(cmdopts.envfile[0], cmdopts.debug)
 
     # Set up logging
     setup_log(cmdopts,procname)
@@ -393,10 +514,14 @@ if __name__=="__main__":
     # that may inadvertently be specified (including /dev/stdin)
     if cmdopts.gencmd:
         logger.info("Reading from Command: %s", " ".join(cmdopts.gencmd))
-        iproc = subprocess.Popen(cmdopts.gencmd, stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE, env=os.environ.copy())
-        ihandle = io.TextIOWrapper(iproc.stdout, encoding="utf-8")
-        isrcname = Path(cmdopts.gencmd[0]).name
+        try:
+            iproc = subprocess.Popen(cmdopts.gencmd, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, env=os.environ.copy())
+            ihandle = io.TextIOWrapper(iproc.stdout, encoding="utf-8")
+            isrcname = Path(cmdopts.gencmd[0]).name
+        except OSError as e:
+            logger.critical("Failed to start generating command: %s", e)
+            sys.exit(42)
     elif cmdopts.infile:
         ihandle = open(cmdopts.infile[0], 'r', encoding="utf-8")
         isrcname = cmdopts.infile[0]
@@ -424,7 +549,7 @@ if __name__=="__main__":
                 logger.info("Job %s started at %s (since epoch: %d)",
                     jobname, curtime, curtime.timestamp())
 
-            process_line(line, objregx, cmdopts.task, jobname, tmdirmaps, ftab)
+            process_object_line(line, cmdopts.task, jobname, tmdirmaps, ftab)
             linecnt += 1
 
             if not linecnt%maxjoblines:
@@ -443,15 +568,33 @@ if __name__=="__main__":
         # Close the input stream handle (and generating process, if needed)
         ihandle.close()
         if iproc:
-            iproc.wait()                                                  # make sure generating command is done
+            iproc.wait()                                              # make sure generating command is done
+            if iproc.returncode:
+                logger.warning("Command %s completed with return code: %d",
+                    isrcname, iproc.returncode)
 
         # Submit job files to Tape Manager
+        errkeys = []                                                  # list of keys that may be populated with submission errors
         for k, entry in ftab.items():
             if not submit_jobfile(entry):
                 logger.error("Failed to submit job [%s] to tape manager!", k)
                 errorhappened = True
+                errkeys.append(k)
             else:
                 logger.debug("Adding [%s] to watch list", k)
+        if errkeys:                                                   # remove any failed submissions from file table
+            for k in errkeys:
+                entry = ftab.pop(k)
+                errfile = entry[GENKEY]
+                if errfile.exists():
+                    logger.info("Removing job file %s after failed submission "+
+                        "to tape manager.", errfile)        
+                    try:
+                        errfile.unlink()
+                    except OSError as e:
+                        logger.error("Problems deleting %s after failed "+
+                            "job submission: %s", errfile, e)
+
         logger.info("Submitting %d job files from job submission [%s]...",
             len(ftab), jobprefix)
 
