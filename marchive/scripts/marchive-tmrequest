@@ -73,7 +73,7 @@ import sys
 import time
 import tomllib
 
-DEFAULT_ENVFILE = "test.env"                                          # File containing the running environment for this script
+DEFAULT_ENVFILE = "marchive.env"                                      # File containing the running environment for this script
 TMCONFIG = "MARCHIVE_TMCONFIG_PATH"                                   # Name of the environment variable to hold the Tape Manager configuration file
 LOGDIR = "MARCHIVE_LOGDIR_PATH"                                       # Name of the environment variable to hold a log directory path
 
@@ -124,6 +124,29 @@ def process_env_line(inline,verbose):
         os.environ[name] = value
         if verbose:
             print(f"DEBUG: {name} = [{value}]")
+
+#======================================================================
+# Constructs the config directory, based on the absolute path of the
+# executable script. If the script is in a "bin" directory, then it is
+# assumed that script is in an installed tree. This implies that
+# the config dirctory would be a sibling directory called "etc".
+# If the script is not in a "bin" directory, then we assume that the
+# config directory is the same directory where the script is located.
+# (This would a testing on non-installed configuration for the files.)
+#
+# This hack means that the location of the config directory can be
+# determined programatically, and not rely on a install macro to
+# determine it. Garrett Ransom suggested this hack.
+#======================================================================
+def gen_config_path():
+    execdir = Path(__file__).absolute().parent
+
+    if str(execdir).endswith('/bin'):
+        configpath = f"{execdir.parent}/etc"
+    else:
+        configpath = str(execdir)
+
+    return configpath
 
 #======================================================================
 # Reads the given envronment file, and sets the scripts running
@@ -418,9 +441,9 @@ if __name__=="__main__":
     cmdline.add_argument('-d', '--debug', dest='debug', default=False, action='store_true',
         help='Prints the debugging statements, unless "-q" is specified '+
             '(default: off)')
-    cmdline.add_argument('-E', '--envfile', dest='envfile', nargs=1, default=[DEFAULT_ENVFILE],
+    cmdline.add_argument('-E', '--envfile', dest='envfile', nargs=1, default=None,
         help='File containing the Marchive environment variables used by this script '+
-            f'(default: {DEFAULT_ENVFILE})')
+            f'(default: <installdir>/etc/{DEFAULT_ENVFILE})')
     cmdline.add_argument('-f', '--infile', dest='infile', nargs=1, default=['/dev/stdin'],
         help='File containing object (with location) output from a utility that '+
             'generates the required request information. This option is ignored '+
@@ -446,6 +469,8 @@ if __name__=="__main__":
     cmdopts = cmdline.parse_args()
 
     # Set up the running environment for this script
+    if not cmdopts.envfile:
+        cmdopts.envfile = [ f"{gen_config_path()}/{DEFAULT_ENVFILE}" ]
     setenv_marchive(cmdopts.envfile[0], cmdopts.debug)
 
     # Set up logging
