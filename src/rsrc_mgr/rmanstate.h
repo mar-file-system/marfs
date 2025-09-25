@@ -13,6 +13,7 @@
 
 #include "config/config.h"
 #include "hash/hash.h"
+#include "rsrc_mgr/common.h"
 #include "rsrc_mgr/resourcelog.h"
 #include "rsrc_mgr/streamwalker.h"
 #include "rsrc_mgr/resourcethreads.h"
@@ -63,7 +64,7 @@ void rmanstate_init(rmanstate *rman, int rank, int rankcount);
 
 // complete rmanstate initialization
 int rmanstate_complete(rmanstate *rman, const char *config_path, const char *ns_path,
-                       const time_t log_skip, const int recurse, pthread_mutex_t *erasuremutex);
+                       ArgThresholds_t *thresh, const int recurse, pthread_mutex_t *erasuremutex);
 
 // destroy the rmanstate
 void rmanstate_fini(rmanstate* rman, char abort);

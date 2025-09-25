@@ -189,7 +189,7 @@ void rmanstate_init(rmanstate *rman, int rank, int rankcount) {
 }
 
 int rmanstate_complete(rmanstate *rman, const char *config_path, const char *ns_path,
-                       const time_t log_skip, const int recurse, pthread_mutex_t *erasuremutex) {
+                       ArgThresholds_t *thresh, const int recurse, pthread_mutex_t *erasuremutex) {
    if ((rman->config = config_init(config_path, erasuremutex)) == NULL) {
        fprintf(stderr, "ERROR: Failed to initialize MarFS config: \"%s\"\n", config_path);
        return -1;
@@ -205,7 +205,7 @@ int rmanstate_complete(rmanstate *rman, const char *config_path, const char *ns_
    rman->walkreport = calloc(sizeof(*rman->walkreport), rman->nscount);
    rman->logsummary = calloc(sizeof(*rman->logsummary), rman->nscount);
 
-   if (read_last_log(rman, log_skip) != 0) {
+   if (read_last_log(rman, thresh->skip) != 0) {
        fprintf(stderr, "ERROR: Failed to open previous run's log\n");
        return -1;
    }

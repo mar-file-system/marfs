@@ -1,9 +1,9 @@
-# 
+#
 # Copyright 2015. Triad National Security, LLC. All rights reserved.
-# 
+#
 # Full details and licensing terms can be found in the License file in the main development branch
 # of the repository.
-# 
+#
 # MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
 #
 
@@ -40,7 +40,7 @@ libResourceCore_la_SOURCES = \
 libResourceCore_la_LIBADD = libResourceLog.la
 libResourceCore_la_CFLAGS = $(XML_CFLAGS)
 
-bin_PROGRAMS = marfs-rman quota
+bin_PROGRAMS = marfs-rman quota rebuild
 
 marfs_rman_SOURCES =         \
     resourcemanager.c
@@ -51,6 +51,11 @@ quota_SOURCES =              \
     quota.c
 quota_LDADD = libResourceCore.la ../datastream/libDatastream.la
 quota_CFLAGS = $(XML_CFLAGS)
+
+rebuild_SOURCES =            \
+	rebuild.c
+rebuild_LDADD = libResourceCore.la ../datastream/libDatastream.la
+rebuild_CFLAGS = $(XML_CFLAGS)
 
 # ---
 

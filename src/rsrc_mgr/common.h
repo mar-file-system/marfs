@@ -24,8 +24,29 @@
 #define MODIFY_ITERATION_PARENT "RMAN-MODIFY-RUNS"
 #define RECORD_ITERATION_PARENT "RMAN-RECORD-RUNS"
 
+//   -------------   INTERNAL DEFINITIONS    -------------
+
+#define GC_THRESH 604800  // Age of deleted files before they are Garbage Collected
+                          // Default to 7 days ago
+#define RB_L_THRESH  600  // Age of files before they are rebuilt (based on location)
+                          // Default to 10 minutes ago
+#define RB_M_THRESH  120  // Age of files before they are rebuilt (based on marker)
+                          // Default to 2 minutes ago
+#define RP_THRESH 259200  // Age of files before they are repacked
+                          // Default to 3 days ago
+#define CL_THRESH  86400  // Age of intermediate state files before they are cleaned up (failed repacks, old logs, etc.)
+                          // Default to 1 day ago
 #define INACTIVE_RUN_SKIP_THRESH 60 // Age of seemingly inactive (no summary file) rman logdirs before they are skipped
                                     // Default to 1 minute ago
+
+typedef struct {
+    time_t skip;    // for skipping seemingly inactive logs of previous runs
+    time_t gc;
+    time_t rbl;
+    time_t rbm;
+    time_t rp;
+    time_t cl;
+} ArgThresholds_t;
 
 #define SUMMARY_FILENAME "summary.log"
 #define ERROR_LOG_PREFIX "ERRORS-"
