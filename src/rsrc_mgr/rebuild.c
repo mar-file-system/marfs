@@ -28,7 +28,7 @@ static void print_usage_info(const int rank) {
 
     printf("\n"
            "rebuild [-c MarFS-Config-File] [-n MarFS-NS-Target] [-r] [-i Iteration-Name] [-l Log-Root]\n"
-           "[-d] [-h]\n"
+           "[-d] [-L [NE-Location]] [-h]\n"
            "\n"
            " Arguments --\n"
            "  -c MarFS-Config-File : Specifies the path of the MarFS config file to use\n"
