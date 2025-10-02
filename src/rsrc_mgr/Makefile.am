@@ -40,7 +40,7 @@ libResourceCore_la_SOURCES = \
 libResourceCore_la_LIBADD = libResourceLog.la
 libResourceCore_la_CFLAGS = $(XML_CFLAGS)
 
-bin_PROGRAMS = marfs-rman quota rebuild
+bin_PROGRAMS = marfs-rman quota rebuild gc
 
 marfs_rman_SOURCES =         \
     resourcemanager.c
@@ -56,6 +56,11 @@ rebuild_SOURCES =            \
 	rebuild.c
 rebuild_LDADD = libResourceCore.la ../datastream/libDatastream.la
 rebuild_CFLAGS = $(XML_CFLAGS)
+
+gc_SOURCES =            \
+	gc.c
+gc_LDADD = libResourceCore.la ../datastream/libDatastream.la
+gc_CFLAGS = $(XML_CFLAGS)
 
 # ---
 
