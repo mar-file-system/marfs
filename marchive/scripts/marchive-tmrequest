@@ -301,7 +301,13 @@ def write_genfile(jobfile, content, dirmaps, filetab):
 
         try:
             if not gendir.exists():
-                gendir.mkdir(parents=True)
+                perms = 0o700
+
+                if '/read/' in str(gendir):
+                    perms = 0o777
+                oldu = os.umask(0)    
+                gendir.mkdir(parents=True, mode=perms)
+                os.umask(oldu)                                        # return previous UMASK value
         except OSError as e:
             logger.error("Failed to create directory %s: %s", gendir, e)
             logger.error("Did not add [%s] to file table.", jobfile)
@@ -679,7 +685,7 @@ if __name__=="__main__":
                     f.unlink()
                     fcnt+=1
                 except OSError as e:
-                    logger.error("Problems deleting %s: %s", donefile, e)
+                    logger.error("Problems deleting files globbed by [%s]: %s", jglob, e)
         else:
             logger.error("No way to determine what job files needed to be cleaned up!")
             errorhappened = True
