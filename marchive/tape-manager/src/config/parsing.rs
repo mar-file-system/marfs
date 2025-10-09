@@ -20,15 +20,15 @@ pub struct ParsedConfig {
 /// [options] subsection values
 #[derive(Debug, Deserialize)]
 pub struct ConfigOptions {
-    pub status_frequency: toml::value::Datetime,
-    pub cleanup_frequency: toml::value::Datetime,
-    pub scan_frequency: toml::value::Datetime,
-    pub filter_frequency: toml::value::Datetime,
-    pub poll_frequency: toml::value::Datetime,
-    pub check_frequency: toml::value::Datetime,
+    pub status_frequency: String,
+    pub cleanup_frequency: String,
+    pub scan_frequency: String,
+    pub filter_frequency: String,
+    pub poll_frequency: String,
+    pub check_frequency: String,
     pub task_parallelism: u32,
-    pub hard_timeout: toml::value::Datetime,
-    pub cleanup_timeout: toml::value::Datetime,
+    pub hard_timeout: String,
+    pub cleanup_timeout: String,
     pub root: String,
     pub input_subdir: String,
     pub processing_subdir: String,
@@ -57,7 +57,7 @@ pub struct ConfigTask {
     pub file_format: String,
     pub overrides: Option<Vec<String>>,
     pub conflicts: Option<Vec<String>>,
-    pub timeout: Option<toml::value::Datetime>,
+    pub timeout: Option<String>,
 }
 
 impl ParsedConfig {
@@ -78,14 +78,6 @@ impl ParsedConfig {
         // catch invalid task defs and warn of some extraneous values
         let mut invalid = false;
         for task in &config.tasks {
-            if let Some(timeout) = task.timeout {
-                if let Some(date) = timeout.date {
-                    eprintln!( "WARNING: Task \"{}\" contained extraneous 'date' information ({date}) in timeout value", task.name );
-                }
-                if let Some(offset) = timeout.offset {
-                    eprintln!( "WARNING: Task \"{}\" contained extraneous 'offset' information ({offset}) in timeout value", task.name );
-                }
-            }
             // check for duplicate task names
             if config.tasks.iter().filter(|t| t.name == task.name).count() > 1 {
                 eprintln!(
