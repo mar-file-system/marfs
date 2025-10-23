@@ -27,8 +27,8 @@ static void print_usage_info(const int rank) {
     }
 
     printf("\n"
-           "rebuild [-c MarFS-Config-File] [-n MarFS-NS-Target] [-r] [-i Iteration-Name] [-l Log-Root]\n"
-           "[-d] [-L [NE-Location]] [-h]\n"
+           "gc [-c MarFS-Config-File] [-n MarFS-NS-Target] [-r] [-i Iteration-Name] [-l Log-Root]\n"
+           "[-d] [-h]\n"
            "\n"
            " Arguments --\n"
            "  -c MarFS-Config-File : Specifies the path of the MarFS config file to use\n"
@@ -50,12 +50,6 @@ static void print_usage_info(const int rank) {
            "                                <Unit>       = 's' (seconds), 'm' (minutes),\n"
            "                                               'h' (hours), 'd' (days)\n"
            "                                               (assumed to be 's', if omitted)\n"
-           "  -L [NE-Location]     : Specifies NE object location to target for rebuilds\n"
-           "                         Value Format = <LocType><LocValue>\n"
-           "                                           [-<LocType><LocValue>]*\n"
-           "                         Where, <LocType>  = 'p' (pod), 'c' (cap), or 's' (scatter)\n"
-           "                                <LocValue> = A numeric value for the specified p/c/s location\n"
-           "                         NOTE -- Missing 'NE-Location' value implies rebuild of ALL objects!\n"
            "  -h                   : Prints this usage info\n"
            "\n",
            DEFAULT_LOG_ROOT);
@@ -75,18 +69,17 @@ static int parse_args(int argc, char **argv,
     }
 
     thresh->skip = currenttime.tv_sec - INACTIVE_RUN_SKIP_THRESH;
-    thresh->rbl  = currenttime.tv_sec - RB_L_THRESH;
-    thresh->rbm  = currenttime.tv_sec - RB_M_THRESH;
+    thresh->gc   = currenttime.tv_sec - GC_THRESH,
 
-    // set some rebuild specific values
+    // set some gc specific values
     rman->tqopts.thread_init_func     = rthread_init;
     rman->tqopts.thread_consumer_func = rthread_all_consumer;
-    rman->tqopts.thread_producer_func = rthread_rebuild_producer;
+    rman->tqopts.thread_producer_func = rthread_gc_producer;
     rman->tqopts.thread_pause_func    = NULL;
     rman->tqopts.thread_resume_func   = NULL;
     rman->tqopts.thread_term_func     = rthread_term;
 
-    rman->gstate.thresh.rebuildthreshold = 1;  // time_t used as bool for now
+    rman->gstate.thresh.gcthreshold = 1;  // time_t used as bool for now
 
     // parse all position-independent arguments
     int print_usage = 0;
@@ -144,56 +137,7 @@ static int parse_args(int argc, char **argv,
                 else if (*endptr == 'h') { parseval *= 60 * 60; }
                 else if (*endptr == 'd') { parseval *= 60 * 60 * 24; }
 
-                thresh->rbl = currenttime.tv_sec - parseval;
-                thresh->rbm = currenttime.tv_sec - parseval;
-
-                break;
-            }
-            case 'L':
-            {
-                rman->gstate.lbrebuild = 1;
-
-                char* locparse = optarg;
-                char lflag = *locparse;
-                if (lflag == '-') {
-                    lflag = *++locparse;
-                }
-
-                // check for a location value type flag
-                if ((*locparse != 'p') &&
-                    (*locparse != 'c') &&
-                    (*locparse != 's')) {
-                    printf("ERROR: Failed to parse '-L' argument value: \"%s\"\n", optarg);
-                    print_usage = 1;
-                    break;
-                }
-
-                // move to the value part of the string
-                locparse++;
-
-                // parse the expected numeric value trailing the type flag
-                char* endptr = NULL;
-                unsigned long long parseval = strtoull(locparse, &endptr, 10);
-                if ((parseval == ULLONG_MAX) || (endptr == NULL) ||
-                    ((*endptr != '-') && (*endptr != '\0'))) {
-                    printf("ERROR: Failed to parse '%c' location from '-L' argument value: \"%s\"\n",
-                           lflag, optarg);
-                    print_usage = 1;
-                    break;
-                }
-
-                // actually assign the parsed value to the appropriate location value
-                switch (lflag) {
-                    case 'p':
-                        rman->gstate.rebuildloc.pod = parseval;
-                        break;
-                    case 'c':
-                        rman->gstate.rebuildloc.cap = parseval;
-                        break;
-                    case 's':
-                        rman->gstate.rebuildloc.scatter = parseval;
-                        break;
-                }
+                thresh->gc = currenttime.tv_sec - parseval;
 
                 break;
             }
@@ -237,13 +181,8 @@ static int parse_args(int argc, char **argv,
         strftime(rman->iteration, ITERATION_STRING_LEN, "%Y-%m-%d-%H:%M:%S", timeinfo);
     }
 
-    if (rman->gstate.thresh.rebuildthreshold) {
-        if (rman->gstate.lbrebuild) {
-            rman->gstate.thresh.rebuildthreshold = thresh->rbl;
-        }
-        else {
-            rman->gstate.thresh.rebuildthreshold = thresh->rbm;
-        }
+    if (rman->gstate.thresh.gcthreshold) {
+        rman->gstate.thresh.gcthreshold = thresh->gc;
     }
 
     return 0;
