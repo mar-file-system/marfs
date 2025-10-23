@@ -8,15 +8,15 @@
 # 
 
 [options]
-status_frequency  = 00:00:30 # frequency of status reports
-cleanup_frequency = 00:10:00 # frequency of output tree scans for deletion targets
-scan_frequency    = 00:00:10 # frequency of scans for new taskfile inputs
-filter_frequency  = 00:00:30 # frequency of filtering reattempts for taskfile inputs
-poll_frequency    = 00:00:10 # frequency of task proc polls for completion
-check_frequency   = 00:00:05 # frequency of checks for client completion ( output file deleted )
-task_parallelism  = 64       # total number of active task procs allowed at once
-hard_timeout      = 06:00:00 # maximum runtime of any task before it is force-killed ( ignores proc output )
-cleanup_timeout   = 06:00:00 # delay on autodeletion of output files ( success + failure )
+status_frequency  = "30m" # frequency of status reports
+cleanup_frequency = "15m" # frequency of output tree scans for deletion targets
+scan_frequency    = "10s" # frequency of scans for new taskfile inputs
+filter_frequency  = "30s" # frequency of filtering reattempts for taskfile inputs
+poll_frequency    = "0.5" # frequency of task proc polls for completion
+check_frequency   = "5s"  # frequency of checks for client completion ( output file deleted )
+task_parallelism  = 64    # total number of active task procs allowed at once
+hard_timeout      = "12h" # maximum runtime of any task before it is force-killed ( ignores proc output )
+cleanup_timeout   = "7d"  # delay on autodeletion of output files ( success + failure )
 root = "./tape-manager-root"     # root of program file state trees ( all further paths are appended to this )
 generating_subdir = "generating" # location for clients to generate taskfile content, prior to rename into input tree
 input_subdir = "input"           # location of the taskfile input tree
@@ -61,28 +61,98 @@ pods = [1]
 #   timeout -- (OPTIONAL) maximum allowable runtime of task command procs w/o producing new output
 #              any stdout / stderr output from a proc resets this timeout
 #              if the timeout elapses w/o new output, the proc will be force-killed
+
 [[tasks]]
 name = "read"
-command = "sleep 8 && echo TGT = {file} && cat {file} && sleep 8 && echo \"done\" >&2"
-file_format = "{object}"
+command = """
+cat {file} | while read -r line; do
+    DIRTGT="$( dirname "$line" )"
+    FILETGT="$( basename "$line" )"
+    if ! [ -f "/zfs/export/$line" ]; then
+        ln "/zfs/export/$DIRTGT/fake-tape/$FILETGT" "/zfs/export/$line"
+        if [[ $? -ne 0 ]]; then ( echo "FAILED TO LINK: /zfs/export/$DIRTGT/fake-tape/$FILETGT -> /zfs/export/$line" >&2 ); exit -1; fi
+        echo "recalled -- $line"
+    else
+        echo "present  -- $line"
+    fi
+done
+"""
+file_format = "block{block}/cap{cap}/scat{scatter}/{object}"
 overrides = [ "flush" ]
-timeout = 00:00:10
+timeout = "30m"
+
 [[tasks]]
 name = "delete"
-command = "sleep 8 && echo TGT = {file} && cat {file} && sleep 8 && echo \"done\" >&2"
-file_format = "{pod} {block} {cap} {scatter} {object}"
+command = """
+cat {file} | while read -r line; do
+    DIRTGT="$( dirname "$line" )"
+    FILETGT="$( basename "$line" )"
+    if ! [ -f "/zfs/export/$line" ]; then
+        if ! [ -f "/zfs/export/$DIRTGT/fake-tape/$FILETGT" ]; then
+            echo "NOT FOUND -- $line"
+        else
+            rm "/zfs/export/$DIRTGT/fake-tape/$FILETGT"
+            if [[ $? -ne 0 ]]; then ( echo "FAILED TO DELETE: /zfs/export/$DIRTGT/fake-tape/$FILETGT" >&2 ); exit -1; fi
+            echo "deleted ( tape only ) -- $line"
+        fi
+    else
+        rm "/zfs/export/$line"
+        if [[ $? -ne 0 ]]; then ( echo "FAILED TO DELETE: /zfs/export/$line" >&2 ); exit -1; fi
+        if ! [ -f "/zfs/export/$DIRTGT/fake-tape/$FILETGT" ]; then
+            echo "deleted ( disk only ) -- $line"
+        else
+            rm "/zfs/export/$DIRTGT/fake-tape/$FILETGT"
+            if [[ $? -ne 0 ]]; then ( echo "FAILED TO DELETE: /zfs/export/$DIRTGT/fake-tape/$FILETGT" >&2 ); exit -1; fi
+            echo "deleted ( disk+tape ) -- $line"
+        fi
+    fi
+done
+"""
+file_format = "block{block}/cap{cap}/scat{scatter}/{object}"
 overrides = [ "push", "flush" ]
 conflicts = [ "read" ]
-timeout = 00:00:10
+timeout = "15m"
+
 [[tasks]]
 name = "flush"
-command = "sleep 8 && echo TGT = {file} && cat {file} && sleep 8 && echo \"done\" >&2"
-file_format = "/zfs/export/block*/cap{cap}/scat{scatter}/{object}"
+command = """
+cat {file} | while read -r line; do
+    DIRTGT="$( dirname "$line" )"
+    FILETGT="$( basename "$line" )"
+    if [ -f "/zfs/export/$DIRTGT/fake-tape/$FILETGT" ]; then
+        if ! [ -f "/zfs/export/$line" ]; then
+            echo "flushed ( no action )  -- $line"
+        else
+            rm "/zfs/export/$line"
+            if [[ $? -ne 0 ]]; then ( echo "FAILED TO DELETE: /zfs/export/$line" >&2 ); exit -1; fi
+            echo "flushed ( pre-pushed ) -- $line"
+        fi
+    else
+        ln "/zfs/export/$line" "/zfs/export/$DIRTGT/fake-tape/$FILETGT"
+        if [[ $? -ne 0 ]]; then ( echo "FAILED TO LINK: /zfs/export/$line -> /zfs/export/$DIRTGT/fake-tape/$FILETGT" >&2 ); exit -1; fi
+        rm "/zfs/export/$line"
+        if [[ $? -ne 0 ]]; then ( echo "FAILED TO DELETE: /zfs/export/$line" >&2 ); exit -1; fi
+        echo "flushed ( and pushed ) -- $line"
+    fi
+done
+"""
+file_format = "block{block}/cap{cap}/scat{scatter}/{object}"
 overrides = [ "push" ]
-timeout = 00:00:10
+timeout = "30m"
+
 [[tasks]]
 name = "push"
-command = "sleep 8 && echo TGT = {file} && cat {file} && sleep 8 && echo \"done\" >&2"
-file_format = "pod{pod}/block{block}/cap{cap}/scat{scatter}/{object}"
-timeout = 00:00:10
+command = """
+cat {file} | while read -r line; do
+    DIRTGT="$( dirname "$line" )"
+    FILETGT="$( basename "$line" )"
+    if ! [ -f "/zfs/export/$line" ]; then ( echo "NOT FOUND -- $line" 2>&1 ); exit -1; fi
+    if [ -f "/zfs/export/$DIRTGT/fake-tape/$FILETGT" ]; then echo "present -- $line"; continue; fi
+    ln "/zfs/export/$line" "/zfs/export/$DIRTGT/fake-tape/$FILETGT"
+    if [[ $? -ne 0 ]]; then ( echo "FAILED TO LINK: /zfs/export/$line -> /zfs/export/$DIRTGT/fake-tape/$FILETGT" >&2 ); exit -1; fi
+    echo "pushed  -- $line"
+done
+"""
+file_format = "block{block}/cap{cap}/scat{scatter}/{object}"
+timeout = "30m"
 

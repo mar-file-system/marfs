@@ -1,5 +1,3 @@
-/// tracking of operations targeting specific objects for conflict detection
-mod objtable;
 // Copyright 2015. Triad National Security, LLC. All rights reserved.
 //
 // Full details and licensing terms can be found in the License file in the main development branch
@@ -7,6 +5,8 @@ mod objtable;
 //
 // MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
 
+/// tracking of operations targeting specific objects for conflict detection
+mod objtable;
 /// manipulation of taskfiles and tracking of associated procs
 mod task;
 
@@ -22,6 +22,7 @@ use std::{
     fmt, fs,
     io::ErrorKind,
     ops::Div,
+    os::unix::fs::DirBuilderExt,
     path::PathBuf,
     process,
     rc::Rc,
@@ -324,7 +325,11 @@ impl Runner {
             ProcessingPathElement::IntermediateDir,
         );
         let dirpath = PathBuf::from(&ppath);
-        if let Err(error) = fs::create_dir_all(&dirpath) {
+        if let Err(error) = fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dirpath)
+        {
             if error.kind() != ErrorKind::AlreadyExists {
                 eprintln!("ERROR: Failed to create processing location {dirpath:?}: {error}");
             }

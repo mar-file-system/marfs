@@ -5,9 +5,8 @@
 //
 // MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
 
-use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
-
 use crate::config::ConfigTask;
+use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
 
 /// Tracks active operations and associated object targets
 /// Upon addition of a new operation, identifies any conflicts / overrides
