@@ -22,6 +22,7 @@ use std::{
     fmt, fs,
     io::ErrorKind,
     ops::Div,
+    os::unix::fs::DirBuilderExt,
     path::PathBuf,
     process,
     rc::Rc,
@@ -324,7 +325,11 @@ impl Runner {
             ProcessingPathElement::IntermediateDir,
         );
         let dirpath = PathBuf::from(&ppath);
-        if let Err(error) = fs::create_dir_all(&dirpath) {
+        if let Err(error) = fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dirpath)
+        {
             if error.kind() != ErrorKind::AlreadyExists {
                 eprintln!("ERROR: Failed to create processing location {dirpath:?}: {error}");
             }

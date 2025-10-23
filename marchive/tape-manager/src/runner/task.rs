@@ -18,8 +18,9 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     fs,
-    io::{BufRead, BufReader, ErrorKind, LineWriter, Write},
+    io::{self, BufRead, BufReader, ErrorKind, LineWriter, Write},
     marker::PhantomData,
+    os::unix::fs::{chown, DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     process,
     rc::Rc,
@@ -36,6 +37,7 @@ pub struct Task<S> {
 /// 'inner' Task def to make cleanup simpler ( see Drop implementation )
 struct InnerTask {
     taskfile: PathBuf,
+    permset: Vec<Option<fs::Metadata>>,
     currentpath: PathBuf,
     timestamp: SystemTime,
     taskdef: Arc<ConfigTask>,
@@ -107,20 +109,23 @@ impl Drop for InnerTask {
         match &self.cleanup {
             InnerTaskCleanup::Ignore => return, // early exit to avoid parent dir cleanup
             InnerTaskCleanup::Failure => {
-                let mut rnamepath = PathBuf::from(&config.output_failure_subdir);
-                rnamepath.push(&self.taskfile);
-                if let Some(rnamedir) = rnamepath.parent() {
-                    if let Err(error) = fs::create_dir_all(rnamedir) {
-                        match error.kind() {
-                            ErrorKind::AlreadyExists => (), // ignore EEXIST
-                            _ => {
-                                eprintln!(
-                                    "ERROR: Failed to create output dir location {rnamedir:?} for taskfile {currentpath:?}: {error}"
-                                ); // almost certainly means rename will fail... but we'll attempt anyhow
-                            }
-                        }
+                // create output dirs
+                if let Some(taskparent) = self.taskfile.parent() {
+                    let path_with_perms = taskparent
+                        .components()
+                        .map(|c| c.as_os_str())
+                        .zip(self.permset.iter())
+                        .collect();
+                    if let Err(error) =
+                        produce_dirs_with_perms(&config.output_failure_subdir, path_with_perms)
+                    {
+                        eprintln!(
+                            "ERROR: Failed to create output dir location for taskfile {currentpath:?}: {error}"
+                        ); // almost certainly means rename will fail... but we'll attempt anyhow
                     }
                 }
+                let mut rnamepath = PathBuf::from(&config.output_failure_subdir);
+                rnamepath.push(&self.taskfile);
                 if let Err(error) = fs::rename(currentpath, &rnamepath) {
                     eprintln!("ERROR: Failed to rename taskfile {currentpath:?} to output location {rnamepath:?}: {error}");
                 } else {
@@ -176,7 +181,12 @@ impl Task<TaskGrabbed> {
     /// Create a new Task, associated with a new taskfile, a Config reference, and an ObjTable
     pub fn new(currentpath: PathBuf, objtable: Rc<RefCell<ObjTable>>) -> Option<Self> {
         let config = PROGRAM_CONFIG.get().unwrap(); // convenience ref
-        let Ok(taskfile) = currentpath.strip_prefix(&config.input_subdir) else {
+
+        // verify this path is below the input subdir and drop that prefix
+        let Ok(taskfile) = currentpath
+            .strip_prefix(&config.input_subdir)
+            .map(|p| p.to_path_buf())
+        else {
             eprintln!(
                 "ERROR: Encountered task file {currentpath:?} does not appear to \
                 be within the designated input subdir {}",
@@ -184,8 +194,34 @@ impl Task<TaskGrabbed> {
             );
             return None;
         };
+
+        // cache perms for all intermediate dirs
+        let mut dirpaths: Vec<&Path> = currentpath.parent().unwrap().ancestors().collect();
+        dirpaths.reverse(); // now a descending list of parent dir paths
+        let diriter = dirpaths.into_iter();
+        let mut failedperms = false;
+        let permset: Vec<Option<fs::Metadata>> = diriter.filter_map(
+            |d| {
+            if matches!( d.to_str(), Some(s) if s == &config.input_subdir || s == "" ) { return None; }
+            match fs::metadata(d) {
+                Err(e) => {
+                    eprintln!(
+                        "ERROR: Failed to get metadata from intermediate dir {d:?} of taskfile {taskfile:?}: {e}"
+                    );
+                    failedperms = true;
+                    Some(None)
+                }
+                Ok(m) => Some(Some(m)),
+            }
+        }).collect();
+        if !failedperms {
+            assert_eq!(taskfile.components().count(), permset.len() + 1);
+        } // sanity check that we pulled the expected number of elements
+
+        // begin tracking state of this new task
         let mut itask = InnerTask {
-            taskfile: taskfile.to_path_buf(),
+            taskfile,
+            permset,
             currentpath,
             taskdef: Arc::clone(&config.tasks[0]), // ugly stand-in value until we can fill it properly
             timestamp: SystemTime::now(),
@@ -202,15 +238,23 @@ impl Task<TaskGrabbed> {
             },
             cleanup: InnerTaskCleanup::Failure, // failed until proven otherwise
         };
+
+        // fail this task if we didn't gather all dir perms ( we abort here to make use of itask.drop() )
+        if failedperms {
+            return None;
+        }
+
         let taskfile = &itask.taskfile; // shorthand ref to new buffer location
-                                        // attempt to capture all values from the task file path
+
+        // attempt to capture all values from the task file path
         let Some(pathcaptures) = config.task_path_regex.captures(taskfile.to_str().unwrap()) else {
             eprintln!(
                 "ERROR: Encountered task file {taskfile:?} does not match \
                       expected path formatting!"
             );
-            return None; // note that itask.drop() will be called here
+            return None;
         };
+
         // make sure this program instance should even be interacting with this file
         if !value_within_restriction(taskfile, "pod", &config.pods, &pathcaptures.name("pod"))
             || !value_within_restriction(
@@ -230,6 +274,7 @@ impl Task<TaskGrabbed> {
             itask.cleanup = InnerTaskCleanup::Ignore; // 'defuse' our destructor
             return None;
         }
+
         // find a matching task defintion in the Config
         let Some(taskname) = pathcaptures.name("task") else {
             eprintln!(
@@ -247,6 +292,7 @@ impl Task<TaskGrabbed> {
             return None;
         };
         itask.taskdef = Arc::clone(taskdef);
+
         // establish a HashMap of all relevant path captures
         for value in &config.task_path_values {
             let Some(capture) = pathcaptures.name(&value) else {
@@ -267,6 +313,7 @@ impl Task<TaskGrabbed> {
                 return None;
             }
         }
+
         // create a destination dir(s) for the taskfile within our processing location
         let origts = itask.timestamp;
         while itask.timestamp.duration_since(origts).unwrap() < Duration::from_millis(100) {
@@ -278,7 +325,11 @@ impl Task<TaskGrabbed> {
             );
             let tsdirpath = PathBuf::from(&ppath);
             if let Some(tsparent) = tsdirpath.parent() {
-                if let Err(error) = fs::create_dir_all(tsparent) {
+                if let Err(error) = fs::DirBuilder::new()
+                    .mode(0o700)
+                    .recursive(true)
+                    .create(tsparent)
+                {
                     if !matches!(error.kind(), ErrorKind::AlreadyExists) {
                         eprintln!(
                             "ERROR: Failed to create processing parent path {tsparent:?}: {error}"
@@ -287,7 +338,7 @@ impl Task<TaskGrabbed> {
                     }
                 }
             }
-            match fs::create_dir(&tsdirpath) {
+            match fs::DirBuilder::new().mode(0o700).create(&tsdirpath) {
                 Ok(()) => break,
                 Err(e) => {
                     match e.kind() {
@@ -307,7 +358,11 @@ impl Task<TaskGrabbed> {
         );
         let tgtpath = PathBuf::from(&ppath);
         if let Some(tgtdir) = tgtpath.parent() {
-            if let Err(error) = fs::create_dir_all(tgtdir) {
+            if let Err(error) = fs::DirBuilder::new()
+                .mode(0o700)
+                .recursive(true)
+                .create(tgtdir)
+            {
                 match error.kind() {
                     ErrorKind::AlreadyExists => (), // ignore EEXIST
                     _ => {
@@ -319,6 +374,7 @@ impl Task<TaskGrabbed> {
                 }
             }
         }
+
         // actually grab the taskfile, moving it into our processing location
         if let Err(error) = fs::rename(&itask.currentpath, &tgtpath) {
             eprintln!(
@@ -333,7 +389,8 @@ impl Task<TaskGrabbed> {
             &itask.currentpath
         );
         itask.currentpath = tgtpath; // update active path
-                                     // finally, return an instantiantion of our Task
+
+        // finally, return an instantiantion of our Task
         Some(Task {
             itask,
             status: PhantomData,
@@ -394,6 +451,7 @@ impl Task<TaskGrabbed> {
         let filterfile = match fs::OpenOptions::new()
             .append(true)
             .create(true)
+            .mode(0o600)
             .open(&filterpath)
         {
             Err(error) => {
@@ -681,21 +739,25 @@ impl Task<TaskRunning> {
             Some(self.itask.timestamp),
             ProcessingPathElement::FilteredTaskfile,
         );
+        // create output dirs
+        if let Some(taskparent) = self.itask.taskfile.parent() {
+            let path_with_perms = taskparent
+                .components()
+                .map(|c| c.as_os_str())
+                .zip(self.itask.permset.iter())
+                .collect();
+            if let Err(error) =
+                produce_dirs_with_perms(&config.output_success_subdir, path_with_perms)
+            {
+                eprintln!(
+                    "ERROR: Failed to create output dir location for taskfile {:?}: {error}",
+                    &self.itask.currentpath
+                ); // almost certainly means rename will fail... but we'll attempt anyhow
+            }
+        }
         let filterpath = PathBuf::from(&ppath);
         let mut successpath = PathBuf::from(&config.output_success_subdir);
         successpath.push(&self.itask.taskfile);
-        if let Some(tgtdir) = successpath.parent() {
-            if let Err(error) = fs::create_dir_all(tgtdir) {
-                match error.kind() {
-                    ErrorKind::AlreadyExists => (), // ignore EEXIST
-                    _ => {
-                        return TaskResult::Err(format!(
-                            "ERROR: Failed to create output dir location {tgtdir:?} for filtered taskfile {filterpath:?}: {error}"
-                        ));
-                    }
-                }
-            }
-        }
         if let Err(error) = fs::rename(&filterpath, &successpath) {
             return TaskResult::Err(format!("ERROR: Failed to rename filtered taskfile {filterpath:?} to output location {successpath:?}: {error}"));
         } else {
@@ -789,4 +851,37 @@ fn format_line(format: &str, values: &HashMap<String, String>) -> Result<String,
             values.get(&captures["name"]).unwrap()
         }),
     ))
+}
+
+/// Internal helper function: Creates a directory subtree, below some prefix directory path,
+///   with associated perms+ownership at each level.
+/// Ignores any errors from pre-existing dirs and doesn't adjust their perms or ownership.
+fn produce_dirs_with_perms<P, T>(
+    prefix: &P,
+    path_with_perms: Vec<(&T, &Option<fs::Metadata>)>,
+) -> io::Result<()>
+where
+    P: AsRef<Path> + ?Sized,
+    T: AsRef<Path> + ?Sized,
+{
+    let mut dirbuilder = fs::DirBuilder::new();
+    let mut tgtpath = PathBuf::from(prefix.as_ref());
+    for (elem, perms) in path_with_perms {
+        tgtpath.push(elem);
+        let Some(perms) = perms else {
+            dirbuilder.mode(0o700);
+            dirbuilder.create(&tgtpath).or_else(|e| match e.kind() {
+                ErrorKind::AlreadyExists => Ok(()),
+                _ => Err(e),
+            })?;
+            continue;
+        };
+        dirbuilder.mode(perms.mode());
+        match dirbuilder.create(&tgtpath) {
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            r => r,
+        }?;
+        chown(&tgtpath, Some(perms.uid()), Some(perms.gid()))?;
+    }
+    Ok(())
 }
