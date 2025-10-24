@@ -62,6 +62,7 @@ Tape Manager Requester
 
 import argparse
 from datetime import datetime
+import getpass
 import io
 import logging
 import logging.handlers
@@ -91,6 +92,8 @@ SUCCESSKEY = "success"
 FAILKEY = "fail"
 
 logger = logging.getLogger('TMREQUEST_LOGGER')                        # global logger for the script - set up in main()
+username = getpass.getuser()                                          # global current user (for directory names)
+pid = os.getpid()                                                     # global PID
 
 #======================================================================
 # Processes a line from an env file. Comment lines are simply ignored.
@@ -301,12 +304,8 @@ def write_genfile(jobfile, content, dirmaps, filetab):
 
         try:
             if not gendir.exists():
-                perms = 0o700
-
-                if '/read/' in str(gendir):
-                    perms = 0o777
                 oldu = os.umask(0)    
-                gendir.mkdir(parents=True, mode=perms)
+                gendir.mkdir(parents=True, mode=0o700)
                 os.umask(oldu)                                        # return previous UMASK value
         except OSError as e:
             logger.error("Failed to create directory %s: %s", gendir, e)
@@ -352,6 +351,7 @@ def write_genfile(jobfile, content, dirmaps, filetab):
 def process_object_line(inline, tmtask, job, dirmaps, filetab):
 
     jobfile = f"{job}.req"                                            # formed, base on the name of running job
+    userid = username if tmtask == 'read' else f"p{pid}"              # form userid based on task
 
     # Ignore comment lines
     if REGX_COMMENT_LINE.match(inline) is not None:
@@ -372,7 +372,8 @@ def process_object_line(inline, tmtask, job, dirmaps, filetab):
     # Now add object to appropriate files in the Tape Manager tree/file table
     for b in range(0,maxstripe):
         linedict = {'task':tmtask, 'pod':pod, 'block':b, 'cap':cap,
-                    'scatter':scatter, 'object':objid, '_':jobfile}
+                'scatter':scatter, 'object':objid, 'user':userid,
+                '_':jobfile}
         tmfile = dirmaps[FILEKEY].format_map(linedict)
         tmline = dirmaps[CONTENTKEY].format_map(linedict)
         write_genfile(tmfile, tmline, dirmaps, filetab)
@@ -398,7 +399,9 @@ def submit_jobfile(tabentry):
 
     try:
         if not inputdir.exists():
-            inputdir.mkdir(parents=True)
+            oldu = os.umask(0)    
+            inputdir.mkdir(parents=True, mode=0o700)
+            os.umask(oldu)                                            # return previous UMASK value
     except OSError as e:
         logger.error("Failed to create directory %s: %s",
             inputdir, e)
@@ -423,7 +426,7 @@ if __name__=="__main__":
     ftab = {}                                                         # a table to hold all files created/managed by this script
     cleanupfiles = []                                                 # a list of files to clean up. Used if "-X" specified
     clntname = os.path.basename(sys.argv[0])                          # name of script
-    procname = f"{clntname}_{os.getpid()}"                            # name of the process to use/log
+    procname = f"{clntname}_{pid}"                                    # name of the process to use/log
 
     ihandle = None                                                    # input stream handle to read lines from (could be either file or socket)
     isrcname = ''                                                     # name of the input source in string form
