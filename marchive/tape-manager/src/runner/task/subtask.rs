@@ -15,6 +15,7 @@ use std::{
     collections::HashMap,
     fmt, fs,
     io::{ErrorKind, LineWriter},
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::Arc,
@@ -78,7 +79,11 @@ impl Drop for SubTask {
                 ),
             };
             if let Some(rnamedir) = rnamepath.parent() {
-                if let Err(error) = fs::create_dir_all(rnamedir) {
+                if let Err(error) = fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(rnamedir)
+                {
                     match error.kind() {
                         ErrorKind::AlreadyExists => (), // ignore EEXIST
                         _ => {
@@ -155,7 +160,7 @@ impl SubTask {
             ProcessingPathElement::SubTaskDir(self.count),
         );
         let dirpath = PathBuf::from(&ppath);
-        match fs::create_dir(&dirpath) {
+        match fs::DirBuilder::new().mode(0o700).create(&dirpath) {
             Err(e) => match e.kind() {
                 ErrorKind::AlreadyExists => (), // ignore EEXIST
                 _ => return Err(format!("failed to create sub-task subdir {dirpath:?}: {e}")),
@@ -167,6 +172,7 @@ impl SubTask {
         let inputfile = match fs::OpenOptions::new()
             .append(true)
             .create(true)
+            .mode(0o600)
             .open(&inputpath)
         {
             Err(error) => {
@@ -213,6 +219,7 @@ impl SubTask {
         let outfile = match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
+            .mode(0o600)
             .open(&outpath)
         {
             Err(e) => {

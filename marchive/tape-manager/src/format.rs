@@ -10,11 +10,16 @@ use chrono::{DateTime, Local};
 use regex::Regex;
 use std::{
     convert::TryFrom,
+    error::Error,
     path::{self, PathBuf},
     sync::LazyLock,
     time::{Duration, SystemTime},
 };
 
+/// Static regex for parsing of time duration strings
+static DURATION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^((?<days>\d+)[dD])?((?<hours>\d+)[hH])?((?<minutes>\d+)[mM])?((?<seconds>\d+)(\.(?<fractional_seconds>\d+))?[sS]?)?$").unwrap()
+});
 /// Static regex for replacement of '{...}' strings containing some name value
 pub static BRACED_NAME_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{(?<name>\w+)\}").unwrap());
@@ -41,6 +46,45 @@ pub fn duration_to_string(duration: &Duration) -> String {
         (0, h, m, s) => format!("{h}h:{m:0>2}m:{s:0>2}s"),
         (d, h, m, s) => format!("{d}d:{h:0>2}h:{m:0>2}m:{s:0>2}s"),
     }
+}
+
+/// Parse a human-readable &str into a Duration type
+pub fn duration_from_string(string: &str) -> Result<Duration, Box<dyn Error>> {
+    let captures = DURATION_REGEX
+        .captures(string)
+        .ok_or(regex::Error::Syntax(String::from(
+            "invalid duration format",
+        )))?;
+    let mut sec = 0;
+    if let Some(days) = captures.name("days") {
+        sec += days.as_str().parse::<u64>()? * 60 * 60 * 24;
+    }
+    if let Some(hours) = captures.name("hours") {
+        sec += hours.as_str().parse::<u64>()? * 60 * 60;
+    }
+    if let Some(minutes) = captures.name("minutes") {
+        sec += minutes.as_str().parse::<u64>()? * 60;
+    }
+    if let Some(seconds) = captures.name("seconds") {
+        sec += seconds.as_str().parse::<u64>()?;
+    }
+    let nanos = match captures.name("fractional_seconds") {
+        Some(fs) => {
+            let mut fs = fs.as_str();
+            let diff: i32 = 9 - fs.chars().count() as i32;
+            if diff < 0 {
+                fs = &fs[..fs.char_indices().nth(9).unwrap().0];
+            }
+            fs.parse::<u32>()?
+                * if diff.is_positive() {
+                    10_u32.pow(diff as u32)
+                } else {
+                    1
+                }
+        }
+        None => 0,
+    };
+    Ok(Duration::new(sec, nanos))
 }
 
 /// Logical representation of a location ( file / dir ) within the processing subtree.
