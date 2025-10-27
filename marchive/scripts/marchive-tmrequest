@@ -239,7 +239,7 @@ def setup_log(opts, pname):
 # Parse a time string in duration format (i.e. 3d2h), and return seconds.
 #
 #  Args:
-#       s (str): a string like "1d1h1m1s" 
+#       s (str): a string like "1d1h1m1s"
 #
 #  Returns:
 #       int: the number of seconds represented by the string. If
@@ -250,9 +250,9 @@ def parse_duration(s: str):
     # Regex pattern to find one or more digits followed by a time unit character.
     # Matches 'd' for days, 'h' for hours, 'm' for minutes, and 's' for seconds.
     pattern = re.compile(r"(\d+)([dhms])")
-    
+
     parts = pattern.findall(s)
-    
+
     time_params = {}
     for value, unit in parts:
         if unit == 'd':
@@ -263,7 +263,7 @@ def parse_duration(s: str):
             time_params['minutes'] = int(value)
         elif unit == 's':
             time_params['seconds'] = int(value)
-            
+
     return int(timedelta(**time_params).total_seconds())
 
 #======================================================================
@@ -282,8 +282,7 @@ def parse_duration(s: str):
 def get_timeout(tstr):
     if tstr.find(':') < 0:
         return parse_duration(tstr)
-    else:
-        return tstr.hour*3600+tstr.minute*60+tstr.second
+    return tstr.hour*3600+tstr.minute*60+tstr.second
 
 #======================================================================
 # Sets up the Tape Manager string maps needed by process_object_line()
@@ -340,7 +339,7 @@ def write_genfile(jobfile, content, dirmaps, filetab):
 
         try:
             if not gendir.exists():
-                oldu = os.umask(0)    
+                oldu = os.umask(0)
                 gendir.mkdir(parents=True, mode=0o700)
                 os.umask(oldu)                                        # return previous UMASK value
         except OSError as e:
@@ -435,7 +434,7 @@ def submit_jobfile(tabentry):
 
     try:
         if not inputdir.exists():
-            oldu = os.umask(0)    
+            oldu = os.umask(0)
             inputdir.mkdir(parents=True, mode=0o700)
             os.umask(oldu)                                            # return previous UMASK value
     except OSError as e:
