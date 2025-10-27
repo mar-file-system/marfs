@@ -62,6 +62,7 @@ Tape Manager Requester
 
 import argparse
 from datetime import datetime
+from datetime import timedelta
 import getpass
 import io
 import logging
@@ -235,8 +236,40 @@ def setup_log(opts, pname):
         logger.addHandler(clhandle)
 
 #======================================================================
-# Parse a string of the format "H:M:S", and returns the number of
-# seconds specified.
+# Parse a time string in duration format (i.e. 3d2h), and return seconds.
+#
+#  Args:
+#       s (str): a string like "1d1h1m1s" 
+#
+#  Returns:
+#       int: the number of seconds represented by the string. If
+#            the string is not valid, then a ValueError will be
+#            thrown.
+#======================================================================
+def parse_duration(s: str):
+    # Regex pattern to find one or more digits followed by a time unit character.
+    # Matches 'd' for days, 'h' for hours, 'm' for minutes, and 's' for seconds.
+    pattern = re.compile(r"(\d+)([dhms])")
+    
+    parts = pattern.findall(s)
+    
+    time_params = {}
+    for value, unit in parts:
+        if unit == 'd':
+            time_params['days'] = int(value)
+        elif unit == 'h':
+            time_params['hours'] = int(value)
+        elif unit == 'm':
+            time_params['minutes'] = int(value)
+        elif unit == 's':
+            time_params['seconds'] = int(value)
+            
+    return int(timedelta(**time_params).total_seconds())
+
+#======================================================================
+# Parse a string of the time format "H:M:S" or "<t>[dhms]" (i.e. 3m)
+# and returns the number of seconds specified. This allows for some
+# flexibility in time specification in the Tape Manager config file.
 #
 #  Args:
 #       tstr (datetime.time): a string of the form "00:00:00"
@@ -247,7 +280,10 @@ def setup_log(opts, pname):
 #            thrown.
 #======================================================================
 def get_timeout(tstr):
-    return tstr.hour*3600+tstr.minute*60+tstr.second
+    if tstr.find(':') < 0:
+        return parse_duration(tstr)
+    else:
+        return tstr.hour*3600+tstr.minute*60+tstr.second
 
 #======================================================================
 # Sets up the Tape Manager string maps needed by process_object_line()
