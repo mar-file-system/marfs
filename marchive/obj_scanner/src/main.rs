@@ -15,7 +15,7 @@ use std::cmp::min;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, mpsc, OnceLock};
 use std::time::{Duration, SystemTime};
 use threadpool::ThreadPool;
 
@@ -37,6 +37,7 @@ struct FlushPush {
     ops: Ops,
     must_match: Option<Regex>,
     force: bool,
+    matchrepo: bool,
 }
 
 // list of paths to write to output files
@@ -65,7 +66,7 @@ static PATH_SEGS: &[&str] = &[
 static PUSHDB_NAME:  &str = "push.db";
 
 // pattern for blacklisting this file
-static PUSHDB_REGEX: &str = "^push\\.db$";
+static PUSHDB_REGEX: &str = r"^push\.db$";
 
 /**
  * Open and/or create the PUSH database
@@ -90,6 +91,45 @@ fn open_pushdb(path: &PathBuf) -> Result<Connection, String> {
         Err(msg) => Err(format!("Could not open PUSH database {}: {}",
                                 dbname.display(), msg)),
     }
+}
+// //////////////////////////////////////
+
+// //////////////////////////////////////
+// Object List formatter:
+//    [object ID][MaxStripe][Pod][Cap][Scatter]
+
+// Define a static OnceLock to hold the compiled Regex
+static RE: OnceLock<Regex> = OnceLock::new();
+
+pub struct ObjListEntry {
+    // Regular Expression used to extract the Object List data from path
+    re: Regex,
+}
+
+impl ObjListEntry {
+    // NOTE: the named regex groups below are used to generate the output of
+    // the scanner. If the group names are modified, corresponding changes need
+    // to be made in the scanner's generating logic.
+    const OBJECT_LIST_REGEX: &str = r"[A-Za-z_/-]*/pod(?P<pod>\d+)/block(?P<block>\d+)/cap(?P<cap>\d+)/scat(?P<scatter>\d+)/(?P<obj>[A-Za-z0-9._-]+\|[A-Za-z0-9.#+_-]+\|\d+)";
+
+    pub fn new() -> ObjListEntry {
+        Self {
+            re: RE.get_or_init(|| { Regex::new(Self::OBJECT_LIST_REGEX).unwrap() }).clone(),
+        }    
+    }
+
+    pub fn generate(&mut self, storagepath: String) -> String {
+        if !self.re.is_match(&storagepath) {
+            return format!("Invalid MarFS Storage Path: {}", storagepath);
+        }    
+
+        // Generate the entry from the given storage path
+        let mut goodentry = String::new();
+        for grp in self.re.captures_iter(&storagepath) {
+            goodentry = format!("[{}][{}][{}][{}][{}]", &grp["obj"], &grp["block"], &grp["pod"], &grp["cap"], &grp["scatter"]);
+        }
+        return goodentry
+    }    
 }
 // //////////////////////////////////////
 
@@ -183,9 +223,8 @@ fn process_leaf(path: PathBuf, fp: Arc<FlushPush>, output: Output) {
         let child = entry.path();
 
         if let Ok(entry_type) = entry.file_type() {
-            // only expecting files under leaf directories
-            if !entry_type.is_file() {
-                eprintln!("Warning: {} is not a file. Skipping.", child.display());
+            // only want real files under leaf directories
+            if entry_type.is_symlink() || !entry_type.is_file() {
                 continue;
             }
         } else {
@@ -193,21 +232,25 @@ fn process_leaf(path: PathBuf, fp: Arc<FlushPush>, output: Output) {
             continue;
         }
 
+        let basename = child.file_name().unwrap().to_str().unwrap();
+
+        // test the file name to make sure it has not been blacklisted ...
+        if fp.config.is_blacklisted(&basename) {
+            continue;
+        }
+        // test to see if the file is in the desired repo
+        if fp.matchrepo && !fp.config.in_repo(&basename) {
+            continue;
+        }
+
         if let Ok(st) = child.metadata() {
             if let Ok(mtime) = st.modified() {
                 if let Ok(file_age) = fp.config.file_age(mtime) {
-                    let basename = child.file_name().unwrap().to_str().unwrap();
-
                     // basename must match in order to be processed
                     if let Some(whitelist) = &fp.must_match {
                         if !whitelist.is_match(&basename) {
                             continue;
                         }
-                    }
-
-                    // do not process blacklisted files
-                    if fp.config.is_blacklisted(&basename) {
-                        continue;
                     }
 
                     // If the FLUSH flag was specified, target object
@@ -341,7 +384,8 @@ fn process_non_leaf(path: PathBuf, level: usize,
 
         let child = entry.path();
 
-        if child.is_dir() == false {
+        // Don't worry about files or symlinks when processing non-leaf directories
+        if child.is_dir() == false || child.is_symlink() {
             continue;
         }
 
@@ -426,32 +470,52 @@ fn print_flushable_in_dal(dal_root: &PathBuf,
 
 /**
  * Iterate through rx channel endpoints and write the paths to the
- * appropriate files.
+ * appropriate files/streams. Note that if output_dir is not specified
+ * (i.e. None), then output will be written to stdout.
  *
- * @param output_dir    directory to place files at
+ * @param output_dir    directory to place files at. STDOUT is used, if
+ *                      not specified
+ * @param ops           the command/channels to write (i.e. push or flush)
+ * @param entryfmt      flag to indicate that an Object List entry should
+ *                      be printed
  * @param flush         the rx channel endpoint containing flush paths
  * @param push          the rx channel endpoint containing push paths
  * @param nthreads      number of threads allowed to use to write output
  */
-fn write_outputs(output_dir: PathBuf, ops: Ops,
+fn write_outputs(output_dir: Option<PathBuf>, ops: Ops,
+                 entryfmt: bool,
                  flush: mpsc::Receiver<PathBuf>,
                  push:  mpsc::Receiver<PathBuf>,
                  nthreads: usize) {
     fn write_paths(pool: &ThreadPool,
-                   output_dir: PathBuf,
+                   output_dir: Option<PathBuf>,
+                   entry: bool,
                    name: &str,
                    paths: mpsc::Receiver<PathBuf>) {
         let name_str = String::from(name);
         pool.execute(move || {
-            let mut output_path = output_dir;
-            output_path.push(name_str);
-            let mut output_file = match fs::File::create(output_path.clone()) {
-                Ok(file) => file,
-                Err(msg) => panic!("Error: Could not open flush file {}: {}", output_path.display(), msg),
-            };
+            let mut objentry = ObjListEntry::new();
+            let output_writer: Option<Box<dyn Write>> = if output_dir.is_none() {
+                        Some(Box::new(std::io::stdout()))
+                    } else {
+                        let mut output_path = output_dir.expect("output_dir is NOT SPECFIED");
+                        output_path.push(name_str);
+                        Some(Box::new(
+                            match fs::File::create(output_path.clone()) {
+                                Ok(file) => file,
+                                Err(msg) => panic!("Error: Could not open output file {}: {}", output_path.display(), msg),
+                            })
+                        )    
+                    };
+            let Some(mut output_file) = output_writer else {panic!("Error: No output sink specified!")};
 
             for path in paths {
-                let _ = output_file.write_all((path.display().to_string() + "\n").as_bytes());
+                let outbytes = if entry {
+                        objentry.generate(path.display().to_string())
+                    } else {
+                        path.display().to_string()
+                    };        
+                let _ = output_file.write_all((outbytes + "\n").as_bytes()).unwrap();
             }
         });
     }
@@ -459,10 +523,10 @@ fn write_outputs(output_dir: PathBuf, ops: Ops,
     let nfiles = if ops.flush { 1 } else { 0 } + if ops.push { 1 } else { 0 };
     let pool = ThreadPool::new(min(nthreads, nfiles));
     if ops.flush {
-        write_paths(&pool, output_dir.clone(), "flush", flush);
+        write_paths(&pool, output_dir.clone(), entryfmt, "flush", flush);
     }
     if ops.push {
-        write_paths(&pool, output_dir.clone(), "push",  push);
+        write_paths(&pool, output_dir.clone(), entryfmt, "push",  push);
     }
     pool.join();
 }
@@ -476,11 +540,20 @@ struct Cli {
     #[arg(help="Path to config file")]
     config_file: PathBuf,
 
-    #[arg(help="Output Directory")]
-    output_dir: PathBuf,
-
     #[clap(flatten)]
     ops: Ops,
+
+    #[arg(short, long, help="Print Object List entries (used by Marchive's Tape manager)")]
+    entryfmt: bool,
+
+    #[arg(short, long, help="Force operation even if condition is not met")]
+    force: bool,
+
+    #[arg(short, long, help="Do not match on Repo name - even if specified in the scanner config file")]
+    ignorerepo: bool,
+
+    #[arg(short, long, help="Input path is a leaf dir")]
+    leaf: bool,
 
     #[arg(short, long, value_name="regexp")]
     #[arg(help="Regex pattern which objects must match in order to be eligible for any operation")]
@@ -489,14 +562,11 @@ struct Cli {
     #[arg(short, long, default_value="1", help="Thread Count")]
     nthreads: usize,
 
-    #[arg(short, long, help="Force operation even if condition is not met")]
-    force: bool,
+    #[arg(short, long, value_name="dir", help="Output Directory. If not specified, then output will go to STDOUT")]
+    output_dir: Option<PathBuf>,
 
     #[arg(short, long, help="Overwrite config file reftime")]
     reftime: Option<u64>,
-
-    #[arg(short, long, help="Input path is a leaf dir")]
-    leaf: bool
 }
 
 fn main() {
@@ -507,6 +577,7 @@ fn main() {
         ops:        cli.ops.clone(),
         must_match: cli.must_match,
         force:      cli.force,
+        matchrepo:  true,
     } };
 
     // never process PUSH db
@@ -516,6 +587,9 @@ fn main() {
     if let Some(reftime) = cli.reftime {
         fp.config.set_reftime(reftime);
     }
+
+    // if there is no repo regex in config, don't do repo name match
+    fp.matchrepo = !cli.ignorerepo && !fp.config.empty_repopat();
 
     // output channels for each type of operation
     let (flush_tx, flush_rx) = mpsc::channel();
@@ -534,7 +608,7 @@ fn main() {
     }
 
     // read from rx
-    write_outputs(cli.output_dir, cli.ops, flush_rx, push_rx, cli.nthreads);
+    write_outputs(cli.output_dir, cli.ops, cli.entryfmt, flush_rx, push_rx, cli.nthreads);
 }
 
 #[cfg(test)]

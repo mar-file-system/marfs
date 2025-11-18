@@ -297,7 +297,9 @@ void put(hashtable* table, char* new_object_name) {
  * A public function that allows for the concationation of object erasure 
  * and location information to the object name, prior to inserting it into
  * a hash table. All data passed to this function is duplicated prior to 
- * instertion into the table.
+ * instertion into the table. Per the need to refine the output of this 
+ * information, a record is created for each stripe or block, based on the
+ * erasure information.
  * @param table : The hashtable to insert into
  * @param new_object_name : the object ID to test/insert into table
  * @param erasure_buf: the object's erasure info
@@ -306,9 +308,11 @@ void put(hashtable* table, char* new_object_name) {
 void putloc(hashtable* table, char* new_object_name, ne_erasure* erasure_buf, ne_location* location_buf) {
     char objname_buf[PATH_MAX-1];                       // buffer to hold both object ID and location information
 
-    snprintf(objname_buf, PATH_MAX-1, "[%s][%d][%d][%d][%d]", new_object_name, (erasure_buf->N+erasure_buf->E),
+    for ( int b=0; b < (erasure_buf->N+erasure_buf->E); b++) {
+        snprintf(objname_buf, PATH_MAX-1, "[%s][%d][%d][%d][%d]", new_object_name, b,
 		    location_buf->pod, location_buf->cap, location_buf->scatter);
-    put(table, objname_buf);
+        put(table, objname_buf);
+    }
 }
 
 /**

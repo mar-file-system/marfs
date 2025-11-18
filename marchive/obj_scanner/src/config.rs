@@ -33,6 +33,10 @@ pub struct Config {
 
     // Regular expressions for basenames to ignore
     blacklist: Vec<Regex>,
+
+    // Regular expression pattern for files or leaves, with
+    // a repo name included
+    reporegx: Regex,
 }
 
 impl Config {
@@ -47,6 +51,7 @@ impl Config {
                 (100, 0),       // if utilization is at 100%, flush everything
             ]),
             blacklist: Vec::new(),
+            reporegx: Regex::new(r"").unwrap(),
         }
     }
 
@@ -89,6 +94,7 @@ impl Config {
         match line.split_once(Self::LABEL_DELIM) {
             Some((label, value)) => {
                 match label.trim() {
+                    "repopat"   => self.set_repo_pattern(value),
                     "reftime"   => self.set_reftime_str(value),
                     "threshold" => self.add_to_threshold(value),
                     "blacklist" => self.add_to_blacklist(value),
@@ -227,6 +233,32 @@ impl Config {
 
         false
     }
+
+    /**
+     * Assigns a repo regex.  Used in selection of the files 
+     * to push/flush.
+     */ 
+    pub fn set_repo_pattern(&mut self, repo_value: &str) {
+        match Regex::new(repo_value.trim()) {
+            Ok(re)   => {
+                self.reporegx = re;
+            }    
+            Err(msg) => panic!("Error: Bad regex pattern for Repo name: {}: {}", repo_value, msg),
+        };
+    }                        
+
+    /**
+     * Test to see if a repo regex is in the config
+     */
+    pub fn empty_repopat(&self) -> bool {
+        return self.reporegx.as_str().is_empty();
+    }    
+    /**
+     * Test to see if file is in desired repo
+     */
+    pub fn in_repo(&self, file_name: &str) -> bool {
+        return self.reporegx.is_match(file_name);
+    }    
 }
 
 #[cfg(test)]

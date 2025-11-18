@@ -370,7 +370,9 @@ def write_genfile(jobfile, content, dirmaps, filetab):
 
 #======================================================================
 # Processes a line from an object list output file or stream. Comment
-# lines are simply ignored.
+# lines are simply ignored. An object list output line should be of
+# the format:
+#    [<object name>][<block>][<pod>][<cap>][<scatter>]
 #
 #  Args:
 #       inline (str): the line to process
@@ -399,19 +401,18 @@ def process_object_line(inline, tmtask, job, dirmaps, filetab):
         logger.error("Invalid output line: %s", inline)
         return
     objid = linedata.group(1)
-    maxstripe = int(linedata.group(2))
+    block = int(linedata.group(2))
     pod = linedata.group(3)
     cap = linedata.group(4)
     scatter = linedata.group(5)
 
-    # Now add object to appropriate files in the Tape Manager tree/file table
-    for b in range(0,maxstripe):
-        linedict = {'task':tmtask, 'pod':pod, 'block':b, 'cap':cap,
-                'scatter':scatter, 'object':objid, 'user':userid,
-                '_':jobfile}
-        tmfile = dirmaps[FILEKEY].format_map(linedict)
-        tmline = dirmaps[CONTENTKEY].format_map(linedict)
-        write_genfile(tmfile, tmline, dirmaps, filetab)
+    # Now add object to appropriate file in the Tape Manager tree/file table
+    linedict = {'task':tmtask, 'pod':pod, 'block':block, 'cap':cap,
+            'scatter':scatter, 'object':objid, 'user':userid,
+            '_':jobfile}
+    tmfile = dirmaps[FILEKEY].format_map(linedict)
+    tmline = dirmaps[CONTENTKEY].format_map(linedict)
+    write_genfile(tmfile, tmline, dirmaps, filetab)
 
     return
 
