@@ -6,10 +6,9 @@
  *
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
-
 use crate::*;
 use std::mem;
-use tempfile::{TempDir, tempdir};
+use tempfile::{tempdir, TempDir};
 
 fn setup_dal() -> (TempDir, PathBuf) {
     // DAL root
@@ -53,7 +52,12 @@ fn setup_config(flush: bool, push: bool, force: bool) -> FlushPush {
         force: force,
     };
 
-    fp.config.set_reftime(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs());
+    fp.config.set_reftime(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    );
     fp.config.add_to_blacklist(PUSHDB_REGEX);
 
     fp
@@ -61,21 +65,25 @@ fn setup_config(flush: bool, push: bool, force: bool) -> FlushPush {
 
 fn setup_channels() -> (Output, (mpsc::Receiver<PathBuf>, mpsc::Receiver<PathBuf>)) {
     let (flush_tx, flush_rx) = mpsc::channel::<PathBuf>();
-    let (push_tx,  push_rx)  = mpsc::channel::<PathBuf>();
+    let (push_tx, push_rx) = mpsc::channel::<PathBuf>();
 
-    (Output {
-        flush: flush_tx,
-        push: push_tx,
-    }, (flush_rx, push_rx))
+    (
+        Output {
+            flush: flush_tx,
+            push: push_tx,
+        },
+        (flush_rx, push_rx),
+    )
 }
 
 fn get_u64(path: &PathBuf, sql: &str) -> Result<u64, rusqlite::Error> {
     let mut dbname = path.clone();
     dbname.push(PUSHDB_NAME);
 
-    let conn = Connection::open_with_flags(&dbname,
-                                           OpenFlags::SQLITE_OPEN_CREATE |
-                                           OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    let conn = Connection::open_with_flags(
+        &dbname,
+        OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )?;
 
     conn.query_row::<u64, _, _>(sql, [], |row| row.get(0))
 }
@@ -102,7 +110,10 @@ fn process_leaf_correctness() {
 
         // getting prev mtime fails because this is an empty leaf
         process_leaf(leaf.clone(), fp.clone(), tx.clone());
-        assert!(!get_u64(&leaf, "SELECT oldest FROM mtime;").is_ok(), "Should not have gotten an mtime");
+        assert!(
+            !get_u64(&leaf, "SELECT oldest FROM mtime;").is_ok(),
+            "Should not have gotten an mtime"
+        );
 
         // PUSHDB has been created
         {
@@ -129,7 +140,10 @@ fn process_leaf_correctness() {
         process_leaf(leaf.clone(), fp.clone(), tx.clone());
 
         // mtime will be set this time
-        assert_eq!(get_u64(&leaf, "SELECT oldest FROM mtime;").unwrap(), FIRST_MTIME);
+        assert_eq!(
+            get_u64(&leaf, "SELECT oldest FROM mtime;").unwrap(),
+            FIRST_MTIME
+        );
 
         // file will be pushed because it was not selected for flush
         assert_eq!(get_u64(&leaf, "SELECT COUNT(*) FROM push;").unwrap(), 1);
@@ -158,7 +172,10 @@ fn process_leaf_correctness() {
         process_leaf(leaf.clone(), fp.clone(), tx.clone());
 
         // prev oldest mtime changed
-        assert_eq!(get_u64(&leaf, "SELECT oldest FROM mtime;").unwrap(), SECOND_MTIME);
+        assert_eq!(
+            get_u64(&leaf, "SELECT oldest FROM mtime;").unwrap(),
+            SECOND_MTIME
+        );
 
         // still only 1 file in table
         assert_eq!(get_u64(&leaf, "SELECT COUNT(*) FROM push;").unwrap(), 1);
@@ -172,7 +189,10 @@ fn process_leaf_correctness() {
         process_leaf(leaf.clone(), fp.clone(), tx.clone());
 
         // prev oldest mtime not changed
-        assert_eq!(get_u64(&leaf, "SELECT oldest FROM mtime;").unwrap(), SECOND_MTIME);
+        assert_eq!(
+            get_u64(&leaf, "SELECT oldest FROM mtime;").unwrap(),
+            SECOND_MTIME
+        );
 
         // file is no longer scheduled for flushing (because it has been flushed)
         assert_eq!(get_u64(&leaf, "SELECT COUNT(*) FROM push;").unwrap(), 0);
@@ -199,9 +219,16 @@ fn readonly_pushdb() {
     let mut path = PathBuf::from(dir.path().to_path_buf().to_owned());
     path.push("ro");
 
-    let _ = fs::OpenOptions::new().read(true).write(false).create(true).open(&path);
+    let _ = fs::OpenOptions::new()
+        .read(true)
+        .write(false)
+        .create(true)
+        .open(&path);
 
-    assert!(!open_pushdb(&path).is_ok(), "open_pushdb should not have succeeded");
+    assert!(
+        !open_pushdb(&path).is_ok(),
+        "open_pushdb should not have succeeded"
+    );
 }
 
 #[test]
@@ -210,11 +237,11 @@ fn write_output_files() {
     let path = PathBuf::from(dir.path().to_path_buf().to_owned());
 
     static FLUSH: &str = "flush";
-    static PUSH:  &str = "push";
+    static PUSH: &str = "push";
 
     let ops = Ops {
         flush: true,
-        push:  true,
+        push: true,
     };
 
     let flush_contents = FLUSH.to_string();
@@ -223,7 +250,7 @@ fn write_output_files() {
     mem::drop(flush_tx);
 
     let push_contents = PUSH.to_string();
-    let (push_tx,  push_rx)  = mpsc::channel::<PathBuf>();
+    let (push_tx, push_rx) = mpsc::channel::<PathBuf>();
     let _ = push_tx.send(PathBuf::from(&push_contents));
     mem::drop(push_tx);
 

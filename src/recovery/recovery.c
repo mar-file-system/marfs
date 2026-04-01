@@ -769,6 +769,7 @@ int recovery_cont( RECOVERY recovery, void* objbuffer, size_t objsize ) {
       LOG( LOG_ERR, "Header info differs in new object buffer\n" );
       free( newheader.ctag );
       free( newheader.streamid );
+      return -1;
    }
    // we're done with new header info
    free( newheader.ctag );

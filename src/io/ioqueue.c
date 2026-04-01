@@ -95,6 +95,11 @@ ioqueue* create_ioqueue( size_t iosz, size_t partsz, DAL_MODE mode ) {
       LOG( LOG_ERR, "IO Size of %zu is too small for CRC size of %d!\n", iosz, CRC_BYTES );
       return NULL;
    }
+   // sanity check partsz
+   if ( partsz <= 0 ) {
+      LOG( LOG_ERR, "PartSz %zu is invalid!\n", partsz );
+      return NULL;
+   }
    size_t subsz = (mode == DAL_READ) ? (iosz - CRC_BYTES) : partsz;
    int    partcnt = (int) ( (iosz - CRC_BYTES) / partsz); // number of complete parts per IO
    if ( partsz > (iosz - CRC_BYTES) ) {
