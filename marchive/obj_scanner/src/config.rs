@@ -6,8 +6,6 @@
  *
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
-
-
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -36,15 +34,15 @@ pub struct Config {
 }
 
 impl Config {
-    const LABEL_DELIM:     char = ':';
+    const LABEL_DELIM: char = ':';
     const THRESHOLD_DELIM: char = ',';
 
     fn new() -> Config {
         Self {
             reftime: SystemTime::UNIX_EPOCH,
             thresholds: BTreeMap::from([
-                (0, u64::MAX),  // if utilization is at 0%, don't flush anything
-                (100, 0),       // if utilization is at 100%, flush everything
+                (0, u64::MAX), // if utilization is at 0%, don't flush anything
+                (100, 0),      // if utilization is at 100%, flush everything
             ]),
             blacklist: Vec::new(),
         }
@@ -54,9 +52,12 @@ impl Config {
         let mut config = Config::new();
 
         let file = match File::open(&path) {
-            Ok(f)    => f,
-            Err(msg) => panic!("Error: Could not open flush config file {}: {}",
-                                 path.display(), msg),
+            Ok(f) => f,
+            Err(msg) => panic!(
+                "Error: Could not open flush config file {}: {}",
+                path.display(),
+                msg
+            ),
         };
 
         // parse file
@@ -65,8 +66,11 @@ impl Config {
         for line_res in BufReader::new(file).lines() {
             let line = match line_res {
                 Ok(line) => line,
-                Err(msg) => panic!("Error: Could not read line from {}: {}",
-                                     path.display(), msg),
+                Err(msg) => panic!(
+                    "Error: Could not read line from {}: {}",
+                    path.display(),
+                    msg
+                ),
             };
 
             config.process_line(&line);
@@ -89,13 +93,12 @@ impl Config {
         match line.split_once(Self::LABEL_DELIM) {
             Some((label, value)) => {
                 match label.trim() {
-                    "reftime"   => self.set_reftime_str(value),
+                    "reftime" => self.set_reftime_str(value),
                     "threshold" => self.add_to_threshold(value),
                     "blacklist" => self.add_to_blacklist(value),
-                    _           => panic!("Error: Unknown config label: {}", label),
+                    _ => panic!("Error: Unknown config label: {}", label),
                 };
-
-            },
+            }
             None => panic!("Error: Did not find separator in line: {}", line),
         };
     }
@@ -107,8 +110,10 @@ impl Config {
     fn set_reftime_str(&mut self, time_str: &str) {
         match time_str.trim().parse::<u64>() {
             Ok(reftime) => self.set_reftime(reftime),
-            Err(msg)    => panic!("Error: Could not convert {} into a timestamp: {}",
-                                  time_str, msg),
+            Err(msg) => panic!(
+                "Error: Could not convert {} into a timestamp: {}",
+                time_str, msg
+            ),
         };
     }
 
@@ -134,28 +139,31 @@ impl Config {
         match pair_str.trim().split_once(Self::THRESHOLD_DELIM) {
             Some((util_str, age_str)) => {
                 let util = match util_str.trim().parse::<u8>() {
-                    Ok(val)  => val,
+                    Ok(val) => val,
                     Err(msg) => panic!("Error: Bad utilization string: '{}': {}", util_str, msg),
                 };
 
                 if util > 100 {
-                    panic!("Error: Utilization can be between 0% and 100%. Got '{}'", util);
+                    panic!(
+                        "Error: Utilization can be between 0% and 100%. Got '{}'",
+                        util
+                    );
                 }
 
                 let age = match age_str.trim().parse::<u64>() {
-                    Ok(val)  => val,
+                    Ok(val) => val,
                     Err(msg) => panic!("Error: Bad age string: '{}': {}", age_str, msg),
                 };
 
                 self.thresholds.insert(util, age);
-            },
+            }
             None => panic!("Error: Bad <utilization>,<age> string: '{}'", pair_str),
         }
     }
 
     pub fn add_to_blacklist(&mut self, regex: &str) {
         match Regex::new(regex.trim()) {
-            Ok(re)   => self.blacklist.push(re),
+            Ok(re) => self.blacklist.push(re),
             Err(msg) => panic!("Error: Bad regex pattern: {}: {}", regex, msg),
         };
     }
@@ -237,7 +245,9 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    #[should_panic(expected = "Error: Could not convert a into a timestamp: invalid digit found in string")]
+    #[should_panic(
+        expected = "Error: Could not convert a into a timestamp: invalid digit found in string"
+    )]
     fn set_reftime_str_bad() {
         let mut config = Config::new();
         config.set_reftime_str("a");
@@ -289,49 +299,55 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected="Error: Bad <utilization>,<age> string: ''")]
+    #[should_panic(expected = "Error: Bad <utilization>,<age> string: ''")]
     fn user_threshold_empty() {
         let mut config = Config::new();
         config.add_to_threshold("");
     }
 
     #[test]
-    #[should_panic(expected="Error: Bad age string: '': cannot parse integer from empty string")]
+    #[should_panic(expected = "Error: Bad age string: '': cannot parse integer from empty string")]
     fn user_threshold_digit_empty() {
         let mut config = Config::new();
         config.add_to_threshold("1,");
     }
 
     #[test]
-    #[should_panic(expected="Error: Bad utilization string: '': cannot parse integer from empty string")]
+    #[should_panic(
+        expected = "Error: Bad utilization string: '': cannot parse integer from empty string"
+    )]
     fn user_threshold_empty_digit() {
         let mut config = Config::new();
         config.add_to_threshold(",1");
     }
 
     #[test]
-    #[should_panic(expected="Error: Bad utilization string: 'a': invalid digit found in string")]
+    #[should_panic(expected = "Error: Bad utilization string: 'a': invalid digit found in string")]
     fn user_threshold_alpha_empty() {
         let mut config = Config::new();
         config.add_to_threshold("a,");
     }
 
     #[test]
-    #[should_panic(expected="Error: Bad utilization string: '': cannot parse integer from empty string")]
+    #[should_panic(
+        expected = "Error: Bad utilization string: '': cannot parse integer from empty string"
+    )]
     fn user_threshold_empty_alpha() {
         let mut config = Config::new();
         config.add_to_threshold(",a");
     }
 
     #[test]
-    #[should_panic(expected="Error: Utilization can be between 0% and 100%. Got '200'")]
+    #[should_panic(expected = "Error: Utilization can be between 0% and 100%. Got '200'")]
     fn user_threshold_too_big() {
         let mut config = Config::new();
         config.add_to_threshold("200,");
     }
 
     #[test]
-    #[should_panic(expected="Error: File age must be strictly monotonically decreasing. Found 10,1 -> 20,1")]
+    #[should_panic(
+        expected = "Error: File age must be strictly monotonically decreasing. Found 10,1 -> 20,1"
+    )]
     fn user_threshold_same_ages() {
         let mut config = Config::new();
         config.add_to_threshold("10,1");
@@ -340,7 +356,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected="Error: File age must be strictly monotonically decreasing. Found 10,1 -> 20,2")]
+    #[should_panic(
+        expected = "Error: File age must be strictly monotonically decreasing. Found 10,1 -> 20,2"
+    )]
     fn user_threshold_increasing_ages() {
         let mut config = Config::new();
         config.add_to_threshold("10,1");
@@ -366,9 +384,9 @@ mod tests {
     fn no_blacklist() {
         let config = Config::new();
 
-        assert_eq!(config.is_blacklisted(""),         false);
-        assert_eq!(config.is_blacklisted("test"),     false);
-        assert_eq!(config.is_blacklisted("match"),    false);
+        assert_eq!(config.is_blacklisted(""), false);
+        assert_eq!(config.is_blacklisted("test"), false);
+        assert_eq!(config.is_blacklisted("match"), false);
         assert_eq!(config.is_blacklisted("matching"), false);
     }
 
@@ -377,9 +395,9 @@ mod tests {
         let mut config = Config::new();
         config.add_to_blacklist("^match.+$");
 
-        assert_eq!(config.is_blacklisted(""),         false);
-        assert_eq!(config.is_blacklisted("test"),     false);
-        assert_eq!(config.is_blacklisted("match"),    false);
+        assert_eq!(config.is_blacklisted(""), false);
+        assert_eq!(config.is_blacklisted("test"), false);
+        assert_eq!(config.is_blacklisted("match"), false);
         assert_eq!(config.is_blacklisted("matching"), true);
     }
 
@@ -412,7 +430,7 @@ mod tests {
         let config = Config::new();
 
         assert_eq!(config.thresholds.len(), 2);
-        assert_eq!(config.blacklist.len(),  0);
+        assert_eq!(config.blacklist.len(), 0);
     }
 
     #[test]

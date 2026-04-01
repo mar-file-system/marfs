@@ -320,7 +320,7 @@ impl From<(parsing::ParsedConfig, String)> for Config {
             pods: hostdef.pods.clone(),
             blocks: hostdef.blocks.clone(),
             caps: hostdef.caps.clone(),
-            scatters: hostdef.caps.clone(),
+            scatters: hostdef.scatters.clone(),
             tasks: tasks,
         }
     }
