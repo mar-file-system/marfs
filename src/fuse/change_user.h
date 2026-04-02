@@ -21,7 +21,7 @@ typedef struct user_ctxt_struct
 } * user_ctxt;
 
 int enter_user(user_ctxt ctxt, uid_t new_euid, gid_t new_egid, int enter_group);
-int exit_user(user_ctxt ctxt);
+void exit_user(user_ctxt ctxt);
 
 #endif // _CHANGE_USER_H
 
