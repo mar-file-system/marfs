@@ -35,6 +35,8 @@
 
 #define CONFIGVER_FNAME "/.configver"
 
+#define ENTER_USER(CTXT,UID,GID,GROUPS) if( enter_user(CTXT, UID, GID, GROUPS) != 0 ) { return (errno) ? -errno : -ENOMSG; }
+
 typedef struct marfs_fuse_ctxt_struct {
    marfs_ctxt ctxt;
    pthread_mutex_t erasurelock;
@@ -87,7 +89,7 @@ int fuse_access(const char *path, int mode)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   int ret = marfs_access(fctxt->ctxt, newpath, mode, AT_SYMLINK_NOFOLLOW | AT_EACCESS);
@@ -109,7 +111,7 @@ int fuse_chmod(const char *path, mode_t mode)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   int ret = marfs_chmod(fctxt->ctxt, newpath, mode, 0);
@@ -131,7 +133,7 @@ int fuse_chown(const char *path, uid_t uid, gid_t gid)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   int ret = marfs_chown(fctxt->ctxt, newpath, uid, gid, AT_SYMLINK_NOFOLLOW);
@@ -164,7 +166,7 @@ int fuse_create(const char *path, mode_t mode, struct fuse_file_info *ffi)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   ffi->fh = (uint64_t)marfs_creat(fctxt->ctxt, NULL, newpath, mode);
@@ -194,7 +196,7 @@ int fuse_flush(const char *path, struct fuse_file_info *ffi)
 
 //  struct user_ctxt_struct u_ctxt;
 //  memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-//  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
+//  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 //
 //  LOG( LOG_INFO, "Flushing marfs_fhandle %p\n", (void*)ffi->fh );
 //  int ret = marfs_flush((marfs_fhandle)ffi->fh);
@@ -236,7 +238,7 @@ int fuse_ftruncate(const char *path, off_t length, struct fuse_file_info *ffi)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   int ret = marfs_ftruncate((marfs_fhandle)ffi->fh, length);
   if ( ret )
@@ -267,7 +269,7 @@ int fuse_getattr(const char *path, struct stat *statbuf)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   int ret = marfs_stat(fctxt->ctxt, newpath, statbuf, AT_SYMLINK_NOFOLLOW);
@@ -300,7 +302,7 @@ int fuse_getxattr(const char *path, const char *name, char *value, size_t size)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
   int cachederrno = errno; // store our orig errno value
 
   // we need to use a file handle for this op
@@ -373,7 +375,7 @@ int fuse_link(const char *oldpath, const char *newpath)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newoldpath = translate_path( fctxt->ctxt, oldpath );
   char* newnewpath = translate_path( fctxt->ctxt, newpath );
@@ -402,7 +404,7 @@ int fuse_listxattr(const char *path, char *list, size_t size)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
   int cachederrno = errno; // cache orig errno
 
   // we need to use a file handle for this op
@@ -461,7 +463,7 @@ int fuse_mkdir(const char *path, mode_t mode)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   int ret = marfs_mkdir(fctxt->ctxt, newpath, mode);
@@ -509,7 +511,7 @@ int fuse_open(const char *path, struct fuse_file_info *ffi)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   ffi->fh = (uint64_t)marfs_open(fctxt->ctxt, NULL, newpath, flags);
@@ -541,7 +543,7 @@ int fuse_opendir(const char *path, struct fuse_file_info *ffi)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   ffi->fh = (uint64_t)marfs_opendir(fctxt->ctxt, newpath);
@@ -602,7 +604,7 @@ int fuse_read(const char *path, char *buf, size_t size, off_t offset, struct fus
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
   LOG( LOG_INFO, "Performing read of %zubytes at offset %zd\n", size, offset );
   ssize_t rres = marfs_read_at_offset((marfs_fhandle)ffi->fh, offset, (void *)buf, size);
@@ -635,7 +637,7 @@ int fuse_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
   int cachederrno = errno; // cache and potentially reset errno
 
   // potentially seek to the specified offset
@@ -695,7 +697,7 @@ int fuse_readlink(const char *path, char *buf, size_t size)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   ssize_t ret = marfs_readlink(fctxt->ctxt, newpath, buf, size);
@@ -734,7 +736,7 @@ int fuse_release(const char *path, struct fuse_file_info *ffi)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
   int ret = marfs_close((marfs_fhandle)ffi->fh);
   if ( ret )
@@ -760,7 +762,7 @@ int fuse_releasedir(const char *path, struct fuse_file_info *ffi)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
   int ret = marfs_closedir((marfs_dhandle)ffi->fh);
   if ( ret )
@@ -784,7 +786,7 @@ int fuse_removexattr(const char *path, const char *name)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
   int cachederrno = errno; // cache orig errno
 
   // we need to use a file handle for this op
@@ -847,7 +849,7 @@ int fuse_rename(const char *oldpath, const char *newpath)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newoldpath = translate_path( fctxt->ctxt, oldpath );
   char* newnewpath = translate_path( fctxt->ctxt, newpath );
@@ -871,7 +873,7 @@ int fuse_rmdir(const char *path)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   int ret = marfs_rmdir(fctxt->ctxt, newpath);
@@ -900,7 +902,7 @@ int fuse_setxattr(const char *path, const char *name, const char *value, size_t 
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
   int cachederrno = errno; // cache orig errno
 
   // we need to use a file handle for this op
@@ -958,7 +960,7 @@ int fuse_statvfs(const char *path, struct statvfs *statbuf)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   int ret = marfs_statvfs(fctxt->ctxt, newpath, statbuf);
@@ -984,7 +986,7 @@ int fuse_symlink(const char *target, const char *linkname)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   // leave target path unmodified
   char* newname = translate_path( fctxt->ctxt, linkname );
@@ -1010,7 +1012,7 @@ int fuse_truncate(const char *path, off_t length)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   if ((fh = marfs_open(fctxt->ctxt, NULL, newpath, O_WRONLY)) == NULL)
@@ -1040,7 +1042,7 @@ int fuse_unlink(const char *path)
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   int ret = marfs_unlink(fctxt->ctxt, newpath);
@@ -1062,7 +1064,7 @@ int fuse_utimens(const char *path, const struct timespec tv[2])
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 1);
 
   char* newpath = translate_path( fctxt->ctxt, path );
   int ret = marfs_utimens(fctxt->ctxt, newpath, tv, 0);
@@ -1090,7 +1092,7 @@ int fuse_write(const char *path, const char *buf, size_t size, off_t offset, str
 
   struct user_ctxt_struct u_ctxt;
   memset(&u_ctxt, 0, sizeof(struct user_ctxt_struct));
-  enter_user(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
+  ENTER_USER(&u_ctxt, fuse_get_context()->uid, fuse_get_context()->gid, 0);
 
   off_t sret = marfs_seek((marfs_fhandle)ffi->fh, offset, SEEK_SET);
   if ( sret != offset)

@@ -110,11 +110,11 @@ int enter_user(user_ctxt ctxt, uid_t new_euid, gid_t new_egid, int enter_group)
   if (syscall(SYS_getresgid, &old_rgid, &old_egid, &old_sgid))
   {
     LOG(LOG_ERR, "getresgid() failed\n");
-    exit(EXIT_FAILURE);
+    return -1;
   }
 
   LOG(LOG_INFO, "gid %u(%u) -> (%u)\n", old_rgid, old_egid, new_egid);
-  if (syscall(SYS_setresgid, -1, new_egid, old_egid) == -1 && !((errno = EACCES) && ((new_egid == old_egid) || (new_egid == old_rgid))))
+  if (syscall(SYS_setresgid, -1, new_egid, old_egid) == -1 && !((new_egid == old_egid) || (new_egid == old_rgid)))
   {
     LOG(LOG_ERR, "failed!\n");
     return -1;
@@ -127,7 +127,7 @@ int enter_user(user_ctxt ctxt, uid_t new_euid, gid_t new_egid, int enter_group)
   if (syscall(SYS_getresuid, &old_ruid, &old_euid, &old_suid))
   {
     LOG(LOG_ERR, "getresuid() failed\n");
-    exit(EXIT_FAILURE);
+    return -1;
   }
 
   LOG(LOG_INFO, "uid %u(%u) -> (%u)\n", old_ruid, old_euid, new_euid);
@@ -168,7 +168,7 @@ int exit_groups(user_ctxt ctxt)
   return 0;
 }
 
-int exit_user(user_ctxt ctxt)
+void exit_user(user_ctxt ctxt)
 {
   uid_t old_ruid;
   uid_t old_euid;
@@ -206,9 +206,8 @@ int exit_user(user_ctxt ctxt)
 
   if (ctxt->entered_groups && exit_groups(ctxt))
   {
-    return -1;
+    exit(EXIT_FAILURE);
   }
 
   ctxt->entered = 0;
-  return 0;
 }
