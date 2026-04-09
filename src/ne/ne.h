@@ -58,9 +58,6 @@ extern "C"
 
 #define UNSAFE(HANDLE, NERR) ((NERR) && (NERR > ((HANDLE)->erasure_state->E - MIN_PROTECTION)))
 
-typedef uint32_t u32;
-typedef uint64_t u64;
-
 // NOTE -- the values of zero and 1 are reserved for internal use (by handles created via ne_stat())
 typedef enum
 {
@@ -93,7 +90,7 @@ typedef struct ne_state_struct
  char *data_status; // user allocated region, must be at least ( sizeof(char) * max_block ) bytes; ignored if NULL
 
  // per-part info
- u64 *csum; // user allocated region, must be at least ( sizeof(u64) * max_block ) bytes; ignored if NULL
+ uint64_t *csum; // user allocated region, must be at least ( sizeof(uint64_t) * max_block ) bytes; ignored if NULL
 } ne_state;
 
 // location struct

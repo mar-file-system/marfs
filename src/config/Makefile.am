@@ -21,6 +21,8 @@ libConfig_la_LIBADD  = ../hash/libHash.la ../mdal/libMDAL.la ../ne/libne.la
 libConfig_la_CFLAGS  = $(XML_CFLAGS)
 CONFIG_LIB = libConfig.la
 
+include_HEADERS = config.h
+
 bin_PROGRAMS = marfs-verifyconf
 marfs_verifyconf_SOURCES = verifyconf.c
 marfs_verifyconf_LDADD   = $(CONFIG_LIB)
