@@ -8,7 +8,7 @@
 #
 
 # automake requires '=' before '+=', even for these built-in vars
-AM_CPPFLAGS = -I ${top_srcdir}/src -I ${top_srcdir}/config -I ${top_srcdir}/recovery -I ${top_srcdir}/tagging
+AM_CPPFLAGS = -I ${top_srcdir}/src -I ${top_srcdir}/src/config -I ${top_srcdir}/src/recovery -I ${top_srcdir}/src/tagging
 AM_CFLAGS   =
 AM_LDFLAGS  =
 
