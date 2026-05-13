@@ -9,9 +9,9 @@
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
 
-#include "hash/hash.h"
-#include "mdal/mdal.h"
-#include "ne/ne.h"
+#include "hash.h"
+#include "mdal.h"
+#include "ne.h"
 
 #define CONFIG_CTAG_LENGTH 32
 

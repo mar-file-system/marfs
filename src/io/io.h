@@ -16,8 +16,8 @@ extern "C"
  */
 
 // THIS INTERFACE RELIES ON THE DAL INTERFACE!
-#include "dal/dal.h"
-#include "thread_queue/thread_queue.h"
+#include "dal.h"
+#include "thread_queue.h"
 #include <pthread.h>
 #include <stdint.h>
 
