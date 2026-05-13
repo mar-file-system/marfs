@@ -9,9 +9,9 @@
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
 
-#include "config/config.h"
-#include "recovery/recovery.h"
-#include "tagging/tagging.h"
+#include "config.h"
+#include "recovery.h"
+#include "tagging.h"
 
 typedef enum {
    CREATE_STREAM,

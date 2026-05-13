@@ -8,13 +8,15 @@
 #
 
 # automake requires '=' before '+=', even for these built-in vars
-AM_CPPFLAGS = -I ${top_srcdir}/src
+AM_CPPFLAGS = -I ${top_srcdir}/src -I ${top_srcdir}/src/hash -I ${top_srcdir}/src/config -I ${top_srcdir}/src/ne
 AM_CFLAGS   =
 AM_LDFLAGS  =
 
 
 # define sources used by many programs as noinst libraries, to avoid multiple compilations
 noinst_LTLIBRARIES = libMDAL.la
+
+include_HEADERS = mdal.h
 
 libMDAL_la_SOURCES = mdal.c posix_mdal.c
 libMDAL_la_CFLAGS = $(XML_CFLAGS)

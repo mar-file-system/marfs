@@ -9,7 +9,7 @@
  * MarFS was reviewed and released by LANL under Los Alamos Computer Code identifier: LA-CC-15-039.
  */
 
-#include "ne/ne.h"
+#include "ne.h"
 
 
 // MARFS FILE TAG  --  attached to every marfs file, providing stream/data info
