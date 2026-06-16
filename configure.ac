@@ -211,13 +211,13 @@ AC_ARG_ENABLE( [debugDS],
              )
 
 AC_ARG_ENABLE( [debugRM],
-               [ AS_HELP_STRING( [--enable-debugRM], [Enable 'rsrc_mgr'-subdir debug output] ) ],
+               [ AS_HELP_STRING( [--enable-debugRM], [Enable 'rman'-subdir debug output] ) ],
                   [ AS_CASE( [ x"${enableval}" ],
                            [[ x[Ee]* ]],
-                              [ AC_DEFINE( [DEBUG_RM], [3], [Enable 'rsrc_mgr'-subdir debug output] ) ],
+                              [ AC_DEFINE( [DEBUG_RMAN], [3], [Enable 'rman'-subdir debug output] ) ],
                            [[ x[Ww]* ]],
-                              [ AC_DEFINE( [DEBUG_RM], [2], [Enable 'rsrc_mgr'-subdir debug output] ) ],
-                           [ AC_DEFINE( [DEBUG_RM], [1], [Enable 'rsrc_mgr'-subdir debug output] ) ]
+                              [ AC_DEFINE( [DEBUG_RMAN], [2], [Enable 'rman'-subdir debug output] ) ],
+                           [ AC_DEFINE( [DEBUG_RMAN], [1], [Enable 'rman'-subdir debug output] ) ]
                   ) && fulldebugstr="$fulldebugstr""RM=\"$enableval\" " ], []
              )
 
@@ -323,7 +323,7 @@ AC_CONFIG_FILES([Makefile
                  src/datastream/Makefile
                  src/api/Makefile
                  src/fuse/Makefile
-                 src/rsrc_mgr/Makefile
+                 src/rman/Makefile
                  etc/Makefile
                ])
 
